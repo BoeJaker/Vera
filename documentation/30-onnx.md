@@ -213,3 +213,15 @@ host**; the edge runtime needs them on the **edge node**.
 - [Research System](./07-research.md) — where `nlp.rerank` will plug into retrieval
 - [Capability Framework](./01-capability-framework.md) — `@capability` pattern the caps follow
 - `ONNX_TODO.md` (repo root) — live status and remaining work
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_No capabilities resolved for this domain._
+<!-- VERA:AUTO:capabilities END -->

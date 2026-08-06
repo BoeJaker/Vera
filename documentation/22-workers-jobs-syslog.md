@@ -77,3 +77,15 @@ Any panel can embed these to get a live event/log view without re-implementing t
 - [Capability Framework](./01-capability-framework.md#6-distributed-dispatch) — task streams, consumer groups, result listeners
 - [Dream](./17-dream.md) — consumes `syslog.errors` and the event bus as sensors
 - [Harness UI](./02-harness-ui.md) — the Workers / Redis / Syslog built-in tabs
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_No capabilities resolved for this domain._
+<!-- VERA:AUTO:capabilities END -->

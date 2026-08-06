@@ -508,18 +508,29 @@ async def _engine_json(rec: Dict, method: str, path: str,
     doesn't send bodies). Supports unix + tcp transports only."""
     import httpx
     kind, addr = _docker_transport(rec)
-    kwargs: Dict[str, Any] = {"timeout": timeout}
     if kind == "unix":
-        base = "http://localhost"
-        kwargs["transport"] = httpx.AsyncHTTPTransport(uds=addr)
+        # Reuse docker_capabilities' cached UDS client instead of building a
+        # fresh httpx.AsyncHTTPTransport (and the SSLContext/CA-bundle load
+        # that construction does even for this plain http:// UDS request) on
+        # every call — see docker_capabilities._uds_client.
+        d = _docker_mod()
+        if d is None:
+            return 503, b'{"message":"docker module not loaded"}'
+        c = d._uds_client(addr)
+        r = await c.request(method, "http://localhost" + path,
+                            json=body if body is not None else None, timeout=timeout)
+        return r.status_code, r.content
     elif kind == "tcp":
         base = f"http://{addr[0]}:{addr[1]}"
+        d = _docker_mod()
+        if d is None:
+            return 503, b'{"message":"docker module not loaded"}'
+        c = d._tcp_client(base)
+        r = await c.request(method, base + path,
+                            json=body if body is not None else None, timeout=timeout)
+        return r.status_code, r.content
     else:
         return 503, b'{"message":"no raw docker transport (unix/tcp)"}'
-    async with httpx.AsyncClient(**kwargs) as c:
-        r = await c.request(method, base + path,
-                            json=body if body is not None else None)
-        return r.status_code, r.content
 
 
 async def _open_engine_raw(rec: Dict):

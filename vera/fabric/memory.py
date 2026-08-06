@@ -2119,6 +2119,8 @@ register_ui(
     # ui_caps=["nlp.modules", "nlp.run", "nlp.health", "nlp.llm"],
     mode="tab",
     tab_order=58,
+    specialist_agent="fabric-librarian",
+    specialist_loop_profile="fabric-discovery",
 )
 
 # ─────────────────────────────────────────────────────────────────────────────

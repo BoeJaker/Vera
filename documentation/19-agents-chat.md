@@ -104,3 +104,15 @@ Chat can also **drive other panels**. `chat/chat_panels_capabilities.py` registe
 - [LLM Cluster](./04-ollama-cluster.md) — model routing, GPU STT/TTS
 - [Dream](./17-dream.md) — `dream.stage.agent_loop` runs this same loop autonomously
 - [Capability Framework](./01-capability-framework.md) — agents-as-capabilities, event streaming
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_No capabilities resolved for this domain._
+<!-- VERA:AUTO:capabilities END -->

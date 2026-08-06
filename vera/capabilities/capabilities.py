@@ -1742,7 +1742,18 @@ async def _llm_files_context(files, session_id: str = "",
             lines = content.splitlines()
             content = "\n".join(lines[max(0, start - 1):(end or len(lines))])
             loc = f" (lines {start or 1}-{end or len(lines)})"
-        blocks.append(f"===== FILE: {path}{loc} =====\n{content[:max_per_file]}")
+        # Say so when the file is CUT. Silent truncation is how a writer ends up
+        # confidently reporting "all 10 sources" from the 3 it happened to see —
+        # it has no way to tell a short file from a long one it got a slice of.
+        if len(content) > max_per_file:
+            shown = content[:max_per_file]
+            cut = (f"\n\n[... TRUNCATED: this file is {len(content):,} chars and you are "
+                   f"seeing the first {max_per_file:,}. Do NOT state totals, counts or "
+                   f"'all of X' from this partial view — to work with the whole file use "
+                   f"text.json / text.grep / text.extract, which run against it on disk.]")
+        else:
+            shown, cut = content, ""
+        blocks.append(f"===== FILE: {path}{loc} =====\n{shown}{cut}")
     if not blocks:
         return ""
     return ("CONTEXT FILES (grounding for this task — use their content; do not echo them "
@@ -2180,10 +2191,18 @@ async def text_stats(text: str, trace_id=None):
 @capability("text.find_replace",
     http_method="POST", http_path="/text/find_replace", http_tags=["text"],
     memory="off",
-    description="Find and replace within text, with optional regex support. "
-                "Input: text (str!), find (str!), replace (str), use_regex (bool). "
-                "Output: {result, replacements_made}.")
-async def text_find_replace(text: str, find: str, replace: str = "", regex: bool = False, trace_id=None):
+    description="Find and replace within a STRING you already hold. For a FILE on "
+                "disk use text.replace instead — it edits in place and never pulls "
+                "the file through your context. "
+                "Input: text (str!), find (str!), replace (str), regex (bool). "
+                "Output: {result, replacements}.")
+async def text_find_replace(text: str, find: str, replace: str = "", regex: bool = False,
+                            use_regex: bool = False, trace_id=None):
+    # `use_regex` is accepted because this cap's own description advertised that
+    # name for a long time while the parameter was `regex`; a caller following
+    # the documented schema had its flag silently dropped by the body filter and
+    # got a literal replace with no error. Honour both.
+    regex = bool(regex or use_regex)
     try:
         if regex: new,n = re.sub(find,replace,text), len(re.findall(find,text))
         else: n,new = text.count(find),text.replace(find,replace)

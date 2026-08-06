@@ -148,7 +148,7 @@
         <div class="typebtn" data-t="metrics" onclick="pickType('metrics')"><div class="i">📊</div>Host metrics</div>
         <div class="typebtn" data-t="desktop" onclick="pickType('desktop')"><div class="i">🖥</div>Remote desktop</div>
         <div class="typebtn" data-t="notebook" onclick="pickType('notebook')"><div class="i">📓</div>Notebook</div>
-        <div class="typebtn" data-t="app" onclick="pickType('app')"><div class="i">🌐</div>Mounted app</div>
+        <div class="typebtn" data-t="app" onclick="pickType('app')"><div class="i">🧩</div>Integration</div>
         <div class="typebtn" data-t="panel" onclick="pickType('panel')"><div class="i">🧩</div>Vera panel</div>
       </div>
       <div id="cfgConn" style="display:none">
@@ -156,8 +156,8 @@
         <div class="fld" id="cfgShellWrap"><label>Shell (blank = login shell)</label><input id="cfgShell" placeholder="sh"></div>
       </div>
       <div id="cfgApp" style="display:none">
-        <div class="fld"><label>Mounted app</label><select id="cfgAppSel"></select></div>
-        <div class="hint"><a href="#" onclick="closeAdd();openApps();return false" style="color:var(--acc)">＋ Mount a new app…</a></div>
+        <div class="fld"><label>Integration</label><select id="cfgAppSel"></select></div>
+        <div class="hint"><a href="#" onclick="closeAdd();setView('int');return false" style="color:var(--acc)">＋ Discover / manage integrations…</a></div>
       </div>
       <div id="cfgPanel" style="display:none">
         <div class="fld"><label>Vera panel</label><select id="cfgPanelSel"></select></div>
@@ -223,7 +223,7 @@
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-let WS=[], CUR=null, EDIT=false, CONNS=[], APPS=[], PANELS=[], NOTEBOOKS=[], addType='', dragIdx=-1;
+let WS=[], CUR=null, EDIT=false, CONNS=[], APPS=[], INTEGRATIONS=[], PANELS=[], NOTEBOOKS=[], addType='', dragIdx=-1;
 
 function toast(m,e){ const t=$('#toast'); t.textContent=m; t.className='toast on'+(e?' err':'');
   clearTimeout(t._h); t._h=setTimeout(()=>t.className='toast',2600); }
@@ -252,13 +252,7 @@ async function openWorkspace(id){
     $('#empty').style.display='none'; $('#grid').style.display='';
     $('#wsTitle').textContent=CUR.label; $('#addBtn').style.display='none'; $('#saveBtn').style.display='none';
     $('#editBtn').classList.remove('on');
-    renderGrid(); /* ── view switch: Workspaces ⇄ Integrations (embedded Hub) ─────── */
-function setView(v){ const int=v==='int';
-  document.body.classList.toggle('intmode',int);
-  $('#segWs').classList.toggle('on',!int); $('#segInt').classList.toggle('on',int);
-}
-
-loadWorkspaces();
+    renderGrid(); loadWorkspaces();
   }catch(e){ toast('load failed: '+e.message,true); }
 }
 async function delWorkspace(id){ if(!confirm('Delete workspace?'))return;
@@ -342,7 +336,7 @@ function rmW(i){ CUR.widgets.splice(i,1); renderGrid(); }
 async function mountWidget(w,body){
   const c=w.config||{};
   if(w.type==='panel'){ body.innerHTML=`<iframe src="/ui/panel/window?id=${encodeURIComponent(c.panel_id)}" allow="microphone; clipboard-read; clipboard-write"></iframe>`; return; }
-  if(w.type==='app'){ body.innerHTML=`<iframe src="/remote/app/${encodeURIComponent(c.app_id)}/" allow="clipboard-read; clipboard-write"></iframe>`; return; }
+  if(w.type==='app'){ const src=c.integration_id?('/integrations/'+encodeURIComponent(c.integration_id)+'/embed'):('/remote/app/'+encodeURIComponent(c.app_id||'')+'/'); body.innerHTML=`<iframe src="${src}" allow="clipboard-read; clipboard-write"></iframe>`; return; }
   if(w.type==='desktop'){ body.innerHTML=`<iframe src="${esc(c.url||'')}" allow="clipboard-read; clipboard-write; fullscreen"></iframe>`; return; }
   if(w.type==='notebook'){ body.innerHTML=`<iframe src="/notebook/panel?embed=1&nb=${encodeURIComponent(c.nb_id||'')}" allow="clipboard-read; clipboard-write"></iframe>`; return; }
   if(w.type==='metrics'){ mountMetrics(w,body); return; }
@@ -494,6 +488,7 @@ async function appUnmount(id){
 async function ensureLists(){
   try{ if(!CONNS.length) CONNS=(await api('/remote/conn/list')).connections||[]; }catch(e){}
   try{ APPS=(await api('/remote/app/list')).apps||[]; }catch(e){}
+  try{ INTEGRATIONS=(await api('/integrations/list')).integrations||[]; }catch(e){}
   try{ PANELS=(await api('/ui/panels'))||[]; }catch(e){}
   try{ const r=await api('/research/notebook/list'); NOTEBOOKS=Array.isArray(r)?r:(r.notebooks||r.items||r.list||[]); }catch(e){ NOTEBOOKS=[]; }
 }
@@ -515,7 +510,7 @@ function pickType(t){ addType=t;
     const pre=(CUR.target&&CUR.target.conn_id)||'';
     $('#cfgConnSel').innerHTML=CONNS.map(c=>`<option value="${esc(c.id)}" ${c.id===pre?'selected':''}>${esc(c.label)} (${esc(c.kind)})</option>`).join('')||'<option value="">no connections</option>';
   }
-  if(t==='app') $('#cfgAppSel').innerHTML=APPS.map(a=>`<option value="${esc(a.id)}">${esc(a.label)}</option>`).join('')||'<option value="">no mounted apps</option>';
+  if(t==='app') $('#cfgAppSel').innerHTML=INTEGRATIONS.map(a=>`<option value="${esc(a.id)}">${esc(a.label)} (${esc(a.kind||'')})</option>`).join('')||'<option value="">no integrations — add via the Integrations view</option>';
   if(t==='panel') $('#cfgPanelSel').innerHTML=PANELS.filter(p=>p.id!=='workspaces').map(p=>`<option value="${esc(p.id)}">${esc(p.label||p.id)}</option>`).join('');
   if(t==='notebook') $('#cfgNotebookSel').innerHTML=NOTEBOOKS.map(n=>`<option value="${esc(n.id)}">${esc(n.title||n.label||n.id)}</option>`).join('')||'<option value="">no notebooks yet</option>';
 }
@@ -539,14 +534,21 @@ function confirmAdd(){
     const id=$('#cfgNotebookSel').value; if(!id) return toast('no notebook selected',true);
     const n=NOTEBOOKS.find(x=>x.id===id)||{}; config={nb_id:id,label:n.title||n.label||id}; defW=6; defH=5;
   } else if(addType==='app'){
-    const id=$('#cfgAppSel').value; if(!id) return toast('no app selected',true);
-    const a=APPS.find(x=>x.id===id)||{}; config={app_id:id,label:a.label};
+    const id=$('#cfgAppSel').value; if(!id) return toast('no integration selected',true);
+    const a=INTEGRATIONS.find(x=>x.id===id)||{}; config={integration_id:id,label:a.label};
   } else if(addType==='panel'){
     const id=$('#cfgPanelSel').value; if(!id) return toast('no panel selected',true);
     const p=PANELS.find(x=>x.id===id)||{}; config={panel_id:id,label:p.label||id};
   }
   CUR.widgets.push({id:uid(),type:addType,w:defW,h:defH,config});
   closeAdd(); renderGrid();
+}
+
+/* ── view switch: Workspaces ⇄ Integrations (embedded Hub) ── global scope ── */
+function setView(v){ const isInt = v==='int';
+  document.body.classList.toggle('intmode', isInt);
+  const a=document.querySelector('#segWs'), b=document.querySelector('#segInt');
+  if(a) a.classList.toggle('on', !isInt); if(b) b.classList.toggle('on', isInt);
 }
 
 loadWorkspaces();

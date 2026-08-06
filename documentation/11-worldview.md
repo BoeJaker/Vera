@@ -2157,3 +2157,15 @@ except Exception as _e:
 log.info("worldview_jepa.py v2 loaded — model=%s index=%s",
          "ready" if MODEL.ready else "disabled",
          "ready" if WV_INDEX.available else "disabled")
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_No capabilities resolved for this domain._
+<!-- VERA:AUTO:capabilities END -->

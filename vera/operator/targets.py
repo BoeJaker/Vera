@@ -96,6 +96,25 @@ async def ensure_target(target: Dict[str, Any],
 
     Returns the resolved dict plus {ready, error}.
     """
+    # Connector targets (integration / ollama / node / docker / proxmox): resolve
+    # against the registered infrastructure via its existing caps.
+    from . import connectors as _connectors
+    source = (target.get("source") or "").lower()
+    if not source and target.get("kind") in _connectors.CONNECTOR_SOURCES and target.get("ref"):
+        source = target["kind"]
+    if source in _connectors.CONNECTOR_SOURCES:
+        if not call_cap:
+            return {"kind": source, "base_url": "", "start_url": "", "canvas": False,
+                    "ready": False, "error": "no cap dispatcher"}
+        res = await _connectors.resolve(source, target.get("ref", ""), call_cap)
+        if isinstance(res, dict) and res.get("error"):
+            return {"kind": source, "base_url": "", "start_url": "", "canvas": False,
+                    "ready": False, "error": res["error"]}
+        return {"kind": source, "base_url": res.get("base_url", ""),
+                "start_url": res.get("url", ""), "canvas": bool(res.get("canvas")),
+                "ready": True, "error": "", "conn_type": res.get("type", ""),
+                "driveable": res.get("driveable", True), "ref": target.get("ref", "")}
+
     resolved = resolve_target(target, default_base_url)
     if resolved["kind"] != "sandbox":
         resolved.update({"ready": True, "error": ""})

@@ -214,12 +214,58 @@ promote/rollback. Two kinds:
 
 | Cap | Purpose |
 |---|---|
-| `evolve.git.status` | Repo branch, dirty flag, loop-lab/* branches |
-| `evolve.branch.create` / `evolve.branch.delete` | Work-branch primitives |
-| `evolve.pipeline.run` | Run a pipeline (background); `kind`, `profile`, `variant_id`/`edits`, `gate_threshold`, `auto_promote`, `auto_test` |
+| `evolve.git.status` | Repo branch, dirty flag, loop-lab/* branches (`repo`, default `vera`) |
+| `evolve.branch.create` / `evolve.branch.delete` | Work-branch primitives (`repo`) |
+| `evolve.pipeline.run` | Run a pipeline (background); `kind`, `profile`, `variant_id`/`edits`, `gate_threshold`, `auto_promote`, `auto_test`, `repo` |
 | `evolve.pipeline.list` / `evolve.pipeline.get` | Pipeline history / full stage trace |
+| `evolve.pipeline.test` | (generic repos only) gate a code pipeline's branch once its edit has landed |
 | `evolve.pipeline.promote` | Promote: variant→set overlay, code→merge branch to main |
 | `evolve.pipeline.rollback` | Roll back: variant→clear overlay, code→delete branch |
+
+### Multi-repo — branch/test/promote a repo other than Vera
+
+Every pipeline/branch/git capability above is **repo-aware**: an optional
+`repo` input (default `"vera"`, the Vera checkout itself, always present and
+protected) picks which git repo the branch/worktree/merge actually happens
+against. Any other repo must first be **registered**:
+
+| Cap | Purpose |
+|---|---|
+| `evolve.repo.add` | Register a local git repo (`id`, `label`, `path`, `remote_url`, `test_cmd` — default `pytest -q --tb=no`) |
+| `evolve.repo.list` / `evolve.repo.get` | Registered repos |
+| `evolve.repo.remove` | Unregister (refuses the protected `vera` entry; nothing on disk is touched) |
+| `evolve.repo.gitea_push` | Provision + push a registered repo's Gitea remote, using the server's own `GITEA_BASE_URL`/`TOKEN`/`OWNER` (never leaves the server) |
+
+For `kind=code` pipelines, `repo != "vera"` swaps the gate: instead of scoring
+a Vera loop-profile suite through the dev sandbox (which is Vera-app-specific —
+it builds `vera:latest` and snapshots Vera's own Redis/fabric state, so it does
+not generalize), the pipeline runs the repo's own `test_cmd` — once at branch
+creation against the repo's current main (the baseline), and again, on demand
+via **`evolve.pipeline.test`**, against the branch worktree once the queued
+edit has actually landed (candidate). The pass rate (0.0–1.0) fills the same
+`baseline_score`/`candidate_score`/`gate_delta`/`gate_passed` fields a
+Vera-suite pipeline uses, so nothing downstream (panel rendering, promote,
+rollback) needed to change to support it. Promote/rollback resolve the repo
+from the pipeline record automatically.
+
+The dev sandbox (`evolve.sandbox.*`, §7) stays **Vera-only** — a generic repo
+has no `vera:latest` image or Loop Lab state to snapshot; its worktree is
+still git-isolated (never the repo's real checkout) exactly like Vera's.
+
+### Controller & reviewer — real, never guessed
+
+Every pipeline records **who is driving it** (`controller`) and — per entry in
+`reviews[]` — **who reviewed it** (`reviewer`): `claude_code`, `autonomous`, or
+`user`. This is not a picker — it's read from `CALLER_KIND`/`BACKGROUND_LLM`
+(`_triggered_by()`, `capability_orchestration.py`), which the **MCP bridge**
+(`vera_mcp_bridge.py`, the shim Claude Code launches) sets honestly on every
+call it forwards, so `claude_code` means a real Claude Code session drove that
+exact `evolve.pipeline.run`/`.review` call — never inferred from a name or a
+dropdown. The Pipelines table, the pipeline detail modal (including each
+review's verdict/findings), and `<vera-branch-pipeline>`'s implement/gate
+stages all render it via a shared `ctrlBadge()`/role-label. To review a
+pipeline as Claude Code, just call `evolve.pipeline.review` over the same MCP
+session driving the work — the identity is automatic.
 
 ### Change sources — review & observability feed the pipeline
 
@@ -504,3 +550,15 @@ the audit log, and a **Sandbox** tab with the `sandbox_mode` control.
 - [Business Simulation](./business-sim) — `business.sim.*`, the ground-truth scorer for `sim`-type tasks
 - [Remote IDE / Claude Code driver](./remote-ide) — where queued code edits execute
 - Providers registry — Workers & Ollama → API (critic/editor API keys)
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_No capabilities resolved for this domain._
+<!-- VERA:AUTO:capabilities END -->

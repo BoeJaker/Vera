@@ -65,6 +65,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import shutil
 import sqlite3
 import subprocess
@@ -78,6 +79,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import (
     APP,
+    BACKGROUND_LLM,
+    CALLER_KIND,
     CAPABILITY_REGISTRY,
     capability,
     emit_event,
@@ -88,6 +91,19 @@ from Vera.vera.capability_orchestration import (
 )
 
 log = logging.getLogger("vera.evolve")
+
+
+def _triggered_by() -> str:
+    """Real, honest run-trigger bucket — never guessed beyond what's actually
+    knowable: CALLER_KIND is set only by the MCP bridge (a real Claude Code
+    session), BACKGROUND_LLM only by autonomous drivers (dream/V8/fabric
+    ingest); anything else (the browser chat UI, or any other caller) is
+    the residual default "user" — not invented, just what's left over."""
+    if CALLER_KIND.get() == "mcp":
+        return "claude_code"
+    if BACKGROUND_LLM.get():
+        return "autonomous"
+    return "user"
 
 _HERE = Path(__file__).parent
 _PANEL_PATH = _HERE / "evolve_panel.html"
@@ -104,6 +120,22 @@ KEY_SESSION  = "vera:evolve:session:"    # + session_id
 KEY_VARIANTS = "vera:evolve:variants:"   # + profile
 KEY_OVERLAY  = "vera:evolve:overlay:"    # + profile
 KEY_AUDIT    = "vera:evolve:audit"       # verbose activity/change log (newest first)
+KEY_REPOS    = "vera:evolve:repos"       # hash: repo_id -> repo record JSON — see
+                                          # the REPO REGISTRY section below for the
+                                          # functions/capabilities; these two names
+                                          # are hoisted up here because they're used
+                                          # as default-parameter values (evaluated at
+                                          # def-time, not call-time) by capabilities
+                                          # defined earlier in the file than that
+                                          # section — a plain forward reference there
+                                          # would NameError at import.
+DEFAULT_REPO_ID  = "vera"
+# A bare `pytest` isn't guaranteed on PATH for the user/env Vera itself runs
+# under (confirmed missing on the primary host — venv installs don't always
+# symlink console-scripts onto PATH). `sys.executable` is the exact
+# interpreter Vera is running under right now, so `-m pytest` always resolves
+# to the same env pytest is actually installed in, if it's installed at all.
+DEFAULT_TEST_CMD = f"{sys.executable} -m pytest -q --tb=no"
 
 RUNS_CAP     = 400
 SUITES_CAP   = 60
@@ -454,8 +486,22 @@ async def _resolve_target(target_id: str) -> Dict[str, Any]:
                 "profile": "planning", "engine": sub,
                 "code_file": "vera/dag/dag_workshop_capabilities.py", "tunable": True}
     if cat == "agent":
+        # An agent: target should exercise the loop PROFILE actually bound to
+        # that agent persona (loop_profiles.py's own agent field), not silently
+        # fall back to the generic planning profile — a target=agent:coder run
+        # used to always run "planning" regardless of which agent was named.
+        # If no profile is bound to this agent, fall through to a plain
+        # single-turn agent.consult-style run instead of mislabeling it.
+        bound_profile = ""
+        try:
+            profs = (await _call("loops.profiles") or {}).get("profiles", [])
+            match = next((p for p in profs if p.get("agent") == sub), None)
+            if match:
+                bound_profile = match.get("id", "")
+        except Exception as e:
+            log.debug("_resolve_target: agent->profile lookup failed for %s: %s", sub, e)
         return {"category": "agent", "id": tid, "label": sub, "agent": sub,
-                "profile": "planning",
+                "profile": bound_profile or "", "no_bound_profile": not bound_profile,
                 "code_file": "vera/agents/agents.py", "tunable": True}
     if cat == "chat":
         return {"category": "chat", "id": tid, "label": "Chat", "profile": "planning",
@@ -651,7 +697,8 @@ async def evolve_ide_improve(instance_id: str = "", goal: str = "",
                "elapsed_s": elapsed, "pass_rate": 1.0 if ok else 0.0,
                "checks_ok": 1 if ok else 0, "checks_n": 1, "score": None,
                "combined": None, "variant": "", "source": "ide", "session": "",
-               "error": error[:200], "where": "remote-ide"}
+               "error": error[:200], "where": "remote-ide", "engine": engine,
+               "triggered_by": _triggered_by()}
     detail = dict(compact)
     detail.update({"goal": goal, "final": summary, "steps": [],
                    "checks": [{"type": ("applied" if apply else "diagnosed"),
@@ -883,16 +930,71 @@ def _default_tasks() -> List[Dict[str, Any]]:
         {
             "id": "fabric-lookup", "label": "Fabric — dataset survey",
             "type": "loop", "profile": "fabric-discovery", "tags": ["core", "loop"],
-            "goal": "List the data fabric's datasets with fabric.datasets and name "
-                    "the three most recently updated ones with their record counts.",
-            "allowed_caps": "fabric.datasets,fabric.query",
-            "max_steps": 5, "timeout_s": 420, "enabled": True,
+            # Deliberately does NOT name a capability — a scripted goal ("use
+            # fabric.datasets") only tests instruction-following, not discovery.
+            "goal": "Find out what the three most active (most-updated) datasets in "
+                    "Vera's data fabric are, and roughly how many records each holds.",
+            "allowed_caps": "",
+            "max_steps": 6, "timeout_s": 420, "enabled": True,
             "checks": [
-                {"type": "cap_called", "value": "fabric.datasets"},
+                {"type": "cap_called", "value": "memory.map"},
                 {"type": "final_nonempty"},
             ],
-            "rubric": "Real dataset ids from the tool output (grounded, not "
-                      "invented), correctly ranked by recency.",
+            "rubric": "Used a real dataset-discovery tool it found on its own (not told "
+                      "which one), named REAL dataset ids from the tool's actual output "
+                      "(never guessed/invented), and ranked by recency/activity.",
+        },
+        {
+            # Added 2026-08-03 after a live agent_loop_v5 run against real Vera
+            # (goal: browse the fabric for agent-loop-failure knowledge, no query
+            # given) showed the specialist correctly received the real dataset ids
+            # from a prior step in its context, then STILL called fabric.browse on
+            # two invented near-miss variants ('web.en.wikipedia_org',
+            # 'web.en_wikipedia_org') that appeared nowhere in that context, wasting
+            # cycles, before separately getting one real id right. Browsing (no
+            # query) is a genuinely different failure surface from search.
+            "id": "fabric-browse-records", "label": "Fabric — browse without a query",
+            "type": "loop", "profile": "fabric-discovery", "tags": ["core", "loop", "memory"],
+            "goal": "Pick any one real dataset that exists in Vera's data fabric and show "
+                    "me 3 actual records from it. You do not have a search query — just "
+                    "look at what's really there.",
+            "allowed_caps": "",
+            "max_steps": 6, "timeout_s": 420, "enabled": True,
+            "checks": [
+                {"type": "cap_called", "value": "memory.map"},
+                {"type": "cap_called", "value": "memory.browse"},
+                {"type": "final_nonempty"},
+            ],
+            "rubric": "CRITICAL: the dataset id passed to memory.browse must be a REAL id "
+                      "that actually appeared in a prior memory.map/discovery call's output "
+                      "— not a plausible-looking guess or invented variant. If a browse call "
+                      "returns zero records, the loop should recover via memory.map again, "
+                      "NOT retry slightly-different guessed spellings of the same wrong id. "
+                      "The final answer must quote real record text, never fabricated "
+                      "placeholder content.",
+        },
+        {
+            # Added 2026-08-03 alongside fabric-browse-records — the SEARCH-shaped
+            # counterpart. The same live run confirmed memory.seek + memory.read
+            # worked well (found a real agent_loop.journal record, collapsed 33
+            # near-duplicates, read it in full); this locks that behaviour in as a
+            # regression guard.
+            "id": "memory-seek-relevance", "label": "Memory — seek then read a real record",
+            "type": "loop", "profile": "fabric-discovery", "tags": ["core", "loop", "memory"],
+            "goal": "Find out what Vera's stored knowledge says about agent loop failure "
+                    "recovery strategies, then quote one specific detail from the single "
+                    "most relevant record you find, citing its dataset.",
+            "allowed_caps": "",
+            "max_steps": 6, "timeout_s": 420, "enabled": True,
+            "checks": [
+                {"type": "cap_called", "value": "memory.seek"},
+                {"type": "cap_called", "value": "memory.read"},
+                {"type": "final_nonempty"},
+            ],
+            "rubric": "Used memory.seek to find candidates (the canonical door, not raw "
+                      "fabric.query), expanded the best one with memory.read rather than "
+                      "settling for a truncated snippet, and the final answer cites a real "
+                      "dataset id and quotes real record text.",
         },
         {
             "id": "web-brief", "label": "Web — grounded one-liner",
@@ -1301,17 +1403,19 @@ async def evolve_cap_test(cap: str = "", args: Optional[Dict[str, Any]] = None,
 
 @capability("evolve.unittest.run", memory="on",
             http_method="POST", http_path="/evolve/unittest/run", http_tags=["evolve"],
-            description="Unit-test any part of Vera: run pytest or a py_compile "
-                        "import-check over a path and gate on the exit code. Runs "
-                        "in the repo (or the dev sandbox worktree when up). Inputs: "
-                        "path (str default 'vera'), mode (pytest|compile, default "
-                        "compile — safe, no code execution), pattern (str — pytest "
-                        "-k), timeout (int=300). Output: {ok, rc, passed, summary, "
+            description="Unit-test any part of Vera (or a registered repo): run "
+                        "pytest or a py_compile import-check over a path and gate "
+                        "on the exit code. Inputs: path (str default 'vera'), mode "
+                        "(pytest|compile, default compile — safe, no code "
+                        "execution), pattern (str — pytest -k), timeout (int=300), "
+                        "repo (str, default 'vera' — id of a repo registered via "
+                        "evolve.repo.add). Output: {ok, rc, passed, summary, "
                         "output}.",
             schema=enum_schema(mode=["compile", "pytest"]))
 async def evolve_unittest_run(path: str = "vera", mode: str = "compile",
-                              pattern: str = "", timeout: int = 300, trace_id=None):
-    root = _repo_root()
+                              pattern: str = "", timeout: int = 300,
+                              repo: str = DEFAULT_REPO_ID, trace_id=None):
+    root = await _resolve_repo_root(repo)
     target = (root / path)
     if not target.exists():
         return {"error": f"path not found: {path}"}
@@ -1328,7 +1432,7 @@ async def evolve_unittest_run(path: str = "vera", mode: str = "compile",
         if not pyfiles:
             return {"error": "no .py files under path"}
         cmd = ["python", "-m", "py_compile"] + pyfiles
-    res = await _sh(cmd, timeout=int(timeout))
+    res = await _sh(cmd, cwd=str(root), timeout=int(timeout))
     passed = res["ok"]
     out = (res.get("out", "") + "\n" + res.get("err", "")).strip()
     await _audit("unittest", f"{mode} {path}: {'PASS' if passed else 'FAIL'}",
@@ -1925,7 +2029,8 @@ async def _run_task(task: Dict[str, Any], variant: Optional[Dict[str, Any]] = No
 
     _RUN_LIVE.update({"run_id": run_id, "task": task.get("id"),
                       "type": ttype, "started_at": now_iso(), "t0": t0,
-                      "where": where,
+                      "where": where, "triggered_by": _triggered_by(),
+                      "profile": task.get("profile", ""), "target": task.get("target", ""),
                       "goal": task.get("goal", "") or task.get("cap", "")})
 
     log.info("evolve run %s: task=%s type=%s where=%s (timeout %ss)",
@@ -2017,6 +2122,7 @@ async def _run_task(task: Dict[str, Any], variant: Optional[Dict[str, Any]] = No
         "combined": combined,
         "variant": (variant or {}).get("id", ""), "source": source,
         "session": session_id, "error": error[:200], "where": where,
+        "triggered_by": _triggered_by(),
     }
     detail = dict(compact)
     detail.update({
@@ -2088,6 +2194,78 @@ async def _run_window_commits(rec: Dict[str, Any]) -> List[Dict[str, Any]]:
         return []
 
 
+@capability("evolve.authors", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/authors", http_tags=["evolve"],
+            description="Real authorship map: recent commits to this repo, each "
+                        "tagged with WHO/WHAT actually produced it — a Claude Code "
+                        "session (via ide.claude_sessions.list_sessions' own git-"
+                        "log time-window correlation), a Vera evolve.ide.improve "
+                        "run (tagged with its real engine: claude|vera-agent), or "
+                        "left 'direct' when no known automated session/run "
+                        "overlapped that commit's timestamp — never guessed. "
+                        "Query: hours (int, default 72), branch (str, optional — "
+                        "log this branch instead of the checked-out HEAD).")
+async def evolve_authors(hours: int = 72, branch: str = "", trace_id=None):
+    from datetime import datetime, timedelta, timezone
+    since_dt = datetime.now(timezone.utc) - timedelta(hours=max(1, int(hours)))
+    since = since_dt.isoformat()
+    ide_caps = sys.modules.get("ide_capabilities")
+    commits: List[Dict[str, Any]] = []
+    if branch:
+        r = await _sh(["git", "log", branch,
+                       "--pretty=format:%H\x1f%an\x1f%ad\x1f%ct\x1f%s",
+                       "--date=short", f"--since={since}"], cwd=str(_repo_root()))
+        for line in (r.get("out") or "").splitlines():
+            parts = line.split("\x1f")
+            if len(parts) >= 5:
+                commits.append({"hash": parts[0], "author": parts[1], "date": parts[2],
+                                "ts": int(parts[3]), "message": parts[4]})
+    elif ide_caps:
+        try:
+            res = await ide_caps.ide_git_log(path=str(_REPO_ROOT), since=since)
+            commits = res.get("commits", [])
+        except Exception as e:
+            log.debug("evolve.authors: git log failed: %s", e)
+
+    claude_sess_caps = sys.modules.get("ide_claude_sessions_capabilities")
+    claude_by_hash: Dict[str, Dict[str, Any]] = {}
+    if claude_sess_caps:
+        try:
+            sess_res = await claude_sess_caps.cap_claude_sessions_list_sessions(scan_limit=3000)
+            for s in sess_res.get("sessions", []):
+                for c in (s.get("commits") or []):
+                    claude_by_hash[c["hash"]] = {
+                        "session_id": s.get("claude_session_id", ""),
+                        "project_dir": s.get("project_dir", ""),
+                    }
+        except Exception as e:
+            log.debug("evolve.authors: claude session correlation failed: %s", e)
+
+    engine_runs = [r for r in (await evolve_runs(limit=300)).get("runs", []) if r.get("engine")]
+    engine_by_hash: Dict[str, Dict[str, Any]] = {}
+    for r in engine_runs:
+        for c in (r.get("commits") or []):
+            engine_by_hash[c["hash"]] = {"engine": r.get("engine"), "run_id": r.get("run_id"),
+                                         "task": r.get("task", "")}
+
+    out_commits = []
+    for c in commits:
+        h = c.get("hash", "")
+        cs = claude_by_hash.get(h)
+        er = engine_by_hash.get(h)
+        if cs:
+            out_commits.append({**c, "agent": "claude", "agent_label": "Claude Code",
+                                "session_id": cs["session_id"], "project_dir": cs["project_dir"]})
+        elif er:
+            eng = er.get("engine") or "vera-agent"
+            out_commits.append({**c, "agent": eng,
+                                "agent_label": "Claude Code" if eng == "claude" else "Vera agent",
+                                "run_id": er.get("run_id"), "task": er.get("task")})
+        else:
+            out_commits.append({**c, "agent": "direct", "agent_label": "direct"})
+    return {"commits": out_commits, "count": len(out_commits), "hours": hours, "branch": branch}
+
+
 @capability("evolve.runs", memory="off", silent=True,
             http_method="GET", http_path="/evolve/runs", http_tags=["evolve"],
             description="Recent benchmark runs (compact, newest first), each "
@@ -2121,6 +2299,69 @@ async def evolve_runs(limit: int = 50, task: str = "", session: str = "",
     for rec in out:
         rec["commits"] = await _run_window_commits(rec)
     return {"runs": out, "count": len(out)}
+
+
+@capability("evolve.compare", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/compare", http_tags=["evolve"],
+            description="Aggregate evolve.runs history into a per-task comparison "
+                        "between two groups (variant ids — empty string means the "
+                        "un-varianted baseline): run count, avg pass_rate, avg "
+                        "combined score, and the A-vs-B delta per task. Query: "
+                        "group_a (str!), group_b (str!), task (str — restrict to "
+                        "one task id), limit (int, runs scanned, default 500).")
+async def evolve_compare(group_a: str = "", group_b: str = "", task: str = "",
+                         limit: int = 500, trace_id=None):
+    r = _redis()
+    runs: List[Dict[str, Any]] = []
+    if r:
+        try:
+            rows = await r.lrange(KEY_RUNS, 0, max(int(limit), 1) - 1)
+            for row in rows or []:
+                try:
+                    rec = json.loads(row.decode() if isinstance(row, bytes) else row)
+                except Exception:
+                    continue
+                if task and rec.get("task") != task:
+                    continue
+                runs.append(rec)
+        except Exception:
+            pass
+
+    def _bucket(group: str) -> Dict[str, List[Dict[str, Any]]]:
+        by_task: Dict[str, List[Dict[str, Any]]] = {}
+        for rec in runs:
+            if (rec.get("variant") or "") != group:
+                continue
+            by_task.setdefault(rec.get("task", ""), []).append(rec)
+        return by_task
+
+    a_by_task = _bucket(group_a)
+    b_by_task = _bucket(group_b)
+    task_ids = sorted(set(a_by_task) | set(b_by_task))
+    tasks_meta = {t.get("id"): t for t in await _get_tasks()}
+
+    def _stats(recs: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not recs:
+            return None
+        combined = [x["combined"] for x in recs if x.get("combined") is not None]
+        return {
+            "n": len(recs),
+            "avg_pass_rate": round(mean(x.get("pass_rate", 0.0) for x in recs), 3),
+            "avg_combined": round(mean(combined), 2) if combined else None,
+        }
+
+    rows = []
+    for tid in task_ids:
+        a_stats = _stats(a_by_task.get(tid, []))
+        b_stats = _stats(b_by_task.get(tid, []))
+        delta = None
+        if a_stats and b_stats and a_stats["avg_combined"] is not None and b_stats["avg_combined"] is not None:
+            delta = round(a_stats["avg_combined"] - b_stats["avg_combined"], 2)
+        rows.append({
+            "task": tid, "label": (tasks_meta.get(tid) or {}).get("label", tid),
+            "a": a_stats, "b": b_stats, "delta": delta,
+        })
+    return {"rows": rows, "group_a": group_a, "group_b": group_b, "runs_scanned": len(runs)}
 
 
 @capability("evolve.run.get", memory="off", silent=True,
@@ -2160,9 +2401,21 @@ async def _build_run_task(kind: str, *, target: str = "", goal: str = "",
                 "label": f"cap: {cap}", "target": tgt["id"],
                 "checks": checks if isinstance(checks, list) else [{"type": "no_error"}],
                 "timeout_s": 120}
+    # An agent: target with no loop profile bound to it (loop_profiles.py has
+    # no preset for this persona) has nothing to run as a multi-step loop —
+    # rather than silently mislabeling it as the generic planning profile
+    # (the bug this whole resolution path used to have), exercise it the
+    # honest way: one bounded agent.consult call against the real persona.
+    if tgt.get("category") == "agent" and tgt.get("no_bound_profile"):
+        return {"id": f"run-{uuid.uuid4().hex[:6]}", "type": "cap",
+                "cap": "agent.consult",
+                "args": {"agent_name": tgt.get("agent", ""), "message": goal},
+                "label": f"consult: {tgt.get('agent', '')}"[:60], "target": tgt["id"],
+                "checks": checks if isinstance(checks, list) else [{"type": "no_error"}],
+                "timeout_s": 120}
     # loop / goal
     return {"id": f"run-{uuid.uuid4().hex[:6]}", "type": "loop",
-            "profile": tgt["profile"], "target": tgt["id"],
+            "profile": tgt["profile"] or "planning", "target": tgt["id"],
             "label": (goal or tgt["label"])[:60], "goal": goal,
             "allowed_caps": allowed_caps,
             "checks": checks if isinstance(checks, list) else [{"type": "final_nonempty"}],
@@ -3728,17 +3981,195 @@ KEY_PIPELINE  = "vera:evolve:pipeline:"       # + id -> full record
 PIPELINES_CAP = 100
 BRANCH_PREFIX = "loop-lab/"
 
+# ─────────────────────────────────────────────────────────────────────────────
+# REPO REGISTRY — other git repos Loop Lab can branch/test/promote/rollback,
+# alongside Vera's own. 'vera' is always present (protected, seeded from this
+# checkout) even with nothing in Redis yet, so every existing call site that
+# never passes `repo=` keeps operating on the Vera repo exactly as before —
+# this is purely additive. (KEY_REPOS / DEFAULT_REPO_ID / DEFAULT_TEST_CMD are
+# defined up near the other KEY_* constants — see the comment there.)
+# ─────────────────────────────────────────────────────────────────────────────
+
 
 def _repo_root() -> Path:
     """The Vera git repo root (…/Vera, which contains .git)."""
     return _HERE.parent.parent
 
 
-async def _git(*args: str, timeout: int = 60) -> Dict[str, Any]:
-    """Run a git command in the repo root, off the event loop."""
+async def _get_repos() -> Dict[str, Dict[str, Any]]:
+    """All registered repos, keyed by id."""
+    out: Dict[str, Dict[str, Any]] = {
+        DEFAULT_REPO_ID: {"id": DEFAULT_REPO_ID, "label": "Vera",
+                          "path": str(_repo_root()), "remote_url": "",
+                          "test_cmd": "", "protected": True, "created_at": ""},
+    }
+    r = _redis()
+    if r:
+        try:
+            rows = await r.hgetall(KEY_REPOS)
+            for k, v in (rows or {}).items():
+                rid = k.decode() if isinstance(k, bytes) else k
+                if rid == DEFAULT_REPO_ID:
+                    continue
+                try:
+                    out[rid] = json.loads(v.decode() if isinstance(v, bytes) else v)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+    return out
+
+
+async def _resolve_repo_root(repo: str) -> Path:
+    """repo id -> its filesystem root. '' / 'vera' resolve with NO lookup (the
+    zero-risk default path every existing caller already takes). Anything else
+    must be registered via evolve.repo.add; an unknown/stale id falls back to
+    the Vera repo root rather than raising, so a typo degrades to the safe
+    default instead of throwing deep inside a background pipeline worker."""
+    if not repo or repo == DEFAULT_REPO_ID:
+        return _repo_root()
+    repos = await _get_repos()
+    rec = repos.get(repo)
+    return Path(rec["path"]) if rec else _repo_root()
+
+
+@capability("evolve.repo.add", memory="off",
+            http_method="POST", http_path="/evolve/repo/add", http_tags=["evolve"],
+            description="Register a git repo Loop Lab can branch/worktree/pipeline/"
+                        "promote/rollback, in addition to Vera's own repo. Inputs: "
+                        "id (str! — short slug), label (str), path (str! — absolute "
+                        "local path to an existing git repo), remote_url (str, "
+                        "optional), test_cmd (str, optional — shell command run in "
+                        "the worktree to gate a code pipeline for this repo; default "
+                        "'" + DEFAULT_TEST_CMD + "'). Output: {ok, repo}.")
+async def evolve_repo_add(id: str = "", label: str = "", path: str = "",
+                          remote_url: str = "", test_cmd: str = "", trace_id=None):
+    rid = re.sub(r"[^a-z0-9_-]+", "-", (id or "").strip().lower())
+    if not rid:
+        return {"error": "id required"}
+    if rid == DEFAULT_REPO_ID:
+        return {"error": f"'{DEFAULT_REPO_ID}' is reserved for the Vera repo itself"}
+    p = Path(path or "")
+    if not p.is_absolute() or not p.is_dir():
+        return {"error": f"path must be an existing absolute directory: {path}"}
+    if not (p / ".git").exists():
+        return {"error": f"not a git repo (no .git): {path}"}
+    rec = {"id": rid, "label": (label or rid).strip(), "path": str(p),
+          "remote_url": (remote_url or "").strip(),
+          "test_cmd": (test_cmd or DEFAULT_TEST_CMD).strip(),
+          "protected": False, "created_at": now_iso()}
+    r = _redis()
+    if r:
+        await r.hset(KEY_REPOS, rid, json.dumps(rec))
+    await _audit("repo.add", f"registered repo {rid} ({p})", repo=rid)
+    await emit_event({"type": "evolve.repo.added", "id": rid})
+    return {"ok": True, "repo": rec}
+
+
+@capability("evolve.repo.list", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/repo/list", http_tags=["evolve"],
+            description="Repos Loop Lab can manage — 'vera' plus any registered "
+                        "via evolve.repo.add.")
+async def evolve_repo_list(trace_id=None):
+    repos = await _get_repos()
+    return {"repos": list(repos.values())}
+
+
+@capability("evolve.repo.get", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/repo/get", http_tags=["evolve"],
+            description="One registered repo's record. Input: id (str!).")
+async def evolve_repo_get(id: str = "", trace_id=None):
+    if not id:
+        return {"error": "id required"}
+    repos = await _get_repos()
+    rec = repos.get(id)
+    if not rec:
+        return {"error": f"repo not registered: {id}"}
+    return {"repo": rec}
+
+
+@capability("evolve.repo.gitea_push", memory="off",
+            http_method="POST", http_path="/evolve/repo/gitea_push", http_tags=["evolve"],
+            description="Provision a Gitea remote for an already-registered repo "
+                        "and push its current branch to it: creates the Gitea repo "
+                        "if it doesn't exist yet (idempotent), then `git push`. "
+                        "Uses the server's configured GITEA_BASE_URL/TOKEN/OWNER — "
+                        "the token never leaves the server. No-op error if Gitea "
+                        "isn't configured. Input: id (str! — a repo registered via "
+                        "evolve.repo.add), branch (str, default the repo's current "
+                        "branch). Output: {ok, remote_url}.")
+async def evolve_repo_gitea_push(id: str = "", branch: str = "", trace_id=None):
+    got = await evolve_repo_get(id=id)
+    rec = got.get("repo")
+    if not rec:
+        return {"error": got.get("error") or "repo not registered"}
+    try:
+        from Vera.vera.config import cfg
+    except Exception:
+        cfg = None
+    base = (getattr(cfg, "GITEA_BASE_URL", "") or "").rstrip("/") if cfg else ""
+    token = getattr(cfg, "GITEA_TOKEN", "") if cfg else ""
+    owner = getattr(cfg, "GITEA_OWNER", "") if cfg else ""
+    if not (base and token and owner):
+        return {"error": "Gitea not configured (GITEA_BASE_URL/GITEA_TOKEN/GITEA_OWNER)"}
+    repo_name = re.sub(r"[^A-Za-z0-9_.-]", "-", id) or id
+    import httpx
+    from urllib.parse import urlparse
+    headers = {"Authorization": f"token {token}", "Content-Type": "application/json"}
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            await c.post(f"{base}/api/v1/orgs/{owner}/repos", headers=headers,
+                        json={"name": repo_name, "auto_init": False, "private": True})
+            r = await c.post(f"{base}/api/v1/user/repos", headers=headers,
+                             json={"name": repo_name, "auto_init": False, "private": True})
+        clone_url = f"{base}/{owner}/{repo_name}.git"
+        if r.status_code in (200, 201):
+            clone_url = r.json().get("clone_url", clone_url)
+    except Exception as e:
+        return {"error": f"gitea repo create failed: {e}"}
+    root = Path(rec["path"])
+    parsed = urlparse(clone_url)
+    push_url = parsed._replace(netloc=f"oauth2:{token}@{parsed.netloc}").geturl()
+    branch = branch or (await _default_branch(repo_root=root))
+    await _git("remote", "remove", "origin", repo_root=root)
+    await _git("remote", "add", "origin", push_url, repo_root=root)
+    pu = await _git("push", "-u", "origin", branch, repo_root=root, timeout=120)
+    if not pu["ok"]:
+        return {"error": f"git push failed: {pu['err']}"}
+    rec["remote_url"] = clone_url
+    r2 = _redis()
+    if r2:
+        await r2.hset(KEY_REPOS, id, json.dumps(rec))
+    await _audit("repo.gitea_push", f"{id} → {clone_url}", repo=id)
+    return {"ok": True, "remote_url": clone_url}
+
+
+@capability("evolve.repo.remove", memory="off",
+            http_method="POST", http_path="/evolve/repo/remove", http_tags=["evolve"],
+            description="Unregister a repo (does not delete anything on disk — "
+                        "just stops Loop Lab tracking it). Refuses the protected "
+                        "'vera' entry. Input: id (str!).")
+async def evolve_repo_remove(id: str = "", trace_id=None):
+    if not id:
+        return {"error": "id required"}
+    if id == DEFAULT_REPO_ID:
+        return {"error": f"'{DEFAULT_REPO_ID}' is protected and cannot be removed"}
+    r = _redis()
+    if r:
+        await r.hdel(KEY_REPOS, id)
+    await _audit("repo.remove", f"unregistered repo {id}", repo=id)
+    await emit_event({"type": "evolve.repo.removed", "id": id})
+    return {"ok": True}
+
+
+async def _git(*args: str, timeout: int = 60,
+               repo_root: Optional[Path] = None) -> Dict[str, Any]:
+    """Run a git command in a repo root, off the event loop. Defaults to the
+    Vera repo — pass repo_root to target a different registered repo."""
+    root = repo_root or _repo_root()
     def _run():
         try:
-            p = subprocess.run(["git", *args], cwd=str(_repo_root()),
+            p = subprocess.run(["git", *args], cwd=str(root),
                                capture_output=True, text=True, timeout=timeout)
             return {"ok": p.returncode == 0, "out": p.stdout.strip(),
                     "err": p.stderr.strip(), "code": p.returncode}
@@ -3751,18 +4182,18 @@ async def _git(*args: str, timeout: int = 60) -> Dict[str, Any]:
     return await asyncio.get_event_loop().run_in_executor(None, _run)
 
 
-async def _default_branch() -> str:
+async def _default_branch(repo_root: Optional[Path] = None) -> str:
     """The repo's mainline branch — what Loop Lab should test against unless the
     user deliberately picks a branch. Asks git rather than assuming 'main'."""
     for args in (("symbolic-ref", "--short", "refs/remotes/origin/HEAD"),
                  ("config", "--get", "init.defaultBranch")):
-        r = await _git(*args)
+        r = await _git(*args, repo_root=repo_root)
         if r.get("ok"):
             nm = (r.get("out") or "").strip().rsplit("/", 1)[-1]
             if nm:
                 return nm
     for cand in ("main", "master"):
-        r = await _git("rev-parse", "--verify", cand)
+        r = await _git("rev-parse", "--verify", cand, repo_root=repo_root)
         if r.get("ok"):
             return cand
     return "main"
@@ -3788,14 +4219,16 @@ async def _refresh_worktree(wt_abs: str, branch: str) -> Dict[str, Any]:
     return {"ok": True, "head": (head.get("out") or "").strip()}
 
 
-async def _ensure_worktree(branch: str) -> Dict[str, Any]:
+async def _ensure_worktree(branch: str, repo_root: Optional[Path] = None) -> Dict[str, Any]:
     """Materialise the branch's WORKTREE at <repo>/.loop-lab-worktrees/<branch>
     WITHOUT ever switching the real working tree — this is the ONLY place a
     loop-lab branch's code exists on disk; all edits/tests happen inside it.
     Idempotent + self-healing: prunes stale registrations, and if the branch is
     (illegally) checked out in the MAIN tree — legacy `checkout -b` state —
-    restores prod to main first."""
-    wt_abs = _repo_root() / _WORKTREE_DIR / _safe_branch(branch)
+    restores prod to main first. repo_root defaults to the Vera repo; pass a
+    different registered repo's root to work a branch there instead."""
+    root = repo_root or _repo_root()
+    wt_abs = root / _WORKTREE_DIR / _safe_branch(branch)
     if wt_abs.exists():
         # A directory that exists is NOT proof of a healthy worktree. A clobbered
         # or hand-copied dir (no .git link, or a registration git has since
@@ -3816,16 +4249,16 @@ async def _ensure_worktree(branch: str) -> Dict[str, Any]:
             shutil.rmtree(wt_abs, ignore_errors=True)
         except Exception:
             pass
-    await _git("worktree", "prune")
-    wt = await _git("worktree", "add", str(wt_abs), branch, timeout=120)
+    await _git("worktree", "prune", repo_root=root)
+    wt = await _git("worktree", "add", str(wt_abs), branch, timeout=120, repo_root=root)
     if not wt["ok"] and "already checked out" in (wt["err"] or ""):
-        cur = await _git("rev-parse", "--abbrev-ref", "HEAD")
+        cur = await _git("rev-parse", "--abbrev-ref", "HEAD", repo_root=root)
         if (cur.get("out") or "").strip() == branch:
-            await _git("checkout", "main")
+            await _git("checkout", "main", repo_root=root)
             await _audit("sandbox.heal",
                          f"prod working tree was on {branch}; restored to main "
                          f"so the worktree could be created")
-            wt = await _git("worktree", "add", str(wt_abs), branch, timeout=120)
+            wt = await _git("worktree", "add", str(wt_abs), branch, timeout=120, repo_root=root)
     if not wt["ok"]:
         return {"error": f"git worktree add failed: {wt['err']}"}
     # Mark the fresh worktree safe for the Vera process user's global config, so
@@ -3838,20 +4271,46 @@ async def _ensure_worktree(branch: str) -> Dict[str, Any]:
     return {"ok": True, "path": str(wt_abs)}
 
 
+async def _repo_test_gate(cwd: str, test_cmd: str, timeout: int = 300) -> Dict[str, Any]:
+    """Run a generic repo's own test command in `cwd` (its root, for a baseline,
+    or a branch worktree, for a candidate) and reduce the result to a 0.0-1.0
+    pass_rate — the same shape evolve_suite_run's avg_combined score already
+    fills for Vera loop-profile pipelines, so the pipeline record's existing
+    baseline_score/candidate_score/gate_delta/gate_passed fields (and the
+    panel's generic rendering of them) need no changes to carry this too."""
+    try:
+        cmd = shlex.split(test_cmd)
+    except ValueError as e:
+        return {"error": f"invalid test_cmd: {e}"}
+    if not cmd:
+        return {"error": "empty test_cmd"}
+    res = await _sh(cmd, cwd=cwd, timeout=timeout)
+    passed = bool(res.get("ok"))
+    out = (res.get("out", "") + "\n" + res.get("err", "")).strip()
+    return {"ok": True, "pass_rate": 1.0 if passed else 0.0, "passed": passed,
+            "rc": res.get("code"),
+            "summary": ("tests passed" if passed else f"tests failed (rc {res.get('code')})"),
+            "output": out[-4000:]}
+
+
 @capability("evolve.git.status", memory="off", silent=True,
             http_method="GET", http_path="/evolve/git/status", http_tags=["evolve"],
-            description="Git state of the Vera repo for CI/CD: current branch, "
-                        "dirty flag, and the loop-lab/* branches. Output: {branch, "
-                        "dirty, dirty_files, branches:[...], repo}.")
-async def evolve_git_status(trace_id=None):
-    br = await _git("rev-parse", "--abbrev-ref", "HEAD")
-    st = await _git("status", "--porcelain")
-    ls = await _git("branch", "--list", f"{BRANCH_PREFIX}*", "--format=%(refname:short)")
+            description="Git state of a repo for CI/CD: current branch, dirty "
+                        "flag, and the loop-lab/* branches. Input: repo (str, "
+                        "default 'vera' — id of a repo registered via "
+                        "evolve.repo.add, or 'vera' for Vera's own repo). "
+                        "Output: {branch, dirty, dirty_files, branches:[...], repo}.")
+async def evolve_git_status(repo: str = DEFAULT_REPO_ID, trace_id=None):
+    root = await _resolve_repo_root(repo)
+    br = await _git("rev-parse", "--abbrev-ref", "HEAD", repo_root=root)
+    st = await _git("status", "--porcelain", repo_root=root)
+    ls = await _git("branch", "--list", f"{BRANCH_PREFIX}*", "--format=%(refname:short)",
+                    repo_root=root)
     if not br["ok"]:
-        return {"error": br["err"] or "not a git repo", "repo": str(_repo_root())}
+        return {"error": br["err"] or "not a git repo", "repo": str(root)}
     dirty_files = [l.strip() for l in (st["out"] or "").splitlines() if l.strip()]
     branches = [l.strip() for l in (ls["out"] or "").splitlines() if l.strip()]
-    return {"repo": str(_repo_root()), "branch": br["out"],
+    return {"repo": str(root), "branch": br["out"],
             "dirty": bool(dirty_files), "dirty_files": dirty_files[:50],
             "branches": branches}
 
@@ -3860,9 +4319,12 @@ async def evolve_git_status(trace_id=None):
             http_method="POST", http_path="/evolve/branch/create", http_tags=["evolve"],
             description="Create (and check out) a loop-lab work branch from the "
                         "current HEAD. Inputs: name (str — suffix; auto if blank), "
-                        "base (str — base ref, default current branch). Output: "
-                        "{ok, branch}.")
-async def evolve_branch_create(name: str = "", base: str = "", trace_id=None):
+                        "base (str — base ref, default current branch), repo (str, "
+                        "default 'vera' — id of a repo registered via "
+                        "evolve.repo.add). Output: {ok, branch}.")
+async def evolve_branch_create(name: str = "", base: str = "",
+                               repo: str = DEFAULT_REPO_ID, trace_id=None):
+    root = await _resolve_repo_root(repo)
     suffix = re.sub(r"[^a-z0-9._-]+", "-", (name or uuid.uuid4().hex[:8]).lower())
     branch = BRANCH_PREFIX + suffix
     # NEVER checkout on the real working tree — prod's source stays untouched.
@@ -3870,11 +4332,11 @@ async def evolve_branch_create(name: str = "", base: str = "", trace_id=None):
     # branch's code is only ever materialised in the sandbox WORKTREE. (The old
     # `checkout -b` also left the branch checked out in the main tree, which
     # made the later `git worktree add` fail with "already checked out".)
-    r = await _git("branch", branch, base or "HEAD")
+    r = await _git("branch", branch, base or "HEAD", repo_root=root)
     if not r["ok"] and "already exists" not in (r["err"] or ""):
         return {"error": r["err"]}
-    await _audit("branch.create", branch, branch=branch)
-    await emit_event({"type": "evolve.branch.created", "branch": branch})
+    await _audit("branch.create", branch, branch=branch, repo=repo)
+    await emit_event({"type": "evolve.branch.created", "branch": branch, "repo": repo})
     return {"ok": True, "branch": branch}
 
 
@@ -3882,22 +4344,27 @@ async def evolve_branch_create(name: str = "", base: str = "", trace_id=None):
             http_method="POST", http_path="/evolve/branch/delete", http_tags=["evolve"],
             description="Delete a loop-lab work branch (the rollback primitive). "
                         "Checks out `to` first (default main). Inputs: branch "
-                        "(str!), to (str, default main), force (bool default True).")
+                        "(str!), to (str, default main), force (bool default True), "
+                        "repo (str, default 'vera' — id of a repo registered via "
+                        "evolve.repo.add).")
 async def evolve_branch_delete(branch: str = "", to: str = "main",
-                               force: bool = True, trace_id=None):
+                               force: bool = True, repo: str = DEFAULT_REPO_ID,
+                               trace_id=None):
     if not branch.startswith(BRANCH_PREFIX):
         return {"error": f"refuses to delete non loop-lab branch: {branch}"}
+    root = await _resolve_repo_root(repo)
     # Never checkout on the real working tree. If the branch is only checked out
     # in a loop-lab WORKTREE, remove that worktree first so the delete succeeds.
-    wt_abs = _repo_root() / _WORKTREE_DIR / _safe_branch(branch)
+    wt_abs = root / _WORKTREE_DIR / _safe_branch(branch)
     if wt_abs.exists():
-        await _git("worktree", "remove", "--force", str(wt_abs), timeout=120)
-    await _git("worktree", "prune")
-    r = await _git("branch", "-D" if force else "-d", branch)
+        await _git("worktree", "remove", "--force", str(wt_abs), timeout=120, repo_root=root)
+    await _git("worktree", "prune", repo_root=root)
+    r = await _git("branch", "-D" if force else "-d", branch, repo_root=root)
     if not r["ok"]:
         return {"error": r["err"]}
-    await _audit("branch.delete", f"{branch} (rollback — change discarded)", branch=branch)
-    await emit_event({"type": "evolve.branch.deleted", "branch": branch})
+    await _audit("branch.delete", f"{branch} (rollback — change discarded)",
+                 branch=branch, repo=repo)
+    await emit_event({"type": "evolve.branch.deleted", "branch": branch, "repo": repo})
     return {"ok": True, "deleted": branch}
 
 
@@ -3912,7 +4379,8 @@ async def _save_pipeline(rec: Dict[str, Any]):
         compact = {k: rec.get(k) for k in
                    ("id", "kind", "profile", "status", "decision", "created_at",
                     "ended_at", "branch", "variant_id", "baseline_score",
-                    "candidate_score", "gate_delta", "gate_passed")}
+                    "candidate_score", "gate_delta", "gate_passed",
+                    "repo", "controller")}
         for i, row in enumerate(rows or []):
             try:
                 if json.loads(row).get("id") == rec["id"]:
@@ -3933,26 +4401,32 @@ def _pstep(rec: Dict[str, Any], stage: str, ok: bool, detail: str = ""):
 
 async def _pipeline_worker(rec: Dict[str, Any]):
     pid = rec["id"]
+    repo = rec.get("repo") or DEFAULT_REPO_ID
+    # A code pipeline on a repo other than Vera has no loop profile to run —
+    # its gate is that repo's own test_cmd instead (see the 'else: # code'
+    # branch below), so the Vera-suite baseline step is skipped for it.
+    generic_repo = rec["kind"] == "code" and repo != DEFAULT_REPO_ID
     try:
         cfg = await _get_config()
         profile = rec["profile"]
         threshold = float(rec.get("gate_threshold", 0.0))
 
-        # ── 1. Baseline: score the profile as it stands now ──────────────────
-        rec["status"] = "baseline"
-        rec["current"] = "measuring baseline"
-        await _save_pipeline(rec)
-        await emit_event({"type": "evolve.pipeline.stage", "id": pid, "stage": "baseline"})
-        base = await evolve_suite_run(profile=profile, assess=True,
-                                      provider=rec.get("critic", cfg["critic_provider"]))
-        if base.get("error"):
-            _pstep(rec, "baseline", False, base["error"])
-            rec["status"] = "error"; rec["decision"] = "held"
-            raise RuntimeError(base["error"])
-        rec["baseline_suite"] = base["suite_id"]
-        rec["baseline_score"] = base["avg_combined"]
-        _pstep(rec, "baseline", True, f"avg {base['avg_combined']}")
-        await _save_pipeline(rec)
+        if not generic_repo:
+            # ── 1. Baseline: score the profile as it stands now ──────────────
+            rec["status"] = "baseline"
+            rec["current"] = "measuring baseline"
+            await _save_pipeline(rec)
+            await emit_event({"type": "evolve.pipeline.stage", "id": pid, "stage": "baseline"})
+            base = await evolve_suite_run(profile=profile, assess=True,
+                                          provider=rec.get("critic", cfg["critic_provider"]))
+            if base.get("error"):
+                _pstep(rec, "baseline", False, base["error"])
+                rec["status"] = "error"; rec["decision"] = "held"
+                raise RuntimeError(base["error"])
+            rec["baseline_suite"] = base["suite_id"]
+            rec["baseline_score"] = base["avg_combined"]
+            _pstep(rec, "baseline", True, f"avg {base['avg_combined']}")
+            await _save_pipeline(rec)
 
         if rec["kind"] == "variant":
             # ── 2v. Apply candidate variant as a temporary overlay ───────────
@@ -3975,10 +4449,11 @@ async def _pipeline_worker(rec: Dict[str, Any]):
             _pstep(rec, "test", True, f"avg {cand['avg_combined']}")
 
         else:  # code
+            root = await _resolve_repo_root(repo)
             # ── 2c. Cut a branch and hand the edit to Claude Code ────────────
             rec["status"] = "branching"; rec["current"] = "creating work branch"
             await _save_pipeline(rec)
-            bc = await evolve_branch_create(name=pid)
+            bc = await evolve_branch_create(name=pid, repo=repo)
             if bc.get("error"):
                 _pstep(rec, "branch", False, bc["error"])
                 raise RuntimeError(bc["error"])
@@ -3987,12 +4462,35 @@ async def _pipeline_worker(rec: Dict[str, Any]):
             # Materialise the branch's WORKTREE and pin every queued edit to it
             # (workdir override) — the editor works ONLY on the containerised /
             # worktree copy of the source, NEVER the real working tree.
-            wt = await _ensure_worktree(rec["branch"])
+            wt = await _ensure_worktree(rec["branch"], repo_root=root)
             if wt.get("error"):
                 _pstep(rec, "worktree", False, wt["error"])
                 raise RuntimeError(wt["error"])
             rec["worktree"] = wt["path"]
             _pstep(rec, "worktree", True, wt["path"])
+
+            if generic_repo:
+                # Baseline for a generic repo: run ITS OWN test_cmd against the
+                # repo root as it stands now (main — untouched, safe to read).
+                # This has to happen before the edit is queued (async — may not
+                # land for a while), so the delta computed once the branch is
+                # tested (evolve.pipeline.test, after the edit lands) is real.
+                repo_rec = (await evolve_repo_get(id=repo)).get("repo") or {}
+                test_cmd = repo_rec.get("test_cmd") or DEFAULT_TEST_CMD
+                rec["test_cmd"] = test_cmd
+                rec["status"] = "baseline"
+                rec["current"] = f"measuring baseline ({test_cmd})"
+                await _save_pipeline(rec)
+                await emit_event({"type": "evolve.pipeline.stage", "id": pid, "stage": "baseline"})
+                base = await _repo_test_gate(str(root), test_cmd)
+                if base.get("error"):
+                    _pstep(rec, "baseline", False, base["error"])
+                    rec["status"] = "error"; rec["decision"] = "held"
+                    raise RuntimeError(base["error"])
+                rec["baseline_score"] = base["pass_rate"]
+                _pstep(rec, "baseline", True, base["summary"])
+                await _save_pipeline(rec)
+
             for cs in (rec.get("edits") or [])[:5]:
                 await _call("ide.remote.queue.add",
                             task=(f"[Loop Lab CI · branch {rec['branch']}] "
@@ -4015,8 +4513,10 @@ async def _pipeline_worker(rec: Dict[str, Any]):
             # If auto_test is on AND the dev sandbox is running THIS branch, run
             # the suite through the sandbox (branch code) and gate on it. Merge
             # to main is ALWAYS manual for code (evolve.pipeline.promote) — we
-            # never auto-merge source. Otherwise we hold for review.
-            sb = await _get_sandbox()
+            # never auto-merge source. Otherwise we hold for review. The dev
+            # sandbox is Vera-app-specific — a generic repo never takes this
+            # path (its retest is evolve.pipeline.test once the edit lands).
+            sb = None if generic_repo else await _get_sandbox()
             sandbox_on_branch = bool(sb) and sb.get("branch") == rec["branch"] \
                 and (await _sandbox_probe()).get("reachable")
             if rec.get("auto_test") and sandbox_on_branch:
@@ -4059,11 +4559,15 @@ async def _pipeline_worker(rec: Dict[str, Any]):
                 return
 
             rec["status"] = "awaiting_edit"
-            rec["current"] = ("edit queued to Claude Code. Bring up the dev sandbox "
-                              "on this branch (Sandbox tab) to test it, then "
-                              "promote (merge) or rollback (delete branch).")
+            rec["current"] = (
+                "edit queued to Claude Code. Once it's landed on the branch, "
+                "call evolve.pipeline.test to gate it, then promote (merge) or "
+                "rollback (delete branch)." if generic_repo else
+                "edit queued to Claude Code. Bring up the dev sandbox "
+                "on this branch (Sandbox tab) to test it, then "
+                "promote (merge) or rollback (delete branch).")
             rec["decision"] = "pending"
-            _pstep(rec, "hold", True, "code change awaiting Claude edit + sandbox test")
+            _pstep(rec, "hold", True, "code change awaiting Claude edit + test")
             await _save_pipeline(rec)
             await emit_event({"type": "evolve.pipeline.done", "id": pid,
                               "decision": "pending", "kind": "code"})
@@ -4109,35 +4613,45 @@ _PIPELINE_TASKS: Dict[str, asyncio.Task] = {}
 
 @capability("evolve.pipeline.run", memory="on",
             http_method="POST", http_path="/evolve/pipeline/run", http_tags=["evolve"],
-            description="Run a CI/CD pipeline for a loop change: baseline → apply "
-                        "→ test → gate → promote/hold, with git branches for "
-                        "rollback. Inputs: kind (variant|code), profile (str!), "
-                        "variant_id (str — for kind=variant), edits (list "
-                        "[{area,suggestion}] — for kind=code), gate_threshold "
-                        "(float, default 0.0 = must not regress), auto_promote "
-                        "(bool default True), critic (str provider). Runs in the "
+            description="Run a CI/CD pipeline for a code/loop change: baseline → "
+                        "apply → test → gate → promote/hold, with git branches for "
+                        "rollback. Inputs: kind (variant|code), profile (str! — a "
+                        "loop profile; for kind=code on a non-vera repo this is "
+                        "just a label, no loop profile is exercised), variant_id "
+                        "(str — for kind=variant), edits (list [{area,suggestion}] "
+                        "— for kind=code), gate_threshold (float, default 0.0 = "
+                        "must not regress), auto_promote (bool default True), "
+                        "critic (str provider), repo (str, default 'vera' — id of "
+                        "a repo registered via evolve.repo.add; for kind=code on a "
+                        "non-vera repo the gate runs that repo's own test_cmd "
+                        "instead of a Vera loop-profile suite). Runs in the "
                         "background — poll evolve.pipeline.get. Output: {ok, id}.",
             schema=enum_schema(kind=["variant", "code"]))
 async def evolve_pipeline_run(kind: str = "variant", profile: str = "",
                               variant_id: str = "", edits: Optional[List[Dict[str, Any]]] = None,
                               gate_threshold: float = 0.0, auto_promote: bool = True,
-                              auto_test: bool = True, critic: str = "", trace_id=None):
+                              auto_test: bool = True, critic: str = "",
+                              repo: str = DEFAULT_REPO_ID, trace_id=None):
     cfg = await _get_config()
     profile = (profile or cfg["default_profile"]).strip()
     if kind == "variant" and not variant_id:
         return {"error": "variant_id required for kind=variant"}
     if kind == "code" and not edits:
         return {"error": "edits required for kind=code"}
+    if repo != DEFAULT_REPO_ID and not (await evolve_repo_get(id=repo)).get("repo"):
+        return {"error": f"repo not registered: {repo}"}
     rec = {
         "id": uuid.uuid4().hex[:8], "kind": kind, "profile": profile,
         "variant_id": variant_id, "edits": edits or [],
         "gate_threshold": float(gate_threshold), "auto_promote": bool(auto_promote),
         "auto_test": bool(auto_test),
         "critic": (critic or cfg["critic_provider"]).strip(),
+        "repo": repo, "controller": _triggered_by(),
         "status": "starting", "decision": "pending", "current": "",
         "created_at": now_iso(), "ended_at": "", "steps": [],
         "baseline_score": None, "candidate_score": None,
         "gate_delta": None, "gate_passed": None, "branch": "",
+        "reviews": [], "review_requested": False,
     }
     await _save_pipeline(rec)
     await _audit("pipeline.run", f"started {kind} pipeline for {profile}",
@@ -4186,6 +4700,115 @@ async def evolve_pipeline_get(id: str = "", trace_id=None):
     return {"pipeline": rec}
 
 
+@capability("evolve.pipeline.review.request", memory="off",
+            http_method="POST", http_path="/evolve/pipeline/review/request", http_tags=["evolve"],
+            description="Flag a pipeline as needing an external adversarial "
+                        "review before its gate/promote decision — the "
+                        "coding-specialist-loop side of the handoff: a loop "
+                        "that just finished a candidate edit can request "
+                        "review instead of self-gating. Input: id (str!), "
+                        "reason (str — why review is wanted). Output: {ok}.")
+async def evolve_pipeline_review_request(id: str = "", reason: str = "", trace_id=None):
+    got = await evolve_pipeline_get(id=id)
+    rec = got.get("pipeline")
+    if not rec:
+        return {"error": got.get("error") or "pipeline not found"}
+    rec["review_requested"] = True
+    rec["review_request_reason"] = reason[:500]
+    await _save_pipeline(rec)
+    await emit_event({"type": "evolve.pipeline.review_requested", "id": id, "reason": reason[:200]})
+    return {"ok": True}
+
+
+@capability("evolve.pipeline.review", memory="on",
+            http_method="POST", http_path="/evolve/pipeline/review", http_tags=["evolve"],
+            description="Submit an adversarial review against a real pipeline "
+                        "record — the mechanism for a review done via Loop Lab "
+                        "(rather than ad hoc in conversation) to be logged as "
+                        "such: reviewer identity (real, from triggered_by — "
+                        "never guessed), verdict, findings, and any edits made "
+                        "during the review (already applied separately via "
+                        "code.author/code.edit — pass their file/summary here "
+                        "to link them to this review, not to author them). "
+                        "Clears review_requested. Inputs: id (str!), verdict "
+                        "(approved|changes_requested|blocked), findings (str!), "
+                        "edits_made (list of {file, summary}, optional). "
+                        "Output: {ok, reviewer}.",
+            schema=enum_schema(verdict=["approved", "changes_requested", "blocked"]))
+async def evolve_pipeline_review(id: str = "", verdict: str = "", findings: str = "",
+                                 edits_made: Optional[List[Dict[str, Any]]] = None,
+                                 trace_id=None):
+    if verdict not in ("approved", "changes_requested", "blocked"):
+        return {"error": "verdict must be approved|changes_requested|blocked"}
+    if not findings.strip():
+        return {"error": "findings required"}
+    got = await evolve_pipeline_get(id=id)
+    rec = got.get("pipeline")
+    if not rec:
+        return {"error": got.get("error") or "pipeline not found"}
+    reviewer = _triggered_by()   # real signal (claude_code/autonomous/user) — never guessed
+    review = {
+        "reviewer": reviewer, "verdict": verdict, "findings": findings[:4000],
+        "edits_made": (edits_made or [])[:20], "ts": now_iso(),
+    }
+    rec.setdefault("reviews", []).append(review)
+    rec["review_requested"] = False
+    await _save_pipeline(rec)
+    await _audit("pipeline.review", f"{reviewer}: {verdict} on pipeline {id}",
+                 id=id, verdict=verdict, reviewer=reviewer)
+    await emit_event({"type": "evolve.pipeline.reviewed", "id": id,
+                      "reviewer": reviewer, "verdict": verdict})
+    return {"ok": True, "reviewer": reviewer}
+
+
+@capability("evolve.pipeline.test", memory="on",
+            http_method="POST", http_path="/evolve/pipeline/test", http_tags=["evolve"],
+            description="(Generic-repo code pipelines only — repo != 'vera'.) "
+                        "Gate a code pipeline's branch once its edit has landed: "
+                        "runs the repo's test_cmd in the branch worktree, computes "
+                        "gate_delta against the baseline already recorded at "
+                        "branch-creation time, and sets gate_passed/status. Merge "
+                        "stays manual (evolve.pipeline.promote/.rollback). For "
+                        "repo='vera' use the dev sandbox (Sandbox tab) instead — "
+                        "this capability refuses that case. Input: id (str!). "
+                        "Output: {ok, gate_passed, gate_delta}.")
+async def evolve_pipeline_test(id: str = "", trace_id=None):
+    got = await evolve_pipeline_get(id=id)
+    rec = got.get("pipeline")
+    if not rec:
+        return {"error": got.get("error") or "pipeline not found"}
+    repo = rec.get("repo") or DEFAULT_REPO_ID
+    if rec.get("kind") != "code" or repo == DEFAULT_REPO_ID:
+        return {"error": "evolve.pipeline.test is only for code pipelines with "
+                         "repo != 'vera' — use the dev sandbox for the Vera repo"}
+    worktree = rec.get("worktree")
+    if not worktree or not Path(worktree).exists():
+        return {"error": "no worktree for this pipeline (branch step may have failed)"}
+    test_cmd = rec.get("test_cmd") or DEFAULT_TEST_CMD
+    cand = await _repo_test_gate(worktree, test_cmd)
+    if cand.get("error"):
+        return {"error": cand["error"]}
+    rec["candidate_score"] = cand["pass_rate"]
+    threshold = float(rec.get("gate_threshold", 0.0))
+    delta = round((rec.get("candidate_score") or 0) - (rec.get("baseline_score") or 0), 2)
+    rec["gate_delta"] = delta
+    passed = delta >= threshold
+    rec["gate_passed"] = passed
+    _pstep(rec, "test", True, cand["summary"])
+    _pstep(rec, "gate", passed, f"Δ {delta:+} vs {threshold} — {'PASS' if passed else 'FAIL'}")
+    rec["status"] = "tested"
+    rec["decision"] = "pending"  # merge stays manual
+    rec["current"] = ("branch tested — gate PASSED, ready to promote (merge)"
+                      if passed else "branch tested — gate FAILED, recommend rollback")
+    await _save_pipeline(rec)
+    await _audit("pipeline.test", f"{repo}:{rec['branch']} — "
+                 f"{'PASS' if passed else 'FAIL'} (Δ {delta:+})",
+                 id=id, repo=repo, gate_passed=passed)
+    await emit_event({"type": "evolve.pipeline.done", "id": id, "decision": "pending",
+                      "kind": "code", "gate_passed": passed})
+    return {"ok": True, "gate_passed": passed, "gate_delta": delta, "output": cand["output"]}
+
+
 @capability("evolve.pipeline.promote", memory="on",
             http_method="POST", http_path="/evolve/pipeline/promote", http_tags=["evolve"],
             description="Manually promote a pipeline's change: for a variant "
@@ -4210,11 +4833,12 @@ async def evolve_pipeline_promote(id: str = "", to: str = "main", trace_id=None)
     branch = rec.get("branch")
     if not branch:
         return {"error": "pipeline has no branch"}
-    co = await _git("checkout", to or "main")
+    root = await _resolve_repo_root(rec.get("repo") or DEFAULT_REPO_ID)
+    co = await _git("checkout", to or "main", repo_root=root)
     if not co["ok"]:
         return {"error": f"checkout {to} failed: {co['err']}"}
     mg = await _git("merge", "--no-ff", "-m",
-                    f"Loop Lab: merge {branch} (pipeline {id})", branch)
+                    f"Loop Lab: merge {branch} (pipeline {id})", branch, repo_root=root)
     ok = mg["ok"]
     rec["decision"] = "promoted" if ok else rec.get("decision", "held")
     _pstep(rec, "merge", ok, mg["err"] or mg["out"] or f"merged {branch} → {to}")
@@ -4222,7 +4846,7 @@ async def evolve_pipeline_promote(id: str = "", to: str = "main", trace_id=None)
     await _audit("pipeline.promote",
                  f"MERGED {branch} → {to} (pushed to real source)"
                  if ok else f"merge {branch} FAILED: {mg['err'][:120]}",
-                 id=id, kind="code", branch=branch, ok=ok)
+                 id=id, kind="code", branch=branch, ok=ok, repo=rec.get("repo"))
     await emit_event({"type": "evolve.pipeline.promoted", "id": id, "branch": branch,
                       "ok": ok})
     return {"ok": ok, "merged": branch if ok else "", "error": "" if ok else mg["err"]}
@@ -4245,7 +4869,8 @@ async def evolve_pipeline_rollback(id: str = "", trace_id=None):
     else:
         branch = rec.get("branch")
         if branch:
-            res = await evolve_branch_delete(branch=branch)
+            res = await evolve_branch_delete(branch=branch,
+                                             repo=rec.get("repo") or DEFAULT_REPO_ID)
             _pstep(rec, "rollback", not res.get("error"),
                    res.get("error") or f"deleted {branch}")
         rec["decision"] = "rolled_back"
@@ -5308,6 +5933,7 @@ async def evolve_sandbox_status(trace_id=None):
             "up": up,
             "paused": bool(probe.get("paused")),
             "routing_drift": drift,
+            "idle_pause_s": _SANDBOX_IDLE_PAUSE_S,
             "dev_port": port, "prod_port": PROD_PORT, "dev_redis_db": DEV_REDIS_DB}
 
 
@@ -5509,10 +6135,18 @@ async def evolve_sandbox_snapshot(prefixes: str = "", sqlite: bool = True, trace
                 fabric_db = {"ok": False, "error": str(e)[:200]}
         else:
             fabric_db = {"ok": False, "skipped": "no sandbox worktree"}
+    snapshotted_at = now_iso()
+    try:
+        sb2 = await _get_sandbox()
+        if sb2:
+            sb2["snapshotted_at"] = snapshotted_at
+            await r.set(KEY_SANDBOX, json.dumps(sb2, default=str))
+    except Exception:
+        pass
     await emit_event({"type": "evolve.sandbox.snapshot", "copied": copied,
                       "db": DEV_REDIS_DB, "fabric_db": fabric_db})
     return {"ok": True, "copied": copied, "dev_redis_db": DEV_REDIS_DB,
-            "fabric_db": fabric_db}
+            "fabric_db": fabric_db, "snapshotted_at": snapshotted_at}
 
 
 @capability("evolve.sandbox.up", memory="on",
@@ -5996,6 +6630,40 @@ async def _evolve_panel_html():
         return _HTMLResp(_PANEL_PATH.read_text(encoding="utf-8"))
     return _HTMLResp("<p style='color:#c96b6b'>evolve_panel.html not found</p>",
                      status_code=404)
+
+
+# ── Loop Lab infographic elements — served the same way activity_capabilities.py
+#    serves activity_timeline_element.js: a dedicated /ui/elements/<name>.js
+#    route per file, reading straight off disk (no build step, no caching —
+#    edit the .js, reload the panel, done). All live at the repo's vera/ root
+#    alongside the other injectable custom elements.
+def _serve_element_js_from(source_filename: str, missing_note: str):
+    path = _HERE.parent / source_filename
+    async def _handler():
+        from fastapi.responses import Response as _Resp
+        if path.exists():
+            return _Resp(content=path.read_text(encoding="utf-8"),
+                        media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache"})
+        return _Resp(content=f"console.warn({missing_note!r});",
+                    media_type="application/javascript")
+    return _handler
+
+
+APP.get("/ui/elements/error_radar.js", include_in_schema=False)(
+    _serve_element_js_from("error_radar_element.js", "vera-error-radar element JS not found"))
+APP.get("/ui/elements/branch_pipeline.js", include_in_schema=False)(
+    _serve_element_js_from("branch_pipeline_element.js", "vera-branch-pipeline element JS not found"))
+APP.get("/ui/elements/task_matrix.js", include_in_schema=False)(
+    _serve_element_js_from("task_matrix_element.js", "vera-task-matrix element JS not found"))
+APP.get("/ui/elements/bench_compare.js", include_in_schema=False)(
+    _serve_element_js_from("bench_compare_element.js", "vera-bench-compare element JS not found"))
+APP.get("/ui/elements/ollama_map.js", include_in_schema=False)(
+    _serve_element_js_from("ollama_routing_map_element.js", "vera-ollama-map element JS not found"))
+APP.get("/ui/elements/test_activity_timeline.js", include_in_schema=False)(
+    _serve_element_js_from("test_activity_timeline_element.js", "vera-test-activity-timeline element JS not found"))
+APP.get("/ui/elements/author_map.js", include_in_schema=False)(
+    _serve_element_js_from("author_map_element.js", "vera-author-map element JS not found"))
 
 
 register_ui(

@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Trust this Vera server</title>
+<style>
+  :root{--bg:#0c0e13;--panel:#141821;--border:#232a37;--ink:#e8edf6;--dim:#8b96aa;--dim2:#606a7d;
+    --accent:#6ea8fe;--ok:#57d08a;--warn:#e8b84b;--code:#0f1220}
+  @media (prefers-color-scheme: light){:root{--bg:#f5f7fb;--panel:#fff;--border:#dde3ee;--ink:#1a2030;
+    --dim:#59637a;--dim2:#8b95a8;--accent:#2f6fe0;--ok:#1f9d57;--warn:#b9821a;--code:#f0f3fa}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.55 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;padding:26px}
+  .card{max-width:760px;margin:0 auto;background:var(--panel);border:1px solid var(--border);
+    border-radius:14px;padding:24px 26px}
+  h1{font-size:20px;margin:0 0 4px}
+  .lead{color:var(--dim);margin:0 0 18px}
+  .dl{display:inline-flex;align-items:center;gap:9px;background:var(--accent);color:#fff;
+    text-decoration:none;font-weight:600;padding:11px 18px;border-radius:10px;border:none;cursor:pointer;font-size:14px}
+  .dl:hover{filter:brightness(1.08)}
+  .fp{font:11px/1.5 ui-monospace,Menlo,Consolas,monospace;color:var(--dim2);margin-top:10px;word-break:break-all}
+  .why{background:color-mix(in srgb,var(--warn) 12%,transparent);border:1px solid color-mix(in srgb,var(--warn) 40%,transparent);
+    border-radius:10px;padding:11px 14px;margin:18px 0;color:var(--ink);font-size:13px}
+  h2{font-size:14px;margin:22px 0 8px;display:flex;align-items:center;gap:8px}
+  .badge{font-size:10px;font-weight:700;color:var(--accent);border:1px solid var(--accent);
+    border-radius:20px;padding:1px 8px;text-transform:uppercase;letter-spacing:.5px}
+  ol{margin:6px 0 0;padding-left:20px}
+  li{margin:4px 0}
+  code{background:var(--code);border:1px solid var(--border);border-radius:5px;padding:1px 6px;
+    font:12px ui-monospace,Menlo,Consolas,monospace}
+  pre{background:var(--code);border:1px solid var(--border);border-radius:9px;padding:11px 13px;
+    overflow-x:auto;position:relative}
+  pre code{background:none;border:none;padding:0;font-size:12px;white-space:pre}
+  .copy{position:absolute;top:7px;right:7px;background:var(--panel);border:1px solid var(--border);
+    color:var(--dim);border-radius:6px;padding:3px 9px;font-size:11px;cursor:pointer}
+  .copy:hover{color:var(--ink)}
+  .tabs{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 12px}
+  .tab{background:transparent;border:1px solid var(--border);color:var(--dim);border-radius:8px;
+    padding:6px 13px;cursor:pointer;font-size:13px}
+  .tab.on{background:color-mix(in srgb,var(--accent) 16%,transparent);border-color:var(--accent);color:var(--ink)}
+  .os{display:none}.os.on{display:block}
+  .foot{margin-top:22px;padding-top:16px;border-top:1px solid var(--border);color:var(--dim);font-size:13px}
+  a.link{color:var(--accent)}
+  .step-done{color:var(--ok);font-weight:600}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>🔐 Trust this Vera server</h1>
+  <p class="lead">This server's certificate is <b>valid</b> — issued by your private <b>FreeIPA</b>
+     certificate authority, with this host's IP in it. Your browser just doesn't trust that CA
+     <i>yet</i>. Import it once and the padlock turns secure everywhere.</p>
+
+  <a class="dl" id="dlBtn" href="/identity/ca.crt" download="vera-freeipa-ca.crt">⬇ Download CA certificate</a>
+  <div class="fp" id="fp">reading CA fingerprint…</div>
+
+  <div class="why">
+    <b>Why isn't there a one-click "trust" button?</b> Browsers deliberately forbid <i>any</i> web page
+    from installing a root CA into your trust store — otherwise a malicious site could forge trust for
+    every other site. So the CA has to be imported by you, once. The steps below take about 30 seconds.
+  </div>
+
+  <div class="tabs">
+    <button class="tab" data-os="win">Windows · Chrome/Edge</button>
+    <button class="tab" data-os="ff">Firefox</button>
+    <button class="tab" data-os="mac">macOS</button>
+    <button class="tab" data-os="linux">Linux</button>
+  </div>
+
+  <div class="os" id="os-win">
+    <h2>Windows <span class="badge">Chrome, Edge, other Chromium</span></h2>
+    <ol>
+      <li>Click <b>Download CA certificate</b> above (saves <code>vera-freeipa-ca.crt</code>).</li>
+      <li><b>Double-click</b> the file → <b>Install Certificate…</b> → <b>Current User</b> → Next →
+        <i>Place all certificates in the following store</i> → <b>Browse</b> →
+        <b>Trusted Root Certification Authorities</b> → OK → Next → Finish → Yes.</li>
+      <li><b>Fully quit and reopen</b> your browser, then reload this page.</li>
+    </ol>
+    <p style="color:var(--dim);margin:8px 0 4px">…or, no clicking through the wizard — run this in PowerShell
+       (no admin needed) after downloading:</p>
+    <pre><code id="psCmd">Import-Certificate -FilePath "$env:USERPROFILE\Downloads\vera-freeipa-ca.crt" -CertStoreLocation Cert:\CurrentUser\Root</code><button class="copy" data-copy="psCmd">copy</button></pre>
+  </div>
+
+  <div class="os" id="os-ff">
+    <h2>Firefox <span class="badge">separate trust store</span></h2>
+    <p style="color:var(--dim);margin:0 0 6px">Firefox ignores the OS store and keeps its own.</p>
+    <ol>
+      <li>Download the CA above.</li>
+      <li>Open <code>about:preferences#privacy</code> → scroll to <b>Certificates</b> →
+        <b>View Certificates…</b> → <b>Authorities</b> tab → <b>Import…</b>.</li>
+      <li>Pick <code>vera-freeipa-ca.crt</code>, and tick
+        <b>“Trust this CA to identify websites.”</b> → OK.</li>
+      <li>Reload this page (no restart needed).</li>
+    </ol>
+  </div>
+
+  <div class="os" id="os-mac">
+    <h2>macOS <span class="badge">Safari, Chrome, Edge</span></h2>
+    <ol>
+      <li>Download the CA above, then <b>double-click</b> it → it opens in <b>Keychain Access</b>
+        (add to the <b>login</b> keychain).</li>
+      <li>Find <b>“Certificate Authority”</b> in Keychain Access → double-click →
+        expand <b>Trust</b> → set <b>“When using this certificate: Always Trust.”</b></li>
+      <li>Close (enter your password to save) and reload. Firefox on macOS uses its own store — see the Firefox tab.</li>
+    </ol>
+  </div>
+
+  <div class="os" id="os-linux">
+    <h2>Linux <span class="badge">system + Chrome</span></h2>
+    <pre><code id="lxCmd">sudo cp vera-freeipa-ca.crt /usr/local/share/ca-certificates/vera-freeipa-ca.crt
+sudo update-ca-certificates</code><button class="copy" data-copy="lxCmd">copy</button></pre>
+    <p style="color:var(--dim);margin:8px 0 0">Chrome/Chromium may also need it in the NSS store:
+      <code>certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n "Vera FreeIPA CA" -i vera-freeipa-ca.crt</code>.
+      Firefox: use the Firefox tab.</p>
+  </div>
+
+  <div class="foot">
+    Once imported and your browser restarted, reload — the padlock should read secure.
+    <a class="link" href="#" onclick="location.reload();return false">Re-test now →</a><br>
+    Same CA is served to the VS Code extension &amp; <code>connect.ps1</code> automatically, so those update on their own.
+  </div>
+</div>
+<script>
+const $=s=>document.querySelector(s);
+// OS tab switching (auto-select best guess)
+const ua=navigator.userAgent, plat=navigator.platform||'';
+const guess = /Firefox/i.test(ua) ? 'ff' : /Mac/i.test(plat) ? 'mac'
+            : /Linux/i.test(plat) && !/Android/i.test(ua) ? 'linux' : 'win';
+function showOS(os){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.os===os));
+  document.querySelectorAll('.os').forEach(o=>o.classList.toggle('on',o.id==='os-'+os));
+}
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>showOS(t.dataset.os));
+showOS(guess);
+// copy buttons
+document.querySelectorAll('.copy').forEach(b=>b.onclick=()=>{
+  const t=$('#'+b.dataset.copy).textContent;
+  navigator.clipboard.writeText(t).then(()=>{b.textContent='copied';setTimeout(()=>b.textContent='copy',1200);});
+});
+// CA fingerprint (SHA-256 of the DER) so you can verify authenticity
+(async()=>{
+  try{
+    const pem=await (await fetch('/identity/ca.crt',{cache:'no-store'})).text();
+    const b64=pem.replace(/-----[^-]+-----/g,'').replace(/\s+/g,'');
+    const der=Uint8Array.from(atob(b64),c=>c.charCodeAt(0));
+    const h=await crypto.subtle.digest('SHA-256',der);
+    const hex=[...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join(':').toUpperCase();
+    $('#fp').innerHTML='CA SHA-256 fingerprint (verify this matches on the server): <b>'+hex+'</b>';
+  }catch(e){ $('#fp').textContent='(could not read CA fingerprint — is FreeIPA reachable?)'; }
+})();
+</script>
+</body>
+</html>

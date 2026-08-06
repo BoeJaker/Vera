@@ -8,7 +8,10 @@ OPERATOR_CAPS = [
     "operator.observe", "operator.read", "operator.screenshot", "operator.act",
     "operator.think", "operator.step", "operator.run",
     "operator.mission.list", "operator.mission.run", "operator.test.run",
-    "docs.build", "docs.gallery",
+    "operator.capture.start", "operator.capture.stop", "operator.capture.status",
+    "operator.tour.list", "operator.tour.run",
+    "operator.connect.list", "operator.connect",
+    "docs.build", "docs.gallery", "docs.capture", "docs.assets",
 ]
 
 
@@ -43,7 +46,7 @@ def test_operator_http_caps_have_paths(orch):
 def test_operator_raw_routes_mounted(orch):
     # Raw @APP.get routes ARE mounted at import time.
     paths = {getattr(r, "path", "") for r in orch.APP.routes}
-    for p in ["/operator/panel", "/operator/artifact"]:
+    for p in ["/operator/panel", "/operator/artifact", "/docs/asset"]:
         assert p in paths, f"raw route not mounted: {p}"
 
 
@@ -57,3 +60,30 @@ def test_operator_loop_profile_present(orch):
     import Vera.vera.dag.loop_profiles as lp
     ids = {p["id"] for p in lp.LOOP_PROFILES}
     assert "operator" in ids
+
+
+EVOLVE_REPO_CAPS = [
+    "evolve.repo.add", "evolve.repo.list", "evolve.repo.get", "evolve.repo.remove",
+    "evolve.repo.gitea_push", "evolve.pipeline.test",
+]
+
+
+def test_evolve_repo_caps_registered(orch):
+    import Vera.vera.evolve.evolve_capabilities  # noqa: F401  registers evolve.*
+    reg = orch.CAPABILITY_REGISTRY
+    missing = [c for c in EVOLVE_REPO_CAPS if c not in reg]
+    assert not missing, f"unregistered evolve repo caps: {missing}"
+
+
+def test_evolve_repo_caps_have_paths(orch):
+    import Vera.vera.evolve.evolve_capabilities  # noqa: F401
+    reg = orch.CAPABILITY_REGISTRY
+    expected = {
+        "evolve.repo.add": "/evolve/repo/add",
+        "evolve.repo.list": "/evolve/repo/list",
+        "evolve.repo.get": "/evolve/repo/get",
+        "evolve.repo.remove": "/evolve/repo/remove",
+        "evolve.pipeline.test": "/evolve/pipeline/test",
+    }
+    for name, path in expected.items():
+        assert reg[name].get("http_path") == path, f"{name} http_path != {path}"

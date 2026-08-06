@@ -103,3 +103,15 @@ Relations can be inferred by the LLM from each cap's name, description, and JSON
 - [DAG Engine](./03-dag-engine.md) — the planner that consumes `cap_ontology.context_for`
 - [Agents & Chat](./19-agents-chat.md) — agents apply skills and run under `domain_caps` allowlists
 - [Memory Graph](./05-memory-graph.md) — domain ontologies shape entity/relationship extraction
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_No capabilities resolved for this domain._
+<!-- VERA:AUTO:capabilities END -->

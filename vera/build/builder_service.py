@@ -117,14 +117,36 @@ def _find_bin(outdir: str, suffix: str, exclude: Optional[List[str]] = None) -> 
     return None
 
 
-def _merge_esp(outdir: str, fqbn: str, flash_size: str = "4MB") -> Optional[str]:
+def _esptool_ok() -> bool:
+    """True only if esptool actually executes — `which` isn't enough."""
+    exe = "esptool.py" if _which("esptool.py") else ("esptool" if _which("esptool") else "")
+    if not exe:
+        return False
+    try:
+        return _run([exe, "version"], "/", timeout=30)[0] == 0
+    except Exception:
+        return False
+
+
+def _merge_esp(outdir: str, fqbn: str, flash_size: str = "4MB",
+               log: Optional[list] = None) -> Optional[str]:
     """Combine the arduino-cli bootloader + partitions + app into ONE image that
-    the panel can flash in a single write at 0x0 (works on a blank chip)."""
+    the panel can flash in a single write at 0x0 (works on a blank chip).
+
+    Failing here is NOT cosmetic: without a merged image the caller falls back to
+    the bare app at 0x10000, which won't boot over a different flash layout (e.g.
+    a board that currently has MicroPython). So say loudly why it failed."""
+    def _note(msg: str) -> None:
+        if log is not None:
+            log.append("[merge] " + msg)
+
     boot = _find_bin(outdir, ".bootloader.bin")
     part = _find_bin(outdir, ".partitions.bin")
     app = _find_bin(outdir, ".bin", exclude=[".bootloader.bin", ".partitions.bin",
                                              ".merged.bin", "merged.bin"])
     if not (boot and part and app):
+        _note("skipped — missing %s" % ", ".join(
+            n for n, v in (("bootloader", boot), ("partitions", part), ("app", app)) if not v))
         return None
     chip = _chip_from_fqbn(fqbn)
     boot_off = "0x1000" if chip == "esp32" else "0x0"
@@ -135,7 +157,11 @@ def _merge_esp(outdir: str, fqbn: str, flash_size: str = "4MB") -> Optional[str]
     rc, so, se = _run([esptool, "--chip", chip, "merge_bin", "-o", merged,
                        "--flash_size", flash_size,
                        boot_off, boot, "0x8000", part, "0x10000", app], outdir, timeout=180)
-    return merged if rc == 0 and os.path.exists(merged) else None
+    if rc == 0 and os.path.exists(merged):
+        return merged
+    _note("esptool merge_bin failed (rc=%s) — the image will need flashing at "
+          "0x10000 over a matching layout: %s" % (rc, (se or so or "")[-400:].strip()))
+    return None
 
 
 # ── Arduino dependency auto-management ───────────────────────────────────────
@@ -250,7 +276,9 @@ def health():
         "tools": {
             "arduino_cli": _which("arduino-cli"),
             "platformio": _which("pio") or _which("platformio"),
-            "esptool": _which("esptool.py") or _which("esptool"),
+            # RUN it, don't just look it up: a dependency-broken esptool is still
+            # on PATH but can't merge_bin, which quietly costs you flashable images.
+            "esptool": _esptool_ok(),
             "gcc": _which("gcc"),
             "g++": _which("g++"),
             "make": _which("make"),
@@ -312,17 +340,33 @@ def build_arduino(req: Dict[str, Any]):
         if rc != 0:
             return {"ok": False, "error": "compile failed", "log": log,
                     "deps": deps, "dep_log": "\n".join(dep_log)[-2000:]}
-        merged = _merge_esp(outdir, fqbn, req.get("flash_size", "4MB"))
-        app_bin = merged or _find_bin(outdir, ".bin",
-                                      exclude=[".bootloader.bin", ".partitions.bin"])
+        merge_log: List[str] = []
+        merged = _merge_esp(outdir, fqbn, req.get("flash_size", "4MB"), merge_log)
+        # The APP-only image, kept separately from the merged one. They are NOT
+        # interchangeable: esptool flashes the merged image at 0x0, but an OTA
+        # writes into an app slot and must receive the app alone — hand an OTA a
+        # merged image and the slot gets a bootloader, fails to boot and rolls
+        # back, which looks exactly like "the OTA did nothing".
+        app_only = _find_bin(outdir, ".bin",
+                             exclude=[".bootloader.bin", ".partitions.bin",
+                                      ".merged.bin", "merged.bin"])
+        app_bin = merged or app_only
         if not app_bin:
             return {"ok": False, "error": "no .bin produced", "log": log, "deps": deps}
-        return {
+        if merge_log:
+            log = (log + "\n" + "\n".join(merge_log))[-MAX_LOG:]
+        out = {
             "ok": True, "chip": _chip_from_fqbn(fqbn), "fqbn": fqbn,
             "offset": "0x0" if merged else "0x10000", "merged": bool(merged),
+            "merge_error": "\n".join(merge_log) if (merge_log and not merged) else "",
             "name": f"{sketch_name}.bin", "bin_b64": _b64_file(app_bin),
             "size": os.path.getsize(app_bin), "deps": deps, "log": log,
         }
+        if app_only and app_only != app_bin:
+            out["app_b64"] = _b64_file(app_only)
+            out["app_size"] = os.path.getsize(app_only)
+            out["app_offset"] = "0x10000"
+        return out
 
 
 @app.post("/build/platformio")

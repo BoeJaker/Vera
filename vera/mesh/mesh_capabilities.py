@@ -549,15 +549,17 @@ async def _handle_hello(msg: dict, channel: str, ip: str = "") -> dict:
     await emit_event({"type": "mesh.node", "stage": "hello", "node_id": node_id,
                       "name": row["name"], "channel": channel,
                       "modules": list(_jloads(row["modules"], {}).keys())})
-    # Auto-OTA: if the node opted in (config.ota.auto) and its firmware trails the
-    # served version, the UI module queues an update. Best-effort, non-blocking.
+    # Auto-OTA (on by default): if the node's firmware trails the newest artifact
+    # for its runtime, the UI module queues an update. Best-effort, non-blocking.
     try:
-        _uimod = sys.modules.get("mesh_ui_capabilities")
+        _uimod = (sys.modules.get("mesh_ui_capabilities")
+                  or sys.modules.get("Vera.vera.mesh.mesh_ui_capabilities"))
         if _uimod and hasattr(_uimod, "maybe_auto_ota"):
             asyncio.create_task(_uimod.maybe_auto_ota(
-                node_id, msg.get("fw", ""), _jloads(row["config"], {}), chans))
-    except Exception:
-        pass
+                node_id, msg.get("fw", ""), _jloads(row["config"], {}), chans,
+                runtime=msg.get("runtime", ""), chip=msg.get("chip", "")))
+    except Exception as e:
+        log.debug("auto-OTA hook: %s", e)
     return {
         "ok": True, "node_id": node_id, "token": row["token"],
         "modules": _jloads(row["modules"], {}), "config": _jloads(row["config"], {}),
@@ -661,17 +663,35 @@ def _fw_truthy(v) -> Optional[bool]:
     return True                                     # any other value (1/true/ili9488/on…) = enable
 
 
+def _boards_mod():
+    """mesh_boards_capabilities, however it happens to be in sys.modules — Vera
+    loads capability modules under a bare name, but a package import (tests,
+    `python -m`) registers the dotted one instead."""
+    m = (sys.modules.get("mesh_boards_capabilities")
+         or sys.modules.get("Vera.vera.mesh.mesh_boards_capabilities"))
+    if m is not None:
+        return m
+    try:
+        from Vera.vera.mesh import mesh_boards_capabilities as m2
+        return m2
+    except Exception as e:
+        log.debug("mesh_boards_capabilities unavailable: %s", e)
+        return None
+
+
 def _bake_firmware_options(text: str, flavor: str, params: dict) -> str:
     """Rewrite the firmware's config lines from panel-supplied query params so a
     flashed/pushed node already has the display, SD, Wi-Fi and toolkit set the way
     the user picked — no post-flash step. Unset params leave the file default.
 
-    Recognised: display (ILI9488 TFT), sd, wifi_ssid, wifi_pass, csi, ble, and
-    board (a boards.json profile id → bakes its tft/sd/neopixel pin map)."""
+    Recognised: display (ILI9488 TFT), sd, wifi_ssid, wifi_pass, csi, ble,
+    usb_pins (reclaim GPIO19/20 from USB-Serial-JTAG), and board (a boards.json
+    profile id → bakes its tft/sd/neopixel pin map)."""
     display = _fw_truthy(params.get("display"))
     sd = _fw_truthy(params.get("sd"))
     csi = _fw_truthy(params.get("csi"))
     ble = _fw_truthy(params.get("ble"))
+    usb_pins = _fw_truthy(params.get("usb_pins"))
     ssid = params.get("wifi_ssid")
     pw = params.get("wifi_pass")
 
@@ -681,7 +701,7 @@ def _bake_firmware_options(text: str, flavor: str, params: dict) -> str:
     board = params.get("board")
     if board:
         try:
-            _bm = sys.modules.get("mesh_boards_capabilities")
+            _bm = _boards_mod()
             if _bm and hasattr(_bm, "board_io"):
                 bio = _bm.board_io(board)
         except Exception as e:
@@ -708,6 +728,9 @@ def _bake_firmware_options(text: str, flavor: str, params: dict) -> str:
         if sd is not None:
             text = re.sub(r"(?m)^(SD_ENABLED\s*=\s*)(?:True|False)",
                           r"\g<1>" + ("True" if sd else "False"), text)
+        if usb_pins is not None:
+            text = re.sub(r"(?m)^(TFT_FREE_USB_PINS\s*=\s*)(?:True|False)",
+                          r"\g<1>" + ("True" if usb_pins else "False"), text)
         if ssid is not None:
             text = re.sub(r'(?m)^(WIFI_SSID\s*=\s*)"[^"]*"',
                           lambda m: m.group(1) + json.dumps(ssid), text)
@@ -728,6 +751,18 @@ def _bake_firmware_options(text: str, flavor: str, params: dict) -> str:
         if ble is not None:
             text = re.sub(r"(?m)^(#define\s+TOOLKIT_BLE\s+)\d+",
                           r"\g<1>" + ("1" if ble else "0"), text)
+        if usb_pins is not None:
+            text = re.sub(r"(?m)^(#define\s+TFT_FREE_USB_PINS\s+)\d+",
+                          r"\g<1>" + ("1" if usb_pins else "0"), text)
+        # Wi-Fi credentials. The sketch declares these as String globals used as
+        # defaults when NVS is empty — which is always the case after a flash with
+        # erase, so without this bake an Arduino node never joins at all.
+        if ssid is not None:
+            text = re.sub(r'(?m)^(String\s+WIFI_SSID\s*=\s*)"[^"]*"',
+                          lambda m: m.group(1) + json.dumps(ssid), text)
+        if pw is not None:
+            text = re.sub(r'(?m)^(String\s+WIFI_PASS\s*=\s*)"[^"]*"',
+                          lambda m: m.group(1) + json.dumps(pw), text)
 
         def _redef(txt, macro, val):
             return re.sub(r"(?m)^(#define\s+%s\s+)-?\d+" % re.escape(macro),
@@ -790,6 +825,54 @@ if _CAP_AVAILABLE:
         """Reject path traversal — bin/file names are basenames only."""
         return os.path.basename(name or "").replace("\\", "").strip()
 
+    async def _resolve_wifi_params(params: dict) -> dict:
+        """Fill a missing Wi-Fi password from the saved (sealed) mesh profile.
+
+        The panel clears its password box after saving — it only ever shows
+        '•••••••• (saved)' afterwards — so every later flash/push would otherwise
+        bake the right SSID with an EMPTY password and the node would never join.
+        The password lives on the server sealed; there is no reason to make it
+        round-trip through the browser. Only used when the SSID matches the saved
+        profile, so a different network never gets the wrong password."""
+        out = dict(params or {})
+        ssid = (out.get("wifi_ssid") or "").strip()
+        pw = out.get("wifi_pass")
+        if not ssid or (pw not in (None, "")):
+            if pw == "":
+                out.pop("wifi_pass", None)     # blank != "set it to empty"
+            return out
+        try:
+            s = await asyncio.get_running_loop().run_in_executor(None, _settings_get_sync)
+            if (s.get("wifi_ssid") or "").strip() == ssid and s.get("wifi_pass"):
+                out["wifi_pass"] = _open_secret(s["wifi_pass"])
+            else:
+                out.pop("wifi_pass", None)
+        except Exception as e:
+            log.warning("wifi password lookup failed: %s", e)
+            out.pop("wifi_pass", None)
+        return out
+
+    # Sidecar metadata for .bins Vera built itself (label/chip/offset/board), so the
+    # catalog can describe them accurately instead of guessing from the filename.
+    def _bin_meta_path(name: str) -> "_Path":
+        return _BIN_DIR / (_safe_name(name) + ".json")
+
+    def _write_bin_meta(name: str, meta: dict) -> None:
+        try:
+            _bin_meta_path(name).write_text(json.dumps(meta), encoding="utf-8")
+        except Exception as e:
+            log.debug("bin meta write %s: %s", name, e)
+
+    def _read_bin_meta(name: str) -> dict:
+        try:
+            p = _bin_meta_path(name)
+            if p.exists():
+                m = json.loads(p.read_text(encoding="utf-8"))
+                return m if isinstance(m, dict) else {}
+        except Exception as e:
+            log.debug("bin meta read %s: %s", name, e)
+        return {}
+
     def _client_ip(req: "Request") -> str:
         try:
             return req.client.host if req.client else ""
@@ -804,6 +887,7 @@ if _CAP_AVAILABLE:
             body = {}
         if MESH_TOKEN and (body.get("token") or req.headers.get("x-mesh-token")) != MESH_TOKEN:
             return JSONResponse({"error": "unauthorized"}, status_code=401)
+        note_peer(str(body.get("node_id") or ""), _client_ip(req), "http")
         out = await _handle_hello(body, channel="http", ip=_client_ip(req))
         return JSONResponse(out)
 
@@ -819,6 +903,7 @@ if _CAP_AVAILABLE:
         row = await loop.run_in_executor(None, _node_get_sync, node_id)
         if not _authed(token, row):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
+        note_peer(node_id, _client_ip(req), "http")
         await loop.run_in_executor(None, _touch_node_sync, node_id, "http", _client_ip(req), None)
         ev = _cmd_event(node_id)
         ev.clear()                                      # clear before drain (no missed nudge)
@@ -952,7 +1037,8 @@ if _CAP_AVAILABLE:
                     .replace("{{NODE_ID}}", node_id or "esp32-001"))
         # Bake flash-time options so the user configures once in the panel and the
         # downloaded/pushed firmware already has them — no post-flash config step.
-        text = _bake_firmware_options(text, flavor, dict(req.query_params))
+        text = _bake_firmware_options(
+            text, flavor, await _resolve_wifi_params(dict(req.query_params)))
         return PlainTextResponse(text)
 
     # ── Firmware catalog / flashing assets ──────────────────────────────────────
@@ -1563,7 +1649,22 @@ if _CAP_AVAILABLE:
         if not node_id:
             return {"error": "node_id required"}
         if artifact and not url:
-            url = f"/mesh/firmware/bin/{_safe_name(artifact)}"
+            art = _safe_name(artifact)
+            # An OTA must receive the APP image. The catalog entry is the merged
+            # one (right for a serial flash, unbootable in an OTA slot), so swap
+            # to its .ota.bin sibling and refuse rather than queue a job that
+            # can only fail silently on the device.
+            if mode == "bin":
+                meta = _read_bin_meta(art)
+                ota = meta.get("ota_name")
+                if ota and (_BIN_DIR / ota).exists():
+                    art = ota
+                elif meta.get("merged"):
+                    return {"error": f"'{art}' is a merged (0x0) image — that is for USB "
+                                     f"flashing and cannot be OTA'd; rebuild it so an "
+                                     f".ota.bin app image is produced alongside",
+                            "artifact": art}
+            url = f"/mesh/firmware/bin/{art}"
         if not url:
             return {"error": "url or artifact required"}
         payload = {"url": url, "mode": mode}
@@ -1624,10 +1725,18 @@ if _CAP_AVAILABLE:
                 aid = "bin:" + p.name
                 if aid in known:
                     continue
-                artifacts.append({"id": aid, "label": p.name, "kind": "bin", "chip": "auto",
-                                  "offset": "auto", "source": "local_bin",
-                                  "url": f"/mesh/firmware/bin/{p.name}",
-                                  "bytes": p.stat().st_size})
+                entry = {"id": aid, "label": p.name, "kind": "bin", "chip": "auto",
+                         "offset": "auto", "source": "local_bin",
+                         "url": f"/mesh/firmware/bin/{p.name}",
+                         "bytes": p.stat().st_size}
+                # A .bin we built ourselves knows its real chip/offset — carry that
+                # through so a NON-merged image is never flashed at 0x0 (which
+                # bricks the board) just because "auto" guessed from the chip.
+                entry.update(_read_bin_meta(p.name))
+                if entry.get("fw_version"):
+                    entry["label"] = "%s  fw %s" % (entry.get("label") or p.name,
+                                                    entry["fw_version"])
+                artifacts.append(entry)
         except Exception as e:
             log.debug("catalog bin scan: %s", e)
         try:
@@ -1635,19 +1744,41 @@ if _CAP_AVAILABLE:
         except Exception:
             has_esptool = False
         # Best-effort probe of the vera-builder container (server-side compiler).
-        builder = {"url": os.environ.get("VERA_BUILDER_URL", "http://vera-builder:8080"), "ok": False}
+        # Resolution matters: the compose DNS name only works in-stack, a native
+        # orchestrator has to go via the published port.
+        _b = _builder_mod()
+        builder = {"url": "", "ok": False,
+                   "tried": _b.builder_candidates() if _b is not None else [],
+                   "can_start": _b is not None}
         try:
-            import httpx
-            async with httpx.AsyncClient(timeout=2.5) as c:
-                r = await c.get(builder["url"].rstrip("/") + "/health")
-            if r.status_code == 200:
-                h = r.json()
-                builder["ok"] = True
-                builder["tools"] = h.get("tools")
-        except Exception:
-            pass
+            url = await _builder_base_url()
+            if url:
+                import httpx
+                async with httpx.AsyncClient(timeout=2.5) as c:
+                    r = await c.get(url + "/health")
+                if r.status_code == 200:
+                    h = r.json()
+                    builder["url"] = url
+                    builder["ok"] = True
+                    builder["tools"] = h.get("tools")
+        except Exception as e:
+            log.debug("builder probe: %s", e)
+        # What a fresh build WOULD produce — the panel compares this against each
+        # built .bin so "I flashed but the node still reports the old version"
+        # (you re-flashed a cached image) is visible instead of baffling.
+        src_fw = {}
+        try:
+            for flavour, rel in (("arduino", ("arduino", "vera_mesh_node.ino")),
+                                 ("micropython", ("micropython", "main.py"))):
+                txt = (_HERE / "firmware" / rel[0] / rel[1]).read_text(encoding="utf-8")[:6000]
+                m = re.search(r'FW_VERSION\s*[= ]\s*"([^"]+)"', txt)
+                if m:
+                    src_fw[flavour] = m.group(1)
+        except Exception as e:
+            log.debug("source fw version: %s", e)
         return {
             "artifacts": artifacts,
+            "source_fw": src_fw,
             "tools": {
                 "arduino_cli": bool(shutil.which("arduino-cli"))
                 or bool((builder.get("tools") or {}).get("arduino_cli")),
@@ -1658,11 +1789,41 @@ if _CAP_AVAILABLE:
             },
         }
 
+    def _builder_mod():
+        """vera/build/build_capabilities — owns builder URL resolution AND the job
+        progress registry.
+
+        Must return the SAME module object the capability loader used, or a build
+        job gets recorded in one copy's _JOBS while build.progress reads the
+        other's and reports "unknown job". Vera loads capability modules under a
+        bare name; a package import creates a second, separate module."""
+        m = (sys.modules.get("build_capabilities")
+             or sys.modules.get("Vera.vera.build.build_capabilities"))
+        if m is not None:
+            return m
+        try:
+            from Vera.vera.build import build_capabilities as _b
+            return _b
+        except Exception as e:
+            log.debug("build_capabilities unavailable: %s", e)
+            return None
+
+    async def _builder_base_url() -> str:
+        b = _builder_mod()
+        if b is not None:
+            try:
+                return await b.resolve_builder_url()
+            except Exception as e:
+                log.debug("builder resolve failed: %s", e)
+        return os.environ.get("VERA_BUILDER_URL", "").rstrip("/")
+
     async def _build_arduino_via_builder(source: str, main: str, fqbn: str) -> Optional[dict]:
         """POST the sketch to the vera-builder service. Returns the builder JSON,
         or None if no builder is reachable (so we can fall back to a local cli)."""
         import httpx
-        url = os.environ.get("VERA_BUILDER_URL", "http://vera-builder:8080").rstrip("/")
+        url = await _builder_base_url()
+        if not url:
+            return None
         try:
             async with httpx.AsyncClient(timeout=1200) as c:
                 r = await c.post(url + "/build/arduino",
@@ -1674,70 +1835,221 @@ if _CAP_AVAILABLE:
             log.debug("builder unreachable (%s): %s", url, e)
             return None
 
+    # Arduino FQBN per chip. CDCOnBoot=default is the core's "USB CDC On Boot:
+    # Disabled" — that is what puts the console on UART0 and lets the sketch take
+    # GPIO19/20 (the native USB-Serial-JTAG lines) for the parallel TFT bus.
+    # PartitionScheme=min_spiffs gives 1.9MB per app slot (vs the default 1.3MB)
+    # while KEEPING two OTA slots — the UI/app engine had already reached 90% of
+    # the default partition, and an image that doesn't fit can't be OTA'd at all.
+    _FQBN_BY_CHIP = {
+        "esp32s3": "esp32:esp32:esp32s3:CDCOnBoot=default,PartitionScheme=min_spiffs",
+        "esp32c3": "esp32:esp32:esp32c3:CDCOnBoot=default,PartitionScheme=min_spiffs",
+        "esp32s2": "esp32:esp32:esp32s2:CDCOnBoot=default,PartitionScheme=min_spiffs",
+        "esp32":   "esp32:esp32:esp32:PartitionScheme=min_spiffs",
+    }
+
+    def _fqbn_for_board(board_id: str) -> str:
+        """Pick the FQBN from the board profile's chip so an S3 board is never
+        compiled as a classic ESP32 (and vice versa)."""
+        chip = ""
+        try:
+            _bm = _boards_mod()
+            if _bm and hasattr(_bm, "get_board"):
+                chip = ((_bm.get_board(board_id) or {}).get("chip") or "").lower()
+        except Exception as e:
+            log.debug("fqbn board lookup %s: %s", board_id, e)
+        return _FQBN_BY_CHIP.get(chip, "")
+
     @capability(
         "mesh.firmware.build", http_method="POST", http_path="/mesh/firmware/build",
         http_tags=["mesh"], memory="on",
         description="Compile the Vera node Arduino sketch to a flashable, merged (0x0) .bin and add it "
-                    "to the catalog so the panel can flash it. Uses the vera-builder container if "
-                    "reachable (VERA_BUILDER_URL), else a local arduino-cli. Input: sketch (str — "
-                    "reserved), fqbn (str, default esp32:esp32:esp32s3:CDCOnBoot=default — S3 with USB-CDC "
-                    "off so GPIO19/20 are free for the parallel TFT). Output: {ok, name, url, via} or {error, hint}.",
+                    "to the catalog so the panel can flash it over USB (Web Serial) or OTA it to a "
+                    "live node. This is the ONLY firmware flavour that can drive the ILI9488 shield "
+                    "on an S3-Uno board, because it builds with USB-CDC off so GPIO19/20 (the native "
+                    "USB-Serial-JTAG lines carrying LCD_D4/D5) are free. Uses the vera-builder "
+                    "container if reachable (build.builder.up starts it), else a local arduino-cli. "
+                    "The same bake-at-flash options as GET /mesh/firmware are applied to the source "
+                    "before compiling, so the .bin ships with the right pin map. Input: board (str — "
+                    "a mesh.boards.list profile id; also picks the FQBN from its chip), display "
+                    "(bool), sd (bool), csi (bool), ble (bool), usb_pins (bool — reclaim GPIO19/20 "
+                    "from USB-Serial-JTAG), wifi_ssid (str), wifi_pass (str), server (str), fqbn "
+                    "(str — overrides the board-derived one), name (str — output .bin), sketch (str "
+                    "— reserved). Output: {ok, name, url, fqbn, board, via} or {error, hint}.",
     )
-    async def cap_mesh_firmware_build(sketch: str = "",
-                                      fqbn: str = "esp32:esp32:esp32s3:CDCOnBoot=default",
+    async def cap_mesh_firmware_build(sketch: str = "", fqbn: str = "", board: str = "",
+                                      display=None, sd=None, csi=None, ble=None, usb_pins=None,
+                                      wifi_ssid=None, wifi_pass=None, server: str = "",
+                                      name: str = "", background: bool = False,
                                       trace_id=None) -> dict:
         import shutil, base64, asyncio as _aio
-        src = _HERE / "firmware" / "arduino" / "vera_mesh_node.ino"
-        if not src.exists():
-            return {"error": "sketch not found"}
-        source = src.read_text(encoding="utf-8")
-        # Resolve template placeholders so the sketch compiles standalone; the node
-        # still self-provisions NODE from its chip id and SERVER/Wi-Fi over serial.
-        try:
-            s = await _aio.get_running_loop().run_in_executor(None, _settings_get_sync)
-            server = (s.get("server_url") or "").strip()
-        except Exception:
-            server = ""
-        source = (source.replace("{{SERVER_URL}}", server)
-                        .replace("{{MESH_TOKEN}}", MESH_TOKEN or "open")
-                        .replace("{{NODE_ID}}", ""))
-        _BIN_DIR.mkdir(parents=True, exist_ok=True)
-        name = "vera_node_arduino.bin"
+        # A compile is ~60-90s of silence. Backgrounded, it reports phases into the
+        # shared job registry so the panel can show progress instead of a dead button.
+        _b = _builder_mod()
+        jid = ""
+        if background and _b is not None:
+            jid = _b.job_start("firmware-build", f"compile {board or 'sketch'}")
 
-        # 1) Preferred: the vera-builder container (no compiler needed in Vera).
-        res = await _build_arduino_via_builder(source, "vera_mesh_node.ino", fqbn)
-        if res is not None:
-            if res.get("ok") and res.get("bin_b64"):
-                (_BIN_DIR / name).write_bytes(base64.b64decode(res["bin_b64"]))
-                return {"ok": True, "name": name, "url": f"/mesh/firmware/bin/{name}",
-                        "via": "builder", "chip": res.get("chip"), "merged": res.get("merged"),
-                        "fqbn": fqbn, "log": (res.get("log") or "")[-800:]}
-            return {"error": res.get("error", "compile failed"), "via": "builder",
-                    "log": (res.get("log") or "")[-1500:]}
+        def _phase(text, pct=None):
+            if jid:
+                _b.job_phase(jid, text, pct)
 
-        # 2) Fallback: a local arduino-cli if one happens to be installed.
-        if shutil.which("arduino-cli"):
-            out_dir = _BIN_DIR / "build"
+        def _jlog(line):
+            if jid:
+                _b.job_log(jid, line)
+
+        def _finish(res):
+            if jid:
+                _b.job_done(jid, bool(res.get("ok")), result=res,
+                            error=str(res.get("error") or ""))
+            return res
+
+        async def _compile() -> dict:
+            nonlocal server, fqbn, name
+            _phase("reading sketch", 3)
+            src = _HERE / "firmware" / "arduino" / "vera_mesh_node.ino"
+            if not src.exists():
+                return {"error": "sketch not found"}
+            source = src.read_text(encoding="utf-8")
+            # Resolve template placeholders so the sketch compiles standalone; the node
+            # still self-provisions NODE from its chip id and SERVER/Wi-Fi over serial.
+            if not server:
+                try:
+                    s = await _aio.get_running_loop().run_in_executor(None, _settings_get_sync)
+                    server = (s.get("server_url") or "").strip()
+                except Exception:
+                    server = ""
+            source = (source.replace("{{SERVER_URL}}", server)
+                            .replace("{{MESH_TOKEN}}", MESH_TOKEN or "open")
+                            .replace("{{NODE_ID}}", ""))
+            # Bake the panel's options into the source before it goes to the compiler —
+            # otherwise a server-built .bin silently ships the file's default pin map
+            # instead of the board the user picked.
+            bake = {k: v for k, v in (("board", board), ("display", display), ("sd", sd),
+                                      ("csi", csi), ("ble", ble), ("usb_pins", usb_pins),
+                                      ("wifi_ssid", wifi_ssid), ("wifi_pass", wifi_pass))
+                    if v is not None and v != ""}
+            bake = await _resolve_wifi_params(bake)
+            source = _bake_firmware_options(source, "arduino", bake)
+            _phase("baking options into the sketch", 8)
+            _jlog("board=%s display=%s sd=%s usb_pins=%s wifi=%s" % (
+                board or "(file defaults)", display, sd, usb_pins,
+                bake.get("wifi_ssid") or "(none)"))
+            # The version compiled INTO this image — auto-OTA compares a node against
+            # this, not against the current .ino, so editing the sketch after a build
+            # can't put nodes in a re-flash loop against an image they already run.
+            _m = re.search(r'#define\s+FW_VERSION\s+"([^"]+)"', source)
+            fw_version = _m.group(1) if _m else ""
+            fqbn = (fqbn or (_fqbn_for_board(board) if board else "")
+                    or _FQBN_BY_CHIP["esp32s3"])
+            _BIN_DIR.mkdir(parents=True, exist_ok=True)
+            # One .bin per board profile so an S3 image never overwrites a D1-R32 one.
+            name = _safe_name(name) or (f"vera_node_arduino_{re.sub(r'[^A-Za-z0-9_-]', '-', board)}.bin"
+                                        if board else "vera_node_arduino.bin")
+
+            # 1) Preferred: the vera-builder container (no compiler needed in Vera).
+            _phase("compiling on the build service (%s)" % fqbn, 15)
+            _jlog("arduino-cli compile --fqbn " + fqbn)
+            _jlog("first compile for a new chip installs its toolchain — that part is slow")
+            res = await _build_arduino_via_builder(source, "vera_mesh_node.ino", fqbn)
+            _phase("compile finished, saving image", 90)
+            if res is not None:
+                if res.get("ok") and res.get("bin_b64"):
+                    (_BIN_DIR / name).write_bytes(base64.b64decode(res["bin_b64"]))
+                    # Keep the OTA (app-only) image beside the merged one. An OTA
+                    # writes into an app slot, so it must not be handed the
+                    # merged image — that lands a bootloader where the app goes.
+                    ota_name = ""
+                    if res.get("app_b64"):
+                        ota_name = name[:-4] + ".ota.bin" if name.endswith(".bin")                             else name + ".ota"
+                        (_BIN_DIR / ota_name).write_bytes(base64.b64decode(res["app_b64"]))
+                    _write_bin_meta(name, {
+                        "label": f"Vera Node — Arduino{(' · ' + board) if board else ''}"
+                                 f" ({res.get('chip') or 'esp32'})",
+                        "chip": res.get("chip") or "", "offset": res.get("offset") or "auto",
+                        "board": board, "fqbn": fqbn, "runtime": "arduino", "built": True,
+                        "fw_version": fw_version, "ota_name": ota_name,
+                        "ota_offset": res.get("app_offset", "0x10000"),
+                        # Full erase: this usually replaces a MicroPython install, whose
+                        # partition table and filesystem must not survive underneath.
+                        "erase": True})
+                    for _l in (res.get("log") or "").strip().splitlines()[-12:]:
+                        _jlog(_l)
+                    _phase("built %s" % name, 100)
+                    await emit_event({"type": "mesh.firmware", "stage": "built", "name": name,
+                                      "board": board, "fqbn": fqbn, "via": "builder"})
+                    return {"ok": True, "name": name, "url": f"/mesh/firmware/bin/{name}",
+                            "via": "builder", "chip": res.get("chip"), "merged": res.get("merged"),
+                            "fqbn": fqbn, "board": board, "offset": res.get("offset"),
+                            "log": (res.get("log") or "")[-800:]}
+                for _l in (res.get("log") or "").strip().splitlines()[-25:]:
+                    _jlog(_l)
+                return {"error": res.get("error", "compile failed"), "via": "builder",
+                        "fqbn": fqbn, "log": (res.get("log") or "")[-1500:]}
+
+            # 2) Fallback: a local arduino-cli if one happens to be installed. Compile a
+            # COPY of the baked source, never the on-disk sketch — the repo file still
+            # has {{SERVER_URL}} placeholders and the un-baked default pin map.
+            if shutil.which("arduino-cli"):
+                _phase("compiling with the local arduino-cli", 20)
+                import tempfile
+                try:
+                    with tempfile.TemporaryDirectory(prefix="vera-ino-") as td:
+                        sk = _Path(td) / "vera_mesh_node"
+                        sk.mkdir()
+                        (sk / "vera_mesh_node.ino").write_text(source, encoding="utf-8")
+                        out_dir = sk / "out"
+                        proc = await _aio.create_subprocess_exec(
+                            "arduino-cli", "compile", "--fqbn", fqbn,
+                            "--output-dir", str(out_dir), str(sk),
+                            stdout=_aio.subprocess.PIPE, stderr=_aio.subprocess.STDOUT)
+                        out, _ = await proc.communicate()
+                        if proc.returncode != 0:
+                            return {"error": "compile failed", "via": "local", "fqbn": fqbn,
+                                    "log": (out or b"").decode(errors="ignore")[-1500:]}
+                        # The plain .ino.bin flashes at 0x10000; prefer a merged image if
+                        # arduino-cli produced one, so the panel can write it at 0x0.
+                        bins = sorted(out_dir.glob("*.bin"))
+                        merged = [b for b in bins if "merged" in b.name.lower()]
+                        pick = (merged or [b for b in bins if b.name.endswith(".ino.bin")] or bins)
+                        if not pick:
+                            return {"error": "no .bin produced", "via": "local"}
+                        (_BIN_DIR / name).write_bytes(pick[0].read_bytes())
+                    chip = (fqbn.split(":")[2].split(":")[0] if fqbn.count(":") >= 2 else "esp32")
+                    _write_bin_meta(name, {
+                        "label": f"Vera Node — Arduino{(' · ' + board) if board else ''} ({chip})",
+                        "chip": chip, "offset": "0x0" if merged else "0x10000",
+                        "board": board, "fqbn": fqbn, "runtime": "arduino", "built": True,
+                        "fw_version": fw_version, "erase": bool(merged)})
+                    await emit_event({"type": "mesh.firmware", "stage": "built", "name": name,
+                                      "board": board, "fqbn": fqbn, "via": "local"})
+                    return {"ok": True, "name": name, "url": f"/mesh/firmware/bin/{name}",
+                            "via": "local", "fqbn": fqbn, "board": board,
+                            "merged": bool(merged), "offset": "0x0" if merged else "0x10000"}
+                except Exception as e:
+                    return {"error": str(e), "via": "local", "fqbn": fqbn}
+
+            b = _builder_mod()
+            tried = b.builder_candidates() if b is not None else []
+            return {"error": "no builder reachable and no local arduino-cli", "tried": tried,
+                    "hint": "run build.builder.up (Flash card ▸ Start build service) to build and start "
+                            "the vera-builder container, or set VERA_BUILDER_URL, or build "
+                            "vera_mesh_node.ino in the Arduino IDE with USB CDC On Boot: Disabled and "
+                            "Upload .bin here."}
+
+        async def _run_and_finish() -> dict:
             try:
-                proc = await _aio.create_subprocess_exec(
-                    "arduino-cli", "compile", "--fqbn", fqbn, "--output-dir", str(out_dir), str(src.parent),
-                    stdout=_aio.subprocess.PIPE, stderr=_aio.subprocess.STDOUT)
-                out, _ = await proc.communicate()
-                if proc.returncode != 0:
-                    return {"error": "compile failed", "via": "local",
-                            "log": (out or b"").decode(errors="ignore")[-1500:]}
-                bins = sorted(out_dir.glob("*.bin"))
-                if not bins:
-                    return {"error": "no .bin produced", "via": "local"}
-                (_BIN_DIR / name).write_bytes(bins[0].read_bytes())
-                return {"ok": True, "name": name, "url": f"/mesh/firmware/bin/{name}", "via": "local"}
+                return _finish(await _compile())
             except Exception as e:
-                return {"error": str(e), "via": "local"}
+                log.warning("firmware build job failed: %s", e)
+                return _finish({"error": str(e)})
 
-        return {"error": "no builder reachable and no local arduino-cli",
-                "hint": "start the build container (docker compose up -d vera-builder), or set "
-                        "VERA_BUILDER_URL, or build vera_mesh_node.ino in the Arduino IDE "
-                        "(USB CDC On Boot: Disabled)."}
+        # Backgrounded: hand back a job_id immediately and let the panel poll.
+        if background and jid:
+            _aio.create_task(_run_and_finish())
+            return {"ok": True, "job_id": jid, "background": True,
+                    "note": "poll build.progress for phase/pct/log"}
+        return await _run_and_finish()
 
     @capability(
         "mesh.firmware.probe", http_method="GET", http_path="/mesh/firmware/probe",
@@ -1780,7 +2092,7 @@ if _CAP_AVAILABLE:
         description="Get the saved provisioning profile (remembered across reboots). The Wi-Fi "
                     "password is redacted unless reveal=1 (the browser needs it to push creds to a "
                     "device). Input: reveal (bool=False). Output: {server_url, wifi_ssid, "
-                    "wifi_password, has_wifi_password, token, secrets}.",
+                    "wifi_password, has_wifi_password, token, ota_auto, secrets}.",
     )
     async def cap_mesh_settings_get(reveal: bool = False, trace_id=None) -> dict:
         await _ensure_tables()
@@ -1792,6 +2104,10 @@ if _CAP_AVAILABLE:
             "wifi_password": (_open_secret(sealed) if reveal else ("••••••••" if sealed else "")),
             "has_wifi_password": bool(sealed),
             "token": s.get("token", ""),
+            # Auto-OTA is fleet-wide ON unless explicitly turned off here; a node
+            # can still opt out individually with config.ota.auto = false.
+            "ota_auto": str(s.get("ota_auto", "1")).strip().lower() not in ("0", "false", "off", "no"),
+            "weather_lat": s.get("weather_lat", ""), "weather_lon": s.get("weather_lon", ""),
             "secrets": HAS_SECRETS,
         }
 
@@ -1800,10 +2116,14 @@ if _CAP_AVAILABLE:
         http_tags=["mesh"], memory="on",
         description="Save the provisioning profile (persisted; Wi-Fi password sealed at rest). Only "
                     "the fields you pass are updated; a blank wifi_password keeps the existing one. "
-                    "Input: server_url (str), wifi_ssid (str), wifi_password (str), token (str). Output: {ok, saved}.",
+                    "Input: server_url (str), wifi_ssid (str), wifi_password (str), token (str), "
+                    "ota_auto (bool — fleet-wide auto-OTA, default ON: a node whose firmware trails "
+                    "the newest artifact for its runtime is updated over Wi-Fi at its next hello). "
+                    "Output: {ok, saved}.",
     )
     async def cap_mesh_settings_set(server_url=None, wifi_ssid=None, wifi_password=None,
-                                    token=None, trace_id=None) -> dict:
+                                    token=None, ota_auto=None, weather_lat=None,
+                                    weather_lon=None, trace_id=None) -> dict:
         await _ensure_tables()
         pairs = {}
         if server_url is not None:
@@ -1812,6 +2132,14 @@ if _CAP_AVAILABLE:
             pairs["wifi_ssid"] = str(wifi_ssid)
         if token is not None:
             pairs["token"] = str(token)
+        # Coordinates for the display's weather readout (open-meteo, keyless).
+        if weather_lat is not None and str(weather_lat).strip() != "":
+            pairs["weather_lat"] = str(weather_lat).strip()
+        if weather_lon is not None and str(weather_lon).strip() != "":
+            pairs["weather_lon"] = str(weather_lon).strip()
+        if ota_auto is not None and str(ota_auto).strip() != "":
+            pairs["ota_auto"] = "0" if str(ota_auto).strip().lower() in (
+                "0", "false", "off", "no") else "1"
         if wifi_password:                       # only overwrite when a new password is supplied
             try:
                 pairs["wifi_pass"] = _seal(str(wifi_password))
@@ -1838,6 +2166,8 @@ if _CAP_AVAILABLE:
                  "mesh.worker.assign", "mesh.firmware.catalog", "mesh.firmware.build",
                  "mesh.firmware.probe", "mesh.settings.get", "mesh.settings.set", "mesh.wifi.scan"],
         mode="tab", tab_order=68,
+        specialist_agent="network-engineer",
+        specialist_loop_profile="networking",
     )
 
     # ── Schedulers / startup ────────────────────────────────────────────────────
@@ -1884,3 +2214,178 @@ if _CAP_AVAILABLE:
             _loop.create_task(_startup())
     except Exception:
         pass
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Mesh topology — the path each node actually takes to reach Vera
+# ════════════════════════════════════════════════════════════════════════════
+# The old graph drew every node straight onto the hub, which is not how this
+# fleet is wired: the ESPs talk to a forwarding server that relays to Vera. That
+# hop is where things break (wrong URL, forwarder down, TLS), so it belongs on
+# the map.
+#
+# A forwarder is detected rather than configured: a node reports its OWN ip in
+# `hello`, and Vera separately sees the peer address the request arrived from.
+# When those differ, something relayed it — and that something is a real hop.
+# Kept in memory (not a schema migration) since it repopulates within one
+# heartbeat and only ever describes live state.
+
+_VIA: Dict[str, dict] = {}          # node_id -> {ip, seen, channel}
+_VIA_MAX = 500
+
+
+def note_peer(node_id: str, peer_ip: str, channel: str = "http") -> None:
+    """Record the address a node's traffic actually arrived from."""
+    if not node_id or not peer_ip:
+        return
+    # datetime rather than now_iso(): that comes from the capability runtime, and
+    # the topology helpers must stay importable (and testable) without it.
+    _VIA[node_id] = {"ip": peer_ip, "channel": channel,
+                     "seen": datetime.now(timezone.utc).isoformat()}
+    if len(_VIA) > _VIA_MAX:                     # bound it; oldest first
+        for k in list(_VIA)[:len(_VIA) - _VIA_MAX]:
+            _VIA.pop(k, None)
+
+
+def _server_host() -> str:
+    """The host the fleet is told to talk to — a forwarder even if no node has
+    checked in yet, so the map is honest about the intended path."""
+    try:
+        s = _settings_get_sync() or {}
+        url = (s.get("server_url") or "").strip()
+        if url:
+            return re.sub(r"^\w+://", "", url).split("/")[0]
+    except Exception as e:
+        log.debug("server host: %s", e)
+    return ""
+
+
+def _topo_status(last_seen: str) -> str:
+    """mesh status vocabulary -> the topology map's ok/warn/err/unknown."""
+    return {"online": "ok", "stale": "warn", "offline": "err"}.get(
+        _status_of(last_seen), "unknown")
+
+
+def build_mesh_topology(rows: List[dict]) -> dict:
+    hub = {"id": "hub", "label": "Vera", "kind": "hub", "status": "ok", "detail": ""}
+    nodes, edges = [hub], []
+
+    configured = _server_host()
+    fwd_seen: Dict[str, dict] = {}
+
+    def _forwarder(ip: str, configured_hop: bool = False) -> str:
+        fid = "fwd:" + ip
+        if fid not in fwd_seen:
+            fwd_seen[fid] = {"id": fid, "label": ip, "kind": "category",
+                             "status": "ok", "count": 0,
+                             "detail": "forwarding server" if not configured_hop
+                                       else "configured relay"}
+            edges.append({"from": fid, "to": "hub"})
+        return fid
+
+    if configured:
+        _forwarder(configured.split(":")[0], configured_hop=True)
+
+    for r in rows:
+        nid = r["node_id"]
+        own_ip = (r.get("ip") or "").strip()
+        via = _VIA.get(nid) or {}
+        peer = (via.get("ip") or "").strip()
+        chans = _jloads(r.get("channels"), [])
+        fw = r.get("fw_version") or ""
+        rssi = r.get("rssi")
+
+        detail = " ".join(x for x in [fw, own_ip,
+                                      ("%sdBm" % rssi) if rssi is not None else ""] if x)
+        nodes.append({"id": nid, "label": r.get("name") or nid, "kind": "device",
+                      "status": _topo_status(r.get("last_seen")), "detail": detail})
+
+        # Route it: through the relay it actually came via, else the configured
+        # one, else straight to the hub.
+        if peer and own_ip and peer != own_ip:
+            parent = _forwarder(peer)
+        elif configured:
+            parent = "fwd:" + configured.split(":")[0]
+        else:
+            parent = "hub"
+        if parent in fwd_seen:
+            fwd_seen[parent]["count"] += 1
+        edges.append({"from": nid, "to": parent,
+                      "channel": chans[0] if chans else ""})
+
+    # Serial ports attached to this machine bypass any forwarder entirely.
+    for p in SERIAL_PORTS:
+        if any(pp == p for pp in _SERIAL["node_port"].values()):
+            continue
+        nodes.append({"id": "serial:" + p, "label": p, "kind": "device",
+                      "status": "ok", "detail": "usb serial"})
+        edges.append({"from": "serial:" + p, "to": "hub"})
+
+    for f in fwd_seen.values():
+        f["detail"] = "%s - %d node(s)" % (f["detail"], f["count"])
+        f.pop("count", None)
+        # A relay nothing reaches Vera through is worth flagging, not hiding.
+        nodes.append(f)
+    return {"nodes": nodes, "edges": edges,
+            "forwarders": [f["label"] for f in fwd_seen.values()]}
+
+
+if _CAP_AVAILABLE:
+
+    @capability(
+        "mesh.topology", http_method="GET", http_path="/mesh/topology",
+        http_tags=["mesh"], memory="off", silent=True,
+        description="Mesh snapshot in the shape the dashboard's SVG topology map consumes "
+                    "({nodes:[{id,label,kind,status,detail}], edges:[{from,to}]}), so the fleet "
+                    "renders in the same style as the rest of Vera. Unlike mesh.graph this shows "
+                    "the FORWARDING SERVERS nodes actually reach Vera through — detected by "
+                    "comparing a node's self-reported ip with the peer address its traffic arrived "
+                    "from, so a relay appears even though nothing is configured to describe it. "
+                    "Output: {nodes, edges, forwarders}.",
+    )
+    async def cap_mesh_topology(trace_id=None) -> dict:
+        await _ensure_tables()
+        rows = await asyncio.get_running_loop().run_in_executor(None, _nodes_all_sync)
+        return build_mesh_topology(rows)
+
+    @capability(
+        "mesh.activity", http_method="GET", http_path="/mesh/activity",
+        http_tags=["mesh"], memory="off", silent=True,
+        description="Recent mesh traffic for animating the topology map — jobs delivered and "
+                    "telemetry received, newest first, each with the node it involves so the map "
+                    "can pulse that node and fly a chip along the edge. Poll with `since` (an ISO "
+                    "timestamp from the previous call) to get only what is new; without it you get "
+                    "a primer that should NOT be animated. Input: since (str), limit (int=40). "
+                    "Output: {events:[{ts,node_id,kind,label}], cursor, primed}.",
+    )
+    async def cap_mesh_activity(since: str = "", limit: int = 40, trace_id=None) -> dict:
+        await _ensure_tables()
+
+        def _q():
+            conn = _sqlite_conn()
+            try:
+                out = []
+                cur = conn.execute(
+                    "SELECT job_id, node_id, type, status, created_at FROM mesh_jobs "
+                    "WHERE created_at > ? ORDER BY created_at DESC LIMIT ?",
+                    (since or "", int(limit)))
+                for r in cur.fetchall():
+                    out.append({"ts": r["created_at"], "node_id": r["node_id"],
+                                "kind": "job", "label": r["type"],
+                                "status": r["status"]})
+                cur = conn.execute(
+                    "SELECT node_id, last_seen FROM mesh_nodes WHERE last_seen > ? "
+                    "ORDER BY last_seen DESC LIMIT ?", (since or "", int(limit)))
+                for r in cur.fetchall():
+                    out.append({"ts": r["last_seen"], "node_id": r["node_id"],
+                                "kind": "seen", "label": "check-in"})
+                return sorted(out, key=lambda e: e["ts"], reverse=True)[:int(limit)]
+            finally:
+                conn.close()
+
+        events = await asyncio.get_running_loop().run_in_executor(None, _q)
+        return {"events": events,
+                "cursor": events[0]["ts"] if events else (since or now_iso()),
+                # A first call is history, not activity — the caller must not
+                # animate it or the map erupts on every page load.
+                "primed": bool(since)}

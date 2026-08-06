@@ -1,0 +1,96 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Directory Sync</title>
+<style>
+  :root{--bg0:#0d0f12;--bg1:#14171c;--bg2:#1b1f26;--fg:#d6dde6;--t2:#9aa4b2;--t3:#6b7480;
+    --acc:#5aa9ff;--line:#252b34;--run:#3ecf8e;--stop:#e05a5a;--warn:#e0a94a;}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg0);color:var(--fg);
+    font:13px/1.45 ui-sans-serif,system-ui,Segoe UI,Roboto,sans-serif}
+  #wrap{max-width:900px;margin:0 auto;padding:16px;display:flex;flex-direction:column;gap:14px}
+  h2{margin:0;font-size:16px} .sub{color:var(--t3);font-size:12px}
+  .cards{display:flex;gap:12px;align-items:stretch}
+  .dir{flex:1;background:var(--bg1);border:1px solid var(--line);border-radius:11px;padding:14px;text-align:center}
+  .dir h3{margin:0 0 6px;font-size:13px} .dir .n{font-size:26px;font-weight:700}
+  .dir .m{color:var(--t3);font-size:11px;margin-top:4px}
+  .arrow{display:flex;flex-direction:column;justify-content:center;align-items:center;gap:6px;min-width:120px}
+  .btn{background:var(--bg2);color:var(--fg);border:1px solid var(--line);border-radius:7px;padding:6px 11px;font-size:12px;cursor:pointer}
+  .btn:hover{border-color:var(--acc)} .btn.pri{background:var(--acc);color:#04121f;border-color:var(--acc);font-weight:600}
+  .btn.on{border-color:var(--acc);color:var(--acc)}
+  .panel{background:var(--bg1);border:1px solid var(--line);border-radius:11px;padding:14px}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .pill{font-size:11px;padding:2px 8px;border:1px solid var(--line);border-radius:20px;color:var(--t2)}
+  .lst{margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .item{font-size:12px;padding:5px 9px;border:1px solid var(--line);border-radius:7px;background:var(--bg0)}
+  .item.ok{border-color:#24523c;color:var(--run)} .item.err{border-color:#5a2e2e;color:var(--stop)}
+  .note{color:var(--warn);font-size:11px;margin-top:8px}
+  label.ck{font-size:12px;color:var(--t2)} select{background:var(--bg0);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:5px 8px}
+  #toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--bg2);border:1px solid var(--line);
+    border-radius:8px;padding:8px 14px;opacity:0;transition:.2s;pointer-events:none}#toast.on{opacity:1}#toast.err{border-color:var(--stop);color:var(--stop)}
+</style></head>
+<body>
+<div id="wrap">
+  <div><h2>🔁 Directory Sync <span class="sub" id="backend"></span></h2>
+    <div class="sub">Migrate users &amp; groups either direction. Idempotent — only creates what's missing. Passwords are not transferred.</div></div>
+
+  <div class="cards">
+    <div class="dir"><h3>lldap</h3><div class="n" id="lU">–</div><div class="m">users</div><div class="n" style="font-size:16px" id="lG">–</div><div class="m">groups</div></div>
+    <div class="arrow">
+      <button class="btn" id="dirL2F" onclick="setDir('lldap_to_freeipa')">lldap → FreeIPA ▶</button>
+      <button class="btn" id="dirF2L" onclick="setDir('freeipa_to_lldap')">◀ FreeIPA → lldap</button>
+    </div>
+    <div class="dir"><h3>FreeIPA</h3><div class="n" id="fU">–</div><div class="m">users</div><div class="n" style="font-size:16px" id="fG">–</div><div class="m">groups</div></div>
+  </div>
+
+  <div class="panel">
+    <div class="row">
+      <b id="dirLabel">lldap → FreeIPA</b><span class="sp" style="flex:1"></span>
+      <label class="ck"><input type="checkbox" id="incU" checked> users</label>
+      <label class="ck"><input type="checkbox" id="incG" checked> groups</label>
+      <button class="btn" onclick="preview()">Preview</button>
+      <button class="btn pri" onclick="run()">Migrate</button>
+    </div>
+    <div id="out"><div class="sub" style="margin-top:10px">Pick a direction, then Preview.</div></div>
+    <div class="note" id="note"></div>
+  </div>
+</div>
+<div id="toast"></div>
+<script>
+const $=s=>document.querySelector(s), esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let DIR='lldap_to_freeipa';
+function toast(m,e){const t=$('#toast');t.textContent=m;t.className='on'+(e?' err':'');clearTimeout(t._h);t._h=setTimeout(()=>t.className='',2600);}
+async function api(p,m='GET',b){const o={method:m,headers:{'Content-Type':'application/json'}};if(b)o.body=JSON.stringify(b);const r=await fetch(p,o);try{return await r.json();}catch(e){return{error:'HTTP '+r.status};}}
+function setDir(d){DIR=d;$('#dirL2F').classList.toggle('on',d==='lldap_to_freeipa');$('#dirF2L').classList.toggle('on',d==='freeipa_to_lldap');
+  $('#dirLabel').textContent=d==='lldap_to_freeipa'?'lldap → FreeIPA':'FreeIPA → lldap';$('#out').innerHTML='<div class="sub" style="margin-top:10px">Preview to see what would be created.</div>';}
+async function load(){
+  const s=await api('/identity/migrate/status');
+  if(s.error){toast(s.error,true);return;}
+  $('#lU').textContent=s.lldap.users;$('#lG').textContent=s.lldap.groups;
+  $('#fU').textContent=s.freeipa.users;$('#fG').textContent=s.freeipa.groups;
+  const rs=await api('/identity/resolve/status');$('#backend').textContent='· active: '+(rs.backend||'?')+(rs.lldap?' (lldap up)':'');
+}
+async function preview(){
+  const r=await api('/identity/migrate/preview','POST',{direction:DIR});
+  if(r.error)return toast(r.error,true);
+  render('Would create', r.groups_to_create.map(g=>({t:'group',n:g})).concat(r.users_to_create.map(u=>({t:'user',n:u.id}))), r.note);
+}
+async function run(){
+  if(!confirm('Migrate '+DIR.replace(/_/g,' ')+' for real? (idempotent, no passwords copied)'))return;
+  const r=await api('/identity/migrate/run','POST',{direction:DIR,dry_run:false,include_users:$('#incU').checked,include_groups:$('#incG').checked});
+  if(r.error)return toast(r.error,true);
+  const items=(r.groups||[]).map(g=>({t:'group',n:g.name,ok:g.ok,err:g.error})).concat((r.users||[]).map(u=>({t:'user',n:u.id,ok:u.ok,err:u.error})));
+  render('Migrated (g:'+r.summary.groups_created+' u:'+r.summary.users_created+')', items, r.note);
+  toast('Migration complete'); load();
+}
+function render(title, items, note){
+  if(!items.length){$('#out').innerHTML='<div class="sub" style="margin-top:10px">Nothing to do — target already has everything.</div>';$('#note').textContent='';return;}
+  $('#out').innerHTML='<div class="row" style="margin-top:8px"><b>'+esc(title)+'</b><span class="pill">'+items.length+'</span></div>'
+    +'<div class="lst">'+items.map(i=>`<div class="item ${i.ok===true?'ok':i.ok===false?'err':''}">${i.t==='group'?'👥':'👤'} ${esc(i.n)}${i.err?' — '+esc(i.err):''}</div>`).join('')+'</div>';
+  $('#note').textContent=note?('⚠ '+note):'';
+}
+setDir('lldap_to_freeipa'); load();
+</script>
+</body>
+</html>

@@ -38,3 +38,15 @@ The key is **never** stored in Redis next to the ciphertext. Resolution order:
 
 - [Integrations](./23-integrations.md) — the Accounts registry and the modules whose secrets this seals
 - [Configuration](./10-configuration.md) — `VERA_SECRET_KEY` and key management
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_No capabilities resolved for this domain._
+<!-- VERA:AUTO:capabilities END -->

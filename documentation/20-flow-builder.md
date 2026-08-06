@@ -89,3 +89,15 @@ The bare inject is mostly a discovery/registration hook — the element needs a 
 - [DAG Engine](./03-dag-engine.md) — the primary consumer (DAG Workshop)
 - [Dream](./17-dream.md) — pipeline building with the same element
 - [Agents & Chat](./19-agents-chat.md) — `<vera-agent-loop-output>`, a sibling reusable element
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_No capabilities resolved for this domain._
+<!-- VERA:AUTO:capabilities END -->

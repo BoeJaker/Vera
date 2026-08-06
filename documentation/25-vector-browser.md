@@ -26,3 +26,15 @@ The **dimension-alignment audit** is the practical payoff: embedding-model chang
 - [Data Fabric](./06-data-fabric.md) — the stores this module inspects; ingestion + recall
 - [LLM Cluster §7](./04-ollama-cluster.md) — the embedding endpoint whose dimension must stay consistent
 - [Memory Graph](./05-memory-graph.md) — the other half of recall
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_No capabilities resolved for this domain._
+<!-- VERA:AUTO:capabilities END -->

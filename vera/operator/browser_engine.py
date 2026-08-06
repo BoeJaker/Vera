@@ -61,9 +61,27 @@ _USER_AGENT = (
 # One shared browser; contexts are cheap and isolate sessions from each other.
 _pw = None
 _browser = None
-_launch_lock = asyncio.Lock()
-# Bound concurrent live pages so a fan-out mission can't exhaust the host.
-PAGE_SEM = asyncio.Semaphore(3)
+# Async primitives are created LAZILY (on first use inside a running loop), never
+# at import time — binding a loop at import is fragile (on Python <3.10 it grabs
+# whatever loop is current then, which breaks if the module is first imported
+# after an asyncio.run() has closed the loop, e.g. mid-test-suite).
+_launch_lock: "Optional[asyncio.Lock]" = None
+_page_sem: "Optional[asyncio.Semaphore]" = None
+
+
+def _get_launch_lock() -> "asyncio.Lock":
+    global _launch_lock
+    if _launch_lock is None:
+        _launch_lock = asyncio.Lock()
+    return _launch_lock
+
+
+def page_sem() -> "asyncio.Semaphore":
+    """Bound concurrent live pages so a fan-out mission can't exhaust the host."""
+    global _page_sem
+    if _page_sem is None:
+        _page_sem = asyncio.Semaphore(3)
+    return _page_sem
 
 
 def playwright_available() -> bool:
@@ -113,7 +131,7 @@ async def _get_browser():
     global _pw, _browser
     if not _PLAYWRIGHT_AVAILABLE:
         raise RuntimeError(INSTALL_HINT)
-    async with _launch_lock:
+    async with _get_launch_lock():
         if _browser is not None:
             try:
                 if _browser.is_connected():

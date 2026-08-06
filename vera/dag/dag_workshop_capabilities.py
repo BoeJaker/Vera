@@ -534,7 +534,7 @@ _EXPLORE_CAP_HINTS = {
     "fabric.query", "fabric.datasets", "fabric.stats", "caps.search",
     "caps.describe", "context.search_caps", "context.search_dags",
     "context.recall_fabric", "system.ping",
-    "memory.seek", "memory.read", "memory.map",
+    "memory.seek", "memory.read", "memory.map", "memory.browse",
 }
 
 
@@ -760,6 +760,64 @@ def _resolve_researcher_url() -> str:
     return url
 
 
+# Keys a researcher may put the written report under, best first. `report` and
+# `markdown` are the deliberate ones; `result`/`content`/`text` are what generic
+# job wrappers use; `answer`/`summary` are last because some payloads carry a
+# one-line summary ALONGSIDE the full report, and we always want the full one.
+# How much of a research report is handed to the step verbatim. Generous on
+# purpose: a research report IS the condensed form of everything the researcher
+# read, so cutting it again just forces the step to go and re-derive what it was
+# already given. The complete text is always on disk regardless.
+_V5_RESEARCH_KEEP_MAX = int(os.getenv("VERA_RESEARCH_KEEP_MAX", "24000") or 24000)
+
+_RESEARCH_REPORT_KEYS = ("report", "markdown", "md", "document", "body",
+                         "result", "content", "text", "output", "answer", "summary")
+
+# A LIST OF RECORDS is source material, not a written report. web.research
+# returns {sources:[{url,title,text,…}]} — raw captured page text — and splicing
+# those together would present a dozen scraped pages as one document. Detected by
+# shape rather than key name, so it also catches whatever a given researcher
+# happens to call its list.
+def _is_record_list(v: Any) -> bool:
+    return isinstance(v, list) and any(isinstance(x, dict) for x in v)
+
+
+def _research_report_text(payload: Any, _depth: int = 0) -> str:
+    """The written report out of whatever shape the researcher returned.
+
+    Returns "" when there is no prose to show (a status-only payload), so the
+    caller can skip emitting rather than render an empty card."""
+    if isinstance(payload, str):
+        return payload
+    if isinstance(payload, dict) and _depth < 3:
+        for k in _RESEARCH_REPORT_KEYS:
+            v = payload.get(k)
+            if isinstance(v, str) and v.strip():
+                return v
+            if isinstance(v, (dict, list)) and v and not _is_record_list(v):
+                inner = _research_report_text(v, _depth + 1)
+                if inner.strip():
+                    return inner
+        # No known key at this level — the report may sit under an ENVELOPE key
+        # we don't know ("data", "payload", "job"). Descend into the remaining
+        # containers rather than give up; depth-bounded, and known keys were
+        # already preferred above, so this only ever runs as a last resort.
+        for k, v in payload.items():
+            if (k in _RESEARCH_REPORT_KEYS or not isinstance(v, (dict, list))
+                    or not v or _is_record_list(v)):
+                continue
+            inner = _research_report_text(v, _depth + 1)
+            if inner.strip():
+                return inner
+    if isinstance(payload, list) and _depth < 3:
+        # A list of sections/chunks — join the prose ones.
+        parts = [p for p in (_research_report_text(i, _depth + 1) for i in payload)
+                 if p and p.strip()]
+        if parts:
+            return "\n\n".join(parts)
+    return ""
+
+
 async def _emit_research_report(*, cap_name: str, job_id: str, result: Any,
                                   citations: Any = None, output_mode: str = "",
                                   session_id: str = "", cycle: int = 0) -> None:
@@ -769,7 +827,15 @@ async def _emit_research_report(*, cap_name: str, job_id: str, result: Any,
     summary."""
     if not cap_name.startswith("research."):
         return
-    text = result if isinstance(result, str) else ""
+    # The report card, its CSS and the client handler all existed — and never
+    # fired. The reason was this line: a FINISHED research job's payload is a
+    # dict ({report, citations, status, …}), not a bare string, so the old
+    # `result if isinstance(result, str) else ""` produced "" and the function
+    # returned before emitting anything. Accept whatever shape the researcher
+    # actually sends: a string, or the first substantial prose field of a dict
+    # (one level of nesting, since callers pass `payload.get("result")` and the
+    # body may sit one deeper).
+    text = _research_report_text(result)
     if not text.strip():
         return
     await emit_event({
@@ -935,6 +1001,30 @@ async def _stream_research_websocket(*, job_id: str, cap_name: str,
                     await emit_event({
                         "type":       "agent_loop.research_file",
                         "path":       msg.get("path", ""),
+                        "job_id":     job_id, "cycle": cycle,
+                        "session_id": session_id,
+                    })
+                elif mtype in ("crawl_progress", "crawl_error", "crawl_done",
+                                "directive", "architecture", "review",
+                                "iter_start", "iter_done", "iter_job",
+                                "chain_continue"):
+                    # These were never forwarded, so the loop's view of a running
+                    # research job skipped straight from "started" to a finished
+                    # report — none of the pages it was actually reading, and
+                    # none of the directive that set the method, ever reached the
+                    # UI. Forwarded verbatim under one event; the client decides
+                    # how to render each kind.
+                    await emit_event({
+                        "type":       "agent_loop.research_activity",
+                        "stream_id":  stream_id,
+                        "kind":       mtype,
+                        "url":        msg.get("url", ""),
+                        "domain":     msg.get("domain", ""),
+                        "chars":      msg.get("chars", 0),
+                        "label":      msg.get("label", "") or msg.get("style", ""),
+                        "detail":     msg.get("detail", "") or msg.get("focus", ""),
+                        "depth":      msg.get("depth", ""),
+                        "error":      msg.get("error", ""),
                         "job_id":     job_id, "cycle": cycle,
                         "session_id": session_id,
                     })
@@ -2836,6 +2926,14 @@ async def workshop_loop_sessions(request: Request):
             run = {_rd(k): _rd(v) for k, v in (run_raw or {}).items()}
             if not run:
                 continue
+            # Same running→interrupted correction session_state applies. Without it
+            # this list is the one place a run orphaned by a restart still claims to
+            # be "running" — forever, since nothing is left alive to write a terminal
+            # status. Applied BEFORE the filter so ?status=running means genuinely
+            # live, which is exactly what a caller asking for resumable runs wants.
+            run["stale"] = await _loop_run_is_stale(r, sid, run)
+            if run.get("status") == "running" and run["stale"]:
+                run["status"] = "interrupted"
             if want and run.get("status") != want:
                 continue
             out.append({"session_id": sid, **run})
@@ -2919,7 +3017,12 @@ async def workshop_loop_reattach(request: Request):
                     continue
                 if (ev.get("session_id") or "") != sid:
                     continue
-                if not str(ev.get("type", "")).startswith("agent_loop"):
+                # Loop events, plus the sandbox's package prompts: those BLOCK the
+                # run until answered, so a client that reattached after a reload
+                # must still receive the ask — otherwise the step sits paused with
+                # its prompt stranded on a stream nobody is reading any more.
+                if not str(ev.get("type", "")).startswith(
+                        ("agent_loop", "remote.sandbox.package")):
                     continue
                 yield f"data: {s}\n\n".encode()
                 if str(ev.get("type", "")).endswith(".done"):
@@ -3008,7 +3111,7 @@ CATEGORY_PREFIX_HINTS: Dict[str, List[str]] = {
                        "web.search", "web.fetch", "http.get",
                        "memory.seek", "memory.recall", "scrape.fetch"],
     "web_check":      ["http.get", "http.head", "system.ping"],
-    "data_lookup":    ["memory.seek", "memory.read", "memory.map",
+    "data_lookup":    ["memory.seek", "memory.read", "memory.map", "memory.browse",
                        "fabric.query", "fabric.datasets", "fabric.search",
                        "fabric.stats", "data.", "memory.recall"],
     "file_edit":      ["text.", "ide.code.", "fs.", "data.json_"],
@@ -3054,8 +3157,8 @@ CATEGORY_BASE_ESSENTIALS: Dict[str, List[str]] = {
     "research":       ["llm.generate", "llm.summarize", "research.run", "research.report",
                        "research.quick_search", "web.search", "http.get"],
     "web_check":      ["http.get", "system.ping"],
-    "data_lookup":    ["memory.seek", "memory.map", "fabric.query",
-                       "fabric.datasets", "llm.generate"],
+    "data_lookup":    ["memory.seek", "memory.map", "memory.browse",
+                       "fabric.query", "fabric.datasets", "llm.generate"],
     "file_edit":      ["llm.generate", "text.find_replace"],
     "summarisation":  ["llm.summarize", "llm.generate"],
     "analysis":       ["llm.analyze", "llm.summarize"],
@@ -3086,8 +3189,9 @@ WORKSHOP_DISCOVERY_CAPS = [
     "caps.search", "caps.describe",
     "context.search_caps", "context.search_dags",
     # Canonical memory retrieval — always available so agents reach stored data
-    # through one door instead of the raw fabric/memory read caps.
-    "memory.seek", "memory.read", "memory.map",
+    # through one door instead of the raw fabric/memory read caps. seek=search,
+    # browse=look-with-no-query, read=full record, map=namespace listing.
+    "memory.seek", "memory.read", "memory.map", "memory.browse",
 ]
 
 # "Useful cap" detection by category. If the toolkit ALREADY contains any of
@@ -3096,7 +3200,7 @@ WORKSHOP_DISCOVERY_CAPS = [
 CATEGORY_USEFUL_CAP_PATTERNS: Dict[str, List[str]] = {
     "research":      ["research.run", "research.report", "research.deep",
                       "research.parallel", "research.quick_search", "web.search"],
-    "data_lookup":   ["memory.seek", "fabric.query"],
+    "data_lookup":   ["memory.seek", "memory.browse", "fabric.query"],
     "web_check":     ["http.get"],
     "network_scan":  ["netscan.target.ports", "netscan.target.tech",
                       "netscan.discover"],
@@ -5036,7 +5140,7 @@ async def cap_dag_agent_loop_v3(
     # Ensure the data-search caps are in the toolkit if datasets were found —
     # canonical (memory.seek/map) when the retrieval gate is on, legacy otherwise.
     if relevant_datasets:
-        _ds_caps = (("memory.map", "memory.seek") if _gated_read_caps()
+        _ds_caps = (("memory.map", "memory.browse", "memory.seek") if _gated_read_caps()
                     else ("fabric.datasets", "fabric.query"))
         for ds_cap in _ds_caps:
             if ds_cap in CAPABILITY_REGISTRY and ds_cap not in toolkit:
@@ -6696,7 +6800,7 @@ async def cap_dag_agent_loop_v4(
 
     relevant_datasets, sel = await asyncio.gather(_ds_task(), _steps_task())
     if relevant_datasets:
-        _ds_caps = (("memory.map", "memory.seek") if _gated_read_caps()
+        _ds_caps = (("memory.map", "memory.browse", "memory.seek") if _gated_read_caps()
                     else ("fabric.datasets", "fabric.query"))
         for ds_cap in _ds_caps:
             if ds_cap in CAPABILITY_REGISTRY and ds_cap not in toolkit:
@@ -7643,7 +7747,18 @@ _V5_CATALOG_MAX_DEFAULT = 40      # caps shown to the orchestrator (name+desc)
 # caps with "get" in the name and the orchestrator wrongly delegates the action to
 # a generative cap; and "create a script" produces no file to iterate on because
 # no file-write cap was offered.
-_V5_ESSENTIAL_ACTION_CAPS = ("exec.bash.run", "ide.fs.write", "ide.fs.read", "http.get")
+#
+# ide.fs.write is deliberately NOT in this list. A model hand-typing file
+# content directly (code OR prose) produces worse output than the authoring
+# specialists — ungrounded, unversioned, and observed live clobbering a
+# specialist's own proven work — and every legitimate "persist a file" case is
+# already covered without it: code.author/code.edit for code, prose.author /
+# llm.generate(save_as=...) for documents (both always seeded — see
+# _V5_CORE_SEED_CAPS below, no substitute needed here), and exec.python.run's
+# own file I/O for a script's data output. ide.fs.write stays a registered
+# capability (so a profile can still opt in explicitly) but is never
+# auto-granted.
+_V5_ESSENTIAL_ACTION_CAPS = ("exec.bash.run", "ide.fs.read", "http.get")
 
 # File-access caps EVERY acting step can always reach, granted ON TOP of the
 # planner's assignment (they never consume its per-step cap budget). The loop
@@ -7651,18 +7766,20 @@ _V5_ESSENTIAL_ACTION_CAPS = ("exec.bash.run", "ide.fs.write", "ide.fs.read", "ht
 # these must be in scope regardless of what the step was assigned — otherwise the
 # agent is told to "grep the saved file with exec.bash.run" and then "exec.bash.run
 # is not in this step's scope". Read-only phases get only the pure-read cap so the
-# explore/verify contract is preserved.
-_V5_ALWAYS_FILE_CAPS = ("exec.bash.run", "exec.python.run", "ide.fs.read", "ide.fs.write")
+# explore/verify contract is preserved. See the ide.fs.write note above — file
+# CREATION always goes through code.author/prose.author (always seeded via
+# _V5_CORE_SEED_CAPS below), never a raw write.
+_V5_ALWAYS_FILE_CAPS = ("exec.bash.run", "exec.python.run", "ide.fs.read")
 _V5_ALWAYS_FILE_CAPS_RO = ("ide.fs.read",)   # read-only phases: no write
 
 # Caps ALWAYS worth offering (run a command/script, persist/read a file, fetch a
 # URL, search data/caps). exec.python.run is here so a step can write+run a script.
-_V5_CORE_SEED_CAPS = ("exec.bash.run", "exec.python.run", "ide.fs.write", "ide.fs.read",
+_V5_CORE_SEED_CAPS = ("exec.bash.run", "exec.python.run", "ide.fs.read",
                       "http.get", "caps.search", "fabric.query", "code.author",
                       # code.edit rides alongside code.author: without it in the
                       # catalog the only route to changing an existing file is a
                       # full re-emit, which is what loses unrelated work.
-                      "code.edit")
+                      "code.edit", "prose.author")
 # Live-web / external-research caps — seeded when the goal looks like it needs the
 # OUTSIDE world (vs the internal data fabric). This is the fix for "no proper web
 # crawling caps" + "uses fabric instead of the web lookup cap".
@@ -7735,6 +7852,8 @@ def _v5_seed_caps_for(goal: str) -> List[str]:
         _canon = {"fabric.query": "memory.seek", "fabric.datasets": "memory.map"}
         seeds = [(_canon.get(c, c) if c in gated else c) for c in seeds]
         seeds = [c for c in seeds if c not in gated]
+        if "memory.seek" in seeds and "memory.browse" not in seeds:
+            seeds.append("memory.browse")
     out: List[str] = []
     for c in seeds:
         if c in CAPABILITY_REGISTRY and c not in out:
@@ -8002,7 +8121,7 @@ def _v5_apply_code_routing(tool: str, args: Any) -> bool:
 # step's recovery toolkit. Anti-verbs win (e.g. "fabric.objects.bucket_create").
 _V5_READONLY_TOKENS = ("search", "list", "get", "read", "describe", "query",
                        "inspect", "status", "fetch", "find", "lookup", "discover",
-                       "expand", "landscape", "seek", "map", "recall")
+                       "expand", "landscape", "seek", "map", "recall", "browse")
 _V5_MUTATING_TOKENS = ("write", "create", "delete", "update", "set", "remove",
                        "run", "exec", "send", "build", "train", "deploy", "apply",
                        "install", "start", "stop", "kill", "save", "put", "post",
@@ -8162,7 +8281,7 @@ _V5_BUILD_CAPS = {"llm.generate", "code.author", "code.edit", "prose.author",
                   "ml.agent.build_and_test", "ide.fs.write"}
 # Read-only/context caps that are useful to BOTH halves of a split.
 _V5_SHARED_READ_CAPS = ("ide.fs.read", "http.get", "fabric.query",
-                        "memory.seek", "memory.read")
+                        "memory.seek", "memory.read", "memory.browse")
 
 # A GENUINE "do X, THEN do Y" seam between two units of work. The split only fires
 # when one of these actually divides the goal prose — so a trivial single-action
@@ -8234,7 +8353,7 @@ _V5_LONGFORM_PREFIXES = ("research.", "fabric.synthesize.", "fabric.discover.")
 _V5_LONGFORM_EXACT = {"web.fetch", "web.search_and_crawl", "llm.summarize",
                       # canonical retrieval caps self-size via max_chars — give
                       # them the longform budget so the loop never re-truncates
-                      "memory.seek", "memory.read"}
+                      "memory.seek", "memory.read", "memory.browse"}
 # File reads get their OWN generous budget: a small default truncates the
 # OBSERVATION of a read (not the file), the model reads that as "the file is
 # partial" and re-reads forever. Size these to fit a typical model context so a
@@ -8473,15 +8592,79 @@ def _v5_csv_schema_note(raw_text: str) -> str:
     return ""
 
 
+# Field names a fetch/research cap uses for the EXTRACTED BODY of a page, as
+# opposed to a title/snippet/summary. Presence of one of these, populated, is the
+# signal that the expensive part of the work is already done and sitting on disk.
+_V5_BODY_FIELDS = ("text", "content", "body", "full_text", "fulltext",
+                   "markdown", "extract", "article", "html")
+# Below this a field is a snippet/teaser, not a page body — 400 chars is well
+# above a search-result snippet and well below any real article.
+_V5_BODY_MIN_CHARS = 400
+
+
+def _v5_fetched_content_note(obj: Any) -> str:
+    """A line stating that a structured file ALREADY holds fetched page bodies.
+
+    Every observed run of a research→report goal burned its middle steps
+    re-fetching URLs whose text was already on disk: `web.research` writes each
+    source's extracted body into `sources[].text`, but a later step sees only a
+    list of records with a `url` and reasons "I need to fetch the full content of
+    the top 5". The SCHEMA line above shows `text: str` — which says a field
+    exists, not that it is *populated with the thing the step is about to go get*.
+    So measure it and say so outright."""
+    best = ()
+    for holder, key, seq in _v5_iter_record_lists(obj):
+        for field in _V5_BODY_FIELDS:
+            vals = [rec.get(field) for rec in seq
+                    if isinstance(rec, dict) and isinstance(rec.get(field), str)]
+            filled = [v for v in vals if len(v) >= _V5_BODY_MIN_CHARS]
+            if len(filled) < max(1, len(seq) // 2):
+                continue          # mostly empty → not a reliable body field
+            total = sum(len(v) for v in filled)
+            if not best or total > best[0]:
+                best = (total, holder, key, field, len(filled), len(seq))
+    if not best:
+        return ""
+    total, holder, key, field, filled, n = best
+    path = f"{key}[].{field}" if key else f"[].{field}"
+    return (f"CONTENT ALREADY FETCHED: {path} holds the full extracted page text for "
+            f"{filled}/{n} records ({total:,} chars total). The fetching is DONE — read "
+            f"this file and use that text. Do NOT re-fetch these URLs, and do NOT crawl, "
+            f"scrape or re-research them to get content this file already contains.")
+
+
+def _v5_iter_record_lists(obj: Any, depth: int = 0):
+    """Yield (holder, key, list-of-dicts) for every record list in a parsed doc —
+    top level or nested one envelope deep, which covers both `[{…}]` and the far
+    more common `{query: …, sources: [{…}]}` shape."""
+    if depth > 3:
+        return
+    if isinstance(obj, list):
+        if obj and any(isinstance(x, dict) for x in obj):
+            yield obj, "", [x for x in obj if isinstance(x, dict)]
+        return
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if isinstance(v, list) and v and any(isinstance(x, dict) for x in v):
+                yield obj, str(k), [x for x in v if isinstance(x, dict)]
+            elif isinstance(v, (dict, list)):
+                yield from _v5_iter_record_lists(v, depth + 1)
+
+
 def _v5_file_schema_note(raw_text: str) -> str:
     """`SCHEMA: …` line for a saved structured (JSON or CSV/TSV) file, or '' when
     it's neither — e.g. prose, code, an HTML page."""
     obj = _v5_try_json(raw_text or "")
     if obj is not None and not isinstance(obj, (str, int, float, bool)):
         try:
-            return "SCHEMA: " + _v5_schema_digest(obj)[:600]
+            note = "SCHEMA: " + _v5_schema_digest(obj)[:600]
         except Exception:
             return ""
+        try:
+            fetched = _v5_fetched_content_note(obj)
+        except Exception:
+            fetched = ""
+        return note + ("\n" + fetched if fetched else "")
     return _v5_csv_schema_note(raw_text)
 
 
@@ -9702,6 +9885,77 @@ def _v5_check_syntax(code: str, lang: str, path: str = "") -> Dict[str, Any]:
     return {"ok": True, "checker": ""}              # nothing to check with
 
 
+async def _v5_context_schema_lines(files: Optional[List[str]],
+                                   session_id: str) -> List[str]:
+    """`• <file>: SCHEMA: {…}` lines for each named context file.
+
+    Shared by code.author and prose.author. Both need it for the same reason:
+    raw bytes alone are not enough. A large file is truncated before the model
+    sees the end of it, and the killer case is invisible even when it isn't — an
+    http.get capture stores its payload under `body` as a JSON *string*, so
+    `data['body']['results']` raises "string indices must be integers". The note
+    also carries the CONTENT ALREADY FETCHED line, which is what stops a writer
+    re-fetching pages whose text is already sitting in the file."""
+    out: List[str] = []
+    if not files:
+        return out
+    try:
+        import importlib as _il_s
+        _ex_s = _il_s.import_module("Vera.vera.execution.exec_capabilities")
+        _rd = getattr(_ex_s, "read_artifact_file", None)
+    except Exception:
+        _rd = None
+    if not _rd:
+        return out
+    for f in files:
+        try:
+            _txt = await _rd(session_id=session_id, relpath=f, max_bytes=40000)
+        except Exception:
+            _txt = None
+        if not _txt:
+            continue
+        note = _v5_file_schema_note(_txt)
+        if note:
+            out.append(f"  • {f}: {note}")
+    return out
+
+
+# Extensions whose content is SOURCE MATERIAL for a document — research dumps,
+# scraped captures, extracted datasets. Deliberately excludes code and the
+# document's own format: a README should be grounded in the data, not in a copy
+# of another README.
+_V5_PROSE_SOURCE_EXTS = (".json", ".jsonl", ".ndjson", ".csv", ".tsv", ".txt", ".yaml", ".yml")
+
+
+def _sandbox_mod():
+    """The session-sandbox module, however it happens to be named in sys.modules
+    (it is imported under different paths depending on the entry point)."""
+    m = sys.modules.get("session_sandbox_capabilities")
+    if m is not None:
+        return m
+    for name, mod in list(sys.modules.items()):
+        if mod is not None and name.endswith("session_sandbox_capabilities"):
+            return mod
+    return None
+
+
+async def _package_hint(session_id: str, language: str = "python") -> str:
+    """What is installed in this session's sandbox, and how to get more. Empty
+    string whenever there is no sandbox, the probe fails, or the module isn't
+    loaded — a hint is an optimisation, never a prerequisite for authoring."""
+    if not session_id:
+        return ""
+    try:
+        sb = _sandbox_mod()
+        fn = getattr(sb, "sandbox_package_hint", None) if sb else None
+        if fn is None:
+            return ""
+        return await fn(session_id, language) or ""
+    except Exception as e:
+        log.debug("package hint unavailable: %s", e)
+        return ""
+
+
 @capability(
     "code.author", memory="on",
     http_method="POST", http_path="/code/author", http_tags=["code", "fabric"],
@@ -9763,6 +10017,13 @@ async def cap_code_author(task: str, path: str = "", context_files=None,
         "  • Refer to data files by the RELATIVE names given. Never invent a path.\n"
         "  • Fail loudly: if an input is missing or malformed, print a clear error — do not "
         "silently produce an empty result.\n"
+        "  • DON'T REBUILD A TOOL THAT ALREADY EXISTS. If the whole job of this file is to "
+        "grep a file, pull out urls/emails/numbers, query or filter a JSON file, find/replace, "
+        "cut columns, dedupe or count lines, then it should not be a script at all — Vera has "
+        "text.grep / text.extract / text.json / text.replace / text.fields / text.uniq / "
+        "text.slice for exactly those, operating on the file in place. Say so in one line "
+        "instead of writing the file. Write real code when the task needs real logic — "
+        "fetching, multi-step transformation, branching, or a structure you must control.\n"
         "  • CAPABILITIES ARE NOT PYTHON — the task description below was carried over from "
         "a planning step and may still be phrased as if getting/storing data goes through a "
         "named Vera capability or tool. That is stale planning framing to IGNORE, not a "
@@ -9787,26 +10048,7 @@ async def cap_code_author(task: str, path: str = "", context_files=None,
     # note deterministically (_v5_file_schema_note tells you which field is a
     # JSON string and must be json.loads'd first) — it simply never reached the
     # coder. Attach it per file so the parser is written against reality.
-    schema_lines: List[str] = []
-    if files:
-        try:
-            import importlib as _il_s
-            _ex_s = _il_s.import_module("Vera.vera.execution.exec_capabilities")
-            _rd = getattr(_ex_s, "read_artifact_file", None)
-        except Exception:
-            _rd = None
-        for f in files:
-            if not _rd:
-                break
-            try:
-                _txt = await _rd(session_id=session_id, relpath=f, max_bytes=40000)
-            except Exception:
-                _txt = None
-            if not _txt:
-                continue
-            note = _v5_file_schema_note(_txt)
-            if note:
-                schema_lines.append(f"  • {f}: {note}")
+    schema_lines = await _v5_context_schema_lines(files, session_id)
     schema_block = ("\nACTUAL STRUCTURE OF THE CONTEXT FILES — parse EXACTLY this shape, do "
                     "not guess and do not add branches for shapes not shown here.\n"
                     "CRITICAL: a field shown as `json-string→{…}` holds JSON as a STRING. You "
@@ -9816,11 +10058,17 @@ async def cap_code_author(task: str, path: str = "", context_files=None,
                     "(which raises \"string indices must be integers\").\n"
                     + "\n".join(schema_lines) + "\n") if schema_lines else ""
 
+    # What is ACTUALLY importable where this file will run. The coder otherwise
+    # guesses in both directions — assuming pandas is there on a slim base, or
+    # hand-rolling a regex parser because it assumes bs4 is not — and both
+    # guesses cost a whole failed run to discover.
+    pkg_block = await _package_hint(session_id, lang)
     prompt = (f"TASK — write `{path}`:\n{task}\n"
               + (f"\nREQUIREMENTS / CONSTRAINTS:\n{requirements}\n" if requirements else "")
               + (f"\nThe code must read these files (their real content is included above as "
                  f"CONTEXT FILES): {', '.join(files)}\n" if files else "")
               + schema_block
+              + (f"\nENVIRONMENT — {pkg_block}\n" if pkg_block else "")
               + f"\nWrite the complete {lang} file now.")
 
     gen = CAPABILITY_REGISTRY.get("llm.generate")
@@ -10048,6 +10296,35 @@ async def cap_prose_author(task: str = "", path: str = "", context_files=None,
     files = [str(f) for f in (files or []) if str(f).strip()][:6]
 
     real_files = await _v5_workdir_files(session_id)
+
+    # AUTO-ATTACH the run's source data when the caller named none.
+    #
+    # This cap only ever received `context_files` if the specialist remembered to
+    # pass them, and when it forgot, the writer got a file LISTING — names only,
+    # zero content — and then wrote a report "summarising" research it had never
+    # been shown. A document task whose sources are sitting in the working
+    # directory should be grounded in them by default, not by luck. Data files
+    # only (see _V5_PROSE_SOURCE_EXTS): code and other documents are not the
+    # source material for a write-up, and pulling them in would just crowd out
+    # the research.
+    auto_attached: List[str] = []
+    if not files and real_files:
+        auto_attached = [f for f in real_files
+                         if str(f).lower().endswith(_V5_PROSE_SOURCE_EXTS)][:4]
+        files = list(auto_attached)
+
+    # The same structural note the coder gets. A writer that can't see the shape
+    # of a research capture describes the file it imagines rather than the one it
+    # has — and without the CONTENT ALREADY FETCHED line it goes off re-fetching
+    # pages whose text is already in the file.
+    schema_lines = await _v5_context_schema_lines(files, session_id)
+    schema_block = (
+        "\nACTUAL STRUCTURE OF THE SOURCE FILES you have been given — the real field "
+        "names and record counts. Use the data that is actually there; do not "
+        "describe fields or totals that are not in this shape, and do not go and "
+        "fetch anything a file already contains.\n"
+        + "\n".join(schema_lines) + "\n") if schema_lines else ""
+
     real_block = (
         "\nTHE ACTUAL FILES THAT EXIST in your working directory right now — this is the ONLY "
         "project you may describe. Do not name, describe, or write install/run instructions "
@@ -10076,6 +10353,9 @@ async def cap_prose_author(task: str = "", path: str = "", context_files=None,
     prompt = (f"TASK — write `{path}`:\n{task}\n"
               + (f"\nThe document should describe/reference these files (their real content is "
                  f"included above as CONTEXT FILES): {', '.join(files)}\n" if files else "")
+              + (f"(These were attached automatically as the source material present in the "
+                 f"working directory — the caller named none.)\n" if auto_attached else "")
+              + schema_block
               + f"\nWrite the complete document now.")
 
     gen = CAPABILITY_REGISTRY.get("llm.generate")
@@ -10926,6 +11206,41 @@ async def _v5_list_skills(trace_id: str = "", *, allow: Optional[set] = None,
     return []
 
 
+def _v5_filter_skills_for_goal(skills: List[Dict[str, Any]], goal: str,
+                               *, catalog: Optional[set] = None) -> List[Dict[str, Any]]:
+    """Keep only skills the planner should actually SEE for THIS goal.
+
+    The planner is handed the eligible-skill list as "AVAILABLE SKILLS" and it
+    treats them as relevant context — so an unrelated user domain skill (e.g.
+    "knowledgeable about cryptocurrency … Bitcoin … DeFi") listed here HIJACKS
+    the plan: observed live, an "AI/ML report" goal produced a crypto plan lifted
+    verbatim from a crypto skill's description. Structural/teaching skills
+    (sys-* = how to use caps, fmt-* = output shaping) are domain-neutral and
+    always kept; a USER domain skill is kept only when it is actually relevant to
+    the goal — it shares a content word with the goal, or it teaches a cap that
+    is in the run's catalog. Everything else is dropped so it can't derail the
+    planner."""
+    gw = _plan_words(goal)
+    catalog = catalog or set()
+    kept: List[Dict[str, Any]] = []
+    for s in skills:
+        sid = str(s.get("id", ""))
+        if sid.startswith("sys-") or sid.startswith("fmt-"):
+            kept.append(s)
+            continue
+        # Relevance by goal-word overlap over the skill's name/description/tags…
+        sw = _plan_words(" ".join([
+            str(s.get("name", "")), str(s.get("description", "")),
+            " ".join(str(t) for t in (s.get("tags") or []))]))
+        if gw & sw:
+            kept.append(s)
+            continue
+        # …or the skill teaches a capability that is actually in the catalog.
+        if catalog and any(c in catalog for c in (s.get("applies_to_caps") or [])):
+            kept.append(s)
+    return kept
+
+
 def _v5_first_json_array_of_objects(s: str) -> List[Dict[str, Any]]:
     """Return the first balanced top-level ``[ ... ]`` whose elements are objects
     (honouring string literals so brackets inside quotes don't confuse the scan).
@@ -11482,7 +11797,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
         + "RECON (optional, ITERATIVE — only when needed): if you cannot make a good plan without "
         "first inspecting the environment/data/web, put up to " + str(_V5_RECON_MAX) + " READ-ONLY "
         "actions in `recon`. Allowed recon: caps.search, context.search_caps, memory.seek, "
-        "memory.map, fabric.query, "
+        "memory.map, memory.browse, fabric.query, "
         "http.get, ide.fs.read, AND read-only shell via exec.bash.run (args {\"command\":\"…\"}) "
         "using ONLY exploratory commands — ls, cat, head, tail, grep/rg, find, pwd, whoami, env, "
         "stat, wc (NO redirection >, pipes-to-writers, rm/mv/cp, or anything that writes/runs/"
@@ -11768,13 +12083,17 @@ def _v5_artifact_brief(rec: Dict[str, Any]) -> str:
     if not rec:
         return ""
     bits = [f"{rec['rel']} ({rec.get('size', 0):,} bytes)"]
-    if rec.get("schema"):
-        bits.append(rec["schema"])
+    # `schema` may carry a second CONTENT ALREADY FETCHED line. Keep it OUT of the
+    # " — " join (it is a sentence, not a field) and hang it on the end, so it
+    # doesn't bury the parse verdict mid-line.
+    schema, _, tail = str(rec.get("schema") or "").partition("\n")
+    if schema:
+        bits.append(schema)
     if rec.get("parse_error"):
         bits.append(f"⚠ does NOT parse: {rec['parse_error']}")
     elif rec.get("checked_with"):
         bits.append(f"parses cleanly ({rec['checked_with']})")
-    return " — ".join(bits)
+    return " — ".join(bits) + (("\n  " + tail.strip()) if tail.strip() else "")
 
 
 def _v5_path_is_proven(artifacts: Dict[str, Dict[str, Any]], path: str) -> bool:
@@ -12476,12 +12795,13 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         "hop; a hop with no `from` just runs on your `input` (unlinked). It is a DAG, not only a line: "
         "a hop's `from` may pull from ANY earlier hop(s) — combine $0 AND $1 — and an optional "
         '"when":"$1:json.ok" runs a hop ONLY if that ref is truthy (conditional branch/skip). '
-        'Examples — research→write→save: [{"name":"web.search","input":{"query":"..."}},'
-        '{"name":"web.fetch","from":{"url":"$0.results.0.url"}},{"name":"llm.generate",'
-        '"input":{"prompt":"Write a report from this source:"},"from":{"context":"$1"}},'
-        '{"name":"ide.fs.write","input":{"path":"report.md"},"from":{"content":"$2"}}]; '
-        'generate→run: [{"name":"llm.generate","input":{"prompt":"write a python script that..."}},'
-        '{"name":"exec.python.run","from":{"code":"$0:code"}}]. '
+        'Example shape (names below are ILLUSTRATIVE PLACEHOLDERS, not a pattern to copy — '
+        'wire together whichever of YOUR actual assigned caps the step needs, in whatever order '
+        'the goal requires; an authoring cap that takes a save-path saves its own output, it is '
+        'never followed by a separate raw file-write hop): '
+        '[{"name":"<lookup-cap>","input":{"query":"..."}},'
+        '{"name":"<fetch-cap>","from":{"url":"$0.results.0.url"}},'
+        '{"name":"<authoring-cap>","input":{"task":"...","path":"out.md"},"from":{"context":"$1"}}]. '
         '`chain` is a TOP-LEVEL field of your JSON response, a sibling to `tool_use` — it is '
         'NOT a capability name. `{"tool_use":{"name":"chain","input":{...}}}` or '
         '`{"tool_use":{"name":"ide.fs.chain",...}}` are WRONG and will be refused (there is no '
@@ -12507,15 +12827,31 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
     # training data (/mnt/data/…, /content/…) and then loops on the failure.
     workdir_files = await _v5_workdir_files(sid)
     await _v5_ensure_workdir_schemas(artifacts, workdir_files, sid)
+    # What's installed, AND what happens when something isn't. The sandbox now
+    # scans code for its imports before running it and (per package policy)
+    # installs them or asks the user — so the old advice here, "install it first
+    # with pip install", is both unnecessary and actively wrong under a policy of
+    # deny. sandbox_package_hint states whichever is true for the current policy;
+    # the plain list below is the fallback when there's no sandbox to ask.
     pkg_note = ""
-    if "exec.python.run" in allowed or "code.author" in allowed:
-        _pkgs = await _v5_installed_packages(sid)
-        if _pkgs:
-            pkg_note = ("\nPYTHON PACKAGES ALREADY INSTALLED (use these, don't assume anything "
-                        "else is present — an import that isn't in this list WILL fail with "
-                        "ModuleNotFoundError; if you truly need one, install it first with "
-                        "exec.bash.run('pip install <pkg>') rather than guessing it's there):\n"
-                        + _pkgs + "\n")
+    _wants_py = "exec.python.run" in allowed or "code.author" in allowed
+    _wants_sh = "exec.bash.run" in allowed
+    if _wants_py or _wants_sh:
+        _hint = await _package_hint(sid, "python" if _wants_py else "bash")
+        if _hint and _wants_py and _wants_sh:
+            _sh = await _package_hint(sid, "bash")
+            # The bash hint's second line is the same policy sentence — keep one.
+            _sh_first = _sh.split("\n")[0] if _sh else ""
+            if _sh_first:
+                _hint = _hint.split("\n")[0] + "\n" + _sh_first + "\n" + \
+                    "\n".join(_hint.split("\n")[1:])
+        if _hint:
+            pkg_note = "\n" + _hint + "\n"
+        elif _wants_py:
+            _pkgs = await _v5_installed_packages(sid)
+            if _pkgs:
+                pkg_note = ("\nPYTHON PACKAGES ALREADY INSTALLED (an import outside this list "
+                            "will fail with ModuleNotFoundError):\n" + _pkgs + "\n")
     workdir_note = ""
     if artifact_dir_path:
         # ONE list, every file annotated with what's already known about it — a
@@ -12600,6 +12936,9 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         "You are a FOCUSED SPECIALIST sub-agent. Complete ONE step of a larger task and "
         "nothing else. Stay strictly within the step goal.\n"
         f"STEP GOAL: {step['goal']}\n"
+        + (f"OVERALL RUN GOAL (context only — this step is ONE PART of it; the plan already "
+           f"scoped this step's slice, so stay inside STEP GOAL, do not try to do the whole "
+           f"thing here): {goal[:600]}\n" if goal else "")
         + (f"SUCCESS CRITERION (this step is only done when this is objectively true): {_success}\n"
            if _success else "")
         + "\n"
@@ -12627,12 +12966,32 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
            "content (code, prose, docs, summaries, explanations). It must NOT be your source for "
            "real-world DATA — a list/table of real entities, factual records, API results, a "
            "populated JSON/CSV (e.g. the 151 Gen-1 Pokémon with real stats). Asked to emit that, it "
-           "FABRICATES. Instead WRITE A SCRIPT (exec.python.run) that fetches from the source API / "
-           "parses the data and WRITES the file itself — deterministic and correct. To EDIT or "
-           "transform a file (especially data, or any bulk/mechanical change) prefer a script "
-           "(exec.python.run, or exec.bash.run with sed/jq/awk) that reads → transforms → writes; "
-           "re-emitting a whole file via llm.generate is only for authored prose/code YOU wrote, "
-           "and risks dropping or altering content on a data file.\n"
+           "FABRICATES. Get it DETERMINISTICALLY instead — but pick the CHEAPEST rung of this "
+           "ladder that does the job, and do not climb higher than you have to:\n"
+           "  1. A CAPABILITY THAT ALREADY DOES IT. Writing a script to redo something your "
+           "toolkit already provides is always wrong — it is slower, it can be buggy, and it is "
+           "not versioned or logged. Before you write ANY code to search, filter, extract, "
+           "reshape or edit a file, check whether one of these does it outright:\n"
+           "     • text.grep    — find the lines matching a pattern\n"
+           "     • text.extract — pull out every url / email / ipv4 / number / date / domain / "
+           "path, or your own regex (this is THE way to 'get the list of X from this file')\n"
+           "     • text.json    — query a JSON file by dotted path, filter with `where`, keep "
+           "only some `fields` (the jq you were about to write)\n"
+           "     • text.replace — find/replace in place, literal or regex (the sed -i)\n"
+           "     • text.fields  — pull columns out of CSV/TSV/whitespace data (the awk/cut)\n"
+           "     • text.uniq    — dedupe, or count occurrences most-frequent-first\n"
+           "     • text.slice   — read a line range from a file too big to read whole\n"
+           "     These take a PATH and run against the file on disk, so the file never enters "
+           "your context, and each takes `save_as` to write the result straight to a new file. "
+           "They are deterministic — no guessing, no parsing bugs, one call.\n"
+           "  2. A SHELL ONE-LINER (exec.bash.run) for anything else simple and mechanical — "
+           "counting, sorting, cutting, piping a couple of tools together.\n"
+           "  3. A SCRIPT (exec.python.run / code.author) ONLY when the work genuinely needs "
+           "real logic: fetching from an API, multi-step transformation, branching, or building "
+           "a file whose structure you must control. Reaching straight for a script to do a job "
+           "rung 1 already does is the single most common way steps waste cycles here.\n"
+           "  Re-emitting a whole file via llm.generate is only for authored prose/code YOU "
+           "wrote, and risks dropping or altering content on a data file.\n"
            "CAPABILITIES ARE NOT PYTHON — this includes any code YOU emit directly (a fenced "
            "block gets autosaved). The STEP GOAL above may be worded around a Vera capability "
            "(this step's own, or an earlier one's you're building on) — that is planning "
@@ -12916,6 +13275,9 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         whole point: e.g. llm.generate → ide.fs.write in one turn). Each hop renders as
         a normal tool card. Returns True if at least one hop produced a usable result."""
         nonlocal gc, dynamic_caps_block, ok, had_useful, code_write_redirects, proven_redirects
+        # auto_grants is shared with the single-tool path on purpose: ONE budget for
+        # the whole step, so a chain can't launder unlimited grants past the ceiling.
+        nonlocal auto_grants
         spec = [h for h in (hops or []) if isinstance(h, dict) and str(h.get("name") or "").strip()]
         spec = spec[:_MAX_CHAIN_HOPS]
         if not spec:
@@ -12950,14 +13312,32 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                     continue
             hop_tool = _v5_resolve_tool_name(str(hop.get("name")).strip(), allowed, catalog_set)
             # Auto-grant a catalog cap the chain reaches for (chaining implies intent).
+            # Mirrors the single-tool path — including its BOUND and its phase
+            # discipline, and crucially its EVENT: this grant used to be silent,
+            # so a step scoped to ['prose.author'] would be seen calling
+            # exec.python.run with no "scope widened" anywhere in the trace,
+            # which reads as the scope gate having been bypassed entirely.
             if hop_tool not in allowed:
-                if hop_tool in catalog_set and hop_tool in CAPABILITY_REGISTRY:
+                _hop_blocked = (phase in ("explore", "verify")
+                                and hop_tool in _V5_AUTHORING_CAPS)
+                if (hop_tool in catalog_set and hop_tool in CAPABILITY_REGISTRY
+                        and auto_grants < _MAX_AUTO_GRANTS and not _hop_blocked):
+                    auto_grants += 1
                     allowed.append(hop_tool)
                     _sig = rich_cap_signature(hop_tool)
                     dynamic_caps_block = (dynamic_caps_block + "\n" + _sig) if dynamic_caps_block else _sig
+                    await emit_event({"type": "agent_loop_v5.scope_widened", "session_id": sid,
+                                      "stream_id": stream_id, "step_id": step_id,
+                                      "added": [hop_tool],
+                                      "reason": "auto-granted to a chain hop"})
                 else:
                     gc += 1
-                    _msg = f"chain hop '{hop_tool}' is not in the toolkit — chain stopped."
+                    _msg = (f"chain hop '{hop_tool}' cannot run here — "
+                            + ("it re-writes the artifact this read-only phase is checking"
+                               if _hop_blocked else
+                               "it is not in the toolkit" if hop_tool not in catalog_set else
+                               f"the step's auto-grant budget ({_MAX_AUTO_GRANTS}) is spent")
+                            + " — chain stopped.")
                     history.append({"tool": f"(denied {hop_tool})", "ok": False, "preview": _msg,
                                     "args": {}, "ms": 0})
                     await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
@@ -13742,6 +14122,32 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                         "— NOT {\"tool_use\":{\"name\":\"chain\",...}}. If you don't actually need "
                         f"multiple chained calls, just make ONE normal tool_use with a real capability "
                         f"name. Allowed now: {_avail}.")
+            elif _V5_ASKLIKE_TOOL_RE.match(str(tool or "")):
+                # The name it invented is an attempt to TALK TO THE USER. Listing
+                # capabilities answers a question it isn't asking, so it flails:
+                # observed live, a step tried `ask_user`, was given the cap list,
+                # and then spent two more cycles using prose.author to write its
+                # questions into a markdown file nobody would ever read. Answer
+                # the actual question — how do I ask? — including the case where
+                # the answer is "you can't, so decide".
+                _msg = (
+                    f"There is no `{tool}` capability, and asking the user is NEVER a tool_use — "
+                    "no capability can reach a human. "
+                    + (
+                        'To ask, put the question at the TOP LEVEL of your JSON response instead: '
+                        '{"thought":"<why you cannot proceed>","ask_user":"<your single question>"} '
+                        "— a sibling of `tool_use`, not a tool name. Use it ONLY for something you "
+                        "genuinely cannot determine and cannot sensibly default. "
+                        if enable_step_questions else
+                        "Asking is DISABLED for this run — there is no way to reach the user, so "
+                        "waiting for an answer will stall the step forever. "
+                    )
+                    + "Do NOT write your questions into a file; nobody reads it, and it does not "
+                    "count as progress. For scope, preferences, timeframe, sources, format or "
+                    "depth: CHOOSE a sensible default, state the choice in one line, and carry on "
+                    "— the goal's own wording usually settles it already ('the latest news' means "
+                    "the most recent you can find). "
+                    + f"Allowed now: {_avail}.")
             else:
                 _msg = ((f"'{tool}' is not in this step's scope. " if _real else
                          f"There is NO capability called '{tool}' — that is not a tool name (a DAG or "
@@ -14351,6 +14757,56 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                                   "reason": "re-author of a file that already ran ok — "
                                             "redirected to code.edit"})
 
+        # ── PROTECT PROVEN-GOOD FILES FROM RAW ide.fs.write ───────────────────
+        # The CODE-WRITE GATE below only judges the CONTENT of an ide.fs.write
+        # call (does it look like code, is it long enough to bother) — and is
+        # bounded by _MAX_CODE_WRITE_REDIRECTS. That leaves exactly the reported
+        # clobber: a SHORT or non-code-shaped write (a truncated retry, an error
+        # stub, a plain-text dump) landing on a path code.author/code.edit
+        # already produced real, working content for — and it goes unguarded
+        # forever once the budget below is spent. Judge the PATH instead: any
+        # ide.fs.write aimed at an already-proven file is redirected to
+        # code.edit — unconditionally, with no redirect budget, because this
+        # protects EXISTING good work rather than just steering new code.
+        if tool == "ide.fs.write" and isinstance(args, dict):
+            _pw_path = str(args.get("path") or args.get("file") or "").strip()
+            if _pw_path and _v5_path_is_proven(artifacts, _pw_path) and "code.edit" in catalog_set:
+                _pw_key = _v5_art_key(_pw_path)
+                if "code.edit" not in allowed:
+                    allowed.append("code.edit")
+                    try:
+                        granted.append("code.edit")
+                    except Exception:
+                        pass
+                    _esig = rich_cap_signature("code.edit")
+                    dynamic_caps_block = ((dynamic_caps_block + "\n" + _esig)
+                                          if dynamic_caps_block else _esig)
+                _pw_draft = str(args.get("content") or args.get("text") or "")
+                _orig_tool = tool
+                tool = "code.edit"
+                tool_calls[tool] = tool_calls.get(tool, 0) + tool_calls.pop(_orig_tool, 1)
+                args = {
+                    "path": _pw_key or _pw_path,
+                    "task": ("An executor tried to overwrite this file directly with "
+                             "ide.fs.write instead of editing it. This file already has "
+                             "proven, working content — a blind overwrite would discard "
+                             "it. Here is what the write attempted to change it to; apply "
+                             f"only the INTENDED change, keep the rest:\n{_pw_draft[:4000]}"),
+                    "session_id": sid,
+                }
+                pending_note = (
+                    f"(`{_pw_path}` already has proven, working content, so the loop "
+                    "redirected your direct ide.fs.write to code.edit instead — it applies "
+                    "your intended change without discarding the rest of the file. "
+                    "ide.fs.write must never be used to overwrite a file this run has "
+                    "already produced good content for.)")
+                _call_sig = _v5_call_sig(tool, args)
+                await emit_event({"type": "agent_loop_v5.proven_code_protected",
+                                  "stream_id": stream_id, "cycle": cur_cycle,
+                                  "step_id": step_id, "session_id": sid, "path": _pw_path,
+                                  "reason": "raw ide.fs.write against a proven file — "
+                                            "redirected to code.edit"})
+
         # ── CODE-WRITE GATE ──────────────────────────────────────────────────
         # ide.fs.write is for DATA and documents. Hand-writing a script through
         # it skips the coding model, skips grounding on the real input files, and
@@ -14681,6 +15137,22 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                                 # script) — show REAL content as a deterministic
                                 # head+tail, never an LLM brief.
                                 _cond = _v5_head_tail(_full)
+                            elif tool.startswith("research.") and _research_report_text(
+                                    invoke.get("result")).strip():
+                                # RESEARCH IS THE DELIVERABLE, not raw material to
+                                # be counted. The structured-brief branch below is
+                                # right for a list of records ("10 items, the list
+                                # is at .sources") but destroys a written report —
+                                # the step then only ever saw "N items" and went
+                                # off re-fetching the sources to reconstruct prose
+                                # it had already been given. Pass the report
+                                # through whole; it is already the condensed form
+                                # of everything the researcher read.
+                                _cond = _research_report_text(invoke.get("result"))
+                                if len(_cond) > _V5_RESEARCH_KEEP_MAX:
+                                    _cond = (_cond[:_V5_RESEARCH_KEEP_MAX]
+                                             + f"\n\n[report continues — full text saved to "
+                                               f"{_full_path or 'the working directory'}]")
                             elif _struct is not None:
                                 # Structured (JSON) data → a DETERMINISTIC brief with the
                                 # REAL item count + where the list lives; the FULL data is
@@ -15783,7 +16255,24 @@ async def cap_dag_agent_loop_v5(
     enable_recon:       bool = True,
     recon_max_rounds:   int  = 3,
     enable_subplans:    bool = True,
-    enable_phases:      bool = True,
+    # ── Step phasing: OFF by default ─────────────────────────────────────────
+    # Phasing splits ONE planned step into explore→think→act→verify sub-steps and
+    # AUTO-SCOPES each one's caps. In practice it repeatedly fought the loop
+    # rather than helping it, in three distinct ways seen live:
+    #   • It STRIPS the step's own caps. A step planned with
+    #     [prose.author, llm.summarize] was given ONLY [ide.fs.read] in its
+    #     explore phase — a summarisation task with nothing that can summarise —
+    #     so its only possible move was to stall ("Awaiting confirmation to read
+    #     the saved HTML file…"), which then became the step's summary.
+    #   • A read-only phase cannot escalate to exec.*, so a recovery step whose
+    #     remaining work was to RUN something could never finish.
+    #   • A verify phase re-authored the script the act phase had just got
+    #     working, destroying a good result while "verifying" it.
+    # The planner already assigns each step the caps it needs; a second, blunter
+    # scoping pass on top mostly removes them. Set enable_phases=True to restore
+    # the cadence (phase_policy/phase_set still apply) — kept so the two modes
+    # can be benchmarked against each other rather than argued about.
+    enable_phases:      bool = False,
     phase_policy:       str  = "auto",     # auto|encourage|sparing (v5 has no tier, so auto≈sparing)
     phase_set:          str  = "explore,think,act,verify",
     prefer_terminal_tools: bool = True,
@@ -15892,6 +16381,10 @@ async def cap_dag_agent_loop_v5(
     _skill_deny = {s.strip() for s in (skill_deny or "").replace(",", " ").split() if s.strip()}
     skills = (await _v5_list_skills(trace_id or "", allow=_skill_allow, deny=_skill_deny)
               if enable_dynamic_skills else [])
+    # Only show the planner skills relevant to THIS goal (+ structural sys-/fmt-
+    # skills) — an unrelated user domain skill otherwise hijacks the plan. See the
+    # v6 site for the confirmed crypto-drift case.
+    skills = _v5_filter_skills_for_goal(skills, goal, catalog=set(catalog_names))
     cap_skill_map = _v5_cap_skill_map(skills)
     eligible_skill_ids = {s["id"] for s in skills}
 
@@ -16358,10 +16851,24 @@ def _v6_build_ledger(goal: str, done_when: str, results: List[Dict[str, Any]],
                 line += f"\n   outputs/artifacts: {outs[:per_step]}"
         done_lines.append(line)
     done_block = "\n".join(done_lines) or "(nothing executed yet)"
-    pend = " › ".join(f"{s['id']}. {s.get('title','')}" for s in queue) or "(none)"
+    # Pending steps with their GOAL and CAPS, one per line — not a terse
+    # "id. title ›" chain. The controller is asked not to insert work a pending
+    # step already covers, and it cannot judge that overlap from titles alone:
+    # it inserted "Fetch full article content from top sources" while "Fetch full
+    # content from top news sources" was the very next pending step.
+    if queue:
+        pend = "\n".join(
+            f"  {s['id']}. {s.get('title', '')}"
+            + (f"\n       goal: {str(s.get('goal') or '')[:140]}" if s.get("goal") else "")
+            + (f"\n       caps: {', '.join(s.get('caps') or [])}" if s.get("caps") else "")
+            for s in queue[:12])
+    else:
+        pend = "  (none)"
     return (f"GOAL: {goal}\n"
             + (f"DONE WHEN: {done_when}\n" if done_when else "")
-            + f"\nEXECUTED STEPS:\n{done_block}\n\nPENDING STEPS: {pend}")[:max(total, _V6_LEDGER_TOTAL)]
+            + f"\nEXECUTED STEPS:\n{done_block}\n\n"
+            + "PENDING STEPS (these WILL run — do not insert work they already do):\n"
+            + pend)[:max(total, _V6_LEDGER_TOTAL)]
 
 
 def _v6_coerce_control_steps(raw_steps: Any, base_id: int, goal: str,
@@ -16456,6 +16963,19 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
         "Be decisive but conservative: prefer \"continue\" when the plan is on track; only "
         "replan/insert when the evidence genuinely warrants it; only \"stop\" when the goal "
         "is DEMONSTRABLY met. Do NOT invent artifacts the goal did not ask for.\n"
+        "NEVER INSERT A STEP THAT A PENDING STEP ALREADY DOES. Read PENDING STEPS before you "
+        "choose: if the work you have in mind is what the next pending step is for, the "
+        "correct action is \"continue\" — inserting it duplicates the step and the run does "
+        "the same work twice. Observed: after a search step succeeded, an insert was made for "
+        "'Fetch full article content from top sources' while 'Fetch full content from top news "
+        "sources' was already the very next pending step. Insert ONLY for work that no pending "
+        "step covers.\n"
+        "IF A CAP ALREADY RETURNED GOOD DATA, ASK FOR MORE OF IT RATHER THAN A DIFFERENT "
+        "MECHANISM. When a research/search cap has produced usable results and you want more "
+        "or deeper coverage, prefer another call to THAT cap over inserting a step that "
+        "re-acquires the same material a harder way (crawling each URL by hand, re-reading a "
+        "file you already have). Re-acquiring by a second mechanism is where runs lose whole "
+        "sequences of cycles.\n"
         "For inserted/replanned steps use the SAME shape as the original plan: a plain-"
         "language title, a goal, the exact `caps` names from the catalog, and a checkable "
         "`success` criterion. NEVER put planning/DAG capabilities in a step.\n"
@@ -16563,6 +17083,46 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
             "goal_alignment": _align,
             "direction": str(obj.get("direction") or "")[:400],
             "goal_met": goal_met, "action": action, "steps": steps}
+
+
+_PLAN_DRIFT_STOP = {
+    "the", "a", "an", "and", "or", "of", "to", "in", "for", "with", "on", "at",
+    "from", "by", "as", "is", "are", "be", "it", "that", "this", "into", "using",
+    "create", "make", "build", "write", "generate", "produce", "get", "find",
+    "list", "show", "data", "file", "files", "report", "detailed", "real", "look",
+    "like", "add", "use", "new", "set", "run", "then", "all", "some", "your",
+}
+
+
+def _plan_words(text: str) -> set:
+    """Content words of a goal/title — lowercased, stemmed crudely to catch
+    plural/singular pairs, with generic task verbs removed so 'create a report'
+    and 'create a scanner' don't look alike."""
+    out = set()
+    for w in re.findall(r"[A-Za-z][A-Za-z0-9'-]{2,}", str(text or "").lower()):
+        if w in _PLAN_DRIFT_STOP:
+            continue
+        out.add(w[:-1] if len(w) > 4 and w.endswith("s") else w)
+    return out
+
+
+def _plan_drifted(goal: str, steps: List[Dict[str, Any]]) -> bool:
+    """True when a plan appears to be about something other than the goal.
+
+    Deliberately conservative — it must never reject a legitimate plan that
+    simply uses different words. It fires only when the plan's titles share NO
+    content word with the goal at all, which is what a wholesale substitution
+    (a crypto plan for a Pokédex request) looks like. A goal too short to have
+    any content words of its own is never judged."""
+    gw = _plan_words(goal)
+    if len(gw) < 2 or not steps:
+        return False
+    tw = set()
+    for s in steps:
+        if isinstance(s, dict):
+            tw |= _plan_words(s.get("title"))
+            tw |= _plan_words(s.get("goal"))
+    return bool(tw) and not (gw & tw)
 
 
 async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]],
@@ -16720,8 +17280,8 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
                          f"Produce it now using the data/results already gathered earlier "
                          f"in this run (see the ledger) — do not restart the whole task. "
                          f"Save it at exactly this path: {p}."),
-                "caps": (["llm.generate", "ide.fs.write"] if _doc_ext
-                         else ["exec.python.run", "ide.fs.write"]),
+                "caps": (["prose.author"] if _doc_ext
+                         else ["exec.python.run", "code.author"]),
                 "success": f"The file '{p}' exists and contains real, non-placeholder content.",
             })
 
@@ -16811,13 +17371,13 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
                 "file (.md/.txt/.html/...) exists in the working directory",
                 {
                     "title": "Write and save the report",
-                    "goal": ("Using the llm.generate capability directly — do NOT write a script "
-                             "that calls an external or mock LLM API — write the document "
-                             "described by the goal below, grounded strictly on data already "
-                             "gathered earlier in this run, then save it as a real file (e.g. "
-                             "report.md) with ide.fs.write or llm.generate's save_as argument.\n"
+                    "goal": ("Using prose.author — do NOT write a script that calls an external "
+                             "or mock LLM API — write the document described by the goal below, "
+                             "grounded strictly on data already gathered earlier in this run, "
+                             "then save it as a real file (e.g. report.md) via prose.author's "
+                             "path argument.\n"
                              f"GOAL: {goal}"),
-                    "caps": ["llm.generate", "ide.fs.write"],
+                    "caps": ["prose.author"],
                     "success": ("A document-shaped file (.md/.txt/.html) exists in the working "
                                 "directory containing the report described by the goal."),
                 })
@@ -18618,6 +19178,43 @@ _V7_SELF_ANSWERED_GAP_RE = re.compile(
     r"|\b(working|artifact|workspace)\s+(directory|dir|path)\b"
     r"|\b(session|sandbox|workspace)[ _-]?id\b", re.I)
 
+# Invented tool names that are really "let me talk to the human". A model that
+# reaches for one of these has a question, not a capability problem, so the
+# refusal has to answer the question it's actually asking.
+_V5_ASKLIKE_TOOL_RE = re.compile(
+    r"^(?:\w+\.)?(?:ask|ask[_.]?user|user[_.]?ask|query[_.]?user|prompt[_.]?user"
+    r"|request[_.]?(?:input|info|user|clarification)|get[_.]?(?:user[_.]?)?input"
+    r"|user[_.]?input|clarify|clarification|confirm[_.]?(?:with[_.]?)?user"
+    r"|human[_.]?(?:input|in[_.]?the[_.]?loop)|hitl|await[_.]?user"
+    r"|ask[_.]?question|question[_.]?user|interact(?:ive)?[_.]?prompt)$", re.I)
+
+# Gaps that can only be answered by ASKING THE USER — scope, taste, preference.
+# These are worse than useless: the step cannot obtain them (there is no
+# ask-the-user tool in its scope), so it stalls. Observed live on the goal
+# "lookup the latest news in AI and ML": the prerequisites block asked for a
+# "desired time range for 'latest'", "preferred sources or domains" and
+# "keywords beyond AI and ML" — none of which the user needs to supply, all of
+# which the step can simply DECIDE. It then invented an `ask_user` capability,
+# was refused, and burned two further cycles writing the questions into a
+# markdown file. A goal that says "the latest news" has already specified its
+# timeframe; a step's job is to pick sensible defaults and proceed.
+_V7_ASK_THE_USER_GAP_RE = re.compile(
+    r"\b(time\s*frame|timeframe|time\s+range|date\s+range|recency|how\s+far\s+back"
+    r"|cut[- ]?off\s+date|period\s+of\s+interest)\b"
+    # One optional intervening noun so "preferred REPORT format" matches as well
+    # as "preferred format".
+    r"|\b(preferred|desired|specific|target|chosen|user[' ]?s?)\s+(\w+\s+)?"
+    r"(source|sources|domain|domains|outlet|outlets|site|sites|keyword|keywords"
+    r"|topic|topics|format|style|tone|length|depth|audience|scope)\b"
+    r"|\b(user|client|requester)('s)?\s+(preference|preferences|choice|choices"
+    r"|requirement|requirements|input|opinion|approval|confirmation)\b"
+    # …and the reversed phrasing: "confirmation FROM THE USER".
+    r"|\b(confirmation|approval|sign[- ]?off|permission|consent|decision|guidance"
+    r"|direction|clarification|feedback)\s+(from|by|of)\s+(the\s+)?"
+    r"(user|client|requester|human)\b"
+    r"|\bask\s+the\s+user\b|\bconfirm\s+with\s+the\s+user\b"
+    r"|\b(clarif\w+)\s+(from|with)\s+the\s+user\b", re.I)
+
 
 async def _v7_prestep_info(step: Dict[str, Any], results: List[Dict[str, Any]],
                            goal: str, *, model: str, instance_id: str,
@@ -18640,6 +19237,15 @@ async def _v7_prestep_info(step: Dict[str, Any], results: List[Dict[str, Any]],
         "directory and is told the path when it does; asking for it first sends the "
         "step hunting for a file that does not exist yet. Gaps are EXTERNAL facts "
         "only (data, parameters, decisions) that the step cannot derive.\n"
+        "EXCLUDE anything that would have to come from the USER — a preferred time "
+        "range, preferred sources or domains, extra keywords, format/tone/length "
+        "preferences, or any confirmation. The step CANNOT ask; there is no "
+        "ask-the-user tool in its scope, so listing one of these strands it. The "
+        "step is expected to CHOOSE sensible defaults and proceed. Treat the goal's "
+        "own wording as already deciding these: 'the latest news' HAS specified its "
+        "timeframe (the most recent available), 'a report on X' HAS specified its "
+        "topic. A gap is something the step must go and FETCH with a tool, not "
+        "something someone must tell it.\n"
         'Respond ONLY with JSON: {"gaps":["...","..."]}')
     prompt = (f"OVERALL GOAL: {goal[:600]}\n"
               f"THIS STEP: {step.get('title','')}\n"
@@ -18656,7 +19262,9 @@ async def _v7_prestep_info(step: Dict[str, Any], results: List[Dict[str, Any]],
         # Drop self-answerable gaps the model asks for anyway. "path to the output
         # file" is the recurring one: the step then spends cycles looking for a file
         # that only comes into existence when it generates it.
-        gaps = [g for g in gaps if not _V7_SELF_ANSWERED_GAP_RE.search(g)]
+        gaps = [g for g in gaps
+                if not _V7_SELF_ANSWERED_GAP_RE.search(g)
+                and not _V7_ASK_THE_USER_GAP_RE.search(g)]
     except Exception as e:
         log.debug("v7 prestep info failed: %s", e)
         gaps = []
@@ -18826,7 +19434,10 @@ async def _v6_deliver(goal: str, done_when: str, results: List[Dict[str, Any]],
         "ceiling on inserted/replanned steps), enable_dynamic_skills (bool default True), "
         "skill_allow/skill_deny (csv), auto_suggest_skills (bool default True), enable_recon "
         "(bool default True), recon_max_rounds (int default 3), enable_subplans (bool default "
-        "True), enable_phases (bool default True), phase_policy (auto|encourage|sparing default "
+        "True), enable_phases (bool default FALSE — splitting a step into "
+        "explore/think/act/verify sub-agents auto-scopes each phase's caps and in practice "
+        "strips the step of the tools the planner gave it; set True to restore it), "
+        "phase_policy (auto|encourage|sparing default "
         "auto — auto phases heavily on a complex/strategic goal, encourage forces it on any run), "
         "phase_set (csv default 'explore,think,act,verify' — which step phases the planner may "
         "use), prefer_terminal_tools (bool default True — seed exec.bash.run + steer specialists "
@@ -18888,7 +19499,24 @@ async def cap_dag_agent_loop_v6(
     enable_recon:       bool = True,
     recon_max_rounds:   int  = 3,
     enable_subplans:    bool = True,
-    enable_phases:      bool = True,
+    # ── Step phasing: OFF by default ─────────────────────────────────────────
+    # Phasing splits ONE planned step into explore→think→act→verify sub-steps and
+    # AUTO-SCOPES each one's caps. In practice it repeatedly fought the loop
+    # rather than helping it, in three distinct ways seen live:
+    #   • It STRIPS the step's own caps. A step planned with
+    #     [prose.author, llm.summarize] was given ONLY [ide.fs.read] in its
+    #     explore phase — a summarisation task with nothing that can summarise —
+    #     so its only possible move was to stall ("Awaiting confirmation to read
+    #     the saved HTML file…"), which then became the step's summary.
+    #   • A read-only phase cannot escalate to exec.*, so a recovery step whose
+    #     remaining work was to RUN something could never finish.
+    #   • A verify phase re-authored the script the act phase had just got
+    #     working, destroying a good result while "verifying" it.
+    # The planner already assigns each step the caps it needs; a second, blunter
+    # scoping pass on top mostly removes them. Set enable_phases=True to restore
+    # the cadence (phase_policy/phase_set still apply) — kept so the two modes
+    # can be benchmarked against each other rather than argued about.
+    enable_phases:      bool = False,
     phase_policy:       str  = "auto",     # auto|encourage|sparing — how hard to phase steps (auto = tier-aware)
     phase_set:          str  = "explore,think,act,verify",  # which step phases the planner may assign
     prefer_terminal_tools: bool = True,    # seed exec.bash.run + steer specialists to grep/sed/awk
@@ -19044,16 +19672,93 @@ async def cap_dag_agent_loop_v6(
     # goal (which genuinely was about a report) got folded into `goal` here
     # and the override searched the augmented text, not the real ask.
     _orig_goal = goal
+    # What the PLANNER sees. Defaults to the real goal and only differs when
+    # useful recall survives the filter below — so `goal` itself stays pristine
+    # everywhere else.
+    plan_goal = goal
+    # ── Planner recall injection (conversation context) ────────────────────────
+    # Re-enabled 2026-08-06: the crypto/quant PLANNER DRIFT was ultimately traced
+    # to UNFILTERED SKILL injection (an unrelated "cryptocurrency … DeFi" user
+    # skill dumped into the planner and hijacked the plan) — fixed by
+    # _v5_filter_skills_for_goal above. This recalled-conversation block was NOT
+    # the culprit (with it OFF the drift still occurred), so it is restored. It
+    # still carries its own echo/relevance filter below and the plan-drift guard
+    # remains as a backstop. Set False to disable planner recall.
+    _V6_PLANNER_RECALL = True
     try:
-        _mh = sys.modules.get("memory_hooks")
+        _mh = sys.modules.get("memory_hooks") if _V6_PLANNER_RECALL else None
         if _mh:
             _mem_ctx = await asyncio.wait_for(
                 _mh.get_agent_memory_context(session_id=sid, query=goal, limit=5), timeout=8)
+            # Strip the WORTHLESS recall before deciding to inject anything.
+            # Almost everything this query returns is the loop's own history:
+            # `[[loop: <the same goal>]]` trigger lines and verbatim echoes of
+            # the request from previous attempts. Re-running the same goal three
+            # times fills the block with three copies of itself — noise that
+            # crowds the prompt and, worse, once got planned instead of the
+            # actual ask. Keep only lines that say something the goal does not.
             if _mem_ctx:
-                goal = (goal + "\n\n" + _mem_ctx
-                        + "\n(The above are RELEVANT RESULTS FROM PAST CONVERSATIONS — reuse "
-                          "them if they already answer part of this goal; do not re-fetch or "
-                          "re-derive from scratch what is already there.)")
+                _gwords = _plan_words(_orig_goal)
+                _keep = []
+                for _ln in str(_mem_ctx).splitlines():
+                    _s = _ln.strip()
+                    if not _s or _s.startswith("==="):
+                        continue
+                    if "[[loop:" in _s or _s in ("[Retrieved Context]",):
+                        continue
+                    # Strip the record's own scaffolding — "[2026-08-05 21:23]
+                    # User:", "[memory]" — before comparing. Those tokens are
+                    # words the goal will never contain, so leaving them in made
+                    # every echo look like new information and defeated the
+                    # whole filter.
+                    _s2 = re.sub(r"^\[[^\]]*\]\s*", "", _s)
+                    _s2 = re.sub(r"^(User|Assistant|System)\s*:\s*", "", _s2, flags=re.I)
+                    _s2 = re.sub(r"^\[[^\]]*\]\s*", "", _s2).strip()
+                    if not _s2:
+                        continue
+                    _lw = _plan_words(_s2)
+                    # A line that adds no word the goal doesn't already have is
+                    # an echo of the request, not context.
+                    if not (_lw - _gwords):
+                        continue
+                    _keep.append(_s)
+                _mem_ctx = "\n".join(_keep).strip()
+            if _mem_ctx:
+                # HARD boundary around the recalled text, and the real ask
+                # restated AFTER it.
+                #
+                # This used to be `goal + memory + a soft note`, which let the
+                # planner read the whole blob as the objective. Observed live:
+                # the goal "create a gen1 pokedex in html that look like a real
+                # pokedex" produced a three-step plan about crypto markets,
+                # volatility and airdrops — the entire plan came from an
+                # unrelated earlier conversation that embedding similarity had
+                # dragged in. Triage and tier, which see the pristine goal, both
+                # correctly said "pokedex"; only the planner was fooled.
+                #
+                # Recall is retrieved by SIMILARITY, not relevance — it is
+                # frequently about something else entirely, so it has to be
+                # framed as reference material that cannot redefine the task,
+                # and the objective has to be the last thing read.
+                # NOTE: assigns plan_goal, NOT goal. `goal` is the run's identity
+                # — it is stored on the run record, shown on the Goal card, and
+                # judged against by the verifier and the completion gate.
+                # Concatenating recall into it dumped the whole memory block into
+                # the UI and into every downstream judgement. Only the PLANNER
+                # prompt gets the background.
+                plan_goal = (
+                    "OBJECTIVE (this, and only this, is what you are planning):\n"
+                    + _orig_goal
+                    + "\n\n----- BACKGROUND: RECALLED FROM PAST CONVERSATIONS -----\n"
+                    + "These were retrieved by similarity and MAY BE ABOUT SOMETHING ELSE "
+                      "ENTIRELY. They are reference only: reuse anything here that already "
+                      "answers part of the objective instead of re-deriving it, and IGNORE "
+                      "the rest. Nothing in this section changes what you are building — if "
+                      "it describes a different task, a different domain or a different "
+                      "deliverable, it is irrelevant and must not appear in your plan.\n"
+                    + _mem_ctx
+                    + "\n----- END BACKGROUND -----\n\n"
+                    + "Plan for the OBJECTIVE stated above: " + _orig_goal)
     except Exception as e:
         log.debug("v6 memory context inject failed: %s", e)
 
@@ -19109,6 +19814,12 @@ async def cap_dag_agent_loop_v6(
     _skill_deny = {s.strip() for s in (skill_deny or "").replace(",", " ").split() if s.strip()}
     skills = (await _v5_list_skills(trace_id or "", allow=_skill_allow, deny=_skill_deny)
               if enable_dynamic_skills else [])
+    # Only show the planner skills relevant to THIS goal (+ structural sys-/fmt-
+    # skills). Dumping every enabled user skill let an unrelated domain skill
+    # (e.g. a "cryptocurrency … Bitcoin … DeFi" skill) hijack the plan — confirmed
+    # live: an "AI/ML report" goal produced a verbatim-crypto plan; nulling skills
+    # fixed it, and this filter is the surgical version of that.
+    skills = _v5_filter_skills_for_goal(skills, goal, catalog=set(catalog_names))
     cap_skill_map = _v5_cap_skill_map(skills)
     eligible_skill_ids = {s["id"] for s in skills}
     valid_skill_ids = set(eligible_skill_ids)
@@ -19280,13 +19991,13 @@ async def cap_dag_agent_loop_v6(
     _plan_hb_stop = asyncio.Event()
     _plan_hb_task = asyncio.create_task(_v5_planning_heartbeat(sid, stream_id, _plan_hb_stop))
     plan = await _v5_orchestrate_plan(
-        goal, catalog_names, skills, cap_skill_map,
+        plan_goal, catalog_names, skills, cap_skill_map,
         model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
         max_steps=max_steps, want_success=True, phase_policy=phase_policy,
         allowed_phases=allowed_phases, sid=sid, stream_id=stream_id)
     if not plan.get("steps"):
         retry = await _v5_orchestrate_plan(
-            goal, catalog_names, skills, cap_skill_map,
+            plan_goal, catalog_names, skills, cap_skill_map,
             model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
             max_steps=max_steps, minimal=True, want_success=True,
             phase_policy=phase_policy)
@@ -19311,7 +20022,7 @@ async def cap_dag_agent_loop_v6(
             if mp.get("long_form"):
                 _master_ran = True
                 plan2 = await _v5_plan_master_piecewise(
-                    goal, catalog_names, skills, cap_skill_map,
+                    plan_goal, catalog_names, skills, cap_skill_map,
                     long_form=mp["long_form"], model=model, instance_id=instance_id,
                     prefer_gpu=prefer_gpu, max_steps=max_steps, want_success=True,
                     max_caps_per_piece=max_caps_per_piece, cap_override_mode=cap_override_mode,
@@ -19381,7 +20092,7 @@ async def cap_dag_agent_loop_v6(
                 # in one session still expands every piece (max_pieces=None).
                 _mp_cap = 1 if tier == "strategic" else None
                 plan2 = await _v5_plan_master_piecewise(
-                    goal, catalog_names, skills, cap_skill_map,
+                    plan_goal, catalog_names, skills, cap_skill_map,
                     long_form=mp["long_form"], model=model, instance_id=instance_id,
                     prefer_gpu=prefer_gpu, max_steps=max_steps, want_success=True,
                     max_pieces=_mp_cap,
@@ -19432,7 +20143,7 @@ async def cap_dag_agent_loop_v6(
             recon_digest = "\n\n".join(accumulated)
             try:
                 plan2 = await _v5_orchestrate_plan(
-                    goal, catalog_names, skills, cap_skill_map,
+                    plan_goal, catalog_names, skills, cap_skill_map,
                     model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
                     max_steps=max_steps, recon_findings="\n\n".join(accumulated),
                     recon_rounds_left=rounds_left_after, want_success=True,
@@ -19467,6 +20178,45 @@ async def cap_dag_agent_loop_v6(
                           "note": "plan escalations exhausted — entering STEPWISE mode"})
 
     steps = _v5_split_compound_single_step(steps, goal)
+    # DRIFT GUARD — does this plan actually address the goal that was asked?
+    # A prompt can always be talked past, so the check is deterministic: if the
+    # plan's titles share essentially no vocabulary with the PRISTINE goal, the
+    # planner has planned something else (in the observed case, a whole plan
+    # about crypto markets for a goal asking for a Gen 1 Pokédex, lifted from
+    # recalled conversation). Re-plan once with no memory injection at all.
+    if _plan_drifted(_orig_goal, steps):
+        await emit_event({"type": "agent_loop_v6.plan_drift", "session_id": sid,
+                          "stream_id": stream_id,
+                          "goal": _orig_goal[:200],
+                          "titles": [str(s.get("title") or "")[:80] for s in steps][:6],
+                          "note": "plan shared no vocabulary with the goal — "
+                                  "re-planning without recalled context"})
+        # RE-PLAN on the pristine goal with NO recalled context at all.
+        #
+        # Detection alone was not enough: observed live, the guard correctly
+        # fired on a quant-trading plan (data_ingestion / strategy_backtest /
+        # portfolio_optimization) for a "gen1 pokedex in html" goal — and the
+        # run then executed that plan anyway, because this branch only logged
+        # and stripped context. The recalled block is the contaminant, so the
+        # retry simply omits it; same arguments as the original call above.
+        goal = _orig_goal
+        try:
+            _fix = await _v5_orchestrate_plan(
+                _orig_goal, catalog_names, skills, cap_skill_map,
+                model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+                max_steps=max_steps, want_success=True, phase_policy=phase_policy,
+                allowed_phases=allowed_phases, sid=sid, stream_id=stream_id)
+            _fsteps = (_fix or {}).get("steps") or []
+            await emit_event({"type": "agent_loop_v6.plan_drift_replan",
+                              "session_id": sid, "stream_id": stream_id,
+                              "recovered": bool(_fsteps and not _plan_drifted(_orig_goal, _fsteps)),
+                              "titles": [str(s.get("title") or "")[:80] for s in _fsteps][:6]})
+            # Only accept the retry if it actually addresses the goal — a second
+            # drifted plan is no better than the first.
+            if _fsteps and not _plan_drifted(_orig_goal, _fsteps):
+                steps = _fsteps
+        except Exception as _e:
+            log.debug("v6 drift re-plan failed: %s", _e)
     # Enforce the phase policy on the plan: none when phases are off, else keep only
     # the phases the user allowed (phase_set) in canonical order.
     for s in steps:
@@ -20460,7 +21210,10 @@ async def workshop_agent_loop_stream(request: Request):
     v5_enable_recon     = bool(body.get("enable_recon", True))
     v5_recon_max_rounds = int(body.get("recon_max_rounds", 3) or 3)
     v5_enable_subplans  = bool(body.get("enable_subplans", True))
-    v5_enable_phases    = bool(body.get("enable_phases", True))
+    # Default OFF — see the note on enable_phases in the v6 runner. The UI sends
+    # this explicitly from the Loop rail, so a user who turns phasing back on
+    # still gets it; only the DEFAULT changed.
+    v5_enable_phases    = bool(body.get("enable_phases", False))
     v5_phase_policy     = (body.get("phase_policy", "auto") or "auto").strip().lower()
     v5_phase_set        = (body.get("phase_set", "explore,think,act,verify")
                            or "explore,think,act,verify")
@@ -21008,6 +21761,7 @@ async def workshop_agent_loop_stream(request: Request):
             "agent_loop.research_file",
             "agent_loop.research_thinking",
             "agent_loop.research_report",
+            "agent_loop.research_activity",
             "agent_loop.error_recovery_start",
             "agent_loop.error_recovery_attempt",
             "agent_loop.error_recovery_done",
@@ -21058,6 +21812,7 @@ async def workshop_agent_loop_stream(request: Request):
             "agent_loop.research_file",
             "agent_loop.research_thinking",
             "agent_loop.research_report",
+            "agent_loop.research_activity",
             "agent_loop.error_recovery_start",
             "agent_loop.error_recovery_attempt",
             "agent_loop.error_recovery_done",
@@ -21961,6 +22716,8 @@ try:
         ],
         mode      = "tab",
         tab_order = 17,
+        specialist_agent="agentic-planner",
+        specialist_loop_profile="planning",
     )
     log.info("dag-workshop UI panel registered")
 except Exception as e:

@@ -48,6 +48,7 @@ import json
 import logging
 import os
 import shlex
+import shutil
 import sys
 import tempfile
 import time
@@ -69,6 +70,17 @@ from Vera.vera.capability_orchestration import (
 log = logging.getLogger("vera.docker")
 
 _LOCAL_SOCK = os.getenv("DOCKER_SOCK", "/var/run/docker.sock")
+
+# CPython's subprocess fast-path (os.posix_spawn, no fork/GIL-holding page-table
+# copy — see exec_capabilities._run_local's VERA_FAST_SPAWN comment) only
+# engages when argv[0] has a directory component (os.path.dirname(executable)
+# must be truthy — see cpython subprocess.Popen._execute_child). A bare
+# "docker" resolved via PATH fails that check silently, so every docker CLI
+# spawn in Vera was taking the slow fork() path regardless of close_fds=False
+# — confirmed live via perf.stalls (a 1.26s create_subprocess_exec hang during
+# sandbox archiving). Resolve the absolute path once so the fast path actually
+# applies; fall back to the bare name (old behavior) if docker isn't on PATH.
+_DOCKER_BIN = shutil.which("docker") or "docker"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -680,7 +692,7 @@ async def _docker_argv(rec: dict, args: List[str]) -> List[str]:
         uh = await _ssh_user_host(rec.get("ssh_host_id", ""))
         if uh:
             flag = ["-H", "ssh://" + uh]
-    return ["docker", *flag, *args]
+    return [_DOCKER_BIN, *flag, *args]
 
 
 def _docker_sse(event: str, data) -> bytes:

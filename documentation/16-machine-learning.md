@@ -100,3 +100,15 @@ This is where ML meets [Markets](./15-markets.md): the `mkt.*` datasets that Mar
 - [Markets](./15-markets.md) — `mkt.*` OHLCV datasets feed `ml.data.prepare`
 - [DAG Engine](./03-dag-engine.md) — compose `ml.run` / training steps into workflows
 - [Capability Framework](./01-capability-framework.md) — `ml.*` registration & event streaming
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_No capabilities resolved for this domain._
+<!-- VERA:AUTO:capabilities END -->

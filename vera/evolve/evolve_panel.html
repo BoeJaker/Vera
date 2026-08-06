@@ -514,7 +514,21 @@ html.vpb-nav-hosted body{padding-left:0}
 <!-- ── CI / CD ── -->
 <div class="sec" id="sec-pipelines" style="display:none">
   <div class="card">
-    <div class="card-h"><span class="card-t">Repository</span><span style="flex:1"></span><button class="btn sm" onclick="loadGit()">&#8635;</button></div>
+    <div class="card-h"><span class="card-t">Repository</span>
+      <select id="git-repo" style="margin-left:8px" onchange="loadGit()"></select>
+      <span style="flex:1"></span>
+      <button class="btn sm" onclick="toggleAddRepo()">+ add repo</button>
+      <button class="btn sm" onclick="loadGit()">&#8635;</button>
+    </div>
+    <div id="add-repo-body" style="display:none;margin-bottom:8px">
+      <div class="row" style="gap:6px;flex-wrap:wrap">
+        <input id="ar-id" placeholder="id (slug)" style="width:110px">
+        <input id="ar-label" placeholder="label" style="width:130px">
+        <input id="ar-path" placeholder="absolute path on the Vera host" style="width:260px">
+        <input id="ar-test" placeholder="test_cmd (default: pytest -q --tb=no)" style="width:220px">
+        <button class="btn sm primary" onclick="addRepo()">Register</button>
+      </div>
+    </div>
     <div id="git-body"><div class="empty">Loading…</div></div>
   </div>
   <div class="card">
@@ -2026,16 +2040,40 @@ async function queueCode(id,i){const r=await post('/evolve/code/queue',{session_
 async function promoteVar(profile,vid){const r=await post('/evolve/variant/promote',{profile,variant_id:vid});if(r&&r.ok){toast('Promoted — loops.run now uses it');closeModal();}else toast((r&&r.error)||'failed')}
 
 /* ═══ CI / CD ═══ */
+let _repos=[];
+const CTRL_META={claude_code:{icon:'🧑‍💻',label:'Claude Code'},autonomous:{icon:'🌙',label:'Autonomous'},user:{icon:'🧑',label:'User'}};
+function ctrlBadge(who){
+  const m=CTRL_META[who];
+  if(!m)return who?'<span class="pill">'+esc(who)+'</span>':'';
+  return '<span class="pill" title="'+esc(m.label)+'">'+m.icon+' '+esc(m.label)+'</span>';
+}
+async function loadRepos(){
+  const r=await api('/evolve/repo/list');_repos=(r&&r.repos)||[{id:'vera',label:'Vera'}];
+  const sel=$('git-repo');if(!sel)return;
+  const cur=sel.value||'vera';
+  sel.innerHTML=_repos.map(rp=>'<option value="'+esc(rp.id)+'">'+esc(rp.label||rp.id)+(rp.protected?' (vera)':'')+'</option>').join('');
+  sel.value=_repos.some(rp=>rp.id===cur)?cur:'vera';
+}
+function toggleAddRepo(){const el=$('add-repo-body');if(el)el.style.display=el.style.display==='none'?'':'none'}
+async function addRepo(){
+  const id=$('ar-id').value.trim(),label=$('ar-label').value.trim(),path=$('ar-path').value.trim(),test_cmd=$('ar-test').value.trim();
+  if(!id||!path){toast('id and path required');return}
+  const r=await post('/evolve/repo/add',{id,label,path,test_cmd});
+  if(r&&r.ok){toast('Repo registered: '+id);toggleAddRepo();$('ar-id').value='';$('ar-label').value='';$('ar-path').value='';$('ar-test').value='';await loadRepos();$('git-repo').value=id;loadGit()}
+  else toast((r&&r.error)||'failed');
+}
 async function loadGit(){
-  const r=await api('/evolve/git/status');
+  if(!_repos.length)await loadRepos();
+  const repo=($('git-repo')&&$('git-repo').value)||'vera';
+  const r=await api('/evolve/git/status?repo='+encodeURIComponent(repo));
   if(!r||r.error){$('git-body').innerHTML='<div class="empty">'+esc((r&&r.error)||'git status failed')+'</div>';return}
   let h='<div class="row"><span class="kv"><span class="k">branch</span><span class="v" style="font-size:12px">'+esc(r.branch)+'</span></span>'
     +'<span class="pill" style="color:'+(r.dirty?'var(--warn)':'var(--ok)')+'">'+(r.dirty?(r.dirty_files.length+' uncommitted'):'clean')+'</span>'
     +'<span class="hint">'+esc(r.repo)+'</span></div>';
   if((r.branches||[]).length){h+='<div style="margin-top:8px"><label class="fld">loop-lab branches</label>'+r.branches.map(b=>'<span class="tag" style="margin:2px">'+esc(b)+'</span>').join(' ')+'</div>'}
   $('git-body').innerHTML=h;
-  // fill sandbox branch select too
-  const sel=$('sb-branch');if(sel){sel.innerHTML='<option value="">— pick a loop-lab branch —</option>'+(r.branches||[]).map(b=>'<option value="'+esc(b)+'">'+esc(b)+'</option>').join('')}
+  // fill sandbox branch select too (vera repo only — the dev sandbox is Vera-only)
+  const sel=$('sb-branch');if(sel&&repo==='vera'){sel.innerHTML='<option value="">— pick a loop-lab branch —</option>'+(r.branches||[]).map(b=>'<option value="'+esc(b)+'">'+esc(b)+'</option>').join('')}
 }
 async function loadGitLog(){
   const el=$('gitlog-body');if(!el)return;
@@ -2052,12 +2090,14 @@ async function loadPipelines(){
   loadGitLog();
   const r=await api('/evolve/pipeline/list?limit=30');const ps=(r&&r.pipelines)||[];
   if(!ps.length){$('pipes-body').innerHTML='<div class="empty">No pipelines yet.</div>';return}
-  let h='<table><tr><th>id</th><th>kind</th><th>profile</th><th>status</th><th>base→cand</th><th>gate</th><th>decision</th><th></th></tr>';
+  let h='<table><tr><th>id</th><th>repo</th><th>kind</th><th>profile</th><th>status</th><th>controller</th><th>base→cand</th><th>gate</th><th>decision</th><th></th></tr>';
   for(const p of ps){
     const gate=p.gate_passed==null?'':(p.gate_passed?'<span style="color:var(--ok)">PASS '+(p.gate_delta>0?'+':'')+p.gate_delta+'</span>':'<span style="color:var(--err)">FAIL '+p.gate_delta+'</span>');
     h+='<tr class="clk" onclick="openPipe(\''+esc(p.id)+'\')"><td class="mono">'+esc(p.id)+(p.live?' <span class="spin"></span>':'')+'</td>'
+      +'<td><span class="tag">'+esc(p.repo||'vera')+'</span></td>'
       +'<td><span class="tag">'+esc(p.kind)+'</span></td><td>'+esc(p.profile)+'</td>'
       +'<td>'+esc(p.status||'')+'</td>'
+      +'<td>'+ctrlBadge(p.controller)+'</td>'
       +'<td class="mono">'+(p.baseline_score==null?'—':p.baseline_score)+'→'+(p.candidate_score==null?'—':p.candidate_score)+'</td>'
       +'<td>'+gate+'</td><td>'+pipeDecision(p.decision)+'</td>'
       +'<td class="row" style="gap:3px">'+pipeActions(p)+'</td></tr>';
@@ -2080,6 +2120,8 @@ async function openPipe(id){
   const p=r.pipeline;
   let h='<div class="card-h"><span class="card-t">Pipeline '+esc(id)+' · '+esc(p.kind)+'</span><span class="hint">'+esc(p.profile)+'</span></div>';
   h+='<div class="row" style="margin-bottom:8px">'+pipeDecision(p.decision)+' <span class="pill">'+esc(p.status||'')+'</span>'
+    +'<span class="tag">'+esc(p.repo||'vera')+'</span>'
+    +' controller '+ctrlBadge(p.controller)
     +(p.baseline_score!=null?' <span class="pill">baseline '+p.baseline_score+'</span>':'')
     +(p.candidate_score!=null?' <span class="pill">candidate '+p.candidate_score+'</span>':'')
     +(p.gate_delta!=null?' <span class="pill" style="color:'+(p.gate_passed?'var(--ok)':'var(--err)')+'">Δ '+(p.gate_delta>0?'+':'')+p.gate_delta+'</span>':'')
@@ -2087,7 +2129,18 @@ async function openPipe(id){
   if(p.current)h+='<div class="row" style="margin-bottom:6px"><span class="spin"></span><span class="hint">'+esc(p.current)+'</span></div>';
   h+='<label class="fld">stages</label>';
   for(const st of p.steps||[])h+='<div class="mono" style="font-size:10px;padding:2px 0;color:'+(st.ok?'var(--ok)':'var(--err)')+'">'+(st.ok?'✓':'✗')+' '+esc(st.stage)+' — <span style="color:var(--dim2)">'+esc(st.detail)+'</span></div>';
+  const reviews=p.reviews||[];
+  if(reviews.length||p.review_requested){
+    h+='<label class="fld" style="margin-top:8px">adversarial review</label>';
+    reviews.forEach(rv=>{h+='<div style="background:var(--bg2);border-radius:5px;padding:6px 9px;margin-bottom:5px;font-size:10.5px">'
+      +ctrlBadge(rv.reviewer)+' <b>'+esc(rv.verdict)+'</b> · <span style="color:var(--dim2)">'+esc((rv.ts||'').slice(0,19).replace('T',' '))+'</span>'
+      +'<div>'+esc(rv.findings||'')+'</div></div>'});
+    if(p.review_requested)h+='<div class="hint">⏳ awaiting review'+(p.review_request_reason?' — '+esc(p.review_request_reason):'')+'</div>';
+  }
   h+='<div class="row" style="margin-top:12px">';
+  if(p.kind==='code'&&p.repo&&p.repo!=='vera'&&p.status==='awaiting_edit'){
+    h+='<button class="btn" onclick="pipeTest(\''+esc(id)+'\')">Test branch (run '+esc(p.test_cmd||'test_cmd')+')</button>';
+  }
   if(p.decision==='pending'||p.decision==='held'){
     h+='<button class="btn primary" onclick="pipePromote(\''+esc(id)+'\')">Promote'+(p.kind==='code'?' (merge branch)':' (set overlay)')+'</button>';
     h+='<button class="btn err-btn" onclick="pipeRollback(\''+esc(id)+'\')">Rollback'+(p.kind==='code'?' (delete branch)':' (clear overlay)')+'</button>';
@@ -2097,6 +2150,7 @@ async function openPipe(id){
 }
 async function pipePromote(id){const r=await post('/evolve/pipeline/promote',{id});toast(r&&r.ok?'Promoted':(r&&r.error)||'failed');closeModal();loadPipelines()}
 async function pipeRollback(id){const r=await post('/evolve/pipeline/rollback',{id});toast(r&&r.ok?'Rolled back':(r&&r.error)||'failed');closeModal();loadPipelines()}
+async function pipeTest(id){const r=await post('/evolve/pipeline/test',{id});toast(r&&r.ok?('Gate '+(r.gate_passed?'PASSED':'FAILED')):(r&&r.error)||'failed');closeModal();openPipe(id)}
 async function pollPipeLive(id){if(!id)return;const r=await api('/evolve/pipeline/get?id='+encodeURIComponent(id));if(r&&r.pipeline){_livePipe=r.pipeline;renderLive();if(r.pipeline.live){clearTimeout(window._pipeLiveT);window._pipeLiveT=setTimeout(()=>pollPipeLive(id),3000)}}}
 let _sessSug=[],_sessProfile='';
 async function ciVariant(profile,vid){const r=await post('/evolve/pipeline/run',{kind:'variant',profile,variant_id:vid});if(r&&r.ok){toast('CI pipeline '+r.id+' started');closeModal();nav('pipelines');pollPipeLive(r.id)}else toast((r&&r.error)||'failed')}

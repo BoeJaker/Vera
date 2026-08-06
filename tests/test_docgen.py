@@ -67,6 +67,29 @@ def test_render_caps_and_shots():
     assert "![Panel](assets/x/p.png)" in shots
 
 
+def test_panel_capture_url_prefers_real_iframe_route():
+    from vera.operator.missions import documentation as M
+    p = {"id": "evolve", "html": '<div><iframe src="/evolve/panel"></iframe></div>'}
+    r = M.panel_capture_url("http://h:8998", p)
+    assert r["via"] == "route"
+    assert r["url"] == "http://h:8998/evolve/panel"
+
+
+def test_panel_capture_url_window_fallback_for_element_panels():
+    from vera.operator.missions import documentation as M
+    p = {"id": "live-event-stream", "html": "<vera-live-event-stream></vera-live-event-stream>"}
+    r = M.panel_capture_url("http://h:8998", p)
+    assert r["via"] == "window"
+    assert "ui/panel/window?id=live-event-stream" in r["url"]
+
+
+def test_normalise_panels_keeps_html_and_mode():
+    from vera.operator.missions import documentation as M
+    n = M._normalise_panels([{"id": "a", "label": "A", "mode": "tab",
+                              "html": "<iframe src='/a/panel'></iframe>"}])
+    assert n[0]["mode"] == "tab" and n[0]["html"]
+
+
 def test_gallery_build():
     md = G.build_gallery([{"slug": "markets", "title": "Markets", "doc": "15-markets.md",
                            "cover_rel": "assets/markets/s.png", "shot_count": 3, "cap_count": 12}],

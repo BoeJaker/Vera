@@ -54,17 +54,74 @@ input:focus,select:focus{border-color:var(--acc)}
   </div>
   <div id="body">
     <div class="wrap">
-      <!-- ── lldap — the recommended lightweight directory ─────────────────── -->
+      <!-- ── Directory & CA status (FreeIPA-first resolver + org CA + migration) ── -->
       <div class="card span2">
-        <h3>Directory backend · lldap <span id="lldapBadge" class="badge" style="margin-left:auto">—</span></h3>
+        <h3>Directory &amp; CA · FreeIPA-first <span id="resBadge" class="badge" style="margin-left:auto">—</span></h3>
+        <div class="row">
+          <div class="field" style="flex:1"><label>Active routing</label><div id="resActive" class="hint">—</div></div>
+          <div class="field" style="flex:1"><label>Backends</label><div id="resBackends" class="hint">—</div></div>
+          <div class="field" style="flex:1"><label>Org CA · FreeIPA Dogtag</label><div id="caState" class="hint">—</div></div>
+        </div>
+        <div class="row" style="flex:0 0 auto;align-items:center">
+          <button class="btn" style="flex:0 0 auto" onclick="openDirSync()">🔁 Directory Sync (lldap ⇆ FreeIPA)</button>
+          <button class="btn gho" style="flex:0 0 auto" onclick="downloadCA()">⬇ FreeIPA CA (distribute trust)</button>
+          <a class="btn gho" style="flex:0 0 auto;text-decoration:none" href="/trust" target="_blank">🔐 Trust this server → guide</a>
+          <span class="hint" style="flex:1;min-width:180px">Vera's TLS cert is issued by the FreeIPA root
+            (<code>identity.cert.request</code>) — import this CA on clients (VS Code ext, browsers) to make the
+            padlock secure. The <b>Trust this server</b> guide (<code>/trust</code>) walks a user through it.</span>
+        </div>
+        <div class="row" style="flex:0 0 auto;align-items:center;margin-top:2px">
+          <span class="hint" style="flex:0 0 auto">OpenBao vault auth:</span>
+          <span id="baoState" class="hint" style="flex:1;min-width:120px">—</span>
+          <button class="btn sm" style="flex:0 0 auto" onclick="baoWire()">🔐 Wire to FreeIPA</button>
+        </div>
+        <div class="row" style="flex:0 0 auto;align-items:center;margin-top:2px">
+          <span class="hint" style="flex:0 0 auto">OpenBao seal:</span>
+          <span id="baoSeal" class="hint" style="flex:1;min-width:120px">—</span>
+          <button class="btn sm" style="flex:0 0 auto" onclick="baoUnseal()">🔓 Unseal now</button>
+          <button class="btn sm gho" style="flex:0 0 auto" onclick="baoAuToggle()">⚙ KMS auto-unseal</button>
+        </div>
+        <div id="baoAuWrap" style="display:none;margin-top:6px;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--bg0)">
+          <div class="hint" style="font-size:11px;line-height:1.5;color:var(--dim2);margin-bottom:6px">
+            Take OpenBao off ephemeral dev mode: run <code>bao operator init</code> on a persistent
+            server, then register its unseal keys here <b>wrapped by a KMS</b> so Vera opens the vault
+            automatically on boot. Keys are sealed before storage — never kept in plaintext.
+          </div>
+          <div class="row" style="align-items:center">
+            <span class="hint" style="flex:0 0 auto">KMS backend</span>
+            <select id="baoKms" onchange="baoKmsToggle()" style="flex:1;min-width:220px">
+              <option value="vera_fernet">vera_fernet — Vera master key (no extra infra)</option>
+              <option value="transit">transit — Vault/OpenBao transit KMS (like Vault auto-unseal)</option>
+            </select>
+          </div>
+          <textarea id="baoKeys" placeholder="unseal keys — one per line (base64, from `bao operator init`)"
+            style="width:100%;height:72px;margin-top:6px;font-family:monospace;font-size:11px"></textarea>
+          <input id="baoRoot" type="password" placeholder="root token (optional — stored sealed)"
+            style="width:100%;margin-top:4px"/>
+          <div id="baoTransit" style="display:none">
+            <input id="baoTAddr" placeholder="transit addr e.g. https://vault:8200" style="width:100%;margin-top:4px"/>
+            <input id="baoTTok" type="password" placeholder="transit token" style="width:100%;margin-top:4px"/>
+            <input id="baoTKey" placeholder="transit key name (default: autounseal)" style="width:100%;margin-top:4px"/>
+          </div>
+          <div class="row" style="margin-top:6px">
+            <button class="btn sm" onclick="baoAuSave()">Save auto-unseal config</button>
+          </div>
+        </div>
+        <div id="dirSyncWrap" style="display:none;margin-top:8px">
+          <iframe id="dirSyncFrame" title="Directory Sync"
+            style="width:100%;height:540px;border:1px solid var(--border);border-radius:8px;background:var(--bg0)"></iframe>
+        </div>
+      </div>
+
+      <!-- ── lldap — lightweight directory / graceful fallback ──────────────── -->
+      <div class="card span2">
+        <h3>Directory backend · lldap <span class="badge" style="background:none;border-color:var(--dim);color:var(--dim2)">fallback</span> <span id="lldapBadge" class="badge" style="margin-left:auto">—</span></h3>
         <div class="hint" style="font-size:11px;line-height:1.6;color:var(--dim2)">
-          <b style="color:var(--text)">Recommended.</b> lldap is a lightweight LDAP
-          directory (users + groups) that container-apps bind to for login. It ships
-          its own web admin and pairs cleanly with <b>step-ca</b> (which already does
-          your PKI + SSH certs) — no overlap. Deploy it from <b>Provision → Security</b>,
-          or here; then manage users/groups in its admin. Prefer this unless you
-          specifically need Kerberos SSO, integrated DNS or an AD trust — that's when
-          the heavier <b>FreeIPA</b> option below earns its keep.
+          Lightweight LDAP directory (users + groups) that container-apps bind to for
+          login. Since you consolidated on <b>FreeIPA</b> as the primary, the resolver
+          uses lldap as a <b>graceful fallback for users/groups</b> — and you can move
+          identities <b>either direction</b> from <b>Directory Sync</b> above. Deploy /
+          manage it here or from <b>Provision → Security</b>.
         </div>
         <div class="row" style="align-items:center;flex:0 0 auto">
           <select id="lldapHost" style="width:auto;min-width:150px"></select>
@@ -95,7 +152,7 @@ input:focus,select:focus{border-color:var(--acc)}
 
       <!-- Connect -->
       <div class="card span2">
-        <h3>① Connect FreeIPA <span class="badge" style="background:none;border-color:var(--dim);color:var(--dim2)">advanced / optional</span> <span id="cfgBadge" class="badge">edit &amp; save</span></h3>
+        <h3>① Connect FreeIPA <span class="badge ok">primary directory</span> <span id="cfgBadge" class="badge">edit &amp; save</span></h3>
         <div class="row">
           <div class="field"><label>IPA URL</label><input id="cUrl" placeholder="https://ipa.lan"></div>
           <div class="field"><label>Admin user</label><input id="cUser" placeholder="admin"></div>
@@ -282,7 +339,78 @@ async function addTrust(){
     if(r.error)return show('#tOut','Error: '+r.error); show('#tOut','Trust established with '+r.domain);
   }catch(e){ toast(e.message,true); }
 }
-(async()=>{ await loadCfg(); refresh(); await lldapHosts(); lldapRefresh(); })();
+/* ── FreeIPA-first resolver + org CA status (Directory & CA card) ── */
+async function loadResolver(){
+  try{ const r=await api('/identity/resolve/status');
+    const el=$('#resBadge'); el.textContent=r.backend||'none';
+    el.className='badge '+(r.freeipa?'ok':(r.lldap?'warn':'err'));
+    $('#resActive').innerHTML='<b>'+esc(r.backend||'none')+'</b> · users→'+esc(r.user_backend)+' · hosts→'+esc(r.host_backend);
+    $('#resBackends').innerHTML='FreeIPA '+(r.freeipa?'<b style="color:var(--ok)">up</b>':'<span style="color:var(--err)">down</span>')
+      +' · lldap '+(r.lldap?'<b style="color:var(--ok)">up</b>':'<span style="color:var(--dim)">down</span>');
+  }catch(e){ $('#resActive').textContent='resolver unavailable (identity.resolve.*)'; }
+}
+async function loadCA(){
+  try{ const r=await api('/identity/ca/cert');
+    if(r.ok&&r.ca_pem){ window._caPem=r.ca_pem; $('#caState').innerHTML='<b style="color:var(--ok)">available</b> · '+r.ca_pem.length+' bytes'; }
+    else $('#caState').textContent=r.error||'not available (connect FreeIPA)';
+  }catch(e){ $('#caState').textContent='not available'; }
+}
+function downloadCA(){ if(!window._caPem) return toast('CA not loaded — connect FreeIPA first',true);
+  const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([window._caPem],{type:'application/x-pem-file'}));
+  a.download='vera-freeipa-ca.pem'; a.click(); toast('CA downloaded — add to client trust stores'); }
+async function loadBao(){
+  try{ const r=await api('/identity/openbao/status');
+    $('#baoState').innerHTML = r.error ? esc(r.error)
+      : (r.ldap_configured ? '<b style="color:var(--ok)">LDAP → FreeIPA</b> <span class="hint">'+esc(r.ldap_url||'')+'</span>'
+                           : (r.reachable ? 'reachable · not wired to FreeIPA' : 'unavailable'));
+  }catch(e){ $('#baoState').textContent='unavailable'; }
+}
+async function baoWire(){
+  toast('wiring OpenBao → FreeIPA…');
+  const r=await api('/identity/openbao/ldap/setup','POST',{group:'admins',policies:'default'});
+  toast(r.error ? r.error : ('OpenBao wired to FreeIPA'+(r.group_mapped?(' · group '+r.group_mapped):'')), !!r.error);
+  loadBao();
+}
+async function loadSeal(){
+  try{ const r=await api('/identity/openbao/seal/status');
+    if(r.error || r.reachable===false){ $('#baoSeal').textContent = r.error?('unavailable'):'unavailable'; return; }
+    const sealed = r.sealed;
+    const st = sealed===false ? '<b style="color:var(--ok)">unsealed</b>'
+             : (sealed===true ? '<b style="color:var(--warn,#e0a030)">sealed</b> ('+(r.progress||0)+'/'+(r.threshold||'?')+')'
+             : (r.initialized===false ? 'uninitialised (dev mode)' : '—'));
+    const au = r.autounseal_configured ? ' · auto-unseal <b>'+esc(r.kms_backend||'')+'</b>' : ' · <span class="hint">no auto-unseal</span>';
+    $('#baoSeal').innerHTML = st + au;
+  }catch(e){ $('#baoSeal').textContent='unavailable'; }
+}
+async function baoUnseal(){
+  toast('unsealing OpenBao…');
+  const r=await api('/identity/openbao/unseal','POST',{});
+  toast(r.error||r.skipped ? (r.error||r.skipped) : (r.sealed===false?('unsealed ('+r.submitted+' shares, kms '+r.kms_backend+')'):('still sealed — '+(r.progress||0)+' submitted')), !!(r.error||r.skipped));
+  loadSeal();
+}
+function baoAuToggle(){ const w=$('#baoAuWrap'); w.style.display = w.style.display==='none'?'block':'none'; }
+function baoKmsToggle(){ $('#baoTransit').style.display = $('#baoKms').value==='transit'?'block':'none'; }
+async function baoAuSave(){
+  const keys=$('#baoKeys').value.split(/[\n,\s]+/).map(s=>s.trim()).filter(Boolean);
+  if(!keys.length) return toast('paste at least one unseal key',true);
+  const backend=$('#baoKms').value;
+  const body={unseal_keys:keys, root_token:$('#baoRoot').value.trim(), kms_backend:backend};
+  if(backend==='transit'){ body.transit_addr=$('#baoTAddr').value.trim();
+    body.transit_token=$('#baoTTok').value.trim(); body.transit_key=($('#baoTKey').value.trim()||'autounseal'); }
+  toast('registering KMS auto-unseal…');
+  const r=await api('/identity/openbao/autounseal/setup','POST',body);
+  if(r.error){ return toast(r.error,true); }
+  toast('auto-unseal configured · '+r.kms_backend+' · '+r.shares_stored+' keys (threshold '+r.threshold+')');
+  $('#baoKeys').value=''; $('#baoRoot').value=''; $('#baoTTok').value='';
+  loadSeal();
+}
+function openDirSync(){ const w=$('#dirSyncWrap'), f=$('#dirSyncFrame');
+  const show = w.style.display==='none';
+  w.style.display = show ? 'block' : 'none';
+  if(show && !f.getAttribute('src')) f.setAttribute('src','/identity/migrate/panel');
+}
+
+(async()=>{ await loadCfg(); refresh(); await lldapHosts(); lldapRefresh(); loadResolver(); loadCA(); loadBao(); loadSeal(); })();
 </script>
 </body>
 </html>

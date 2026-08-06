@@ -21,8 +21,6 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-import httpx
-
 from .. import browser_engine as _be
 from .. import perception as _perception
 from ..docs import doc_scaffold as _scaffold
@@ -41,7 +39,7 @@ def _safe_name(s: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", str(s or "panel")).strip("-") or "panel"
 
 
-async def _fetch_json(client: httpx.AsyncClient, url: str) -> Any:
+async def _fetch_json(client: Any, url: str) -> Any:
     try:
         r = await client.get(url, timeout=15)
         r.raise_for_status()
@@ -53,8 +51,10 @@ async def _fetch_json(client: httpx.AsyncClient, url: str) -> Any:
 
 def _make_call_target(base_url: str) -> Callable[..., Awaitable[Any]]:
     async def _call(name: str, args: Dict[str, Any]) -> Any:
+        import httpx
         try:
-            async with httpx.AsyncClient(timeout=60) as c:
+            # verify=False: prod serves a self-signed cert on localhost.
+            async with httpx.AsyncClient(timeout=60, verify=False) as c:
                 r = await c.post(base_url.rstrip("/") + "/mcp/call",
                                  json={"name": name, "arguments": args or {}})
             r.raise_for_status()
@@ -121,7 +121,12 @@ async def run_documentation_mission(params: Dict[str, Any],
                 kind=resolved.get("kind"))
 
     # ── discover panels + capabilities ───────────────────────────────────────
-    async with httpx.AsyncClient() as client:
+    import httpx
+    # verify=False: a live target serves Vera's self-signed HTTPS cert on
+    # localhost; without this the /ui/panels + /mcp/tools discovery fetches fail
+    # SSL verification → 0 panels discovered → an empty capture that would wipe
+    # the manifest.
+    async with httpx.AsyncClient(verify=False) as client:
         panels_raw = await _fetch_json(client, base_url.rstrip("/") + "/ui/panels")
         caps_raw = await _fetch_json(client, base_url.rstrip("/") + "/mcp/tools")
     panels = _normalise_panels(panels_raw)
@@ -130,11 +135,23 @@ async def run_documentation_mission(params: Dict[str, Any],
     await _emit("discover", f"{len(panels)} panels · {len(all_caps)} capabilities",
                 panels=len(panels), caps=len(all_caps))
 
+    # Discovery failed (unreachable target / TLS) → abort BEFORE writing anything,
+    # so a bad run can never wipe the manifest of previously-captured images.
+    if not panels and not all_caps:
+        return {"error": f"discovered 0 panels and 0 capabilities from {base_url} — "
+                         f"the target is unreachable or its TLS cert was rejected. "
+                         f"Nothing was written (existing images/manifest untouched).",
+                "base_url": base_url, "target_kind": resolved.get("kind")}
+
     by_domain = _assign_panels(panels)
     domains = _dm.resolve_slugs(params.get("domains"))
     write_docs = params.get("write_docs", True)
     do_capture = params.get("capture", True) and _be.playwright_available()
     capture_note = "" if do_capture else _be.INSTALL_HINT if params.get("capture", True) else "capture disabled"
+    settle_ms = int(params.get("settle_ms", 1400) or 1400)
+    # Optional selective re-capture: only shoot these panel ids (any domain).
+    panel_filter = set(str(x) for x in (params.get("panels") or []))
+    full_page = bool(params.get("full_page", False))
 
     docs_dir = os.path.join(repo_root, "documentation")
     assets_dir = os.path.join(docs_dir, "assets")
@@ -149,8 +166,19 @@ async def run_documentation_mission(params: Dict[str, Any],
             capture_note = f"browser start failed: {e}"
             await _emit("warn", capture_note)
 
+    # Load any existing manifest so a partial run (a domain subset or a panel
+    # re-capture) preserves everything it doesn't touch.
+    manifest_prev: Dict[str, Any] = {}
+    _man_path = os.path.join(assets_dir, "manifest.json")
+    if os.path.exists(_man_path):
+        try:
+            with open(_man_path, "r", encoding="utf-8") as f:
+                manifest_prev = json.load(f) or {}
+        except Exception:
+            manifest_prev = {}
     manifest: Dict[str, Any] = {"generated_at": _iso(), "base_url": base_url,
-                                "target_kind": resolved.get("kind"), "domains": {}}
+                                "target_kind": resolved.get("kind"),
+                                "domains": dict(manifest_prev.get("domains", {}))}
     gallery_entries: List[Dict[str, Any]] = []
     total_shots = 0
 
@@ -178,21 +206,29 @@ async def run_documentation_mission(params: Dict[str, Any],
                 pid = p.get("id", "")
                 if not pid:
                     continue
+                if panel_filter and pid not in panel_filter:
+                    continue  # selective re-capture skips everything else
                 rel = f"assets/{slug}/{_safe_name(pid)}.png"
                 abspath = os.path.join(docs_dir, rel)
                 mode = "seeded" if seed_name else "default"
                 if do_capture and session is not None:
-                    ok = await _shoot_panel(session, base_url, pid, abspath)
+                    cap_url = panel_capture_url(base_url, p)
+                    ok = await _shoot_panel(session, cap_url["url"], abspath,
+                                            settle_ms=settle_ms, full_page=full_page)
                     if not ok:
                         continue
                     total_shots += 1
+                    await _emit("shot", f"[{slug}] {p.get('label') or pid}",
+                                domain=slug, panel_id=pid, label=p.get("label") or pid,
+                                rel=rel, url=f"/docs/asset?path={rel}",
+                                via=cap_url["via"])
                 elif not os.path.exists(abspath):
                     # nothing to embed for this panel yet
                     continue
                 os.makedirs(dom_asset_dir, exist_ok=True)
                 shots.append({"panel_id": pid, "label": p.get("label") or pid,
                               "rel_path": rel, "caption": p.get("label") or pid,
-                              "mode": mode})
+                              "mode": mode, "via": (cap_url["via"] if do_capture else "")})
 
             # write doc auto-blocks
             number = domain["doc"].split("-")[0]
@@ -209,21 +245,37 @@ async def run_documentation_mission(params: Dict[str, Any],
                 with open(doc_path, "w", encoding="utf-8") as f:
                     f.write(content)
 
+            # Always merge into the existing manifest entry so a partial run (a
+            # selective re-capture, or a domain that captured fewer panels this
+            # time) never drops previously-recorded images.
+            prev = dict(manifest_prev.get("domains", {}).get(slug, {}))
+            prev_panels = {pp.get("id"): pp for pp in prev.get("panels", [])}
+            for s in shots:
+                prev_panels[s["panel_id"]] = {
+                    "id": s["panel_id"], "label": s["label"], "shot": s["rel_path"],
+                    "mode": s["mode"], "via": s.get("via", "")}
             manifest["domains"][slug] = {
                 "doc": domain["doc"], "title": domain["title"],
-                "panels": [{"id": s["panel_id"], "label": s["label"],
-                            "shot": s["rel_path"], "mode": s["mode"]} for s in shots],
-                "cap_count": len(caps),
+                "panels": list(prev_panels.values()), "cap_count": len(caps),
             }
-            gallery_entries.append({
-                "slug": slug, "title": domain["title"], "doc": domain["doc"],
-                "cover_rel": shots[0]["rel_path"] if shots else "",
-                "shot_count": len(shots), "cap_count": len(caps)})
             await _emit("domain", f"[{slug}] {len(shots)} shots · {len(caps)} caps",
                         slug=slug, shots=len(shots), caps=len(caps))
     finally:
         if session is not None:
             await _be.close_session(session.session_id)
+
+    # Build the gallery from the FULL merged manifest (in domain-map order) so a
+    # partial run still produces a complete index.
+    for d in _dm.DOMAINS:
+        info = manifest["domains"].get(d["slug"])
+        if not info:
+            continue
+        pnls = info.get("panels", [])
+        gallery_entries.append({
+            "slug": d["slug"], "title": info.get("title", d["title"]),
+            "doc": info.get("doc", d["doc"]),
+            "cover_rel": pnls[0]["shot"] if pnls else "",
+            "shot_count": len(pnls), "cap_count": info.get("cap_count", 0)})
 
     # gallery + manifest
     if write_docs:
@@ -259,24 +311,66 @@ def _normalise_panels(raw: Any) -> List[Dict[str, Any]]:
             if not pid:
                 continue
             items.append({"id": pid, "label": p.get("label") or pid,
-                          "tags": p.get("http_tags") or p.get("tags") or p.get("ui_caps") or []})
+                          "tags": p.get("http_tags") or p.get("tags") or p.get("ui_caps") or [],
+                          "mode": p.get("mode") or "inject",
+                          "html": p.get("html") or ""})
     return items
 
 
-async def _shoot_panel(session, base_url: str, panel_id: str, abspath: str) -> bool:
-    """Navigate to a panel window and save a screenshot. Returns success."""
-    url = f"{base_url.rstrip('/')}/ui/panel/window?id={panel_id}"
+_IFRAME_SRC = re.compile(r"""<iframe[^>]*\bsrc=["']([^"']+)["']""", re.IGNORECASE)
+
+
+def panel_capture_url(base_url: str, panel: Dict[str, Any]) -> Dict[str, str]:
+    """Where to actually screenshot a panel.
+
+    Most tab panels register an ``<iframe src="/xxx/panel">`` — that src is the
+    REAL panel route, which renders with full fidelity. Screenshot it directly
+    rather than the ``/ui/panel/window`` wrapper (whose degraded shim is why
+    several panels came out wrong). Inline/element panels have no iframe, so we
+    fall back to the panel window. Returns {url, via}."""
+    base = base_url.rstrip("/")
+    html = panel.get("html") or ""
+    m = _IFRAME_SRC.search(html)
+    if m:
+        src = m.group(1)
+        if src.startswith("http"):
+            return {"url": src, "via": "route"}
+        return {"url": base + "/" + src.lstrip("/"), "via": "route"}
+    return {"url": f"{base}/ui/panel/window?id={panel.get('id')}", "via": "window"}
+
+
+async def _wait_ready(page, settle_ms: int) -> None:
+    """Give a panel time to actually render: best-effort network-idle, then wait
+    for real content, then a settle delay for charts / async fetches / WS data."""
+    try:
+        await page.wait_for_load_state("networkidle", timeout=4000)
+    except Exception:
+        pass  # WS-backed panels never go idle — that's fine
+    try:
+        # Wait until the body has meaningful rendered content (not a blank shell).
+        await page.wait_for_function(
+            "() => { const b=document.body; if(!b) return false; "
+            "return b.scrollHeight > 60 && (b.innerText||'').trim().length > 2 "
+            "|| b.querySelector('canvas,svg,img,table,iframe,input,button'); }",
+            timeout=5000)
+    except Exception:
+        pass
+    try:
+        await page.wait_for_timeout(max(300, int(settle_ms)))
+    except Exception:
+        pass
+
+
+async def _shoot_panel(session, url: str, abspath: str, *, settle_ms: int = 1400,
+                       full_page: bool = False) -> bool:
+    """Navigate to a panel's real URL and save a screenshot. Returns success."""
     page = session.page
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        try:
-            await page.wait_for_load_state("networkidle", timeout=6000)
-        except Exception:
-            pass
-        await page.wait_for_timeout(600)  # settle animations / async panel loads
+        await _wait_ready(page, settle_ms)
         os.makedirs(os.path.dirname(abspath), exist_ok=True)
-        await page.screenshot(path=abspath, full_page=False, type="png")
+        await page.screenshot(path=abspath, full_page=bool(full_page), type="png")
         return True
     except Exception as e:
-        log.warning("operator/docs: shoot %s failed: %s", panel_id, e)
+        log.warning("operator/docs: shoot %s failed: %s", url, e)
         return False

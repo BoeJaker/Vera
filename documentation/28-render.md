@@ -21,3 +21,15 @@ Generated files are written under `_out/` next to the module and served read-onl
 - [Dream](./17-dream.md) — `render.dream_export` consumes dream reports
 - [Agents & Chat](./19-agents-chat.md) — shares the `output_formats` profiles
 - [Docker](./13-docker.md) — the image that ships the `pandoc` binary
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_No capabilities resolved for this domain._
+<!-- VERA:AUTO:capabilities END -->

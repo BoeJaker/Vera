@@ -219,3 +219,15 @@ A separate process (the GPU node's `:8765` `gpu_infer` server) handles Whisper S
 - [Workers, Jobs & Syslog](./22-workers-jobs-syslog.md) — worker registry, job persistence, the proxy log
 - [Configuration](./10-configuration.md) — all env vars in one place
 - [Research System](./07-research.md) — resolves its thinker/writer/verifier roles through the `research` role profile
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_No capabilities resolved for this domain._
+<!-- VERA:AUTO:capabilities END -->

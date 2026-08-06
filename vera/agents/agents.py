@@ -3352,10 +3352,23 @@ DEFAULT_AGENTS = [
             "(vector+text+graph) search over what is STORED. Be precise about "
             "provenance — cite the dataset/record a fact came from. Remember: fabric "
             "search is INTERNAL memory; for live/external facts, say so and defer to a "
-            "research/web agent rather than guessing."
+            "research/web agent rather than guessing.\n\n"
+            "REUSE BEFORE RE-FETCH: before collecting reference data, call "
+            "fabric.identify to see if we already have it. If we do, reuse it "
+            "(fabric.gaps tells you what, if anything, is missing — fill only "
+            "genuine gaps, and never keep re-fetching gaps marked noise/unfillable). "
+            "Persist collected data with fabric.upsert (keyed, so it de-dupes and "
+            "gap-fills, never duplicates), declare its schema with "
+            "fabric.schema.declare, and check quality with fabric.validate. Query a "
+            "dataset's rows precisely with memory.select. Use context.for_agent to "
+            "pull the authoritative datasets + memories for a topic in one call."
         ),
         domain_caps=["fabric.query", "fabric.entity_graph.query",
-                     "fabric.discover.crawl", "images.list"],
+                     "fabric.discover.crawl", "images.list",
+                     "fabric.identify", "fabric.gaps", "fabric.upsert",
+                     "fabric.schema.declare", "fabric.schema.get",
+                     "fabric.validate", "memory.select", "fabric.fuse",
+                     "context.for_agent"],
         domain_description="Knowledge fabric ingestion, dataset curation, hybrid retrieval",
         tool_mode="call",
         voice="af_heart",
@@ -3408,7 +3421,8 @@ DEFAULT_AGENTS = [
             "memories beat many noisy ones. When you promote or drop a memory, say why."
         ),
         domain_caps=["memory.session_history", "memory.graph_stats",
-                     "fabric.entity_graph.query", "fabric.entity_graph.snapshot"],
+                     "fabric.entity_graph.query", "fabric.entity_graph.snapshot",
+                     "memory.select", "context.for_agent"],
         domain_description="Memory-graph curation, linking, second-order connections",
         tool_mode="call",
         voice="af_heart",

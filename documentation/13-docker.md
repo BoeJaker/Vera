@@ -125,15 +125,32 @@ A dedicated compilation container so Vera never needs a toolchain in its own ima
 - **System** — `build.run` can `apt`-install packages for a build (not isolated; persists in the running container until restart).
 - Cores/libs and PlatformIO platforms are cached in the `builder-cache` / `builder-pio` volumes, so the second build of a given kind is fast.
 
-`mesh.firmware.build` prefers the builder and falls back to a local `arduino-cli` if one is installed; with neither it returns a hint to start the container or build in the Arduino IDE. Its default FQBN is `esp32:esp32:esp32s3:CDCOnBoot=default` (ESP32-S3 with USB-CDC **off**) because the reference display board wires the parallel TFT's D4/D5 onto the S3's native USB pins (GPIO19/20) — CDC-off frees them. Source is passed inline as JSON (`{files:{path:content}}`); artifacts come back base64-encoded, so no shared volume is needed.
+`mesh.firmware.build` prefers the builder and falls back to a local `arduino-cli` if one is installed; with neither it returns a hint to start the container or build in the Arduino IDE. It picks the FQBN from the selected board profile's `chip` (falling back to `esp32:esp32:esp32s3:CDCOnBoot=default` — ESP32-S3 with USB-CDC **off**), because the reference display board wires the parallel TFT's D4/D5 onto the S3's native USB pins (GPIO19/20) and CDC-off frees them. It also applies the panel's bake options (board pin map, display/SD/CSI, Wi-Fi, server URL) to the source *before* compiling, so the resulting `.bin` matches what was configured. Source is passed inline as JSON (`{files:{path:content}}`); artifacts come back base64-encoded, so no shared volume is needed.
+
+**Discovery.** `VERA_BUILDER_URL` wins if set. Otherwise Vera probes the published port (`http://localhost:$BUILDER_PORT`) *and* the compose DNS name and remembers whichever answers `/health` — the compose name only resolves in-stack, so without this a native (`./build.sh run`) orchestrator reports `can_build: false` even with the container running.
 
 > **Security:** `build.run` / `/build/exec` runs arbitrary commands — it's a self-hosted build runner (like a CI worker). Keep it on `vera-net` / a trusted LAN; don't expose the port to untrusted networks.
 
-> **First build is heavy:** `docker compose build vera-builder` installs the ESP32 toolchains (~2 GB), then caches them in the `builder-cache` volume.
+> **First build is heavy:** it installs the ESP32 toolchains (~2 GB), then caches them in the `builder-cache` volume.
+
+Bring it up whichever way suits the deployment:
 
 ```bash
-docker compose up -d --build vera-builder     # bring up the build farm
+docker compose up -d --build vera-builder     # in-stack
 ```
+
+`build.builder.up` does the same thing for a native orchestrator (and is what the Mesh panel's **Start build service** button calls): it builds `vera/build/Dockerfile` if the image is missing, runs the container with `$BUILDER_PORT` published, and waits for `/health`. It's idempotent — a reachable builder returns immediately; `rebuild: true` forces a fresh image.
+
+### Progress on long builds
+
+An image build takes ~10 minutes and a sketch compile ~90 seconds. Both run in the **background** and report into a shared job registry, so the UI shows what's happening instead of a greyed-out button:
+
+- `build.builder.up` and `mesh.firmware.build` return `{job_id}` immediately (pass `background: false` to block instead).
+- `build.progress?job_id=…` returns `{phase, pct, done, ok, elapsed_s, log, result, error}`.
+- The image build **streams** `docker build` output line by line; `Step n/m` is parsed into a real percentage. The sketch compile reports phases (baking → compiling → saving) and appends the compiler log at the end.
+- Logs are capped at 400 lines, keeping the newest; finished jobs are evicted once 40 accumulate.
+
+The Mesh panel's Flash card polls this and renders a phase line, a percentage bar, an elapsed timer, and a following log tail.
 
 ## 7. Configuration
 
@@ -161,3 +178,15 @@ The Docker pane lives inside the **Workers** tab (`workers_ollama_panel.html` / 
 - [LLM Cluster](./04-ollama-cluster.md) — the worker/cluster view a Docker worker joins
 - [Workers, Jobs & Syslog](./22-workers-jobs-syslog.md) — worker registry, metrics, job feed
 - [Configuration](./10-configuration.md) — all env vars in one place
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_No capabilities resolved for this domain._
+<!-- VERA:AUTO:capabilities END -->

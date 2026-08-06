@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Estate — infrastructure, provisioning &amp; security</title>
+<style>
+  :root{
+    --bg:#0c0e13; --bg2:#12151c; --panel:#151923; --border:#232a37;
+    --ink:#e8edf6; --dim:#8b96aa; --dim2:#606a7d;
+    --wire:#2b3444; --ok:#57d08a; --warn:#e8b84b; --bad:#e0687a;
+    --pmx:#e08a5b; --docker:#3ba6e8; --ipa:#efa14b; --vault:#e8b84b; --mesh:#4bb8c9;
+  }
+  @media (prefers-color-scheme: light){
+    :root{ --bg:#f6f8fc; --bg2:#eef1f7; --panel:#fff; --border:#dde3ee;
+      --ink:#1a2030; --dim:#59637a; --dim2:#8b95a8; --wire:#c7d0e0; --ok:#1f9d57; }
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font:13px/1.4 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  .wrap{display:flex;flex-direction:column;height:100%}
+  header{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--border);
+    background:linear-gradient(180deg,var(--bg2),transparent);flex:0 0 auto;flex-wrap:wrap}
+  header h1{font-size:14px;font-weight:650;margin:0}
+  header .sub{color:var(--dim);font-size:11.5px}
+  .spacer{flex:1}
+  .kpis{display:flex;gap:14px;flex-wrap:wrap}
+  .kpi{font-size:11.5px;color:var(--dim)} .kpi b{color:var(--ink);font-size:13px}
+  .btn{background:transparent;border:1px solid var(--border);color:var(--dim);border-radius:7px;
+    padding:5px 11px;font-size:12px;cursor:pointer}
+  .btn:hover{color:var(--ink);border-color:var(--dim)}
+  .stat{display:flex;align-items:center;gap:6px;color:var(--dim);font-size:11.5px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--dim2)}
+  .dot.live{background:var(--ok);box-shadow:0 0 8px var(--ok);animation:blip 2s infinite}
+  @keyframes blip{50%{opacity:.35}}
+  .stage{flex:1;position:relative;min-height:0;overflow:auto}
+  svg{display:block;width:100%}
+  .wire{stroke:var(--wire);stroke-width:1.3;fill:none}
+  .wire.flow{stroke-dasharray:2 7;animation:flow 2.6s linear infinite}
+  @keyframes flow{to{stroke-dashoffset:-36}}
+  .wire.dim{opacity:.32}
+  text{fill:var(--ink)}
+  .lbl{font-size:11px} .sub2{fill:var(--dim2);font-size:9px}
+  .card-t{font-size:12px;font-weight:600}
+  .badge-t{font-size:11px}
+  .sysbox{fill:var(--panel);stroke-width:1.4}
+  .hostbox{fill:color-mix(in srgb,var(--panel) 70%,transparent);stroke:var(--border);stroke-width:1}
+  .hostbox.g:hover{stroke:var(--ink)}
+  .flash{animation:flash 1s ease-out}
+  @keyframes flash{0%{filter:drop-shadow(0 0 0 currentColor)}25%{filter:drop-shadow(0 0 10px currentColor)}}
+  .pulse{pointer-events:none}
+  .ticker{position:absolute;right:10px;bottom:10px;width:236px;max-height:44%;
+    background:color-mix(in srgb,var(--panel) 90%,transparent);border:1px solid var(--border);
+    border-radius:10px;padding:7px 9px;backdrop-filter:blur(6px);overflow:hidden}
+  .ticker h2{margin:0 0 5px;font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:var(--dim2)}
+  .ev{display:flex;gap:6px;align-items:baseline;padding:2px 0;border-top:1px solid var(--border);animation:sl .3s}
+  .ev:first-of-type{border-top:none}
+  @keyframes sl{from{opacity:0;transform:translateY(-3px)}}
+  .ev i{width:6px;height:6px;border-radius:50%;flex:0 0 auto;margin-top:5px}
+  .ev .t{color:var(--ink);font-size:10.5px;word-break:break-word;flex:1}
+  .ev .a{color:var(--dim2);font-size:9.5px}
+  .legend{position:absolute;left:10px;bottom:10px;display:flex;flex-direction:column;gap:3px;
+    background:color-mix(in srgb,var(--panel) 82%,transparent);border:1px solid var(--border);
+    border-radius:9px;padding:7px 10px;font-size:10.5px;color:var(--dim)}
+  .legend b{color:var(--ink)}
+  .msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--dim)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🛰️ Estate</h1><span class="sub">infrastructure · provisioning · security</span>
+    <span class="spacer"></span>
+    <div class="kpis" id="kpis"></div>
+    <span class="stat"><span id="dot" class="dot"></span><span id="statTxt">…</span></span>
+    <button class="btn" onclick="loadAll()">⟳ Refresh</button>
+    <button class="btn" id="deepBtn" onclick="deepLoad()" title="SSH to Proxmox + Docker for the full guest / container list (slower)">⤓ Deep scan</button>
+  </header>
+  <div class="stage">
+    <svg id="map" preserveAspectRatio="xMinYMin meet"><g id="edges"></g><g id="pulses"></g><g id="nodes"></g></svg>
+    <div class="msg" id="msg">loading estate…</div>
+    <div class="ticker"><h2>Live infra events</h2><div id="evlist"></div></div>
+    <div class="legend">
+      <span><b>🔐</b> cert SSH &nbsp; <b>🕸️</b> on mesh &nbsp; <b>🆔</b> in FreeIPA</span>
+      <span><b>📦</b> LXC &nbsp; <b>🖥️</b> VM &nbsp; <b>🐳</b> Docker host &nbsp; <b>💻</b> off-cluster</span>
+    </div>
+  </div>
+</div>
+<script>
+const SVGNS="http://www.w3.org/2000/svg";
+const $=s=>document.querySelector(s);
+const el=(n,a={})=>{const e=document.createElementNS(SVGNS,n);for(const k in a)e.setAttribute(k,a[k]);return e;};
+const esc=s=>String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+async function j(u,opt){try{const r=await fetch(u,{cache:'no-store',...(opt||{})});return r.ok?await r.json():null;}catch(e){return null;}}
+
+// systems (right column) — the managers + security fabric
+const SYS={
+  proxmox:{ic:'📦',l:'Proxmox',c:'var(--pmx)'},
+  docker: {ic:'🐳',l:'Docker',c:'var(--docker)'},
+  ipa:    {ic:'🆔',l:'FreeIPA',c:'var(--ipa)'},
+  vault:  {ic:'🔐',l:'OpenBao',c:'var(--vault)'},
+  mesh:   {ic:'🕸️',l:'WireGuard mesh',c:'var(--mesh)'},
+};
+const SYS_ORDER=['proxmox','docker','ipa','vault','mesh'];
+let STATE={hosts:[],sys:{},clusters:[]};
+
+function shortName(fqdn){return (fqdn||'').split('.')[0];}
+function ipHost(h){return (h||'').replace(/^https?:\/\//,'').split(':')[0];}
+
+async function loadAll(){
+  $('#statTxt').textContent='scanning';
+  const [clusters,dockerHosts,sshHosts,mesh,ipaHosts,ipaStatus,seal]=await Promise.all([
+    j('/proxmox/cluster/list'), j('/workers/docker/hosts'), j('/enroll/ssh/host/list'),
+    j('/netsec/mesh/members'), j('/identity/host/list'), j('/identity/status'),
+    j('/identity/openbao/seal/status'),
+  ]);
+  const clist=(clusters&&clusters.clusters)||[];
+  const dhosts=(dockerHosts&&dockerHosts.hosts)||[];
+  const shosts=(sshHosts&&sshHosts.hosts)||[];
+  const members=(mesh&&mesh.members)||[];
+  const ipaList=(ipaHosts&&ipaHosts.hosts)||[];
+  const ipaFqdns=new Set(ipaList.map(h=>(h.fqdn||'').toLowerCase()));
+  const memByIp={}, memByName={};
+  members.forEach(m=>{ if(m.host)memByIp[ipHost(m.host)]=m; if(m.label)memByName[shortName(m.label).toLowerCase()]=m; });
+  const dockerSsh=new Set(dhosts.map(d=>d.ssh_host_id).filter(Boolean));
+  const clusterById={}; clist.forEach(c=>clusterById[c.id]=c);
+
+  // unify hosts from the SSH provisioning store (the estate we manage)
+  const hosts=[]; const seenIp=new Set();
+  shosts.forEach(s=>{
+    const ip=ipHost(s.host); seenIp.add(ip);
+    let gr=null; if(s.guest_ref&&String(s.guest_ref).includes(':')){const[cl,vm]=String(s.guest_ref).split(':');gr={cluster:cl,vmid:vm};}
+    const mem=memByIp[ip]||memByName[shortName(s.label).toLowerCase()];
+    const isDocker=dockerSsh.has(s.id);
+    hosts.push({
+      name:shortName(s.label)||ip, fqdn:s.label, ip, kind: isDocker?'docker':(gr?'lxc':'host'),
+      guest:gr, cert:s.auth==='cert',
+      mesh: mem?{ip:mem.ip}:null,
+      ipa: ipaFqdns.has((s.label||'').toLowerCase()),
+    });
+  });
+  // mesh members not in the SSH store (e.g. the docker test host)
+  members.forEach(m=>{ const ip=ipHost(m.host); if(ip&&!seenIp.has(ip)){ seenIp.add(ip);
+    hosts.push({name:shortName(m.label)||ip, fqdn:m.label, ip, kind:'host', guest:null, cert:false,
+      mesh:{ip:m.ip}, ipa:ipaFqdns.has((m.label||'').toLowerCase())}); }});
+  hosts.sort((a,b)=>(a.kind+a.name).localeCompare(b.kind+b.name));
+
+  STATE={ hosts, clusters:clist,
+    sys:{
+      proxmox:{on:clist.length>0, meta:clist.map(c=>c.label).join(', ')||'—',
+               count:hosts.filter(h=>h.guest).length},
+      docker:{on:dhosts.length>0, meta:dhosts.length+' host'+(dhosts.length!=1?'s':''),
+              count:hosts.filter(h=>h.kind==='docker').length},
+      ipa:{on:!!(ipaStatus&&ipaStatus.reachable), meta:(ipaStatus&&ipaStatus.reachable)?('v'+(ipaStatus.version||'?')):'unreachable',
+           count:ipaList.length},
+      vault:{on:!!(seal&&seal.reachable), sealed:seal&&seal.sealed,
+             meta: !seal||!seal.reachable?'unreachable':(seal.sealed?'SEALED':'unsealed')+(seal.autounseal_configured?(' · KMS '+ (seal.kms_backend||'')):' · no auto-unseal'),
+             bad: seal&&seal.sealed, count:0},
+      mesh:{on:members.length>0, meta:((mesh&&mesh.subnet)||'')+(mesh&&mesh.enforce?' · enforced':''),
+            count:hosts.filter(h=>h.mesh).length},
+    }};
+  render();
+  kpis(hosts,seal,members,ipaList);
+  $('#dot').className='dot live'; $('#statTxt').textContent='live';
+}
+
+function kpis(hosts,seal,members,ipa){
+  const el=$('#kpis');
+  el.innerHTML=[
+    ['hosts',hosts.length],['on mesh',hosts.filter(h=>h.mesh).length],
+    ['cert SSH',hosts.filter(h=>h.cert).length],['FreeIPA',ipa.length],
+    ['vault', !seal?'—':(seal.sealed?'sealed':'open')],
+  ].map(([k,v])=>`<span class="kpi">${k} <b>${v}</b></span>`).join('');
+}
+
+function render(){
+  const H=STATE.hosts, S=SYS_ORDER;
+  const rowH=Math.max(26,Math.min(46,Math.floor(560/Math.max(H.length,1))));
+  const topH=54, topS=70;
+  const H_h=topH+H.length*rowH+30, S_h=topS+S.length*96;
+  const height=Math.max(H_h,S_h,300), width=1000;
+  const svg=$('#map'); svg.setAttribute('viewBox',`0 0 ${width} ${height}`); svg.style.height=height+'px';
+  const E=$('#edges'), ND=$('#nodes'); E.innerHTML=''; ND.innerHTML=''; $('#pulses').innerHTML='';
+  $('#msg').style.display = H.length? 'none':'flex';
+  if(!H.length){ $('#msg').textContent='no estate hosts found — enrol a Proxmox guest or register a host'; return; }
+
+  const hx=232, sx=724, sw=250;
+  // system node positions
+  const spos={};
+  S.forEach((k,i)=>{ spos[k]={x:sx,y:topS+i*96,w:sw,h:70}; });
+  // host node positions
+  const hpos={};
+  H.forEach((h,i)=>{ hpos[i]={x:hx,y:topH+i*rowH,w:300,h:rowH-6}; });
+
+  // ── edges: host → each system it's wired into ───────────────────────────────
+  H.forEach((h,i)=>{
+    const p=hpos[i], links=[];
+    if(h.guest) links.push('proxmox');
+    if(h.kind==='docker') links.push('docker');
+    if(h.ipa) links.push('ipa');
+    if(h.mesh) links.push('mesh');
+    links.forEach(k=>{ const s=spos[k];
+      const a={x:p.x+p.w,y:p.y+p.h/2}, b={x:s.x,y:s.y+s.h/2};
+      const mid=(a.x+b.x)/2;
+      E.appendChild(el('path',{class:'wire flow dim','data-h':i,'data-s':k,
+        style:`stroke:${SYS[k].c}`,
+        d:`M${a.x} ${a.y} C${mid} ${a.y} ${mid} ${b.y} ${b.x} ${b.y}`}));
+    });
+  });
+
+  // ── system cards (right) ────────────────────────────────────────────────────
+  S.forEach(k=>{ const s=spos[k], sy=STATE.sys[k]||{};
+    const g=el('g',{class:'node',id:'sys-'+k}); g.style.color=SYS[k].c;
+    g.appendChild(el('rect',{class:'sysbox',x:s.x,y:s.y,width:s.w,height:s.h,rx:12,
+      stroke:SYS[k].c, fill: sy.on?('color-mix(in srgb,'+SYS[k].c+' 10%,var(--panel))'):'var(--panel)',
+      opacity: sy.on?1:.5}));
+    g.appendChild(txt(s.x+20,s.y+29,SYS[k].ic,{'font-size':'20','text-anchor':'middle'}));
+    g.appendChild(txt(s.x+40,s.y+26,SYS[k].l,{class:'card-t'}));
+    const st=el('circle',{cx:s.x+s.w-16,cy:s.y+18,r:5,
+      fill: sy.bad?'var(--bad)':(sy.on?'var(--ok)':'var(--dim2)')}); g.appendChild(st);
+    g.appendChild(txt(s.x+40,s.y+44,(sy.meta||''),{class:'sub2'}));
+    if(sy.count) g.appendChild(txt(s.x+s.w-16,s.y+46,sy.count+'',{class:'sub2','text-anchor':'end',
+      style:'font-size:11px;fill:'+SYS[k].c}));
+    ND.appendChild(g);
+  });
+
+  // ── host chips (left) ───────────────────────────────────────────────────────
+  H.forEach((h,i)=>{ const p=hpos[i];
+    const g=el('g',{class:'node',id:'host-'+i});
+    const box=el('rect',{class:'hostbox g',x:p.x,y:p.y,width:p.w,height:p.h,rx:7});
+    box.addEventListener('mouseenter',()=>hoverHost(i,true));
+    box.addEventListener('mouseleave',()=>hoverHost(i,false));
+    g.appendChild(box);
+    const ic={lxc:'📦',docker:'🐳',host:'💻'}[h.kind]||'💻';
+    g.appendChild(txt(p.x+15,p.y+p.h/2+4,ic,{'font-size':'13','text-anchor':'middle'}));
+    g.appendChild(txt(p.x+30,p.y+p.h/2-2,h.name,{class:'lbl'}));
+    g.appendChild(txt(p.x+30,p.y+p.h/2+9,h.ip+(h.mesh?('  ·  '+h.mesh.ip):''),{class:'sub2'}));
+    let bx=p.x+p.w-14;
+    [[h.ipa,'🆔'],[h.mesh,'🕸️'],[h.cert,'🔐']].forEach(([on,ic])=>{ if(on){
+      g.appendChild(txt(bx,p.y+p.h/2+4,ic,{class:'badge-t','text-anchor':'end'})); bx-=17; }});
+    ND.appendChild(g);
+  });
+}
+function txt(x,y,s,a={}){const t=el('text',{x,y,...a});t.textContent=s;return t;}
+function hoverHost(i,on){
+  document.querySelectorAll('#edges path').forEach(p=>{
+    const mine = p.getAttribute('data-h')==String(i);
+    if(on) p.classList.toggle('dim', !mine);   // highlight this host's wires, dim the rest
+    else   p.classList.add('dim');             // all dim at rest
+  });
+}
+
+// ── deep scan (slow: SSH to Proxmox + Docker) ───────────────────────────────
+async function deepLoad(){
+  const b=$('#deepBtn'); b.disabled=true; b.textContent='⤓ scanning…';
+  try{
+    for(const c of STATE.clusters){
+      const st=await j('/proxmox/status?cluster_id='+encodeURIComponent(c.id));
+      const guests=(st&&st.guests)||[];
+      guests.forEach(gst=>{
+        const exists=STATE.hosts.find(h=>h.guest&&h.guest.vmid==String(gst.vmid));
+        if(exists){ exists.name=gst.name||exists.name; exists.status=gst.status; exists.kind=gst.type==='qemu'?'vm':'lxc'; }
+        else STATE.hosts.push({name:gst.name||('vmid '+gst.vmid),fqdn:'',ip:'',
+          kind:gst.type==='qemu'?'vm':'lxc',guest:{cluster:c.id,vmid:String(gst.vmid)},
+          cert:false,mesh:null,ipa:false,status:gst.status});
+      });
+    }
+    STATE.hosts.sort((a,b)=>(a.kind+a.name).localeCompare(b.kind+b.name));
+    render();
+  }finally{ b.disabled=false; b.textContent='⤓ Deep scan'; }
+}
+
+// ── live infra-event pulses ─────────────────────────────────────────────────
+const RULES=[
+  [/openbao|vault|seal/,'vault'],
+  [/mesh|netsec|wireguard|\bwg\b|overlay/,'mesh'],
+  [/proxmox|\blxc\b|\bqm\b|\bpct\b|\bpve\b/,'proxmox'],
+  [/docker|container|image|stack|compose/,'docker'],
+  [/ident|freeipa|ldap|dogtag|kerb|\bca\b|cert|dns|host_add|user_add|group/,'ipa'],
+  [/enroll|provision|autoenroll/,'proxmox'],
+];
+function classify(s){s=(s||'').toLowerCase(); for(const[re,k]of RULES) if(re.test(s)) return k; return null;}
+function pulse(sysk){
+  const s=document.querySelector('#sys-'+sysk); if(!s) return;
+  s.classList.add('flash'); setTimeout(()=>s.classList.remove('flash'),1000);
+  // brighten one connected edge briefly
+  const edges=[...document.querySelectorAll('#edges path[data-s="'+sysk+'"]')];
+  if(edges.length){ const e=edges[Math.floor(Math.random()*edges.length)];
+    e.classList.remove('dim'); const d=e.getAttribute('d');
+    const c=el('circle',{class:'pulse',r:4,fill:SYS[sysk].c,style:'filter:drop-shadow(0 0 6px '+SYS[sysk].c+')'});
+    $('#pulses').appendChild(c);
+    const path=e; const len=path.getTotalLength(); let t0=null;
+    const step=(ts)=>{ if(!t0)t0=ts; const k=Math.min(1,(ts-t0)/900); const pt=path.getPointAtLength(len*k);
+      c.setAttribute('cx',pt.x); c.setAttribute('cy',pt.y);
+      if(k<1) requestAnimationFrame(step); else { c.remove(); setTimeout(()=>e.classList.add('dim'),200); } };
+    requestAnimationFrame(step);
+  }
+}
+function ticker(label,sysk){
+  const list=$('#evlist'); const d=document.createElement('div'); d.className='ev'; const n=new Date();
+  d.innerHTML=`<i style="background:${SYS[sysk].c}"></i><span class="t">${esc(label)}</span>`+
+    `<span class="a">${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}:${String(n.getSeconds()).padStart(2,'0')}</span>`;
+  list.insertBefore(d,list.firstChild); while(list.children.length>8) list.removeChild(list.lastChild);
+}
+const seen=new Set(); let seeded=false;
+function key(ev){return (ev.ts||'')+'|'+(ev.type||'')+'|'+(ev.name||ev.trace_id||'');}
+async function pollEvents(){
+  const evs=await j('/events?limit=40'); if(!evs){ return; }
+  const fresh=[]; for(const ev of evs){const k=key(ev); if(!seen.has(k)){seen.add(k);fresh.push(ev);}}
+  if(!seeded){ seeded=true; }
+  else{ fresh.reverse(); fresh.forEach((ev,i)=>{
+    const sysk=classify((ev.group||'')+' '+(ev.name||ev.cap_name||'')+' '+(ev.type||''));
+    if(sysk) setTimeout(()=>{pulse(sysk); ticker(ev.name||ev.cap_name||ev.type||'event',sysk);}, i*130);
+  }); }
+  if(seen.size>4000){const a=[...seen];seen.clear();a.slice(-1500).forEach(k=>seen.add(k));}
+}
+loadAll();
+setInterval(pollEvents,2500);
+setInterval(loadAll,45000);
+</script>
+</body>
+</html>

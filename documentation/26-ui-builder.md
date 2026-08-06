@@ -44,3 +44,15 @@ These scopes are the same allowlist mechanism agents use via `domain_caps` ([Age
 - [Harness UI](./02-harness-ui.md) — panel registration, the theme broadcast, the iframe pattern
 - [Agents & Chat](./19-agents-chat.md) — the chat module that also surfaces `ui.*`; `domain_caps`
 - [Flow Builder & UI Elements](./20-flow-builder.md) — reusable elements that drop into panels
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_No capabilities resolved for this domain._
+<!-- VERA:AUTO:capabilities END -->

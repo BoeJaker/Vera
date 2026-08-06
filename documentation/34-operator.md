@@ -188,6 +188,40 @@ The loop-lab sandbox is the default target for documentation: it's isolated
 
 ---
 
+## 7b. Connections — drive anything registered in Vera
+
+The operator can reach **anything already registered across Vera's
+infrastructure**, without duplicating a registry — the **connectors** layer
+([`connectors.py`](../vera/operator/connectors.py)) just calls each subsystem's
+own list cap and normalises the result:
+
+| source | from | type | driveable |
+|---|---|---|---|
+| `integration` | Integrations Hub (`integration.list`) — apps in the stack | web | if `access.interact` & not sensitive |
+| `ollama` | `ollama.instances` | api | reference (drive via `ollama.*`) |
+| `node` | `nodes.list` (the unified machine registry) | web / ssh | web if it has an HTTP UI |
+| `docker` | `docker.hosts.list` + `docker.ps` — containers with published ports | web | yes |
+| `proxmox` | `proxmox.cluster.list` + guests → in-Vera noVNC console | vnc | if the guest is running |
+
+`operator.connect.list` enumerates them all; `operator.connect(source, ref, goal?)`
+opens a session on one (and optionally drives it). Web UIs — integration apps,
+Docker web ports, Proxmox consoles, code-server — are **fully driven**
+(observe→think→act); API/SSH endpoints are opened for reference (control them
+through their own caps). Resolution is lazy, so a Proxmox console ticket is only
+minted when you actually connect.
+
+**Trust model:** registered connectables on the local/private network are
+operable by default (the same rule the safety gate uses); external hosts still
+need the allowlist; integration apps still respect the Hub's `access.interact`
+gate. The Integrations Hub's own `integration.operate` routes through the same
+operator loop.
+
+In the **Operator Studio**, the target picker defaults to **🔌 connections** — a
+grouped, searchable dropdown of everything you can reach (with `[web]`/`[api]`/
+`[ssh]`/`[vnc]` tags); pick one and **Connect**.
+
+---
+
 ## 8. The documentation mission
 
 `operator.mission.run("documentation", …)` (alias **`docs.build`**):
@@ -227,14 +261,69 @@ Equivalent capability call: `POST /docs/build {"target":"sandbox"}`.
 
 ---
 
+## 8b. GIFs, time-lapse & scripted tours
+
+Static screenshots don't show a workflow *happening*. Three deterministic
+(LLM-free) capture paths turn motion into docs:
+
+**GIF of an operator run** — `operator.run` already saves one PNG per step, so
+`operator.run(goal=…, record_gif=true)` assembles them into an animated GIF of
+the whole observe→act sequence (returned as `gif`). Nearly free.
+
+**Time-lapse of a long task** — sample a panel while something runs (a dream
+cycle, a backtest, a loop):
+
+```bash
+operator.session.start kind=live panel_id=dream       # watch the Dream panel
+operator.capture.start session_id=<sid> interval_ms=1000
+… trigger the dream cycle (UI or a cap) …
+operator.capture.stop  capture_id=<cid> domain=dream name=cycle
+#   → documentation/assets/dream/cycle.gif  (or artifacts, served live, if no domain)
+```
+
+The Operator Studio's **⏺ REC** button does exactly this on the current session.
+
+**Scripted tours** — a named, deterministic walkthrough that navigates, waits,
+clicks labelled controls and captures stills + GIF clips the same way every time
+([`tours.py`](../vera/operator/tours.py)):
+
+```bash
+operator.tour.list
+operator.tour.run slug=markets target=sandbox
+#   → assets/markets/overview.png + assets/markets/scan.gif
+```
+
+Steps are dicts or a compact mini-DSL — `goto`, `wait`, `scroll`, `shot`,
+`gif_start`/`gif_stop`, `click_text` (match a control by its label), `type_text`,
+`seed`. Because they're scripted, they're reproducible for a docs build (unlike
+the LLM-driven `operator.run`).
+
+**Capture directives in the docs** — drop a marker where an image belongs and
+`docs.capture` fills it in, idempotently, preserving your prose
+([`docs/directives.py`](../vera/operator/docs/directives.py)):
+
+```html
+<!-- VERA:CAPTURE panel="markets-studio" name="backtest" gif="true"
+     steps="click_text Run backtest; gif_start; wait 3000; gif_stop backtest" -->
+```
+
+`docs.capture` navigates to the panel, runs the steps, captures a still or GIF,
+and inserts/refreshes it in a managed `<!-- VERA:CAPTURED … -->` block right after
+the directive. Omit `steps` to capture the panel as-loaded (or a default scroll
+GIF with `gif="true"`).
+
+---
+
 ## 9. Operator Studio panel
 
 A dedicated tab (🕹 **Operator**) drives all of the above: pick a target, set a
 goal, and watch the observe→think→act **timeline** (thoughts, chosen actions and
-per-step screenshots) render live. Buttons run the documentation mission, rebuild
-the gallery, and run the unit suite. It's a standalone page served at
-`/operator/panel` and mounted as an iframe (so its CSS never leaks into the
-harness).
+per-step screenshots) render live. The **Eyes** viewport shows the live page with
+clickable element-ref overlays; **⏺ REC** captures a time-lapse GIF; a **Tour**
+picker runs a scripted walkthrough; and buttons run the documentation mission,
+fulfil `VERA:CAPTURE` directives, rebuild the gallery, and run the unit suite.
+It's a standalone page served at `/operator/panel` and mounted as an iframe (so
+its CSS never leaks into the harness).
 
 ---
 
@@ -272,6 +361,10 @@ browser is present.
 | [`vera/operator/thinker.py`](../vera/operator/thinker.py) | provider-pluggable decide step |
 | [`vera/operator/operator_loop.py`](../vera/operator/operator_loop.py) | the observe→think→act driver |
 | [`vera/operator/targets.py`](../vera/operator/targets.py) | target resolution (url/live/sandbox/vm/…) |
+| [`vera/operator/connectors.py`](../vera/operator/connectors.py) | connect to anything registered (integrations/ollama/nodes/docker/proxmox) |
+| [`vera/operator/capture.py`](../vera/operator/capture.py) | GIF assembly (Pillow) + time-lapse frame sampler |
+| [`vera/operator/tours.py`](../vera/operator/tours.py) | deterministic scripted tours (stills + GIF clips) |
+| [`vera/operator/docs/directives.py`](../vera/operator/docs/directives.py) | `VERA:CAPTURE` directive parse + insert |
 | [`vera/operator/missions/`](../vera/operator/missions) | mission registry + `documentation` + seeds |
 | [`vera/operator/docs/`](../vera/operator/docs) | domain map, doc scaffolder, gallery |
 | [`vera/operator/operator_capabilities.py`](../vera/operator/operator_capabilities.py) | the `operator.*` / `docs.*` caps + panel |
@@ -288,24 +381,5 @@ _No screenshots captured yet — run `docs.build` (or `operator.mission.run docu
 ## Capabilities
 
 <!-- VERA:AUTO:capabilities START -->
-_Regenerated from the live registry by `docs.build`. Until then, the operator
-surface is:_
-
-| Capability | HTTP | Description |
-|---|---|---|
-| `operator.session.start` | `POST /operator/session/start` | Open a browser session on a target |
-| `operator.session.status` | `GET /operator/session/status` | Status of one/all sessions |
-| `operator.session.close` | `POST /operator/session/close` | Close a session |
-| `operator.observe` | `POST /operator/observe` | Hybrid observation (refs + screenshot) |
-| `operator.read` | `POST /operator/read` | Read page/selector text |
-| `operator.screenshot` | `POST /operator/screenshot` | Capture a screenshot |
-| `operator.act` | `POST /operator/act` | Perform one action |
-| `operator.think` | `POST /operator/think` | Decide the next action (no act) |
-| `operator.step` | `POST /operator/step` | One observe→think→act tick |
-| `operator.run` | `POST /operator/run` | Full observe→think→act loop |
-| `operator.mission.list` | `GET /operator/mission/list` | List missions |
-| `operator.mission.run` | `POST /operator/mission/run` | Run a mission |
-| `docs.build` | `POST /docs/build` | Screenshot panels + regenerate docs |
-| `docs.gallery` | `POST /docs/gallery` | Rebuild the gallery from the manifest |
-| `operator.test.run` | `POST /operator/test/run` | Run the pytest unit suite |
+_No capabilities resolved for this domain._
 <!-- VERA:AUTO:capabilities END -->

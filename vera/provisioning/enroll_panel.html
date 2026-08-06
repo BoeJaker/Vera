@@ -187,11 +187,12 @@ function enrollOpen(vmid){
   $('#m-ttl').textContent=g.name?('Enroll '+g.name):'Enroll a host';
   const ip='width:100%';
   $('#m-body').innerHTML=`
-    <div class="field" style="font-size:10.5px;color:var(--dim)">Vera SSHes in with the bootstrap creds below, installs the step-ca trust + SSH user-CA (enables cert logins), requests a TLS cert, and registers the host in FreeIPA/DNS.</div>
+    <div class="field" style="font-size:10.5px;color:var(--dim)">Vera SSHes in with the bootstrap creds below, installs step-ca trust + SSH user-CA (cert logins), requests a TLS cert, registers the host in FreeIPA, and joins it to the WireGuard mesh. Works for Proxmox guests <b>and off-cluster hosts (e.g. a laptop)</b> — just give an IP.</div>
     <div class="field"><label>FQDN</label><input id="e-fqdn" value="${esc(g.name?g.name:'')}" placeholder="host.lan"></div>
-    <div class="field"><label>IP / reachable host</label><input id="e-ip" placeholder="10.0.0.42"></div>
+    <div class="field"><label>IP / reachable host ${g.ip?'<span style="color:var(--ok)">· auto-detected</span>':''}</label><input id="e-ip" value="${esc(g.ip||'')}" placeholder="10.0.0.42"></div>
     <div class="row"><div class="field" style="flex:1"><label>SSH user</label><input id="e-user" value="root"></div><div class="field" style="flex:0 0 90px"><label>Port</label><input id="e-port" value="22"></div></div>
-    <div class="field"><label>SSH password <span style="color:var(--dim)">(bootstrap)</span></label><input id="e-pass" type="password" placeholder="used once for enrolment"></div>
+    ${g.vmid?'<div class="field" style="font-size:10.5px;color:var(--ok)">✓ Proxmox guest — Vera enrols via Proxmox (pct exec / guest agent) and installs its own key. <b>Leave the SSH password blank.</b></div>':''}
+    <div class="field"><label>SSH password <span style="color:var(--dim)">(${g.vmid?'off-cluster fallback only':'bootstrap'})</span></label><input id="e-pass" type="password" placeholder="${g.vmid?'not needed for Proxmox guests':'used once for enrolment'}"></div>
     <div class="field"><label>…or key path on server</label><input id="e-key" placeholder="/root/.ssh/id_ed25519"></div>
     <input type="hidden" id="e-vmid" value="${esc(vmid||'')}"><input type="hidden" id="e-type" value="${esc(g.type||'')}"><input type="hidden" id="e-node" value="${esc(g.node||'')}">
     <button class="btn pri" onclick="enrollGo()">Enroll host</button>

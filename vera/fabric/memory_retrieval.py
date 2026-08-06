@@ -19,6 +19,12 @@ This module provides ONE retrieval door designed for models:
                     memory store), paged via offset/max_chars.
   memory.map      — namespace-level dataset browser (one level at a time),
                     replacing "list all datasets".
+  memory.browse   — real records from ONE dataset with NO search query needed
+                    (newest first, optional plain-substring narrow). A thin
+                    canonical-rendering wrapper around the existing fabric.browse
+                    cap. memory.seek only covers "I have a query"; browsing
+                    covers "show me what's actually in this dataset" — a
+                    distinct operation search can't substitute for.
   memory.tooling  — switch between 'canonical' (hide the overlapping fabric /
                     memory read caps from agent discovery) and 'full'
                     (legacy behaviour, nothing hidden).
@@ -76,12 +82,19 @@ _mode_cache: Dict[str, Any] = {"value": "", "at": 0.0}
 # Read/search doors that overlap memory.seek/read/map and confuse cap triage.
 # Hidden from DISCOVERY only while mode == canonical — never blocked at call time.
 GATED_DISCOVERY_CAPS: Set[str] = {
-    "fabric.query", "fabric.datasets",
+    "fabric.query", "fabric.datasets", "fabric.browse",
     "context.recall", "context.recall_fabric",
     "memory.search", "memory.recall", "memory.similar",
     "memory.session_history", "memory.find_similar_questions",
     "memory.traverse", "memory.get",
 }
+
+# The full canonical set, for consumers that want to seed a toolkit with every
+# door rather than gate individual ones (loop_profiles.py's fabric-discovery
+# floor, WORKSHOP_DISCOVERY_CAPS, etc.).
+CANONICAL_RETRIEVAL_CAPS: List[str] = [
+    "memory.seek", "memory.read", "memory.map", "memory.browse",
+]
 
 
 def _kv_conn():
@@ -687,10 +700,95 @@ async def cap_memory_map(prefix: str = "", max_entries: int = 40,
         lines.append(f"  {e['name']:<42} {ds_part}{e['records']:,} rec{expand}")
     if total > len(shown):
         lines.append(f"  … and {total - len(shown)} more (raise max_entries or narrow prefix)")
-    lines.append('→ memory.seek(query="…", scope="<name>") to search inside a namespace')
+    lines.append('→ memory.seek(query="…", scope="<name>") to search a namespace, '
+                 'memory.browse(scope="<name>") to just look at its records')
 
     return {"text": "\n".join(lines), "entries": shown, "count": total,
             "prefix": prefix}
+
+
+def _render_browse(scope: str, rows: List[Dict], total: Optional[int],
+                   offset: int, max_chars: int, filter_text: str = "") -> str:
+    k = len(rows)
+    if not k:
+        parent = scope.rsplit(".", 1)[0] if "." in scope else ""
+        return (f'MEMORY BROWSE "{scope}" — no records found at offset {offset}'
+                f'{" matching " + repr(filter_text) if filter_text else ""}.\n'
+                f'"{scope}" may not be a real dataset id — do NOT retry with a '
+                f"guessed spelling/variant of it. "
+                f'→ memory.map(prefix="{parent}") to see the REAL dataset ids that '
+                f"exist before trying again.")
+    snip = max(160, (max_chars - 200 - 90 * k) // k)
+    total_str = f"{total:,}" if total is not None else "?"
+    filt = f' matching "{filter_text}"' if filter_text else ""
+    lines = [f'MEMORY BROWSE "{scope}"{filt} — {k} records (offset {offset} of {total_str}, '
+             f"newest first)"]
+    for i, r in enumerate(rows, offset + 1):
+        text = re.sub(r"\s+", " ", (r["text"] or "").strip())
+        if len(text) > snip:
+            cut = text[:snip].rsplit(" ", 1)[0]
+            text = (cut or text[:snip]) + " …"
+        lines.append(f"[{i}] id={r['id']} · {_age_str(r['created_at'])}\n    {text}")
+    nxt = offset + k
+    if total is None or nxt < total:
+        lines.append(f'→ memory.browse(scope="{scope}", offset={nxt}) for more · '
+                     f'memory.read(record_id="<id>") for a full record')
+    else:
+        lines.append(f'→ memory.read(record_id="<id>") for a full record')
+    return "\n".join(lines)
+
+
+@capability(
+    "memory.browse",
+    http_method="POST", http_path="/memory/browse", http_tags=["memory", "fabric"],
+    memory="off",
+    description=(
+        "Look at REAL records from ONE dataset with NO search query needed — for "
+        "'what's actually in this dataset' rather than 'find me X'. Different from "
+        "memory.seek: seek ranks by relevance to a query, browse just lists what's "
+        "there, newest first. WHEN TO USE: you have an EXACT dataset id — from a "
+        "prior memory.map or memory.seek call's real output, never invented or "
+        "guessed — and want to get a feel for its contents before deciding how to "
+        "search it, or there's no good query yet. A thin canonical-rendering wrapper "
+        "around fabric.browse (same underlying data). "
+        "Params: scope (str! — an exact dataset id, e.g. 'dream.reports' — a "
+        "namespace with sub-datasets has no records of its own, use memory.map "
+        "first if unsure), contains (str — optional plain substring to narrow by, "
+        "NOT semantic search), k (int 10), offset (int 0 — paging), max_chars (int 4000). "
+        "Output: {text, records:[{n,id,created_at}], count, total, offset, scope}. "
+        "Read the `text` field; expand any record with memory.read(record_id=<id>)."
+    ),
+)
+async def cap_memory_browse(scope: str, contains: str = "", k: int = 10,
+                            offset: int = 0, max_chars: int = 4000,
+                            trace_id=None) -> Dict:
+    scope = str(scope or "").strip()
+    if not scope:
+        return {"error": "scope required — an exact dataset id, e.g. from memory.map"}
+    fab_browse = CAPABILITY_REGISTRY.get("fabric.browse", {}).get("func")
+    if not fab_browse:
+        return {"error": "fabric.browse not available"}
+
+    try:    k = max(1, min(50, int(k)))
+    except Exception: k = 10
+    try:    offset = max(0, int(offset))
+    except Exception: offset = 0
+    try:    max_chars = max(800, min(32000, int(max_chars)))
+    except Exception: max_chars = 4000
+
+    res = await fab_browse(dataset_id=scope, limit=k, offset=offset,
+                           search=contains or "", lite=False)
+    raw_rows = (res or {}).get("records", []) or []
+    rows = [_norm_rec(r.get("id", ""), r, 0.0) for r in raw_rows]
+    total = res.get("total") if isinstance(res, dict) else None
+    if total is not None and total < 0:
+        total = None   # fabric.browse returns -1 when it skipped the COUNT
+
+    text = _render_browse(scope, rows, total, offset, max_chars, filter_text=contains)
+    records = [{"n": i, "id": r["id"], "created_at": r["created_at"]}
+               for i, r in enumerate(rows, offset + 1)]
+    return {"text": text, "records": records, "count": len(rows),
+            "total": total, "offset": offset, "scope": scope}
 
 
 @capability(

@@ -335,3 +335,15 @@ The thread is persistent — closing and reopening the panel preserves the last 
 - [Memory Graph](./05-memory-graph.md) — the activity chain for research runs
 - [Ollama Cluster](./04-ollama-cluster.md) — the tier-to-instance routing
 - [IDE Module](./08-ide.md) — code generation, which shares the same pipeline
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_No capabilities resolved for this domain._
+<!-- VERA:AUTO:capabilities END -->

@@ -50,3 +50,15 @@ Config: `BROWSER_HEADLESS`, `BROWSER_TIMEOUT_MS`, `BROWSER_VIEWPORT_W/H`, `BROWS
 - [Research System](./07-research.md) — the heavier pipeline `web.*` was factored out of
 - [Data Fabric](./06-data-fabric.md) — crawl/ingest target
 - [Configuration](./10-configuration.md) — search + browser env vars
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_No capabilities resolved for this domain._
+<!-- VERA:AUTO:capabilities END -->

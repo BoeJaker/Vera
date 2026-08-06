@@ -2427,22 +2427,33 @@ async def ingest_dataset(
 ) -> Dict:
     recs: List[DataRecord] = []
     for item in (data if isinstance(data, list) else [data]):
+        # Keyed-upsert hook: a caller (e.g. fabric.upsert) may inject a
+        # deterministic record id as `_id` so re-ingesting the same business
+        # key REPLACES the row in place (INSERT OR REPLACE on the PK) instead
+        # of appending a duplicate. `_id` is popped so it never pollutes the
+        # stored row data. Absent → default random UUID (unchanged behaviour).
+        forced_id = None
         if isinstance(item, str):
             text = item; item = {"text": item}
         else:
+            if isinstance(item, dict) and "_id" in item:
+                forced_id = str(item.pop("_id") or "") or None
             text = item.get("text","") if isinstance(item, dict) else str(item)
             if not text and isinstance(item, dict):
                 text = " ".join(str(v) for v in item.values()
                                 if isinstance(v, str))[:2000]
 
-        recs.append(DataRecord(
+        _rec_kw = dict(
             dataset_id = dataset_id,
             source     = source,
             source_id  = source_id,
             text       = text[:2000],
             data       = item if isinstance(item, dict) else {"value": item},
             tags       = tags or [],
-        ))
+        )
+        if forced_id:
+            _rec_kw["id"] = forced_id
+        recs.append(DataRecord(**_rec_kw))
 
     # Batch pre-embed: one /api/embed call per ~64 records instead of one HTTP
     # roundtrip per record inside EmbedStage (which then no-ops on records that
@@ -9585,6 +9596,8 @@ _reg_ui(
     ],
     mode="tab",
     tab_order=35,
+    specialist_agent="fabric-librarian",
+    specialist_loop_profile="fabric-discovery",
 )
 
 log.info("fabric panel registered at /fabric/panel")

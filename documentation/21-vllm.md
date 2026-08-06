@@ -87,3 +87,15 @@ Mirrors the Ollama cluster layer so the router treats both uniformly:
 - [Configuration](./10-configuration.md) — env vars in one place
 - [Capability Framework](./01-capability-framework.md) — `vllm.*` registration
 - [Machine Learning](./16-machine-learning.md) — LoRA adapters trained/loaded here
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_No capabilities resolved for this domain._
+<!-- VERA:AUTO:capabilities END -->

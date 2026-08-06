@@ -368,5 +368,5 @@ _No screenshots captured yet — run `docs.build` (or `operator.mission.run docu
 ## Capabilities
 
 <!-- VERA:AUTO:capabilities START -->
-_Regenerated from the live registry by `docs.build`. Run the documentation mission to populate this table._
+_No capabilities resolved for this domain._
 <!-- VERA:AUTO:capabilities END -->

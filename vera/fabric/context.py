@@ -1797,12 +1797,14 @@ def _fabric_usage_hints(toolkit) -> str:
     if "memory.seek" in toolkit:
         parts.append(
             "MEMORY RETRIEVAL TIPS:\n"
-            "• memory.seek(query=\"…\") is THE way to search stored knowledge — "
-            "hybrid search with duplicates collapsed, sized to max_chars.\n"
-            "• Narrow with scope=\"<dataset or prefix>\" and since=\"7d\"; "
+            "• memory.seek(query=\"…\") is for SEARCH — hybrid search with duplicates "
+            "collapsed, sized to max_chars, when you have something to look for.\n"
+            "• memory.browse(scope=\"<dataset>\") is for LOOKING — real records from one "
+            "dataset with NO query needed, when you just want to see what's there.\n"
+            "• Narrow seek with scope=\"<dataset or prefix>\" and since=\"7d\"; "
             "read the returned `text` field.\n"
             "• Expand any hit IN FULL with memory.read(record_id=\"<id>\").\n"
-            "• Browse what data exists with memory.map() / memory.map(prefix=\"caps\").\n\n"
+            "• Find dataset names with memory.map() / memory.map(prefix=\"caps\").\n\n"
         )
     fabric_tools = {"fabric.query", "fabric.datasets", "fabric.ingest",
                     "fabric.skills.list", "fabric.skills.get", "fabric.stats"}
@@ -2057,7 +2059,7 @@ async def _agent_loop_call_tool(cap_name: str, args: Dict, *,
 
 # Caps whose output is already sized to the caller's budget (memory.seek's
 # max_chars) or is inherently a document — don't re-truncate them at 1500.
-_LOOP_PREVIEW_LONGFORM = {"memory.seek", "memory.read", "memory.map",
+_LOOP_PREVIEW_LONGFORM = {"memory.seek", "memory.read", "memory.map", "memory.browse",
                           "web.fetch", "llm.summarize"}
 
 
@@ -2549,6 +2551,7 @@ _BASE_DISCOVERY_CAPS = [
     "memory.seek",          # canonical stored-knowledge search
     "memory.read",          # full record by id
     "memory.map",           # dataset namespace browser
+    "memory.browse",        # look at a dataset's real records, no query needed
 ]
 _BASE_ESSENTIAL_CAPS = [
     "http.get",

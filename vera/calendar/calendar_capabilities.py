@@ -1771,4 +1771,6 @@ register_ui(
     ],
     mode="inject",          # now a sub-tab of the combined "Comms" tab
     tab_order=70,
+    specialist_agent="long-term-planner",
+    specialist_loop_profile="long-term-scheduling",
 )

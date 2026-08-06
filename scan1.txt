@@ -1,0 +1,2 @@
+mesh_ui_capabilities.py:112  U+00B7
+mesh_ui_capabilities.py:1115  U+2713 U+2717

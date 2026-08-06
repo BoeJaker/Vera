@@ -454,3 +454,15 @@ permanently and is the recommended long-term fix — point `TLS_CERTFILE` /
 - [Execution & Network Mapping](./12-execution.md) — the exec sandbox the IDE **Run** action shares
 - [Agents & Chat](./19-agents-chat.md) — the shared `<vera-agent-loop-output>` renderer
 - [Research System](./07-research.md) — the code pipeline shares the agent triplet
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_No capabilities resolved for this domain._
+<!-- VERA:AUTO:capabilities END -->

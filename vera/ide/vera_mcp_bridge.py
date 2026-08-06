@@ -112,7 +112,12 @@ class Vera:
             # Map may be empty if tools/list wasn't called first — rebuild it.
             self.list_tools()
             cap = self._name_map.get(mcp_name, mcp_name)
-        resp = self._post("/mcp/call", {"name": cap, "arguments": arguments or {}})
+        # caller_kind: "mcp" — the one honest, identifiable signal that this
+        # call came from a Claude Code session rather than the browser chat
+        # UI (which POSTs to this same /mcp/call endpoint but never sets
+        # this). Read server-side into evolve.* run records' triggered_by.
+        resp = self._post("/mcp/call", {"name": cap, "arguments": arguments or {},
+                                        "caller_kind": "mcp"})
         # Vera wraps the real result under "content".
         if isinstance(resp, dict) and "content" in resp:
             return resp["content"]

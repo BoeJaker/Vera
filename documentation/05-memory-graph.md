@@ -219,3 +219,15 @@ The panel reads theme variables from the parent harness via the postMessage brid
 - [Data Fabric](./06-data-fabric.md) — the semantic store records also land in (caps datasets)
 - [Galaxy Graph](./09-galaxy-graph.md) — the rendering component
 - [Capability Framework](./01-capability-framework.md) — activity recording mechanics
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_No capabilities resolved for this domain._
+<!-- VERA:AUTO:capabilities END -->

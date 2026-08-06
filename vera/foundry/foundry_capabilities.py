@@ -1,0 +1,913 @@
+"""
+foundry_capabilities.py — Vera OS Provisioning ("Foundry")
+==========================================================
+Phase 1: a versioned, multi-type **image catalog** + a **feature-bundle**
+registry + a **provision orchestrator** that stands up an OS onto a target
+(Proxmox CT, Proxmox VM, or Docker) with SSH-cert + FreeIPA + mesh and the
+selected hardening / file-server / compute features baked in.
+
+Model — a job is  Target × Base-image × Features[].  The orchestrator composes
+existing Vera plumbing (proxmox.lxc.create, docker.run, enroll.guest / lxc.create
+auto_enroll, proxmox.guest.exec) rather than reimplementing it.
+
+Catalog (`vera:foundry:images`): one entry per (os, version, type) — types are
+  cloudimg | lxc-template | docker | iso | ipxe
+so VMs/physical use cloud images or ISOs, CTs use LXC templates, and Docker uses
+registry images, all from one index. Big blobs live in Proxmox storage / Garage;
+this is the index + (later) the import/serve logic.
+
+See OS-PROVISIONING-ROADMAP.md for the full design + phasing.
+Capabilities (group `foundry.*`):
+  foundry.catalog.seed   — idempotent seed of the default OS set
+  foundry.image.list     — list catalogued images (filter by os/type)
+  foundry.image.add      — add/replace a catalogue entry
+  foundry.image.delete   — remove an entry
+  foundry.image.import   — build a cloud-init template from a cloudimg (VMs)
+  foundry.image.import.status — poll a template build
+  foundry.features       — the composable feature bundles + target compatibility
+  foundry.provision      — stand up target × image × features[]
+  foundry.jobs           — recent provision jobs
+  foundry.blueprint.*    — versioned, reusable IaC manifests: save/list/get/apply/
+                           delete/export(YAML)/import — define a whole estate once,
+                           version it, re-apply it, commit it to git/Gitea
+"""
+from __future__ import annotations
+
+import base64
+import json
+import time
+import uuid
+from pathlib import Path
+from typing import Any, Dict, List
+
+from fastapi.responses import HTMLResponse
+
+import Vera.vera.capability_orchestration as _orch
+from Vera.vera.capability_orchestration import (
+    APP, capability, emit_event, register_ui, CAPABILITY_REGISTRY,
+)
+
+_HERE = Path(__file__).parent
+K_IMAGES = "vera:foundry:images"
+K_JOBS = "vera:foundry:jobs"
+
+
+def _redis():
+    return getattr(_orch, "REDIS", None)
+
+
+async def _call(_cap_name: str, **kw) -> Dict:
+    """Invoke another capability by name (raw function). The first arg is
+    underscore-prefixed so target caps that take a `name` kwarg don't collide."""
+    c = CAPABILITY_REGISTRY.get(_cap_name)
+    fn = (c.get("raw") or c.get("func")) if c else None
+    if not fn:
+        return {"error": f"capability '{_cap_name}' unavailable"}
+    try:
+        return await fn(**kw)
+    except Exception as e:
+        return {"error": f"{_cap_name}: {type(e).__name__}: {e}"}
+
+
+async def _resolve_storage(cluster_id: str) -> str:
+    """Pick an active storage on the node that can hold guest disks — so Foundry
+    isn't hardcoded to a storage name that may not exist (e.g. local-lvm vs
+    local-zfs). Prefers block pools (zfspool/lvmthin/lvm), else dir/nfs/cifs."""
+    res = await _call("proxmox.node.exec", cluster_id=cluster_id,
+                      command="pvesm status -content images 2>/dev/null")
+    if res.get("error"):
+        return ""
+    best = ""
+    for line in (res.get("stdout", "") or "").splitlines()[1:]:
+        p = line.split()
+        if len(p) >= 3 and p[2] == "active":
+            if p[1] in ("zfspool", "lvmthin", "lvm"):
+                return p[0]
+            if not best and p[1] in ("dir", "nfs", "cifs"):
+                best = p[0]
+    return best
+
+
+def _vera_pubkey() -> str:
+    """Vera's SSH public key — baked into VMs via cloud-init so Vera can enrol them."""
+    try:
+        p = Path.home() / ".vera" / "ssh" / "id_vera.pub"
+        return p.read_text(encoding="utf-8").strip() if p.exists() else ""
+    except Exception:
+        return ""
+
+
+def _netcfg(ip: str, gateway: str):
+    """(lxc_net0, vm_ipconfig) for a static IP — the LAN has no DHCP, so guests
+    need a static address to be reachable/enrollable. Empty ip → DHCP."""
+    if not ip:
+        return "", "ip=dhcp"
+    cidr = ip if "/" in ip else ip + "/24"
+    gw = gateway or "192.168.0.1"
+    return f"name=eth0,bridge=vmbr0,ip={cidr},gw={gw}", f"ip={cidr},gw={gw}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Seed catalogue — the default OS set (indexed, not yet downloaded). Import
+# fetches + checksums the blob into Proxmox storage / Garage on demand.
+# ─────────────────────────────────────────────────────────────────────────────
+SEED: List[Dict[str, Any]] = [
+    # Debian 12
+    {"os": "debian", "version": "12", "type": "cloudimg", "arch": "amd64",
+     "source_url": "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2"},
+    {"os": "debian", "version": "12", "type": "lxc-template", "arch": "amd64",
+     "source_url": "debian-12-standard"},   # pveam appliance name
+    {"os": "debian", "version": "12", "type": "docker", "arch": "amd64", "source_url": "debian:12"},
+    # Ubuntu 24.04
+    {"os": "ubuntu", "version": "24.04", "type": "cloudimg", "arch": "amd64",
+     "source_url": "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"},
+    {"os": "ubuntu", "version": "24.04", "type": "lxc-template", "arch": "amd64",
+     "source_url": "ubuntu-24.04-standard"},
+    {"os": "ubuntu", "version": "24.04", "type": "docker", "arch": "amd64", "source_url": "ubuntu:24.04"},
+    # AlmaLinux 9
+    {"os": "almalinux", "version": "9", "type": "cloudimg", "arch": "amd64",
+     "source_url": "https://repo.almalinux.org/almalinux/9/cloud/x86_64/images/AlmaLinux-9-GenericCloud-latest.x86_64.qcow2"},
+    {"os": "almalinux", "version": "9", "type": "lxc-template", "arch": "amd64",
+     "source_url": "almalinux-9-default"},
+    {"os": "almalinux", "version": "9", "type": "docker", "arch": "amd64", "source_url": "almalinux:9"},
+    # Alpine
+    {"os": "alpine", "version": "3.20", "type": "lxc-template", "arch": "amd64",
+     "source_url": "alpine-3.20-default"},
+    {"os": "alpine", "version": "3.20", "type": "docker", "arch": "amd64", "source_url": "alpine:3.20"},
+    # Arch
+    {"os": "arch", "version": "latest", "type": "cloudimg", "arch": "amd64",
+     "source_url": "https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2"},
+    {"os": "arch", "version": "latest", "type": "docker", "arch": "amd64", "source_url": "archlinux:latest"},
+    # Kali (security testing)
+    {"os": "kali", "version": "rolling", "type": "docker", "arch": "amd64",
+     "source_url": "kalilinux/kali-rolling"},
+    {"os": "kali", "version": "rolling", "type": "cloudimg", "arch": "amd64",
+     "source_url": "https://kali.download/cloud-images/current/kali-linux-current-cloud-genericcloud-amd64.tar.xz",
+     "notes": "Kali cloud image (verify current path at import time)"},
+    # Windows — stub (bring-your-own ISO)
+    {"os": "windows", "version": "server-2022", "type": "iso", "arch": "amd64",
+     "source_url": "", "notes": "STUB — supply a Windows Server 2022 ISO volid; autounattend.xml support is a later phase"},
+]
+
+
+def _img_id(e: Dict) -> str:
+    return f"{e['os']}-{e['version']}-{e['type']}"
+
+
+@capability(
+    "foundry.catalog.seed",
+    http_method="POST", http_path="/foundry/catalog/seed", http_tags=["foundry"],
+    memory="on",
+    description="Seed the image catalogue with the default OS set (Debian 12, "
+                "Ubuntu 24.04, AlmaLinux 9, Alpine, Arch, Kali, Windows-stub) "
+                "across cloudimg / lxc-template / docker / iso types. Idempotent — "
+                "only adds entries that are missing. Output: {ok, added, total}.",
+)
+async def cap_seed(overwrite: bool = False, trace_id=None) -> Dict:
+    r = _redis()
+    if not r:
+        return {"error": "no redis"}
+    existing = await r.hgetall(K_IMAGES) or {}
+    existing = {(k.decode() if isinstance(k, bytes) else k) for k in existing}
+    added = 0
+    for e in SEED:
+        iid = _img_id(e)
+        if iid in existing and not overwrite:
+            continue
+        rec = {"id": iid, "arch": "amd64", "sha256": "", "size": 0,
+               "location": "", "status": "indexed", "notes": "",
+               "added": time.time(), "is_latest": True, **e}
+        await r.hset(K_IMAGES, iid, json.dumps(rec))
+        added += 1
+    total = len(await r.hgetall(K_IMAGES) or {})
+    await emit_event({"type": "foundry.catalog.seeded", "added": added, "total": total})
+    return {"ok": True, "added": added, "total": total}
+
+
+@capability(
+    "foundry.image.list",
+    http_method="GET", http_path="/foundry/image/list", http_tags=["foundry"],
+    memory="off", silent=True,
+    description="List catalogued OS images. Optional filters: os, type "
+                "(cloudimg|lxc-template|docker|iso|ipxe). Output: {images:[...]}.",
+)
+async def cap_image_list(os: str = "", type: str = "", trace_id=None) -> Dict:
+    r = _redis()
+    if not r:
+        return {"images": []}
+    rows = await r.hgetall(K_IMAGES) or {}
+    out = []
+    for v in rows.values():
+        try:
+            rec = json.loads(v)
+        except Exception:
+            continue
+        if os and rec.get("os") != os:
+            continue
+        if type and rec.get("type") != type:
+            continue
+        out.append(rec)
+    out.sort(key=lambda e: (e.get("os", ""), e.get("version", ""), e.get("type", "")))
+    return {"images": out, "count": len(out)}
+
+
+@capability(
+    "foundry.image.add",
+    http_method="POST", http_path="/foundry/image/add", http_tags=["foundry"],
+    memory="on",
+    description="Add or replace a catalogue entry. Inputs: os (str!), version "
+                "(str!), type (cloudimg|lxc-template|docker|iso|ipxe), arch "
+                "(str='amd64'), source_url (str — URL, pveam name, docker ref or "
+                "iso volid), sha256 (str), notes (str). Output: {ok, id}.",
+)
+async def cap_image_add(os: str = "", version: str = "", type: str = "",
+                        arch: str = "amd64", source_url: str = "",
+                        sha256: str = "", notes: str = "", template_vmid: int = 0,
+                        trace_id=None) -> Dict:
+    if not (os and version and type):
+        return {"error": "os, version and type are required"}
+    r = _redis()
+    if not r:
+        return {"error": "no redis"}
+    e = {"os": os, "version": version, "type": type}
+    iid = _img_id(e)
+    rec = {"id": iid, "os": os, "version": version, "type": type, "arch": arch,
+           "source_url": source_url, "sha256": sha256, "size": 0, "location": "",
+           "status": "indexed", "notes": notes, "added": time.time(), "is_latest": True}
+    if template_vmid:
+        rec["template_vmid"] = int(template_vmid)   # link a cloud-init template (VMs)
+    await r.hset(K_IMAGES, iid, json.dumps(rec))
+    await emit_event({"type": "foundry.image.added", "id": iid})
+    return {"ok": True, "id": iid}
+
+
+@capability(
+    "foundry.image.delete",
+    http_method="POST", http_path="/foundry/image/delete", http_tags=["foundry"],
+    memory="on", description="Remove a catalogue entry by id. Input: id (str!).",
+)
+async def cap_image_delete(id: str = "", trace_id=None) -> Dict:
+    r = _redis()
+    if not r or not id:
+        return {"error": "id required"}
+    n = await r.hdel(K_IMAGES, id)
+    return {"ok": bool(n), "id": id}
+
+
+async def _vztmpl_storage(cluster_id: str, storage: str) -> str:
+    """A storage on the node that holds LXC templates (vztmpl content)."""
+    if storage and storage not in ("local-lvm",):
+        return storage
+    res = await _call("proxmox.node.exec", cluster_id=cluster_id,
+                      command="pvesm status -content vztmpl 2>/dev/null | awk 'NR>1 && $3==\"active\"{print $1; exit}'")
+    return ((res.get("stdout", "") or "").strip()) or "local"
+
+
+async def _import_lxc_template(image_id, img, cluster_id, storage) -> Dict:
+    """Download an LXC appliance template via pveam (background) and, when done,
+    the status cap rewrites the catalogue entry's source_url to the real volid."""
+    r = _redis()
+    appliance = img.get("source_url", "")
+    if not appliance or ":" in appliance:
+        return {"error": "entry has no pveam appliance name to download"}
+    tstore = await _vztmpl_storage(cluster_id, storage)
+    log = f"/var/log/foundry-tmpl-{image_id}.log"
+    script = (
+        "set -e\n"
+        f"exec >{log} 2>&1\n"
+        "pveam update >/dev/null 2>&1 || true\n"
+        f'FULL=$(pveam available 2>/dev/null | awk \'{{print $2}}\' | grep -E "^{appliance}(_|$)" | sort -V | tail -1)\n'
+        f'[ -z "$FULL" ] && {{ echo NO_APPLIANCE:{appliance}; exit 1; }}\n'
+        f'echo "[foundry] pveam download {tstore} $FULL"; pveam download {tstore} "$FULL"\n'
+        f'echo "VERA_TEMPLATE_VOLID:{tstore}:vztmpl/$FULL"\n'
+    )
+    b64 = base64.b64encode(script.encode()).decode()
+    launch = f"nohup bash -c 'echo {b64} | base64 -d | bash' >/dev/null 2>&1 & echo STARTED"
+    res = await _call("proxmox.node.exec", cluster_id=cluster_id, command=launch, timeout=40)
+    if res.get("error"):
+        return {"error": res["error"]}
+    img.update({"status": "importing", "import_log": log, "import_storage": tstore})
+    await r.hset(K_IMAGES, image_id, json.dumps(img))
+    await emit_event({"type": "foundry.image.import.started", "image": image_id, "kind": "lxc-template"})
+    return {"ok": True, "image_id": image_id, "started": True, "log": log,
+            "note": "downloading LXC template in the background — poll foundry.image.import.status"}
+
+
+@capability(
+    "foundry.image.import",
+    http_method="POST", http_path="/foundry/image/import", http_tags=["foundry"],
+    memory="on",
+    description="Import a catalogue CLOUD IMAGE onto Proxmox and build a cloud-init "
+                "TEMPLATE from it (runs on the node in the background), so VM "
+                "provisioning can clone it. Inputs: image_id (str! — a cloudimg entry), "
+                "cluster_id (str!), node (str!), storage (str='local-lvm' — where the "
+                "VM disk lands, e.g. local-zfs), template_vmid (int — blank=auto). "
+                "Output: {ok, image_id, template_vmid, started, log}.",
+)
+async def cap_image_import(image_id: str = "", cluster_id: str = "", node: str = "",
+                           storage: str = "local-lvm", template_vmid: int = 0,
+                           trace_id=None) -> Dict:
+    r = _redis()
+    raw = await r.hget(K_IMAGES, image_id) if (r and image_id) else None
+    if not raw:
+        return {"error": f"image '{image_id}' not in catalogue"}
+    img = json.loads(raw)
+    if img.get("type") == "lxc-template":
+        return await _import_lxc_template(image_id, img, cluster_id, storage)
+    if img.get("type") != "cloudimg":
+        return {"error": f"import handles cloudimg (VM template) or lxc-template (CT); "
+                         f"'{image_id}' is {img.get('type')}"}
+    url = img.get("source_url", "")
+    if not url.startswith("http"):
+        return {"error": "image has no downloadable http source_url"}
+    if not template_vmid:
+        nid = await _call("proxmox.nextid", cluster_id=cluster_id)
+        template_vmid = int(nid.get("vmid") or 0)
+    if not template_vmid:
+        return {"error": "could not allocate a template vmid"}
+    base = url.split("/")[-1] or f"{image_id}.img"
+    tname = f"{img['os']}-{img['version']}-tmpl".replace(".", "-").replace("_", "-")
+    log = f"/var/log/foundry-import-{template_vmid}.log"
+    script = (
+        "set -e\n"
+        f"exec >{log} 2>&1\n"
+        f"VMID={template_vmid}; STORAGE='{storage}'; URL='{url}'\n"
+        "WORK=/var/lib/vz/template/foundry; mkdir -p $WORK\n"
+        f'IMG="$WORK/{base}"\n'
+        'echo "[foundry] download $URL"; [ -s "$IMG" ] || wget -qO "$IMG" "$URL"\n'
+        f"echo '[foundry] create VM'; qm create $VMID --name {tname} --memory 2048 "
+        "--cores 2 --net0 virtio,bridge=vmbr0 --scsihw virtio-scsi-pci --ostype l26\n"
+        'echo "[foundry] importdisk"; qm importdisk $VMID "$IMG" $STORAGE\n'
+        "DISK=$(qm config $VMID | sed -n 's/^unused0: //p')\n"
+        '[ -n "$DISK" ] || DISK="$STORAGE:vm-$VMID-disk-0"\n'
+        'qm set $VMID --scsi0 "$DISK"\n'
+        "qm set $VMID --ide2 $STORAGE:cloudinit\n"
+        "qm set $VMID --boot c --bootdisk scsi0 --serial0 socket --vga serial0 --agent enabled=1\n"
+        "qm template $VMID\n"
+        "echo VERA_TEMPLATE_OK:$VMID\n"
+    )
+    b64 = base64.b64encode(script.encode()).decode()
+    launch = f"nohup bash -c 'echo {b64} | base64 -d | bash' >/dev/null 2>&1 & echo STARTED:$!"
+    res = await _call("proxmox.node.exec", cluster_id=cluster_id, command=launch, timeout=40)
+    if res.get("error"):
+        return {"error": res["error"]}
+    img.update({"status": "importing", "template_vmid": template_vmid,
+                "import_log": log, "import_storage": storage})
+    await r.hset(K_IMAGES, image_id, json.dumps(img))
+    await emit_event({"type": "foundry.image.import.started", "image": image_id,
+                      "template_vmid": template_vmid})
+    return {"ok": True, "image_id": image_id, "template_vmid": template_vmid,
+            "started": True, "log": log,
+            "note": "building template in the background — poll foundry.image.import.status"}
+
+
+@capability(
+    "foundry.image.import.status",
+    http_method="GET", http_path="/foundry/image/import/status", http_tags=["foundry"],
+    memory="off", silent=True,
+    description="Check a template-build import: reads the node log + confirms the "
+                "template exists, and when ready marks the catalogue entry 'ready' so "
+                "VM provisioning can clone it. Inputs: image_id (str!), cluster_id "
+                "(str!). Output: {status, template_vmid, ready, tail}.",
+)
+async def cap_image_import_status(image_id: str = "", cluster_id: str = "",
+                                  trace_id=None) -> Dict:
+    r = _redis()
+    raw = await r.hget(K_IMAGES, image_id) if (r and image_id) else None
+    if not raw:
+        return {"error": "image not in catalogue"}
+    img = json.loads(raw)
+    log = img.get("import_log", "")
+    # LXC template download: parse the resulting volid from the log → source_url
+    if img.get("type") == "lxc-template":
+        if not log:
+            return {"status": img.get("status", "indexed"), "ready": False, "note": "not imported"}
+        res = await _call("proxmox.node.exec", cluster_id=cluster_id,
+                          command=f"tail -n 6 {log} 2>/dev/null")
+        out = res.get("stdout", "") or ""
+        volid = ""
+        for line in out.splitlines():
+            if line.startswith("VERA_TEMPLATE_VOLID:"):
+                volid = line.split("VERA_TEMPLATE_VOLID:", 1)[1].strip()
+        if volid:
+            img["source_url"] = volid
+            img["status"] = "ready"
+            await r.hset(K_IMAGES, image_id, json.dumps(img))
+            await emit_event({"type": "foundry.image.imported", "image": image_id, "volid": volid})
+        return {"status": "ready" if volid else img.get("status", "importing"),
+                "ready": bool(volid), "volid": volid, "tail": out[-500:]}
+    vmid = img.get("template_vmid")
+    if not vmid:
+        return {"status": img.get("status", "indexed"), "ready": False, "note": "not imported"}
+    cmd = (f"tail -n 5 {log} 2>/dev/null; echo '---'; "
+           f"qm config {vmid} 2>/dev/null | grep -q '^template:' && echo IS_TEMPLATE || true")
+    res = await _call("proxmox.node.exec", cluster_id=cluster_id, command=cmd, timeout=30)
+    out = res.get("stdout", "") or ""
+    ready = ("IS_TEMPLATE" in out) or ("VERA_TEMPLATE_OK" in out)
+    if ready and img.get("status") != "ready":
+        img["status"] = "ready"
+        await r.hset(K_IMAGES, image_id, json.dumps(img))
+        await emit_event({"type": "foundry.image.imported", "image": image_id,
+                          "template_vmid": vmid})
+    return {"status": "ready" if ready else img.get("status", "importing"),
+            "template_vmid": vmid, "ready": ready, "tail": out[-500:]}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Feature bundles — composable, toggleable. `targets` = which target types the
+# feature applies to. Scripts (where applicable) are applied post-create via
+# proxmox.guest.exec / SSH. enrol+mesh are delivered by lxc.create auto_enroll /
+# enroll.guest today; the rest land as bundle scripts (Gitea-backed) next.
+# ─────────────────────────────────────────────────────────────────────────────
+FEATURES: List[Dict[str, Any]] = [
+    {"id": "enrol", "label": "Enrolment (SSH cert + FreeIPA)", "default": True,
+     "targets": ["ct", "vm", "physical"], "status": "ready",
+     "desc": "Passwordless SSH-cert trust + FreeIPA host/user join."},
+    {"id": "mesh", "label": "Private mesh network", "default": True,
+     "targets": ["ct", "vm", "physical"], "status": "ready",
+     "desc": "Join the WireGuard private overlay."},
+    {"id": "hardening", "label": "OS hardening", "default": True,
+     "targets": ["ct", "vm", "physical"], "status": "ready",
+     "desc": "sshd policy, host firewall, auto-updates, no root SSH login."},
+    {"id": "file-client", "label": "File-server client", "default": False,
+     "targets": ["ct", "vm", "physical"], "status": "ready",
+     "desc": "Mount the shared SMB/NFS drives."},
+    {"id": "file-server", "label": "File server", "default": False,
+     "targets": ["ct", "vm", "physical"], "status": "planned",
+     "desc": "Host Samba + NFS shares (bundle script next)."},
+    {"id": "security-monitoring", "label": "Security monitoring", "default": False,
+     "targets": ["ct", "vm", "physical"], "status": "planned",
+     "desc": "auditd + log shipping to a collector (bundle script next)."},
+    {"id": "docker-swarm", "label": "Docker swarm member", "default": False,
+     "targets": ["ct", "vm", "physical"], "status": "planned",
+     "desc": "Install Docker + join/init the swarm (bundle script next)."},
+    {"id": "distributed-compute", "label": "Vera compute cluster", "default": False,
+     "targets": ["ct", "vm", "physical", "docker"], "status": "planned",
+     "desc": "Join the Vera worker / Ollama compute cluster (bundle script next)."},
+]
+
+
+@capability(
+    "foundry.features",
+    http_method="GET", http_path="/foundry/features", http_tags=["foundry"],
+    memory="off", silent=True,
+    description="List the composable feature bundles and which target types each "
+                "supports. Output: {features:[{id,label,desc,targets,default,status}]}.",
+)
+async def cap_features(trace_id=None) -> Dict:
+    return {"features": FEATURES}
+
+
+# hardening bundle — small, idempotent, POSIX-ish (Debian/EL both handled).
+_HARDEN = r"""
+set -e
+# no root SSH password login; keep key/cert auth
+if [ -f /etc/ssh/sshd_config ]; then
+  sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config || true
+  sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config || true
+  (systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || true)
+fi
+# host firewall — allow ssh + mesh, default deny (best-effort per available tool)
+if command -v ufw >/dev/null 2>&1; then
+  ufw --force reset >/dev/null 2>&1 || true
+  ufw default deny incoming >/dev/null 2>&1; ufw default allow outgoing >/dev/null 2>&1
+  ufw allow 22/tcp >/dev/null 2>&1; ufw allow 51820/udp >/dev/null 2>&1
+  ufw --force enable >/dev/null 2>&1 || true
+elif command -v firewall-cmd >/dev/null 2>&1; then
+  firewall-cmd --permanent --add-service=ssh >/dev/null 2>&1 || true
+  firewall-cmd --permanent --add-port=51820/udp >/dev/null 2>&1 || true
+  firewall-cmd --reload >/dev/null 2>&1 || true
+fi
+# unattended security updates
+if command -v apt-get >/dev/null 2>&1; then
+  DEBIAN_FRONTEND=noninteractive apt-get install -y unattended-upgrades >/dev/null 2>&1 || true
+elif command -v dnf >/dev/null 2>&1; then
+  dnf install -y dnf-automatic >/dev/null 2>&1 && systemctl enable --now dnf-automatic.timer >/dev/null 2>&1 || true
+fi
+echo VERA_HARDEN_DONE
+""".strip()
+
+
+async def _apply_ct_feature(cluster_id, vmid, guest_type, script, node="") -> Dict:
+    return await _call("proxmox.guest.exec", cluster_id=cluster_id, node=node, vmid=vmid,
+                       guest_type=guest_type, command=script, timeout=180)
+
+
+async def _wait_guest_running(cluster_id, vmid, kind="lxc", timeout=90) -> bool:
+    tool = "pct" if kind == "lxc" else "qm"
+    cmd = (f"for i in $(seq 1 {max(1, timeout // 3)}); do "
+           f"{tool} status {vmid} 2>/dev/null | grep -q running && {{ echo RUNNING; exit 0; }}; "
+           "sleep 3; done; echo TIMEOUT")
+    res = await _call("proxmox.node.exec", cluster_id=cluster_id, command=cmd, timeout=timeout + 15)
+    return "RUNNING" in (res.get("stdout", "") or "")
+
+
+@capability(
+    "foundry.provision",
+    http_method="POST", http_path="/foundry/provision", http_tags=["foundry"],
+    memory="on",
+    description="Stand up an OS: target (ct|vm|docker) × image_id (from the "
+                "catalogue) × features[]. All three targets are live (CT/VM need the "
+                "image imported first — foundry.image.import). Inputs: target, "
+                "image_id, name (hostname), features (csv/list), cluster_id, node, "
+                "cores (int=1), memory (int=1024 MB), disk (int=8 GB), storage (str — "
+                "blank auto-resolves), fqdn (str — FreeIPA name), ip (str — static "
+                "address, this LAN has no DHCP; blank=dhcp), gateway (str). CT enrol+"
+                "mesh via auto-enrol + hardening script; VM bakes Vera's SSH key + "
+                "static IP (post-boot enrol next); other features recorded pending. "
+                "Output: {ok, job_id, target, steps}.",
+)
+async def cap_provision(target: str = "", image_id: str = "", name: str = "",
+                        features="", cluster_id: str = "", node: str = "",
+                        cores: int = 1, memory: int = 1024, disk: int = 8,
+                        storage: str = "", fqdn: str = "", ip: str = "",
+                        gateway: str = "", trace_id=None) -> Dict:
+    r = _redis()
+    if isinstance(features, str):
+        feats = [f.strip() for f in features.replace(",", " ").split() if f.strip()]
+    else:
+        feats = [str(f) for f in (features or [])]
+    if "enrol" not in feats:
+        feats.insert(0, "enrol")            # baseline
+    img = None
+    if r and image_id:
+        raw = await r.hget(K_IMAGES, image_id)
+        if raw:
+            try:
+                img = json.loads(raw)
+            except Exception:
+                img = None
+    if not img:
+        return {"error": f"image '{image_id}' not in catalogue (foundry.image.list)"}
+    job_id = uuid.uuid4().hex[:12]
+    job = {"id": job_id, "target": target, "image": image_id, "name": name,
+           "features": feats, "created": time.time(), "steps": [], "status": "running"}
+
+    def step(k, v):
+        job["steps"].append({k: v}); return v
+
+    # resolve a real node storage if none/invalid given (local-lvm may not exist)
+    if target in ("ct", "vm") and (not storage or storage == "local-lvm"):
+        storage = await _resolve_storage(cluster_id) or storage
+    net0, ipconfig = _netcfg(ip, gateway)   # static IP (no DHCP on this LAN) or dhcp
+
+    want_enrol = "enrol" in feats or "mesh" in feats
+    if target == "ct":
+        if img.get("type") != "lxc-template":
+            return {"error": f"CT target needs an lxc-template image; '{image_id}' is {img.get('type')}"}
+        tmpl = img.get("source_url", "")
+        if ":" not in tmpl or "vztmpl" not in tmpl:
+            return {"error": f"LXC template not downloaded yet for '{image_id}' — build it "
+                             "first (foundry.image.import) so there's a real volid"}
+        res = await _call("proxmox.lxc.create", cluster_id=cluster_id, node=node,
+                          ostemplate=tmpl, hostname=name or "",
+                          storage=storage, cores=cores, memory=memory, disk=disk,
+                          net0=net0,
+                          features="nesting=1,keyctl=1" if "docker-swarm" in feats else "",
+                          auto_enroll=False)   # enrol AFTER it's running (avoid create-task race)
+        step("create", res)
+        vmid = res.get("vmid")
+        if res.get("error") or not vmid:
+            job["status"] = "error"
+        else:
+            job["vmid"] = vmid
+            running = await _wait_guest_running(cluster_id, vmid, "lxc")
+            step("boot", {"running": running})
+            if want_enrol and running:
+                step("enrol", await _call("enroll.guest", cluster_id=cluster_id, vmid=vmid,
+                                          guest_type="lxc", node=node, fqdn=fqdn or "",
+                                          via_proxmox=True))
+            if "hardening" in feats and running:
+                step("hardening", await _apply_ct_feature(cluster_id, vmid, "lxc", _HARDEN, node))
+            for f in feats:
+                if f in ("file-server", "security-monitoring", "docker-swarm",
+                         "distributed-compute", "file-client"):
+                    step(f, {"status": "pending", "note": "bundle script lands next"})
+            job["status"] = "ok"
+    elif target == "docker":
+        if img.get("type") != "docker":
+            return {"error": f"Docker target needs a docker image; '{image_id}' is {img.get('type')}"}
+        res = await _call("docker.run", image=img.get("source_url", ""),
+                          name=name or f"foundry-{job_id}", detach=True)
+        step("run", res)
+        job["status"] = "error" if res.get("error") else "ok"
+        for f in feats:
+            if f not in ("enrol",):
+                step(f, {"status": "pending",
+                         "note": "container features (mesh/compute) land next"})
+    elif target == "vm":
+        if img.get("type") not in ("cloudimg", "iso"):
+            return {"error": f"VM target needs a cloudimg/iso image; '{image_id}' is {img.get('type')}"}
+        tmpl = img.get("template_vmid")
+        if tmpl:
+            res = await _call("proxmox.vm.create", cluster_id=cluster_id, node=node,
+                              template_vmid=int(tmpl), name=name, cores=cores,
+                              memory=memory, disk=disk, storage=storage,
+                              ipconfig=ipconfig, sshkeys=_vera_pubkey())
+            step("create", res)
+            vmid = res.get("vmid")
+            if res.get("error") or not vmid:
+                job["status"] = "error"
+            else:
+                job["status"] = "ok"
+                job["vmid"] = vmid
+                for f in feats:
+                    if f != "enrol":
+                        step(f, {"status": "pending",
+                                 "note": "VM post-boot enrol/features apply once reachable (next)"})
+        else:
+            step("create", {"status": "pending",
+                            "note": "no cloud-init template linked to this cloudimg yet — "
+                                    "build one from the image, or set template_vmid via "
+                                    "foundry.image.add (image-import pipeline lands next)"})
+            job["status"] = "pending"
+    else:
+        return {"error": "target must be one of: ct | vm | docker"}
+
+    if r:
+        await r.lpush(K_JOBS, json.dumps(job))
+        await r.ltrim(K_JOBS, 0, 199)
+    await emit_event({"type": "foundry.provision", "job": job_id, "target": target,
+                      "image": image_id, "status": job["status"]})
+    return {"ok": job["status"] in ("ok", "pending"), "job_id": job_id,
+            "target": target, "status": job["status"], "steps": job["steps"],
+            "vmid": job.get("vmid")}
+
+
+@capability(
+    "foundry.jobs",
+    http_method="GET", http_path="/foundry/jobs", http_tags=["foundry"],
+    memory="off", silent=True,
+    description="Recent provision jobs (newest first). Output: {jobs:[...]}.",
+)
+async def cap_jobs(limit: int = 30, trace_id=None) -> Dict:
+    r = _redis()
+    if not r:
+        return {"jobs": []}
+    rows = await r.lrange(K_JOBS, 0, max(1, min(limit, 200)) - 1) or []
+    jobs = []
+    for v in rows:
+        try:
+            jobs.append(json.loads(v))
+        except Exception:
+            pass
+    return {"jobs": jobs}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Blueprints — declarative, versioned, reusable Infrastructure-as-Code. A
+# blueprint describes a whole estate (N nodes, each = target × image × features ×
+# resources); it is versioned on every save (prior versions snapshotted),
+# re-applied idempotently by fanning out to foundry.provision, and exported as a
+# portable YAML manifest you can commit to Gitea/git. This is what makes Foundry
+# "a versioned, reusable infra setup tool like Docker/Terraform".
+# ─────────────────────────────────────────────────────────────────────────────
+K_BP = "vera:foundry:blueprints"
+K_BP_RUNS = "vera:foundry:bp_runs"
+
+
+def _bp_versions_key(bid: str) -> str:
+    return f"vera:foundry:bp:{bid}:versions"
+
+
+@capability(
+    "foundry.blueprint.save",
+    http_method="POST", http_path="/foundry/blueprint/save", http_tags=["foundry"],
+    memory="on",
+    description="Create or update a versioned, reusable provisioning blueprint "
+                "(Infrastructure-as-Code, like a docker-compose for OS estates). "
+                "Inputs: id (blank = new), name (str!), description (str), nodes "
+                "(list/JSON of {name,target,image_id,count,features,cluster_id,node,"
+                "cores,memory,disk,fqdn}). Updating an existing id snapshots the "
+                "prior version and bumps the version. Output: {ok, id, version}.",
+)
+async def cap_bp_save(id: str = "", name: str = "", description: str = "",
+                      nodes=None, trace_id=None) -> Dict:
+    r = _redis()
+    if not r:
+        return {"error": "no redis"}
+    if isinstance(nodes, str):
+        try:
+            nodes = json.loads(nodes)
+        except Exception:
+            return {"error": "nodes must be a JSON list"}
+    nodes = nodes or []
+    now = time.time()
+    if id:
+        raw = await r.hget(K_BP, id)
+        if not raw:
+            return {"error": f"blueprint {id} not found"}
+        cur = json.loads(raw)
+        await r.lpush(_bp_versions_key(id), raw)      # snapshot the prior version
+        await r.ltrim(_bp_versions_key(id), 0, 49)
+        doc = {**cur, "name": name or cur.get("name"),
+               "description": description if description else cur.get("description", ""),
+               "nodes": nodes if nodes else cur.get("nodes", []),
+               "version": int(cur.get("version", 1)) + 1, "updated": now}
+    else:
+        if not name:
+            return {"error": "name required"}
+        id = uuid.uuid4().hex[:12]
+        doc = {"id": id, "name": name, "description": description, "nodes": nodes,
+               "version": 1, "created": now, "updated": now}
+    await r.hset(K_BP, id, json.dumps(doc))
+    await emit_event({"type": "foundry.blueprint.saved", "id": id, "version": doc["version"]})
+    return {"ok": True, "id": id, "version": doc["version"]}
+
+
+@capability(
+    "foundry.blueprint.list",
+    http_method="GET", http_path="/foundry/blueprint/list", http_tags=["foundry"],
+    memory="off", silent=True,
+    description="List provisioning blueprints (latest version each). "
+                "Output: {blueprints:[{id,name,version,nodes,description,updated}]}.",
+)
+async def cap_bp_list(trace_id=None) -> Dict:
+    r = _redis()
+    if not r:
+        return {"blueprints": []}
+    rows = await r.hgetall(K_BP) or {}
+    out = []
+    for v in rows.values():
+        try:
+            d = json.loads(v)
+            out.append({"id": d["id"], "name": d.get("name"), "version": d.get("version"),
+                        "nodes": len(d.get("nodes", [])), "description": d.get("description", ""),
+                        "updated": d.get("updated")})
+        except Exception:
+            pass
+    out.sort(key=lambda b: (b.get("name") or "").lower())
+    return {"blueprints": out}
+
+
+@capability(
+    "foundry.blueprint.get",
+    http_method="GET", http_path="/foundry/blueprint/get", http_tags=["foundry"],
+    memory="off", silent=True,
+    description="Get a blueprint, optionally a past version. Inputs: id (str!), "
+                "version (int — blank/0 = latest). Output: the doc + {versions:[...]}.",
+)
+async def cap_bp_get(id: str = "", version: int = 0, trace_id=None) -> Dict:
+    r = _redis()
+    if not r or not id:
+        return {"error": "id required"}
+    raw = await r.hget(K_BP, id)
+    if not raw:
+        return {"error": "not found"}
+    latest = json.loads(raw)
+    hist = await r.lrange(_bp_versions_key(id), 0, -1) or []
+    old_versions = []
+    for h in hist:
+        try:
+            old_versions.append(json.loads(h).get("version"))
+        except Exception:
+            pass
+    all_versions = [latest.get("version")] + old_versions
+    if version and version != latest.get("version"):
+        for h in hist:
+            try:
+                d = json.loads(h)
+                if d.get("version") == version:
+                    return {**d, "versions": all_versions, "is_latest": False}
+            except Exception:
+                pass
+        return {"error": f"version {version} not found"}
+    return {**latest, "versions": all_versions, "is_latest": True}
+
+
+@capability(
+    "foundry.blueprint.delete",
+    http_method="POST", http_path="/foundry/blueprint/delete", http_tags=["foundry"],
+    memory="on", description="Delete a blueprint + its version history. Input: id (str!).",
+)
+async def cap_bp_delete(id: str = "", trace_id=None) -> Dict:
+    r = _redis()
+    if not r or not id:
+        return {"error": "id required"}
+    await r.hdel(K_BP, id)
+    await r.delete(_bp_versions_key(id))
+    return {"ok": True, "id": id}
+
+
+@capability(
+    "foundry.blueprint.apply",
+    http_method="POST", http_path="/foundry/blueprint/apply", http_tags=["foundry"],
+    memory="on",
+    description="Apply a blueprint — provision every node (× count) it declares by "
+                "fanning out to foundry.provision. Inputs: id (str!), version (int — "
+                "blank = latest), dry_run (bool — plan only, no changes). "
+                "Output: {ok, run_id, results:[{node,target,status,job_id}]}.",
+)
+async def cap_bp_apply(id: str = "", version: int = 0, dry_run: bool = False,
+                       trace_id=None) -> Dict:
+    got = await cap_bp_get(id=id, version=version)
+    if got.get("error"):
+        return got
+    results = []
+    for n in got.get("nodes", []):
+        count = int(n.get("count", 1) or 1)
+        for i in range(max(1, count)):
+            nm = n.get("name", "node")
+            if count > 1:
+                nm = f"{nm}-{i + 1}"
+            if dry_run:
+                results.append({"node": nm, "target": n.get("target"),
+                                "image": n.get("image_id"), "features": n.get("features", []),
+                                "status": "dry-run"})
+                continue
+            res = await _call("foundry.provision", target=n.get("target", "ct"),
+                              image_id=n.get("image_id", ""), name=nm,
+                              features=n.get("features", []), cluster_id=n.get("cluster_id", ""),
+                              node=n.get("node", ""), cores=int(n.get("cores", 1) or 1),
+                              memory=int(n.get("memory", 1024) or 1024),
+                              disk=int(n.get("disk", 8) or 8), fqdn=n.get("fqdn", ""),
+                              ip=n.get("ip", ""), gateway=n.get("gateway", ""))
+            results.append({"node": nm, "target": n.get("target"),
+                            "status": res.get("status") or ("error" if res.get("error") else "?"),
+                            "job_id": res.get("job_id"), "error": res.get("error")})
+    run_id = uuid.uuid4().hex[:12]
+    r = _redis()
+    if r:
+        await r.lpush(K_BP_RUNS, json.dumps({"run_id": run_id, "blueprint": id,
+                      "version": got.get("version"), "dry_run": dry_run,
+                      "results": results, "ts": time.time()}))
+        await r.ltrim(K_BP_RUNS, 0, 99)
+    await emit_event({"type": "foundry.blueprint.applied", "id": id, "run": run_id,
+                      "nodes": len(results), "dry_run": dry_run})
+    return {"ok": True, "run_id": run_id, "results": results}
+
+
+@capability(
+    "foundry.blueprint.export",
+    http_method="GET", http_path="/foundry/blueprint/export", http_tags=["foundry"],
+    memory="off", silent=True,
+    description="Export a blueprint as a portable IaC manifest (YAML if available, "
+                "else JSON) to commit to git/Gitea for versioned, reusable infra. "
+                "Inputs: id (str!), format (yaml|json). Output: {ok, format, text}.",
+)
+async def cap_bp_export(id: str = "", format: str = "yaml", trace_id=None) -> Dict:
+    got = await cap_bp_get(id=id)
+    if got.get("error"):
+        return got
+    doc = {"foundry_blueprint": {"apiVersion": "foundry/v1",
+           "name": got.get("name"), "description": got.get("description", ""),
+           "nodes": got.get("nodes", [])}}
+    if format == "yaml":
+        try:
+            import yaml
+            return {"ok": True, "format": "yaml",
+                    "text": yaml.safe_dump(doc, sort_keys=False, default_flow_style=False)}
+        except Exception:
+            pass
+    return {"ok": True, "format": "json", "text": json.dumps(doc, indent=2)}
+
+
+@capability(
+    "foundry.blueprint.import",
+    http_method="POST", http_path="/foundry/blueprint/import", http_tags=["foundry"],
+    memory="on",
+    description="Import a blueprint from a YAML or JSON IaC manifest (round-trips "
+                "foundry.blueprint.export) and save it as a new blueprint. "
+                "Input: text (str!). Output: {ok, id, version}.",
+)
+async def cap_bp_import(text: str = "", trace_id=None) -> Dict:
+    if not text.strip():
+        return {"error": "text (YAML/JSON manifest) required"}
+    doc = None
+    try:
+        import yaml
+        doc = yaml.safe_load(text)
+    except Exception:
+        try:
+            doc = json.loads(text)
+        except Exception:
+            return {"error": "not valid YAML or JSON"}
+    bp = (doc or {}).get("foundry_blueprint") or doc or {}
+    return await cap_bp_save(name=bp.get("name", ""), description=bp.get("description", ""),
+                             nodes=bp.get("nodes", []))
+
+
+@APP.get("/foundry/panel", include_in_schema=False)
+async def _foundry_panel():
+    p = _HERE / "foundry_panel.html"
+    return HTMLResponse(p.read_text(encoding="utf-8") if p.exists()
+                        else "<p style='color:red'>foundry_panel.html not found</p>")
+
+
+register_ui(
+    "foundry",
+    "Foundry",
+    "🏭",
+    """<div style="height:100%;display:flex;flex-direction:column">
+  <iframe src="/foundry/panel"
+          style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"
+          title="Foundry — OS provisioning"></iframe>
+</div>""",
+    "",
+    ui_caps=["foundry.image.list", "foundry.features", "foundry.provision",
+             "foundry.jobs", "proxmox.cluster.list",
+             "foundry.image.import", "foundry.image.import.status",
+             "foundry.blueprint.list", "foundry.blueprint.save",
+             "foundry.blueprint.apply", "foundry.blueprint.export"],
+    mode="element",     # embedded as a Workers & Ollama sub-tab
+)

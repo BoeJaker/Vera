@@ -290,22 +290,34 @@ async def build_agent_system_prompt(agent, message: str, session_id: str = "") -
     except Exception as e:
         log.debug("domain enrich failed for %s: %s", getattr(agent, "name", "?"), e)
 
-    # Memory injection — preserved from original
+    # Memory injection — preserved from original, but BOUNDED. agents.py's own
+    # run/run_stream wraps this same call in asyncio.wait_for(CTX_INJECT_TIMEOUT)
+    # specifically because "a busy embed node must not stall the reply" — this
+    # patch module replaces those methods wholesale and had silently dropped
+    # that timeout, so a slow/contended memory search here just blocked the
+    # whole chat turn (and the agent loop it would have started) with no
+    # exception, no log, and no loop session ever created — indistinguishable
+    # from a plain hang until you turn memory off and it goes away.
     if getattr(agent, "memory_inject", False) and session_id:
         try:
             mh = sys.modules.get("memory_hooks")
             if mh:
-                mem_ctx = await mh.get_agent_memory_context(
-                    session_id  = session_id,
-                    query       = message,
-                    agent_name  = agent.name,
-                    limit       = getattr(agent, "memory_inject_limit", 5),
-                    tags        = [t.strip() for t in
-                                    getattr(agent, "memory_tags", "").split(",")
-                                    if t.strip()] or None,
-                )
+                _timeout = getattr(_agents_module(), "CTX_INJECT_TIMEOUT", 12.0)
+                mem_ctx = await asyncio.wait_for(
+                    mh.get_agent_memory_context(
+                        session_id  = session_id,
+                        query       = message,
+                        agent_name  = agent.name,
+                        limit       = getattr(agent, "memory_inject_limit", 5),
+                        tags        = [t.strip() for t in
+                                        getattr(agent, "memory_tags", "").split(",")
+                                        if t.strip()] or None,
+                    ), timeout=_timeout)
                 if mem_ctx:
                     base += "\n\n" + mem_ctx
+        except asyncio.TimeoutError:
+            log.warning("agent context [%s]: memory inject skipped after %.0fs "
+                        "(embed/graph stack busy)", agent.name, _timeout)
         except Exception as e:
             log.debug("agent memory inject: %s", e)
 

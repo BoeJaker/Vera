@@ -7290,6 +7290,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "networking/netgraph_capabilities.py"),
         os.path.join(_here, "networking/netsec_capabilities.py"),
         os.path.join(_here, "interaction/interaction_capabilities.py"),
+        os.path.join(_here, "foundry/foundry_capabilities.py"),
         os.path.join(_here, "workers/docker_capabilities.py"),
         os.path.join(_here, "workers/workers.py"),
         os.path.join(_here, "workers/nodes_capabilities.py"),
@@ -7745,6 +7746,20 @@ def _mount_all_http_routes(app: FastAPI):
 
 APP = FastAPI(title="Vera Orchestrator", version="3.0", lifespan=lifespan)
 APP.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+@APP.get("/ui/elements/research_card.js", include_in_schema=False)
+async def _serve_research_card_js():
+    """<vera-research-card> — the ONE research progress/report renderer, shared
+    by the chat panel and the agent-loop output so a fix lands in both."""
+    from fastapi.responses import Response as _Resp
+    p = Path(__file__).parent / "research_card_element.js"
+    if p.exists():
+        return _Resp(content=p.read_text(encoding="utf-8"),
+                     media_type="application/javascript",
+                     headers={"Cache-Control": "no-cache"})
+    return _Resp(content="console.warn('vera-research-card element JS not found');",
+                 media_type="application/javascript")
+
 
 @APP.get("/ui/elements/panel_copilot.js", include_in_schema=False)
 async def _serve_panel_copilot_js():

@@ -114,3 +114,15 @@ third-party coordinator.
   their transport security stays at the protocol layer.
 - The dual SSH stores (exec vs enroll) should converge before Phase 2 so the
   cert-auth flag and mesh_ip live in one place.
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_No capabilities resolved for this domain._
+<!-- VERA:AUTO:capabilities END -->

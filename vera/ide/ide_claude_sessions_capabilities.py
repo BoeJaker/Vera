@@ -65,6 +65,7 @@ import asyncio
 import json
 import logging
 import os
+import sqlite3
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -539,6 +540,73 @@ async def _query_records(limit: int) -> List[dict]:
     return await loop.run_in_executor(None, _query_records_sync, limit)
 
 
+def _recent_session_ids_sync(max_sessions: int) -> Optional[List[str]]:
+    """The N most-recently-active DISTINCT claude_session_ids, by each
+    session's OWN most recent turn — not by a flat row-count window.
+
+    list_sessions used to derive its session set from "the last scan_limit
+    ROWS across every session", grouped afterwards. That silently drops
+    quieter sessions once a single chatty one (or a big re-ingested backlog)
+    pushes enough of its own turns through the window — "had 4 chats, now
+    only 1, and it's a different one" (2026-08-03). Session IDENTITY has to
+    be resolved before any row-count limit is applied, not after.
+
+    Requires SQLite's JSON1 extension (json_extract) — bundled in virtually
+    every modern Python's sqlite3 build. Returns None (never raises) if it's
+    unavailable, so the caller can fall back to the old flat-scan behavior
+    rather than breaking the panel outright."""
+    conn = _sqlite_conn()
+    try:
+        rows = conn.execute(
+            "SELECT json_extract(data,'$.claude_session_id') AS sid, "
+            "MAX(created_at) AS last_ts FROM fabric_records "
+            "WHERE dataset_id=? AND sid IS NOT NULL "
+            "GROUP BY sid ORDER BY last_ts DESC LIMIT ?",
+            ("ide.claude_sessions", max_sessions),
+        ).fetchall()
+        return [r["sid"] for r in rows]
+    except sqlite3.OperationalError as e:
+        log.debug("claude_sessions: json_extract unavailable, falling back "
+                 "to flat scan: %s", e)
+        return None
+    finally:
+        conn.close()
+
+
+def _query_records_for_sessions_sync(session_ids: List[str], per_session_limit: int) -> List[dict]:
+    """Turns for a KNOWN set of sessions only — bounded per session so one
+    huge transcript still can't crowd another session's rows out of its own
+    slice, unlike the old single shared row budget."""
+    conn = _sqlite_conn()
+    try:
+        out: List[dict] = []
+        for sid in session_ids:
+            rows = conn.execute(
+                "SELECT id, data, created_at FROM fabric_records "
+                "WHERE dataset_id=? AND json_extract(data,'$.claude_session_id')=? "
+                "ORDER BY created_at DESC LIMIT ?",
+                ("ide.claude_sessions", sid, per_session_limit),
+            ).fetchall()
+            out.extend(dict(r) for r in rows)
+        return out
+    finally:
+        conn.close()
+
+
+async def _query_records_for_recent_sessions(max_sessions: int, per_session_limit: int) -> Optional[List[dict]]:
+    """The real fix's data path: resolve session identity first (cheap
+    GROUP BY), then pull each session's own bounded slice of turns. Returns
+    None if JSON1 isn't available, signalling the caller to fall back."""
+    loop = asyncio.get_running_loop()
+    sids = await loop.run_in_executor(None, _recent_session_ids_sync, max_sessions)
+    if sids is None:
+        return None
+    if not sids:
+        return []
+    return await loop.run_in_executor(
+        None, _query_records_for_sessions_sync, sids, per_session_limit)
+
+
 @capability(
     "ide.claude_sessions.list_sessions",
     http_method="GET", http_path="/ide/claude_sessions/list_sessions", http_tags=["ide", "claude_sessions"],
@@ -548,15 +616,27 @@ async def _query_records(limit: int) -> List[dict]:
                 "correlated against this repo's git log for its own time "
                 "window, so a session that produced commits shows them "
                 "directly — the same join key Loop Lab's evolve.* runs use. "
-                "Input: scan_limit (int, default 3000 — how many recent turns "
-                "to scan before grouping). "
+                "Input: max_sessions (int, default 60 — how many of the most "
+                "RECENTLY-ACTIVE distinct sessions to return; session identity "
+                "is resolved before any per-session turn limit, so one chatty "
+                "session can no longer crowd quieter ones out of the list), "
+                "scan_limit (int, default 3000 — per-session turn cap, and the "
+                "flat-scan row budget used only as a fallback if this SQLite "
+                "build lacks the JSON1 extension). "
                 "Output: {sessions: [{claude_session_id, project_dir, "
                 "instance_id, turns, first_ts, last_ts, last_role, "
                 "last_preview, commits: [{hash, author, date, ts, message}]}]}.",
 )
-async def cap_claude_sessions_list_sessions(scan_limit: int = 3000, trace_id=None) -> dict:
+async def cap_claude_sessions_list_sessions(scan_limit: int = 3000, max_sessions: int = 60,
+                                            trace_id=None) -> dict:
     scan_limit = max(1, min(20000, scan_limit))
-    rows = await _query_records(scan_limit)
+    max_sessions = max(1, min(500, max_sessions))
+    rows = await _query_records_for_recent_sessions(max_sessions, scan_limit)
+    if rows is None:
+        # JSON1 not available on this SQLite build — fall back to the old
+        # flat-scan behavior (still correct, just re-exposed to the
+        # chatty-session-crowds-out-others limitation it has).
+        rows = await _query_records(scan_limit)
     sessions: Dict[str, dict] = {}
     for row in rows:
         try:
@@ -614,7 +694,17 @@ async def cap_claude_sessions_history(
     if not claude_session_id:
         return {"error": "claude_session_id is required"}
     scan_limit = max(1, min(50000, scan_limit))
-    rows = await _query_records(scan_limit)
+    # Same fix as list_sessions: query THIS session's own rows directly
+    # instead of scanning the last N rows across every session and hoping
+    # this one's turns are still inside that shared window.
+    loop = asyncio.get_running_loop()
+    try:
+        rows = await loop.run_in_executor(
+            None, _query_records_for_sessions_sync, [claude_session_id], scan_limit)
+    except sqlite3.OperationalError as e:
+        log.debug("claude_sessions: json_extract unavailable for history, "
+                 "falling back to flat scan: %s", e)
+        rows = await _query_records(scan_limit)
     turns = []
     for row in rows:
         try:

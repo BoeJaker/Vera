@@ -114,3 +114,15 @@ The bot token is sealed via the shared secrets helper; config persists in `vera:
 - [Agents & Chat](./19-agents-chat.md) — Telegram free-text routes to `agent.chat`
 - [Dream](./17-dream.md) — Telegram delivery + HITL approvals
 - [Capability Framework](./01-capability-framework.md) — `acct.*` / `cal.*` / `mail.*` / `tg.*` registration
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_No capabilities resolved for this domain._
+<!-- VERA:AUTO:capabilities END -->

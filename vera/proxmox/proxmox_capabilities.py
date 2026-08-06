@@ -452,6 +452,129 @@ async def _guest_ip(rec: Dict, node: str, guest_type: str, vmid: int) -> str:
 
 
 @capability(
+    "proxmox.guest.ip",
+    http_method="POST", http_path="/proxmox/guest/ip", http_tags=["proxmox"],
+    memory="off", silent=True,
+    description="Best-effort resolve a guest's IPv4 (LXC net0 config / QEMU guest "
+                "agent) so enrolment can auto-fill it. Inputs: cluster_id (str!), "
+                "node (str!), guest_type ('qemu'|'lxc'), vmid (int!). Output: {ip}.",
+)
+async def cap_guest_ip(cluster_id: str = "", node: str = "", guest_type: str = "",
+                       vmid: int = 0, trace_id=None) -> Dict:
+    rec = await _get_cluster(cluster_id, opened=True)
+    if not rec:
+        return {"error": "cluster not found", "ip": ""}
+    return {"ip": await _guest_ip(rec, node, guest_type, int(vmid))}
+
+
+@capability(
+    "proxmox.guest.exec",
+    http_method="POST", http_path="/proxmox/guest/exec", http_tags=["proxmox"],
+    memory="off",
+    description="Run a bash script INSIDE a guest via Proxmox — no guest SSH "
+                "needed. LXC: `pct exec` on the node (needs the node registered as "
+                "an SSH host). QEMU: the guest agent (must be installed). Inputs: "
+                "cluster_id (str!), node (str!), guest_type ('qemu'|'lxc'), vmid "
+                "(int!), command (str! — bash script), timeout (int=120), "
+                "pve_ssh_host_id (str — override the node's SSH host). Output: "
+                "{ok, stdout, stderr, exit_code, via}.",
+)
+async def cap_guest_exec(cluster_id: str = "", node: str = "", guest_type: str = "",
+                         vmid: int = 0, command: str = "", timeout: int = 120,
+                         pve_ssh_host_id: str = "", trace_id=None) -> Dict:
+    if not command:
+        return {"error": "command required"}
+    rec = await _get_cluster(cluster_id, opened=True)
+    if not rec:
+        return {"error": "cluster not found"}
+    import base64 as _b64
+    if (guest_type or "lxc") == "lxc":
+        host = _host_port(rec)[0]
+        hid = pve_ssh_host_id
+        if not hid:
+            lst = _cap("exec.ssh.hosts.list")
+            if lst:
+                try:
+                    for h in (await lst() or {}).get("hosts", []):
+                        if h.get("host") == host:
+                            hid = h.get("id")
+                            break
+                except Exception:
+                    pass
+        if not hid:
+            return {"error": f"the Proxmox node ({host}) isn't a registered SSH host "
+                             "— add it (Enroll → + a host, or Exec) so LXC pct-exec "
+                             "works, or pass pve_ssh_host_id"}
+        run = _cap("exec.ssh.run")
+        if not run:
+            return {"error": "exec.ssh.run unavailable"}
+        b64 = _b64.b64encode(command.encode()).decode()
+        cmd = f"pct exec {int(vmid)} -- bash -c 'echo {b64} | base64 -d | bash'"
+        res = await run(host_id=hid, command=cmd, timeout=int(timeout)) or {}
+        return {"ok": bool(res.get("ok")) or res.get("rc") == 0, "via": "pct",
+                "stdout": res.get("stdout", ""), "stderr": res.get("stderr", ""),
+                "exit_code": res.get("rc", res.get("exit_code"))}
+    # QEMU guest agent
+    pid_data, err = await _pve(rec, "POST", f"/nodes/{node}/qemu/{vmid}/agent/exec",
+                               {"command": ["bash", "-c", command]})
+    pid = (pid_data or {}).get("pid") if isinstance(pid_data, dict) else None
+    if err or pid is None:
+        return {"error": f"agent exec failed ({err or 'no pid'}) — is the QEMU guest "
+                         "agent installed + running?"}
+    for _ in range(max(1, int(timeout) // 2)):
+        st, err2 = await _pve(rec, "GET",
+                              f"/nodes/{node}/qemu/{vmid}/agent/exec-status?pid={pid}")
+        if err2:
+            return {"error": err2}
+        if isinstance(st, dict) and st.get("exited"):
+            return {"ok": st.get("exitcode", 0) == 0, "via": "qm-agent",
+                    "stdout": st.get("out-data", ""), "stderr": st.get("err-data", ""),
+                    "exit_code": st.get("exitcode")}
+        await asyncio.sleep(2)
+    return {"error": "agent exec timed out", "via": "qm-agent"}
+
+
+@capability(
+    "proxmox.node.exec",
+    http_method="POST", http_path="/proxmox/node/exec", http_tags=["proxmox"],
+    memory="off",
+    description="Run a shell command ON the Proxmox NODE itself (not inside a guest) "
+                "— for qm / pvesm / pveam / wget when building templates or importing "
+                "images. Needs the node registered as an SSH host. Inputs: cluster_id "
+                "(str!), command (str!), timeout (int=300), pve_ssh_host_id (str — "
+                "override). Output: {ok, stdout, stderr, exit_code}.",
+)
+async def cap_node_exec(cluster_id: str = "", command: str = "", timeout: int = 300,
+                        pve_ssh_host_id: str = "", trace_id=None) -> Dict:
+    if not command:
+        return {"error": "command required"}
+    rec = await _get_cluster(cluster_id, opened=True)
+    if not rec:
+        return {"error": "cluster not found"}
+    host = _host_port(rec)[0]
+    hid = pve_ssh_host_id
+    if not hid:
+        lst = _cap("exec.ssh.hosts.list")
+        if lst:
+            try:
+                for h in (await lst() or {}).get("hosts", []):
+                    if h.get("host") == host:
+                        hid = h.get("id")
+                        break
+            except Exception:
+                pass
+    if not hid:
+        return {"error": f"the Proxmox node ({host}) isn't a registered SSH host — add it"}
+    run = _cap("exec.ssh.run")
+    if not run:
+        return {"error": "exec.ssh.run unavailable"}
+    res = await run(host_id=hid, command=command, timeout=int(timeout)) or {}
+    return {"ok": bool(res.get("ok")) or res.get("rc") == 0,
+            "stdout": res.get("stdout", ""), "stderr": res.get("stderr", ""),
+            "exit_code": res.get("rc", res.get("exit_code"))}
+
+
+@capability(
     "proxmox.nextid",
     http_method="POST", http_path="/proxmox/nextid", http_tags=["proxmox"],
     memory="off", silent=True,
@@ -533,6 +656,87 @@ async def cap_guest_clone(cluster_id: str = "", node: str = "",
     return {"ok": True, "newid": int(newid), "upid": upid}
 
 
+async def _wait_pve_task(rec, node: str, upid: str, timeout: int = 240):
+    """Poll a Proxmox task UPID until it finishes. Returns None on success, else
+    an error string. Needed because clone/other ops are async tasks."""
+    if not upid:
+        return None
+    for _ in range(max(1, int(timeout) // 3)):
+        st, err = await _pve(rec, "GET", f"/nodes/{node}/tasks/{upid}/status")
+        if err:
+            return str(err)
+        if isinstance(st, dict) and st.get("status") == "stopped":
+            ex = st.get("exitstatus")
+            return None if ex in ("OK", None) else str(ex)
+        await asyncio.sleep(3)
+    return "task timed out"
+
+
+@capability(
+    "proxmox.vm.create",
+    http_method="POST", http_path="/proxmox/vm/create", http_tags=["proxmox"],
+    memory="off",
+    description="Create a cloud-init VM by cloning a prepared cloud-image TEMPLATE "
+                "and injecting cloud-init (user, SSH keys, network) via the API. "
+                "Inputs: cluster_id (str!), node (str!), template_vmid (int! — a "
+                "cloud-init template to clone; build one from a catalog cloudimg "
+                "first), newid (int — blank=auto), name (str), cores (int=2), memory "
+                "(int=2048 MB), disk (int=0 — GB to grow scsi0 to; 0=leave), ciuser "
+                "(str='vera'), cipassword (str), sshkeys (str — authorized keys), "
+                "ipconfig (str='ip=dhcp'), storage (str), start (bool=True). "
+                "Output: {ok, vmid, upid}.",
+)
+async def cap_vm_create(cluster_id: str = "", node: str = "", template_vmid: int = 0,
+                        newid: int = 0, name: str = "", cores: int = 2,
+                        memory: int = 2048, disk: int = 0, ciuser: str = "vera",
+                        cipassword: str = "", sshkeys: str = "",
+                        ipconfig: str = "ip=dhcp", storage: str = "",
+                        start: bool = True, trace_id=None) -> Dict:
+    if not template_vmid:
+        return {"error": "template_vmid required — a prepared cloud-init template to "
+                         "clone (build one from a catalog cloudimg; the image-import "
+                         "pipeline creates these)"}
+    rec = await _get_cluster(cluster_id, opened=True)
+    if not rec:
+        return {"error": "cluster not found"}
+    if not newid:
+        nid, err = await _pve(rec, "GET", "/cluster/nextid")
+        if err:
+            return {"error": f"nextid: {err}"}
+        newid = int(nid)
+    cdata: Dict = {"newid": int(newid), "full": 1}
+    if name:
+        cdata["name"] = name
+    if storage:
+        cdata["storage"] = storage
+    upid, err = await _pve(rec, "POST", f"/nodes/{node}/qemu/{template_vmid}/clone", cdata)
+    if err:
+        return {"error": f"clone: {err}"}
+    # the clone is an async task — wait for it before configuring / starting
+    terr = await _wait_pve_task(rec, node, upid)
+    if terr:
+        return {"error": f"clone task: {terr}", "vmid": int(newid)}
+    cfg: Dict = {"cores": int(cores), "memory": int(memory), "agent": "enabled=1",
+                 "ciuser": ciuser or "vera", "ipconfig0": ipconfig or "ip=dhcp"}
+    if name:
+        cfg["name"] = name
+    if cipassword:
+        cfg["cipassword"] = cipassword
+    if sshkeys:
+        from urllib.parse import quote
+        cfg["sshkeys"] = quote(sshkeys, safe="")
+    _c, cerr = await _pve(rec, "POST", f"/nodes/{node}/qemu/{newid}/config", cfg)
+    if disk:
+        await _pve(rec, "PUT", f"/nodes/{node}/qemu/{newid}/resize",
+                   {"disk": "scsi0", "size": f"{int(disk)}G"})
+    if start:
+        await _pve(rec, "POST", f"/nodes/{node}/qemu/{newid}/status/start", {})
+    await emit_event({"type": "proxmox.vm.create", "cluster": cluster_id,
+                      "node": node, "vmid": newid, "template": template_vmid})
+    return {"ok": True, "vmid": int(newid), "upid": upid,
+            "note": f"config warning: {cerr}" if cerr else ""}
+
+
 @capability(
     "proxmox.lxc.create",
     http_method="POST", http_path="/proxmox/lxc/create", http_tags=["proxmox"],
@@ -552,8 +756,8 @@ async def cap_lxc_create(cluster_id: str = "", node: str = "", vmid: int = 0,
                          memory: int = 512, disk: int = 8, password: str = "",
                          ssh_public_keys: str = "", net0: str = "",
                          unprivileged: bool = True, features: str = "",
-                         start: bool = True,
-                         trace_id=None) -> Dict:
+                         start: bool = True, auto_enroll: bool = False,
+                         enroll_fqdn: str = "", trace_id=None) -> Dict:
     if not ostemplate:
         return {"error": "ostemplate required (a vztmpl volid)"}
     rec = await _get_cluster(cluster_id, opened=True)
@@ -585,7 +789,31 @@ async def cap_lxc_create(cluster_id: str = "", node: str = "", vmid: int = 0,
         return {"error": err}
     await emit_event({"type": "proxmox.lxc.create", "cluster": cluster_id,
                       "node": node, "vmid": vmid})
-    return {"ok": True, "vmid": int(vmid), "upid": upid}
+    out = {"ok": True, "vmid": int(vmid), "upid": upid}
+
+    # Closed loop: create → auto-enrol via Proxmox (no guest creds needed —
+    # enroll.guest runs `pct exec` and installs Vera's key), so a freshly-spun
+    # CT lands enrolled (cert SSH + FreeIPA + mesh) with zero touch.
+    if auto_enroll and start:
+        ip = ""
+        for _ in range(15):                      # wait for boot + IP (~30s)
+            await asyncio.sleep(2)
+            ip = await _guest_ip(rec, node, "lxc", int(vmid))
+            if ip:
+                break
+        enrol = _cap("enroll.guest")
+        if enrol:
+            fqdn = (enroll_fqdn or (hostname if hostname and "." in hostname
+                    else (f"{hostname}.local" if hostname else f"ct{vmid}.local")))
+            try:
+                out["enrol"] = await enrol(cluster_id=cluster_id, vmid=int(vmid),
+                                           guest_type="lxc", node=node, fqdn=fqdn,
+                                           ip=ip, via_proxmox=True)
+            except Exception as e:
+                out["enrol"] = {"error": str(e)}
+        else:
+            out["enrol"] = {"skipped": "enroll module not loaded"}
+    return out
 
 
 @capability(

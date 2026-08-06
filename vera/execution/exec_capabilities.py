@@ -452,6 +452,14 @@ _DEFAULT_TIMEOUT = 60          # seconds — short probes (ssh reach, port/banne
 _EXEC_DEFAULT_TIMEOUT = int(os.getenv("VERA_EXEC_TIMEOUT", "600") or 600)   # 10 min
 _MAX_OUTPUT     = 1_000_000    # 1 MB captured output per stream
 
+# A few call sites below build ["bash", "-lc", cmd] argv for _run_local with a
+# bare executable name. CPython's posix_spawn fast path (the whole point of
+# _run_local's close_fds=False below) only engages when argv[0] has a
+# directory component (os.path.dirname(executable) must be truthy) — a bare
+# "bash" silently falls back to the slow GIL-holding fork() path. Use the
+# same absolute default the rest of this file already resolves per-call.
+_BASH_BIN = os.getenv("VERA_BASH_BIN", "/bin/bash")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Opt-in per-session sandbox routing (Phase 6). When a session has an ACTIVE
@@ -971,17 +979,42 @@ async def write_artifact_file(*, relpath: str, content: str, session_id: str = "
         raise ValueError("invalid artifact filename")
 
     sb = _sandbox_mod()
+    _has_sandbox = False
     if session_id and sb is not None and hasattr(sb, "route_artifact_dir") \
             and hasattr(sb, "route_fs_write"):
+        # Retry once. Routing can fail transiently while a container is being
+        # woken from idle-sleep, and a single miss here is not a harmless
+        # fallback: the file lands on the HOST while every exec/read for this
+        # session routes into the CONTAINER, so the run is told
+        # "saved to ./x.json" and can then never open it. Seen live — two
+        # 120 KB search results written to the host artifact dir an hour into a
+        # run whose earlier writes had gone to /workspace, after which the agent
+        # burned cycles on "File not found".
+        for _attempt in (1, 2):
+            try:
+                base = await sb.route_artifact_dir(session_id, create=True)
+                if base:
+                    _has_sandbox = True
+                    full = base.rstrip("/") + "/" + "/".join(parts)
+                    res = await sb.route_fs_write(session_id, full, content)
+                    if res is not None and not res.get("error"):
+                        return full
+                    log.debug("sandbox artifact write attempt %d failed: %s",
+                              _attempt, (res or {}).get("error"))
+            except Exception as e:
+                log.debug("sandbox artifact write attempt %d raised: %s", _attempt, e)
+            if _attempt == 1:
+                await asyncio.sleep(1.0)      # give a waking container a moment
+        # Does the session HAVE a sandbox even though routing failed? If so the
+        # host write below is a SPLIT, not a fallback — say so loudly rather than
+        # letting the run discover it as a mysterious missing file.
         try:
-            base = await sb.route_artifact_dir(session_id, create=True)
-            if base:
-                full = base.rstrip("/") + "/" + "/".join(parts)
-                res = await sb.route_fs_write(session_id, full, content)
-                if res is not None and not res.get("error"):
-                    return full
-        except Exception as e:
-            log.debug("sandbox artifact write failed (host): %s", e)
+            _stfn = getattr(sb, "cap_sbx_status", None)
+            if _stfn:
+                _st = await _stfn(session_id=session_id)
+                _has_sandbox = _has_sandbox or bool((_st or {}).get("exists"))
+        except Exception:
+            pass
 
     base = artifact_dir(session_id=session_id, project=project, workspace=workspace)
     target = _norm_path(os.path.join(base, *parts))
@@ -990,6 +1023,12 @@ async def write_artifact_file(*, relpath: str, content: str, session_id: str = "
     os.makedirs(os.path.dirname(target) or base, exist_ok=True)
     with open(target, "w", encoding="utf-8") as fh:
         fh.write(content)
+    if _has_sandbox:
+        log.warning(
+            "ARTIFACT SPLIT: '%s' was written to the HOST (%s) even though session %s has a "
+            "sandbox — the session's exec/reads resolve inside the CONTAINER, so this file "
+            "will read as 'File not found'. Sandbox routing failed twice (container waking "
+            "or docker host unreachable).", "/".join(parts), target, session_id)
     return target
 
 
@@ -1202,8 +1241,9 @@ async def artifact_list(session_id: str = ""):
         base = await artifact_dir_async(session_id=sid, create=False)
     except Exception:
         base = ""
-    def _row(name: str, size, mtime, is_dir: bool):
+    def _row(name: str, size, mtime, is_dir: bool, where: str = "sandbox"):
         return {"name": name, "is_dir": is_dir, "size": size, "mtime": mtime,
+                "where": where,
                 "ext": (name.rsplit(".", 1)[-1].lower() if "." in name else "")}
 
     def _keep(name: str) -> bool:
@@ -1223,9 +1263,33 @@ async def artifact_list(session_id: str = ""):
                 nm = str(e.get("name") or "")
                 if _keep(nm):
                     out.append(_row(nm, e.get("size"), e.get("mtime"),
-                                    e.get("kind") == "dir"))
+                                    e.get("kind") == "dir", "sandbox"))
+            # ALSO list the host artifact dir. A sandboxed session can still have
+            # files there — a write whose sandbox routing failed lands on the host
+            # (see write_artifact_file) — and listing only the container made those
+            # files invisible in the UI even though the run had reported creating
+            # them. Marked `where` so it is obvious they are NOT in /workspace and
+            # the session's own exec/reads will not find them.
+            _names = {f["name"] for f in out}
+            try:
+                for e in os.scandir(artifact_dir(session_id=sid)):
+                    if not _keep(e.name) or e.name in _names:
+                        continue
+                    try:
+                        st = e.stat()
+                        out.append(_row(e.name, st.st_size, int(st.st_mtime),
+                                        e.is_dir(), "host"))
+                    except Exception:
+                        out.append(_row(e.name, None, None, e.is_dir(), "host"))
+            except Exception:
+                pass
             out.sort(key=lambda x: (x["is_dir"], x["name"].lower()))
-            return {"ok": True, "session_id": sid, "dir": base, "files": out}
+            _split = [f["name"] for f in out if f.get("where") == "host"]
+            return {"ok": True, "session_id": sid, "dir": base, "files": out,
+                    "host_only": _split,
+                    "warning": (f"{len(_split)} file(s) are on the HOST, not in this session's "
+                                "/workspace — the run's exec/reads cannot open them"
+                                if _split else "")}
     # Host artifact dir.
     try:
         hbase = artifact_dir(session_id=sid)
@@ -1235,9 +1299,9 @@ async def artifact_list(session_id: str = ""):
                     continue
                 try:
                     st = e.stat()
-                    out.append(_row(e.name, st.st_size, int(st.st_mtime), e.is_dir()))
+                    out.append(_row(e.name, st.st_size, int(st.st_mtime), e.is_dir(), "host"))
                 except Exception:
-                    out.append(_row(e.name, None, None, e.is_dir()))
+                    out.append(_row(e.name, None, None, e.is_dir(), "host"))
     except Exception as e:
         return {"ok": False, "session_id": sid, "dir": base, "files": [],
                 "error": f"working directory could not be listed: {e}"}
@@ -1267,15 +1331,23 @@ async def artifact_download(session_id: str = "", rel: str = ""):
         try:
             res = await sb.route_fs_read(session_id, cpath)
         except Exception as e:
-            return JSONResponse({"error": str(e)}, status_code=500)
-        if res is None or res.get("error"):
-            return JSONResponse({"error": (res or {}).get("error") or f"not found: {rel}"},
-                                status_code=404)
-        data = (res.get("content") or "").encode("utf-8", "replace")
-        return Response(content=data, media_type="application/octet-stream",
-                        headers={"Content-Disposition":
-                                 f'attachment; filename="{os.path.basename(rel)}"'})
+            res = {"error": str(e)}
+        if res is not None and not res.get("error"):
+            data = (res.get("content") or "").encode("utf-8", "replace")
+            return Response(content=data, media_type="application/octet-stream",
+                            headers={"Content-Disposition":
+                                     f'attachment; filename="{os.path.basename(rel)}"'})
+        # NOT in the container — fall through to the HOST artifact dir rather than
+        # 404ing. A sandboxed session can legitimately have files on the host (a
+        # write whose sandbox routing failed), and those were undownloadable:
+        # the list showed them, the download refused them.
+        log.debug("artifact download: %s not in container, trying host", rel)
 
+    # For a sandboxed session `base` is the CONTAINER path (/workspace), which is
+    # not a directory on this host — resolve the real host artifact dir for the
+    # fallback, otherwise every host-only file 404s here.
+    if not base or not os.path.isdir(base):
+        base = artifact_dir(session_id=session_id, create=False)
     if not base or not os.path.isdir(base):
         return JSONResponse({"error": "no artifact directory for this session"},
                             status_code=404)
@@ -2846,7 +2918,7 @@ async def _docker_ps(ssh_host_id: str = "", host: str = "",
             return None, r.get("stderr") or r.get("error") or "ssh failed"
         out = r.get("stdout", "")
     else:
-        r = await _run_local(["bash", "-lc", cmd], timeout=20)
+        r = await _run_local([_BASH_BIN, "-lc", cmd], timeout=20)
         if not r.get("ok"):
             return None, r.get("stderr") or r.get("error") or "docker command failed"
         out = r.get("stdout", "")
@@ -3133,7 +3205,7 @@ async def _kubectl(args: List[str], ssh_host_id: str = "", host: str = "",
                               host=host or "",
                               timeout=30)
     else:
-        r = await _run_local(["bash", "-lc", cmd], timeout=30)
+        r = await _run_local([_BASH_BIN, "-lc", cmd], timeout=30)
     if not r.get("ok"):
         return None, r.get("stderr") or r.get("error") or "kubectl failed"
     try:
@@ -3700,7 +3772,7 @@ async def cap_netscan_target_traffic(
         ss_out = r.get("stdout", "")
         source = f"ssh:{rec.get('host')}"
     else:
-        r = await _run_local(["bash", "-lc", ss_cmd])
+        r = await _run_local([_BASH_BIN, "-lc", ss_cmd])
         ss_out = r.get("stdout", "")
         source = "local"
     for line in (ss_out or "").splitlines():
@@ -3727,7 +3799,7 @@ async def cap_netscan_target_traffic(
             )
             td_out = (r.get("stdout","") + "\n" + r.get("stderr","")).strip()
         else:
-            r = await _run_local(["bash", "-lc", td_cmd], timeout=duration + 10)
+            r = await _run_local([_BASH_BIN, "-lc", td_cmd], timeout=duration + 10)
             td_out = (r.get("stdout","") + "\n" + r.get("stderr","")).strip()
 
     await emit_event({"type": "netscan.target.traffic.done",
@@ -4769,6 +4841,8 @@ register_ui(
     ],
     mode="tab",
     tab_order=53,
+    specialist_agent="script-verifier",
+    specialist_loop_profile="verification",
 )
 
 

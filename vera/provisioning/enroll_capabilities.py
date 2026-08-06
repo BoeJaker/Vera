@@ -96,6 +96,21 @@ def _vera_key_path() -> str:
     return os.path.join(_vera_ssh_dir(), "id_vera")
 
 
+async def _ensure_vera_pubkey() -> str:
+    """Vera's SSH public key, for installing passwordless (key/cert) login on a
+    guest. Generates a plain ed25519 key on first use if none exists; a step-ca
+    user cert (from ssh.cert.mint) sits alongside as '<key>-cert.pub' and is
+    auto-used when present."""
+    key = _vera_key_path()
+    pub = key + ".pub"
+    if not os.path.exists(pub) and _have("ssh-keygen"):
+        await _sh(["ssh-keygen", "-t", "ed25519", "-f", key, "-N", "", "-q", "-C", "vera"])
+    try:
+        return open(pub).read().strip()
+    except Exception:
+        return ""
+
+
 async def _sh(args: List[str], timeout: int = 60) -> Tuple[int, str, str]:
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -458,18 +473,27 @@ async def cap_discover(cluster_id: str = "", trace_id=None) -> Dict:
     snap = await status(cluster_id=cluster_id)
     hosts = await _hosts_raw()
     by_ref = {h.get("guest_ref"): h for h in hosts if h.get("guest_ref")}
-    guests = []
-    for g in snap.get("guests", []):
-        if g.get("template"):
-            continue
+    gip = _cap("proxmox.guest.ip")
+
+    async def _row(g: Dict) -> Dict:
         ref = f"{cluster_id}:{g['vmid']}"
         h = by_ref.get(ref)
-        guests.append({
-            "vmid": g["vmid"], "name": g.get("name", ""), "type": g["type"],
-            "node": g["node"], "status": g["status"],
-            "enrolled": bool(h), "host_id": h.get("id", "") if h else "",
-            "auth": h.get("auth", "") if h else "",
-        })
+        # Auto-detect the IP so the enrol form pre-fills it: use the saved SSH
+        # host's address if enrolled, else resolve from Proxmox (LXC config / agent).
+        ip = (h.get("host") if h else "") or ""
+        if not ip and g.get("status") == "running" and gip:
+            try:
+                ip = ((await gip(cluster_id=cluster_id, node=g["node"],
+                                 guest_type=g["type"], vmid=g["vmid"])) or {}).get("ip", "")
+            except Exception:
+                ip = ""
+        return {"vmid": g["vmid"], "name": g.get("name", ""), "type": g["type"],
+                "node": g["node"], "status": g["status"], "ip": ip,
+                "enrolled": bool(h), "host_id": h.get("id", "") if h else "",
+                "auth": h.get("auth", "") if h else ""}
+
+    guests = list(await asyncio.gather(
+        *[_row(g) for g in snap.get("guests", []) if not g.get("template")]))
     return {"cluster_id": cluster_id, "guests": guests}
 
 
@@ -488,38 +512,119 @@ async def cap_discover(cluster_id: str = "", trace_id=None) -> Dict:
 async def cap_enroll_guest(
     cluster_id: str = "", vmid: int = 0, guest_type: str = "", node: str = "",
     fqdn: str = "", ip: str = "", ssh_user: str = "root", ssh_password: str = "",
-    ssh_key_path: str = "", ssh_port: int = 22, trace_id=None,
+    ssh_key_path: str = "", ssh_port: int = 22, via_proxmox: bool = False,
+    trace_id=None,
 ) -> Dict:
+    # Auto-resolve the guest IP when not supplied (LXC config / QEMU agent).
+    if not ip and cluster_id and node and vmid:
+        gip = _cap("proxmox.guest.ip")
+        if gip:
+            try:
+                ip = (((await gip(cluster_id=cluster_id, node=node,
+                                  guest_type=guest_type or "lxc", vmid=int(vmid)))
+                       or {}).get("ip", "")) or ip
+            except Exception:
+                pass
     if not ip or not ssh_user:
-        return {"error": "ip and ssh_user required"}
+        return {"error": "ip and ssh_user required (could not auto-resolve the "
+                         "guest IP — install the QEMU guest agent / use a static "
+                         "LXC IP, or enter it manually)"}
     if not fqdn:
         return {"error": "fqdn required"}
+    # FreeIPA needs a fully-qualified name — if the caller passed a bare label
+    # (e.g. the guest name "Ollama"), append the directory domain and normalise.
+    if "." not in fqdn.strip("."):
+        dom = ""
+        idc = _cap("identity.config.get")
+        if idc:
+            try:
+                dom = (await idc() or {}).get("ipa_domain", "")
+            except Exception:
+                dom = ""
+        if dom:
+            fqdn = f"{fqdn.strip().lower().replace(' ', '-')}.{dom}"
     state = await _prov_state()
     ca = await _ssh_user_ca(state)
-    script = _enroll_script(state, fqdn, ca)
+    base_script = _enroll_script(state, fqdn, ca)
     steps: Dict[str, Any] = {}
 
-    # 1. Push + run the enrolment script over SSH (bootstrap creds).
-    res = await _run_ssh(ip, ssh_user, password=ssh_password, key_path=ssh_key_path,
-                         port=ssh_port, command=script, timeout=180)
-    steps["ssh"] = {"ok": bool(res.get("ok")), "error": res.get("error", ""),
-                    "stderr": (res.get("stderr", "") or "")[:400]}
-    out = res.get("stdout", "") or ""
+    # Proxmox-native mode: for a Proxmox guest we already have root inside it via
+    # `pct exec` / the guest agent — so NO bootstrap SSH password is needed. Run
+    # the enrol script AND install Vera's public key, so afterwards Vera logs in
+    # passwordless (key/cert). Auto-selected when a guest is given with no creds.
+    use_proxmox = via_proxmox or (bool(cluster_id) and bool(vmid)
+                                  and not ssh_password and not ssh_key_path)
+    vera_pub = ""
+    if use_proxmox:
+        vera_pub = await _ensure_vera_pubkey()
+        parts: List[str] = []
+        if vera_pub:
+            pe = vera_pub.replace("'", "")
+            parts.append(
+                # unprivileged LXCs can have /root owned by a mapped uid (nobody)
+                # so uid-0 can't write it — reclaim it first (best-effort).
+                "chown 0:0 /root 2>/dev/null || true; "
+                "install -d -m700 /root/.ssh && touch /root/.ssh/authorized_keys && "
+                "chmod 600 /root/.ssh/authorized_keys && "
+                f"(grep -qxF '{pe}' /root/.ssh/authorized_keys || echo '{pe}' "
+                ">> /root/.ssh/authorized_keys)")
+        parts.append(base_script)
+        pexec = _cap("proxmox.guest.exec")
+        if not pexec:
+            return {"error": "proxmox.guest.exec unavailable (proxmox module not loaded)"}
+        res = await pexec(cluster_id=cluster_id, node=node,
+                          guest_type=guest_type or "lxc", vmid=int(vmid),
+                          command=" && ".join(parts), timeout=200)
+        steps["ssh"] = {"ok": bool(res.get("ok")),
+                        "via": "proxmox:" + str(res.get("via", "")),
+                        "error": res.get("error", ""),
+                        "stderr": (res.get("stderr", "") or "")[:400]}
+        out = res.get("stdout", "") or ""
+    else:
+        # 1. Push + run the enrolment script over SSH (bootstrap creds).
+        res = await _run_ssh(ip, ssh_user, password=ssh_password, key_path=ssh_key_path,
+                             port=ssh_port, command=base_script, timeout=180)
+        steps["ssh"] = {"ok": bool(res.get("ok")), "error": res.get("error", ""),
+                        "stderr": (res.get("stderr", "") or "")[:400]}
+        out = res.get("stdout", "") or ""
     steps["script"] = {"reached_end": "VERA_ENROLL_DONE" in out,
                        "ssh_user_ca_installed": bool(ca),
+                       "key_installed": bool(vera_pub) if use_proxmox else None,
                        "tail": out[-600:]}
 
-    # 2. Persist per-host SSH creds for future cert/key/password logins.
+    # 2. Persist per-host SSH creds — passwordless (Vera's key/cert) in Proxmox
+    #    mode; else honour the bootstrap auth that was used.
+    if use_proxmox:
+        auth, save_pw = "cert", ""   # _auth_for('cert') uses Vera's key file (+cert)
+    else:
+        auth = "cert" if ca else ("key" if ssh_key_path else "password")
+        save_pw = ssh_password if not ca and not ssh_key_path else ""
     save = await cap_host_save(
-        label=fqdn, host=ip, port=ssh_port, user=ssh_user,
-        auth="cert" if ca else ("key" if ssh_key_path else "password"),
-        password=ssh_password if not ca and not ssh_key_path else "",
+        label=fqdn, host=ip, port=ssh_port, user=ssh_user, auth=auth,
+        password=save_pw,
         guest_ref=f"{cluster_id}:{vmid}" if cluster_id and vmid else "",
     )
     host_id = (save.get("host") or {}).get("id", "")
 
-    # 3. Register in FreeIPA + DNS (best-effort, decoupled).
-    reg = _cap("identity.host.register")
+    # 2b. Also register in the EXEC host store (canonical for mesh / terminal /
+    #     exec) — Vera's key gives it passwordless access there too, and mesh-join
+    #     resolves hosts from THIS store.
+    exec_host_id = ""
+    exec_save = _cap("exec.ssh.hosts.save")
+    if exec_save:
+        try:
+            er = await exec_save(
+                host=ip, user=ssh_user, port=int(ssh_port or 22), label=fqdn,
+                auth="key" if (use_proxmox or ssh_key_path) else "password",
+                key_path=_vera_key_path() if use_proxmox else ssh_key_path,
+                password="" if use_proxmox else save_pw,
+                tags=(f"enrolled,{guest_type}" if guest_type else "enrolled"))
+            exec_host_id = (er.get("host") or {}).get("id", "") if isinstance(er, dict) else ""
+        except Exception as e:
+            log.debug("exec host save: %s", e)
+
+    # 3. Register in the directory — FreeIPA-first via the resolver (best-effort).
+    reg = _cap("identity.resolve.host") or _cap("identity.host.register")
     if reg:
         try:
             steps["identity"] = await reg(fqdn=fqdn, ip=ip)
@@ -528,9 +633,22 @@ async def cap_enroll_guest(
     else:
         steps["identity"] = {"skipped": "identity module not loaded"}
 
+    # 4. Pull the host onto the encrypted WireGuard mesh (best-effort) — so every
+    #    enrolled host (Proxmox guest OR an off-cluster laptop) joins the overlay.
+    join = _cap("netsec.mesh.join")
+    mesh_hid = exec_host_id or host_id
+    if join and mesh_hid:
+        try:
+            steps["mesh"] = await join(host_id=mesh_hid)
+        except Exception as e:
+            steps["mesh"] = {"error": str(e)}
+    else:
+        steps["mesh"] = {"skipped": "mesh unavailable or host not saved"}
+
     await emit_event({"type": "enroll.guest.done", "fqdn": fqdn, "ip": ip,
                       "ok": steps["ssh"]["ok"]})
-    return {"ok": steps["ssh"]["ok"], "fqdn": fqdn, "host_id": host_id, "steps": steps}
+    return {"ok": steps["ssh"]["ok"], "fqdn": fqdn, "host_id": host_id,
+            "exec_host_id": exec_host_id, "steps": steps}
 
 
 # ═════════════════════════════════════════════════════════════════════════════

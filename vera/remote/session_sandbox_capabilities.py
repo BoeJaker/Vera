@@ -278,6 +278,15 @@ async def _ensure_sandbox_pyenv(dk, host, cname: str) -> None:
             "pip install --quiet --disable-pip-version-check brotli 2>/dev/null || true; "
             "python3 -c 'import zstandard' 2>/dev/null || "
             "pip install --quiet --disable-pip-version-check zstandard 2>/dev/null || true; "
+            # bs4/lxml: the Python equivalent of the curl case below. Any step that
+            # scrapes reaches for BeautifulSoup by reflex, and a model has no way to
+            # know it is absent until its script dies on ImportError — after which
+            # the step burns cycles rewriting around a gap that one pip install
+            # closes. lxml comes along because bs4 without a parser backend falls
+            # back to the slow built-in and warns on every construction.
+            "python3 -c 'import bs4, lxml' 2>/dev/null || "
+            "pip install --quiet --disable-pip-version-check beautifulsoup4 lxml "
+            "2>/dev/null || true; "
             # curl: the single most commonly reached-for CLI tool the base image
             # lacks (it has python3/pip and little else) — install it up front so
             # the FIRST command a step runs doesn't have to hit the "not found" →
@@ -682,6 +691,18 @@ async def cap_sbx_start(session_id: str = "", base_image: str = "",
     # Human-shaped outbound HTTP + a usable `requests` for agent scripts.
     await _ensure_sandbox_pyenv(dk, host, cname)
 
+    # Standing preload (sandbox.config package_preload): the set the user has
+    # decided EVERY sandbox should have, so the common libraries are never an
+    # approval prompt on a fresh container. Applied before the per-call
+    # `packages` so an explicit request can still override a version.
+    preload = _pkg_listcfg(scfg, "package_preload")
+    if preload:
+        quoted = " ".join(shlex.quote(n) for n in preload)
+        await dk._run_local(
+            await dk._docker_argv(host, ["exec", cname, "sh", "-lc",
+                                         f"pip install --quiet --disable-pip-version-check "
+                                         f"{quoted} 2>/dev/null || true"]), timeout=900)
+
     if packages.strip():
         # best-effort: apt for debian-ish bases, then pip.
         pkgs = packages.strip()
@@ -1000,6 +1021,15 @@ async def cap_sbx_stop(session_id: str = "", sync: Optional[bool] = None,
     if commit:
         c = await cap_sbx_commit(session_id=session_id)
         committed = c.get("image", "")
+        # cap_sbx_commit correctly persists committed_image on ITS OWN copy of
+        # the record — but `rec` here was fetched before that call, so the
+        # plain _save_rec(rec) below would silently overwrite that update back
+        # to empty. Merge it into the local copy so the real archive actually
+        # survives the stop — without this, cap_sbx_start never finds a
+        # committed_image to restore from and just builds fresh every time.
+        if committed:
+            rec["committed_image"] = committed
+            rec["committed_at"] = now_iso()
     if remove:
         await dk._run_local(await dk._docker_argv(host, ["rm", "-f", rec["container"]]), timeout=40)
     else:
@@ -1393,7 +1423,14 @@ async def cap_sbx_cfg_get(trace_id=None) -> Dict:
             "archive_on_stop": bool(cfg.get("archive_on_stop", True)),
             "auto_create": bool(cfg.get("auto_create", True)),
             "idle_sleep_minutes": int(cfg.get("idle_sleep_minutes", _IDLE_SLEEP_DEFAULT) or 0),
-            "confine_writes": bool(cfg.get("confine_writes", True))}
+            "idle_archive_days": int(cfg.get("idle_archive_days", _IDLE_ARCHIVE_DEFAULT_DAYS) or 0),
+            "confine_writes": bool(cfg.get("confine_writes", True)),
+            "package_policy": _pkg_policy(cfg),
+            "package_allowlist": _pkg_listcfg(cfg, "package_allowlist"),
+            "package_blocklist": _pkg_listcfg(cfg, "package_blocklist"),
+            "package_preload": _pkg_listcfg(cfg, "package_preload"),
+            "package_ask_timeout_secs": int(cfg.get("package_ask_timeout_secs")
+                                            or _PKG_ASK_TIMEOUT_DEFAULT)}
 
 
 @capability(
@@ -1413,10 +1450,25 @@ async def cap_sbx_cfg_get(trace_id=None) -> Dict:
                 "own container automatically — chat, dream, goals, loops; when "
                 "false, containers exist only where explicitly started), "
                 "idle_sleep_minutes (int — auto-STOP containers idle for this long; "
-                "they wake automatically on next use; 0 disables), confine_writes "
+                "they wake automatically on next use; 0 disables), idle_archive_days "
+                "(int — go further than sleep: sessions unused for this many DAYS get "
+                "fully archived (commit + sync, same as sandbox.session.stop with "
+                "archive_on_stop) and their container removed — the record's real "
+                "committed_image is kept, so sandbox.session.start on that session id "
+                "restores from it rather than building fresh; 0 disables), confine_writes "
                 "(bool — keep agent-generated files in /workspace by redirecting "
                 "HOME/temp/cache into the workspace volume and defaulting the exec "
-                "cwd there; reads elsewhere still work; default true). "
+                "cwd there; reads elsewhere still work; default true), package_policy "
+                "(str — what happens when code needs a package the sandbox lacks: "
+                "'ask' (default) pauses the run and prompts the user to approve the "
+                "install, 'auto' installs it silently, 'deny' never installs and "
+                "fails the run with the list), package_allowlist (str/list — names "
+                "ALWAYS auto-installed even in ask mode, i.e. already-approved "
+                "packages), package_blocklist (str/list — names never installed, "
+                "whatever the policy), package_preload (str/list — pip packages "
+                "installed into EVERY new sandbox at creation), "
+                "package_ask_timeout_secs (int — how long a paused run waits for an "
+                "answer before giving up; default 300). "
                 "Output: {ok, config}.",
 )
 async def cap_sbx_cfg_set(docker_host_id: Optional[str] = None,
@@ -1425,7 +1477,13 @@ async def cap_sbx_cfg_set(docker_host_id: Optional[str] = None,
                           archive_on_stop: Optional[bool] = None,
                           auto_create: Optional[bool] = None,
                           idle_sleep_minutes: Optional[int] = None,
+                          idle_archive_days: Optional[int] = None,
                           confine_writes: Optional[bool] = None,
+                          package_policy: Optional[str] = None,
+                          package_allowlist: Any = None,
+                          package_blocklist: Any = None,
+                          package_preload: Any = None,
+                          package_ask_timeout_secs: Optional[int] = None,
                           trace_id=None) -> Dict:
     cfg = await _get_cfg()
     if docker_host_id is not None:
@@ -1452,8 +1510,28 @@ async def cap_sbx_cfg_set(docker_host_id: Optional[str] = None,
             cfg["idle_sleep_minutes"] = max(0, int(idle_sleep_minutes))
         except Exception:
             return {"ok": False, "error": "idle_sleep_minutes must be an integer"}
+    if idle_archive_days is not None:
+        try:
+            cfg["idle_archive_days"] = max(0, int(idle_archive_days))
+        except Exception:
+            return {"ok": False, "error": "idle_archive_days must be an integer"}
     if confine_writes is not None:
         cfg["confine_writes"] = bool(confine_writes)
+    if package_policy is not None:
+        p = str(package_policy).strip().lower()
+        if p not in (_PKG_POLICY_ASK, _PKG_POLICY_AUTO, _PKG_POLICY_DENY):
+            return {"ok": False, "error": "package_policy must be ask, auto or deny"}
+        cfg["package_policy"] = p
+    for _field, _val in (("package_allowlist", package_allowlist),
+                         ("package_blocklist", package_blocklist),
+                         ("package_preload", package_preload)):
+        if _val is not None:
+            cfg[_field] = [_pkg_norm(n) for n in _pkg_names(_val)]
+    if package_ask_timeout_secs is not None:
+        try:
+            cfg["package_ask_timeout_secs"] = max(15, int(package_ask_timeout_secs))
+        except Exception:
+            return {"ok": False, "error": "package_ask_timeout_secs must be an integer"}
     await _save_cfg(cfg)
     await emit_event({"type": "remote.sandbox.config",
                       "docker_host_id": cfg.get("docker_host_id", ""),
@@ -1529,6 +1607,995 @@ async def _auto_install_missing_bin_and_retry(sid: str, command: str, res: Optio
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+#  PACKAGES — availability, approval, and management
+# ═════════════════════════════════════════════════════════════════════════════
+# _auto_install_missing_bin_and_retry (above) is REACTIVE: the command fails, we
+# recognise the shell's "not found", install, retry. That works for a fixed list
+# of CLI binaries but not for library imports, where the failure costs a whole
+# agent cycle: the script dies on ImportError, the specialist re-reasons, and it
+# usually rewrites AROUND the missing library rather than asking for it (observed
+# live — a step spent four cycles hand-rolling regex HTML parsing after `bs4`
+# came back missing).
+#
+# So this section is PROACTIVE and asks the human:
+#   1. Before code runs, statically scan it for the modules/binaries it needs.
+#   2. Probe the container for which of those are actually absent.
+#   3. Apply policy — auto-install, ASK the user, or deny — and when asking,
+#      block the run until they answer (or the ask times out).
+#   4. Give the coder a list of what IS available so it stops guessing, plus the
+#      knowledge that it can ask for more.
+# ─────────────────────────────────────────────────────────────────────────────
+
+KEY_PKG_PENDING = "vera:remote:sandbox:pkg:pending"    # hash: req_id → request
+_PKG_DECISION_TTL = 1800
+
+
+def _pkg_decision_key(req_id: str) -> str:
+    return f"vera:remote:sandbox:pkg:decision:{req_id}"
+
+
+# Local futures for the same-instance fast path; the Redis key above is the
+# cross-instance bridge (the run and the user's click can land on different
+# instances — see [[vera-cluster-shared-backend]]).
+_PKG_PENDING_LOCAL: Dict[str, asyncio.Future] = {}
+
+# Policy values for cfg["package_policy"].
+_PKG_POLICY_ASK = "ask"       # default — pause and ask the user (approve/deny)
+_PKG_POLICY_AUTO = "auto"     # install whatever a script needs, no prompt
+_PKG_POLICY_DENY = "deny"     # never install; the run fails with a clear message
+_PKG_ASK_TIMEOUT_DEFAULT = 300
+
+# Import name → distribution name, for the cases where they differ. Only the
+# genuinely non-obvious ones: everything else installs under its import name and
+# is handled by the identity fallback in _pkg_for_import.
+_PY_IMPORT_TO_PKG = {
+    "bs4": "beautifulsoup4", "PIL": "pillow", "sklearn": "scikit-learn",
+    "yaml": "pyyaml", "cv2": "opencv-python-headless", "docx": "python-docx",
+    "pptx": "python-pptx", "fitz": "pymupdf", "dateutil": "python-dateutil",
+    "bson": "pymongo", "serial": "pyserial", "OpenSSL": "pyopenssl",
+    "Crypto": "pycryptodome", "git": "GitPython", "attr": "attrs",
+    "jwt": "pyjwt", "psycopg2": "psycopg2-binary", "MySQLdb": "mysqlclient",
+    "dotenv": "python-dotenv", "magic": "python-magic", "lxml": "lxml",
+    "skimage": "scikit-image", "Levenshtein": "python-Levenshtein",
+    "pkg_resources": "setuptools", "zoneinfo": "", "usb": "pyusb",
+    "slugify": "python-slugify", "markdown": "Markdown", "toml": "toml",
+    "ruamel": "ruamel.yaml", "google": "google-api-python-client",
+    "PyPDF2": "PyPDF2", "pypdf": "pypdf", "openpyxl": "openpyxl",
+    "xlrd": "xlrd", "nacl": "pynacl", "jose": "python-jose",
+    "redis": "redis", "requests_html": "requests-html",
+}
+
+# The curated menu the UI offers and the coder is told about. `imports` lists the
+# module names that prove it's present. Kept deliberately to things an agent
+# doing research / data / reporting work actually reaches for — a full PyPI
+# browser belongs in the model-catalog-style UI, not here.
+_PKG_CATALOG: List[Dict[str, Any]] = [
+    # ── HTTP + scraping ──────────────────────────────────────────────────────
+    {"name": "requests", "kind": "pip", "imports": ["requests"], "group": "web",
+     "summary": "The standard HTTP client."},
+    {"name": "beautifulsoup4", "kind": "pip", "imports": ["bs4"], "group": "web",
+     "summary": "HTML/XML parsing (BeautifulSoup)."},
+    {"name": "lxml", "kind": "pip", "imports": ["lxml"], "group": "web",
+     "summary": "Fast XML/HTML parser; BeautifulSoup's best backend."},
+    {"name": "httpx", "kind": "pip", "imports": ["httpx"], "group": "web",
+     "summary": "HTTP client with HTTP/2 and async support."},
+    {"name": "feedparser", "kind": "pip", "imports": ["feedparser"], "group": "web",
+     "summary": "RSS/Atom feed parsing."},
+    {"name": "html5lib", "kind": "pip", "imports": ["html5lib"], "group": "web",
+     "summary": "Spec-compliant HTML parser for malformed markup."},
+    # ── data ─────────────────────────────────────────────────────────────────
+    {"name": "pandas", "kind": "pip", "imports": ["pandas"], "group": "data",
+     "summary": "DataFrames: tabular analysis, CSV/Excel/JSON IO."},
+    {"name": "numpy", "kind": "pip", "imports": ["numpy"], "group": "data",
+     "summary": "Numeric arrays; dependency of most data libraries."},
+    {"name": "duckdb", "kind": "pip", "imports": ["duckdb"], "group": "data",
+     "summary": "In-process analytical SQL over files."},
+    {"name": "openpyxl", "kind": "pip", "imports": ["openpyxl"], "group": "data",
+     "summary": "Read/write .xlsx workbooks."},
+    {"name": "pyyaml", "kind": "pip", "imports": ["yaml"], "group": "data",
+     "summary": "YAML parsing/serialisation."},
+    {"name": "tabulate", "kind": "pip", "imports": ["tabulate"], "group": "data",
+     "summary": "Render tables as text/markdown."},
+    # ── documents + reporting ────────────────────────────────────────────────
+    {"name": "markdown", "kind": "pip", "imports": ["markdown"], "group": "docs",
+     "summary": "Markdown → HTML."},
+    {"name": "jinja2", "kind": "pip", "imports": ["jinja2"], "group": "docs",
+     "summary": "Templating for generated HTML/report output."},
+    {"name": "pypdf", "kind": "pip", "imports": ["pypdf"], "group": "docs",
+     "summary": "Read/split/merge PDFs."},
+    {"name": "python-docx", "kind": "pip", "imports": ["docx"], "group": "docs",
+     "summary": "Read/write .docx documents."},
+    {"name": "pillow", "kind": "pip", "imports": ["PIL"], "group": "docs",
+     "summary": "Image loading, resizing, conversion."},
+    {"name": "matplotlib", "kind": "pip", "imports": ["matplotlib"], "group": "docs",
+     "summary": "Charts and plots (writes image files)."},
+    # ── science / ML ─────────────────────────────────────────────────────────
+    {"name": "scipy", "kind": "pip", "imports": ["scipy"], "group": "ml",
+     "summary": "Scientific computing on top of numpy."},
+    {"name": "scikit-learn", "kind": "pip", "imports": ["sklearn"], "group": "ml",
+     "summary": "Classical ML: clustering, regression, metrics."},
+    # ── binaries (apt) ───────────────────────────────────────────────────────
+    {"name": "curl", "kind": "apt", "bins": ["curl"], "group": "cli",
+     "summary": "HTTP from the shell."},
+    {"name": "wget", "kind": "apt", "bins": ["wget"], "group": "cli",
+     "summary": "File downloader."},
+    {"name": "git", "kind": "apt", "bins": ["git"], "group": "cli",
+     "summary": "Version control."},
+    {"name": "jq", "kind": "apt", "bins": ["jq"], "group": "cli",
+     "summary": "Command-line JSON processing."},
+    {"name": "ripgrep", "kind": "apt", "bins": ["rg"], "group": "cli",
+     "summary": "Fast recursive search."},
+    {"name": "poppler-utils", "kind": "apt", "bins": ["pdftotext"], "group": "cli",
+     "summary": "pdftotext / pdfimages PDF extraction."},
+    {"name": "imagemagick", "kind": "apt", "bins": ["convert"], "group": "cli",
+     "summary": "Image conversion from the shell."},
+    {"name": "sqlite3", "kind": "apt", "bins": ["sqlite3"], "group": "cli",
+     "summary": "SQLite CLI."},
+]
+
+_PKG_KINDS = ("pip", "apt", "npm", "pwsh")
+
+
+def _pkg_norm(name: str) -> str:
+    """PEP 503 normalisation, so `Beautiful_Soup4` and `beautifulsoup4` are the
+    same entry in an allow/block list."""
+    return re.sub(r"[-_.]+", "-", str(name or "").strip().lower())
+
+
+def _pkg_catalog_entry(name: str) -> Dict[str, Any]:
+    n = _pkg_norm(name)
+    for e in _PKG_CATALOG:
+        if _pkg_norm(e["name"]) == n:
+            return e
+    return {}
+
+
+def _py_stdlib() -> set:
+    """Module names that never need installing. `sys.stdlib_module_names` is the
+    authoritative list (3.10+); the container runs 3.12, and so does Vera."""
+    names = set(getattr(sys, "stdlib_module_names", ()) or ())
+    if not names:                       # ancient interpreter — degrade safely
+        names = set(sys.builtin_module_names)
+    return names
+
+
+def _pkg_for_import(module: str) -> str:
+    """Distribution that provides `module`. Falls back to the module name, which
+    is right for the large majority (requests, pandas, httpx …)."""
+    m = str(module or "").split(".")[0]
+    if m in _PY_IMPORT_TO_PKG:
+        return _PY_IMPORT_TO_PKG[m]
+    for e in _PKG_CATALOG:
+        if m in (e.get("imports") or []):
+            return e["name"]
+    return m
+
+
+_PY_IMPORT_RE = re.compile(
+    r"(?m)^\s*(?:import\s+([A-Za-z_][\w.]*)|from\s+([A-Za-z_][\w.]*)\s+import)")
+
+
+def scan_python_imports(code: str) -> List[str]:
+    """Third-party top-level module names a snippet imports.
+
+    AST first (exact, ignores imports inside strings/comments); regex only if the
+    code doesn't parse — a snippet with a syntax error still tells us what it
+    MEANT to import, and reporting a missing package beats reporting a
+    SyntaxError the author can already see."""
+    mods: List[str] = []
+    try:
+        import ast as _ast
+        tree = _ast.parse(code or "")
+        for node in _ast.walk(tree):
+            if isinstance(node, _ast.Import):
+                mods += [a.name.split(".")[0] for a in node.names]
+            elif isinstance(node, _ast.ImportFrom):
+                # `from . import x` is local — node.module is None or level > 0
+                if node.module and not node.level:
+                    mods.append(node.module.split(".")[0])
+    except Exception:
+        for a, b in _PY_IMPORT_RE.findall(code or ""):
+            mods.append((a or b).split(".")[0])
+    std = _py_stdlib()
+    out: List[str] = []
+    for m in mods:
+        if not m or m in std or m.startswith("_") or m in out:
+            continue
+        out.append(m)
+    return out
+
+
+# Shell tokens worth checking for existence before a bash command runs. Only
+# names in the catalog or the reactive apt map are considered, so a scan of
+# arbitrary agent shell never turns into "install anything it typed".
+_SH_TOKEN_RE = re.compile(r"(?m)(?:^|[|;&]\s*|\$\(\s*|`\s*)\s*([A-Za-z][\w.+-]*)")
+
+
+def scan_shell_bins(command: str) -> List[str]:
+    """Binaries a shell command invokes that we know how to install."""
+    known = dict(_APT_PKG_FOR_MISSING_BIN)
+    for e in _PKG_CATALOG:
+        for b in (e.get("bins") or []):
+            known.setdefault(b, e["name"])
+    out: List[str] = []
+    for tok in _SH_TOKEN_RE.findall(command or ""):
+        if tok in known and tok not in out:
+            out.append(tok)
+    return out
+
+
+_PWSH_IMPORT_RE = re.compile(r"(?im)^\s*(?:Import-Module|using\s+module)\s+"
+                             r"['\"]?([A-Za-z][\w.]*)")
+
+
+def scan_pwsh_modules(code: str) -> List[str]:
+    """PowerShell modules a script explicitly imports. Deliberately narrow:
+    inferring modules from bare cmdlet names guesses wrong constantly, and a
+    wrong guess here would prompt the user to install something irrelevant."""
+    builtin = {"Microsoft.PowerShell.Management", "Microsoft.PowerShell.Utility",
+               "Microsoft.PowerShell.Security", "Microsoft.PowerShell.Core",
+               "PSReadLine", "ThreadJob"}
+    out: List[str] = []
+    for m in _PWSH_IMPORT_RE.findall(code or ""):
+        if m not in builtin and m not in out:
+            out.append(m)
+    return out
+
+
+# ── container probes ─────────────────────────────────────────────────────────
+# Probing the REAL interpreter beats mapping installed distribution names back to
+# import names: `pip list` says "beautifulsoup4", the script says "import bs4",
+# and any table mapping between them is one stale entry away from a false
+# "missing" that prompts the user to install something already there.
+
+async def _probe_python_modules(sid: str, modules: List[str]) -> Dict[str, bool]:
+    """{module: importable} inside the sandbox, via importlib.find_spec."""
+    if not modules:
+        return {}
+    probe = ("import importlib.util,json,sys;"
+             "print(json.dumps({m:(importlib.util.find_spec(m) is not None) "
+             "for m in sys.argv[1:]}))")
+    cmd = "python3 -c " + shlex.quote(probe) + " " + " ".join(
+        shlex.quote(m) for m in modules[:60])
+    try:
+        res = await _exec_in(sid, cmd, timeout=60, shell="sh")
+    except Exception as e:
+        log.debug("python module probe failed: %s", e)
+        return {}
+    if not res or not res.get("ok"):
+        return {}
+    try:
+        return {k: bool(v) for k, v in
+                json.loads(str(res.get("stdout") or "").strip().splitlines()[-1]).items()}
+    except Exception:
+        return {}
+
+
+async def _probe_bins(sid: str, bins: List[str]) -> Dict[str, bool]:
+    """{binary: on PATH} inside the sandbox."""
+    if not bins:
+        return {}
+    checks = "; ".join(
+        f"command -v {shlex.quote(b)} >/dev/null 2>&1 && echo {shlex.quote(b)}=1 "
+        f"|| echo {shlex.quote(b)}=0" for b in bins[:40])
+    try:
+        res = await _exec_in(sid, checks, timeout=60, shell="sh")
+    except Exception as e:
+        log.debug("binary probe failed: %s", e)
+        return {}
+    if not res:
+        return {}
+    out: Dict[str, bool] = {}
+    for line in str(res.get("stdout") or "").splitlines():
+        name, _, val = line.strip().partition("=")
+        if name:
+            out[name] = val == "1"
+    return out
+
+
+async def _probe_pwsh_modules(sid: str, modules: List[str]) -> Dict[str, bool]:
+    if not modules:
+        return {}
+    names = ",".join("'" + m.replace("'", "''") + "'" for m in modules[:40])
+    ps = (f"@({names}) | ForEach-Object {{ "
+          "$ok = [bool](Get-Module -ListAvailable -Name $_); "
+          "Write-Output \"$_=$([int]$ok)\" }")
+    try:
+        res = await _exec_in(sid, ps, timeout=90, shell="pwsh")
+    except Exception as e:
+        log.debug("pwsh module probe failed: %s", e)
+        return {}
+    if not res:
+        return {}
+    out: Dict[str, bool] = {}
+    for line in str(res.get("stdout") or "").splitlines():
+        name, _, val = line.strip().partition("=")
+        if name:
+            out[name] = val.strip() == "1"
+    return out
+
+
+async def sandbox_installed_packages(session_id: str) -> Dict[str, Any]:
+    """Everything installed in a session's sandbox: pip distributions, plus which
+    catalog binaries are on PATH. Used by the management UI and the coder hint."""
+    sid = await _resolve_sid(session_id)
+    rec = await _get_rec(sid)
+    if not rec or not rec.get("container"):
+        return {"ok": False, "error": "no sandbox for this session", "pip": [], "bins": []}
+    pip: List[Dict[str, str]] = []
+    try:
+        res = await _exec_in(sid, "pip list --format=json --disable-pip-version-check",
+                             timeout=90, shell="sh")
+        if res and res.get("ok"):
+            raw = str(res.get("stdout") or "").strip()
+            start = raw.find("[")
+            if start >= 0:
+                pip = [{"name": str(d.get("name") or ""), "version": str(d.get("version") or "")}
+                       for d in json.loads(raw[start:]) if isinstance(d, dict)]
+    except Exception as e:
+        log.debug("pip list failed for %s: %s", sid, e)
+    cat_bins = sorted({b for e in _PKG_CATALOG for b in (e.get("bins") or [])})
+    present = await _probe_bins(sid, cat_bins)
+    return {"ok": True, "session_id": sid,
+            "pip": sorted(pip, key=lambda d: d["name"].lower()),
+            "bins": [b for b, ok in present.items() if ok]}
+
+
+# ── policy ───────────────────────────────────────────────────────────────────
+
+def _pkg_policy(cfg: Dict) -> str:
+    p = str(cfg.get("package_policy") or _PKG_POLICY_ASK).strip().lower()
+    return p if p in (_PKG_POLICY_ASK, _PKG_POLICY_AUTO, _PKG_POLICY_DENY) else _PKG_POLICY_ASK
+
+
+def _pkg_listcfg(cfg: Dict, key: str) -> List[str]:
+    v = cfg.get(key) or []
+    if isinstance(v, str):
+        v = [x for x in re.split(r"[,\s]+", v) if x]
+    return [_pkg_norm(x) for x in v if str(x).strip()]
+
+
+def _classify_requests(cfg: Dict, reqs: List[Dict[str, Any]]) -> Dict[str, List[Dict]]:
+    """Split what a run needs into auto-installable / must-ask / blocked.
+
+    The allowlist is what makes 'ask' mode liveable: a user who has already said
+    yes to beautifulsoup4 once should never be asked again, without having to
+    turn prompting off globally."""
+    policy = _pkg_policy(cfg)
+    allow = set(_pkg_listcfg(cfg, "package_allowlist"))
+    block = set(_pkg_listcfg(cfg, "package_blocklist"))
+    auto, ask, denied = [], [], []
+    for req in reqs:
+        n = _pkg_norm(req.get("package"))
+        if n in block:
+            denied.append({**req, "reason": "on the package blocklist"})
+        elif policy == _PKG_POLICY_DENY:
+            denied.append({**req, "reason": "package installs are disabled "
+                                            "(sandbox package policy = deny)"})
+        elif policy == _PKG_POLICY_AUTO or n in allow:
+            auto.append(req)
+        else:
+            ask.append(req)
+    return {"auto": auto, "ask": ask, "denied": denied}
+
+
+# ── install ──────────────────────────────────────────────────────────────────
+
+async def _install_packages(sid: str, reqs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Install a batch inside the sandbox, grouped by ecosystem. Returns per-item
+    outcomes; never raises."""
+    by_kind: Dict[str, List[str]] = {}
+    for req in reqs:
+        by_kind.setdefault(str(req.get("kind") or "pip"), []).append(str(req.get("package")))
+    installed, failed, log_lines = [], [], []
+    for kind, names in by_kind.items():
+        names = [n for n in names if n]
+        if not names:
+            continue
+        quoted = " ".join(shlex.quote(n) for n in names)
+        if kind == "pip":
+            cmd = f"pip install --disable-pip-version-check --no-input {quoted}"
+            shell = "sh"
+            timeout = 600
+        elif kind == "apt":
+            cmd = (f"apt-get update -qq && apt-get install -y -qq "
+                   f"--no-install-recommends {quoted}")
+            shell = "sh"
+            timeout = 600
+        elif kind == "npm":
+            cmd = f"npm install -g {quoted}"
+            shell = "sh"
+            timeout = 600
+        elif kind == "pwsh":
+            inner = ",".join("'" + n.replace("'", "''") + "'" for n in names)
+            cmd = (f"Install-Module -Name @({inner}) -Scope CurrentUser -Force "
+                   f"-AcceptLicense -ErrorAction Stop")
+            shell = "pwsh"
+            timeout = 900
+        else:
+            failed += [{"package": n, "kind": kind, "error": f"unknown package kind '{kind}'"}
+                       for n in names]
+            continue
+        try:
+            res = await _exec_in(sid, cmd, timeout=timeout, shell=shell)
+        except Exception as e:
+            res = {"ok": False, "stderr": str(e)}
+        ok = bool(res and res.get("ok"))
+        tail = str((res or {}).get("stderr") or (res or {}).get("stdout") or "")[-600:]
+        log_lines.append(f"[{kind}] {' '.join(names)} → {'ok' if ok else 'FAILED'}")
+        if ok:
+            installed += [{"package": n, "kind": kind} for n in names]
+        else:
+            failed += [{"package": n, "kind": kind, "error": tail} for n in names]
+    return {"ok": not failed, "installed": installed, "failed": failed,
+            "log": "\n".join(log_lines)}
+
+
+# ── the ask ──────────────────────────────────────────────────────────────────
+
+async def _await_package_decision(req_id: str, timeout: float) -> Dict[str, Any]:
+    """Block until the user approves/denies, or the ask times out. Same dual
+    local-future + Redis-key resolution as the loop's HITL gate, for the same
+    reason: the run and the click can be on different instances."""
+    loop = asyncio.get_event_loop()
+    fut: asyncio.Future = loop.create_future()
+    _PKG_PENDING_LOCAL[req_id] = fut
+    r = _redis()
+    key = _pkg_decision_key(req_id)
+    deadline = time.monotonic() + max(5.0, timeout)
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return {"decision": "timeout"}
+            if fut.done():
+                return fut.result()
+            if r is not None:
+                try:
+                    raw = await r.get(key)
+                except Exception:
+                    raw = None
+                if raw:
+                    try:
+                        await r.delete(key)
+                    except Exception:
+                        pass
+                    try:
+                        return json.loads(raw if isinstance(raw, str) else raw.decode())
+                    except Exception:
+                        return {"decision": "deny"}
+            try:
+                await asyncio.wait_for(asyncio.shield(fut),
+                                       timeout=min(1.0, max(0.05, remaining)))
+                return fut.result()
+            except asyncio.TimeoutError:
+                continue
+    finally:
+        _PKG_PENDING_LOCAL.pop(req_id, None)
+        if r is not None:
+            try:
+                await r.hdel(KEY_PKG_PENDING, req_id)
+            except Exception:
+                pass
+
+
+def _pkg_lines(reqs: List[Dict[str, Any]]) -> str:
+    out = []
+    for q in reqs:
+        entry = _pkg_catalog_entry(q.get("package"))
+        why = q.get("needed_for") or ""
+        summary = entry.get("summary") or ""
+        bits = [f"  • {q.get('package')} ({q.get('kind')})"]
+        if why:
+            bits.append(f"— needed for `{why}`")
+        if summary:
+            bits.append(f"— {summary}")
+        out.append(" ".join(bits))
+    return "\n".join(out)
+
+
+async def _request_package_approval(sid: str, reqs: List[Dict[str, Any]], *,
+                                    context: str = "", event_sid: str = "") -> Dict[str, Any]:
+    """Register a pending request, tell the UI, and wait for the answer.
+
+    `event_sid` is the session the CALLER thinks it is (a chat/loop session id);
+    `sid` is the container's, which differs whenever an alias redirects a
+    governed run into an owner container. The event must carry the caller's, or
+    the loop SSE — which drops events whose session_id doesn't match the run —
+    filters out the very prompt the run is blocked on."""
+    cfg = await _get_cfg()
+    timeout = float(cfg.get("package_ask_timeout_secs") or _PKG_ASK_TIMEOUT_DEFAULT)
+    req_id = uuid.uuid4().hex[:12]
+    record = {"id": req_id, "session_id": event_sid or sid, "sandbox_id": sid,
+              "packages": reqs,
+              "context": str(context or "")[:400], "created": now_iso(),
+              "expires_in": timeout}
+    r = _redis()
+    if r is not None:
+        try:
+            await r.hset(KEY_PKG_PENDING, req_id, json.dumps(record))
+        except Exception:
+            pass
+    await emit_event({"type": "remote.sandbox.package_request", **record,
+                      "summary": f"{len(reqs)} package(s) need approval",
+                      "lines": _pkg_lines(reqs)})
+    decision = await _await_package_decision(req_id, timeout)
+    await emit_event({"type": "remote.sandbox.package_decision", "id": req_id,
+                      "session_id": event_sid or sid,
+                      "decision": decision.get("decision", "timeout")})
+    return {"request": record, **decision}
+
+
+# ── the gate ─────────────────────────────────────────────────────────────────
+
+def _gate_message(head: str, reqs: List[Dict[str, Any]], tail: str) -> str:
+    return f"{head}\n{_pkg_lines(reqs)}\n{tail}"
+
+
+async def _package_gate(sid: str, *, reqs: List[Dict[str, Any]],
+                        context: str = "", event_sid: str = "") -> Optional[Dict[str, Any]]:
+    """Ensure everything in `reqs` is present before a run.
+
+    Returns None when the run may proceed (nothing missing, or everything was
+    installed), or an exec-shaped FAILURE dict explaining what is needed and how
+    to get it. Never raises — a sandbox that can't be probed must not become a
+    sandbox that can't run code."""
+    if not reqs:
+        return None
+    cfg = await _get_cfg()
+    split = _classify_requests(cfg, reqs)
+    if split["denied"]:
+        names = ", ".join(q["package"] for q in split["denied"])
+        # Both keys: exec results are consumed as `rc` in most places and
+        # `exit_code` in others, and a gate refusal that carries only one reads
+        # as rc=None — indistinguishable from "never ran" to a caller that
+        # branches on it. 126 is the shell's "found but not executable".
+        return {"ok": False, "rc": 126, "exit_code": 126, "stdout": "", "packages_denied": split["denied"],
+                "stderr": _gate_message(
+                    f"BLOCKED: this code needs package(s) that policy will not install: {names}",
+                    split["denied"],
+                    "Rewrite it using what is already available, or ask the user to change the "
+                    "sandbox package policy / blocklist.")}
+    to_install = list(split["auto"])
+    rejected: List[Dict[str, Any]] = []
+    head = ""
+    if split["ask"]:
+        outcome = await _request_package_approval(sid, split["ask"], context=context,
+                                                  event_sid=event_sid)
+        decision = str(outcome.get("decision") or "timeout")
+        approved = {_pkg_norm(p) for p in (outcome.get("approved") or [])}
+        if decision == "approve":
+            # An empty `approved` list means "all of them" (the plain Approve
+            # button); a populated one is a per-package SUBSET.
+            picked = [q for q in split["ask"]
+                      if not approved or _pkg_norm(q["package"]) in approved]
+            to_install += picked
+            rejected = [q for q in split["ask"] if q not in picked]
+            head = "The user approved only SOME of them. These were NOT installed:"
+        else:
+            rejected = list(split["ask"])
+            _t = int(float(cfg.get("package_ask_timeout_secs") or _PKG_ASK_TIMEOUT_DEFAULT))
+            head = ("The user DENIED installing these packages:" if decision == "deny"
+                    else f"No answer within {_t}s, so these packages were NOT installed:")
+
+    # Install what we may BEFORE reporting anything refused: a partial approval
+    # should still leave the container better off, and the next attempt then only
+    # has to solve the genuinely-refused import. (The install persists in the
+    # container even though this run is stopped.)
+    installed_failures: List[Dict[str, Any]] = []
+    if to_install:
+        res = await _install_packages(sid, to_install)
+        await _invalidate_pkg_cache(sid)
+        await emit_event({"type": "remote.sandbox.packages_installed",
+                          "session_id": event_sid or sid, "sandbox_id": sid,
+                          "installed": [q["package"] for q in res.get("installed") or []],
+                          "failed": [q["package"] for q in res.get("failed") or []]})
+        installed_failures = list(res.get("failed") or [])
+
+    # Anything the code imports but still doesn't have STOPS the run — including
+    # the partial-approval case, which previously fell through and let the script
+    # run straight into the ImportError the gate exists to prevent.
+    if rejected:
+        # Both keys: exec results are consumed as `rc` in most places and
+        # `exit_code` in others, and a gate refusal that carries only one reads
+        # as rc=None — indistinguishable from "never ran" to a caller that
+        # branches on it. 126 is the shell's "found but not executable".
+        return {"ok": False, "rc": 126, "exit_code": 126, "stdout": "",
+                "packages_rejected": rejected,
+                "stderr": _gate_message(
+                    head, rejected,
+                    "Do NOT retry the same import. Either solve it with the packages "
+                    "already installed, or explain to the user why this one is needed.")}
+    if installed_failures:
+        # Both keys: exec results are consumed as `rc` in most places and
+        # `exit_code` in others, and a gate refusal that carries only one reads
+        # as rc=None — indistinguishable from "never ran" to a caller that
+        # branches on it. 126 is the shell's "found but not executable".
+        return {"ok": False, "rc": 126, "exit_code": 126, "stdout": "",
+                "packages_failed": installed_failures,
+                "stderr": _gate_message(
+                    "These packages could not be installed:",
+                    installed_failures,
+                    "The install itself failed — the name may be wrong, or the package may "
+                    "need a build toolchain. Try a different library.")}
+    return None
+
+
+async def _invalidate_pkg_cache(sid: str) -> None:
+    r = _redis()
+    if r is not None:
+        try:
+            await r.delete(f"vera:remote:sandbox:pkgcache:{sid}")
+        except Exception:
+            pass
+
+
+async def preflight_python(sid: str, code: str, *,
+                           event_sid: str = "") -> Optional[Dict[str, Any]]:
+    """Missing-import gate for a python snippet about to run in `sid`."""
+    mods = scan_python_imports(code)
+    if not mods:
+        return None
+    present = await _probe_python_modules(sid, mods)
+    if not present:
+        return None                       # probe failed → never block the run
+    reqs = []
+    for m in mods:
+        if present.get(m) is False:
+            pkg = _pkg_for_import(m)
+            if pkg:
+                reqs.append({"package": pkg, "kind": "pip", "needed_for": f"import {m}"})
+    return await _package_gate(sid, reqs=reqs, context="python code", event_sid=event_sid)
+
+
+async def preflight_shell(sid: str, command: str, *,
+                          event_sid: str = "") -> Optional[Dict[str, Any]]:
+    """Missing-binary gate for a shell command about to run in `sid`."""
+    bins = scan_shell_bins(command)
+    if not bins:
+        return None
+    present = await _probe_bins(sid, bins)
+    if not present:
+        return None
+    known = dict(_APT_PKG_FOR_MISSING_BIN)
+    for e in _PKG_CATALOG:
+        for b in (e.get("bins") or []):
+            known.setdefault(b, e["name"])
+    reqs = [{"package": known[b], "kind": "apt", "needed_for": b}
+            for b in bins if present.get(b) is False and b in known]
+    # de-dup: several binaries often come from one package (dnsutils → dig+nslookup)
+    seen, uniq = set(), []
+    for q in reqs:
+        if _pkg_norm(q["package"]) not in seen:
+            seen.add(_pkg_norm(q["package"]))
+            uniq.append(q)
+    return await _package_gate(sid, reqs=uniq, context="shell command", event_sid=event_sid)
+
+
+_PREFLIGHT_LANGS = {
+    "python": "python", "py": "python", "python3": "python",
+    "bash": "shell", "sh": "shell", "shell": "shell",
+    "powershell": "pwsh", "pwsh": "pwsh", "ps": "pwsh", "ps1": "pwsh",
+}
+
+
+async def _preflight_for(sid: str, language: str, *, code: str = "",
+                         path: str = "", event_sid: str = "") -> Optional[Dict[str, Any]]:
+    """Dispatch the right preflight for `language`, reading the source out of the
+    container first when the run is by path. Unknown languages are not gated —
+    there is nothing useful to scan, and guessing would block valid runs."""
+    kind = _PREFLIGHT_LANGS.get(str(language or "").lower())
+    if not kind:
+        return None
+    src = code or ""
+    if not src and path:
+        try:
+            res = await _exec_in(sid, f"cat {shlex.quote(path)}", timeout=30, shell="sh")
+            if res and res.get("ok"):
+                src = str(res.get("stdout") or "")
+        except Exception:
+            return None
+    if not src.strip():
+        return None
+    try:
+        if kind == "python":
+            return await preflight_python(sid, src, event_sid=event_sid)
+        if kind == "shell":
+            return await preflight_shell(sid, src, event_sid=event_sid)
+        return await preflight_pwsh(sid, src, event_sid=event_sid)
+    except Exception as e:
+        log.debug("preflight (%s) failed for %s: %s", kind, sid, e)
+        return None
+
+
+async def preflight_pwsh(sid: str, code: str, *,
+                         event_sid: str = "") -> Optional[Dict[str, Any]]:
+    """Missing-module gate for a PowerShell script about to run in `sid`."""
+    mods = scan_pwsh_modules(code)
+    if not mods:
+        return None
+    present = await _probe_pwsh_modules(sid, mods)
+    if not present:
+        return None
+    reqs = [{"package": m, "kind": "pwsh", "needed_for": f"Import-Module {m}"}
+            for m in mods if present.get(m) is False]
+    return await _package_gate(sid, reqs=reqs, context="powershell script",
+                               event_sid=event_sid)
+
+
+# ── what the coder is told ───────────────────────────────────────────────────
+
+async def sandbox_package_hint(session_id: str, language: str = "python") -> str:
+    """A short block naming what's installed and how to get more, for injection
+    into code-authoring prompts.
+
+    Without this the model guesses, and guesses badly in both directions: it
+    assumes pandas is present (it isn't, on a slim base) or hand-rolls a parser
+    because it assumes bs4 is absent (it may well be there). Telling it the truth
+    once is far cheaper than either failure."""
+    try:
+        sid = await _resolve_sid(session_id)
+        rec = await _get_rec(sid)
+        if not rec or not rec.get("container"):
+            return ""
+        inv = await sandbox_installed_packages(sid)
+        if not inv.get("ok"):
+            return ""
+        cfg = await _get_cfg()
+        policy = _pkg_policy(cfg)
+        lang = (language or "python").lower()
+        lines: List[str] = []
+        if lang in ("python", "py"):
+            names = [d["name"] for d in inv.get("pip") or []]
+            lines.append("PYTHON PACKAGES INSTALLED in this sandbox: "
+                         + (", ".join(sorted(names)[:80]) or "(only the standard library)"))
+        elif lang in ("bash", "sh", "shell"):
+            lines.append("EXTRA CLI TOOLS available in this sandbox: "
+                         + (", ".join(inv.get("bins") or []) or "(none beyond the base image)"))
+        else:
+            names = [d["name"] for d in inv.get("pip") or []]
+            lines.append("INSTALLED: python — " + (", ".join(sorted(names)[:60]) or "stdlib only")
+                         + "; CLI — " + (", ".join(inv.get("bins") or []) or "base image only"))
+        offer = ", ".join(e["name"] for e in _PKG_CATALOG
+                          if _pkg_norm(e["name"]) not in
+                          {_pkg_norm(d["name"]) for d in inv.get("pip") or []})
+        if policy == _PKG_POLICY_AUTO:
+            lines.append("Anything else you import is installed AUTOMATICALLY before the run — "
+                         "just import what you need. Commonly available: " + offer[:400])
+        elif policy == _PKG_POLICY_DENY:
+            lines.append("Installing new packages is DISABLED. Use only what is listed above "
+                         "and the standard library.")
+        else:
+            lines.append("If you need something else, IMPORT IT ANYWAY: the run pauses and asks "
+                         "the user to approve the install, then continues. Do not hand-roll a "
+                         "replacement for a standard library. Approvable examples: " + offer[:400])
+        return "\n".join(lines)
+    except Exception as e:
+        log.debug("package hint failed for %s: %s", session_id, e)
+        return ""
+
+
+# ── management capabilities ──────────────────────────────────────────────────
+
+@capability(
+    "sandbox.packages.catalog",
+    http_method="GET", http_path="/remote/sandbox/packages/catalog",
+    http_tags=["remote", "sandbox"], memory="off", silent=True,
+    description="The curated menu of packages that can be installed into session "
+                "sandboxes, each marked with whether it is already present in a "
+                "given session. Input: session_id (str — optional; omit for the "
+                "bare catalog). Output: {ok, policy, catalog:[{name, kind, group, "
+                "summary, installed}], installed:{pip:[], bins:[]}}.",
+)
+async def cap_sbx_pkg_catalog(session_id: str = "", trace_id=None) -> Dict:
+    cfg = await _get_cfg()
+    inv = {"pip": [], "bins": []}
+    if session_id:
+        got = await sandbox_installed_packages(session_id)
+        if got.get("ok"):
+            inv = {"pip": got.get("pip") or [], "bins": got.get("bins") or []}
+    have = {_pkg_norm(d["name"]) for d in inv["pip"]} | {b for b in inv["bins"]}
+    catalog = []
+    for e in _PKG_CATALOG:
+        installed = _pkg_norm(e["name"]) in have or any(b in have for b in (e.get("bins") or []))
+        catalog.append({"name": e["name"], "kind": e["kind"], "group": e.get("group", ""),
+                        "summary": e.get("summary", ""), "installed": installed})
+    return {"ok": True, "policy": _pkg_policy(cfg), "catalog": catalog, "installed": inv,
+            "allowlist": _pkg_listcfg(cfg, "package_allowlist"),
+            "blocklist": _pkg_listcfg(cfg, "package_blocklist")}
+
+
+@capability(
+    "sandbox.packages.list",
+    http_method="POST", http_path="/remote/sandbox/packages/list",
+    http_tags=["remote", "sandbox"], memory="off", silent=True,
+    description="Everything actually installed in one session's sandbox. Input: "
+                "session_id (str!). Output: {ok, pip:[{name,version}], bins:[]}.",
+)
+async def cap_sbx_pkg_list(session_id: str = "", trace_id=None) -> Dict:
+    if not session_id:
+        return {"ok": False, "error": "session_id required"}
+    return await sandbox_installed_packages(session_id)
+
+
+@capability(
+    "sandbox.packages.install",
+    http_method="POST", http_path="/remote/sandbox/packages/install",
+    http_tags=["remote", "sandbox"],
+    description="Install packages into a session's sandbox. Inputs: session_id "
+                "(str!), packages (str/list! — names, e.g. 'pandas,lxml'), kind "
+                "(str — pip|apt|npm|pwsh, default pip), remember (bool — also add "
+                "them to the auto-approve allowlist so future runs never ask). "
+                "Blocklisted names are refused. Output: {ok, installed, failed}.",
+)
+async def cap_sbx_pkg_install(session_id: str = "", packages: Any = "", kind: str = "pip",
+                              remember: bool = False, trace_id=None) -> Dict:
+    if not session_id:
+        return {"ok": False, "error": "session_id required"}
+    names = _pkg_names(packages)
+    if not names:
+        return {"ok": False, "error": "packages required"}
+    k = (kind or "pip").strip().lower()
+    if k not in _PKG_KINDS:
+        return {"ok": False, "error": f"kind must be one of {', '.join(_PKG_KINDS)}"}
+    cfg = await _get_cfg()
+    block = set(_pkg_listcfg(cfg, "package_blocklist"))
+    refused = [n for n in names if _pkg_norm(n) in block]
+    if refused:
+        return {"ok": False, "error": f"blocklisted: {', '.join(refused)}"}
+    sid = await _resolve_sid(session_id)
+    rec = await _get_rec(sid)
+    if not rec or not rec.get("container"):
+        return {"ok": False, "error": "no sandbox for this session"}
+    res = await _install_packages(sid, [{"package": n, "kind": k} for n in names])
+    await _invalidate_pkg_cache(sid)
+    if remember and res.get("installed"):
+        allow = _pkg_listcfg(cfg, "package_allowlist")
+        for q in res["installed"]:
+            if _pkg_norm(q["package"]) not in allow:
+                allow.append(_pkg_norm(q["package"]))
+        cfg["package_allowlist"] = allow
+        await _save_cfg(cfg)
+    await emit_event({"type": "remote.sandbox.packages_installed", "session_id": sid,
+                      "installed": [q["package"] for q in res.get("installed") or []],
+                      "failed": [q["package"] for q in res.get("failed") or []]})
+    return {"session_id": sid, **res}
+
+
+@capability(
+    "sandbox.packages.remove",
+    http_method="POST", http_path="/remote/sandbox/packages/remove",
+    http_tags=["remote", "sandbox"],
+    description="Uninstall packages from a session's sandbox. Inputs: session_id "
+                "(str!), packages (str/list!), kind (str — pip|apt, default pip). "
+                "Output: {ok, removed, log}.",
+)
+async def cap_sbx_pkg_remove(session_id: str = "", packages: Any = "", kind: str = "pip",
+                             trace_id=None) -> Dict:
+    if not session_id:
+        return {"ok": False, "error": "session_id required"}
+    names = _pkg_names(packages)
+    if not names:
+        return {"ok": False, "error": "packages required"}
+    sid = await _resolve_sid(session_id)
+    quoted = " ".join(shlex.quote(n) for n in names)
+    k = (kind or "pip").strip().lower()
+    if k == "pip":
+        cmd = f"pip uninstall -y --disable-pip-version-check {quoted}"
+    elif k == "apt":
+        cmd = f"apt-get remove -y -qq {quoted}"
+    else:
+        return {"ok": False, "error": "kind must be pip or apt"}
+    res = await _exec_in(sid, cmd, timeout=300, shell="sh")
+    await _invalidate_pkg_cache(sid)
+    if res is None:
+        return {"ok": False, "error": "no sandbox for this session"}
+    return {"ok": bool(res.get("ok")), "removed": names if res.get("ok") else [],
+            "log": str(res.get("stdout") or res.get("stderr") or "")[-1500:]}
+
+
+@capability(
+    "sandbox.packages.pending",
+    http_method="GET", http_path="/remote/sandbox/packages/pending",
+    http_tags=["remote", "sandbox"], memory="off", silent=True,
+    description="Package installs currently waiting on the user's approval (a run "
+                "is paused on each one). Output: {ok, pending:[{id, session_id, "
+                "packages, context, created}]}.",
+)
+async def cap_sbx_pkg_pending(trace_id=None) -> Dict:
+    r = _redis()
+    if not r:
+        return {"ok": True, "pending": []}
+    try:
+        raw = await r.hgetall(KEY_PKG_PENDING)
+    except Exception as e:
+        return {"ok": False, "error": str(e), "pending": []}
+    out = []
+    for v in (raw or {}).values():
+        try:
+            out.append(json.loads(v if isinstance(v, str) else v.decode()))
+        except Exception:
+            continue
+    out.sort(key=lambda d: str(d.get("created") or ""), reverse=True)
+    return {"ok": True, "pending": out, "count": len(out)}
+
+
+@capability(
+    "sandbox.packages.respond",
+    http_method="POST", http_path="/remote/sandbox/packages/respond",
+    http_tags=["remote", "sandbox"],
+    description="Answer a pending package-install request, releasing the paused "
+                "run. Inputs: id (str! — from sandbox.packages.pending), decision "
+                "(str! — approve|deny), packages (str/list — approve only a SUBSET; "
+                "omit to approve all of them), remember (bool — add the approved "
+                "names to the auto-approve allowlist so this never asks again). "
+                "Output: {ok, id, decision}.",
+)
+async def cap_sbx_pkg_respond(id: str = "", decision: str = "approve", packages: Any = "",
+                              remember: bool = False, trace_id=None) -> Dict:
+    req_id = str(id or "").strip()
+    if not req_id:
+        return {"ok": False, "error": "id required"}
+    dec = (decision or "").strip().lower()
+    if dec not in ("approve", "deny"):
+        return {"ok": False, "error": "decision must be 'approve' or 'deny'"}
+    approved = _pkg_names(packages)
+    payload = {"decision": dec, "approved": approved}
+    if dec == "approve" and remember:
+        cfg = await _get_cfg()
+        allow = _pkg_listcfg(cfg, "package_allowlist")
+        # With no explicit subset the user approved the whole request, so the
+        # remembered set is the request's own package list.
+        names = approved
+        if not names:
+            r0 = _redis()
+            try:
+                raw = await r0.hget(KEY_PKG_PENDING, req_id) if r0 else None
+                if raw:
+                    rec = json.loads(raw if isinstance(raw, str) else raw.decode())
+                    names = [str(q.get("package")) for q in (rec.get("packages") or [])]
+            except Exception:
+                names = []
+        for n in names:
+            if _pkg_norm(n) and _pkg_norm(n) not in allow:
+                allow.append(_pkg_norm(n))
+        cfg["package_allowlist"] = allow
+        await _save_cfg(cfg)
+    # Local future first (same-instance, instant), Redis key as the cross-instance
+    # bridge — the paused run may be on another node entirely.
+    fut = _PKG_PENDING_LOCAL.get(req_id)
+    if fut is not None and not fut.done():
+        try:
+            fut.set_result(payload)
+        except Exception:
+            pass
+    r = _redis()
+    if r is not None:
+        try:
+            await r.set(_pkg_decision_key(req_id), json.dumps(payload), ex=_PKG_DECISION_TTL)
+        except Exception:
+            pass
+    return {"ok": True, "id": req_id, "decision": dec, "approved": approved}
+
+
+def _pkg_names(packages: Any) -> List[str]:
+    """Accept a list, or a comma/space-separated string, from either a UI form or
+    an agent that ignored the schema."""
+    if isinstance(packages, str):
+        items = re.split(r"[,\s]+", packages)
+    elif isinstance(packages, (list, tuple)):
+        items = [str(p) for p in packages]
+    else:
+        items = []
+    out: List[str] = []
+    for p in items:
+        p = str(p).strip()
+        if p and p not in out:
+            out.append(p)
+    return out
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 #  ROUTING HOOKS  (called by exec_capabilities when a call carries a session_id)
 # ═════════════════════════════════════════════════════════════════════════════
 async def route_shell(session_id: str, command: str, timeout: int = 60,
@@ -1542,6 +2609,15 @@ async def route_shell(session_id: str, command: str, timeout: int = 60,
     rec = await _ensure_routable(session_id, create=True)
     if not rec:
         return None
+    # Missing tools the command NAMES are settled before it runs, so a policy of
+    # "ask" gets one prompt up front rather than the command half-executing and
+    # dying partway. _auto_install_missing_bin_and_retry below still covers what
+    # a static scan can't see (a binary invoked from inside a script it calls).
+    if shell != "pwsh":
+        gate = await preflight_shell(rec["session_id"], command, event_sid=session_id)
+        if gate is not None:
+            gate.setdefault("elapsed_ms", 0)
+            return gate
     res = await _exec_in(rec["session_id"], command, timeout=int(timeout or 60), shell=shell)
     if res is not None and shell != "pwsh":
         res = await _auto_install_missing_bin_and_retry(
@@ -1565,6 +2641,16 @@ async def route_code(session_id: str, language: str, code: str, path: str = "",
     if not rec:
         return None
     p = (path or "").strip()
+    # Preflight the SOURCE, whether it arrived inline or already lives in the
+    # container — a by-path run is exactly the case that used to fail on an
+    # ImportError the author never sees, because the file was written in an
+    # earlier step.
+    gate = await _preflight_for(rec["session_id"], language, code=code, path=p,
+                                event_sid=session_id)
+    if gate is not None:
+        gate.setdefault("elapsed_ms", 0)
+        gate.setdefault("language", language)
+        return gate
     if p:
         res = await _run_pathfile_in(rec["session_id"], language, p, args=args,
                                      timeout=int(timeout or 60))
@@ -2115,6 +3201,17 @@ _AUTO_SYNC_DEFAULT = int(os.getenv("VERA_SANDBOX_AUTOSYNC_SEC", "900"))
 # Idle auto-sleep: containers unused for this many minutes are STOPPED (docker
 # stop — volume + layers kept) and wake automatically on next use. 0 disables.
 _IDLE_SLEEP_DEFAULT = int(os.getenv("VERA_SANDBOX_IDLE_SLEEP_MIN", "30"))
+
+# Idle auto-ARCHIVE: a second, much longer tier past sleep — sessions unused
+# for this many DAYS are fully stopped via cap_sbx_stop (commit + sync +
+# remove, same as a manual archive-and-close) rather than just left sleeping
+# forever. Sleeping containers still occupy disk/volume/docker-ps-a space
+# indefinitely; this actually reclaims it. Restoration on next use is real —
+# sandbox.session.start finds the record's committed_image and rebuilds from
+# it (see the cap_sbx_stop fix, 2026-08-04: committed_image used to get
+# silently wiped by a stale-record overwrite, which made this tier pointless
+# — archiving worked but nothing could ever find the archive again). 0 disables.
+_IDLE_ARCHIVE_DEFAULT_DAYS = int(os.getenv("VERA_SANDBOX_IDLE_ARCHIVE_DAYS", "7"))
 
 
 def _object_store():
@@ -2761,6 +3858,7 @@ async def _idle_sleep_tick() -> None:
             return
         items = await r.hgetall(KEY_SBX)
         now = time.time()
+        due = []
         for v in (items or {}).values():
             try:
                 rec = json.loads(v)
@@ -2775,11 +3873,28 @@ async def _idle_sleep_tick() -> None:
                 continue
             if now - last < idle_min * 60:
                 continue
+            due.append(rec)
+        if not due:
+            return
+        # One bulk docker call (cached, see `_containers_state_map`) per DISTINCT
+        # host instead of one `_container_running` round trip per record — with
+        # hundreds of accumulated sandbox records all past the idle threshold,
+        # the old per-record loop serially fired that many docker/SSH round
+        # trips on the event loop every tick, which is exactly the storm
+        # `_containers_state_map` was built to fix for sandbox.session.list.
+        host_cache: Dict[str, Any] = {}
+        state_cache: Dict[str, Dict[str, str]] = {}
+        for rec in due:
+            host_id = rec.get("docker_host_id", "local")
+            if host_id not in host_cache:
+                host_cache[host_id] = await _docker_host(dk, host_id)
+                if host_cache[host_id]:
+                    state_cache[host_id] = await _containers_state_map(
+                        dk, host_cache[host_id], host_id)
+            if not host_cache[host_id]:
+                continue
             try:
-                host = await _docker_host(dk, rec.get("docker_host_id", "local"))
-                if not host:
-                    continue
-                if (await _container_running(dk, host, rec["container"])) != "running":
+                if state_cache.get(host_id, {}).get(rec["container"]) != "running":
                     continue
                 await cap_sbx_sleep(session_id=rec["session_id"])
                 log.info("sandbox %s idle %dmin — slept", rec["session_id"], idle_min)
@@ -2789,8 +3904,50 @@ async def _idle_sleep_tick() -> None:
         log.debug("sandbox idle-sleep tick failed: %s", e)
 
 
-# Register the periodic auto-sync + idle-sleep (the scheduler_loop invokes them;
-# each tick throttles per-session and no-ops when its config interval is 0).
+async def _idle_archive_tick() -> None:
+    """Scheduler tick: fully ARCHIVE (commit + sync + remove, via cap_sbx_stop)
+    sessions unused for idle_archive_days (0 = disabled) — the second, much
+    longer tier past _idle_sleep_tick's docker-stop. A session sleeping
+    forever still occupies real disk (image layers + volume) indefinitely;
+    this reclaims it. Checked regardless of the `active` flag (cap_sbx_sleep
+    never clears it, so a long-sleeping session stays "active" forever and
+    would never be considered otherwise) — the real signal is last_used
+    staleness, not that flag."""
+    try:
+        cfg = await _get_cfg()
+        idle_days = int(cfg.get("idle_archive_days", _IDLE_ARCHIVE_DEFAULT_DAYS) or 0)
+        if idle_days <= 0:
+            return
+        r = _redis()
+        if not r:
+            return
+        items = await r.hgetall(KEY_SBX)
+        now = time.time()
+        threshold_s = idle_days * 86400
+        for v in (items or {}).values():
+            try:
+                rec = json.loads(v)
+            except Exception:
+                continue
+            if not rec.get("container"):
+                continue
+            last = float(rec.get("last_used") or 0)
+            if not last or now - last < threshold_s:
+                continue
+            try:
+                res = await cap_sbx_stop(session_id=rec["session_id"], remove=True)
+                if res.get("ok"):
+                    log.info("sandbox %s idle %dd — archived (committed_image=%s)",
+                             rec["session_id"], idle_days, res.get("committed_image", ""))
+            except Exception as e:
+                log.debug("idle archive for %s failed: %s", rec.get("session_id"), e)
+    except Exception as e:
+        log.debug("sandbox idle-archive tick failed: %s", e)
+
+
+# Register the periodic auto-sync + idle-sleep + idle-archive (the
+# scheduler_loop invokes them; each tick throttles per-session and no-ops
+# when its config interval/threshold is 0).
 try:
     schedule(_auto_sync_tick, 60, name="sandbox_auto_sync")
 except Exception as _e:
@@ -2799,6 +3956,10 @@ try:
     schedule(_idle_sleep_tick, 120, name="sandbox_idle_sleep")
 except Exception as _e:
     log.debug("could not register sandbox idle-sleep: %s", _e)
+try:
+    schedule(_idle_archive_tick, 3600, name="sandbox_idle_archive")
+except Exception as _e:
+    log.debug("could not register sandbox idle-archive: %s", _e)
 
 
 # Keep sandbox LIFECYCLE caps out of agent-loop toolkits: a loop already runs

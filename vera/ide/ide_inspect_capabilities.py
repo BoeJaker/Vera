@@ -1645,7 +1645,9 @@ register_ui(
               style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12);"
               allow="clipboard-read; clipboard-write"></iframe>
     </div>""",
-    "", ui_caps=[...], mode="inject"
+    "", ui_caps=[...], mode="inject",
+    specialist_agent="code-verifier",
+    specialist_loop_profile="code-verification",
 )
 
 

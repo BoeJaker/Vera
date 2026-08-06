@@ -340,6 +340,62 @@ details.lp-sub:not([open])>summary{opacity:.8}
 .cap-json .jt-more{color:var(--dim2);font-style:italic;padding:1px 0}
 .cap-raw-btn{background:transparent;border:1px solid var(--border);color:var(--dim2);border-radius:3px;font-size:8px;padding:0 5px;cursor:pointer;font-family:var(--mono);margin-bottom:4px}
 .cap-raw-btn:hover{color:var(--acc);border-color:var(--acc)}
+/* A rendered research report inside a cap card. Reuses the chat's own .md
+   typography (renderMd emits the same markup as an assistant message) but drops
+   the mono/9.5px treatment a raw payload gets — this is a document to read. */
+.cap-md{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:11.5px;line-height:1.6;color:var(--text)}
+.cap-md h1,.cap-md h2,.cap-md h3,.cap-md h4{margin:8px 0 4px;line-height:1.3}
+.cap-md h1{font-size:14px;color:var(--acc);border-bottom:1px solid var(--border);padding-bottom:3px}
+.cap-md h2{font-size:12.5px;color:var(--acc2)}
+.cap-md h3{font-size:11.5px;color:var(--text)}
+.cap-md p{margin:5px 0}
+.cap-md ul,.cap-md ol{margin:4px 0 4px 18px;padding:0}
+.cap-md li{margin:2px 0}
+.cap-md a{color:var(--acc);text-decoration:underline;word-break:break-word}
+.cap-md code{background:var(--bg2);padding:0 4px;border-radius:2px;font-family:var(--mono);font-size:10px}
+.cap-md pre{background:var(--bg2);padding:6px 8px;border-radius:3px;overflow-x:auto;font-size:10px}
+.cap-md blockquote{margin:5px 0;padding-left:8px;border-left:2px solid var(--border2);color:var(--dim)}
+/* Live research card: the method plan, the pages being read, and the report as
+   it streams. Replaces the old bare-textContent panes. */
+.rr-live{max-height:340px;overflow-y:auto;margin:3px 0}
+.rr-wait{font-size:9px;color:var(--dim2);font-style:italic}
+.rr-plan{border:1px solid var(--border);border-left:2px solid var(--acc2);border-radius:3px;padding:6px 8px;margin:4px 0;background:var(--bg0)}
+.rr-plan-h{font-size:8.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--acc2);margin-bottom:4px}
+.rr-plan-s{font-size:8.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--dim2);margin:6px 0 2px}
+.rr-chips{display:flex;flex-wrap:wrap;gap:3px}
+.rr-chip{font-size:8.5px;border:1px solid var(--border2);border-radius:9px;padding:1px 7px;color:var(--dim);white-space:nowrap}
+.rr-chip b{color:var(--dim2);font-weight:600;margin-right:3px}
+.rr-qs{margin:2px 0 0 16px;padding:0;font-size:10px;line-height:1.5;color:var(--text2)}
+.rr-qs li{margin:2px 0}
+.rr-brief{font-size:9.5px;line-height:1.5;color:var(--dim);font-style:italic}
+/* max-width:100% + overflow-x:hidden stop a long URL widening the whole card. */
+.rr-pages{border:1px solid var(--border);border-radius:3px;padding:5px 7px;margin:4px 0;max-height:150px;overflow-y:auto;overflow-x:hidden;background:var(--bg0);max-width:100%;box-sizing:border-box}
+.rr-page{display:flex;gap:6px;align-items:baseline;font-size:9px;font-family:var(--mono);margin:1px 0;max-width:100%}
+/* A flex item will NOT shrink below its content width unless min-width:0 is set
+   — without it `overflow:hidden;text-overflow:ellipsis` never takes effect and
+   a long URL simply runs out past the box edge. That is the overflow bug. */
+.rr-page a{color:var(--acc);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 auto}
+.rr-page span{margin-left:auto;color:var(--dim2);font-size:8.5px;white-space:nowrap;flex:0 0 auto}
+.rr-page.bad a{color:var(--err);text-decoration:line-through}
+.rr-src{border:1px solid var(--border);border-radius:3px;padding:5px 7px;margin:5px 0;background:var(--bg0);max-width:100%;box-sizing:border-box}
+.rr-src>summary{cursor:pointer;font-size:8.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--acc2)}
+.rr-src ol{margin:4px 0 0 16px;padding:0;font-size:9.5px;line-height:1.45}
+.rr-src li{margin:2px 0;overflow-wrap:anywhere}
+.rr-src a{color:var(--acc);text-decoration:none}
+.rr-src a:hover{text-decoration:underline}
+.rr-src-u{display:block;color:var(--dim2);font-family:var(--mono);font-size:8.5px;overflow-wrap:anywhere}
+/* Live sources list — same position and styling from first citation to finish,
+   so nothing re-flows when the report lands. */
+.rr-src-live{border:1px solid var(--border);border-radius:3px;padding:5px 7px;margin:4px 0;background:var(--bg0);max-width:100%;box-sizing:border-box;max-height:190px;overflow-y:auto;overflow-x:hidden}
+.rr-src-ol{margin:3px 0 0 16px;padding:0;font-size:9.5px;line-height:1.45}
+.rr-src-ol li{margin:2px 0;overflow-wrap:anywhere}
+.rr-src-ol a{color:var(--acc);text-decoration:none}
+.rr-src-ol a:hover{text-decoration:underline}
+/* The finished report sits where the live stream was — below method/sources,
+   preserving the order the card had throughout the run. */
+.rr-report{max-height:75vh;overflow-y:auto;border:1px solid var(--border);border-radius:3px;padding:8px 10px;background:var(--bg0);margin-top:4px}
+.cap-md table{border-collapse:collapse;margin:5px 0;font-size:10.5px}
+.cap-md th,.cap-md td{border:1px solid var(--border);padding:2px 6px;text-align:left}
 .cap-inline-header{font-size:8.5px;color:var(--acc2);font-family:var(--mono);margin-bottom:2px;display:flex;align-items:center;gap:5px;flex-wrap:wrap}
 /* One-line result peek shown when the card is collapsed — keeps a hint of the
    result visible without the full body (so a collapsed card isn't blank). */
@@ -1064,6 +1120,7 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
     <div class="row"><label style="min-width:70px">Unattended</label><input type="checkbox" id="cfgUnattended" title="Automatically retry/correct cap failures without asking for approval"></div>
     <div class="row"><label style="min-width:70px">Show results</label><input type="checkbox" id="cfgShowCapResult" checked></div>
     <div class="row"><label style="min-width:70px">Auto-loop</label><input type="checkbox" id="cfgAutoDeferLoop" title="When a request needs more than one capability, hand it to the agentic loop (v7) automatically"></div>
+    <div class="row"><label style="min-width:70px">Panel specialist</label><input type="checkbox" id="cfgPanelDefer" title="When the open panel has a bound specialist agent (see register_ui's specialist_agent), answer panel-scoped questions directly through that specialist (one bounded agent.consult call) instead of the general agent with injected panel-control context. Costs a second guaranteed round trip, so it's off by default."></div>
     <div class="row"><label style="min-width:70px">Monitor</label><input type="checkbox" id="cfgMonitor" title="Show planning/execution commentary in a side stream"></div>
     <div class="sec" style="margin-top:5px">Session container</div>
     <div class="row"><label style="min-width:70px">Container</label><input type="checkbox" id="cfgSessionSbx" onchange="CH._sessionSbxToggle(this.checked)" title="Give THIS session its own Docker sandbox container: while active, all of the session's shell commands, code runs and file IO happen inside the container (sandbox.session.*) — never on the host — and the Files pane browses the container's /workspace"></div>
@@ -1514,8 +1571,8 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
         Auto-suggest skills from caps
       </label>
       <div class="sec" style="margin-top:6px;font-size:8.5px;color:var(--dim)">Planning &amp; execution</div>
-      <label class="row" style="font-size:9.5px" title="Let the planner give a step explore/think/act/verify phases, each run as its own scoped sub-agent. Turn OFF to force every step to run as one flat specialist (no phase sub-agents).">
-        <input type="checkbox" id="loopEnablePhases" checked>
+      <label class="row" style="font-size:9.5px" title="OFF by default. Splits one planned step into explore/think/act/verify sub-agents and AUTO-SCOPES each one's caps — which in practice strips the step of the tools the planner gave it (a summarise step left with only ide.fs.read), blocks a read-only phase from running what it just wrote, and lets a verify phase re-author working code. Turn ON to restore the cadence and compare.">
+        <input type="checkbox" id="loopEnablePhases">
         Step phases (explore/think/act/verify)
       </label>
       <label class="row" style="font-size:9.5px" title="Before finalising the plan, let the orchestrator run a few READ-ONLY recon calls when it needs grounding (simple goals stay one LLM call)">
@@ -3024,6 +3081,7 @@ const CH = (() => {
     cfgUnattended:'Retry and self-correct failed capabilities without approval',
     cfgShowCapResult:"Show each capability's raw result inline in the chat",
     cfgAutoDeferLoop:'When a request needs more than one capability, hand it to the agentic loop (v7) automatically',
+    cfgPanelDefer:"When the open panel has a bound specialist agent, answer panel-scoped questions directly through that specialist instead of the general agent with injected panel context",
     cfgMonitor:'Stream planning / execution commentary in a side panel',
     cfgSessionSbx:'Per-session override of the system-wide container default (sandbox config): while on, all shell, code and file IO run inside this session’s Docker container and the Files pane shows its /workspace',
     cfgStepPause:'Pause between agent steps so you can review each one',
@@ -4686,6 +4744,58 @@ IMPORTANT:
   }
 
   /* ── Cap-result media: inline galleries + keep b64 out of history ── */
+  /* The written report inside a research cap's result, or '' when there isn't
+     one. Mirrors _research_report_text in dag_workshop_capabilities.py: the
+     payload shape varies by researcher and by transport, so try the keys that
+     actually carry prose, preferring the FULL report over any short summary
+     sitting beside it, then fall back to descending through envelope keys.
+     Only applied to research.* caps — a generic cap returning a `text` field
+     should still render as the structured tree it is. */
+  const _REPORT_KEYS=['report','markdown','md','document','body','result',
+                      'content','text','output','answer','summary'];
+  /* Record-list keys. web.research returns {sources:[{url,title,text,…}]} —
+     raw captured page text, NOT a written report. Descending into those would
+     splice a dozen scraped pages together and render them as one document,
+     which is worse than the tree. A report is prose ABOUT sources; a sources
+     list is the material. */
+  const _RECORD_KEYS=['sources','results','items','hits','documents','links',
+                      'citations','pages','articles','entries','rows'];
+  /* An ARRAY OF OBJECTS is a record list whatever it is called — that check
+     catches the shapes the name list misses, and lets ambiguous envelope names
+     like `data` still be descended into when they hold an object. */
+  const _isRecordList=v=>Array.isArray(v)&&v.some(x=>x&&typeof x==='object');
+  function _researchReportText(capName,content,depth){
+    depth=depth||0;
+    /* Matches research.run / research.quick_search AND web.research. */
+    if(depth===0&&!/(^|\.)research(\.|$)/.test(String(capName||''))) return '';
+    if(typeof content==='string')
+      /* A bare string is only a "report" if it reads like a document, not a
+         one-line status. */
+      return (content.trim().length>400||/^#|\n#{1,3}\s/.test(content))?content:'';
+    if(depth>3||!content||typeof content!=='object') return '';
+    if(Array.isArray(content)){
+      const parts=content.map(c=>_researchReportText(capName,c,depth+1)).filter(Boolean);
+      return parts.length?parts.join('\n\n'):'';
+    }
+    for(const k of _REPORT_KEYS){
+      const v=content[k];
+      if(typeof v==='string'&&v.trim().length>400) return v;
+      if(v&&typeof v==='object'&&!_isRecordList(v)){
+        const inner=_researchReportText(capName,v,depth+1);
+        if(inner) return inner;
+      }
+    }
+    for(const k of Object.keys(content)){
+      if(_REPORT_KEYS.includes(k)||_RECORD_KEYS.includes(k)) continue;
+      const v=content[k];
+      if(v&&typeof v==='object'&&!_isRecordList(v)){
+        const inner=_researchReportText(capName,v,depth+1);
+        if(inner) return inner;
+      }
+    }
+    return '';
+  }
+
   function _capResultImages(content){
     if(!content||typeof content!=='object')return'';
     const imgs=[];
@@ -6145,18 +6255,29 @@ IMPORTANT:
       // stays available behind Show for the raw payload.
       const imgGallery=_capResultImages(content);
       const previewClean=typeof content==='string'?preview:JSON.stringify(_stripB64(content),null,2);
+      // A research result's payload IS a written markdown report — the deliverable
+      // itself, not a data structure to inspect. Rendering it as a JSON tree (or
+      // as a raw <pre> of ## and **) buried the actual answer, and the model was
+      // then asked to "be concise" about it, so the user only ever saw a
+      // paraphrase of a document they were never shown. Pull the report out and
+      // render it.
+      const _rep=_researchReportText(capName,content);
       // Structured (object/array) results render as an interactive tree with a
       // raw-JSON toggle; strings/primitives fall back to a plain <pre>.
       const structured=(!imgGallery)?_capStructuredView(content):null;
       const rawStyle='font-family:var(--mono);font-size:9.5px;white-space:pre-wrap;margin:0';
-      const bodyInner=structured
+      const bodyInner=_rep
+        ? `<button class="cap-raw-btn" onclick="const w=this.parentNode,m=w.querySelector('.cap-md'),r=w.querySelector('.cap-raw');const toRaw=r.style.display==='none';m.style.display=toRaw?'none':'block';r.style.display=toRaw?'block':'none';this.textContent=toRaw?'report':'{ } raw';">{ } raw</button><div class="cap-md md">${renderMd(_rep)}</div><pre class="cap-raw" style="${rawStyle};display:none">${esc(previewClean.slice(0,8000))}</pre>`
+        : structured
         ? `<button class="cap-raw-btn" onclick="const w=this.parentNode,j=w.querySelector('.cap-json'),r=w.querySelector('.cap-raw');const toRaw=r.style.display==='none';j.style.display=toRaw?'none':'block';r.style.display=toRaw?'block':'none';this.textContent=toRaw?'tree':'{ } raw';">{ } raw</button>${structured}<pre class="cap-raw" style="${rawStyle};display:none">${esc(previewClean.slice(0,8000))}</pre>`
         : `<pre style="${rawStyle}">${esc(previewClean.slice(0,8000))}</pre>`;
       el.className='cap-inline'+(isErr?' error':' done');
       // Single compact header: cap · args · status · toggle — no sparse standalone
       // "OK" row (that left a big empty band on short results). When collapsed, a
       // one-line peek of the result keeps the card informative.
-      const _collapsed=!(showResult&&!imgGallery);
+      // A research report is the ANSWER — never collapse it behind a Show button
+      // the way a debug payload is collapsed.
+      const _collapsed=_rep?false:!(showResult&&!imgGallery);
       const _peek=(previewClean||'').split('\n').map(s=>s.trim()).find(s=>s&&!/^[{}\[\],]*$/.test(s))||'';
       el.innerHTML=`<div class="cap-inline-header" style="margin-bottom:4px">
           <span class="cap-dot"></span>
@@ -6166,7 +6287,7 @@ IMPORTANT:
           <button class="btn xs" style="font-size:8px" onclick="const p=document.getElementById('${resultId}'),k=document.getElementById('${resultId}_pk');const o=p.style.display==='none';p.style.display=o?'block':'none';if(k)k.style.display=o?'none':'block';this.textContent=o?'Hide':'Show'">${_collapsed?'Show':'Hide'}</button>
         </div>
         ${(_peek&&!imgGallery)?`<div id="${resultId}_pk" class="cap-peek" style="display:${_collapsed?'block':'none'}">${esc(_peek.slice(0,160))}</div>`:''}
-        <div id="${resultId}" class="cap-result" style="background:var(--bg0);border-radius:3px;padding:5px;max-height:300px;overflow:auto;display:${_collapsed?'none':'block'}">${bodyInner}</div>
+        <div id="${resultId}" class="cap-result" style="background:var(--bg0);border-radius:3px;padding:${_rep?'8px 10px':'5px'};max-height:${_rep?'75vh':'300px'};overflow:auto;display:${_collapsed?'none':'block'}">${bodyInner}</div>
         ${imgGallery}`;
       scroll();
 
@@ -6177,11 +6298,28 @@ IMPORTANT:
         // the model needs to produce a correct answer. Base64 image payloads
         // are the one exception — stripped, or a single PNG eats the budget.
         const resultText=typeof content==='string'?content:JSON.stringify(_stripB64(content),null,2);
-        const resultTrunc=resultText.slice(0,8000);
+        // Research reports get a much larger budget: 8000 chars cuts a real
+        // report in half, and the model then "summarises" a document it only
+        // half received.
+        const resultTrunc=resultText.slice(0,_rep?60000:8000);
         HISTORY.push({role:'tool',content:`[${capName} result] ${resultTrunc}`});
-        if(!silent)await continueConversation(agentName,
-          `The capability ${capName} ran and returned:\n\n${resultTrunc}\n\nAnswer the user's question using this result. Be concise and complete.`,
-          null,true);
+        if(!silent){
+          // The report is ALREADY on screen, rendered. Asking the model to
+          // "answer using this result, be concise" made it re-state the whole
+          // thing badly — the user saw a lossy paraphrase instead of the
+          // research they asked for. Tell it the report is displayed and that
+          // its job is to add something, not to repeat it.
+          const followUp=_rep
+            ? `The capability ${capName} produced a full research report, and that report `
+              + `is ALREADY DISPLAYED to the user in this conversation, rendered in full. `
+              + `Do NOT summarise it, restate it, or reproduce any part of it — the user can `
+              + `read it. Reply with at most two sentences that add something the report does `
+              + `not already say: point at the part that answers their question, flag a gap or `
+              + `caveat, or ask what they want next. If nothing useful can be added, say only `
+              + `that the report is above.\n\nFor your reference, the report was:\n\n${resultTrunc}`
+            : `The capability ${capName} ran and returned:\n\n${resultTrunc}\n\nAnswer the user's question using this result. Be concise and complete.`;
+          await continueConversation(agentName,followUp,null,true);
+        }
       }else{
         HISTORY.push({role:'tool',content:`[${capName} error] ${content.error||'unknown'}`});
         if(!silent){
@@ -7059,6 +7197,55 @@ Your task: decide what to do next to advance toward the goal.
     scroll();
   }
 
+  // ── Panel-dispatch defer-to-specialist (Phase 2) ────────────────────────
+  let _panelSpecialistCache={};
+  async function _getPanelSpecialist(panelId){
+    if(!panelId) return null;
+    if(Object.prototype.hasOwnProperty.call(_panelSpecialistCache,panelId)) return _panelSpecialistCache[panelId];
+    try{
+      const base=(window._veraBase||window.location.origin||'');
+      const r=await fetch(base+'/ui/panel/specialist?panel_id='+encodeURIComponent(panelId));
+      const d=await r.json();
+      _panelSpecialistCache[panelId]=(d&&d.bound)?d:null;
+    }catch(_){ _panelSpecialistCache[panelId]=null; }
+    return _panelSpecialistCache[panelId];
+  }
+  async function _fetchSpecialistContext(contextCap){
+    if(!contextCap) return '';
+    try{
+      const base=(window._veraBase||window.location.origin||'');
+      const r=await fetch(base+'/mcp/call',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({name:contextCap,arguments:{}})});
+      const d=await r.json();
+      return (d&&d.content&&d.content.context)||'';
+    }catch(_){ return ''; }
+  }
+  async function _tryPanelDeferToSpecialist(msg,bubEl){
+    try{
+      if(!document.getElementById('cfgPanelDefer')?.checked) return false;
+      if(!_activePanelId) return false;
+      const spec=await _getPanelSpecialist(_activePanelId);
+      if(!spec || !spec.specialist_agent) return false;
+      const base=(window._veraBase||window.location.origin||'');
+      // Real, fresh, panel-relevant data — not just the right persona — so
+      // the specialist answers from CURRENT state (a live market scan, the
+      // real business/store rollup, …), not persona + training data alone.
+      const context=await _fetchSpecialistContext(spec.specialist_context_cap);
+      const r=await fetch(base+'/agents/consult',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({agent_name:spec.specialist_agent,message:msg,context})});
+      const d=await r.json();
+      if(!d || d.error){ return false; }  // fall through to the normal path on any failure
+      HISTORY.push({role:'assistant',content:d.text||''});
+      bubEl.innerHTML='<div class="specialist-badge" style="font-size:9.5px;color:var(--dim2,#8a7e70);margin-bottom:4px" '+
+        'title="answered directly by this panel\'s bound specialist instead of the general agent">'+
+        '🎯 '+esc(spec.specialist_agent)+'</div>'+esc(d.text||'').replace(/\n/g,'<br>');
+      scroll();
+      return true;
+    }catch(_){ return false; }
+  }
+
   async function sendMsg(msg){
     _clearWatchedLoopOverride();
     const agentName=document.getElementById('agentBarSel')?.value||'assistant';
@@ -7098,6 +7285,15 @@ Your task: decide what to do next to advance toward the goal.
     // that didn't need them. Otherwise panels open only when the model itself
     // emits [[panel:id]] during its reply.
     try{ await _maybeExplicitOpenPanel(msg); }catch(_){}
+    // Panel-dispatch defer-to-specialist (opt-in, cfgPanelDefer): instead of
+    // injecting generic panel-control context into whatever agent is
+    // currently chatting, hand this panel-scoped question directly to the
+    // panel's own bound specialist (one bounded agent.consult call — see
+    // Phase 1's recursion-safe primitive in agents.py). Short-circuits the
+    // rest of sendMsg entirely on success; falls through to the normal path
+    // (capHint/panelStateBlock/generic agent) on any failure, so turning
+    // this on can never make a panel-scoped question WORSE than today.
+    if(await _tryPanelDeferToSpecialist(msg,bubEl)) return;
     const capHint=buildCapHint(a,msg);
     _lastUserMessage=msg;
     _lastCapHint=capHint;
@@ -8454,42 +8650,60 @@ Your task: decide what to do next to advance toward the goal.
     return base.replace(/^http/,'ws')+'/ws/stream/'+jobId;
   }
 
+  /* Ensure <vera-research-card> is defined. Idempotent; resolves immediately
+     once loaded, and resolves anyway on failure so research never blocks on a
+     missing asset (the card just renders as an inert div). */
+  let _rcPromise=null;
+  function _ensureResearchCard(){
+    if(window.customElements&&customElements.get('vera-research-card')) return Promise.resolve();
+    if(_rcPromise) return _rcPromise;
+    _rcPromise=new Promise((resolve)=>{
+      const s=document.createElement('script');
+      s.src=(typeof BASE!=='undefined'?BASE:'')+'/ui/elements/research_card.js';
+      s.onload=()=>resolve();
+      s.onerror=()=>{console.warn('research card element failed to load');resolve();};
+      document.head.appendChild(s);
+    });
+    return _rcPromise;
+  }
+
   async function _streamResearchJob(jobId, agentName, card, maxWaitMs=1800000){
     const start=Date.now();
-    const statusEl=card?card.querySelector('#dag-res-area')||card:null;
+    const host=card?card.querySelector('#dag-res-area')||card:null;
     let cancelled=false;
     let fullText='';
 
-    if(statusEl){
-      statusEl.innerHTML=`
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-          <span style="font-size:9px;color:var(--acc)" id="rpoll-status-${jobId.slice(-6)}">Connecting to research stream…<span class="cur"></span></span>
-          <span style="font-size:8.5px;color:var(--dim2);font-family:var(--mono)" id="rpoll-timer-${jobId.slice(-6)}">0s</span>
-          <button class="btn xs danger" id="rpoll-cancel-${jobId.slice(-6)}" style="margin-left:auto">Cancel</button>
-        </div>
-        <div id="rpoll-steps-${jobId.slice(-6)}" style="font-size:8.5px;color:var(--dim2);margin-bottom:3px"></div>
-        <div id="rpoll-text-${jobId.slice(-6)}" style="font-size:10px;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow-y:auto"></div>
-        <div style="font-size:8.5px;color:var(--dim2);font-family:var(--mono)">Job: ${esc(jobId)}</div>`;
-      const cancelBtn=document.getElementById('rpoll-cancel-'+jobId.slice(-6));
-      if(cancelBtn)cancelBtn.onclick=()=>{cancelled=true;if(cancelBtn)cancelBtn.textContent='Cancelling…';};
+    /* ── the ONE renderer ───────────────────────────────────────────────────
+       All progress/report UI lives in <vera-research-card> (served from
+       /ui/elements/research_card.js) and is shared with the agent-loop output.
+       This function is now only a TRANSPORT: connect, forward each message to
+       the card, fall back to polling. Previously the same card was implemented
+       separately here and in agent_loop_ouput.js, so every fix had to be made
+       twice — and in practice was made once. */
+    // Load the shared element on demand — the panel is mounted in several
+    // different ways (iframe, injected fragment, pop-out) and a hard <script>
+    // tag doesn't survive all of them.
+    await _ensureResearchCard();
+    let rc=null;
+    if(host){
+      host.innerHTML='';
+      rc=document.createElement('vera-research-card');
+      rc.jobId=jobId;
+      host.appendChild(rc);
+      const cancel=document.createElement('button');
+      cancel.className='btn xs danger';
+      cancel.style.cssText='margin-top:4px';
+      cancel.textContent='Cancel';
+      cancel.onclick=()=>{cancelled=true;cancel.textContent='Cancelling…';};
+      host.appendChild(cancel);
+      rc._cancelBtn=cancel;
     }
+    const push=(m)=>{ if(rc) rc.push(m); };
+    const setStatus=(t)=>{ if(rc) rc.status(t); };
+    const finish=(result)=>{
+      if(rc){ rc.finish(result); if(rc._cancelBtn) rc._cancelBtn.remove(); }
+    };
     scroll();
-
-    const timerInterval=setInterval(()=>{
-      const el=document.getElementById('rpoll-timer-'+jobId.slice(-6));
-      if(el)el.textContent=Math.round((Date.now()-start)/1000)+'s';
-    },1000);
-
-    const setStatus=(txt)=>{const el=document.getElementById('rpoll-status-'+jobId.slice(-6));if(el)el.innerHTML=esc(txt)+'<span class="cur"></span>';};
-    const addStep=(label,detail)=>{
-      const el=document.getElementById('rpoll-steps-'+jobId.slice(-6));
-      if(el){el.textContent=label+(detail?' — '+detail.slice(0,50):'');scroll();}
-    };
-    const appendText=(tok)=>{
-      fullText+=tok;
-      const el=document.getElementById('rpoll-text-'+jobId.slice(-6));
-      if(el){el.textContent=fullText.slice(-2000);scroll();}
-    };
 
     try{
       const wsUrl=_researcherWsUrl(jobId);
@@ -8504,33 +8718,22 @@ Your task: decide what to do next to advance toward the goal.
           if(cancelled){ws.close();resolve();return;}
           try{
             const m=JSON.parse(e.data);
-            if(m.type==='token'){appendText(m.text||'');}
-            else if(m.type==='thinking'){/* skip thinking in chat */}
-            else if(m.type==='step'){addStep(m.label||'',m.detail||'');setStatus(m.label||'Working…');}
-            else if(m.type==='citations'&&m.citations?.length){
-              const cits=m.citations.slice(0,5);
-              const citEl=document.getElementById('rpoll-steps-'+jobId.slice(-6));
-              if(citEl)citEl.textContent='Found '+m.citations.length+' sources: '+cits.map(c=>c.url||'').slice(0,3).join(', ');
-            }
-            else if(m.type==='error'){setStatus('Error: '+(m.text||''));appendText('\n\nError: '+(m.text||''));}
-            else if(m.type==='done'){
+            if(m.type==='token'||m.type==='thinking') fullText+=(m.text||'');
+            if(m.type==='done'){
               clearTimeout(timeout);
-              setStatus('Done ✓');
               const result=m.result||fullText;
-              if(statusEl){
-                statusEl.innerHTML=`
-                  <div style="color:var(--ok);font-size:9.5px;margin-bottom:5px">&#10003; Research complete (${Math.round((Date.now()-start)/1000)}s)</div>
-                  <div style="font-size:10px;line-height:1.55;white-space:pre-wrap;word-break:break-word;max-height:350px;overflow-y:auto;border:1px solid var(--border);border-radius:3px;padding:7px;background:var(--bg0)">${esc(result.slice(0,3000))}${result.length>3000?'\n\n…(truncated)':''}</div>`;
-              }
-              // Add to context
+              fullText=result;
+              finish(result);
               if(result){
-                const rNode={id:'research-'+jobId,label:'Research: '+result.slice(0,50),text:result.slice(0,1500),type:'research',score:0.9,source:'web'};
+                const rNode={id:'research-'+jobId,label:'Research: '+result.slice(0,50),
+                             text:result.slice(0,1500),type:'research',score:0.9,source:'web'};
                 if(!CTX_NODES.find(n=>n.id===rNode.id))CTX_NODES.push(rNode);
-                const ctxEl=document.getElementById('ctxCount');if(ctxEl)ctxEl.textContent=CTX_NODES.length+' ctx';
+                const ctxEl=document.getElementById('ctxCount');
+                if(ctxEl)ctxEl.textContent=CTX_NODES.length+' ctx';
               }
-              fullText=m.result||fullText;
-              ws.close();resolve();
+              ws.close();resolve();return;
             }
+            push(m);
           }catch(err){}
         };
       });
@@ -8546,27 +8749,34 @@ Your task: decide what to do next to advance toward the goal.
         const status=res.status||'';
         setStatus('Poll: '+status+'…');
         if(status==='done'||status==='completed'){
+          // Same renderer as the streaming path — the polling fallback used to
+          // have its OWN cut-down markup (raw pre-wrap, truncated at 2000
+          // chars), so a WS failure silently downgraded the whole card.
           const result=res.result||res.report||'';
           fullText=result;
-          if(statusEl){
-            statusEl.innerHTML=`
-              <div style="color:var(--ok);font-size:9.5px;margin-bottom:5px">&#10003; Done via poll (${Math.round((Date.now()-start)/1000)}s)</div>
-              <div style="font-size:10px;line-height:1.55;white-space:pre-wrap;max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:3px;padding:7px;background:var(--bg0)">${esc(result.slice(0,2000))}</div>`;
-          }
+          (res.citations||[]).length&&push({type:'citations',citations:res.citations});
+          finish(result);
           break;
         }
         if(status==='error'||status==='failed'){
-          if(statusEl)statusEl.innerHTML=`<div style="color:var(--err)">Research failed: ${esc(res.error||status)}</div>`;
+          setStatus('Research failed: '+(res.error||status));
           fullText='';break;
         }
       }
-    }finally{clearInterval(timerInterval);}
+    }finally{ if(rc&&rc._cancelBtn) rc._cancelBtn.remove(); }
 
     if(!fullText){return null;}
     HISTORY.push({role:'tool',content:`[research result] ${fullText.slice(0,600)}`});
-    const citsStr=(fullText.match(/\[\d+\][^\n]+/g)||[]).slice(0,5).join('\n');
+    // The report is ALREADY on screen, rendered in full. Asking for a summary
+    // here is what produced a lossy paraphrase of a document the user could
+    // already read — the whole complaint this work started from.
     await continueConversation(agentName,
-      `Research completed. Result:\n\n${fullText.slice(0,2500)}${fullText.length>2500?'\n…':''}${citsStr?'\n\nCitations:\n'+citsStr:''}\n\nSummarise the key findings conversationally.`,
+      `The research finished and its full report is ALREADY DISPLAYED to the user, `
+      + `rendered above this message. Do NOT summarise it, restate it, or reproduce any `
+      + `part of it. Reply with at most two sentences adding something the report does `
+      + `not already say — point at the part that answers their question, flag a gap, or `
+      + `ask what they want next. If nothing useful can be added, say only that the `
+      + `report is above.\n\nFor your reference:\n\n${fullText.slice(0,60000)}`,
       card,true);
     return fullText;
   }

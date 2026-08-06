@@ -169,6 +169,27 @@
   .lightbox{position:fixed;inset:0;background:rgba(0,0,0,.82);display:none;align-items:center;
     justify-content:center;z-index:50;cursor:zoom-out;padding:24px}
   .lightbox img{max-width:100%;max-height:100%;border:1px solid var(--border);border-radius:6px}
+  /* docs gallery */
+  .gal{width:100%;padding:12px}
+  .gal-bar{display:flex;align-items:center;gap:9px;margin-bottom:12px;flex-wrap:wrap}
+  .gal-bar .t{font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim)}
+  .gal-bar button{background:var(--acc);color:var(--on-acc);border:none;border-radius:6px;padding:6px 12px;font-weight:700;cursor:pointer}
+  .gal-bar button.ghost{background:var(--bg2);color:var(--text);border:1px solid var(--border);font-weight:600}
+  .gal-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+  .tile{border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--bg1);
+    cursor:pointer;transition:border-color .12s;position:relative}
+  .tile:hover{border-color:var(--dim2)}
+  .tile.sel{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc) inset}
+  .tile .imgwrap{height:150px;background:var(--bg2);display:flex;align-items:center;justify-content:center;overflow:hidden}
+  .tile img{width:100%;height:100%;object-fit:cover;object-position:top}
+  .tile .meta{padding:6px 8px;display:flex;flex-direction:column;gap:2px}
+  .tile .meta .lab{font-size:11px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tile .meta .sub{font-size:9.5px;color:var(--dim2);display:flex;gap:6px}
+  .tile .via{padding:0 5px;border-radius:8px;border:1px solid var(--border)}
+  .tile .via.window{color:var(--warn);border-color:var(--warn)}
+  .tile .via.route{color:var(--ok)}
+  .tile .ck{position:absolute;top:6px;left:6px;width:18px;height:18px;accent-color:var(--acc)}
+  .tile .dom{position:absolute;top:6px;right:6px;font-size:9px;background:rgba(0,0,0,.55);color:#fff;padding:1px 6px;border-radius:8px}
   @media(max-width:1080px){.grid{grid-template-columns:1fr}.rail,.mind{max-height:none}}
 </style>
 </head>
@@ -193,15 +214,22 @@
         <h3>Target <span class="car">▾</span></h3>
         <div class="body">
           <div class="seg" id="kindSeg">
-            <button data-k="live" class="on">live</button>
+            <button data-k="conn" class="on">🔌 connections</button>
+            <button data-k="live">live</button>
             <button data-k="sandbox">sandbox</button>
             <button data-k="url">url</button>
             <button data-k="panel">panel</button>
             <button data-k="codeserver">code</button>
             <button data-k="vm">vm</button>
           </div>
-          <label id="tgtLbl">URL / base_url</label>
-          <input type="text" id="tgtInput" placeholder="https://…">
+          <div id="connBox">
+            <label style="display:flex;align-items:center;gap:6px">Registered connectable
+              <span style="flex:1"></span><span id="connRefresh" title="reload" style="cursor:pointer;color:var(--acc2)">↻</span></label>
+            <select id="connSelect"><option value="">loading…</option></select>
+            <div class="hint" id="connHint">Anything registered in Integrations, Ollama, Nodes, Docker or Proxmox. Web UIs drive; API/SSH open for reference.</div>
+          </div>
+          <label id="tgtLbl" style="display:none">URL / base_url</label>
+          <input type="text" id="tgtInput" style="display:none" placeholder="https://…">
           <button class="act" id="connectBtn">⚡ Connect &amp; observe</button>
           <div class="hint">Starts a browser session on the target and takes a first look. Local/sandbox targets are trusted; external hosts need the allowlist below.</div>
         </div>
@@ -217,6 +245,7 @@
             <div><label>Max steps</label><input type="number" id="maxsteps" value="12" min="1" max="60"></div>
           </div>
           <label class="chk"><input type="checkbox" id="dryrun"> dry-run (plan only, don't execute)</label>
+          <label class="chk"><input type="checkbox" id="recgif"> 🎞 record run as GIF</label>
           <label>Allowlist — external hosts you permit operating (comma-sep)</label>
           <input type="text" id="allowlist" placeholder="maxhodl.com, app.internal">
           <div class="hint">Vera's own UI and local/sandbox targets are always operable. Any other site must be listed here — that's all it takes; tick dry-run to preview first.</div>
@@ -244,6 +273,15 @@
             <button class="act ghost" id="galleryBtn">Rebuild gallery</button>
             <button class="act ghost" id="testsBtn">✓ Run tests</button>
           </div>
+          <label>Scripted tour (deterministic, captures GIFs)</label>
+          <div class="row">
+            <select id="tourSlug"></select>
+            <button class="act ghost" id="tourBtn" style="flex:0 0 auto;margin-top:0;padding:8px 12px">▶ Tour</button>
+          </div>
+          <div class="btns">
+            <button class="act ghost" id="galleryViewBtn">🖼 Gallery</button>
+            <button class="act ghost" id="captureBtn">🎬 Directives</button>
+          </div>
           <div class="hint" id="missionMsg"></div>
         </div>
       </div>
@@ -256,6 +294,7 @@
         <span class="u" id="eyesUrl"></span>
         <span class="badge" id="elCount">0 elements</span>
         <button id="ovBtn" class="on" title="Toggle element overlays">⧉ refs</button>
+        <button id="recBtn" title="Time-lapse: sample this page into a GIF">⏺ REC</button>
         <button id="reobsBtn" title="Re-observe">↻</button>
       </div>
       <div class="stage" id="stage">
@@ -296,7 +335,7 @@
 <script>
 const ORIGIN = window.location.origin;
 const $ = id => document.getElementById(id);
-const state = {ws:null, session:"", viewport:{width:1440,height:900}, kind:"live",
+const state = {ws:null, session:"", viewport:{width:1440,height:900}, kind:"conn",
   elements:[], selRef:"", running:false, filter:"all", stepN:0, pw:true};
 
 /* ── HTTP cap call ─────────────────────────────────────── */
@@ -333,7 +372,9 @@ function onEvent(ev){
   if(t==='operator.act'){ /* covered by step in run; standalone acts handled by caller */ return; }
   if(t==='operator.session'){ return; }
   if(t==='operator.docs.progress'){ $('missionMsg').textContent='['+(ev.stage||'')+'] '+(ev.message||'');
-    if(ev.stage==='domain') addStep({phase:'info',action:'docs',thought:ev.message}); return; }
+    if(ev.stage==='shot') liveShot(ev);
+    else if(ev.stage==='domain') addStep({phase:'info',action:'docs',thought:ev.message}); return; }
+  if(t==='operator.tour'&&ev.stage){ $('missionMsg').textContent='tour '+(ev.slug||'')+' — '+ev.stage; return; }
 }
 
 /* ── timeline rendering ────────────────────────────────── */
@@ -439,13 +480,33 @@ async function doAct(forceAction){
 
 /* ── high-level actions ────────────────────────────────── */
 function targetBody(){
-  const k=state.kind, v=$('tgtInput').value.trim(), b={kind:k};
+  const k=state.kind, v=$('tgtInput').value.trim();
+  if(k==='conn'){ const sel=$('connSelect').value; if(!sel) return {};
+    const i=sel.indexOf('|'); return {source:sel.slice(0,i), ref:sel.slice(i+1)}; }
+  const b={kind:k};
   if(k==='url'||k==='vm') b.url=v;
   else if(k==='panel') b.panel_id=v;
   else if(k==='codeserver') b.id=v;
   else if(k==='sandbox'){ if(v) b.branch=v; }
   else if(v) b.base_url=v;   // live with an explicit base_url
   return b;
+}
+async function loadConnectables(){
+  const sel=$('connSelect'); sel.innerHTML='<option value="">loading…</option>';
+  const d=await api('/operator/connect/list');
+  const items=(d&&d.connectables)||[];
+  if(!items.length){ sel.innerHTML='<option value="">(none registered — add in Integrations/Workers/Proxmox)</option>'; return; }
+  const groups={};
+  items.forEach(it=>{ (groups[it.group]=groups[it.group]||[]).push(it); });
+  let html='';
+  Object.keys(groups).sort().forEach(g=>{
+    html+='<optgroup label="'+esc(g)+'">';
+    groups[g].forEach(it=>{ const tag=it.driveable?('['+it.type+']'):('['+it.type+'·ref]');
+      html+='<option value="'+esc(it.source+'|'+it.ref)+'">'+tag+' '+esc(it.label)+(it.detail?' — '+esc(it.detail):'')+'</option>'; });
+    html+='</optgroup>';
+  });
+  sel.innerHTML=html;
+  $('connHint').textContent=d.count+' connectable(s) across '+Object.keys(groups).length+' systems. Web UIs drive; api/ssh open for reference.';
 }
 function allowList(){ return $('allowlist').value.split(',').map(s=>s.trim()).filter(Boolean); }
 function policyFields(){ return {allowlist:allowList(), dry_run:$('dryrun').checked}; }
@@ -473,10 +534,12 @@ async function run(){
   if(!state.session) await connect();
   setRun(true,'running…'); clearStreamHint();
   const body={goal,provider:$('provider').value.trim()||'ollama',max_steps:+$('maxsteps').value||12,
-    session_id:state.session,keep_open:true,dry_run:$('dryrun').checked,allowlist:allowList()};
+    session_id:state.session,keep_open:true,dry_run:$('dryrun').checked,allowlist:allowList(),
+    record_gif:$('recgif').checked};
   const res=await api('/operator/run',body);
   setRun(false, res&&res.error?('error: '+res.error):('done — '+((res&&res.reason)||'')));
-  // per-step cards already streamed live via operator.step events
+  if(res&&res.gif){ addStep({phase:'done',action:'run.gif',thought:'animated recording of this run'});
+    const s=$('stream').lastElementChild; if(s){ const im=document.createElement('img'); im.src=ORIGIN+res.gif; im.onclick=()=>zoom(im.src); s.appendChild(im); } }
   await observe();
 }
 async function think(){
@@ -498,10 +561,12 @@ async function step(){
 }
 async function buildDocs(){
   setRun(true,'building docs — booting sandbox + shooting panels…'); clearStreamHint();
+  startLiveGallery('Building docs');   // Eyes shows each shot live as it lands
   const domains=[...document.querySelectorAll('#domChips .chip.on')].map(c=>c.dataset.slug);
-  const res=await api('/docs/build',{target:$('mtarget').value,domains,capture:$('mcapture').checked});
+  const res=await api('/docs/build',{target:$('mtarget').value,domains,capture:$('mcapture').checked,settle_ms:1600});
   setRun(false, res&&res.error?('docs error: '+res.error):('docs done — '+((res&&res.screenshots)||0)+' shots'));
   $('missionMsg').textContent=res&&res.error?res.error:('captured '+((res&&res.screenshots)||0)+' screenshots across '+((res&&res.domains)||0)+' domains');
+  await loadGallery();
 }
 
 function setRun(on,msg){ state.running=on; $('spin').classList.toggle('on',on); $('runMsg').textContent=msg||(on?'working…':'idle');
@@ -524,7 +589,10 @@ function initChips(){ $('domChips').innerHTML=DOMAINS.map(d=>'<span class="chip"
 function initSections(){ document.querySelectorAll('.sec>h3').forEach(h=>h.onclick=()=>h.parentElement.classList.toggle('collapsed')); }
 function initKind(){ document.querySelectorAll('#kindSeg button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('#kindSeg button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
-  state.kind=b.dataset.k;
+  state.kind=b.dataset.k; const isConn=b.dataset.k==='conn';
+  $('connBox').style.display=isConn?'':'none';
+  $('tgtLbl').style.display=isConn?'none':''; $('tgtInput').style.display=isConn?'none':'';
+  if(isConn){ loadConnectables(); return; }
   const lbl={live:'base_url (blank = this Vera)',sandbox:'branch (optional)',url:'URL',panel:'panel id',
     codeserver:'code-server id',vm:'noVNC URL'}[b.dataset.k];
   $('tgtLbl').textContent=lbl; $('tgtInput').placeholder=b.dataset.k==='url'||b.dataset.k==='vm'?'https://…':
@@ -544,6 +612,116 @@ $('ovBtn').onclick=()=>{ $('ovBtn').classList.toggle('on'); drawOverlays(); };
 $('cActBtn').onclick=()=>doAct();
 $('goal').addEventListener('keydown',e=>{ if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){ e.preventDefault(); run(); }});
 
+/* ── time-lapse (REC) ──────────────────────────────────── */
+$('recBtn').onclick=async()=>{
+  if(!state.session){ setRun(false,'connect a session first'); return; }
+  if(state.capId){ // stop
+    const cid=state.capId; state.capId=''; $('recBtn').classList.remove('on'); $('recBtn').textContent='⏺ REC';
+    setRun(true,'assembling GIF…');
+    const r=await api('/operator/capture/stop',{capture_id:cid,name:'timelapse-'+Date.now()});
+    setRun(false, r&&r.error?('gif: '+r.error):('GIF · '+(r&&r.frames||0)+' frames'));
+    if(r&&r.url){ addStep({phase:'done',action:'time-lapse',thought:(r.frames||0)+' frames'});
+      const s=$('stream').lastElementChild; if(s){ const im=document.createElement('img'); im.src=ORIGIN+r.url; im.onclick=()=>zoom(im.src); s.appendChild(im); } }
+  }else{ // start
+    const r=await api('/operator/capture/start',{session_id:state.session,interval_ms:1000});
+    if(r&&r.error){ setRun(false,r.error); return; }
+    state.capId=r.capture_id; $('recBtn').classList.add('on'); $('recBtn').textContent='⏹ STOP';
+    setRun(false,'recording — run a task, then ⏹ STOP');
+  }
+};
+/* ── tours + doc capture ───────────────────────────────── */
+$('tourBtn').onclick=async()=>{ const slug=$('tourSlug').value; if(!slug){ setRun(false,'no tour'); return; }
+  setRun(true,'tour: '+slug+' — navigating + capturing…'); clearStreamHint();
+  const r=await api('/operator/tour/run',{slug,target:$('mtarget').value});
+  setRun(false, r&&r.error?('tour: '+r.error):('tour done — '+((r&&r.shots||[]).length)+' shots, '+((r&&r.gifs||[]).length)+' gifs'));
+  renderAssets('tour '+slug, r); };
+$('galleryViewBtn').onclick=loadGallery;
+$('connRefresh').onclick=loadConnectables;
+$('captureBtn').onclick=async()=>{ setRun(true,'fulfilling CAPTURE directives…');
+  const r=await api('/docs/capture',{target:$('mtarget').value});
+  setRun(false, r&&r.error?('capture: '+r.error):('captured '+((r&&r.captures)||0)+' images'));
+  $('missionMsg').textContent=r&&r.error?r.error:('inserted '+((r&&r.captures)||0)+' images into '+Object.keys((r&&r.docs)||{}).length+' docs'); };
+function renderAssets(title,r){
+  if(!r) return;
+  liveGrid=null;
+  const all=((r.gifs||[]).map(g=>[g,'gif'])).concat((r.shots||[]).map(s=>[s,'png']));
+  // Tour/directive assets live in documentation/assets → served by /docs/asset.
+  let tiles='';
+  all.forEach(([a,kind])=>{ const url=a.rel?bust('/docs/asset?path='+a.rel):'';
+    tiles+='<div class="tile"><span class="dom">'+kind+'</span>'+
+      '<div class="imgwrap">'+(url?'<img loading="lazy" src="'+url+'">':'<span style="color:var(--dim2)">no image</span>')+'</div>'+
+      '<div class="meta"><span class="lab">'+esc(a.name||'')+'</span><span class="sub">'+esc(a.rel||'')+'</span></div></div>'; });
+  const errs=(r.errors&&r.errors.length)?('<pre>'+esc(r.errors.join('\n'))+'</pre>'):'';
+  $('stage').innerHTML='<div class="gal"><div class="gal-bar"><span class="t">'+esc(title)+'</span>'+
+    '<span style="color:var(--dim2)">'+all.length+' captures</span></div>'+
+    '<div class="gal-grid">'+(tiles||'<div class="empty">No captures produced.</div>')+'</div>'+errs+'</div>';
+  document.querySelectorAll('#stage .tile img').forEach(im=>im.onclick=()=>zoom(im.src));
+}
+
+/* ── docs gallery (view / select / regenerate) ─────────── */
+const gsel=new Set();
+let liveGrid=null;
+function bust(u){ return u ? (ORIGIN+u+(u.indexOf('?')>=0?'&':'?')+'t='+Date.now()) : ''; }
+function tileHTML(slug,id,label,url,via,sel){
+  const key=slug+'|'+id;
+  const v=(via==='route')?'route':(via==='window'?'window':(via||'?'));
+  return '<div class="tile'+(sel?' sel':'')+'" data-key="'+esc(key)+'" data-slug="'+esc(slug)+'" data-id="'+esc(id)+'">'+
+    '<input type="checkbox" class="ck" '+(sel?'checked':'')+'>'+
+    '<span class="dom">'+esc(slug)+'</span>'+
+    '<div class="imgwrap">'+(url?'<img loading="lazy" src="'+url+'">':'<span style="color:var(--dim2)">no image</span>')+'</div>'+
+    '<div class="meta"><span class="lab">'+esc(label||id)+'</span>'+
+    '<span class="sub"><span class="via '+v+'">'+v+'</span><span>'+esc(id)+'</span></span></div></div>';
+}
+async function loadGallery(){
+  setRun(true,'loading gallery…');
+  const d=await api('/docs/assets'); setRun(false, d&&d.error?d.error:(((d&&d.count)||0)+' images'));
+  liveGrid=null;
+  const domains=(d&&d.domains)||[]; let tiles='';
+  domains.forEach(dom=>(dom.panels||[]).forEach(p=>{ tiles+=tileHTML(dom.slug,p.id,p.label,p.url?ORIGIN+p.url:'',p.via,gsel.has(dom.slug+'|'+p.id)); }));
+  $('stage').innerHTML='<div class="gal"><div class="gal-bar"><span class="t">Docs gallery</span>'+
+    '<span style="color:var(--dim2)">'+((d&&d.count)||0)+' images · <span class="via route">route</span>=real panel, <span class="via window">window</span>=wrapper (often wrong)</span>'+
+    '<span style="flex:1"></span><button class="ghost" id="galAll">all</button><button class="ghost" id="galNone">clear</button>'+
+    '<button id="galRegen">♻ Regenerate selected</button><button class="ghost" id="galClose">✕</button></div>'+
+    '<div class="gal-grid" id="galGrid">'+(tiles||'<div class="empty">No images yet — run <b>Build documentation</b>.</div>')+'</div></div>';
+  wireGallery();
+}
+function wireGallery(){
+  document.querySelectorAll('#galGrid .tile').forEach(t=>{
+    const ck=t.querySelector('.ck'); const img=t.querySelector('img');
+    t.onclick=(e)=>{ if(e.target===ck||e.target===img) return; ck.checked=!ck.checked; toggleSel(t,ck.checked); };
+    ck.onchange=(e)=>toggleSel(t,e.target.checked);
+    if(img) img.onclick=(e)=>{ e.stopPropagation(); zoom(e.target.src); };
+  });
+  const g=id=>$(id);
+  if(g('galAll')) g('galAll').onclick=()=>document.querySelectorAll('#galGrid .tile').forEach(t=>{t.querySelector('.ck').checked=true; toggleSel(t,true);});
+  if(g('galNone')) g('galNone').onclick=()=>{ gsel.clear(); document.querySelectorAll('#galGrid .tile').forEach(t=>{t.querySelector('.ck').checked=false; t.classList.remove('sel');}); };
+  if(g('galClose')) g('galClose').onclick=()=>{ liveGrid=null; $('stage').innerHTML='<div class="empty"><div class="big">👁</div><b>Live view.</b><br>Connect a target, or open the gallery.</div>'; };
+  if(g('galRegen')) g('galRegen').onclick=regenSelected;
+}
+function toggleSel(t,on){ const k=t.dataset.key; if(on){gsel.add(k); t.classList.add('sel');} else {gsel.delete(k); t.classList.remove('sel');} }
+async function regenSelected(){
+  if(!gsel.size){ setRun(false,'tick some images first'); return; }
+  const domains=new Set(), panels=new Set();
+  gsel.forEach(k=>{ const i=k.indexOf('|'); domains.add(k.slice(0,i)); panels.add(k.slice(i+1)); });
+  setRun(true,'regenerating '+panels.size+' image(s) — longer settle…'); clearStreamHint(); startLiveGallery('Regenerating');
+  const r=await api('/docs/build',{target:$('mtarget').value,domains:[...domains],panels:[...panels],settle_ms:2400});
+  setRun(false, r&&r.error?('regen: '+r.error):('regenerated '+((r&&r.screenshots)||0)+' image(s)'));
+  gsel.clear(); await loadGallery();
+}
+function startLiveGallery(title){
+  $('stage').innerHTML='<div class="gal"><div class="gal-bar"><span class="t">'+(title||'Capturing')+'…</span>'+
+    '<span id="galLiveN" style="color:var(--dim2)">live</span></div><div class="gal-grid" id="galGrid"></div></div>';
+  liveGrid=$('galGrid');
+}
+function liveShot(ev){
+  if(!liveGrid) return;
+  const key=(ev.domain||'')+'|'+(ev.panel_id||'');
+  const html=tileHTML(ev.domain,ev.panel_id,ev.label,bust(ev.url),ev.via,false);
+  const ex=liveGrid.querySelector('.tile[data-key="'+CSS.escape(key)+'"]');
+  if(ex) ex.outerHTML=html; else liveGrid.insertAdjacentHTML('afterbegin',html);
+  const n=liveGrid.querySelectorAll('.tile').length; const c=$('galLiveN'); if(c) c.textContent=n+' captured';
+}
+
 /* ── boot ──────────────────────────────────────────────── */
 async function boot(){
   initSections(); initKind(); initFilters(); initChips(); initComposer(); connectWs();
@@ -551,6 +729,9 @@ async function boot(){
   const sess=(st&&st.sessions)||[];
   if(sess.length){ state.session=sess[0].session_id; $('sessLbl').innerHTML='session <b>'+sess[0].session_id+'</b>';
     if(sess[0].url) $('urlLbl').textContent=sess[0].url; }
+  const tl=await api('/operator/tour/list'); const tours=(tl&&tl.tours)||[];
+  $('tourSlug').innerHTML=tours.length?tours.map(t=>'<option>'+t+'</option>').join(''):'<option value="">(no tours)</option>';
+  loadConnectables();   // connections is the default target view
   // Browser status is confirmed on first successful observe; until then leave "?".
 }
 boot();

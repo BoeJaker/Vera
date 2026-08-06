@@ -82,8 +82,8 @@ except Exception:                              # pragma: no cover
 
 try:
     from Vera.vera.capability_orchestration import (
-        APP, capability, emit_event, enum_schema, now_iso, ollama_generate,
-        register_ui, schedule,
+        APP, CAPABILITY_REGISTRY, capability, emit_event, enum_schema, now_iso,
+        ollama_generate, register_ui, schedule,
     )
     from Vera.vera.fabric.data_fabric import _sqlite_conn
     _CAP_AVAILABLE = True
@@ -3947,6 +3947,57 @@ if _CAP_AVAILABLE and HAS_NUMPY:
                         "fee_bps": meta.get("fee_bps", 10), **val})
         out.sort(key=lambda a: -(a.get("ret_pct") or 0))
         return {"accounts": out, "count": len(out)}
+
+    @capability(
+        "markets.specialist_context", http_method="GET",
+        http_path="/markets/specialist_context", http_tags=["markets"],
+        memory="off", silent=True,
+        description="A fresh, compact real-data snapshot for the markets "
+                    "specialist (quant-strategist) to consult FROM — not just "
+                    "the right persona, the right live context: real market "
+                    "breadth/state (markets.overview), real open positions "
+                    "(markets.portfolio.positions), real sim account P&L "
+                    "(markets.sim.list), composed into one text block for "
+                    "agent.consult's context argument. This is the panel "
+                    "binding's specialist_context_cap for the markets panel "
+                    "(see register_ui). Output: {context (str), asof}.",
+    )
+    async def cap_markets_specialist_context(trace_id=None) -> dict:
+        async def _safe_call(name: str, **kw) -> dict:
+            cap = CAPABILITY_REGISTRY.get(name)
+            if not cap:
+                return {}
+            try:
+                return await cap["func"](**kw, trace_id=trace_id) or {}
+            except Exception as e:
+                log.debug("specialist_context: %s failed: %s", name, e)
+                return {}
+        overview = await _safe_call("markets.overview", spark=0)
+        positions = await _safe_call("markets.portfolio.positions")
+        sims = await _safe_call("markets.sim.list")
+        lines = []
+        groups = overview.get("groups") or []
+        if groups:
+            lines.append("REAL MARKET STATE (asof " + str(overview.get("asof", "")) + "):")
+            for g in groups[:8]:
+                lines.append(f"  {g.get('name')}: breadth_1d={g.get('breadth_1d')}% "
+                             f"median_1d={g.get('median_1d')}%")
+        pos = positions.get("positions") or []
+        totals = positions.get("totals") or {}
+        if pos:
+            lines.append(f"REAL OPEN PORTFOLIO POSITIONS ({len(pos)}, "
+                         f"value={totals.get('value')}, unrealized={totals.get('unrealized')}):")
+            for p in pos[:15]:
+                lines.append(f"  {p.get('symbol_key')}: qty={p.get('qty')} "
+                             f"value={p.get('market_value')} pnl%={p.get('unrealized_pct')}")
+        else:
+            lines.append("REAL OPEN PORTFOLIO POSITIONS: none.")
+        accts = sims.get("accounts") or []
+        if accts:
+            lines.append(f"REAL SIM ACCOUNTS ({len(accts)}):")
+            for a in accts[:10]:
+                lines.append(f"  {a.get('name')}: value={a.get('value')} ret%={a.get('ret_pct')}")
+        return {"context": "\n".join(lines), "asof": overview.get("asof", "")}
 
     @capability(
         "markets.sim.order", http_method="POST", http_path="/markets/sim/order",

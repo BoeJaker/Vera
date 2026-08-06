@@ -769,6 +769,8 @@ register_ui(
     ],
     mode="tab",
     tab_order=57,
+    specialist_agent="file-operator",
+    specialist_loop_profile="file-operations",
 )
 
 

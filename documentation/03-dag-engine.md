@@ -269,3 +269,15 @@ The Fix / Explain / Modify buttons feed the current DAG into the planner with a 
 - [Capability Framework](./01-capability-framework.md) — what each DAG node calls
 - [IDE Module](./08-ide.md) — the agentic loop powering the coding agent
 - [Research System](./07-research.md) — research jobs as multi-step DAGs
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_No capabilities resolved for this domain._
+<!-- VERA:AUTO:capabilities END -->

@@ -16611,6 +16611,8 @@ register_ui(
     ],
     mode="tab",
     tab_order=78,
+    specialist_agent="long-term-planner",
+    specialist_loop_profile="long-term-scheduling",
 )
 
 

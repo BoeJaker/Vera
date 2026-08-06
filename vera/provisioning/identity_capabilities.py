@@ -321,6 +321,70 @@ async def cap_user_list(trace_id=None) -> Dict:
 
 
 @capability(
+    "identity.group.list",
+    http_method="GET", http_path="/identity/group/list", http_tags=["identity"],
+    memory="off", silent=True,
+    description="List IPA groups (permission sets). Output: {groups:[{name, "
+                "description, members}]}.",
+)
+async def cap_group_list(trace_id=None) -> Dict:
+    st = await _state_opened()
+    res, err = await _ipa_call(st, "group_find", args=[""], options={"sizelimit": 200})
+    if res is None:
+        return {"error": err, "groups": []}
+    groups = []
+    for g in (res.get("result") or []):
+        cn = (g.get("cn") or [""])[0] if isinstance(g.get("cn"), list) else g.get("cn", "")
+        desc = (g.get("description") or [""])
+        desc = desc[0] if isinstance(desc, list) else desc
+        groups.append({"name": cn, "description": desc,
+                       "members": g.get("member_user", []) or []})
+    return {"groups": groups}
+
+
+@capability(
+    "identity.group.register",
+    http_method="POST", http_path="/identity/group/register", http_tags=["identity"],
+    memory="off",
+    description="Create an IPA group (permission set). Inputs: name (str!), "
+                "description (str). Output: {ok, name} or {error}.",
+)
+async def cap_group_register(name: str = "", description: str = "",
+                             trace_id=None) -> Dict:
+    if not name:
+        return {"error": "name required"}
+    st = await _state_opened()
+    opts = {"description": description} if description else {}
+    res, err = await _ipa_call(st, "group_add", args=[name], options=opts)
+    if res is None:
+        # tolerate "already exists" so migration is idempotent
+        if "already exists" in (err or "").lower():
+            return {"ok": True, "name": name, "existed": True}
+        return {"error": err}
+    await emit_event({"type": "identity.group.registered", "name": name})
+    return {"ok": True, "name": name}
+
+
+@capability(
+    "identity.group.add_member",
+    http_method="POST", http_path="/identity/group/add_member", http_tags=["identity"],
+    memory="off",
+    description="Add a user to an IPA group. Inputs: group (str!), login (str!). "
+                "Output: {ok} or {error}.",
+)
+async def cap_group_add_member(group: str = "", login: str = "",
+                               trace_id=None) -> Dict:
+    if not group or not login:
+        return {"error": "group and login required"}
+    st = await _state_opened()
+    res, err = await _ipa_call(st, "group_add_member", args=[group],
+                               options={"user": [login]})
+    if res is None:
+        return {"error": err}
+    return {"ok": True, "group": group, "login": login}
+
+
+@capability(
     "identity.service.register",
     http_method="POST", http_path="/identity/service/register", http_tags=["identity"],
     memory="off",
@@ -396,6 +460,67 @@ async def cap_app_register(name: str = "", ip: str = "", port: int = 0,
 
 
 @capability(
+    "identity.ca.cert",
+    http_method="GET", http_path="/identity/ca/cert", http_tags=["identity"],
+    memory="off", silent=True,
+    description="Fetch the FreeIPA Dogtag CA certificate (PEM) — the org root of "
+                "trust to distribute to clients (browsers, the VS Code extension, "
+                "etc.) before migrating any cert onto it. Output: {ok, ca_pem}.",
+)
+async def cap_ca_cert(trace_id=None) -> Dict:
+    st = await _state_opened()
+    url = (st.get("ipa_url") or "").rstrip("/")
+    if not url:
+        return {"error": "ipa_url not configured"}
+    try:
+        async with httpx.AsyncClient(timeout=15, verify=bool(st.get("verify_tls"))) as c:
+            r = await c.get(url + "/ipa/config/ca.crt")
+            if r.status_code >= 400:
+                return {"error": f"HTTP {r.status_code}"}
+            return {"ok": True, "ca_pem": r.text}
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"}
+
+
+@capability(
+    "identity.cert.request",
+    http_method="POST", http_path="/identity/cert/request", http_tags=["identity"],
+    memory="on",
+    description="Issue a TLS cert for an FQDN from FreeIPA's Dogtag CA (the org "
+                "root). Submits a CSR via FreeIPA's cert_request; auto-adds the "
+                "host + HTTP service principal (add=true). This is the mechanism to "
+                "RE-ISSUE Vera's own cert onto the FreeIPA root. Inputs: fqdn "
+                "(str!), csr (str! — PEM CSR whose CN/SAN is the fqdn), add "
+                "(bool=true). Output: {ok, fqdn, cert_pem, serial} or {error}. "
+                "Pair with identity.ca.cert to build the full chain, and distribute "
+                "that CA to clients BEFORE swapping any live cert.",
+)
+async def cap_cert_request(fqdn: str = "", csr: str = "", add: bool = True,
+                           trace_id=None) -> Dict:
+    if not fqdn or not csr:
+        return {"error": "fqdn and csr (PEM) are required"}
+    st = await _state_opened()
+    # Ensure the host exists (cert_request add= handles the service principal).
+    await _ipa_call(st, "host_add", args=[fqdn], options={"force": True})
+    principal = f"HTTP/{fqdn}"
+    res, err = await _ipa_call(st, "cert_request", args=[csr],
+                               options={"principal": principal, "add": bool(add),
+                                        "cacn": "ipa"})
+    if res is None:
+        return {"error": err}
+    result = res.get("result", res) if isinstance(res, dict) else {}
+    b64 = result.get("certificate", "")
+    cert_pem = ""
+    if b64:
+        body = "\n".join(b64[i:i + 64] for i in range(0, len(b64), 64))
+        cert_pem = f"-----BEGIN CERTIFICATE-----\n{body}\n-----END CERTIFICATE-----\n"
+    await emit_event({"type": "identity.cert.issued", "fqdn": fqdn,
+                      "backend": "freeipa"})
+    return {"ok": bool(cert_pem), "fqdn": fqdn, "cert_pem": cert_pem,
+            "serial": result.get("serial_number", ""), "principal": principal}
+
+
+@capability(
     "identity.trust.add",
     http_method="POST", http_path="/identity/trust/add", http_tags=["identity"],
     memory="off",
@@ -427,6 +552,40 @@ async def _identity_panel():
     p = _HERE / "identity_panel.html"
     return HTMLResponse(p.read_text(encoding="utf-8") if p.exists()
                         else "<p style='color:red'>identity_panel.html not found</p>")
+
+
+async def _fetch_ca_pem() -> str:
+    """Fetch the FreeIPA Dogtag CA PEM (empty string on failure)."""
+    st = await _state_opened()
+    url = (st.get("ipa_url") or "").rstrip("/")
+    if not url:
+        return ""
+    try:
+        async with httpx.AsyncClient(timeout=15, verify=bool(st.get("verify_tls"))) as c:
+            r = await c.get(url + "/ipa/config/ca.crt")
+            return r.text if r.status_code < 400 else ""
+    except Exception:
+        return ""
+
+
+@APP.get("/identity/ca.crt", include_in_schema=False)
+async def _identity_ca_crt():
+    """Serve the CA as a double-click-installable .crt (launches the OS cert
+    wizard on Windows/macOS)."""
+    pem = await _fetch_ca_pem()
+    if not pem:
+        return HTMLResponse("CA unavailable — is FreeIPA configured?", status_code=502)
+    from starlette.responses import Response as _Resp
+    return _Resp(pem, media_type="application/x-x509-ca-cert",
+                 headers={"Content-Disposition":
+                          'attachment; filename="vera-freeipa-ca.crt"'})
+
+
+@APP.get("/trust", include_in_schema=False)
+async def _trust_page():
+    p = _HERE / "trust_panel.html"
+    return HTMLResponse(p.read_text(encoding="utf-8") if p.exists()
+                        else "<p style='color:red'>trust_panel.html not found</p>")
 
 
 # Standalone top-level tab retired — embedded as the Identity sub-tab of the

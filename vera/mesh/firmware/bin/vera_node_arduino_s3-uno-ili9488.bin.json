@@ -1,0 +1,1 @@
+{"label": "Vera Node \u2014 Arduino \u00b7 s3-uno-ili9488 (esp32s3)", "chip": "esp32s3", "offset": "0x0", "board": "s3-uno-ili9488", "fqbn": "esp32:esp32:esp32s3:CDCOnBoot=default,PartitionScheme=min_spiffs", "runtime": "arduino", "built": true, "fw_version": "1.9.0-ino", "ota_name": "vera_node_arduino_s3-uno-ili9488.ota.bin", "ota_offset": "0x10000", "erase": true}

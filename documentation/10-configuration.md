@@ -318,3 +318,15 @@ Don't read `os.getenv` directly outside `config.py` — it makes overrides invis
 - [Device Mesh](./14-mesh.md) · [vLLM Backend](./21-vllm.md) — subsystem-specific config
 - [Security & Secrets](./29-security.md) — `VERA_SECRET_KEY` and key management
 - [Research System](./07-research.md) — researcher_api/NLP URLs
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_No capabilities resolved for this domain._
+<!-- VERA:AUTO:capabilities END -->

@@ -25,7 +25,7 @@ Per-node hardware lives in Redis (vera:catalog:node_hw); the node→SSH-host map
 (vera:catalog:node_ssh) points at the canonical exec.ssh.hosts.* store.
 """
 from __future__ import annotations
-import asyncio, json, logging, os, re, sys, time
+import asyncio, json, logging, os, re, socket, sys, time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -51,7 +51,7 @@ KEY_AUTOLOG  = "vera:catalog:autoopt:log"  # JSON list, newest-last, capped
 NODE_HW:  Dict[str, dict] = {}
 NODE_SSH: Dict[str, str]  = {}
 AUTOOPT:  dict = {"enabled_nodes": [], "roles": [], "interval_min": 1440, "backend": "ollama"}
-_HYDRATED = {"v": False}
+_HYDRATED = {"v": False, "busy": False}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -67,12 +67,25 @@ def _redis():
 
 
 async def _hydrate() -> None:
-    if _HYDRATED["v"]:
+    # Redis comes up a beat after the HTTP server does, and the Downloads tab
+    # starts polling immediately. Latching "hydrated" before that check — as this
+    # did — meant one poll landing in that window permanently skipped the
+    # restore, the orphan reap and the download auto-resume for the whole life of
+    # the process. Only latch once there is actually a Redis to read from.
+    if _HYDRATED["v"] or _HYDRATED["busy"]:
         return
-    _HYDRATED["v"] = True
     r = _redis()
     if not r:
-        return
+        return                       # not ready yet — the next call retries
+    _HYDRATED["busy"] = True
+    try:
+        await _hydrate_from(r)
+        _HYDRATED["v"] = True
+    finally:
+        _HYDRATED["busy"] = False
+
+
+async def _hydrate_from(r) -> None:
     for key, target, is_list in ((KEY_NODE_HW, NODE_HW, False),
                                  (KEY_NODE_SSH, NODE_SSH, False)):
         try:
@@ -92,8 +105,14 @@ async def _hydrate() -> None:
     except Exception as e:
         log.debug("hydrate autoopt: %s", e)
     # Downloads do NOT survive a Vera restart (the /api/pull stream is ours), so
-    # retire the records that a previous process left mid-flight.
+    # retire the records a previous process left mid-flight, then put them back.
     await _reap_stale_pulls()
+    # Off the request path: resuming re-runs the registry preflight per download,
+    # and _hydrate() is awaited by the status poll the Downloads tab makes every
+    # couple of seconds. Blocking it would stall the UI on the first call.
+    _t = asyncio.create_task(_autoresume_pulls())
+    _BG_TASKS.add(_t)
+    _t.add_done_callback(_BG_TASKS.discard)
 
 
 async def _persist(key: str, obj) -> None:
@@ -295,15 +314,20 @@ def _fit_target(req: dict, fits: str) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 @capability("catalog.search", memory="off", silent=True,
             http_method="GET", http_path="/catalog/search", http_tags=["catalog"],
-            description="Search Hugging Face models. Query: search (str), filter "
-                        "(str — HF tag, e.g. 'gguf' or 'text-generation'), sort "
+            description="Search Hugging Face models. Query: search (str — include the "
+                        "publisher for quant repos, e.g. 'bartowski Qwen3.6'; HF ranks by "
+                        "relevance, so a bare model name buries them), filter (str — HF "
+                        "tag, default 'gguf' = pullable; do NOT use 'text-generation', "
+                        "which hides multimodal repos tagged image-text-to-text and the "
+                        "many quant repos with no pipeline tag), sort "
                         "(downloads|likes|lastModified|trendingScore, default downloads), "
-                        "limit (int, default 30), fits (node_id|cluster|any — annotate "
+                        "limit (int, default 60, max 100 — HF's ceiling), fits "
+                        "(node_id|cluster|any — annotate "
                         "each result with a hardware-fit verdict), quant (str — quant to "
                         "assume for the fit estimate, default Q4_K_M). Returns normalised "
                         "rows with an estimated parameter count + fit badge.")
-async def cap_catalog_search(search: str = "", filter: str = "text-generation",
-                             sort: str = "downloads", limit: int = 30,
+async def cap_catalog_search(search: str = "", filter: str = "gguf",
+                             sort: str = "downloads", limit: int = 60,
                              fits: str = "any", quant: str = "Q4_K_M",
                              author: str = "", trace_id=None):
     await _hydrate()
@@ -1101,6 +1125,14 @@ _ACTIVE_STATES = ("starting", "downloading", "verifying")
 # that is gone — and since the /api/pull stream is ours, the transfer died with
 # it. Generous enough to cover a slow manifest fetch before the first byte.
 PULL_STALE_S = 120.0
+# Which Vera opened a given pull stream. Stable across restarts of this host, so
+# on the way back up we can tell our own dead downloads (resume them) apart from
+# another cluster member's live ones (leave alone) without waiting on a timeout.
+PULL_OWNER = os.getenv("VERA_NODE_NAME") or socket.gethostname()
+# When this process began. A record last written before we existed cannot be
+# ours, which is how records from *older* Vera builds — written before `owner`
+# was recorded — are still recognised as dead the moment we come back.
+_PROC_START = time.time()
 
 
 def _pull_id(instance_id: str) -> str:
@@ -1123,8 +1155,35 @@ def _pull_is_stale(rec: dict) -> bool:
     """True for a record that still advertises itself as running but whose owner
     is gone. Only ever true for the Redis mirror — local records in PULLS are
     driven by a live task."""
-    return (rec.get("state") in _ACTIVE_STATES
-            and _iso_age(rec.get("updated_at") or rec.get("started_at") or "") > PULL_STALE_S)
+    if rec.get("state") not in _ACTIVE_STATES:
+        return False
+    # Our own record with no live task behind it. A pull only exists inside the
+    # process that opened its stream, so if we are that Vera and we have no such
+    # task, it died with the previous process — true the instant we come back.
+    #
+    # The age check below CANNOT see this case: at restart every record was
+    # written a second earlier (the worker persists once a second right up to
+    # the moment it is killed), so they all look alive. Auto-resume runs at
+    # startup, found nothing, and never ran again — the heuristic raced the one
+    # event it exists to catch.
+    if rec.get("owner") == PULL_OWNER and rec.get("id") not in PULLS:
+        return True
+    # Someone else's record (another Vera in the cluster): all we can do is
+    # notice it has stopped being written to.
+    return _iso_age(rec.get("updated_at") or rec.get("started_at") or "") > PULL_STALE_S
+
+
+def _predates_this_process(rec: dict) -> bool:
+    """Was this record last written before we existed?
+
+    Only meaningful during the startup pass, and only for records from builds
+    that did not stamp an owner — without it, every download in flight at the
+    moment this fix ships would be stranded one final time. It is deliberately
+    NOT part of _pull_is_stale: seconds into startup almost everything predates
+    us, which would condemn another cluster member's perfectly live pull."""
+    return (rec.get("state") in _ACTIVE_STATES and not rec.get("owner")
+            and _iso_age(rec.get("updated_at") or rec.get("started_at") or "")
+            > (time.time() - _PROC_START))
 
 
 def _pull_mark_interrupted(rec: dict) -> dict:
@@ -1172,6 +1231,156 @@ async def _pull_store(pull_id: str, rec: dict) -> None:
         log.debug("pull store %s: %s", pull_id, e)
 
 
+# Interrupted downloads are picked back up when Vera returns. Set
+# VERA_PULL_AUTORESUME=0 to leave them sitting for a manual Resume instead.
+PULL_AUTORESUME = (os.getenv("VERA_PULL_AUTORESUME", "1").strip().lower()
+                   not in ("0", "false", "no", "off"))
+# Don't silently restart multi-GB transfers that were abandoned days ago, and
+# don't stampede the uplink if a lot were in flight at once.
+PULL_RESUME_MAX_AGE_S = 86400.0
+PULL_RESUME_MAX = 16
+
+
+# Transfers die for two very different reasons. A dropped connection is bad luck
+# and retrying is exactly right; a rejected manifest is a verdict and retrying
+# reproduces it forever. Ollama reports both as "failed", so read the message.
+_TRANSIENT_RE = re.compile(
+    r"max retries exceeded|EOF|stream error|connection reset|connection refused|"
+    r"broken pipe|timeout|timed out|temporary failure|no route to host|"
+    r"unexpected EOF|i/o error|HTTP 5\d\d|digest mismatch", re.I)
+_PERMANENT_RE = re.compile(
+    r"file does not exist|not a valid quantization scheme|unauthorized|"
+    r"no space left|invalid digest|not published|published incompletely|"
+    r"unknown node|no such model", re.I)
+PULL_MAX_RETRIES = 5
+
+
+def _pull_failure_is_transient(rec: dict) -> bool:
+    err = str(rec.get("error") or "")
+    if _PERMANENT_RE.search(err):
+        return False
+    return bool(_TRANSIENT_RE.search(err))
+
+
+def _pull_is_resumable(rec: dict) -> bool:
+    """What may come back on its own.
+
+    'interrupted' always: the process holding the stream went away, which is no
+    reflection on the download. 'failed' only when the message describes a
+    transport problem rather than a verdict — a dropped connection nine tenths
+    of the way through a 20 GB pull should not need a human to notice it — and
+    only up to PULL_MAX_RETRIES, so a model that genuinely cannot be fetched
+    stops instead of looping. 'cancelled' never: that was a decision."""
+    state = rec.get("state")
+    if state == "interrupted":
+        return True
+    if state == "failed" and _pull_failure_is_transient(rec):
+        return int(rec.get("resume_count") or 0) < PULL_MAX_RETRIES
+    return False
+
+
+async def _resume_pull(pid: str, rec: dict) -> dict:
+    """Restart one interrupted download and retire the record it came from.
+
+    Ollama still holds the partial blob, so this continues from where it stopped
+    rather than re-fetching. Returns the new record, or {"error": ...}."""
+    started = await _pull_start(rec.get("model", ""), rec.get("instance_id", ""),
+                                hf_id=rec.get("hf_id", ""))
+    if started.get("error"):
+        return started
+    # Carry the attempt count across, so a model that keeps dropping eventually
+    # stops retrying instead of cycling forever.
+    started["resume_count"] = int(rec.get("resume_count") or 0) + 1
+    if started.get("id") != pid:
+        # Superseded by a fresh record; drop the old one so the list does not
+        # accumulate a rung per restart.
+        await _pull_forget(pid)
+    return started
+
+
+async def _resume_pulls(pull_id: str = "", auto: bool = False) -> dict:
+    """Resume one interrupted download, or every one of them when pull_id is ''."""
+    rows = [(pid, rec) for pid, rec in await _pull_all_redis()
+            if _pull_is_resumable(rec) and (not pull_id or pid == pull_id)]
+    if auto:
+        rows = [(pid, rec) for pid, rec in rows
+                if _iso_age(rec.get("finished_at") or rec.get("updated_at") or "")
+                <= PULL_RESUME_MAX_AGE_S]
+    rows.sort(key=lambda kv: kv[1].get("started_at") or "")
+    resumed, failed = [], []
+    for pid, rec in rows[:PULL_RESUME_MAX]:
+        res = await _resume_pull(pid, rec)
+        if res.get("error"):
+            failed.append({"model": rec.get("model"), "instance_id": rec.get("instance_id"),
+                           "error": str(res["error"])[:200]})
+        else:
+            resumed.append({"pull_id": res["id"], "model": rec.get("model"),
+                            "instance_id": rec.get("instance_id"),
+                            "from_pct": rec.get("pct", 0)})
+    return {"ok": True, "resumed": resumed, "failed": failed,
+            "skipped": max(0, len(rows) - PULL_RESUME_MAX)}
+
+
+_BG_TASKS: set = set()          # strong refs; a bare create_task can be GC'd
+PULL_SWEEP_S = 180.0            # how often to pick dropped transfers back up
+
+
+async def _pull_sweep() -> None:
+    """Periodically put back anything that stopped on its own.
+
+    Startup recovery only covers restarts. A connection dropped at 3am mid-pull
+    would otherwise sit there failed until someone looked at the tab — after
+    hours of transfer. Cheap: a Redis scan that no-ops unless something is
+    actually waiting."""
+    if not PULL_AUTORESUME:
+        return
+    try:
+        if not any(_pull_is_resumable(rec) for _, rec in await _pull_all_redis()):
+            return
+        res = await _resume_pulls(auto=True)
+    except Exception as e:
+        log.debug("pull sweep: %s", e)
+        return
+    for r in res["resumed"]:
+        log.info("catalog: picked %s back up on %s from %.1f%%",
+                 r["model"], r["instance_id"], r["from_pct"] or 0.0)
+
+
+async def _autoresume_pulls() -> None:
+    """Startup hook: put back whatever the previous process was downloading.
+
+    A pull is a stream owned by the Vera process, so every restart kills all of
+    them. Without this the operator has to notice and press Resume on each row,
+    which is exactly the manual step a restart should not create."""
+    if not PULL_AUTORESUME:
+        return
+    try:
+        res = await _resume_pulls(auto=True)
+    except Exception as e:
+        log.warning("catalog: auto-resume failed: %s", e)
+        return
+    for r in res["resumed"]:
+        log.info("catalog: resumed %s on %s from %.1f%%",
+                 r["model"], r["instance_id"], r["from_pct"] or 0.0)
+    for f in res["failed"]:
+        log.warning("catalog: could not resume %s on %s: %s",
+                    f["model"], f["instance_id"], f["error"])
+    if res["resumed"] or res["failed"]:
+        await emit_event({"type": "catalog.pull.autoresume",
+                          "resumed": len(res["resumed"]), "failed": len(res["failed"])})
+
+
+async def _pull_forget(pull_id: str) -> None:
+    PULLS.pop(pull_id, None)
+    r = _redis()
+    if not r:
+        return
+    try:
+        await r.hdel(KEY_PULLS, pull_id)
+    except Exception as e:
+        log.debug("pull forget %s: %s", pull_id, e)
+
+
 async def _reap_stale_pulls() -> int:
     """One-shot at startup: rewrite every orphaned record as 'interrupted'.
 
@@ -1183,13 +1392,171 @@ async def _reap_stale_pulls() -> int:
     being written to, so they never cross PULL_STALE_S."""
     n = 0
     for pid, rec in await _pull_all_redis():
-        if not _pull_is_stale(rec):
+        if not (_pull_is_stale(rec) or _predates_this_process(rec)):
             continue
         await _pull_store(pid, _pull_mark_interrupted(rec))
         n += 1
     if n:
         log.info("catalog: retired %d model download(s) orphaned by a restart", n)
     return n
+
+
+# ── registry preflight ───────────────────────────────────────────────────────
+# Ollama pulls a model's big layers first and its tiny config blob LAST. When a
+# registry serves the manifest but 404s one of the objects in it, the download
+# runs all the way to 100%, fails on the final fetch, and never writes a
+# manifest — so nothing appears in the model list, nothing can be resumed, and
+# the bytes sit orphaned in the blob store. Worse, Ollama surfaces that 404 as
+# Go's bare os.ErrNotExist, whose message is the uninformative "file does not
+# exist". Two HTTP round-trips up front turn 39 GB and an hour into an
+# immediate, legible refusal.
+_HF_REF_RE = re.compile(r"^(?:hf\.co|huggingface\.co)/([^/]+/[^:/]+)(?::(.+))?$", re.I)
+
+
+def _hf_ref(model: str) -> Optional[Tuple[str, str]]:
+    """(repo, tag) for an hf.co pull ref, else None."""
+    m = _HF_REF_RE.match((model or "").strip())
+    return (m.group(1), m.group(2) or "latest") if m else None
+
+
+# A GGUF filename ends in the quant it holds; that suffix is the tag HF serves.
+_QUANT_TAG_RE = re.compile(
+    r"^(?:I?Q\d[A-Z0-9_]*|BF16|F16|F32|MXFP4[A-Z0-9_]*|TQ\d[A-Z0-9_]*)$", re.I)
+_HF_SHARD_RE = re.compile(r"-\d{5}-of-\d{5}$")
+
+
+async def _hf_available_quants(repo: str) -> List[str]:
+    """The quant tags a Hugging Face repo actually publishes.
+
+    HF's Ollama endpoint only serves a tag when a matching GGUF file exists, and
+    rejects everything else with a flat 400 — "The specified tag is not a valid
+    quantization scheme" — that names no alternatives. The catalog's quant picker
+    offers a generic list, so picking one this particular repo never published
+    looks identical to picking a good one, and every retry fails the same way."""
+    try:
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True,
+                                     verify=_ssl()) as c:
+            r = await c.get(f"{HF_HOST}/api/models/{repo}")
+            if r.status_code >= 400:
+                return []
+            files = [s.get("rfilename", "") for s in (r.json().get("siblings") or [])]
+    except Exception as e:
+        log.debug("hf quants %s: %s", repo, e)
+        return []
+    cands: List[str] = []
+    for f in files:
+        if not f.lower().endswith(".gguf"):
+            continue
+        stem = _HF_SHARD_RE.sub("", os.path.basename(f)[:-5])
+        tag = stem.rsplit("-", 1)[-1]        # trailing token; 'UD-' prefixes drop out
+        if _QUANT_TAG_RE.match(tag) and tag not in cands:
+            cands.append(tag)
+    # A file existing is NOT enough: HF matches the tag against its own list of
+    # quantization schemes, so a publisher's non-standard naming (bartowski's
+    # Q4_K_L, say) is present in the repo and still rejected. Listing those back
+    # would send the operator round the same loop. Ask which ones it will serve.
+    sem = asyncio.Semaphore(8)
+
+    async def _ok(tag: str) -> Optional[str]:
+        async with sem:
+            try:
+                async with httpx.AsyncClient(timeout=15.0, follow_redirects=True,
+                                             verify=_ssl()) as c:
+                    r = await c.get(f"{HF_HOST}/v2/{repo}/manifests/{tag}",
+                                    headers={"Accept": "application/vnd.docker."
+                                                       "distribution.manifest.v2+json"})
+                return tag if r.status_code == 200 else None
+            except Exception:
+                return None
+
+    served = await asyncio.gather(*(_ok(t) for t in cands[:40]))
+    return sorted(t for t in served if t)
+
+
+async def _hf_bad_tag_msg(model: str) -> str:
+    ref = _hf_ref(model)
+    if not ref:
+        return ""
+    repo, tag = ref
+    quants = await _hf_available_quants(repo)
+    if not quants:
+        return (f"hugging face does not serve the quant '{tag}' for {repo}. "
+                f"Use 'latest', or pick the model from the Ollama library instead.")
+    return (f"'{tag}' is not published for {repo} — that repo offers: "
+            f"{', '.join(quants)} (or 'latest').")
+
+
+async def _hf_check_objects(model: str) -> dict:
+    """Verify every object an hf.co pull needs is actually served.
+
+    Returns {"checked": bool, "missing": [{digest, kind, size}], "note": str}.
+    Callers gate on ``missing`` — it is only ever populated by a definitive 404 on
+    a specific object. A ref this cannot inspect (an Ollama library model, an
+    unreachable registry) yields checked=False and no missing objects, so the
+    download proceeds: a network blip must never block a legitimate pull.
+
+    An unknown repo or quant is deliberately NOT our problem — Hugging Face
+    answers those with 400/401 on the manifest itself, and Ollama fails on them
+    within a second at "pulling manifest" without moving any data. This guard
+    exists for the one case that is expensive: a manifest that resolves fine
+    while an object inside it does not."""
+    ref = _hf_ref(model)
+    if not ref:
+        return {"checked": False, "missing": [], "note": "not a hugging-face ref"}
+    repo, tag = ref
+    base = f"{HF_HOST}/v2/{repo}"
+    timeout = httpx.Timeout(connect=10.0, read=20.0, write=20.0, pool=20.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True,
+                                     verify=_ssl()) as c:
+            mr = await c.get(f"{base}/manifests/{tag}",
+                             headers={"Accept": "application/vnd.docker.distribution."
+                                                "manifest.v2+json"})
+            if mr.status_code >= 400:
+                # A rejected quant tag is worth catching here: Ollama's own error
+                # for it lists no alternatives, so the operator retries other
+                # quants blind. Everything else is left to Ollama, which fails on
+                # it in about a second without moving data.
+                if "quantization scheme" in (mr.text or ""):
+                    return {"checked": True, "missing": [], "bad_tag": True,
+                            "note": f"manifest HTTP {mr.status_code}: rejected quant tag"}
+                return {"checked": False, "missing": [],
+                        "note": f"manifest HTTP {mr.status_code} — leaving it to Ollama"}
+            man = mr.json()
+            objs = [{"digest": l.get("digest", ""),
+                     "kind": str(l.get("mediaType", "")).rsplit(".", 1)[-1] or "layer",
+                     "size": int(l.get("size") or 0)}
+                    for l in (man.get("layers") or [])]
+            cfg = man.get("config") or {}
+            if cfg.get("digest"):
+                objs.append({"digest": cfg["digest"], "kind": "config",
+                             "size": int(cfg.get("size") or 0)})
+
+            async def _head(o: dict):
+                try:
+                    r = await c.head(f"{base}/blobs/{o['digest']}")
+                    return o, r.status_code
+                except Exception:
+                    return o, None          # inconclusive, not missing
+
+            results = await asyncio.gather(*(_head(o) for o in objs))
+    except Exception as e:
+        return {"checked": False, "missing": [], "note": f"preflight unavailable: {e}"}
+    missing = [o for o, code in results if code == 404]
+    # An object we could not reach is not an object we know to be absent.
+    partial = any(code is None for _, code in results)
+    return {"checked": not partial, "missing": missing,
+            "note": "some objects could not be checked" if partial else ""}
+
+
+def _hf_broken_msg(model: str, chk: dict) -> str:
+    bits = ", ".join(f"{o['kind']} {o['digest'][7:19]} ({o['size']}B)"
+                     for o in chk.get("missing", []))
+    repo = (_hf_ref(model) or (model, ""))[0]
+    return (f"this quant is published incompletely on hugging face — the registry "
+            f"404s on: {bits}. Ollama fetches that object last, so the download "
+            f"would reach 100% and then fail with 'file does not exist'. Try a "
+            f"different quant of {repo}.")
 
 
 async def _pull_persist(rec: dict, force: bool = False) -> None:
@@ -1212,6 +1579,22 @@ async def _pull_persist(rec: dict, force: bool = False) -> None:
 
 def _pull_public(rec: dict) -> dict:
     return {k: v for k, v in rec.items() if not k.startswith("_")}
+
+
+async def _explain_pull_error(model: str, err: str) -> str:
+    """Ollama reports a registry 404 as Go's bare os.ErrNotExist — "file does not
+    exist" — naming neither the object nor the cause. Ask the registry which one
+    it is actually refusing to serve and say so."""
+    e = (err or "").strip()
+    if "quantization scheme" in e.lower():
+        return (await _hf_bad_tag_msg(model) or e)[:400]
+    if e.lower().rstrip(".") != "file does not exist":
+        return e[:400]
+    chk = await _hf_check_objects(model)
+    if chk.get("missing"):
+        return _hf_broken_msg(model, chk)[:400]
+    return (f"{e} — Ollama could not fetch one of this model's objects from the "
+            f"registry (a 404 is reported with this wording)")[:400]
 
 
 async def _pull_worker(rec: dict, url: str) -> None:
@@ -1279,14 +1662,23 @@ async def _pull_worker(rec: dict, url: str) -> None:
         rec["ok"] = True
         rec["pct"] = 100.0
     except asyncio.CancelledError:
-        rec["state"] = "cancelled"
-        rec["ok"] = False
-        rec["error"] = "cancelled by operator"
+        # Two very different things arrive here: the operator pressing Cancel,
+        # and the event loop tearing down tasks as Vera shuts down. Only the
+        # first is a decision to stop wanting this model — a shutdown must look
+        # like any other interruption so it gets picked back up on restart.
+        if rec.pop("_operator_cancel", False):
+            rec["state"] = "cancelled"
+            rec["ok"] = False
+            rec["error"] = "cancelled by operator"
+        else:
+            _pull_mark_interrupted(rec)
+            rec["error"] = ("Vera shut down while this download was in flight — "
+                            "it resumes automatically when Vera comes back")
         raise
     except Exception as e:
         rec["state"] = "failed"
         rec["ok"] = False
-        rec["error"] = str(e)[:400]
+        rec["error"] = await _explain_pull_error(rec["model"], str(e))
     finally:
         rec["finished_at"] = now_iso()
         rec["updated_at"] = rec["finished_at"]
@@ -1335,8 +1727,14 @@ async def _pull_start(model: str, instance_id: str, hf_id: str = "") -> dict:
                 await _pull_store(pid, _pull_mark_interrupted(other))
             else:
                 return other               # live elsewhere — point at its record
+    chk = await _hf_check_objects(model)
+    if chk.get("bad_tag"):
+        return {"error": await _hf_bad_tag_msg(model), "preflight": chk}
+    if chk.get("missing"):
+        return {"error": _hf_broken_msg(model, chk), "preflight": chk}
     rec = {
         "id": _pull_id(instance_id), "model": model, "hf_id": hf_id,
+        "owner": PULL_OWNER,
         "instance_id": instance_id, "node_label": base.get("label", instance_id),
         "state": "starting", "status": "queued", "ok": None, "error": "",
         "total_bytes": 0, "completed_bytes": 0, "pct": 0.0,
@@ -1370,7 +1768,10 @@ def _prune_pulls() -> None:
                         "library name like 'qwen2.5:7b' or an 'hf.co/author/repo:QUANT' "
                         "ref), instance_id (str!). Re-starting a pull that is already "
                         "running joins the existing one; re-starting one that was "
-                        "interrupted resumes it from the partial data on the node.")
+                        "interrupted resumes it from the partial data on the node. "
+                        "hf.co refs are preflighted — a quant whose registry objects "
+                        "are incomplete is refused up front rather than after "
+                        "downloading the whole model.")
 async def cap_catalog_pull_start(model: str, instance_id: str, trace_id=None):
     await _hydrate()
     if not (model or "").strip():
@@ -1438,8 +1839,28 @@ async def cap_catalog_pull_cancel(pull_id: str, trace_id=None):
             break
         return {"error": "pull not running on this Vera instance — cancel it from the "
                          "instance that started it"}
+    rec = PULLS.get(pull_id)
+    if rec is not None:
+        rec["_operator_cancel"] = True   # tells the worker this is a real stop,
+                                         # not a shutdown — see _pull_worker
     task.cancel()
     return {"ok": True, "pull_id": pull_id, "state": "cancelling"}
+
+
+@capability("catalog.pull.resume", memory="off",
+            http_method="POST", http_path="/catalog/pull/resume", http_tags=["catalog"],
+            description="Resume downloads that a Vera restart interrupted, continuing "
+                        "from the partial data already on the node rather than starting "
+                        "over. Inputs: pull_id (str — one download; empty resumes ALL "
+                        "interrupted ones). Operator-cancelled and failed downloads are "
+                        "left alone. This also runs automatically at startup.")
+async def cap_catalog_pull_resume(pull_id: str = "", trace_id=None):
+    await _hydrate()
+    res = await _resume_pulls(pull_id=pull_id)
+    if pull_id and not res["resumed"] and not res["failed"]:
+        return {"error": "nothing to resume — that download is not in the "
+                         "'interrupted' state"}
+    return res
 
 
 @capability("catalog.pull.clear", memory="off",
@@ -1838,5 +2259,11 @@ try:
     schedule(_autoopt_tick, 300.0, name="catalog_autoopt")
 except Exception as e:
     log.debug("schedule autoopt: %s", e)
+
+# Pick dropped downloads back up without waiting for a restart or an operator.
+try:
+    schedule(_pull_sweep, PULL_SWEEP_S, name="catalog_pull_sweep")
+except Exception as e:
+    log.debug("schedule pull sweep: %s", e)
 
 log.info("catalog: model catalog capabilities loaded")

@@ -87,15 +87,18 @@ async def _engine_post(host_id: str, path: str, body: Dict) -> Tuple[int, Any]:
     try:
         if kind == "tcp":
             base = dmod._normalize_tcp(rec.get("url", ""))
-            async with httpx.AsyncClient(timeout=15) as c:
-                r = await c.post(base + path, json=body)
-                return r.status_code, (r.json() if r.text else {})
+            c = dmod._tcp_client(base)
+            r = await c.post(base + path, json=body, timeout=15)
+            return r.status_code, (r.json() if r.text else {})
         sock = rec.get("socket") or getattr(dmod, "_LOCAL_SOCK", "/var/run/docker.sock")
         if os.path.exists(sock):
-            tr = httpx.AsyncHTTPTransport(uds=sock)
-            async with httpx.AsyncClient(transport=tr, timeout=15) as c:
-                r = await c.post("http://localhost" + path, json=body)
-                return r.status_code, (r.json() if r.text else {})
+            # Reuse docker_capabilities' cached UDS client instead of building a
+            # fresh httpx.AsyncHTTPTransport (and the SSLContext/CA-bundle load
+            # that construction does even for this plain http:// UDS request)
+            # on every call — see docker_capabilities._uds_client.
+            c = dmod._uds_client(sock)
+            r = await c.post("http://localhost" + path, json=body, timeout=15)
+            return r.status_code, (r.json() if r.text else {})
         return 501, {"message": f"docker host kind '{kind}' not supported for this op"}
     except Exception as e:
         return 502, {"message": f"{type(e).__name__}: {e}"}

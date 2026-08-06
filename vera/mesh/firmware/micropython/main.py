@@ -18,7 +18,7 @@
 # Wire protocol: see vera/mesh/PROTOCOL.md
 # ============================================================================
 
-import network, time, json, sys, uselect, machine
+import network, time, json, os, sys, uselect, machine
 try:
     import urequests as requests
 except ImportError:
@@ -43,10 +43,33 @@ WIFI_PASS = ""
 # pins on GPIO 0-31); the driver falls back to the slower Pin.value path — fine
 # for a status display. Remap at runtime with config.io.tft if needed.
 TFT_PINS = {"rst": 5, "cs": 6, "dc": 7, "wr": 1, "rd": 2,     # hardware-verified S3-Uno control map
-            "d": [21, 46, 18, 17, 19, 20, 3, 14]}   # NOTE: d[4]=19 & d[5]=20 are native USB pins — Arduino + USB-CDC-off only
+            "d": [21, 46, 18, 17, 19, 20, 3, 14]}   # NOTE: d[4]=19 & d[5]=20 are the native USB pins (see TFT_FREE_USB_PINS)
 SD_PINS  = {"clk": 12, "miso": 13, "mosi": 11, "cs": 10}
 TFT_ENABLED = True                 # set False if no display shield fitted
 SD_ENABLED  = True
+
+# ── Reclaiming GPIO19/20 from USB-Serial-JTAG ───────────────────────────────
+# On the S3-Uno shield LCD_D4/D5 land on GPIO19/20 — the chip's native USB D-/D+.
+# While the USB PHY owns that pad those two data bits are stuck, the parallel bus
+# writes garbage, and the panel stays white. The Arduino build dodges this by
+# compiling with USB CDC On Boot: Disabled; MicroPython can't, because its REPL
+# IS the USB-Serial-JTAG device.
+#
+# So we take the pad by force: clear USB_SERIAL_JTAG_CONF0.USB_PAD_ENABLE and the
+# pins become ordinary GPIO. The cost is real — **the USB REPL dies the moment
+# this runs** and the node is reachable only over Wi-Fi (and UART0, see below).
+# Recovery is always possible: hold BOOT, tap RESET, and the ROM bootloader
+# re-enables the pad, so re-flashing from the panel still works.
+#
+# Off by default — turn it on from the panel's "Free USB pins" bake option (or
+# set it here). It only fires when a data pin actually sits on 19/20.
+TFT_FREE_USB_PINS = False
+# Before dropping USB, hand the REPL to UART0 (S3 pins 43/44 — the devkit's
+# second USB port / the Uno header's TX-RX pins) so you keep a console.
+TFT_USB_REPL_TO_UART0 = True
+# Seconds to wait first. Press any key on the USB console in that window to
+# ABORT the takeover — an escape hatch when main.py is misbehaving.
+TFT_FREE_USB_GRACE = 3
 
 # ── Pins (board-robust: a GPIO that doesn't exist on this chip must NOT crash
 #    the firmware at import — ESP32 / S2 / S3 / C3 all differ). Pins are also
@@ -77,7 +100,7 @@ ADC   = _mkadc(ADC_PIN)
 # Bump on every firmware change. The server reads this same constant from the
 # served main.py; if a node reports an older FW_VERSION and its config.ota.auto
 # is set, Vera auto-queues an OTA file update. Keep the literal on one line.
-FW_VERSION = "1.3.0-mpy"
+FW_VERSION = "1.4.0-mpy"
 
 MODULES = ["sensor", "web_fetch", "watch", "alert", "control", "io", "worker",
            "rgb", "ble", "toolkit", "position", "ui"]
@@ -102,7 +125,7 @@ AUDIO_PINS = {}            # config.io.audio — I2S mic/speaker (audio incremen
 # config.io.touch = {xp,ym,yp,xm, x0,x1,y0,y1, zmin,zmax, swap,invx,invy}.
 TOUCH_PINS = {"xp": 3, "ym": 14, "yp": 6, "xm": 7}
 TOUCH_CAL = {"x0": 320, "x1": 3800, "y0": 320, "y1": 3800,   # raw ADC at screen edges
-             "zmin": 350, "zmax": 3600,                      # pressure gate (tune via touch_raw)
+             "zmin": 350, "zmax": 4095,                      # pressure gate (tune via touch_raw)
              "swap": 1, "invx": 0, "invy": 1}                # axis orientation vs rotation=1
 _touch_last = 0; _touch_down = False
 SERIAL_ONLY = False        # bridge mode: the host browser relays us to Vera over USB
@@ -323,11 +346,82 @@ C_BLACK, C_WHITE, C_GREEN, C_RED, C_YELL, C_GREY = 0x0000, 0xFFFF, 0x07E0, 0xF80
 C_NAVY, C_CYAN, C_BLUE = 0x000F, 0x07FF, 0x001F      # used by the server-driven UI widgets
 
 TFT = None
+_usb_freed = None                    # None=not attempted, True=pad released, "…"=why not
+
+# USB_SERIAL_JTAG_CONF0_REG per chip; bit 14 = USB_PAD_ENABLE (the switch that
+# hands GPIO19/20 to the USB PHY). Only the chips whose REPL lives on USB-JTAG.
+_USB_JTAG_CONF0 = {"esp32s3": 0x60038018, "esp32c3": 0x60043018, "esp32c6": 0x6000F018}
+_USB_PAD_ENABLE = 1 << 14
+
+def _usb_jtag_conf0():
+    try:
+        m = os.uname().machine.lower()
+    except Exception:
+        return 0
+    for k, addr in _USB_JTAG_CONF0.items():
+        if k[5:] in m:               # "s3" / "c3" / "c6"
+            return addr
+    return 0
+
+def _free_usb_pads(pins):
+    """Release GPIO19/20 from the USB-Serial-JTAG PHY so the parallel bus can
+    drive them. Returns True on success, else a string saying why not. Read the
+    TFT_FREE_USB_PINS notes above first — this kills the USB REPL."""
+    global _usb_freed
+    dpins = list(pins.get("d") or [])
+    if not any(n in (19, 20) for n in dpins):
+        _usb_freed = "not needed (no data pin on 19/20)"
+        return _usb_freed
+    if not TFT_FREE_USB_PINS:
+        _usb_freed = "disabled (TFT_FREE_USB_PINS=False)"
+        return _usb_freed
+    addr = _usb_jtag_conf0()
+    if not addr:
+        _usb_freed = "unsupported chip"
+        return _usb_freed
+
+    # Escape hatch: any keypress on the console in the grace window aborts, so a
+    # bad main.py can't lock you out of the REPL without a BOOT-button reflash.
+    if TFT_FREE_USB_GRACE > 0:
+        print("[usb] releasing GPIO19/20 from USB-Serial-JTAG in %ds — the USB REPL "
+              "will DIE. Press any key to abort." % TFT_FREE_USB_GRACE)
+        try:
+            poll = uselect.poll(); poll.register(sys.stdin, uselect.POLLIN)
+            if poll.poll(TFT_FREE_USB_GRACE * 1000):
+                try: sys.stdin.read(1)
+                except Exception: pass
+                print("[usb] aborted — USB REPL kept, display will not work on 19/20")
+                _usb_freed = "aborted by keypress"
+                return _usb_freed
+        except Exception:
+            time.sleep(TFT_FREE_USB_GRACE)
+
+    # Keep a console: move the REPL to UART0 before the USB pad goes away.
+    if TFT_USB_REPL_TO_UART0:
+        try:
+            _u = machine.UART(0, 115200)
+            os.dupterm(_u, 1)
+            print("[usb] REPL also on UART0 (115200)")
+        except Exception as e:
+            print("[usb] UART0 REPL unavailable:", e)
+    try:
+        machine.mem32[addr] = machine.mem32[addr] & ~_USB_PAD_ENABLE
+        _usb_freed = True
+        print("[usb] USB pad disabled — GPIO19/20 are now plain GPIO")
+    except Exception as e:
+        _usb_freed = "failed: %s" % e
+    return _usb_freed
+
 def tft_init(pins=None):
     global TFT
     if not TFT_ENABLED: return
+    pins = pins or TFT_PINS
     try:
-        TFT = ILI9488P8(pins or TFT_PINS)
+        _free_usb_pads(pins)         # must happen BEFORE the data pins are claimed
+    except Exception as e:
+        print("[usb] pad release error:", e)
+    try:
+        TFT = ILI9488P8(pins)
         if not TFT.ok: TFT = None
     except Exception:
         TFT = None
@@ -614,7 +708,11 @@ def _touch_raw():
         # Z: XP=0, YM=1, pressure ∝ (z2 - z1)
         P(xp, P.OUT).value(0); P(ym, P.OUT).value(1)
         z1 = _adc(xm).read(); z2 = _adc(yp).read()
-        z = z2 - z1
+        # Inverted on purpose: z2-z1 is LARGE with nothing touching (open
+        # circuit) and small under a press, so pressure is ADC_MAX - (z2-z1).
+        # The raw difference made an untouched panel look like maximum force.
+        z = 4095 - (z2 - z1)
+        if z < 0: z = 0
         _touch_restore()
         return (x, y, z)
     except Exception:
@@ -800,6 +898,10 @@ def _toolkit_job(t, p, jid):
             import esp32
             info["flash_mb"] = esp32.flash_size() // 1048576
         except Exception: pass
+        # Whether GPIO19/20 were taken back off the USB PHY — the one fact that
+        # decides if this build can drive an S3-Uno parallel TFT at all.
+        info["usb_pads_freed"] = _usb_freed
+        info["display"] = bool(TFT)
         send_result(jid, "done", info); return True
     if t == "deep_sleep":
         secs = int(p.get("seconds", 0))
@@ -882,7 +984,8 @@ def wifi_connect(timeout=12):
 def enroll():
     global TOKEN, _last_note
     d = {"kind": "hello", "node_id": NODE, "name": NODE, "board": board_name(),
-         "fw": FW_VERSION, "ip": wlan.ifconfig()[0] if wlan.isconnected() else "",
+         "fw": FW_VERSION, "runtime": "micropython",   # picks the OTA artifact kind
+         "ip": wlan.ifconfig()[0] if wlan.isconnected() else "",
          "rssi": _rssi(), "modules": MODULES, "channels": ["http", "serial"]}
     if TOKEN and TOKEN != "open": d["token"] = TOKEN
     emit_serial(d)
@@ -1086,7 +1189,7 @@ def run_job(job):
                 send_result(jid, "done", {"shown": txt[:80]})
         elif t == "display_probe":
             if TFT is None:
-                send_result(jid, "error", error="display disabled or init failed — re-flash with the 🖥 Display option enabled")
+                send_result(jid, "error", error="display disabled or init failed — re-flash with the [display] Display option enabled")
             else:
                 ids = TFT.read_id()
                 send_result(jid, "done", {"ids": ids, "enabled": True,
@@ -1182,7 +1285,8 @@ def serial_announce():
     # Always print a hello over USB at boot so the host browser can bridge us to
     # Vera even when Wi-Fi can't reach the server (firewall).
     emit_serial({"kind": "hello", "node_id": NODE, "name": NODE, "board": board_name(),
-                 "fw": FW_VERSION, "modules": MODULES, "channels": ["serial"]})
+                 "fw": FW_VERSION, "runtime": "micropython",
+                 "modules": MODULES, "channels": ["serial"]})
 
 def handle_serial():
     global WIFI_SSID, WIFI_PASS, SERVER, NODE, SERIAL_ONLY
@@ -1237,10 +1341,12 @@ def main():
             verdict = ("ILI9488 OK" if code == 0x9488 else
                        "ILI9486 (wrong init!)" if code == 0x9486 else
                        "BUS DEAD - check D4=GPIO19/D5=GPIO20 (USB pins)" if code in (0, 0xFFFF) else "unknown")
-            print("[tft] pins", TFT_PINS, "id_D3", d3, verdict)
+            print("[tft] pins", TFT_PINS, "id_D3", d3, verdict, "usb_pads", _usb_freed)
             for i, n in enumerate(TFT_PINS.get("d", [])):
-                if n in (19, 20):
-                    print("[tft] WARNING: data D%d is on GPIO%d = native USB pin; that bit is stuck while the USB REPL is active" % (i, n))
+                if n in (19, 20) and _usb_freed is not True:
+                    print("[tft] WARNING: data D%d is on GPIO%d = native USB pin, and the USB pad is "
+                          "still enabled (%s) — that bit is stuck. Re-push with the 'Free USB pins' "
+                          "option, or flash the Arduino build (USB CDC off)." % (i, n, _usb_freed))
         except Exception as e:
             print("[tft] id read failed:", e)
     else:

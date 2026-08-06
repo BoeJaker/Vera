@@ -747,6 +747,23 @@
     }
 
     // ── public API ───────────────────────────────────────────────────────────
+
+    // Animate a real event on a node: a pulse, a log line, and optionally a chip
+    // flying along an edge. Exposed because the map's own animation is diff-gated
+    // on status, which cannot express traffic — a mesh node checking in or being
+    // sent a job never changes status, but IS the thing you want to see moving.
+    // Callers must only pass genuinely new events (diff against a cursor first),
+    // preserving this map's rule that motion always means something happened.
+    noteActivity(id, opts) {
+      const o = opts || {};
+      if (!this._nodes.has(id)) return false;
+      const colour = STATUS_COL[o.status] || STATUS_COL.ok;
+      this._pulseEl(this._nodeEls.get(id), colour);
+      if (o.label) this._logNode(id, String(o.label), String(o.detail || ''));
+      if (o.to && this._nodes.has(o.to)) this._flyChip(id, o.to, colour);
+      return true;
+    }
+
     applySnapshot(data) {
       const nodes = (data && data.nodes) || [];
       const edges = (data && data.edges) || [];

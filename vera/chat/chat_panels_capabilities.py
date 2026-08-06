@@ -329,38 +329,16 @@ async def _serve_vera_panel_bridge_js():
     return Response(content=fallback, media_type="application/javascript")
 
 
-# Serve the UI builder panel
-@APP.get("/ui/builder/panel", include_in_schema=False)
-async def _serve_builder_panel():
-    from fastapi.responses import HTMLResponse
-    from pathlib import Path
-    p = Path(__file__).parent / "ui_builder_panel.html"
-    if p.exists():
-        return HTMLResponse(p.read_text(encoding="utf-8"))
-    return HTMLResponse("<p style='color:red'>ui_builder_panel.html not found</p>")
-
-
-_IFRAME_STYLE = (
-    "border:none;width:100%;height:100%;flex:1;min-height:0;"
-    "background:transparent;"
-)
-
-register_ui(
-    "ui-builder",
-    "UI Builder",
-    "⎈",
-    f'<div style="height:100%;display:flex;flex-direction:column;">'
-    f'<iframe src="/ui/builder/panel" style="{_IFRAME_STYLE}" '
-    f'allow="clipboard-read; clipboard-write"></iframe></div>',
-    "",
-    ui_caps=[
-        "ui.themes", "ui.theme.get", "ui.theme.set", "ui.theme.create", "ui.theme.css",
-        "ui.panel.list", "ui.panel.get", "ui.panel.create", "ui.panel.update", "ui.panel.delete",
-        "ui.caps.acl", "ui.caps.scopes", "ui.caps.allowed",
-    ],
-    mode="tab",
-    tab_order=85,
-)
+# NOTE: the "ui-builder" panel + /ui/builder/panel route used to be
+# registered HERE too — a byte-identical duplicate of the one in
+# vera/ui builder/ui_capabilities.py (this file's own docstring even still
+# reads "ui_capabilities.py — UI System Capabilities", a leftover from
+# before this content moved to that dedicated file). Since capability_
+# orchestration.py's module list loads that file first and this one second,
+# this file's copy was the one silently winning in UI_PANELS at runtime —
+# removed 2026-08-04 so the actively-maintained copy is unambiguous. The
+# other capabilities below (ui.panel.list/get/create/update/delete etc.)
+# are untouched — only the duplicate panel registration + its route are gone.
 
 
 # Dynamic panels created at runtime (vs register_ui which is done at import time)

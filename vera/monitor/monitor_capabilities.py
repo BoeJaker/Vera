@@ -126,6 +126,15 @@ def _resources() -> Dict:
 
 _PROC_CACHE: Dict[int, "psutil.Process"] = {}   # pid -> psutil.Process, reused across
                                                  # ticks so cpu_percent() gets a real delta
+# _top_processes() now runs off-thread (see _build_full) so a scheduled sample
+# tick and a concurrent fresh=true request can genuinely overlap in real OS
+# threads — this lock keeps _PROC_CACHE mutations serialized instead of racing.
+_TOP_PROC_LOCK = asyncio.Lock()
+
+
+async def _top_processes_threaded(n: int = 8) -> List[Dict]:
+    async with _TOP_PROC_LOCK:
+        return await asyncio.to_thread(_top_processes, n)
 
 
 def _top_processes(n: int = 8) -> List[Dict]:
@@ -373,9 +382,14 @@ async def _proxmox_summary() -> Dict:
 #  Full snapshot + sampler
 # ─────────────────────────────────────────────────────────────────────────────
 async def _build_full() -> Dict:
-    proxmox, docker, ollama, temps, nodes_list = await asyncio.gather(
+    # _top_processes() walks every host process via psutil.process_iter, which
+    # is a synchronous /proc scan — run it off-thread so a host with hundreds
+    # of processes (this box, with dozens of docker containers) can't stall
+    # the single event loop for 1s+ every sample tick (confirmed live via
+    # perf.stalls as the direct cause of WS ping/pong timeouts — see doc 37).
+    proxmox, docker, ollama, temps, nodes_list, top_processes = await asyncio.gather(
         _proxmox_summary(), _docker_summary(), _ollama_summary(),
-        _call("obs.node_temps"), _call("nodes.list"))
+        _call("obs.node_temps"), _call("nodes.list"), _top_processes_threaded())
     # Proxmox-specific peak temp: a PVE host's obs.node_temps entry is keyed
     # by ssh_host_id, and a guest/cluster's own "node" field is the PVE-
     # internal hostname (e.g. "corp") — NEITHER of those is the SSH-registry
@@ -392,7 +406,7 @@ async def _build_full() -> Dict:
     pmx_temp_vals = [h.get("max_c") for h in temp_hosts_all
                        if h.get("max_c") is not None and h.get("host_id") in pmx_host_ids]
     return {"ts": now_iso(), "t": time.time(), "resources": _resources(),
-            "top_processes": _top_processes(),
+            "top_processes": top_processes,
             "proxmox": proxmox, "docker": docker, "ollama": ollama, "temps": temps,
             "pmx_temp_max": max(pmx_temp_vals) if pmx_temp_vals else None}
 

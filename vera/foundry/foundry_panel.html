@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Foundry — OS provisioning</title>
+<style>
+  :root{--bg:#0c0e13;--bg2:#12151c;--panel:#151923;--border:#232a37;--ink:#e8edf6;
+    --dim:#8b96aa;--dim2:#606a7d;--acc:#6ea8fe;--ok:#57d08a;--warn:#e8b84b;--bad:#e0687a}
+  @media (prefers-color-scheme:light){:root{--bg:#f6f8fc;--bg2:#eef1f7;--panel:#fff;--border:#dde3ee;
+    --ink:#1a2030;--dim:#59637a;--dim2:#8b95a8;--acc:#2f6fe0}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.45 -apple-system,Segoe UI,Roboto,Arial,sans-serif}
+  .wrap{max-width:1100px;margin:0 auto;padding:16px}
+  h1{font-size:16px;margin:0 0 2px}.lead{color:var(--dim);margin:0 0 14px;font-size:12px}
+  .grid{display:grid;grid-template-columns:1.15fr .85fr;gap:14px}
+  @media(max-width:820px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
+  .card h2{font-size:13px;margin:0 0 10px;display:flex;align-items:center;gap:8px}
+  .card h2 .r{margin-left:auto;font-weight:400;color:var(--dim2);font-size:11px}
+  label{display:block;font-size:11px;color:var(--dim);margin:8px 0 3px}
+  input,select{width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--ink);
+    border-radius:7px;padding:7px 9px;font-size:12px}
+  .row{display:flex;gap:8px}.row>*{flex:1}
+  .feats{display:flex;flex-direction:column;gap:5px;margin-top:6px}
+  .feat{display:flex;align-items:flex-start;gap:8px;padding:6px 8px;border:1px solid var(--border);
+    border-radius:8px;background:var(--bg2);cursor:pointer}
+  .feat input{width:auto;margin-top:2px}
+  .feat .fx{flex:1}.feat .fl{font-size:12px}.feat .fd{font-size:10.5px;color:var(--dim2)}
+  .pill{font-size:9px;padding:1px 6px;border-radius:20px;border:1px solid var(--border);color:var(--dim2)}
+  .pill.ready{color:var(--ok);border-color:var(--ok)}.pill.planned{color:var(--warn);border-color:var(--warn)}
+  .btn{background:var(--acc);color:#fff;border:none;border-radius:8px;padding:9px 16px;font-size:13px;
+    font-weight:600;cursor:pointer;margin-top:12px}.btn:hover{filter:brightness(1.08)}
+  .btn.gho{background:transparent;color:var(--dim);border:1px solid var(--border);font-weight:500;padding:6px 12px;font-size:12px;margin:0}
+  .btn.gho:hover{color:var(--ink)}
+  table{width:100%;border-collapse:collapse;font-size:11.5px}
+  th{text-align:left;color:var(--dim2);font-weight:500;font-size:10px;text-transform:uppercase;letter-spacing:.5px;padding:4px 6px;border-bottom:1px solid var(--border)}
+  td{padding:5px 6px;border-bottom:1px solid var(--border)}
+  .t-cloudimg{color:#57d08a}.t-lxc-template{color:#e08a5b}.t-docker{color:#3ba6e8}.t-iso{color:#c77dff}
+  .muted{color:var(--dim2)}
+  .job{border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:7px;font-size:11.5px}
+  .job .st{font-size:9px;padding:1px 7px;border-radius:20px}
+  .st.ok{background:color-mix(in srgb,var(--ok) 20%,transparent);color:var(--ok)}
+  .st.error{background:color-mix(in srgb,var(--bad) 20%,transparent);color:var(--bad)}
+  .st.pending,.st.running{background:color-mix(in srgb,var(--warn) 20%,transparent);color:var(--warn)}
+  .toast{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);background:var(--panel);
+    border:1px solid var(--border);border-radius:9px;padding:9px 16px;font-size:12px;opacity:0;
+    transition:opacity .2s;pointer-events:none;max-width:80%}
+  .toast.on{opacity:1}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🏭 Foundry</h1>
+  <p class="lead">Provision an OS onto a target — <b>image × features</b>, with SSH-cert + FreeIPA + mesh baked in. (Phase 1: CT &amp; Docker live; VM cloud-init next.)</p>
+  <div class="grid">
+    <!-- Provision wizard -->
+    <div class="card">
+      <h2>Provision</h2>
+      <div class="row">
+        <div><label>Target</label>
+          <select id="target" onchange="onTarget()">
+            <option value="ct">Proxmox CT</option>
+            <option value="vm">Proxmox VM</option>
+            <option value="docker">Docker</option>
+          </select></div>
+        <div><label>OS image</label><select id="image"></select></div>
+      </div>
+      <div class="row"><div><label>Name / hostname</label><input id="name" placeholder="e.g. web-01"></div>
+        <div><label>FreeIPA FQDN <span class="muted">(optional)</span></label><input id="fqdn" placeholder="web-01.vera.int"></div></div>
+      <div id="pmxfields">
+        <div class="row"><div><label>Cluster</label><select id="cluster"></select></div>
+          <div><label>Node</label><input id="node" placeholder="corp"></div></div>
+        <div class="row"><div><label>Cores</label><input id="cores" type="number" value="1"></div>
+          <div><label>Memory MB</label><input id="memory" type="number" value="1024"></div>
+          <div><label>Disk GB</label><input id="disk" type="number" value="8"></div></div>
+        <div class="row"><div><label>Static IP <span class="muted">(no DHCP — set one)</span></label><input id="ip" placeholder="192.168.0.95"></div>
+          <div><label>Gateway</label><input id="gw" placeholder="192.168.0.1"></div></div>
+      </div>
+      <label>Features</label>
+      <div class="feats" id="feats"></div>
+      <button class="btn" onclick="provision()" id="goBtn">Provision →</button>
+    </div>
+
+    <div>
+      <!-- Catalog -->
+      <div class="card" style="margin-bottom:14px">
+        <h2>Image catalog <span class="r"><a href="#" onclick="seed();return false" style="color:var(--acc)">seed defaults</a> · <span id="imgCount">0</span></span></h2>
+        <div style="max-height:260px;overflow:auto">
+          <table><thead><tr><th>OS</th><th>Ver</th><th>Type</th><th>Source</th><th></th></tr></thead>
+          <tbody id="imgRows"></tbody></table>
+        </div>
+      </div>
+      <!-- Blueprints (IaC) -->
+      <div class="card" style="margin-bottom:14px">
+        <h2>Blueprints <span class="r"><a href="#" onclick="saveAsBlueprint();return false" style="color:var(--acc)">save current</a> · <a href="#" onclick="importBp();return false" style="color:var(--acc)">import</a></span></h2>
+        <div id="bpList" style="max-height:210px;overflow:auto"><span class="muted">none yet</span></div>
+        <div class="muted" style="font-size:10px;margin-top:6px">Versioned, reusable Infrastructure-as-Code — define an estate once, then <b>apply</b> / <b>export</b> it as a YAML manifest you can commit to git/Gitea.</div>
+      </div>
+      <!-- Jobs -->
+      <div class="card">
+        <h2>Recent jobs <span class="r"><a href="#" onclick="loadJobs();return false" style="color:var(--acc)">refresh</a></span></h2>
+        <div id="jobs" style="max-height:230px;overflow:auto"><span class="muted">none yet</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+const $=s=>document.getElementById(s);
+const esc=s=>String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+async function j(u,opt){try{const r=await fetch(u,{cache:'no-store',...(opt||{})});return await r.json();}catch(e){return null;}}
+async function post(u,body){return j(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});}
+function toast(m,bad){const t=$('toast');t.textContent=m;t.style.borderColor=bad?'var(--bad)':'var(--border)';t.classList.add('on');setTimeout(()=>t.classList.remove('on'),2600);}
+
+const TYPE_FOR={ct:'lxc-template',vm:'cloudimg',docker:'docker'};
+let IMAGES=[], FEATURES=[];
+
+async function boot(){
+  const [imgs,feats,cl]=await Promise.all([j('/foundry/image/list'),j('/foundry/features'),j('/proxmox/cluster/list')]);
+  IMAGES=(imgs&&imgs.images)||[]; FEATURES=(feats&&feats.features)||[];
+  $('imgCount').textContent=IMAGES.length;
+  renderCatalog();
+  const cs=(cl&&cl.clusters)||[];
+  $('cluster').innerHTML=cs.map(c=>`<option value="${c.id}">${esc(c.label)}</option>`).join('')||'<option value="">(none)</option>';
+  onTarget(); loadJobs(); loadBlueprints();
+  if(!IMAGES.length) toast('catalog empty — click “seed defaults”');
+}
+// ── Blueprints (IaC) ────────────────────────────────────────────────────────
+function curNode(){
+  const t=$('target').value;
+  const features=[...document.querySelectorAll('#feats input:checked')].map(c=>c.dataset.feat);
+  const n={name:$('name').value.trim()||'node',target:t,image_id:$('image').value,count:1,features};
+  if(t!=='docker'){n.cluster_id=$('cluster').value;n.node=$('node').value.trim()||'corp';
+    n.cores=+$('cores').value;n.memory=+$('memory').value;n.disk=+$('disk').value;n.fqdn=$('fqdn').value.trim();
+    n.ip=$('ip').value.trim();n.gateway=$('gw').value.trim();}
+  return n;
+}
+async function loadBlueprints(){
+  const d=await j('/foundry/blueprint/list'); const bps=(d&&d.blueprints)||[];
+  $('bpList').innerHTML=bps.map(b=>`<div class="job">
+    <b>${esc(b.name)}</b> <span class="muted">v${b.version} · ${b.nodes} node(s)</span>
+    ${b.description?('<div class="muted" style="font-size:10.5px">'+esc(b.description)+'</div>'):''}
+    <div style="margin-top:5px;display:flex;gap:6px;flex-wrap:wrap">
+      <button class="btn gho" onclick="bpApply('${b.id}',true)">dry-run</button>
+      <button class="btn gho" onclick="bpApply('${b.id}',false)">apply</button>
+      <button class="btn gho" onclick="bpExport('${b.id}')">export YAML</button>
+      <button class="btn gho" onclick="bpDel('${b.id}')">✕</button>
+    </div></div>`).join('')||'<span class="muted">none yet — “save current” turns the form above into a reusable blueprint</span>';
+}
+async function saveAsBlueprint(){
+  const name=prompt('Blueprint name:', ($('name').value.trim()||'my-estate'));
+  if(!name) return;
+  const r=await post('/foundry/blueprint/save',{name,description:'',nodes:[curNode()]});
+  if(r&&r.ok){toast('blueprint “'+name+'” saved v'+r.version);loadBlueprints();}else toast((r&&r.error)||'save failed',true);
+}
+async function bpApply(id,dry){
+  if(!dry&&!confirm('Apply this blueprint — provision every node it declares?')) return;
+  toast(dry?'planning…':'applying blueprint…');
+  const r=await post('/foundry/blueprint/apply',{id,dry_run:dry});
+  if(r&&r.ok){toast('run '+r.run_id+' · '+r.results.length+' node(s)'+(dry?' (dry-run)':''));loadJobs();}else toast('apply failed',true);
+}
+async function bpExport(id){
+  const r=await j('/foundry/blueprint/export?id='+encodeURIComponent(id)+'&format=yaml');
+  if(!r||!r.text) return toast('export failed',true);
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([r.text],{type:'text/plain'}));
+  a.download='foundry-blueprint.'+(r.format==='yaml'?'yaml':'json');a.click();toast('exported '+r.format);
+}
+async function bpDel(id){if(!confirm('Delete this blueprint + its history?'))return;await post('/foundry/blueprint/delete',{id});loadBlueprints();}
+async function importBp(){
+  const text=prompt('Paste a blueprint YAML/JSON manifest:');
+  if(!text) return;
+  const r=await post('/foundry/blueprint/import',{text});
+  if(r&&r.ok){toast('imported v'+r.version);loadBlueprints();}else toast((r&&r.error)||'import failed',true);
+}
+function onTarget(){
+  const t=$('target').value, type=TYPE_FOR[t];
+  const opts=IMAGES.filter(i=>i.type===type);
+  $('image').innerHTML=opts.map(i=>`<option value="${i.id}">${esc(i.os)} ${esc(i.version)} (${esc(i.arch||'amd64')})</option>`).join('')
+    || `<option value="">— no ${type} images —</option>`;
+  $('pmxfields').style.display=(t==='docker')?'none':'block';
+  // features filtered by target
+  $('feats').innerHTML=FEATURES.filter(f=>(f.targets||[]).includes(t)).map(f=>`
+    <label class="feat"><input type="checkbox" data-feat="${f.id}" ${f.default?'checked':''} ${f.status==='planned'?'':''}>
+      <span class="fx"><span class="fl">${esc(f.label)}</span> <span class="pill ${f.status}">${f.status}</span>
+      <div class="fd">${esc(f.desc||'')}</div></span></label>`).join('');
+}
+function imgAction(i){
+  if(i.type!=='cloudimg') return '';
+  if(i.status==='ready') return `<span style="color:var(--ok)" title="template ${i.template_vmid}">✓ tmpl</span>`;
+  if(i.status==='importing') return '<span style="color:var(--warn)">building…</span>';
+  return `<a href="#" onclick="importImg('${i.id}');return false" style="color:var(--acc)">build tmpl</a>`;
+}
+function renderCatalog(){
+  $('imgRows').innerHTML=IMAGES.map(i=>`<tr>
+    <td>${esc(i.os)}</td><td>${esc(i.version)}</td>
+    <td class="t-${i.type}">${esc(i.type)}</td>
+    <td class="muted" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(i.source_url)}">${esc(i.source_url||'—')}</td>
+    <td style="white-space:nowrap">${imgAction(i)} <a href="#" onclick="delImg('${i.id}');return false" class="muted" style="text-decoration:none">✕</a></td></tr>`).join('')
+    || '<tr><td colspan="5" class="muted">empty — seed defaults</td></tr>';
+}
+async function importImg(id){
+  const cluster=$('cluster').value, node=$('node').value.trim()||'corp';
+  if(!cluster) return toast('pick a cluster in the Provision form first',true);
+  const storage=prompt('VM disk storage on the node (e.g. local-zfs, local-lvm):','local-zfs');
+  if(!storage) return;
+  toast('starting template build…');
+  const r=await post('/foundry/image/import',{image_id:id,cluster_id:cluster,node,storage});
+  if(r&&r.ok){toast('building template vmid '+r.template_vmid+' in background');boot();pollImport(id,cluster);}
+  else toast((r&&r.error)||'import failed',true);
+}
+async function pollImport(id,cluster){
+  const s=await j('/foundry/image/import/status?image_id='+encodeURIComponent(id)+'&cluster_id='+encodeURIComponent(cluster));
+  if(s&&s.ready){toast('template ready — VM provisioning is live for '+id);boot();return;}
+  setTimeout(()=>pollImport(id,cluster),15000);
+}
+async function seed(){toast('seeding catalog…');const r=await post('/foundry/catalog/seed',{});if(r&&r.ok){toast('catalog: '+r.total+' images ('+r.added+' new)');boot();}else toast('seed failed',true);}
+async function delImg(id){await post('/foundry/image/delete',{id});boot();}
+async function provision(){
+  const t=$('target').value, image_id=$('image').value;
+  if(!image_id) return toast('pick an OS image (seed the catalog first)',true);
+  const features=[...document.querySelectorAll('#feats input:checked')].map(c=>c.dataset.feat);
+  const body={target:t,image_id,name:$('name').value.trim(),fqdn:$('fqdn').value.trim(),features};
+  if(t!=='docker'){body.cluster_id=$('cluster').value;body.node=$('node').value.trim()||'corp';
+    body.cores=+$('cores').value;body.memory=+$('memory').value;body.disk=+$('disk').value;
+    body.ip=$('ip').value.trim();body.gateway=$('gw').value.trim();}
+  $('goBtn').disabled=true;$('goBtn').textContent='Provisioning…';
+  const r=await post('/foundry/provision',body);
+  $('goBtn').disabled=false;$('goBtn').textContent='Provision →';
+  if(!r){toast('request failed',true);return;}
+  if(r.error){toast(r.error,true);return;}
+  toast('job '+r.job_id+' · '+r.status+(r.vmid?(' · vmid '+r.vmid):''));
+  loadJobs();
+}
+async function loadJobs(){
+  const d=await j('/foundry/jobs?limit=12'); const js=(d&&d.jobs)||[];
+  $('jobs').innerHTML=js.map(job=>{
+    const steps=(job.steps||[]).map(s=>{const k=Object.keys(s)[0];const v=s[k];
+      const ok=v&&(v.ok||v.status==='ok'||v.vmid);const pend=v&&v.status==='pending';
+      return `<span style="color:${pend?'var(--warn)':(ok?'var(--ok)':(v&&v.error?'var(--bad)':'var(--dim)'))}">${esc(k)}</span>`;}).join(' · ');
+    return `<div class="job"><b>${esc(job.target)}</b> · ${esc(job.image||'')} ${job.name?('· '+esc(job.name)):''}
+      <span class="st ${job.status}">${esc(job.status)}</span>${job.vmid?(' · vmid '+job.vmid):''}
+      <div class="muted" style="margin-top:3px">${steps||'—'}</div>
+      <div style="font-size:10px;color:var(--dim2);margin-top:2px">feats: ${(job.features||[]).join(', ')}</div></div>`;
+  }).join('')||'<span class="muted">none yet</span>';
+}
+boot();
+</script>
+</body>
+</html>

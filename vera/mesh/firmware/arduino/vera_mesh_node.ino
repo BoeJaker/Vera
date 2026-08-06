@@ -105,10 +105,39 @@
 #define SD_PIN_MOSI 11
 #define SD_PIN_CS   10
 
+/* ── Reclaiming GPIO19/20 from USB-Serial-JTAG ───────────────────────────────
+ * LCD_D4/D5 land on GPIO19/20, which are the S3's native USB D-/D+. While the
+ * USB PHY owns that pad those two bits are stuck and the panel stays white.
+ * Building with "USB CDC On Boot: Disabled" (FQBN esp32:esp32:esp32s3:
+ * CDCOnBoot=default — what mesh.firmware.build uses) normally frees them.
+ * This is the belt-and-braces version: clear USB_PAD_ENABLE outright so the
+ * display still comes up if the sketch was built with the wrong board menu
+ * setting. Only fires when a data pin really is on 19/20. Cost when it fires
+ * with CDC on: you lose the USB console (Serial then means UART0). */
+#define TFT_FREE_USB_PINS 1
+
+// ── Firmware version ────────────────────────────────────────────────────────
+// Reported in `hello` and compared by the server's auto-OTA against the version
+// recorded for the newest built .bin. BUMP THIS when you change the sketch, or
+// nodes will never be offered the new image.
+#define FW_VERSION "1.9.0-ino"
+
+// The job path nests JSON buffers (poll -> runJob -> toolkitJob -> sendResult)
+// and then calls HTTPClient on top. The 8KB default loopTask stack overflows on
+// ANY job, which resets the board — so ask for a bigger one. Needs core 2.0.3+.
+SET_LOOP_TASK_STACK_SIZE(16 * 1024);
+
 // ── Server config (templated on download) ──────────────────────────────────
 String SERVER = "{{SERVER_URL}}";          // e.g. http://192.168.0.138:8000
 String TOKEN  = "{{MESH_TOKEN}}";          // "open" if no shared token
 String NODE   = "{{NODE_ID}}";
+
+// ── Wi-Fi (baked at flash time from the panel's Wi-Fi profile) ──────────────
+// Defaults only: anything provisioned over serial is saved to NVS and wins on
+// the next boot (same precedence as the MicroPython build). Leave blank to
+// provision over serial instead.
+String WIFI_SSID = "";
+String WIFI_PASS = "";
 
 // ── State ───────────────────────────────────────────────────────────────────
 Preferences prefs;
@@ -159,11 +188,35 @@ int sdPinClk = SD_PIN_CLK, sdPinMiso = SD_PIN_MISO, sdPinMosi = SD_PIN_MOSI, sdP
 #if USE_TFT_ILI9488_P8
 #include "soc/gpio_reg.h"
 
+// USB_SERIAL_JTAG only exists on the chips whose D-/D+ are shared with GPIO —
+// on a classic ESP32/S2 there is nothing to reclaim and the header is absent.
+#if TFT_FREE_USB_PINS && (defined(CONFIG_IDF_TARGET_ESP32S3) || \
+                          defined(CONFIG_IDF_TARGET_ESP32C3) || \
+                          defined(CONFIG_IDF_TARGET_ESP32C6))
+#include "soc/usb_serial_jtag_reg.h"
+#define VERA_CAN_FREE_USB 1
+#endif
+
+// Hand GPIO19/20 back to the GPIO matrix by clearing USB_PAD_ENABLE. Returns
+// true only when it actually did something (a data pin sits on 19/20).
+static bool freeUsbPads(const int *dpins) {
+#ifdef VERA_CAN_FREE_USB
+  bool need = false;
+  for (int b = 0; b < 8; b++) if (dpins[b] == 19 || dpins[b] == 20) need = true;
+  if (!need) return false;
+  CLEAR_PERI_REG_MASK(USB_SERIAL_JTAG_CONF0_REG, USB_SERIAL_JTAG_USB_PAD_ENABLE);
+  return true;
+#else
+  (void)dpins;
+  return false;
+#endif
+}
+
 struct ILI9488P8 {
   int pRST = TFT_P8_RST, pCS = TFT_P8_CS, pDC = TFT_P8_DC, pWR = TFT_P8_WR, pRD = TFT_P8_RD;
   int pD[8] = {TFT_P8_D0, TFT_P8_D1, TFT_P8_D2, TFT_P8_D3, TFT_P8_D4, TFT_P8_D5, TFT_P8_D6, TFT_P8_D7};
   uint32_t lutSet[256], lutClr[256], wrMask = 0;
-  bool fast = false, ok = false;
+  bool fast = false, ok = false, usbFreed = false;
   int16_t W = 480, H = 320;
   uint8_t rot = 1;
   int16_t curX = 0, curY = 0;
@@ -217,6 +270,9 @@ struct ILI9488P8 {
   }
 
   void init() {
+    // Before any pinMode: take 19/20 back off the USB PHY if the shield uses them.
+    // Runs on remap too, so config.io.tft can move data lines onto 19/20 live.
+    usbFreed = freeUsbPads(pD);
     int ctl[5] = {pRST, pCS, pDC, pWR, pRD};
     for (int i = 0; i < 5; i++) if (ctl[i] >= 0) { pinMode(ctl[i], OUTPUT); digitalWrite(ctl[i], HIGH); }
     for (int b = 0; b < 8; b++) if (pD[b] >= 0) { pinMode(pD[b], OUTPUT); digitalWrite(pD[b], LOW); }
@@ -391,6 +447,250 @@ void dspAlert(const String &msg) {
   kioskMode = "text";     // hold the alert until the next kiosk_set / status switch
 }
 
+/* ════════════════════════════════════════════════════════════════════════════
+ * Server-driven UI — Vera pushes a "screen" (a list of widgets), the node just
+ * renders it and reports touches back as ui_event, so every app (macro pad,
+ * sysmon, art viewer, web view…) lives on the server and adding one needs no
+ * reflash. Schema and behaviour mirror the MicroPython firmware exactly:
+ *   label {text,color,bg,size}   rect {w,h,color,fill}   hline {w,h,color}
+ *   button {w,h,text,color,bg,size,action}   bar {w,h,val(0-100),color,label}
+ * Colours are RGB565 ints.
+ * ══════════════════════════════════════════════════════════════════════════ */
+#if USE_TFT_ILI9488_P8
+struct UiButton { int x, y, w, h; String action; };
+#define UI_MAX_BUTTONS 24
+UiButton uiButtons[UI_MAX_BUTTONS];
+int uiButtonCount = 0;
+
+void uiFrame(int x, int y, int w, int h, uint16_t c) {
+  p8.fillRect(x, y, w, 1, c); p8.fillRect(x, y + h - 1, w, 1, c);
+  p8.fillRect(x, y, 1, h, c); p8.fillRect(x + w - 1, y, 1, h, c);
+}
+
+static uint16_t uiCol(JsonVariant v, uint16_t dflt) {
+  return v.isNull() ? dflt : (uint16_t)(v.as<long>());
+}
+
+void uiWidget(JsonObject wd, uint16_t bg) {
+  String t = wd["t"].as<String>();
+  int x = wd["x"] | 0, y = wd["y"] | 0;
+  if (t == "label") {
+    p8.drawText(x, y, wd["text"].as<String>(), uiCol(wd["color"], C_WHITE),
+                uiCol(wd["bg"], bg), (uint8_t)(wd["size"] | 2));
+  } else if (t == "rect") {
+    int w = wd["w"] | 10, h = wd["h"] | 10;
+    uint16_t c = uiCol(wd["color"], C_GREY);
+    bool fill = wd["fill"].isNull() ? true : wd["fill"].as<bool>();
+    if (fill) p8.fillRect(x, y, w, h, c); else uiFrame(x, y, w, h, c);
+  } else if (t == "hline") {
+    p8.fillRect(x, y, wd["w"] | (p8.W - x - 6), wd["h"] | 2, uiCol(wd["color"], C_GREY));
+  } else if (t == "button") {
+    int w = wd["w"] | 96, h = wd["h"] | 36;
+    uint8_t size = (uint8_t)(wd["size"] | 2);
+    uint16_t bbg = uiCol(wd["bg"], C_NAVY), fg = uiCol(wd["color"], C_WHITE);
+    p8.fillRect(x, y, w, h, bbg);
+    uiFrame(x, y, w, h, uiCol(wd["color"], C_GREEN));
+    p8.drawText(x + 6, y + h / 2 - 4 * size, wd["text"].as<String>(), fg, bbg, size);
+    if (!wd["action"].isNull() && uiButtonCount < UI_MAX_BUTTONS) {
+      uiButtons[uiButtonCount++] = {x, y, w, h, wd["action"].as<String>()};
+    }
+  } else if (t == "image") {
+    // Fetched by the node itself — a full frame is 300KB, far too big to push
+    // through the job queue.
+    dspImageUrl(wd["url"].as<String>(), x, y);
+  } else if (t == "bar") {
+    int w = wd["w"] | 140, h = wd["h"] | 12;
+    int val = wd["val"] | 0; if (val < 0) val = 0; if (val > 100) val = 100;
+    if (!wd["label"].isNull()) p8.drawText(x, y - 16, wd["label"].as<String>(), C_WHITE, bg, 1);
+    uiFrame(x, y, w, h, C_GREY);
+    p8.fillRect(x + 1, y + 1, (w - 2) * val / 100, h - 2, uiCol(wd["color"], C_GREEN));
+  }
+}
+
+void uiRender(JsonObject scr) {
+  if (!p8.ok) return;
+  uiButtonCount = 0;
+  kioskMode = "ui";
+  uint16_t bg = uiCol(scr["bg"], C_BLACK);
+  p8.fillScreen(bg);
+  int y0 = 6;
+  if (!scr["title"].isNull()) {
+    p8.drawText(6, y0, scr["title"].as<String>(), uiCol(scr["title_color"], C_YELL), bg, 3);
+    p8.fillRect(6, y0 + 28, p8.W - 12, 2, C_GREY);
+  }
+  JsonArray ws = scr["widgets"].as<JsonArray>();
+  for (JsonObject wd : ws) uiWidget(wd, bg);
+}
+
+/* ── 4-wire resistive touch ──────────────────────────────────────────────────
+ * The touch wires SHARE LCD data/control pins, so each read reconfigures them as
+ * ADC/GPIO inputs and touchRestore() puts them back to OUTPUT — otherwise the
+ * next render draws garbage. Defaults follow the S3-Uno shield; override at
+ * runtime with config.io.touch.  */
+int touchXP = 3, touchYM = 14, touchYP = 6, touchXM = 7;
+int touchCalX0 = 320, touchCalX1 = 3800, touchCalY0 = 320, touchCalY1 = 3800;
+// analogRead is 12-bit on ESP32 (0-4095).
+#define TOUCH_ADC_MAX 4095
+// Pressure band. Higher = harder press (see touchRaw). The floor rejects noise
+// and the ceiling rejects a shorted/absent panel reading full scale.
+int touchZMin = 350, touchZMax = 4095;
+bool touchSwap = false, touchInvX = false, touchInvY = false;
+bool touchDown = false;
+unsigned long touchLast = 0;
+
+// Hand the bus back to the display. Direction alone is NOT enough: on this
+// shield the touch panel shares the LCD's own control lines (yp=CS, xm=DC), and
+// a read drives CS HIGH — which DESELECTS the panel. Leaving it there makes
+// every later draw a no-op, so the screen looks frozen until a reboot re-runs
+// init(). Restore the levels the driver relies on, not just the modes.
+void touchRestore() {
+  int pins[4] = {touchXP, touchYM, touchYP, touchXM};
+  for (int i = 0; i < 4; i++) if (pins[i] >= 0) pinMode(pins[i], OUTPUT);
+#if USE_TFT_ILI9488_P8
+  for (int b = 0; b < 8; b++) if (p8.pD[b] >= 0) pinMode(p8.pD[b], OUTPUT);
+  if (p8.pRD >= 0) { pinMode(p8.pRD, OUTPUT); digitalWrite(p8.pRD, HIGH); }
+  if (p8.pDC >= 0) { pinMode(p8.pDC, OUTPUT); digitalWrite(p8.pDC, HIGH); }
+  if (p8.pWR >= 0) { pinMode(p8.pWR, OUTPUT); digitalWrite(p8.pWR, HIGH); }
+  if (p8.pCS >= 0) { pinMode(p8.pCS, OUTPUT); digitalWrite(p8.pCS, LOW); }  // re-select
+#endif
+}
+
+// Returns true and fills x/y/z with raw ADC values.
+bool touchRaw(int &x, int &y, int &z) {
+  pinMode(touchXP, OUTPUT); digitalWrite(touchXP, HIGH);
+  pinMode(touchXM, OUTPUT); digitalWrite(touchXM, LOW);
+  pinMode(touchYM, INPUT);  pinMode(touchYP, INPUT);
+  delayMicroseconds(60); x = (analogRead(touchYP) + analogRead(touchYP)) / 2;
+
+  pinMode(touchYP, OUTPUT); digitalWrite(touchYP, HIGH);
+  pinMode(touchYM, OUTPUT); digitalWrite(touchYM, LOW);
+  pinMode(touchXP, INPUT);  pinMode(touchXM, INPUT);
+  delayMicroseconds(60); y = (analogRead(touchXM) + analogRead(touchXM)) / 2;
+
+  // Pressure. NOTE THE INVERSION: across the plates z2-z1 is LARGE when nothing
+  // is touching (open circuit) and small under a press, so pressure is
+  // ADC_MAX - (z2 - z1). Reporting the raw difference as "pressure" made an
+  // untouched panel look like maximum force and a real press look like none —
+  // with a min/max band around it, no touch could ever register.
+  pinMode(touchXP, OUTPUT); digitalWrite(touchXP, LOW);
+  pinMode(touchYM, OUTPUT); digitalWrite(touchYM, HIGH);
+  pinMode(touchXM, INPUT);  pinMode(touchYP, INPUT);
+  int z1 = analogRead(touchXM), z2 = analogRead(touchYP);
+  z = TOUCH_ADC_MAX - (z2 - z1);
+  if (z < 0) z = 0;
+  touchRestore();
+  return true;
+}
+
+static int touchScale(int v, int lo, int hi, int span) {
+  if (v < lo) v = lo; if (v > hi) v = hi;
+  int d = hi - lo; if (d < 1) d = 1;
+  return (int)((long)(v - lo) * span / d);
+}
+
+// Map a press to screen coords. Returns false when nothing is being touched.
+bool touchPoint(int &sx, int &sy) {
+  int x, y, z;
+  if (!p8.ok || !touchRaw(x, y, z)) return false;
+  if (z < touchZMin || z > touchZMax) return false;
+  sx = touchScale(x, touchCalX0, touchCalX1, p8.W);
+  sy = touchScale(y, touchCalY0, touchCalY1, p8.H);
+  if (touchSwap) { int t = sx; sx = (int)((long)sy * p8.W / max(1, (int)p8.H));
+                   sy = (int)((long)t * p8.H / max(1, (int)p8.W)); }
+  if (touchInvX) sx = p8.W - sx;
+  if (touchInvY) sy = p8.H - sy;
+  if (sx < 0) sx = 0; if (sx >= p8.W) sx = p8.W - 1;
+  if (sy < 0) sy = 0; if (sy >= p8.H) sy = p8.H - 1;
+  return true;
+}
+
+void uiSendEvent(const String &action) {
+  StaticJsonDocument<256> d;
+  d["kind"] = "ui_event"; d["node_id"] = NODE; d["action"] = action;
+  emitSerial(d);                                   // works when bridged over USB too
+  String b; serializeJson(d, b);
+  httpPost("/mesh/ui/event", b);
+}
+
+// Sample touch continuously for a while. The main loop blocks for seconds in the
+// HTTP long-poll, so checking once per iteration misses a 200ms tap almost every
+// time — the screen felt dead even when the hit-test was right.
+void touchPump(unsigned long ms) {
+  unsigned long t0 = millis();
+  do {
+    touchTick();
+    delay(15);
+  } while (millis() - t0 < ms && kioskMode == "ui");
+}
+
+// Poll touch while a pushed screen is showing; one event per press.
+void touchTick() {
+  if (kioskMode != "ui" || !p8.ok || uiButtonCount == 0) return;
+  if (millis() - touchLast < 90) return;
+  touchLast = millis();
+  int sx, sy;
+  if (!touchPoint(sx, sy)) { touchDown = false; return; }   // released → re-arm
+  if (touchDown) return;                                     // debounce
+  touchDown = true;
+  for (int i = 0; i < uiButtonCount; i++) {
+    UiButton &b = uiButtons[i];
+    if (sx >= b.x && sx < b.x + b.w && sy >= b.y && sy < b.y + b.h) {
+      p8.fillRect(b.x, b.y, b.w, 3, C_WHITE);                // brief visual feedback
+      uiSendEvent(b.action);
+      return;
+    }
+  }
+}
+#endif // USE_TFT_ILI9488_P8
+
+// ── Reset cause ─────────────────────────────────────────────────────────────
+// A node that silently reboots is the hardest thing to debug with no console.
+// Report WHY the last boot happened, on screen and in hello/sysinfo.
+#include "esp_system.h"
+String resetReasonText(){
+  switch(esp_reset_reason()){
+    case ESP_RST_POWERON:  return "power-on";
+    case ESP_RST_SW:       return "sw restart";
+    case ESP_RST_PANIC:    return "PANIC (crash)";
+    case ESP_RST_INT_WDT:  return "interrupt watchdog";
+    case ESP_RST_TASK_WDT: return "task watchdog";
+    case ESP_RST_WDT:      return "watchdog";
+    case ESP_RST_BROWNOUT: return "BROWNOUT (power)";
+    case ESP_RST_DEEPSLEEP:return "deep-sleep wake";
+    case ESP_RST_EXT:      return "reset pin";
+    default:               return "unknown";
+  }
+}
+String bootReason = "";
+
+// ── Wi-Fi diagnosis ─────────────────────────────────────────────────────────
+// "Didn't connect" has several very different causes and they are trivial to
+// tell apart with a scan — but only if someone reports the answer. The ESP32 is
+// 2.4GHz-only, so a dual-band router advertising one SSID is a common trap.
+String wifiVerdict = "";
+
+void diagnoseWifi() {
+  if (!wifiSsid.length()) { wifiVerdict = "no creds"; return; }
+  int n = WiFi.scanNetworks();
+  int found = -1;
+  for (int i = 0; i < n; i++) if (WiFi.SSID(i) == wifiSsid) { found = i; break; }
+  if (found < 0) wifiVerdict = "SSID not seen (2.4GHz only?)";
+  else           wifiVerdict = "seen " + String(WiFi.RSSI(found)) + "dBm, check password";
+  Serial.printf("[wifi] diagnosis: %s (%d networks visible)\n", wifiVerdict.c_str(), n);
+  WiFi.scanDelete();
+}
+
+String wifiStateText() {
+  if (WiFi.status() == WL_CONNECTED) return "connected";
+  if (!wifiSsid.length())            return "no creds";
+  if (wifiVerdict.length())          return wifiVerdict;
+  switch (WiFi.status()) {
+    case WL_NO_SSID_AVAIL:  return "SSID not found";
+    case WL_CONNECT_FAILED: return "auth failed";
+    default:                return "connecting...";
+  }
+}
+
 // Status dashboard: identity, network, storage, last activity.
 void dspStatus() {
 #if USE_TFT_ILI9488_P8
@@ -404,12 +704,19 @@ void dspStatus() {
   if (sdOk) sd = String((unsigned long)(SD.usedBytes() / 1048576UL)) + "/" +
                  String((unsigned long)(SD.totalBytes() / 1048576UL)) + " MB";
 #endif
+  // The Arduino build runs with USB-CDC off, so Serial goes to UART0 and a USB
+  // cable shows you nothing. The screen is the only console most people have —
+  // put the version and the actual network verdict on it.
+  p8.drawText(p8.W - 8 - (int)strlen(FW_VERSION) * 6, 14, FW_VERSION, C_GREY, C_BLACK, 1);
   String body;
   body += "node   " + NODE + "\n";
+  body += "wifi   " + (wifiSsid.length() ? wifiSsid : String("(no creds)")) +
+          "  " + wifiStateText() + "\n";
   body += "ip     " + ip + "  rssi " + String(WiFi.RSSI()) + "\n";
   body += "server " + SERVER + "\n";
   body += "uptime " + String(millis() / 1000) + "s   heap " + String((int)(ESP.getFreeHeap() / 1024)) + "k\n";
   body += "sd     " + sd + "\n";
+  body += "boot   " + bootReason + "\n";
   body += "last   " + lastNote;
   p8.drawText(8, 48, body, C_WHITE, C_BLACK, 2);
 #endif
@@ -442,6 +749,149 @@ void dspTest() {
   kioskMode = "text";   // hold the pattern until the next kiosk_set / status switch
 #endif
 }
+
+/* Stream an image straight from the network to the panel.
+ *
+ * Format is deliberately dumb: an 8-byte header "V565" + big-endian w,h, then
+ * raw RGB565 rows. That means no decoder, no full-frame buffer (480x320 would be
+ * 300KB) and no base64 bloat through the job queue — the node blits each row as
+ * it arrives. Vera renders anything (a page screenshot, a sprite frame, a
+ * generated image) into this with Pillow. Returns false on any short read so a
+ * truncated transfer can't leave half a frame claiming success. */
+#if USE_TFT_ILI9488_P8
+bool dspImageUrl(const String &url, int dx, int dy) {
+  if (!p8.ok || WiFi.status() != WL_CONNECTED) return false;
+  HTTPClient http;
+  http.begin(url.startsWith("/") ? (SERVER + url) : url);
+  http.setTimeout(15000);
+  if (TOKEN.length() && TOKEN != "open") http.addHeader("X-Mesh-Token", TOKEN);
+  int code = http.GET();
+  if (code != 200) { http.end(); return false; }
+  WiFiClient *st = http.getStreamPtr();
+
+  uint8_t hdr[8];
+  if (st->readBytes(hdr, 8) != 8 ||
+      hdr[0] != 'V' || hdr[1] != '5' || hdr[2] != '6' || hdr[3] != '5') {
+    http.end(); return false;
+  }
+  int iw = (hdr[4] << 8) | hdr[5], ih = (hdr[6] << 8) | hdr[7];
+  if (iw <= 0 || ih <= 0 || iw > 1024 || ih > 1024) { http.end(); return false; }
+
+  int w = min(iw, (int)p8.W - dx), h = min(ih, (int)p8.H - dy);
+  if (w <= 0 || h <= 0) { http.end(); return false; }
+
+  static uint8_t row[1024 * 2];                 // one source row, RGB565
+  p8.window(dx, dy, w, h);
+  bool ok = true;
+  for (int y = 0; y < ih && ok; y++) {
+    int want = iw * 2;
+    int got = st->readBytes(row, want);
+    if (got != want) { ok = false; break; }
+    if (y >= h) continue;                        // taller than the screen: drain, don't draw
+    for (int i = 0; i < w * 2; i++) p8.wr8(row[i]);
+    handleSerialInput();                         // stay responsive on long transfers
+  }
+  http.end();
+  return ok;
+}
+#endif
+
+/* Sprite / companion animation.
+ *
+ * Re-fetching a frame every tick would make anything above a few fps stutter and
+ * saturate the link, so the whole sequence arrives in ONE file ("V56A" + w,h,
+ * count,fps + frames) and lives in PSRAM. Playback is then local and needs no
+ * network at all. Frames are held raw: decoding per-frame on a 240MHz core while
+ * also driving a parallel bus is not worth the RAM it would save. */
+#if USE_TFT_ILI9488_P8
+struct AnimState {
+  uint8_t *buf = nullptr;
+  size_t   bytes = 0;
+  int w = 0, h = 0, count = 0, fps = 10, idx = 0, x = 0, y = 0;
+  bool loop = true, active = false;
+  unsigned long last = 0;
+} anim;
+
+void animFree() {
+  if (anim.buf) { free(anim.buf); anim.buf = nullptr; }
+  anim.bytes = 0; anim.count = 0; anim.active = false;
+}
+
+// Biggest sequence we'll accept. PSRAM when the board has it, otherwise a small
+// slice of heap — refusing loudly beats an allocation failure mid-blit.
+static size_t animBudget() {
+  size_t ps = ESP.getFreePsram();
+  if (ps > 64 * 1024) return ps - 64 * 1024;      // leave the allocator headroom
+  size_t heap = ESP.getFreeHeap();
+  return heap > 120 * 1024 ? heap - 100 * 1024 : 0;
+}
+
+bool animLoad(const String &url, int dx, int dy, bool loopIt, String &err) {
+  if (!p8.ok || WiFi.status() != WL_CONNECTED) { err = "no display / offline"; return false; }
+  HTTPClient http;
+  http.begin(url.startsWith("/") ? (SERVER + url) : url);
+  http.setTimeout(20000);
+  if (TOKEN.length() && TOKEN != "open") http.addHeader("X-Mesh-Token", TOKEN);
+  if (http.GET() != 200) { http.end(); err = "http error"; return false; }
+  WiFiClient *st = http.getStreamPtr();
+
+  uint8_t hdr[12];
+  if (st->readBytes(hdr, 12) != 12 ||
+      hdr[0] != 'V' || hdr[1] != '5' || hdr[2] != '6' || hdr[3] != 'A') {
+    http.end(); err = "bad header"; return false;
+  }
+  int w  = (hdr[4] << 8) | hdr[5],  h   = (hdr[6] << 8) | hdr[7];
+  int n  = (hdr[8] << 8) | hdr[9],  fps = (hdr[10] << 8) | hdr[11];
+  if (w <= 0 || h <= 0 || n <= 0 || w > 480 || h > 480 || n > 240) {
+    http.end(); err = "bad geometry"; return false;
+  }
+  size_t need = (size_t)w * h * 2 * n;
+  size_t budget = animBudget();
+  if (need > budget) {
+    http.end();
+    err = "sequence is " + String((unsigned long)(need / 1024)) + "KB, only " +
+          String((unsigned long)(budget / 1024)) + "KB free — fewer/smaller frames";
+    return false;
+  }
+
+  animFree();
+  anim.buf = (uint8_t *)(ESP.getFreePsram() > need ? ps_malloc(need) : malloc(need));
+  if (!anim.buf) { http.end(); err = "allocation failed"; return false; }
+
+  size_t got = 0;
+  while (got < need) {
+    int r = st->readBytes(anim.buf + got, min((size_t)2048, need - got));
+    if (r <= 0) break;
+    got += r;
+    handleSerialInput();                          // long transfer: stay alive
+  }
+  http.end();
+  if (got != need) { animFree(); err = "short transfer"; return false; }
+
+  anim.bytes = need; anim.w = w; anim.h = h; anim.count = n;
+  anim.fps = fps > 0 ? fps : 10; anim.idx = 0;
+  anim.x = dx; anim.y = dy; anim.loop = loopIt;
+  anim.active = true; anim.last = 0;
+  return true;
+}
+
+// Blit the next frame if it is due. Called from loop(), never blocks.
+void animTick() {
+  if (!anim.active || !anim.buf || !p8.ok) return;
+  unsigned long due = 1000UL / (unsigned long)max(1, anim.fps);
+  if (millis() - anim.last < due) return;
+  anim.last = millis();
+  uint8_t *f = anim.buf + (size_t)anim.idx * anim.w * anim.h * 2;
+  p8.window(anim.x, anim.y, anim.w, anim.h);
+  size_t px = (size_t)anim.w * anim.h * 2;
+  for (size_t i = 0; i < px; i++) p8.wr8(f[i]);
+  anim.idx++;
+  if (anim.idx >= anim.count) {
+    anim.idx = 0;
+    if (!anim.loop) anim.active = false;          // one-shot: hold the last frame
+  }
+}
+#endif
 
 // Draw a 24-bit uncompressed BMP from SD, top-left anchored, clipped to screen.
 #if USE_TFT_ILI9488_P8 && USE_SD_SPI
@@ -494,11 +944,15 @@ String chipId(){ uint64_t m=ESP.getEfuseMac(); char b[20]; sprintf(b,"%04X%08X",
 void emitSerial(const JsonDocument& doc){ serializeJson(doc, Serial); Serial.println(); }
 
 // POST helper; returns response body ("" on failure)
+int lastHttpCode = 0;                            // last httpPost result, for diagnostics
+int otaLastPct = -1;                             // throttles OTA progress telemetry
+
 String httpPost(const String& path, const String& body){
-  if(WiFi.status()!=WL_CONNECTED) return "";
+  if(WiFi.status()!=WL_CONNECTED){ lastHttpCode = -1000; return ""; }
   HTTPClient http; http.begin(SERVER+path); http.addHeader("Content-Type","application/json");
   if(TOKEN.length() && TOKEN!="open") http.addHeader("X-Mesh-Token", TOKEN);
   int code = http.POST(body); String out = (code>0)? http.getString() : "";
+  lastHttpCode = code;
   http.end(); return out;
 }
 
@@ -506,7 +960,11 @@ String httpPost(const String& path, const String& body){
 void enroll(){
   StaticJsonDocument<512> d;
   d["kind"]="hello"; d["node_id"]=NODE; d["name"]=NODE; d["board"]="esp32";
-  d["fw"]="1.1"; d["mac"]=WiFi.macAddress(); d["ip"]=WiFi.localIP().toString();
+  // runtime + chip pick the OTA artifact: an image built for another chip must
+  // never be pushed at this node.
+  d["fw"]=FW_VERSION; d["runtime"]="arduino"; d["chip"]=ESP.getChipModel();
+  d["reset_reason"]=bootReason;                   // why the node last rebooted
+  d["mac"]=WiFi.macAddress(); d["ip"]=WiFi.localIP().toString();
   d["rssi"]=WiFi.RSSI(); if(TOKEN.length()&&TOKEN!="open") d["token"]=TOKEN;
   JsonArray mods=d.createNestedArray("modules");
 #if MOD_SENSOR
@@ -523,6 +981,9 @@ void enroll(){
 #endif
 #if USE_TFT_ILI9488_P8 || defined(USE_TFT)
   mods.add("kiosk");
+#endif
+#if USE_TFT_ILI9488_P8
+  mods.add("ui");                               // server-driven screens + touch
 #endif
 #if USE_SD_SPI
   mods.add("storage");
@@ -542,14 +1003,25 @@ void enroll(){
   String body; serializeJson(d,body);
   emitSerial(d);                                 // also announce over USB serial
   String resp = httpPost("/mesh/hello", body);
-  if(resp.length()){
-    StaticJsonDocument<1024> r; if(!deserializeJson(r,resp)){
+  // Don't claim success blindly: a node that joined Wi-Fi but can't reach the
+  // server used to sit there showing "enrolled" while being absent from the
+  // fleet. Put the real reason on the console AND the screen.
+  if(lastHttpCode == 200 && resp.length()){
+    DynamicJsonDocument r(2048); if(!deserializeJson(r,resp)){
       if(r.containsKey("token")){ nodeToken=r["token"].as<String>(); TOKEN=nodeToken; }
       if(r["heartbeat"].is<int>()) {/* could adjust poll cadence */}
       applyConfig(r["config"]);
     }
+    lastNote = "enrolled";
+    Serial.printf("[mesh] enrolled at %s as %s\n", SERVER.c_str(), NODE.c_str());
+  } else {
+    lastNote = "enroll failed " + String(lastHttpCode);
+    Serial.printf("[mesh] ENROLL FAILED: POST %s/mesh/hello -> %d. Check the server URL "
+                  "(mesh panel ▸ Server URL) is reachable from the node's network%s\n",
+                  SERVER.c_str(), lastHttpCode,
+                  SERVER.startsWith("https") ? " — and note plain HTTP is far more reliable "
+                                               "here than a self-signed HTTPS endpoint" : "");
   }
-  lastNote = "enrolled";
   if (kioskMode == "status") dspStatus();
 }
 
@@ -581,6 +1053,28 @@ void applyConfig(JsonVariant cfg){
     if(changed){ p8.init(); dspStatus(); }
   }
   if(cfg["kiosk"]["rotation"].is<int>()) { p8.setRotation(cfg["kiosk"]["rotation"].as<int>()); dspStatus(); }
+  // Touch panel: pins and calibration, both remappable with no reflash.
+  // config.io.touch = {xp,ym,yp,xm}   config.touch = {x0,x1,y0,y1,zmin,zmax,swap,invx,invy}
+  JsonVariant tp = cfg["io"]["touch"];
+  if(!tp.isNull()){
+    if(tp["xp"].is<int>()) touchXP=tp["xp"];
+    if(tp["ym"].is<int>()) touchYM=tp["ym"];
+    if(tp["yp"].is<int>()) touchYP=tp["yp"];
+    if(tp["xm"].is<int>()) touchXM=tp["xm"];
+    touchRestore();                       // hand the shared LCD pins straight back
+  }
+  JsonVariant tc = cfg["touch"];
+  if(!tc.isNull()){
+    if(tc["x0"].is<int>())   touchCalX0=tc["x0"];
+    if(tc["x1"].is<int>())   touchCalX1=tc["x1"];
+    if(tc["y0"].is<int>())   touchCalY0=tc["y0"];
+    if(tc["y1"].is<int>())   touchCalY1=tc["y1"];
+    if(tc["zmin"].is<int>()) touchZMin=tc["zmin"];
+    if(tc["zmax"].is<int>()) touchZMax=tc["zmax"];
+    if(!tc["swap"].isNull()) touchSwap=tc["swap"].as<bool>();
+    if(!tc["invx"].isNull()) touchInvX=tc["invx"].as<bool>();
+    if(!tc["invy"].isNull()) touchInvY=tc["invy"].as<bool>();
+  }
 #endif
 #if USE_SD_SPI
   JsonVariant s = cfg["io"]["sd"];
@@ -617,7 +1111,7 @@ void sendTelemetry(){
 
 // ── Result reporting ────────────────────────────────────────────────────────
 void sendResult(const String& jobId, const char* status, JsonVariant result, const String& err){
-  StaticJsonDocument<2560> d; d["kind"]="result"; d["node_id"]=NODE; d["job_id"]=jobId;   // roomy: wifi_scan/sysinfo results
+  DynamicJsonDocument d(3072); d["kind"]="result"; d["node_id"]=NODE; d["job_id"]=jobId;   // roomy: wifi_scan/sysinfo results
   d["status"]=status; if(!result.isNull()) d["result"]=result; if(err.length()) d["error"]=err;
   String body; serializeJson(d,body); emitSerial(d); httpPost("/mesh/result", body);
 }
@@ -705,7 +1199,7 @@ void snCb(void* buf, wifi_promiscuous_pkt_type_t type){
 
 // Returns true if this job type was a toolkit job (handled + result sent).
 bool toolkitJob(const String& id, const String& type, JsonObject p){
-  StaticJsonDocument<1024> res; JsonVariant rv = res.to<JsonVariant>();
+  DynamicJsonDocument res(1536); JsonVariant rv = res.to<JsonVariant>();
 
 #if TOOLKIT_RGB
   if(type=="neopixel_set"){
@@ -791,11 +1285,92 @@ bool toolkitJob(const String& id, const String& type, JsonObject p){
     else sendResult(id,"error",rv,"target not seen: "+target);
     return true;
   }
+#if USE_TFT_ILI9488_P8
+  // ── Server-driven UI ──────────────────────────────────────────────────────
+  if(type=="ui_screen"){
+    if(!p8.ok){ sendResult(id,"error",rv,"no display"); return true; }
+    JsonObject scr = p["screen"].is<JsonObject>() ? p["screen"].as<JsonObject>() : p;
+    animFree();                                   // a new screen supersedes any animation
+    uiRender(scr);
+    res["ok"]=true; res["buttons"]=uiButtonCount; sendResult(id,"done",rv,""); return true;
+  }
+  if(type=="ui_image"){
+    if(!p8.ok){ sendResult(id,"error",rv,"no display"); return true; }
+    String u = p["url"].as<String>();
+    if(!u.length()){ sendResult(id,"error",rv,"url required"); return true; }
+    if(p["clear"].as<bool>()) p8.fillScreen(p["bg"].is<int>()?(uint16_t)p["bg"].as<int>():C_BLACK);
+    kioskMode = "image";
+    bool okimg = dspImageUrl(u, p["x"] | 0, p["y"] | 0);
+    if(!okimg){ sendResult(id,"error",rv,"image fetch/decode failed: "+u); return true; }
+    res["shown"]=u; sendResult(id,"done",rv,""); return true;
+  }
+  if(type=="ui_anim"){
+    if(!p8.ok){ sendResult(id,"error",rv,"no display"); return true; }
+    String u = p["url"].as<String>();
+    if(!u.length()){ sendResult(id,"error",rv,"url required"); return true; }
+    if(p["clear"].as<bool>()) p8.fillScreen(p["bg"].is<int>()?(uint16_t)p["bg"].as<int>():C_BLACK);
+    String err;
+    bool okA = animLoad(u, p["x"] | 0, p["y"] | 0,
+                        p["loop"].isNull() ? true : p["loop"].as<bool>(), err);
+    if(!okA){ sendResult(id,"error",rv,"anim: "+err); return true; }
+    kioskMode = "anim";
+    res["frames"]=anim.count; res["fps"]=anim.fps;
+    res["kb"]=(int)(anim.bytes/1024); res["psram"]=(int)(ESP.getFreePsram()/1024);
+    sendResult(id,"done",rv,""); return true;
+  }
+  if(type=="ui_anim_stop"){
+    animFree(); kioskMode="status"; dspStatus();
+    sendResult(id,"done",rv,""); return true;
+  }
+  if(type=="ui_clear"){
+    animFree(); kioskMode="status"; uiButtonCount=0; dspStatus();
+    sendResult(id,"done",rv,""); return true;
+  }
+  if(type=="touch_raw"){
+    // Calibration helper: hold a finger on the screen while this runs and read
+    // back the raw ADC values to feed into touch_cal.
+    int samples = p["samples"] | 5, bx=0, by=0, bz=-100000;
+    JsonArray all = res.createNestedArray("all");
+    for(int s=0;s<samples;s++){
+      int x,y,z; if(touchRaw(x,y,z)){
+        JsonArray one = all.createNestedArray(); one.add(x); one.add(y); one.add(z);
+        if(z>bz){ bx=x; by=y; bz=z; }
+      }
+      delay(80);
+    }
+    JsonArray best = res.createNestedArray("raw"); best.add(bx); best.add(by); best.add(bz);
+    JsonObject cal = res.createNestedObject("cal");
+    cal["x0"]=touchCalX0; cal["x1"]=touchCalX1; cal["y0"]=touchCalY0; cal["y1"]=touchCalY1;
+    cal["zmin"]=touchZMin; cal["zmax"]=touchZMax;
+    cal["swap"]=touchSwap; cal["invx"]=touchInvX; cal["invy"]=touchInvY;
+    JsonObject pins = res.createNestedObject("pins");
+    pins["xp"]=touchXP; pins["ym"]=touchYM; pins["yp"]=touchYP; pins["xm"]=touchXM;
+    sendResult(id,"done",rv,""); return true;
+  }
+  if(type=="touch_cal"){
+    if(p["x0"].is<int>())   touchCalX0=p["x0"];
+    if(p["x1"].is<int>())   touchCalX1=p["x1"];
+    if(p["y0"].is<int>())   touchCalY0=p["y0"];
+    if(p["y1"].is<int>())   touchCalY1=p["y1"];
+    if(p["zmin"].is<int>()) touchZMin=p["zmin"];
+    if(p["zmax"].is<int>()) touchZMax=p["zmax"];
+    if(!p["swap"].isNull()) touchSwap=p["swap"].as<bool>();
+    if(!p["invx"].isNull()) touchInvX=p["invx"].as<bool>();
+    if(!p["invy"].isNull()) touchInvY=p["invy"].as<bool>();
+    res["ok"]=true; sendResult(id,"done",rv,""); return true;
+  }
+#endif
   if(type=="sysinfo"){
     res["node_id"]=NODE; res["chip"]=ESP.getChipModel(); res["cores"]=ESP.getChipCores();
     res["rev"]=ESP.getChipRevision(); res["cpu_mhz"]=ESP.getCpuFreqMHz();
     res["flash_mb"]=(int)(ESP.getFlashChipSize()/1048576); res["psram_mb"]=(int)(ESP.getPsramSize()/1048576);
     res["heap_free"]=(int)ESP.getFreeHeap(); res["mac"]=WiFi.macAddress(); res["sdk"]=ESP.getSdkVersion();
+    res["reset_reason"]=bootReason; res["fw"]=FW_VERSION;
+    res["loop_stack_free"]=(int)uxTaskGetStackHighWaterMark(NULL);
+    res["psram_free_kb"]=(int)(ESP.getFreePsram()/1024);
+#if USE_TFT_ILI9488_P8
+    res["anim_frames"]=anim.count; res["anim_active"]=anim.active;
+#endif
     sendResult(id,"done",rv,""); return true;
   }
   if(type=="deep_sleep"){
@@ -873,7 +1448,7 @@ void runJob(JsonObject job){
   String id   = job["job_id"].as<String>();
   String type = job["type"].as<String>();
   JsonObject p = job["payload"].as<JsonObject>();
-  StaticJsonDocument<2048> res; JsonVariant rv = res.to<JsonVariant>();
+  DynamicJsonDocument res(3072); JsonVariant rv = res.to<JsonVariant>();
   lastNote = type;
 
   if(type=="identify"){
@@ -906,10 +1481,32 @@ void runJob(JsonObject job){
     if(url.startsWith("/")) url = SERVER + url;
     if(mode=="file"){ sendResult(id,"error",rv,"file OTA is MicroPython-only; use a .bin for Arduino"); }
     else {
-      sendResult(id,"done",rv,"OTA starting");           // report before we reboot
-      WiFiClient client; t_httpUpdate_return r = httpUpdate.update(client, url);
-      if(r==HTTP_UPDATE_FAILED) sendResult(id,"error",rv,String("OTA failed: ")+httpUpdate.getLastErrorString());
-      // HTTP_UPDATE_OK reboots automatically into the new image
+      // Progress is reported as telemetry, not as the job result: a successful
+      // update reboots the node, so the result can never be sent. Claiming
+      // "done" up front (as this used to) made a silent failure look like a
+      // success and left no way to tell the two apart.
+      lastNote = "OTA starting"; if(kioskMode=="status") dspStatus();
+      Serial.printf("[ota] fetching %s\n", url.c_str());
+      otaLastPct = -1;
+      httpUpdate.onProgress([](int done, int total){
+        int pct = total > 0 ? (int)((long)done * 100 / total) : 0;
+        if(pct == otaLastPct || pct % 10) return;         // every 10%, not every packet
+        otaLastPct = pct;
+        StaticJsonDocument<160> t; t["kind"]="telemetry"; t["node_id"]=NODE;
+        t["metrics"]["ota_pct"]=pct; String b; serializeJson(t,b);
+        httpPost("/mesh/telemetry", b);
+        Serial.printf("[ota] %d%%\n", pct);
+      });
+      httpUpdate.rebootOnUpdate(true);
+      WiFiClient client;
+      t_httpUpdate_return r = httpUpdate.update(client, url);
+      // Only reached when the update did NOT happen — success reboots above.
+      String why = (r==HTTP_UPDATE_NO_UPDATES)
+                     ? String("server returned no update (304/empty)")
+                     : (String(httpUpdate.getLastError()) + ": " + httpUpdate.getLastErrorString());
+      lastNote = "OTA failed"; if(kioskMode=="status") dspStatus();
+      Serial.printf("[ota] FAILED %s\n", why.c_str());
+      sendResult(id,"error",rv,"OTA failed - " + why + " (url " + url + ")");
     }
   }
 #if MOD_WEB_FETCH
@@ -947,6 +1544,14 @@ void runJob(JsonObject job){
     if(p["rotation"].is<int>()) p8.setRotation(p["rotation"].as<int>());
 #endif
     if(mode=="status"){ kioskMode="status"; dspStatus(); }
+#if USE_TFT_ILI9488_P8
+    else if(p.containsKey("img_url")){
+      kioskMode="image";
+      if(!dspImageUrl(p["img_url"].as<String>(), p["x"] | 0, p["y"] | 0)){
+        sendResult(id,"error",rv,"image fetch failed"); return; }
+      res["shown"]=p["img_url"];
+    }
+#endif
     else if(mode=="test"){ dspTest(); res["shown"]="test-pattern"; }
 #if USE_TFT_ILI9488_P8 && USE_SD_SPI
     else if(p.containsKey("bmp")){
@@ -1000,6 +1605,73 @@ void runJob(JsonObject job){
     res["total_mb"]=(int)(SD.totalBytes()/1048576UL); res["used_mb"]=(int)(SD.usedBytes()/1048576UL);
     sendResult(id,"done",rv,"");
   }
+  else if(type=="sd_walk"){
+    // Recursive listing with a hard budget — an SD card can hold tens of
+    // thousands of files and the result has to fit one JSON response.
+    if(!sdOk && !sdMount()){ sendResult(id,"error",rv,"sd not mounted"); return; }
+    String root = p.containsKey("path") ? p["path"].as<String>() : String("/");
+    int maxFiles = p["max_files"] | 300, maxDepth = p["max_depth"] | 4;
+    JsonArray out = res.createNestedArray("files");
+    int found = 0, truncated = 0;
+    // Explicit stack: recursion here would nest File handles and eat the stack.
+    String stack[24]; int depth[24]; int sp = 0;
+    stack[sp] = root; depth[sp] = 0; sp++;
+    while(sp > 0 && found < maxFiles){
+      String dpath = stack[--sp]; int d = depth[sp];
+      File dir = SD.open(dpath);
+      if(!dir || !dir.isDirectory()){ if(dir) dir.close(); continue; }
+      for(File f = dir.openNextFile(); f; f = dir.openNextFile()){
+        String nm = String(f.name());
+        bool isDir = f.isDirectory(); long sz = (long)f.size();
+        f.close();
+        String full = nm.startsWith("/") ? nm : (dpath.endsWith("/") ? dpath + nm : dpath + "/" + nm);
+        if(isDir){
+          if(d + 1 <= maxDepth && sp < 24){ stack[sp] = full; depth[sp] = d + 1; sp++; }
+          continue;
+        }
+        if(found >= maxFiles){ truncated = 1; break; }
+        JsonObject e = out.createNestedObject();
+        e["path"] = full; e["size"] = sz;
+        found++;
+      }
+      dir.close();
+    }
+    res["count"] = found; res["truncated"] = truncated; res["root"] = root;
+    res["total_mb"]=(int)(SD.totalBytes()/1048576UL); res["used_mb"]=(int)(SD.usedBytes()/1048576UL);
+    sendResult(id,"done",rv,""); return;
+  }
+  else if(type=="sd_upload"){
+    // The node PUSHES files to Vera. Pulling them as job results would cost a
+    // long-poll round trip per 1KB chunk, which is unusable for real cards.
+    if(!sdOk && !sdMount()){ sendResult(id,"error",rv,"sd not mounted"); return; }
+    if(WiFi.status()!=WL_CONNECTED){ sendResult(id,"error",rv,"offline"); return; }
+    JsonArray want = p["paths"].as<JsonArray>();
+    int sent = 0, failed = 0, skipped = 0;
+    long budget = p["max_bytes"] | 8388608L;          // 8MB default per job
+    for(JsonVariant v : want){
+      String path = v.as<String>();
+      File f = SD.open(path);
+      if(!f || f.isDirectory()){ if(f) f.close(); failed++; continue; }
+      long sz = (long)f.size();
+      if(sz > budget){ f.close(); skipped++; continue; }
+      HTTPClient http;
+      http.begin(SERVER + "/mesh/sd/upload");
+      http.addHeader("Content-Type","application/octet-stream");
+      http.addHeader("X-Node-Id", NODE);
+      http.addHeader("X-Sd-Path", path);
+      http.addHeader("X-Sd-Size", String(sz));
+      if(TOKEN.length() && TOKEN!="open") http.addHeader("X-Mesh-Token", TOKEN);
+      int code = http.sendRequest("POST", &f, sz);    // stream straight off the card
+      http.end(); f.close();
+      if(code==200 || code==201){ sent++; budget -= sz; }
+      else if(code==208){ skipped++; }                // already stored, unchanged
+      else failed++;
+      handleSerialInput();
+      if(budget <= 0) break;
+    }
+    res["sent"]=sent; res["skipped"]=skipped; res["failed"]=failed;
+    sendResult(id,"done",rv,""); return;
+  }
   else if(type=="sd_read"){
     if(!sdOk && !sdMount()){ sendResult(id,"error",rv,"sd not mounted"); return; }
     String path=p["path"].as<String>();
@@ -1039,12 +1711,15 @@ void runJob(JsonObject job){
 void pollOnce(){
   if(WiFi.status()!=WL_CONNECTED) return;
   HTTPClient http;
-  String url = SERVER+"/mesh/poll?node_id="+NODE+"&wait=25";
+  // Long-poll is efficient but blocks the loop — and touch is polled in the
+  // loop. While a touch UI is showing, poll briefly so taps stay responsive.
+  bool uiActive = (kioskMode == "ui");
+  String url = SERVER+"/mesh/poll?node_id="+NODE+"&wait="+(uiActive?"2":"25");
   if(TOKEN.length()&&TOKEN!="open") url += "&token="+TOKEN;
-  http.begin(url); http.setTimeout(30000);
+  http.begin(url); http.setTimeout(uiActive?6000:30000);
   int code=http.GET();
   if(code==200){
-    String body=http.getString(); StaticJsonDocument<4096> d;
+    String body=http.getString(); DynamicJsonDocument d(16384);
     if(!deserializeJson(d,body)){
       for(JsonObject job : d["jobs"].as<JsonArray>()) runJob(job);
     }
@@ -1091,6 +1766,9 @@ void handleSerialInput(){
 // ── Setup / loop ────────────────────────────────────────────────────────────
 void setup(){
   Serial.begin(115200); delay(200);
+  bootReason = resetReasonText();
+  Serial.printf("[boot] fw=%s reset=%s heap=%u\n", FW_VERSION, bootReason.c_str(),
+                (unsigned)ESP.getFreeHeap());
   pinMode(LED_PIN,OUTPUT);
   if(BUZZER_PIN>=0) pinMode(BUZZER_PIN,OUTPUT);
 #if MOD_CONTROL
@@ -1110,31 +1788,68 @@ void setup(){
                     ((d3 & 0xFFFF) == 0x9486) ? "ILI9486 (wrong init!)" :
                     (((d3 & 0xFFFFFF) == 0) || ((d3 & 0xFFFF) == 0xFFFF)) ? "BUS DEAD - check D4=GPIO19/D5=GPIO20 (USB pins)" : "unknown");
     for (int b = 0; b < 8; b++) if (p8.pD[b] == 19 || p8.pD[b] == 20)
-      Serial.printf("[tft] WARNING: data D%d is on GPIO%d = native USB pin; disable USB-CDC (console on UART0) or that bit is stuck\n", b, p8.pD[b]);
+      Serial.printf("[tft] data D%d is on GPIO%d = native USB pin; usb_pad_released=%d "
+                    "(if 0: build with USB CDC On Boot: Disabled, or that bit stays stuck)\n",
+                    b, p8.pD[b], p8.usbFreed ? 1 : 0);
   }
-  dspText("VERA NODE", "booting…\nconnecting Wi-Fi", C_WHITE, C_BLACK, 2);
+  // First thing on screen, before Wi-Fi: proves which image is actually running.
+  dspText("VERA NODE", String("fw ") + FW_VERSION + "\nbooting…", C_WHITE, C_BLACK, 2);
 #elif defined(USE_TFT)
   tft.init(); tft.setRotation(1); tft.fillScreen(TFT_BLACK);
 #endif
 #if USE_SD_SPI
   sdMount();       // non-fatal if absent — telemetry just skips sd_* metrics
 #endif
+  // Credentials: flash-time bake is the DEFAULT, a serial provision (saved to
+  // NVS) overrides it. A freshly erased chip has no NVS, so the baked pair is
+  // what gets the node onto Wi-Fi with no cable step at all.
   prefs.begin("vera",true);
-  wifiSsid=prefs.getString("ssid",""); wifiPass=prefs.getString("pass","");
+  String nvsSsid=prefs.getString("ssid","");
+  wifiSsid = nvsSsid.length() ? nvsSsid : WIFI_SSID;
+  wifiPass = nvsSsid.length() ? prefs.getString("pass","") : WIFI_PASS;
   if(prefs.getString("server","").length()) SERVER=prefs.getString("server",SERVER);
   if(prefs.getString("node","").length())   NODE=prefs.getString("node",NODE);
   prefs.end();
   if(NODE=="{{NODE_ID}}"||NODE.length()==0) NODE="esp32-"+chipId();
 
+  Serial.printf("[wifi] ssid=\"%s\" (%s) server=%s node=%s\n", wifiSsid.c_str(),
+                nvsSsid.length() ? "from NVS" :
+                  (WIFI_SSID.length() ? "baked at flash time"
+                                      : "NONE - provision over serial or re-flash with Wi-Fi baked"),
+                SERVER.c_str(), NODE.c_str());
+#if USE_TFT_ILI9488_P8
+  // Put the SSID on screen: "no creds" and "wrong creds" look identical otherwise.
+  dspText("VERA NODE", (wifiSsid.length() ? ("connecting Wi-Fi\n" + wifiSsid)
+                                          : String("NO WI-FI CREDS\nprovision over USB"))
+                       + "\n\nfw " + FW_VERSION,
+          C_WHITE, C_BLACK, 2);
+#endif
   if(wifiSsid.length()) WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
   unsigned long t0=millis();
   while(WiFi.status()!=WL_CONNECTED && millis()-t0<12000){ handleSerialInput(); delay(200); }
-  if(WiFi.status()==WL_CONNECTED) enroll();
+  if(WiFi.status()==WL_CONNECTED){
+    Serial.printf("[wifi] connected, ip=%s rssi=%d\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
+    enroll();
+  } else {
+    Serial.printf("[wifi] FAILED to join \"%s\" (status=%d); diagnosing…\n",
+                  wifiSsid.c_str(), (int)WiFi.status());
+    diagnoseWifi();                       // scan → is it the band, the range, or the password?
+    lastNote = "wifi: " + wifiVerdict;
+#if USE_TFT_ILI9488_P8
+    dspText("WI-FI FAILED", (wifiSsid.length() ? wifiSsid : String("(no credentials)")) +
+            "\n" + wifiVerdict + "\n\nfw " + FW_VERSION, C_YELL, C_BLACK, 2);
+    delay(4000);                          // long enough to read before the status screen
+#endif
+  }
   if (kioskMode == "status") dspStatus();
 }
 
 void loop(){
   handleSerialInput();
+#if USE_TFT_ILI9488_P8
+  touchTick();
+  animTick();                                    // sprite/companion playback
+#endif
   if(WiFi.status()==WL_CONNECTED){
     pollOnce();                                  // blocks up to ~25s (long-poll)
     if(millis()-lastTelemetry>telemetryEvery){ sendTelemetry(); lastTelemetry=millis(); }
@@ -1146,6 +1861,11 @@ void loop(){
     }
 #endif
     runWorkerTasks();                            // autonomous edge tasks
+#if USE_TFT_ILI9488_P8
+    // Between polls, give touch the floor. Without this a tap only lands if it
+    // coincides with the split second between long-polls.
+    if (kioskMode == "ui" && uiButtonCount) touchPump(1200);
+#endif
 #if TOOLKIT_CSI
     csiTick();                                   // fold CSI window → presence telemetry
 #endif

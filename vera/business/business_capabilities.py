@@ -64,7 +64,8 @@ log = logging.getLogger("vera.business")
 
 try:
     from Vera.vera.capability_orchestration import (
-        APP, capability, emit_event, now_iso, register_ui, enum_schema,
+        APP, CAPABILITY_REGISTRY, capability, emit_event, now_iso, register_ui,
+        enum_schema,
     )
     from Vera.vera.fabric.data_fabric import _sqlite_conn
     _CAP_AVAILABLE = True
@@ -1446,6 +1447,48 @@ if _CAP_AVAILABLE:
         return d
 
     @capability(
+        "business.specialist_context", http_method="GET",
+        http_path="/business/specialist_context", http_tags=["business"],
+        memory="off", silent=True,
+        description="A fresh, compact real-data snapshot for the business "
+                    "specialist (business-operator) to consult FROM — sees "
+                    "ALL businesses/stores by default (via business.dashboard's "
+                    "real store rollup), or zooms into ONE active business/"
+                    "store when store_id is given (via business.store.get). "
+                    "This is the panel binding's specialist_context_cap for "
+                    "the business panel (see register_ui). Input: store_id "
+                    "(str — optional, zoom to one store), is_sim (int 0/1). "
+                    "Output: {context (str), asof}.")
+    async def cap_business_specialist_context(store_id: str = "", is_sim: int = 0,
+                                               trace_id=None) -> dict:
+        d = await cap_dashboard(is_sim=is_sim, trace_id=trace_id)
+        lines = []
+        stores_block = d.get("stores") or {}
+        all_stores = stores_block.get("stores") or []
+        totals = stores_block.get("totals") or {}
+        lines.append(f"REAL BUSINESS STATE — {len(all_stores)} store(s), "
+                     f"revenue_30d={totals.get('revenue_30d')} net_30d={totals.get('net_30d')} "
+                     f"open_orders={totals.get('open_orders')}:")
+        for s in all_stores[:20]:
+            lines.append(f"  {s.get('name')} [{s.get('id')}]: status={s.get('status')} "
+                         f"revenue_30d={s.get('revenue_30d')} net_30d={s.get('net_30d')} "
+                         f"open_orders={s.get('open_orders')} products={s.get('product_count')}")
+        if d.get("open_gigs") is not None:
+            lines.append(f"Open gigs: {d.get('open_gigs')} · open tasks: {d.get('open_tasks')}")
+        if store_id:
+            cap = CAPABILITY_REGISTRY.get("business.store.get")
+            if cap:
+                try:
+                    detail = await cap["func"](id=store_id, trace_id=trace_id)
+                    store = detail.get("store") if isinstance(detail, dict) else None
+                    if store:
+                        lines.append(f"ZOOMED IN — active store {store.get('name')} "
+                                     f"[{store_id}]: {json.dumps(store)[:1200]}")
+                except Exception as e:
+                    log.debug("specialist_context: store.get(%s) failed: %s", store_id, e)
+        return {"context": "\n".join(lines), "asof": now_iso()}
+
+    @capability(
         "business.graph", http_method="GET", http_path="/business/graph",
         http_tags=["business"], memory="off", silent=True,
         description="Business network graph (streams ↔ accounts ↔ gigs ↔ content ↔ "
@@ -1570,6 +1613,7 @@ if _CAP_AVAILABLE:
         "business.market.search", "business.watch.upsert", "business.watch.list",
         "business.watch.delete", "business.watch.scan", "business.market.alerts",
         "business.market.alert.seen", "business.market.reprice",
+        "business.specialist_context",
     ]
 
     # One top-level "Business" tab. The panel (/biz/panel) carries its own
@@ -1589,6 +1633,9 @@ if _CAP_AVAILABLE:
         "",
         ui_caps=_BIZ_UI_CAPS,
         mode="tab", tab_order=66,
+        specialist_agent="business-operator",
+        specialist_loop_profile="business-shop",
+        specialist_context_cap="business.specialist_context",
     )
 
     log.info("business: core ready (streams / money / inventory / gigs / content / "

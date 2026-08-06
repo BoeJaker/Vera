@@ -345,9 +345,42 @@ _VISION_PATTERNS = re.compile(
 )
 
 
+# How good a match each family is for the job. Callers take the head of this
+# list, so the order decides what actually gets used: a model built for
+# vision-language work beats a general model that merely accepts images
+# (gemma3, mistral-small), and reading small print off a product photo — the
+# Scan Station's whole job — is exactly where that gap shows.
+_VISION_RANK = (
+    (re.compile(r"qwen[3-9][\d.]*-?vl", re.I), 100),
+    (re.compile(r"qwen2[\d.]*-?vl", re.I),      90),
+    (re.compile(r"internvl", re.I),             85),
+    (re.compile(r"minicpm-v", re.I),            80),
+    (re.compile(r"pixtral", re.I),              75),
+    (re.compile(r"llama[\d.]*-vision", re.I),   70),
+    (re.compile(r"granite.*vision", re.I),      65),
+    (re.compile(r"llava|bakllava", re.I),       60),
+    (re.compile(r"moondream", re.I),            40),   # tiny; last resort
+    (re.compile(r"mistral-small", re.I),        30),   # general, takes images
+    (re.compile(r"gemma3", re.I),               25),   # general, takes images
+)
+
+
+def _vision_score(model: str) -> int:
+    for rx, score in _VISION_RANK:
+        if rx.search(model or ""):
+            return score
+    return 10                       # matched _VISION_PATTERNS but unrecognised
+
+
 async def _list_vision_models() -> List[Dict[str, str]]:
-    """[{instance, url, model}] for every vision-capable model on online instances."""
-    found: List[Dict[str, str]] = []
+    """[{instance, url, model}] for every vision-capable model on online instances,
+    best first.
+
+    Ordering matters: vision.describe tries candidates in order, so this is what
+    picks the model. Ranked by family, then GPU ahead of CPU — vision calls are
+    interactive (the Scan Station blocks on them), and the same model is an order
+    of magnitude quicker on the V100 than on a CPU node."""
+    found: List[Dict[str, Any]] = []
     for iid, inst in (OLLAMA_INSTANCES or {}).items():
         if inst.get("status") not in (None, "online"):
             continue
@@ -365,8 +398,11 @@ async def _list_vision_models() -> List[Dict[str, str]]:
                 continue
         for m in models:
             if m and _VISION_PATTERNS.search(m):
-                found.append({"instance": iid, "url": url, "model": m})
-    return found
+                found.append({"instance": iid, "url": url, "model": m,
+                              "_score": _vision_score(m),
+                              "_gpu": bool(inst.get("has_gpu"))})
+    found.sort(key=lambda f: (-f["_score"], not f["_gpu"], f["model"]))
+    return [{k: v for k, v in f.items() if not k.startswith("_")} for f in found]
 
 
 @capability(

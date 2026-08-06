@@ -186,3 +186,15 @@ System tools used opportunistically (called via bash, optional): `arp`, `ping` (
 - [Docker](./13-docker.md) — container lifecycle caps gated by the same sandbox
 - [Data Fabric](./06-data-fabric.md) — `netscan.fabric.load_web` source
 - [Galaxy Graph](./09-galaxy-graph.md) — the graph component the Netmap panel renders with
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_No capabilities resolved for this domain._
+<!-- VERA:AUTO:capabilities END -->

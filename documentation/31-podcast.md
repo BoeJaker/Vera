@@ -60,3 +60,15 @@ systems (dream, research) can discover them.
   download link. *Episodes* re-inserts past episodes.
 - *Defaults* persists the current speaker/style config server-side
   (`podcast.settings.set`), so agent-initiated generations use the same voices.
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_No capabilities resolved for this domain._
+<!-- VERA:AUTO:capabilities END -->

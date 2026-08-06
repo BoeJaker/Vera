@@ -1173,8 +1173,12 @@ if _CAP_AVAILABLE:
                  "markets.macro.catalog", "markets.macro.fetch",
                  "markets.sim.create", "markets.sim.list", "markets.sim.order",
                  "markets.sim.equity", "markets.sim.reset", "markets.sim.delete",
-                 "markets.layout.save", "markets.layout.list", "markets.layout.delete"],
+                 "markets.layout.save", "markets.layout.list", "markets.layout.delete",
+                 "markets.specialist_context"],
         mode="tab", tab_order=67,
+        specialist_agent="quant-strategist",
+        specialist_loop_profile="markets-quant",
+        specialist_context_cap="markets.specialist_context",
     )
 
     # ── Auto-update scheduler ──────────────────────────────────────────────────

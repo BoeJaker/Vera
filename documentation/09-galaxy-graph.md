@@ -331,3 +331,15 @@ const graph = window.veraUI.Graph.create(container, {
 - [Memory Graph](./05-memory-graph.md) — the data behind the memory source
 - [Data Fabric](./06-data-fabric.md) — the data behind the fabric / entity / aux sources
 - [Harness UI](./02-harness-ui.md) — how the Galaxy tab is registered
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_No capabilities resolved for this domain._
+<!-- VERA:AUTO:capabilities END -->

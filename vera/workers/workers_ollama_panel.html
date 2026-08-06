@@ -379,6 +379,8 @@ html.vpb-nav-hosted #secNav{display:none}
     <div class="navdiv"></div>
     <div class="snav" data-pane="proxmox" onclick="P.show('proxmox',this)">Proxmox</div>
     <div class="snav" data-pane="storage" onclick="P.show('storage',this)">Storage</div>
+    <div class="snav" data-pane="estate" onclick="P.show('estate',this)">Estate</div>
+    <div class="snav" data-pane="foundry" onclick="P.show('foundry',this)">Foundry</div>
     <div class="navdiv"></div>
     <div class="snav" data-pane="docker" onclick="P.show('docker',this)">Docker</div>
     <div class="snav" data-pane="sandbox" onclick="P.show('sandbox',this)">Sandbox</div>
@@ -871,10 +873,11 @@ html.vpb-nav-hosted #secNav{display:none}
               <button class="btn sm" onclick="P.catBrowseHome()" title="Back to the browse index">⌂ Browse</button>
               <input id="cat-q" placeholder="Search Hugging Face… (e.g. qwen, llama)" style="flex:1;min-width:180px;font-size:11px;padding:4px 8px;background:var(--bg0);border:1px solid var(--border);color:var(--text);border-radius:4px" onkeydown="if(event.key==='Enter')P.catSearch()">
               <select id="cat-task" style="font-size:10px;padding:3px 5px">
+                <option value="">any task</option>
                 <option value="text-generation">text-generation</option>
+                <option value="image-text-to-text">multimodal (VL)</option>
                 <option value="text2text-generation">text2text</option>
                 <option value="feature-extraction">embeddings</option>
-                <option value="">any task</option>
               </select>
               <label style="font-size:10px;color:var(--dim2);display:flex;align-items:center;gap:3px"><input type="checkbox" id="cat-gguf" checked> GGUF only</label>
               <select id="cat-sort" style="font-size:10px;padding:3px 5px">
@@ -1609,6 +1612,17 @@ html.vpb-nav-hosted #secNav{display:none}
          ════════════════════════════════════════════════════════════════════ -->
     <div class="pane" id="pane-storage" style="padding:0;overflow:hidden">
       <iframe id="storage-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
+    </div>
+
+    <!-- ESTATE PANE — backend infra map (Docker/Proxmox/provisioning/security),
+         lazy iframe to the interaction module's /interaction/panel -->
+    <div class="pane" id="pane-estate" style="padding:0;overflow:hidden">
+      <iframe id="estate-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
+    </div>
+
+    <!-- FOUNDRY PANE — OS provisioning (catalog × target × features), lazy iframe -->
+    <div class="pane" id="pane-foundry" style="padding:0;overflow:hidden">
+      <iframe id="foundry-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
     </div>
 
     <!-- ════════════════════════════════════════════════════════════════════
@@ -5860,6 +5874,8 @@ function showPane(name, el){
   if(name==='api'){ _mountFrame('api-frame', BASE+'/providers/panel'); }
   if(name==='provision'){ provSub(_prvSub); }
   if(name==='storage'){ _mountFrame('storage-frame', BASE+'/pxstore/panel'); }
+  if(name==='estate'){ _mountFrame('estate-frame', BASE+'/interaction/panel'); }
+  if(name==='foundry'){ _mountFrame('foundry-frame', BASE+'/foundry/panel'); }
   if(name==='network'){ netSub(_netSub); }
   if(name==='connections'){ connLoad(); }
   if(name==='nodes'){ ndInit(); }
@@ -5879,6 +5895,7 @@ if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
   {id:'workers', label:'Workers'}, {id:'nodes', label:'Nodes'}, {id:'ollama', label:'Ollama'},
   {id:'modelrouting', label:'Model Routing'},
   {id:'observe', label:'Observe'}, {id:'proxmox', label:'Proxmox'}, {id:'storage', label:'Storage'},
+  {id:'estate', label:'Estate'}, {id:'foundry', label:'Foundry'},
   {id:'docker', label:'Docker'}, {id:'sandbox', label:'Sandbox'}, {id:'network', label:'Network'},
   {id:'connections', label:'Connections'}, {id:'mimic', label:'Mimic'}, {id:'vllm', label:'vLLM'},
   {id:'openclaw', label:'OpenClaw'}, {id:'api', label:'API'}, {id:'provision', label:'Provision'},
@@ -6367,7 +6384,10 @@ async function catSearch(){
   $('cat-index').style.display='none';
   const res=$('cat-results'); res.style.display='';
   res.innerHTML='<span style="color:var(--dim)">Searching Hugging Face…</span>';
-  const p=new URLSearchParams({search:q,filter:filter||'',sort:sort,limit:'40',fits:fits}).toString();
+  // 100 is Hugging Face's per-query ceiling. Asking for less silently hides the
+  // long tail — and the quant repos you actually pull from (bartowski,
+  // mradermacher, unsloth) rank well below the base models on downloads.
+  const p=new URLSearchParams({search:q,filter:filter||'',sort:sort,limit:'100',fits:fits}).toString();
   const r=await api('/catalog/search?'+p); catStatus('');
   if(!r||r.error){ res.innerHTML='<span style="color:var(--err)">'+esc((r&&r.error)||'search failed')+'</span>'; return; }
   catRenderResults(r.results||[],'Search: '+q);
@@ -6961,7 +6981,10 @@ function ndCompToggle(){
 async function ndModelSearch(){
   const q=($('nd-model-q').value||'').trim();
   $('nd-model-results').innerHTML='<span style="color:var(--dim)">Searching…</span>';
-  const r=await api('/catalog/search?search='+encodeURIComponent(q)+'&filter=text-generation&limit=12&fits=cluster');
+  // 'gguf', not 'text-generation': current multimodal models are tagged
+  // image-text-to-text and most quant repos carry no pipeline tag at all, so
+  // filtering on text-generation hides about three quarters of what is pullable.
+  const r=await api('/catalog/search?search='+encodeURIComponent(q)+'&filter=gguf&limit=24&fits=cluster');
   const rows=(r&&r.results)||[];
   $('nd-model-results').innerHTML=rows.map(m=>{
     const fit=(m.fit&&m.fit.verdict)||'?';

@@ -72,6 +72,7 @@ except Exception:                                    # pragma: no cover
 from Vera.vera.capability_orchestration import (
     APP, capability, emit_event, now_iso,
 )
+import Vera.vera.capability_orchestration as _orch
 
 try:
     from Vera.vera.security import secrets as vsecrets
@@ -348,7 +349,26 @@ async def vscode_connect_cert():
         pem = Path(path).read_bytes()
     except Exception as e:
         return Response(f"cert unavailable: {e}", status_code=500, media_type="text/plain")
-    return Response(content=pem, media_type="application/x-pem-file",
+    # Hand out the ISSUING CA, not the leaf, so trust survives cert rotation and a
+    # migration onto FreeIPA's CA without re-distributing per-cert. Self-signed →
+    # the cert is its own CA (unchanged behaviour). CA-signed (e.g. after the
+    # FreeIPA cutover) → serve the issuing CA (via identity.ca.cert), so every
+    # future FreeIPA-issued Vera cert is already trusted and clients auto-update.
+    ca_pem = pem
+    try:
+        from cryptography import x509
+        crt = x509.load_pem_x509_certificate(pem)
+        if crt.issuer.rfc4514_string() != crt.subject.rfc4514_string():
+            reg = _orch.CAPABILITY_REGISTRY.get("identity.ca.cert")
+            fn = reg.get("raw") if reg else None
+            if fn:
+                r = await fn()
+                cp = (r or {}).get("ca_pem") if isinstance(r, dict) else None
+                if cp and "BEGIN CERTIFICATE" in cp:
+                    ca_pem = cp.encode() if isinstance(cp, str) else cp
+    except Exception:
+        pass  # any failure → fall back to serving the cert file itself
+    return Response(content=ca_pem, media_type="application/x-pem-file",
                     headers={"Content-Disposition": 'attachment; filename="vera-ca.crt"',
                              "Cache-Control": "no-store"})
 

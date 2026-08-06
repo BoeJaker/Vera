@@ -160,6 +160,30 @@
     .sbx .s-row button.danger:hover{color:var(--sb-err);border-color:var(--sb-err)}
     .sbx .s-empty{color:var(--sb-t3);font-size:10px}
 
+    /* ── packages ─────────────────────────────────────────────────────── */
+    .sbx .pkg-pending{border:1px solid var(--sb-ac);border-radius:5px;padding:9px 11px;
+                      margin-bottom:9px;background:color-mix(in srgb,var(--sb-ac) 9%,transparent)}
+    .sbx .pkg-pending b{font-size:11px;color:var(--sb-t1)}
+    .sbx .pkg-pending .pk-why{font-size:10px;color:var(--sb-t2);margin:3px 0 6px}
+    .sbx .pkg-pending ul{margin:0 0 7px;padding-left:16px}
+    .sbx .pkg-pending li{font-size:10px;color:var(--sb-t2);line-height:1.5}
+    .sbx .pkg-pending li code{color:var(--sb-t1)}
+    .sbx .pkg-pending .pk-acts{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+    .sbx .pkg-pending button{cursor:pointer;font:inherit;font-size:10px;border-radius:4px;
+                             padding:4px 10px;border:1px solid var(--sb-bd);background:var(--sb-s2);color:var(--sb-t2)}
+    .sbx .pkg-pending button.ok{background:var(--sb-ac);color:#06121c;border-color:var(--sb-ac);font-weight:600}
+    .sbx .pkg-pending button:hover{filter:brightness(1.08)}
+    .sbx .pkg-pending label{font-size:10px;color:var(--sb-t3);display:flex;align-items:center;gap:4px}
+    .sbx .pk{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--sb-bd);
+             border-radius:4px;padding:3px 8px;font-size:10px;color:var(--sb-t2);cursor:pointer;
+             background:var(--sb-s2);max-width:100%}
+    .sbx .pk:hover{border-color:var(--sb-bd2);color:var(--sb-t1)}
+    .sbx .pk input{margin:0}
+    .sbx .pk.on{border-color:var(--sb-ok);color:var(--sb-t1)}
+    .sbx .pk .k{color:var(--sb-t3);font-size:9px}
+    .sbx .pk.here{opacity:.55}
+    .sbx .pk.here .k::after{content:' · installed';color:var(--sb-ok)}
+
     .foot{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--sb-s1);
           border-top:1px solid var(--sb-bd);flex-shrink:0}
     .foot .msg{flex:1;font-size:10px;color:var(--sb-t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -288,6 +312,57 @@
           <div data-sbx-list style="display:flex;flex-direction:column;gap:5px"></div>
           <div class="hint" style="font-size:9px">While a sandbox is ACTIVE, its session's shell, code &amp; file IO run inside that container instead of this host (sandbox.session.*). Sleeping containers wake automatically on next use. Provision a dedicated desktopless Docker host with the <code>sandbox.host.provision</code> cap (Proxmox LXC + Docker).</div>
         </div>
+
+        <div class="sect-ttl">Packages · what code can import inside sandboxes</div>
+        <div class="sbx">
+          <div class="pkg-pending" data-pkg-pending style="display:none"></div>
+
+          <div class="s-cfg" style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;padding-bottom:7px;border-bottom:1px solid var(--sb-bd)">
+            <div class="field" style="flex:0 0 auto;min-width:210px">
+              <label>When code needs a missing package</label>
+              <select class="num" style="width:100%" data-pkg-policy>
+                <option value="ask">Ask me first — pause the run and list them</option>
+                <option value="auto">Auto-approve — install anything it needs</option>
+                <option value="deny">Never install — fail with the list</option>
+              </select>
+            </div>
+            <div class="field" style="flex:0 0 auto">
+              <label>Ask timeout (s)</label>
+              <input class="num" style="width:80px" type="number" min="15" step="15" data-pkg-timeout>
+            </div>
+            <div class="field" style="flex:1;min-width:180px">
+              <label>Always allow · never ask for these</label>
+              <input class="num" style="width:100%" type="text" data-pkg-allow spellcheck="false" placeholder="beautifulsoup4, pandas">
+            </div>
+            <div class="field" style="flex:1;min-width:150px">
+              <label>Never install</label>
+              <input class="num" style="width:100%" type="text" data-pkg-block spellcheck="false" placeholder="(none)">
+            </div>
+            <div class="field" style="flex:1;min-width:180px">
+              <label>Preload into every new sandbox</label>
+              <input class="num" style="width:100%" type="text" data-pkg-preload spellcheck="false" placeholder="requests, beautifulsoup4, lxml">
+            </div>
+            <button data-pkg-cfg-save title="Save the package policy, allow/block lists and preload set">Save policy</button>
+          </div>
+
+          <div class="s-head">
+            <span class="cnt" data-pkg-count>select a sandbox to see what's installed</span>
+            <select class="num" style="max-width:210px" data-pkg-session></select>
+            <button data-pkg-refresh>↻ Refresh</button>
+          </div>
+          <div data-pkg-catalog style="display:flex;flex-wrap:wrap;gap:5px"></div>
+          <div class="trow" style="display:flex;gap:6px;margin-top:7px">
+            <input data-pkg-custom spellcheck="false" placeholder="or type any package name(s), e.g. polars, pyarrow">
+            <select class="num" style="flex:0 0 auto" data-pkg-kind>
+              <option value="pip">pip</option>
+              <option value="apt">apt</option>
+              <option value="npm">npm</option>
+              <option value="pwsh">pwsh</option>
+            </select>
+            <button data-pkg-install>Install selected</button>
+          </div>
+          <div class="hint" style="font-size:9px">Tick packages to install them into the chosen sandbox. Before any code runs, its imports are checked against the container — missing ones follow the policy above. Installing here also teaches the coder what's available, so it stops hand-rolling replacements for libraries it assumed were absent.</div>
+        </div>
       </div>
       <div class="foot">
         <span class="msg" data-msg></span>
@@ -335,6 +410,20 @@
       });
       this._el('[data-sbx-refresh]').onclick = () => this._sbxRefresh();
       this._el('[data-sbx-cfg-save]').onclick = () => this._sbxCfgSave();
+      this._el('[data-pkg-refresh]').onclick = () => this._pkgRefresh();
+      this._el('[data-pkg-cfg-save]').onclick = () => this._pkgCfgSave();
+      this._el('[data-pkg-install]').onclick = () => this._pkgInstall();
+      this._el('[data-pkg-session]').addEventListener('change', () => this._pkgRefresh());
+      this._el('[data-pkg-custom]').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); this._pkgInstall(); }
+      });
+      // A paused run is time-sensitive — the step is blocked until answered, so
+      // poll for requests rather than making the user hit Refresh to find one.
+      this._pkgPoll = setInterval(() => this._pkgPending(), 6000);
+    }
+
+    disconnectedCallback() {
+      if (this._pkgPoll) { clearInterval(this._pkgPoll); this._pkgPoll = null; }
     }
 
     async _sbxCfgLoad() {
@@ -388,6 +477,178 @@
         if (!r.ok || j.ok === false) throw new Error(j.error || ('HTTP ' + r.status));
         this._msg('sandbox defaults saved', 'ok');
       } catch (e) { this._msg('sandbox defaults save failed: ' + e.message, 'err'); }
+    }
+
+    // ── packages ────────────────────────────────────────────────────────────
+    // Three jobs in one pane: answer whatever a paused run is asking for right
+    // now, set the standing policy, and browse/install into a chosen sandbox.
+    async _pkgRefresh() {
+      const sel = this._el('[data-pkg-session]');
+      const cnt = this._el('[data-pkg-count]');
+      const box = this._el('[data-pkg-catalog]');
+      if (!box) return;
+      // Sandbox picker — reuses the container list already on screen.
+      let rows = [];
+      try {
+        const r = await fetch(this._api('/remote/sandbox/list'), { method: 'GET' });
+        if (r.ok) rows = (await r.json()).sandboxes || [];
+      } catch (e) { /* module may not be loaded */ }
+      if (sel) {
+        const keep = sel.value;
+        sel.innerHTML = '<option value="">(no sandbox — catalog only)</option>' +
+          rows.map((s) => `<option value="${this._esc(s.session_id)}">${this._esc(s.label || s.session_id)}</option>`).join('');
+        if (keep && [...sel.options].some((o) => o.value === keep)) sel.value = keep;
+        else if (!keep) {
+          const act = rows.find((s) => s.active);
+          if (act) sel.value = act.session_id;
+        }
+      }
+      const sid = sel ? sel.value : '';
+      let data = {};
+      try {
+        const q = sid ? ('?session_id=' + encodeURIComponent(sid)) : '';
+        const r = await fetch(this._api('/remote/sandbox/packages/catalog' + q), { method: 'GET' });
+        if (r.ok) data = await r.json();
+      } catch (e) { /* leave empty */ }
+      const cat = data.catalog || [];
+      const pip = (data.installed || {}).pip || [];
+      if (cnt) {
+        cnt.textContent = sid
+          ? `${pip.length} python package${pip.length === 1 ? '' : 's'} installed · policy: ${data.policy || 'ask'}`
+          : 'select a sandbox to see what\'s installed';
+      }
+      // Reflect the saved policy onto the controls (the server is the truth).
+      const pp = this._el('[data-pkg-policy]'); if (pp && data.policy) pp.value = data.policy;
+      const pa = this._el('[data-pkg-allow]');
+      if (pa && document.activeElement !== pa) pa.value = (data.allowlist || []).join(', ');
+      const pb = this._el('[data-pkg-block]');
+      if (pb && document.activeElement !== pb) pb.value = (data.blocklist || []).join(', ');
+      box.innerHTML = cat.map((e) => `
+        <label class="pk${e.installed ? ' here' : ''}" title="${this._esc(e.summary || '')}">
+          <input type="checkbox" data-pkg-pick="${this._esc(e.name)}" data-pkg-pick-kind="${this._esc(e.kind)}"${e.installed ? ' disabled' : ''}>
+          <span>${this._esc(e.name)}</span><span class="k">${this._esc(e.kind)}</span>
+        </label>`).join('') || '<div class="s-empty">catalog unavailable</div>';
+      box.querySelectorAll('.pk input').forEach((cb) => {
+        cb.addEventListener('change', () => cb.closest('.pk').classList.toggle('on', cb.checked));
+      });
+      this._pkgPending();
+    }
+
+    async _pkgCfgLoad() {
+      try {
+        const r = await fetch(this._api('/remote/sandbox/config'), { method: 'GET' });
+        if (!r.ok) return;
+        const cfg = await r.json();
+        const pp = this._el('[data-pkg-policy]'); if (pp) pp.value = cfg.package_policy || 'ask';
+        const pt = this._el('[data-pkg-timeout]'); if (pt) pt.value = Number(cfg.package_ask_timeout_secs ?? 300);
+        const pa = this._el('[data-pkg-allow]'); if (pa) pa.value = (cfg.package_allowlist || []).join(', ');
+        const pb = this._el('[data-pkg-block]'); if (pb) pb.value = (cfg.package_blocklist || []).join(', ');
+        const pl = this._el('[data-pkg-preload]'); if (pl) pl.value = (cfg.package_preload || []).join(', ');
+      } catch (e) { /* module may not be loaded */ }
+    }
+
+    async _pkgCfgSave() {
+      try {
+        const body = {
+          package_policy: this._el('[data-pkg-policy]')?.value || 'ask',
+          package_ask_timeout_secs: Math.max(15, parseInt(this._el('[data-pkg-timeout]')?.value, 10) || 300),
+          package_allowlist: (this._el('[data-pkg-allow]')?.value || '').trim(),
+          package_blocklist: (this._el('[data-pkg-block]')?.value || '').trim(),
+          package_preload: (this._el('[data-pkg-preload]')?.value || '').trim(),
+        };
+        const r = await fetch(this._api('/remote/sandbox/config/set'), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const j = await r.json();
+        if (!r.ok || j.ok === false) throw new Error(j.error || ('HTTP ' + r.status));
+        this._msg('package policy saved', 'ok');
+      } catch (e) { this._msg('package policy save failed: ' + e.message, 'err'); }
+    }
+
+    async _pkgInstall() {
+      const sel = this._el('[data-pkg-session]');
+      const sid = sel ? sel.value : '';
+      if (!sid) { this._msg('pick a sandbox to install into', 'err'); return; }
+      // Catalog ticks carry their own ecosystem; the free-text box uses the
+      // dropdown next to it, so both can be submitted in one go.
+      const byKind = {};
+      this.shadowRoot.querySelectorAll('[data-pkg-pick]:checked').forEach((cb) => {
+        const k = cb.getAttribute('data-pkg-pick-kind') || 'pip';
+        (byKind[k] = byKind[k] || []).push(cb.getAttribute('data-pkg-pick'));
+      });
+      const custom = (this._el('[data-pkg-custom]')?.value || '').trim();
+      if (custom) {
+        const k = this._el('[data-pkg-kind]')?.value || 'pip';
+        (byKind[k] = byKind[k] || []).push(...custom.split(/[,\s]+/).filter(Boolean));
+      }
+      const kinds = Object.keys(byKind);
+      if (!kinds.length) { this._msg('nothing selected', 'err'); return; }
+      this._msg('installing…', '');
+      const done = [], failed = [];
+      for (const kind of kinds) {
+        try {
+          const r = await fetch(this._api('/remote/sandbox/packages/install'), {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: sid, kind, packages: byKind[kind] }),
+          });
+          const j = await r.json();
+          (j.installed || []).forEach((q) => done.push(q.package));
+          (j.failed || []).forEach((q) => failed.push(q.package));
+          if (j.ok === false && j.error) failed.push(j.error);
+        } catch (e) { failed.push(byKind[kind].join(', ') + ': ' + e.message); }
+      }
+      const el = this._el('[data-pkg-custom]'); if (el) el.value = '';
+      this._msg(
+        (done.length ? 'installed ' + done.join(', ') : 'nothing installed') +
+        (failed.length ? ' · FAILED: ' + failed.join('; ') : ''),
+        failed.length ? 'err' : 'ok');
+      this._pkgRefresh();
+    }
+
+    async _pkgPending() {
+      const box = this._el('[data-pkg-pending]');
+      if (!box) return;
+      let pend = [];
+      try {
+        const r = await fetch(this._api('/remote/sandbox/packages/pending'), { method: 'GET' });
+        if (r.ok) pend = (await r.json()).pending || [];
+      } catch (e) { /* module may not be loaded */ }
+      if (!pend.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+      box.style.display = '';
+      box.innerHTML = pend.map((p) => `
+        <div data-pkg-req="${this._esc(p.id)}">
+          <b>A run is paused — it needs ${(p.packages || []).length} package(s)</b>
+          <div class="pk-why">session <code>${this._esc(p.session_id || '')}</code>${p.context ? ' · ' + this._esc(p.context) : ''}</div>
+          <ul>${(p.packages || []).map((q) => `<li><code>${this._esc(q.package)}</code> <span class="k">(${this._esc(q.kind)})</span>${q.needed_for ? ' — needed for <code>' + this._esc(q.needed_for) + '</code>' : ''}</li>`).join('')}</ul>
+          <div class="pk-acts">
+            <button class="ok" data-pkg-approve="${this._esc(p.id)}">Install &amp; continue</button>
+            <button data-pkg-deny="${this._esc(p.id)}">Deny</button>
+            <label title="Add these to the always-allow list so future runs never ask again"><input type="checkbox" data-pkg-remember="${this._esc(p.id)}"> don't ask again for these</label>
+          </div>
+        </div>`).join('');
+      box.querySelectorAll('[data-pkg-approve]').forEach((b) => {
+        b.onclick = () => this._pkgRespond(b.getAttribute('data-pkg-approve'), 'approve');
+      });
+      box.querySelectorAll('[data-pkg-deny]').forEach((b) => {
+        b.onclick = () => this._pkgRespond(b.getAttribute('data-pkg-deny'), 'deny');
+      });
+    }
+
+    async _pkgRespond(id, decision) {
+      const rem = this.shadowRoot.querySelector(`[data-pkg-remember="${CSS.escape(id)}"]`);
+      try {
+        const r = await fetch(this._api('/remote/sandbox/packages/respond'), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, decision, remember: !!(rem && rem.checked) }),
+        });
+        const j = await r.json();
+        if (!r.ok || j.ok === false) throw new Error(j.error || ('HTTP ' + r.status));
+        this._msg(decision === 'approve' ? 'approved — the run is continuing' : 'denied', 'ok');
+      } catch (e) { this._msg('could not answer: ' + e.message, 'err'); }
+      // The install runs server-side inside the released step, so give it a
+      // moment before re-reading what's present.
+      setTimeout(() => this._pkgRefresh(), 1500);
     }
 
     // ── container sandboxes (per-session Docker isolation) ──────────────────
@@ -524,6 +785,8 @@
     async refresh() {
       this._msg('loading…');
       this._sbxRefresh();   // container-sandbox list loads in parallel
+      this._pkgCfgLoad();   // package policy + allow/block/preload lists
+      this._pkgRefresh();   // catalog + what's installed + any paused request
       try {
         const r = await fetch(this._api('/exec/sandbox'), { method: 'GET' });
         if (!r.ok) throw new Error('HTTP ' + r.status);

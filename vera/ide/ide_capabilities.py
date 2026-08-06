@@ -2130,7 +2130,9 @@ register_ui(
     </div>""",
     "", ui_caps=["ide.workspace.changes.list", "ide.workspace.changes.get",
                  "ide.workspace.changes.accept", "ide.workspace.changes.reject"],
-    mode="inject"
+    mode="inject",
+    specialist_agent="code-editor",
+    specialist_loop_profile="code-editing",
 )
 
 
@@ -2567,6 +2569,8 @@ register_ui(
         ],
     mode="tab",
     tab_order=50,
+    specialist_agent="coder",
+    specialist_loop_profile="coding",
 )
 
 # ─────────────────────────────────────────────────────────────────────────────

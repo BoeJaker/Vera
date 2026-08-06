@@ -35,3 +35,15 @@ The bridge runs both directions:
 
 - [Agents & Chat](./19-agents-chat.md) — Vera's native agentic loop (the in-house counterpart)
 - [Capability Framework §5](./01-capability-framework.md) — MCP proxying, the general pattern for bridging external tool servers
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_No capabilities resolved for this domain._
+<!-- VERA:AUTO:capabilities END -->

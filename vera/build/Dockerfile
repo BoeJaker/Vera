@@ -25,9 +25,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Build service + embedded toolchains (esptool for merge_bin, PlatformIO for the
 # long tail of boards, mpy-cross for MicroPython bytecode).
+# esptool is pinned to v4: v5 rewrote the CLI on a newer `click` than PlatformIO
+# pins, so an unpinned install lands a broken binary (ImportError on click.
+# shell_completion) AND renames merge_bin → merge-bin. Both break _merge_esp,
+# which silently downgrades firmware to a non-merged 0x10000 image.
 RUN pip3 install --no-cache-dir \
       "fastapi>=0.110" "uvicorn[standard]>=0.29" "pydantic>=2" \
-      esptool platformio mpy-cross
+      "esptool<5" platformio mpy-cross
 
 # arduino-cli
 RUN curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh \

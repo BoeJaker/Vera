@@ -528,7 +528,19 @@
 .alo-progress-line.exec .pkind{color:var(--acc2,#a8c87a);background:rgba(143,184,122,.12)}
 .alo-progress-line.train .pkind{color:var(--acc3,#c5a572);background:rgba(197,165,114,.12)}
 .alo-progress-tokens{font-family:var(--mono,monospace);font-size:9.5px;color:var(--text,#ddd5c8);background:var(--bg2,#252220);padding:4px 6px;border-radius:3px;white-space:pre-wrap;line-height:1.4;max-height:280px;min-height:60px;overflow-y:auto;word-break:break-word;flex-shrink:0}
-.alo-research-thinking{margin-top:4px;font-size:8.5px;color:var(--dim2,#8a7e70);font-style:italic;max-height:120px;overflow-y:auto;white-space:pre-wrap;border-left:2px solid var(--acc4,#a07ec1);padding-left:5px}
+/* The preamble is rendered markdown now, so pre-wrap (which would preserve the
+   source's own newlines on top of the block layout) and italics are dropped —
+   they fought the headings and lists. */
+.alo-research-thinking{margin-top:4px;font-size:9px;color:var(--dim2,#8a7e70);max-height:180px;overflow-y:auto;border-left:2px solid var(--acc4,#a07ec1);padding-left:7px;line-height:1.5}
+.alo-research-thinking p{margin:3px 0}
+.alo-research-thinking .md-h1,.alo-research-thinking .md-h2,.alo-research-thinking .md-h3,.alo-research-thinking .md-h4{font-size:9.5px;font-weight:600;color:var(--acc4,#a07ec1);margin:5px 0 2px;text-transform:none}
+.alo-research-thinking strong{color:var(--text2,#bfb6a8);font-weight:600}
+.alo-research-thinking em{font-style:italic}
+.alo-research-thinking .md-ul,.alo-research-thinking .md-ol{margin:2px 0 2px 15px;padding:0}
+.alo-research-thinking .md-ul li,.alo-research-thinking .md-ol li{margin:1px 0}
+.alo-research-thinking .md-inline{background:var(--bg2,#252220);padding:0 3px;border-radius:2px;font-family:var(--mono,monospace);font-size:8.5px;color:var(--acc2,#a8c87a)}
+.alo-research-thinking .md-code{background:var(--bg2,#252220);padding:4px 6px;border-radius:2px;font-family:var(--mono,monospace);font-size:8.5px;margin:3px 0;overflow-x:auto;white-space:pre}
+.alo-research-thinking .md-link{color:var(--acc,#5a9e8f)}
 
 /* HITL pause card */
 .alo-hitl-pause{margin:6px 0;padding:9px 11px;background:rgba(217,119,87,.08);border:1.5px solid var(--warn,#c9a45a);border-radius:3px;display:flex;flex-direction:column;gap:7px}
@@ -567,6 +579,17 @@
 .alo-handover-body .md-ul,.alo-handover-body .md-ol{margin:4px 0 4px 18px;padding:0}
 .alo-handover-body .md-ul li,.alo-handover-body .md-ol li{margin:2px 0}
 .alo-handover-body .md-link{color:var(--acc,#5a9e8f);text-decoration:underline}
+
+/* Pages read, live. min-width:0 on the flex link is required or a long URL runs
+   past the box instead of ellipsising. */
+.alo-research-pages{margin-top:5px;border:1px solid var(--border2,#3a3530);border-radius:3px;background:var(--bg0,#181614);padding:4px 6px;max-width:100%;box-sizing:border-box}
+.alo-rp-h{font-size:8.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--info,#7eb8d9);margin-bottom:3px}
+.alo-rp-list{max-height:150px;overflow-y:auto;overflow-x:hidden}
+.alo-rp{display:flex;gap:6px;align-items:baseline;font-family:var(--mono,monospace);font-size:9px;margin:1px 0;max-width:100%}
+.alo-rp a{color:var(--acc,#5a9e8f);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 auto}
+.alo-rp a:hover{text-decoration:underline}
+.alo-rp span{margin-left:auto;color:var(--dim2,#8a7e70);font-size:8.5px;white-space:nowrap;flex:0 0 auto}
+.alo-rp.bad a{color:var(--err,#c75a5a);text-decoration:line-through}
 
 /* Research report card — collapsible, mirrors .alo-handover-body's markdown styling */
 .alo-research-report{margin-top:6px;border:1px solid var(--border2,#3a3530);border-radius:3px;background:var(--bg0,#181614);overflow:hidden}
@@ -687,6 +710,10 @@
           if(row && act){ this._showFile(row.getAttribute('data-file'), act).catch(()=>{}); }
           return;
         }
+        // Package approval — the run is BLOCKED on this answer, so it is
+        // answered inline here rather than sending the user off to a panel.
+        const pk = e.target.closest('[data-pkg-act]');
+        if(pk){ this._answerPackages(pk); return; }
         const btn = e.target.closest('.alo-card-expand');
         if(btn){ this._toggleCardExpand(btn); return; }
         // Expand/collapse a truncated argument pill to reveal its full value.
@@ -1808,6 +1835,48 @@
         return;
       }
 
+      // ── the sandbox needs packages the run's code imports ────────────────
+      // This is a BLOCKING prompt: the step is parked inside the exec call
+      // until it is answered or the ask times out, so it renders as an action
+      // card with live buttons, not a passive log line.
+      if(t === 'remote.sandbox.package_request'){
+        const pkgs = ev.packages || [];
+        const rows = pkgs.map(q =>
+          `<div style="font-family:var(--mono,monospace);font-size:10px;margin:2px 0">`
+          + `<b>${_esc(q.package||'')}</b> <span style="color:var(--dim,#a89f92)">(${_esc(q.kind||'pip')})</span>`
+          + (q.needed_for?` <span style="color:var(--dim,#a89f92)">— ${_esc(q.needed_for)}</span>`:'')
+          + `</div>`).join('');
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">📦 Install packages?</span>
+          <span class="alo-cycle-status">waiting for you</span>
+        </div>
+        <div class="alo-cycle-preview" data-pkg-req="${_esc(ev.id||'')}">
+          <div style="margin-bottom:4px">This run is paused — its code needs ${pkgs.length} package${pkgs.length===1?'':'s'} that the sandbox doesn't have${ev.context?` (${_esc(ev.context)})`:''}:</div>
+          ${rows}
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:7px">
+            <button data-pkg-act="approve" data-pkg-id="${_esc(ev.id||'')}"
+                    style="cursor:pointer;font:inherit;font-size:10px;padding:4px 10px;border-radius:4px;border:1px solid var(--acc,#7fd1c1);background:var(--acc,#7fd1c1);color:#06121c;font-weight:600">Install &amp; continue</button>
+            <button data-pkg-act="deny" data-pkg-id="${_esc(ev.id||'')}"
+                    style="cursor:pointer;font:inherit;font-size:10px;padding:4px 10px;border-radius:4px;border:1px solid var(--bd,#3a3630);background:transparent;color:var(--text2,#bfb6a8)">Deny</button>
+            <label style="font-size:10px;color:var(--dim,#a89f92);display:flex;align-items:center;gap:4px">
+              <input type="checkbox" data-pkg-remember> don't ask again for these</label>
+            <span data-pkg-msg style="font-size:10px;color:var(--dim,#a89f92)"></span>
+          </div>
+        </div>`, 'expand');
+        return;
+      }
+
+      if(t === 'remote.sandbox.packages_installed'){
+        const ok = (ev.installed||[]).map(_esc).join(', ');
+        const bad = (ev.failed||[]).map(_esc).join(', ');
+        if(!ok && !bad) return;
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">📦 Packages installed</span>
+          <span class="alo-cycle-status">${bad?'partial':'ok'}</span>
+        </div><div class="alo-cycle-preview">${ok?_esc('installed: ')+ok:''}${bad?`<span style="color:var(--err,#e2725b)"> failed: ${bad}</span>`:''}</div>`);
+        return;
+      }
+
       // ── v5-only: a step's capability scope was widened (request or auto) ──
       if(t === 'agent_loop_v5.scope_widened'){
         const added = (ev.added||[]).map(_esc).join(', ');
@@ -2141,6 +2210,31 @@
       if(t === 'agent_loop.research_thinking'){ this._renderResearchThinking(ev); return; }
       if(t === 'agent_loop.research_citations'){ this._renderResearchCitations(ev); return; }
       if(t === 'agent_loop.research_file'){ this._renderResearchFile(ev); return; }
+      // The finished report. Handled at top level as well as via the progress
+      // path: emitted directly it starts with 'agent_loop.', so it matches
+      // neither the handlers above nor the /^(research|exec|…)\./ fallback below,
+      // and was silently dropped.
+      if(t === 'agent_loop.research_report'){
+        const c = this._researchCard(ev);
+        if(c){ (ev.citations||[]).length && c.push({type:'citations',citations:ev.citations});
+               c.finish(ev.report || ''); }
+        return;
+      }
+      // ALL research progress now goes to the SAME <vera-research-card> the chat
+      // panel uses — pages read, the method, sources, the streaming report.
+      // These used to be re-implemented here, which is why fixes shipped to chat
+      // and never reached the loop.
+      if(t === 'agent_loop.research_activity'
+         || t === 'agent_loop.research_thinking'
+         || t === 'agent_loop.research_step'
+         || t === 'agent_loop.research_citations'){
+        this._researchCard(ev)?.push(ev.kind ? ev : {
+          type: t.split('.').pop().replace('research_',''),
+          text: ev.text, label: ev.label, detail: ev.detail,
+          citations: ev.citations, url: ev.url, domain: ev.domain, chars: ev.chars,
+        });
+        return;
+      }
       if(t === 'agent_loop.research_stream_done'){ this._renderResearchStreamDone(ev); return; }
       if(t === 'agent_loop.research_stream_failed'){ this._renderResearchStreamFailed(ev); return; }
 
@@ -2274,6 +2368,42 @@
         <div class="alo-file-list">${rows}</div>
         <div class="alo-file-view" hidden></div>`;
     }
+    // Plain JSON POST against the same API base the stream uses. (bindStream is
+    // for SSE; these are one-shot control calls.)
+    async _post(path, body){
+      const base = this._apiBase || _apiBase();
+      const r = await fetch(path.startsWith('http') ? path : (base + path), {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(body || {}),
+      });
+      let j = null;
+      try{ j = await r.json(); }catch(_){}
+      if(!r.ok) throw new Error((j && j.error) || ('HTTP ' + r.status));
+      return j;
+    }
+
+    // Answer a blocked package request. The buttons are disabled immediately so
+    // a double-click can't send two decisions for the same paused step.
+    async _answerPackages(btn){
+      const id = btn.getAttribute('data-pkg-id') || '';
+      const decision = btn.getAttribute('data-pkg-act') || 'deny';
+      const box = btn.closest('[data-pkg-req]');
+      const msg = box ? box.querySelector('[data-pkg-msg]') : null;
+      const remember = !!(box && box.querySelector('[data-pkg-remember]')?.checked);
+      if(box) box.querySelectorAll('button').forEach(b => { b.disabled = true; b.style.opacity = '.5'; });
+      if(msg) msg.textContent = 'sending…';
+      try{
+        const r = await this._post('/remote/sandbox/packages/respond',
+                                   { id, decision, remember });
+        if(r && r.ok === false) throw new Error(r.error || 'refused');
+        if(msg) msg.textContent = decision === 'approve'
+          ? 'approved — installing, the run continues' : 'denied';
+      }catch(e){
+        if(msg) msg.textContent = 'failed: ' + (e && e.message ? e.message : e);
+        if(box) box.querySelectorAll('button').forEach(b => { b.disabled = false; b.style.opacity = ''; });
+      }
+    }
+
     async _showFile(name, mode){
       const view = this._filesCard && this._filesCard.querySelector('.alo-file-view');
       if(!view) return;
@@ -2683,6 +2813,38 @@
      *  Triggered by the agent_loop.research_report event emitted once a
      *  research.* cap finishes — the full result, distinct from the
      *  truncated one-line tool_done preview. */
+    /* The ONE research card for a cycle, created on first use. Loads the shared
+       element on demand — this file is served standalone, so it cannot rely on
+       the host page having a <script> tag for it. Returns null until the element
+       has loaded (messages before that are dropped rather than half-rendered by
+       a second implementation, which is exactly what this replaces). */
+    _researchCard(ev){
+      const cyc = ev.cycle != null ? ev.cycle
+                : Array.from(this._cycleRefs.keys()).pop();
+      const strip = this._cycleRefs.get(cyc)?.progressEl;
+      if(!strip) return null;
+      if(!window.customElements || !customElements.get('vera-research-card')){
+        if(!this._rcLoading){
+          this._rcLoading = true;
+          const s = document.createElement('script');
+          s.src = (this._apiBase || _apiBase() || '') + '/ui/elements/research_card.js';
+          s.onload = () => { this._rcLoading = false; };
+          s.onerror = () => { this._rcLoading = false;
+            console.warn('vera-research-card failed to load'); };
+          document.head.appendChild(s);
+        }
+        return null;
+      }
+      let card = strip.querySelector('vera-research-card');
+      if(!card){
+        card = document.createElement('vera-research-card');
+        if(ev.job_id) card.jobId = ev.job_id;
+        strip.appendChild(card);
+        _follow(strip);
+      }
+      return card;
+    }
+
     _renderResearchReport(strip, data){
       const report = data.report || '';
       if(!report.trim()) return;
@@ -3101,7 +3263,14 @@
         thinkEl.className = 'alo-research-thinking';
         strip.appendChild(thinkEl);
       }
-      thinkEl.textContent += (ev.text||'');
+      // The researcher's preamble — how it intends to conduct the research — is
+      // written as markdown (headings, numbered plan, bold terms). It used to be
+      // appended with textContent, so it rendered as an unbroken wall of raw
+      // '## ' and '**'. Accumulate the source and re-render it each delta: the
+      // text arrives token by token, so formatting can only be resolved against
+      // the whole string, not the fragment.
+      thinkEl._md = (thinkEl._md || '') + (ev.text || '');
+      thinkEl.innerHTML = _renderMarkdown(thinkEl._md);
       _follow(thinkEl);
     }
     _renderResearchCitations(ev){

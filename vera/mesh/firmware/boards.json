@@ -11,7 +11,7 @@
       "neopixel": 48
     },
     "kiosk": { "rotation": 1 },
-    "note": "Verified on hardware (control RST5/CS6/DC7/WR1/RD2). CRITICAL: LCD_D4=GPIO19 and LCD_D5=GPIO20 are the S3's native USB-Serial-JTAG lines. The display ONLY works under the Arduino build with 'USB CDC On Boot: Disabled' (console on UART0), which lets the sketch reclaim 19/20 as GPIO. MicroPython's REPL sits on those USB pins and can never drive this display."
+    "note": "Verified on hardware (control RST5/CS6/DC7/WR1/RD2). CRITICAL: LCD_D4=GPIO19 and LCD_D5=GPIO20 are the S3's native USB-Serial-JTAG lines, so the USB PHY has to give that pad up before the bus works. Easiest: flash the Arduino build (built with 'USB CDC On Boot: Disabled', console on UART0 — it frees 19/20 automatically). MicroPython CAN drive it too, but only with the 'Free USB pins' bake option, which costs you the USB REPL (Wi-Fi/UART0 only; hold BOOT+RESET to reflash)."
   },
   {
     "id": "esp32-d1r32-ili9488",

@@ -91,7 +91,7 @@ code{font-family:var(--mono);font-size:10px;background:var(--bg0);border:1px sol
 </head>
 <body>
 <div class="hdr">
-  <h1>🛰️ Mesh</h1>
+  <h1>⬡ Mesh</h1>
   <span class="sub">ESP32 fleet — enroll, send work, stream sensors, kiosk &amp; control</span>
   <div class="tx" id="txBar"></div>
 </div>
@@ -104,7 +104,7 @@ code{font-family:var(--mono);font-size:10px;background:var(--bg0);border:1px sol
       <label>Server URL <span class="muted">(baked into firmware &amp; provisioning — set a Twingate/LAN URL the node can reach)</span></label>
       <div class="row" style="gap:4px">
         <input id="srvUrl" placeholder="http://host:8000" onchange="updateFwLinks()">
-        <button class="btn sm" onclick="saveSettings()" title="Remember across reboots">💾</button>
+        <button class="btn sm" onclick="saveSettings()" title="Remember across reboots">▤</button>
       </div>
       <label>Wi-Fi profile <span class="muted">(saved, sealed; reused for provisioning)</span></label>
       <div class="row" style="gap:4px">
@@ -115,35 +115,56 @@ code{font-family:var(--mono);font-size:10px;background:var(--bg0);border:1px sol
 
       <label>USB device</label>
       <div class="row" style="gap:5px;flex-wrap:wrap">
-        <button class="btn sm" id="serBtn" onclick="serialConnect()">🔌 Connect</button>
+        <button class="btn sm" id="serBtn" onclick="serialConnect()">⌁ Connect</button>
         <button class="btn sm" id="detectBtn" onclick="detectChip()" disabled>Detect</button>
         <button class="btn sm" id="provBtn" onclick="serialProvision()" disabled>Wi-Fi…</button>
         <button class="btn sm" id="bridgeBtn" onclick="toggleBridge()" disabled
-                title="Relay this USB board to Vera over the serial cable — use when the board can't reach the server over Wi-Fi (firewall)">🌉 Bridge</button>
+                title="Relay this USB board to Vera over the serial cable — use when the board can't reach the server over Wi-Fi (firewall)">⇌ Bridge</button>
       </div>
 
       <label style="margin-top:7px">Firmware / tool</label>
       <select id="fwSel" style="margin-bottom:5px" onchange="onFwChange()"><option>loading…</option></select>
+      <div id="fwVersion" style="font-size:10px;margin:-2px 0 5px"></div>
+      <label style="margin-top:2px" title="The selected node mirrors whichever Vera tab you open — Markets shows Markets controls, Mesh shows node controls.">
+        <input type="checkbox" id="optFollow" onchange="toggleFollow()"> ⇄ Selected node follows the Vera tab I'm on</label>
       <!-- Bake-at-flash options: set once, baked into the firmware that gets
            flashed/pushed — no post-flash config step in the node panel. -->
       <div class="row" id="fwOpts" style="gap:9px;flex-wrap:wrap;font-size:10px;margin-bottom:6px;align-items:center">
         <span class="muted">Bake in:</span>
-        <label title="Enable the 3.5&quot; ILI9488 parallel TFT + boot status dashboard now, at flash time"><input type="checkbox" id="optDisplay" checked onchange="saveOnboard()"> 🖥 Display</label>
+        <label title="Enable the 3.5&quot; ILI9488 parallel TFT + boot status dashboard now, at flash time"><input type="checkbox" id="optDisplay" checked onchange="saveOnboard()"> ▣ Display</label>
         <label title="Enable the SD card slot"><input type="checkbox" id="optSd" checked onchange="saveOnboard()"> SD</label>
         <label title="Arduino build only: Wi-Fi CSI device-free motion sensing"><input type="checkbox" id="optCsi" onchange="saveOnboard()"> CSI</label>
-        <label title="Bake the Wi-Fi SSID+password (typed above) into the firmware so the node joins on boot — no serial provisioning needed"><input type="checkbox" id="optWifi" onchange="saveOnboard()"> Wi-Fi</label>
-        <label title="Bake this board's pin map (display/SD/NeoPixel) into the firmware defaults">🧩 <select id="optBoard" style="font-size:10px" onchange="saveOnboard()"></select></label>
+        <label title="Bake the Wi-Fi SSID+password into the firmware so the node joins on boot — no serial provisioning needed. Leave the password box empty to reuse the saved one (it never leaves the server)."><input type="checkbox" id="optWifi" onchange="saveOnboard()"> Wi-Fi</label>
+        <label title="Reclaim GPIO19/20 (the S3's native USB-Serial-JTAG lines) for the TFT's LCD_D4/D5. Needed for the display on an S3-Uno shield. On MicroPython this KILLS the USB REPL — the node is then Wi-Fi/UART0 only; hold BOOT+RESET to reflash."><input type="checkbox" id="optUsbPins" onchange="saveOnboard()"> ⌁ Free USB pins</label>
+        <label title="Bake this board's pin map (display/SD/NeoPixel) into the firmware defaults">▦ <select id="optBoard" style="font-size:10px" onchange="saveOnboard()"></select></label>
+      </div>
+      <!-- Server-side compiler: the Arduino sketch is the only build that can drive
+           the S3-Uno TFT, and it needs compiling before it can be flashed. -->
+      <div class="row" id="builderRow" style="gap:6px;flex-wrap:wrap;font-size:10px;margin-bottom:6px;align-items:center;display:none">
+        <span class="muted" id="builderState"></span>
+        <button class="btn sm" id="builderBtn" onclick="startBuilder()">▧ Start build service</button>
       </div>
       <div class="row" style="gap:5px;flex-wrap:wrap">
-        <button class="btn sm primary" id="onboardBtn" onclick="flashAndOnboard()" disabled title="One click: flash the runtime if needed, then push main.py with the options above, then it joins. Set things once here.">⚡ Flash &amp; Onboard</button>
+        <button class="btn sm primary" id="onboardBtn" onclick="flashAndOnboard()" disabled title="One click: flash the runtime if needed, then push main.py with the options above, then it joins. Set things once here.">↯ Flash &amp; Onboard</button>
         <button class="btn sm" id="flashBtn" onclick="flashSelected()" disabled title="Flash only the selected item (no auto script push)">Flash only</button>
-        <button class="btn sm" id="pushBtn" onclick="pushSelected()" disabled title="Send to selected node over Wi-Fi (OTA)">📡 OTA→node</button>
+        <button class="btn sm" id="pushBtn" onclick="pushSelected()" disabled title="Send to selected node over Wi-Fi (OTA)">⇈ OTA→node</button>
         <button class="btn sm" id="eraseBtn" onclick="eraseChip()" disabled>Erase</button>
         <button class="btn sm" id="uploadBtn" onclick="document.getElementById('binFile').click()">Upload .bin</button>
         <input type="file" id="binFile" accept=".bin" style="display:none" onchange="uploadBin(this)">
       </div>
       <div id="flashBar" style="display:none;height:6px;background:var(--bg3);border-radius:3px;margin-top:6px;overflow:hidden">
         <div id="flashBarFill" style="height:100%;width:0%;background:var(--acc);transition:width .2s"></div></div>
+      <!-- Live build progress: a compile is ~90s and a first image build ~10min,
+           so show the phase, a percentage and the log as it happens. -->
+      <div id="buildProg" style="display:none;margin-top:6px">
+        <div class="row" style="gap:6px;align-items:center;font-size:10px">
+          <span id="buildPhase" class="muted" style="flex:1"></span>
+          <span id="buildElapsed" class="muted"></span>
+        </div>
+        <div style="height:6px;background:var(--bg3);border-radius:3px;margin-top:4px;overflow:hidden">
+          <div id="buildBarFill" style="height:100%;width:0%;background:var(--acc);transition:width .3s"></div></div>
+        <pre id="buildLog" style="max-height:110px;overflow:auto;background:var(--bg0);border:1px solid var(--border);border-radius:3px;padding:5px;font-family:var(--mono);font-size:9px;white-space:pre-wrap;margin:5px 0 0;color:var(--dim2)"></pre>
+      </div>
       <div class="status" id="serStatus">Connect a USB ESP32 to flash firmware, push a MicroPython worker, provision Wi-Fi, or relay it into the mesh.</div>
 
       <details style="margin-top:7px"><summary class="muted" style="cursor:pointer">Serial console</summary>
@@ -162,6 +183,31 @@ code{font-family:var(--mono);font-size:10px;background:var(--bg0);border:1px sol
       </details>
     </div>
 
+    <div class="card">
+      <h2>Display apps <span class="muted" id="appsNode" style="margin-left:auto;font-size:10px"></span></h2>
+      <div class="status" id="appsHint" style="margin:0 0 6px">Select a node with a screen, then run an app on it.</div>
+      <select id="appSel" style="margin-bottom:5px"><option>loading…</option></select>
+      <div class="row" style="gap:5px;flex-wrap:wrap">
+        <button class="btn sm primary" onclick="launchApp()">Run app</button>
+        <button class="btn sm" onclick="stopApp()">Status screen</button>
+        <button class="btn sm" onclick="webviewApp()" title="Screenshot a web page and stream it to the panel">Web page…</button>
+      </div>
+      <div class="row" style="gap:5px;flex-wrap:wrap;margin-top:5px">
+        <select id="spriteSel" style="font-size:10px;flex:1"><option value="">sprites...</option></select>
+        <button class="btn sm" onclick="showSprite()" title="Show a Sprite Studio character on the panel (animated if it has frames)">Show sprite</button>
+      </div>
+      <div class="row" style="gap:5px;flex-wrap:wrap;margin-top:5px">
+        <button class="btn sm" onclick="sdWalk()" title="Recursively list the SD card inserted in the node">SD list</button>
+        <button class="btn sm" onclick="sdIdentify()" title="Work out which console the card came from and what is on it">Identify card</button>
+        <button class="btn sm" onclick="sdDump()" title="Archive the card into Vera's store (skips anything already stored)">Archive card</button>
+      </div>
+      <div class="row" style="gap:5px;flex-wrap:wrap;margin-top:5px">
+        <button class="btn sm" onclick="otaPlan()" title="Show what a fleet update would do — sends nothing">Plan fleet update</button>
+        <button class="btn sm" onclick="otaAll()" title="Update every eligible node to the image built for its own board">Update all nodes</button>
+      </div>
+      <pre id="appsOut" style="max-height:120px;overflow:auto;background:var(--bg0);border:1px solid var(--border);border-radius:3px;padding:5px;font-family:var(--mono);font-size:9px;white-space:pre-wrap;margin:6px 0 0;color:var(--dim2);display:none"></pre>
+    </div>
+
     <div class="card" style="flex:1;min-height:120px;display:flex;flex-direction:column">
       <h2>Nodes <span class="muted" id="nodeCount" style="margin-left:auto"></span></h2>
       <input id="nodeSearch" placeholder="filter nodes…" oninput="renderList()" style="margin-bottom:7px">
@@ -175,6 +221,7 @@ code{font-family:var(--mono);font-size:10px;background:var(--bg0);border:1px sol
       <strong style="font-size:11px;color:var(--acc2)">TOPOLOGY</strong>
       <button class="btn sm" onclick="refresh()">⟳ Refresh</button>
       <button class="btn sm" onclick="resetLayout()">Reset layout</button>
+      <button class="btn sm" id="topoBtn" onclick="toggleTopo()" title="Switch between the simple uplink graph and the SVG map that also shows forwarding servers and live traffic">SVG map</button>
       <span class="muted" id="graphMeta" style="margin-left:6px"></span>
       <div class="bcast" style="margin-left:auto">
         <span class="muted">Broadcast</span>
@@ -187,6 +234,12 @@ code{font-family:var(--mono);font-size:10px;background:var(--bg0);border:1px sol
         <input id="bcModule" placeholder="module (any)" style="width:96px">
         <button class="btn sm" onclick="broadcast()">Send all</button>
       </div>
+    </div>
+    <!-- The shared dashboard map. Same element as the stack topology, fed a mesh
+         snapshot, so the fleet renders in Vera's own idiom instead of a bespoke
+         second style. -->
+    <div id="topoWrap" style="display:none;position:absolute;inset:0">
+      <vera-topology-map id="meshTopo" style="width:100%;height:100%"></vera-topology-map>
     </div>
     <div id="graphWrap">
       <svg id="graph"></svg>
@@ -267,7 +320,7 @@ async function loadSettings(){
   document.getElementById('srvUrl').value = _settings.server_url || location.origin;
   if(_settings.wifi_ssid) document.getElementById('wifiSsid').value=_settings.wifi_ssid;
   if(_settings.has_wifi_password) document.getElementById('wifiPass').placeholder='•••••••• (saved)';
-  if(_settings.secrets===false) setStatus('setStatus','⚠ install cryptography to seal Wi-Fi passwords','warn');
+  if(_settings.secrets===false) setStatus('setStatus','△ install cryptography to seal Wi-Fi passwords','warn');
 }
 async function saveSettings(){
   const body={server_url:serverUrl(), wifi_ssid:(document.getElementById('wifiSsid').value||'').trim()};
@@ -282,6 +335,7 @@ async function loadCatalog(){
   const r = await api('/mesh/firmware/catalog');
   _catalog = (r && r.artifacts) || [];
   _fwTools = (r && r.tools) || {};
+  _srcFw   = (r && r.source_fw) || {};
   const sel = document.getElementById('fwSel');
   sel.innerHTML = _catalog.map((a,i)=>`<option value="${i}">${esc(a.label||a.id)}</option>`).join('')
     || '<option value="">no firmware in catalog</option>';
@@ -289,6 +343,112 @@ async function loadCatalog(){
   if('serial' in navigator){ ['flashBtn','eraseBtn','onboardBtn'].forEach(id=>{const e=document.getElementById(id); if(e)e.disabled=false;}); }
   const pb=document.getElementById('pushBtn'); if(pb) pb.disabled=false;
   loadOnboard();                       // restore the firmware pick + bake options from last time
+  renderBuilder();
+  renderFwVersion();
+  renderFollow();
+  renderApps();
+  loadApps();
+  loadSprites();
+}
+
+// Flashing a CACHED .bin does not rebuild it, so an edited sketch silently keeps
+// shipping the old version. Show both versions and say so when they differ.
+function renderFwVersion(){
+  const el=document.getElementById('fwVersion'); if(!el) return;
+  const a=selectedArtifact()||{};
+  const src=_srcFw[a.runtime||(a.kind==='sketch'?'arduino':'')]||'';
+  const built=a.fw_version||'';
+  let h='';
+  if(built||src){
+    h='<span class="muted">image <b>'+esc(built||'—')+'</b>'+(src?(' · source <b>'+esc(src)+'</b>'):'')+'</span>';
+    if(built&&src&&built!==src)
+      h+=' <span class="status warn" style="display:inline;padding:1px 4px">△ this .bin is older than the sketch — pick “Vera Node — Arduino sketch” to rebuild, or it will flash '+esc(built)+' again</span>';
+  }
+  el.innerHTML=h;
+}
+
+// ── Server-side compiler (vera-builder) ─────────────────────────────────────
+// The Arduino sketch has to be compiled before anything can flash it, and it's
+// the only flavour that frees GPIO19/20 for the S3-Uno TFT. Show plainly whether
+// a compiler is reachable, and offer to start one when it isn't.
+function renderBuilder(){
+  const row=document.getElementById('builderRow'), st=document.getElementById('builderState'),
+        btn=document.getElementById('builderBtn');
+  if(!row||!st||!btn) return;
+  const b=(_fwTools&&_fwTools.builder)||{};
+  row.style.display='flex';
+  if(_fwTools.can_build){
+    st.innerHTML='▧ build service <b style="color:var(--ok,#4ade80)">ready</b>'+
+                 (b.url?(' <span class="muted">'+esc(b.url)+'</span>'):'')+
+                 ' — the Arduino sketch can be compiled &amp; flashed from here';
+    btn.textContent='↻ Rebuild image'; btn.dataset.rebuild='1';
+  } else {
+    st.innerHTML='▧ build service <b style="color:var(--warn,#fbbf24)">not running</b> — '+
+                 'the Arduino sketch can\'t be compiled yet'+
+                 (b.tried&&b.tried.length?(' <span class="muted">(tried '+esc(b.tried.join(', '))+')</span>'):'');
+    btn.textContent='▧ Start build service'; btn.dataset.rebuild='';
+  }
+  btn.disabled=!(b.can_start!==false);
+}
+// ── Live build progress ─────────────────────────────────────────────────────
+// Both the image build and the sketch compile run detached and report into a
+// job record; poll it so the user sees phase + % + log instead of a dead button.
+function showBuildProg(on){
+  const el=document.getElementById('buildProg'); if(el) el.style.display=on?'block':'none';
+  if(!on) return;
+  setBuildProg({phase:'starting…', pct:0, log:[], elapsed_s:0});
+}
+function setBuildProg(p){
+  const ph=document.getElementById('buildPhase'), fill=document.getElementById('buildBarFill'),
+        lg=document.getElementById('buildLog'), el=document.getElementById('buildElapsed');
+  if(ph) ph.textContent=p.phase||'';
+  if(fill) fill.style.width=Math.max(0,Math.min(100,p.pct||0))+'%';
+  if(el) el.textContent=(p.elapsed_s!=null)?(Math.round(p.elapsed_s)+'s'):'';
+  if(lg && p.log){
+    const atBottom = lg.scrollTop+lg.clientHeight >= lg.scrollHeight-8;
+    lg.textContent=(p.log||[]).join('\n');
+    if(atBottom) lg.scrollTop=lg.scrollHeight;        // follow, unless scrolled up
+  }
+}
+// Poll a job to completion. Resolves with the job's final `result`.
+async function followBuildJob(jobId, everyMs){
+  showBuildProg(true);
+  let last=null;
+  for(;;){
+    const p=await api('/build/progress?job_id='+encodeURIComponent(jobId)+'&tail=60');
+    if(!p || p.error){ setBuildProg({phase:'lost track of the job: '+((p&&p.error)||'?'),pct:0}); return null; }
+    setBuildProg(p); last=p;
+    if(p.done) break;
+    await sleep(everyMs||1500);
+  }
+  return last;
+}
+async function startBuilder(){
+  const btn=document.getElementById('builderBtn');
+  const rebuild=!!(btn&&btn.dataset.rebuild);
+  if(rebuild && !confirm('Rebuild the vera-builder image from scratch? This re-downloads the ESP32 toolchains (~2 GB).')) return;
+  if(btn) btn.disabled=true;
+  setStatus('serStatus','starting the build service — the FIRST run pulls the ESP32 toolchains (~2 GB). Progress below; you can leave this running.');
+  try{
+    const r=await api('/build/builder/up','POST',{rebuild:rebuild,background:true},60000);
+    if(r&&r.job_id){
+      const done=await followBuildJob(r.job_id, 1500);
+      if(done&&done.ok){
+        await loadCatalog();
+        const url=(done.result&&done.result.url)||'';
+        setStatus('serStatus','✓ build service ready'+(url?(' at '+url):'')+' — select the Arduino sketch and press Flash','ok');
+      } else {
+        setStatus('serStatus','build service failed: '+((done&&done.error)||'unknown')+' — see the log above','err');
+      }
+    } else if(r&&r.ok){                                  // already healthy
+      await loadCatalog();
+      setStatus('serStatus','✓ build service already running at '+(r.url||''),'ok');
+    } else {
+      setStatus('serStatus','build service: '+((r&&r.error)||'could not start'),'err');
+    }
+  }catch(e){ setStatus('serStatus','build service: '+(e.message||e),'err'); }
+  if(btn) btn.disabled=false;
+  renderBuilder();
 }
 
 // ── Onboard options: pick once, persist, bake into the firmware ──────────────
@@ -300,6 +460,7 @@ function saveOnboard(){
     sd:document.getElementById('optSd').checked,
     csi:document.getElementById('optCsi').checked,
     wifi:document.getElementById('optWifi').checked,
+    usbPins:document.getElementById('optUsbPins').checked,
     board:(document.getElementById('optBoard')||{}).value||'',
   })); }catch(e){}
 }
@@ -311,15 +472,179 @@ function loadOnboard(){
   if(s.sd===false) document.getElementById('optSd').checked=false;
   if(s.csi) document.getElementById('optCsi').checked=true;
   if(s.wifi) document.getElementById('optWifi').checked=true;
+  if(s.usbPins) document.getElementById('optUsbPins').checked=true;
   const ob=document.getElementById('optBoard'); if(ob&&s.board&&ob.querySelector('option[value="'+s.board+'"]')) ob.value=s.board;
 }
-function onFwChange(){ saveOnboard(); }
+function onFwChange(){ saveOnboard(); renderFwVersion(); }
+// Bind (or unbind) the selected node to the harness tab-follow hook. The harness
+// reads this key directly, so nothing happens until it is set.
+function toggleFollow(){
+  const on=document.getElementById('optFollow').checked;
+  try{
+    if(on && _sel){ localStorage.setItem('vera_mesh_follow_node', _sel);
+      setStatus('serStatus','⇄ '+_sel+' will now follow the Vera tab you open','ok'); }
+    else{ localStorage.removeItem('vera_mesh_follow_node');
+      if(on) setStatus('serStatus','select a node in the graph first','warn');
+      document.getElementById('optFollow').checked=false; }
+  }catch(e){}
+}
+// ── Display apps + fleet update ─────────────────────────────────────────────
+let _apps=[];
+function appsOut(text, cls){
+  const el=document.getElementById('appsOut'); if(!el) return;
+  el.style.display=text?'block':'none'; el.textContent=text||'';
+}
+async function loadApps(){
+  const r=await api('/mesh/apps');
+  _apps=(r&&r.apps)||[];
+  const sel=document.getElementById('appSel'); if(!sel) return;
+  sel.innerHTML=_apps.map(a=>`<option value="${esc(a.id)}">${esc(a.label)}</option>`).join('')
+    || '<option value="">no apps</option>';
+}
+function renderApps(){
+  const el=document.getElementById('appsNode'); if(el) el.textContent=_sel||'no node selected';
+  const h=document.getElementById('appsHint');
+  if(h) h.textContent=_sel? ('Runs on '+_sel+' — its buttons trigger Vera capabilities.')
+                          : 'Select a node with a screen, then run an app on it.';
+}
+async function launchApp(){
+  if(!_sel){ appsOut('select a node in the graph first'); return; }
+  const app=document.getElementById('appSel').value;
+  appsOut('launching '+app+' on '+_sel+'…');
+  const r=await api('/mesh/app/launch','POST',{node_id:_sel, app:app});
+  appsOut(r&&!r.error ? ('running '+app+' on '+_sel+(r.buttons?(' ('+r.buttons+' buttons)'):''))
+                      : ('failed: '+((r&&r.error)||'?')));
+}
+async function stopApp(){
+  if(!_sel){ appsOut('select a node first'); return; }
+  const r=await api('/mesh/app/stop','POST',{node_id:_sel});
+  appsOut(r&&!r.error?'back to the status screen':('failed: '+((r&&r.error)||'?')));
+}
+async function webviewApp(){
+  if(!_sel){ appsOut('select a node first'); return; }
+  const url=prompt('Web page to show on the panel:', 'https://example.com');
+  if(!url) return;
+  appsOut('rendering '+url+'…');
+  const r=await api('/mesh/ui/webview','POST',{node_id:_sel, url:url}, 120000);
+  appsOut(r&&!r.error ? ('showing '+(r.title||r.url||url)) : ('failed: '+((r&&r.error)||'?')));
+}
+function _otaLines(r){
+  const out=[];
+  (r.plan||r.sent||[]).forEach(p=>out.push('  '+p.node_id+'  '+(p.from||'?')+' -> '+(p.to||'?')+'  ['+p.artifact+']'));
+  (r.failed||[]).forEach(p=>out.push('  FAILED '+p.node_id+': '+p.error));
+  (r.skipped||[]).forEach(p=>out.push('  skip   '+p.node_id+': '+p.reason));
+  return out.join('\n')||'  (nothing)';
+}
+async function otaPlan(){
+  appsOut('planning...');
+  const r=await api('/mesh/ota/plan','POST',{only_behind:true}, 60000);
+  if(!r||r.error){ appsOut('plan failed: '+((r&&r.error)||'?')); return; }
+  appsOut('Would update '+r.count+' node(s), skipping '+r.skipped_count+':\n'+_otaLines(r));
+}
+async function otaAll(){
+  // Dry run first, then confirm with the actual per-node plan in front of you —
+  // nodes carry different flash options, so "update all" is worth reading.
+  const r0=await api('/mesh/ota/all','POST',{only_behind:true}, 60000);
+  if(!r0||r0.error){ appsOut('failed: '+((r0&&r0.error)||'?')); return; }
+  if(!r0.count){ appsOut('Nothing to update:\n'+_otaLines(r0)); return; }
+  const summary=r0.plan.map(p=>p.node_id+': '+(p.from||'?')+' -> '+(p.to||'?')).join('\n');
+  if(!confirm('Update '+r0.count+' node(s)?\n\nEach gets the image built for its own board.\n'+summary)) return;
+  appsOut('sending...');
+  const r=await api('/mesh/ota/all','POST',{only_behind:true, confirm:true}, 120000);
+  appsOut(r&&r.counts ? ('sent '+r.counts.sent+', failed '+r.counts.failed+
+                         ', skipped '+r.counts.skipped+':\n'+_otaLines(r))
+                      : ('failed: '+((r&&r.error)||'?')));
+}
+// ── SD card toolkit ─────────────────────────────────────────────────────────
+// The node answers these as JOB RESULTS, so we queue and then read the result
+// back rather than expecting it inline.
+async function _jobResult(jobId, waitMs){
+  const t0=Date.now();
+  while(Date.now()-t0 < (waitMs||20000)){
+    await sleep(1200);
+    const r=await api('/mesh/jobs?node_id='+encodeURIComponent(_sel));
+    const j=((r&&r.jobs)||[]).find(x=>x.job_id===jobId);
+    if(j && (j.status==='done'||j.status==='error')) return j;
+  }
+  return null;
+}
+let _sdFiles=[];
+async function sdWalk(){
+  if(!_sel){ appsOut('select a node first'); return; }
+  appsOut('walking the SD card on '+_sel+'...');
+  const q=await api('/mesh/sd/walk','POST',{node_id:_sel, max_files:300});
+  if(!q||q.error){ appsOut('failed: '+((q&&q.error)||'?')); return; }
+  const j=await _jobResult(q.job_id, 40000);
+  if(!j){ appsOut('no answer from the node - is a card inserted?'); return; }
+  if(j.status==='error'){ appsOut('node said: '+(j.error||'?')); return; }
+  const res=j.result||{};
+  _sdFiles=res.files||[];
+  appsOut('card: '+_sdFiles.length+' file(s)'+(res.truncated?' (truncated)':'')+
+          ', '+(res.used_mb||'?')+'/'+(res.total_mb||'?')+' MB\n'+
+          _sdFiles.slice(0,25).map(f=>'  '+f.path+'  '+f.size).join('\n'));
+}
+async function sdIdentify(){
+  if(!_sdFiles.length){ await sdWalk(); if(!_sdFiles.length) return; }
+  const r=await api('/mesh/sd/identify','POST',{node_id:_sel, files:_sdFiles});
+  if(!r||r.error){ appsOut('failed: '+((r&&r.error)||'?')); return; }
+  appsOut('console: '+r.console+'   games: '+r.game_count+'\n'+
+          Object.entries(r.by_platform||{}).map(([k,v])=>'  '+k+': '+v).join('\n')+'\n'+
+          (r.games||[]).slice(0,20).map(g=>'  '+g.title+'  ['+g.platform+']').join('\n'));
+}
+async function sdDump(){
+  if(!_sdFiles.length){ await sdWalk(); if(!_sdFiles.length) return; }
+  if(!confirm('Archive '+_sdFiles.length+' file(s) from the card into Vera?\n\n'+
+              'Anything already stored at the same size is skipped.')) return;
+  const r=await api('/mesh/sd/dump','POST',{node_id:_sel, paths:_sdFiles.map(f=>f.path)});
+  appsOut(r&&!r.error ? ('queued '+r.queued+' file(s) - the node uploads them in the background')
+                      : ('failed: '+((r&&r.error)||'?')));
+}
+async function loadSprites(){
+  const sel=document.getElementById('spriteSel'); if(!sel) return;
+  const r=await api('/mesh/ui/sprites');
+  const list=(r&&r.sprites)||[];
+  sel.innerHTML = list.length ? list.map(s=>`<option value="${esc(s.id)}">${esc(s.label)}</option>`).join('')
+                              : '<option value="">no sprites</option>';
+}
+async function showSprite(){
+  if(!_sel){ appsOut('select a node first'); return; }
+  const id=document.getElementById('spriteSel').value;
+  if(!id){ appsOut('no sprite selected'); return; }
+  appsOut('rendering '+id+'...');
+  const r=await api('/mesh/ui/sprite','POST',{node_id:_sel, sprite:id}, 120000);
+  appsOut(r&&!r.error ? ('showing '+id+(r.frames?(' ('+r.frames+' frames)'):'')) 
+                      : ('failed: '+((r&&r.error)||'?')));
+}
+function renderFollow(){
+  const el=document.getElementById('optFollow'); if(!el) return;
+  let bound=''; try{ bound=localStorage.getItem('vera_mesh_follow_node')||''; }catch(e){}
+  el.checked = !!bound && bound===_sel;
+}
+// The bake options as a plain object — one source of truth for both the query
+// string (source download / MicroPython push) and the JSON build request.
+function fwOpts(){
+  const o={
+    display:document.getElementById('optDisplay').checked?'1':'0',
+    sd:document.getElementById('optSd').checked?'1':'0',
+    csi:document.getElementById('optCsi').checked?'1':'0',
+    usb_pins:document.getElementById('optUsbPins').checked?'1':'0',
+  };
+  const ob=document.getElementById('optBoard'); if(ob&&ob.value) o.board=ob.value;
+  if(document.getElementById('optWifi').checked){
+    const ssid=(document.getElementById('wifiSsid').value||'').trim();
+    const pass=document.getElementById('wifiPass').value||'';
+    if(ssid) o.wifi_ssid=ssid;
+    if(pass) o.wifi_pass=pass;
+  }
+  return o;
+}
 // Build the &display=..&sd=..&csi=..&wifi_ssid=.. query the server bakes into firmware.
 function fwOptsQuery(){
   const q=[];
   q.push('display='+(document.getElementById('optDisplay').checked?'1':'0'));
   q.push('sd='+(document.getElementById('optSd').checked?'1':'0'));
   q.push('csi='+(document.getElementById('optCsi').checked?'1':'0'));
+  q.push('usb_pins='+(document.getElementById('optUsbPins').checked?'1':'0'));
   const ob=document.getElementById('optBoard'); if(ob&&ob.value) q.push('board='+encodeURIComponent(ob.value));
   if(document.getElementById('optWifi').checked){
     const ssid=(document.getElementById('wifiSsid').value||'').trim();
@@ -396,6 +721,68 @@ function _graphForRender(){
   }
   return {nodes, edges};
 }
+// ── SVG topology map ────────────────────────────────────────────────────────
+// Reuses the dashboard's <vera-topology-map> rather than growing a second map
+// style. It renders forwarding servers as their own tier and pulses on real
+// traffic — every animation corresponds to an event that actually happened.
+let _topoOn = false, _topoCursor = '', _topoTimer = null, _topoLoaded = false;
+
+async function _ensureTopoElement(){
+  if (_topoLoaded || customElements.get('vera-topology-map')) { _topoLoaded = true; return; }
+  await new Promise((res) => {
+    const s = document.createElement('script');
+    s.src = (BASE || '') + '/ui/elements/topology_map.js';
+    s.onload = res; s.onerror = res;         // absent element degrades, never blocks
+    document.head.appendChild(s);
+  });
+  _topoLoaded = true;
+}
+
+function toggleTopo(){
+  _topoOn = !_topoOn;
+  document.getElementById('topoWrap').style.display = _topoOn ? 'block' : 'none';
+  document.getElementById('graphWrap').style.display = _topoOn ? 'none' : 'block';
+  const b = document.getElementById('topoBtn');
+  if (b) b.textContent = _topoOn ? 'Uplink graph' : 'SVG map';
+  if (_topoOn) startTopo(); else stopTopo();
+}
+
+async function startTopo(){
+  await _ensureTopoElement();
+  await refreshTopo();
+  if (_topoTimer) clearInterval(_topoTimer);
+  _topoTimer = setInterval(refreshTopo, 4000);
+}
+function stopTopo(){ if (_topoTimer) clearInterval(_topoTimer); _topoTimer = null; }
+
+async function refreshTopo(){
+  const el = document.getElementById('meshTopo');
+  if (!el || typeof el.applySnapshot !== 'function') return;
+  const snap = await api('/mesh/topology');
+  if (snap && snap.nodes) {
+    el.applySnapshot(snap);
+    const meta = document.getElementById('graphMeta');
+    if (meta) meta.textContent = (snap.nodes.length - 1) + ' nodes' +
+      (snap.forwarders && snap.forwarders.length
+        ? '  via ' + snap.forwarders.join(', ') : '');
+  }
+  // Traffic. The first call primes a cursor and is deliberately NOT animated —
+  // otherwise the map erupts with history every time you open the tab.
+  const act = await api('/mesh/activity?limit=30' +
+                        (_topoCursor ? '&since=' + encodeURIComponent(_topoCursor) : ''));
+  if (!act || !act.events) return;
+  if (act.cursor) _topoCursor = act.cursor;
+  if (!act.primed || typeof el.noteActivity !== 'function') return;
+  act.events.slice().reverse().forEach(e => {
+    el.noteActivity(e.node_id, {
+      label: e.kind === 'job' ? ('job ' + e.label) : 'check-in',
+      detail: e.status || '',
+      status: e.status === 'error' ? 'err' : 'ok',
+      to: e.kind === 'job' ? undefined : 'hub',
+    });
+  });
+}
+
 function renderGraph(){
   const svg=document.getElementById('graph');
   const W=svg.clientWidth||800, H=svg.clientHeight||600;
@@ -415,14 +802,14 @@ function renderGraph(){
     if(n.id==='__hub__'){
       svgNodes+=`<g class="gn" data-id="__hub__" transform="translate(${p.x},${p.y})">
         <circle r="20" fill="#23302c" stroke="${STC.hub}" stroke-width="2"/>
-        <text text-anchor="middle" dy="4" font-size="14">🛰️</text>
+        <text text-anchor="middle" dy="4" font-size="14">⬡</text>
         <text text-anchor="middle" dy="34" font-size="10" fill="#8a7e70">Vera Hub</text></g>`;
       return;
     }
     if(n.kind==='usb' || n.kind==='serial_port'){
       svgNodes+=`<g class="gn" data-id="${esc(n.id)}" transform="translate(${p.x},${p.y})">
         <rect x="-15" y="-12" width="30" height="24" rx="4" fill="#201d1a" stroke="${STC.online}" stroke-width="2" stroke-dasharray="4 3"/>
-        <text text-anchor="middle" dy="4" font-size="12">🔌</text>
+        <text text-anchor="middle" dy="4" font-size="12">⌁</text>
         <text text-anchor="middle" dy="26" font-size="9" fill="#8a7e70">${esc((n.label||'serial').slice(0,16))}</text></g>`;
       return;
     }
@@ -481,7 +868,7 @@ async function loadNode(id, quiet){
     _lastNodeJSON='';
     document.getElementById('inspector').innerHTML=
       `<div class="card"><span class="status err">${esc((r&&r.error)||'load failed')}</span>`
-      +`<div class="muted" style="margin-top:6px">If this is a USB board that can't reach the server over Wi-Fi, it isn't enrolled yet — click <b>🌉 Bridge</b> (not just Connect) to relay it into the mesh, or provision Wi-Fi.</div></div>`;
+      +`<div class="muted" style="margin-top:6px">If this is a USB board that can't reach the server over Wi-Fi, it isn't enrolled yet — click <b>⇌ Bridge</b> (not just Connect) to relay it into the mesh, or provision Wi-Fi.</div></div>`;
     return;
   }
   markInspectorStale(false);
@@ -513,10 +900,10 @@ function renderInspector(r){
       ${n.role?`· role <span class="pill">${esc(n.role)}</span>`:''}
     </div>
     <div class="row" style="gap:5px;flex-wrap:wrap;margin:0">
-      <button class="btn sm" onclick="act('identify','${esc(n.node_id)}')">💡 Identify</button>
+      <button class="btn sm" onclick="act('identify','${esc(n.node_id)}')">◇ Identify</button>
       <button class="btn sm" onclick="act('reboot','${esc(n.node_id)}')">↻ Reboot</button>
-      <button class="btn sm" onclick="readSensor('${esc(n.node_id)}')">📊 Read now</button>
-      <button class="btn sm danger" onclick="forgetNode('${esc(n.node_id)}')">🗑 Forget</button>
+      <button class="btn sm" onclick="readSensor('${esc(n.node_id)}')">▥ Read now</button>
+      <button class="btn sm danger" onclick="forgetNode('${esc(n.node_id)}')">✕ Forget</button>
     </div>
     <div class="status" id="actStatus"></div>
   </div>
@@ -566,10 +953,10 @@ function renderInspector(r){
   drawSparks(r.telemetry||[]);
 }
 
-function moduleWebFetch(n){return `<div class="card"><h2>🌐 Web Fetch</h2>
+function moduleWebFetch(n){return `<div class="card"><h2>⊕ Web Fetch</h2>
   <div class="row"><input id="wfUrl" placeholder="https://example.com/api"></div>
   <button class="btn sm" onclick="webFetch('${esc(n.node_id)}')">Fetch on node</button></div>`;}
-function moduleKiosk(n){return `<div class="card"><h2>🖥 Kiosk</h2>
+function moduleKiosk(n){return `<div class="card"><h2>▣ Kiosk</h2>
   <div class="row"><label>URL</label><input id="kioUrl" placeholder="https://…"></div>
   <div class="row"><label>Text</label><input id="kioText" placeholder="or a message"></div>
   <div class="row"><label>Bright</label><input id="kioBri" type="range" min="0" max="100" value="80"></div>
@@ -583,10 +970,10 @@ function moduleBoard(n){
   const allp=[t.rst,t.cs,t.dc,t.wr,t.rd].concat(d).filter(x=>x!=null);
   const usb=allp.filter(p=>p===19||p===20), flash=allp.filter(p=>p>=26&&p<=37);
   let pinWarn='';
-  if(usb.length) pinWarn+=`<div class="status err" style="margin-bottom:6px">⛔ Pin(s) on GPIO ${usb.join('/')} = the S3's native <b>USB-Serial-JTAG</b> lines. While the USB console/REPL is active these are <b>stuck</b>, so the parallel bus is dead. On MicroPython (REPL is on USB) the display <b>cannot</b> work here — use the Arduino build with <b>USB CDC On Boot: Disabled</b>, or wire those LCD lines to other GPIOs.</div>`;
-  if(flash.length) pinWarn+=`<div class="status warn" style="margin-bottom:6px">⚠ Pin(s) on GPIO ${flash.join('/')} are usually SPI-flash/PSRAM (26-32, and 33-37 on -R8 octal-PSRAM boards) — not free GPIO. Verify against your board.</div>`;
-  return `<div class="card"><h2>🧩 Board / Pins</h2>
-   ${hasKiosk?'':'<div class="status warn" style="margin-bottom:6px">⚠ This node isn\'t advertising a display (no <b>kiosk</b> module) — it was almost certainly flashed with 🖥 Display <b>off</b>. Re-flash/re-push firmware with Display enabled; pin edits and the Test pattern do nothing until then.</div>'}
+  if(usb.length) pinWarn+=`<div class="status err" style="margin-bottom:6px">✕ Pin(s) on GPIO ${usb.join('/')} = the S3's native <b>USB-Serial-JTAG</b> lines. While the USB PHY owns that pad these bits are <b>stuck</b> and the parallel bus is dead. Three ways out: <b>(1)</b> flash the <b>Arduino</b> build (Flash card ▸ pick “Vera Node — Arduino sketch” ▸ Flash) — it compiles with USB CDC off and frees them automatically; <b>(2)</b> re-push <b>MicroPython</b> with the <b>⌁ Free USB pins</b> bake option — the display works but the USB REPL dies (Wi-Fi/UART0 only; hold BOOT+RESET to reflash); <b>(3)</b> wire those LCD lines to other GPIOs and remap them below.</div>`;
+  if(flash.length) pinWarn+=`<div class="status warn" style="margin-bottom:6px">△ Pin(s) on GPIO ${flash.join('/')} are usually SPI-flash/PSRAM (26-32, and 33-37 on -R8 octal-PSRAM boards) — not free GPIO. Verify against your board.</div>`;
+  return `<div class="card"><h2>▦ Board / Pins</h2>
+   ${hasKiosk?'':'<div class="status warn" style="margin-bottom:6px">△ This node isn\'t advertising a display (no <b>kiosk</b> module) — it was almost certainly flashed with ▣ Display <b>off</b>. Re-flash/re-push firmware with Display enabled; pin edits and the Test pattern do nothing until then.</div>'}
    ${pinWarn}
    <div class="row" style="gap:4px;margin:0">
      <select id="boardSel" style="flex:1" onchange="onBoardPick()"></select>
@@ -608,12 +995,12 @@ function moduleBoard(n){
    <div class="row" style="gap:5px;margin-top:6px;flex-wrap:wrap">
      <button class="btn sm primary" onclick="pushPins('${esc(n.node_id)}')">Push pins</button>
      <button class="btn sm" onclick="displayTest('${esc(n.node_id)}')">▦ Test pattern</button>
-     <button class="btn sm" onclick="displayProbe('${esc(n.node_id)}')">🔍 Probe controller</button>
-     <button class="btn sm" onclick="saveBoard()">💾 Save as…</button>
+     <button class="btn sm" onclick="displayProbe('${esc(n.node_id)}')">⌕ Probe controller</button>
+     <button class="btn sm" onclick="saveBoard()">▤ Save as…</button>
    </div>
    <div class="muted" style="margin-top:4px">Blank white screen? Push pins → Test pattern. Colour bars = the bus is alive; swapped colours = RGB/BGR; mirrored/rotated = change Rot. Save the map that works.</div>
    <div class="status" id="boardStatus"></div></div>`;}
-function moduleNeopixel(n){return `<div class="card"><h2>🌈 NeoPixel</h2>
+function moduleNeopixel(n){return `<div class="card"><h2>◩ NeoPixel</h2>
    <div class="row" style="gap:6px;align-items:center;margin:0">
      <input type="color" id="npCol" value="#00ff88" style="width:46px;height:28px;padding:2px">
      <select id="npFx" style="width:auto"><option value="solid">solid</option><option value="blink">blink</option><option value="breathe">breathe</option><option value="rainbow">rainbow</option><option value="off">off</option></select>
@@ -623,17 +1010,17 @@ function moduleNeopixel(n){return `<div class="card"><h2>🌈 NeoPixel</h2>
      <button class="btn sm" onclick="neoProbe('${esc(n.node_id)}')">Probe pin</button></div>
    <div class="muted" style="margin-top:4px">Drives the on-board WS2812. Unknown pin? Probe lights each candidate GPIO in turn — note which one lights, then set it in Board / Pins.</div>
    <div class="status" id="neoStatus"></div></div>`;}
-function moduleControl(n){return `<div class="card"><h2>🎚 Control</h2>
+function moduleControl(n){return `<div class="card"><h2>≡ Control</h2>
   <div class="row"><label>Channel</label><input id="ctlCh" placeholder="relay1 / 26"></div>
   <div class="row"><label>Value</label>
     <select id="ctlVal"><option value="1">on / 1</option><option value="0">off / 0</option><option value="toggle">toggle</option></select></div>
   <button class="btn sm" onclick="controlSet('${esc(n.node_id)}')">Actuate</button></div>`;}
-function moduleAlert(n){return `<div class="card"><h2>🔔 Alert</h2>
+function moduleAlert(n){return `<div class="card"><h2>△ Alert</h2>
   <div class="row"><input id="alMsg" placeholder="message…"></div>
   <div class="row"><label>Level</label><select id="alLvl"><option>info</option><option>warn</option><option>crit</option></select>
     <label style="min-width:auto;margin-left:6px"><input type="checkbox" id="alSnd" checked> sound</label></div>
   <button class="btn sm" onclick="alertNode('${esc(n.node_id)}')">Send alert</button></div>`;}
-function moduleIO(n){return `<div class="card"><h2>🔌 IO control</h2>
+function moduleIO(n){return `<div class="card"><h2>⌁ IO control</h2>
   <div class="row" style="gap:4px">
     <input id="ioPin" placeholder="pin (e.g. 26)" style="width:84px">
     <select id="ioMode" style="width:auto"><option value="digital">digital</option><option value="pwm">pwm</option></select>
@@ -648,7 +1035,7 @@ function moduleIO(n){return `<div class="card"><h2>🔌 IO control</h2>
 function moduleWifi(n, jobs){
   const scan=(jobs||[]).find(j=>j.type==='wifi_scan' && j.result && j.result.aps);
   const aps=scan?scan.result.aps:null;
-  return `<div class="card"><h2>📶 Wi-Fi</h2>
+  return `<div class="card"><h2>≋ Wi-Fi</h2>
   <button class="btn sm" onclick="wifiScan('${esc(n.node_id)}')">Scan networks</button>
   <span class="muted" id="wifiScanStatus" style="margin-left:6px"></span>
   ${aps?`<table style="margin-top:6px"><thead><tr><th>SSID</th><th>ch</th><th>rssi</th></tr></thead><tbody>`+
@@ -657,7 +1044,7 @@ function moduleWifi(n, jobs){
   <div class="muted" style="margin-top:4px">Channel-state info (CSI) needs custom ESP-IDF firmware — not in the MicroPython build.</div></div>`;}
 function moduleWorker(n){
   const tasks=((n.config&&n.config.worker&&n.config.worker.tasks)||[]);
-  return `<div class="card"><h2>⚙ Worker tasks</h2>
+  return `<div class="card"><h2>≡ Worker tasks</h2>
   ${tasks.length?tasks.map(t=>`<div class="modrow"><span class="mn">${esc(t.type)} · every ${esc(t.interval_s||60)}s</span></div>`).join(''):'<span class="muted">No recurring tasks.</span>'}
   <div class="row" style="gap:4px;margin-top:6px">
     <select id="wkType" style="width:auto"><option value="read_sensor">read_sensor</option><option value="io_read">io_read</option><option value="web_fetch">web_fetch</option></select>
@@ -712,7 +1099,7 @@ async function assignWorker(id){
 async function clearWorker(id){ const r=await api('/mesh/worker/assign','POST',{node_id:id, replace:true});
   setStatus('actStatus', r&&r.ok?'tasks cleared':'failed', r&&r.ok?'ok':'err'); if(r&&r.ok) loadNode(id,true); }
 // ── Board / Pins + NeoPixel ──────────────────────────────────────────────────
-let _boards=[]; let _fwTools={};
+let _boards=[]; let _fwTools={}; let _srcFw={};
 async function loadBoards(){ const r=await api('/mesh/boards');
   if(r&&r.boards){ _boards=r.boards;
     const sel=document.getElementById('boardSel'); if(sel) fillBoardSelect(sel);
@@ -836,8 +1223,8 @@ async function openSerial(){
   if(!_serPort.readable){ await _serPort.open({baudRate:115200}); }   // skip if already open
   _serWriter=_serPort.writable.getWriter();
   ['detectBtn','provBtn','flashBtn','eraseBtn','bridgeBtn'].forEach(id=>{const e=document.getElementById(id); if(e)e.disabled=false;});
-  document.getElementById('serBtn').textContent='🔌 Connected';
-  setStatus('serStatus','Connected. Flash, provision Wi-Fi, or 🌉 Bridge over USB. Auto-enrols if it already runs Vera.','ok');
+  document.getElementById('serBtn').textContent='⌁ Connected';
+  setStatus('serStatus','Connected. Flash, provision Wi-Fi, or ⇌ Bridge over USB. Auto-enrols if it already runs Vera.','ok');
   _usbConnected=true; renderGraph();
   readSerialLoop();
   try{ await _serWriter.write(new TextEncoder().encode(JSON.stringify({cmd:'ping'})+'\n')); }catch(e){}  // elicit a hello
@@ -863,7 +1250,7 @@ async function cleanupSerial(){
   _serReader=null; _serWriter=null;
   try{ if(_serPort && _serPort.readable) await _serPort.close(); }catch(e){}
   _serPort=null; _usbConnected=false;
-  const b=document.getElementById('serBtn'); if(b) b.textContent='🔌 Connect';
+  const b=document.getElementById('serBtn'); if(b) b.textContent='⌁ Connect';
   ['detectBtn','provBtn','bridgeBtn'].forEach(id=>{const e=document.getElementById(id); if(e)e.disabled=true;});
   renderGraph();
 }
@@ -875,7 +1262,7 @@ async function toggleBridge(){
   try{ await _serWriter.write(new TextEncoder().encode(JSON.stringify({cmd:'serial_mode',on:true})+'\n')); }catch(e){}
   try{ await _serWriter.write(new TextEncoder().encode(JSON.stringify({cmd:'ping'})+'\n')); }catch(e){}
   startBridge();
-  const b=document.getElementById('bridgeBtn'); if(b) b.textContent='🌉 Bridging';
+  const b=document.getElementById('bridgeBtn'); if(b) b.textContent='⇌ Bridging';
 }
 let _bridgeWaited=0;
 function startBridge(){
@@ -910,7 +1297,7 @@ function startBridge(){
 function stopBridge(){
   if(_bridgeTimer){ clearTimeout(_bridgeTimer); _bridgeTimer=null; }
   try{ if(_serWriter) _serWriter.write(new TextEncoder().encode(JSON.stringify({cmd:'serial_mode',on:false})+'\n')); }catch(e){}
-  const b=document.getElementById('bridgeBtn'); if(b) b.textContent='🌉 Bridge';
+  const b=document.getElementById('bridgeBtn'); if(b) b.textContent='⇌ Bridge';
 }
 async function readSerialLoop(){
   const dec=new TextDecoder(); let buf='';
@@ -1106,21 +1493,53 @@ function fwSourceUrl(a){
   return (BASE||'')+base+(base.includes('?')?'&':'?')+'server='+encodeURIComponent(serverUrl())+(o?('&'+o):'');
 }
 async function sketchBuildHelp(a){
-  // If the vera-builder container is up, compile on the server and flash the
-  // resulting .bin — no IDE needed. Otherwise fall back to the IDE instructions.
+  // If a compiler is reachable, build on the server and flash the resulting .bin —
+  // no IDE needed. Otherwise offer to start one, and fall back to IDE instructions.
   if(_fwTools && _fwTools.can_build){ return buildOnServer(a); }
+  if(confirm('The Arduino sketch has to be compiled first, and no build service is running.\n\n'+
+             'Start one now? The first run builds a container image and downloads the ESP32 '+
+             'toolchains (~2 GB, several minutes). After that, builds take seconds.\n\n'+
+             'Cancel = open the .ino to compile in the Arduino IDE instead.')){
+    await startBuilder();
+    if(_fwTools && _fwTools.can_build) return buildOnServer(a);
+    return;
+  }
   const url=fwSourceUrl(a);
   try{ window.open(url,'_blank'); }catch(e){}
-  setStatus('serStatus','This Arduino sketch must be compiled. No build service is running (start it with: docker compose up -d --build vera-builder), so build it in the Arduino IDE: opened the .ino in a new tab — Save As vera_mesh_node.ino → Arduino IDE → Tools ▸ USB CDC On Boot ▸ Disabled → pick your ESP32-S3 board → Upload. Source: '+url,'warn');
+  setStatus('serStatus','Opened the templated .ino in a new tab — Save As vera_mesh_node.ino → Arduino IDE → Tools ▸ USB CDC On Boot ▸ Disabled → pick your ESP32-S3 board → Upload. Or export the .bin and bring it back here with “Upload .bin”. Source: '+url,'warn');
 }
 async function buildOnServer(a){
-  setStatus('serStatus','Building '+(a.label||'sketch')+' on the vera-builder container (first build pulls the ESP32 toolchains — can take a few minutes)…');
-  const r=await api('/mesh/firmware/build','POST',{},600000);   // long timeout: compile can be slow
-  if(!(r&&r.ok)){ setStatus('serStatus','build failed'+(r&&r.via?(' ('+r.via+')'):'')+': '+((r&&r.error)||'?')+(r&&r.log?(' — '+String(r.log).slice(-300)):''),'err'); return; }
+  const o=fwOpts();
+  setStatus('serStatus','Compiling the Vera node sketch'+(o.board?(' for '+o.board):'')+' on the build service…');
+  // Send the SAME bake options the download/REPL-push path uses, so the .bin
+  // ships with the picked board's pin map instead of the file defaults.
+  const body={board:o.board||'', server:serverUrl(),
+              display:o.display==='1', sd:o.sd==='1', csi:o.csi==='1',
+              usb_pins:o.usb_pins==='1'};
+  // Send the SSID even with a blank password — the server fills it from the saved
+  // (sealed) profile, which is the normal case since the box clears after saving.
+  if(o.wifi_ssid){ body.wifi_ssid=o.wifi_ssid; if(o.wifi_pass) body.wifi_pass=o.wifi_pass; }
+  body.background=true;                              // report progress while it compiles
+  const started=await api('/mesh/firmware/build','POST',body,60000);
+  let r=started;
+  if(started&&started.job_id){
+    const done=await followBuildJob(started.job_id, 1200);
+    r=(done&&done.result)||{error:(done&&done.error)||'build did not finish'};
+  }
+  if(!(r&&r.ok)){
+    setStatus('serStatus','build failed'+(r&&r.via?(' ('+r.via+')'):'')+': '+((r&&r.error)||'?')+
+              (r&&r.log?(' — '+String(r.log).slice(-300)):''),'err');
+    if(r&&r.hint) console.warn('mesh.firmware.build:', r.hint);
+    return;
+  }
   await loadCatalog();
   const idx=_catalog.findIndex(x=>x.id==='bin:'+r.name || (x.url&&x.url.endsWith('/'+r.name)));
   if(idx>=0){ document.getElementById('fwSel').value=idx; }
-  setStatus('serStatus','✓ built '+r.name+' (USB-CDC-off S3 image) — flashing over USB…','ok');
+  if(!o.wifi_ssid){
+    setStatus('serStatus','✓ built '+r.name+' — △ Wi-Fi was NOT baked in (tick “Wi-Fi” above, with an SSID set), so this node will boot with no credentials and never join. Flashing anyway; provision it over serial with the Wi-Fi… button afterwards.','warn');
+  } else {
+    setStatus('serStatus','✓ built '+r.name+' ('+(r.fqbn||'')+') — Wi-Fi “'+o.wifi_ssid+'” baked in — flashing over USB…','ok');
+  }
   await flashSelected();
 }
 async function flashSelected(){
@@ -1235,7 +1654,11 @@ async function pushSelected(){
   let body;
   if(a.kind==='script'){ const u=a.text_url||'/mesh/firmware?flavor=micropython'; const o=fwOptsQuery();
     body={node_id:_sel, mode:'file', filename:a.upload_as||'main.py', url:u+(o?((u.includes('?')?'&':'?')+o):'')}; }
-  else if(a.source==='local_bin' || (a.url && a.url.startsWith('/mesh/firmware/bin/'))) body={node_id:_sel, mode:'bin', url:a.url};
+  // Send the ARTIFACT, not a raw url: the server swaps in the .ota.bin app
+  // image, because the catalog entry is the merged image and an OTA slot cannot
+  // boot that.
+  else if(a.source==='local_bin' || (a.url && a.url.startsWith('/mesh/firmware/bin/')))
+    body={node_id:_sel, mode:'bin', artifact:(a.url||'').split('/').pop()};
   else { setStatus('serStatus','remote runtimes must be flashed over USB; upload a .bin to OTA it','warn'); return; }
   const r=await api('/mesh/ota','POST',body);
   setStatus('serStatus', r&&r.ok?('OTA queued → '+_sel):(r&&r.error||'failed'), r&&r.ok?'ok':'err');

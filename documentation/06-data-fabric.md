@@ -324,3 +324,15 @@ See [Research System](./07-research.md) for the full recall surface.
 - [Markets](./15-markets.md) & [Device Mesh](./14-mesh.md) — high-volume numeric sources that write straight to fabric datasets
 - [Research System](./07-research.md) — research artifacts are fabric records
 - [Capability Framework](./01-capability-framework.md) — the `fabric.*` caps surface
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_No capabilities resolved for this domain._
+<!-- VERA:AUTO:capabilities END -->

@@ -1712,6 +1712,11 @@ function _tabRender(){
     }
   });
 
+  // Let a bound mesh display follow the tab you're on (Markets open -> Markets
+  // pad on the desk). Inert until you bind a node in the Mesh panel, and the
+  // server no-ops when the right pad is already showing.
+  try { _veraMeshFollow(); } catch (e) {}
+
   // 4) Insert resizable dividers between visible panels
   if(visibleCount>1){
     const visible = [...panelsEl.querySelectorAll('.panel.active')];
@@ -3945,6 +3950,20 @@ function _ensurePanelSpinner(panelEl) {
 // spinner once it fires 'load'. A cheap no-op after the first activation.
 // If a frame never loads (slow/errored route), we surface a Retry affordance
 // instead of leaving a blank white iframe with a browser "no response" message.
+// Tell Vera which panel is in focus so a bound display node can mirror it.
+let _meshFollowLast = '';
+function _veraMeshFollow() {
+  const node = (localStorage.getItem('vera_mesh_follow_node') || '').trim();
+  if (!node) return;                       // opt-in: nothing bound, nothing sent
+  const pid = [..._openTabs][0] || '';
+  if (!pid || pid === _meshFollowLast) return;
+  _meshFollowLast = pid;
+  fetch('/mesh/app/follow', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ node_id: node, panel: pid })
+  }).catch(() => {});                      // best-effort: never disturb the UI
+}
+
 function _ensurePanelLoaded(panelEl) {
   if (!panelEl) return;
   if (panelEl._parkTimer) { clearTimeout(panelEl._parkTimer); panelEl._parkTimer = null; }

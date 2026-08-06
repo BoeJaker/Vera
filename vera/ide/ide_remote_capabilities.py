@@ -1763,6 +1763,8 @@ register_ui(
     # solo pop-out without rendering a second top-level tab.
     mode="element",
     tab_order=51,
+    specialist_agent="coder",
+    specialist_loop_profile="coding",
 )
 
 
