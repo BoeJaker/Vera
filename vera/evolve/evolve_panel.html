@@ -1440,6 +1440,7 @@ function onEvent(ev){
     if(_curSec()==='watch')watchRefresh();
   }
   if(t.startsWith('evolve.pipeline.')){if(_curSec()==='pipelines')loadPipelines();if(_curSec()==='review')loadReview();pollPipeLive(ev.id)}
+  if(t.startsWith('ide.workspace.changes.')||t==='evolve.sandbox.review'){if(_curSec()==='review')loadReview()}
 }
 
 /* ═══ WATCH — live test → evaluate → synthesize ═══ */
@@ -2198,11 +2199,36 @@ async function confirmRollback(id){
 
 /* ═══ REVIEW — everything awaiting a decision, diff + verdict in one place ═══ */
 async function loadReview(){
+  const body=$('review-body');
+  // Which dev sandbox / branch is this review context? (was silently pinned to prod)
+  let sbLine='';
+  try{
+    const s=await api('/evolve/sandbox/status');const sb=(s&&s.sandbox)||{};
+    if(sb.branch){
+      const reach=s&&s.probe&&s.probe.reachable;
+      sbLine='<div class="hint" style="margin-bottom:10px">active dev sandbox: <b>'+esc(sb.branch)+'</b>'
+        +' · '+(reach?'<span style="color:var(--ok)">reachable</span>':'<span style="color:var(--warn)">down</span>')
+        +(sb.port?' · :'+esc(String(sb.port)):'')
+        +(sb.worktree?' · <span class="mono" style="font-size:10px">'+esc(sb.worktree)+'</span>':'')+'</div>';
+    }
+  }catch(e){}
+  // Sandbox → Workspace Changes proposals (from evolve.sandbox.review). These live
+  // in the shared changes store, NOT the pipeline queue, so surface them here too.
+  let wsCards='';
+  try{
+    const wr=await api('/ide/workspace/changes/list?status=pending');
+    const wps=((wr&&wr.proposals)||[]).filter(p=>/^loop-lab:/.test(p.source||'')||/^Loop Lab/.test(p.workspace||''));
+    if(wps.length)wsCards=wps.map(wsReviewCard).join('');
+  }catch(e){}
+  // Pipelines awaiting a decision.
   const r=await api('/evolve/pipeline/list?limit=50');const ps=(r&&r.pipelines)||[];
   const queue=ps.filter(p=>p.review_requested||p.decision==='pending'||p.decision==='held');
-  const body=$('review-body');
-  if(!queue.length){body.innerHTML='<div class="empty">Nothing awaiting review right now.</div>';return}
-  body.innerHTML=queue.map(reviewCard).join('');
+  const pipeCards=queue.length?queue.map(reviewCard).join(''):'';
+  if(!wsCards&&!pipeCards){body.innerHTML=sbLine+'<div class="empty">Nothing awaiting review right now.</div>';return}
+  let h=sbLine;
+  if(wsCards)h+='<label class="fld">Sandbox changes — awaiting accept / reject</label>'+wsCards;
+  if(pipeCards)h+='<label class="fld"'+(wsCards?' style="margin-top:12px"':'')+'>Pipelines — awaiting a decision</label>'+pipeCards;
+  body.innerHTML=h;
   if(queue.some(p=>p.live)){clearTimeout(window._reviewT);window._reviewT=setTimeout(loadReview,3500)}
 }
 function reviewCard(p){
@@ -2245,6 +2271,56 @@ async function reviewVerdict(id,verdict){
   const r=await post('/evolve/pipeline/review',{id,verdict,findings:findings||(verdict+' via Review tab')});
   toast(r&&r.ok?('Reviewed as '+r.reviewer):(r&&r.error)||'failed');
   loadReview();loadPipelines();
+}
+
+/* ── Sandbox Workspace-Changes proposals (evolve.sandbox.review → ide.workspace.changes.*) ── */
+function wsReviewCard(p){
+  const br=(p.source||'').replace(/^loop-lab:/,'')||(p.workspace||'');
+  const pend=p.pending!=null?p.pending:p.files;
+  return '<div class="card" style="margin-bottom:8px">'
+    +'<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">'
+    +'<span class="mono">'+esc(p.id)+'</span>'
+    +'<span class="tag">'+esc(br)+'</span>'
+    +'<span class="pill" style="color:var(--acc)">'+esc(String(p.files))+' file'+(p.files===1?'':'s')+'</span>'
+    +(pend?'<span class="pill" style="color:var(--warn)">'+esc(String(pend))+' pending</span>':'<span class="pill" style="color:var(--ok)">resolved</span>')
+    +(p.created?'<span class="hint">'+esc(String(p.created).slice(0,19).replace('T',' '))+'</span>':'')
+    +'<span style="flex:1"></span>'
+    +'<button class="btn sm" onclick="toggleWsDiff(\''+esc(p.id)+'\')">files / diff</button>'
+    +'</div>'
+    +'<div id="ws-diff-'+esc(p.id)+'" style="display:none;margin-top:8px"></div>'
+    +'<div class="row" style="margin-top:8px;gap:5px;flex-wrap:wrap">'
+    +'<button class="btn sm ok-btn" onclick="wsAccept(\''+esc(p.id)+'\')">Approve → write to base</button>'
+    +'<button class="btn sm err-btn" onclick="wsReject(\''+esc(p.id)+'\')">Reject</button>'
+    +'<span class="hint" style="flex:1;text-align:right">accept writes the worktree files into the base checkout (no git merge)</span>'
+    +'</div></div>';
+}
+async function toggleWsDiff(id){
+  const el=$('ws-diff-'+id);if(!el)return;
+  if(el.style.display!=='none'){el.style.display='none';return}
+  el.style.display='';el.innerHTML='<span class="spin"></span> loading…';
+  const d=await api('/ide/workspace/changes/get?id='+encodeURIComponent(id));
+  if(!d||d.error){el.innerHTML='<div class="hint">'+esc((d&&d.error)||'no detail')+'</div>';return}
+  const files=(d.files||[]);
+  el.innerHTML=files.map(f=>{
+    const diff=f.diff||'';
+    return '<div style="margin-bottom:6px">'
+      +'<div class="mono" style="font-size:10.5px;color:var(--acc)">'+esc(f.rel||'')+' <span style="color:var(--dim2)">('+esc(f.status||'')+')</span></div>'
+      +(diff?'<pre style="max-height:240px;overflow:auto;font-size:10px;background:var(--bg2);border-radius:6px;padding:8px;white-space:pre-wrap">'+esc(diff)+'</pre>'
+            :'<div class="hint">'+(f.binary?'binary file':'no textual diff')+'</div>')
+      +'</div>';
+  }).join('')||'<div class="hint">no files</div>';
+}
+async function wsAccept(id){
+  if(!confirm('Approve: write ALL files from this proposal into the base checkout?\n\nThis modifies the target repo on disk (no git commit/merge).'))return;
+  const r=await post('/ide/workspace/changes/accept',{id,apply_all:true});
+  toast(r&&r.ok?('Applied '+((r.applied||[]).length)+' file(s)'+((r.skipped||[]).length?', skipped '+r.skipped.length:'')):(r&&r.error)||'failed');
+  loadReview();
+}
+async function wsReject(id){
+  if(!confirm('Reject and discard this whole proposal?'))return;
+  const r=await post('/ide/workspace/changes/reject',{id,reject_all:true});
+  toast(r&&r.ok?'Rejected':(r&&r.error)||'failed');
+  loadReview();
 }
 
 async function pollPipeLive(id){if(!id)return;const r=await api('/evolve/pipeline/get?id='+encodeURIComponent(id));if(r&&r.pipeline){_livePipe=r.pipeline;renderLive();if(r.pipeline.live){clearTimeout(window._pipeLiveT);window._pipeLiveT=setTimeout(()=>pollPipeLive(id),3000)}}}
