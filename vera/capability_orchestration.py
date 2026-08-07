@@ -3221,8 +3221,16 @@ async def _persist_loop_event(event: dict, ev_json: str):
             log.debug("resume persist: %s", e)
 
 
+try:
+    from Vera.vera.provenance import event_stamp as _prov_stamp
+except Exception:                       # provenance must never break event emit
+    def _prov_stamp(_ev):  # type: ignore
+        return None
+
+
 async def emit_event(event: dict):
     event.setdefault("ts", now_iso())
+    _prov_stamp(event)   # compact git {ver, br, dirty} → correlate any event to code
     ev_json = json.dumps(event)
     if REDIS:
         try:
@@ -4797,6 +4805,22 @@ async def scheduler_loop():
 #  ██  BUILT-IN CAPABILITIES  (all declared with @capability)
 #      These replace every former @APP.get / @APP.post route.
 # ─────────────────────────────────────────────────────────────────────────────
+
+# ── Observability ─────────────────────────────────────────────────────────────
+
+@capability("obs.provenance", memory="off", silent=True,
+            http_method="GET", http_path="/obs/provenance", http_tags=["obs"],
+            description="Git provenance of the RUNNING process: which commit/branch it "
+                        "is on, whether the checkout is dirty (uncommitted code), plus "
+                        "instance/pid/start time — computed once at boot. Every emitted "
+                        "event also carries a compact {ver, br, dirty} so any event, log, "
+                        "run or error correlates to the exact code that produced it. "
+                        "Output: {git_sha, git_sha_short, branch, dirty, instance, pid, "
+                        "started_at}.")
+async def cap_obs_provenance(trace_id=None):
+    from Vera.vera.provenance import get_provenance
+    return get_provenance()
+
 
 # ── MCP ───────────────────────────────────────────────────────────────────────
 
