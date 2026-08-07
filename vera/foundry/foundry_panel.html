@@ -1,14 +1,21 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dusk">
 <head>
+<script>/* vera theme boot — paint cached theme before CSS parses (shared same-origin) */
+(function(){try{var d=document.documentElement,S=window.localStorage;
+var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Foundry — OS provisioning</title>
 <style>
-  :root{--bg:#0c0e13;--bg2:#12151c;--panel:#151923;--border:#232a37;--ink:#e8edf6;
-    --dim:#8b96aa;--dim2:#606a7d;--acc:#6ea8fe;--ok:#57d08a;--warn:#e8b84b;--bad:#e0687a}
-  @media (prefers-color-scheme:light){:root{--bg:#f6f8fc;--bg2:#eef1f7;--panel:#fff;--border:#dde3ee;
-    --ink:#1a2030;--dim:#59637a;--dim2:#8b95a8;--acc:#2f6fe0}}
+  :root{--bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;--border:#3a3530;--border2:#4a4540;
+    --acc:#5a9e8f;--acc2:#8fb87a;--acc3:#c9955a;--acc4:#9e8fa0;--ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;
+    --gpu:#c97a5a;--text:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;
+    --mono:'JetBrains Mono','Fira Mono',monospace;--sans:'Inter',system-ui,sans-serif;
+    /* panel-local aliases → track the active Vera theme */
+    --bg:var(--bg0);--panel:var(--bg1);--ink:var(--text);--bad:var(--err)}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.45 -apple-system,Segoe UI,Roboto,Arial,sans-serif}
   .wrap{max-width:1100px;margin:0 auto;padding:16px}
@@ -104,6 +111,38 @@
       </div>
     </div>
   </div>
+
+  <!-- Physical / PXE -->
+  <div class="card" style="margin-top:14px">
+    <h2>Physical / PXE <span class="r"><span id="pxeStatus" class="muted">—</span> · <a href="#" onclick="pxeDeploy();return false" style="color:var(--acc)">deploy netboot server</a></span></h2>
+    <div class="muted" style="font-size:11px;margin:-4px 0 10px">Bare-metal &amp; ISO installs use the <b>same catalogue images and feature bundles</b> as CT/VM — a PXE <b>profile</b> = image × features. Runs on a dedicated provisioning bridge/VLAN, isolated from the main LAN.</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
+      <div>
+        <div style="font-size:11px;color:var(--acc);font-weight:600;margin-bottom:4px">Netboot server</div>
+        <label>Provisioning host (vera-foundry)</label><input id="pxeHost" placeholder="vera-foundry">
+        <div class="row"><div><label>Bridge / VLAN</label><input id="pxeBridge" placeholder="vmbr1"></div>
+          <div><label>Gateway</label><input id="pxeGw" placeholder="10.42.0.1"></div></div>
+        <label>Subnet</label><input id="pxeSubnet" placeholder="10.42.0.0/24">
+        <button class="btn gho" style="margin-top:8px" onclick="pxeSaveCfg()">Save config</button>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--acc);font-weight:600;margin-bottom:4px">Boot profiles (image × features)</div>
+        <div id="pxeProfiles" style="max-height:118px;overflow:auto;margin-bottom:6px"><span class="muted">none</span></div>
+        <input id="pxePName" placeholder="profile name (e.g. workstation)">
+        <select id="pxePImg" style="margin-top:4px"></select>
+        <input id="pxePFeats" placeholder="features: enrol mesh hardening file-client" style="margin-top:4px">
+        <button class="btn gho" style="margin-top:6px" onclick="pxeProfileSave()">+ profile</button>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--acc);font-weight:600;margin-bottom:4px">Machines (waiting-room, by MAC)</div>
+        <div id="pxeMacs" style="max-height:118px;overflow:auto;margin-bottom:6px"><span class="muted">none</span></div>
+        <input id="pxeMac" placeholder="aa:bb:cc:dd:ee:ff">
+        <select id="pxeMacProf" style="margin-top:4px"></select>
+        <input id="pxeMacIp" placeholder="static IP (no DHCP)" style="margin-top:4px">
+        <button class="btn gho" style="margin-top:6px" onclick="pxeMacAdd()">assign profile</button>
+      </div>
+    </div>
+  </div>
 </div>
 <div class="toast" id="toast"></div>
 <script>
@@ -123,9 +162,27 @@ async function boot(){
   renderCatalog();
   const cs=(cl&&cl.clusters)||[];
   $('cluster').innerHTML=cs.map(c=>`<option value="${c.id}">${esc(c.label)}</option>`).join('')||'<option value="">(none)</option>';
-  onTarget(); loadJobs(); loadBlueprints();
+  onTarget(); loadJobs(); loadBlueprints(); loadPxe();
   if(!IMAGES.length) toast('catalog empty — click “seed defaults”');
 }
+// ── Physical / PXE ──────────────────────────────────────────────────────────
+async function loadPxe(){
+  const st=await j('/foundry/pxe/status'); const cfg=(st&&st.config)||{};
+  $('pxeStatus').textContent=((st&&st.deployed)?'deployed':'not deployed')+' · '+((st&&st.profiles)||0)+' profiles · '+((st&&st.macs)||0)+' machines';
+  $('pxeHost').value=cfg.host||''; $('pxeBridge').value=cfg.bridge||''; $('pxeGw').value=cfg.gateway||''; $('pxeSubnet').value=cfg.subnet||'';
+  const imgs=IMAGES.filter(i=>i.type==='cloudimg'||i.type==='iso');
+  $('pxePImg').innerHTML=imgs.map(i=>`<option value="${i.id}">${esc(i.os)} ${esc(i.version)} (${esc(i.type)})</option>`).join('')||'<option value="">— import an ISO/cloudimg —</option>';
+  const profs=((await j('/foundry/pxe/profile/list'))||{}).profiles||[];
+  $('pxeProfiles').innerHTML=profs.map(p=>`<div style="font-size:11px;padding:3px 0;border-bottom:1px solid var(--border)"><b>${esc(p.name)}</b> <span class="muted">${esc(p.image_id||'—')} · ${(p.features||[]).join(',')}</span> <a href="#" onclick="pxeProfileDel('${p.id}');return false" class="muted" style="text-decoration:none">✕</a></div>`).join('')||'<span class="muted">none — create one below</span>';
+  $('pxeMacProf').innerHTML='<option value="">unassigned</option>'+profs.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  const macs=((await j('/foundry/pxe/macs'))||{}).macs||[];
+  $('pxeMacs').innerHTML=macs.map(m=>{const pn=(profs.find(p=>p.id===m.profile_id)||{}).name||'—';return `<div style="font-size:11px;padding:3px 0;border-bottom:1px solid var(--border)"><code>${esc(m.mac)}</code> → <b>${esc(pn)}</b> <span class="muted">${esc(m.ip||'')}</span></div>`;}).join('')||'<span class="muted">none</span>';
+}
+async function pxeSaveCfg(){await post('/foundry/pxe/config/save',{host:$('pxeHost').value.trim(),bridge:$('pxeBridge').value.trim(),gateway:$('pxeGw').value.trim(),subnet:$('pxeSubnet').value.trim()});toast('PXE config saved');loadPxe();}
+async function pxeProfileSave(){const name=$('pxePName').value.trim();if(!name)return toast('profile name?',true);const r=await post('/foundry/pxe/profile/save',{name,image_id:$('pxePImg').value,features:$('pxePFeats').value.trim()||'enrol hardening'});if(r&&r.ok){toast('profile saved');$('pxePName').value='';loadPxe();}else toast((r&&r.error)||'failed',true);}
+async function pxeProfileDel(id){await post('/foundry/pxe/profile/delete',{id});loadPxe();}
+async function pxeMacAdd(){const mac=$('pxeMac').value.trim();if(!mac)return toast('MAC?',true);const r=await post('/foundry/pxe/mac/add',{mac,profile_id:$('pxeMacProf').value,ip:$('pxeMacIp').value.trim()});if(r&&r.ok){toast('assigned '+mac);$('pxeMac').value='';loadPxe();}else toast((r&&r.error)||'failed',true);}
+async function pxeDeploy(){const r=await post('/foundry/pxe/server/deploy',{});toast((r&&(r.note||r.error))||'—',!(r&&r.ok));}
 // ── Blueprints (IaC) ────────────────────────────────────────────────────────
 function curNode(){
   const t=$('target').value;

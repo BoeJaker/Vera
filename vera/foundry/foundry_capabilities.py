@@ -30,9 +30,13 @@ Capabilities (group `foundry.*`):
   foundry.blueprint.*    — versioned, reusable IaC manifests: save/list/get/apply/
                            delete/export(YAML)/import — define a whole estate once,
                            version it, re-apply it, commit it to git/Gitea
+  foundry.pxe.*          — PXE/physical + ISO: config, boot profiles (image × the
+                           SAME feature bundles), MAC waiting-room, server deploy —
+                           so bare metal is provisioned from the same catalogue+features
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import time
@@ -493,11 +497,50 @@ async def _apply_ct_feature(cluster_id, vmid, guest_type, script, node="") -> Di
                        guest_type=guest_type, command=script, timeout=180)
 
 
+async def _post_provision(cluster_id, node, vmid, kind, feats, fqdn, job_id=""):
+    """Background: wait for the guest to run, then enrol + apply features. Emits
+    events + patches the stored job so the sync provision call returns fast."""
+    steps = []
+    try:
+        running = await _wait_guest_running(cluster_id, vmid, kind)
+        steps.append({"boot": {"running": running}})
+        if running and ("enrol" in feats or "mesh" in feats):
+            res = await _call("enroll.guest", cluster_id=cluster_id, vmid=vmid,
+                              guest_type=kind, node=node, fqdn=fqdn or "", via_proxmox=True)
+            steps.append({"enrol": {"ok": not res.get("error"),
+                                    "identity": (res.get("steps") or {}).get("identity", {}).get("ok"),
+                                    "mesh": (res.get("steps") or {}).get("mesh")}})
+        if running and "hardening" in feats and kind == "lxc":
+            h = await _apply_ct_feature(cluster_id, vmid, "lxc", _HARDEN, node)
+            steps.append({"hardening": {"ok": bool(h.get("ok"))}})
+    except Exception as e:
+        steps.append({"post_error": str(e)})
+    # patch the stored job (find by id in the K_JOBS list)
+    r = _redis()
+    if r and job_id:
+        try:
+            rows = await r.lrange(K_JOBS, 0, 199) or []
+            for i, raw in enumerate(rows):
+                jd = json.loads(raw)
+                if jd.get("id") == job_id:
+                    jd["steps"].extend(steps)
+                    jd["status"] = "ok"
+                    await r.lset(K_JOBS, i, json.dumps(jd))
+                    break
+        except Exception:
+            pass
+    await emit_event({"type": "foundry.provision.finished", "job": job_id,
+                      "vmid": vmid, "steps": steps})
+
+
 async def _wait_guest_running(cluster_id, vmid, kind="lxc", timeout=90) -> bool:
+    # For CTs, `pct create --start 1` often races the config lock and leaves the
+    # container stopped — retry `pct start` each poll until it's running.
     tool = "pct" if kind == "lxc" else "qm"
+    start = f"{tool} start {vmid} 2>/dev/null || true; " if kind == "lxc" else ""
     cmd = (f"for i in $(seq 1 {max(1, timeout // 3)}); do "
            f"{tool} status {vmid} 2>/dev/null | grep -q running && {{ echo RUNNING; exit 0; }}; "
-           "sleep 3; done; echo TIMEOUT")
+           f"{start}sleep 3; done; echo TIMEOUT")
     res = await _call("proxmox.node.exec", cluster_id=cluster_id, command=cmd, timeout=timeout + 15)
     return "RUNNING" in (res.get("stdout", "") or "")
 
@@ -571,19 +614,14 @@ async def cap_provision(target: str = "", image_id: str = "", name: str = "",
             job["status"] = "error"
         else:
             job["vmid"] = vmid
-            running = await _wait_guest_running(cluster_id, vmid, "lxc")
-            step("boot", {"running": running})
-            if want_enrol and running:
-                step("enrol", await _call("enroll.guest", cluster_id=cluster_id, vmid=vmid,
-                                          guest_type="lxc", node=node, fqdn=fqdn or "",
-                                          via_proxmox=True))
-            if "hardening" in feats and running:
-                step("hardening", await _apply_ct_feature(cluster_id, vmid, "lxc", _HARDEN, node))
+            job["status"] = "ok"
             for f in feats:
                 if f in ("file-server", "security-monitoring", "docker-swarm",
                          "distributed-compute", "file-client"):
                     step(f, {"status": "pending", "note": "bundle script lands next"})
-            job["status"] = "ok"
+            step("post", {"status": "applying",
+                          "note": "start + enrol + hardening running in background — watch events / jobs"})
+            asyncio.create_task(_post_provision(cluster_id, node, vmid, "lxc", feats, fqdn, job_id))
     elif target == "docker":
         if img.get("type") != "docker":
             return {"error": f"Docker target needs a docker image; '{image_id}' is {img.get('type')}"}
@@ -611,10 +649,11 @@ async def cap_provision(target: str = "", image_id: str = "", name: str = "",
             else:
                 job["status"] = "ok"
                 job["vmid"] = vmid
-                for f in feats:
-                    if f != "enrol":
-                        step(f, {"status": "pending",
-                                 "note": "VM post-boot enrol/features apply once reachable (next)"})
+                # VM boots with Vera's key + static IP; enrol it in the background
+                # (needs the guest agent — cloud image may lack it; best-effort).
+                step("post", {"status": "applying",
+                              "note": "VM boot + enrol running in background — watch events / jobs"})
+                asyncio.create_task(_post_provision(cluster_id, node, vmid, "qemu", feats, fqdn, job_id))
         else:
             step("create", {"status": "pending",
                             "note": "no cloud-init template linked to this cloudimg yet — "
@@ -887,6 +926,215 @@ async def cap_bp_import(text: str = "", trace_id=None) -> Dict:
                              nodes=bp.get("nodes", []))
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# PXE / physical + ISO — the SAME image catalogue + feature bundles, delivered to
+# bare metal via netboot. A PXE *profile* is the physical/ISO analogue of a
+# provision request / blueprint node: image × features[] × autoinstall. This is
+# the management layer (config, profiles, MAC waiting-room) driveable from the UI;
+# the netboot server itself is stood up on a dedicated provisioning bridge/VLAN
+# (foundry.pxe.server.deploy → the vera-foundry host) — see the roadmap.
+# ─────────────────────────────────────────────────────────────────────────────
+K_PXE_CFG = "vera:foundry:pxe:config"
+K_PXE_PROFILES = "vera:foundry:pxe:profiles"
+K_PXE_MACS = "vera:foundry:pxe:macs"
+PXE_DEFAULTS = {
+    "enabled": False, "deployed": False, "host": "",
+    "bridge": "vmbr1", "subnet": "10.42.0.0/24",
+    "dhcp_from": "10.42.0.50", "dhcp_to": "10.42.0.200", "gateway": "10.42.0.1",
+    "default_action": "local", "note": "",
+}
+
+
+async def _pxe_cfg() -> Dict:
+    r = _redis()
+    cfg = dict(PXE_DEFAULTS)
+    if r:
+        raw = await r.hget(K_PXE_CFG, "main")
+        if raw:
+            try:
+                cfg.update(json.loads(raw))
+            except Exception:
+                pass
+    return cfg
+
+
+@capability(
+    "foundry.pxe.config", http_method="GET", http_path="/foundry/pxe/config",
+    http_tags=["foundry"], memory="off", silent=True,
+    description="PXE/netboot server config (bridge/VLAN, DHCP range, gateway, "
+                "deploy host, enabled/deployed). Output: the config.",
+)
+async def cap_pxe_config(trace_id=None) -> Dict:
+    return await _pxe_cfg()
+
+
+@capability(
+    "foundry.pxe.config.save", http_method="POST", http_path="/foundry/pxe/config/save",
+    http_tags=["foundry"], memory="on",
+    description="Update PXE server config. Inputs (any of): enabled (bool), host "
+                "(str — the provisioning host, e.g. the vera-foundry CT), bridge, "
+                "subnet, dhcp_from, dhcp_to, gateway, default_action (local|menu). "
+                "Runs on a dedicated provisioning bridge/VLAN, isolated from the main "
+                "LAN. Output: the saved config.",
+)
+async def cap_pxe_config_save(enabled=None, host=None, bridge=None, subnet=None,
+                              dhcp_from=None, dhcp_to=None, gateway=None,
+                              default_action=None, trace_id=None) -> Dict:
+    r = _redis()
+    if not r:
+        return {"error": "no redis"}
+    cfg = await _pxe_cfg()
+    for k, v in (("enabled", enabled), ("host", host), ("bridge", bridge),
+                 ("subnet", subnet), ("dhcp_from", dhcp_from), ("dhcp_to", dhcp_to),
+                 ("gateway", gateway), ("default_action", default_action)):
+        if v is not None:
+            cfg[k] = v
+    await r.hset(K_PXE_CFG, "main", json.dumps(cfg))
+    await emit_event({"type": "foundry.pxe.config.saved"})
+    return cfg
+
+
+@capability(
+    "foundry.pxe.profile.save", http_method="POST", http_path="/foundry/pxe/profile/save",
+    http_tags=["foundry"], memory="on",
+    description="Create/update a PXE boot profile — the physical/ISO analogue of a "
+                "provision node: an image × feature bundles × autoinstall. Inputs: id "
+                "(blank=new), name (str!), image_id (str! — a cloudimg/iso catalogue "
+                "entry), features (csv/list — same bundles as CT/VM), disk (int GB), "
+                "autoinstall (str — extra preseed/kickstart/cloud-init). Output: {ok,id}.",
+)
+async def cap_pxe_profile_save(id="", name="", image_id="", features=None, disk: int = 20,
+                               autoinstall="", trace_id=None) -> Dict:
+    r = _redis()
+    if not r:
+        return {"error": "no redis"}
+    if isinstance(features, str):
+        features = [f.strip() for f in features.replace(",", " ").split() if f.strip()]
+    features = features or ["enrol", "hardening"]
+    if not id:
+        if not name:
+            return {"error": "name required"}
+        id = uuid.uuid4().hex[:12]
+    prof = {"id": id, "name": name, "image_id": image_id, "features": features,
+            "disk": int(disk), "autoinstall": autoinstall, "updated": time.time()}
+    await r.hset(K_PXE_PROFILES, id, json.dumps(prof))
+    await emit_event({"type": "foundry.pxe.profile.saved", "id": id})
+    return {"ok": True, "id": id}
+
+
+@capability(
+    "foundry.pxe.profile.list", http_method="GET", http_path="/foundry/pxe/profile/list",
+    http_tags=["foundry"], memory="off", silent=True,
+    description="List PXE boot profiles. Output: {profiles:[...]}.",
+)
+async def cap_pxe_profile_list(trace_id=None) -> Dict:
+    r = _redis()
+    if not r:
+        return {"profiles": []}
+    rows = await r.hgetall(K_PXE_PROFILES) or {}
+    out = []
+    for v in rows.values():
+        try:
+            out.append(json.loads(v))
+        except Exception:
+            pass
+    out.sort(key=lambda p: (p.get("name") or "").lower())
+    return {"profiles": out}
+
+
+@capability(
+    "foundry.pxe.profile.delete", http_method="POST", http_path="/foundry/pxe/profile/delete",
+    http_tags=["foundry"], memory="on", description="Delete a PXE profile. Input: id (str!).",
+)
+async def cap_pxe_profile_delete(id="", trace_id=None) -> Dict:
+    r = _redis()
+    if not r or not id:
+        return {"error": "id required"}
+    await r.hdel(K_PXE_PROFILES, id)
+    return {"ok": True, "id": id}
+
+
+@capability(
+    "foundry.pxe.mac.add", http_method="POST", http_path="/foundry/pxe/mac/add",
+    http_tags=["foundry"], memory="on",
+    description="Register/assign a physical machine by MAC to a boot profile "
+                "(the waiting-room: an unknown MAC that PXE-boots gets its assigned "
+                "profile, else the default action). Inputs: mac (str!), profile_id "
+                "(str), hostname (str), ip (str — static, no DHCP on the main LAN). "
+                "Output: {ok, mac}.",
+)
+async def cap_pxe_mac_add(mac="", profile_id="", hostname="", ip="", trace_id=None) -> Dict:
+    r = _redis()
+    if not r or not mac:
+        return {"error": "mac required"}
+    mac = mac.strip().lower()
+    rec = {"mac": mac, "profile_id": profile_id, "hostname": hostname, "ip": ip,
+           "status": "assigned" if profile_id else "waiting", "updated": time.time()}
+    await r.hset(K_PXE_MACS, mac, json.dumps(rec))
+    await emit_event({"type": "foundry.pxe.mac.assigned", "mac": mac, "profile": profile_id})
+    return {"ok": True, "mac": mac}
+
+
+@capability(
+    "foundry.pxe.macs", http_method="GET", http_path="/foundry/pxe/macs",
+    http_tags=["foundry"], memory="off", silent=True,
+    description="The PXE waiting-room — physical machines seen/registered by MAC + "
+                "their assigned profile. Output: {macs:[...]}.",
+)
+async def cap_pxe_macs(trace_id=None) -> Dict:
+    r = _redis()
+    if not r:
+        return {"macs": []}
+    rows = await r.hgetall(K_PXE_MACS) or {}
+    out = []
+    for v in rows.values():
+        try:
+            out.append(json.loads(v))
+        except Exception:
+            pass
+    return {"macs": out}
+
+
+@capability(
+    "foundry.pxe.status", http_method="GET", http_path="/foundry/pxe/status",
+    http_tags=["foundry"], memory="off", silent=True,
+    description="PXE subsystem status: config + counts + whether the netboot server "
+                "is deployed. Output: {deployed, enabled, profiles, macs, config, note}.",
+)
+async def cap_pxe_status(trace_id=None) -> Dict:
+    cfg = await _pxe_cfg()
+    profs = (await cap_pxe_profile_list()).get("profiles", [])
+    macs = (await cap_pxe_macs()).get("macs", [])
+    note = ("netboot server not deployed — set a provisioning host (the vera-foundry "
+            "CT) + a dedicated bridge/VLAN, then foundry.pxe.server.deploy"
+            if not cfg.get("deployed") else "netboot server deployed")
+    return {"deployed": cfg.get("deployed"), "enabled": cfg.get("enabled"),
+            "profiles": len(profs), "macs": len(macs), "config": cfg, "note": note}
+
+
+@capability(
+    "foundry.pxe.server.deploy", http_method="POST", http_path="/foundry/pxe/server/deploy",
+    http_tags=["foundry"], memory="on",
+    description="Stand up the netboot stack (dnsmasq proxy/scoped-DHCP + TFTP + iPXE "
+                "+ HTTP autoinstall) on the configured provisioning host, bound to the "
+                "dedicated bridge/VLAN. Gated: requires foundry.pxe.config.host (the "
+                "vera-foundry CT) to exist. Output: {ok, deployed, steps} or a clear "
+                "prerequisite error.",
+)
+async def cap_pxe_server_deploy(trace_id=None) -> Dict:
+    cfg = await _pxe_cfg()
+    if not cfg.get("host"):
+        return {"error": "set foundry.pxe.config host first (the vera-foundry "
+                         "provisioning CT) — create it, then deploy the netboot stack "
+                         "onto the dedicated provisioning bridge/VLAN (Phase 2)."}
+    # The netboot install runs on the provisioning host (SSH). Kept gated until the
+    # vera-foundry CT + VLAN exist so we never touch the main LAN's DHCP.
+    return {"ok": False, "deployed": False,
+            "note": f"host '{cfg['host']}' configured; netboot install (dnsmasq+TFTP+"
+                    "iPXE) is the Phase-2 step on the isolated bridge/VLAN. Confirm the "
+                    "VLAN + host, then I'll run the install."}
+
+
 @APP.get("/foundry/panel", include_in_schema=False)
 async def _foundry_panel():
     p = _HERE / "foundry_panel.html"
@@ -908,6 +1156,9 @@ register_ui(
              "foundry.jobs", "proxmox.cluster.list",
              "foundry.image.import", "foundry.image.import.status",
              "foundry.blueprint.list", "foundry.blueprint.save",
-             "foundry.blueprint.apply", "foundry.blueprint.export"],
+             "foundry.blueprint.apply", "foundry.blueprint.export",
+             "foundry.pxe.status", "foundry.pxe.config", "foundry.pxe.config.save",
+             "foundry.pxe.profile.list", "foundry.pxe.profile.save",
+             "foundry.pxe.mac.add", "foundry.pxe.macs"],
     mode="element",     # embedded as a Workers & Ollama sub-tab
 )
