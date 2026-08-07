@@ -219,6 +219,8 @@ promote/rollback. Two kinds:
 | `evolve.pipeline.run` | Run a pipeline (background); `kind`, `profile`, `variant_id`/`edits`, `gate_threshold`, `auto_promote`, `auto_test`, `repo` |
 | `evolve.pipeline.list` / `evolve.pipeline.get` | Pipeline history / full stage trace |
 | `evolve.pipeline.test` | (generic repos only) gate a code pipeline's branch once its edit has landed |
+| `evolve.pipeline.diff` | Unified diff of a pipeline's branch worktree vs. its repo's default branch — any repo, not just Vera's dev sandbox |
+| `evolve.git.graph` | Real commit graph (all branches, real parents/refs) for `<vera-git-graph>` |
 | `evolve.pipeline.promote` | Promote: variant→set overlay, code→merge branch to main |
 | `evolve.pipeline.rollback` | Roll back: variant→clear overlay, code→delete branch |
 
@@ -266,6 +268,40 @@ review's verdict/findings), and `<vera-branch-pipeline>`'s implement/gate
 stages all render it via a shared `ctrlBadge()`/role-label. To review a
 pipeline as Claude Code, just call `evolve.pipeline.review` over the same MCP
 session driving the work — the identity is automatic.
+
+### Commit graph — `evolve.git.graph` + `<vera-git-graph>`
+
+A real commit DAG, not the pipeline-run race chart `<vera-branch-pipeline
+mode="lanes">` already provides. `evolve.git.graph(repo, limit=150)` parses
+`git log --all --topo-order` (every commit across every branch, real parent
+hashes, real ref decorations — nothing synthesized) into `{hash, parents,
+author, date, refs, subject}` records. `vera/git_graph_element.js`
+(`<vera-git-graph>`) lane-assigns and draws them with the standard gitk-style
+walk (each active lane holds the hash it's waiting for; a commit continues its
+lane or opens a new one; a merge commit's extra parents each get their own
+resolved edge) — served the same `_serve_element_js_from` /
+`/ui/elements/<name>.js` way as every other Loop Lab infographic element.
+`loop-lab/*` refs render distinctly from `main`/other branches. Card: Pipelines
+tab, tracks the same repo selector as the Repository/Sandbox cards.
+
+### Review tab — everything awaiting a decision, in one place
+
+The Pipelines tab's flat history and the per-pipeline detail modal both still
+work exactly as before, but finding "what needs my attention right now" meant
+knowing a pipeline's id. The **Review** tab (`evolve_panel.html`, `loadReview`)
+lists every pipeline with `review_requested` or `decision` in
+`pending`/`held`, each expandable to its diff (`evolve.pipeline.diff` — the
+worktree-vs-repo's-default-branch diff, generalized off the same logic
+`evolve.sandbox.diff` uses so it works for ANY registered repo, not just
+Vera's dev sandbox) and its `reviews[]` history, with Approve / Request
+changes / Block (`evolve.pipeline.review`) and Promote / Rollback right there.
+
+**Rollback always shows what it's about to discard.** Every rollback trigger
+(Pipelines table, pipeline detail modal, Review tab) now opens a confirmation
+first — the pipeline's diff (or, for a `kind=variant` pipeline, a plain
+statement that this clears the promoted overlay) — before the delete actually
+fires. Cancel does nothing; only the confirmed "Discard this change" button
+calls `evolve.pipeline.rollback`.
 
 ### Change sources — review & observability feed the pipeline
 

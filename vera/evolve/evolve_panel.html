@@ -182,6 +182,7 @@ html.vpb-nav-hosted body{padding-left:0}
   <button class="btn" data-sec="activity" onclick="nav('activity')"><span class="ic">≣</span>Activity</button>
   <div class="rail-grp">Ship</div>
   <button class="btn" data-sec="pipelines" onclick="nav('pipelines')"><span class="ic">⎇</span>CI / CD</button>
+  <button class="btn" data-sec="review" onclick="nav('review')"><span class="ic">✓</span>Review</button>
   <button class="btn" data-sec="sources" onclick="nav('sources')"><span class="ic">⌥</span>Sources</button>
   <button class="btn" data-sec="sandbox" onclick="nav('sandbox')"><span class="ic">🛡</span>Sandbox</button>
   <div class="rail-grp">Library</div>
@@ -532,6 +533,11 @@ html.vpb-nav-hosted body{padding-left:0}
     <div id="git-body"><div class="empty">Loading…</div></div>
   </div>
   <div class="card">
+    <div class="card-h"><span class="card-t">Commit graph</span>
+      <span class="hint">the repo's real history — branches, merges, loop-lab/* highlighted</span></div>
+    <vera-git-graph id="git-graph" repo="vera" limit="150"></vera-git-graph>
+  </div>
+  <div class="card">
     <div class="card-h"><span class="card-t">Pipeline runs</span>
       <span class="hint">baseline → apply → test → gate → promote / rollback</span>
       <span style="flex:1"></span>
@@ -552,6 +558,18 @@ html.vpb-nav-hosted body{padding-left:0}
   <div class="card">
     <div class="card-h"><span class="card-t">git log · loop-lab</span><span class="hint">every change, promote, merge-to-source &amp; rollback</span></div>
     <div id="gitlog-body"><div class="empty">—</div></div>
+  </div>
+</div>
+
+<!-- ── REVIEW: everything awaiting a decision, diff + verdict in one place ── -->
+<div class="sec" id="sec-review" style="display:none">
+  <div class="card">
+    <div class="card-h"><span class="card-t">Awaiting review / decision</span>
+      <span class="hint">pipelines flagged for review, or gated and holding on a promote/rollback call</span>
+      <span style="flex:1"></span>
+      <button class="btn" onclick="loadReview()">&#8635;</button>
+    </div>
+    <div id="review-body"><div class="empty">Loading…</div></div>
   </div>
 </div>
 
@@ -734,6 +752,7 @@ html.vpb-nav-hosted body{padding-left:0}
 <script src="/ui/elements/ollama_map.js"></script>
 <script src="/ui/elements/test_activity_timeline.js"></script>
 <script src="/ui/elements/author_map.js"></script>
+<script src="/ui/elements/git_graph.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 <script>
 const $=id=>document.getElementById(id);
@@ -752,6 +771,7 @@ function nav(sec){
   document.querySelectorAll('#nav .btn').forEach(b=>b.classList.toggle('on',b.dataset.sec===sec));
   document.querySelectorAll('.sec').forEach(s=>s.style.display=s.id==='sec-'+sec?'':'none');
   const f={test:loadTest,tasks:loadTasks,runs:loadRuns,improve:loadSessions,watch:loadWatch,pipelines:()=>{loadGit();loadPipelines()},
+    review:loadReview,
     sources:loadSources,sandbox:loadSandbox,activity:loadAudit,variants:loadVariants,settings:fillSettings,overview:loadOverview,errors:loadErrors}[sec];
   if(f)f();
   // Keep the outer shell's injected top-level sub-menu in sync when this
@@ -769,7 +789,7 @@ if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
   {id:'test', label:'Test'}, {id:'improve', label:'Improve'}, {id:'watch', label:'Watch'},
   {id:'overview', label:'Suite'}, {id:'errors', label:'Errors'}, {id:'variants', label:'Variants'},
   {id:'activity', label:'Activity'},
-  {id:'pipelines', label:'CI / CD'}, {id:'sources', label:'Sources'}, {id:'sandbox', label:'Sandbox'},
+  {id:'pipelines', label:'CI / CD'}, {id:'review', label:'Review'}, {id:'sources', label:'Sources'}, {id:'sandbox', label:'Sandbox'},
   {id:'tasks', label:'Tasks'}, {id:'runs', label:'Runs'}, {id:'settings', label:'Settings'},
 ]);
 
@@ -1419,7 +1439,7 @@ function onEvent(ev){
     if(_curSec()==='improve')loadSessions(true);
     if(_curSec()==='watch')watchRefresh();
   }
-  if(t.startsWith('evolve.pipeline.')){if(_curSec()==='pipelines')loadPipelines();pollPipeLive(ev.id)}
+  if(t.startsWith('evolve.pipeline.')){if(_curSec()==='pipelines')loadPipelines();if(_curSec()==='review')loadReview();pollPipeLive(ev.id)}
 }
 
 /* ═══ WATCH — live test → evaluate → synthesize ═══ */
@@ -2074,6 +2094,7 @@ async function loadGit(){
   $('git-body').innerHTML=h;
   // fill sandbox branch select too (vera repo only — the dev sandbox is Vera-only)
   const sel=$('sb-branch');if(sel&&repo==='vera'){sel.innerHTML='<option value="">— pick a loop-lab branch —</option>'+(r.branches||[]).map(b=>'<option value="'+esc(b)+'">'+esc(b)+'</option>').join('')}
+  const gg=$('git-graph');if(gg&&gg.setRepo)gg.setRepo(repo);
 }
 async function loadGitLog(){
   const el=$('gitlog-body');if(!el)return;
@@ -2111,7 +2132,7 @@ function pipeActions(p){
   let h='';
   if(p.decision==='pending'||p.decision==='held'){
     h+='<button class="btn sm ok-btn" onclick="event.stopPropagation();pipePromote(\''+esc(p.id)+'\')">promote</button>';
-    h+='<button class="btn sm err-btn" onclick="event.stopPropagation();pipeRollback(\''+esc(p.id)+'\')">rollback</button>';
+    h+='<button class="btn sm err-btn" onclick="event.stopPropagation();confirmRollback(\''+esc(p.id)+'\')">rollback</button>';
   }
   return h;
 }
@@ -2143,14 +2164,89 @@ async function openPipe(id){
   }
   if(p.decision==='pending'||p.decision==='held'){
     h+='<button class="btn primary" onclick="pipePromote(\''+esc(id)+'\')">Promote'+(p.kind==='code'?' (merge branch)':' (set overlay)')+'</button>';
-    h+='<button class="btn err-btn" onclick="pipeRollback(\''+esc(id)+'\')">Rollback'+(p.kind==='code'?' (delete branch)':' (clear overlay)')+'</button>';
+    h+='<button class="btn err-btn" onclick="confirmRollback(\''+esc(id)+'\')">Rollback'+(p.kind==='code'?' (delete branch)':' (clear overlay)')+'</button>';
   }
   h+='<span style="flex:1"></span><button class="btn" onclick="closeModal()">Close</button></div>';
   openModal(h);
 }
-async function pipePromote(id){const r=await post('/evolve/pipeline/promote',{id});toast(r&&r.ok?'Promoted':(r&&r.error)||'failed');closeModal();loadPipelines()}
-async function pipeRollback(id){const r=await post('/evolve/pipeline/rollback',{id});toast(r&&r.ok?'Rolled back':(r&&r.error)||'failed');closeModal();loadPipelines()}
+async function pipePromote(id){const r=await post('/evolve/pipeline/promote',{id});toast(r&&r.ok?'Promoted':(r&&r.error)||'failed');closeModal();loadPipelines();if($('review-body'))loadReview()}
+async function pipeRollback(id){const r=await post('/evolve/pipeline/rollback',{id});toast(r&&r.ok?'Rolled back':(r&&r.error)||'failed');closeModal();loadPipelines();if($('review-body'))loadReview()}
 async function pipeTest(id){const r=await post('/evolve/pipeline/test',{id});toast(r&&r.ok?('Gate '+(r.gate_passed?'PASSED':'FAILED')):(r&&r.error)||'failed');closeModal();openPipe(id)}
+
+/* ═══ ROLLBACK CONFIRMATION — always shows what's about to be discarded ═══ */
+async function confirmRollback(id){
+  const g=await api('/evolve/pipeline/get?id='+encodeURIComponent(id));
+  const p=g&&g.pipeline;
+  if(!p){toast('not found');return}
+  let diffHtml;
+  if(p.kind==='code'){
+    const d=await api('/evolve/pipeline/diff?id='+encodeURIComponent(id));
+    diffHtml=(d&&d.diff!=null)
+      ?'<pre style="max-height:340px;overflow:auto;font-size:10px;background:var(--bg2);border-radius:6px;padding:8px;white-space:pre-wrap">'+esc(d.diff||'(no changes)')+'</pre>'
+      :'<div class="hint">'+esc((d&&d.error)||'could not load diff')+'</div>';
+  } else {
+    diffHtml='<div class="hint">This clears the promoted tuning overlay for profile <b>'+esc(p.profile)+'</b> — production runs revert to stock defaults.</div>';
+  }
+  let h='<div class="card-h"><span class="card-t">Discard '+esc(p.kind)+' pipeline '+esc(id)+'?</span>'
+    +(p.branch?'<span class="tag">'+esc(p.branch)+'</span>':'')+'</div>';
+  if(p.kind==='code')h+='<div class="hint" style="margin-bottom:8px">This deletes the branch — the change below is discarded, not just hidden. Main is never touched by this or any pipeline action.</div>';
+  h+=diffHtml;
+  h+='<div class="row" style="margin-top:12px"><button class="btn" onclick="closeModal()">Cancel</button><span style="flex:1"></span>'
+    +'<button class="btn err-btn" onclick="pipeRollback(\''+esc(id)+'\')">Discard this change</button></div>';
+  openModal(h);
+}
+
+/* ═══ REVIEW — everything awaiting a decision, diff + verdict in one place ═══ */
+async function loadReview(){
+  const r=await api('/evolve/pipeline/list?limit=50');const ps=(r&&r.pipelines)||[];
+  const queue=ps.filter(p=>p.review_requested||p.decision==='pending'||p.decision==='held');
+  const body=$('review-body');
+  if(!queue.length){body.innerHTML='<div class="empty">Nothing awaiting review right now.</div>';return}
+  body.innerHTML=queue.map(reviewCard).join('');
+  if(queue.some(p=>p.live)){clearTimeout(window._reviewT);window._reviewT=setTimeout(loadReview,3500)}
+}
+function reviewCard(p){
+  const gate=p.gate_passed==null?'':(p.gate_passed?'<span style="color:var(--ok)">gate PASS</span>':'<span style="color:var(--err)">gate FAIL</span>');
+  return '<div class="card" style="margin-bottom:8px">'
+    +'<div class="row" style="gap:8px;flex-wrap:wrap;cursor:pointer" onclick="openPipe(\''+esc(p.id)+'\')">'
+    +'<span class="mono">'+esc(p.id)+'</span>'
+    +'<span class="tag">'+esc(p.repo||'vera')+'</span>'
+    +'<span class="tag">'+esc(p.kind)+'</span>'
+    +(p.branch?'<span class="tag">'+esc(p.branch)+'</span>':'')
+    +ctrlBadge(p.controller)+' '+pipeDecision(p.decision)+' '+gate
+    +(p.review_requested?'<span class="pill" style="color:var(--warn)">review requested</span>':'')
+    +'<span style="flex:1"></span>'
+    +'<button class="btn sm" onclick="event.stopPropagation();toggleReviewDiff(\''+esc(p.id)+'\')">diff</button>'
+    +'</div>'
+    +'<div id="rv-diff-'+esc(p.id)+'" style="display:none;margin-top:8px"></div>'
+    +'<div class="row" style="margin-top:8px;gap:5px;flex-wrap:wrap">'
+    +'<button class="btn sm" onclick="reviewVerdict(\''+esc(p.id)+'\',\'approved\')">Approve</button>'
+    +'<button class="btn sm" onclick="reviewVerdict(\''+esc(p.id)+'\',\'changes_requested\')">Request changes</button>'
+    +'<button class="btn sm err-btn" onclick="reviewVerdict(\''+esc(p.id)+'\',\'blocked\')">Block</button>'
+    +'<span style="flex:1"></span>'
+    +((p.decision==='pending'||p.decision==='held')
+      ?('<button class="btn sm ok-btn" onclick="pipePromote(\''+esc(p.id)+'\')">Promote</button>'
+        +'<button class="btn sm err-btn" onclick="confirmRollback(\''+esc(p.id)+'\')">Rollback</button>')
+      :'')
+    +'</div></div>';
+}
+async function toggleReviewDiff(id){
+  const el=$('rv-diff-'+id);if(!el)return;
+  if(el.style.display!=='none'){el.style.display='none';return}
+  el.style.display='';el.innerHTML='<span class="spin"></span> loading diff…';
+  const d=await api('/evolve/pipeline/diff?id='+encodeURIComponent(id));
+  el.innerHTML=(d&&d.diff!=null)
+    ?'<pre style="max-height:300px;overflow:auto;font-size:10px;background:var(--bg2);border-radius:6px;padding:8px;white-space:pre-wrap">'+esc(d.diff||'(no changes)')+'</pre>'
+    :'<div class="hint">'+esc((d&&d.error)||'no diff (variant pipeline)')+'</div>';
+}
+async function reviewVerdict(id,verdict){
+  const findings=prompt(verdict==='approved'?'Approval notes (optional):':'Findings — what needs to change:');
+  if(findings===null)return;
+  const r=await post('/evolve/pipeline/review',{id,verdict,findings:findings||(verdict+' via Review tab')});
+  toast(r&&r.ok?('Reviewed as '+r.reviewer):(r&&r.error)||'failed');
+  loadReview();loadPipelines();
+}
+
 async function pollPipeLive(id){if(!id)return;const r=await api('/evolve/pipeline/get?id='+encodeURIComponent(id));if(r&&r.pipeline){_livePipe=r.pipeline;renderLive();if(r.pipeline.live){clearTimeout(window._pipeLiveT);window._pipeLiveT=setTimeout(()=>pollPipeLive(id),3000)}}}
 let _sessSug=[],_sessProfile='';
 async function ciVariant(profile,vid){const r=await post('/evolve/pipeline/run',{kind:'variant',profile,variant_id:vid});if(r&&r.ok){toast('CI pipeline '+r.id+' started');closeModal();nav('pipelines');pollPipeLive(r.id)}else toast((r&&r.error)||'failed')}

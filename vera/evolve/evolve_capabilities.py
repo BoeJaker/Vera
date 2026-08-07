@@ -2173,7 +2173,12 @@ async def _run_window_commits(rec: Dict[str, Any]) -> List[Dict[str, Any]]:
     a Loop Lab run and the chat session that triggered it share a join key
     (the commit hash) without either subsystem needing to know about the
     other directly. Best-effort: a run with no `ts`/`elapsed_s`, or a repo
-    with nothing committed in the window, just gets an empty list."""
+    with nothing committed in the window, just gets an empty list.
+
+    Single-run helper — for a LIST of runs use _runs_window_commits_batch
+    below instead of calling this once per run (that N-calls-per-request
+    pattern, one real git subprocess spawn each, is what flooded Vera and
+    took it offline — see evolve_runs)."""
     ts = rec.get("ts") or ""
     elapsed_s = rec.get("elapsed_s")
     if not ts or elapsed_s is None:
@@ -2192,6 +2197,42 @@ async def _run_window_commits(rec: Dict[str, Any]) -> List[Dict[str, Any]]:
     except Exception as e:
         log.debug("evolve: commit correlation failed for run %s: %s", rec.get("run_id"), e)
         return []
+
+
+async def _runs_window_commits_batch(recs: List[Dict[str, Any]]) -> None:
+    """Same correlation as _run_window_commits, but for a whole run LIST:
+    one ide_git_log call covering the union of every run's window, then
+    bucketed back out per run in Python — not one subprocess spawn per run.
+    Mutates each rec in place, setting rec["commits"]."""
+    from datetime import datetime, timedelta
+    windows: List[Any] = []   # (rec, since_dt, until_dt)
+    for rec in recs:
+        ts = rec.get("ts") or ""
+        elapsed_s = rec.get("elapsed_s")
+        if not ts or elapsed_s is None:
+            rec["commits"] = []
+            continue
+        try:
+            until_dt = datetime.fromisoformat(ts.rstrip("Z"))
+            since_dt = until_dt - timedelta(seconds=float(elapsed_s) + 1)
+            windows.append((rec, since_dt, until_dt))
+        except Exception:
+            rec["commits"] = []
+    if not windows:
+        return
+    ide_caps = sys.modules.get("ide_capabilities")
+    all_commits: List[Dict[str, Any]] = []
+    if ide_caps:
+        try:
+            since = min(w[1] for w in windows).isoformat() + "Z"
+            until = max(w[2] for w in windows).isoformat() + "Z"
+            res = await ide_caps.ide_git_log(path=str(_REPO_ROOT), since=since, until=until)
+            all_commits = res.get("commits", [])
+        except Exception as e:
+            log.debug("evolve: batched commit correlation failed: %s", e)
+    for rec, since_dt, until_dt in windows:
+        lo, hi = since_dt.timestamp(), until_dt.timestamp()
+        rec["commits"] = [c for c in all_commits if lo <= c.get("ts", 0) <= hi]
 
 
 @capability("evolve.authors", memory="off", silent=True,
@@ -2296,8 +2337,7 @@ async def evolve_runs(limit: int = 50, task: str = "", session: str = "",
                     break
         except Exception:
             pass
-    for rec in out:
-        rec["commits"] = await _run_window_commits(rec)
+    await _runs_window_commits_batch(out)
     return {"runs": out, "count": len(out)}
 
 
@@ -4315,6 +4355,44 @@ async def evolve_git_status(repo: str = DEFAULT_REPO_ID, trace_id=None):
             "branches": branches}
 
 
+_GRAPH_FIELD_SEP = "\x1f"
+_GRAPH_RECORD_SEP = "\x1e"
+
+
+@capability("evolve.git.graph", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/git/graph", http_tags=["evolve"],
+            description="Real commit graph for a repo — every commit (across ALL "
+                        "branches) with its parents and ref decorations, newest-"
+                        "first (git's natural log order — what a standard gitk-"
+                        "style lane-assignment walk expects). Inputs: repo (str, "
+                        "default 'vera'), limit (int default 150 — most recent N "
+                        "commits). Output: {ok, repo, commits: [{hash, "
+                        "parents:[...], author, date, refs:[...], subject}]}.")
+async def evolve_git_graph(repo: str = DEFAULT_REPO_ID, limit: int = 150, trace_id=None):
+    root = await _resolve_repo_root(repo)
+    fmt = _GRAPH_FIELD_SEP.join(["%H", "%P", "%an", "%ad", "%D", "%s"]) + _GRAPH_RECORD_SEP
+    r = await _git("log", "--all", "--topo-order", "-n", str(max(1, int(limit or 150))),
+                   "--date=iso-strict", f"--format={fmt}", repo_root=root, timeout=30)
+    if not r["ok"]:
+        return {"error": r["err"] or "git log failed", "repo": str(root)}
+    commits = []
+    for rec in (r["out"] or "").split(_GRAPH_RECORD_SEP):
+        rec = rec.strip("\n")
+        if not rec.strip():
+            continue
+        parts = rec.split(_GRAPH_FIELD_SEP)
+        if len(parts) < 6:
+            continue
+        h, p, an, ad, refs, subj = parts[:6]
+        commits.append({
+            "hash": h, "parents": [x for x in p.split(" ") if x],
+            "author": an, "date": ad,
+            "refs": [x.strip() for x in refs.split(",") if x.strip()],
+            "subject": subj,
+        })
+    return {"ok": True, "repo": str(root), "commits": commits}
+
+
 @capability("evolve.branch.create", memory="off",
             http_method="POST", http_path="/evolve/branch/create", http_tags=["evolve"],
             description="Create (and check out) a loop-lab work branch from the "
@@ -4380,7 +4458,7 @@ async def _save_pipeline(rec: Dict[str, Any]):
                    ("id", "kind", "profile", "status", "decision", "created_at",
                     "ended_at", "branch", "variant_id", "baseline_score",
                     "candidate_score", "gate_delta", "gate_passed",
-                    "repo", "controller")}
+                    "repo", "controller", "review_requested")}
         for i, row in enumerate(rows or []):
             try:
                 if json.loads(row).get("id") == rec["id"]:
@@ -6421,23 +6499,15 @@ async def _code_sidecar_teardown(sb: Dict[str, Any]) -> None:
     await _set_sandbox(sb)
 
 
-@capability("evolve.sandbox.diff", memory="off", silent=True,
-            http_method="GET", http_path="/evolve/sandbox/diff", http_tags=["evolve"],
-            description="Unified diff of the dev-sandbox worktree (committed + "
-                        "uncommitted branch edits) against a base ref, so you can "
-                        "see exactly what Loop Lab changed. Inputs: base (str, "
-                        "default 'main'), file (str — scope to one path), context "
-                        "(int=3), max_bytes (int=200000). Output: {ok, branch, "
-                        "base, files: [{path, status, adds, dels}], untracked, "
-                        "diff, truncated}.")
-async def evolve_sandbox_diff(base: str = "main", file: str = "",
-                              context: int = 3, max_bytes: int = 200000,
-                              trace_id=None):
-    sb = await _get_sandbox()
-    wt = sb.get("worktree", "")
+async def _worktree_diff(wt: str, base: str = "main", file: str = "",
+                         context: int = 3, max_bytes: int = 200000) -> Dict[str, Any]:
+    """Unified diff of a worktree (committed + uncommitted edits) against a base
+    ref — the shared logic behind both evolve.sandbox.diff (Vera's own dev
+    sandbox) and evolve.pipeline.diff (any pipeline, any registered repo).
+    Callers resolve `wt`/`base` for their own case; this just needs a real
+    worktree path."""
     if not wt or not Path(wt).exists():
-        return {"error": "no dev sandbox worktree — bring one up first "
-                         "(evolve.sandbox.up / ensure)"}
+        return {"error": "worktree not found"}
     base = (base or "main").strip()
     context = max(0, int(context or 3))
     max_bytes = int(max_bytes or 200000)
@@ -6478,9 +6548,62 @@ async def evolve_sandbox_diff(base: str = "main", file: str = "",
         d = await _sh(args, cwd=wt)
         diff = d["out"] if d["ok"] else f"(git diff failed: {d['err']})"
     truncated = len(diff) > max_bytes
-    return {"ok": True, "branch": sb.get("branch", ""), "base": base,
-            "worktree": wt, "files": files, "untracked": untracked,
-            "diff": diff[:max_bytes], "truncated": truncated}
+    return {"ok": True, "base": base, "worktree": wt, "files": files,
+            "untracked": untracked, "diff": diff[:max_bytes], "truncated": truncated}
+
+
+@capability("evolve.sandbox.diff", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/sandbox/diff", http_tags=["evolve"],
+            description="Unified diff of the dev-sandbox worktree (committed + "
+                        "uncommitted branch edits) against a base ref, so you can "
+                        "see exactly what Loop Lab changed. Inputs: base (str, "
+                        "default 'main'), file (str — scope to one path), context "
+                        "(int=3), max_bytes (int=200000). Output: {ok, branch, "
+                        "base, files: [{path, status, adds, dels}], untracked, "
+                        "diff, truncated}.")
+async def evolve_sandbox_diff(base: str = "main", file: str = "",
+                              context: int = 3, max_bytes: int = 200000,
+                              trace_id=None):
+    sb = await _get_sandbox()
+    wt = sb.get("worktree", "")
+    if not wt or not Path(wt).exists():
+        return {"error": "no dev sandbox worktree — bring one up first "
+                         "(evolve.sandbox.up / ensure)"}
+    res = await _worktree_diff(wt, base, file, context, max_bytes)
+    if res.get("error"):
+        return res
+    res["branch"] = sb.get("branch", "")
+    return res
+
+
+@capability("evolve.pipeline.diff", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/pipeline/diff", http_tags=["evolve"],
+            description="Unified diff of a code pipeline's branch worktree against "
+                        "its repo's default branch — works for any registered repo, "
+                        "not just Vera's dev sandbox. Inputs: id (str!), file (str "
+                        "— scope to one path), context (int=3), max_bytes "
+                        "(int=200000). Output: {ok, repo, branch, base, files, "
+                        "untracked, diff, truncated}.")
+async def evolve_pipeline_diff(id: str = "", file: str = "", context: int = 3,
+                               max_bytes: int = 200000, trace_id=None):
+    got = await evolve_pipeline_get(id=id)
+    rec = got.get("pipeline")
+    if not rec:
+        return {"error": got.get("error") or "pipeline not found"}
+    if rec.get("kind") != "code":
+        return {"error": "evolve.pipeline.diff is only for kind=code pipelines"}
+    wt = rec.get("worktree")
+    if not wt or not Path(wt).exists():
+        return {"error": "no worktree for this pipeline (branch step may have failed)"}
+    repo = rec.get("repo") or DEFAULT_REPO_ID
+    root = await _resolve_repo_root(repo)
+    base = await _default_branch(repo_root=root)
+    res = await _worktree_diff(wt, base, file, context, max_bytes)
+    if res.get("error"):
+        return res
+    res["repo"] = repo
+    res["branch"] = rec.get("branch", "")
+    return res
 
 
 @capability("evolve.sandbox.review", memory="on",
@@ -6664,6 +6787,8 @@ APP.get("/ui/elements/test_activity_timeline.js", include_in_schema=False)(
     _serve_element_js_from("test_activity_timeline_element.js", "vera-test-activity-timeline element JS not found"))
 APP.get("/ui/elements/author_map.js", include_in_schema=False)(
     _serve_element_js_from("author_map_element.js", "vera-author-map element JS not found"))
+APP.get("/ui/elements/git_graph.js", include_in_schema=False)(
+    _serve_element_js_from("git_graph_element.js", "vera-git-graph element JS not found"))
 
 
 register_ui(
