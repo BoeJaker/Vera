@@ -120,7 +120,7 @@
 // Reported in `hello` and compared by the server's auto-OTA against the version
 // recorded for the newest built .bin. BUMP THIS when you change the sketch, or
 // nodes will never be offered the new image.
-#define FW_VERSION "1.9.0-ino"
+#define FW_VERSION "3.3.0-ino"
 
 // The job path nests JSON buffers (poll -> runJob -> toolkitJob -> sendResult)
 // and then calls HTTPClient on top. The 8KB default loopTask stack overflows on
@@ -522,6 +522,16 @@ void uiRender(JsonObject scr) {
   for (JsonObject wd : ws) uiWidget(wd, bg);
 }
 
+// analogRead is 12-bit on ESP32 (0-4095).
+#define TOUCH_ADC_MAX 4095
+// Pressure band. Higher = harder press (see touchRaw). The floor rejects noise
+// and the ceiling rejects a shorted/absent panel reading full scale.
+// The ceiling matters as much as the floor: with pressure inverted, an OPEN or
+// absent panel gives z2-z1 ~ 0 and therefore z ~ full scale. Allowing 4095
+// turned "no touch panel responding" into a permanent maximum-force press at
+// garbage coordinates, which fires buttons continuously.
+int touchZMin = 350, touchZMax = 3900;
+
 /* ── 4-wire resistive touch ──────────────────────────────────────────────────
  * The touch wires SHARE LCD data/control pins, so each read reconfigures them as
  * ADC/GPIO inputs and touchRestore() puts them back to OUTPUT — otherwise the
@@ -529,13 +539,10 @@ void uiRender(JsonObject scr) {
  * runtime with config.io.touch.  */
 int touchXP = 3, touchYM = 14, touchYP = 6, touchXM = 7;
 int touchCalX0 = 320, touchCalX1 = 3800, touchCalY0 = 320, touchCalY1 = 3800;
-// analogRead is 12-bit on ESP32 (0-4095).
-#define TOUCH_ADC_MAX 4095
-// Pressure band. Higher = harder press (see touchRaw). The floor rejects noise
-// and the ceiling rejects a shorted/absent panel reading full scale.
-int touchZMin = 350, touchZMax = 4095;
 bool touchSwap = false, touchInvX = false, touchInvY = false;
 bool touchDown = false;
+unsigned long touchHeldSince = 0;                // stuck-read detector
+int touchStuck = 0;                              // how often it has tripped
 unsigned long touchLast = 0;
 
 // Hand the bus back to the display. Direction alone is NOT enough: on this
@@ -589,10 +596,22 @@ static int touchScale(int v, int lo, int hi, int span) {
 }
 
 // Map a press to screen coords. Returns false when nothing is being touched.
+int touchLastZ = 0, touchLastX = 0, touchLastY = 0;   // exposed by touch_diag
+
 bool touchPoint(int &sx, int &sy) {
   int x, y, z;
-  if (!p8.ok || !touchRaw(x, y, z)) return false;
+  if (!p8.ok) return false;
+  if (!touchRaw(x, y, z)) return false;
+  touchLastX = x; touchLastY = y; touchLastZ = z;
   if (z < touchZMin || z > touchZMax) return false;
+  // Confirm with a second read. A single in-band sample is easily electrical
+  // noise on lines we share with the LCD bus, and a phantom tap is worse than a
+  // missed one — it moves the screen out from under you.
+  int x2, y2, z2;
+  if (!touchRaw(x2, y2, z2)) return false;
+  if (z2 < touchZMin || z2 > touchZMax) return false;
+  if (abs(x2 - x) > 400 || abs(y2 - y) > 400) return false;
+  x = (x + x2) / 2; y = (y + y2) / 2;
   sx = touchScale(x, touchCalX0, touchCalX1, p8.W);
   sy = touchScale(y, touchCalY0, touchCalY1, p8.H);
   if (touchSwap) { int t = sx; sx = (int)((long)sy * p8.W / max(1, (int)p8.H));
@@ -629,7 +648,22 @@ void touchTick() {
   if (millis() - touchLast < 90) return;
   touchLast = millis();
   int sx, sy;
-  if (!touchPoint(sx, sy)) { touchDown = false; return; }   // released → re-arm
+  if (!touchPoint(sx, sy)) {
+    touchDown = false; touchHeldSince = 0;                   // released -> re-arm
+    return;
+  }
+  // Self-heal a stuck read. A press that never releases latches touchDown and
+  // silently kills every future tap — which is indistinguishable from a frozen
+  // screen. Nobody holds a button for 8 seconds, so treat it as a bad reading,
+  // re-arm, and say so rather than going quiet.
+  if (touchHeldSince == 0) touchHeldSince = millis();
+  else if (millis() - touchHeldSince > 8000) {
+    Serial.printf("[touch] stuck for %lums (z=%d x=%d y=%d) - ignoring, re-arming\n",
+                  millis() - touchHeldSince, touchLastZ, touchLastX, touchLastY);
+    touchHeldSince = 0; touchDown = false;
+    touchStuck++;                                            // surfaced in sysinfo
+    return;
+  }
   if (touchDown) return;                                     // debounce
   touchDown = true;
   for (int i = 0; i < uiButtonCount; i++) {
@@ -959,7 +993,7 @@ String httpPost(const String& path, const String& body){
 // ── Enroll ──────────────────────────────────────────────────────────────────
 void enroll(){
   StaticJsonDocument<512> d;
-  d["kind"]="hello"; d["node_id"]=NODE; d["name"]=NODE; d["board"]="esp32";
+  d["kind"]="hello"; d["node_id"]=NODE; d["name"]=NODE; d["board"]=ESP.getChipModel();   // was hardcoded "esp32" on every variant
   // runtime + chip pick the OTA artifact: an image built for another chip must
   // never be pushed at this node.
   d["fw"]=FW_VERSION; d["runtime"]="arduino"; d["chip"]=ESP.getChipModel();
@@ -1347,6 +1381,193 @@ bool toolkitJob(const String& id, const String& type, JsonObject p){
     pins["xp"]=touchXP; pins["ym"]=touchYM; pins["yp"]=touchYP; pins["xm"]=touchXM;
     sendResult(id,"done",rv,""); return true;
   }
+  if(type=="pin_probe"){
+    // Measure whether a pin can actually be DRIVEN, rather than trusting a
+    // table. Drive it high and low with the input latch still readable: a pin
+    // with no output stage reports the same level both ways. This settles
+    // "is GPIO46 input-only on this chip?" on the actual silicon instead of
+    // from documentation that varies between ESP32 variants.
+    JsonArray want = p["pins"].as<JsonArray>();
+    JsonArray out = res.createNestedArray("pins");
+    int list[64]; int n = 0;
+    if(want.isNull() || want.size() == 0){
+      for(int g = 0; g <= 48 && n < 64; g++){
+        if(g >= 22 && g <= 25) continue;                 // absent on the S3
+        list[n++] = g;
+      }
+    } else {
+      for(JsonVariant v : want) if(n < 64) list[n++] = v.as<int>();
+    }
+    for(int i = 0; i < n; i++){
+      int g = list[i];
+      bool skip = (g == p8.pWR || g == p8.pCS || g == p8.pDC);   // mid-draw hazards
+      JsonObject e = out.createNestedObject();
+      e["pin"] = g;
+      if(skip){ e["skipped"] = "display control line"; continue; }
+      int hi = -1, lo = -1;
+      pinMode(g, OUTPUT);
+      digitalWrite(g, HIGH); delayMicroseconds(120); hi = digitalRead(g);
+      digitalWrite(g, LOW);  delayMicroseconds(120); lo = digitalRead(g);
+      pinMode(g, INPUT);
+      e["high"] = hi; e["low"] = lo;
+      e["drivable"] = (hi == 1 && lo == 0);
+    }
+    touchRestore();
+    res["note"] = "drivable=false means the pin has no usable output stage on "
+                  "this chip (or is held by external circuitry)";
+    sendResult(id,"done",rv,""); return true;
+  }
+  if(type=="touch_scan"){
+    // Continuity, done so a pull-up cannot fake it.
+    //
+    // The first version drove A HIGH and read B: on this shield the control
+    // lines carry pull-ups, so B read HIGH whether or not anything connected
+    // them — every pair looked continuous and the one "plate" it reported was
+    // a phantom. Inverted, the test is sound: hold B up with its own pull-up
+    // and pull A LOW. Only a real low-resistance path drags B down; a pull-up
+    // keeps an unconnected pin high. Then release A and require B to spring
+    // back, which rejects a pin that was simply stuck low to begin with.
+    if(!p8.ok){ sendResult(id,"error",rv,"no display"); return true; }
+    int cand[24]; int nc = 0;
+    JsonArray extra = p["pins"].as<JsonArray>();
+    if(!extra.isNull() && extra.size()){
+      for(JsonVariant v : extra) if(nc < 24) cand[nc++] = v.as<int>();
+    } else {
+      for(int b = 0; b < 8; b++) if(p8.pD[b] >= 0 && nc < 24) cand[nc++] = p8.pD[b];
+      int ctl[5] = {p8.pCS, p8.pDC, p8.pWR, p8.pRD, p8.pRST};
+      for(int i = 0; i < 5 && nc < 24; i++) if(ctl[i] >= 0) cand[nc++] = ctl[i];
+    }
+
+    // Release the whole bus first. The display leaves its data lines as OUTPUTs
+    // driving LOW, so any pin tested against them reads low forever — six of the
+    // eight data pins came back "stuck" for that reason alone, hiding whichever
+    // plate they belong to.
+    for(int i = 0; i < nc; i++) pinMode(cand[i], INPUT);
+    delay(2);
+
+    JsonArray pairs = res.createNestedArray("pairs");
+    JsonArray stuck = res.createNestedArray("stuck");
+    for(int j = 0; j < nc; j++){
+      // Does this pin even float high on its own? If not it can never show a
+      // pull-down, and reporting it would be noise.
+      pinMode(cand[j], INPUT_PULLUP); delayMicroseconds(400);
+      int idle = digitalRead(cand[j]);
+      if(!idle){ stuck.add(cand[j]); continue; }
+      for(int i = 0; i < nc; i++){
+        if(i == j) continue;
+        pinMode(cand[i], OUTPUT); digitalWrite(cand[i], LOW);
+        delayMicroseconds(400);
+        int pulled = 0;
+        for(int k = 0; k < 5; k++) if(!digitalRead(cand[j])) pulled++;
+        pinMode(cand[i], INPUT);                 // release the driver again
+        delayMicroseconds(400);
+        int back = digitalRead(cand[j]);
+        if(pulled >= 4 && back){                 // dragged down, then recovered
+          JsonObject e = pairs.createNestedObject();
+          e["a"] = cand[i]; e["b"] = cand[j];
+        }
+      }
+      pinMode(cand[j], INPUT);
+    }
+    touchRestore();
+    res["candidates"] = nc;
+    res["note"] = "a-b = pins joined by a low-resistance path (a plate). Pins in "
+                  "`stuck` sit low even with a pull-up, so they cannot be tested "
+                  "this way. Two disjoint pairs are the X and Y plates.";
+    sendResult(id,"done",rv,""); return true;
+  }
+  if(type=="touch_hunt"){
+    /* Find the touch wires ON SCREEN, with no round trip to a human reading
+     * logs. The four wires tap four of the eight LCD data lines directly (they
+     * bypass the LVC245 buffers, which is why nothing was ever visible through
+     * them). Pressing the panel shorts an X wire to a Y wire — a connection
+     * that is absent when released. So: measure continuity between every pair
+     * released, measure again pressed, and the pairs that appear ONLY under
+     * pressure are the crossing. That is a purely digital test, which matters
+     * because only one of these eight pins is on ADC1 (the rest are ADC2 and
+     * unreadable while Wi-Fi is up). */
+    if(!p8.ok){ sendResult(id,"error",rv,"no display"); return true; }
+    int d[8], nd = 0;
+    for(int b = 0; b < 8; b++) if(p8.pD[b] >= 0) d[nd++] = p8.pD[b];
+
+    uint8_t base[8][8]; uint8_t press[8][8];
+    for(int phase = 0; phase < 2; phase++){
+      dspText(phase == 0 ? "TOUCH SETUP" : "NOW PRESS",
+              phase == 0 ? "Do NOT touch the screen.\n\nSampling in 3s..."
+                         : "PRESS AND HOLD\nanywhere on the screen\n\nSampling in 3s...",
+              phase == 0 ? C_WHITE : C_YELL, C_BLACK, 2);
+      delay(3000);
+      for(int i = 0; i < nd; i++) pinMode(d[i], INPUT);
+      delay(2);
+      for(int j = 0; j < nd; j++){
+        pinMode(d[j], INPUT_PULLUP); delayMicroseconds(300);
+        for(int i = 0; i < nd; i++){
+          uint8_t hit = 0;
+          if(i != j){
+            pinMode(d[i], OUTPUT); digitalWrite(d[i], LOW);
+            delayMicroseconds(300);
+            int low = 0;
+            for(int k = 0; k < 5; k++) if(!digitalRead(d[j])) low++;
+            pinMode(d[i], INPUT); delayMicroseconds(200);
+            hit = (low >= 4 && digitalRead(d[j])) ? 1 : 0;
+          }
+          if(phase == 0) base[j][i] = hit; else press[j][i] = hit;
+        }
+        pinMode(d[j], INPUT);
+      }
+    }
+    touchRestore();
+
+    // Pairs that only conduct under pressure are the X-to-Y crossing.
+    JsonArray found = res.createNestedArray("crossings");
+    String lines = "";
+    int n = 0;
+    for(int j = 0; j < nd; j++)
+      for(int i = 0; i < nd; i++)
+        if(press[j][i] && !base[j][i]){
+          JsonObject e = found.createNestedObject();
+          e["a"] = d[i]; e["b"] = d[j];
+          if(n < 6) lines += "GPIO" + String(d[i]) + " - GPIO" + String(d[j]) + "\n";
+          n++;
+        }
+    res["count"] = n;
+    for(int i = 0; i < nd; i++) res["scanned"].add(d[i]);
+
+    if(n){
+      dspText("TOUCH FOUND", String(n) + " crossing(s):\n" + lines +
+              "\nThese are the X and Y wires.", C_GREEN, C_BLACK, 2);
+    } else {
+      dspText("NO CROSSING", "Nothing conducted while pressed.\n\n"
+              "Either the press was missed,\nor touch is not on these\n"
+              "8 data pins.", C_RED, C_BLACK, 2);
+    }
+    res["shown_on_screen"] = true;
+    sendResult(id,"done",rv,""); return true;
+  }
+  if(type=="touch_diag"){
+    // Raw values with NO gating, so an unresponsive panel can be told apart
+    // from a mis-calibrated one. Press the screen while this runs.
+    int n = p["samples"] | 12;
+    JsonArray arr = res.createNestedArray("samples");
+    int zmin = 99999, zmax = -99999;
+    for(int i = 0; i < n; i++){
+      int x, y, z;
+      if(touchRaw(x, y, z)){
+        JsonArray s = arr.createNestedArray(); s.add(x); s.add(y); s.add(z);
+        if(z < zmin) zmin = z; if(z > zmax) zmax = z;
+      }
+      delay(60);
+    }
+    res["z_min"] = zmin; res["z_max"] = zmax;
+    res["gate_min"] = touchZMin; res["gate_max"] = touchZMax;
+    JsonObject pins = res.createNestedObject("pins");
+    pins["xp"] = touchXP; pins["ym"] = touchYM; pins["yp"] = touchYP; pins["xm"] = touchXM;
+    res["verdict"] = (zmax - zmin < 40)
+        ? "readings never change - wrong touch pins, or the panel is not wired"
+        : (zmin > touchZMax ? "always above the gate - panel reads open"
+                            : "readings vary; press during the run and compare z");
+    sendResult(id,"done",rv,""); return true;
+  }
   if(type=="touch_cal"){
     if(p["x0"].is<int>())   touchCalX0=p["x0"];
     if(p["x1"].is<int>())   touchCalX1=p["x1"];
@@ -1366,6 +1587,10 @@ bool toolkitJob(const String& id, const String& type, JsonObject p){
     res["flash_mb"]=(int)(ESP.getFlashChipSize()/1048576); res["psram_mb"]=(int)(ESP.getPsramSize()/1048576);
     res["heap_free"]=(int)ESP.getFreeHeap(); res["mac"]=WiFi.macAddress(); res["sdk"]=ESP.getSdkVersion();
     res["reset_reason"]=bootReason; res["fw"]=FW_VERSION;
+#if USE_TFT_ILI9488_P8
+    res["touch_z"]=touchLastZ; res["touch_stuck"]=touchStuck;
+    res["touch_gate"]=String(touchZMin)+".."+String(touchZMax);
+#endif
     res["loop_stack_free"]=(int)uxTaskGetStackHighWaterMark(NULL);
     res["psram_free_kb"]=(int)(ESP.getFreePsram()/1024);
 #if USE_TFT_ILI9488_P8

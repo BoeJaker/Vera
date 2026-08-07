@@ -100,7 +100,7 @@ ADC   = _mkadc(ADC_PIN)
 # Bump on every firmware change. The server reads this same constant from the
 # served main.py; if a node reports an older FW_VERSION and its config.ota.auto
 # is set, Vera auto-queues an OTA file update. Keep the literal on one line.
-FW_VERSION = "1.4.0-mpy"
+FW_VERSION = "1.5.0-mpy"
 
 MODULES = ["sensor", "web_fetch", "watch", "alert", "control", "io", "worker",
            "rgb", "ble", "toolkit", "position", "ui"]

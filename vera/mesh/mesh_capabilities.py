@@ -779,6 +779,15 @@ def _bake_firmware_options(text: str, flavor: str, params: dict) -> str:
                                ("SD_PIN_MOSI", "mosi"), ("SD_PIN_CS", "cs")):
                 if key in b_sd:
                     text = _redef(text, macro, b_sd[key])
+        # Touch was never baked, so a board profile could carry the right pins
+        # and the firmware would still ship the file defaults.
+        b_touch = (bio or {}).get("touch") if isinstance(bio, dict) else None
+        if isinstance(b_touch, dict):
+            for var, key in (("touchXP", "xp"), ("touchYM", "ym"),
+                             ("touchYP", "yp"), ("touchXM", "xm")):
+                if key in b_touch:
+                    text = re.sub(r"(?m)^(int %s = )-?\d+" % var,
+                                  r"\g<1>" + str(int(b_touch[key])), text)
         if isinstance(b_neo, int) and b_neo >= 0:
             text = re.sub(r"(?m)^(int\s+neoPin\s*=\s*)-?\d+", r"\g<1>" + str(b_neo), text)
     return text
@@ -888,6 +897,8 @@ if _CAP_AVAILABLE:
         if MESH_TOKEN and (body.get("token") or req.headers.get("x-mesh-token")) != MESH_TOKEN:
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         note_peer(str(body.get("node_id") or ""), _client_ip(req), "http")
+        if body.get("chip"):
+            _NODE_CHIP[str(body.get("node_id") or "")] = str(body["chip"])
         out = await _handle_hello(body, channel="http", ip=_client_ip(req))
         return JSONResponse(out)
 
@@ -2231,6 +2242,7 @@ if _CAP_AVAILABLE:
 # heartbeat and only ever describes live state.
 
 _VIA: Dict[str, dict] = {}          # node_id -> {ip, seen, channel}
+_NODE_CHIP: Dict[str, str] = {}     # node_id -> reported chip (ESP.getChipModel)
 _VIA_MAX = 500
 
 
@@ -2260,13 +2272,25 @@ def _server_host() -> str:
     return ""
 
 
+def _rf_status(last_seen: str) -> str:
+    """A radio sighting goes stale fast — an AP heard an hour ago is not 'here'."""
+    if not last_seen:
+        return "unknown"
+    try:
+        seen = datetime.fromisoformat(str(last_seen).replace("Z", "+00:00"))
+        age = (datetime.now(timezone.utc) - seen).total_seconds()
+    except Exception:
+        return "unknown"
+    return "ok" if age < 600 else ("warn" if age < 3600 else "err")
+
+
 def _topo_status(last_seen: str) -> str:
     """mesh status vocabulary -> the topology map's ok/warn/err/unknown."""
     return {"online": "ok", "stale": "warn", "offline": "err"}.get(
         _status_of(last_seen), "unknown")
 
 
-def build_mesh_topology(rows: List[dict]) -> dict:
+def build_mesh_topology(rows: List[dict], wireless: List[dict] = None) -> dict:
     hub = {"id": "hub", "label": "Vera", "kind": "hub", "status": "ok", "detail": ""}
     nodes, edges = [hub], []
 
@@ -2280,7 +2304,7 @@ def build_mesh_topology(rows: List[dict]) -> dict:
                              "status": "ok", "count": 0,
                              "detail": "forwarding server" if not configured_hop
                                        else "configured relay"}
-            edges.append({"from": fid, "to": "hub"})
+            edges.append({"from": "hub", "to": fid})
         return fid
 
     if configured:
@@ -2310,7 +2334,7 @@ def build_mesh_topology(rows: List[dict]) -> dict:
             parent = "hub"
         if parent in fwd_seen:
             fwd_seen[parent]["count"] += 1
-        edges.append({"from": nid, "to": parent,
+        edges.append({"from": parent, "to": nid,
                       "channel": chans[0] if chans else ""})
 
     # Serial ports attached to this machine bypass any forwarder entirely.
@@ -2319,7 +2343,37 @@ def build_mesh_topology(rows: List[dict]) -> dict:
             continue
         nodes.append({"id": "serial:" + p, "label": p, "kind": "device",
                       "status": "ok", "detail": "usb serial"})
-        edges.append({"from": "serial:" + p, "to": "hub"})
+        edges.append({"from": "hub", "to": "serial:" + p})
+
+    # Wireless devices the fleet has heard. They come from the Network Map's
+    # aux graph (mesh.wifi.scan / mesh.ble.scan ingest into it), so this is what
+    # the nodes actually detected rather than a separate scan.
+    if wireless:
+        for group, types, label in (
+                ("wifi", ("WifiAP", "WiFiAP", "wifi_ap"), "Wi-Fi"),
+                ("ble", ("BleDevice", "BLEDevice", "Bluetooth", "ble_device"), "Bluetooth")):
+            found = [w for w in wireless if str(w.get("type") or "") in types]
+            if not found:
+                continue
+            gid = "rf:" + group
+            nodes.append({"id": gid, "label": label, "kind": "category",
+                          "status": "ok", "detail": "%d seen" % len(found)})
+            edges.append({"from": "hub", "to": gid})
+            # Cap it: a busy 2.4GHz band would otherwise bury the fleet itself.
+            def _rssi(d):
+                try:
+                    return float(d.get("rssi"))
+                except (TypeError, ValueError):
+                    return -999.0          # unknown signal sorts last, never crashes
+
+            for w in sorted(found, key=lambda d: -_rssi(d))[:12]:
+                wid = str(w.get("id") or "")
+                rssi = w.get("rssi")
+                nodes.append({"id": wid, "kind": "device",
+                              "label": str(w.get("label") or wid)[:28],
+                              "status": _rf_status(w.get("last_seen")),
+                              "detail": ("%sdBm" % rssi) if rssi not in (None, "") else ""})
+                edges.append({"from": gid, "to": wid})
 
     for f in fwd_seen.values():
         f["detail"] = "%s - %d node(s)" % (f["detail"], f["count"])
@@ -2343,10 +2397,22 @@ if _CAP_AVAILABLE:
                     "from, so a relay appears even though nothing is configured to describe it. "
                     "Output: {nodes, edges, forwarders}.",
     )
-    async def cap_mesh_topology(trace_id=None) -> dict:
+    async def cap_mesh_topology(wireless: bool = True, trace_id=None) -> dict:
         await _ensure_tables()
         rows = await asyncio.get_running_loop().run_in_executor(None, _nodes_all_sync)
-        return build_mesh_topology(rows)
+        rf = []
+        if wireless:
+            try:
+                from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY
+                if "netscan.graph" in CAPABILITY_REGISTRY:
+                    g = await CAPABILITY_REGISTRY["netscan.graph"]["func"]()
+                    for n in (g or {}).get("nodes") or []:
+                        inner = n.get("data") if isinstance(n.get("data"), dict) else n
+                        if isinstance(inner, dict) and inner.get("type"):
+                            rf.append(inner)
+            except Exception as e:
+                log.debug("wireless devices for topology: %s", e)
+        return build_mesh_topology(rows, rf)
 
     @capability(
         "mesh.activity", http_method="GET", http_path="/mesh/activity",

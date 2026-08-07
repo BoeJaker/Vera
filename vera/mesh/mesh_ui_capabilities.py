@@ -532,6 +532,11 @@ async def route_ui_event(node_id: str, action: str) -> None:
                     await _push(node_id, {"title": "Macro Pad", "bg": C_BLACK,
                                           "widgets": _grid_buttons(items)})
             return
+        if action.startswith("followmode:"):
+            await cap_mesh_app_follow_mode(node_id=node_id,
+                                           mode=action.split(":", 1)[1])
+            await launch_app(node_id, "follow")      # reflect the new choice
+            return
         if action.startswith("applist:"):
             await launch_app(node_id, "launcher",
                              {"page": int(action.split(":", 1)[1])})
@@ -970,6 +975,9 @@ def _register_pads() -> None:
                               "build": _app_pad(pid), "panel": pid}
     for aid in INFO_APPS:
         APPS[aid] = {"label": INFO_APPS[aid]["label"], "build": _app_dashboard(aid)}
+    APPS["home"] = {"label": "Home", "build": _app_home}
+    APPS["info:candles"] = {"label": "Candles", "build": _app_candles}
+    APPS["follow"] = {"label": "Follow mode", "build": _app_modeswitch}
     for aid in LIST_APPS:
         APPS[aid] = {"label": LIST_APPS[aid]["label"], "build": _app_list(aid)}
     APPS["pad:intake"] = {"label": "Stock intake", "build": _app_pad("intake"),
@@ -1061,23 +1069,36 @@ async def cap_mesh_app_stop(node_id: str = "", trace_id=None) -> dict:
                 "Output: {ok, app, changed}.",
 )
 async def cap_mesh_app_follow(node_id: str = "", panel: str = "", force: bool = False,
-                              trace_id=None) -> dict:
+                              trace_id=None) -> dict:                   
     if not node_id or not panel:
         return {"error": "node_id and panel required"}
-    app_id = "pad:" + panel
-    if app_id not in APPS and pad_for_panel(panel).get("buttons"):
-        APPS[app_id] = {"label": panel + " pad", "build": _app_pad(panel),
-                        "panel": panel}          # a panel registered after boot
-    if app_id not in APPS:
-        # Unmapped panel: leave whatever is on screen. Blanking the node every
-        # time you visit an unrelated tab would make the feature obnoxious.
-        return {"ok": True, "app": _NODE_APP.get(node_id, ""), "changed": False,
-                "reason": f"no pad defined for panel '{panel}'"}
+    mode = follow_mode(node_id)
+    if mode == "off":
+        return {"ok": True, "changed": False, "mode": mode, "reason": "following is off"}
+
+    if mode == "dash":
+        app_id = PANEL_DASHBOARDS.get(panel, "")
+        if not app_id or app_id not in APPS:
+            # No readout for this panel: leave the screen alone rather than
+            # blanking it just because you opened an unrelated tab.
+            return {"ok": True, "changed": False, "mode": mode,
+                    "reason": "no dashboard for panel %r" % panel}
+    else:
+        app_id = "pad:" + panel
+        if app_id not in APPS and pad_for_panel(panel).get("buttons"):
+            APPS[app_id] = {"label": panel + " pad", "build": _app_pad(panel),
+                            "panel": panel}
+        if app_id not in APPS:
+            return {"ok": True, "changed": False, "mode": mode,
+                    "reason": "no pad for panel %r" % panel}
+
     if _NODE_APP.get(node_id) == app_id and not force:
-        return {"ok": True, "app": app_id, "changed": False}
+        return {"ok": True, "app": app_id, "changed": False, "mode": mode}
+    _FOLLOW_LAST[node_id] = panel
+    _FOLLOW_SEEN[node_id] = {"panel": panel, "at": now_iso(), "app": app_id}
     r = await launch_app(node_id, app_id)
     return {"ok": not r.get("error"), "app": app_id, "changed": True,
-            "error": r.get("error", "")}
+            "mode": mode, "error": r.get("error", "")}
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1946,35 +1967,49 @@ async def cap_mesh_ui_sprite(node_id: str = "", sprite: str = "", animation: str
                              fps: int = 10, loop: bool = True, trace_id=None) -> dict:
     if not node_id or not sprite:
         return {"error": "node_id and sprite required"}
-    if not _cap_exists("spritegen.get"):
-        return {"error": "spritegen is unavailable on this Vera"}
-    rec = await _call_cap("spritegen.get", id=sprite)
-    if not isinstance(rec, dict) or rec.get("error"):
-        return {"error": f"sprite {sprite!r} not found: {(rec or {}).get('error')}"}
 
-    # Sprite Studio records vary in shape; look for frame images wherever they are.
-    anims = rec.get("animations") or rec.get("anims") or {}
-    if isinstance(anims, dict):
-        chosen = anims.get(animation) if animation else next(iter(anims.values()), None)
-    else:
-        chosen = next((a for a in anims if not animation or a.get("name") == animation), None)
-    frames = []
-    if isinstance(chosen, dict):
-        frames = chosen.get("frames") or chosen.get("images") or []
-    elif isinstance(chosen, list):
-        frames = chosen
-    frames = [f.get("url") or f.get("path") if isinstance(f, dict) else f for f in frames]
-    frames = [f for f in frames if f]
+    # A generated image is already a picture — show it directly rather than
+    # sending it through a character lookup that will not find it.
+    if sprite.startswith("/") or sprite.startswith("http"):
+        return await cap_mesh_ui_image(node_id=node_id, url=sprite, w=w, h=h,
+                                       x=x, y=y, fit="contain")
+
+    rec = None
+    if _cap_exists("spritegen.get"):
+        rec = await _call_cap("spritegen.get", char_id=sprite)
+        if not (isinstance(rec, dict) and rec.get("char_id")):
+            rec = None
+    # Companions live in a different subsystem with the same shape of problem.
+    if rec is None and _cap_exists("character.get"):
+        c = await _call_cap("character.get", agent_id=sprite)
+        if isinstance(c, dict) and (c.get("agent_id") or c.get("id")):
+            still = c.get("sheet") or c.get("preview") or c.get("image")
+            if not (c.get("urls") or {}).get("frames") and still:
+                return await cap_mesh_ui_image(node_id=node_id, url=still, w=w,
+                                               h=h, x=x, y=y, fit="contain")
+            rec = dict(c, char_id=c.get("agent_id") or c.get("id"))
+    if rec is None:
+        return {"error": f"{sprite!r} not found in Sprite Studio, companions or images"}
+
+    frames, sheet, anim = _sprite_anim_frames(rec, animation)
+    rate = int(fps or (rec.get("animations") or {}).get(anim, {}).get("fps") or 10)
 
     if frames:
-        return await cap_mesh_ui_animate(node_id=node_id, frames=frames, w=w, h=h,
-                                         x=x, y=y, fps=fps, loop=loop, fit="contain")
-    still = rec.get("image") or rec.get("preview") or rec.get("sheet") or rec.get("url")
-    if not still:
-        return {"error": f"sprite {sprite!r} has no frames or preview image to show",
-                "keys": sorted(rec)[:12]}
-    return await cap_mesh_ui_image(node_id=node_id, url=still, w=w, h=h, x=x, y=y,
-                                   fit="contain")
+        r = await cap_mesh_ui_animate(node_id=node_id, frames=frames, w=w, h=h,
+                                      x=x, y=y, fps=rate, loop=loop, fit="contain")
+        r["animation"] = anim
+        return r
+    if sheet.get("gif"):                       # the rendered preview animates too
+        r = await cap_mesh_ui_animate(node_id=node_id, url=sheet["gif"], w=w, h=h,
+                                      x=x, y=y, fps=rate, loop=loop, fit="contain")
+        r["animation"] = anim
+        return r
+    if sheet.get("png"):
+        return await cap_mesh_ui_image(node_id=node_id, url=sheet["png"], w=w, h=h,
+                                       x=x, y=y, fit="contain")
+    return {"error": f"'{sprite_summary(rec)['label']}' has no generated frames yet — "
+                     f"run an animation in Sprite Studio, then show it here",
+            "animations": sorted((rec.get("animations") or {}).keys())}
 
 
 @capability(
@@ -1984,18 +2019,55 @@ async def cap_mesh_ui_sprite(node_id: str = "", sprite: str = "", animation: str
                 "Output: {sprites:[{id,label}], count} (empty when spritegen is not installed).",
 )
 async def cap_mesh_ui_sprites(trace_id=None) -> dict:
-    if not _cap_exists("spritegen.list"):
-        return {"sprites": [], "count": 0, "note": "spritegen is not available on this Vera"}
-    res = await _call_cap("spritegen.list")
-    items = (res or {}).get("sprites") or (res or {}).get("items") or []
+    """Everything showable on a panel, from all three places Vera keeps art:
+    Sprite Studio characters, companion characters, and generated images. They
+    live in different subsystems with different record shapes, so a single
+    picker has to speak all three rather than one and call it "sprites"."""
     out = []
-    for it in items:
-        if isinstance(it, dict):
-            out.append({"id": it.get("id") or it.get("name") or "",
-                        "label": it.get("name") or it.get("label") or it.get("id") or ""})
-        elif it:
-            out.append({"id": str(it), "label": str(it)})
-    return {"sprites": [o for o in out if o["id"]], "count": len(out)}
+
+    if _cap_exists("spritegen.list"):
+        res = await _call_cap("spritegen.list")
+        for c in (res or {}).get("characters") or []:
+            if isinstance(c, dict) and c.get("char_id"):
+                s = sprite_summary(c)
+                s["source"] = "spritegen"
+                out.append(s)
+
+    if _cap_exists("character.list"):
+        res = await _call_cap("character.list")
+        for c in (res or {}).get("characters") or []:
+            if not isinstance(c, dict):
+                continue
+            cid = c.get("agent_id") or c.get("id") or ""
+            if not cid:
+                continue
+            urls = c.get("urls") or {}
+            ready = bool(c.get("sheet") or c.get("preview") or c.get("image")
+                         or (urls.get("frames") or urls.get("sheets")))
+            out.append({"id": cid, "source": "companion",
+                        "label": (c.get("display_name") or c.get("name")
+                                  or cid[:12]),
+                        "animations": sorted((c.get("animations") or {}).keys()),
+                        "ready": ready, "frames": 0, "animation": ""})
+
+    if _cap_exists("images.list"):
+        res = await _call_cap("images.list", limit=40)
+        for im in (res or {}).get("images") or []:
+            if isinstance(im, dict) and im.get("url"):
+                out.append({"id": im["url"], "source": "image",
+                            "label": (im.get("prompt") or im["url"].split("/")[-1])[:40],
+                            "animations": [], "ready": True, "frames": 1,
+                            "animation": ""})
+
+    if not out:
+        return {"sprites": [], "count": 0, "ready": 0,
+                "note": "nothing found in Sprite Studio, companions or generated images"}
+    ready = [s for s in out if s["ready"]]
+    note = ""
+    if not ready:
+        note = ("%d item(s) found but none are renderable yet — generate frames "
+                "in Sprite Studio first" % len(out))
+    return {"sprites": out, "count": len(out), "ready": len(ready), "note": note}
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -2983,6 +3055,777 @@ async def cap_mesh_ui_widget(node_id: str = "", widget=None, save_as: str = "",
 )
 async def cap_mesh_ui_widget_kinds(trace_id=None) -> dict:
     return {"kinds": dict(WIDGET_KINDS), "count": len(WIDGET_KINDS)}
+
+
+# ── Sprite Studio, mapped to its ACTUAL record shape ────────────────────────
+# spritegen.list returns {"characters": [...]} keyed by char_id, and the frame
+# images live at urls.frames[<animation>] (a list of paths) with a rendered sheet
+# and gif at urls.sheets[<animation>]. `animations[a].frames` is a COUNT, not
+# images — reading that as a list is why nothing ever appeared.
+#
+# A character that has been DEFINED but not generated has empty urls. Those are
+# listed with ready=False rather than hidden, because "no characters" and "no
+# frames generated yet" are different problems and the second is the common one.
+
+def _sprite_anim_frames(rec: dict, animation: str = ""):
+    """(frames, sheet, chosen_animation) from a character record."""
+    urls = rec.get("urls") or {}
+    frames_by_anim = urls.get("frames") or {}
+    sheets_by_anim = urls.get("sheets") or {}
+    names = [a for a in (rec.get("animations") or {})] or list(frames_by_anim)
+    chosen = animation or next((a for a in names if frames_by_anim.get(a)),
+                               names[0] if names else "")
+    return (list(frames_by_anim.get(chosen) or []),
+            sheets_by_anim.get(chosen) or {}, chosen)
+
+
+def sprite_summary(rec: dict) -> dict:
+    frames, sheet, anim = _sprite_anim_frames(rec)
+    urls = rec.get("urls") or {}
+    any_frames = any((urls.get("frames") or {}).values())
+    any_sheet = any((s or {}).get("png") or (s or {}).get("gif")
+                    for s in (urls.get("sheets") or {}).values())
+    return {"id": rec.get("char_id") or "",
+            "label": (rec.get("name") or "").strip() or (rec.get("char_id") or "")[:12],
+            "animations": sorted((rec.get("animations") or {}).keys()),
+            "ready": bool(any_frames or any_sheet),
+            "frames": len(frames), "animation": anim}
+
+
+
+
+
+
+# ── Charts ──────────────────────────────────────────────────────────────────
+# A candle is a filled body plus a one-pixel wick, and the firmware draws filled
+# rects — so real OHLC needs no new device code, just arithmetic. Everything is
+# scaled to the actual high/low of the window, because a chart with a misleading
+# baseline is worse than no chart.
+
+def ui_candles(x, y, w, h, bars, up="good", down="bad", axis="textDim"):
+    """bars: [{o,h,l,c}] oldest-first. Returns widgets."""
+    rows = [b for b in bars if isinstance(b, dict) and b.get("h") is not None]
+    if not rows:
+        return [ui_label(x, y + h // 2, "no data", UI_CAPTION, "muted")]
+    hi = max(_num(b.get("h")) for b in rows)
+    lo = min(_num(b.get("l")) for b in rows)
+    span = (hi - lo) or 1.0
+
+    def _py(v):                                   # price -> y, inverted
+        return int(y + h - ((_num(v) - lo) / span) * h)
+
+    n = len(rows)
+    slot = max(3, w // n)
+    body_w = max(1, slot - 2)
+    out = [ui_fill(x, y + h, w, 1, axis)]         # baseline
+    for i, b in enumerate(rows[-(w // slot or 1):]):
+        cx = x + i * slot
+        o, c = _num(b.get("o")), _num(b.get("c"))
+        role = up if c >= o else down
+        # wick first so the body sits over it
+        out.append(ui_fill(cx + body_w // 2, _py(b.get("h")), 1,
+                           max(1, _py(b.get("l")) - _py(b.get("h"))), role))
+        top, bot = _py(max(o, c)), _py(min(o, c))
+        out.append(ui_fill(cx, top, body_w, max(1, bot - top), role))
+    return out
+
+
+def ui_sparkline(x, y, w, h, values, colour="accent"):
+    """A column sparkline — cheaper than candles when you only have closes."""
+    vals = [_num(v) for v in values if v is not None]
+    if not vals:
+        return [ui_label(x, y + h // 2, "no data", UI_CAPTION, "muted")]
+    lo, hi = min(vals), max(vals)
+    span = (hi - lo) or 1.0
+    n = len(vals)
+    slot = max(1, w // n)
+    out = []
+    for i, v in enumerate(vals[-(w // slot or 1):]):
+        bh = max(1, int(((v - lo) / span) * h))
+        out.append(ui_fill(x + i * slot, y + h - bh, max(1, slot - 1), bh, colour))
+    return out
+
+
+def _ohlc_rows(res) -> List[dict]:
+    """Normalise whatever markets.bars hands back into [{o,h,l,c}]."""
+    rows = res if isinstance(res, list) else (
+        (res or {}).get("bars") or (res or {}).get("candles")
+        or (res or {}).get("data") or [])
+    out = []
+    for r in rows:
+        if isinstance(r, dict):
+            o = r.get("open", r.get("o")); h = r.get("high", r.get("h"))
+            l = r.get("low", r.get("l")); c = r.get("close", r.get("c"))
+            if None not in (o, h, l, c):
+                out.append({"o": o, "h": h, "l": l, "c": c})
+        elif isinstance(r, (list, tuple)) and len(r) >= 5:
+            out.append({"o": r[1], "h": r[2], "l": r[3], "c": r[4]})   # ts,o,h,l,c
+    return out
+
+
+async def _app_candles(node_id: str, ctx: dict):
+    """A real candle chart with the live quote and any firing alerts."""
+    cfg = _load_dash_config()
+    symbol = (ctx or {}).get("symbol") or cfg.get("symbol") or "BTC/USD"
+    tf = cfg.get("timeframe") or "1h"
+    flow_widgets, sub = [], symbol
+
+    bars = []
+    if _cap_exists("markets.bars"):
+        try:
+            res = await _call_cap("markets.bars", symbol=symbol, timeframe=tf, limit=60)
+            bars = _ohlc_rows(res)
+        except Exception as e:
+            log.debug("candles %s: %s", symbol, e)
+
+    top = UI_HEADER_H + 8
+    ch = 140
+    flow_widgets.extend(ui_candles(UI_MARGIN, top, UI_W - 2 * UI_MARGIN, ch, bars))
+    if bars:
+        last, first = bars[-1]["c"], bars[0]["o"]
+        chg = ((_num(last) - _num(first)) / (_num(first) or 1)) * 100
+        sub = "%s %s  %+.2f%%" % (symbol, tf, chg)
+
+    flow = UiFlow(top + ch + 14)
+    alerts = []
+    if _cap_exists("markets.alerts.list"):
+        try:
+            ares = await _call_cap("markets.alerts.list")
+            alerts = _pick_list(ares, "alerts")
+        except Exception as e:
+            log.debug("alerts: %s", e)
+    if alerts:
+        for a in alerts[:3]:
+            flow.kv(str(_field(a, ["symbol", "title", "name"], "alert")),
+                    str(_field(a, ["state", "status", "level"], "")), "warn")
+    else:
+        flow.note("no alerts firing")
+
+    return (ui_screen("Markets", flow_widgets + flow.done(),
+                      [{"text": "Refresh", "action": "app:info:candles"},
+                       {"text": "Apps", "action": "app:launcher"}],
+                      subtitle=sub,
+                      status_role="warn" if alerts else "good"), {})
+
+
+# ── A configurable home dashboard ───────────────────────────────────────────
+# Time, agenda and markets on one screen — and which sections appear, in what
+# order, is the user's choice rather than mine.
+
+_DASH_CFG = os.path.join(_FW_DIR, "dash_config.json")
+_DASH_DEFAULT = {"sections": ["clock", "agenda", "markets"],
+                 "symbol": "BTC/USD", "timeframe": "1h", "rows": 3}
+
+
+def _load_dash_config() -> dict:
+    try:
+        with open(_DASH_CFG, encoding="utf-8") as f:
+            return dict(_DASH_DEFAULT, **json.load(f))
+    except FileNotFoundError:
+        return dict(_DASH_DEFAULT)
+    except Exception as e:
+        log.warning("dash config unreadable: %s", e)
+        return dict(_DASH_DEFAULT)
+
+
+async def _dash_clock(flow):
+    import time as _t
+    now = _t.localtime()
+    flow.metrics([{"label": _t.strftime("%A", now), "value": _t.strftime("%H:%M", now)},
+                  {"label": "date", "value": _t.strftime("%d %b", now), "colour": "info"}])
+
+
+async def _dash_agenda(flow, cfg):
+    if not _cap_exists("cal.events.list"):
+        return flow.note("calendar unavailable")
+    try:
+        res = await _call_cap("cal.events.list")
+    except Exception as e:
+        return flow.note("calendar: %s" % e)
+    events = _pick_list(res, "events")
+    if not events:
+        return flow.note("nothing scheduled")
+    for e in events[:int(cfg.get("rows", 3))]:
+        flow.kv(str(_field(e, ["title", "summary", "name"], "event")),
+                str(_field(e, ["start", "start_time", "when", "time"], "")), "info")
+
+
+async def _dash_markets(flow, cfg):
+    if not _cap_exists("markets.watchlist.list"):
+        return flow.note("markets unavailable")
+    try:
+        res = await _call_cap("markets.watchlist.list")
+    except Exception as e:
+        return flow.note("markets: %s" % e)
+    for it in _pick_list(res, "watchlist")[:int(cfg.get("rows", 3))]:
+        flow.kv(str(_field(it, ["symbol", "ticker", "pair", "_key"], "?")),
+                str(_field(it, ["last", "price", "close"], "")))
+
+
+async def _app_home(node_id: str, ctx: dict):
+    cfg = _load_dash_config()
+    flow = UiFlow()
+    builders = {"clock": lambda: _dash_clock(flow),
+                "agenda": lambda: _dash_agenda(flow, cfg),
+                "markets": lambda: _dash_markets(flow, cfg)}
+    for name in cfg.get("sections") or []:
+        b = builders.get(name)
+        if b:
+            await b()
+        else:
+            flow.note("unknown section %r" % name)
+    return (ui_screen("Vera", flow.done(),
+                      [{"text": "Refresh", "action": "app:home"},
+                       {"text": "Apps", "action": "app:launcher"}]), {})
+
+
+@capability(
+    "mesh.ui.dash.config", http_method="POST", http_path="/mesh/ui/dash/config",
+    http_tags=["mesh", "ui"], memory="on",
+    description="Configure the node home dashboard — which sections it shows and in what order. "
+                "Sections: clock, agenda, markets. Input: sections (JSON list), symbol (str — the "
+                "candle chart's instrument), timeframe (str), rows (int — rows per section). "
+                "Omit everything to read the current config. Output: {ok, config}.",
+)
+async def cap_mesh_ui_dash_config(sections=None, symbol: str = "", timeframe: str = "",
+                                  rows: int = 0, trace_id=None) -> dict:
+    cfg = _load_dash_config()
+    sections = json.loads(sections) if isinstance(sections, str) else sections
+    if sections is not None:
+        known = {"clock", "agenda", "markets"}
+        bad = [s for s in sections if s not in known]
+        if bad:
+            return {"error": "unknown section(s): %s; known: %s"
+                             % (", ".join(map(str, bad)), ", ".join(sorted(known)))}
+        cfg["sections"] = list(sections)
+    if symbol:
+        cfg["symbol"] = symbol
+    if timeframe:
+        cfg["timeframe"] = timeframe
+    if rows:
+        cfg["rows"] = max(1, min(8, int(rows)))
+    try:
+        with open(_DASH_CFG, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+    except Exception as e:
+        return {"error": "could not save: %s" % e}
+    return {"ok": True, "config": cfg}
+
+
+# ── Follow modes ────────────────────────────────────────────────────────────
+# Mirroring the Vera tab you're on is useful for CONTROLS and useful for
+# READOUTS, and which one you want differs by node and by moment. So the mode is
+# a per-node choice — pad, dashboard, or off — and it can be changed from the
+# device itself, because walking back to a browser to change what a wall panel
+# shows defeats the point.
+
+_FOLLOW_MODES = ("pad", "dash", "off")
+_FOLLOW_CFG = os.path.join(_FW_DIR, "follow_modes.json")
+
+# Panels whose readouts are worth mirroring, and the dashboard app to show.
+PANEL_DASHBOARDS = {
+    "markets": "info:candles", "mesh": "info:mesh", "workers": "info:system",
+    "calendar": "info:agenda", "comms": "info:agenda", "business": "info:orders",
+    "dream": "info:system", "netmap": "info:nodes",
+}
+
+
+def _load_follow() -> Dict[str, str]:
+    try:
+        with open(_FOLLOW_CFG, encoding="utf-8") as f:
+            return {k: v for k, v in json.load(f).items() if v in _FOLLOW_MODES}
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        log.warning("follow modes unreadable: %s", e)
+        return {}
+
+
+def _save_follow(modes: Dict[str, str]) -> None:
+    tmp = _FOLLOW_CFG + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(modes, f, indent=2)
+    os.replace(tmp, _FOLLOW_CFG)
+
+
+def follow_mode(node_id: str) -> str:
+    return _load_follow().get(node_id, "pad")
+
+
+@capability(
+    "mesh.app.follow.mode", http_method="POST", http_path="/mesh/app/follow/mode",
+    http_tags=["mesh", "ui"], memory="on",
+    description="Choose what a node mirrors as you move around Vera: 'pad' (that panel's controls), "
+                "'dash' (that panel's readout, e.g. Markets becomes a candle chart), or 'off'. "
+                "Per node, changeable from the device too. Omit mode to read it. "
+                "Input: node_id (str!), mode (str — pad|dash|off). Output: {ok, node_id, mode, modes}.",
+    schema={"properties": {"mode": {"enum": ["pad", "dash", "off"]}}},
+)
+async def cap_mesh_app_follow_mode(node_id: str = "", mode: str = "", trace_id=None) -> dict:
+    if not node_id:
+        return {"error": "node_id required"}
+    modes = _load_follow()
+    if mode:
+        if mode not in _FOLLOW_MODES:
+            return {"error": "mode must be one of %s" % ", ".join(_FOLLOW_MODES)}
+        modes[node_id] = mode
+        try:
+            _save_follow(modes)
+        except Exception as e:
+            return {"error": "could not save: %s" % e}
+    return {"ok": True, "node_id": node_id,
+            "mode": modes.get(node_id, "pad"), "modes": modes,
+            # Empty means the harness has never called follow for this node —
+            # the binding is missing, not the device.
+            "last_seen": _FOLLOW_SEEN.get(node_id, {})}
+
+
+
+
+_FOLLOW_LAST: Dict[str, str] = {}       # node -> the panel it is mirroring
+# Last follow request actually RECEIVED, so "is it the browser or the device?"
+# is answerable without being at the machine.
+_FOLLOW_SEEN: Dict[str, dict] = {}
+
+
+def _app_modeswitch(node_id: str, ctx: dict):
+    """On-device mode switch, so the panel can be repurposed where it hangs."""
+    cur = follow_mode(node_id)
+    panel = _FOLLOW_LAST.get(node_id, "")
+    widgets, y = [], UI_HEADER_H + 10
+    bw = (UI_W - 2 * UI_MARGIN - UI_GUTTER) // 2
+    for i, (m, label) in enumerate((("pad", "Controls"), ("dash", "Readouts"),
+                                    ("off", "Stay put"))):
+        r, c = divmod(i, 2)
+        widgets.append(ui_button(UI_MARGIN + c * (bw + UI_GUTTER),
+                                 y + r * (44 + UI_GUTTER), label,
+                                 "followmode:" + m,
+                                 bg="accent" if m == cur else "accentDim",
+                                 w=bw, h=44))
+    flow = UiFlow(y + 2 * (44 + UI_GUTTER) + 6)
+    flow.note("following: %s%s" % (cur, (" (%s)" % panel) if panel else ""))
+    return (ui_screen("Follow mode", widgets + flow.done(),
+                      [{"text": "Apps", "action": "app:launcher"},
+                       {"text": "Status", "action": "nav:status"}],
+                      subtitle=node_id[:20]), {})
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Pin map — what is wired where, and how to read it
+# ════════════════════════════════════════════════════════════════════════════
+# Pins were scattered across config.io.tft / .sd / .touch / .neopixel with no
+# single view, so nothing could answer "is GPIO7 free?" or "why is the display
+# broken?" — the answer is usually that two things claim the same pin.
+#
+# A pin map is a list of ASSIGNMENTS: {pin, role, device, profile}. A DEVICE
+# PROFILE describes a kind of hardware once (which roles it needs, how its
+# signal is read) so adding a sensor is data, not code. Conflicts are detected
+# rather than silently overwritten, because a double-booked pin is the single
+# most common cause of "it just doesn't work".
+
+# Chip pin capabilities. What a pin CAN do is a property of the silicon, and
+# assigning an input-only or flash pin is a mistake worth catching up front.
+CHIP_PINS = {
+    "esp32s3": {
+        "gpio": list(range(0, 22)) + list(range(26, 49)),
+        "adc": list(range(1, 11)),          # ADC1 — usable while Wi-Fi is on
+        "adc2": list(range(11, 21)),        # unusable with Wi-Fi active
+        # Believed input-only, but ESP32 variants differ and getting this wrong
+        # sends people chasing a hardware problem that isn't there. Confirm with
+        # mesh.pins.probe, which measures it on the actual silicon.
+        "input_only": [46], "input_only_confirmed": False,
+        "reserved": {0: "boot strap", 3: "JTAG strap", 45: "VDD_SPI strap",
+                     46: "input only / strap",
+                     19: "USB D-", 20: "USB D+",
+                     **{p: "SPI flash / PSRAM" for p in range(26, 33)}},
+    },
+    "esp32": {
+        "gpio": list(range(0, 40)),
+        "adc": [32, 33, 34, 35, 36, 39],
+        "adc2": [0, 2, 4, 12, 13, 14, 15, 25, 26, 27],
+        "input_only": [34, 35, 36, 37, 38, 39],
+        "reserved": {0: "boot strap", 2: "boot strap", 12: "boot strap",
+                     **{p: "SPI flash" for p in range(6, 12)}},
+    },
+    "esp32c3": {
+        "gpio": list(range(0, 22)),
+        "adc": list(range(0, 6)), "adc2": [],
+        "input_only": [],
+        "reserved": {8: "boot strap", 9: "boot strap", 18: "USB D-", 19: "USB D+"},
+    },
+}
+
+# Device profiles: the roles a kind of hardware needs, and how its signal is
+# interpreted. `read` describes the filter/decoding so a profile can be added
+# without touching firmware.
+DEVICE_PROFILES = {
+    "tft_ili9488_p8": {
+        "label": "ILI9488 parallel TFT (8-bit)",
+        "roles": ["rst", "cs", "dc", "wr", "rd",
+                  "d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7"],
+        "kind": "display", "read": None,
+        "note": "d4/d5 on GPIO19/20 collide with USB-Serial-JTAG on the S3",
+    },
+    "touch_4wire": {
+        "label": "4-wire resistive touch",
+        "roles": ["xp", "ym", "yp", "xm"],
+        "kind": "input",
+        "read": {"type": "resistive_touch", "adc_roles": ["yp", "xm"],
+                 "pressure": "adc_max - (z2 - z1)"},
+        "note": "shares LCD lines on Uno shields; yp/xm must be ADC-capable",
+    },
+    "sd_spi": {"label": "SD card (SPI)", "kind": "storage",
+               "roles": ["clk", "miso", "mosi", "cs"], "read": None},
+    "neopixel": {"label": "WS2812 / NeoPixel", "kind": "output",
+                 "roles": ["data"], "read": None},
+    "led": {"label": "LED", "kind": "output", "roles": ["pin"], "read": None},
+    "relay": {"label": "Relay", "kind": "output", "roles": ["pin"], "read": None},
+    "ds18b20": {"label": "DS18B20 temperature", "kind": "sensor",
+                "roles": ["data"],
+                "read": {"type": "onewire", "unit": "C", "poll_s": 30}},
+    "dht22": {"label": "DHT22 temp/humidity", "kind": "sensor",
+              "roles": ["data"],
+              "read": {"type": "dht", "unit": "C,%", "poll_s": 30}},
+    "analog_sensor": {"label": "Generic analogue sensor", "kind": "sensor",
+                      "roles": ["adc"],
+                      "read": {"type": "adc", "scale": 1.0, "offset": 0.0,
+                               "smooth": 4, "poll_s": 10}},
+    "digital_input": {"label": "Digital input / button", "kind": "input",
+                      "roles": ["pin"],
+                      "read": {"type": "digital", "pull": "up", "debounce_ms": 40}},
+    "i2c_bus": {"label": "I2C bus", "kind": "bus", "roles": ["sda", "scl"],
+                "read": {"type": "i2c", "freq": 100000}},
+    "pwm_output": {"label": "PWM output", "kind": "output", "roles": ["pin"],
+                   "read": {"type": "pwm", "freq": 1000}},
+}
+
+
+_PIN_PROBED: Dict[str, dict] = {}      # node_id -> {pin: drivable}
+
+
+def note_pin_probe(node_id: str, results: List[dict]) -> None:
+    """Record a measured drivability result so it overrides the static table."""
+    if not node_id:
+        return
+    seen = _PIN_PROBED.setdefault(node_id, {})
+    for r in results or []:
+        if isinstance(r, dict) and isinstance(r.get("pin"), int) and "drivable" in r:
+            seen[int(r["pin"])] = bool(r["drivable"])
+
+
+def pin_capabilities(chip: str, node_id: str = "") -> dict:
+    caps = dict(CHIP_PINS.get((chip or "").lower(), CHIP_PINS["esp32s3"]))
+    probed = _PIN_PROBED.get(node_id or "", {})
+    if probed:
+        # Measured wins. A pin the board actually drove is not input-only, and a
+        # pin it could not drive is — whatever the datasheet says.
+        io_only = {p for p in caps.get("input_only", []) if probed.get(p, True) is False}
+        io_only |= {p for p, ok in probed.items() if ok is False}
+        caps["input_only"] = sorted(io_only)
+        caps["input_only_confirmed"] = True
+    return caps
+
+
+def _assignments_from_io(io_cfg: dict) -> List[dict]:
+    """The existing config.io shape -> flat assignments, so the map reflects what
+    a node is ACTUALLY running rather than a separate parallel truth."""
+    out = []
+    io_cfg = io_cfg or {}
+    tft = io_cfg.get("tft") or {}
+    for role in ("rst", "cs", "dc", "wr", "rd"):
+        if isinstance(tft.get(role), int):
+            out.append({"pin": tft[role], "role": role, "device": "display",
+                        "profile": "tft_ili9488_p8"})
+    for i, p in enumerate(tft.get("d") or []):
+        if isinstance(p, int):
+            out.append({"pin": p, "role": "d%d" % i, "device": "display",
+                        "profile": "tft_ili9488_p8"})
+    for role in ("clk", "miso", "mosi", "cs"):
+        sd = io_cfg.get("sd") or {}
+        if isinstance(sd.get(role), int):
+            out.append({"pin": sd[role], "role": role, "device": "sd",
+                        "profile": "sd_spi"})
+    touch = io_cfg.get("touch") or {}
+    for role in ("xp", "ym", "yp", "xm"):
+        if isinstance(touch.get(role), int):
+            out.append({"pin": touch[role], "role": role, "device": "touch",
+                        "profile": "touch_4wire"})
+    for key, prof in (("neopixel", "neopixel"), ("led", "led"),
+                      ("relay", "relay"), ("adc", "analog_sensor")):
+        v = io_cfg.get(key)
+        if isinstance(v, int) and v >= 0:
+            out.append({"pin": v, "role": "data" if prof == "neopixel" else "pin",
+                        "device": key, "profile": prof})
+    for extra in io_cfg.get("devices") or []:
+        if isinstance(extra, dict):
+            for role, pin in (extra.get("pins") or {}).items():
+                if isinstance(pin, int):
+                    out.append({"pin": pin, "role": role,
+                                "device": extra.get("name") or extra.get("profile", "device"),
+                                "profile": extra.get("profile", "")})
+    return out
+
+
+def build_pin_map(io_cfg: dict, chip: str = "esp32s3", node_id: str = "") -> dict:
+    """Every pin on the chip with what claims it, plus the problems."""
+    caps = pin_capabilities(chip, node_id)
+    assigns = _assignments_from_io(io_cfg)
+    by_pin: Dict[int, List[dict]] = {}
+    for a in assigns:
+        by_pin.setdefault(int(a["pin"]), []).append(a)
+
+    pins, conflicts, warnings = [], [], []
+    for p in sorted(set(caps["gpio"]) | set(by_pin)):
+        holders = by_pin.get(p, [])
+        entry = {"pin": p, "used": bool(holders),
+                 "holders": [{"device": h["device"], "role": h["role"],
+                              "profile": h.get("profile", "")} for h in holders],
+                 "adc": p in caps["adc"], "adc2_only": p in caps.get("adc2", []),
+                 "input_only": p in caps.get("input_only", []),
+                 "input_only_confirmed": bool(caps.get("input_only_confirmed")),
+                 "reserved": caps.get("reserved", {}).get(p, "")}
+        # Two devices on one pin is the commonest cause of "it just doesn't work".
+        if len(holders) > 1:
+            devs = sorted({h["device"] for h in holders})
+            if len(devs) > 1:
+                entry["conflict"] = True
+                conflicts.append({"pin": p, "devices": devs,
+                                  "roles": [h["role"] for h in holders]})
+        if holders and entry["reserved"]:
+            warnings.append({"pin": p, "issue": entry["reserved"],
+                             "devices": sorted({h["device"] for h in holders})})
+        if holders and entry["input_only"] and any(
+                h["role"] not in ("adc",) for h in holders):
+            warnings.append({"pin": p, "issue": "input only — cannot be driven",
+                             "devices": sorted({h["device"] for h in holders})})
+        pins.append(entry)
+
+    free = [e["pin"] for e in pins if not e["used"] and not e["reserved"]]
+    return {"chip": chip, "pins": pins, "conflicts": conflicts,
+            "warnings": warnings, "free": free,
+            "used": sum(1 for e in pins if e["used"]), "total": len(pins)}
+
+
+@capability(
+    "mesh.pins.map", http_method="POST", http_path="/mesh/pins/map",
+    http_tags=["mesh", "pins"], memory="off", silent=True,
+    description="The full pin map for a node: every GPIO, what claims it (device + role), whether "
+                "it is ADC-capable, input-only or strapping/flash-reserved, plus detected CONFLICTS "
+                "(two devices on one pin — the commonest cause of 'it just doesn't work') and "
+                "warnings. Built from the node's live config.io, so it reflects what is actually "
+                "running. Input: node_id (str!). Output: {chip, pins, conflicts, warnings, free}.",
+)
+async def cap_mesh_pins_map(node_id: str = "", trace_id=None) -> dict:
+    if not node_id:
+        return {"error": "node_id required"}
+    node = await _call_cap("mesh.node", node_id=node_id)
+    n = (node or {}).get("node") if isinstance(node, dict) else None
+    if not n:
+        return {"error": "unknown node", "node_id": node_id}
+    cfg = n.get("config") or {}
+    # Prefer what the node REPORTED (ESP.getChipModel). The `board` field is a
+    # hardcoded "esp32" in the sketch, so believing it picked the classic ESP32
+    # profile — GPIO 0-39 — for an S3 and hid GPIO40-48 completely, which is
+    # where the display and touch pins actually live on this board.
+    reported = ""
+    try:
+        mesh = (sys.modules.get("mesh_capabilities")
+                or sys.modules.get("Vera.vera.mesh.mesh_capabilities"))
+        if mesh is not None:
+            reported = (getattr(mesh, "_NODE_CHIP", {}) or {}).get(node_id, "")
+    except Exception as e:
+        log.debug("reported chip lookup: %s", e)
+
+    raw = str(reported or n.get("chip") or "")
+    source = "reported" if raw else ""
+    if not raw:
+        # Fall back to the pin map already in use: pins above 39 can only exist
+        # on an S3, so the config itself is better evidence than `board`.
+        pins_in_use = [a["pin"] for a in _assignments_from_io(cfg.get("io") or {})]
+        if pins_in_use and max(pins_in_use) > 39:
+            raw, source = "esp32s3", "inferred from pins in use"
+        else:
+            raw, source = str(n.get("board") or ""), "board field"
+
+    low = raw.lower()
+    chip = ("esp32s3" if "s3" in low else
+            "esp32c3" if "c3" in low else
+            "esp32" if low.startswith("esp32") and low not in ("esp32",) else
+            "esp32" if low == "esp32" else "")
+    if not chip:
+        chip, source = "esp32s3", "assumed"
+    out = build_pin_map(cfg.get("io") or {}, chip, node_id)
+    out["chip_reported"] = raw
+    out["chip_source"] = source
+    return out
+
+
+@capability(
+    "mesh.pins.profiles", http_method="GET", http_path="/mesh/pins/profiles",
+    http_tags=["mesh", "pins"], memory="off", silent=True,
+    description="Device profiles that can be mapped onto pins — display, touch, SD, NeoPixel, LED, "
+                "relay, DS18B20, DHT22, generic analogue sensor, digital input, I2C, PWM. Each "
+                "declares the roles it needs and how its signal is read (filter, units, poll rate), "
+                "so supporting new hardware is data rather than code. Output: {profiles, count}.",
+)
+async def cap_mesh_pins_profiles(trace_id=None) -> dict:
+    return {"profiles": DEVICE_PROFILES, "count": len(DEVICE_PROFILES)}
+
+
+@capability(
+    "mesh.pins.assign", http_method="POST", http_path="/mesh/pins/assign",
+    http_tags=["mesh", "pins"], memory="on",
+    description="Attach a device profile to pins on a node, validated against the chip before "
+                "anything is pushed: unknown roles, pins that don't exist, input-only pins asked to "
+                "drive, non-ADC pins asked to measure, and collisions with an existing device are "
+                "all refused with the reason. Input: node_id (str!), profile (str! — from "
+                "mesh.pins.profiles), name (str — what to call this device), pins (JSON! — "
+                "{role: gpio}), force (bool=False — assign despite warnings). "
+                "Output: {ok, assigned, warnings} or {error}.",
+)
+async def cap_mesh_pins_assign(node_id: str = "", profile: str = "", name: str = "",
+                               pins=None, force: bool = False, trace_id=None) -> dict:
+    if not node_id or not profile:
+        return {"error": "node_id and profile required"}
+    prof = DEVICE_PROFILES.get(profile)
+    if not prof:
+        return {"error": "unknown profile %r; see mesh.pins.profiles" % profile,
+                "profiles": sorted(DEVICE_PROFILES)}
+    pins = json.loads(pins) if isinstance(pins, str) else pins
+    if not isinstance(pins, dict) or not pins:
+        return {"error": "pins must be {role: gpio}; roles for %s are %s"
+                         % (profile, ", ".join(prof["roles"]))}
+
+    current = await cap_mesh_pins_map(node_id=node_id)
+    if current.get("error"):
+        return current
+    caps = pin_capabilities(current["chip"], node_id)
+    taken = {e["pin"]: e["holders"] for e in current["pins"] if e["used"]}
+
+    bad, warn = [], []
+    unknown = [r for r in pins if r not in prof["roles"]]
+    if unknown:
+        bad.append("roles not in profile %s: %s (expected %s)"
+                   % (profile, ", ".join(unknown), ", ".join(prof["roles"])))
+    adc_roles = set(((prof.get("read") or {}).get("adc_roles")) or
+                    (["adc"] if "adc" in prof["roles"] else []))
+    for role, pin in pins.items():
+        if not isinstance(pin, int):
+            bad.append("%s: pin must be an integer" % role)
+            continue
+        if pin not in caps["gpio"]:
+            bad.append("%s: GPIO%d does not exist on %s" % (role, pin, current["chip"]))
+            continue
+        if pin in caps.get("input_only", []) and role not in adc_roles:
+            msg = "%s: GPIO%d is input-only and cannot drive" % (role, pin)
+            if caps.get("input_only_confirmed"):
+                bad.append(msg)          # measured on this board — a real blocker
+            else:
+                warn.append(msg + " (unverified — run mesh.pins.probe to confirm)")
+        if role in adc_roles and pin not in caps["adc"]:
+            note = " (ADC2 is unusable while Wi-Fi is on)" if pin in caps.get("adc2", []) else ""
+            bad.append("%s: GPIO%d cannot be read as analogue%s" % (role, pin, note))
+        holder = taken.get(pin)
+        if holder and any(h["device"] != (name or profile) for h in holder):
+            msg = "GPIO%d already used by %s" % (pin, ", ".join(
+                sorted({h["device"] + "." + h["role"] for h in holder})))
+            (warn if force else bad).append(msg)
+        res = caps.get("reserved", {}).get(pin)
+        if res:
+            warn.append("GPIO%d is %s" % (pin, res))
+    if bad:
+        return {"error": "; ".join(bad), "profile": profile,
+                "roles": prof["roles"], "warnings": warn}
+
+    # Land it in the shape the firmware already understands.
+    io_patch: Dict[str, Any] = {}
+    if profile == "tft_ili9488_p8":
+        tft = {r: p for r, p in pins.items() if not r.startswith("d")}
+        d = [pins[k] for k in sorted((k for k in pins if k.startswith("d")),
+                                     key=lambda k: int(k[1:]))]
+        if d:
+            tft["d"] = d
+        io_patch["tft"] = tft
+    elif profile == "touch_4wire":
+        io_patch["touch"] = dict(pins)
+    elif profile == "sd_spi":
+        io_patch["sd"] = dict(pins)
+    elif profile == "neopixel":
+        io_patch["neopixel"] = list(pins.values())[0]
+    elif profile in ("led", "relay"):
+        io_patch[profile] = list(pins.values())[0]
+    else:
+        io_patch["devices"] = [{"name": name or profile, "profile": profile,
+                                "pins": dict(pins), "read": prof.get("read")}]
+
+    r = await _call_cap("mesh.config", node_id=node_id, config={"io": io_patch},
+                        merge=True)
+    return {"ok": bool(isinstance(r, dict) and not r.get("error")),
+            "assigned": {"profile": profile, "name": name or profile, "pins": pins},
+            "warnings": warn, "job_id": (r or {}).get("job_id"),
+            "error": (r or {}).get("error", "")}
+
+
+@capability(
+    "mesh.pins.probe", http_method="POST", http_path="/mesh/pins/probe",
+    http_tags=["mesh", "pins"], memory="on",
+    description="Measure which GPIOs a node can actually DRIVE, rather than trusting a table. Each "
+                "pin is driven high then low and read back; one that reports the same level both "
+                "ways has no usable output stage. Settles questions like 'is GPIO46 input-only on "
+                "this chip?' on the real silicon, since ESP32 variants differ and a wrong answer "
+                "sends you chasing a hardware fault that isn't there. Display control lines are "
+                "skipped (driving them mid-draw corrupts the panel). Read the result with "
+                "mesh.jobs. Input: node_id (str!), pins (JSON list — default every GPIO). "
+                "Output: {ok, job_id}.",
+)
+async def cap_mesh_pins_probe(node_id: str = "", pins=None, results=None,
+                              trace_id=None) -> dict:
+    if not node_id:
+        return {"error": "node_id required"}
+    # Feeding the job result back in is what makes the measurement stick, so the
+    # pin map and the assign form stop guessing.
+    results = json.loads(results) if isinstance(results, str) else results
+    if results:
+        note_pin_probe(node_id, results)
+        return {"ok": True, "recorded": len(results),
+                "not_drivable": sorted(p for p, ok in
+                                       _PIN_PROBED.get(node_id, {}).items() if not ok)}
+    pins = json.loads(pins) if isinstance(pins, str) else pins
+    return await _call_cap("mesh.send", node_id=node_id, type="pin_probe",
+                           payload={"pins": pins or []})
+
+
+@capability(
+    "mesh.pins.touch_hunt", http_method="POST", http_path="/mesh/pins/touch_hunt",
+    http_tags=["mesh", "pins"], memory="on",
+    description="Find the touch wires ON THE NODE'S OWN SCREEN. It prompts 'do not touch', measures "
+                "continuity between all eight LCD data lines, prompts 'press and hold', measures "
+                "again, and reports the pairs that conduct ONLY under pressure — those are the X-to-Y "
+                "crossing, i.e. the touch wires. Purely digital, because only one of those pins is on "
+                "ADC1 (the rest are ADC2 and unreadable while Wi-Fi is up). Results are drawn on the "
+                "panel as well as returned, so no log-reading round trip is needed. Takes ~10s and "
+                "needs someone to press when asked. Input: node_id (str!). Output: {ok, job_id}.",
+)
+async def cap_mesh_pins_touch_hunt(node_id: str = "", trace_id=None) -> dict:
+    if not node_id:
+        return {"error": "node_id required"}
+    return await _call_cap("mesh.send", node_id=node_id, type="touch_hunt", payload={})
+
+
+@capability(
+    "mesh.pins.touch_scan", http_method="POST", http_path="/mesh/pins/touch_scan",
+    http_tags=["mesh", "pins"], memory="on",
+    description="Ask a node to FIND its touch wires rather than guessing them. A 4-wire resistive "
+                "panel is two resistive plates, and on an Uno shield those wires are shared with "
+                "LCD lines — so a plate shows up as continuity between two pins we already drive. "
+                "No pressing needed. Read the result with mesh.jobs: `pairs` are connected pins; "
+                "two disjoint pairs are the X and Y plates. Input: node_id (str!). "
+                "Output: {ok, job_id}.",
+)
+async def cap_mesh_pins_touch_scan(node_id: str = "", trace_id=None) -> dict:
+    if not node_id:
+        return {"error": "node_id required"}
+    return await _call_cap("mesh.send", node_id=node_id, type="touch_scan", payload={})
 
 
 # Built-ins plus anything saved. Runs last: it depends on the pad loader and the

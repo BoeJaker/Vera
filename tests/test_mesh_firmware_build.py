@@ -1273,11 +1273,37 @@ def test_sprite_app_reports_a_missing_sprite_clearly(ui_mod, monkeypatch):
     assert "not found" in r["error"]
 
 
-def test_sprite_listing_is_graceful_without_spritegen(ui_mod, monkeypatch):
+def test_sprite_listing_is_graceful_with_no_sources(ui_mod, monkeypatch):
+    """Sprite Studio, companions and generated images are three separate
+    subsystems; with none of them present the picker must say so rather than
+    look broken."""
     import asyncio
     monkeypatch.setattr(ui_mod, "_cap_exists", lambda n: False)
     r = asyncio.run(ui_mod.cap_mesh_ui_sprites())
-    assert r["sprites"] == [] and "not available" in r["note"]
+    assert r["sprites"] == [] and "nothing found" in r["note"]
+
+
+def test_sprite_listing_merges_all_three_sources(ui_mod, monkeypatch):
+    import asyncio
+
+    async def _fake(cap, **kw):
+        if cap == "spritegen.list":
+            return {"characters": [_CHAR]}
+        if cap == "character.list":
+            return {"characters": [{"agent_id": "a1", "display_name": "Ally",
+                                    "sheet": "/c/a1.png"}]}
+        if cap == "images.list":
+            return {"images": [{"url": "/images/file/x.png", "prompt": "a robot"}]}
+        return {}
+
+    monkeypatch.setattr(ui_mod, "_call_cap", _fake)
+    monkeypatch.setattr(ui_mod, "_cap_exists", lambda n: True)
+    r = asyncio.run(ui_mod.cap_mesh_ui_sprites())
+    by_src = {s["source"] for s in r["sprites"]}
+    assert by_src == {"spritegen", "companion", "image"}, by_src
+    assert r["count"] == 3
+    img = next(s for s in r["sprites"] if s["source"] == "image")
+    assert img["id"].startswith("/images/") and img["ready"]
 
 
 # ── UI kit: geometry that cannot drift ─────────────────────────────────────
@@ -1438,16 +1464,18 @@ def test_forwarder_is_detected_from_the_peer_address(mesh, monkeypatch):
     ids = {n["id"] for n in topo["nodes"]}
     assert "fwd:192.168.1.197" in ids, "the relay must appear as its own node"
     edges = {(e["from"], e["to"]) for e in topo["edges"]}
-    assert ("n1", "fwd:192.168.1.197") in edges
-    assert ("fwd:192.168.1.197", "hub") in edges
-    assert ("n1", "hub") not in edges, "must not pretend the node talks to Vera directly"
+    # Edges point OUTWARD from the hub: the map lays out ring 1 from
+    # edgesByParent['hub'], so reversing them leaves every node stacked at 0,0.
+    assert ("fwd:192.168.1.197", "n1") in edges
+    assert ("hub", "fwd:192.168.1.197") in edges
+    assert ("hub", "n1") not in edges, "must not pretend the node talks to Vera directly"
 
 
 def test_direct_node_is_not_given_a_phantom_hop(mesh, monkeypatch):
     monkeypatch.setattr(mesh, "_server_host", lambda: "")
     monkeypatch.setattr(mesh, "_VIA", {"n1": {"ip": "192.168.1.55"}})
     topo = mesh.build_mesh_topology(_rows(("n1", "192.168.1.55", "2026-01-01T00:00:00+00:00")))
-    assert ("n1", "hub") in {(e["from"], e["to"]) for e in topo["edges"]}
+    assert ("hub", "n1") in {(e["from"], e["to"]) for e in topo["edges"]}
     assert not [n for n in topo["nodes"] if n["id"].startswith("fwd:")]
 
 
@@ -1534,8 +1562,10 @@ def test_pressure_band_admits_a_real_press():
     m = re.search(r"int touchZMin = (\d+), touchZMax = (\d+);", ino)
     assert m, "pressure band not found"
     lo, hi = int(m.group(1)), int(m.group(2))
-    assert 0 < lo < hi <= 4095
-    assert hi >= 4000, "a firm press reads near full scale; do not clip it out"
+    assert 0 < lo < hi < 4095, (
+        "the ceiling must admit a firm press but stay STRICTLY below full scale: "
+        "an open/absent panel pins at 4095 and would read as a permanent press")
+    assert hi >= 3000, "but not so low that a firm press is clipped out"
 
 
 # ── Visual language ────────────────────────────────────────────────────────
@@ -1647,3 +1677,547 @@ def test_every_mapped_kind_produces_a_valid_spec(ui_mod):
         v = ui_mod.validate_ui_spec(spec)
         assert v["ok"], f"{kind}: {v.get('error')}"
         ui_mod.compile_ui_spec(spec)          # must also lay out without raising
+
+
+# ── Sprite Studio record shape ─────────────────────────────────────────────
+
+_CHAR = {
+    "char_id": "abc123", "name": "Pip",
+    "animations": {"idle": {"frames": 4, "fps": 6}, "walk": {"frames": 8, "fps": 10}},
+    "urls": {"frames": {"idle": ["/f/0.png", "/f/1.png"]},
+             "sheets": {"walk": {"png": "/s/walk.png", "gif": "/s/walk.gif"}}},
+}
+_UNGENERATED = {"char_id": "def456", "name": "",
+                "animations": {"idle": {"frames": 4}},
+                "urls": {"frames": {}, "sheets": {}}}
+
+
+def test_listing_reads_characters_not_sprites(ui_mod, monkeypatch):
+    """spritegen.list returns {"characters": [...]}; looking for 'sprites' is
+    why the picker was empty."""
+    import asyncio
+
+    async def _fake(cap, **kw):
+        return {"characters": [_CHAR, _UNGENERATED]}
+
+    monkeypatch.setattr(ui_mod, "_call_cap", _fake)
+    monkeypatch.setattr(ui_mod, "_cap_exists", lambda n: True)
+    r = asyncio.run(ui_mod.cap_mesh_ui_sprites())
+    assert r["count"] == 2 and r["ready"] == 1
+    by = {s["id"]: s for s in r["sprites"]}
+    assert by["abc123"]["label"] == "Pip"
+    assert by["def456"]["label"] == "def456"[:12], "unnamed falls back to its id"
+    assert by["def456"]["ready"] is False
+
+
+def test_ungenerated_characters_are_listed_not_hidden(ui_mod, monkeypatch):
+    """"no characters" and "no frames generated yet" are different problems, and
+    the second is the common one."""
+    import asyncio
+
+    async def _fake(cap, **kw):
+        return {"characters": [_UNGENERATED]}
+
+    monkeypatch.setattr(ui_mod, "_call_cap", _fake)
+    monkeypatch.setattr(ui_mod, "_cap_exists", lambda n: True)
+    r = asyncio.run(ui_mod.cap_mesh_ui_sprites())
+    assert r["count"] == 1 and r["ready"] == 0
+    assert "generate" in r["note"].lower()
+
+
+def test_frames_come_from_urls_not_the_animation_count(ui_mod):
+    """animations[a].frames is a COUNT; the images live at urls.frames[a]."""
+    frames, sheet, anim = ui_mod._sprite_anim_frames(_CHAR)
+    assert frames == ["/f/0.png", "/f/1.png"] and anim == "idle"
+    frames2, sheet2, anim2 = ui_mod._sprite_anim_frames(_CHAR, "walk")
+    assert frames2 == [] and sheet2.get("gif") == "/s/walk.gif"
+
+
+def test_sprite_without_frames_explains_itself(ui_mod, monkeypatch):
+    import asyncio
+
+    async def _fake(cap, **kw):
+        return _UNGENERATED
+
+    monkeypatch.setattr(ui_mod, "_call_cap", _fake)
+    monkeypatch.setattr(ui_mod, "_cap_exists", lambda n: True)
+    r = asyncio.run(ui_mod.cap_mesh_ui_sprite(node_id="n1", sprite="def456"))
+    assert "no generated frames" in r["error"] and r["animations"] == ["idle"]
+
+
+# ── Candles ────────────────────────────────────────────────────────────────
+
+def test_candles_scale_to_the_window(ui_mod):
+    m = ui_mod
+    bars = [{"o": 10, "h": 12, "l": 9, "c": 11}, {"o": 11, "h": 15, "l": 10, "c": 14}]
+    ws = m.ui_candles(8, 50, 200, 100, bars)
+    assert ws, "no candles drawn"
+    for w in ws:
+        assert w["y"] >= 50 - 1 and w["y"] + w.get("h", 0) <= 50 + 100 + 1, w
+        assert w["x"] >= 8 and w["x"] + w.get("w", 0) <= 8 + 200 + 1, w
+
+
+def test_candle_direction_is_coloured(ui_mod):
+    m = ui_mod
+    up = m.ui_candles(0, 0, 40, 40, [{"o": 1, "h": 2, "l": 0.5, "c": 2}])
+    dn = m.ui_candles(0, 0, 40, 40, [{"o": 2, "h": 2, "l": 0.5, "c": 1}])
+    assert {w["color"] for w in up if "color" in w} != {w["color"] for w in dn if "color" in w}
+
+
+def test_empty_series_says_so_rather_than_drawing_nothing(ui_mod):
+    ws = ui_mod.ui_candles(0, 0, 40, 40, [])
+    assert any("no data" in str(w.get("text", "")) for w in ws)
+    ws2 = ui_mod.ui_sparkline(0, 0, 40, 40, [])
+    assert any("no data" in str(w.get("text", "")) for w in ws2)
+
+
+def test_ohlc_normalisation_accepts_both_shapes(ui_mod):
+    rows = ui_mod._ohlc_rows({"bars": [{"open": 1, "high": 2, "low": 0, "close": 1.5}]})
+    assert rows == [{"o": 1, "h": 2, "l": 0, "c": 1.5}]
+    rows2 = ui_mod._ohlc_rows([[1700000000, 1, 2, 0, 1.5, 99]])
+    assert rows2 == [{"o": 1, "h": 2, "l": 0, "c": 1.5}]
+    assert ui_mod._ohlc_rows({"bars": [{"open": 1}]}) == [], "incomplete bars dropped"
+
+
+# ── Home dashboard config ──────────────────────────────────────────────────
+
+def test_dash_config_rejects_unknown_sections(ui_mod, monkeypatch, tmp_path):
+    import asyncio
+    monkeypatch.setattr(ui_mod, "_DASH_CFG", str(tmp_path / "d.json"))
+    r = asyncio.run(ui_mod.cap_mesh_ui_dash_config(sections=["clock", "nope"]))
+    assert "unknown section" in r["error"] and "nope" in r["error"]
+    ok = asyncio.run(ui_mod.cap_mesh_ui_dash_config(sections=["markets", "clock"]))
+    assert ok["config"]["sections"] == ["markets", "clock"], "order is the user's choice"
+
+
+def test_dash_config_round_trips(ui_mod, monkeypatch, tmp_path):
+    import asyncio
+    monkeypatch.setattr(ui_mod, "_DASH_CFG", str(tmp_path / "d.json"))
+    asyncio.run(ui_mod.cap_mesh_ui_dash_config(symbol="ETH/USD", rows=5))
+    cfg = ui_mod._load_dash_config()
+    assert cfg["symbol"] == "ETH/USD" and cfg["rows"] == 5
+    assert cfg["sections"] == ui_mod._DASH_DEFAULT["sections"], "untouched keys survive"
+
+
+# ── Follow modes ───────────────────────────────────────────────────────────
+
+def test_follow_mode_is_per_node_and_persisted(ui_mod, monkeypatch, tmp_path):
+    import asyncio
+    monkeypatch.setattr(ui_mod, "_FOLLOW_CFG", str(tmp_path / "f.json"))
+    assert ui_mod.follow_mode("n1") == "pad", "controls are the sensible default"
+    asyncio.run(ui_mod.cap_mesh_app_follow_mode(node_id="n1", mode="dash"))
+    assert ui_mod.follow_mode("n1") == "dash"
+    assert ui_mod.follow_mode("n2") == "pad", "one node's choice must not leak"
+    bad = asyncio.run(ui_mod.cap_mesh_app_follow_mode(node_id="n1", mode="wat"))
+    assert "mode must be one of" in bad["error"]
+    assert ui_mod.follow_mode("n1") == "dash", "a bad value must not clobber a good one"
+
+
+def test_follow_off_leaves_the_screen_alone(ui_mod, monkeypatch, tmp_path):
+    import asyncio
+    monkeypatch.setattr(ui_mod, "_FOLLOW_CFG", str(tmp_path / "f.json"))
+    asyncio.run(ui_mod.cap_mesh_app_follow_mode(node_id="n1", mode="off"))
+    r = asyncio.run(ui_mod.cap_mesh_app_follow(node_id="n1", panel="markets"))
+    assert r["changed"] is False and r["mode"] == "off"
+
+
+def test_dash_mode_maps_panels_to_readouts(ui_mod, monkeypatch, tmp_path):
+    import asyncio
+    monkeypatch.setattr(ui_mod, "_FOLLOW_CFG", str(tmp_path / "f.json"))
+    asyncio.run(ui_mod.cap_mesh_app_follow_mode(node_id="n1", mode="dash"))
+    launched = {}
+
+    async def _fake_launch(node_id, app_id, ctx=None):
+        launched["app"] = app_id
+        return {"ok": True}
+
+    monkeypatch.setattr(ui_mod, "launch_app", _fake_launch)
+    r = asyncio.run(ui_mod.cap_mesh_app_follow(node_id="n1", panel="markets"))
+    assert r["changed"] and launched["app"] == "info:candles"
+    # a panel with no readout must not blank the screen
+    r2 = asyncio.run(ui_mod.cap_mesh_app_follow(node_id="n1", panel="nothing"))
+    assert r2["changed"] is False and "no dashboard" in r2["reason"]
+
+
+def test_mode_switch_screen_offers_every_mode(ui_mod, monkeypatch, tmp_path):
+    monkeypatch.setattr(ui_mod, "_FOLLOW_CFG", str(tmp_path / "f.json"))
+    screen, _ = ui_mod._app_modeswitch("n1", {})
+    actions = {w.get("action") for w in screen["widgets"]}
+    for m in ui_mod._FOLLOW_MODES:
+        assert "followmode:" + m in actions, m
+
+
+# ── Phantom touch: the regression my own pressure fix introduced ───────────
+
+def test_pressure_ceiling_rejects_an_open_panel():
+    """With pressure inverted, an OPEN/absent panel gives z2-z1 ~ 0 and so
+    z ~ full scale. Allowing 4095 turned 'no panel responding' into a permanent
+    maximum-force press."""
+    ino = _read(_INO)
+    m = re.search(r"int touchZMin = (\d+), touchZMax = (\d+);", ino)
+    lo, hi = int(m.group(1)), int(m.group(2))
+    assert hi < 4095, "a pinned full-scale reading must NOT count as a press"
+    assert lo > 0 and lo < hi
+
+
+def test_touch_requires_a_second_confirming_read():
+    """These lines are shared with the LCD bus; one in-band sample is easily
+    noise, and a phantom tap moves the screen out from under you."""
+    ino = _read(_INO)
+    fn = ino[ino.index("bool touchPoint("):]
+    fn = fn[:fn.index("\n}")]
+    assert "touchRaw(x2, y2, z2)" in fn, "no confirming sample"
+    assert "abs(x2 - x)" in fn, "the two samples must agree on position"
+
+
+def test_stuck_touch_self_heals():
+    """A press that never releases latches touchDown and silently kills every
+    future tap — indistinguishable from a frozen screen."""
+    ino = _read(_INO)
+    assert "touchHeldSince" in ino and "touchStuck" in ino
+    fn = ino[ino.index("void touchTick()"):]
+    fn = fn[:fn.index("\n}")]
+    assert "> 8000" in fn, "must give up on an implausibly long press"
+    assert "touchDown = false" in fn, "and re-arm rather than going quiet"
+    assert 'res["touch_stuck"]' in ino, "sysinfo must report it"
+
+
+def test_touch_diag_reports_raw_values_ungated():
+    """Raw numbers are the only way to tell an unresponsive panel from a
+    mis-calibrated one without being in the room."""
+    ino = _read(_INO)
+    assert '"touch_diag"' in ino
+    blk = ino[ino.index('if(type=="touch_diag")'):]
+    blk = blk[:blk.index("sendResult")]
+    assert "gate_min" in blk and "z_min" in blk
+    assert "verdict" in blk, "it should say what the numbers mean"
+
+
+# ── Pin map: conflicts are the point ───────────────────────────────────────
+
+def test_pin_map_flags_a_double_booked_pin(ui_mod):
+    """Two devices on one pin is the commonest cause of 'it just doesn't work',
+    and it was previously invisible."""
+    io_cfg = {"tft": {"cs": 6, "dc": 7, "d": [21, 46, 18, 17, 19, 20, 3, 14]},
+              "touch": {"xp": 3, "ym": 14, "yp": 6, "xm": 7}}
+    m = ui_mod.build_pin_map(io_cfg, "esp32s3")
+    conflicted = {c["pin"] for c in m["conflicts"]}
+    assert {3, 6, 7, 14} <= conflicted, conflicted
+    cell = next(p for p in m["pins"] if p["pin"] == 6)
+    assert cell["conflict"] and len(cell["holders"]) == 2
+
+
+def test_pin_map_knows_the_silicon(ui_mod):
+    m = ui_mod.build_pin_map({}, "esp32s3")
+    by = {p["pin"]: p for p in m["pins"]}
+    assert by[4]["adc"] and not by[4]["reserved"]
+    assert by[19]["reserved"] and "USB" in by[19]["reserved"]
+    assert by[46]["input_only"]
+    assert by[27]["reserved"], "flash pins must not look free"
+    assert 4 in m["free"] and 19 not in m["free"]
+
+
+def test_assign_rejects_impossible_pins(ui_mod, monkeypatch):
+    import asyncio
+
+    async def _map(node_id="", trace_id=None):
+        return {"chip": "esp32s3", "pins": [], "conflicts": [], "warnings": [],
+                "free": [], "used": 0, "total": 0}
+
+    async def _ok(*a, **k):
+        return {"ok": True, "job_id": "j1"}
+
+    monkeypatch.setattr(ui_mod, "cap_mesh_pins_map", _map)
+    monkeypatch.setattr(ui_mod, "_call_cap", lambda *a, **k: _ok())
+    ui_mod._PIN_PROBED.clear()
+    run = lambda **kw: asyncio.run(ui_mod.cap_mesh_pins_assign(node_id="n1", **kw))
+
+    assert "unknown profile" in run(profile="nope", pins={"a": 1})["error"]
+    assert "roles not in profile" in run(profile="ds18b20", pins={"wat": 4})["error"]
+    assert "does not exist" in run(profile="ds18b20", pins={"data": 99})["error"]
+    # GPIO46's input-only status is UNVERIFIED, so it must warn, not block —
+    # blocking on an assumption is what made it unselectable.
+    r46 = run(profile="ds18b20", pins={"data": 46})
+    assert r46.get("ok") and any("unverified" in w for w in r46["warnings"])
+    # an analogue role on a pin that cannot measure, with the ADC2 caveat named
+    r = run(profile="analog_sensor", pins={"adc": 15})
+    assert "analogue" in r["error"] and "ADC2" in r["error"]
+
+
+def test_assign_refuses_to_steal_a_used_pin_unless_forced(ui_mod, monkeypatch):
+    import asyncio
+
+    async def _map(node_id="", trace_id=None):
+        return {"chip": "esp32s3",
+                "pins": [{"pin": 7, "used": True,
+                          "holders": [{"device": "display", "role": "dc",
+                                       "profile": "tft_ili9488_p8"}]}],
+                "conflicts": [], "warnings": [], "free": [], "used": 1, "total": 1}
+
+    async def _cfg(**kw):
+        return {"ok": True, "job_id": "j1"}
+
+    monkeypatch.setattr(ui_mod, "cap_mesh_pins_map", _map)
+    monkeypatch.setattr(ui_mod, "_call_cap", lambda *a, **k: _cfg())
+    blocked = asyncio.run(ui_mod.cap_mesh_pins_assign(
+        node_id="n1", profile="ds18b20", pins={"data": 7}))
+    assert "already used by display.dc" in blocked["error"]
+    forced = asyncio.run(ui_mod.cap_mesh_pins_assign(
+        node_id="n1", profile="ds18b20", pins={"data": 7}, force=True))
+    assert forced["ok"] and any("already used" in w for w in forced["warnings"])
+
+
+def test_profiles_declare_roles_and_how_to_read_them(ui_mod):
+    for name, prof in ui_mod.DEVICE_PROFILES.items():
+        assert prof.get("roles"), name
+        assert prof.get("kind"), name
+        if prof["kind"] == "sensor":
+            assert prof.get("read"), f"{name}: a sensor must say how it is read"
+    touch = ui_mod.DEVICE_PROFILES["touch_4wire"]
+    assert touch["read"]["adc_roles"] == ["yp", "xm"]
+
+
+def test_touch_scan_finds_plates_by_continuity():
+    """A press-and-hold scan is unreliable; a resistive plate is detectable as
+    continuity between two pins we already drive."""
+    ino = _read(_INO)
+    assert '"touch_scan"' in ino
+    blk = ino[ino.index('if(type=="touch_scan")'):]
+    # slice to the NEXT handler, not the first sendResult — that one is the
+    # early "no display" return
+    blk = blk[:blk.index('if(type=="touch_diag")')]
+    assert "INPUT_PULLDOWN" in blk, "continuity needs a known-low reference"
+    assert "p8.pD[b]" in blk, "the data lines D0-D7 must be candidates"
+    assert "p8.pCS" in blk and "p8.pDC" in blk, "control lines too"
+
+
+def test_topology_edges_point_outward_from_the_hub(mesh, monkeypatch):
+    """<vera-topology-map> builds ring 1 from edgesByParent['hub'], so edges must
+    run parent -> child. Reversed, ring 1 is empty and every node keeps its
+    default position — the whole graph collapses into the top-left corner."""
+    monkeypatch.setattr(mesh, "_server_host", lambda: "10.0.0.1")
+    monkeypatch.setattr(mesh, "_VIA", {})
+    topo = mesh.build_mesh_topology(_rows(("n1", "10.0.0.5", "2026-01-01T00:00:00+00:00")))
+    froms = {e["from"] for e in topo["edges"]}
+    assert "hub" in froms, "nothing descends from the hub"
+    assert not any(e["to"] == "hub" for e in topo["edges"]), "edges must not point AT the hub"
+
+
+def test_wireless_devices_join_the_topology(mesh, monkeypatch):
+    """Wi-Fi APs and BLE devices the fleet HEARD belong on the map — that is what
+    a mesh of RF sensors is for."""
+    monkeypatch.setattr(mesh, "_server_host", lambda: "")
+    monkeypatch.setattr(mesh, "_VIA", {})
+    now = mesh.datetime.now(mesh.timezone.utc).isoformat()
+    rf = [{"id": "wifi:aa", "type": "WifiAP", "label": "HOMENET", "rssi": "-40",
+           "last_seen": now},
+          {"id": "ble:bb", "type": "BleDevice", "label": "Watch", "rssi": "-70",
+           "last_seen": now},
+          {"id": "net:1.2.3.4", "type": "NetHost", "label": "unrelated"}]
+    topo = mesh.build_mesh_topology([], rf)
+    ids = {n["id"] for n in topo["nodes"]}
+    assert {"rf:wifi", "rf:ble", "wifi:aa", "ble:bb"} <= ids
+    assert "net:1.2.3.4" not in ids, "only radio sightings, not the whole net graph"
+    edges = {(e["from"], e["to"]) for e in topo["edges"]}
+    assert ("hub", "rf:wifi") in edges and ("rf:wifi", "wifi:aa") in edges
+
+
+def test_wireless_is_capped_so_it_cannot_bury_the_fleet(mesh, monkeypatch):
+    monkeypatch.setattr(mesh, "_server_host", lambda: "")
+    monkeypatch.setattr(mesh, "_VIA", {})
+    now = mesh.datetime.now(mesh.timezone.utc).isoformat()
+    rf = [{"id": "wifi:%d" % i, "type": "WifiAP", "label": "ap%d" % i,
+           "rssi": str(-30 - i), "last_seen": now} for i in range(40)]
+    topo = mesh.build_mesh_topology([], rf)
+    aps = [n for n in topo["nodes"] if n["id"].startswith("wifi:")]
+    assert len(aps) == 12, "a busy band must not swamp the map"
+    assert "ap0" in {a["label"] for a in aps}, "strongest signals kept"
+
+
+def test_rf_sightings_go_stale(mesh):
+    from datetime import timedelta
+    now = mesh.datetime.now(mesh.timezone.utc)
+    assert mesh._rf_status(now.isoformat()) == "ok"
+    assert mesh._rf_status((now - timedelta(minutes=20)).isoformat()) == "warn"
+    assert mesh._rf_status((now - timedelta(hours=5)).isoformat()) == "err"
+    assert mesh._rf_status("") == "unknown"
+    assert mesh._rf_status("not a date") == "unknown"
+
+
+def test_map_emits_selection_so_it_can_replace_the_graph():
+    """Folding the two graphs means the map must do the old one's job of
+    selecting a node for the inspector."""
+    src = _read(os.path.join(_ROOT, "vera", "topology_map_element.js"))
+    assert "'node-select'" in src
+    panel = _read(os.path.join(_ROOT, "vera", "mesh", "mesh_panel.html"))
+    assert "node-select" in panel and "loadNode(id);" in panel
+
+
+def test_pin_assignment_is_a_form_not_prompts():
+    """Chained prompt() dialogs made you memorise role names and type raw pin
+    numbers with no idea which were legal."""
+    panel = _read(os.path.join(_ROOT, "vera", "mesh", "mesh_panel.html"))
+    assert "function renderAssignForm(" in panel
+    assert "pinOptionsFor(" in panel, "dropdowns must be filtered by capability"
+    assert "prompt('Device profile" not in panel, "the prompt flow should be gone"
+
+
+def test_map_selection_calls_the_panels_real_selector():
+    """The panel's selector is loadNode(); calling a selectNode() that never
+    existed threw, which is why selection broke when the map replaced the graph."""
+    panel = _read(os.path.join(_ROOT, "vera", "mesh", "mesh_panel.html"))
+    assert "loadNode(id);" in panel
+    assert "selectNode(id)" not in panel, "that function does not exist"
+    assert "function highlightTopo(" in panel, "the selection must be visible"
+    # and re-applied after a redraw, since the map rebuilds its node groups
+    assert panel.count("highlightTopo()") >= 3
+
+
+def test_pin_table_covers_the_whole_s3_range(ui_mod):
+    """The board silkscreen goes to IO48; a table that stops short would hide
+    real pins and send someone hunting a phantom problem."""
+    caps = ui_mod.pin_capabilities("esp32s3")
+    assert max(caps["gpio"]) == 48 and min(caps["gpio"]) == 0
+    # 22-25 genuinely do not exist on the S3
+    assert not (set(range(22, 26)) & set(caps["gpio"]))
+    assert {46, 47, 48} <= set(caps["gpio"])
+
+
+def test_input_only_is_flagged_as_unconfirmed(ui_mod):
+    """ESP32 variants differ here, and asserting it from memory sent us chasing a
+    hardware constraint that may not exist. It must be measurable."""
+    caps = ui_mod.pin_capabilities("esp32s3")
+    assert caps.get("input_only_confirmed") is False
+    ino = _read(_INO)
+    assert '"pin_probe"' in ino
+    blk = ino[ino.index('if(type=="pin_probe")'):]
+    blk = blk[:blk.index('if(type=="touch_scan")')]
+    assert "drivable" in blk and "digitalRead(g)" in blk, "must read the pin back"
+    assert "display control line" in blk, "driving those mid-draw corrupts the panel"
+
+
+# ── Chip selection: the reason GPIO40-48 were invisible ────────────────────
+
+def test_sketch_reports_its_real_chip_model():
+    """`board` was hardcoded "esp32" on every variant, so an S3 was mapped with
+    the classic ESP32 profile (GPIO 0-39) and pins 40-48 simply vanished — which
+    is where this board's display and touch pins live."""
+    ino = _read(_INO)
+    assert 'd["board"]=ESP.getChipModel()' in ino
+    assert 'd["board"]="esp32"' not in ino
+
+
+def test_s3_profile_exposes_pins_above_39(ui_mod):
+    caps = ui_mod.pin_capabilities("esp32s3")
+    for p in (40, 42, 45, 46, 47, 48):
+        assert p in caps["gpio"], f"GPIO{p} missing from the S3 profile"
+    assert max(ui_mod.pin_capabilities("esp32")["gpio"]) == 39, \
+        "the classic profile legitimately stops at 39 — that is why picking it mattered"
+
+
+def test_pin_map_infers_s3_when_the_config_uses_high_pins(ui_mod, monkeypatch):
+    """Even with no reported chip, a config using GPIO46 cannot be a classic
+    ESP32 — believing `board` over the evidence is what hid the pin."""
+    import asyncio
+
+    async def _node(**kw):
+        return {"node": {"node_id": "n1", "board": "esp32",
+                         "config": {"io": {"tft": {"cs": 6, "dc": 7,
+                                                   "d": [21, 46, 18, 17, 19, 20, 3, 14]}}}}}
+
+    monkeypatch.setattr(ui_mod, "_call_cap", lambda *a, **k: _node())
+    m = asyncio.run(ui_mod.cap_mesh_pins_map(node_id="n1"))
+    assert m["chip"] == "esp32s3", m.get("chip_source")
+    assert "inferred" in m["chip_source"]
+    assert 46 in [p["pin"] for p in m["pins"]]
+
+
+def test_pin_map_says_where_the_chip_came_from(ui_mod, monkeypatch):
+    """Silently guessing is what caused this; the answer must be attributable."""
+    import asyncio
+
+    async def _node(**kw):
+        return {"node": {"node_id": "n1", "board": "", "config": {}}}
+
+    monkeypatch.setattr(ui_mod, "_call_cap", lambda *a, **k: _node())
+    m = asyncio.run(ui_mod.cap_mesh_pins_map(node_id="n1"))
+    assert m["chip_source"] in ("assumed", "board field", "reported",
+                                "inferred from pins in use")
+
+
+def test_unverified_input_only_does_not_hide_a_pin(ui_mod):
+    """GPIO46 was unselectable everywhere because an UNCONFIRMED input-only flag
+    was enforced as fact — filtered out of driven roles, and not ADC so filtered
+    out of measured ones too."""
+    caps = ui_mod.pin_capabilities("esp32s3")
+    assert caps.get("input_only_confirmed") is False
+    panel = _read(os.path.join(_ROOT, "vera", "mesh", "mesh_panel.html"))
+    assert "p.input_only && p.input_only_confirmed" in panel, \
+        "a pin may only be hidden when its status was measured"
+
+
+def test_measured_drivability_overrides_the_table(ui_mod):
+    ui_mod._PIN_PROBED.clear()
+    try:
+        ui_mod.note_pin_probe("n1", [{"pin": 46, "drivable": True},
+                                     {"pin": 47, "drivable": False}])
+        caps = ui_mod.pin_capabilities("esp32s3", "n1")
+        assert 46 not in caps["input_only"], "the board drove it; the table was wrong"
+        assert 47 in caps["input_only"], "the board could not drive it"
+        assert caps["input_only_confirmed"] is True
+        # and an unprobed node keeps the cautious default
+        assert 46 in ui_mod.pin_capabilities("esp32s3", "other")["input_only"]
+    finally:
+        ui_mod._PIN_PROBED.clear()
+
+
+def test_assign_warns_but_allows_an_unverified_input_only_pin(ui_mod, monkeypatch):
+    import asyncio
+
+    async def _map(node_id="", trace_id=None):
+        return {"chip": "esp32s3", "pins": [], "conflicts": [], "warnings": [],
+                "free": [], "used": 0, "total": 0}
+
+    async def _ok(*a, **k):
+        return {"ok": True, "job_id": "j1"}
+
+    monkeypatch.setattr(ui_mod, "cap_mesh_pins_map", _map)
+    monkeypatch.setattr(ui_mod, "_call_cap", lambda *a, **k: _ok())
+    ui_mod._PIN_PROBED.clear()
+    r = asyncio.run(ui_mod.cap_mesh_pins_assign(
+        node_id="n1", profile="touch_4wire",
+        pins={"xp": 46, "ym": 21, "yp": 7, "xm": 1}))
+    assert r.get("ok"), r.get("error")
+    assert any("unverified" in w for w in r["warnings"])
+
+
+def test_touch_profile_measures_on_yp_and_xm(ui_mod):
+    """X drives XP/XM and measures YP; Y drives YP/YM and measures XM — so those
+    two are the ADC pins. All four are driven at some point."""
+    prof = ui_mod.DEVICE_PROFILES["touch_4wire"]
+    assert prof["read"]["adc_roles"] == ["yp", "xm"]
+    assert set(prof["roles"]) == {"xp", "ym", "yp", "xm"}
+
+
+def test_board_profile_uses_the_scanned_touch_pins():
+    import json as _json
+    with open(os.path.join(_ROOT, "vera", "mesh", "firmware", "boards.json"),
+              encoding="utf-8") as f:
+        boards = _json.load(f)
+    prof = next(b for b in boards if b["id"] == "s3-uno-ili9488")
+    t = prof["io"]["touch"]
+    # From this board's own continuity scan: GPIO7(RS) <-> GPIO21(D0) is a plate.
+    assert (t["yp"], t["ym"]) == (7, 21)
+    assert (t["xp"], t["xm"]) == (46, 1)
+
+
+def test_touch_pins_are_baked_from_the_profile(mesh, stub_boards, monkeypatch):
+    """A profile could carry the right pins and the firmware would still ship the
+    file defaults, because touch was never part of the bake."""
+    monkeypatch.setattr(_StubBoards, "PROFILE",
+                        dict(_StubBoards.PROFILE,
+                             io=dict(_StubBoards.PROFILE["io"],
+                                     touch={"xp": 46, "ym": 21, "yp": 7, "xm": 1})))
+    out = mesh._bake_firmware_options(_read(_INO), "arduino", {"board": "test-s3"})
+    assert re.search(r"(?m)^int touchXP = 46", out)
+    assert re.search(r"touchYP = 7", out) and re.search(r"touchXM = 1", out)

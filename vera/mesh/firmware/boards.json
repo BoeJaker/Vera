@@ -6,12 +6,35 @@
     "bus": "parallel8",
     "controller": "ili9488",
     "io": {
-      "tft": { "rst": 5, "cs": 6, "dc": 7, "wr": 1, "rd": 2, "d": [21, 46, 18, 17, 19, 20, 3, 14] },
-      "sd":  { "clk": 12, "miso": 13, "mosi": 11, "cs": 10 },
+      "tft": {
+        "rst": 5,
+        "cs": 6,
+        "dc": 7,
+        "wr": 1,
+        "rd": 2,
+        "d": [
+          21,
+          46,
+          18,
+          17,
+          19,
+          20,
+          3,
+          14
+        ]
+      },
+      "sd": {
+        "clk": 12,
+        "miso": 13,
+        "mosi": 11,
+        "cs": 10
+      },
       "neopixel": 48
     },
-    "kiosk": { "rotation": 1 },
-    "note": "Verified on hardware (control RST5/CS6/DC7/WR1/RD2). CRITICAL: LCD_D4=GPIO19 and LCD_D5=GPIO20 are the S3's native USB-Serial-JTAG lines, so the USB PHY has to give that pad up before the bus works. Easiest: flash the Arduino build (built with 'USB CDC On Boot: Disabled', console on UART0 — it frees 19/20 automatically). MicroPython CAN drive it too, but only with the 'Free USB pins' bake option, which costs you the USB REPL (Wi-Fi/UART0 only; hold BOOT+RESET to reflash)."
+    "kiosk": {
+      "rotation": 1
+    },
+    "note": "Verified on hardware (control RST5/CS6/DC7/WR1/RD2). CRITICAL: LCD_D4=GPIO19 and LCD_D5=GPIO20 are the S3's native USB-Serial-JTAG lines, so the USB PHY has to give that pad up before the bus works. Easiest: flash the Arduino build (built with 'USB CDC On Boot: Disabled', console on UART0 \u2014 it frees 19/20 automatically). MicroPython CAN drive it too, but only with the 'Free USB pins' bake option, which costs you the USB REPL (Wi-Fi/UART0 only; hold BOOT+RESET to reflash)."
   },
   {
     "id": "esp32-d1r32-ili9488",
@@ -20,12 +43,35 @@
     "bus": "parallel8",
     "controller": "ili9488",
     "io": {
-      "tft": { "rst": 36, "cs": 34, "dc": 35, "wr": 4, "rd": 2, "d": [12, 13, 26, 25, 17, 16, 27, 14] },
-      "sd":  { "clk": 18, "miso": 19, "mosi": 23, "cs": 5 },
+      "tft": {
+        "rst": 36,
+        "cs": 34,
+        "dc": 35,
+        "wr": 4,
+        "rd": 2,
+        "d": [
+          12,
+          13,
+          26,
+          25,
+          17,
+          16,
+          27,
+          14
+        ]
+      },
+      "sd": {
+        "clk": 18,
+        "miso": 19,
+        "mosi": 23,
+        "cs": 5
+      },
       "neopixel": -1
     },
-    "kiosk": { "rotation": 1 },
-    "note": "A D1 R32 maps the shield's LCD control lines (RST/CS/RS/WR/RD = A4/A3/A2/A1/A0) onto GPIO36/34/35/4/2. WARNING: GPIO34-36 are INPUT-ONLY on the classic ESP32 — if the panel stays white you must bodge CS/DC/RST to output-capable GPIOs. Verify with the Test Pattern before trusting this map."
+    "kiosk": {
+      "rotation": 1
+    },
+    "note": "A D1 R32 maps the shield's LCD control lines (RST/CS/RS/WR/RD = A4/A3/A2/A1/A0) onto GPIO36/34/35/4/2. WARNING: GPIO34-36 are INPUT-ONLY on the classic ESP32 \u2014 if the panel stays white you must bodge CS/DC/RST to output-capable GPIOs. Verify with the Test Pattern before trusting this map."
   },
   {
     "id": "manual",
@@ -34,11 +80,34 @@
     "bus": "parallel8",
     "controller": "ili9488",
     "io": {
-      "tft": { "rst": 4, "cs": 5, "dc": 6, "wr": 7, "rd": 1, "d": [21, 46, 18, 17, 19, 20, 3, 14] },
-      "sd":  { "clk": 12, "miso": 13, "mosi": 11, "cs": 10 },
+      "tft": {
+        "rst": 4,
+        "cs": 5,
+        "dc": 6,
+        "wr": 7,
+        "rd": 1,
+        "d": [
+          21,
+          46,
+          18,
+          17,
+          19,
+          20,
+          3,
+          14
+        ]
+      },
+      "sd": {
+        "clk": 12,
+        "miso": 13,
+        "mosi": 11,
+        "cs": 10
+      },
       "neopixel": 48
     },
-    "kiosk": { "rotation": 1 },
+    "kiosk": {
+      "rotation": 1
+    },
     "note": "Blank starting point: edit every pin by hand in the Board / Pins card, push, and run the Test Pattern until the bars render. Save as a named board when it works so you never have to rediscover it."
   }
 ]

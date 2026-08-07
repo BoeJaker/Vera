@@ -10,6 +10,11 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Vera — Mesh</title>
 <style>
+.pingrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(30px,1fr));gap:3px}
+.pincell{border:1px solid var(--border);border-radius:3px;text-align:center;
+  font-family:var(--mono);font-size:9px;padding:3px 0;cursor:pointer}
+.pincell:hover{outline:1px solid var(--acc2)}
+
 :root{
   --bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;
   --border:#3a3530;--border2:#4a4540;
@@ -127,6 +132,7 @@ code{font-family:var(--mono);font-size:10px;background:var(--bg0);border:1px sol
       <div id="fwVersion" style="font-size:10px;margin:-2px 0 5px"></div>
       <label style="margin-top:2px" title="The selected node mirrors whichever Vera tab you open — Markets shows Markets controls, Mesh shows node controls.">
         <input type="checkbox" id="optFollow" onchange="toggleFollow()"> ⇄ Selected node follows the Vera tab I'm on</label>
+      <div id="followSeen" class="muted" style="font-size:9px;margin:-2px 0 4px"></div>
       <!-- Bake-at-flash options: set once, baked into the firmware that gets
            flashed/pushed — no post-flash config step in the node panel. -->
       <div class="row" id="fwOpts" style="gap:9px;flex-wrap:wrap;font-size:10px;margin-bottom:6px;align-items:center">
@@ -205,6 +211,14 @@ code{font-family:var(--mono);font-size:10px;background:var(--bg0);border:1px sol
         <button class="btn sm" onclick="otaPlan()" title="Show what a fleet update would do — sends nothing">Plan fleet update</button>
         <button class="btn sm" onclick="otaAll()" title="Update every eligible node to the image built for its own board">Update all nodes</button>
       </div>
+      <div class="row" style="gap:5px;flex-wrap:wrap;margin-top:5px">
+        <button class="btn sm" onclick="loadPinMap()" title="Every GPIO and what claims it">Pin map</button>
+        <button class="btn sm" onclick="assignPins()" title="Attach a device profile to pins, validated against the chip">Assign pins…</button>
+        <button class="btn sm" onclick="probePins()" title="Drive every GPIO and read it back to see which can really be outputs">Probe pins</button>
+        <button class="btn sm" onclick="scanTouch()" title="Find the touch panel's wires by continuity instead of guessing">Find touch pins</button>
+      </div>
+      <div id="pinMap" style="display:none;margin-top:6px"></div>
+      <div id="pinAssign" style="display:none;margin-top:6px;padding:7px;background:var(--bg0);border:1px solid var(--border);border-radius:3px"></div>
       <pre id="appsOut" style="max-height:120px;overflow:auto;background:var(--bg0);border:1px solid var(--border);border-radius:3px;padding:5px;font-family:var(--mono);font-size:9px;white-space:pre-wrap;margin:6px 0 0;color:var(--dim2);display:none"></pre>
     </div>
 
@@ -221,7 +235,7 @@ code{font-family:var(--mono);font-size:10px;background:var(--bg0);border:1px sol
       <strong style="font-size:11px;color:var(--acc2)">TOPOLOGY</strong>
       <button class="btn sm" onclick="refresh()">⟳ Refresh</button>
       <button class="btn sm" onclick="resetLayout()">Reset layout</button>
-      <button class="btn sm" id="topoBtn" onclick="toggleTopo()" title="Switch between the simple uplink graph and the SVG map that also shows forwarding servers and live traffic">SVG map</button>
+      <button class="btn sm" onclick="refreshTopo()" title="Re-read the map now">Redraw</button>
       <span class="muted" id="graphMeta" style="margin-left:6px"></span>
       <div class="bcast" style="margin-left:auto">
         <span class="muted">Broadcast</span>
@@ -238,10 +252,13 @@ code{font-family:var(--mono);font-size:10px;background:var(--bg0);border:1px sol
     <!-- The shared dashboard map. Same element as the stack topology, fed a mesh
          snapshot, so the fleet renders in Vera's own idiom instead of a bespoke
          second style. -->
-    <div id="topoWrap" style="display:none;position:absolute;inset:0">
+    <!-- A SIBLING of #graphWrap in the flex column, not an overlay: absolute
+         inset:0 escaped to the viewport (.main is not positioned) and covered
+         the toolbar, leaving no way back. -->
+    <div id="topoWrap" style="flex:1;position:relative;overflow:hidden">
       <vera-topology-map id="meshTopo" style="width:100%;height:100%"></vera-topology-map>
     </div>
-    <div id="graphWrap">
+    <div id="graphWrap" style="display:none">
       <svg id="graph"></svg>
       <div class="legend">
         <span><i class="dot online"></i>online</span>
@@ -615,10 +632,215 @@ async function showSprite(){
   appsOut(r&&!r.error ? ('showing '+id+(r.frames?(' ('+r.frames+' frames)'):'')) 
                       : ('failed: '+((r&&r.error)||'?')));
 }
+// ── Pin map ─────────────────────────────────────────────────────────────────
+// A grid of every GPIO, coloured by what claims it. Text boxes never showed the
+// thing that actually matters — that two devices are fighting over one pin.
+let _pinMap = null, _pinProfiles = null;
+
+function pinCellStyle(p){
+  if (p.conflict) return 'background:var(--err);color:#fff;border-color:var(--err)';
+  if (p.used)     return 'background:var(--acc);color:#fff;border-color:var(--acc)';
+  if (p.reserved) return 'background:var(--bg3);color:var(--dim);border-style:dashed';
+  return 'background:var(--bg2);color:var(--dim2)';
+}
+
+function pinTitle(p){
+  const bits = ['GPIO' + p.pin];
+  if (p.holders && p.holders.length)
+    bits.push(p.holders.map(h => h.device + '.' + h.role).join(', '));
+  else bits.push('free');
+  if (p.adc) bits.push('ADC');
+  if (p.adc2_only) bits.push('ADC2 (unusable with Wi-Fi)');
+  if (p.input_only) bits.push(p.input_only_confirmed ? '· input only (measured)'
+                                                             : '· input only? unverified');
+  if (p.reserved) bits.push(p.reserved);
+  if (p.conflict) bits.push('CONFLICT');
+  return bits.join(' | ');
+}
+
+async function loadPinMap(){
+  if (!_sel){ appsOut('select a node first'); return; }
+  appsOut('reading the pin map of ' + _sel + '...');
+  const [m, pr] = await Promise.all([
+    api('/mesh/pins/map', 'POST', {node_id: _sel}),
+    _pinProfiles ? Promise.resolve({profiles: _pinProfiles}) : api('/mesh/pins/profiles'),
+  ]);
+  if (!m || m.error){ appsOut('pin map: ' + ((m && m.error) || '?')); return; }
+  _pinMap = m; _pinProfiles = (pr && pr.profiles) || _pinProfiles || {};
+  renderPinMap();
+}
+
+function renderPinMap(){
+  const host = document.getElementById('pinMap'); if (!host || !_pinMap) return;
+  const m = _pinMap;
+  const cells = m.pins.map(p =>
+    `<div class="pincell" style="${pinCellStyle(p)}" title="${esc(pinTitle(p))}"
+          onclick="pinDetail(${p.pin})">${p.pin}</div>`).join('');
+  const problems = []
+    .concat((m.conflicts || []).map(c =>
+      `<div class="status err">GPIO${c.pin}: claimed by ${esc(c.devices.join(' and '))}` +
+      ` (${esc((c.roles || []).join(', '))}) - one of them will not work</div>`))
+    .concat((m.warnings || []).map(w =>
+      `<div class="status warn">GPIO${w.pin}: ${esc(w.issue)}` +
+      ` (used by ${esc((w.devices || []).join(', '))})</div>`));
+  host.innerHTML =
+    `<div class="muted" style="font-size:10px;margin-bottom:4px">${esc(m.chip)} -
+       ${m.used}/${m.total} pins used, ${(m.free || []).length} free</div>` +
+    `<div class="pingrid">${cells}</div>` +
+    (problems.length ? problems.join('') :
+      '<div class="status ok" style="margin-top:5px">no pin conflicts</div>') +
+    `<div class="muted" style="font-size:9px;margin-top:4px">
+       filled = assigned &middot; red = conflict &middot; dashed = strapping/flash &middot; click a pin for detail</div>`;
+  host.style.display = 'block';
+}
+
+function pinDetail(pin){
+  const p = (_pinMap && _pinMap.pins || []).find(x => x.pin === pin);
+  if (p) appsOut(pinTitle(p));
+}
+
+// Pin assignment as a real form. Chained prompt() dialogs made you remember
+// role names and type raw numbers with no idea which pins were legal — the
+// dropdowns below only ever offer pins the chip can actually use for that role.
+function pinOptionsFor(role, profile){
+  const m = _pinMap; if (!m) return [];
+  const prof = (_pinProfiles || {})[profile] || {};
+  const adcRoles = ((prof.read || {}).adc_roles) || (prof.roles || []).includes('adc') ? ((prof.read||{}).adc_roles || ['adc']) : [];
+  const needsAdc = (adcRoles || []).includes(role);
+  return m.pins.filter(p => {
+    if (needsAdc && !p.adc) return false;   // genuinely cannot be measured
+    // Only hide a pin when its input-only status was MEASURED on this board.
+    // Hiding it on an unverified assumption is what made GPIO46 unselectable.
+    if (!needsAdc && p.input_only && p.input_only_confirmed) return false;
+    return true;
+  });
+}
+
+function pinLabel(p){
+  const bits = ['GPIO' + p.pin];
+  if (p.holders && p.holders.length) bits.push('· ' + p.holders.map(h => h.device).join('/'));
+  else bits.push('· free');
+  if (p.adc) bits.push('· ADC');
+  if (p.reserved) bits.push('· ' + p.reserved);
+  return bits.join(' ');
+}
+
+async function assignPins(){
+  if (!_sel){ appsOut('select a node first'); return; }
+  if (!_pinMap) await loadPinMap();
+  if (!_pinMap){ return; }
+  if (!_pinProfiles){ const pr = await api('/mesh/pins/profiles'); _pinProfiles = (pr && pr.profiles) || {}; }
+  renderAssignForm(Object.keys(_pinProfiles)[0]);
+}
+
+function renderAssignForm(profile){
+  const host = document.getElementById('pinAssign'); if (!host) return;
+  const profs = _pinProfiles || {};
+  const prof = profs[profile] || {};
+  const roles = prof.roles || [];
+  const rows = roles.map(r => {
+    const opts = pinOptionsFor(r, profile)
+      .map(p => `<option value="${p.pin}" ${p.conflict ? 'style="color:var(--err)"' : ''}>${esc(pinLabel(p))}</option>`)
+      .join('');
+    return `<div class="row" style="gap:5px;margin-bottom:3px">
+      <label style="min-width:44px">${esc(r)}</label>
+      <select data-role="${esc(r)}" style="flex:1;font-size:10px">
+        <option value="">— not set —</option>${opts}</select></div>`;
+  }).join('');
+  host.style.display = 'block';
+  host.innerHTML =
+    `<div class="row" style="gap:5px">
+       <label style="min-width:44px">device</label>
+       <select id="assignProfile" style="flex:1;font-size:10px" onchange="renderAssignForm(this.value)">
+         ${Object.entries(profs).map(([k, v]) =>
+            `<option value="${k}" ${k === profile ? 'selected' : ''}>${esc(v.label || k)}</option>`).join('')}
+       </select></div>
+     <div class="muted" style="font-size:9px;margin:2px 0 5px">${esc(prof.note || (prof.kind || ''))}</div>
+     ${rows || '<div class="muted">this profile needs no pins</div>'}
+     <div class="row" style="gap:5px;margin-top:4px">
+       <button class="btn sm primary" onclick="submitAssign('${esc(profile)}')">Assign</button>
+       <button class="btn sm" onclick="document.getElementById('pinAssign').style.display='none'">Cancel</button>
+       <label style="min-width:0;font-size:9px"><input type="checkbox" id="assignForce"> take pins already in use</label>
+     </div>`;
+}
+
+async function submitAssign(profile){
+  const host = document.getElementById('pinAssign');
+  const pins = {};
+  host.querySelectorAll('select[data-role]').forEach(sel => {
+    if (sel.value !== '') pins[sel.dataset.role] = +sel.value;
+  });
+  if (!Object.keys(pins).length){ appsOut('set at least one pin'); return; }
+  const dupes = Object.values(pins).filter((v, i, a) => a.indexOf(v) !== i);
+  if (dupes.length){ appsOut('the same pin is selected twice: GPIO' + dupes[0]); return; }
+  const force = !!(document.getElementById('assignForce') || {}).checked;
+  const r = await api('/mesh/pins/assign', 'POST',
+                      {node_id: _sel, profile: profile, name: profile, pins: pins, force: force});
+  if (r && r.error){ appsOut('rejected: ' + r.error); return; }
+  appsOut('assigned ' + profile + ' → ' + Object.entries(pins).map(([k, v]) => k + '=' + v).join(', ') +
+          ((r.warnings || []).length ? ('\nwarnings: ' + r.warnings.join('; ')) : ''));
+  host.style.display = 'none';
+  loadPinMap();
+}
+
+// Measure which pins can actually be driven, and feed it back so the map and
+// the assign form stop relying on an assumption.
+async function probePins(){
+  if (!_sel){ appsOut('select a node first'); return; }
+  appsOut('probing every GPIO on ' + _sel + '...');
+  const q = await api('/mesh/pins/probe', 'POST', {node_id: _sel});
+  if (!q || q.error){ appsOut('probe: ' + ((q && q.error) || '?')); return; }
+  const j = await _jobResult(q.job_id, 60000);
+  if (!j){ appsOut('no answer from the node (needs firmware 2.3.0+)'); return; }
+  if (j.status === 'error'){ appsOut('node said: ' + (j.error || '?')); return; }
+  const pins = (j.result || {}).pins || [];
+  await api('/mesh/pins/probe', 'POST', {node_id: _sel, results: pins});
+  const dead = pins.filter(p => p.drivable === false).map(p => p.pin);
+  const skipped = pins.filter(p => p.skipped).map(p => p.pin);
+  appsOut('Probed ' + pins.length + ' pins.\n' +
+          'Cannot be driven: ' + (dead.length ? dead.join(', ') : 'none') + '\n' +
+          (skipped.length ? ('Skipped (display control): ' + skipped.join(', ')) : ''));
+  loadPinMap();
+}
+
+// Find the touch wires by continuity rather than guessing them.
+async function scanTouch(){
+  if (!_sel){ appsOut('select a node first'); return; }
+  appsOut('scanning for touch plates on ' + _sel + '...');
+  const q = await api('/mesh/pins/touch_scan', 'POST', {node_id: _sel});
+  if (!q || q.error){ appsOut('scan: ' + ((q && q.error) || '?')); return; }
+  const j = await _jobResult(q.job_id, 40000);
+  if (!j){ appsOut('no answer from the node'); return; }
+  if (j.status === 'error'){ appsOut('node said: ' + (j.error || '?')); return; }
+  const r = j.result || {}, pairs = r.pairs || [];
+  if (!pairs.length){
+    appsOut('No connected pin pairs found across ' + (r.candidates || 0) + ' LCD pins.\n' +
+            'The touch panel is either not wired to these pins, or not wired at all.');
+    return;
+  }
+  appsOut('Connected pairs (a-b = one resistive plate):\n' +
+          pairs.map(p => '  GPIO' + p.a + ' - GPIO' + p.b +
+                         (p.level >= 0 ? ('   level ' + p.level) : '')).join('\n') +
+          '\n\nTwo disjoint pairs are the X and Y plates. Assign them with the ' +
+          'touch_4wire profile (yp/xm must be ADC-capable).');
+}
+
 function renderFollow(){
   const el=document.getElementById('optFollow'); if(!el) return;
   let bound=''; try{ bound=localStorage.getItem('vera_mesh_follow_node')||''; }catch(e){}
   el.checked = !!bound && bound===_sel;
+  checkFollow();
+}
+// Show whether the server has actually RECEIVED a follow call, so a silent
+// panel can be blamed on the right half of the system.
+async function checkFollow(){
+  const el=document.getElementById('followSeen'); if(!el||!_sel) return;
+  const r=await api('/mesh/app/follow/mode','POST',{node_id:_sel});
+  if(!r||r.error){ el.textContent=''; return; }
+  const seen=r.last_seen||{};
+  el.textContent = seen.panel
+    ? ('mode ' + r.mode + '  -  last followed "' + seen.panel + '" at ' + String(seen.at).slice(11,19))
+    : ('mode ' + r.mode + '  -  no follow received yet (tick the box with a node selected)');
 }
 // The bake options as a plain object — one source of truth for both the query
 // string (source download / MicroPython push) and the JSON build request.
@@ -662,6 +884,7 @@ async function refresh(){
   document.getElementById('graphMeta').textContent = (_graph.count||0)+' nodes';
   document.getElementById('nodeCount').textContent = (_nodes.length||0);
   renderList(); renderGraph();
+  if (!_topoTimer) startTopo();          // the map is the graph now
   // Don't re-render the inspector while the user is typing in it (the 3s poll was
   // recreating inputs and stealing focus from the web-fetch box etc.).
   if(_sel && !_editingCfg && !inspectorFocused()) loadNode(_sel, true);
@@ -738,7 +961,7 @@ async function _ensureTopoElement(){
   _topoLoaded = true;
 }
 
-function toggleTopo(){
+function toggleTopo(){   // kept for the legacy uplink view; not on the toolbar
   _topoOn = !_topoOn;
   document.getElementById('topoWrap').style.display = _topoOn ? 'block' : 'none';
   document.getElementById('graphWrap').style.display = _topoOn ? 'none' : 'block';
@@ -755,12 +978,57 @@ async function startTopo(){
 }
 function stopTopo(){ if (_topoTimer) clearInterval(_topoTimer); _topoTimer = null; }
 
+let _topoSelected = '';
+// The old graph highlighted the selected node; the map has to as well or you
+// lose track of what the inspector is showing.
+function highlightTopo(){
+  const el = document.getElementById('meshTopo');
+  const root = el && el.shadowRoot; if (!root) return;
+  root.querySelectorAll('.vera-sel').forEach(g => {
+    g.classList.remove('vera-sel');
+    g.querySelectorAll('.vera-selring').forEach(r => r.remove());
+  });
+  if (!_topoSelected) return;
+  // The element keys its rendered groups by node id.
+  const g = el._nodeEls && el._nodeEls.get(_topoSelected);
+  if (!g) return;
+  g.classList.add('vera-sel');
+  const ring = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  ring.setAttribute('class', 'vera-selring');
+  ring.setAttribute('r', '18');
+  ring.setAttribute('fill', 'none');
+  ring.setAttribute('stroke', 'var(--acc2, #6cf)');
+  ring.setAttribute('stroke-width', '2');
+  ring.setAttribute('stroke-dasharray', '4 3');
+  g.insertBefore(ring, g.firstChild);
+}
+
+function _bindTopoSelect(el){
+  if (!el || el._veraBound) return;
+  el._veraBound = true;
+  // The map replaces the old canvas graph, so it has to do the old graph's job
+  // of selecting a node for the inspector.
+  el.addEventListener('node-select', ev => {
+    const id = (ev.detail || {}).id || '';
+    // loadNode is the panel's selector (it sets _sel and drives both side
+    // panels). Calling a selectNode() that never existed threw, which is why
+    // selection stopped working when the map replaced the graph.
+    if (id && _nodes.some(n => n.node_id === id)) {
+      loadNode(id);
+      _topoSelected = id;
+      highlightTopo();
+    }
+  });
+}
+
 async function refreshTopo(){
   const el = document.getElementById('meshTopo');
   if (!el || typeof el.applySnapshot !== 'function') return;
+  _bindTopoSelect(el);
   const snap = await api('/mesh/topology');
   if (snap && snap.nodes) {
     el.applySnapshot(snap);
+    highlightTopo();                    // the redraw rebuilds the node groups
     const meta = document.getElementById('graphMeta');
     if (meta) meta.textContent = (snap.nodes.length - 1) + ' nodes' +
       (snap.forwarders && snap.forwarders.length
@@ -859,6 +1127,7 @@ let _lastNodeJSON='';
 async function loadNode(id, quiet){
   if(id!==_sel) _lastNodeJSON='';                 // switched nodes → force a render
   _sel=id; if(!quiet){ renderList(); renderGraph(); }
+  _topoSelected=id; try{ highlightTopo(); }catch(e){}
   const r=await api('/mesh/node?node_id='+encodeURIComponent(id));
   if(!r||r.error){
     // A poll-driven refresh must NOT flash an error card in and out — that's the
