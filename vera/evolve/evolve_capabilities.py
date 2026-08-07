@@ -6732,6 +6732,225 @@ async def evolve_sandbox_approve(branch: str = "", into: str = "", proposal_id: 
     return {"ok": True, "merged": branch, "into": into, "commit": merged_sha, "conflicts": []}
 
 
+# ── Unified sandbox log / error / perf collector ────────────────────────────
+#   A background task tails each loop-lab sandbox container's docker logs (as
+#   they run) into capped Redis streams, samples docker stats, and routes each
+#   DISTINCT error into the existing evolve.errors queue (Error Radar/postmortem)
+#   — every record stamped with the sandbox branch + running-code short sha, so a
+#   log line or error ties straight back to the commit that produced it.
+from Vera.vera.evolve.evolve_logs_core import (          # noqa: E402
+    parse_log_line as _log_parse, classify_level as _log_level,
+    error_signature as _log_sig, parse_stats_line as _stats_parse)
+
+_LOG_PREFIXES    = ("vera-dev",)                        # loop-lab sandbox containers
+_LOG_STREAM      = "vera:evolve:sandbox:logs"           # + :<container>
+_LOG_ERRS        = "vera:evolve:sandbox:errors"         # + :<container>
+_LOG_PERF        = "vera:evolve:sandbox:perf"           # + :<container>
+_LOG_CURSOR      = "vera:evolve:sandbox:logcursor"      # hash container -> last ts
+_LOG_SEEN_ERR    = "vera:evolve:sandbox:errsig"         # set of routed signatures
+_LOG_MAXLEN      = 2000
+_LOG_PERF_MAXLEN = 500
+_LOG_INTERVAL    = int(os.getenv("VERA_SANDBOX_LOG_INTERVAL", "10"))
+_LOG_TASK = None
+
+
+def _b2s(v) -> str:
+    return v.decode() if isinstance(v, (bytes, bytearray)) else (v or "")
+
+
+async def _log_containers() -> List[str]:
+    r = await _sh(["docker", "ps", "--format", "{{.Names}}"], timeout=15)
+    names = [n.strip() for n in (r.get("out", "") or "").splitlines() if n.strip()]
+    return [n for n in names if any(n.startswith(p) for p in _LOG_PREFIXES)]
+
+
+async def _collect_container(c: str, branch: str, ver: str) -> Dict[str, int]:
+    R = _redis()
+    if not R:
+        return {"lines": 0, "errors": 0}
+    try:
+        last = _b2s(await R.hget(_LOG_CURSOR, c))
+    except Exception:
+        last = ""
+    args = ["docker", "logs", "--timestamps"]
+    args += (["--since", last] if last else ["--since", "5m", "--tail", "300"])
+    args += [c]
+    res = await _sh(args, timeout=20)
+    raw = (res.get("out", "") or "") + "\n" + (res.get("err", "") or "")   # docker splits streams
+    nlines = nerr = 0
+    newlast = last
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        ts, text = _log_parse(line)
+        if ts and last and ts <= last:
+            continue                                    # already collected
+        level = _log_level(text)
+        entry = {"ts": ts, "text": text[:2000], "level": level, "c": c, "br": branch, "ver": ver}
+        try:
+            await R.xadd(f"{_LOG_STREAM}:{c}", {"data": json.dumps(entry)},
+                         maxlen=_LOG_MAXLEN, approximate=True)
+        except Exception:
+            pass
+        nlines += 1
+        if ts and ts > newlast:
+            newlast = ts
+        if level == "error":
+            nerr += 1
+            try:
+                await R.xadd(f"{_LOG_ERRS}:{c}", {"data": json.dumps(entry)},
+                             maxlen=_LOG_MAXLEN, approximate=True)
+            except Exception:
+                pass
+            try:                                        # route only DISTINCT errors → no LLM spam
+                if await R.sadd(_LOG_SEEN_ERR, f"{c}|{_log_sig(text)}"):
+                    await evolve_errors_ingest(
+                        source="sandbox", title=f"[{c}] {text[:120]}", detail=text[:1500],
+                        meta={"component": c, "branch": branch, "ver": ver}, suggest=False)
+            except Exception:
+                pass
+    if newlast and newlast != last:
+        try:
+            await R.hset(_LOG_CURSOR, c, newlast)
+        except Exception:
+            pass
+    try:                                                # perf sample
+        st = await _sh(["docker", "stats", "--no-stream", "--format",
+                        "{{.Name}}\t{{.CPUPerc}}\t{{.MemPerc}}\t{{.MemUsage}}", c], timeout=15)
+        for l in (st.get("out", "") or "").splitlines():
+            p = _stats_parse(l)
+            if p:
+                p.update({"ts": now_iso(), "br": branch})
+                await R.xadd(f"{_LOG_PERF}:{c}", {"data": json.dumps(p)},
+                             maxlen=_LOG_PERF_MAXLEN, approximate=True)
+    except Exception:
+        pass
+    return {"lines": nlines, "errors": nerr}
+
+
+async def _collect_once() -> Dict[str, int]:
+    try:
+        ver = ""
+        try:
+            from Vera.vera.provenance import get_provenance
+            ver = get_provenance().get("git_sha_short", "")
+        except Exception:
+            pass
+        try:
+            branch = (await _get_sandbox() or {}).get("branch", "")
+        except Exception:
+            branch = ""
+        total = {"containers": 0, "lines": 0, "errors": 0}
+        for c in await _log_containers():
+            r = await _collect_container(c, branch, ver)
+            total["containers"] += 1
+            total["lines"] += r["lines"]
+            total["errors"] += r["errors"]
+        return total
+    except Exception as e:
+        log.debug("sandbox log collect: %s", e)
+        return {"containers": 0, "lines": 0, "errors": 0}
+
+
+async def _collector_loop():
+    while True:
+        try:
+            t = await _collect_once()
+            await asyncio.sleep(_LOG_INTERVAL if t.get("containers") else _LOG_INTERVAL * 3)
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            await asyncio.sleep(_LOG_INTERVAL)
+
+
+def _ensure_collector():
+    """Start the background collector once; idempotent and safe to call from any
+    cap (lazy start) or from evolve.sandbox.up (start when a sandbox comes up)."""
+    global _LOG_TASK
+    if _LOG_TASK is None or _LOG_TASK.done():
+        try:
+            _LOG_TASK = asyncio.create_task(_collector_loop())
+        except RuntimeError:                            # no running loop yet
+            _LOG_TASK = None
+
+
+async def _read_stream(key: str, limit: int) -> List[Dict]:
+    R = _redis()
+    if not R:
+        return []
+    out = []
+    try:
+        for _id, v in await R.xrevrange(key, count=int(limit)):
+            data = v.get(b"data") or v.get("data")
+            if data:
+                out.append(json.loads(_b2s(data)))
+    except Exception:
+        pass
+    return out
+
+
+@capability("evolve.sandbox.logs", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/sandbox/logs", http_tags=["evolve"],
+            description="Recent captured logs for loop-lab sandbox container(s), newest "
+                        "first, each stamped with branch + running-code sha. Inputs: "
+                        "container (str — blank = all vera-dev* sandboxes), limit (int, "
+                        "default 200), level (error|warn|info — filter), errors_only "
+                        "(bool). Output: {logs:[{ts,text,level,c,br,ver}], containers}.")
+async def evolve_sandbox_logs(container: str = "", limit: int = 200, level: str = "",
+                              errors_only: bool = False, trace_id=None):
+    _ensure_collector()
+    containers = [container] if container else await _log_containers()
+    base = _LOG_ERRS if errors_only else _LOG_STREAM
+    out: List[Dict] = []
+    for c in containers:
+        for e in await _read_stream(f"{base}:{c}", limit):
+            if level and e.get("level") != level:
+                continue
+            out.append(e)
+    out.sort(key=lambda e: e.get("ts", ""), reverse=True)
+    return {"logs": out[:int(limit)], "containers": containers}
+
+
+@capability("evolve.sandbox.metrics", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/sandbox/metrics", http_tags=["evolve"],
+            description="Recent CPU%/mem% samples for loop-lab sandbox container(s), "
+                        "oldest→newest (for sparklines). Inputs: container (str — blank "
+                        "= all), limit (int, default 60). Output: {metrics:{<c>:[{ts,"
+                        "cpu_pct,mem_pct,mem,br}]}, containers}.")
+async def evolve_sandbox_metrics(container: str = "", limit: int = 60, trace_id=None):
+    _ensure_collector()
+    containers = [container] if container else await _log_containers()
+    series = {}
+    for c in containers:
+        series[c] = list(reversed(await _read_stream(f"{_LOG_PERF}:{c}", limit)))
+    return {"metrics": series, "containers": containers}
+
+
+@capability("evolve.sandbox.log_status", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/sandbox/log_status", http_tags=["evolve"],
+            description="Collector health + per-container capture counts (log lines, "
+                        "errors, perf samples, cursor). Starts the collector if idle. "
+                        "Output: {collector_running, interval_s, containers:{<c>:{...}}}.")
+async def evolve_sandbox_log_status(trace_id=None):
+    _ensure_collector()
+    R = _redis()
+    containers = await _log_containers()
+    st = {}
+    for c in containers:
+        row = {}
+        if R:
+            try:
+                row = {"lines": await R.xlen(f"{_LOG_STREAM}:{c}"),
+                       "errors": await R.xlen(f"{_LOG_ERRS}:{c}"),
+                       "perf": await R.xlen(f"{_LOG_PERF}:{c}"),
+                       "cursor": _b2s(await R.hget(_LOG_CURSOR, c))}
+            except Exception:
+                row = {}
+        st[c] = row
+    return {"collector_running": bool(_LOG_TASK and not _LOG_TASK.done()),
+            "interval_s": _LOG_INTERVAL, "containers": st}
+
+
 @capability("evolve.sandbox.code.attach", memory="on",
             http_method="POST", http_path="/evolve/sandbox/code/attach", http_tags=["evolve"],
             description="Start a VS Code (code-server) sidecar with the dev-sandbox "
