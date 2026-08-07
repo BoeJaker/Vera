@@ -874,6 +874,12 @@
           e.stopPropagation();
           if (n.kind === 'category') this._toggleCollapse(n.id);
           this._showDrill(n.id);
+          // Let a host page use this map as its selector. Emitted for every
+          // node; the drill-down still opens, so nothing existing changes.
+          this.dispatchEvent(new CustomEvent('node-select', {
+            detail: {id: n.id, kind: n.kind, label: n.label, status: n.status},
+            bubbles: true, composed: true,
+          }));
         });
         this._gNodes.appendChild(g);
         this._nodeEls.set(n.id, g);
