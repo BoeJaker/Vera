@@ -2289,9 +2289,9 @@ function wsReviewCard(p){
     +'</div>'
     +'<div id="ws-diff-'+esc(p.id)+'" style="display:none;margin-top:8px"></div>'
     +'<div class="row" style="margin-top:8px;gap:5px;flex-wrap:wrap">'
-    +'<button class="btn sm ok-btn" onclick="wsAccept(\''+esc(p.id)+'\')">Approve → write to base</button>'
+    +'<button class="btn sm ok-btn" onclick="wsAccept(\''+esc(p.id)+'\',\''+esc(br)+'\')">Approve → merge branch</button>'
     +'<button class="btn sm err-btn" onclick="wsReject(\''+esc(p.id)+'\')">Reject</button>'
-    +'<span class="hint" style="flex:1;text-align:right">accept writes the worktree files into the base checkout (no git merge)</span>'
+    +'<span class="hint" style="flex:1;text-align:right">approve merges the branch into an integration branch via git — prod\'s live checkout is never touched</span>'
     +'</div></div>';
 }
 async function toggleWsDiff(id){
@@ -2310,10 +2310,16 @@ async function toggleWsDiff(id){
       +'</div>';
   }).join('')||'<div class="hint">no files</div>';
 }
-async function wsAccept(id){
-  if(!confirm('Approve: write ALL files from this proposal into the base checkout?\n\nThis modifies the target repo on disk (no git commit/merge).'))return;
-  const r=await post('/ide/workspace/changes/accept',{id,apply_all:true});
-  toast(r&&r.ok?('Applied '+((r.applied||[]).length)+' file(s)'+((r.skipped||[]).length?', skipped '+r.skipped.length:'')):(r&&r.error)||'failed');
+async function wsAccept(id,branch){
+  const into=prompt('Approve by MERGING  '+branch+'  into which integration branch?\n\n'
+    +'Leave blank for the repo default (main). This merges via git in an isolated '
+    +'worktree — prod\'s live checkout is NOT touched, and it refuses rather than '
+    +'clobber if the target is checked out or the merge conflicts.','');
+  if(into===null)return;
+  const r=await post('/evolve/sandbox/approve',{branch,proposal_id:id,into:(into||'').trim()});
+  if(r&&r.ok){toast('Merged '+branch+' → '+r.into+' @ '+String(r.commit||'').slice(0,8));}
+  else if(r&&r.conflicts&&r.conflicts.length){toast('Merge conflict: '+r.conflicts.slice(0,3).join(', '));}
+  else{toast((r&&r.error)||'failed');}
   loadReview();
 }
 async function wsReject(id){

@@ -6659,6 +6659,79 @@ async def evolve_sandbox_review(base: str = "main", trace_id=None):
     return res
 
 
+from Vera.vera.evolve.evolve_git_core import branches_checked_out as _branches_checked_out  # noqa: E402
+
+
+@capability("evolve.sandbox.approve", memory="on",
+            http_method="POST", http_path="/evolve/sandbox/approve", http_tags=["evolve"],
+            description="Approve a sandbox change by MERGING its branch into an "
+                        "integration branch via git, in a throwaway isolated worktree — "
+                        "NEVER writing into a live working tree. Prod's checkout is left "
+                        "untouched (no dirty tree, no forced restart); deploying the "
+                        "integration branch to prod stays a separate, deliberate step. "
+                        "Refuses if `into` is checked out by a live worktree, or on merge "
+                        "conflict (resolve on the branch, then re-approve). Inputs: branch "
+                        "(str! — the loop-lab/… branch to merge), into (str — target "
+                        "integration branch; default the repo's mainline), proposal_id "
+                        "(str — Workspace-Changes proposal to mark merged), repo (str). "
+                        "Output: {ok, merged, into, commit, conflicts}.")
+async def evolve_sandbox_approve(branch: str = "", into: str = "", proposal_id: str = "",
+                                 repo: str = DEFAULT_REPO_ID, trace_id=None):
+    root = await _resolve_repo_root(repo or DEFAULT_REPO_ID)
+    branch = (branch or "").strip()
+    if not branch:
+        return {"ok": False, "error": "branch required"}
+    if not (await _git("rev-parse", "--verify", f"refs/heads/{branch}", repo_root=root))["ok"]:
+        return {"ok": False, "error": f"unknown branch: {branch}"}
+    into = (into or "").strip() or await _default_branch(root)
+    if into == branch:
+        return {"ok": False, "error": "into must differ from branch"}
+    if not (await _git("rev-parse", "--verify", f"refs/heads/{into}", repo_root=root))["ok"]:
+        return {"ok": False, "error": f"unknown target branch: {into}"}
+    # SAFETY GATE: never advance a branch a live worktree (e.g. prod's checkout)
+    # has checked out — moving that ref changes files under a running process.
+    wl = await _git("worktree", "list", "--porcelain", repo_root=root)
+    if into in _branches_checked_out(wl.get("out", "")):
+        return {"ok": False, "error": f"'{into}' is checked out by a live worktree; "
+                "approve into an integration branch that isn't currently checked out "
+                "(deploying it to prod is a separate, deliberate step)"}
+    # Merge in a throwaway worktree checked out on `into`, so no live tree is touched.
+    import uuid
+    tmp = str(Path(root) / ".loop-lab-worktrees" / f"_merge-{uuid.uuid4().hex[:8]}")
+    add = await _sh(_git_wt_argv(str(root), "worktree", "add", tmp, into), cwd=str(root))
+    if not add["ok"]:
+        return {"ok": False, "error": f"worktree add failed: {add['err'] or add['out']}"}
+    conflicts: List[str] = []
+    merged_sha = ""
+    try:
+        mg = await _sh(_git_wt_argv(tmp, "merge", "--no-ff", "-m",
+                                    f"Loop Lab: approve+merge {branch} → {into}", branch), cwd=tmp)
+        if mg["ok"]:
+            merged_sha = (await _sh(_git_wt_argv(tmp, "rev-parse", "HEAD"), cwd=tmp)).get("out", "")
+        else:
+            cf = await _sh(_git_wt_argv(tmp, "diff", "--name-only", "--diff-filter=U"), cwd=tmp)
+            conflicts = [ln for ln in (cf.get("out", "") or "").splitlines() if ln.strip()]
+            await _sh(_git_wt_argv(tmp, "merge", "--abort"), cwd=tmp)
+    finally:
+        await _sh(_git_wt_argv(str(root), "worktree", "remove", "--force", tmp), cwd=str(root))
+    if not merged_sha:
+        return {"ok": False, "error": "merge conflict — resolve on the branch, then re-approve",
+                "conflicts": conflicts}
+    # Mark the Workspace-Changes proposal MERGED (no file write-back).
+    if proposal_id:
+        mark = CAPABILITY_REGISTRY.get("ide.workspace.changes.mark_merged")
+        if mark and mark.get("func"):
+            try:
+                await mark["func"](id=proposal_id, into=into, commit=merged_sha)
+            except Exception as _e:
+                log.debug("mark_merged %s: %s", proposal_id, _e)
+    await _audit("sandbox.approve", f"MERGED {branch} → {into} @ {merged_sha[:10]}",
+                 branch=branch, into=into, repo=repo, ok=True)
+    await emit_event({"type": "evolve.sandbox.approved", "branch": branch,
+                      "into": into, "commit": merged_sha})
+    return {"ok": True, "merged": branch, "into": into, "commit": merged_sha, "conflicts": []}
+
+
 @capability("evolve.sandbox.code.attach", memory="on",
             http_method="POST", http_path="/evolve/sandbox/code/attach", http_tags=["evolve"],
             description="Start a VS Code (code-server) sidecar with the dev-sandbox "

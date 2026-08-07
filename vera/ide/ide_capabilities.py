@@ -2123,6 +2123,33 @@ async def ide_ws_changes_reject(id: str = "", paths: str = "", reject_all: bool 
     return {"ok": True, "rejected": n, "status": prop.get("status")}
 
 
+@capability(
+    "ide.workspace.changes.mark_merged", memory="off", silent=True,
+    http_method="POST", http_path="/ide/workspace/changes/mark_merged", http_tags=["ide", "workspace"],
+    description="Mark a change proposal as MERGED (landed via git) WITHOUT writing "
+                "any files — used when approval integrates the source branch through a "
+                "git merge (evolve.sandbox.approve) instead of a file write-back, so a "
+                "landed proposal clears the review queue without ever touching a live "
+                "working tree. Inputs: id (str!), into (str), commit (str). "
+                "Output: {ok, status}.",
+)
+async def ide_ws_changes_mark_merged(id: str = "", into: str = "", commit: str = "",
+                                     trace_id=None):
+    prop = await _ws_proposal_get(id)
+    if not prop:
+        return {"ok": False, "error": f"unknown proposal: {id}"}
+    for f in prop.get("files", []):
+        if f.get("decision") == "pending":
+            f["decision"] = "merged"
+    prop["status"] = "applied"
+    prop["merged_into"] = into
+    prop["merged_commit"] = commit
+    await _ws_proposal_save(prop)
+    await emit_event({"type": "ide.workspace.changes.merged", "id": id,
+                      "into": into, "commit": commit, "workspace": prop.get("workspace")})
+    return {"ok": True, "status": "applied"}
+
+
 _CHANGES_PANEL_FILE = _HERE / "ide_changes_panel.html"
 
 
