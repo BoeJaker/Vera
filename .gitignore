@@ -1,6 +1,10 @@
 **/keys/
 **client_secrets.json
 **service.json
+
+# Per-environment provenance stamp written host-side at bring-up (git sha/branch
+# of the running deploy) for the git-less container to read. Never source.
+.vera-provenance.json
 *.db
 *.db-shm
 *.db-wal
