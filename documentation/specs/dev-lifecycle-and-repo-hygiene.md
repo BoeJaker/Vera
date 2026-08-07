@@ -339,32 +339,106 @@ These are the concrete, already-encountered failure modes the guardrails address
 ## 8. Phased roadmap
 
 Each phase is independently shippable and leaves the system better than it found it.
+**Status as of 2026-08-08** — ✓ done · ◐ partial · ○ not started. Kept current as phases
+land (per §2.5 this doc is the living record, not a snapshot of original intent).
 
-- **Phase A — Provenance + first guardrails (highest leverage, lowest cost).**
-  §5.1 stamping (git sha/branch/dirty/session on the event+log+run streams) + §3 pre-commit
-  hooks (attribution, secret-scan, no-commit-to-main, branch-name) + the first
-  **critical-system regression tests for the planner** (the ones that would have caught both
-  recent incidents). Fold the branch-naming + "document plans/reports in-repo" rules into how
-  I (Claude) work immediately.
+- **Phase A — Provenance + first guardrails (highest leverage, lowest cost).  ◐ mostly done**
+  - ✓ **Provenance stamping (§5.1)** — `vera/provenance.py` resolves git sha/branch/dirty
+    once at boot; `event_stamp` stamps `{ver,br,dirty}` at the `emit_event` chokepoint;
+    `obs.provenance` cap exposes full detail. Deployed to prod and verified (live events
+    carry `ver`/`br`; `GET /obs/provenance` returns real data). **Container caveat:** the app
+    image has no git binary and a worktree's `.git` sits outside the bind mount, so
+    provenance resolves via env → live git → a host-written `.vera-provenance.json` that
+    bring-up generates (`python -m Vera.vera.provenance`).
+  - ○ **`session_id` link to the Claude session** — not yet stamped; git fields are in, the
+    `ide.claude_sessions.*` link is the remaining piece.
+  - ✓ **Planner regression tests** — pure helpers extracted to `vera/dag/planner_core.py`;
+    `tests/test_planner_guards.py` (10) locks skill-filtering, drift detection, and
+    non-deterministic planner sampling (the logic behind both incidents). `evolve.unittest
+    .run` fixed to use `sys.executable` (was bare `python`, not on PATH). Live-verified
+    2026-08-08: `dag.plan` on two diverse goals produced on-topic plans, no drift.
+  - ◐ **Pre-commit hooks (§3)** — only the **secret-scan** gate is wired
+    (`tools/hooks/pre-commit`). Still to add: reject AI-attribution trailer; reject non-user
+    author; block direct commit to `main`; enforce the typed branch-name pattern. (Also: the
+    hook isn't executable in fresh worktrees, so it silently skips there — fix it.)
+  - ◐ **Fold hygiene into how I work** — branch-per-unit + document-in-repo in force; §2.2b
+    (branch/worktree lifecycle) added 2026-08-08 after a sprawl incident (§8.1).
 
-- **Phase B — Test suite + merge gate.**
-  §6: consolidate `tests/`, wire `evolve.suite`/`selftest` as regression-on-push and
-  gate-on-promote. Results stamped (Phase A) and persisted.
+- **Phase A+ — Safe sandbox landing (unplanned; shipped 2026-08-07/08).  ✓ done**
+  Not in the original plan but necessary and delivered — approval/landing can no longer
+  clobber a live checkout:
+  - ✓ **Clobber-proof accept** — `ide.workspace.changes.accept` is now compare-and-swap:
+    propose records each file's `base_sha`; accept refuses any file whose live target drifted
+    (returned in `conflicts`), never overwriting newer work. Pure `ide/ws_changes_core.py` +
+    `tests/test_ws_changes_guard.py`.
+  - ✓ **Git-merge approval** — `evolve.sandbox.approve` merges a reviewed branch into an
+    integration branch **inside a throwaway worktree**, never touching a live checkout; hard-
+    refuses if the target is checked out or on conflict. Pure `evolve/evolve_git_core.py` +
+    `tests/test_evolve_git_core.py`. `ide.workspace.changes.mark_merged` clears a landed
+    proposal with no file write-back. Loop Lab **Review** tab now surfaces sandbox proposals.
+  - This is the safe primitive Phase B's gate and Phase C's deploy build on — and it surfaced
+    a fix Phase B must make (§8.1: `evolve.pipeline.promote` is still unsafe).
 
-- **Phase C — Per-branch dev containers + VSCode/Vera management + UI access.**
-  §4: generalize the dev sandbox to per-branch containers with a port pool, `.devcontainer/`
-  + VSCode tasks/commands, Vera-UI + operator launchers for each container, the **Ollama/GPU
-  contention discipline** (§4.1) and the **cleanup/archive lifecycle** (§4.2). Retire
-  prod-share editing (guardrail flips from warn → block).
+- **Phase B — Test suite + merge gate.  ○ not started (primitives exist)**
+  §6: consolidate `tests/` into contract/behavioural/critical-system tiers; wire
+  `evolve.suite`/`selftest` as regression-on-push and **gate-on-promote**; results stamped
+  (Phase A) + persisted. **Amendment:** the gate must promote via the safe isolated-worktree
+  merge from Phase A+, and **`evolve.pipeline.promote` must be reworked** — it currently does
+  `git checkout <to>` in the prod repo root, which switches prod's live checkout (§8.1).
 
-- **Phase D — Unified observability plane + tests/errors heatmap + auto-postmortem.**
-  §5.2–5.5: one store, the Loop Lab heatmap tab with playback, deep-dive → generated
-  postmortem, critical-system flagging + comms alerts + gate integration.
+- **Phase C — Per-branch dev containers + VSCode/Vera management + UI access.  ○ not started**
+  §4: per-branch containers with a port pool, `.devcontainer/` + VSCode tasks/commands,
+  Vera-UI + operator launchers, the Ollama/GPU discipline (§4.1) and cleanup/archive
+  lifecycle (§4.2). Retire prod-share editing (guardrail warn → block). **Amendment (container
+  limits, §8.1):** per-branch containers must be provisioned with a **docker socket** and a
+  **git binary**, or the log collector's docker-tail, `evolve.sandbox.approve`'s git ops, and
+  in-container provenance won't work (today they work only because prod runs as a host process
+  with docker+git). **Amendment (topology):** decide prod's branch-tracking model first (§8.1)
+  or approve-and-deploy stays a two-step manual dance.
 
-- **Phase E — Documentation/traceability automation.**
-  Make §2.5 partly automatic: a branch's plan doc is created on `evolve.pipeline.run`; the
-  auto-postmortem writes to `documentation/postmortems/`; a check warns when a merged branch
+- **Phase D — Unified observability plane + tests/errors heatmap + auto-postmortem.  ◐ started**
+  - ✓ **Unified sandbox log/error/perf collector (§5.2, first slice)** — a background
+    collector tails each loop-lab sandbox container's docker logs into capped Redis streams,
+    samples `docker stats`, and routes **distinct** errors into `evolve.errors` (Error Radar/
+    postmortem), all provenance-stamped. Caps `evolve.sandbox.logs/.metrics/.log_status`; pure
+    `evolve/evolve_logs_core.py` + `tests/test_evolve_logs_core.py`; a Loop Lab **Logs** pane.
+    (Collects where the app has docker = prod host process; see container-limits amendment.)
+  - ○ **Heatmap tab + one-click auto-postmortem + critical-system flagging (§5.3–5.5)** — still
+    to build; the hand-written 2026-08-06 postmortem is the template.
+
+- **Phase E — Documentation/traceability automation.  ○ not started**
+  Make §2.5 partly automatic: a branch's plan doc created on `evolve.pipeline.run`; the auto-
+  postmortem writes to `documentation/postmortems/`; a check warns when a merged branch
   changed code with no matching docs/tests.
+
+### 8.1 Build learnings & amendments (2026-08-08)
+Recorded from actually building Phases A / A+ / D, so the plan reflects reality, not intent:
+1. **Prod branch-tracking is undecided — the biggest open topology gap.** Prod runs the
+   transitional integration branch `agentic-loop-improvements-3`, while `evolve.sandbox
+   .approve` / `promote` land into `main`. So the UI "approve" doesn't put code where prod
+   runs it, and every deploy so far has been a deliberate merge-into-prod's-branch + restart.
+   **Decide:** prod tracks `main` (approve→main→deploy is one path), or the integration branch
+   *is* the promote target. Until decided, land to prod via a single deliberate merge (never
+   file-copy) + one restart.
+2. **`evolve.pipeline.promote` is unsafe and must be reworked (Phase B blocker).** It runs
+   `git checkout <to>` in the **prod** repo root — switching prod's live checkout out from
+   under the running process. Rework it to the throwaway-worktree merge `evolve.sandbox
+   .approve` uses.
+3. **Sandbox containers lack docker + git (Phase C requirement).** Provenance,
+   `evolve.sandbox.approve`'s git ops, and the collector's docker-tail work today only because
+   **prod runs as a host process** with docker+git. Per-branch containers (§4) must mount a
+   docker socket and include git, or these run host-side.
+4. **Land content once, via one mechanism; leave no scaffolding (§2.2b).** Cherry-picks,
+   throwaway "boot-test" merges, and mixing fast-forward/merge/file-copy created duplicate-
+   content commits (phantom "unmerged" branches) and stray branches/worktrees. The 2026-08-07
+   cleanup + §2.2b address it; the periodic-sweep guardrail is still to build.
+5. **"No error" ≠ "it ran" — probe the real thing, the right way (reinforces §2.6).** A
+   dev-container probe (`host.docker.internal:8999`) misreported prod as missing caps; the
+   direct host probe was the truth. Verify against prod itself, not through a proxy.
+6. **Destructive git ops need proof-first (now §2.2b / §9.9).** Delete a branch/worktree only
+   after `git merge-tree`/`git cherry` proves zero unique content — and force-removing a
+   worktree can hit **root-owned files** a container left behind (remove them via a root
+   container, e.g. `docker run --rm -v …:/wt alpine rm -rf /wt/<name>`).
 
 ---
 
