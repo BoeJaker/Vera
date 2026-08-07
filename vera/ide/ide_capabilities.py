@@ -1803,6 +1803,13 @@ def _resolve_ws_host_path(workspace: str, host_path: str) -> str:
     return ""
 
 
+# Clobber-safety compare-and-swap primitives live in a pure, unit-testable module.
+from Vera.vera.ide.ws_changes_core import (          # noqa: E402
+    sha256_file as _sha256_file,
+    accept_conflict as _ws_accept_conflict,
+)
+
+
 def _build_ws_proposal_files(host_path: str, export_dir: str,
                              only_paths=None) -> List[Dict]:
     """Compare a NEW-versions dir (`export_dir` — a container export, or a git
@@ -1840,6 +1847,10 @@ def _build_ws_proposal_files(host_path: str, export_dir: str,
             new_text, is_text = "", False
         host_file = os.path.join(host_path, rel)
         exists = os.path.exists(host_file)
+        # Hash the target's CURRENT bytes (None if absent) so accept can do a
+        # compare-and-swap: it will refuse to write any file whose live target
+        # has drifted from this reviewed base, making a clobber impossible.
+        base_sha = _sha256_file(host_file) if exists else None
         old_text = ""
         if exists and is_text:
             try:
@@ -1851,7 +1862,7 @@ def _build_ws_proposal_files(host_path: str, export_dir: str,
             continue                          # genuinely unchanged
         status = "modified" if exists else "added"
         entry: Dict = {"rel": rel, "status": status, "bytes": len(data),
-                       "decision": "pending", "text": is_text}
+                       "decision": "pending", "text": is_text, "base_sha": base_sha}
         if not is_text:
             entry["binary"] = True            # recorded, not auto-appliable as text
         else:
@@ -2021,8 +2032,11 @@ async def ide_ws_changes_get(id: str = "", trace_id=None):
     description="ACCEPT (write to the workspace) files from a change proposal — the "
                 "gated write-back. Inputs: id (str!), paths (csv of rels to accept), "
                 "apply_all (bool default False — accept every text file). Binary and "
-                "over-size files are skipped (returned in `skipped`). Output: {ok, "
-                "applied:[rel], skipped:[rel], status}.",
+                "over-size files are skipped (returned in `skipped`). A file whose "
+                "live target has changed since the proposal was built is NEVER "
+                "overwritten — it is returned in `conflicts` and left pending "
+                "(regenerate the proposal to pick up the new base). Output: {ok, "
+                "applied:[rel], skipped:[rel], conflicts:[rel], status}.",
 )
 async def ide_ws_changes_accept(id: str = "", paths: str = "", apply_all: bool = False,
                                 trace_id=None):
@@ -2033,7 +2047,7 @@ async def ide_ws_changes_accept(id: str = "", paths: str = "", apply_all: bool =
     if not host_path or not os.path.isdir(host_path):
         return {"ok": False, "error": "workspace host path no longer exists"}
     sel = {p.strip() for p in (paths or "").split(",") if p.strip()}
-    applied, skipped = [], []
+    applied, skipped, conflicts = [], [], []
     for f in prop.get("files", []):
         rel = f.get("rel")
         if not (apply_all or rel in sel):
@@ -2044,6 +2058,12 @@ async def ide_ws_changes_accept(id: str = "", paths: str = "", apply_all: bool =
         dest = os.path.join(host_path, rel)
         if not _within(host_path, dest):
             skipped.append(rel)
+            continue
+        # Compare-and-swap: refuse to write if the live target has drifted from
+        # the base this proposal was reviewed against — never clobber newer work.
+        cur_sha = _sha256_file(dest) if os.path.exists(dest) else None
+        if _ws_accept_conflict(f, cur_sha):
+            conflicts.append(rel)          # left pending; regenerate the proposal
             continue
         try:
             os.makedirs(os.path.dirname(dest), exist_ok=True)
@@ -2061,9 +2081,10 @@ async def ide_ws_changes_accept(id: str = "", paths: str = "", apply_all: bool =
         prop["status"] = "partial"
     await _ws_proposal_save(prop)
     await emit_event({"type": "ide.workspace.changes.applied", "id": id,
-                      "applied": len(applied), "workspace": prop.get("workspace")})
+                      "applied": len(applied), "conflicts": len(conflicts),
+                      "workspace": prop.get("workspace")})
     return {"ok": True, "applied": applied, "skipped": skipped,
-            "status": prop.get("status")}
+            "conflicts": conflicts, "status": prop.get("status")}
 
 
 @capability(
