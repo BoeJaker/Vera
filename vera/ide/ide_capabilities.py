@@ -2138,7 +2138,7 @@ register_ui(
 
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _git(args: list, cwd: str) -> tuple[int, str, str]:
+def _git_sync(args: list, cwd: str) -> tuple[int, str, str]:
     """Run a git command; returns (returncode, stdout, stderr)."""
     try:
         r = subprocess.run(
@@ -2150,6 +2150,18 @@ def _git(args: list, cwd: str) -> tuple[int, str, str]:
         return 1, "", str(e)
 
 
+async def _git(args: list, cwd: str) -> tuple[int, str, str]:
+    """Async wrapper — every ide.git.* capability below is an async def
+    calling this from the event loop, and subprocess.run() blocks for its
+    FULL duration (up to the 30s timeout), not just the fork spawn cost.
+    A caller that loops this per-item (ide.claude_sessions.list_sessions
+    used to call ide_git_log once per session) turned one request into a
+    long, fully-serialized freeze of the entire process — confirmed live as
+    what took Vera offline. to_thread() keeps the loop free for everything
+    else while this one call runs."""
+    return await asyncio.to_thread(_git_sync, args, cwd)
+
+
 @capability(
     "ide.git.status",
     http_method="POST", http_path="/ide/git/status", http_tags=["ide", "git"],
@@ -2158,7 +2170,7 @@ def _git(args: list, cwd: str) -> tuple[int, str, str]:
                 "Input: path (str!). Output: {path, status, branch, staged, unstaged, untracked}.",
 )
 async def ide_git_status(path: str, trace_id=None):
-    rc, out, err = _git(["status", "--porcelain", "-b"], path)
+    rc, out, err = await _git(["status", "--porcelain", "-b"], path)
     if rc != 0 and "not a git repository" in err:
         return {"error": "Not a git repository", "path": path}
     lines = out.splitlines()
@@ -2186,10 +2198,10 @@ async def ide_git_status(path: str, trace_id=None):
 )
 async def ide_git_commit(path: str, message: str, add_all: bool = True, trace_id=None):
     if add_all:
-        rc, out, err = _git(["add", "-A"], path)
+        rc, out, err = await _git(["add", "-A"], path)
         if rc != 0:
             return {"success": False, "output": err or out}
-    rc, out, err = _git(["commit", "-m", message], path)
+    rc, out, err = await _git(["commit", "-m", message], path)
     await emit_event({"type": "ide.git.commit", "path": path, "message": message})
     return {"success": rc == 0, "output": (out + err).strip()}
 
@@ -2220,7 +2232,7 @@ async def ide_git_log(path: str, n: int = 20, since: str = "", until: str = "", 
             args.append(f"--until={until}")
     else:
         args.append(f"-{n}")
-    rc, out, err = _git(args, path)
+    rc, out, err = await _git(args, path)
     commits = []
     for line in out.splitlines():
         parts = line.split("\x1f")
@@ -2249,7 +2261,7 @@ async def ide_git_branches(path: str = "", base: str = "main", trace_id=None):
     # find .git regardless of which subdirectory cwd is), so this was
     # functionally harmless, but the reported `path` field was wrong.
     path = path or str(Path(__file__).resolve().parents[2])
-    rc, out, _err = _git(
+    rc, out, _err = await _git(
         ["for-each-ref", "--sort=-committerdate", "refs/heads/",
          "--format=%(refname:short)\x1f%(objectname:short)\x1f%(authorname)\x1f"
          "%(committerdate:short)\x1f%(committerdate:unix)\x1f%(subject)"],
@@ -2271,7 +2283,7 @@ async def ide_git_branches(path: str = "", base: str = "main", trace_id=None):
     for b in branches:
         if b["name"] == base:
             continue
-        rc2, out2, _err2 = _git(
+        rc2, out2, _err2 = await _git(
             ["rev-list", "--left-right", "--count", f"{base}...{b['name']}"], path)
         if rc2 == 0:
             counts = out2.strip().split()
@@ -2281,7 +2293,7 @@ async def ide_git_branches(path: str = "", base: str = "main", trace_id=None):
     # checkout, a Loop Lab dev-sandbox worktree, or any other active
     # checkout) — the "actually being worked on" signal, distinct from just
     # "has commits".
-    rc3, out3, _err3 = _git(["worktree", "list", "--porcelain"], path)
+    rc3, out3, _err3 = await _git(["worktree", "list", "--porcelain"], path)
     by_branch_wt: dict = {}
     cur_wt_path = ""
     for line in out3.splitlines():
@@ -2290,7 +2302,7 @@ async def ide_git_branches(path: str = "", base: str = "main", trace_id=None):
         elif line.startswith("branch "):
             ref = line[len("branch "):].strip()
             by_branch_wt[ref.rsplit("/", 1)[-1]] = cur_wt_path
-    rc4, out4, _err4 = _git(["branch", "--show-current"], path)
+    rc4, out4, _err4 = await _git(["branch", "--show-current"], path)
     cur_name = out4.strip()
     for b in branches:
         b["current"] = (b["name"] == cur_name)
@@ -2310,7 +2322,7 @@ async def ide_git_diff(path: str, staged: bool = False, trace_id=None):
     args = ["diff"]
     if staged:
         args.append("--cached")
-    rc, out, err = _git(args, path)
+    rc, out, err = await _git(args, path)
     return {"diff": out, "path": path, "error": err if rc != 0 else ""}
 
 

@@ -66,6 +66,7 @@ import json
 import logging
 import os
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -667,15 +668,43 @@ async def cap_claude_sessions_list_sessions(scan_limit: int = 3000, max_sessions
     # (see ide.git.log's since/until support). A session with no commits in
     # its window (read-only work, or work on a different repo/checkout) just
     # gets an empty list — this never blocks the session list from loading.
-    for s in out:
+    #
+    # This used to call ide_git_log once PER session (up to max_sessions=500)
+    # — a single panel load could fire hundreds of sequential git subprocess
+    # calls. Fetch the union window ONCE and bucket commits per session in
+    # Python instead — confirmed live as the flood that took Vera offline
+    # (each git call was also fully synchronous on the event loop before the
+    # ide_capabilities._git async fix, so N of them serialized into one long
+    # freeze of the whole process, not just this request).
+    if out:
         try:
-            log_res = await ide_git_log(path=str(_REPO_ROOT), since=s["first_ts"], until=s["last_ts"])
-            s["commits"] = log_res.get("commits", [])
+            first_vals = [s["first_ts"] for s in out if s["first_ts"]]
+            last_vals = [s["last_ts"] for s in out if s["last_ts"]]
+            log_res = await ide_git_log(path=str(_REPO_ROOT),
+                                        since=min(first_vals) if first_vals else "",
+                                        until=max(last_vals) if last_vals else "")
+            all_commits = log_res.get("commits", [])
         except Exception as e:
-            log.debug("claude_sessions: commit correlation failed for %s: %s",
-                     s.get("claude_session_id"), e)
-            s["commits"] = []
+            log.debug("claude_sessions: batched commit correlation failed: %s", e)
+            all_commits = []
+        for s in out:
+            lo, hi = _parse_epoch(s["first_ts"]), _parse_epoch(s["last_ts"])
+            s["commits"] = ([c for c in all_commits
+                             if lo is not None and hi is not None
+                             and lo <= c.get("ts", 0) <= hi]
+                            if lo is not None and hi is not None else [])
     return {"sessions": out}
+
+
+def _parse_epoch(ts: str) -> Optional[float]:
+    """ISO8601 session timestamp -> unix epoch seconds, for bucketing a
+    single batched git-log result back out per session."""
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts[:-1] + "+00:00" if ts.endswith("Z") else ts).timestamp()
+    except Exception:
+        return None
 
 
 @capability(
