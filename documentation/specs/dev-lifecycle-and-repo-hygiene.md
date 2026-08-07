@@ -2,6 +2,8 @@
 
 **Status:** proposed (plan) · **Author of plan:** drafted with Claude Code · **Date:** 2026-08-07
 **Owner:** admin (user) · **Home of the standard once ratified:** this file (versioned in-repo)
+**Revisions:** 2026-08-08 — added §2.2b (branch & worktree lifecycle) + §7 row + §9 rules
+8–9, after a branch/worktree-sprawl + duplicate-history incident while building the tooling.
 
 > This document is BOTH the plan for the work AND, once ratified, the standard itself.
 > It is deliberately kept in the repo (not just in an assistant's memory) — per the
@@ -73,6 +75,32 @@ These are the rules. §3 makes them enforceable; §8 sequences the build.
 - This directly removes: concurrent same-file edits, the "someone changed my file" class of
   confusion (`git-repo-concurrent-changes-normal`), and every SMB git-mechanics failure in
   §7 (dev containers commit against a local `.git`, not the share).
+
+### 2.2b Branch & worktree lifecycle — no scaffolding left behind
+The mess this standard prevents includes the **scaffolding of doing the work**, not just
+the work. An incident on 2026-08-07 (building this very tooling) left redundant branches
+and stray worktrees behind and littered the git graph with duplicate-content commits —
+the exact opposite of the goal. Rules:
+- **One worktree per active unit, on a local path — removed the moment the unit lands or
+  is abandoned** (`git worktree remove` + `git worktree prune`). A finished unit leaves
+  **no** worktree. Worktrees are scaffolding, not deliverables.
+- **A branch's content lands EXACTLY ONCE, via ONE mechanism** (the promote/merge gate in
+  §3). Never cherry-pick the same change onto another branch; never create throwaway
+  "boot-test" merge commits; never mix fast-forward + merge + file-copy to land a single
+  unit. Each duplicates content under a new SHA, producing **phantom "unmerged" branches**
+  and an incoherent graph. Need to boot-test a combination? Do it **on the unit's own
+  branch**, not a disposable side-branch.
+- **Delete the branch when it lands** (or is abandoned). Its commits remain reachable from
+  the target; the label is scaffolding. The git graph should show **only genuinely
+  in-flight work**.
+- **Prove-redundant-before-deleting.** A branch/worktree is deleted only after proving it
+  carries no unique content: `git merge-tree --write-tree <target> <tip>` equals the
+  target's tree, **or** `git cherry <target> <tip>` marks every commit already-applied
+  (`-`). *Reasoning that it's redundant is not sufficient — run the check first.* (Deleting
+  a branch keeps its commits by SHA, so a mistake is recoverable — but verify, don't lean
+  on recovery.)
+- **Periodic sweep** (the branch/worktree analogue of §4.2's container reaping): no
+  worktree without an active unit; no branch whose content is fully in the target.
 
 ### 2.3 Commit hygiene
 - **Commit granularly and often.** A day's work is many small commits on the branch, not one
@@ -298,6 +326,7 @@ These are the concrete, already-encountered failure modes the guardrails address
 | **Secret-scan slow over SMB** (`secret-scan-precommit-gate`) | pre-commit hook takes minutes over the share; commit appears to hang; staged-vs-worktree ignore-file gotcha | Runs fast on a container's local FS; keep pragma / `.secretscanignore` conventions |
 | **AI attribution in git** (`no-claude-coauthor-trailer`, `git-attribution-internal-only`) | `Co-Authored-By: Claude` surfaced Claude as a GitHub contributor; expensive force-push to undo | Hook rejects attribution trailers + non-user author; internal fields carry "Claude Code" |
 | **Bundled uncommitted work** (this incident) | a day's changes uncommitted, then one 800-line commit → breaking change unpinnable, `bisect` useless | Branch-per-work + granular commits + gate (§2.1, §2.3) |
+| **Branch/worktree sprawl + duplicate history** (2026-08-07) | building the hygiene tooling itself left redundant branches + stray worktrees behind, and cherry-pick/boot-merge created duplicate-content commits → phantom "unmerged" branches, an incoherent graph, deletes made on a hunch | §2.2b: one worktree per unit removed on land; land content once via one mechanism; delete branch on land; prove-redundant-before-delete |
 | **Import-time breakage py_compile misses** (`loop-lab-multi-repo-foundation`) | forward-ref default-arg → `NameError` at import → took down the whole `evolve.*` namespace | Gate runs `evolve.selftest` (real boot), not just compile (§2.6, §6) |
 | **Stale sandbox image** (`loop-lab-sandbox-and-impl-timeline`) | dev sandbox on stale `vera:latest` → missing caps → `loops.run` 404 | Per-branch containers built from a **fresh** image; probe requires a workhorse cap |
 | **Reload to load backend changes** | Python changes need a process reload; panel HTML needs only a refresh | Dev-container loop includes reload; the test/verify step assumes it |
@@ -353,6 +382,13 @@ Until the guardrails are built, I hold to the standard manually:
 6. **Verify on the real running thing** (boot + selftest + feature test; observe UI/runtime)
    before calling it done — never trust `py_compile` alone.
 7. **Document the change** in the commit and the relevant doc; leave a breadcrumb from memory.
+8. **Tear down scaffolding when a unit lands** (§2.2b): remove its worktree, delete its
+   branch, and land its content **once via one mechanism** — never cherry-pick or
+   boot-test-merge it onto a side-branch (that duplicates history and litters the graph).
+   Leave no worktree or dead branch behind; the git graph shows only in-flight work.
+9. **Prove-safe-before any destructive git op.** Before deleting a branch/worktree, prove
+   it's redundant (`git merge-tree`/`git cherry`, §2.2b); before any reset/force/overwrite,
+   check the target first. Verify, don't act on a hunch and rely on recovery.
 
 ---
 
