@@ -1420,7 +1420,7 @@ async def evolve_unittest_run(path: str = "vera", mode: str = "compile",
     if not target.exists():
         return {"error": f"path not found: {path}"}
     if mode == "pytest":
-        cmd = ["python", "-m", "pytest", path, "-q"]
+        cmd = [sys.executable, "-m", "pytest", path, "-q"]
         if pattern:
             cmd += ["-k", pattern]
     else:
@@ -1431,7 +1431,7 @@ async def evolve_unittest_run(path: str = "vera", mode: str = "compile",
             else [path]
         if not pyfiles:
             return {"error": "no .py files under path"}
-        cmd = ["python", "-m", "py_compile"] + pyfiles
+        cmd = [sys.executable, "-m", "py_compile"] + pyfiles
     res = await _sh(cmd, cwd=str(root), timeout=int(timeout))
     passed = res["ok"]
     out = (res.get("out", "") + "\n" + res.get("err", "")).strip()
