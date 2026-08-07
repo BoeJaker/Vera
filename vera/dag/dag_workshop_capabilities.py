@@ -2399,6 +2399,32 @@ try:
 except Exception:
     _LOOP_SEED = 7
 
+# PLANNING is the exception to loop determinism. Verdicts / tool-selection /
+# journal records want one reproducible answer, but PLAN GENERATION is creative
+# decomposition — pinning it to a fixed seed means a bad or off-goal plan is
+# produced IDENTICALLY every time, so the drift-guard retry re-derives the same
+# broken plan and can never recover ("detected but not corrected"). Give the
+# planner real sampling + a FRESH seed per call so it explores and retries
+# genuinely differ. Tunable / disable-able via env.
+_PLANNER_NONDET = os.getenv("VERA_PLANNER_NONDET", "1").strip() not in ("0", "false", "no")
+try:
+    _PLANNER_TEMP = float(os.getenv("VERA_PLANNER_TEMP", "0.4") or 0.4)
+except Exception:
+    _PLANNER_TEMP = 0.4
+
+
+def _planner_sampling(base: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """Sampling options for a PLANNER LLM call: real temperature + a fresh random
+    seed each call (so a re-plan differs from the plan that drifted). Returns the
+    base options unchanged when planner non-determinism is disabled."""
+    if not _PLANNER_NONDET:
+        return base
+    opts = dict(base or {})
+    opts.setdefault("temperature", _PLANNER_TEMP)
+    opts.setdefault("top_p", 0.95)
+    opts["seed"] = int(time.time_ns() & 0x7FFFFFFF)   # fresh per call → retries differ
+    return opts
+
 
 async def _safe_ollama_generate_dw(prompt, *, system="", json_mode=True,
                                      model="", instance_id="", prefer_gpu=True,
@@ -11577,7 +11603,9 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
     # instructions so the planning call is shaped for agentic-loop decomposition.
     _pa = await _v5_planner_agent_cfg()
     plan_model = model or _pa.get("model") or ""
-    plan_opts = _pa.get("options") or None
+    # Planning explores — real sampling + a fresh seed per call (not the loop's
+    # deterministic floor), so a re-plan differs from a plan that drifted.
+    plan_opts = _planner_sampling(_pa.get("options"))
     plan_persona = _pa.get("persona") or ""
     cap_line_parts = []
     for n in catalog_names:
@@ -12420,6 +12448,7 @@ def _v5_actual_caps_used(history: List[Dict[str, Any]]) -> List[str]:
 async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                        blackboard: Dict[int, Dict[str, Any]],
                        artifacts: Optional[Dict[str, Dict[str, Any]]] = None,
+                       journal: Optional[List[Dict[str, Any]]] = None,
                        model: str, instance_id: str, prefer_gpu: bool,
                        session_id: str, stream_id: str, trace_id: Any,
                        cycle_budget: int, cycle_offset: int,
@@ -13023,6 +13052,10 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
           "(granted if they exist in the broader toolkit; their schemas are then provided), OR\n"
         + _chain_help + _ask_help
         + '  {"thought":"<one sentence>","done":"<concise result for the orchestrator>"}  when finished.\n'
+          'Any of the above may ALSO carry a sibling `"note":"<short durable fact/decision/gotcha>"` — '
+          "e.g. a confirmed schema, a path you found, a dead end not worth retrying. It is appended "
+          "immediately to the RUN JOURNAL (below, if present) for later steps AND later cycles of THIS "
+          "step to reuse — write one whenever you learn something worth not re-deriving, not on every turn.\n"
           "Only emit a tool_use when you can fill in ALL of that cap's REQUIRED inputs — never call a cap "
           "with empty or placeholder args (e.g. llm.generate with no `prompt`). If you don't yet have an "
           "argument, THINK first (no tool_use) to work it out, then act.\n"
@@ -13694,7 +13727,17 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             if _tb:
                 _think_back = ("\n\nYOUR RECENT REASONING (build on this — do NOT repeat it):\n"
                                + _tb[:700])
-        user_msg = (f"STEP GOAL: {step['goal']}\n\nYour results so far:\n{obs}{_think_back}{_rep_hint}{_note}{_grant_block}\n\n"
+        # Live journal digest, recomputed fresh EVERY cycle (unlike the frozen
+        # step-start injection into step["goal"]) — so a note written in cycle 2
+        # of THIS step is visible to cycle 3 of the SAME step, not just later
+        # steps. Cheap: formatting an in-memory list, no LLM call.
+        _journal_live = ""
+        if journal:
+            _jdig = _v6_journal_digest(journal)
+            if _jdig:
+                _journal_live = ("\n\nRUN JOURNAL (live — reuse, don't re-derive):\n"
+                                  + _jdig[:1200])
+        user_msg = (f"STEP GOAL: {step['goal']}\n\nYour results so far:\n{obs}{_think_back}{_rep_hint}{_note}{_grant_block}{_journal_live}\n\n"
                     "Reply with ONE JSON action, or a `done` summary if the step goal is met.")
 
         # Live reasoning streaming: forward the model's thought to the UI
@@ -13747,6 +13790,25 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         thought = (raw_obj.get("thought") or action.get("thought") or think_text or "").strip()
         if thought:
             all_thoughts.append(thought)
+        # Specialist-writable journal note (sibling field, any turn shape) —
+        # appended immediately, not deferred to step-end like the LLM-derived
+        # extraction pass. `journal` is a plain list owned by the v6 runner;
+        # appending here mutates that SAME object, so it's live for this run
+        # (and, per-branch, isolated — see _run_branch's local snapshot).
+        note_val = str(raw_obj.get("note") or action.get("note") or "").strip()
+        if note_val and journal is not None:
+            journal.append({
+                "step_id": step_id, "title": f"(live note, cycle {turns})",
+                "ok": None, "met": None, "ts": now_iso(),
+                "key_outputs": [], "files": [], "tools": [], "entities": [],
+                "schema": "", "note": note_val[:240], "source": "specialist",
+                "cycle": turns,
+            })
+            if stream_id:
+                await emit_event({"type": "agent_loop_v6.journal", "session_id": sid,
+                                  "stream_id": stream_id, "step_id": step_id,
+                                  "entry": {"note": note_val[:240], "source": "specialist",
+                                            "cycle": turns}, "count": len(journal)})
 
         # Step complete? — unless this is a PREMATURE done: nothing useful has
         # happened yet this phase, and the summary itself reads as a plan
@@ -15723,7 +15785,7 @@ async def _v5_master_plan(goal: str, catalog_brief: str = "", *, model: str = ""
             system=("You assemble expert planner personas on demand. Name the specific domain "
                     "expertise the goal demands."),
             model=model, instance_id=instance_id, prefer_gpu=prefer_gpu, json_mode=False,
-            profile=LOOP_ROUTING_PROFILE, role="planner")
+            options=_planner_sampling(), profile=LOOP_ROUTING_PROFILE, role="planner")
         cand = _strip_think(p_raw or "")[0].strip()
         if cand:
             persona = cand[:400]
@@ -15785,7 +15847,7 @@ async def _v5_master_plan(goal: str, catalog_brief: str = "", *, model: str = ""
                     "section over many days, so each section must carry enough substance to expand "
                     "into real work on its own."),
             model=model, instance_id=instance_id, prefer_gpu=prefer_gpu, json_mode=False,
-            profile=LOOP_ROUTING_PROFILE, role="planner",
+            options=_planner_sampling(), profile=LOOP_ROUTING_PROFILE, role="planner",
             stream_cb=(_mp_stream_cb if stream_id else None))
         long_form = _strip_think(lf_raw or "")[0].strip()[:6000]
     except Exception as e:
@@ -18083,6 +18145,7 @@ async def _v6_journal_extract(step: Dict[str, Any], res: Dict[str, Any], goal: s
         "entities": [],
         "schema": "",
         "note": "",
+        "source": "extract",  # vs. "specialist" — a live note the acting model wrote itself
     }
     summary = str(res.get("summary") or res.get("raw_summary") or "")
     if len(summary) < 40:
@@ -18160,6 +18223,8 @@ def _v6_journal_digest(journal: List[Dict[str, Any]], *,
             lines.append(f"    files: {', '.join(e['files'][:6])}")
         if e.get("entities"):
             lines.append(f"    entities: {', '.join(e['entities'][:8])}")
+        if e.get("note"):
+            lines.append(f"    note: {e['note']}")
     return "\n".join(lines)[:max_chars]
 
 
@@ -19984,8 +20049,12 @@ async def cap_dag_agent_loop_v6(
     # run reuses its own findings instead of re-deriving them. Reserved for
     # complex/long-term runs by default (the per-step extraction has a cost);
     # `journal_all_tiers` forces it for any run (e.g. a v6 engine with no tier).
+    # When tiering never ran there IS no tier signal to gate on — `tier` just
+    # holds its "simple" default, which would otherwise silently defeat an
+    # explicit enable_journal=True for every non-tiered (typical v6) run.
     journal_on = bool(enable_journal) and (
-        journal_all_tiers or _v7_tier_rank(tier) >= _v7_tier_rank("complex"))
+        journal_all_tiers or not enable_tiering
+        or _v7_tier_rank(tier) >= _v7_tier_rank("complex"))
 
     # ── Orchestrate (want_success=True so steps carry success criteria) ───────
     _plan_hb_stop = asyncio.Event()
@@ -20201,10 +20270,16 @@ async def cap_dag_agent_loop_v6(
         # retry simply omits it; same arguments as the original call above.
         goal = _orig_goal
         try:
+            # Retry with the MINIMAL prompt (simpler, no skills, explicitly
+            # forbids capability-name titles — what small models handle most
+            # reliably) AND a fresh planner seed (see _planner_sampling), so this
+            # re-plan genuinely differs from the plan that drifted instead of
+            # re-deriving it.
             _fix = await _v5_orchestrate_plan(
                 _orig_goal, catalog_names, skills, cap_skill_map,
                 model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
-                max_steps=max_steps, want_success=True, phase_policy=phase_policy,
+                max_steps=max_steps, minimal=True, want_success=True,
+                phase_policy=phase_policy,
                 allowed_phases=allowed_phases, sid=sid, stream_id=stream_id)
             _fsteps = (_fix or {}).get("steps") or []
             await emit_event({"type": "agent_loop_v6.plan_drift_replan",
@@ -20325,7 +20400,8 @@ async def cap_dag_agent_loop_v6(
             sub_steps = sub.get("steps") or []
             if not sub_steps:
                 return await _v5_run_step(
-                    step, goal=goal, blackboard=blackboard, artifacts=artifacts, model=model, instance_id=instance_id,
+                    step, goal=goal, blackboard=blackboard, artifacts=artifacts, journal=journal,
+                    model=model, instance_id=instance_id,
                     prefer_gpu=prefer_gpu, session_id=sid, stream_id=stream_id, trace_id=trace_id,
                     cycle_budget=step_cycle_budget, cycle_offset=gc_in,
                     artifact_dir_path=artifact_dir_path, call_tool=_agent_loop_call_tool,
@@ -20356,6 +20432,7 @@ async def cap_dag_agent_loop_v6(
             for ss in sub_steps:
                 r = await _v5_run_step(
                     ss, goal=step["goal"], blackboard={**blackboard, **sub_bb}, artifacts=artifacts,
+                    journal=journal,
                     model=model, instance_id=instance_id, prefer_gpu=prefer_gpu, session_id=sid,
                     stream_id=stream_id, trace_id=trace_id, cycle_budget=step_cycle_budget,
                     cycle_offset=gc, artifact_dir_path=artifact_dir_path,
@@ -20384,7 +20461,8 @@ async def cap_dag_agent_loop_v6(
                     "outputs": _sub_outputs, "cycle_end": gc, "history": sub_history, "subplan": True,
                     "sub_steps": sub_results, "actual_caps": _v5_actual_caps_used(sub_history)}
         return await _v5_run_step(
-            step, goal=goal, blackboard=blackboard, artifacts=artifacts, model=model, instance_id=instance_id,
+            step, goal=goal, blackboard=blackboard, artifacts=artifacts, journal=journal,
+            model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, session_id=sid, stream_id=stream_id, trace_id=trace_id,
             cycle_budget=step_cycle_budget, cycle_offset=gc_in,
             artifact_dir_path=artifact_dir_path, call_tool=_agent_loop_call_tool,
@@ -20500,6 +20578,13 @@ async def cap_dag_agent_loop_v6(
         result dict {ok, summary, outputs, history, met, cycle_end}. The branch
         steps run flat (no sub-plans) — a branch is already a decomposition."""
         local_bb: Dict[int, Dict[str, Any]] = dict(base_bb)   # isolated copy
+        # Journal isolation, same reasoning as local_bb: concurrent branches
+        # (asyncio.gather below) must never append to the SHARED run-level
+        # journal directly — a pruned branch's exploratory notes would leak
+        # into what sibling branches and later steps see. Each branch mutates
+        # its own private snapshot; only the WINNER's new entries get folded
+        # back, in _resolve_branches.
+        branch_journal: List[Dict[str, Any]] = list(journal)
         branch_results: List[Dict[str, Any]] = []
         agg_outputs: Dict[str, Any] = {}
         agg_history: List[Dict[str, Any]] = []
@@ -20515,7 +20600,8 @@ async def cap_dag_agent_loop_v6(
             bs = dict(bs)
             bs["needs"] = sorted(set((bs.get("needs") or []) + anc_ids + branch_ids))
             r = await _v5_run_step(
-                bs, goal=goal, blackboard=local_bb, artifacts=artifacts, model=model, instance_id=instance_id,
+                bs, goal=goal, blackboard=local_bb, artifacts=artifacts, journal=branch_journal,
+                model=model, instance_id=instance_id,
                 prefer_gpu=prefer_gpu, session_id=sid, stream_id=stream_id, trace_id=trace_id,
                 cycle_budget=step_cycle_budget, cycle_offset=gc,
                 artifact_dir_path=artifact_dir_path, call_tool=_agent_loop_call_tool,
@@ -20540,7 +20626,8 @@ async def cap_dag_agent_loop_v6(
         agg_summary = "\n\n".join(
             f"[{r['title']}] {(r.get('summary') or '')[:600]}" for r in branch_results)[:_V6_FINALIZE_OUT_MAX]
         return {"ok": agg_ok, "summary": agg_summary, "outputs": agg_outputs,
-                "history": agg_history, "cycle_end": gc, "branch_steps": branch_results}
+                "history": agg_history, "cycle_end": gc, "branch_steps": branch_results,
+                "journal": branch_journal}
 
     async def _resolve_branches(failed_step, failed_res, pre_bb, gc):
         """Fork from the last good point (pre_bb — the ancestor chain, WITHOUT the
@@ -20624,6 +20711,11 @@ async def cap_dag_agent_loop_v6(
             return {"won": False, "res": None, "gcycle": gc, "used": used,
                     "records": prune_records}
         ap, br = winner
+        # Fold ONLY the winning branch's new journal entries back into the
+        # shared run-level journal — a pruned branch's local_journal snapshot
+        # is simply discarded along with its prune_records entry, exactly like
+        # its blackboard results never reach the shared blackboard.
+        journal.extend(br.get("journal", [])[len(journal):])
         await emit_event({"type": "agent_loop_v6.branch_merge", "session_id": sid,
                           "stream_id": stream_id, "fork_step": failed_step["id"],
                           "label": ap["label"], "summary": br["summary"][:_V6_FINALIZE_OUT_MAX]})
@@ -21259,7 +21351,10 @@ async def workshop_agent_loop_stream(request: Request):
     v6_progress_channel  = (body.get("progress_channel", "telegram") or "telegram").strip().lower()
     v6_strategic_slug    = (body.get("strategic_slug", "") or "").strip()
     v6_enable_dream_persistence = bool(body.get("enable_dream_persistence", _v7_default))
-    v6_enable_journal    = bool(body.get("enable_journal", _v7_default))
+    # Journal defaults ON regardless of version (v6 callers get run continuity
+    # too, not just v7) — unlike the other _v7_default-gated knobs above, which
+    # stay tied to version since they're genuinely v7-defining behaviours.
+    v6_enable_journal    = bool(body.get("enable_journal", True))
     v6_journal_all_tiers = bool(body.get("journal_all_tiers", False))
     v6_enable_final_gate = bool(body.get("enable_final_gate", True))
     v6_enable_delivery   = bool(body.get("enable_delivery", True))
