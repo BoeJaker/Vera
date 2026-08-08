@@ -242,6 +242,24 @@ Concurrent dev containers **must not contend for scarce shared resources — chi
   guardrails) LLM load is minimal — we're not testing chat/loops soon — so container
   concurrency is safe here. The rule matters the moment a dev container starts running loops.
 
+**✓ Implemented — cross-process GPU gate / "one big queue" (C5-U1, 2026-08-08, live on prod).**
+The sketch above ("harness assigns a specific worker") was replaced by a simpler, robust
+primitive: a **bounded, crash-safe semaphore per Ollama node on a SHARED coordination Redis
+DB** that prod and every dev container both reach (`vera/ollama_gate.py`, wired at the single
+`_ollama_slot` chokepoint). A generation must hold a slot before it runs and releases it
+after; the GPU node is capped at 1 concurrent generation across ALL processes, so prod and
+dev containers **queue** for the GPU instead of colliding. This is the coordination-plane /
+data-plane split: coordination Redis is SHARED (`VERA_COORD_REDIS_DB=0`), data Redis stays
+isolated per sandbox.
+- Slots are TTL-fenced leases (a killed container's slot auto-frees); release is owner-fenced
+  (Lua CAS); **fail-open** everywhere (gate off / node ungated / coord Redis down / queued past
+  the wait budget → proceed unslotted) so the gate can only ever ADD waiting, never BREAK
+  generation.
+- Flags: `VERA_OLLAMA_GATE` (on/off — **now on in prod's `.env`**), `VERA_GPU_GATE_N` (default 1),
+  `VERA_NODE_GATE_N` (default 0 = CPU nodes ungated), `VERA_GATE_TTL_S`, `VERA_GATE_WAIT_S`.
+  Live occupancy: `GET /ollama/gate` (`ollama.gate.status`). Verified cross-process: a prod
+  generation's held slot was visible from a dev container's `/ollama/gate`.
+
 ### 4.2 Container lifecycle — cleanup & archive
 Dev containers are cattle, not pets. A clear teardown policy prevents a pile of stale, stale-
 imaged, resource-holding sandboxes (we've already hit the stale-image trap):
@@ -259,6 +277,39 @@ imaged, resource-holding sandboxes (we've already hit the stale-image trap):
 - Surface all of this in the Loop Lab Sandbox tab (status, last-used, "archive", "prune",
   "rebuild") — most of the status plumbing already exists (`/remote/sandbox/list` state
   semantics, the rebuild button).
+
+### 4.3 Data isolation — dev must not pollute prod's stores
+A dev sandbox is a FULL Vera process **sharing prod's backing services**: the `_dev_compose_yaml`
+env points it at prod's live Postgres, Chroma and Neo4j (only Redis is isolated by DB number,
+and fabric.db is snapshotted). So a dev loop that stored memories or wrote graph nodes was
+**mutating prod**.
+- **✓ Implemented — write-isolate guard (C5-U2, 2026-08-08).** `vera/sandbox_guard.py`:
+  `write_blocked()` is true only in a dev sandbox (`VERA_IS_DEV_SANDBOX=1`) and is a **strict
+  no-op in prod**. Guarded at the write chokepoints — `MemoryFabric.store/update` (fans out to
+  PG+Chroma+Neo4j), the `FabricNeo4j` write methods + write-cypher `query()`,
+  `MemoryGraphAdapter`, `FabricChroma.upsert`, and `_pg_archive`. **Reads pass through** to prod
+  (dev sees real context); only writes are suppressed. Escape hatch `VERA_SANDBOX_WRITE_GUARD=0`.
+  Verified: a sandbox `memory.store` touched nothing in prod while `memory/edges/diag` still read
+  prod's 3.2M-relationship graph; a prod store persisted normally (guard inert).
+- **○ Gap to close (revisit U2):** the guard covers the fabric + memory write surface (where ~all
+  loop/agent persistence flows), but any subsystem doing **direct** Neo4j/PG/Chroma writes through
+  its own session (candidates: dream, goals, projects, worldview) would still leak. **Do a full
+  audit of direct-write sites** and route them through the guard (each is a one-liner). Until then
+  the leak is "mostly closed," not hermetic.
+
+### 4.4 Leech boot — dev inherits prod's state, doesn't recompute it
+A fresh full boot runs embeddings + fetches/rebuilds fabric sources; N dev containers each doing
+that independently would hammer Ollama and duplicate prod's work.
+- **✓ Implemented — leech boot (C5-U3, 2026-08-08).** In a dev sandbox, `scheduler_loop` skips
+  heavy **ambient** scheduled jobs (agent-RAG re-embedding, node benchmarks, model sync/pull
+  sweeps, the long-term loop scheduler, v8 program ticks, external calendar sync) via a denylist
+  (`_SANDBOX_SKIP_JOBS`) + a `schedule(..., skip_in_sandbox=True)` opt-in. One-time `_startup`
+  module-init hooks still run (panels/state init). Complements `EMBED_CAPS_ON_START=0` (already in
+  the dev compose) and the dream/claude-session jobs that already self-gate. The sandbox
+  **read-throughs** prod's already-computed state instead of rebuilding it. Strict no-op in prod.
+- **Direction (better method, confirmed):** one-directional sync FROM the main session INTO dev
+  containers — snapshot (Redis/fabric.db, already) + read-through (PG/Chroma/Neo4j, §4.3) + skip
+  recompute (this) — rather than each container booting its own heavy load.
 
 ---
 
@@ -392,15 +443,25 @@ land (per §2.5 this doc is the living record, not a snapshot of original intent
   merge from Phase A+, and **`evolve.pipeline.promote` must be reworked** — it currently does
   `git checkout <to>` in the prod repo root, which switches prod's live checkout (§8.1).
 
-- **Phase C — Per-branch dev containers + VSCode/Vera management + UI access.  ○ not started**
+- **Phase C — Per-branch dev containers + VSCode/Vera management + UI access.  ◐ mostly done**
   §4: per-branch containers with a port pool, `.devcontainer/` + VSCode tasks/commands,
   Vera-UI + operator launchers, the Ollama/GPU discipline (§4.1) and cleanup/archive
-  lifecycle (§4.2). Retire prod-share editing (guardrail warn → block). **Amendment (container
-  limits, §8.1):** per-branch containers must be provisioned with a **docker socket** and a
-  **git binary**, or the log collector's docker-tail, `evolve.sandbox.approve`'s git ops, and
-  in-container provenance won't work (today they work only because prod runs as a host process
-  with docker+git). **Amendment (topology):** decide prod's branch-tracking model first (§8.1)
-  or approve-and-deploy stays a two-step manual dance.
+  lifecycle (§4.2).
+  - ✓ **C1 — per-branch container pool** (`evolve.sandbox.spawn`, `sandbox_pool.py`: port
+    8998→8980 + Redis DB 3–15 allocator; `vera-dev-<slug>` containers; `evolve.sandbox.list`
+    unifies primary+spawned). Verified 3 concurrent.
+  - ✓ **C2 — Loop Lab sandbox selector** (spawn/list/down in the panel).
+  - ✓ **C3 — cleanup/reap lifecycle** (§4.2): `_remove_worktree_robust` (root-owned-file
+    fallback) + `evolve.sandbox.prune` (dry-run default, prove-merged-before-delete, dirty-guard,
+    never a live-container worktree; `sandbox_reap.py` + tests).
+  - ✓ **C5 — resource discipline**: U1 GPU gate (§4.1, live on prod), U2 data-isolation write
+    guard (§4.3), U3 leech boot (§4.4). All landed + verified 2026-08-08.
+  - ○ **C4 — VSCode `.devcontainer/` + tasks** (still to build; see the container-limits
+    amendment — dev containers need a **docker socket + git binary** for in-container provenance /
+    `approve` git ops / the docker-tail collector, which today work only because prod is a host
+    process). Retire prod-share editing (guardrail warn → block) once C4 lands.
+  - ○ **C6 — UI access to dev instances (new; requested 2026-08-08):** see §8.2 — connect to a
+    branch's sandbox from within Vera (no new page), SSH/web launchers, sandbox-session indicator.
 
 - **Phase D — Unified observability plane + tests/errors heatmap + auto-postmortem.  ◐ started**
   - ✓ **Unified sandbox log/error/perf collector (§5.2, first slice)** — a background
@@ -454,6 +515,43 @@ Recorded from actually building Phases A / A+ / D, so the plan reflects reality,
    after `git merge-tree`/`git cherry` proves zero unique content — and force-removing a
    worktree can hit **root-owned files** a container left behind (remove them via a root
    container, e.g. `docker run --rm -v …:/wt alpine rm -rf /wt/<name>`).
+
+### 8.2 Requested enhancements (2026-08-08) — backlog
+
+Captured from the user during the C5 build; not yet scheduled.
+
+1. **Revisit U2 (§4.3) and close the direct-write gaps.** The write guard covers the fabric +
+   memory chokepoints; audit every subsystem that opens its own Neo4j/PG/Chroma session (dream,
+   goals, projects, worldview, …) and route each through `sandbox_guard.write_blocked()`. Goal:
+   a hermetic dev/prod data boundary, not "mostly closed."
+
+2. **Review UI — show accepted/rejected history.** The Loop Lab **Review** tab surfaces
+   *outstanding* proposals; it should also display **decided** reviews (accepted / rejected, who,
+   when, resulting merge commit) so the review log is auditable, not just the queue.
+
+3. **Connect to a sandbox from inside Vera — no new page (C6).** Open a branch's dev instance
+   *within* the current Vera UI (embed/attach, reusing the `/vscode/…` same-origin proxy pattern
+   and `remote-access` session model) rather than navigating to its `:port`. Needs a **clear,
+   persistent "SANDBOX SESSION" indicator** (branch + container name) so it's never mistaken for
+   prod. Pairs with §4's "easy access to each dev container's Web UI."
+
+4. **Connect to per-branch dev instances via SSH *or* the Vera web UI (C6).** A launcher/registry
+   to reach a branch container over SSH (terminal) and over its Vera web UI — register each live
+   dev container as an operator/remote target (`unified-nodes-estate`,
+   `remote-access-workspaces-subsystem`) so both a human and the operator system can drive it.
+
+5. **Internal UI attribution of git-graph nodes & changes (NOT in the repo).** The repo keeps a
+   human author with **no AI-attribution trailer** (`git-attribution-internal-only`,
+   `no-claude-coauthor-trailer`) — that stays. *Internally, in Vera's UI*, we DO want to attribute
+   each commit / change / graph node to its actual agent + session: **Claude Code + its chat
+   session**, or **Vera + its session**. Surface this on the git graph and other infographics
+   (correlate via the provenance stamp / session id already on events — `provenance.py`,
+   `_session_stamp`, the `triggered_by/reviewer/agent` tags that stay internal).
+
+6. **Slick git-graph UI with chat drill-down + a layered chat/session graph.** A polished commit
+   DAG (build on `<vera-git-graph>`, `git_graph_element.js`) where you can **drill from a commit
+   into the chat/session that produced it**, and a **chat/session graph that layers on top** of
+   the commit graph (session → the commits/branches it drove). Ties directly to #5's attribution.
 
 ---
 
