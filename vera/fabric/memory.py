@@ -96,8 +96,20 @@ from Vera.vera.capability_orchestration import (
     register_ui,
     capability, emit_event, now_iso, ollama_generate, schedule,
 )
+# Dev-sandbox write guard — memory backends are prod's SHARED stores; suppress
+# writes when running as a dev sandbox (strict no-op in prod). See sandbox_guard.
+from Vera.vera.sandbox_guard import write_blocked as _sbx_write_blocked   # noqa: E402
 
 log = logging.getLogger("vera.memory")
+
+_SBX_BLOCK_LOGGED = set()
+
+
+def _sbx_note(where: str) -> None:
+    if where not in _SBX_BLOCK_LOGGED:
+        _SBX_BLOCK_LOGGED.add(where)
+        log.info("dev-sandbox write guard: suppressed %s write to shared prod "
+                 "store (set VERA_SANDBOX_WRITE_GUARD=0 to allow)", where)
 
 # Reference REDIS lazily through the orchestrator module so we always
 # get the live connection object even if it was None at import time.
@@ -1437,6 +1449,13 @@ class HybridMemoryStore:
 
     async def store(self, record: MemoryRecord) -> Dict:
         """Store a record across all backends. Returns per-backend success map."""
+        # Dev-sandbox write guard: the memory backends (Postgres/Chroma/Neo4j)
+        # are prod's SHARED stores, so a dev loop storing memories would pollute
+        # prod. Suppress the fan-out entirely (strict no-op in prod). The record
+        # still lives in the sandbox's isolated Redis/SQLite fabric elsewhere.
+        if _sbx_write_blocked():
+            _sbx_note("memory")
+            return {name: True for name in self._backends}
         # Fill in derived fields
         if not record.content_hash:
             record.content_hash = record.compute_hash()
@@ -1527,6 +1546,9 @@ class HybridMemoryStore:
         return None
 
     async def update(self, record_id: str, updates: Dict) -> Dict:
+        if _sbx_write_blocked():
+            _sbx_note("memory-update")
+            return {name: True for name in self._backends}
         updates["updated_at"] = datetime.now(timezone.utc)
         tasks = {n: b.update(record_id, updates) for n,b in self._backends.items()}
         results = await asyncio.gather(*tasks.values(), return_exceptions=True)

@@ -65,8 +65,24 @@ from Vera.vera.capability_orchestration import (
     APP,
     capability, emit_event, now_iso, schedule,
 )
+# Dev-sandbox write guard — suppress writes to prod-SHARED stores (Neo4j/Chroma)
+# when running as a dev sandbox, so testing noise never leaks into prod. Strict
+# no-op in prod. See vera/sandbox_guard.py.
+from Vera.vera.sandbox_guard import write_blocked as _sbx_write_blocked, \
+    is_write_cypher as _sbx_is_write_cypher
 
 log = logging.getLogger("vera.data_fabric")
+
+# Rate-limited notice so a dev loop's suppressed writes are visible once, not
+# per-record (which would flood the log).
+_SBX_BLOCK_LOGGED = set()
+
+
+def _sbx_note(where: str) -> None:
+    if where not in _SBX_BLOCK_LOGGED:
+        _SBX_BLOCK_LOGGED.add(where)
+        log.info("dev-sandbox write guard: suppressed %s write to shared prod "
+                 "store (set VERA_SANDBOX_WRITE_GUARD=0 to allow)", where)
 
 def _redis():
     """Return the shared REDIS pool — never open a new connection."""
@@ -1276,6 +1292,8 @@ class FabricChromaStore:
 
     def upsert(self, record: DataRecord) -> bool:
         if not self._col: return False
+        if _sbx_write_blocked():
+            _sbx_note("chroma"); return False
         if not record.embedding:
             # Without an explicit vector Chroma embeds server/client-side with
             # its default MiniLM function (384-dim) — the wrong space for this
@@ -1579,6 +1597,7 @@ class FabricNeo4j:
 
     async def ensure_dataset(self, dataset_id: str) -> bool:
         if not self._driver: return False
+        if _sbx_write_blocked(): _sbx_note("neo4j"); return True
         try:
             async with self._driver.session() as s:
                 await s.run("MERGE (d:Dataset {id:$id}) SET d.updated_at=$ts",
@@ -1588,6 +1607,7 @@ class FabricNeo4j:
 
     async def add_record(self, record: DataRecord) -> bool:
         if not self._driver: return False
+        if _sbx_write_blocked(): _sbx_note("neo4j"); return True
         try:
             data = record.data or {}
             title = str(data.get("title") or data.get("name") or "")[:120]
@@ -1608,6 +1628,7 @@ class FabricNeo4j:
     async def link_datasets(self, from_id: str, to_id: str,
                             rel_type: str = "SIMILAR_TO", props: Dict = None) -> bool:
         if not self._driver: return False
+        if _sbx_write_blocked(): _sbx_note("neo4j"); return True
         rtype = re.sub(r"[^A-Z0-9_]", "_", rel_type.upper())
         try:
             async with self._driver.session() as s:
@@ -1620,6 +1641,10 @@ class FabricNeo4j:
 
     async def query(self, cypher: str, params: Dict = None) -> List[Dict]:
         if not self._driver: return []
+        # Read-through: MATCH…RETURN queries pass through to prod so the sandbox
+        # sees real context; only a write-cypher (MERGE/CREATE/SET/…) is blocked.
+        if _sbx_write_blocked() and _sbx_is_write_cypher(cypher):
+            _sbx_note("neo4j-query"); return []
         try:
             async with self._driver.session() as s:
                 result = await s.run(cypher, **(params or {}))
@@ -1684,6 +1709,7 @@ class FabricNeo4j:
     async def upsert_node(self, label: str, node_id: str, props: Dict = None) -> bool:
         """MERGE a node by id with arbitrary label and properties."""
         if not self._driver: return False
+        if _sbx_write_blocked(): _sbx_note("neo4j"); return True
         # Sanitise label (Cypher labels can't be parameterised)
         lbl = re.sub(r"[^A-Za-z0-9_]", "", label) or "Node"
         try:
@@ -1703,6 +1729,7 @@ class FabricNeo4j:
         This is the generic link method used by Loom, Skills, and any other
         subsystem that needs to write edges into the fabric graph."""
         if not self._driver: return False
+        if _sbx_write_blocked(): _sbx_note("neo4j"); return True
         flbl = re.sub(r"[^A-Za-z0-9_]", "", from_label) or "Node"
         tlbl = re.sub(r"[^A-Za-z0-9_]", "", to_label) or "Node"
         rtype = re.sub(r"[^A-Z0-9_]", "_", rel.upper()) or "RELATED_TO"
@@ -1723,6 +1750,7 @@ class FabricNeo4j:
         """Bulk-write edges in a single session. Each edge dict needs:
         from_label, from_id, to_label, to_id, rel, props (optional)."""
         if not self._driver or not edges: return 0
+        if _sbx_write_blocked(): _sbx_note("neo4j"); return len(edges)
         written = 0
         try:
             async with self._driver.session() as s:
@@ -1824,6 +1852,7 @@ class MemoryGraphAdapter(GraphAdapter):
     async def upsert_node(self, label, node_id, props=None):
         be = self._backend()
         if not be: return False
+        if _sbx_write_blocked(): _sbx_note("memory-neo4j"); return True
         # Memory's neo4j uses different method names — try a few
         for fn_name in ("upsert_node","merge_node","add_node"):
             fn = getattr(be, fn_name, None)
@@ -1841,6 +1870,7 @@ class MemoryGraphAdapter(GraphAdapter):
     async def link(self, fl, fi, tl, ti, rel="RELATED_TO", props=None):
         be = self._backend()
         if not be: return False
+        if _sbx_write_blocked(): _sbx_note("memory-neo4j"); return True
         # Try to get a driver/session
         drv = getattr(be, "_driver", None) or getattr(be, "driver", None)
         if not drv: return False

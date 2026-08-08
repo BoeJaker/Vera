@@ -981,6 +981,8 @@ OLLAMA_QUEUE_TIMEOUT = float(os.environ.get("OLLAMA_QUEUE_TIMEOUT", "0") or 0)
 # dark and can never wedge generation. See vera/ollama_gate.py.
 from Vera.vera import ollama_gate as _gate   # noqa: E402
 _GATE_ON = _gate.gate_enabled()
+# Dev-sandbox write guard (strict no-op in prod). See vera/sandbox_guard.py.
+from Vera.vera.sandbox_guard import write_blocked as _sbx_write_blocked   # noqa: E402
 
 
 def _split_redis_url(url: str):
@@ -3825,6 +3827,10 @@ async def result_listener():
                 await REDIS.xack(RESULT_STREAM, GROUP_RESULTS, msg_id)
 
 async def _pg_archive(task_id,result_json):
+    # Dev sandboxes share prod's Postgres — don't archive their task results into
+    # prod's table (strict no-op in prod; see vera/sandbox_guard.py).
+    if _sbx_write_blocked():
+        return
     try:
         async with PG_POOL.acquire() as conn:
             await conn.execute("INSERT INTO vera_task_results(task_id,result,ts) VALUES($1,$2::jsonb,NOW()) ON CONFLICT DO NOTHING",task_id,result_json)
