@@ -4952,7 +4952,8 @@ async def _merge_in_checkout(root: str, branch: str, into: str, wt: str, msg: st
                         "conflict, returns restart_required) when `to` is a live checkout "
                         "like prod on main. Never the old blind `git checkout <to>`. "
                         "Input: id (str!), to (str — default main).")
-async def evolve_pipeline_promote(id: str = "", to: str = "main", trace_id=None):
+async def evolve_pipeline_promote(id: str = "", to: str = "main", force: bool = False,
+                                  trace_id=None):
     got = await evolve_pipeline_get(id=id)
     if got.get("error"):
         return got
@@ -4978,6 +4979,21 @@ async def evolve_pipeline_promote(id: str = "", to: str = "main", trace_id=None)
         return {"error": f"unknown branch: {branch}"}
     if not (await _git("rev-parse", "--verify", f"refs/heads/{to}", repo_root=root))["ok"]:
         return {"error": f"unknown target branch: {to}"}
+    # ── GATE (§3/§6): a code change only merges to `to` when its pipeline gate
+    # PASSED — green tests on the branch in the dev sandbox, which also boots it
+    # (catching the import-time breakage py_compile misses). No gate pass → no
+    # promote. `force=True` is the sanctioned override for a change the score-gate
+    # can't evaluate (docs/infra) — still hook-validated at the merge.
+    if rec.get("gate_passed") is not True and not force:
+        rec["decision"] = "held"
+        _pstep(rec, "gate", False, "promote blocked — gate not passed")
+        await _save_pipeline(rec)
+        await _audit("pipeline.promote", f"BLOCKED {branch} → {to}: gate not passed",
+                     id=id, kind="code", branch=branch, ok=False, repo=rec.get("repo"))
+        return {"ok": False, "held": True, "gate_passed": rec.get("gate_passed"),
+                "error": "gate not passed — run evolve.pipeline.test to gate the branch "
+                         "first, or promote with force=true for a change the score-gate "
+                         "can't evaluate (docs/infra)."}
     msg = f"Loop Lab: merge {branch} (pipeline {id})"
     wl = await _git("worktree", "list", "--porcelain", repo_root=root)
     wt_of = _worktree_paths_by_branch(wl.get("out", ""))

@@ -71,9 +71,10 @@ secret:  ## Print a fresh VERA_SECRET_KEY
 	$(PY) -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"
 
 .PHONY: install-hooks
-install-hooks:  ## Enable the pre-commit secret scanner (git core.hooksPath)
+install-hooks:  ## Enable repo-hygiene git hooks (secret-scan + branch/author/message guardrails)
 	git config core.hooksPath tools/hooks
-	@echo "Secret scan will run on every commit. Bypass once with: git commit --no-verify"
+	@echo "Hooks active: block main commits, typed branch names, no AI author/attribution, secret-scan."
+	@echo "Bypass once (sparingly) with: git commit --no-verify"
 
 .PHONY: scan
 scan:  ## Scan all tracked files for leaked secrets
@@ -95,6 +96,14 @@ test:  ## Smoke-test the running orchestrator
 .PHONY: test-unit
 test-unit:  ## Run the pytest unit suite (operator + docgen contract)
 	$(PY) -m pytest tests -q
+
+.PHONY: test-critical
+test-critical:  ## Run the critical-system regression tier (§6 gate set)
+	$(PY) -m pytest tests -m critical -q
+
+.PHONY: test-hooks
+test-hooks:  ## Test the repo-hygiene git hooks (branch/author/message guardrails)
+	sh tests/test_hooks.sh
 
 .PHONY: docs-shots
 docs-shots:  ## Capture UI screenshots + regenerate docs (needs requirements-operator.txt)
