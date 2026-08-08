@@ -13,11 +13,12 @@
 # Keep .claude private EXCEPT the Vera dev skills — those SHIP in the repo so any
 # agent working on Vera (its own dev container) gets them. Everything else under
 # .claude (projects/chat history, settings.local.json, worktrees, locks) stays
-# ignored. Negation order matters: un-ignore the dir, re-ignore its contents,
-# then re-include only skills/.
-!.claude/
-.claude/*
-!.claude/skills/
+# ignored. LEADING SLASH anchors these to the repo ROOT only — an un-anchored
+# `!.claude/` would un-ignore EVERY nested .claude dir (e.g. tools/*/.claude).
+# Order matters: un-ignore the root dir, re-ignore its contents, re-include skills/.
+!/.claude/
+/.claude/*
+!/.claude/skills/
 
 lib/
 
