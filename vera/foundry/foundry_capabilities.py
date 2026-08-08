@@ -1001,22 +1001,33 @@ async def cap_pxe_config_save(enabled=None, host=None, bridge=None, subnet=None,
                 "provision node: an image × feature bundles × autoinstall. Inputs: id "
                 "(blank=new), name (str!), image_id (str! — a cloudimg/iso catalogue "
                 "entry), features (csv/list — same bundles as CT/VM), disk (int GB), "
-                "autoinstall (str — extra preseed/kickstart/cloud-init). Output: {ok,id}.",
+                "autoinstall (str — extra preseed/kickstart/cloud-init), arch "
+                "(amd64|arm64), boot_type (uefi|bios|rpi-netboot|rpi-flash — blank "
+                "auto-picks by arch), display (hdmi|xpt2046 — xpt2046 = 3.2\" SPI "
+                "touchscreen on a Raspberry Pi), ip (static, no DHCP on the main LAN). "
+                "arch: amd64|arm64. boot_type: uefi|bios|rpi-netboot|rpi-flash. "
+                "display: hdmi|xpt2046. Output: {ok,id}.",
 )
 async def cap_pxe_profile_save(id="", name="", image_id="", features=None, disk: int = 20,
-                               autoinstall="", trace_id=None) -> Dict:
+                               autoinstall="", arch="amd64", boot_type="", display="hdmi",
+                               ip="", trace_id=None) -> Dict:
     r = _redis()
     if not r:
         return {"error": "no redis"}
     if isinstance(features, str):
         features = [f.strip() for f in features.replace(",", " ").split() if f.strip()]
     features = features or ["enrol", "hardening"]
+    arch = (arch or "amd64").lower()
+    boot_type = (boot_type or ("rpi-netboot" if arch in ("arm64", "armhf") else "uefi")).lower()
+    display = (display or "hdmi").lower()
     if not id:
         if not name:
             return {"error": "name required"}
         id = uuid.uuid4().hex[:12]
     prof = {"id": id, "name": name, "image_id": image_id, "features": features,
-            "disk": int(disk), "autoinstall": autoinstall, "updated": time.time()}
+            "disk": int(disk), "autoinstall": autoinstall, "arch": arch,
+            "boot_type": boot_type, "display": display, "ip": ip.strip(),
+            "updated": time.time()}
     await r.hset(K_PXE_PROFILES, id, json.dumps(prof))
     await emit_event({"type": "foundry.pxe.profile.saved", "id": id})
     return {"ok": True, "id": id}
@@ -1112,6 +1123,148 @@ async def cap_pxe_status(trace_id=None) -> Dict:
             "profiles": len(profs), "macs": len(macs), "config": cfg, "note": note}
 
 
+# ── netboot artifact rendering (pure) — a PXE profile → its boot files ──────────
+def _pxe_slug(s: str) -> str:
+    s = (s or "node").lower()
+    return ("".join(c if (c.isalnum() or c == "-") else "-" for c in s).strip("-")) or "node"
+
+
+def _render_features_script(feats: List[str]) -> str:
+    """First-boot script applying the SAME feature bundles as CT/VM (target-agnostic)."""
+    out = ["#!/bin/sh", "set -e", "# Foundry feature bundles — applied on first boot"]
+    if "hardening" in feats:
+        out += ["# --- hardening ---", _HARDEN]
+    if "file-client" in feats:
+        out += ["# --- file-client ---",
+                "command -v apt-get >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive "
+                "apt-get install -y cifs-utils nfs-common autofs >/dev/null 2>&1 || true"]
+    if "docker-swarm" in feats or "distributed-compute" in feats:
+        out += ["# --- docker (swarm / compute) ---",
+                "command -v docker >/dev/null 2>&1 || (curl -fsSL https://get.docker.com | sh) || true"]
+    out += ["# enrol/mesh: host registers with Foundry on check-in (SSH-cert + FreeIPA + mesh)",
+            "echo foundry-features-done"]
+    return "\n".join(out) + "\n"
+
+
+def _render_rpi_config(display: str) -> str:
+    """Raspberry Pi config.txt. display=xpt2046 → 3.2\" SPI TFT (ILI9341) + XPT2046 touch."""
+    lines = ["# Foundry Raspberry Pi config.txt", "arm_64bit=1", "enable_uart=1"]
+    if display == "xpt2046":
+        lines += [
+            "# --- XPT2046 3.2\" SPI touchscreen: ILI9341 TFT + ADS7846-compatible touch ---",
+            "# (generic 3.2\" board defaults — adjust dc/reset/penirq pins to your wiring)",
+            "dtparam=spi=on",
+            "dtoverlay=fbtft,spi0-0,ili9341,dc_pin=24,reset_pin=25,rotate=270,speed=32000000,fps=30,bgr=1",
+            "dtoverlay=ads7846,cs=1,penirq=17,penirq_pull=2,speed=1000000,keep_vref_on=1,"
+            "swapxy=0,pmax=255,xohms=150,xmin=200,xmax=3900,ymin=200,ymax=3900",
+            "hdmi_force_hotplug=0",
+        ]
+    else:
+        lines += ["# --- HDMI monitor ---", "hdmi_force_hotplug=1", "hdmi_drive=2"]
+    return "\n".join(lines) + "\n"
+
+
+def _render_rpi_cmdline(profile: Dict, cfg: Dict) -> str:
+    boot_type = profile.get("boot_type", "rpi-netboot")
+    ip = profile.get("ip", "")
+    gw = cfg.get("gateway", "")
+    net = f"ip={ip}::{gw}:255.255.255.0::eth0:off" if ip else "ip=dhcp"
+    if boot_type == "rpi-netboot":
+        root = f"root=/dev/nfs nfsroot={gw}:/srv/foundry/rpi/{_pxe_slug(profile.get('name',''))},vers=3 rw"
+    else:
+        root = "root=/dev/mmcblk0p2 rootwait"
+    con = " fbcon=map:1 console=tty1" if profile.get("display") == "xpt2046" else ""
+    return f"console=serial0,115200 {root} {net}{con} elevator=deadline\n"
+
+
+def _render_ipxe(profile: Dict, cfg: Dict, image: Dict, http: str) -> str:
+    nm = _pxe_slug(profile.get("name", "node"))
+    return "\n".join([
+        "#!ipxe",
+        f"# Foundry profile: {profile.get('name')} ({profile.get('arch','amd64')})",
+        "dhcp || echo using-next-server",
+        f"set base {http}/{nm}",
+        f"kernel ${{base}}/vmlinuz initrd=initrd.img autoinstall "
+        f"ds=nocloud-net;s=${{base}}/autoinstall/ ---",
+        f"initrd ${{base}}/initrd.img",
+        "boot || shell",
+    ]) + "\n"
+
+
+def _render_autoinstall(profile: Dict, cfg: Dict, feats: List[str]) -> str:
+    """cloud-init NoCloud user-data: static net + run the feature bundle on first boot."""
+    ip = profile.get("ip", "")
+    gw = cfg.get("gateway", "")
+    net = ""
+    if ip:
+        net = ("network:\n  version: 2\n  ethernets:\n    eth0:\n"
+               f"      addresses: [{ip}/24]\n      routes: [{{to: default, via: {gw}}}]\n")
+    fb = _render_features_script(feats).replace("\n", "\n      ")
+    return ("#cloud-config\n"
+            f"hostname: {_pxe_slug(profile.get('name','node'))}\n"
+            "ssh_pwauth: false\n"
+            + net
+            + "write_files:\n"
+              "  - path: /var/lib/foundry/features.sh\n    permissions: '0755'\n    content: |\n"
+              f"      {fb}\n"
+              "runcmd:\n  - [ sh, /var/lib/foundry/features.sh ]\n")
+
+
+def _render_boot(profile: Dict, cfg: Dict, image: Dict) -> Dict:
+    """Turn a PXE profile into its netboot artifacts — unified across x86 + RPi."""
+    arch = (profile.get("arch") or "amd64").lower()
+    boot_type = (profile.get("boot_type")
+                 or ("rpi-netboot" if arch in ("arm64", "armhf") else "uefi")).lower()
+    display = (profile.get("display") or "hdmi").lower()
+    feats = profile.get("features") or []
+    http = cfg.get("http_base") or f"http://{cfg.get('gateway','10.42.0.1')}/foundry"
+    artifacts: Dict[str, str] = {"features.sh": _render_features_script(feats)}
+    if boot_type in ("rpi-netboot", "rpi-flash"):
+        artifacts["config.txt"] = _render_rpi_config(display)
+        artifacts["cmdline.txt"] = _render_rpi_cmdline(profile, cfg)
+        if boot_type == "rpi-flash":
+            artifacts["flash.plan"] = (
+                f"# rpi-imager/dd flash plan for {profile.get('name')}\n"
+                f"IMAGE={image.get('source_url','<image>')}\n"
+                "# 1) rpi-imager --cli $IMAGE /dev/sdX   (write base image to SD)\n"
+                "# 2) copy config.txt + cmdline.txt onto the boot partition\n"
+                "# 3) copy features.sh + a firstrun hook into the rootfs\n")
+    else:
+        artifacts["boot.ipxe"] = _render_ipxe(profile, cfg, image, http)
+        artifacts["autoinstall/user-data"] = _render_autoinstall(profile, cfg, feats)
+        artifacts["autoinstall/meta-data"] = \
+            f"instance-id: {_pxe_slug(profile.get('name','node'))}\n"
+    return {"boot_type": boot_type, "arch": arch, "display": display,
+            "features": feats, "artifacts": artifacts}
+
+
+@capability(
+    "foundry.pxe.render", http_method="GET", http_path="/foundry/pxe/render",
+    http_tags=["foundry"], memory="off", silent=True,
+    description="Render a PXE boot profile into its netboot artifacts: iPXE + "
+                "cloud-init autoinstall for x86; config.txt/cmdline.txt for Raspberry "
+                "Pi (incl. the XPT2046 3.2\" SPI touchscreen overlay), plus the feature "
+                "first-boot script (same bundles as CT/VM). Input: profile_id (str!). "
+                "Output: {ok, boot_type, arch, display, features, artifacts:{name:content}}.",
+)
+async def cap_pxe_render(profile_id: str = "", trace_id=None) -> Dict:
+    r = _redis()
+    raw = await r.hget(K_PXE_PROFILES, profile_id) if (r and profile_id) else None
+    if not raw:
+        return {"error": f"profile '{profile_id}' not found"}
+    prof = json.loads(raw)
+    cfg = await _pxe_cfg()
+    img: Dict = {}
+    if prof.get("image_id") and r:
+        iraw = await r.hget(K_IMAGES, prof["image_id"])
+        if iraw:
+            try:
+                img = json.loads(iraw)
+            except Exception:
+                img = {}
+    return {"ok": True, **_render_boot(prof, cfg, img)}
+
+
 @capability(
     "foundry.pxe.server.deploy", http_method="POST", http_path="/foundry/pxe/server/deploy",
     http_tags=["foundry"], memory="on",
@@ -1127,12 +1280,32 @@ async def cap_pxe_server_deploy(trace_id=None) -> Dict:
         return {"error": "set foundry.pxe.config host first (the vera-foundry "
                          "provisioning CT) — create it, then deploy the netboot stack "
                          "onto the dedicated provisioning bridge/VLAN (Phase 2)."}
-    # The netboot install runs on the provisioning host (SSH). Kept gated until the
-    # vera-foundry CT + VLAN exist so we never touch the main LAN's DHCP.
-    return {"ok": False, "deployed": False,
-            "note": f"host '{cfg['host']}' configured; netboot install (dnsmasq+TFTP+"
-                    "iPXE) is the Phase-2 step on the isolated bridge/VLAN. Confirm the "
-                    "VLAN + host, then I'll run the install."}
+    # Render every profile into its netboot artifacts (pure) — this is what gets
+    # written to the host's TFTP/HTTP roots.
+    r = _redis()
+    profs = (await cap_pxe_profile_list()).get("profiles", [])
+    rendered: Dict[str, Dict] = {}
+    for p in profs:
+        img: Dict = {}
+        if p.get("image_id") and r:
+            iraw = await r.hget(K_IMAGES, p["image_id"])
+            if iraw:
+                try:
+                    img = json.loads(iraw)
+                except Exception:
+                    img = {}
+        rendered[p["id"]] = _render_boot(p, cfg, img)
+    # The actual install (dnsmasq scoped-DHCP + TFTP + iPXE + HTTP) on the host is
+    # gated until the vera-foundry CT + dedicated VLAN exist — never touch the main
+    # LAN's DHCP. When ready this writes `rendered` to the host over SSH.
+    return {"ok": True, "deployed": False, "host": cfg.get("host"),
+            "rendered_profiles": len(rendered),
+            "profiles": {pid: {"boot_type": rv["boot_type"], "arch": rv["arch"],
+                               "display": rv["display"], "files": list(rv["artifacts"].keys())}
+                         for pid, rv in rendered.items()},
+            "note": f"rendered {len(rendered)} profile(s) for host '{cfg['host']}'. "
+                    "Netboot install writes these to the host's TFTP/HTTP roots once "
+                    "the dedicated VLAN + CT are up — gated so it never touches the main LAN."}
 
 
 @APP.get("/foundry/panel", include_in_schema=False)
