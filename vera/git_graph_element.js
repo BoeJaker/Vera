@@ -56,6 +56,12 @@
   color:var(--dim2,var(--t3,#8a7e70));white-space:nowrap}
 .ref.looplab{border-color:var(--acc,var(--ac,#5a9e8f));color:var(--acc,var(--ac,#5a9e8f))}
 .ref.main{border-color:var(--ok,var(--ac2,#6db87a));color:var(--ok,var(--ac2,#6db87a))}
+.attr{font-size:8.5px;padding:1px 6px;border-radius:8px;flex-shrink:0;white-space:nowrap;
+  border:1px solid var(--acc,var(--ac,#5a9e8f));color:var(--acc,var(--ac,#5a9e8f))}
+.attr.claude{border-color:#c98fae;color:#c98fae}
+.attr.autonomous{border-color:var(--warn,#d9a441);color:var(--warn,#d9a441)}
+.attr.clk{cursor:pointer}
+.attr.clk:hover{background:var(--acc,var(--ac,#5a9e8f));color:#111;border-color:transparent}
 .empty{padding:14px;text-align:center;color:var(--dim2,var(--t3,#8a7e70))}
 </style>
 <div class="hdr"><span class="ttl">Commit graph</span><span class="count" id="count"></span></div>
@@ -187,6 +193,23 @@
           const cls = name.startsWith('loop-lab/') ? 'looplab' : (name === 'main' || name === 'master') ? 'main' : '';
           return '<span class="ref ' + cls + '">' + this._esc(name) + '</span>';
         }).join('');
+        // Attribution chip — which session/agent produced this commit. Clickable
+        // (when a session is known) to drill into the chat that drove it. The
+        // panel exposes window.openSessionChat; the graph lives in that document.
+        const a = c.attribution;
+        let attrHtml = '';
+        if (a && (a.controller || a.session_id)) {
+          const label = a.controller || 'session';
+          const cls = a.controller === 'claude_code' ? ' claude'
+            : a.controller === 'autonomous' ? ' autonomous' : '';
+          const clickable = a.session_id && typeof window !== 'undefined'
+            && typeof window.openSessionChat === 'function';
+          const tip = this._esc([a.controller, a.via, a.session_id, a.pipeline_id ? ('pipeline ' + a.pipeline_id) : '']
+            .filter(Boolean).join(' · '));
+          attrHtml = '<span class="attr' + cls + (clickable ? ' clk' : '') + '" title="' + tip + '"'
+            + (clickable ? ' onclick="window.openSessionChat(\'' + this._esc(a.session_id) + '\')"' : '')
+            + '>' + this._esc(label) + '</span>';
+        }
         return '<div class="row">' +
           '<svg width="' + svgW + '" height="' + ROW_H + '" style="flex-shrink:0">' +
           '<circle cx="' + (LANE_W / 2 + lane * LANE_W) + '" cy="' + (ROW_H / 2) + '" r="' + DOT_R +
@@ -194,6 +217,7 @@
           '<span class="hash">' + this._esc((c.hash || '').slice(0, 7)) + '</span>' +
           (refs ? '<span class="refs">' + refs + '</span>' : '') +
           '<span class="subj">' + this._esc(c.subject || '') + '</span>' +
+          attrHtml +
           '</div>';
       }).join('');
       wrap.innerHTML = '<div style="position:relative">' + edgeSvg +
