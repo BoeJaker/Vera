@@ -42,3 +42,16 @@ def test_live_prod_branch_is_flagged_so_approve_refuses_it():
 def test_empty_and_blank_are_empty_set():
     assert core.branches_checked_out("") == set()
     assert core.branches_checked_out("\n \n") == set()
+
+
+def test_worktree_paths_by_branch():
+    m = core.worktree_paths_by_branch(PORCELAIN)
+    assert m["agentic-loop-improvements-3"] == "/home/boejaker/Vera"
+    assert m["loop-lab/phase-a-test-safetynet"] == \
+        "/home/boejaker/Vera/.loop-lab-worktrees/phase-a-test-safetynet"
+    # detached worktree contributes no branch → its path is not mapped
+    assert not any("_merge" in p for p in m.values())
+    # a branch NOT in the map is free for an isolated merge; one IN it is a live
+    # checkout that promote must merge into in-place (guarded), never git-checkout.
+    assert "main" not in m
+    assert core.worktree_paths_by_branch("") == {}

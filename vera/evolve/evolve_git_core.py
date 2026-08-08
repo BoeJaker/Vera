@@ -27,3 +27,23 @@ def branches_checked_out(worktree_list_porcelain: str) -> set:
             if name:
                 out.add(name)
     return out
+
+
+def worktree_paths_by_branch(worktree_list_porcelain: str) -> dict:
+    """Map {branch name -> its worktree path} from `git worktree list --porcelain`.
+
+    Lets a promote/deploy route the merge: a target NOT in this map is free for an
+    isolated-worktree merge; a target that IS here is checked out live (e.g. prod
+    on main at that path), so it takes the guarded in-checkout deploy path instead
+    of the blind `git checkout` the old promote used."""
+    out: dict = {}
+    path = None
+    for line in (worktree_list_porcelain or "").splitlines():
+        line = line.rstrip()
+        if line.startswith("worktree "):
+            path = line[len("worktree "):].strip()
+        elif line.strip().startswith("branch refs/heads/"):
+            name = line.strip()[len("branch refs/heads/"):].strip()
+            if name and path:
+                out[name] = path
+    return out

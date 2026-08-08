@@ -4887,12 +4887,71 @@ async def evolve_pipeline_test(id: str = "", trace_id=None):
     return {"ok": True, "gate_passed": passed, "gate_delta": delta, "output": cand["output"]}
 
 
+from Vera.vera.evolve.evolve_git_core import worktree_paths_by_branch as _worktree_paths_by_branch  # noqa: E402
+
+
+async def _merge_isolated(root: str, branch: str, into: str, msg: str) -> Dict[str, Any]:
+    """Merge `branch` into `into` in a THROWAWAY worktree — for when `into` is NOT
+    checked out anywhere, so no live working tree is touched. {ok, commit, conflicts}."""
+    import uuid
+    tmp = str(Path(root) / ".loop-lab-worktrees" / f"_merge-{uuid.uuid4().hex[:8]}")
+    add = await _sh(_git_wt_argv(str(root), "worktree", "add", tmp, into), cwd=str(root))
+    if not add["ok"]:
+        return {"ok": False, "commit": "", "conflicts": [],
+                "error": f"worktree add failed: {add['err'] or add['out']}"}
+    conflicts: List[str] = []
+    sha = ""
+    try:
+        mg = await _sh(_git_wt_argv(tmp, "merge", "--no-ff", "-m", msg, branch), cwd=tmp)
+        if mg["ok"]:
+            sha = (await _sh(_git_wt_argv(tmp, "rev-parse", "HEAD"), cwd=tmp)).get("out", "")
+        else:
+            cf = await _sh(_git_wt_argv(tmp, "diff", "--name-only", "--diff-filter=U"), cwd=tmp)
+            conflicts = [ln for ln in (cf.get("out", "") or "").splitlines() if ln.strip()]
+            await _sh(_git_wt_argv(tmp, "merge", "--abort"), cwd=tmp)
+    finally:
+        await _sh(_git_wt_argv(str(root), "worktree", "remove", "--force", tmp), cwd=str(root))
+    return {"ok": bool(sha), "commit": sha, "conflicts": conflicts,
+            "error": "" if sha else "merge conflict"}
+
+
+async def _merge_in_checkout(root: str, branch: str, into: str, wt: str, msg: str) -> Dict[str, Any]:
+    """DEPLOY merge: `into` is checked out LIVE at `wt` (e.g. prod on main), so an
+    isolated worktree can't touch it. Merge `branch` into it IN PLACE — committed +
+    hook-validated — but GUARDED: it must already be on `into` (never switch a live
+    checkout), its tree must be clean (protect uncommitted work), and it must merge
+    without conflict. Requires a deliberate restart to activate — flagged, never
+    performed here. Replaces the old promote's blind `git checkout <to>`."""
+    cur = (await _sh(_git_wt_argv(wt, "symbolic-ref", "--short", "-q", "HEAD"), cwd=wt)).get("out", "")
+    if cur != into:
+        return {"ok": False, "commit": "", "conflicts": [],
+                "error": f"target worktree is on '{cur}', not '{into}' — refusing to switch a live checkout"}
+    st = await _sh(_git_wt_argv(wt, "status", "--porcelain"), cwd=wt)
+    if (st.get("out", "") or "").strip():
+        return {"ok": False, "commit": "", "conflicts": [],
+                "error": "target checkout has uncommitted changes — refusing (protect WIP); commit or clean it first"}
+    mt = await _sh(_git_wt_argv(wt, "merge-tree", "--write-tree", into, branch), cwd=wt)
+    if not mt["ok"]:
+        return {"ok": False, "commit": "", "conflicts": ["(merge-tree reported conflicts)"],
+                "error": "merge conflict — resolve on the branch, then re-promote"}
+    mg = await _sh(_git_wt_argv(wt, "merge", "--no-ff", "-m", msg, branch), cwd=wt)
+    if not mg["ok"]:
+        await _sh(_git_wt_argv(wt, "merge", "--abort"), cwd=wt)
+        return {"ok": False, "commit": "", "conflicts": [],
+                "error": f"merge failed: {mg['err'] or mg['out']}"}
+    sha = (await _sh(_git_wt_argv(wt, "rev-parse", "HEAD"), cwd=wt)).get("out", "")
+    return {"ok": True, "commit": sha, "conflicts": [], "restart_required": True, "error": ""}
+
+
 @capability("evolve.pipeline.promote", memory="on",
             http_method="POST", http_path="/evolve/pipeline/promote", http_tags=["evolve"],
-            description="Manually promote a pipeline's change: for a variant "
-                        "pipeline, promote the overlay; for a code pipeline, MERGE "
-                        "its branch into main. Input: id (str!), to (str — merge "
-                        "target for code, default main).")
+            description="Promote a pipeline's change. Variant → set the overlay. Code → "
+                        "MERGE its branch into `to` (default main) SAFELY: an isolated "
+                        "throwaway worktree when `to` isn't checked out, or a guarded "
+                        "in-checkout merge (no branch switch, refuses a dirty tree or a "
+                        "conflict, returns restart_required) when `to` is a live checkout "
+                        "like prod on main. Never the old blind `git checkout <to>`. "
+                        "Input: id (str!), to (str — default main).")
 async def evolve_pipeline_promote(id: str = "", to: str = "main", trace_id=None):
     got = await evolve_pipeline_get(id=id)
     if got.get("error"):
@@ -4907,27 +4966,42 @@ async def evolve_pipeline_promote(id: str = "", to: str = "main", trace_id=None)
         await _audit("pipeline.promote", f"variant overlay ← {rec['variant_id']} "
                      f"({rec['profile']})", id=id, kind="variant")
         return {"ok": not res.get("error"), "decision": "promoted"}
-    # code: merge branch → main — this is the "push to real source" step.
+    # code: merge branch → `to`. Route SAFELY — never the blind `git checkout <to>`
+    # in the repo root the old promote used (that switched prod's live checkout and
+    # could clobber uncommitted work).
     branch = rec.get("branch")
     if not branch:
         return {"error": "pipeline has no branch"}
+    to = (to or "main").strip()
     root = await _resolve_repo_root(rec.get("repo") or DEFAULT_REPO_ID)
-    co = await _git("checkout", to or "main", repo_root=root)
-    if not co["ok"]:
-        return {"error": f"checkout {to} failed: {co['err']}"}
-    mg = await _git("merge", "--no-ff", "-m",
-                    f"Loop Lab: merge {branch} (pipeline {id})", branch, repo_root=root)
-    ok = mg["ok"]
+    if not (await _git("rev-parse", "--verify", f"refs/heads/{branch}", repo_root=root))["ok"]:
+        return {"error": f"unknown branch: {branch}"}
+    if not (await _git("rev-parse", "--verify", f"refs/heads/{to}", repo_root=root))["ok"]:
+        return {"error": f"unknown target branch: {to}"}
+    msg = f"Loop Lab: merge {branch} (pipeline {id})"
+    wl = await _git("worktree", "list", "--porcelain", repo_root=root)
+    wt_of = _worktree_paths_by_branch(wl.get("out", ""))
+    if to in wt_of:
+        res = await _merge_in_checkout(str(root), branch, to, wt_of[to], msg)   # guarded deploy in place
+    else:
+        res = await _merge_isolated(str(root), branch, to, msg)                 # isolated — no live tree
+    ok = res["ok"]
     rec["decision"] = "promoted" if ok else rec.get("decision", "held")
-    _pstep(rec, "merge", ok, mg["err"] or mg["out"] or f"merged {branch} → {to}")
+    _pstep(rec, "merge", ok, res.get("error") or f"merged {branch} → {to} @ {(res.get('commit') or '')[:10]}")
     await _save_pipeline(rec)
     await _audit("pipeline.promote",
-                 f"MERGED {branch} → {to} (pushed to real source)"
-                 if ok else f"merge {branch} FAILED: {mg['err'][:120]}",
+                 f"MERGED {branch} → {to} @ {(res.get('commit') or '')[:10]}"
+                 if ok else f"merge {branch} → {to} FAILED: {(res.get('error') or '')[:120]}",
                  id=id, kind="code", branch=branch, ok=ok, repo=rec.get("repo"))
     await emit_event({"type": "evolve.pipeline.promoted", "id": id, "branch": branch,
-                      "ok": ok})
-    return {"ok": ok, "merged": branch if ok else "", "error": "" if ok else mg["err"]}
+                      "into": to, "ok": ok, "commit": res.get("commit", "")})
+    out = {"ok": ok, "merged": branch if ok else "", "into": to,
+           "commit": res.get("commit", ""), "conflicts": res.get("conflicts", []),
+           "error": "" if ok else res.get("error", "")}
+    if res.get("restart_required"):
+        out["restart_required"] = True
+        out["note"] = "merged into the live checkout — a deliberate restart is required to activate it"
+    return out
 
 
 @capability("evolve.pipeline.rollback", memory="on",
@@ -6695,28 +6769,14 @@ async def evolve_sandbox_approve(branch: str = "", into: str = "", proposal_id: 
         return {"ok": False, "error": f"'{into}' is checked out by a live worktree; "
                 "approve into an integration branch that isn't currently checked out "
                 "(deploying it to prod is a separate, deliberate step)"}
-    # Merge in a throwaway worktree checked out on `into`, so no live tree is touched.
-    import uuid
-    tmp = str(Path(root) / ".loop-lab-worktrees" / f"_merge-{uuid.uuid4().hex[:8]}")
-    add = await _sh(_git_wt_argv(str(root), "worktree", "add", tmp, into), cwd=str(root))
-    if not add["ok"]:
-        return {"ok": False, "error": f"worktree add failed: {add['err'] or add['out']}"}
-    conflicts: List[str] = []
-    merged_sha = ""
-    try:
-        mg = await _sh(_git_wt_argv(tmp, "merge", "--no-ff", "-m",
-                                    f"Loop Lab: approve+merge {branch} → {into}", branch), cwd=tmp)
-        if mg["ok"]:
-            merged_sha = (await _sh(_git_wt_argv(tmp, "rev-parse", "HEAD"), cwd=tmp)).get("out", "")
-        else:
-            cf = await _sh(_git_wt_argv(tmp, "diff", "--name-only", "--diff-filter=U"), cwd=tmp)
-            conflicts = [ln for ln in (cf.get("out", "") or "").splitlines() if ln.strip()]
-            await _sh(_git_wt_argv(tmp, "merge", "--abort"), cwd=tmp)
-    finally:
-        await _sh(_git_wt_argv(str(root), "worktree", "remove", "--force", tmp), cwd=str(root))
-    if not merged_sha:
+    # Merge in a throwaway worktree (into is NOT checked out — gated just above), so
+    # no live working tree is touched. Shared with evolve.pipeline.promote.
+    res = await _merge_isolated(str(root), branch, into,
+                                f"Loop Lab: approve+merge {branch} → {into}")
+    if not res["ok"]:
         return {"ok": False, "error": "merge conflict — resolve on the branch, then re-approve",
-                "conflicts": conflicts}
+                "conflicts": res.get("conflicts", [])}
+    merged_sha = res["commit"]
     # Mark the Workspace-Changes proposal MERGED (no file write-back).
     if proposal_id:
         mark = CAPABILITY_REGISTRY.get("ide.workspace.changes.mark_merged")
