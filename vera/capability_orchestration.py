@@ -3228,9 +3228,35 @@ except Exception:                       # provenance must never break event emit
         return None
 
 
+def _session_stamp(event: dict) -> None:
+    """Stamp the session + caller that TRIGGERED this event (§5.1 provenance) —
+    the 'which session' hop, so any event/error ties back not just to the commit
+    (via _prov_stamp) but to the Claude-Code / chat / loop session behind it.
+    Reuses the SAME resolution as the activity graph: an explicit session already
+    on the event → the syslog trigger chain (set per /mcp/call) → the last-known
+    _CURRENT_SESSION fallback. `via` records the caller KIND (e.g. 'mcp' = a
+    Claude Code cap call). setdefault semantics; never overwrites; never raises —
+    emitting an event must not depend on this succeeding."""
+    try:
+        if not event.get("sid") and not event.get("session_id"):
+            sid = ""
+            _sys = sys.modules.get("syslog")
+            if _sys and hasattr(_sys, "get_trigger_chain"):
+                sid = ((_sys.get_trigger_chain() or {}).get("session_id") or "")
+            sid = sid or _CURRENT_SESSION
+            if sid:
+                event["sid"] = sid
+        ck = CALLER_KIND.get("")
+        if ck and not event.get("via"):
+            event["via"] = ck
+    except Exception:
+        pass
+
+
 async def emit_event(event: dict):
     event.setdefault("ts", now_iso())
-    _prov_stamp(event)   # compact git {ver, br, dirty} → correlate any event to code
+    _prov_stamp(event)     # compact git {ver, br, dirty} → correlate any event to code
+    _session_stamp(event)  # {sid, via} → correlate any event to the session that triggered it
     ev_json = json.dumps(event)
     if REDIS:
         try:

@@ -24,6 +24,7 @@ Self-test (no stdio loop):
 
 import argparse
 import json
+import os
 import ssl
 import sys
 import urllib.request
@@ -116,8 +117,14 @@ class Vera:
         # call came from a Claude Code session rather than the browser chat
         # UI (which POSTs to this same /mcp/call endpoint but never sets
         # this). Read server-side into evolve.* run records' triggered_by.
-        resp = self._post("/mcp/call", {"name": cap, "arguments": arguments or {},
-                                        "caller_kind": "mcp"})
+        payload = {"name": cap, "arguments": arguments or {}, "caller_kind": "mcp"}
+        # Best-effort Claude session id, if the launcher exposes one (env). Lets
+        # server-side provenance stamp the EXACT session onto events (§5.1); when
+        # absent, caller_kind alone still marks the call as Claude-driven.
+        _sess = os.environ.get("CLAUDE_SESSION_ID") or os.environ.get("VERA_CLAUDE_SESSION") or ""
+        if _sess:
+            payload["session_id"] = _sess
+        resp = self._post("/mcp/call", payload)
         # Vera wraps the real result under "content".
         if isinstance(resp, dict) and "content" in resp:
             return resp["content"]
