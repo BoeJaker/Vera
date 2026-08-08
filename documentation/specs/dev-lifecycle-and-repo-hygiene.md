@@ -75,6 +75,12 @@ These are the rules. §3 makes them enforceable; §8 sequences the build.
 - This directly removes: concurrent same-file edits, the "someone changed my file" class of
   confusion (`git-repo-concurrent-changes-normal`), and every SMB git-mechanics failure in
   §7 (dev containers commit against a local `.git`, not the share).
+- **Deploy model (settled 2026-08-08, see §8.1 #1):** prod **tracks `main`** and only ever
+  **fast-forwards** to it — a deploy is `git fetch && git merge --ff-only main` + restart, a
+  deliberate atomic step; prod's tree stays clean. Integration (feature→`main`) happens
+  off-prod via the isolated-worktree gate, **never** by merging into prod's live checkout.
+  `--ff-only` is the safety: if it can't fast-forward, prod's tree was dirtied out-of-band —
+  fix that rather than force it.
 
 ### 2.2b Branch & worktree lifecycle — no scaffolding left behind
 The mess this standard prevents includes the **scaffolding of doing the work**, not just
@@ -413,13 +419,22 @@ land (per §2.5 this doc is the living record, not a snapshot of original intent
 
 ### 8.1 Build learnings & amendments (2026-08-08)
 Recorded from actually building Phases A / A+ / D, so the plan reflects reality, not intent:
-1. **Prod branch-tracking is undecided — the biggest open topology gap.** Prod runs the
-   transitional integration branch `agentic-loop-improvements-3`, while `evolve.sandbox
-   .approve` / `promote` land into `main`. So the UI "approve" doesn't put code where prod
-   runs it, and every deploy so far has been a deliberate merge-into-prod's-branch + restart.
-   **Decide:** prod tracks `main` (approve→main→deploy is one path), or the integration branch
-   *is* the promote target. Until decided, land to prod via a single deliberate merge (never
-   file-copy) + one restart.
+1. **Prod branch-tracking — RESOLVED 2026-08-08: prod tracks `main`.** Was: prod ran the
+   transitional integration branch `agentic-loop-improvements-3` while approve/promote target
+   `main`, so "approve" didn't put code where prod ran, and every deploy was a hack —
+   a merge into prod's *live checkout* + restart. **Decision (best practice, and what §2.2
+   already says — prod is a deploy target, not a dev workspace):** `main` is the single
+   integration branch; feature branches merge into it **off-prod** via the isolated-worktree
+   gate; **prod tracks `main` and deploys fast-forward-only** (`git fetch && merge --ff-only
+   main` + restart), keeping a clean tree. approve/promote simply target `main` — the
+   "dynamic prod-branch / in-checkout merge" idea is **dropped** as the hack it was. **Done:**
+   `main` fast-forwarded to `04ce1af` (contains all work); prod's checkout switched to `main`
+   (content-neutral — same commit, WIP preserved, running pid unaffected). **Remaining:** one
+   restart to load `04ce1af` (activates the log collector + re-stamps provenance `branch=main`);
+   the uncommitted mesh WIP still lives in prod's tree and should be committed to a `feat/…`
+   branch by its author (its two `.bin` artifacts carry an embedded key — gitignore, don't
+   commit). **Ideal end-state (Phase C):** prod runs from an immutable image built from a
+   `main` commit — no working checkout on prod at all.
 2. **`evolve.pipeline.promote` is unsafe and must be reworked (Phase B blocker).** It runs
    `git checkout <to>` in the **prod** repo root — switching prod's live checkout out from
    under the running process. Rework it to the throwaway-worktree merge `evolve.sandbox
