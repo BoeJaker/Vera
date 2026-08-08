@@ -1,0 +1,26 @@
+#!/bin/sh
+# ─────────────────────────────────────────────────────────────────────────────
+#  Vera commit-msg — reject AI-attribution trailers in commit messages
+#  (documentation/specs/dev-lifecycle-and-repo-hygiene.md §2.3;
+#   no-claude-coauthor-trailer, git-attribution-internal-only).
+#
+#  "Claude Code did this" is recorded ONLY in Vera-internal fields (pipeline
+#  controller, reviews[].reviewer, author-map) — never in git history. A
+#  `Co-Authored-By: Claude` trailer once surfaced Claude as a GitHub contributor
+#  and cost an expensive force-push to undo; this stops it at the source.
+#
+#  Enabled via `git config core.hooksPath tools/hooks`.
+#  Emergency bypass: git commit --no-verify
+# ─────────────────────────────────────────────────────────────────────────────
+msg_file="$1"
+[ -n "$msg_file" ] && [ -f "$msg_file" ] || exit 0
+
+if grep -qiE '^[[:space:]]*Co-Authored-By:[[:space:]]*.*(claude|anthropic)' "$msg_file" \
+   || grep -qiE 'Generated with .*(Claude|Anthropic)|Generated with \[Claude|🤖 Generated with' "$msg_file"; then
+    echo "commit-msg: AI-attribution trailer detected (§2.3)." >&2
+    echo "  e.g. 'Co-Authored-By: Claude …' or 'Generated with Claude Code'." >&2
+    echo "  Remove it — AI attribution never goes in git; Claude Code is recorded" >&2
+    echo "  only in Vera-internal fields (pipeline controller / reviewer / author-map)." >&2
+    exit 1
+fi
+exit 0
