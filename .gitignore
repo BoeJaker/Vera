@@ -20,6 +20,14 @@
 /.claude/*
 !/.claude/skills/
 
+# TEMPORARY (2026-08-08): `docs.build` (operator Playwright screenshot capture)
+# REGENERATES these INSIDE the repo, continuously dirtying prod's live working
+# tree and blocking promote-into-live-checkout. Untracked + ignored for now.
+# PROPER FIX (TODO): generate doc assets OUTSIDE the tracked tree, or run prod
+# from an immutable image with no working checkout (§8.1). The .md auto-screenshot
+# sections are ALSO regenerated — handled via skip-worktree on prod for now.
+documentation/assets/
+
 lib/
 
 **/chroma_store/**/
