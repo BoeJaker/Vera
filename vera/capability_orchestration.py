@@ -326,6 +326,17 @@ def register_ui(panel_id: str, label: str, icon: str, html: str, js: str = "",
 
 REDIS = PG_POOL = CHROMA = NEO = None
 
+# COORD_REDIS — a SHARED coordination Redis handle used for cross-process
+# primitives that must be visible across prod AND every dev sandbox container
+# (currently: the Ollama GPU gate / "one big queue"). Dev containers run their
+# DATA on an isolated Redis DB, but coordination MUST be shared, so this always
+# targets the same Redis SERVER as REDIS_URL forced onto VERA_COORD_REDIS_DB
+# (default 0 = prod's shared DB). When it equals the data DB (prod's own case)
+# COORD_REDIS is just REDIS reused. Keys are namespaced 'vera:ollama:gate:*' so
+# they never collide with data on a shared DB.
+COORD_REDIS = None
+COORD_REDIS_DB = int(os.environ.get("VERA_COORD_REDIS_DB", "0") or 0)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # OLLAMA CLUSTER
 # ─────────────────────────────────────────────────────────────────────────────
@@ -965,6 +976,62 @@ def _ollama_sem(iid: str) -> asyncio.Semaphore:
 # stale-check and the stuck-running sweeper know it is alive.
 OLLAMA_QUEUE_TIMEOUT = float(os.environ.get("OLLAMA_QUEUE_TIMEOUT", "0") or 0)
 
+# Cross-process GPU gate ("one big queue"). Feature-flagged (VERA_OLLAMA_GATE);
+# a no-op until enabled AND a coordination Redis is connected, so it deploys
+# dark and can never wedge generation. See vera/ollama_gate.py.
+from Vera.vera import ollama_gate as _gate   # noqa: E402
+_GATE_ON = _gate.gate_enabled()
+
+
+def _split_redis_url(url: str):
+    """(scheme, authority, data_db) from a redis URL — no regex, so it is safe
+    to call from any scope. authority keeps any user:pass@host:port intact."""
+    u = url or "redis://localhost:6379"
+    sep = u.find("://")
+    scheme = u[:sep] if sep >= 0 else "redis"
+    rest = u[sep + 3:] if sep >= 0 else u
+    cut = len(rest)
+    for ch in ("/", "?"):
+        i = rest.find(ch)
+        if i >= 0:
+            cut = min(cut, i)
+    authority = rest[:cut]
+    data_db = 0
+    tail = rest[cut:]
+    if tail.startswith("/"):
+        seg = tail[1:].split("?", 1)[0]
+        if seg.isdigit():
+            data_db = int(seg)
+    return scheme, authority, data_db
+
+
+async def _ensure_coord_redis():
+    """Lazily connect the SHARED coordination Redis for the Ollama gate — the
+    'one big queue' lives here so prod + every dev container see the same slot
+    leases. Idempotent + cached, and robust to whichever path connected REDIS
+    first (main connector, worker loop, or a probe). When the coordination DB
+    equals the data DB (prod's own case) REDIS is reused with no 2nd connection.
+    Fail-open: any error leaves COORD_REDIS None and the gate a no-op."""
+    global COORD_REDIS
+    if COORD_REDIS is not None or not HAS_REDIS:
+        return COORD_REDIS
+    try:
+        scheme, authority, data_db = _split_redis_url(REDIS_URL)
+        if data_db == COORD_REDIS_DB and REDIS is not None:
+            COORD_REDIS = REDIS
+            log.info("✓ Ollama gate coord Redis = data Redis (DB %d)", COORD_REDIS_DB)
+            return COORD_REDIS
+        coord_url = f"{scheme}://{authority}/{COORD_REDIS_DB}"
+        _cr = aioredis.from_url(coord_url, decode_responses=False,
+                                socket_connect_timeout=4, socket_timeout=4)
+        await _cr.ping()
+        COORD_REDIS = _cr
+        log.info("✓ Ollama gate coord Redis connected: %s (data DB %d)",
+                 coord_url, data_db)
+    except Exception as e:
+        log.warning("coord Redis connect failed — Ollama gate stays a no-op: %s", e)
+    return COORD_REDIS
+
 
 async def _ollama_liveness_heartbeat(req_id: str, iid: str, mdl: str,
                                      caller: dict, prompt_preview: str,
@@ -1011,9 +1078,31 @@ async def _ollama_slot(iid: str, timeout: Optional[float] = None):
                 f"{int(wait)}s (node busy with earlier requests)")
     else:
         await sem.acquire()
+    # ── Cross-process GPU gate ("one big queue") ─────────────────────────────
+    # The local semaphore above serialises WITHIN this process; this lease
+    # serialises the same node ACROSS prod + every dev sandbox, so they don't
+    # flood one GPU. Fail-open by construction: a None lease (gate off / node
+    # ungated / coord Redis down / queued past the wait budget) just means the
+    # caller proceeds unslotted — generation is never blocked by the gate.
+    _lease = None
+    if _GATE_ON:
+        try:
+            if COORD_REDIS is None:
+                await _ensure_coord_redis()
+            _cap = _gate.capacity_for(bool(OLLAMA_INSTANCES.get(iid, {}).get("has_gpu")))
+            if _cap > 0 and COORD_REDIS is not None:
+                _lease = await _gate.acquire(
+                    COORD_REDIS, iid, _cap, _gate.ttl_ms(), _gate.wait_s())
+        except Exception as _ge:
+            log.debug("ollama gate acquire skipped for %s: %s", iid, _ge)
     try:
         yield
     finally:
+        if _lease is not None:
+            try:
+                await _gate.release(COORD_REDIS, _lease)
+            except Exception:
+                pass
         sem.release()
 
 
@@ -5343,6 +5432,30 @@ async def obs_neo4j_diag(trace_id=None):
         out["probe"]["attempts"] = attempts
     return out
 
+@capability("ollama.gate.status", memory="off", silent=True,
+            http_method="GET", http_path="/ollama/gate", http_tags=["ollama", "obs"],
+            description="Cross-process Ollama GPU gate ('one big queue') status: "
+                        "whether it is enabled, the coordination Redis DB, and per-node "
+                        "slot capacity / held / free (live occupancy shared across prod + "
+                        "every dev sandbox). Output: {enabled, coord_db, nodes:[...]}.")
+async def ollama_gate_status(trace_id=None):
+    await _ensure_coord_redis()
+    nodes = []
+    for iid, inst in OLLAMA_INSTANCES.items():
+        cap = _gate.capacity_for(bool(inst.get("has_gpu")))
+        if cap <= 0:
+            nodes.append({"node": iid, "has_gpu": bool(inst.get("has_gpu")),
+                          "capacity": 0, "gated": False})
+            continue
+        occ = await _gate.occupancy(COORD_REDIS, iid, cap)
+        nodes.append({"node": iid, "has_gpu": bool(inst.get("has_gpu")),
+                      "gated": True, **occ})
+    return {"enabled": _GATE_ON, "coord_connected": COORD_REDIS is not None,
+            "coord_db": COORD_REDIS_DB,
+            "gpu_cap": _gate.capacity_for(True), "node_cap": _gate.capacity_for(False),
+            "nodes": nodes}
+
+
 @capability("obs.workers", memory="off", silent=True,
             http_method="GET", http_path="/workers", http_tags=["obs"],
             description="Worker registry — all hosts merged from Redis + local fallback.")
@@ -7180,6 +7293,7 @@ async def lifespan(app: FastAPI):
                 log.info("✓ Redis connected (attempt %d): %s v%s",
                          _attempt, REDIS_URL, info.get("redis_version", "?"))
                 await emit_event({"type": "backend.connected", "backend": "redis"})
+                await _ensure_coord_redis()
                 return
             except Exception as e:
                 if _attempt == 1:
