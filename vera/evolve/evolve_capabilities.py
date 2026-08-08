@@ -6624,12 +6624,85 @@ async def evolve_sandbox_ensure(branch: str = "", rebuild_image: bool = False,
             "healthy": up.get("healthy"), "stale": up.get("stale"), "error": up.get("error")}
 
 
+@capability("evolve.sandbox.list", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/sandbox/list", http_tags=["evolve"],
+            description="List ALL dev sandboxes — the primary vera-dev plus every "
+                        "spawned per-branch container — each with branch, container "
+                        "name, host port, Redis DB, whether it is running, and its URL. "
+                        "The unified view for the Loop Lab sandbox selector. Output: "
+                        "{sandboxes:[{role,branch,name,port,redis_db,running,url}], count}.")
+async def evolve_sandbox_list(trace_id=None):
+    ps = await _sh(["docker", "ps", "--format", "{{.Names}}"])
+    running = {n.strip() for n in (ps.get("out", "") or "").splitlines() if n.strip()}
+    out: List[Dict[str, Any]] = []
+    r = _redis()
+    if r:
+        try:
+            raw = await r.get(KEY_SANDBOX)
+            if raw:
+                pri = json.loads(raw.decode() if isinstance(raw, (bytes, bytearray)) else raw)
+                out.append({"role": "primary", "branch": pri.get("branch"),
+                            "name": _SANDBOX_CONTAINER, "port": pri.get("port"),
+                            "redis_db": pri.get("redis_db"),
+                            "running": _SANDBOX_CONTAINER in running,
+                            "url": f"http://localhost:{pri.get('port')}",
+                            "worktree": pri.get("worktree")})
+        except Exception:
+            pass
+    for slug, d in (await _sandbox_pool()).items():
+        out.append({"role": "spawned", "branch": d.get("branch"), "slug": slug,
+                    "name": d.get("name"), "port": d.get("port"),
+                    "redis_db": d.get("redis_db"),
+                    "running": d.get("name") in running,
+                    "url": d.get("url") or f"http://localhost:{d.get('port')}",
+                    "worktree": d.get("worktree")})
+    return {"sandboxes": out, "count": len(out)}
+
+
 @capability("evolve.sandbox.down", memory="on",
             http_method="POST", http_path="/evolve/sandbox/down", http_tags=["evolve"],
-            description="Tear down the dev sandbox: stop+remove the vera-dev "
-                        "container and (optionally) remove the git worktree. "
-                        "Input: remove_worktree (bool default True).")
-async def evolve_sandbox_down(remove_worktree: bool = True, trace_id=None):
+            description="Tear down a dev sandbox: stop+remove its container and "
+                        "(optionally) its git worktree. With NO name/branch, tears down "
+                        "the PRIMARY vera-dev (original behavior). Pass name (container "
+                        "or slug) or branch to tear down a specific SPAWNED per-branch "
+                        "container instead. Inputs: name (str), branch (str), "
+                        "remove_worktree (bool default True).")
+async def evolve_sandbox_down(remove_worktree: bool = True, name: str = "",
+                              branch: str = "", trace_id=None):
+    # ── a specific SPAWNED container (by container name, slug, or branch) ──
+    if name or branch:
+        target = None
+        for slug, d in (await _sandbox_pool()).items():
+            if name in (d.get("name"), slug) or (branch and branch == d.get("branch")):
+                target = (slug, d)
+                break
+        if not target:
+            return {"error": f"no spawned sandbox matching '{name or branch}'"}
+        slug, d = target
+        compose = d.get("compose", f"docker-compose.dev-{slug}.yml")
+        dn = await _sh(["docker", "compose", "-f", "docker-compose.yml", "-f", compose,
+                        "-p", d.get("name"), "down"], timeout=180)
+        removed_wt = False
+        if remove_worktree and d.get("worktree"):
+            wr = await _git("worktree", "remove", "--force", d["worktree"], timeout=120)
+            removed_wt = wr["ok"]
+        r = _redis()
+        if r:
+            try:
+                await r.hdel(KEY_SANDBOX_POOL, slug)
+            except Exception:
+                pass
+        try:
+            (_repo_root() / compose).unlink()
+        except Exception:
+            pass
+        await _audit("sandbox.down", f"spawned {d.get('name')} torn down "
+                     f"(worktree_removed={removed_wt})", branch=d.get("branch"))
+        await emit_event({"type": "evolve.sandbox.down", "name": d.get("name"),
+                          "worktree_removed": removed_wt})
+        return {"ok": dn["ok"], "name": d.get("name"), "worktree_removed": removed_wt,
+                "detail": dn["err"] or dn["out"]}
+    # ── the PRIMARY vera-dev (original behavior) ──
     sb = await _get_sandbox()
     dn = await _sh(["docker", "compose", "-f", "docker-compose.yml",
                     "-f", _DEV_COMPOSE, "down"], timeout=180)

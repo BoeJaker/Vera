@@ -626,6 +626,12 @@ html.vpb-nav-hosted body{padding-left:0}
       <span style="flex:1"></span><button class="btn sm" onclick="loadSandbox()">&#8635;</button>
     </div>
     <div id="sandbox-body"><div class="empty">Loading…</div></div>
+    <div id="sandbox-pool" style="margin-top:12px"></div>
+    <div class="row" style="margin-top:8px;gap:6px;align-items:center;flex-wrap:wrap">
+      <input id="sbx-spawn-branch" placeholder="branch to run as its own container" style="min-width:230px">
+      <button class="btn sm" onclick="sandboxSpawn()">＋ Spawn container</button>
+      <span class="hint">gives a branch its own isolated dev container — allocated port + Redis DB, alongside the others</span>
+    </div>
     <div class="row" style="margin-top:10px">
       <label class="fld" style="margin:0">Test execution</label>
       <select id="sb-mode" onchange="saveMode()" title="Where benchmark loops run">
@@ -2484,6 +2490,41 @@ async function loadAudit(){
 }
 
 /* ═══ SANDBOX ═══ */
+/* ═══ Per-branch sandbox pool (C2 selector — evolve.sandbox.list/spawn/down) ═══ */
+async function loadSandboxPool(){
+  const el=$('sandbox-pool'); if(!el)return;
+  const r=await api('/evolve/sandbox/list');
+  const list=(r&&r.sandboxes)||[];
+  if(!list.length){el.innerHTML='';return}
+  el.innerHTML='<label class="fld">All dev sandboxes ('+list.length+')</label>'+list.map(function(s){
+    const on=s.running;
+    return '<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;padding:4px 0;border-bottom:1px solid var(--border)">'
+      +'<span class="pill" style="color:'+(on?'var(--ok)':'var(--dim2)')+'">'+(on?'● running':'○ down')+'</span>'
+      +'<span class="tag">'+esc(s.role||'')+'</span>'
+      +'<span class="tag">'+esc(s.branch||'')+'</span>'
+      +'<span class="mono" style="font-size:10px">'+esc(s.name||'')+'</span>'
+      +'<span class="hint">:'+esc(String(s.port||''))+' · db '+esc(String(s.redis_db||''))+'</span>'
+      +'<span style="flex:1"></span>'
+      +(on?'<a href="'+esc(s.url||('http://localhost:'+s.port))+'/" target="_blank">open →</a>':'')
+      +(s.role==='spawned'?' <button class="btn sm err-btn" onclick="sandboxDownNamed(\''+esc(s.name)+'\')">down</button>':'')
+      +'</div>';
+  }).join('');
+}
+async function sandboxSpawn(){
+  const b=(($('sbx-spawn-branch')||{}).value||'').trim();
+  if(!b){toast('enter a branch');return}
+  toast('spawning '+b+' — may take a minute…');
+  const r=await post('/evolve/sandbox/spawn',{branch:b});
+  toast(r&&r.ok?('spawned '+r.name+' on :'+r.port):(r&&r.error)||'failed');
+  loadSandboxPool();
+}
+async function sandboxDownNamed(name){
+  if(!confirm('Tear down '+name+' (its container + worktree)?'))return;
+  const r=await post('/evolve/sandbox/down',{name:name});
+  toast(r&&r.ok?('torn down '+name):(r&&r.error)||'failed');
+  loadSandboxPool();
+}
+
 async function loadSandbox(){
   if($('sb-mode')&&_cfg.sandbox_mode)$('sb-mode').value=_cfg.sandbox_mode;
   loadGit();
@@ -2517,6 +2558,7 @@ async function loadSandbox(){
     h+='<div class="hint" style="margin-top:4px;color:var(--warn)">probe: '+esc(r.probe.error)+'</div>';
   }
   $('sandbox-body').innerHTML=h;
+  loadSandboxPool();
   renderSbxCode(sb.code||null);
   loadSbxDiff('');
   if(sb.worktree)sbxFsList(_sbfCur||'');
