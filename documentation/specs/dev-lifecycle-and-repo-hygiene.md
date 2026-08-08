@@ -538,9 +538,10 @@ Captured from the user during the C5 build; not yet scheduled.
    goals, projects, worldview, …) and route each through `sandbox_guard.write_blocked()`. Goal:
    a hermetic dev/prod data boundary, not "mostly closed."
 
-2. **Review UI — show accepted/rejected history.** The Loop Lab **Review** tab surfaces
-   *outstanding* proposals; it should also display **decided** reviews (accepted / rejected, who,
-   when, resulting merge commit) so the review log is auditable, not just the queue.
+2. **✓ Review UI — accepted/rejected history (2026-08-08).** The Loop Lab **Review** tab now
+   lists **decided** pipelines below the queue (`promoted`=accepted / `rolled_back`=rejected) —
+   verdict, attribution (controller + adopted badge), driving-session **chat drill-down**, and
+   decided-at. An auditable review log, not just the queue. (`decidedCard` in evolve_panel.html.)
 
 3. **Connect to a sandbox from inside Vera — no new page (C6).** Open a branch's dev instance
    *within* the current Vera UI (embed/attach, reusing the `/vscode/…` same-origin proxy pattern
@@ -611,6 +612,16 @@ fix so an agent (me, or another) can drive it cleanly:
    chat drill-down).
 5. **The dirty-tree blocker (§8.2 #7)** was the dominant friction — `docs.build` writing into the
    tracked tree. Already noted + temp-fixed; the real unlock is the immutable-prod-image end-state.
+
+6. **UI-only changes deploy WITHOUT a prod restart.** `/evolve/panel` and `/ui/elements/*.js`
+   are read fresh off disk per request, so a promote that merges only panel HTML / element JS is
+   **live the instant the merge lands** — no restart. Reserve the restart for `.py` (import-time)
+   changes. This matters under concurrency: **2026-08-08 the multi-agent estate went live** (three
+   dev containers — `vera-dev`, `vera-dev-loop-lab-foundry-pxe-netboot` @ :8994 for another agent,
+   `vera-dev-agentic-loop-improvements-2` @ :8997 — all gated on the one shared GPU slot, the C1/
+   U1/U2/U3 payoff), and a prod restart interrupts every agent's prod-side cap calls (adopt/
+   promote/git.graph). So: batch `.py` deploys, keep UI changes restart-free, and check
+   `ollama.gate` / `evolve.sandbox.list` before a restart.
 
 ---
 
