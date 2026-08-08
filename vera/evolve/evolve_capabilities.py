@@ -4709,7 +4709,7 @@ async def evolve_pipeline_run(kind: str = "variant", profile: str = "",
                               variant_id: str = "", edits: Optional[List[Dict[str, Any]]] = None,
                               gate_threshold: float = 0.0, auto_promote: bool = True,
                               auto_test: bool = True, critic: str = "",
-                              repo: str = DEFAULT_REPO_ID, trace_id=None):
+                              repo: str = DEFAULT_REPO_ID, session_id: str = "", trace_id=None):
     cfg = await _get_config()
     profile = (profile or cfg["default_profile"]).strip()
     if kind == "variant" and not variant_id:
@@ -4725,6 +4725,7 @@ async def evolve_pipeline_run(kind: str = "variant", profile: str = "",
         "auto_test": bool(auto_test),
         "critic": (critic or cfg["critic_provider"]).strip(),
         "repo": repo, "controller": _triggered_by(),
+        "session_id": (session_id or "").strip(), "via": (CALLER_KIND.get() or ""),
         "status": "starting", "decision": "pending", "current": "",
         "created_at": now_iso(), "ended_at": "", "steps": [],
         "baseline_score": None, "candidate_score": None,
@@ -4755,7 +4756,8 @@ async def evolve_pipeline_run(kind: str = "variant", profile: str = "",
                         "(str=main), title (str), summary (str), repo (str=vera). "
                         "Output: {ok, id, ahead_by, changed_files, gate_passed}.")
 async def evolve_pipeline_adopt(branch: str = "", to: str = "main", title: str = "",
-                                summary: str = "", repo: str = DEFAULT_REPO_ID, trace_id=None):
+                                summary: str = "", repo: str = DEFAULT_REPO_ID,
+                                session_id: str = "", trace_id=None):
     branch = (branch or "").strip()
     if not branch:
         return {"error": "branch required"}
@@ -4781,6 +4783,13 @@ async def evolve_pipeline_adopt(branch: str = "", to: str = "main", title: str =
         "edits": [{"area": (title or branch), "suggestion": (summary or "hand-authored change")}],
         "gate_threshold": 0.0, "auto_promote": False, "auto_test": False,
         "critic": "", "repo": repo, "controller": _triggered_by(), "adopted": True,
+        # Link this run to the exact driving session (the Claude Code session
+        # UUID for controller=claude_code) so the CI/CD UI can drill from a
+        # pipeline/commit into the chat that produced it. Resolves against
+        # ide.claude_sessions once that session is ingested (remote/Windows
+        # sessions need the deferred SSH ingestion — see §8-Phase-A).
+        "session_id": (session_id or "").strip(),
+        "via": (CALLER_KIND.get() or ""),
         "to": to, "status": "adopted", "decision": "pending",
         "current": "adopted an existing hand-authored branch",
         "created_at": now_iso(), "ended_at": "", "steps": [],
