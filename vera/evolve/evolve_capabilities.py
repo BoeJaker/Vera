@@ -4368,13 +4368,21 @@ async def _commit_attribution_map(limit: int = 500) -> Dict[str, Dict[str, Any]]
     r = _redis()
     if not r:
         return out
+    # The compact list records (KEY_PIPELINES) omit `commits`; the FULL record
+    # (KEY_PIPELINE + id) carries them. Read the ids from the list, then fetch
+    # each full record.
     try:
         rows = await r.lrange(KEY_PIPELINES, 0, max(0, int(limit) - 1))
     except Exception:
         return out
     for row in rows or []:
         try:
-            rec = json.loads(row.decode() if isinstance(row, (bytes, bytearray)) else row)
+            head = json.loads(row.decode() if isinstance(row, (bytes, bytearray)) else row)
+            pid = head.get("id")
+            if not pid:
+                continue
+            full = await r.get(KEY_PIPELINE + pid)
+            rec = json.loads(full.decode() if isinstance(full, (bytes, bytearray)) else full) if full else head
         except Exception:
             continue
         attr = {"controller": rec.get("controller") or "",
@@ -4499,7 +4507,10 @@ async def _save_pipeline(rec: Dict[str, Any]):
                    ("id", "kind", "profile", "status", "decision", "created_at",
                     "ended_at", "branch", "variant_id", "baseline_score",
                     "candidate_score", "gate_delta", "gate_passed",
-                    "repo", "controller", "review_requested")}
+                    "repo", "controller", "review_requested",
+                    # attribution — so the CI/CD row shows the adopted badge +
+                    # driving session without a full per-row fetch.
+                    "adopted", "session_id", "via")}
         for i, row in enumerate(rows or []):
             try:
                 if json.loads(row).get("id") == rec["id"]:
