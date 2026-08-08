@@ -2224,7 +2224,7 @@ async function openSessionChat(sid){
   const turns=(r&&r.turns)||[];
   let h='<div class="card-h"><span class="card-t">Chat session</span><span class="hint mono">'+esc(sid)+'</span></div>';
   if(!turns.length){
-    h+='<div class="empty" style="line-height:1.5">No ingested chat for this session yet.<br><span class="hint">The pipeline records which session drove it, but the chat itself resolves only once that session is scanned into <b>ide.claude_sessions</b>. Remote / Windows-host Claude Code sessions need the deferred SSH ingestion (dev-lifecycle §8-Phase-A).</span></div>';
+    h+='<div class="empty" style="line-height:1.5">No ingested chat for this session yet.<br><span class="hint">The pipeline records which session drove it; the chat resolves once that session is scanned into <b>ide.claude_sessions</b> (it ingests remote sessions via the vscode-client channel). If a very recent session hasn\'t landed yet, trigger <b>ide.claude_sessions.ingest_all</b>.</span></div>';
   }else{
     for(const t of turns){
       const role=esc(t.role||''), when=esc((t.ts||'').slice(0,19).replace('T',' '));
@@ -2287,12 +2287,32 @@ async function loadReview(){
   const r=await api('/evolve/pipeline/list?limit=50');const ps=(r&&r.pipelines)||[];
   const queue=ps.filter(p=>p.review_requested||p.decision==='pending'||p.decision==='held');
   const pipeCards=queue.length?queue.map(reviewCard).join(''):'';
-  if(!wsCards&&!pipeCards){body.innerHTML=sbLine+'<div class="empty">Nothing awaiting review right now.</div>';return}
+  // Decided reviews — the auditable accept/reject LOG, not just the queue (§8.2).
+  const decided=ps.filter(p=>p.decision==='promoted'||p.decision==='rolled_back').slice(0,20);
+  const decidedCards=decided.length?decided.map(decidedCard).join(''):'';
+  if(!wsCards&&!pipeCards&&!decidedCards){body.innerHTML=sbLine+'<div class="empty">Nothing awaiting review right now.</div>';return}
   let h=sbLine;
   if(wsCards)h+='<label class="fld">Sandbox changes — awaiting accept / reject</label>'+wsCards;
   if(pipeCards)h+='<label class="fld"'+(wsCards?' style="margin-top:12px"':'')+'>Pipelines — awaiting a decision</label>'+pipeCards;
+  if(decidedCards)h+='<label class="fld" style="margin-top:14px">Decided — accepted / rejected</label>'+decidedCards;
   body.innerHTML=h;
   if(queue.some(p=>p.live)){clearTimeout(window._reviewT);window._reviewT=setTimeout(loadReview,3500)}
+}
+// Compact, read-only card for a DECIDED pipeline (the review audit log): accept/
+// reject verdict, attribution, driving-session chat drill-down, decided-at.
+function decidedCard(p){
+  const accepted=p.decision==='promoted';
+  return '<div class="card" style="margin-bottom:5px;opacity:.9">'
+    +'<div class="row" style="gap:8px;flex-wrap:wrap;cursor:pointer;align-items:center" onclick="openPipe(\''+esc(p.id)+'\')">'
+    +'<span class="pill" style="color:'+(accepted?'var(--ok)':'var(--dim2)')+'">'+(accepted?'✓ accepted':'✗ rejected')+'</span>'
+    +'<span class="mono">'+esc(p.id)+'</span>'
+    +(p.adopted?'<span class="tag" style="background:var(--acc3);color:#111">adopted</span>':'')
+    +(p.branch?'<span class="tag">'+esc(p.branch)+'</span>':'')
+    +ctrlBadge(p.controller)
+    +(p.session_id?'<button class="btn sm" onclick="event.stopPropagation();openSessionChat(\''+esc(p.session_id)+'\')">chat ▸</button>':'')
+    +'<span style="flex:1"></span>'
+    +'<span class="hint">'+esc((p.ended_at||p.created_at||'').slice(0,19).replace('T',' '))+'</span>'
+    +'</div></div>';
 }
 function reviewCard(p){
   const gate=p.gate_passed==null?'':(p.gate_passed?'<span style="color:var(--ok)">gate PASS</span>':'<span style="color:var(--err)">gate FAIL</span>');
