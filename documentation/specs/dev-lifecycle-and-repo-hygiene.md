@@ -574,6 +574,34 @@ Captured from the user during the C5 build; not yet scheduled.
    **immutable image with no working checkout** (§8.1) — which dissolves this class of problem
    entirely. This is the strongest concrete evidence yet for that end-state.
 
+### 8.3 Pipeline dogfood findings (2026-08-08) — make it easier to operate
+
+From landing a real UI change end-to-end THROUGH the pipeline (`adopt → review_request →
+promote`, all via the Claude Code MCP channel — pipeline `237208d4`, merged `eb5909c`). What
+worked: the safe promote, the gate, `controller` attribution, and the guard correctly refusing
+a dirty tree (audit trail even records the two blocked attempts then the success). Friction to
+fix so an agent (me, or another) can drive it cleanly:
+
+1. **MCP manifest is per-session-static.** A cap deployed mid-session (`evolve.pipeline.adopt`)
+   never appeared as an `mcp__vera__*` tool, and `promote`'s cached schema lacked the newer
+   `force` param. Workaround used: hand-rolled `POST /mcp/call` with `{caller_kind:"mcp",
+   session_id, arguments:{…, force:true}}` — which is exactly what the real bridge does, so it's
+   honest, but undocumented. **Do:** (a) document the `/mcp/call` + `caller_kind=mcp` escape
+   hatch in the skill so agents can always reach a fresh cap; (b) keep pipeline cap **schemas
+   stable/complete** (don't drop params) so a stale manifest still works.
+2. **`adopt`'s gate is compile-only** (ast.parse of changed `.py`). Fine for docs/infra, but a
+   behavioural change still needs the dev-sandbox suite. **Do:** let `adopt` optionally run the
+   critical unit-test tier (or the sandbox suite) and set a real `gate_passed`, so `force` isn't
+   the only path for non-trivial changes.
+3. **Promote → deploy is a manual two-step** (push from the Windows host + restart via the tool).
+   Inherent for the push (creds live on Windows), but **Do:** a small "deploy" helper that, on a
+   `restart_required` promote, signals the push + triggers the restart in one gated action.
+4. **`session_id` is not on the pipeline record** — `controller` is `claude_code` but not WHICH
+   session. This is the §8-Phase-A open item; being built next (ties to §8.2 #5/#6 attribution +
+   chat drill-down).
+5. **The dirty-tree blocker (§8.2 #7)** was the dominant friction — `docs.build` writing into the
+   tracked tree. Already noted + temp-fixed; the real unlock is the immutable-prod-image end-state.
+
 ---
 
 ## 9. Operating rules for Claude (the part I follow now, before the tooling exists)
