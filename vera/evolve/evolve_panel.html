@@ -2176,6 +2176,14 @@ async function openPipe(id){
     +(p.branch?' <span class="tag">'+esc(p.branch)+'</span>':'')
     +(p.adopted?' <span class="tag" style="background:var(--acc3);color:#111" title="hand-authored branch adopted into CI/CD">adopted → '+esc(p.to||'main')+'</span>':'')+'</div>';
   if(p.current)h+='<div class="row" style="margin-bottom:6px"><span class="spin"></span><span class="hint">'+esc(p.current)+'</span></div>';
+  // Session attribution: which chat/session drove this run. Drill into the chat
+  // (resolves against ide.claude_sessions once that session is ingested).
+  if(p.session_id){
+    h+='<div class="row" style="margin-bottom:6px;gap:6px;align-items:center">'
+      +'<span class="hint">session</span>'
+      +'<span class="tag mono" title="driving session ('+esc(p.via||'')+')">'+esc(p.session_id)+'</span>'
+      +'<button class="btn sm" onclick="openSessionChat(\''+esc(p.session_id)+'\')">open chat ▸</button></div>';
+  }
   // Provenance for an adopted (hand-authored) branch: the actual commits + files.
   if(p.commits&&p.commits.length){
     h+='<label class="fld" style="margin-top:8px">commits ('+p.commits.length+' ahead of '+esc(p.to||'main')+')</label>';
@@ -2208,6 +2216,26 @@ async function openPipe(id){
 async function pipePromote(id){const r=await post('/evolve/pipeline/promote',{id});toast(r&&r.ok?'Promoted':(r&&r.error)||'failed');closeModal();loadPipelines();if($('review-body'))loadReview()}
 async function pipeRollback(id){const r=await post('/evolve/pipeline/rollback',{id});toast(r&&r.ok?'Rolled back':(r&&r.error)||'failed');closeModal();loadPipelines();if($('review-body'))loadReview()}
 async function pipeTest(id){const r=await post('/evolve/pipeline/test',{id});toast(r&&r.ok?('Gate '+(r.gate_passed?'PASSED':'FAILED')):(r&&r.error)||'failed');closeModal();openPipe(id)}
+/* Drill from a pipeline's driving session into the chat that produced it.
+   Resolves against ide.claude_sessions.history — empty until that session is
+   ingested (remote/Windows Claude Code sessions need the deferred ingestion). */
+async function openSessionChat(sid){
+  const r=await api('/ide/claude_sessions/history?claude_session_id='+encodeURIComponent(sid)+'&scan_limit=2000');
+  const turns=(r&&r.turns)||[];
+  let h='<div class="card-h"><span class="card-t">Chat session</span><span class="hint mono">'+esc(sid)+'</span></div>';
+  if(!turns.length){
+    h+='<div class="empty" style="line-height:1.5">No ingested chat for this session yet.<br><span class="hint">The pipeline records which session drove it, but the chat itself resolves only once that session is scanned into <b>ide.claude_sessions</b>. Remote / Windows-host Claude Code sessions need the deferred SSH ingestion (dev-lifecycle §8-Phase-A).</span></div>';
+  }else{
+    for(const t of turns){
+      const role=esc(t.role||''), when=esc((t.ts||'').slice(0,19).replace('T',' '));
+      h+='<div style="background:var(--bg2);border-radius:5px;padding:6px 9px;margin-bottom:5px;font-size:10.5px">'
+        +'<b>'+role+'</b> <span class="hint">'+when+'</span>'
+        +'<div class="mono" style="white-space:pre-wrap;color:var(--dim2);margin-top:2px">'+esc((t.text||'').slice(0,4000))+'</div></div>';
+    }
+  }
+  h+='<div class="row" style="margin-top:10px"><span style="flex:1"></span><button class="btn" onclick="closeModal()">Close</button></div>';
+  openModal(h);
+}
 
 /* ═══ ROLLBACK CONFIRMATION — always shows what's about to be discarded ═══ */
 async function confirmRollback(id){
