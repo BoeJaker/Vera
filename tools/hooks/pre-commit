@@ -1,14 +1,54 @@
 #!/bin/sh
 # ─────────────────────────────────────────────────────────────────────────────
-#  Vera pre-commit hook — blocks commits that contain likely secrets.
-#  Enabled via `git config core.hooksPath tools/hooks` (run `make install-hooks`
-#  or `pwsh tools/install-hooks.ps1`). Git Bash supplies /bin/sh on Windows too.
-#  Bypass in a genuine emergency with:  git commit --no-verify
+#  Vera pre-commit — repo-hygiene guardrails
+#  (documentation/specs/dev-lifecycle-and-repo-hygiene.md §2, §3)
+#
+#  Enabled via `git config core.hooksPath tools/hooks`
+#  (run `make install-hooks` or `pwsh tools/install-hooks.ps1`).
+#  Git Bash supplies /bin/sh on Windows too.
+#  Emergency bypass (use sparingly, never for the reasons below): git commit --no-verify
 # ─────────────────────────────────────────────────────────────────────────────
 set -e
+REPO_ROOT=$(git rev-parse --show-toplevel)
+# symbolic-ref returns the branch name even on an unborn branch (before the first
+# commit); it fails only on a genuinely detached HEAD, where we fall back to HEAD.
+branch=$(git symbolic-ref --short -q HEAD || echo HEAD)
 
-# Find a working interpreter. We probe by actually running it: on Windows the
-# `python3` on PATH is often a Store stub that fails with "Permission denied".
+# ── 1. No DIRECT commits to `main` (§2.1). `main` is the integration branch and
+#       only advances by a gate MERGE or a fast-forward deploy — never a human/
+#       agent committing straight onto it. Merge commits are allowed (the gate
+#       landing); a sanctioned deploy step sets VERA_ALLOW_MAIN_COMMIT=1.
+if [ "$branch" = "main" ] \
+   && ! git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 \
+   && [ "${VERA_ALLOW_MAIN_COMMIT:-}" != "1" ]; then
+    echo "pre-commit: direct commits to 'main' are blocked (§2.1)." >&2
+    echo "  Work on a typed branch (feat/…, fix/…) and land via the gate/merge." >&2
+    echo "  Sanctioned deploy step only:  VERA_ALLOW_MAIN_COMMIT=1 git commit …" >&2
+    exit 1
+fi
+
+# ── 2. Typed branch names (§2.1): <type>/<slug>.
+case "$branch" in
+    HEAD|main) : ;;   # detached (rebase/bisect/merge), or a merge onto main past check #1
+    feat/*|fix/*|refactor/*|perf/*|docs/*|test/*|chore/*|spike/*|hotfix/*|loop-lab/*) : ;;
+    *)
+        echo "pre-commit: branch '$branch' is not a typed <type>/<slug> name (§2.1)." >&2
+        echo "  Allowed types: feat fix refactor perf docs test chore spike hotfix." >&2
+        echo "  Rename it:  git branch -m <type>/<slug>" >&2
+        exit 1 ;;
+esac
+
+# ── 3. Git author/committer must be a human — never an AI identity
+#       (§2.3, git-attribution-internal-only). "Claude Code did this" lives only
+#       in Vera-internal fields, never in git.
+who="$(git var GIT_AUTHOR_IDENT 2>/dev/null)$(git var GIT_COMMITTER_IDENT 2>/dev/null)"
+if printf '%s' "$who" | grep -qiE 'claude|anthropic|assistant@|noreply@anthropic|copilot'; then
+    echo "pre-commit: git author/committer looks like an AI identity (§2.3)." >&2
+    echo "  The commit author is always the human user. Fix git user.name / user.email." >&2
+    exit 1
+fi
+
+# ── 4. Secret scan (existing gate) — probe for a working interpreter.
 PY=""
 for cand in python3 python py; do
     if command -v "$cand" >/dev/null 2>&1 && "$cand" --version >/dev/null 2>&1; then
@@ -20,6 +60,4 @@ if [ -z "$PY" ]; then
     echo "secret-scan: no working python found on PATH; skipping (install python to enable)." >&2
     exit 0
 fi
-
-REPO_ROOT=$(git rev-parse --show-toplevel)
 exec "$PY" "$REPO_ROOT/tools/secret_scan.py" --staged
