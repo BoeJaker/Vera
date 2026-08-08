@@ -3804,12 +3804,14 @@ async def cap_mesh_pins_probe(node_id: str = "", pins=None, results=None,
                 "crossing, i.e. the touch wires. Purely digital, because only one of those pins is on "
                 "ADC1 (the rest are ADC2 and unreadable while Wi-Fi is up). Results are drawn on the "
                 "panel as well as returned, so no log-reading round trip is needed. Takes ~10s and "
-                "needs someone to press when asked. Input: node_id (str!). Output: {ok, job_id}.",
+                "needs someone to press when asked. Each phase counts down on the panel. Input: node_id (str!), hold_s (int=8 — seconds per phase). Output: {ok, job_id}.",
 )
-async def cap_mesh_pins_touch_hunt(node_id: str = "", trace_id=None) -> dict:
+async def cap_mesh_pins_touch_hunt(node_id: str = "", hold_s: int = 8,
+                                   trace_id=None) -> dict:
     if not node_id:
         return {"error": "node_id required"}
-    return await _call_cap("mesh.send", node_id=node_id, type="touch_hunt", payload={})
+    return await _call_cap("mesh.send", node_id=node_id, type="touch_hunt",
+                           payload={"hold_s": max(3, min(30, int(hold_s)))})
 
 
 @capability(

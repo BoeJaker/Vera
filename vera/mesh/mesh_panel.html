@@ -215,7 +215,7 @@ code{font-family:var(--mono);font-size:10px;background:var(--bg0);border:1px sol
         <button class="btn sm" onclick="loadPinMap()" title="Every GPIO and what claims it">Pin map</button>
         <button class="btn sm" onclick="assignPins()" title="Attach a device profile to pins, validated against the chip">Assign pins…</button>
         <button class="btn sm" onclick="probePins()" title="Drive every GPIO and read it back to see which can really be outputs">Probe pins</button>
-        <button class="btn sm" onclick="scanTouch()" title="Find the touch panel's wires by continuity instead of guessing">Find touch pins</button>
+        <button class="btn sm primary" onclick="huntTouch()" title="Runs a wizard ON THE NODE'S SCREEN: it asks you not to touch, measures, asks you to press and hold, measures again, and reports which data lines are the touch wires">Find touch wires…</button>
       </div>
       <div id="pinMap" style="display:none;margin-top:6px"></div>
       <div id="pinAssign" style="display:none;margin-top:6px;padding:7px;background:var(--bg0);border:1px solid var(--border);border-radius:3px"></div>
@@ -802,6 +802,37 @@ async function probePins(){
           (skipped.length ? ('Skipped (display control): ' + skipped.join(', ')) : ''));
   loadPinMap();
 }
+
+// On-screen touch wizard. Pressing a 4-wire panel shorts an X wire to a Y wire,
+// so the pairs that conduct only under pressure are the touch wires. The node
+// prompts on its own display; all this does is start it and read the answer.
+async function huntTouch(){
+  if(!_sel){ appsOut('select a node first'); return; }
+  const steps = 'Touch wire finder\n\nWatch the NODE SCREEN:\n'
+              + '1. "do not touch" - keep your hands off\n'
+              + '2. "PRESS AND HOLD" - press anywhere and hold\n\n'
+              + 'Takes about 10 seconds. Start now?';
+  if(!confirm(steps)) return;
+  appsOut('running on ' + _sel + ' - watch the node screen and press when asked...');
+  const q = await api('/mesh/pins/touch_hunt','POST',{node_id:_sel});
+  if(!q || q.error){ appsOut('could not start: ' + ((q&&q.error)||'?')); return; }
+  const j = await _jobResult(q.job_id, 60000);
+  if(!j){ appsOut('no answer from the node (needs firmware 3.3.0+)'); return; }
+  if(j.status === 'error'){ appsOut('node said: ' + (j.error||'?')); return; }
+  const r = j.result || {}, cross = r.crossings || [];
+  if(!cross.length){
+    appsOut('No crossing detected.\n\nEither the press was missed, or touch is not '
+            + 'on these pins: ' + (r.scanned||[]).join(', ')
+            + '\nTry again and hold firmly for the whole PRESS AND HOLD phase.');
+    return;
+  }
+  const pins = [...new Set(cross.reduce((a,c)=>a.concat([c.a,c.b]),[]))];
+  appsOut('Touch wires found - ' + cross.length + ' crossing(s):\n'
+          + cross.map(c => '  GPIO' + c.a + ' <-> GPIO' + c.b).join('\n')
+          + '\n\nPins involved: ' + pins.join(', ')
+          + '\nAssign these with the touch_4wire profile (Assign pins).');
+}
+
 
 // Find the touch wires by continuity rather than guessing them.
 async function scanTouch(){
