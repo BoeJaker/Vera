@@ -553,18 +553,20 @@ Captured from the user during the C5 build; not yet scheduled.
    dev container as an operator/remote target (`unified-nodes-estate`,
    `remote-access-workspaces-subsystem`) so both a human and the operator system can drive it.
 
-5. **Internal UI attribution of git-graph nodes & changes (NOT in the repo).** The repo keeps a
+5. **✓ Internal UI attribution of git-graph nodes & changes (2026-08-08).** The repo keeps a
    human author with **no AI-attribution trailer** (`git-attribution-internal-only`,
-   `no-claude-coauthor-trailer`) — that stays. *Internally, in Vera's UI*, we DO want to attribute
-   each commit / change / graph node to its actual agent + session: **Claude Code + its chat
-   session**, or **Vera + its session**. Surface this on the git graph and other infographics
-   (correlate via the provenance stamp / session id already on events — `provenance.py`,
-   `_session_stamp`, the `triggered_by/reviewer/agent` tags that stay internal).
+   `no-claude-coauthor-trailer`) — that stays. Internally, the CI/CD pipeline UI + the commit
+   DAG now attribute each run/commit to its agent + session: `controller` (claude_code / vera /
+   autonomous / user), `session_id`, `via`. **DONE:** pipeline records + `evolve.git.graph`
+   (`_commit_attribution_map`) stamp commits; UI shows the badges. Remaining spread: apply the
+   same to OTHER infographics (author-map, activity timelines).
 
-6. **Slick git-graph UI with chat drill-down + a layered chat/session graph.** A polished commit
-   DAG (build on `<vera-git-graph>`, `git_graph_element.js`) where you can **drill from a commit
-   into the chat/session that produced it**, and a **chat/session graph that layers on top** of
-   the commit graph (session → the commits/branches it drove). Ties directly to #5's attribution.
+6. **✓ Git-graph chat drill-down (2026-08-08); layered session graph still TODO.** `<vera-git-graph>`
+   commit nodes now carry an attribution chip that is **clickable → the chat that produced the
+   commit** (`window.openSessionChat` → `ide.claude_sessions.history`), and the CI/CD pipeline
+   detail has the same "open chat ▸". Verified live (4 commits attributed to claude_code, the
+   recent ones session-linked to `cd43896f…`). **Still TODO:** the *layered chat/session graph*
+   (session → the commits/branches it drove, as its own overlay on the DAG).
 
 7. **⚠ Vera writes generated files into its OWN tracked repo — must stop (found 2026-08-08).**
    Dogfooding the pipeline surfaced this: `docs.build` (operator Playwright screenshot capture)
