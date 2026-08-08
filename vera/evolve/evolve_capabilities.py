@@ -4359,6 +4359,37 @@ _GRAPH_FIELD_SEP = "\x1f"
 _GRAPH_RECORD_SEP = "\x1e"
 
 
+async def _commit_attribution_map(limit: int = 500) -> Dict[str, Dict[str, Any]]:
+    """short-SHA → {controller, session_id, via, pipeline_id} from pipeline
+    records, so the commit DAG can attribute each commit to the session/agent
+    that produced it (and drill into its chat). Keyed by the short SHAs each
+    pipeline stores in its `commits` list (the branch's authored commits)."""
+    out: Dict[str, Dict[str, Any]] = {}
+    r = _redis()
+    if not r:
+        return out
+    try:
+        rows = await r.lrange(KEY_PIPELINES, 0, max(0, int(limit) - 1))
+    except Exception:
+        return out
+    for row in rows or []:
+        try:
+            rec = json.loads(row.decode() if isinstance(row, (bytes, bytearray)) else row)
+        except Exception:
+            continue
+        attr = {"controller": rec.get("controller") or "",
+                "session_id": rec.get("session_id") or "",
+                "via": rec.get("via") or "",
+                "pipeline_id": rec.get("id") or ""}
+        if not (attr["controller"] or attr["session_id"]):
+            continue
+        for c in rec.get("commits") or []:
+            sha = (str(c).split(" ", 1)[0] or "").strip()
+            if sha and sha not in out:
+                out[sha] = attr
+    return out
+
+
 @capability("evolve.git.graph", memory="off", silent=True,
             http_method="GET", http_path="/evolve/git/graph", http_tags=["evolve"],
             description="Real commit graph for a repo — every commit (across ALL "
@@ -4390,6 +4421,16 @@ async def evolve_git_graph(repo: str = DEFAULT_REPO_ID, limit: int = 150, trace_
             "refs": [x.strip() for x in refs.split(",") if x.strip()],
             "subject": subj,
         })
+    # Stamp per-commit attribution (which session/agent produced it) so the DAG
+    # is chat-drillable — from a commit node into the driving Claude/Vera session.
+    amap = await _commit_attribution_map()
+    if amap:
+        for c in commits:
+            hh = c.get("hash") or ""
+            for sha, attr in amap.items():
+                if hh.startswith(sha):
+                    c["attribution"] = attr
+                    break
     return {"ok": True, "repo": str(root), "commits": commits}
 
 
