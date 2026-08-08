@@ -407,8 +407,16 @@ land (per §2.5 this doc is the living record, not a snapshot of original intent
     image has no git binary and a worktree's `.git` sits outside the bind mount, so
     provenance resolves via env → live git → a host-written `.vera-provenance.json` that
     bring-up generates (`python -m Vera.vera.provenance`).
-  - ○ **`session_id` link to the Claude session** — not yet stamped; git fields are in, the
-    `ide.claude_sessions.*` link is the remaining piece.
+  - ◐ **`session_id` link to the Claude session** — DONE for pipelines (2026-08-08):
+    `evolve.pipeline.adopt`/`run` now record `session_id` (the driving session — the Claude
+    Code UUID for `controller=claude_code`, injected by `/mcp/call`) + `via` (caller_kind). The
+    CI/CD pipeline detail surfaces the session with an **"open chat ▸"** drill-down that renders
+    `ide.claude_sessions.history` for it (verified: a run captured `session_id=cd43896f…`,
+    `via=mcp`). **Remaining:** (a) **remote/Windows session ingestion** (the deferred SSH piece)
+    so the drill-down actually resolves for host-side Claude Code sessions — prod (llm.int) has
+    no local `~/.claude/projects`, so the chat lives where it can't yet be scanned; (b) stamp
+    `session_id` onto **git-graph commit nodes** so the same drill-down works from the commit DAG
+    (§8.2 #6), not just the pipeline record.
   - ✓ **Planner regression tests** — pure helpers extracted to `vera/dag/planner_core.py`;
     `tests/test_planner_guards.py` (10) locks skill-filtering, drift detection, and
     non-deterministic planner sampling (the logic behind both incidents). `evolve.unittest
