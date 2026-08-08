@@ -4740,6 +4740,96 @@ async def evolve_pipeline_run(kind: str = "variant", profile: str = "",
     return {"ok": True, "id": rec["id"]}
 
 
+@capability("evolve.pipeline.adopt", memory="on",
+            http_method="POST", http_path="/evolve/pipeline/adopt", http_tags=["evolve"],
+            description="Register an ALREADY-edited branch as a code pipeline run — for a "
+                        "HAND-AUTHORED change (edits made directly in a worktree, e.g. by a "
+                        "Claude Code session, NOT dispatched to the edit queue). Creates the "
+                        "same pipeline-record shape so the change is tracked + ATTRIBUTED "
+                        "(controller = the triggering agent/session) in the CI/CD UI and "
+                        "flows through the SAME review + safe promote as a generated change — "
+                        "it just skips the code-gen dispatch. Runs a fast compile/smoke gate "
+                        "(ast.parse of the branch's changed .py) so gate_passed reflects "
+                        "'branch parses clean'; a behavioural change should ALSO be run through "
+                        "the dev sandbox suite before promote. Inputs: branch (str!), to "
+                        "(str=main), title (str), summary (str), repo (str=vera). "
+                        "Output: {ok, id, ahead_by, changed_files, gate_passed}.")
+async def evolve_pipeline_adopt(branch: str = "", to: str = "main", title: str = "",
+                                summary: str = "", repo: str = DEFAULT_REPO_ID, trace_id=None):
+    branch = (branch or "").strip()
+    if not branch:
+        return {"error": "branch required"}
+    to = (to or "main").strip()
+    if repo != DEFAULT_REPO_ID and not (await evolve_repo_get(id=repo)).get("repo"):
+        return {"error": f"repo not registered: {repo}"}
+    root = await _resolve_repo_root(repo)
+    if not (await _git("rev-parse", "--verify", f"refs/heads/{branch}", repo_root=root))["ok"]:
+        return {"error": f"unknown branch: {branch}"}
+    if not (await _git("rev-parse", "--verify", f"refs/heads/{to}", repo_root=root))["ok"]:
+        return {"error": f"unknown target branch: {to}"}
+    # Commits + changed files this branch adds on top of `to`.
+    lg = await _git("log", "--oneline", f"{to}..{branch}", repo_root=root)
+    commits = [ln for ln in (lg.get("out", "") or "").splitlines() if ln.strip()]
+    if not commits:
+        return {"error": f"branch '{branch}' has no commits ahead of '{to}' — nothing to adopt"}
+    df = await _git("diff", "--name-only", f"{to}...{branch}", repo_root=root)
+    changed = [ln for ln in (df.get("out", "") or "").splitlines() if ln.strip()]
+
+    rec = {
+        "id": uuid.uuid4().hex[:8], "kind": "code", "profile": "adopted",
+        "variant_id": "",
+        "edits": [{"area": (title or branch), "suggestion": (summary or "hand-authored change")}],
+        "gate_threshold": 0.0, "auto_promote": False, "auto_test": False,
+        "critic": "", "repo": repo, "controller": _triggered_by(), "adopted": True,
+        "to": to, "status": "adopted", "decision": "pending",
+        "current": "adopted an existing hand-authored branch",
+        "created_at": now_iso(), "ended_at": "", "steps": [],
+        "baseline_score": None, "candidate_score": None,
+        "gate_delta": None, "gate_passed": None, "branch": branch,
+        "commits": commits, "changed_files": changed,
+        "reviews": [], "review_requested": False,
+    }
+    _pstep(rec, "adopt", True,
+           f"{len(commits)} commit(s), {len(changed)} file(s) ahead of {to} "
+           f"(controller: {rec['controller']})")
+
+    # Compile/smoke gate: ast.parse each changed .py AT THE BRANCH (git show) —
+    # dependency-free, fast, and catches the syntax breakage that would stop the
+    # branch booting. NOT a substitute for the behavioural suite on a loop change.
+    import ast as _ast
+    py = [f for f in changed if f.endswith(".py")]
+    bad: List[str] = []
+    for f in py:
+        show = await _git("show", f"{branch}:{f}", repo_root=root)
+        if not show["ok"]:
+            continue  # deleted/renamed on the branch — nothing to parse
+        try:
+            _ast.parse(show.get("out", "") or "")
+        except SyntaxError as e:
+            bad.append(f"{f}: {e}")
+    if py:
+        rec["gate_passed"] = not bad
+        _pstep(rec, "gate", not bad,
+               f"compile-check {len(py)} .py file(s): "
+               + ("PASS" if not bad else "FAIL — " + "; ".join(bad[:3])))
+    else:
+        _pstep(rec, "gate", True,
+               "no .py changes — compile gate n/a; promote with force for docs/infra")
+
+    await _save_pipeline(rec)
+    await _audit("pipeline.adopt",
+                 f"adopted {branch} ({len(commits)} commit(s)) → {to} "
+                 f"[gate_passed={rec['gate_passed']}]",
+                 id=rec["id"], kind="code", branch=branch, repo=repo)
+    await emit_event({"type": "evolve.pipeline.adopted", "id": rec["id"], "branch": branch,
+                      "into": to, "commits": len(commits), "gate_passed": rec["gate_passed"]})
+    return {"ok": True, "id": rec["id"], "branch": branch, "into": to,
+            "ahead_by": len(commits), "changed_files": len(changed),
+            "gate_passed": rec["gate_passed"],
+            "next": "evolve.pipeline.review_request to raise for review, then "
+                    "evolve.pipeline.promote (force=true for docs/infra) to merge."}
+
+
 @capability("evolve.pipeline.list", memory="off", silent=True,
             http_method="GET", http_path="/evolve/pipeline/list", http_tags=["evolve"],
             description="Recent CI/CD pipeline runs (compact, newest first). "
