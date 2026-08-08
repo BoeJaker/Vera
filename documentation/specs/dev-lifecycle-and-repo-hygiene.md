@@ -496,10 +496,15 @@ Recorded from actually building Phases A / A+ / D, so the plan reflects reality,
    branch by its author (its two `.bin` artifacts carry an embedded key — gitignore, don't
    commit). **Ideal end-state (Phase C):** prod runs from an immutable image built from a
    `main` commit — no working checkout on prod at all.
-2. **`evolve.pipeline.promote` is unsafe and must be reworked (Phase B blocker).** It runs
+2. **`evolve.pipeline.promote` — RESOLVED 2026-08-08: reworked, now safe.** Was: it ran
    `git checkout <to>` in the **prod** repo root — switching prod's live checkout out from
-   under the running process. Rework it to the throwaway-worktree merge `evolve.sandbox
-   .approve` uses.
+   under the running process. **Now:** it routes through `_merge_isolated` (throwaway worktree
+   when `to` isn't checked out) or `_merge_in_checkout` (guarded in-place merge when `to` is a
+   live checkout like prod on `main`: refuses to switch branches, refuses a dirty tree, does a
+   `merge-tree` conflict preflight, `merge --no-ff`, and flags `restart_required` rather than
+   restarting). Gate enforced (`gate_passed is not True and not force → held`). The blind
+   `git checkout <to>` is gone. Push-to-GitHub (creds live on the Windows host) and the restart
+   remain deliberate out-of-band steps.
 3. **Sandbox containers lack docker + git (Phase C requirement).** Provenance,
    `evolve.sandbox.approve`'s git ops, and the collector's docker-tail work today only because
    **prod runs as a host process** with docker+git. Per-branch containers (§4) must mount a

@@ -10,6 +10,15 @@
 *.db-wal
 *.claude
 
+# Keep .claude private EXCEPT the Vera dev skills — those SHIP in the repo so any
+# agent working on Vera (its own dev container) gets them. Everything else under
+# .claude (projects/chat history, settings.local.json, worktrees, locks) stays
+# ignored. Negation order matters: un-ignore the dir, re-ignore its contents,
+# then re-include only skills/.
+!.claude/
+.claude/*
+!.claude/skills/
+
 lib/
 
 **/chroma_store/**/
