@@ -558,6 +558,22 @@ Captured from the user during the C5 build; not yet scheduled.
    into the chat/session that produced it**, and a **chat/session graph that layers on top** of
    the commit graph (session → the commits/branches it drove). Ties directly to #5's attribution.
 
+7. **⚠ Vera writes generated files into its OWN tracked repo — must stop (found 2026-08-08).**
+   Dogfooding the pipeline surfaced this: `docs.build` (operator Playwright screenshot capture)
+   regenerates `documentation/assets/**/*.png` **and** the `<!-- VERA:AUTO:screenshots -->`
+   sections of the top-level `documentation/NN-*.md` docs **in place**, continuously dirtying
+   prod's live working tree. The safe promote (`_merge_in_checkout`) correctly refuses a dirty
+   tree, so a background regen **blocks every promote-into-live-checkout** — and it's a moving
+   target (can't win the discard→merge race). Other subsystems likely write into the tree too
+   (audit needed: dream outputs, operator run artifacts, media, catalog, etc.). **TEMPORARY fix
+   applied (commit `2738e9a`):** `documentation/assets/` untracked + gitignored; the regenerated
+   top-level `documentation/NN-*.md` are `git update-index --skip-worktree` on prod so their
+   churn is invisible (specs/postmortems deliberately NOT skip-worktree'd — they must stay
+   committable). **PROPER FIX (TODO, revisit):** generated artifacts must be emitted OUTSIDE the
+   tracked tree (a gitignored `build/`/`out/` dir, or object storage), and/or prod runs from an
+   **immutable image with no working checkout** (§8.1) — which dissolves this class of problem
+   entirely. This is the strongest concrete evidence yet for that end-state.
+
 ---
 
 ## 9. Operating rules for Claude (the part I follow now, before the tooling exists)
