@@ -5721,6 +5721,11 @@ services:
       VERA_IS_DEV_SANDBOX: "1"
       EMBED_CAPS_ON_START: "0"
       SYSLOG_MONITOR: "0"
+      # Cross-process Ollama GPU gate ('one big queue'): inherit prod's setting
+      # so a dev container joins the SAME queue when prod has it on, and pin the
+      # coordination DB to the shared 0 (its data lives on an isolated DB).
+      VERA_OLLAMA_GATE: "{os.getenv('VERA_OLLAMA_GATE', '0')}"
+      VERA_COORD_REDIS_DB: "0"
     volumes:
       - ./{worktree_rel}:/app/Vera:rw
     restart: "no"
