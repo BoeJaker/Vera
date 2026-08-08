@@ -185,10 +185,30 @@ html.vpb-nav-hosted body{padding-left:0}
   <button class="btn" data-sec="review" onclick="nav('review')"><span class="ic">✓</span>Review</button>
   <button class="btn" data-sec="sources" onclick="nav('sources')"><span class="ic">⌥</span>Sources</button>
   <button class="btn" data-sec="sandbox" onclick="nav('sandbox')"><span class="ic">🛡</span>Sandbox</button>
+  <button class="btn" data-sec="logs" onclick="nav('logs')"><span class="ic">📜</span>Logs</button>
   <div class="rail-grp">Library</div>
   <button class="btn" data-sec="tasks" onclick="nav('tasks')"><span class="ic">☰</span>Tasks</button>
   <button class="btn" data-sec="runs" onclick="nav('runs')"><span class="ic">↻</span>Runs</button>
   <button class="btn" data-sec="settings" onclick="nav('settings')"><span class="ic">⚙</span>Settings</button>
+</div>
+
+<!-- ── LOGS: unified sandbox log/error/perf capture ── -->
+<div class="sec" id="sec-logs" style="display:none">
+  <div class="card">
+    <div class="card-h"><span class="card-t">Sandbox logs</span>
+      <span class="hint" id="logs-status">collector —</span>
+      <span style="flex:1"></span>
+      <select id="logs-container" onchange="loadLogs()" style="min-width:150px"></select>
+      <label class="hint" style="margin-left:8px"><input type="checkbox" id="logs-errors" onchange="loadLogs()"> errors only</label>
+      <label class="hint" style="margin-left:8px"><input type="checkbox" id="logs-follow" checked> follow</label>
+      <button class="btn sm" onclick="loadLogs()" style="margin-left:8px">&#8635;</button>
+    </div>
+    <div id="logs-perf" class="hint" style="margin:6px 0"></div>
+    <div id="logs-body" class="mono" style="max-height:60vh;overflow:auto;font-size:11px;background:var(--bg2);border-radius:6px;padding:8px">
+      <div class="empty">Loading…</div>
+    </div>
+    <div class="hint" style="margin-top:6px">Each line is stamped with its sandbox branch + running-code sha; distinct errors also flow to the Errors tab. Live tailing runs where the app has docker (prod).</div>
+  </div>
 </div>
 
 <!-- ── TEST (home): compose a run → watch the workflow ── -->
@@ -771,7 +791,7 @@ function nav(sec){
   document.querySelectorAll('#nav .btn').forEach(b=>b.classList.toggle('on',b.dataset.sec===sec));
   document.querySelectorAll('.sec').forEach(s=>s.style.display=s.id==='sec-'+sec?'':'none');
   const f={test:loadTest,tasks:loadTasks,runs:loadRuns,improve:loadSessions,watch:loadWatch,pipelines:()=>{loadGit();loadPipelines()},
-    review:loadReview,
+    review:loadReview,logs:loadLogs,
     sources:loadSources,sandbox:loadSandbox,activity:loadAudit,variants:loadVariants,settings:fillSettings,overview:loadOverview,errors:loadErrors}[sec];
   if(f)f();
   // Keep the outer shell's injected top-level sub-menu in sync when this
@@ -789,7 +809,7 @@ if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
   {id:'test', label:'Test'}, {id:'improve', label:'Improve'}, {id:'watch', label:'Watch'},
   {id:'overview', label:'Suite'}, {id:'errors', label:'Errors'}, {id:'variants', label:'Variants'},
   {id:'activity', label:'Activity'},
-  {id:'pipelines', label:'CI / CD'}, {id:'review', label:'Review'}, {id:'sources', label:'Sources'}, {id:'sandbox', label:'Sandbox'},
+  {id:'pipelines', label:'CI / CD'}, {id:'review', label:'Review'}, {id:'sources', label:'Sources'}, {id:'sandbox', label:'Sandbox'}, {id:'logs', label:'Logs'},
   {id:'tasks', label:'Tasks'}, {id:'runs', label:'Runs'}, {id:'settings', label:'Settings'},
 ]);
 
@@ -2333,6 +2353,47 @@ async function pollPipeLive(id){if(!id)return;const r=await api('/evolve/pipelin
 let _sessSug=[],_sessProfile='';
 async function ciVariant(profile,vid){const r=await post('/evolve/pipeline/run',{kind:'variant',profile,variant_id:vid});if(r&&r.ok){toast('CI pipeline '+r.id+' started');closeModal();nav('pipelines');pollPipeLive(r.id)}else toast((r&&r.error)||'failed')}
 async function ciCode(i){const cs=_sessSug[i];if(!cs){toast('suggestion not found');return}const r=await post('/evolve/pipeline/run',{kind:'code',profile:_sessProfile,edits:[cs]});if(r&&r.ok){toast('Code pipeline '+r.id+' started (branch)');closeModal();nav('pipelines');pollPipeLive(r.id)}else toast((r&&r.error)||'failed')}
+
+/* ═══ LOGS — unified sandbox log/error/perf capture ═══ */
+let _logsTimer=null;
+async function loadLogs(){
+  const st=await api('/evolve/sandbox/log_status');
+  const conts=Object.keys((st&&st.containers)||{});
+  const sel=$('logs-container');
+  if(sel && sel.options.length!==conts.length+1){
+    const cur=sel.value;
+    sel.innerHTML='<option value="">all sandboxes</option>'+conts.map(c=>'<option value="'+esc(c)+'">'+esc(c)+'</option>').join('');
+    if(cur)sel.value=cur;
+  }
+  if($('logs-status'))$('logs-status').textContent='collector '+((st&&st.collector_running)?'running':'idle')+' · '+conts.length+' sandbox'+(conts.length===1?'':'es');
+  const c=sel?sel.value:'';
+  const errs=$('logs-errors')&&$('logs-errors').checked;
+  const r=await api('/evolve/sandbox/logs?limit=300'+(c?'&container='+encodeURIComponent(c):'')+(errs?'&errors_only=true':''));
+  renderLogs((r&&r.logs)||[]);
+  const m=await api('/evolve/sandbox/metrics?limit=1'+(c?'&container='+encodeURIComponent(c):''));
+  const parts=[];
+  for(const cn of Object.keys((m&&m.metrics)||{})){
+    const arr=m.metrics[cn]; const last=arr&&arr[arr.length-1];
+    if(last)parts.push('<b>'+esc(cn)+'</b> cpu '+(last.cpu_pct==null?'—':last.cpu_pct+'%')+' · mem '+(last.mem_pct==null?'—':last.mem_pct+'%')+(last.mem?' <span style="color:var(--dim2)">('+esc(last.mem)+')</span>':''));
+  }
+  if($('logs-perf'))$('logs-perf').innerHTML=parts.join(' &nbsp;·&nbsp; ')||'<span style="color:var(--dim2)">no perf samples yet</span>';
+  clearTimeout(_logsTimer);
+  if($('logs-follow')&&$('logs-follow').checked&&_curSec()==='logs')_logsTimer=setTimeout(loadLogs,4000);
+}
+function renderLogs(logs){
+  const body=$('logs-body');if(!body)return;
+  if(!logs.length){body.innerHTML='<div class="empty">No captured logs yet. The collector tails sandbox containers where the app has docker access (prod); it backfills recent lines once a sandbox is running.</div>';return}
+  const col={error:'var(--err)',warn:'var(--warn)',info:'var(--dim2)'};
+  body.innerHTML=logs.slice().reverse().map(function(e){
+    const c=col[e.level]||'var(--fg)';
+    return '<div style="white-space:pre-wrap;border-left:2px solid '+c+';padding:1px 6px;margin:1px 0">'
+      +'<span style="color:var(--dim2)">'+esc((e.ts||'').slice(11,19))+'</span> '
+      +'<span class="tag" style="font-size:9px">'+esc(e.c||'')+'</span> '
+      +(e.ver?'<span class="hint" style="font-size:9px">'+esc(e.ver)+'</span> ':'')
+      +'<span style="color:'+c+'">'+esc(e.text||'')+'</span></div>';
+  }).join('');
+  if($('logs-follow')&&$('logs-follow').checked)body.scrollTop=body.scrollHeight;
+}
 
 /* ═══ SOURCES ═══ */
 async function loadSources(){
