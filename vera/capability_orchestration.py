@@ -4906,13 +4906,46 @@ async def route_llm(prompt: str, prefer: Optional[str] = None) -> Any:
 # ─────────────────────────────────────────────────────────────────────────────
 # SCHEDULER
 # ─────────────────────────────────────────────────────────────────────────────
-def schedule(fn: Callable, interval: float, name: Optional[str] = None):
-    SCHEDULED_TASKS.append({"fn":fn,"int":interval,"name":name or fn.__name__,"last":None,"runs":0})
+# LEECH BOOT (dev sandbox): heavy AMBIENT scheduled jobs that generate Ollama
+# traffic (embeddings/benchmarks/model pulls), crawl/fetch external sources, or
+# auto-run loops/programs must NOT fire inside a dev sandbox — the sandbox should
+# leech prod's already-computed state (read-through) rather than independently
+# recompute it, and its GPU budget belongs to the loop/test actually under study.
+# One-time _startup module-init hooks (interval 999999) are NOT here: a sandbox
+# still needs its panels/state initialised. A job may also self-declare via
+# schedule(..., skip_in_sandbox=True). See is_dev_sandbox()'s docstring.
+_SANDBOX_SKIP_JOBS = {
+    "agent_rag_refresh",       # re-embeds every agent's knowledge dataset
+    "bench_node_perf",         # runs benchmark GENERATIONS against the nodes
+    "model_sync",              # polls every Ollama node's model inventory
+    "catalog_autoopt",         # model optimisation sweeps
+    "catalog_pull_sweep",      # background model PULLS
+    "cal_auto_sync",           # external calendar sync (no side effects from a sandbox)
+    "longterm_scheduler",      # would auto-fire scheduled LOOPS in the sandbox
+    "v8_program_tick",         # would auto-advance long-horizon PROGRAMS
+    "worldview_startup_load",  # loads/embeds the worldview model
+}
+_SANDBOX_SKIP_LOGGED = set()
+
+
+def schedule(fn: Callable, interval: float, name: Optional[str] = None,
+             skip_in_sandbox: bool = False):
+    SCHEDULED_TASKS.append({"fn": fn, "int": interval, "name": name or fn.__name__,
+                            "last": None, "runs": 0, "skip_in_sandbox": skip_in_sandbox})
 
 async def scheduler_loop():
+    _sandbox = is_dev_sandbox()
     while True:
         now=datetime.utcnow()
         for task in SCHEDULED_TASKS:
+            # Leech boot: never fire heavy ambient jobs inside a dev sandbox.
+            if _sandbox and (task.get("skip_in_sandbox")
+                             or task["name"] in _SANDBOX_SKIP_JOBS):
+                if task["name"] not in _SANDBOX_SKIP_LOGGED:
+                    _SANDBOX_SKIP_LOGGED.add(task["name"])
+                    log.info("leech boot: skipping ambient job '%s' in dev sandbox",
+                             task["name"])
+                continue
             last=task["last"]
             if last is None or (now-last).total_seconds()>=task["int"]:
                 task["last"]=now; task["runs"]+=1
