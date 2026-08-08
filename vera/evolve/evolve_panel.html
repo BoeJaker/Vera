@@ -2143,7 +2143,7 @@ async function loadPipelines(){
     const gate=p.gate_passed==null?'':(p.gate_passed?'<span style="color:var(--ok)">PASS '+(p.gate_delta>0?'+':'')+p.gate_delta+'</span>':'<span style="color:var(--err)">FAIL '+p.gate_delta+'</span>');
     h+='<tr class="clk" onclick="openPipe(\''+esc(p.id)+'\')"><td class="mono">'+esc(p.id)+(p.live?' <span class="spin"></span>':'')+'</td>'
       +'<td><span class="tag">'+esc(p.repo||'vera')+'</span></td>'
-      +'<td><span class="tag">'+esc(p.kind)+'</span></td><td>'+esc(p.profile)+'</td>'
+      +'<td><span class="tag">'+esc(p.kind)+'</span>'+(p.adopted?' <span class="tag" style="background:var(--acc3);color:#111" title="hand-authored branch adopted into CI/CD (edits made directly in a worktree, not dispatched to the edit queue)">adopted</span>':'')+'</td><td>'+esc(p.profile)+'</td>'
       +'<td>'+esc(p.status||'')+'</td>'
       +'<td>'+ctrlBadge(p.controller)+'</td>'
       +'<td class="mono">'+(p.baseline_score==null?'—':p.baseline_score)+'→'+(p.candidate_score==null?'—':p.candidate_score)+'</td>'
@@ -2173,9 +2173,18 @@ async function openPipe(id){
     +(p.baseline_score!=null?' <span class="pill">baseline '+p.baseline_score+'</span>':'')
     +(p.candidate_score!=null?' <span class="pill">candidate '+p.candidate_score+'</span>':'')
     +(p.gate_delta!=null?' <span class="pill" style="color:'+(p.gate_passed?'var(--ok)':'var(--err)')+'">Δ '+(p.gate_delta>0?'+':'')+p.gate_delta+'</span>':'')
-    +(p.branch?' <span class="tag">'+esc(p.branch)+'</span>':'')+'</div>';
+    +(p.branch?' <span class="tag">'+esc(p.branch)+'</span>':'')
+    +(p.adopted?' <span class="tag" style="background:var(--acc3);color:#111" title="hand-authored branch adopted into CI/CD">adopted → '+esc(p.to||'main')+'</span>':'')+'</div>';
   if(p.current)h+='<div class="row" style="margin-bottom:6px"><span class="spin"></span><span class="hint">'+esc(p.current)+'</span></div>';
-  h+='<label class="fld">stages</label>';
+  // Provenance for an adopted (hand-authored) branch: the actual commits + files.
+  if(p.commits&&p.commits.length){
+    h+='<label class="fld" style="margin-top:8px">commits ('+p.commits.length+' ahead of '+esc(p.to||'main')+')</label>';
+    for(const c of p.commits)h+='<div class="mono" style="font-size:10px;padding:1px 0;color:var(--dim2)">'+esc(c)+'</div>';
+  }
+  if(p.changed_files&&p.changed_files.length){
+    h+='<div class="hint" style="margin-top:4px">'+p.changed_files.length+' file(s): '+esc(p.changed_files.slice(0,8).join(', '))+(p.changed_files.length>8?' …':'')+'</div>';
+  }
+  h+='<label class="fld" style="margin-top:8px">stages</label>';
   for(const st of p.steps||[])h+='<div class="mono" style="font-size:10px;padding:2px 0;color:'+(st.ok?'var(--ok)':'var(--err)')+'">'+(st.ok?'✓':'✗')+' '+esc(st.stage)+' — <span style="color:var(--dim2)">'+esc(st.detail)+'</span></div>';
   const reviews=p.reviews||[];
   if(reviews.length||p.review_requested){
