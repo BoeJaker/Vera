@@ -5610,6 +5610,39 @@ def _git_wt_argv(wt: str, *args: str) -> List[str]:
     return ["git", "-c", f"safe.directory={wt}", "-c", "safe.directory=*", *args]
 
 
+async def _remove_worktree_robust(wt_abs: str) -> Dict[str, Any]:
+    """Remove a git worktree, resilient to ROOT-OWNED files a container left
+    behind. The dev containers run as root and bind-mount the worktree, so a
+    `pip install`/build inside them drops root-owned paths there. Vera runs as an
+    unprivileged user, so `git worktree remove --force` then fails with
+    Permission denied and the sandbox teardown reports worktree_removed=false —
+    the exact bug seen tearing down a spawned pool container.
+
+    Strategy: try the clean git removal first; on failure, delete the tree from
+    INSIDE a throwaway root `alpine` container that bind-mounts ONLY the parent
+    `.loop-lab-worktrees` dir (so a bad path can't reach outside it), then
+    `git worktree prune` to clear the now-dangling admin entry. Guard-railed:
+    refuses any path not under _WORKTREE_DIR and any suspicious leaf, so it can
+    never rm the main checkout or an arbitrary directory."""
+    wt = str(wt_abs).replace("\\", "/").rstrip("/")
+    r = await _git("worktree", "remove", "--force", wt, timeout=120)
+    if r.get("ok"):
+        return {"ok": True, "method": "git", "detail": ""}
+    parent, _, leaf = wt.rpartition("/")
+    # Safety: only ever operate inside a loop-lab worktree with a sane leaf name.
+    if (_WORKTREE_DIR not in wt or not leaf
+            or not re.fullmatch(r"[A-Za-z0-9._-]+", leaf)
+            or not parent.endswith(_WORKTREE_DIR)):
+        return {"ok": False, "method": "git",
+                "detail": r.get("err") or "unsafe path — refusing root rm"}
+    rm = await _sh(["docker", "run", "--rm", "-v", f"{parent}:/wt", "alpine",
+                    "sh", "-c", f"rm -rf /wt/{leaf}"], timeout=120)
+    await _git("worktree", "prune", timeout=60)
+    gone = not Path(wt).exists()
+    return {"ok": gone, "method": "root-container" if gone else "failed",
+            "detail": ((rm.get("err") or "") + " " + (r.get("err") or "")).strip()}
+
+
 def _host_for_docker(value: str) -> str:
     """Rewrite loopback host references so they resolve from INSIDE a container:
     prod (running natively on the host) reaches its backing services on
@@ -5711,6 +5744,10 @@ from Vera.vera.evolve.sandbox_pool import (          # noqa: E402
     container_name as _pool_cname,
     alloc_port as _pool_alloc_port,
     alloc_db as _pool_alloc_db,
+)
+from Vera.vera.evolve.sandbox_reap import (          # noqa: E402
+    plan_reap as _plan_reap,
+    orphan_composes as _orphan_composes,
 )
 
 KEY_SANDBOX_POOL = "vera:evolve:sandbox:pool"         # hash: slug -> per-branch descriptor
@@ -6684,7 +6721,7 @@ async def evolve_sandbox_down(remove_worktree: bool = True, name: str = "",
                         "-p", d.get("name"), "down"], timeout=180)
         removed_wt = False
         if remove_worktree and d.get("worktree"):
-            wr = await _git("worktree", "remove", "--force", d["worktree"], timeout=120)
+            wr = await _remove_worktree_robust(d["worktree"])
             removed_wt = wr["ok"]
         r = _redis()
         if r:
@@ -6708,7 +6745,7 @@ async def evolve_sandbox_down(remove_worktree: bool = True, name: str = "",
                     "-f", _DEV_COMPOSE, "down"], timeout=180)
     removed_wt = False
     if remove_worktree and sb.get("worktree"):
-        wr = await _git("worktree", "remove", "--force", sb["worktree"], timeout=120)
+        wr = await _remove_worktree_robust(sb["worktree"])
         removed_wt = wr["ok"]
     r = _redis()
     if r:
@@ -6723,6 +6760,135 @@ async def evolve_sandbox_down(remove_worktree: bool = True, name: str = "",
     await emit_event({"type": "evolve.sandbox.down", "worktree_removed": removed_wt})
     return {"ok": dn["ok"], "worktree_removed": removed_wt,
             "detail": dn["err"] or dn["out"]}
+
+
+async def _list_worktrees() -> List[Dict[str, Any]]:
+    """Parse `git worktree list --porcelain` into [{path, branch, is_main}]."""
+    r = await _git("worktree", "list", "--porcelain")
+    root = str(_repo_root()).replace("\\", "/").rstrip("/")
+    wts: List[Dict[str, Any]] = []
+    cur: Dict[str, Any] = {}
+    for line in (r.get("out", "") or "").splitlines():
+        if line.startswith("worktree "):
+            if cur:
+                wts.append(cur)
+            p = line[len("worktree "):].strip()
+            cur = {"path": p, "branch": "",
+                   "is_main": p.replace("\\", "/").rstrip("/") == root}
+        elif line.startswith("branch "):
+            b = line[len("branch "):].strip()
+            cur["branch"] = b[len("refs/heads/"):] if b.startswith("refs/heads/") else b
+    if cur:
+        wts.append(cur)
+    return wts
+
+
+@capability("evolve.sandbox.prune", memory="on",
+            http_method="POST", http_path="/evolve/sandbox/prune", http_tags=["evolve"],
+            description="Reap STALE sandbox leftovers: loop-lab worktrees whose "
+                        "branch is fully merged (0 unique commits) with no live "
+                        "container, orphaned per-branch compose files, and dead pool "
+                        "entries. DRY-RUN by default — reports keep/reap/review "
+                        "without changing anything. review = worktrees with UNMERGED "
+                        "commits (never auto-removed; needs a manual decision). A live "
+                        "sandbox's worktree and the main checkout are NEVER touched. "
+                        "Inputs: dry_run (bool=True), delete_branches (bool=False — "
+                        "off keeps every reap fully restorable via git worktree add), "
+                        "base (str=''=default branch), protect (list[str] branch names).")
+async def evolve_sandbox_prune(dry_run: bool = True, delete_branches: bool = False,
+                               base: str = "", protect: List[str] = None, trace_id=None):
+    base = (base or "").strip() or await _default_branch()
+    protect = list(protect or [])
+    wts = await _list_worktrees()
+    # which worktree paths are backed by a LIVE container → protected
+    ps = await _sh(["docker", "ps", "--format", "{{.Names}}"])
+    running = {n.strip() for n in (ps.get("out", "") or "").splitlines() if n.strip()}
+    protected_paths: List[str] = []
+    pool = await _sandbox_pool()
+    r = _redis()
+    prim = {}
+    if r:
+        try:
+            raw = await r.get(KEY_SANDBOX)
+            if raw:
+                prim = json.loads(raw.decode() if isinstance(raw, (bytes, bytearray)) else raw)
+        except Exception:
+            prim = {}
+    if prim.get("worktree") and _SANDBOX_CONTAINER in running:
+        protected_paths.append(prim["worktree"])
+    live_composes: List[str] = []
+    stale_pool: List[str] = []
+    for slug, d in pool.items():
+        if d.get("name") in running:
+            if d.get("worktree"):
+                protected_paths.append(d["worktree"])
+            live_composes.append(d.get("compose", f"docker-compose.dev-{slug}.yml"))
+        else:
+            stale_pool.append(slug)  # descriptor with a dead container
+    # which candidate branches are fully merged into base (0 unique commits) —
+    # and which worktrees hold UNCOMMITTED changes (never reap those, even if
+    # merged: rev-list only sees committed history, so WIP left in a worktree
+    # would otherwise be silently clobbered).
+    merged: List[str] = []
+    dirty_paths: List[str] = []
+    for w in wts:
+        path = w.get("path", "")
+        br = w.get("branch")
+        if w.get("is_main") or _WORKTREE_DIR not in path:
+            continue
+        st = await _sh(_git_wt_argv(path, "-C", path, "status", "--porcelain"))
+        if (st.get("out", "") or "").strip():
+            dirty_paths.append(path)
+        if br:
+            cnt = await _git("rev-list", "--count", f"{base}..{br}")
+            if cnt.get("ok") and (cnt.get("out", "").strip() == "0"):
+                merged.append(br)
+    plan = _plan_reap(worktrees=wts, protected_paths=protected_paths,
+                      merged_branches=merged, protected_branches=protect,
+                      dirty_paths=dirty_paths, base_branch=base)
+    # orphaned auto-generated compose files
+    try:
+        composes = [p.name for p in _repo_root().glob("docker-compose.dev-*.yml")]
+    except Exception:
+        composes = []
+    orphan_yml = _orphan_composes(compose_files=composes, live_composes=live_composes)
+
+    result = {"dry_run": dry_run, "base": base, "keep": plan["keep"],
+              "reap": plan["reap"], "review": plan["review"],
+              "orphan_composes": orphan_yml, "stale_pool_entries": stale_pool,
+              "removed": [], "errors": []}
+    if dry_run:
+        result["note"] = ("dry-run — nothing changed. Re-run with dry_run=false to "
+                          "remove the `reap` worktrees + orphan composes + dead pool "
+                          "entries. `review` items are left for a manual decision.")
+        return result
+
+    # ── execute: only the proven-safe reap set ──
+    for e in plan["reap"]:
+        rm = await _remove_worktree_robust(e["path"])
+        (result["removed"] if rm["ok"] else result["errors"]).append(
+            {**e, "method": rm.get("method"), "detail": rm.get("detail", "")})
+        if rm["ok"] and delete_branches and e.get("branch"):
+            await _git("branch", "-D", e["branch"], timeout=60)
+    await _git("worktree", "prune", timeout=60)
+    for slug in stale_pool:
+        if r:
+            try:
+                await r.hdel(KEY_SANDBOX_POOL, slug)
+            except Exception:
+                pass
+    for fn in orphan_yml:
+        try:
+            (_repo_root() / fn).unlink()
+        except Exception:
+            pass
+    await _audit("sandbox.prune",
+                 f"reaped {len(result['removed'])} worktree(s), "
+                 f"{len(orphan_yml)} compose(s), {len(stale_pool)} dead pool entr(ies)")
+    await emit_event({"type": "evolve.sandbox.prune",
+                      "removed": len(result["removed"]),
+                      "review": len(plan["review"])})
+    return result
 
 
 # ─────────────────────────────────────────────────────────────────────────────

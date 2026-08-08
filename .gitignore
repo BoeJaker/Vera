@@ -60,6 +60,7 @@ vera/dream/outputs/
 # Loop Lab CI/CD dev sandbox
 .loop-lab-worktrees/
 docker-compose.dev.yml
+docker-compose.dev-*.yml   # auto-generated per-branch sandbox composes (evolve.sandbox.spawn)
 
 # Operator run artifacts (per-run observe/step screenshots) — ephemeral.
 # The DOCUMENTATION screenshots under documentation/assets/ ARE tracked.
