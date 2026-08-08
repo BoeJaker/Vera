@@ -120,7 +120,7 @@
 // Reported in `hello` and compared by the server's auto-OTA against the version
 // recorded for the newest built .bin. BUMP THIS when you change the sketch, or
 // nodes will never be offered the new image.
-#define FW_VERSION "3.3.0-ino"
+#define FW_VERSION "4.1.0-ino"
 
 // The job path nests JSON buffers (poll -> runJob -> toolkitJob -> sendResult)
 // and then calls HTTPClient on top. The 8KB default loopTask stack overflows on
@@ -537,7 +537,11 @@ int touchZMin = 350, touchZMax = 3900;
  * ADC/GPIO inputs and touchRestore() puts them back to OUTPUT — otherwise the
  * next render draws garbage. Defaults follow the S3-Uno shield; override at
  * runtime with config.io.touch.  */
-int touchXP = 3, touchYM = 14, touchYP = 6, touchXM = 7;
+// MCUFRIEND_kbv TouchScreen_Calibr_native for ID=0x9488: XP=D8, XM=A2,
+// YP=A3, YM=D9. On this board D8=LCD_D0=GPIO21, D9=LCD_D1=GPIO46,
+// A2=RS/DC=GPIO7, A3=CS=GPIO6. YP/XM are the analogue pair and 6/7 are
+// both ADC1, which is exactly what a 4-wire read needs.
+int touchXP = 21, touchYM = 46, touchYP = 6, touchXM = 7;
 int touchCalX0 = 320, touchCalX1 = 3800, touchCalY0 = 320, touchCalY1 = 3800;
 bool touchSwap = false, touchInvX = false, touchInvY = false;
 bool touchDown = false;
@@ -1477,95 +1481,156 @@ bool toolkitJob(const String& id, const String& type, JsonObject p){
     sendResult(id,"done",rv,""); return true;
   }
   if(type=="touch_hunt"){
-    /* Find the touch wires ON SCREEN, with no round trip to a human reading
-     * logs. The four wires tap four of the eight LCD data lines directly (they
-     * bypass the LVC245 buffers, which is why nothing was ever visible through
-     * them). Pressing the panel shorts an X wire to a Y wire — a connection
-     * that is absent when released. So: measure continuity between every pair
-     * released, measure again pressed, and the pairs that appear ONLY under
-     * pressure are the crossing. That is a purely digital test, which matters
-     * because only one of these eight pins is on ADC1 (the rest are ADC2 and
-     * unreadable while Wi-Fi is up). */
+    /* Find the touch wires with no prompt timing to get wrong.
+     *
+     * The earlier version drew "press now", measured once, and depended on the
+     * press landing inside that window - which it never did, partly because the
+     * scan left the LCD bus as inputs so the prompt could not even redraw. This
+     * one takes a baseline, then sweeps continuously for N seconds: press at any
+     * point, as many times as you like. Any pair that conducts at ANY moment but
+     * not in the baseline is an X-to-Y crossing, i.e. two touch wires.
+     * Purely digital: only one of these eight pins is on ADC1, the rest are ADC2
+     * and unreadable while Wi-Fi is up. */
     if(!p8.ok){ sendResult(id,"error",rv,"no display"); return true; }
     int d[8], nd = 0;
     for(int b = 0; b < 8; b++) if(p8.pD[b] >= 0) d[nd++] = p8.pD[b];
+    int secs = p["seconds"] | 20;
+    if(secs < 5) secs = 5; if(secs > 60) secs = 60;
 
-    uint8_t base[8][8]; uint8_t press[8][8];
-    for(int phase = 0; phase < 2; phase++){
-      dspText(phase == 0 ? "TOUCH SETUP" : "NOW PRESS",
-              phase == 0 ? "Do NOT touch the screen.\n\nSampling in 3s..."
-                         : "PRESS AND HOLD\nanywhere on the screen\n\nSampling in 3s...",
-              phase == 0 ? C_WHITE : C_YELL, C_BLACK, 2);
-      delay(3000);
+    uint8_t base[8][8]; uint8_t ever[8][8];
+    for(int a = 0; a < 8; a++) for(int b2 = 0; b2 < 8; b2++){ base[a][b2]=0; ever[a][b2]=0; }
+
+    // One sweep of every ordered pair, writing into `dst`.
+    // (declared as a lambda so both the baseline and the live loop share it)
+    auto sweep = [&](uint8_t dst[8][8]){
       for(int i = 0; i < nd; i++) pinMode(d[i], INPUT);
-      delay(2);
+      delayMicroseconds(400);
       for(int j = 0; j < nd; j++){
-        pinMode(d[j], INPUT_PULLUP); delayMicroseconds(300);
+        pinMode(d[j], INPUT_PULLUP); delayMicroseconds(250);
+        if(!digitalRead(d[j])){ pinMode(d[j], INPUT); continue; }   // held low
         for(int i = 0; i < nd; i++){
-          uint8_t hit = 0;
-          if(i != j){
-            pinMode(d[i], OUTPUT); digitalWrite(d[i], LOW);
-            delayMicroseconds(300);
-            int low = 0;
-            for(int k = 0; k < 5; k++) if(!digitalRead(d[j])) low++;
-            pinMode(d[i], INPUT); delayMicroseconds(200);
-            hit = (low >= 4 && digitalRead(d[j])) ? 1 : 0;
-          }
-          if(phase == 0) base[j][i] = hit; else press[j][i] = hit;
+          if(i == j) continue;
+          pinMode(d[i], OUTPUT); digitalWrite(d[i], LOW);
+          delayMicroseconds(250);
+          int low = 0;
+          for(int k = 0; k < 3; k++) if(!digitalRead(d[j])) low++;
+          pinMode(d[i], INPUT); delayMicroseconds(150);
+          if(low >= 3 && digitalRead(d[j])) dst[j][i] = 1;
         }
         pinMode(d[j], INPUT);
       }
+    };
+
+    dspText("TOUCH SETUP", "Hands OFF for 2 seconds", C_WHITE, C_BLACK, 2);
+    delay(2000);
+    sweep(base);
+    touchRestore();                       // the sweep leaves the bus as inputs
+
+    dspText("PRESS THE SCREEN", "Press and drag anywhere,\nas often as you like.\n\n"
+            + String(secs) + " seconds...", C_YELL, C_BLACK, 2);
+    unsigned long t0 = millis();
+    int passes = 0;
+    while(millis() - t0 < (unsigned long)secs * 1000UL){
+      sweep(ever);
+      passes++;
+      handleSerialInput();
     }
     touchRestore();
 
-    // Pairs that only conduct under pressure are the X-to-Y crossing.
     JsonArray found = res.createNestedArray("crossings");
-    String lines = "";
-    int n = 0;
+    String lines = ""; int n = 0;
     for(int j = 0; j < nd; j++)
       for(int i = 0; i < nd; i++)
-        if(press[j][i] && !base[j][i]){
+        if(ever[j][i] && !base[j][i]){
           JsonObject e = found.createNestedObject();
           e["a"] = d[i]; e["b"] = d[j];
-          if(n < 6) lines += "GPIO" + String(d[i]) + " - GPIO" + String(d[j]) + "\n";
+          if(n < 5) lines += "GPIO" + String(d[i]) + " - GPIO" + String(d[j]) + "\n";
           n++;
         }
-    res["count"] = n;
+    res["count"] = n; res["passes"] = passes;
     for(int i = 0; i < nd; i++) res["scanned"].add(d[i]);
-
-    if(n){
-      dspText("TOUCH FOUND", String(n) + " crossing(s):\n" + lines +
-              "\nThese are the X and Y wires.", C_GREEN, C_BLACK, 2);
+    if(n) dspText("TOUCH FOUND", String(n) + " crossing(s):\n" + lines, C_GREEN, C_BLACK, 2);
+    else  dspText("NOTHING SEEN", "No pair conducted while\npressed, over " +
+                  String(passes) + " sweeps.\n\nTouch is not reachable\non these 8 pins.",
+                  C_RED, C_BLACK, 2);
+    sendResult(id,"done",rv,""); return true;
+  }
+  if(type=="adc_check"){
+    /* Does analogRead() on these pins work AT ALL?
+     *
+     * Every touch conclusion so far rests on trusting those readings. If the ADC
+     * path is misconfigured the values would sit near a rail and never move -
+     * which is exactly the symptom I have been attributing to the panel. So
+     * drive each pin to a known level and read it back: a working ADC follows
+     * the pin. This tests my own code, not the hardware.                        */
+    JsonArray out = res.createNestedArray("pins");
+    int list[8]; int n = 0;
+    JsonArray want = p["pins"].as<JsonArray>();
+    if(!want.isNull() && want.size()){
+      for(JsonVariant v : want) if(n < 8) list[n++] = v.as<int>();
     } else {
-      dspText("NO CROSSING", "Nothing conducted while pressed.\n\n"
-              "Either the press was missed,\nor touch is not on these\n"
-              "8 data pins.", C_RED, C_BLACK, 2);
+      int def[] = {touchYP, touchXM, touchXP, touchYM};
+      for(int i = 0; i < 4; i++) if(def[i] >= 0 && n < 8) list[n++] = def[i];
     }
-    res["shown_on_screen"] = true;
+    for(int i = 0; i < n; i++){
+      int g = list[i];
+      JsonObject e = out.createNestedObject();
+      e["pin"] = g;
+      pinMode(g, OUTPUT); digitalWrite(g, HIGH); delay(3);
+      int hi = analogRead(g);
+      digitalWrite(g, LOW); delay(3);
+      int lo = analogRead(g);
+      pinMode(g, INPUT); delay(3);
+      int fl = analogRead(g);
+      e["driven_high"] = hi; e["driven_low"] = lo; e["floating"] = fl;
+      // A working ADC on a driven pin swings most of the range.
+      e["adc_ok"] = (hi > 3000 && lo < 800);
+    }
+    touchRestore();
+    res["note"] = "adc_ok=false means analogRead cannot see this pin - every touch "
+                  "reading taken through it was meaningless";
     sendResult(id,"done",rv,""); return true;
   }
   if(type=="touch_diag"){
-    // Raw values with NO gating, so an unresponsive panel can be told apart
-    // from a mis-calibrated one. Press the screen while this runs.
+    // Long sample runs must report RANGES, not every reading: 200 samples of
+    // (x,y,z) overflow the result document and the array comes back empty.
     int n = p["samples"] | 12;
-    JsonArray arr = res.createNestedArray("samples");
-    int zmin = 99999, zmax = -99999;
+    if(n > 400) n = 400;
+    int xmin=99999,xmax=-99999,ymin=99999,ymax=-99999,zmin=99999,zmax=-99999;
+    int bestx=0,besty=0,bestz=-99999, got=0;
+    JsonArray arr = res.createNestedArray("peak_samples");
     for(int i = 0; i < n; i++){
-      int x, y, z;
-      if(touchRaw(x, y, z)){
-        JsonArray s = arr.createNestedArray(); s.add(x); s.add(y); s.add(z);
-        if(z < zmin) zmin = z; if(z > zmax) zmax = z;
+      int x,y,z;
+      if(touchRaw(x,y,z)){
+        got++;
+        if(x<xmin)xmin=x; if(x>xmax)xmax=x;
+        if(y<ymin)ymin=y; if(y>ymax)ymax=y;
+        if(z<zmin)zmin=z; if(z>zmax)zmax=z;
+        if(z>bestz){ bestz=z; bestx=x; besty=y; }
+        // keep a handful of the strongest readings for inspection
+        if(z > touchZMin && arr.size() < 8){
+          JsonArray one = arr.createNestedArray(); one.add(x); one.add(y); one.add(z);
+        }
       }
       delay(60);
+      handleSerialInput();
     }
-    res["z_min"] = zmin; res["z_max"] = zmax;
+    res["samples"] = got;
+    res["x_min"]=xmin; res["x_max"]=xmax;
+    res["y_min"]=ymin; res["y_max"]=ymax;
+    res["z_min"]=zmin; res["z_max"]=zmax;
+    res["peak"] = bestz;
+    JsonArray pk = res.createNestedArray("peak_xyz");
+    pk.add(bestx); pk.add(besty); pk.add(bestz);
     res["gate_min"] = touchZMin; res["gate_max"] = touchZMax;
     JsonObject pins = res.createNestedObject("pins");
-    pins["xp"] = touchXP; pins["ym"] = touchYM; pins["yp"] = touchYP; pins["xm"] = touchXM;
-    res["verdict"] = (zmax - zmin < 40)
-        ? "readings never change - wrong touch pins, or the panel is not wired"
-        : (zmin > touchZMax ? "always above the gate - panel reads open"
-                            : "readings vary; press during the run and compare z");
+    pins["xp"]=touchXP; pins["ym"]=touchYM; pins["yp"]=touchYP; pins["xm"]=touchXM;
+    int xspan = xmax-xmin, yspan = ymax-ymin, zspan = zmax-zmin;
+    res["verdict"] = (zspan > 300)
+        ? "pressure MOVES - the panel is wired here; set the gate from z_min/z_max"
+        : ((xspan > 300 || yspan > 300)
+           ? "position moves but pressure does not - check the z wiring/pair"
+           : "nothing moves - wrong pins, or not reachable from these");
     sendResult(id,"done",rv,""); return true;
   }
   if(type=="touch_cal"){

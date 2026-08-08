@@ -79,3 +79,6 @@ logs/
 .vera/
 vera/ide/.vera_remote_*.json
 vera/ide/.vera_claude_sessions_state.json
+
+# Mesh firmware build binaries â€” large, and carry an embedded device key. Never commit.
+vera/mesh/firmware/bin/*.bin

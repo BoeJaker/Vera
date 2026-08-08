@@ -29,12 +29,18 @@
         "mosi": 11,
         "cs": 10
       },
-      "neopixel": 48
+      "neopixel": 48,
+      "touch": {
+        "xp": 21,
+        "ym": 46,
+        "yp": 6,
+        "xm": 7
+      }
     },
     "kiosk": {
       "rotation": 1
     },
-    "note": "Verified on hardware (control RST5/CS6/DC7/WR1/RD2). CRITICAL: LCD_D4=GPIO19 and LCD_D5=GPIO20 are the S3's native USB-Serial-JTAG lines, so the USB PHY has to give that pad up before the bus works. Easiest: flash the Arduino build (built with 'USB CDC On Boot: Disabled', console on UART0 \u2014 it frees 19/20 automatically). MicroPython CAN drive it too, but only with the 'Free USB pins' bake option, which costs you the USB REPL (Wi-Fi/UART0 only; hold BOOT+RESET to reflash)."
+    "note": "Verified on hardware (control RST5/CS6/DC7/WR1/RD2). CRITICAL: LCD_D4=GPIO19 and LCD_D5=GPIO20 are the S3's native USB-Serial-JTAG lines, so the USB PHY has to give that pad up before the bus works. Easiest: flash the Arduino build (built with 'USB CDC On Boot: Disabled', console on UART0 \u2014 it frees 19/20 automatically). MicroPython CAN drive it too, but only with the 'Free USB pins' bake option, which costs you the USB REPL (Wi-Fi/UART0 only; hold BOOT+RESET to reflash). TOUCH: MCUFRIEND_kbv's ILI9488 pinout (XP=D8/XM=A2/YP=A3/YM=D9) maps here to xp=21(D0), xm=7(RS), yp=6(CS), ym=46(D1). The plates span DATA and CONTROL lines, which is why a scan of D0-D7 alone found nothing."
   },
   {
     "id": "esp32-d1r32-ili9488",
