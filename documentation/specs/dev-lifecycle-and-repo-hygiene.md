@@ -745,6 +745,37 @@ fix so an agent (me, or another) can drive it cleanly:
    `pip install`. Until then, an agent cannot complete the in-sandbox test tier for app-importing
    changes — it must fall back to standalone-helper tests + the compile gate.
 
+   **◐ Partial mitigation available NOW (2026-08-10, branch `refactor/foundry-testable-cores`) —
+   the app-free `*_core.py` split.** You can get REAL (not just compile-gate) unit coverage for
+   app-importing modules today by extracting the pure logic into a sibling `X_core.py` that imports
+   NOTHING from the app (no `@capability`/`register_ui`/orchestrator) — template `vera/dag/planner_core.py`.
+   The cap module imports the names from the core; the test imports them via the **lowercase `vera.X`**
+   path. This matters because **`Vera.vera.*` imports resolve to the MAIN checkout, not the worktree**
+   (the host has main importable as the `Vera` package), so a worktree test that imports `from Vera.vera…`
+   silently exercises MAIN's code, not your edits — the lowercase path binds to the worktree. Such tests
+   run with a plain host `pytest` (no app boot, no container, no hang): e.g.
+   `cd <worktree> && PYTHONPATH=$PWD python -m pytest tests/… -q` (local Windows `/c/Python38` pytest works;
+   SMB blocks the `.pyc` atomic-write, so use `ast.parse` for syntax checks, not `py_compile`). Proven on
+   `foundry_core.py` + `enroll_core.py` (12/12 green app-free). This does NOT replace the ephemeral-container
+   fix — behaviour that only exists inside a cap (redis/httpx/proxmox side-effects) still needs the sandbox
+   suite — but it converts most "pure helper" logic from compile-gate-only to actually-tested. Captured in
+   memory `worktree-testable-cores-pattern`.
+
+10. **⚠ No Vera-capability MCP server is exposed to the Claude Code session — the CI/CD flow falls
+    back to raw HTTP, which MIS-ATTRIBUTES the caller (found 2026-08-10).** Driving `evolve.pipeline.*`
+    / `evolve.sandbox.*` from an agent session currently means `curl` against `https://<host>:8999/…`
+    (the capability HTTP API), because the session's toolset exposes only the claude.ai connectors
+    (Gmail/Calendar/Drive) + built-ins — NOT Vera's own capabilities as MCP tools. Two costs: (a) it's
+    clunky (hand-built JSON, self-signed `-k`, no schema help); (b) **attribution is wrong** — a plain
+    HTTP call makes `_triggered_by()` / `CALLER_KIND` resolve to **`user`**, so an `adopt`/`review`
+    driven this way is logged as the human, not `claude_code`. (Seen this session: pipeline `43f1e835`'s
+    adopt + adversarial review both stamped `reviewer=user`.) **Do:** expose the Vera capability MCP
+    bridge (`vera/mcp`, `mcp-server-catalog` / the remote-IDE MCP bridge) to agent sessions so the flow
+    runs through MCP tools that carry the real caller identity — restoring correct controller/reviewer
+    attribution in the CI/CD UI (§8.2 #4) and removing the raw-curl workaround. Until then, treat any
+    `user`-stamped adopt/review that an agent actually drove as an attribution artefact of this gap, not
+    a real human sign-off.
+
 ---
 
 ## 8.4 Shelved — deliberately deferred, do at the end
