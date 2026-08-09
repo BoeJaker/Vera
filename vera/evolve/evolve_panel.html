@@ -1663,7 +1663,7 @@ async function loadCSessions(){
   if(sum)sum.innerHTML=Object.keys(by).sort().map(k=>'<span class="tag" style="border-left:3px solid '+(_CSESS_COLOR[k]||'#666')+'">'+esc(k)+' '+by[k]+'</span>').join('');
   const rows=r.sessions||[];
   if(!rows.length){el.innerHTML='<div class="empty">No ingested Claude Code sessions.</div>';return}
-  let h='<table style="width:100%;border-collapse:collapse;font-size:12px"><tr style="text-align:left;color:var(--muted)"><th>state</th><th>session</th><th>turns</th><th>idle</th><th>claims</th><th>pipelines</th><th>why</th></tr>';
+  let h='<table style="width:100%;border-collapse:collapse;font-size:12px"><tr style="text-align:left;color:var(--muted)"><th>state</th><th>session</th><th>turns</th><th>idle</th><th>claims</th><th>pipelines</th><th>why</th><th>act</th></tr>';
   for(const s of rows){
     const c=_CSESS_COLOR[s.state]||'#666';
     const claims=(s.claims||[]).map(x=>esc((x.title||x.id||'').slice(0,28))).join(', ')||'—';
@@ -1675,9 +1675,28 @@ async function loadCSessions(){
       +'<td>'+_csessAge(s.age_s)+'</td>'
       +'<td>'+claims+'</td>'
       +'<td class="mono" style="font-size:10px">'+pipes+'</td>'
-      +'<td class="hint" style="max-width:280px">'+esc(s.reason||'')+'</td></tr>';
+      +'<td class="hint" style="max-width:240px">'+esc(s.reason||'')+'</td>'
+      +'<td style="white-space:nowrap">'+_csessActions(s)+'</td></tr>';
   }
   el.innerHTML=h+'</table>';
+}
+function _csessActions(s){
+  const st=s.state,sid=s.claude_session_id,hasClaims=(s.claims&&s.claims.length);
+  let b='';
+  if(st==='resumable'||st==='stalled')b+='<button class="btn sm" style="font-size:9px;padding:2px 5px" onclick="csessResume(\''+esc(sid)+'\')">resume</button> ';
+  if(hasClaims&&(st==='resumable'||st==='stalled'||st==='finished-unreported'||st==='human'))b+='<button class="btn sm" style="font-size:9px;padding:2px 5px" onclick="csessRelease(\''+esc(sid)+'\')">release</button>';
+  return b||'<span class="hint">—</span>';
+}
+async function csessResume(sid){
+  const inst=prompt('Resume on which instance_id? (auto-dispatch is not built yet — pick the target to run --resume on)',localStorage.getItem('vera_resume_instance')||'');
+  if(!inst)return;localStorage.setItem('vera_resume_instance',inst);
+  const r=await post('/ide/claude_sessions/resume',{claude_session_id:sid,instance_id:inst});
+  toast(r&&r.ok?('resumed (attempt '+r.attempt+')'):(r&&r.error)||'failed');loadCSessions();
+}
+async function csessRelease(sid){
+  if(!confirm('Release this session’s board claims back to the pool?'))return;
+  const r=await post('/ide/claude_sessions/release',{claude_session_id:sid});
+  toast(r&&r.ok?('released '+r.count+' claim(s)'):(r&&r.error)||'failed');loadCSessions();
 }
 
 async function loadWatch(){
