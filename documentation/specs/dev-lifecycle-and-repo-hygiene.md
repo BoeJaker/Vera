@@ -721,22 +721,25 @@ fix so an agent (me, or another) can drive it cleanly:
    commits before merging so a `begin`-stub gets accurate commits/attribution. The skill leads with
    `begin`. Verified end-to-end (own container on the correctly-allocated port, no collision).
 
-9. **⚠ Dev container OOMs / won't stay up under in-container `pytest` (found 2026-08-09, running
-   `improve-vera-sandboxed`) — TO FIX.** Running the branch's unit tests INSIDE its pooled dev
-   container (`pip install pytest` + `python -m pytest`) crashes the container: importing a second
-   full Vera under pytest, on top of the already-running app process, exceeds the container's memory
-   and the container goes down (repeatedly, would not stay up 2 min). This **blocks the "run the
-   suite in the sandbox" step** (§6 / the skill's test stage) for anything that imports the app,
-   and destabilises the same container the real-VM E2E drives from. Workarounds used this session:
-   verify pure helpers **standalone** (no app import) + rely on the host-side `adopt` compile gate —
-   but that is NOT the behavioural/suite testing the standard wants. **Do:** (a) give pooled dev
-   containers enough memory headroom (compose `mem_limit`/reservation) and/or run pytest in a
-   **separate** short-lived exec that isn't competing with the live app process; (b) **bake `git` +
-   `pytest` into the dev image** (§8.1 #3 already notes missing `git`/docker) so tests don't need a
-   fragile in-container `pip install`; (c) expose a `evolve.sandbox.test`/`evolve.suite.run` that
-   runs the suite against a branch **without** OOM-crashing its serving container (e.g. a dedicated
-   test container, or `pytest -p no:cacheprovider` in a mem-bounded subprocess). Until fixed, an
-   agent cannot complete the in-sandbox test tier for app-importing changes.
+9. **✅ CORRECTED 2026-08-09 — this was NOT an OOM; it was the `Vera.vera.*` import-path trap.**
+   The original write-up said in-container `pytest` "OOMs / won't stay up" from "importing a second
+   full Vera." **Empirically disproven** (2026-08-09): the pooled dev container has **`mem_limit=0`
+   (no cap)**, sits at **~0.6% memory**, **`OOMKilled=false`, 0 restarts**, and a full second-Vera
+   app import *plus* an app-importing `pytest` run both **pass in-container in ~1s with the container
+   staying up**. There is no memory problem. The real trap: **`Vera` is a namespace package (no
+   `__init__.py`), so `from Vera.vera.X import …` resolves to whatever is first on `sys.path`** — on
+   the HOST that is the **main checkout, not the worktree**, so a host `pytest` silently tested the
+   OLD code (symbols "missing", changes "did nothing"), which the earlier session misread as the
+   container dying. The two genuine, non-memory gaps behind the confusion:
+   - **pytest isn't baked into the dev image** — the in-container test tier needs a `pip install
+     pytest` first (bake it in + `git`, per §8.1 #3 / C4a).
+   - **worktree code must be imported the right way** — lowercase `from vera.X` with the worktree
+     root on `sys.path` (pure-core pattern: `board_core.py`, `remote_exec_core.py`), or run pytest
+     **inside the container** where the worktree *is* `/app/Vera` so `Vera.vera.X` resolves. The
+     `improve-vera-sandboxed` skill §5 now documents this.
+   **Still worth doing** (not blockers, just ergonomics): bake `pytest` into the image, and expose an
+   `evolve.sandbox.test` that runs a branch's suite in a clean short-lived exec. But the in-sandbox
+   test tier is NOT blocked, and no memory headroom work is needed.
 
 ---
 
