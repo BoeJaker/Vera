@@ -7664,10 +7664,15 @@ async def _sandbox_suite(branch: str, profile: str, critic: str) -> Dict[str, An
 @APP.get("/evolve/panel", include_in_schema=False)
 async def _evolve_panel_html():
     from fastapi.responses import HTMLResponse as _HTMLResp
+    # no-cache: the panel is redeployed constantly (every UI landing) and loads in
+    # an iframe — without this the browser serves a STALE cached panel, which can
+    # mismatch the always-fresh /ui/elements/*.js and render inconsistently. Match
+    # the no-cache the element routes already set.
+    _hdrs = {"Cache-Control": "no-cache, no-store, must-revalidate"}
     if _PANEL_PATH.exists():
-        return _HTMLResp(_PANEL_PATH.read_text(encoding="utf-8"))
+        return _HTMLResp(_PANEL_PATH.read_text(encoding="utf-8"), headers=_hdrs)
     return _HTMLResp("<p style='color:#c96b6b'>evolve_panel.html not found</p>",
-                     status_code=404)
+                     status_code=404, headers=_hdrs)
 
 
 # ── Loop Lab infographic elements — served the same way activity_capabilities.py
