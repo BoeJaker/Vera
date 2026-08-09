@@ -487,18 +487,18 @@ land (per §2.5 this doc is the living record, not a snapshot of original intent
   Make §2.5 partly automatic: a branch's plan doc created on `evolve.pipeline.run`; the auto-
   postmortem writes to `documentation/postmortems/`; a check warns when a merged branch
   changed code with no matching docs/tests.
-  - **Docs edit-area + scheduled auto-push (requested 2026-08-08).** Docs get edited on prod (and
-    from any dev container) but currently land only via manual direct-to-main commits. Provide a
-    sanctioned **docs edit surface** and a **scheduled job that commits + pushes `documentation/`
-    changes to `main` every ~24h if there are any** (author = the human, no AI trailer, secret-scan
-    gated) — so doc edits flow without hand commits.
-  - **Cross-container reconciliation is REAL (confirmed to bite).** Docs get edited from prod AND
-    from multiple dev containers; the 24h auto-push must **merge/reconcile** those concurrent edits,
-    not blindly overwrite — the same class of "Vera writes into its own tree from many places"
-    problem as §8.2 #7, which we already hit. Design the auto-push to rebase/merge doc edits (or
-    scope each container to its own doc area) rather than last-writer-wins. NOTE: still SEPARATE
-    from §8.2 #7's *generated* files (`docs.build` screenshots stay gitignored / emitted outside the
-    tree); THIS item is HAND-authored doc prose edited concurrently.
+  - **A sanctioned place for Vera to update non-code content — WITHOUT a dev container
+    (reframed 2026-08-09 per the user).** The user should NOT have to spin up a dev container just
+    for Vera to change **documentation, notes, skills, plans, or images**. Vera (running on prod)
+    needs a first-class content-edit surface that lands these to `main` safely: a cap like
+    `content.edit(path, body)` scoped to an allowlist (`documentation/`, `.claude/skills/`, notes,
+    image assets) that commits (author = the human, **no AI trailer**, secret-scan gated) and a
+    **scheduled ~24h auto-push** of any pending content changes to GitHub. This is the natural home
+    for the doc/skill/plan edits currently done by hand this session.
+  - **Cross-container reconciliation — NOT needed (user, 2026-08-09).** We do not need to merge doc
+    edits made concurrently from multiple containers; the content-edit surface above lands from
+    prod. (Still SEPARATE from §8.2 #7's *generated* files — `docs.build` screenshots stay
+    gitignored / emitted outside the tree.)
 
 ### 8.1 Build learnings & amendments (2026-08-08)
 Recorded from actually building Phases A / A+ / D, so the plan reflects reality, not intent:
@@ -547,10 +547,10 @@ Recorded from actually building Phases A / A+ / D, so the plan reflects reality,
 
 Captured from the user during the C5 build; not yet scheduled.
 
-1. **Revisit U2 (§4.3) and close the direct-write gaps.** The write guard covers the fabric +
-   memory chokepoints; audit every subsystem that opens its own Neo4j/PG/Chroma session (dream,
-   goals, projects, worldview, …) and route each through `sandbox_guard.write_blocked()`. Goal:
-   a hermetic dev/prod data boundary, not "mostly closed."
+1. **[SHELVED 2026-08-09 — see §8.4] Revisit U2 (§4.3) and close the direct-write gaps.** The
+   write guard covers the fabric + memory chokepoints; auditing every OTHER subsystem's direct
+   Neo4j/PG/Chroma writes (dream, goals, projects, worldview, …) for a fully hermetic boundary is
+   deferred — the dominant surfaces are already guarded.
 
 2. **✓ Review UI — accepted/rejected history (2026-08-08).** The Loop Lab **Review** tab now
    lists **decided** pipelines below the queue (`promoted`=accepted / `rolled_back`=rejected) —
@@ -683,6 +683,9 @@ fix so an agent (me, or another) can drive it cleanly:
 ## 8.4 Shelved — deliberately deferred, do at the end
 
 Real but low-urgency; parked here so they don't clog the active phases.
+- **U2 hermetic-boundary audit (§8.2 #1, shelved 2026-08-09).** Audit every OTHER subsystem's
+  direct Neo4j/PG/Chroma writes and route them through `sandbox_guard.write_blocked()`. The
+  dominant surfaces (fabric + memory) are already guarded; the rest is deferred.
 - **Git history author remediation (`admin` → `BoeJaker`).** Future commits are fixed (git config
   set 2026-08-08). Rewriting PAST history (`git filter-repo` + force-push) is disruptive — it
   changes every SHA and breaks live clones/worktrees — so do it **at a quiet moment with no other
