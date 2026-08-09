@@ -721,29 +721,34 @@ fix so an agent (me, or another) can drive it cleanly:
    commits before merging so a `begin`-stub gets accurate commits/attribution. The skill leads with
    `begin`. Verified end-to-end (own container on the correctly-allocated port, no collision).
 
-9. **⚠ In-container `pytest` that imports the app hangs the sandbox's HTTP — NOT an OOM
-   (found 2026-08-09, running `improve-vera-sandboxed`; DIAGNOSED, fix TODO).** Running the
-   branch's unit tests INSIDE its pooled dev container (`python -m pytest` on a test that
-   `import`s `Vera.vera...`) makes the container's Vera HTTP server go **unresponsive** — my
-   `exec.bash.run` / `/health` calls (served by that same app) drop with "connection closed",
-   which I first **mis-read as an OOM crash**. It is not: `docker inspect` shows
-   **`Running=true, OOMKilled=false, ExitCode=0, RestartCount=0`** throughout, and it does NOT
-   recover cleanly after the run. Root cause is **contention/deadlock, not memory** — a second
-   full-app import (which re-runs module-init / touches the shared coordination Redis, secret
-   key, etc.) inside the container that is *already* serving the full app starves/blocks its
-   event loop. **Memory was NOT the constraint:** each dev container uses ~1 GiB idle, has no
-   `mem_limit` (unlimited), and `OOMKilled=false`. (A 16 GiB host swap file was added this
-   session as general headroom — reasonable, but it did **not** fix this; the problem recurred
-   with 15 GiB swap free.) This still **blocks the "run the suite in the sandbox" step** (§6 /
-   the skill's test stage) for any app-importing test. Workaround used: verify pure helpers
-   **standalone** (no app import) + the host-side `adopt` compile gate — NOT the behavioural
-   testing the standard wants. **Do (real fix, not memory):** run the suite in a **separate,
-   ephemeral test container** (a fresh `vera:latest` that runs pytest and exits — never the
-   container that's serving HTTP), OR a dedicated `evolve.sandbox.test`/`evolve.unittest.run`
-   that shells into an isolated process/namespace so the serving app isn't disturbed; and
-   **bake `git`+`pytest` into the dev image** (§8.1 #3) so tests don't need a fragile in-container
-   `pip install`. Until then, an agent cannot complete the in-sandbox test tier for app-importing
-   changes — it must fall back to standalone-helper tests + the compile gate.
+9. **✅ CORRECTED 2026-08-09 — the "OOM" was a misdiagnosis. Two independent sessions re-diagnosed
+   it and found TWO distinct, real, non-memory causes (both credited below).** `docker inspect`
+   shows **`Running=true, OOMKilled=false, ExitCode=0, RestartCount=0`**, `mem_limit=0` (unlimited),
+   ~0.6–1 GiB idle usage — there is **no memory problem**. A 16 GiB host swap file was added as
+   general headroom but did **not** fix anything (it was never memory). Two things were conflated:
+   - **(a) Host-side import-path trap.** `Vera` is a **namespace package** (no `__init__.py`), so
+     `from Vera.vera.X import …` resolves to whatever is first on `sys.path` — on the HOST that is
+     the **main checkout, not your worktree**. A host `pytest` therefore silently tests the OLD code
+     (your symbols "missing", changes "did nothing"), which looks like a failure/crash. Fix: import
+     worktree code as lowercase **`from vera.X`** with the worktree root on `sys.path` (the pure-core
+     pattern — `board_core.py`, `remote_exec_core.py`, `session_watch_core.py`), or run pytest
+     **inside the container** where the worktree *is* `/app/Vera` so `Vera.vera.X` resolves.
+   - **(b) In-container full-suite contention with the LIVE app.** Running an app-importing `pytest`
+     *inside the container that is already serving the app* can make that container's HTTP go
+     **unresponsive** (`exec`/`/health` calls drop) and not recover cleanly — a second full-app
+     import re-runs module-init and touches shared state (coordination Redis, sockets) and/or starves
+     the box while the live server is trying to serve. NOTE the scale caveat: a **single quick
+     isolated** `docker exec python -m pytest one_test.py` completes fine in ~1 s (verified) — it is
+     the **longer/full-suite** run against the *serving* container that contends. So don't test in the
+     serving container.
+   **Both point the same way (real fix, not memory):** run a branch's suite in a **separate ephemeral
+   test container** (a fresh `vera:latest` that runs pytest and exits — never the serving container),
+   or a dedicated `evolve.sandbox.test`/`evolve.unittest.run` in an isolated process; **bake `git` +
+   `pytest` into the dev image** (§8.1 #3 / C4a) so tests don't need a fragile `pip install`; and
+   prefer the **pure-core pattern** so most unit tests import `vera.X` and never touch the app at all.
+   The `improve-vera-sandboxed` skill §5 documents the correct test-running approaches. Net: the
+   in-sandbox test tier is **not memory-blocked** — it needs the right import path (a) and a
+   test-isolated exec (b), both now understood.
 
 ---
 

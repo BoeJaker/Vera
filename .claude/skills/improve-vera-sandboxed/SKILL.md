@@ -81,14 +81,36 @@ trailer; that's git-attribution policy). Container syntax checks:
    swallows the failure. If a `code-reviewer` agent is available, invoke it. Fix
    what it finds BEFORE gating.
 
-## 5. Tests — build them if missing
+## 5. Tests — build them, and run them where they RESOLVE to YOUR worktree
 - **pytest / pure-module unit test** under `tests/` for the touched logic. Pure
-  helpers (no I/O) are easiest — extract them if needed (e.g. `sandbox_reap.py`,
-  `ollama_gate.py`). Run against the sandbox. If pytest isn't on the host, a
-  stdlib driver works for pure `assert` tests.
+  helpers (no I/O) are easiest — extract them if needed (e.g. `board_core.py`,
+  `remote_exec_core.py`, `sandbox_reap.py`, `ollama_gate.py`).
+- **⚠ Import-path trap — this bites HARD and hides (found 2026-08-09).** `Vera`
+  is a **namespace package** (no `__init__.py`), so `from Vera.vera.X import …`
+  resolves to whatever is first on `sys.path` — on the HOST that is the **main
+  checkout, NOT your worktree**. A host `pytest` that imports `Vera.vera.X`
+  therefore silently exercises the OLD code, so your change "does nothing" /
+  `AttributeError`s on a symbol you just added. This is the real cause that was
+  once **misread as an OOM** (dev-lifecycle §8.3 #9 — retracted: mem-limit 0,
+  `oom_killed=false`, in-container pytest passes). Two correct ways to test
+  worktree code:
+  - **lowercase import, worktree on the path** — `sys.path.insert(0, <worktree
+    root>)` then `from vera.X import …` (what `tests/test_board_core.py` /
+    `test_remote_exec_seam.py` do). This is *why* the pure-core extraction pattern
+    earns its keep: the logic is reachable as `vera.X` without the app.
+  - **in the container**, where the worktree IS `/app/Vera` so `Vera.vera.X`
+    resolves right: `evolve.sandbox.exec(where="container", branch="feat/<name>",
+    cmd="pip install -q pytest && cd /app/Vera && python -m pytest tests/… -q")`.
+    In-container pytest does **not** OOM — pytest just isn't baked into the image
+    yet, so install it first.
+  - Host venv (has pytest): `/home/boejaker/langchain/bin/python3 -m pytest
+    tests/… -q` — fast, but only correct via the lowercase `vera.X` + sys.path
+    insert above; `Vera.vera.X` there still hits main.
 - **Loop Lab task** (`evolve.task.upsert`) for behavioural/loop changes, with
   `checks` that would actually fail if the bug returned.
-- Verify the module **boots** (import-time errors py_compile misses).
+- Verify the module **boots** — `evolve.sandbox.up` on the branch; a reachable
+  probe (tool_count went up for a new cap) means every `_module_files` import,
+  including yours, loaded (import-time errors py_compile misses).
 
 ## 6. Land it through the CI/CD pipeline (adopt → review → promote)
 This is the current flow — it tracks + attributes your hand-authored change and

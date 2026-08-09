@@ -66,6 +66,11 @@ from Vera.vera.capability_orchestration import (
 from Vera.vera.ide.ide_capabilities import (  # type: ignore
     PROJECT_ROOT, _record, _ide_get_session_id,
 )
+from Vera.vera.ide.remote_exec_core import (
+    build_claude_cmd as _core_build_claude_cmd,
+    parse_claude_result as _core_parse_claude_result,
+    auth_pool_for as _core_auth_pool_for,
+)
 
 try:
     from Vera.vera.security import secrets as vsecrets
@@ -314,9 +319,13 @@ async def ide_remote_instances(trace_id=None):
                 "auth (api-key|subscription — subscription = the host's own "
                 "`claude login`, no key exported), oauth_token (str — from "
                 "`claude setup-token`, sealed, used with auth=subscription). "
+                "mcp_enabled (bool — pass an MCP config so a remote Claude can reach Vera's "
+                "MCP, e.g. call evolve.pipeline.adopt) + mcp_config (str — the MCP-servers "
+                "JSON; a vera-bridge stanza). "
                 "kind=vscode-client is a user's live VS Code window running the Vera "
                 "extension in client mode; it self-registers and receives work via "
-                "the client dispatch channel. Output: {ok, instance}.",
+                "the client dispatch channel. Output: {ok, instance} (instance reports the "
+                "DERIVED auth_pool and mcp_enabled).",
     schema=enum_schema(kind=["code-server", "tunnel", "ssh", "vscode-client"],
                        auth=["api-key", "subscription"]),
 )
@@ -332,6 +341,8 @@ async def ide_remote_register(
     api_key:     str = "",
     auth:        str = "",
     oauth_token: str = "",
+    mcp_enabled: bool = False,
+    mcp_config:  str = "",
     trace_id=None,
 ):
     kind = (kind or "code-server").lower()
@@ -369,6 +380,14 @@ async def ide_remote_register(
         rec["api_key_sealed"] = _seal(api_key)
     if oauth_token:
         rec["oauth_sealed"] = _seal(oauth_token)
+    # MCP passthrough (gap 3): an mcp_config is a non-secret servers blob (URL +
+    # allow prefixes via the vera bridge), stored plainly; mcp_enabled gates it.
+    if mcp_enabled or mcp_config:
+        rec["mcp_enabled"] = bool(mcp_enabled or mcp_config)
+    if mcp_config:
+        rec["mcp_config"] = mcp_config
+    # auth_pool (gap 4) is DERIVED from the auth mode, recorded for routing/attribution.
+    rec["auth_pool"] = _core_auth_pool_for(rec)
 
     _save_instances(rows)
     await emit_event({"type": "ide.remote.instance", "action": "saved",
@@ -686,38 +705,36 @@ _CLAUDE_PERMISSION_MODE = os.getenv("VERA_CLAUDE_PERMISSION_MODE", "acceptEdits"
 
 def _build_claude_cmd(workdir: str, task: str, api_key: str,
                       stream: bool, permission_mode: str = "",
-                      oauth_token: str = "", model: str = "") -> str:
-    """Compose the remote shell command that runs Claude Code headless.
+                      oauth_token: str = "", model: str = "",
+                      resume_session_id: str = "", mcp_config: str = "") -> str:
+    """Thin wrapper over remote_exec_core.build_claude_cmd, supplying the
+    module-level default permission mode. See that (pure, tested) helper for the
+    composition + --resume (§6.5 gap 1) + --mcp-config (§6.5 gap 3) semantics."""
+    return _core_build_claude_cmd(
+        workdir, task, api_key, stream, permission_mode=permission_mode,
+        oauth_token=oauth_token, model=model, resume_session_id=resume_session_id,
+        default_permission_mode=_CLAUDE_PERMISSION_MODE, mcp_config=mcp_config)
 
-    Credentials (if any) are written to a 0600 env file and sourced, so they
-    are not visible in the process list. With neither api_key nor oauth_token
-    the CLI runs bare and uses the host's own `claude login` (subscription)
-    credentials. Flags are configurable because the CLI's surface changes
-    between versions.
-    """
-    fmt = "stream-json --verbose" if stream else "json"
-    pm = permission_mode or _CLAUDE_PERMISSION_MODE
-    parts = []
-    cred_var = ("ANTHROPIC_API_KEY" if api_key
-                else "CLAUDE_CODE_OAUTH_TOKEN" if oauth_token else "")
-    cred_val = api_key or oauth_token
-    if cred_var:
-        parts.append("umask 077; mkdir -p ~/.vera; "
-                      f"printf 'export {cred_var}=%s\\n' {shlex.quote(cred_val)} > ~/.vera/claude.env; "
-                      ". ~/.vera/claude.env;")
-    parts.append(f"cd {shlex.quote(workdir)} &&")
-    parts.append("claude -p " + shlex.quote(task)
-                 + f" --output-format {fmt}"
-                 + (f" --permission-mode {shlex.quote(pm)}" if pm else "")
-                 + (f" --model {shlex.quote(model)}" if model else ""))
-    return " ".join(parts)
+
+def _instance_mcp_config(inst: dict) -> str:
+    """The MCP-servers JSON to pass to a remote Claude for this instance, or ""
+    when MCP passthrough is off. Gates gap 3 on the instance's mcp_enabled."""
+    if not inst.get("mcp_enabled"):
+        return ""
+    return inst.get("mcp_config", "") or ""
+
+
+# Session-id capture (§6.5 gap 2) lives in the pure core; re-exported name kept.
+_parse_claude_result = _core_parse_claude_result
 
 
 async def _run_claude(inst: dict, task: str, permission_mode: str = "",
-                      timeout: int = 1800, workdir: str = "", model: str = "") -> dict:
+                      timeout: int = 1800, workdir: str = "", model: str = "",
+                      resume_session_id: str = "") -> dict:
     """Blocking Claude Code run (used by the cap + dispatcher). Streaming lives
     in the /ide-api/remote/run SSE endpoint. `workdir` overrides the instance's
-    project root for THIS run (e.g. Loop Lab pins edits to a branch worktree)."""
+    project root for THIS run (e.g. Loop Lab pins edits to a branch worktree).
+    `resume_session_id` continues an existing Claude session (§6.5 gap 1)."""
     host_id = inst.get("host_id", "")
     workdir = workdir or inst.get("workdir", "") or "."
     if not host_id:
@@ -725,26 +742,17 @@ async def _run_claude(inst: dict, task: str, permission_mode: str = "",
     key, oauth = await _claude_auth(inst)
     cmd = _build_claude_cmd(workdir, task, key, stream=False,
                             permission_mode=permission_mode, oauth_token=oauth,
-                            model=model)
+                            model=model, resume_session_id=resume_session_id,
+                            mcp_config=_instance_mcp_config(inst))
     res = await _ssh(host_id, cmd, timeout=timeout)
     raw = res.get("stdout", "") or ""
-    summary, result_obj = "", None
-    # claude --output-format json prints a JSON object; be tolerant of extra lines.
-    for line in reversed(raw.strip().splitlines()):
-        line = line.strip()
-        if line.startswith("{"):
-            try:
-                result_obj = json.loads(line)
-                summary = (result_obj.get("result")
-                           or result_obj.get("text") or "")
-                break
-            except Exception:
-                continue
+    summary, result_obj, claude_sid = _parse_claude_result(raw)
     if not summary:
         summary = raw[-1200:] or res.get("stderr", "")[-600:]
     return {"ok": bool(res.get("ok")), "engine": "claude",
             "summary": summary[:4000], "rc": res.get("rc"),
-            "result": result_obj, "raw_tail": raw[-1500:]}
+            "result": result_obj, "raw_tail": raw[-1500:],
+            "claude_session_id": claude_sid}
 
 
 # ── vera-agent engine ─────────────────────────────────────────────────────────
@@ -893,7 +901,8 @@ async def _run_vera_agent(inst: dict, task: str, agent: str = "writer",
 async def _run_task(instance_id: str, task: str, engine: str = "claude",
                     agent: str = "writer", permission_mode: str = "",
                     session_id: str = "", source: str = "user",
-                    workdir: str = "", model: str = "") -> dict:
+                    workdir: str = "", model: str = "",
+                    resume_session_id: str = "") -> dict:
     """Shared entry used by ide.remote.run AND the queue dispatcher. `workdir`
     (optional) overrides the instance's project root for this run — used by
     Loop Lab to pin edits to a branch WORKTREE so the real source is never
@@ -914,10 +923,15 @@ async def _run_task(instance_id: str, task: str, engine: str = "claude",
                                        model=model)
     else:
         out = await _run_claude(inst, task, permission_mode=permission_mode,
-                                workdir=workdir, model=model)
+                                workdir=workdir, model=model,
+                                resume_session_id=resume_session_id)
     elapsed_ms = round((time.monotonic() - t0) * 1000)
     out["elapsed_ms"] = elapsed_ms
     out["instance_id"] = instance_id
+    # The Claude Code session id this run ran as (§6.5 gap 2) — stamped onto the
+    # record + event so a Vera-DRIVEN run joins the same association graph
+    # (pipeline/commit → chat drill-down) as an MCP-driven one.
+    claude_sid = out.get("claude_session_id", "")
 
     asyncio.ensure_future(_record(
         session_id=sid, category="ide.remote.run",
@@ -929,14 +943,17 @@ async def _run_task(instance_id: str, task: str, engine: str = "claude",
         capability_name="ide.remote.run", broadcast_type="ide.remote.run_done",
         fabric_dataset="ide.remote_runs",
         metadata={"instance_id": instance_id, "engine": engine, "ok": out.get("ok"),
-                  "elapsed_ms": elapsed_ms, "source": source},
+                  "elapsed_ms": elapsed_ms, "source": source,
+                  "claude_session_id": claude_sid},
         fabric_data={"instance": inst.get("label"), "engine": engine, "task": task[:4000],
                      "summary": out.get("summary", "")[:20000],
-                     "changed": out.get("changed", []), "source": source},
+                     "changed": out.get("changed", []), "source": source,
+                     "claude_session_id": claude_sid},
     ))
     await emit_event({"type": "ide.remote.run", "stage": "done", "engine": engine,
                       "instance_id": instance_id, "ok": out.get("ok"),
-                      "elapsed_ms": elapsed_ms, "session_id": sid})
+                      "elapsed_ms": elapsed_ms, "session_id": sid,
+                      "claude_session_id": claude_sid})
     return out
 
 
@@ -952,20 +969,23 @@ async def _run_task(instance_id: str, task: str, engine: str = "claude",
                 "Input: instance_id (str!), task (str!), engine (claude|vera-agent), "
                 "agent (thinker|writer|analyser), permission_mode (str), model (str — "
                 "e.g. 'opus'/'sonnet'/'haiku' or a full model id; engine=claude only, "
-                "blank lets the CLI's own default decide), session_id (str). "
-                "Output: {ok, engine, summary, changed, elapsed_ms}. "
+                "blank lets the CLI's own default decide), session_id (str), "
+                "resume_session_id (str — engine=claude only: continue an EXISTING Claude "
+                "Code session via --resume, keeping its context; used by auto-resume). "
+                "Output: {ok, engine, summary, changed, elapsed_ms, claude_session_id}. "
                 "For live token streaming use POST /ide-api/remote/run instead.",
     schema=enum_schema(engine=["claude", "vera-agent"],
                        agent=["writer", "thinker", "analyser"]),
 )
 async def ide_remote_run(
-    instance_id:     str = "",
-    task:            str = "",
-    engine:          str = "claude",
-    agent:           str = "writer",
-    permission_mode: str = "",
-    model:           str = "",
-    session_id:      str = "",
+    instance_id:        str = "",
+    task:               str = "",
+    engine:             str = "claude",
+    agent:              str = "writer",
+    permission_mode:    str = "",
+    model:              str = "",
+    session_id:         str = "",
+    resume_session_id:  str = "",
     trace_id=None,
 ):
     if not instance_id:
@@ -974,7 +994,7 @@ async def ide_remote_run(
         return {"ok": False, "error": "task required"}
     return await _run_task(instance_id, task, engine=engine, agent=agent,
                            permission_mode=permission_mode, session_id=session_id,
-                           model=model)
+                           model=model, resume_session_id=resume_session_id)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
