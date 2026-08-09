@@ -491,10 +491,14 @@ land (per §2.5 this doc is the living record, not a snapshot of original intent
     from any dev container) but currently land only via manual direct-to-main commits. Provide a
     sanctioned **docs edit surface** and a **scheduled job that commits + pushes `documentation/`
     changes to `main` every ~24h if there are any** (author = the human, no AI trailer, secret-scan
-    gated) — so doc edits flow without hand commits. Reconciling edits made from *different*
-    containers is likely over-thinking (see §8.4). NOTE: keep this SEPARATE from the §8.2 #7
-    problem — that's Vera GENERATING files into the tree (`docs.build` screenshots); those stay
-    gitignored/emitted-outside-the-tree. This item is about HAND-authored doc prose.
+    gated) — so doc edits flow without hand commits.
+  - **Cross-container reconciliation is REAL (confirmed to bite).** Docs get edited from prod AND
+    from multiple dev containers; the 24h auto-push must **merge/reconcile** those concurrent edits,
+    not blindly overwrite — the same class of "Vera writes into its own tree from many places"
+    problem as §8.2 #7, which we already hit. Design the auto-push to rebase/merge doc edits (or
+    scope each container to its own doc area) rather than last-writer-wins. NOTE: still SEPARATE
+    from §8.2 #7's *generated* files (`docs.build` screenshots stay gitignored / emitted outside the
+    tree); THIS item is HAND-authored doc prose edited concurrently.
 
 ### 8.1 Build learnings & amendments (2026-08-08)
 Recorded from actually building Phases A / A+ / D, so the plan reflects reality, not intent:
@@ -649,14 +653,14 @@ fix so an agent (me, or another) can drive it cleanly:
    - ○ **Agents don't know the caps** to create branch+worktree+sandbox and drive the pipeline —
      they backtrack and reinvent the flow. → #8 (atomic start) + the skill update.
 
-8. **Make branch+worktree creation ATOMIC in the pipeline (requested 2026-08-08).** Today the agent
-   creates the branch, materialises a worktree, brings up a sandbox, commits, THEN adopts — manually,
-   in order, knowing the caps. And because `adopt` records no worktree, `evolve.pipeline.diff`/`.test`
-   fail with **"no worktree for this pipeline"** (every Review-tab diff errors). **Do:** an
-   `evolve.pipeline.begin(title)` that creates the typed branch + worktree (+ optional per-branch
-   container), records the pipeline WITH its worktree, and returns the exact next steps — one cap to
-   start, then edit + promote. **Interim fix:** `evolve.pipeline.diff` falls back to `git diff
-   base...branch` when there is no worktree (so adopted-pipeline diffs work now).
+8. **✓ Atomic branch+worktree creation in the pipeline (DONE 2026-08-08).** `evolve.pipeline.begin
+   (title, spawn=true)` — one call creates the typed branch off main + worktree + own dev container
+   + records the pipeline WITH its worktree, and returns `{id, branch, worktree, url, next[]}`
+   (the exact next caps). No more reinventing the setup. **Also fixed:** `evolve.pipeline.diff`
+   falls back to `git diff base...branch` when a pipeline has no worktree, so the "no worktree for
+   this pipeline" error (every Review-tab diff) is gone; and `promote` refreshes the branch's
+   commits before merging so a `begin`-stub gets accurate commits/attribution. The skill leads with
+   `begin`. Verified end-to-end (own container on the correctly-allocated port, no collision).
 
 ---
 
@@ -667,14 +671,13 @@ Real but low-urgency; parked here so they don't clog the active phases.
   set 2026-08-08). Rewriting PAST history (`git filter-repo` + force-push) is disruptive — it
   changes every SHA and breaks live clones/worktrees — so do it **at a quiet moment with no other
   agent's branches in flight**, then everyone re-syncs. (User: remediate later.)
-- **Session overlay ON the commit-DAG lanes.** §8.2 #6's session→branches grouping shipped as a
-  list; drawing it as a visual overlay on the DAG lanes is polish.
-- **Docs cross-container reconciliation.** Merging doc edits made from multiple dev containers before
-  the 24h auto-push (Phase E) — likely over-thinking; revisit only if it actually bites.
-- **Spread attribution to other infographics** (author-map, activity timelines) beyond the CI/CD
-  pipeline UI + commit DAG.
 - **Retire prod-share editing (guardrail warn → block)** — only after C4 gives dev containers a git
   binary + docker socket, so the sandboxed flow fully replaces prod-in-place edits.
+
+_(Moved OUT of shelved 2026-08-08 per the user — these are active, not deferred: **session overlay
+on the DAG lanes** → §8.2 #6 remaining; **spread attribution to author-map / activity timelines** →
+§8.2 #5 remaining; **docs cross-container reconciliation** → Phase E — the problem is real and
+confirmed to bite (§8.2 #7); only the earlier "over-thinking" wording was wrong, not the problem.)_
 
 ---
 
