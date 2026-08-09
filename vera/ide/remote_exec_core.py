@@ -20,14 +20,18 @@ from typing import Optional, Tuple
 def build_claude_cmd(workdir: str, task: str, api_key: str, stream: bool,
                      permission_mode: str = "", oauth_token: str = "",
                      model: str = "", resume_session_id: str = "",
-                     default_permission_mode: str = "") -> str:
+                     default_permission_mode: str = "", mcp_config: str = "") -> str:
     """Compose the remote shell command that runs Claude Code headless.
 
     Credentials (if any) are written to a 0600 env file and sourced, so they
     are not visible in the process list. With neither api_key nor oauth_token
     the CLI runs bare and uses the host's own `claude login` credentials.
     `resume_session_id` continues an EXISTING session via --resume (gap 1).
-    Everything interpolated into the shell is `shlex.quote`d.
+    `mcp_config` (a JSON MCP-servers blob) is written to a 0600 file on the
+    remote and passed via --mcp-config so the remote Claude can reach Vera's MCP
+    (e.g. call evolve.pipeline.adopt) — gap 3, the deepest gap: without it a
+    remote run does the work yet cannot drive the pipeline. Everything
+    interpolated into the shell is `shlex.quote`d.
     """
     fmt = "stream-json --verbose" if stream else "json"
     pm = permission_mode or default_permission_mode
@@ -39,13 +43,29 @@ def build_claude_cmd(workdir: str, task: str, api_key: str, stream: bool,
         parts.append("umask 077; mkdir -p ~/.vera; "
                      f"printf 'export {cred_var}=%s\\n' {shlex.quote(cred_val)} > ~/.vera/claude.env; "
                      ". ~/.vera/claude.env;")
+    if mcp_config:
+        parts.append("umask 077; mkdir -p ~/.vera; "
+                     f"printf '%s' {shlex.quote(mcp_config)} > ~/.vera/mcp.json;")
     parts.append(f"cd {shlex.quote(workdir)} &&")
     parts.append("claude -p " + shlex.quote(task)
                  + f" --output-format {fmt}"
                  + (f" --resume {shlex.quote(resume_session_id)}" if resume_session_id else "")
+                 + (" --mcp-config ~/.vera/mcp.json" if mcp_config else "")
                  + (f" --permission-mode {shlex.quote(pm)}" if pm else "")
                  + (f" --model {shlex.quote(model)}" if model else ""))
     return " ".join(parts)
+
+
+def auth_pool_for(inst: dict) -> str:
+    """Which credential POOL a run on this instance spends (swarm §6.5 gap 4 +
+    §6.5.1 seat axis) — DERIVED from the instance's auth mode, not assumed:
+      • 'api-key'    → metered Anthropic API billing (a distinct pool)
+      • 'oauth-token'→ a specific subscription's budget (sealed setup-token)
+      • 'host-login' → whatever `claude login` that host is signed into
+    Routing skips a 'cooling' seat by pool; attribution needs the right pool."""
+    if (inst.get("auth") or "api-key") == "subscription":
+        return "oauth-token" if inst.get("oauth_sealed") else "host-login"
+    return "api-key"
 
 
 def parse_claude_result(raw: str) -> Tuple[str, Optional[dict], str]:
