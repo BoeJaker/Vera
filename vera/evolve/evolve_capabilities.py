@@ -6999,11 +6999,14 @@ async def evolve_sandbox_list(trace_id=None):
             raw = await r.get(KEY_SANDBOX)
             if raw:
                 pri = json.loads(raw.decode() if isinstance(raw, (bytes, bytearray)) else raw)
+                _pp = pri.get("port")
+                _psc = _DEV_SCHEME_CACHE.get(int(_pp)) if _pp else None
                 out.append({"role": "primary", "branch": pri.get("branch"),
-                            "name": _SANDBOX_CONTAINER, "port": pri.get("port"),
+                            "name": _SANDBOX_CONTAINER, "port": _pp,
                             "redis_db": pri.get("redis_db"),
                             "running": _SANDBOX_CONTAINER in running,
-                            "url": f"http://localhost:{pri.get('port')}",
+                            "url": f"{_psc or 'http'}://localhost:{_pp}",
+                            "scheme": _psc or "http",
                             "worktree": pri.get("worktree")})
         except Exception:
             pass
