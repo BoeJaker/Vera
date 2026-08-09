@@ -573,12 +573,16 @@ Captured from the user during the C5 build; not yet scheduled.
    - **Transition note:** NEW sandboxes are HTTPS automatically; a container created before this
      (the primary, another agent's) stays http until re-created (`evolve.sandbox.up`/`spawn`).
 
-4. **◐ Connect to per-branch dev instances via SSH *or* web (C6, part-done 2026-08-08).**
+4. **✓ Connect to per-branch dev instances via SSH *or* web (C6, 2026-08-08).**
    - ✓ **SSH/exec launcher** — Sandbox tab `⌨ shell` copies `ssh boejaker@llm.int -t "docker exec
      -it <name> sh"` (the git-over-SMB-safe way to a terminal in the container).
-   - ○ **Operator/remote target registration** — register each live dev container as an operator
-     target (`unified-nodes-estate`, `remote-access-workspaces-subsystem`) so the operator system
-     (not just a human) can drive it. Still to build.
+   - ✓ **Operator-target registration** — `operator.ensure_target({"kind":"sandbox","branch":…})`
+     now resolves the SPECIFIC per-branch container from `evolve.sandbox.list` (not just the
+     primary), at its scheme-aware url — so `operator.run`/`operator.mission.run` can drive ANY
+     live dev sandbox (the operator browser already ignores the self-signed HTTPS cert).
+   - ○ **Full remote-node registration** (`unified-nodes-estate` / `remote-access-workspaces`) so
+     dev containers also appear in the nodes/remote estate — a fuller follow-up, not required for
+     operator-driving. C6 core is DONE.
 
 5. **✓ Internal UI attribution of git-graph nodes & changes (2026-08-08).** The repo keeps a
    human author with **no AI-attribution trailer** (`git-attribution-internal-only`,
