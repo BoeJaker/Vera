@@ -27,13 +27,21 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from Vera.vera.capability_orchestration import APP, capability
+from Vera.vera import state_paths
 
 log = logging.getLogger("vera.build")
 
 # Where a built firmware image is dropped so the mesh panel's flasher can see it.
+# This one stays in-tree by design: the flasher UI reads firmware from this exact
+# path, and the .bin is gitignored (embedded key) while its .bin.json is tracked —
+# a deliberate mixed dir, not a stray machine-output dir.
 _MESH_BIN_DIR = Path(__file__).resolve().parent.parent / "mesh" / "firmware" / "bin"
-# Generic (non-firmware) build outputs.
-_OUT_DIR = Path(__file__).resolve().parent / "output"
+# Generic (non-firmware) build outputs go to the out-of-tree state root, NOT into
+# the repo (an in-tree output dir dirties prod's checkout and blocks every
+# promote — dev-lifecycle §8.2 #7). The guard asserts that invariant loudly and
+# also catches a future edit that points this back inside the tree.
+_OUT_DIR = state_paths.build_output_dir()
+state_paths.guard_out_of_tree(_OUT_DIR)
 
 
 # The builder is reachable by two different names depending on how Vera runs:

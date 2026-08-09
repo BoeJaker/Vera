@@ -484,7 +484,10 @@ land (per §2.5 this doc is the living record, not a snapshot of original intent
       **existing** dev containers keep the old mounts until recreated via `evolve.sandbox.up`.
     - ○ **C4b — VS Code `.devcontainer/` + tasks** (still to build). The docker-socket need for
       the in-container docker-tail collector remains (today it works only because prod is a host
-      process). Retire prod-share editing (guardrail warn → block) once C4b lands.
+      process). **Retire prod-share editing** (guardrail warn → block) once C4b lands — this is
+      the endpoint of the §8.2 #7 boundary work: with git in dev containers (C4a) agents no longer
+      need to edit prod's live checkout, and the out-of-tree state boundary (§8.2 #7, `state_paths`)
+      stops machine output landing there. See §8.2 #7's "🔗 Linked work" note.
   - ○ **C6 — UI access to dev instances (new; requested 2026-08-08):** see §8.2 — connect to a
     branch's sandbox from within Vera (no new page), SSH/web launchers, sandbox-session indicator.
 
@@ -631,6 +634,25 @@ Captured from the user during the C5 build; not yet scheduled.
    tracked tree (a gitignored `build/`/`out/` dir, or object storage), and/or prod runs from an
    **immutable image with no working checkout** (§8.1) — which dissolves this class of problem
    entirely. This is the strongest concrete evidence yet for that end-state.
+   - **◐ FIRST STEP LANDED 2026-08-09 (`feat/state-dir-boundary`): a single out-of-tree state
+     boundary.** `vera/state_paths.py` centralises where machine-cadence output goes — a single
+     `VERA_STATE_DIR` root **outside the repo** (default `~/vera-state`) with `build_output_dir()` /
+     `render_output_dir()` / `board_dir()` / `notebook_dir()` / `media_dir()` helpers — plus
+     `guard_out_of_tree(path)`, which makes a mis-pointed output **fail loudly at the write**
+     instead of silently dirtying prod and blocking every promote. First writer migrated:
+     `build_capabilities._OUT_DIR` (was `vera/build/output`, **un-gitignored** — a live hole)
+     now resolves under the state root, guarded at import. `tests/test_state_paths.py` pins the
+     invariant (incl. the sibling-prefix edge case). **Remaining writers to migrate (the audit
+     above):** `render/_out` (already gitignored), `docs.build` assets, dream/media/catalog
+     outputs. **This is the linked prerequisite for two other threads** — see cross-refs below.
+   - **🔗 Linked work.** This boundary, **C4b** (retire prod-share editing — once agents never
+     edit prod's live checkout, the hazard's *source* dries up; git-in-dev-containers C4a landed
+     2026-08-09) and **Agent Boards & Comms §9.0 Stage 0** (`~/vera_sandbox/agentic swarm.md` —
+     live board/notebook state must live outside the tracked tree; that plan calls a machine-cadence
+     agent board "the same hazard, worse") are **one problem**: nothing Vera writes at machine
+     cadence may land in the tracked tree. `state_paths` is the shared mechanism; the *versioned*
+     write-back (docs/skills/notes Vera legitimately authors) is the separate content-edit surface
+     (Phase E), which stages via a branch+commit rather than a raw write into prod's checkout.
 
 ### 8.3 Pipeline dogfood findings (2026-08-08) — make it easier to operate
 
