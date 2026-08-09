@@ -2,7 +2,9 @@
 (e.g. 'vera' on a provisioned VM) run the root-requiring enrol script via sudo."""
 import base64
 
-from Vera.vera.provisioning.enroll_capabilities import _ssh_enrol_cmd
+# lowercase `vera.*` path so it resolves to THIS worktree's app-free core (not the
+# main checkout) and needs no app dependencies — see enroll_core.py header.
+from vera.provisioning.enroll_core import _ssh_enrol_cmd
 
 
 def test_root_runs_directly():
