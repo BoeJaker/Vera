@@ -1,5 +1,11 @@
 # Vera Dev Lifecycle, Repo Hygiene & Observability — Plan / Standard
 
+> **⏸ ON HOLD (2026-08-09).** Active focus moved to the companion plan
+> `~/vera_sandbox/agentic swarm.md` (**Agent Boards & Comms**), Stage 1. This plan
+> is paused, not abandoned — Phases C/D/E remainders (C4b, heatmap/auto-postmortem,
+> the content-edit surface) resume after the board foundation lands. The §8.2 #7
+> boundary work (`state_paths`) shipped and directly unblocks that plan's Stage 0.
+
 **Status:** proposed (plan) · **Author of plan:** drafted with Claude Code · **Date:** 2026-08-07
 **Owner:** admin (user) · **Home of the standard once ratified:** this file (versioned in-repo)
 **Revisions:** 2026-08-08 — added §2.2b (branch & worktree lifecycle) + §7 row + §9 rules
