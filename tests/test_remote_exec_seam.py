@@ -9,7 +9,9 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from vera.ide.remote_exec_core import build_claude_cmd, parse_claude_result  # noqa: E402
+from vera.ide.remote_exec_core import (  # noqa: E402
+    build_claude_cmd, parse_claude_result, auth_pool_for,
+)
 
 
 def test_resume_flag_gated():
@@ -60,3 +62,28 @@ def test_parse_prefers_last_json_line():
     summary, obj, sid = parse_claude_result(
         '{"result":"early","session_id":"a"}\n{"result":"final","session_id":"b"}')
     assert summary == "final" and sid == "b"
+
+
+# ── gap 3: MCP passthrough ───────────────────────────────────────────────────
+def test_mcp_config_writes_file_and_passes_flag():
+    cfg = '{"mcpServers":{"vera":{"type":"stdio"}}}'
+    cmd = build_claude_cmd("/w", "t", "", False, mcp_config=cfg)
+    assert "--mcp-config ~/.vera/mcp.json" in cmd
+    assert "> ~/.vera/mcp.json" in cmd            # the config is written out
+    assert "'" + cfg + "'" in cmd                 # and shell-quoted, not raw
+
+
+def test_no_mcp_flag_when_disabled():
+    cmd = build_claude_cmd("/w", "t", "", False)
+    assert "--mcp-config" not in cmd and "mcp.json" not in cmd
+
+
+# ── gap 4: auth pool derivation ──────────────────────────────────────────────
+def test_auth_pool_api_key_default():
+    assert auth_pool_for({}) == "api-key"
+    assert auth_pool_for({"auth": "api-key"}) == "api-key"
+
+
+def test_auth_pool_subscription_variants():
+    assert auth_pool_for({"auth": "subscription"}) == "host-login"
+    assert auth_pool_for({"auth": "subscription", "oauth_sealed": "xxx"}) == "oauth-token"
