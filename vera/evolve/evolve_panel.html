@@ -187,6 +187,8 @@ html.vpb-nav-hosted body{padding-left:0}
   <button class="btn" data-sec="sandbox" onclick="nav('sandbox')"><span class="ic">🛡</span>Sandbox</button>
   <button class="btn" data-sec="logs" onclick="nav('logs')"><span class="ic">📜</span>Logs</button>
   <button class="btn" data-sec="csessions" onclick="nav('csessions')"><span class="ic">🧩</span>Sessions</button>
+  <button class="btn" data-sec="board" onclick="nav('board')"><span class="ic">📋</span>Board</button>
+  <button class="btn" data-sec="notes" onclick="nav('notes')"><span class="ic">🗒</span>Notes</button>
   <div class="rail-grp">Library</div>
   <button class="btn" data-sec="tasks" onclick="nav('tasks')"><span class="ic">☰</span>Tasks</button>
   <button class="btn" data-sec="runs" onclick="nav('runs')"><span class="ic">↻</span>Runs</button>
@@ -230,6 +232,62 @@ html.vpb-nav-hosted body{padding-left:0}
       <div class="empty">Loading…</div>
     </div>
     <div class="hint" style="margin-top:6px">Each session is joined to its board claims (items whose board-meta <code>session</code> matches) and its pipelines, then classified (§6.6): <b>resumable</b>/<b>stalled</b> = undeclared silence past 90m/45m; <b>declared-block</b> = <code>blocked:quota</code>, held not reclaimed; <b>finished-unreported</b> = a promoted pipeline with a still-open claim → reconcile, never re-run. Resume/release actions land next.</div>
+  </div>
+</div>
+
+<!-- ── BOARD: the work plane (board.* caps) — create / edit / move / claim / comment ── -->
+<div class="sec" id="sec-board" style="display:none">
+  <div class="card">
+    <div class="card-h"><span class="card-t">Board</span>
+      <span class="hint" id="board-status">—</span>
+      <span style="flex:1"></span>
+      <input id="board-fltrepo" placeholder="repo filter" style="width:100px" oninput="loadBoard()">
+      <input id="board-fltproj" placeholder="project filter" style="width:100px;margin-left:6px" oninput="loadBoard()">
+      <button class="btn sm" onclick="boardToggleNew()" style="margin-left:8px">+ New</button>
+      <button class="btn sm" onclick="loadBoard()" style="margin-left:6px">&#8635;</button>
+    </div>
+    <div id="board-new" style="display:none;background:var(--bg2);border-radius:6px;padding:8px;margin:6px 0">
+      <input type="hidden" id="bn-id">
+      <div class="row" style="gap:6px;flex-wrap:wrap">
+        <input id="bn-title" placeholder="title" style="flex:1;min-width:200px">
+        <select id="bn-lane"></select>
+      </div>
+      <div class="row" style="gap:6px;flex-wrap:wrap;margin-top:6px">
+        <input id="bn-labels" placeholder="labels (comma: code, needs:help)" style="flex:1;min-width:160px">
+        <input id="bn-repo" placeholder="repo" style="width:120px">
+        <input id="bn-project" placeholder="project" style="width:120px">
+      </div>
+      <textarea id="bn-body" placeholder="body — point at file:line, the done-when, etc." style="width:100%;min-height:56px;margin-top:6px"></textarea>
+      <div class="row" style="gap:6px;margin-top:6px">
+        <button class="btn primary sm" onclick="boardSave()">Save</button>
+        <button class="btn sm" onclick="boardToggleNew(true)">Cancel</button>
+        <span class="hint" id="bn-msg"></span>
+      </div>
+    </div>
+    <div id="board-body" class="row" style="gap:10px;align-items:flex-start;overflow-x:auto">
+      <div class="empty">Loading…</div>
+    </div>
+    <div class="hint" style="margin-top:6px">The work plane (<code>board.*</code>). Items carry <code>repo</code>/<code>project</code> so the board is repo-agnostic (§0.2 #2). Claim is a lease (lowest comment-id wins, §3.3); comments run a secret scan on the write path.</div>
+  </div>
+</div>
+
+<!-- ── NOTES: the capture plane — reuse the vera-session-notes editor ── -->
+<div class="sec" id="sec-notes" style="display:none">
+  <div class="card">
+    <div class="card-h"><span class="card-t">Notes</span>
+      <span style="flex:1"></span>
+      <span class="hint">scope</span>
+      <select id="notes-scope" onchange="notesScope()" style="min-width:110px">
+        <option value="general">general</option>
+        <option value="workspace">workspace</option>
+        <option value="project">project</option>
+      </select>
+    </div>
+    <script src="/ui/vera-notes.js"></script>
+    <div id="notes-host" style="margin-top:6px">
+      <vera-session-notes id="ll-notes-el" scope="general" title="Loop Lab notepad" style="display:block"></vera-session-notes>
+    </div>
+    <div class="hint" style="margin-top:6px">The capture plane (§1) — cheap, messy, human-editable; structure begins at promotion into a board item. Backed by <code>notes.*</code>; the same editor used across chat/dream/IDE.</div>
   </div>
 </div>
 
@@ -819,7 +877,7 @@ function nav(sec){
   document.querySelectorAll('#nav .btn').forEach(b=>b.classList.toggle('on',b.dataset.sec===sec));
   document.querySelectorAll('.sec').forEach(s=>s.style.display=s.id==='sec-'+sec?'':'none');
   const f={test:loadTest,tasks:loadTasks,runs:loadRuns,improve:loadSessions,watch:loadWatch,pipelines:()=>{loadGit();loadPipelines()},
-    review:loadReview,logs:loadLogs,csessions:loadCSessions,
+    review:loadReview,logs:loadLogs,csessions:loadCSessions,board:loadBoard,notes:loadNotes,
     sources:loadSources,sandbox:loadSandbox,activity:loadAudit,variants:loadVariants,settings:fillSettings,overview:loadOverview,errors:loadErrors}[sec];
   if(f)f();
   // Keep the outer shell's injected top-level sub-menu in sync when this
@@ -837,7 +895,7 @@ if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
   {id:'test', label:'Test'}, {id:'improve', label:'Improve'}, {id:'watch', label:'Watch'},
   {id:'overview', label:'Suite'}, {id:'errors', label:'Errors'}, {id:'variants', label:'Variants'},
   {id:'activity', label:'Activity'},
-  {id:'pipelines', label:'CI / CD'}, {id:'review', label:'Review'}, {id:'sources', label:'Sources'}, {id:'sandbox', label:'Sandbox'}, {id:'logs', label:'Logs'}, {id:'csessions', label:'Sessions'},
+  {id:'pipelines', label:'CI / CD'}, {id:'review', label:'Review'}, {id:'sources', label:'Sources'}, {id:'sandbox', label:'Sandbox'}, {id:'logs', label:'Logs'}, {id:'csessions', label:'Sessions'}, {id:'board', label:'Board'}, {id:'notes', label:'Notes'},
   {id:'tasks', label:'Tasks'}, {id:'runs', label:'Runs'}, {id:'settings', label:'Settings'},
 ]);
 
@@ -1530,6 +1588,66 @@ function watchOnEditq(ev){
     if(el)el.innerHTML='<span style="color:'+(ev.status==='done'?'var(--ok)':'var(--err)')+'">'+(ev.status==='done'?'✓':'✗')+'</span> <span class="hint">variant synthesised'+(ev.ran_on?(' on '+esc(ev.ran_on)):'')+'</span> <button class="btn sm" onclick="openEditq(\''+esc(ev.id)+'\')">view</button>';
   }
 }
+/* ═══ BOARD: the work plane (board.* caps) — create / edit / move / claim / comment ═══ */
+const _LANES=['inbox','ready','in_progress','blocked','needs_review','review','done','dropped','queued_vera','in_progress_vera'];
+const _LANE_COLOR={inbox:'#6a6a6a',ready:'#3cb371',in_progress:'#e0a030',blocked:'#d05a5a',needs_review:'#4a9ed0',review:'#4a9ed0',done:'#3a7a4a',dropped:'#555',queued_vera:'#b070d0',in_progress_vera:'#9050b0'};
+function _boardAgent(){let a=localStorage.getItem('vera_board_agent');if(!a){a=(window._sessionId&&('claude-'+String(window._sessionId).slice(0,8)))||'me'}return a}
+function _boardFillLanes(){const s=$('bn-lane');if(s&&!s.options.length)s.innerHTML=_LANES.map(l=>'<option value="'+l+'">'+l+'</option>').join('')}
+function boardToggleNew(hide){const el=$('board-new');if(!el)return;el.style.display=(hide||el.style.display!=='none')?'none':'block';if(el.style.display==='block'){_boardFillLanes();if(!$('bn-id').value){['bn-title','bn-labels','bn-body','bn-repo','bn-project'].forEach(i=>{if($(i))$(i).value=''});}if($('bn-msg'))$('bn-msg').textContent='';$('bn-title').focus()}}
+async function boardSave(){
+  const t=$('bn-title').value.trim();if(!t){$('bn-msg').textContent='title required';return}
+  const body={id:$('bn-id').value||'',title:t,lane:$('bn-lane').value||'inbox',
+    labels:($('bn-labels').value||'').split(',').map(x=>x.trim()).filter(Boolean),
+    repo:$('bn-repo').value.trim(),project:$('bn-project').value.trim(),body:$('bn-body').value};
+  const r=await post('/board/item/upsert',body);
+  if(r&&r.ok){toast('saved');$('bn-id').value='';boardToggleNew(true);loadBoard()}else toast((r&&r.error)||'failed')}
+async function boardEdit(id){
+  const r=await api('/board/item?id='+encodeURIComponent(id));const it=r&&r.item;if(!it)return;
+  _boardFillLanes();
+  $('bn-id').value=it.id;$('bn-title').value=it.title||'';$('bn-lane').value=it.lane;
+  $('bn-labels').value=(it.labels||[]).join(', ');$('bn-repo').value=it.repo||'';$('bn-project').value=it.project||'';$('bn-body').value=it.body||'';
+  $('board-new').style.display='block';$('bn-title').focus()}
+async function boardMove(id,lane){const r=await post('/board/item/move',{id,lane});if(r&&r.ok)loadBoard();else toast((r&&r.error)||'failed')}
+async function boardClaim(id){const a=prompt('claim as agent:',_boardAgent());if(!a)return;localStorage.setItem('vera_board_agent',a);const r=await post('/board/claim',{id,agent:a});toast(r&&r.ok?'claimed':(r&&r.held_by?('lost → '+r.held_by):(r&&r.error)||'failed'));loadBoard()}
+async function boardComment(id){const b=prompt('comment (point at file:line, not a dump):');if(!b)return;const r=await post('/board/comment',{id,frm:_boardAgent(),kind:'progress',body:b});toast(r&&r.ok?'commented':(r&&r.error)||'failed');loadBoard()}
+async function loadBoard(){
+  const el=$('board-body');if(!el)return;
+  const q=[];const fr=$('board-fltrepo'),fp=$('board-fltproj');
+  if(fr&&fr.value.trim())q.push('repo='+encodeURIComponent(fr.value.trim()));
+  if(fp&&fp.value.trim())q.push('project='+encodeURIComponent(fp.value.trim()));
+  const r=await api('/board/items'+(q.length?('?'+q.join('&')):''));
+  const st=$('board-status');
+  if(!r||!r.ok){el.innerHTML='<div class="empty">Could not load board.</div>';return}
+  const items=r.items||[];if(st)st.textContent=items.length+' items · '+(r.provider||'file');
+  const byLane={};for(const it of items){(byLane[it.lane]=byLane[it.lane]||[]).push(it)}
+  const lanes=_LANES.filter(l=>byLane[l]||['inbox','ready','in_progress','needs_review','done'].includes(l));
+  let h='';
+  for(const lane of lanes){
+    const its=byLane[lane]||[],c=_LANE_COLOR[lane]||'#666';
+    h+='<div style="min-width:210px;max-width:240px;flex:0 0 auto"><div style="font-size:11px;font-weight:600;border-bottom:2px solid '+c+';padding-bottom:3px;margin-bottom:6px">'+esc(lane)+' <span class="hint">'+its.length+'</span></div>';
+    for(const it of its){
+      const labels=(it.labels||[]).map(l=>'<span class="tag" style="font-size:9px">'+esc(l)+'</span>').join(' ');
+      const meta=[it.repo?('📁'+esc(it.repo)):'',it.project?('▸'+esc(it.project)):'',it.agent?('👤'+esc(it.agent)):''].filter(Boolean).join(' ');
+      const moves=_LANES.map(l=>'<option value="'+l+'"'+(l===it.lane?' selected':'')+'>'+l+'</option>').join('');
+      h+='<div style="background:var(--bg2);border-radius:6px;padding:6px;margin-bottom:6px;border-left:3px solid '+c+'">'
+        +'<div style="font-size:11.5px;cursor:pointer" onclick="boardEdit(\''+esc(it.id)+'\')" title="edit">'+esc(it.title||'(untitled)')+'</div>'
+        +(meta?'<div class="hint" style="font-size:9.5px;margin-top:2px">'+meta+'</div>':'')
+        +(labels?'<div style="margin-top:3px">'+labels+'</div>':'')
+        +'<div class="row" style="gap:4px;margin-top:5px">'
+          +'<select onchange="boardMove(\''+esc(it.id)+'\',this.value)" style="font-size:9px;flex:1">'+moves+'</select>'
+          +'<button class="btn sm" style="font-size:9px;padding:2px 5px" onclick="boardClaim(\''+esc(it.id)+'\')">claim</button>'
+          +'<button class="btn sm" style="font-size:9px;padding:2px 5px" onclick="boardComment(\''+esc(it.id)+'\')" title="comment">💬</button>'
+        +'</div>'
+        +(it.comment_count?'<div class="hint" style="font-size:9px;margin-top:2px">'+it.comment_count+' comments</div>':'')
+      +'</div>';
+    }
+    h+='</div>';
+  }
+  el.innerHTML=h||'<div class="empty">No items. Click “+ New”.</div>';
+}
+function loadNotes(){/* <vera-session-notes> self-loads via notes.* — nothing to fetch */}
+function notesScope(){const el=$('ll-notes-el'),s=$('notes-scope');if(el&&s){el.setAttribute('scope',s.value);if(el.reload)try{el.reload()}catch(_){}}}
+
 /* ═══ SESSIONS: Claude Code session watch (§6.6) — read-only classify ═══ */
 function _csessAge(s){if(s==null)return '—';s=Math.round(s);if(s<90)return s+'s';if(s<5400)return Math.round(s/60)+'m';if(s<172800)return Math.round(s/3600)+'h';return Math.round(s/86400)+'d'}
 const _CSESS_COLOR={resumable:'#e0a030',stalled:'#d0902a','finished-unreported':'#4a9ed0','declared-block':'#8a8a8a',live:'#3cb371',human:'#b070d0',untracked:'#6a6a6a'};
