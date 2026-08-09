@@ -36,18 +36,23 @@ POST https://llm.int:8999/mcp/call
 `session_id` links it to your chat (drill-down in the CI/CD UI). A bare curl or
 the browser tags `user` — use `/mcp/call` so your work is attributed.
 
-## 2. Get a sandbox on a TYPED branch, edit ONLY in its worktree
+## 2. Start atomically — `evolve.pipeline.begin` (ONE call), then edit the worktree
 ```
-evolve.sandbox.up(branch="feat/<short-name>")     # your own primary sandbox
-# or, to run ALONGSIDE other agents on your own container+port:
-evolve.sandbox.spawn(branch="feat/<short-name>")
+evolve.pipeline.begin(title="<what you're doing>", spawn=true, session_id="<yours>")
 ```
-Use a **typed** branch (`feat/…`, `fix/…`, `chore/…`) off `main` — the branch
-may need creating first: `evolve.sandbox.exec(where="worktree", cmd="git branch
-feat/<name> main")`. `up`/`spawn` create the worktree at
-`<repo>/.loop-lab-worktrees/<safe-branch>/` + a `vera-dev*` container (now with
-`VERA_DEV_MODE=1`, so you can restart your own sandbox). Poll
-`evolve.sandbox.status` for `reachable`.
+This does everything at once: creates a **typed** branch (`feat/<slug>`) off `main`,
+materialises its worktree, brings up your **own** dev container (`spawn=true`, so
+you don't disturb other agents' primary sandbox — now with `VERA_DEV_MODE=1`), and
+records the CI/CD pipeline **with its worktree** (so diff/test work). It returns
+`{id, branch, worktree, url, next[]}` — the exact next caps. No more guessing the
+setup steps.
+
+Lower-level alternative (if you need control): `evolve.sandbox.up(branch=…)` (your
+primary sandbox) or `evolve.sandbox.spawn(branch=…)` (own container); create the
+branch first with `evolve.sandbox.exec(where="worktree", cmd="git branch feat/<name>
+main")`. Poll `evolve.sandbox.status` for `reachable`.
+
+**Edit only inside the returned worktree.** Never the main checkout.
 
 **Edit only inside that worktree** (`…\.loop-lab-worktrees\<branch>\…` over SMB,
 or `evolve.sandbox.fs.write`). Never the main checkout. The bind mount makes a
@@ -97,9 +102,9 @@ evolve.pipeline.promote(id, to="main"[, force=true])   # force for docs/UI/infra
 `adopt` records the pipeline (it shows in the CI/CD UI with your session +
 drill-down). Promote does a guarded `--no-ff` merge into prod's `main` checkout
 and returns `restart_required`. **Refuses a dirty prod tree** — that's the guard
-protecting WIP, not a failure. *(Aim: an `evolve.pipeline.begin(title)` that
-creates branch+worktree+record atomically is on the roadmap — until then do §2–§3
-by hand.)*
+protecting WIP, not a failure. If you started with `evolve.pipeline.begin` (§2) you
+already have the pipeline `id` — skip `adopt` and go straight to `review_request` +
+`promote` (promote refreshes the branch's commits before merging).
 
 ## 7. Deploy = push + restart (only for `.py`)
 - **Push:** creds live on the Windows host — push from there:
