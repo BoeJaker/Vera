@@ -1,131 +1,116 @@
 ---
 name: improve-vera-sandboxed
-description: Build, fix, or improve Vera's own RUNTIME source by working entirely inside a Loop Lab sandbox/worktree — cut a branch, edit in the worktree, build/extend Loop Lab + pytest tests for the area touched, review your own diff adversarially, gate it through evolve.pipeline.run, and stop at "awaiting manual promote." Never edit prod's live checkout for runtime code and never call evolve.pipeline.promote yourself — merging to main is always the user's explicit call, surfaced to them, not assumed. Use this instead of editing prod directly whenever the work is a source change to Vera itself, not a live-prod diagnosis session.
+description: Build, fix, or improve Vera's own RUNTIME source by working inside a Loop Lab sandbox — cut a typed branch, edit in its worktree, commit via the HOST (git-over-SMB fails), test, then land through the CI/CD pipeline (adopt → review_request → promote) with the change tracked + attributed to your session. Diagnose against the live prod instance (its Redis traces, UI, behaviour are ground truth) but land the FIX here, never by editing prod's live checkout. Use this whenever the work is a source change to Vera itself.
 ---
 
-# Improving Vera — sandboxed, adversarially-reviewed, gated
+# Improving Vera — sandboxed, adversarially-reviewed, gated, attributed
 
-`improve-vera` documents how to diagnose and fix a live issue by editing
-prod's own checkout directly over SMB and restarting the real process.
-That was the right (and only) tool for a while, but prod is being phased
-out as an EDIT TARGET — it's fine to keep diagnosing symptoms against
-the real running instance (its Redis event traces, its live UI, its
-actual behavior are still ground truth — see `improve-vera` §1–§3a,
-still valid), but the FIX itself should now land through this sandboxed
-pipeline instead of a direct edit to prod's working tree. Reach for
-`improve-vera`'s direct-SMB-edit-to-prod path only for something small,
-urgent, and explicitly sanctioned in the moment (infra-level fixes to
-shared capabilities, the kind of thing that can't wait for a branch) —
-treat that as the exception, not the default.
+Diagnose against the real running instance (Redis event traces, live UI, actual
+behaviour — see `improve-vera` §1–§3a, still valid), but land the FIX through
+this sandboxed pipeline, not a direct edit to prod's working tree. Direct-to-prod
+editing is the rare exception (small, urgent, explicitly sanctioned infra fix).
 
-## 0. Still true, unchanged from improve-vera
+## 0. Still true, unchanged
+- **Never run two Ollama-calling tests at once.** A sandbox loop is an Ollama
+  consumer. Check `vera:loop:sessions` first. The shared GPU is now gated
+  (`ollama.gate`) so calls queue rather than collide, but don't pile on.
+- **Multi-agent estate is live.** Other agents may be working in their own
+  containers (`evolve.sandbox.list` shows them), all sharing one GPU. Never touch
+  another agent's branch/container. Before a **prod restart**, check
+  `ollama.gate` (is someone mid-generation?) and warn — a restart interrupts
+  every agent's prod-side cap calls.
+- Root-cause discipline, the standalone-verification trap, "no error ≠ it ran",
+  background-monitoring-not-polling — all still apply.
 
-- **Never run two Ollama-calling tests at once** (§0) — a sandbox test is
-  still an Ollama consumer; the same `vera:loop:sessions`/`vera:loop:run:<sid>`
-  check applies before launching one, sandboxed or not.
-- **The standalone-verification trap** (§2), **root-cause discipline**
-  (§3), **"no error" isn't proof a code path ran** (§3a), **background
-  monitoring not tight polling** (§5), **the Perf/Observe UI** (§6), and
-  **when to keep watching vs. stop** (§7) all still apply exactly as
-  written — none of that changes just because the edit now lands in a
-  worktree instead of prod's checkout.
-
-## 1. Get a sandbox + branch, then edit ONLY inside the worktree
-
+## 1. Reaching capabilities — the `/mcp/call` escape hatch (READ THIS FIRST)
+Your MCP tool list is fixed at session start. A cap deployed mid-session (or a
+changed schema, e.g. `promote`'s `force`) will NOT appear as an `mcp__vera__*`
+tool. Reach ANY cap — and attribute it to you — via the same HTTP entrypoint the
+MCP bridge uses:
 ```
-POST /evolve/sandbox/ensure   {"branch": "loop-lab/<short-descriptive-name>"}
+POST https://llm.int:8999/mcp/call
+{ "name":"<cap.name>", "arguments":{...},
+  "caller_kind":"mcp", "session_id":"<your claude session uuid>" }
 ```
-Creates the branch (if new) + a git worktree at
-`<repo>/.loop-lab-worktrees/<branch>/` + a running `vera-dev` container
-bind-mounting that worktree read-write, and snapshots current Loop Lab
-state into it. If a sandbox is already up on a DIFFERENT branch and you
-need this one, `evolve.sandbox.up(branch=..., rebuild_image=...)`
-explicitly moves/recreates it. Poll `evolve.sandbox.status` to confirm
-`reachable`.
+`caller_kind:"mcp"` stamps the pipeline/commit as `controller=claude_code`; the
+`session_id` links it to your chat (drill-down in the CI/CD UI). A bare curl or
+the browser tags `user` — use `/mcp/call` so your work is attributed.
 
-**Every edit for this unit of work happens inside that worktree path**
-(`\\llm.int\boejaker\Vera\.loop-lab-worktrees\<branch>\...` over SMB), never
-in the main checkout. The container's bind mount means a saved Python
-edit is visible to `vera-dev` immediately — no rebuild needed for source
-changes (only `rebuild_image=True` if dependencies themselves changed).
-
-## 2. Two roles, in order, on the SAME change — don't skip the second
-
-1. **Coder.** Make the fix/feature in the worktree. Small, focused
-   commits (`git -C <worktree> commit`, or `evolve.sandbox.exec`) — one
-   logical change per commit, real messages, not "wip".
-2. **Adversarial reviewer — of your own diff, before anyone else sees it.**
-   This is the step that's easy to skip because you just finished
-   writing the thing and it feels done. Explicitly switch mindset and
-   re-read `git -C <worktree> diff` as a skeptical reviewer would:
-   regressions in adjacent code, incomplete/half-finished branches of
-   the change, edge cases the happy-path test won't catch, anything that
-   looks like a security or prompt-injection surface, error handling
-   that silently swallows the exact failure mode §3a warns about. If a
-   `code-reviewer`-style agent/skill is available, actually invoke it
-   against the diff rather than only self-reviewing — a second, less
-   invested pass catches things the first one won't. Fix what it finds
-   BEFORE moving to gating, not after.
-
-## 3. Tests: build them if they don't exist, don't just assume coverage
-
-For whatever area the change touches:
-- **Loop Lab task** — check `GET /evolve/tasks` for one covering it. If
-  none exists, add one (`evolve.task.upsert`): a real `goal`, tight
-  `allowed_caps`, and `checks` that would actually fail if the bug
-  reappeared (not just `final_nonempty`) — see the `web-brief` fix in
-  `documentation/36-agentic-loop-v7-evaluation.md` §17 for an example of
-  a check that was too strict AND one that was too loose; aim for
-  neither.
-- **pytest unit test** — check `tests/` for coverage of the touched
-  module/function. If none exists, add one (`make test-unit` /
-  `python -m pytest tests -q` runs the suite; run it before and after
-  your change so you know your test would actually have caught the bug).
-- Run both **against the sandbox**, not prod — `evolve.task.run` and the
-  suite naturally target the sandbox once one is up (`_resolve_sandbox`
-  prefers it automatically).
-
-## 4. Gate it — never promote it yourself
-
+## 2. Get a sandbox on a TYPED branch, edit ONLY in its worktree
 ```
-POST /evolve/pipeline/run   {"kind":"code","profile":"<profile>",
-                             "edits":[{"area":"...","suggestion":"..."}],
-                             "auto_promote": false}
+evolve.sandbox.up(branch="feat/<short-name>")     # your own primary sandbox
+# or, to run ALONGSIDE other agents on your own container+port:
+evolve.sandbox.spawn(branch="feat/<short-name>")
 ```
-`auto_promote: false` is not optional — this is what keeps the change
-from ever touching main without a human decision. Poll
-`evolve.pipeline.get` until `decision` is `pending` (gate passed,
-awaiting promote) or `held` (gate failed — fix and re-run, don't force
-it through). **Never call `evolve.pipeline.promote` in this skill's
-flow** — that capability merges the branch into main
-(`evolve_pipeline_promote`, `evolve_capabilities.py:4185`) and exists
-specifically so that decision stays a manual, separate act.
+Use a **typed** branch (`feat/…`, `fix/…`, `chore/…`) off `main` — the branch
+may need creating first: `evolve.sandbox.exec(where="worktree", cmd="git branch
+feat/<name> main")`. `up`/`spawn` create the worktree at
+`<repo>/.loop-lab-worktrees/<safe-branch>/` + a `vera-dev*` container (now with
+`VERA_DEV_MODE=1`, so you can restart your own sandbox). Poll
+`evolve.sandbox.status` for `reachable`.
 
-## 5. End the work unit by telling the user, not by merging
+**Edit only inside that worktree** (`…\.loop-lab-worktrees\<branch>\…` over SMB,
+or `evolve.sandbox.fs.write`). Never the main checkout. The bind mount makes a
+saved edit visible to the container immediately.
 
-When a pipeline reaches `pending` (or `held`, if it needs their input on
-whether to keep iterating or drop it), say so directly in chat: branch
-name, pipeline id, what the gate/tests showed, and that
-`evolve.pipeline.promote` is theirs to call whenever they're ready — it
-will also show up passively in Dispatch → Branches (built this session:
-a branch ahead of main with no merge yet) and in Loop Lab's pipeline
-list, but don't rely on either as the ONLY notification; say it. There
-is currently no active push-notification when a pipeline reaches
-`pending` (checked live — `_audit`/`emit_event` fire, but nothing pages
-the user) — that's a known gap in the supporting systems, not something
-this skill papers over. If closing that gap is in scope for the current
-work, it's a reasonable next increment; if not, flag it rather than
-silently assuming someone's watching.
+## 3. Commit via the HOST — git-over-SMB does NOT work
+A worktree's `.git` points at a Linux host path (`…/.git/worktrees/…`) that
+Windows/SMB can't resolve, so running `git` in the worktree from your machine
+fails. Commit through the host instead:
+```
+evolve.sandbox.exec(where="worktree", branch="feat/<name>",
+                    cmd="git -c user.name=BoeJaker add -A && git commit -m '…'")
+```
+`where="worktree"` runs on the HOST (git works natively); `branch=`/`name=`
+routes to YOUR worktree/container (not the primary — that trap is fixed). Small,
+focused commits, real messages, author = the human (**never** an AI-attribution
+trailer; that's git-attribution policy). Container syntax checks:
+`evolve.sandbox.exec(where="container", branch="feat/<name>", cmd="python3 -c
+'import ast; ast.parse(open(\"vera/…\").read())'")`.
 
-## 6. "Restart" means the sandbox now, not prod
+## 4. Two roles on the SAME change — don't skip the reviewer
+1. **Coder** — make the fix in the worktree.
+2. **Adversarial reviewer of your OWN diff, before landing.** Re-read `git diff`
+   as a skeptic: regressions in adjacent code, half-finished branches, edge cases
+   the happy path misses, security/prompt-injection surface, error handling that
+   swallows the failure. If a `code-reviewer` agent is available, invoke it. Fix
+   what it finds BEFORE gating.
 
-`sys.dev.restart` re-execs the REAL prod process — irrelevant to this
-flow, since prod's checkout was never touched. To pick up a worktree
-change in a running sandbox container, re-run `evolve.sandbox.up` on the
-same branch (no rebuild needed for pure source edits, since the bind
-mount is already live — a container bounce is only needed if the
-running process itself needs to reload, e.g. a module-import-time
-constant). Reserve an actual prod restart for the rare direct-to-prod
-exception in the intro above, and even then check §0's concurrency rule
-and warn the user first — it kills every in-flight loop/chat/session on
-the box, exactly as `improve-vera` §4 already says.
+## 5. Tests — build them if missing
+- **pytest / pure-module unit test** under `tests/` for the touched logic. Pure
+  helpers (no I/O) are easiest — extract them if needed (e.g. `sandbox_reap.py`,
+  `ollama_gate.py`). Run against the sandbox. If pytest isn't on the host, a
+  stdlib driver works for pure `assert` tests.
+- **Loop Lab task** (`evolve.task.upsert`) for behavioural/loop changes, with
+  `checks` that would actually fail if the bug returned.
+- Verify the module **boots** (import-time errors py_compile misses).
+
+## 6. Land it through the CI/CD pipeline (adopt → review → promote)
+This is the current flow — it tracks + attributes your hand-authored change and
+uses the SAFE merge (never a blind `git checkout`):
+```
+evolve.pipeline.adopt(branch="feat/<name>", title, summary, session_id)  # via /mcp/call
+   → gate_passed: true  (compile gate on changed .py) | null (docs/UI — promote force)
+evolve.pipeline.review_request(id, reason)
+evolve.pipeline.promote(id, to="main"[, force=true])   # force for docs/UI/infra
+```
+`adopt` records the pipeline (it shows in the CI/CD UI with your session +
+drill-down). Promote does a guarded `--no-ff` merge into prod's `main` checkout
+and returns `restart_required`. **Refuses a dirty prod tree** — that's the guard
+protecting WIP, not a failure. *(Aim: an `evolve.pipeline.begin(title)` that
+creates branch+worktree+record atomically is on the roadmap — until then do §2–§3
+by hand.)*
+
+## 7. Deploy = push + restart (only for `.py`)
+- **Push:** creds live on the Windows host — push from there:
+  `git -C \\llm.int\boejaker\Vera -c credential.interactive=false push origin main`.
+- **Restart** (`.py`/import-time changes only): the restart tool re-execs prod.
+  **UI-only changes (panel HTML, `/ui/elements/*.js`) are served fresh — NO
+  restart.** Before restarting, check the multi-agent rule in §0.
+- Verify LIVE on prod (127.0.0.1 / llm.int:8999), not just in the sandbox.
+
+## 8. Close the unit — tell the user
+Say it in chat: branch, pipeline id, what the gate/tests showed, what landed.
+Promote is safe to run yourself for your own vetted change, but if the user
+should decide, stop at `review_requested`/`pending` and surface it — don't merge
+silently. It also shows in the Loop Lab CI/CD + Review tabs.
