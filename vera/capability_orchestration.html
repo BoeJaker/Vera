@@ -549,19 +549,53 @@ select option{background:var(--bg2)}
   try{
     var port=location.port;
     if(!port || port==='8999') return;              // prod — no banner
+    var BR='';
+    function E(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
     function paint(branch){
+      BR=branch||BR;
       var h=document.querySelector('header'); if(!h) return;
       h.style.borderBottom='3px solid #d9a441';
       h.style.background='linear-gradient(90deg, rgba(217,164,65,.20), transparent 55%)';
       var s=document.getElementById('sbxBadge');
       if(!s){ s=document.createElement('div'); s.id='sbxBadge';
-        s.title='This is a Loop Lab DEV SANDBOX, not production — changes here are isolated.';
+        s.title='Loop Lab DEV SANDBOX (not prod) — click for branch stats, pipelines & Claude sessions';
         s.style.cssText='background:#d9a441;color:#1a1512;font:700 11px/1 system-ui,sans-serif;'
-          +'padding:6px 9px;border-radius:6px;margin-right:8px;letter-spacing:.03em;flex-shrink:0;white-space:nowrap';
+          +'padding:6px 9px;border-radius:6px;margin-right:8px;letter-spacing:.03em;flex-shrink:0;white-space:nowrap;cursor:pointer';
+        s.onclick=toggleInfo;
         h.insertBefore(s, h.firstChild);
       }
-      s.textContent='⚠ SANDBOX'+(branch?' · '+branch:'')+' · :'+port;
-      document.title='⚠ '+(branch||'SANDBOX')+' — Vera';
+      s.textContent='⚠ SANDBOX'+(BR?' · '+BR:'')+' · :'+port+' ▾';
+      document.title='⚠ '+(BR||'SANDBOX')+' — Vera';
+    }
+    function toggleInfo(){
+      var ov=document.getElementById('sbxInfo'); if(ov){ ov.remove(); return; }
+      ov=document.createElement('div'); ov.id='sbxInfo';
+      ov.style.cssText='position:fixed;top:44px;left:50%;transform:translateX(-50%);z-index:100000;'
+        +'width:min(680px,94vw);max-height:78vh;overflow:auto;background:#1f1d1a;border:2px solid #d9a441;'
+        +'border-radius:10px;box-shadow:0 10px 44px rgba(0,0,0,.6);padding:14px;color:#ddd5c8;'
+        +'font:12.5px/1.5 system-ui,sans-serif';
+      ov.innerHTML='<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'
+        +'<b style="color:#d9a441">⚠ SANDBOX · '+E(BR)+'</b> <span style="opacity:.6">:'+E(port)+'</span>'
+        +'<span style="flex:1"></span><button onclick="this.closest(\'#sbxInfo\').remove()" '
+        +'style="background:#302c29;color:#ddd5c8;border:1px solid #4a4540;border-radius:5px;cursor:pointer;padding:3px 8px">✕</button></div>'
+        +'<div id="sbxInfoBody" style="white-space:pre-wrap">loading…</div>';
+      document.body.appendChild(ov);
+      var hd=function(t){return '<div style="color:#d9a441;font-weight:600;margin:10px 0 3px;font-size:11px;text-transform:uppercase;letter-spacing:.04em">'+t+'</div>';};
+      Promise.all([
+        fetch('/obs/provenance').then(function(r){return r.json();}).catch(function(){return {};}),
+        fetch('/evolve/pipeline/list?limit=60').then(function(r){return r.json();}).catch(function(){return {};}),
+        fetch('/ide/claude_sessions/list_sessions?max_sessions=8').then(function(r){return r.json();}).catch(function(){return {};})
+      ]).then(function(res){
+        var prov=res[0]||{}, pipes=(res[1]&&res[1].pipelines)||[], sess=(res[2]&&res[2].sessions)||[];
+        var mine=pipes.filter(function(p){return p.branch===BR;});
+        var b=hd('provenance')+'<div style="font-family:monospace">'+E(prov.git_sha_short||'?')+' · branch '+E(prov.branch||'?')
+          +(prov.dirty?' · <span style="color:#d9a441">dirty</span>':' · clean')+'</div>';
+        b+=hd('Loop Lab pipelines on this branch ('+mine.length+')');
+        b+= mine.length? mine.slice(0,10).map(function(p){return '<div style="font-family:monospace">'+E(p.id)+' · '+E(p.decision||p.status||'')+' · '+E(p.controller||'')+'</div>';}).join('') : '<div style="opacity:.6">none yet</div>';
+        b+=hd('recent Claude Code sessions ('+sess.length+')');
+        b+= sess.length? sess.slice(0,8).map(function(s){return '<div style="font-family:monospace">'+E((s.claude_session_id||'').slice(0,14))+'… · '+E(String(s.turn_count||s.turns||s.count||''))+' turns</div>';}).join('') : '<div style="opacity:.6">none ingested</div>';
+        var bd=document.getElementById('sbxInfoBody'); if(bd) bd.innerHTML=b;
+      });
     }
     function go(){ paint('');
       fetch('/obs/provenance').then(function(r){return r.json();})
