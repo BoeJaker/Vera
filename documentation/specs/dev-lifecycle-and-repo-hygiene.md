@@ -466,10 +466,25 @@ land (per §2.5 this doc is the living record, not a snapshot of original intent
     never a live-container worktree; `sandbox_reap.py` + tests).
   - ✓ **C5 — resource discipline**: U1 GPU gate (§4.1, live on prod), U2 data-isolation write
     guard (§4.3), U3 leech boot (§4.4). All landed + verified 2026-08-08.
-  - ○ **C4 — VSCode `.devcontainer/` + tasks** (still to build; see the container-limits
-    amendment — dev containers need a **docker socket + git binary** for in-container provenance /
-    `approve` git ops / the docker-tail collector, which today work only because prod is a host
-    process). Retire prod-share editing (guardrail warn → block) once C4 lands.
+  - ◐ **C4 — in-container git + VS Code, then `.devcontainer/` + tasks.**
+    - ✓ **C4a — git + VS Code in dev containers (2026-08-09, branch `feat/git-graph-attribution`,
+      commit `4cfde41`):** `git` is baked into `vera:latest`; both the `vera-dev` container
+      (`_dev_compose_yaml`) and the code-server sidecar (`sandbox.code.attach`) now mount the
+      main `.git` **and** the worktree at its **host-absolute path**, so every git-worktree
+      pointer (`.git` file → `.git/worktrees/<name>` → `gitdir` → worktree) resolves inside the
+      container and you can `git commit` from the VS Code terminal. `safe.directory='*'` is baked
+      into the dev image and passed via `GIT_CONFIG_*` env to the foreign code-server image so the
+      root user isn't blocked by git's dubious-ownership guard on host-owned files. Validated
+      end-to-end against real containers (branch resolves, commit as BoeJaker, pre-commit
+      secret-scan runs). **Security note:** a dev container now has **read-write access to the
+      whole `.git`** (all branches/objects), not just its worktree — acceptable because these are
+      our own trusted sandboxes and there are no push creds in-container (worst case is local ref
+      corruption, git-recoverable), but don't run untrusted loop code that could rewrite history.
+      **Rollout note:** takes effect on the next prod restart (prod re-emits the new compose/attach);
+      **existing** dev containers keep the old mounts until recreated via `evolve.sandbox.up`.
+    - ○ **C4b — VS Code `.devcontainer/` + tasks** (still to build). The docker-socket need for
+      the in-container docker-tail collector remains (today it works only because prod is a host
+      process). Retire prod-share editing (guardrail warn → block) once C4b lands.
   - ○ **C6 — UI access to dev instances (new; requested 2026-08-08):** see §8.2 — connect to a
     branch's sandbox from within Vera (no new page), SSH/web launchers, sandbox-session indicator.
 
