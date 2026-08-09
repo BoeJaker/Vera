@@ -195,3 +195,33 @@ def test_default_root_is_out_of_tree():
     from vera import state_paths
     p = bc.FileBoardProvider(root=state_paths.board_dir())
     assert not state_paths.is_under_repo(p.root)
+
+
+# ── fabric index projection (§6.3) ───────────────────────────────────────────
+def test_index_row_is_flat_and_scalar():
+    it = bc.BoardItem(id="i1", title="T", lane="blocked", body="x" * 5000,
+                      labels=["code", "needs:help"], agent="claude-a",
+                      comments=[bc.AgentMessage(kind="note", frm="a", id=1)])
+    row = bc.index_row(it)
+    assert row["id"] == "i1" and row["lane"] == "blocked"
+    assert row["labels"] == "code needs:help"        # flattened, not a list
+    assert row["blocked"] is True and row["needs_help"] is True
+    assert row["comment_count"] == 1
+    assert len(row["text"]) <= 2000                  # truncated for retrieval
+    assert all(not isinstance(v, (list, dict)) for v in row.values())
+
+
+def test_summarize_rollup():
+    items = [
+        bc.BoardItem(id="1", lane="blocked", title="b1", agent="claude-a"),
+        bc.BoardItem(id="2", lane="ready", title="r1", labels=["needs:help"]),
+        bc.BoardItem(id="3", lane="in_progress", title="p1", agent="claude-a"),
+        bc.BoardItem(id="4", lane="ready", title="r2", labels=["needs:help"],
+                     agent="claude-b"),   # claimed → not "unclaimed"
+    ]
+    s = bc.summarize(items)
+    assert s["total"] == 4
+    assert s["by_lane"] == {"blocked": 1, "ready": 2, "in_progress": 1}
+    assert s["by_agent"] == {"claude-a": 2, "claude-b": 1}
+    assert [b["id"] for b in s["blocked"]] == ["1"]
+    assert [h["id"] for h in s["needs_help_unclaimed"]] == ["2"]  # 4 is claimed
