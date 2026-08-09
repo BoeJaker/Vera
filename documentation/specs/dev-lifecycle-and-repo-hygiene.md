@@ -566,8 +566,10 @@ Captured from the user during the C5 build; not yet scheduled.
    commit nodes now carry an attribution chip that is **clickable → the chat that produced the
    commit** (`window.openSessionChat` → `ide.claude_sessions.history`), and the CI/CD pipeline
    detail has the same "open chat ▸". Verified live (4 commits attributed to claude_code, the
-   recent ones session-linked to `cd43896f…`). **Still TODO:** the *layered chat/session graph*
-   (session → the commits/branches it drove, as its own overlay on the DAG).
+   recent ones session-linked to `cd43896f…`). **Layered session→branches view DONE** too — the
+   CI/CD tab groups pipeline runs by driving session (`renderSessionGroups`: session → the
+   branches it drove ✓/✗/·, with chat drill-down). **Remaining polish:** render that session
+   overlay directly ON the commit-DAG lanes (visual overlay), not just as a grouped list.
 
 7. **⚠ Vera writes generated files into its OWN tracked repo — must stop (found 2026-08-08).**
    Dogfooding the pipeline surfaced this: `docs.build` (operator Playwright screenshot capture)
