@@ -678,6 +678,23 @@ fix so an agent (me, or another) can drive it cleanly:
    commits before merging so a `begin`-stub gets accurate commits/attribution. The skill leads with
    `begin`. Verified end-to-end (own container on the correctly-allocated port, no collision).
 
+9. **⚠ Dev container OOMs / won't stay up under in-container `pytest` (found 2026-08-09, running
+   `improve-vera-sandboxed`) — TO FIX.** Running the branch's unit tests INSIDE its pooled dev
+   container (`pip install pytest` + `python -m pytest`) crashes the container: importing a second
+   full Vera under pytest, on top of the already-running app process, exceeds the container's memory
+   and the container goes down (repeatedly, would not stay up 2 min). This **blocks the "run the
+   suite in the sandbox" step** (§6 / the skill's test stage) for anything that imports the app,
+   and destabilises the same container the real-VM E2E drives from. Workarounds used this session:
+   verify pure helpers **standalone** (no app import) + rely on the host-side `adopt` compile gate —
+   but that is NOT the behavioural/suite testing the standard wants. **Do:** (a) give pooled dev
+   containers enough memory headroom (compose `mem_limit`/reservation) and/or run pytest in a
+   **separate** short-lived exec that isn't competing with the live app process; (b) **bake `git` +
+   `pytest` into the dev image** (§8.1 #3 already notes missing `git`/docker) so tests don't need a
+   fragile in-container `pip install`; (c) expose a `evolve.sandbox.test`/`evolve.suite.run` that
+   runs the suite against a branch **without** OOM-crashing its serving container (e.g. a dedicated
+   test container, or `pytest -p no:cacheprovider` in a mem-bounded subprocess). Until fixed, an
+   agent cannot complete the in-sandbox test tier for app-importing changes.
+
 ---
 
 ## 8.4 Shelved — deliberately deferred, do at the end
