@@ -497,22 +497,64 @@ async def _apply_ct_feature(cluster_id, vmid, guest_type, script, node="") -> Di
                        guest_type=guest_type, command=script, timeout=180)
 
 
-async def _post_provision(cluster_id, node, vmid, kind, feats, fqdn, job_id=""):
-    """Background: wait for the guest to run, then enrol + apply features. Emits
-    events + patches the stored job so the sync provision call returns fast."""
+def _vera_key_path() -> str:
+    """Path to Vera's SSH PRIVATE key (baked into VMs as the authorized pubkey)."""
+    return str(Path.home() / ".vera" / "ssh" / "id_vera")
+
+
+async def _wait_ssh(cluster_id, ip, port: int = 22, timeout: int = 180) -> bool:
+    """Poll (from the PVE node, via bash /dev/tcp — no nc needed) until the guest's
+    SSH port is open. Cloud-init needs ~a minute to boot + install Vera's key."""
+    if not ip:
+        return False
+    cmd = (f"for i in $(seq 1 {max(1, timeout // 5)}); do "
+           f"timeout 3 bash -c '</dev/tcp/{ip}/{port}' 2>/dev/null && {{ echo SSH_UP; exit 0; }}; "
+           "sleep 5; done; echo TIMEOUT")
+    res = await _call("proxmox.node.exec", cluster_id=cluster_id, command=cmd, timeout=timeout + 20)
+    return "SSH_UP" in (res.get("stdout", "") or "")
+
+
+async def _post_provision(cluster_id, node, vmid, kind, feats, fqdn, job_id="", ip=""):
+    """Background: wait for the guest, then enrol + apply features; patches the stored
+    job so the sync provision call returns fast.
+    LXC → enrol via Proxmox (pct exec, root). QEMU/VM → enrol over SSH to the static
+    IP with Vera's baked key (cloud-init user 'vera' + sudo), since cloud images ship
+    no guest agent."""
     steps = []
+    want_enrol = ("enrol" in feats or "mesh" in feats)
     try:
         running = await _wait_guest_running(cluster_id, vmid, kind)
         steps.append({"boot": {"running": running}})
-        if running and ("enrol" in feats or "mesh" in feats):
-            res = await _call("enroll.guest", cluster_id=cluster_id, vmid=vmid,
-                              guest_type=kind, node=node, fqdn=fqdn or "", via_proxmox=True)
-            steps.append({"enrol": {"ok": not res.get("error"),
-                                    "identity": (res.get("steps") or {}).get("identity", {}).get("ok"),
-                                    "mesh": (res.get("steps") or {}).get("mesh")}})
-        if running and "hardening" in feats and kind == "lxc":
-            h = await _apply_ct_feature(cluster_id, vmid, "lxc", _HARDEN, node)
-            steps.append({"hardening": {"ok": bool(h.get("ok"))}})
+        if running and kind == "lxc":
+            if want_enrol:
+                res = await _call("enroll.guest", cluster_id=cluster_id, vmid=vmid,
+                                  guest_type="lxc", node=node, fqdn=fqdn or "", via_proxmox=True)
+                steps.append({"enrol": {"ok": not res.get("error"),
+                              "identity": (res.get("steps") or {}).get("identity", {}).get("ok"),
+                              "mesh": (res.get("steps") or {}).get("mesh")}})
+            if "hardening" in feats:
+                h = await _apply_ct_feature(cluster_id, vmid, "lxc", _HARDEN, node)
+                steps.append({"hardening": {"ok": bool(h.get("ok"))}})
+        elif running and kind == "qemu":
+            if want_enrol and ip:
+                ready = await _wait_ssh(cluster_id, ip)
+                steps.append({"ssh_wait": {"ip": ip, "reachable": ready}})
+                if ready:
+                    res = await _call("enroll.guest", cluster_id=cluster_id, vmid=vmid,
+                                      guest_type="qemu", node=node, fqdn=fqdn or "", ip=ip,
+                                      ssh_user="vera", ssh_key_path=_vera_key_path())
+                    steps.append({"enrol": {"ok": not res.get("error"),
+                                  "identity": (res.get("steps") or {}).get("identity", {}).get("ok"),
+                                  "mesh": (res.get("steps") or {}).get("mesh"),
+                                  "error": res.get("error")}})
+            elif want_enrol:
+                steps.append({"enrol": {"status": "skipped",
+                              "note": "VM enrol needs a static ip (none set)"}})
+            # hardening for VMs also rides SSH+sudo — enrol registers the host in the
+            # exec store; a follow-up applies _HARDEN over that. Noted for now.
+            if "hardening" in feats:
+                steps.append({"hardening": {"status": "pending",
+                              "note": "VM hardening over SSH is the next increment"}})
     except Exception as e:
         steps.append({"post_error": str(e)})
     # patch the stored job (find by id in the K_JOBS list)
@@ -650,10 +692,11 @@ async def cap_provision(target: str = "", image_id: str = "", name: str = "",
                 job["status"] = "ok"
                 job["vmid"] = vmid
                 # VM boots with Vera's key + static IP; enrol it in the background
-                # (needs the guest agent — cloud image may lack it; best-effort).
+                # over SSH to that IP (cloud image ships no guest agent).
                 step("post", {"status": "applying",
-                              "note": "VM boot + enrol running in background — watch events / jobs"})
-                asyncio.create_task(_post_provision(cluster_id, node, vmid, "qemu", feats, fqdn, job_id))
+                              "note": "VM boot + SSH enrol running in background — watch events / jobs"})
+                asyncio.create_task(_post_provision(cluster_id, node, vmid, "qemu",
+                                                    feats, fqdn, job_id, ip))
         else:
             step("create", {"status": "pending",
                             "note": "no cloud-init template linked to this cloudimg yet — "
