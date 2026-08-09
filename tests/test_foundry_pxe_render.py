@@ -72,6 +72,29 @@ def test_features_script_minimal_when_no_bundles():
     assert "cifs-utils" not in fb
 
 
+def test_autoinstall_embeds_features_base64():
+    import base64
+    r = _render_boot(_prof(features=["hardening", "file-client"]), CFG, {})
+    ud = r["artifacts"]["autoinstall/user-data"]
+    assert "encoding: b64" in ud          # script embedded base64, not raw YAML block
+    # the embedded blob must decode back to the real feature script
+    line = [x for x in ud.splitlines() if x.strip().startswith("content:")][0]
+    blob = line.split("content:", 1)[1].strip()
+    decoded = base64.b64decode(blob).decode()
+    assert decoded.startswith("#!/bin/sh")
+    assert "cifs-utils" in decoded
+
+
+def test_xpt2046_display_opts_override_pins_and_panel():
+    r = _render_boot(_prof(arch="arm64", boot_type="rpi-netboot", display="xpt2046",
+                           display_opts={"panel": "ili9486", "penirq": 25, "rotate": 90}),
+                     CFG, {})
+    c = r["artifacts"]["config.txt"]
+    assert "ili9486" in c and "ili9341" not in c   # overridden panel
+    assert "penirq=25" in c
+    assert "rotate=90" in c
+
+
 def test_slug():
     assert _pxe_slug("Work Station!") == "work-station"
     assert _pxe_slug("") == "node"
