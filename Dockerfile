@@ -35,9 +35,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libpq5 \
         curl \
         pandoc \
+        git \
     && (apt-get install -y --no-install-recommends wkhtmltopdf \
         || echo "wkhtmltopdf not in this suite — skipping (pandoc PDF fallback)") \
     && rm -rf /var/lib/apt/lists/*
+
+# Dev containers bind-mount the repo/worktree so you can commit from inside (e.g.
+# the VS Code terminal). Files are owned by the host repo user but git runs as
+# root here, so git's dubious-ownership guard would otherwise block every command
+# — these are our own trusted sandboxes, so mark all mounted repos safe.
+RUN git config --system --add safe.directory '*'
 
 # Copy installed packages from deps stage
 COPY --from=deps /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
