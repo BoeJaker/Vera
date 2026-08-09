@@ -2593,7 +2593,10 @@ async function loadSandboxPool(){
       +'<span class="mono" style="font-size:10px">'+esc(s.name||'')+'</span>'
       +'<span class="hint">:'+esc(String(s.port||''))+' · db '+esc(String(s.redis_db||''))+'</span>'
       +'<span style="flex:1"></span>'
-      +(on?'<a class="btn sm" href="'+esc(s.url||('http://localhost:'+s.port))+'/" target="_blank" title="Open this sandbox\'s Vera UI (it shows a ⚠ SANDBOX banner so you never mistake it for prod)">open web UI ↗</a>':'')
+      // browser-facing URL = the host YOU are on (llm.int), https, the sandbox port —
+      // NOT the server-side localhost. https so it embeds without a mixed-content block.
+      +(on?'<button class="btn sm" onclick="embedSandbox(\''+esc(s.name)+'\',\''+esc(s.branch||'')+'\','+esc(String(s.port))+')" title="Embed this sandbox\'s Vera UI right here (no new page)">▣ embed here</button>':'')
+      +(on?' <a class="btn sm" href="https://'+esc(location.hostname)+':'+esc(String(s.port))+'/" target="_blank" title="Open this sandbox\'s Vera UI in a new tab (shows a ⚠ SANDBOX banner)">open ↗</a>':'')
       +(on?' <button class="btn sm" onclick="copySandboxSsh(\''+esc(s.name)+'\')" title="Copy the SSH/exec command to get a terminal in this container">⌨ shell</button>':'')
       +(s.role==='spawned'?' <button class="btn sm err-btn" onclick="sandboxDownNamed(\''+esc(s.name)+'\')">down</button>':'')
       +'</div>';
@@ -2605,6 +2608,20 @@ function copySandboxSsh(name){
   const cmd='ssh boejaker@llm.int -t "docker exec -it '+name+' sh"';
   try{ navigator.clipboard.writeText(cmd); toast('shell command copied — '+cmd); }
   catch(e){ toast(cmd); }
+}
+// C6 in-page embed: a sandbox now serves HTTPS with prod's cert, so we can iframe
+// it same-securely (no mixed-content). Built from YOUR host + the sandbox port.
+function embedSandbox(name, branch, port){
+  const url='https://'+location.hostname+':'+port+'/';
+  const h='<div class="card-h"><span class="card-t">⚠ SANDBOX · '+esc(branch||name)+'</span>'
+    +'<span class="hint mono">'+esc(url)+'</span></div>'
+    +'<div style="background:#d9a441;color:#1a1512;font:600 11px/1.4 system-ui,sans-serif;padding:6px 10px;border-radius:5px;margin-bottom:6px">'
+    +'⚠ DEV SANDBOX embedded in prod — changes here are isolated. If it stays blank, the '
+    +'self-signed cert needs accepting ONCE — open <a href="'+esc(url)+'" target="_blank" style="color:#1a1512;text-decoration:underline">'+esc(url)+'</a>, accept, then re-embed.</div>'
+    +'<iframe src="'+esc(url)+'" style="width:100%;height:70vh;border:2px solid #d9a441;border-radius:6px;background:var(--bg1)"></iframe>'
+    +'<div class="row" style="margin-top:8px"><a class="btn" href="'+esc(url)+'" target="_blank">open in new tab ↗</a>'
+    +'<span style="flex:1"></span><button class="btn" onclick="closeModal()">Close</button></div>';
+  openModal(h);
 }
 async function sandboxSpawn(){
   const b=(($('sbx-spawn-branch')||{}).value||'').trim();
