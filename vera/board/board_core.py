@@ -269,6 +269,55 @@ def item_matches(it: BoardItem, q: Optional[BoardQuery]) -> bool:
     return True
 
 
+# ── fabric index projection (§6.3) ───────────────────────────────────────────
+def index_row(it: BoardItem) -> dict:
+    """A flat, fabric-ingestable row for one item (keyed by id). Labels/comments
+    are flattened to strings so the row is a plain scalar dict; `text` carries
+    title+body for text/semantic retrieval. Derived — never written back."""
+    return {
+        "id": it.id,
+        "title": it.title,
+        "lane": it.lane,
+        "labels": " ".join(it.labels),
+        "agent": it.agent,
+        "branch": it.branch,
+        "pipeline": it.pipeline,
+        "session": it.session,
+        "executor": it.executor,
+        "model": it.model,
+        "blocked": it.lane == "blocked",
+        "needs_help": "needs:help" in it.labels,
+        "comment_count": len(it.comments),
+        "heartbeat": it.heartbeat,
+        "updated_at": it.updated_at,
+        "text": (it.title + "\n" + it.body).strip()[:2000],
+    }
+
+
+def summarize(items: List[BoardItem]) -> dict:
+    """A queryable rollup answering the plan's headline questions directly
+    (what's blocked, who owns what) without needing the fabric round-trip."""
+    by_lane: dict = {}
+    by_agent: dict = {}
+    blocked: List[dict] = []
+    needs_help: List[dict] = []
+    for it in items:
+        by_lane[it.lane] = by_lane.get(it.lane, 0) + 1
+        if it.agent:
+            by_agent[it.agent] = by_agent.get(it.agent, 0) + 1
+        if it.lane == "blocked":
+            blocked.append({"id": it.id, "title": it.title, "agent": it.agent})
+        if "needs:help" in it.labels and not it.agent:
+            needs_help.append({"id": it.id, "title": it.title})
+    return {
+        "total": len(items),
+        "by_lane": by_lane,
+        "by_agent": by_agent,
+        "blocked": blocked,
+        "needs_help_unclaimed": needs_help,
+    }
+
+
 # ── FileBoardProvider ───────────────────────────────────────────────────────
 class FileBoardProvider:
     """Markdown-file board: one `<id>.md` per item under an out-of-tree root.

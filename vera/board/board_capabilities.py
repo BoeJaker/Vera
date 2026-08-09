@@ -15,10 +15,15 @@ import logging
 import re
 from typing import List, Optional
 
-from Vera.vera.capability_orchestration import APP, capability
+from Vera.vera.capability_orchestration import APP, capability, CAPABILITY_REGISTRY
 from Vera.vera.board import board_core as bc
+from Vera.vera.sandbox_guard import write_blocked as _sbx_write_blocked
 
 log = logging.getLogger("vera.board")
+
+# The fabric dataset the board projects into (§6.3) — derived, rebuilt each
+# index, never authoritative.
+_INDEX_DATASET = "board_index"
 
 # ── active provider (file tier for now) ─────────────────────────────────────
 _PROVIDER: Optional[bc.FileBoardProvider] = None
@@ -238,3 +243,41 @@ if True:  # capability registration (mirrors the guard style of the other module
     async def cap_board_provider(trace_id=None) -> dict:
         p = provider()
         return {"ok": True, "active": p.name, "root": str(p.root), "degraded": False}
+
+    @capability(
+        "board.index", http_method="POST", http_path="/board/index",
+        http_tags=["board"], memory="on",
+        description="(Re)build the fabric index of the board from files (+ board) so items are "
+                    "queryable via fabric.query / memory.seek — 'what is blocked', 'what touched "
+                    "the planner', 'what did agent B conclude'. DERIVED, never authoritative: "
+                    "rebuilt wholesale each call (dataset '" + _INDEX_DATASET + "', keyed by id, "
+                    "mode=replace), never written back. PROD-SIDE ONLY: fabric writes are "
+                    "suppressed inside a dev sandbox (sandbox_guard), so an index built in a "
+                    "sandbox is empty BY DESIGN — treat that as expected, not a finding (swarm "
+                    "§6.3). Output: {ok, indexed, dataset, prod_side_only?, summary:{total,"
+                    "by_lane,by_agent,blocked,needs_help_unclaimed}}.",
+    )
+    async def cap_board_index(trace_id=None) -> dict:
+        items = await provider().items()
+        summary = bc.summarize(items)
+        # A dev sandbox must not write to the prod-shared fabric — and it must
+        # say so, not silently look like an empty index (swarm §6.3).
+        if _sbx_write_blocked():
+            return {"ok": True, "indexed": 0, "prod_side_only": True,
+                    "dataset": _INDEX_DATASET, "candidate_rows": len(items),
+                    "note": "fabric writes suppressed in this dev sandbox; the board index is "
+                            "built prod-side. An empty index here is expected, not a finding.",
+                    "summary": summary}
+        reg = CAPABILITY_REGISTRY.get("fabric.upsert") or {}
+        func = reg.get("func")
+        if not func:
+            return {"ok": False, "error": "fabric.upsert unavailable — cannot index",
+                    "summary": summary}
+        if not items:
+            return {"ok": True, "indexed": 0, "dataset": _INDEX_DATASET,
+                    "summary": summary, "note": "no board items to index yet"}
+        rows = [bc.index_row(it) for it in items]
+        res = await func(dataset_id=_INDEX_DATASET, rows=rows, key="id",
+                         mode="replace", source="board.index", tags="board,index")
+        return {"ok": True, "indexed": len(rows), "dataset": _INDEX_DATASET,
+                "summary": summary, "fabric": res}
