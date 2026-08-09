@@ -5870,6 +5870,11 @@ services:
       OLLAMA_EMBED_URL: "{_host_for_docker(getattr(c, 'OLLAMA_EMBED_URL', 'http://192.168.0.246:11435'))}"
       OLLAMA_MODEL: "{getattr(c, 'OLLAMA_MODEL', '')}"
       VERA_IS_DEV_SANDBOX: "1"
+      # Dev containers ARE the sanctioned place for sys.dev.* (restart/env) — a
+      # sandbox needs to restart its own process to pick up module-import changes.
+      # Prod never sets this by default, so enable it here (the skill relied on it
+      # being on but it wasn't — an agent couldn't restart its own sandbox).
+      VERA_DEV_MODE: "1"
       EMBED_CAPS_ON_START: "0"
       SYSLOG_MONITOR: "0"
       # Cross-process Ollama GPU gate ('one big queue'): inherit prod's setting
@@ -6222,37 +6227,75 @@ async def _wt_jail(path: str) -> Any:
     return (root, p)
 
 
+async def _resolve_exec_target(name: str = "", branch: str = "") -> Dict[str, Any]:
+    """Which sandbox does an exec target? Primary vera-dev by default, or a
+    SPAWNED per-branch container/worktree selected by container name/slug or
+    branch. Returns {container, worktree} or {error}."""
+    name = (name or "").strip()
+    branch = (branch or "").strip()
+    if not name and not branch:
+        sb = await _get_sandbox()
+        return {"container": _SANDBOX_CONTAINER, "worktree": sb.get("worktree", "")}
+    for slug, d in (await _sandbox_pool()).items():
+        if name in (d.get("name"), slug) or (branch and branch == d.get("branch")):
+            return {"container": d.get("name"), "worktree": d.get("worktree", "")}
+    sb = await _get_sandbox()
+    if name == _SANDBOX_CONTAINER or (branch and branch == sb.get("branch")):
+        return {"container": _SANDBOX_CONTAINER, "worktree": sb.get("worktree", "")}
+    return {"error": f"no sandbox matching name='{name}' branch='{branch}' "
+                     "(evolve.sandbox.list shows the running ones)"}
+
+
 @capability("evolve.sandbox.exec", memory="on",
             http_method="POST", http_path="/evolve/sandbox/exec", http_tags=["evolve"],
-            description="TERMINAL into the sandbox: run a shell command inside "
-                        "the vera-dev CONTAINER (docker exec — the branch's code, "
-                        "isolated Redis) or, with where='worktree', in the branch "
-                        "worktree on the host. Never the real source tree. Inputs: "
-                        "cmd (str!), where (container|worktree), timeout (int=60). "
-                        "Output: {ok, out, err, code, where}.",
+            description="TERMINAL into a sandbox: run a shell command inside the "
+                        "CONTAINER (docker exec — the branch's code, isolated Redis) "
+                        "or, with where='worktree', in the branch worktree ON THE HOST "
+                        "(where git works natively — use this to commit; a Windows/SMB "
+                        "agent CAN'T run git in the worktree directly). Targets the "
+                        "primary vera-dev by default; pass name (container/slug) or "
+                        "branch to reach a SPAWNED per-branch sandbox (a second agent "
+                        "uses this to reach its OWN container). Never the real source "
+                        "tree. Inputs: cmd (str!), where (container|worktree), name "
+                        "(str), branch (str), timeout (int=60). Output: {ok, out, err, "
+                        "code, where, target}.",
             schema=enum_schema(where=["container", "worktree"]))
 async def evolve_sandbox_exec(cmd: str = "", where: str = "container",
-                              timeout: int = 60, trace_id=None):
+                              timeout: int = 60, name: str = "", branch: str = "",
+                              trace_id=None):
     if not (cmd or "").strip():
         return {"error": "cmd required"}
     timeout = max(3, min(300, int(timeout)))
+    # Route to the RIGHT sandbox — primary vera-dev by default, or a SPAWNED
+    # per-branch container/worktree by name/branch. Without this, a second agent
+    # on its own spawned container could only ever reach the primary (the
+    # 'hardcoded to vera-dev' trap). where='worktree' runs on the HOST in that
+    # branch's worktree — which is ALSO the git-over-SMB fix: a Windows/SMB agent
+    # can't run git in the worktree directly (its .git points at a Linux host
+    # path), so it commits by exec'ing here (git runs natively on the host).
+    tgt = await _resolve_exec_target(name, branch)
+    if tgt.get("error"):
+        return tgt
     if where == "worktree":
-        j = await _wt_jail(".")
-        if isinstance(j, dict):
-            return j
-        root, _ = j
+        wt = tgt.get("worktree") or ""
+        if not wt:
+            return {"error": "no worktree for the target sandbox — bring it up first"}
+        root = Path(wt).resolve()
+        cwd_p = (root / ".").resolve()
+        if root != cwd_p and root not in cwd_p.parents:
+            return {"error": "worktree path escape"}
         res = await _sh(["sh", "-lc", cmd] if os.name != "nt"
                         else ["cmd", "/c", cmd], cwd=str(root), timeout=timeout)
     else:
-        res = await _sh(["docker", "exec", "vera-dev", "sh", "-lc", cmd],
+        res = await _sh(["docker", "exec", tgt["container"], "sh", "-lc", cmd],
                         timeout=timeout)
         if not res["ok"] and "No such container" in (res["err"] or ""):
-            return {"error": "vera-dev container is not running — bring the "
-                             "sandbox up first (evolve.sandbox.ensure)",
+            return {"error": f"{tgt['container']} container is not running — bring the "
+                             "sandbox up first (evolve.sandbox.ensure/spawn)",
                     "where": where}
-    await _audit("sandbox.exec", f"[{where}] {cmd[:120]}", ok=res["ok"])
+    await _audit("sandbox.exec", f"[{where}:{tgt.get('container')}] {cmd[:120]}", ok=res["ok"])
     return {"ok": res["ok"], "out": res["out"][-8000:], "err": res["err"][-2000:],
-            "code": res["code"], "where": where}
+            "code": res["code"], "where": where, "target": tgt.get("container")}
 
 
 @capability("evolve.sandbox.fs.list", memory="off", silent=True,

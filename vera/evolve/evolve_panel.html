@@ -2140,7 +2140,9 @@ async function loadPipelines(){
   if(!ps.length){$('pipes-body').innerHTML='<div class="empty">No pipelines yet.</div>';return}
   let h='<table><tr><th>id</th><th>repo</th><th>kind</th><th>profile</th><th>status</th><th>controller</th><th>base→cand</th><th>gate</th><th>decision</th><th></th></tr>';
   for(const p of ps){
-    const gate=p.gate_passed==null?'':(p.gate_passed?'<span style="color:var(--ok)">PASS '+(p.gate_delta>0?'+':'')+p.gate_delta+'</span>':'<span style="color:var(--err)">FAIL '+p.gate_delta+'</span>');
+    const gate=p.gate_passed==null?'':(p.gate_passed
+      ?'<span style="color:var(--ok)">PASS'+(p.gate_delta!=null?' '+(p.gate_delta>0?'+':'')+p.gate_delta:'')+'</span>'
+      :'<span style="color:var(--err)">FAIL'+(p.gate_delta!=null?' '+p.gate_delta:'')+'</span>');
     h+='<tr class="clk" onclick="openPipe(\''+esc(p.id)+'\')"><td class="mono">'+esc(p.id)+(p.live?' <span class="spin"></span>':'')+'</td>'
       +'<td><span class="tag">'+esc(p.repo||'vera')+'</span></td>'
       +'<td><span class="tag">'+esc(p.kind)+'</span>'+(p.adopted?' <span class="tag" style="background:var(--acc3);color:#111" title="hand-authored branch adopted into CI/CD (edits made directly in a worktree, not dispatched to the edit queue)">adopted</span>':'')+'</td><td>'+esc(p.profile)+'</td>'
