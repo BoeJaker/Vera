@@ -541,6 +541,37 @@ select option{background:var(--bg2)}
 </head>
 <body>
 
+<!-- Sandbox-session indicator (C6): a dev container serves the SAME UI as prod,
+     so make it unmistakable. Detected client-side by port — prod is :8999, any
+     other explicit port is a dev sandbox (an empty/default port, i.e. prod behind
+     a proxy, is NOT flagged). Branch comes from /obs/provenance. No backend flag. -->
+<script>(function(){
+  try{
+    var port=location.port;
+    if(!port || port==='8999') return;              // prod — no banner
+    function paint(branch){
+      var h=document.querySelector('header'); if(!h) return;
+      h.style.borderBottom='3px solid #d9a441';
+      h.style.background='linear-gradient(90deg, rgba(217,164,65,.20), transparent 55%)';
+      var s=document.getElementById('sbxBadge');
+      if(!s){ s=document.createElement('div'); s.id='sbxBadge';
+        s.title='This is a Loop Lab DEV SANDBOX, not production — changes here are isolated.';
+        s.style.cssText='background:#d9a441;color:#1a1512;font:700 11px/1 system-ui,sans-serif;'
+          +'padding:6px 9px;border-radius:6px;margin-right:8px;letter-spacing:.03em;flex-shrink:0;white-space:nowrap';
+        h.insertBefore(s, h.firstChild);
+      }
+      s.textContent='⚠ SANDBOX'+(branch?' · '+branch:'')+' · :'+port;
+      document.title='⚠ '+(branch||'SANDBOX')+' — Vera';
+    }
+    function go(){ paint('');
+      fetch('/obs/provenance').then(function(r){return r.json();})
+        .then(function(p){ if(p&&p.branch) paint(p.branch); }).catch(function(){});
+    }
+    if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',go,{once:true});
+    else go();
+  }catch(e){}
+})();</script>
+
 <header>
   <div class="logo"><div class="logo-hex"></div>VERA</div>
   <div class="dot" id="dot"></div>
