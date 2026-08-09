@@ -2,8 +2,12 @@
 (incl. XPT2046 3.2" SPI touchscreen) boot-artifact generator.
 
 These exercise the pure render helpers directly (no redis / no network), so they
-would fail if the netboot config generation regressed."""
-from Vera.vera.foundry.foundry_capabilities import (
+would fail if the netboot config generation regressed.
+
+Imported from the app-free core via the lowercase `vera.*` path so it resolves to
+THIS worktree (Vera.vera.* would resolve to the main checkout) and pulls in no app
+dependencies — see foundry_core.py header + dev-lifecycle §8.3."""
+from vera.foundry.foundry_core import (
     _render_boot, _render_features_script, _pxe_slug,
 )
 
