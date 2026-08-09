@@ -1010,13 +1010,18 @@ async def cap_pxe_config_save(enabled=None, host=None, bridge=None, subnet=None,
 )
 async def cap_pxe_profile_save(id="", name="", image_id="", features=None, disk: int = 20,
                                autoinstall="", arch="amd64", boot_type="", display="hdmi",
-                               ip="", trace_id=None) -> Dict:
+                               ip="", display_opts=None, trace_id=None) -> Dict:
     r = _redis()
     if not r:
         return {"error": "no redis"}
     if isinstance(features, str):
         features = [f.strip() for f in features.replace(",", " ").split() if f.strip()]
     features = features or ["enrol", "hardening"]
+    if isinstance(display_opts, str):
+        try:
+            display_opts = json.loads(display_opts) if display_opts.strip() else {}
+        except Exception:
+            return {"error": "display_opts must be a JSON object"}
     arch = (arch or "amd64").lower()
     boot_type = (boot_type or ("rpi-netboot" if arch in ("arm64", "armhf") else "uefi")).lower()
     display = (display or "hdmi").lower()
@@ -1027,7 +1032,7 @@ async def cap_pxe_profile_save(id="", name="", image_id="", features=None, disk:
     prof = {"id": id, "name": name, "image_id": image_id, "features": features,
             "disk": int(disk), "autoinstall": autoinstall, "arch": arch,
             "boot_type": boot_type, "display": display, "ip": ip.strip(),
-            "updated": time.time()}
+            "display_opts": display_opts or {}, "updated": time.time()}
     await r.hset(K_PXE_PROFILES, id, json.dumps(prof))
     await emit_event({"type": "foundry.pxe.profile.saved", "id": id})
     return {"ok": True, "id": id}
@@ -1146,16 +1151,24 @@ def _render_features_script(feats: List[str]) -> str:
     return "\n".join(out) + "\n"
 
 
-def _render_rpi_config(display: str) -> str:
-    """Raspberry Pi config.txt. display=xpt2046 → 3.2\" SPI TFT (ILI9341) + XPT2046 touch."""
+def _render_rpi_config(display: str, opts: Dict = None) -> str:
+    """Raspberry Pi config.txt. display=xpt2046 → 3.2\" SPI TFT + XPT2046 touch.
+    Pins/panel are overridable via the profile's display_opts (defaults suit a
+    common generic 3.2\" ILI9341 board — adjust to your wiring)."""
+    opts = opts or {}
     lines = ["# Foundry Raspberry Pi config.txt", "arm_64bit=1", "enable_uart=1"]
     if display == "xpt2046":
+        panel = opts.get("panel", "ili9341")
+        dc, rst = opts.get("dc", 24), opts.get("reset", 25)
+        penirq, rotate = opts.get("penirq", 17), opts.get("rotate", 270)
+        speed = opts.get("speed", 32000000)
         lines += [
-            "# --- XPT2046 3.2\" SPI touchscreen: ILI9341 TFT + ADS7846-compatible touch ---",
-            "# (generic 3.2\" board defaults — adjust dc/reset/penirq pins to your wiring)",
+            "# --- XPT2046 3.2\" SPI touchscreen: TFT + ADS7846-compatible touch ---",
+            "# (panel/pins overridable via the profile's display_opts)",
             "dtparam=spi=on",
-            "dtoverlay=fbtft,spi0-0,ili9341,dc_pin=24,reset_pin=25,rotate=270,speed=32000000,fps=30,bgr=1",
-            "dtoverlay=ads7846,cs=1,penirq=17,penirq_pull=2,speed=1000000,keep_vref_on=1,"
+            f"dtoverlay=fbtft,spi0-0,{panel},dc_pin={dc},reset_pin={rst},rotate={rotate},"
+            f"speed={speed},fps=30,bgr=1",
+            f"dtoverlay=ads7846,cs=1,penirq={penirq},penirq_pull=2,speed=1000000,keep_vref_on=1,"
             "swapxy=0,pmax=255,xohms=150,xmin=200,xmax=3900,ymin=200,ymax=3900",
             "hdmi_force_hotplug=0",
         ]
@@ -1199,14 +1212,16 @@ def _render_autoinstall(profile: Dict, cfg: Dict, feats: List[str]) -> str:
     if ip:
         net = ("network:\n  version: 2\n  ethernets:\n    eth0:\n"
                f"      addresses: [{ip}/24]\n      routes: [{{to: default, via: {gw}}}]\n")
-    fb = _render_features_script(feats).replace("\n", "\n      ")
+    # embed the feature script base64 (encoding: b64) so arbitrary shell content
+    # can never break the YAML block-scalar indentation.
+    fb64 = base64.b64encode(_render_features_script(feats).encode()).decode()
     return ("#cloud-config\n"
             f"hostname: {_pxe_slug(profile.get('name','node'))}\n"
             "ssh_pwauth: false\n"
             + net
             + "write_files:\n"
-              "  - path: /var/lib/foundry/features.sh\n    permissions: '0755'\n    content: |\n"
-              f"      {fb}\n"
+              "  - path: /var/lib/foundry/features.sh\n    permissions: '0755'\n"
+              f"    encoding: b64\n    content: {fb64}\n"
               "runcmd:\n  - [ sh, /var/lib/foundry/features.sh ]\n")
 
 
@@ -1220,7 +1235,7 @@ def _render_boot(profile: Dict, cfg: Dict, image: Dict) -> Dict:
     http = cfg.get("http_base") or f"http://{cfg.get('gateway','10.42.0.1')}/foundry"
     artifacts: Dict[str, str] = {"features.sh": _render_features_script(feats)}
     if boot_type in ("rpi-netboot", "rpi-flash"):
-        artifacts["config.txt"] = _render_rpi_config(display)
+        artifacts["config.txt"] = _render_rpi_config(display, profile.get("display_opts"))
         artifacts["cmdline.txt"] = _render_rpi_cmdline(profile, cfg)
         if boot_type == "rpi-flash":
             artifacts["flash.plan"] = (
