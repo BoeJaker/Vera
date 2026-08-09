@@ -2593,10 +2593,18 @@ async function loadSandboxPool(){
       +'<span class="mono" style="font-size:10px">'+esc(s.name||'')+'</span>'
       +'<span class="hint">:'+esc(String(s.port||''))+' · db '+esc(String(s.redis_db||''))+'</span>'
       +'<span style="flex:1"></span>'
-      +(on?'<a href="'+esc(s.url||('http://localhost:'+s.port))+'/" target="_blank">open →</a>':'')
+      +(on?'<a class="btn sm" href="'+esc(s.url||('http://localhost:'+s.port))+'/" target="_blank" title="Open this sandbox\'s Vera UI (it shows a ⚠ SANDBOX banner so you never mistake it for prod)">open web UI ↗</a>':'')
+      +(on?' <button class="btn sm" onclick="copySandboxSsh(\''+esc(s.name)+'\')" title="Copy the SSH/exec command to get a terminal in this container">⌨ shell</button>':'')
       +(s.role==='spawned'?' <button class="btn sm err-btn" onclick="sandboxDownNamed(\''+esc(s.name)+'\')">down</button>':'')
       +'</div>';
   }).join('');
+}
+// C6 connect launcher: copy the command to open a terminal inside a sandbox
+// container (git-over-SMB fails in the worktree, so this is how you get a shell).
+function copySandboxSsh(name){
+  const cmd='ssh boejaker@llm.int -t "docker exec -it '+name+' sh"';
+  try{ navigator.clipboard.writeText(cmd); toast('shell command copied — '+cmd); }
+  catch(e){ toast(cmd); }
 }
 async function sandboxSpawn(){
   const b=(($('sbx-spawn-branch')||{}).value||'').trim();
