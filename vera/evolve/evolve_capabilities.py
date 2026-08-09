@@ -4891,6 +4891,69 @@ async def evolve_pipeline_adopt(branch: str = "", to: str = "main", title: str =
                     "evolve.pipeline.promote (force=true for docs/infra) to merge."}
 
 
+@capability("evolve.pipeline.begin", memory="on",
+            http_method="POST", http_path="/evolve/pipeline/begin", http_tags=["evolve"],
+            description="ATOMIC pipeline start — ONE call does everything an agent needs to begin "
+                        "work on Vera, so it never has to reinvent the flow: creates a TYPED branch "
+                        "off main, materialises its worktree + dev sandbox (its OWN container with "
+                        "spawn=true, for multi-agent), and records the CI/CD pipeline WITH its "
+                        "worktree (so diff/test work). Returns branch, worktree, sandbox url, "
+                        "pipeline id, and the exact NEXT caps. Then: edit the worktree, commit via "
+                        "evolve.sandbox.exec(where='worktree', branch=...) — git-over-SMB fails in "
+                        "the worktree — then review_request + promote. Inputs: title (str!), branch "
+                        "(str — full typed name, else feat/<slug>), spawn (bool), session_id (str), "
+                        "repo (str=vera). Output: {ok, id, branch, worktree, url, base, next[]}.")
+async def evolve_pipeline_begin(title: str = "", branch: str = "", spawn: bool = False,
+                                session_id: str = "", repo: str = DEFAULT_REPO_ID, trace_id=None):
+    title = (title or "").strip()
+    if not title and not branch:
+        return {"error": "title (or branch) required"}
+    if repo != DEFAULT_REPO_ID and not (await evolve_repo_get(id=repo)).get("repo"):
+        return {"error": f"repo not registered: {repo}"}
+    root = await _resolve_repo_root(repo)
+    base = await _default_branch(repo_root=root)
+    br = (branch or "").strip()
+    if not br:
+        slug = re.sub(r"[^a-z0-9._-]+", "-", title.lower()).strip("-")[:40] or uuid.uuid4().hex[:8]
+        br = f"feat/{slug}"
+    if not (await _git("rev-parse", "--verify", f"refs/heads/{br}", repo_root=root))["ok"]:
+        cr = await _git("branch", br, base, repo_root=root)
+        if not cr["ok"]:
+            return {"error": f"branch create failed: {cr['err'] or cr['out']}"}
+    up = await (evolve_sandbox_spawn(branch=br) if spawn else evolve_sandbox_up(branch=br))
+    if up.get("error"):
+        return {"error": f"sandbox up failed: {up['error']}", "branch": br}
+    wt = (up.get("sandbox") or {}).get("worktree") or up.get("worktree", "")
+    url = up.get("url", "")
+    rec = {
+        "id": uuid.uuid4().hex[:8], "kind": "code", "profile": "adopted", "variant_id": "",
+        "edits": [{"area": br, "suggestion": title or "hand-authored change"}],
+        "gate_threshold": 0.0, "auto_promote": False, "auto_test": False, "critic": "",
+        "repo": repo, "controller": _triggered_by(), "adopted": True, "began": True,
+        "session_id": (session_id or "").strip(), "via": (CALLER_KIND.get() or ""),
+        "to": base, "status": "drafting", "decision": "pending",
+        "current": "branch + worktree ready — edit, commit, then promote",
+        "created_at": now_iso(), "ended_at": "", "steps": [],
+        "baseline_score": None, "candidate_score": None, "gate_delta": None,
+        "gate_passed": None, "branch": br, "worktree": wt, "commits": [], "changed_files": [],
+        "reviews": [], "review_requested": False,
+    }
+    _pstep(rec, "begin", True,
+           f"branch {br} + worktree ready ({'own container' if spawn else 'primary sandbox'})")
+    await _save_pipeline(rec)
+    await _audit("pipeline.begin", f"began {br} → {base}", id=rec["id"], branch=br, repo=repo)
+    await emit_event({"type": "evolve.pipeline.begun", "id": rec["id"], "branch": br})
+    return {"ok": True, "id": rec["id"], "branch": br, "worktree": wt, "url": url, "base": base,
+            "next": [
+                f"1. edit files in the worktree ({wt})",
+                f"2. commit ON THE HOST: evolve.sandbox.exec(where='worktree', branch='{br}', "
+                f"cmd='git add -A && git commit -m \"...\"')",
+                f"3. raise: evolve.pipeline.review_request(id='{rec['id']}', reason='...')",
+                f"4. land: evolve.pipeline.promote(id='{rec['id']}'[, force=true for docs/UI]) "
+                "— it refreshes the branch's commits + does the safe merge",
+            ]}
+
+
 @capability("evolve.pipeline.list", memory="off", silent=True,
             http_method="GET", http_path="/evolve/pipeline/list", http_tags=["evolve"],
             description="Recent CI/CD pipeline runs (compact, newest first). "
@@ -5130,6 +5193,15 @@ async def evolve_pipeline_promote(id: str = "", to: str = "main", force: bool = 
         return {"error": f"unknown branch: {branch}"}
     if not (await _git("rev-parse", "--verify", f"refs/heads/{to}", repo_root=root))["ok"]:
         return {"error": f"unknown target branch: {to}"}
+    # Refresh the record's commits/changed_files from git so attribution + the UI
+    # reflect what's actually on the branch NOW — essential for evolve.pipeline.begin
+    # stubs (recorded before any commit) and harmless for adopt (keeps them current).
+    _lg = await _git("log", "--oneline", f"{to}..{branch}", repo_root=root)
+    _cm = [ln for ln in (_lg.get("out", "") or "").splitlines() if ln.strip()]
+    if _cm:
+        rec["commits"] = _cm
+        _dfp = await _git("diff", "--name-only", f"{to}...{branch}", repo_root=root)
+        rec["changed_files"] = [ln for ln in (_dfp.get("out", "") or "").splitlines() if ln.strip()]
     # ── GATE (§3/§6): a code change only merges to `to` when its pipeline gate
     # PASSED — green tests on the branch in the dev sandbox, which also boots it
     # (catching the import-time breakage py_compile misses). No gate pass → no
@@ -7137,23 +7209,26 @@ async def _code_sidecar_teardown(sb: Dict[str, Any]) -> None:
 
 
 async def _worktree_diff(wt: str, base: str = "main", file: str = "",
-                         context: int = 3, max_bytes: int = 200000) -> Dict[str, Any]:
+                         context: int = 3, max_bytes: int = 200000,
+                         head: str = "") -> Dict[str, Any]:
     """Unified diff of a worktree (committed + uncommitted edits) against a base
-    ref — the shared logic behind both evolve.sandbox.diff (Vera's own dev
-    sandbox) and evolve.pipeline.diff (any pipeline, any registered repo).
-    Callers resolve `wt`/`base` for their own case; this just needs a real
-    worktree path."""
+    ref — the shared logic behind evolve.sandbox.diff and evolve.pipeline.diff.
+    When `head` is given, diff `base...head` (a COMMITTED branch, e.g. an adopted
+    pipeline that has no worktree) from `wt` = the repo root instead — no working
+    tree needed. Callers resolve `wt`/`base`/`head` for their own case."""
     if not wt or not Path(wt).exists():
         return {"error": "worktree not found"}
     base = (base or "main").strip()
+    head = (head or "").strip()
+    spec = f"{base}...{head}" if head else base   # branch diff vs working-tree diff
     context = max(0, int(context or 3))
     max_bytes = int(max_bytes or 200000)
 
     # changed files: status letters + adds/dels, rename-aware
-    ns = await _sh(_git_wt_argv(wt, "diff", base, "--name-status", "-M"), cwd=wt)
+    ns = await _sh(_git_wt_argv(wt, "diff", spec, "--name-status", "-M"), cwd=wt)
     if not ns["ok"]:
         return {"error": f"git diff failed: {ns['err'] or ns['out']}"}
-    num = await _sh(_git_wt_argv(wt, "diff", base, "--numstat", "-M"), cwd=wt)
+    num = await _sh(_git_wt_argv(wt, "diff", spec, "--numstat", "-M"), cwd=wt)
     stats: Dict[str, Any] = {}
     for line in (num["out"] or "").splitlines():
         p = line.split("\t")
@@ -7167,8 +7242,12 @@ async def _worktree_diff(wt: str, base: str = "main", file: str = "",
             files.append({"path": path, "status": p[0][:1],
                           **stats.get(path, {"adds": "?", "dels": "?"})})
 
-    st = await _sh(_git_wt_argv(wt, "status", "--porcelain"), cwd=wt)
-    untracked = [l[3:] for l in (st["out"] or "").splitlines() if l.startswith("??")]
+    # Untracked files only exist for a working-tree diff (head=""); a committed
+    # branch diff (head set) has none.
+    untracked: List[str] = []
+    if not head:
+        st = await _sh(_git_wt_argv(wt, "status", "--porcelain"), cwd=wt)
+        untracked = [l[3:] for l in (st["out"] or "").splitlines() if l.startswith("??")]
 
     # the diff text itself (an untracked file has no git diff — synthesize one)
     if file and file in untracked:
@@ -7179,7 +7258,7 @@ async def _worktree_diff(wt: str, base: str = "main", file: str = "",
         except Exception as e:
             diff = f"(could not read untracked file: {e})"
     else:
-        args = _git_wt_argv(wt, "diff", base, "-M", f"-U{context}")
+        args = _git_wt_argv(wt, "diff", spec, "-M", f"-U{context}")
         if file:
             args += ["--", file]
         d = await _sh(args, cwd=wt)
@@ -7229,17 +7308,24 @@ async def evolve_pipeline_diff(id: str = "", file: str = "", context: int = 3,
         return {"error": got.get("error") or "pipeline not found"}
     if rec.get("kind") != "code":
         return {"error": "evolve.pipeline.diff is only for kind=code pipelines"}
-    wt = rec.get("worktree")
-    if not wt or not Path(wt).exists():
-        return {"error": "no worktree for this pipeline (branch step may have failed)"}
     repo = rec.get("repo") or DEFAULT_REPO_ID
     root = await _resolve_repo_root(repo)
-    base = await _default_branch(repo_root=root)
-    res = await _worktree_diff(wt, base, file, context, max_bytes)
+    base = rec.get("to") or await _default_branch(repo_root=root)
+    branch = rec.get("branch", "")
+    wt = rec.get("worktree")
+    if wt and Path(wt).exists():
+        # live worktree: committed + uncommitted edits vs base
+        res = await _worktree_diff(wt, base, file, context, max_bytes)
+    elif branch:
+        # adopted / no-worktree pipeline: diff the branch's COMMITTED changes vs
+        # base straight from git (root repo, base...branch) — no worktree needed.
+        res = await _worktree_diff(str(root), base, file, context, max_bytes, head=branch)
+    else:
+        return {"error": "pipeline has neither a worktree nor a branch to diff"}
     if res.get("error"):
         return res
     res["repo"] = repo
-    res["branch"] = rec.get("branch", "")
+    res["branch"] = branch
     return res
 
 
