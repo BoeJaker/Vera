@@ -186,6 +186,7 @@ html.vpb-nav-hosted body{padding-left:0}
   <button class="btn" data-sec="sources" onclick="nav('sources')"><span class="ic">⌥</span>Sources</button>
   <button class="btn" data-sec="sandbox" onclick="nav('sandbox')"><span class="ic">🛡</span>Sandbox</button>
   <button class="btn" data-sec="logs" onclick="nav('logs')"><span class="ic">📜</span>Logs</button>
+  <button class="btn" data-sec="csessions" onclick="nav('csessions')"><span class="ic">🧩</span>Sessions</button>
   <div class="rail-grp">Library</div>
   <button class="btn" data-sec="tasks" onclick="nav('tasks')"><span class="ic">☰</span>Tasks</button>
   <button class="btn" data-sec="runs" onclick="nav('runs')"><span class="ic">↻</span>Runs</button>
@@ -208,6 +209,27 @@ html.vpb-nav-hosted body{padding-left:0}
       <div class="empty">Loading…</div>
     </div>
     <div class="hint" style="margin-top:6px">Each line is stamped with its sandbox branch + running-code sha; distinct errors also flow to the Errors tab. Live tailing runs where the app has docker (prod).</div>
+  </div>
+</div>
+
+<!-- ── SESSIONS: Claude Code sessions ↔ board claims ↔ pipelines (§6.6) ── -->
+<div class="sec" id="sec-csessions" style="display:none">
+  <div class="card">
+    <div class="card-h"><span class="card-t">Claude Code sessions</span>
+      <span class="hint" id="csess-status">—</span>
+      <span style="flex:1"></span>
+      <span class="hint">stalled after</span>
+      <select id="csess-stalled" onchange="loadCSessions()" style="min-width:70px">
+        <option value="">45m</option><option value="900">15m</option>
+        <option value="1800">30m</option><option value="3600">60m</option>
+      </select>
+      <button class="btn sm" onclick="loadCSessions()" style="margin-left:8px">&#8635;</button>
+    </div>
+    <div id="csess-summary" class="row" style="gap:6px;flex-wrap:wrap;margin:6px 0"></div>
+    <div id="csess-body">
+      <div class="empty">Loading…</div>
+    </div>
+    <div class="hint" style="margin-top:6px">Each session is joined to its board claims (items whose board-meta <code>session</code> matches) and its pipelines, then classified (§6.6): <b>resumable</b>/<b>stalled</b> = undeclared silence past 90m/45m; <b>declared-block</b> = <code>blocked:quota</code>, held not reclaimed; <b>finished-unreported</b> = a promoted pipeline with a still-open claim → reconcile, never re-run. Resume/release actions land next.</div>
   </div>
 </div>
 
@@ -797,7 +819,7 @@ function nav(sec){
   document.querySelectorAll('#nav .btn').forEach(b=>b.classList.toggle('on',b.dataset.sec===sec));
   document.querySelectorAll('.sec').forEach(s=>s.style.display=s.id==='sec-'+sec?'':'none');
   const f={test:loadTest,tasks:loadTasks,runs:loadRuns,improve:loadSessions,watch:loadWatch,pipelines:()=>{loadGit();loadPipelines()},
-    review:loadReview,logs:loadLogs,
+    review:loadReview,logs:loadLogs,csessions:loadCSessions,
     sources:loadSources,sandbox:loadSandbox,activity:loadAudit,variants:loadVariants,settings:fillSettings,overview:loadOverview,errors:loadErrors}[sec];
   if(f)f();
   // Keep the outer shell's injected top-level sub-menu in sync when this
@@ -815,7 +837,7 @@ if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
   {id:'test', label:'Test'}, {id:'improve', label:'Improve'}, {id:'watch', label:'Watch'},
   {id:'overview', label:'Suite'}, {id:'errors', label:'Errors'}, {id:'variants', label:'Variants'},
   {id:'activity', label:'Activity'},
-  {id:'pipelines', label:'CI / CD'}, {id:'review', label:'Review'}, {id:'sources', label:'Sources'}, {id:'sandbox', label:'Sandbox'}, {id:'logs', label:'Logs'},
+  {id:'pipelines', label:'CI / CD'}, {id:'review', label:'Review'}, {id:'sources', label:'Sources'}, {id:'sandbox', label:'Sandbox'}, {id:'logs', label:'Logs'}, {id:'csessions', label:'Sessions'},
   {id:'tasks', label:'Tasks'}, {id:'runs', label:'Runs'}, {id:'settings', label:'Settings'},
 ]);
 
@@ -1508,6 +1530,38 @@ function watchOnEditq(ev){
     if(el)el.innerHTML='<span style="color:'+(ev.status==='done'?'var(--ok)':'var(--err)')+'">'+(ev.status==='done'?'✓':'✗')+'</span> <span class="hint">variant synthesised'+(ev.ran_on?(' on '+esc(ev.ran_on)):'')+'</span> <button class="btn sm" onclick="openEditq(\''+esc(ev.id)+'\')">view</button>';
   }
 }
+/* ═══ SESSIONS: Claude Code session watch (§6.6) — read-only classify ═══ */
+function _csessAge(s){if(s==null)return '—';s=Math.round(s);if(s<90)return s+'s';if(s<5400)return Math.round(s/60)+'m';if(s<172800)return Math.round(s/3600)+'h';return Math.round(s/86400)+'d'}
+const _CSESS_COLOR={resumable:'#e0a030',stalled:'#d0902a','finished-unreported':'#4a9ed0','declared-block':'#8a8a8a',live:'#3cb371',human:'#b070d0',untracked:'#6a6a6a'};
+async function loadCSessions(){
+  const el=$('csess-body');if(!el)return;
+  const sa=$('csess-stalled')?$('csess-stalled').value:'';
+  const st=$('csess-status');if(st)st.textContent='loading…';
+  const r=await api('/ide/claude_sessions/watch?max_sessions=60'+(sa?('&stalled_after_s='+sa):''));
+  if(!r||!r.ok){el.innerHTML='<div class="empty">Could not load sessions.</div>';if(st)st.textContent='—';return}
+  const by=r.summary.by_state||{},tot=r.summary.total||0;
+  if(st)st.textContent=tot+' sessions';
+  const sum=$('csess-summary');
+  if(sum)sum.innerHTML=Object.keys(by).sort().map(k=>'<span class="tag" style="border-left:3px solid '+(_CSESS_COLOR[k]||'#666')+'">'+esc(k)+' '+by[k]+'</span>').join('');
+  const rows=r.sessions||[];
+  if(!rows.length){el.innerHTML='<div class="empty">No ingested Claude Code sessions.</div>';return}
+  let h='<table style="width:100%;border-collapse:collapse;font-size:12px"><tr style="text-align:left;color:var(--muted)"><th>state</th><th>session</th><th>turns</th><th>idle</th><th>claims</th><th>pipelines</th><th>why</th></tr>';
+  for(const s of rows){
+    const c=_CSESS_COLOR[s.state]||'#666';
+    const claims=(s.claims||[]).map(x=>esc((x.title||x.id||'').slice(0,28))).join(', ')||'—';
+    const pipes=(s.pipelines||[]).map(p=>esc((p.branch||p.id||'')+' ('+(p.decision||'?')+')')).join(', ')||'—';
+    h+='<tr style="border-top:1px solid var(--border)">'
+      +'<td style="white-space:nowrap"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+c+';margin-right:5px"></span>'+esc(s.state)+(s.action&&s.action!=='none'?' <span class="hint">→'+esc(s.action)+'</span>':'')+'</td>'
+      +'<td class="mono" title="'+esc(s.claude_session_id)+'">'+esc((s.claude_session_id||'').slice(0,12))+'</td>'
+      +'<td>'+(s.turns||0)+'</td>'
+      +'<td>'+_csessAge(s.age_s)+'</td>'
+      +'<td>'+claims+'</td>'
+      +'<td class="mono" style="font-size:10px">'+pipes+'</td>'
+      +'<td class="hint" style="max-width:280px">'+esc(s.reason||'')+'</td></tr>';
+  }
+  el.innerHTML=h+'</table>';
+}
+
 async function loadWatch(){
   // populate the session selector (running first)
   const r=await api('/evolve/improve/list?limit=25');const ss=(r&&r.sessions)||[];
