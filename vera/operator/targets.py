@@ -120,8 +120,28 @@ async def ensure_target(target: Dict[str, Any],
         resolved.update({"ready": True, "error": ""})
         return resolved
 
-    # Boot / ensure the sandbox Vera. evolve.sandbox.ensure is idempotent.
+    # A SPECIFIC per-branch dev container (not just the primary): resolve it from
+    # evolve.sandbox.list — every live sandbox (primary + spawned) is thus a
+    # driveable operator target, at its own scheme-aware url (HTTPS now; the
+    # operator browser already ignores the self-signed cert).
     branch = target.get("branch") or ""
+    name = target.get("name") or ""
+    if call_cap and (branch or name):
+        try:
+            lst = await call_cap("evolve.sandbox.list")
+            for s in (lst or {}).get("sandboxes", []):
+                if s.get("running") and s.get("url") and (
+                        (branch and s.get("branch") == branch) or
+                        (name and s.get("name") == name)):
+                    resolved["base_url"] = s["url"]
+                    resolved["start_url"] = (_panel_url(s["url"], target["panel_id"])
+                                             if target.get("panel_id") else "")
+                    resolved.update({"ready": True, "error": "", "container": s.get("name")})
+                    return resolved
+        except Exception as e:
+            log.debug("sandbox target list lookup failed: %s", e)
+
+    # Boot / ensure the PRIMARY sandbox Vera. evolve.sandbox.ensure is idempotent.
     res = await call_cap("evolve.sandbox.ensure", branch=branch) if call_cap else \
         {"error": "no cap dispatcher"}
     if isinstance(res, dict) and res.get("error"):
