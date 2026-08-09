@@ -721,22 +721,29 @@ fix so an agent (me, or another) can drive it cleanly:
    commits before merging so a `begin`-stub gets accurate commits/attribution. The skill leads with
    `begin`. Verified end-to-end (own container on the correctly-allocated port, no collision).
 
-9. **⚠ Dev container OOMs / won't stay up under in-container `pytest` (found 2026-08-09, running
-   `improve-vera-sandboxed`) — TO FIX.** Running the branch's unit tests INSIDE its pooled dev
-   container (`pip install pytest` + `python -m pytest`) crashes the container: importing a second
-   full Vera under pytest, on top of the already-running app process, exceeds the container's memory
-   and the container goes down (repeatedly, would not stay up 2 min). This **blocks the "run the
-   suite in the sandbox" step** (§6 / the skill's test stage) for anything that imports the app,
-   and destabilises the same container the real-VM E2E drives from. Workarounds used this session:
-   verify pure helpers **standalone** (no app import) + rely on the host-side `adopt` compile gate —
-   but that is NOT the behavioural/suite testing the standard wants. **Do:** (a) give pooled dev
-   containers enough memory headroom (compose `mem_limit`/reservation) and/or run pytest in a
-   **separate** short-lived exec that isn't competing with the live app process; (b) **bake `git` +
-   `pytest` into the dev image** (§8.1 #3 already notes missing `git`/docker) so tests don't need a
-   fragile in-container `pip install`; (c) expose a `evolve.sandbox.test`/`evolve.suite.run` that
-   runs the suite against a branch **without** OOM-crashing its serving container (e.g. a dedicated
-   test container, or `pytest -p no:cacheprovider` in a mem-bounded subprocess). Until fixed, an
-   agent cannot complete the in-sandbox test tier for app-importing changes.
+9. **⚠ In-container `pytest` that imports the app hangs the sandbox's HTTP — NOT an OOM
+   (found 2026-08-09, running `improve-vera-sandboxed`; DIAGNOSED, fix TODO).** Running the
+   branch's unit tests INSIDE its pooled dev container (`python -m pytest` on a test that
+   `import`s `Vera.vera...`) makes the container's Vera HTTP server go **unresponsive** — my
+   `exec.bash.run` / `/health` calls (served by that same app) drop with "connection closed",
+   which I first **mis-read as an OOM crash**. It is not: `docker inspect` shows
+   **`Running=true, OOMKilled=false, ExitCode=0, RestartCount=0`** throughout, and it does NOT
+   recover cleanly after the run. Root cause is **contention/deadlock, not memory** — a second
+   full-app import (which re-runs module-init / touches the shared coordination Redis, secret
+   key, etc.) inside the container that is *already* serving the full app starves/blocks its
+   event loop. **Memory was NOT the constraint:** each dev container uses ~1 GiB idle, has no
+   `mem_limit` (unlimited), and `OOMKilled=false`. (A 16 GiB host swap file was added this
+   session as general headroom — reasonable, but it did **not** fix this; the problem recurred
+   with 15 GiB swap free.) This still **blocks the "run the suite in the sandbox" step** (§6 /
+   the skill's test stage) for any app-importing test. Workaround used: verify pure helpers
+   **standalone** (no app import) + the host-side `adopt` compile gate — NOT the behavioural
+   testing the standard wants. **Do (real fix, not memory):** run the suite in a **separate,
+   ephemeral test container** (a fresh `vera:latest` that runs pytest and exits — never the
+   container that's serving HTTP), OR a dedicated `evolve.sandbox.test`/`evolve.unittest.run`
+   that shells into an isolated process/namespace so the serving app isn't disturbed; and
+   **bake `git`+`pytest` into the dev image** (§8.1 #3) so tests don't need a fragile in-container
+   `pip install`. Until then, an agent cannot complete the in-sandbox test tier for app-importing
+   changes — it must fall back to standalone-helper tests + the compile gate.
 
 ---
 
