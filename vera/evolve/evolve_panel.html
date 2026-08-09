@@ -2593,10 +2593,15 @@ async function loadSandboxPool(){
       +'<span class="mono" style="font-size:10px">'+esc(s.name||'')+'</span>'
       +'<span class="hint">:'+esc(String(s.port||''))+' · db '+esc(String(s.redis_db||''))+'</span>'
       +'<span style="flex:1"></span>'
-      // browser-facing URL = the host YOU are on (llm.int), https, the sandbox port —
-      // NOT the server-side localhost. https so it embeds without a mixed-content block.
-      +(on?'<button class="btn sm" onclick="embedSandbox(\''+esc(s.name)+'\',\''+esc(s.branch||'')+'\','+esc(String(s.port))+')" title="Embed this sandbox\'s Vera UI right here (no new page)">▣ embed here</button>':'')
-      +(on?' <a class="btn sm" href="https://'+esc(location.hostname)+':'+esc(String(s.port))+'/" target="_blank" title="Open this sandbox\'s Vera UI in a new tab (shows a ⚠ SANDBOX banner)">open ↗</a>':'')
+      // Use the container's ACTUAL scheme (http/https). Opening an http container
+      // over https gives ERR_SSL_PROTOCOL_ERROR; embedding needs https (an http
+      // iframe from the https prod page is mixed-content-blocked). Host = the host
+      // YOU are on (llm.int), not the server-side localhost.
+      +((s2=>{const sc=s2.scheme||'http', https=sc==='https', u=sc+'://'+location.hostname+':'+s2.port+'/';return on?(
+          (https?'<button class="btn sm" onclick="embedSandbox(\''+esc(s2.branch||s2.name)+'\','+esc(String(s2.port))+')" title="Embed this sandbox\'s Vera UI here (no new page)">▣ embed here</button> ':'')
+        +'<a class="btn sm" href="'+u+'" target="_blank" title="Open this sandbox\'s Vera UI in a new tab">open ↗</a>'
+        +(https?'':' <span class="hint" title="This container is HTTP — re-create it (down, then up/spawn) to serve HTTPS + embed in-page">(http)</span>')
+      ):''})(s))
       +(on?' <button class="btn sm" onclick="copySandboxSsh(\''+esc(s.name)+'\')" title="Copy the SSH/exec command to get a terminal in this container">⌨ shell</button>':'')
       +(s.role==='spawned'?' <button class="btn sm err-btn" onclick="sandboxDownNamed(\''+esc(s.name)+'\')">down</button>':'')
       +'</div>';
@@ -2609,11 +2614,11 @@ function copySandboxSsh(name){
   try{ navigator.clipboard.writeText(cmd); toast('shell command copied — '+cmd); }
   catch(e){ toast(cmd); }
 }
-// C6 in-page embed: a sandbox now serves HTTPS with prod's cert, so we can iframe
-// it same-securely (no mixed-content). Built from YOUR host + the sandbox port.
-function embedSandbox(name, branch, port){
+// C6 in-page embed: an HTTPS sandbox serves prod's cert, so we iframe it
+// same-securely (no mixed-content). Built from YOUR host + the sandbox port.
+function embedSandbox(branch, port){
   const url='https://'+location.hostname+':'+port+'/';
-  const h='<div class="card-h"><span class="card-t">⚠ SANDBOX · '+esc(branch||name)+'</span>'
+  const h='<div class="card-h"><span class="card-t">⚠ SANDBOX · '+esc(branch)+'</span>'
     +'<span class="hint mono">'+esc(url)+'</span></div>'
     +'<div style="background:#d9a441;color:#1a1512;font:600 11px/1.4 system-ui,sans-serif;padding:6px 10px;border-radius:5px;margin-bottom:6px">'
     +'⚠ DEV SANDBOX embedded in prod — changes here are isolated. If it stays blank, the '
