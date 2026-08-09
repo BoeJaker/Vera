@@ -100,9 +100,12 @@ trailer; that's git-attribution policy). Container syntax checks:
     earns its keep: the logic is reachable as `vera.X` without the app.
   - **in the container**, where the worktree IS `/app/Vera` so `Vera.vera.X`
     resolves right: `evolve.sandbox.exec(where="container", branch="feat/<name>",
-    cmd="pip install -q pytest && cd /app/Vera && python -m pytest tests/… -q")`.
+    cmd="pip install -q pytest && cd /app/Vera && python -m pytest tests/<one_file> -q")`.
     In-container pytest does **not** OOM — pytest just isn't baked into the image
-    yet, so install it first.
+    yet, so install it first. **Caveat (§8.3 #9b):** a *targeted* test is fine, but
+    running the **full app-importing suite in the container that is SERVING the app**
+    contends with its event loop and can make its HTTP go unresponsive — for a full
+    suite use a separate ephemeral `vera:latest` exec, not the serving container.
   - Host venv (has pytest): `/home/boejaker/langchain/bin/python3 -m pytest
     tests/… -q` — fast, but only correct via the lowercase `vera.X` + sys.path
     insert above; `Vera.vera.X` there still hits main.
