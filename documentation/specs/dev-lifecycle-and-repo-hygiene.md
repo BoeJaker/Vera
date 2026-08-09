@@ -557,17 +557,21 @@ Captured from the user during the C5 build; not yet scheduled.
    verdict, attribution (controller + adopted badge), driving-session **chat drill-down**, and
    decided-at. An auditable review log, not just the queue. (`decidedCard` in evolve_panel.html.)
 
-3. **◐ Connect to a sandbox from inside Vera + indicator (C6, part-done 2026-08-08).**
-   - ✓ **SANDBOX-SESSION indicator** — a dev container's UI now shows a prominent amber
-     `⚠ SANDBOX · <branch> · :<port>` badge in the header + tints it + prefixes the tab title, so
-     it's never mistaken for prod. Detected client-side by port (prod=:8999), branch from
-     `/obs/provenance` — no backend flag, restart-free (`capability_orchestration.html`).
-   - ✓ **Web launcher** — Loop Lab Sandbox tab has `open web UI ↗` per running sandbox (the opened
-     UI carries the banner above).
-   - ○ **Embed IN-PAGE (no new page)** — still opens a new tab. True in-page embed needs a
-     same-origin reverse proxy (prod https → container http, server-side) with UI base-path
-     support, OR dev containers serving HTTPS — because a cross-origin `http://…:port` iframe from
-     the `https` prod page is mixed-content-blocked. Deferred to a proxy slice.
+3. **✓ Connect to a sandbox from inside Vera + indicator (C6, 2026-08-08).**
+   - ✓ **SANDBOX-SESSION indicator** — a dev container's UI shows a prominent amber
+     `⚠ SANDBOX · <branch> · :<port>` badge in the header + tints it + prefixes the tab title.
+     Client-side by port (prod=:8999), branch from `/obs/provenance` — restart-free.
+   - ✓ **HTTPS dev containers** — dev containers now serve HTTPS with prod's SAME cert (mounted
+     `/certs` ro), and the cert was regenerated with a full SAN (`llm.int, localhost, vera.vera.int,
+     127.0.0.1, …` via `TLS_EXTRA_SANS`) so `https://llm.int:<port>` validates. Probes are
+     scheme-agnostic (`_dev_resolve_base`: https-verify-off then http, cached) so the http→https
+     transition is non-breaking (a pre-existing http container still routes fine).
+   - ✓ **In-page embed** — Sandbox tab `▣ embed here` iframes the sandbox's `https://<your-host>:<port>`
+     same-securely (no mixed-content), with a ⚠ SANDBOX header. **One-time step:** the self-signed
+     cert must be TRUSTED once (import `~/.vera/tls/cert.pem` into the OS/browser Trusted-Root store)
+     — a cert warning can't be clicked through inside an iframe, so an untrusted cert renders blank.
+   - **Transition note:** NEW sandboxes are HTTPS automatically; a container created before this
+     (the primary, another agent's) stays http until re-created (`evolve.sandbox.up`/`spawn`).
 
 4. **◐ Connect to per-branch dev instances via SSH *or* web (C6, part-done 2026-08-08).**
    - ✓ **SSH/exec launcher** — Sandbox tab `⌨ shell` copies `ssh boejaker@llm.int -t "docker exec
