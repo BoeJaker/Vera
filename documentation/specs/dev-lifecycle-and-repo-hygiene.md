@@ -415,8 +415,8 @@ land (per §2.5 this doc is the living record, not a snapshot of original intent
     already ingests remote/Windows-host sessions via the **`vscode-client` push channel**
     (`ide.claude_sessions.sources` lists them), NOT via any deferred SSH scan. Verified end to
     end: the driving session `cd43896f…` (`via=mcp`) resolved to **223 ingested turns** of this
-    very conversation. **Remaining (→ §8.2 #6):** stamp `session_id` onto **git-graph commit
-    nodes** so the same drill-down works from the commit DAG, not only the pipeline record.
+    very conversation. **git-graph commit nodes are stamped too** (§8.2 #6 done) — the same
+    drill-down works from the commit DAG, not only the pipeline record.
   - ✓ **Planner regression tests** — pure helpers extracted to `vera/dag/planner_core.py`;
     `tests/test_planner_guards.py` (10) locks skill-filtering, drift detection, and
     non-deterministic planner sampling (the logic behind both incidents). `evolve.unittest
@@ -447,9 +447,11 @@ land (per §2.5 this doc is the living record, not a snapshot of original intent
 - **Phase B — Test suite + merge gate.  ○ not started (primitives exist)**
   §6: consolidate `tests/` into contract/behavioural/critical-system tiers; wire
   `evolve.suite`/`selftest` as regression-on-push and **gate-on-promote**; results stamped
-  (Phase A) + persisted. **Amendment:** the gate must promote via the safe isolated-worktree
-  merge from Phase A+, and **`evolve.pipeline.promote` must be reworked** — it currently does
-  `git checkout <to>` in the prod repo root, which switches prod's live checkout (§8.1).
+  (Phase A) + persisted. **Amendment (RESOLVED 2026-08-08):** the gate promotes via the safe
+  isolated-worktree / guarded in-checkout merge — `evolve.pipeline.promote` was reworked (§8.1 #2),
+  so the "blind `git checkout <to>`" hazard is gone. What's left for Phase B proper: the tiered
+  test suite + wiring `evolve.suite`/`selftest` as the on-promote gate (today `adopt` only
+  compile-gates; see §8.3 #2).
 
 - **Phase C — Per-branch dev containers + VSCode/Vera management + UI access.  ◐ mostly done**
   §4: per-branch containers with a port pool, `.devcontainer/` + VSCode tasks/commands,
@@ -485,6 +487,14 @@ land (per §2.5 this doc is the living record, not a snapshot of original intent
   Make §2.5 partly automatic: a branch's plan doc created on `evolve.pipeline.run`; the auto-
   postmortem writes to `documentation/postmortems/`; a check warns when a merged branch
   changed code with no matching docs/tests.
+  - **Docs edit-area + scheduled auto-push (requested 2026-08-08).** Docs get edited on prod (and
+    from any dev container) but currently land only via manual direct-to-main commits. Provide a
+    sanctioned **docs edit surface** and a **scheduled job that commits + pushes `documentation/`
+    changes to `main` every ~24h if there are any** (author = the human, no AI trailer, secret-scan
+    gated) — so doc edits flow without hand commits. Reconciling edits made from *different*
+    containers is likely over-thinking (see §8.4). NOTE: keep this SEPARATE from the §8.2 #7
+    problem — that's Vera GENERATING files into the tree (`docs.build` screenshots); those stay
+    gitignored/emitted-outside-the-tree. This item is about HAND-authored doc prose.
 
 ### 8.1 Build learnings & amendments (2026-08-08)
 Recorded from actually building Phases A / A+ / D, so the plan reflects reality, not intent:
@@ -624,6 +634,47 @@ fix so an agent (me, or another) can drive it cleanly:
    U1/U2/U3 payoff), and a prod restart interrupts every agent's prod-side cap calls (adopt/
    promote/git.graph). So: batch `.py` deploys, keep UI changes restart-free, and check
    `ollama.gate` / `evolve.sandbox.list` before a restart.
+
+7. **Second-agent workflow blockers (found running `improve-vera-sandboxed` on another agent;
+   mostly FIXED 2026-08-08).**
+   - ✓ `evolve.sandbox.exec` was hardcoded to the primary `vera-dev` container/worktree — a second
+     agent on its own spawned container could never reach it. Now takes `name`/`branch` to route to
+     the right container + worktree (`_resolve_exec_target`).
+   - ✓ **Git-over-SMB:** a worktree's `.git` points at a Linux host path Windows/SMB can't resolve,
+     so an agent can't run git in the worktree directly. Fix: `evolve.sandbox.exec where=worktree
+     branch=<theirs>` runs git natively on the HOST — that is the commit path.
+   - ✓ Dev containers now set `VERA_DEV_MODE=1` (was off) so an agent can restart its own sandbox.
+   - ✓ `/evolve/panel` now sends `Cache-Control: no-cache` (was cacheable → stale iframe could
+     render inconsistently against the always-fresh element JS).
+   - ○ **Agents don't know the caps** to create branch+worktree+sandbox and drive the pipeline —
+     they backtrack and reinvent the flow. → #8 (atomic start) + the skill update.
+
+8. **Make branch+worktree creation ATOMIC in the pipeline (requested 2026-08-08).** Today the agent
+   creates the branch, materialises a worktree, brings up a sandbox, commits, THEN adopts — manually,
+   in order, knowing the caps. And because `adopt` records no worktree, `evolve.pipeline.diff`/`.test`
+   fail with **"no worktree for this pipeline"** (every Review-tab diff errors). **Do:** an
+   `evolve.pipeline.begin(title)` that creates the typed branch + worktree (+ optional per-branch
+   container), records the pipeline WITH its worktree, and returns the exact next steps — one cap to
+   start, then edit + promote. **Interim fix:** `evolve.pipeline.diff` falls back to `git diff
+   base...branch` when there is no worktree (so adopted-pipeline diffs work now).
+
+---
+
+## 8.4 Shelved — deliberately deferred, do at the end
+
+Real but low-urgency; parked here so they don't clog the active phases.
+- **Git history author remediation (`admin` → `BoeJaker`).** Future commits are fixed (git config
+  set 2026-08-08). Rewriting PAST history (`git filter-repo` + force-push) is disruptive — it
+  changes every SHA and breaks live clones/worktrees — so do it **at a quiet moment with no other
+  agent's branches in flight**, then everyone re-syncs. (User: remediate later.)
+- **Session overlay ON the commit-DAG lanes.** §8.2 #6's session→branches grouping shipped as a
+  list; drawing it as a visual overlay on the DAG lanes is polish.
+- **Docs cross-container reconciliation.** Merging doc edits made from multiple dev containers before
+  the 24h auto-push (Phase E) — likely over-thinking; revisit only if it actually bites.
+- **Spread attribution to other infographics** (author-map, activity timelines) beyond the CI/CD
+  pipeline UI + commit DAG.
+- **Retire prod-share editing (guardrail warn → block)** — only after C4 gives dev containers a git
+  binary + docker socket, so the sandboxed flow fully replaces prod-in-place edits.
 
 ---
 
