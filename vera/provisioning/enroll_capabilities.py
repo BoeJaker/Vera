@@ -31,6 +31,7 @@ Redis layout
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -403,6 +404,17 @@ async def _ssh_user_ca(state: Dict) -> str:
         return ""
 
 
+def _ssh_enrol_cmd(base_script: str, ssh_user: str) -> str:
+    """Wrap the (root-requiring) enrol script for the SSH path: a non-root SSH user
+    (e.g. cloud-init's default 'vera' on a provisioned VM, which has passwordless
+    sudo) runs it via `sudo -n`; root runs it directly. base64 so arbitrary script
+    content survives the sudo shell."""
+    if (ssh_user or "root") == "root":
+        return base_script
+    b = base64.b64encode(base_script.encode()).decode()
+    return f"echo {b} | base64 -d | sudo -n bash"
+
+
 def _enroll_script(state: Dict, fqdn: str, ssh_user_ca: str) -> str:
     """The agentless enrolment payload run on the guest (Debian/RHEL-ish)."""
     url = state.get("stepca_url", "")
@@ -581,9 +593,12 @@ async def cap_enroll_guest(
                         "stderr": (res.get("stderr", "") or "")[:400]}
         out = res.get("stdout", "") or ""
     else:
-        # 1. Push + run the enrolment script over SSH (bootstrap creds).
+        # 1. Push + run the enrolment script over SSH (bootstrap creds). The script
+        #    needs root; a non-root SSH user (e.g. cloud-init's 'vera' on a provisioned
+        #    VM) runs it via sudo -n (see _ssh_enrol_cmd).
         res = await _run_ssh(ip, ssh_user, password=ssh_password, key_path=ssh_key_path,
-                             port=ssh_port, command=base_script, timeout=180)
+                             port=ssh_port, command=_ssh_enrol_cmd(base_script, ssh_user),
+                             timeout=180)
         steps["ssh"] = {"ok": bool(res.get("ok")), "error": res.get("error", ""),
                         "stderr": (res.get("stderr", "") or "")[:400]}
         out = res.get("stdout", "") or ""
