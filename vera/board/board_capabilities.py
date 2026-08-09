@@ -45,7 +45,8 @@ def _msg_dict(m: bc.AgentMessage) -> dict:
 
 def _item_dict(it: bc.BoardItem, full: bool = False) -> dict:
     d = {"id": it.id, "title": it.title, "lane": it.lane, "labels": it.labels,
-         "agent": it.agent, "branch": it.branch, "pipeline": it.pipeline,
+         "agent": it.agent, "repo": it.repo, "project": it.project,
+         "branch": it.branch, "pipeline": it.pipeline,
          "session": it.session, "executor": it.executor, "model": it.model,
          "reviewed_by": it.reviewed_by, "heartbeat": it.heartbeat,
          "hops": it.hops, "created_at": it.created_at, "updated_at": it.updated_at,
@@ -90,8 +91,10 @@ if True:  # capability registration (mirrors the guard style of the other module
                     "labels,agent,branch,pipeline,session,comment_count,...}], count}.",
     )
     async def cap_board_items(lane: str = "", label: str = "", agent: str = "",
+                              repo: str = "", project: str = "",
                               mentions: str = "", text: str = "", trace_id=None) -> dict:
-        q = bc.BoardQuery(lane=lane, label=label, agent=agent, mentions=mentions, text=text)
+        q = bc.BoardQuery(lane=lane, label=label, agent=agent, repo=repo,
+                          project=project, mentions=mentions, text=text)
         items = await provider().items(q)
         return {"ok": True, "items": [_item_dict(i) for i in items], "count": len(items),
                 "provider": provider().name}
@@ -115,19 +118,23 @@ if True:  # capability registration (mirrors the guard style of the other module
                     "capture plane for messy braindumps). Inputs: id (str — blank to create), "
                     "title, lane (inbox|ready|in_progress|blocked|needs_review|review|done|dropped|"
                     "queued_vera|in_progress_vera), body, labels (list — route+needs:*), agent, "
-                    "branch, pipeline, session, executor (deterministic|vera|capable), model, "
-                    "reviewed_by, hops (int). Comments are preserved. Output: {ok, item}.",
+                    "repo (WHERE it lands — an evolve.repo.add id; blank = Vera), project (the "
+                    "effort it belongs to, may be non-code), branch, pipeline, session, executor "
+                    "(deterministic|vera|capable), model, reviewed_by, hops (int). Comments are "
+                    "preserved. Output: {ok, item}.",
     )
     async def cap_board_item_upsert(id: str = "", title: str = "", lane: str = "inbox",
                                     body: str = "", labels: Optional[List[str]] = None,
-                                    agent: str = "", branch: str = "", pipeline: str = "",
+                                    agent: str = "", repo: str = "", project: str = "",
+                                    branch: str = "", pipeline: str = "",
                                     session: str = "", executor: str = "", model: str = "",
                                     reviewed_by: str = "", hops: int = 0, trace_id=None) -> dict:
         if lane not in bc.LANE_SET:
             return {"ok": False, "error": f"unknown lane: {lane}", "lanes": bc.LANES}
         it = bc.BoardItem(
             id=id or "", title=title, lane=lane, body=body,
-            labels=list(labels or []), agent=agent, branch=branch, pipeline=pipeline,
+            labels=list(labels or []), agent=agent, repo=repo, project=project,
+            branch=branch, pipeline=pipeline,
             session=session, executor=executor, model=model, reviewed_by=reviewed_by,
             hops=int(hops or 0))
         saved = await provider().upsert(it)
