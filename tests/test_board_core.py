@@ -211,6 +211,24 @@ def test_index_row_is_flat_and_scalar():
     assert all(not isinstance(v, (list, dict)) for v in row.values())
 
 
+def test_repo_project_round_trip_and_index(prov):
+    it = run(prov.upsert(bc.BoardItem(title="cross-repo item", lane="ready",
+                                      repo="acme-web", project="q3-launch")))
+    back = run(prov.get(it.id))
+    assert back.repo == "acme-web" and back.project == "q3-launch"
+    row = bc.index_row(back)
+    assert row["repo"] == "acme-web" and row["project"] == "q3-launch"
+
+
+def test_query_by_repo_and_project(prov):
+    run(prov.upsert(bc.BoardItem(title="a", lane="ready", repo="r1", project="p1")))
+    run(prov.upsert(bc.BoardItem(title="b", lane="ready", repo="r2", project="p1")))
+    by_repo = run(prov.items(bc.BoardQuery(repo="r1")))
+    assert [i.title for i in by_repo] == ["a"]
+    by_proj = run(prov.items(bc.BoardQuery(project="p1")))
+    assert {i.title for i in by_proj} == {"a", "b"}
+
+
 def test_summarize_rollup():
     items = [
         bc.BoardItem(id="1", lane="blocked", title="b1", agent="claude-a"),

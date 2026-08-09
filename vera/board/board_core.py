@@ -49,8 +49,8 @@ ENVELOPE_KINDS = {
 
 # board-meta scalar fields (everything but title/body/comments).
 META_FIELDS = [
-    "lane", "labels", "agent", "branch", "pipeline", "session",
-    "executor", "model", "reviewed_by", "heartbeat", "hops",
+    "lane", "labels", "agent", "repo", "project", "branch", "pipeline",
+    "session", "executor", "model", "reviewed_by", "heartbeat", "hops",
     "created_at", "updated_at",
 ]
 
@@ -86,6 +86,8 @@ class BoardItem:
     body: str = ""
     labels: List[str] = field(default_factory=list)
     agent: str = ""          # owner — the agent:<name> whose lease is current
+    repo: str = ""           # WHERE it lands (evolve.repo.add id) — §0.2 #2
+    project: str = ""        # the project/effort it belongs to (may be non-code)
     branch: str = ""
     pipeline: str = ""
     session: str = ""
@@ -104,6 +106,8 @@ class BoardQuery:
     lane: str = ""
     label: str = ""
     agent: str = ""
+    repo: str = ""
+    project: str = ""
     mentions: str = ""
     text: str = ""
 
@@ -226,6 +230,8 @@ def item_from_markdown(text: str, item_id: str) -> BoardItem:
         body=body,
         labels=labels,
         agent=meta.get("agent", ""),
+        repo=meta.get("repo", ""),
+        project=meta.get("project", ""),
         branch=meta.get("branch", ""),
         pipeline=meta.get("pipeline", ""),
         session=meta.get("session", ""),
@@ -261,6 +267,10 @@ def item_matches(it: BoardItem, q: Optional[BoardQuery]) -> bool:
         return False
     if q.agent and it.agent != q.agent:
         return False
+    if q.repo and it.repo != q.repo:
+        return False
+    if q.project and it.project != q.project:
+        return False
     hay_body = it.body + " " + " ".join(c.body for c in it.comments)
     if q.mentions and q.mentions not in hay_body:
         return False
@@ -280,6 +290,8 @@ def index_row(it: BoardItem) -> dict:
         "lane": it.lane,
         "labels": " ".join(it.labels),
         "agent": it.agent,
+        "repo": it.repo,
+        "project": it.project,
         "branch": it.branch,
         "pipeline": it.pipeline,
         "session": it.session,
