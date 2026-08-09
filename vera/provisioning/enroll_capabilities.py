@@ -31,7 +31,6 @@ Redis layout
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import logging
 import os
@@ -47,6 +46,9 @@ from fastapi.responses import HTMLResponse
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import APP, capability, emit_event, now_iso
 from Vera.vera.security import secrets as vsecrets
+# pure SSH-enrol wrapping lives in an app-free core module so it's unit-testable
+# without booting the orchestrator (see enroll_core.py header).
+from Vera.vera.provisioning.enroll_core import _ssh_enrol_cmd
 
 log = logging.getLogger("vera.enroll")
 _HERE = Path(__file__).parent
@@ -404,15 +406,7 @@ async def _ssh_user_ca(state: Dict) -> str:
         return ""
 
 
-def _ssh_enrol_cmd(base_script: str, ssh_user: str) -> str:
-    """Wrap the (root-requiring) enrol script for the SSH path: a non-root SSH user
-    (e.g. cloud-init's default 'vera' on a provisioned VM, which has passwordless
-    sudo) runs it via `sudo -n`; root runs it directly. base64 so arbitrary script
-    content survives the sudo shell."""
-    if (ssh_user or "root") == "root":
-        return base_script
-    b = base64.b64encode(base_script.encode()).decode()
-    return f"echo {b} | base64 -d | sudo -n bash"
+# _ssh_enrol_cmd is imported from enroll_core (app-free, unit-testable).
 
 
 def _enroll_script(state: Dict, fqdn: str, ssh_user_ca: str) -> str:
