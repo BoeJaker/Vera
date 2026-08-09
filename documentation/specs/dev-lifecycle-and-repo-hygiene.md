@@ -557,16 +557,24 @@ Captured from the user during the C5 build; not yet scheduled.
    verdict, attribution (controller + adopted badge), driving-session **chat drill-down**, and
    decided-at. An auditable review log, not just the queue. (`decidedCard` in evolve_panel.html.)
 
-3. **Connect to a sandbox from inside Vera — no new page (C6).** Open a branch's dev instance
-   *within* the current Vera UI (embed/attach, reusing the `/vscode/…` same-origin proxy pattern
-   and `remote-access` session model) rather than navigating to its `:port`. Needs a **clear,
-   persistent "SANDBOX SESSION" indicator** (branch + container name) so it's never mistaken for
-   prod. Pairs with §4's "easy access to each dev container's Web UI."
+3. **◐ Connect to a sandbox from inside Vera + indicator (C6, part-done 2026-08-08).**
+   - ✓ **SANDBOX-SESSION indicator** — a dev container's UI now shows a prominent amber
+     `⚠ SANDBOX · <branch> · :<port>` badge in the header + tints it + prefixes the tab title, so
+     it's never mistaken for prod. Detected client-side by port (prod=:8999), branch from
+     `/obs/provenance` — no backend flag, restart-free (`capability_orchestration.html`).
+   - ✓ **Web launcher** — Loop Lab Sandbox tab has `open web UI ↗` per running sandbox (the opened
+     UI carries the banner above).
+   - ○ **Embed IN-PAGE (no new page)** — still opens a new tab. True in-page embed needs a
+     same-origin reverse proxy (prod https → container http, server-side) with UI base-path
+     support, OR dev containers serving HTTPS — because a cross-origin `http://…:port` iframe from
+     the `https` prod page is mixed-content-blocked. Deferred to a proxy slice.
 
-4. **Connect to per-branch dev instances via SSH *or* the Vera web UI (C6).** A launcher/registry
-   to reach a branch container over SSH (terminal) and over its Vera web UI — register each live
-   dev container as an operator/remote target (`unified-nodes-estate`,
-   `remote-access-workspaces-subsystem`) so both a human and the operator system can drive it.
+4. **◐ Connect to per-branch dev instances via SSH *or* web (C6, part-done 2026-08-08).**
+   - ✓ **SSH/exec launcher** — Sandbox tab `⌨ shell` copies `ssh boejaker@llm.int -t "docker exec
+     -it <name> sh"` (the git-over-SMB-safe way to a terminal in the container).
+   - ○ **Operator/remote target registration** — register each live dev container as an operator
+     target (`unified-nodes-estate`, `remote-access-workspaces-subsystem`) so the operator system
+     (not just a human) can drive it. Still to build.
 
 5. **✓ Internal UI attribution of git-graph nodes & changes (2026-08-08).** The repo keeps a
    human author with **no AI-attribution trailer** (`git-attribution-internal-only`,
