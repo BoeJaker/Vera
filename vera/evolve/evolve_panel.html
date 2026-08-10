@@ -100,7 +100,9 @@ details>summary{cursor:pointer;font-size:10.5px;color:var(--acc);font-family:var
 /* ── v2 left icon rail ── */
 body{padding-left:158px}
 .tb{padding-left:6px}
-#nav.rail{position:fixed;left:0;top:0;bottom:0;width:146px;background:var(--bg1);border-right:1px solid var(--border);padding:10px 8px;display:flex;flex-direction:column;gap:2px;overflow-y:auto;z-index:50}
+#nav.rail{position:fixed;left:0;top:0;bottom:0;width:146px;background:var(--bg1);border-right:1px solid var(--border);padding:10px 8px;display:flex;flex-direction:column;gap:2px;overflow-y:auto;overflow-x:hidden;z-index:50}
+#nav.rail .btn{min-width:0}
+#nav.rail .btn span:not(.ic){overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #nav.rail .rail-logo{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:1px;color:var(--acc4);padding:2px 6px 8px}
 #nav.rail .rail-grp{font-size:8px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim);padding:8px 6px 2px}
 #nav.rail .btn{display:flex;align-items:center;gap:7px;justify-content:flex-start;width:100%;border:none;background:transparent;padding:5px 8px;border-radius:5px;font-size:11px;color:var(--dim2)}
@@ -246,6 +248,7 @@ html.vpb-nav-hosted body{padding-left:0}
       <span class="hint">filter</span>
       <select id="board-fltrepo" onchange="loadBoardTab()" style="min-width:100px" title="filter by repo"><option value="">all repos</option></select>
       <select id="board-fltproj" onchange="loadBoardTab()" style="min-width:110px;margin-left:6px" title="filter by project"><option value="">all projects</option></select>
+      <select id="board-fltbranch" onchange="loadBoardTab()" style="min-width:120px;margin-left:6px" title="filter by branch"><option value="">all branches</option></select>
       <button class="btn sm" onclick="boardToggleNew()" style="margin-left:8px">+ New</button>
       <button class="btn sm" onclick="loadBoardTab()" style="margin-left:6px">&#8635;</button>
     </div>
@@ -1679,8 +1682,9 @@ async function loadBoardTab(){
   const all=r.items||[];
   _fillFilter('board-fltrepo','all repos',[...new Set(all.map(i=>i.repo).filter(Boolean))].sort());
   _fillFilter('board-fltproj','all projects',[...new Set(all.map(i=>i.project).filter(Boolean))].sort());
-  const fr=$('board-fltrepo')?$('board-fltrepo').value:'',fp=$('board-fltproj')?$('board-fltproj').value:'';
-  const items=all.filter(i=>(!fr||i.repo===fr)&&(!fp||i.project===fp));
+  _fillFilter('board-fltbranch','all branches',[...new Set(all.map(i=>i.branch).filter(Boolean))].sort());
+  const fr=$('board-fltrepo')?$('board-fltrepo').value:'',fp=$('board-fltproj')?$('board-fltproj').value:'',fb=$('board-fltbranch')?$('board-fltbranch').value:'';
+  const items=all.filter(i=>(!fr||i.repo===fr)&&(!fp||i.project===fp)&&(!fb||i.branch===fb));
   if(st)st.textContent=items.length+(items.length!==all.length?(' / '+all.length):'')+' items · '+(r.provider||'file');
   const byLane={};for(const it of items){(byLane[it.lane]=byLane[it.lane]||[]).push(it)}
   const lanes=_LANES.filter(l=>byLane[l]||['inbox','ready','in_progress','needs_review','done'].includes(l));
