@@ -184,11 +184,11 @@ html.vpb-nav-hosted body{padding-left:0}
   <button class="btn" data-sec="pipelines" onclick="nav('pipelines')"><span class="ic">⎇</span>CI / CD</button>
   <button class="btn" data-sec="review" onclick="nav('review')"><span class="ic">✓</span>Review</button>
   <button class="btn" data-sec="sources" onclick="nav('sources')"><span class="ic">⌥</span>Sources</button>
-  <button class="btn" data-sec="sandbox" onclick="nav('sandbox')"><span class="ic">🛡</span>Sandbox</button>
-  <button class="btn" data-sec="logs" onclick="nav('logs')"><span class="ic">📜</span>Logs</button>
-  <button class="btn" data-sec="csessions" onclick="nav('csessions')"><span class="ic">🧩</span>Sessions</button>
-  <button class="btn" data-sec="board" onclick="nav('board')"><span class="ic">📋</span>Board</button>
-  <button class="btn" data-sec="notes" onclick="nav('notes')"><span class="ic">🗒</span>Notes</button>
+  <button class="btn" data-sec="sandbox" onclick="nav('sandbox')"><span class="ic">▩</span>Sandbox</button>
+  <button class="btn" data-sec="logs" onclick="nav('logs')"><span class="ic">≣</span>Logs</button>
+  <button class="btn" data-sec="csessions" onclick="nav('csessions')"><span class="ic">◈</span>Sessions</button>
+  <button class="btn" data-sec="board" onclick="nav('board')"><span class="ic">▤</span>Board</button>
+  <button class="btn" data-sec="notes" onclick="nav('notes')"><span class="ic">✎</span>Notes</button>
   <div class="rail-grp">Library</div>
   <button class="btn" data-sec="tasks" onclick="nav('tasks')"><span class="ic">☰</span>Tasks</button>
   <button class="btn" data-sec="runs" onclick="nav('runs')"><span class="ic">↻</span>Runs</button>
@@ -241,10 +241,10 @@ html.vpb-nav-hosted body{padding-left:0}
     <div class="card-h"><span class="card-t">Board</span>
       <span class="hint" id="board-status">—</span>
       <span style="flex:1"></span>
-      <input id="board-fltrepo" placeholder="repo filter" style="width:100px" oninput="loadBoard()">
-      <input id="board-fltproj" placeholder="project filter" style="width:100px;margin-left:6px" oninput="loadBoard()">
+      <input id="board-fltrepo" placeholder="repo filter" style="width:100px" oninput="loadBoardTab()">
+      <input id="board-fltproj" placeholder="project filter" style="width:100px;margin-left:6px" oninput="loadBoardTab()">
       <button class="btn sm" onclick="boardToggleNew()" style="margin-left:8px">+ New</button>
-      <button class="btn sm" onclick="loadBoard()" style="margin-left:6px">&#8635;</button>
+      <button class="btn sm" onclick="loadBoardTab()" style="margin-left:6px">&#8635;</button>
     </div>
     <div id="board-new" style="display:none;background:var(--bg2);border-radius:6px;padding:8px;margin:6px 0">
       <input type="hidden" id="bn-id">
@@ -877,7 +877,7 @@ function nav(sec){
   document.querySelectorAll('#nav .btn').forEach(b=>b.classList.toggle('on',b.dataset.sec===sec));
   document.querySelectorAll('.sec').forEach(s=>s.style.display=s.id==='sec-'+sec?'':'none');
   const f={test:loadTest,tasks:loadTasks,runs:loadRuns,improve:loadSessions,watch:loadWatch,pipelines:()=>{loadGit();loadPipelines()},
-    review:loadReview,logs:loadLogs,csessions:loadCSessions,board:loadBoard,notes:loadNotes,
+    review:loadReview,logs:loadLogs,csessions:loadCSessions,board:loadBoardTab,notes:loadNotes,
     sources:loadSources,sandbox:loadSandbox,activity:loadAudit,variants:loadVariants,settings:fillSettings,overview:loadOverview,errors:loadErrors}[sec];
   if(f)f();
   // Keep the outer shell's injected top-level sub-menu in sync when this
@@ -1471,7 +1471,10 @@ async function loadAll(){
   if($('im-editor'))$('im-editor').value=_cfg.editor_provider||'anthropic';
   await loadTargets();
   fillTargetSelectors('im-cat','im-profile','specialist');   // Improve target
-  nav('test');       // Test is the home
+  // Test is the home — but this init awaits slow config/targets, so only land on
+  // Test if the user hasn't already switched tabs DURING the load (else we'd yank
+  // them off the tab they opened). _curSec() reads the active nav button.
+  if(_curSec()==='test')nav('test');
   pollSuite();       // reflect any in-flight suite immediately
   loadSessions(true);
 }
@@ -1600,17 +1603,24 @@ async function boardSave(){
     labels:($('bn-labels').value||'').split(',').map(x=>x.trim()).filter(Boolean),
     repo:$('bn-repo').value.trim(),project:$('bn-project').value.trim(),body:$('bn-body').value};
   const r=await post('/board/item/upsert',body);
-  if(r&&r.ok){toast('saved');$('bn-id').value='';boardToggleNew(true);loadBoard()}else toast((r&&r.error)||'failed')}
+  if(r&&r.ok){toast('saved');$('bn-id').value='';boardToggleNew(true);loadBoardTab()}else toast((r&&r.error)||'failed')}
 async function boardEdit(id){
   const r=await api('/board/item?id='+encodeURIComponent(id));const it=r&&r.item;if(!it)return;
   _boardFillLanes();
   $('bn-id').value=it.id;$('bn-title').value=it.title||'';$('bn-lane').value=it.lane;
   $('bn-labels').value=(it.labels||[]).join(', ');$('bn-repo').value=it.repo||'';$('bn-project').value=it.project||'';$('bn-body').value=it.body||'';
   $('board-new').style.display='block';$('bn-title').focus()}
-async function boardMove(id,lane){const r=await post('/board/item/move',{id,lane});if(r&&r.ok)loadBoard();else toast((r&&r.error)||'failed')}
-async function boardClaim(id){const a=prompt('claim as agent:',_boardAgent());if(!a)return;localStorage.setItem('vera_board_agent',a);const r=await post('/board/claim',{id,agent:a});toast(r&&r.ok?'claimed':(r&&r.held_by?('lost → '+r.held_by):(r&&r.error)||'failed'));loadBoard()}
-async function boardComment(id){const b=prompt('comment (point at file:line, not a dump):');if(!b)return;const r=await post('/board/comment',{id,frm:_boardAgent(),kind:'progress',body:b});toast(r&&r.ok?'commented':(r&&r.error)||'failed');loadBoard()}
-async function loadBoard(){
+async function boardMove(id,lane){const r=await post('/board/item/move',{id,lane});if(r&&r.ok)loadBoardTab();else toast((r&&r.error)||'failed')}
+async function boardClaim(id){const a=prompt('claim as agent:',_boardAgent());if(!a)return;localStorage.setItem('vera_board_agent',a);const r=await post('/board/claim',{id,agent:a});toast(r&&r.ok?'claimed':(r&&r.held_by?('lost → '+r.held_by):(r&&r.error)||'failed'));loadBoardTab()}
+async function boardComment(id){const b=prompt('comment (point at file:line, not a dump):');if(!b)return;const r=await post('/board/comment',{id,frm:_boardAgent(),kind:'progress',body:b});toast(r&&r.ok?'commented':(r&&r.error)||'failed');loadBoardTab()}
+async function boardDispatch(id){
+  const ex=prompt('dispatch executor: deterministic | vera | capable','deterministic');if(!ex)return;
+  const r=await post('/board/dispatch',{id,executor:ex.trim(),agent:_boardAgent()});
+  toast(r&&r.ok?('dispatched ('+(r.status||'running')+')'):(r&&r.error)||'failed');setTimeout(loadBoardTab,1200)}
+// NOTE: named loadBoardTab (not loadBoard) — a pre-existing loadBoard() renders the
+// overview SVG board into #ov-board; sharing the name shadowed this one and the tab
+// stayed blank.
+async function loadBoardTab(){
   const el=$('board-body');if(!el)return;
   const q=[];const fr=$('board-fltrepo'),fp=$('board-fltproj');
   if(fr&&fr.value.trim())q.push('repo='+encodeURIComponent(fr.value.trim()));
@@ -1627,16 +1637,18 @@ async function loadBoard(){
     h+='<div style="min-width:210px;max-width:240px;flex:0 0 auto"><div style="font-size:11px;font-weight:600;border-bottom:2px solid '+c+';padding-bottom:3px;margin-bottom:6px">'+esc(lane)+' <span class="hint">'+its.length+'</span></div>';
     for(const it of its){
       const labels=(it.labels||[]).map(l=>'<span class="tag" style="font-size:9px">'+esc(l)+'</span>').join(' ');
-      const meta=[it.repo?('📁'+esc(it.repo)):'',it.project?('▸'+esc(it.project)):'',it.agent?('👤'+esc(it.agent)):''].filter(Boolean).join(' ');
+      const meta=[it.repo?('⊟ '+esc(it.repo)):'',it.project?('▸ '+esc(it.project)):'',it.agent?('@'+esc(it.agent)):''].filter(Boolean).join('  ');
       const moves=_LANES.map(l=>'<option value="'+l+'"'+(l===it.lane?' selected':'')+'>'+l+'</option>').join('');
+      const canDispatch=(lane==='ready'||lane==='inbox');
       h+='<div style="background:var(--bg2);border-radius:6px;padding:6px;margin-bottom:6px;border-left:3px solid '+c+'">'
         +'<div style="font-size:11.5px;cursor:pointer" onclick="boardEdit(\''+esc(it.id)+'\')" title="edit">'+esc(it.title||'(untitled)')+'</div>'
         +(meta?'<div class="hint" style="font-size:9.5px;margin-top:2px">'+meta+'</div>':'')
         +(labels?'<div style="margin-top:3px">'+labels+'</div>':'')
         +'<div class="row" style="gap:4px;margin-top:5px">'
           +'<select onchange="boardMove(\''+esc(it.id)+'\',this.value)" style="font-size:9px;flex:1">'+moves+'</select>'
+          +(canDispatch?'<button class="btn sm" style="font-size:9px;padding:2px 5px" onclick="boardDispatch(\''+esc(it.id)+'\')" title="orchestrate: begin→work→gate">▷</button>':'')
           +'<button class="btn sm" style="font-size:9px;padding:2px 5px" onclick="boardClaim(\''+esc(it.id)+'\')">claim</button>'
-          +'<button class="btn sm" style="font-size:9px;padding:2px 5px" onclick="boardComment(\''+esc(it.id)+'\')" title="comment">💬</button>'
+          +'<button class="btn sm" style="font-size:9px;padding:2px 5px" onclick="boardComment(\''+esc(it.id)+'\')" title="comment">✎</button>'
         +'</div>'
         +(it.comment_count?'<div class="hint" style="font-size:9px;margin-top:2px">'+it.comment_count+' comments</div>':'')
       +'</div>';
@@ -2505,9 +2517,13 @@ async function loadReview(){
     const wps=((wr&&wr.proposals)||[]).filter(p=>/^loop-lab:/.test(p.source||'')||/^Loop Lab/.test(p.workspace||''));
     if(wps.length)wsCards=wps.map(wsReviewCard).join('');
   }catch(e){}
-  // Pipelines awaiting a decision.
+  // Pipelines awaiting a decision — but a pipeline that was review-requested and
+  // then PROMOTED/rolled_back keeps review_requested=true, so it would linger here
+  // as a "stale/stuck pending" forever. Exclude anything already decided (those go
+  // in the Decided log below).
   const r=await api('/evolve/pipeline/list?limit=50');const ps=(r&&r.pipelines)||[];
-  const queue=ps.filter(p=>p.review_requested||p.decision==='pending'||p.decision==='held');
+  const _terminal=d=>d==='promoted'||d==='rolled_back';
+  const queue=ps.filter(p=>(p.review_requested||p.decision==='pending'||p.decision==='held')&&!_terminal(p.decision));
   const pipeCards=queue.length?queue.map(reviewCard).join(''):'';
   // Decided reviews — the auditable accept/reject LOG, not just the queue (§8.2).
   const decided=ps.filter(p=>p.decision==='promoted'||p.decision==='rolled_back').slice(0,20);
@@ -2547,6 +2563,7 @@ function reviewCard(p){
     +ctrlBadge(p.controller)+' '+pipeDecision(p.decision)+' '+gate
     +(p.review_requested?'<span class="pill" style="color:var(--warn)">review requested</span>':'')
     +'<span style="flex:1"></span>'
+    +'<span class="hint" style="font-size:9px" title="created">'+esc((p.created_at||'').slice(0,19).replace('T',' '))+'</span>'
     +'<button class="btn sm" onclick="event.stopPropagation();toggleReviewDiff(\''+esc(p.id)+'\')">diff</button>'
     +'</div>'
     +'<div id="rv-diff-'+esc(p.id)+'" style="display:none;margin-top:8px"></div>'
