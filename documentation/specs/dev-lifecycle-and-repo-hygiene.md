@@ -10,6 +10,9 @@
 **Owner:** admin (user) · **Home of the standard once ratified:** this file (versioned in-repo)
 **Revisions:** 2026-08-08 — added §2.2b (branch & worktree lifecycle) + §7 row + §9 rules
 8–9, after a branch/worktree-sprawl + duplicate-history incident while building the tooling.
+2026-08-10 — hardened §9 rules 1 & 3 after a self-audit found branch discipline being
+bypassed for "UI-only, served-fresh" edits (committed straight to `main` via the
+`VERA_ALLOW_MAIN_COMMIT` override) and commit messages landing with `â€”` mojibake.
 
 > This document is BOTH the plan for the work AND, once ratified, the standard itself.
 > It is deliberately kept in the repo (not just in an assistant's memory) — per the
@@ -822,11 +825,25 @@ confirmed to bite (§8.2 #7); only the earlier "over-thinking" wording was wrong
 ## 9. Operating rules for Claude (the part I follow now, before the tooling exists)
 
 Until the guardrails are built, I hold to the standard manually:
-1. **Branch first, typed** (`fix/…`, `feat/…`) — never work directly on `main`; register a
-   pipeline where the flow supports it.
+1. **Branch first, typed** (`fix/…`, `feat/…`, `loop-lab/…`) — never work directly on `main`;
+   register a pipeline where the flow supports it. **This holds even when the change needs no
+   restart.** A UI / template / static-asset edit that prod serves fresh from disk
+   (`evolve_panel.html`, element JS, CSS) is still a change to prod's working tree: it lands on
+   a branch and merges/promotes like any other change — never by editing the `\\llm.int`
+   checkout in place because "it's only UI and reloads on its own." The `VERA_ALLOW_MAIN_COMMIT=1`
+   escape hatch is reserved for a genuinely urgent, explicitly-sanctioned hotfix you call out in
+   the moment; it is not a convenience for skipping the branch. (This rule was hardened on
+   2026-08-10 precisely because served-fresh UI edits had been drifting straight onto `main`.)
 2. **Prefer a dev container** for anything non-trivial (via `improve-vera-sandboxed`);
    edit prod-in-place only when you explicitly ask, and say so.
 3. **Commit granularly**, user as author, **no AI attribution trailer**, secret-scan clean.
+   **Commit messages are ASCII-only.** Em-dashes, smart quotes and box-drawing glyphs passed
+   through the `evolve.sandbox.exec` shell get double-encoded (UTF-8 bytes read back as Latin-1)
+   and land in history as mojibake like `â€”` — write `-`, not `—`. Avoid backticks in
+   `commit -m` too (the shell command-substitutes them). After every push, **verify
+   `local == origin`** (`git rev-parse main` vs `origin/main`) — the SMB ref cache goes stale and
+   will report "Everything up-to-date" while `main` is actually ahead; push the explicit
+   `<sha>:refs/heads/main` if so.
 4. **Ship tests with the change**; a bug fix gets a failing→passing regression test.
 5. **Write the plan/report/postmortem to the repo** (`documentation/…`), not only to memory;
    memory just points at it.
