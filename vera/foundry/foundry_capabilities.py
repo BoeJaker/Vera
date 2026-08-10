@@ -56,12 +56,14 @@ from Vera.vera.capability_orchestration import (
 from Vera.vera.foundry.foundry_core import (
     _HARDEN, _pxe_slug, _render_features_script, _render_rpi_config,
     _render_rpi_cmdline, _render_ipxe, _render_autoinstall, _render_boot,
-    pick_node,
+    pick_node, cluster_join_script, CLUSTER_KINDS,
 )
+from Vera.vera.security import secrets as vsecrets
 
 _HERE = Path(__file__).parent
 K_IMAGES = "vera:foundry:images"
 K_JOBS = "vera:foundry:jobs"
+K_CLUSTERS = "vera:foundry:clusters"   # registered clusters a host can be provisioned to join
 
 
 def _redis():
@@ -460,12 +462,20 @@ FEATURES: List[Dict[str, Any]] = [
     {"id": "security-monitoring", "label": "Security monitoring", "default": False,
      "targets": ["ct", "vm", "physical"], "status": "planned",
      "desc": "auditd + log shipping to a collector (bundle script next)."},
-    {"id": "docker-swarm", "label": "Docker swarm member", "default": False,
-     "targets": ["ct", "vm", "physical"], "status": "planned",
-     "desc": "Install Docker + join/init the swarm (bundle script next)."},
-    {"id": "distributed-compute", "label": "Vera compute cluster", "default": False,
-     "targets": ["ct", "vm", "physical", "docker"], "status": "planned",
-     "desc": "Join the Vera worker / Ollama compute cluster (bundle script next)."},
+    {"id": "docker-swarm", "label": "Docker Swarm member", "default": False,
+     "targets": ["ct", "vm", "physical"], "status": "ready",
+     "desc": "Install Docker + join a registered Swarm. Use cluster:<name> to pick a "
+             "specific cluster; bare docker-swarm joins the default docker-swarm cluster "
+             "if one is registered (foundry.cluster.register), else installs Docker only."},
+    {"id": "distributed-compute", "label": "Distributed compute member", "default": False,
+     "targets": ["ct", "vm", "physical", "docker"], "status": "ready",
+     "desc": "Join a registered distributed-compute cluster (Docker Swarm / k3s / Nomad / "
+             "Ray). Use cluster:<name>, or bare = the default registered cluster."},
+    {"id": "cluster", "label": "Join a named cluster", "default": False,
+     "targets": ["ct", "vm", "physical"], "status": "ready",
+     "desc": "cluster:<name> — join the named cluster from the Foundry registry "
+             "(docker-swarm|k3s|nomad|ray|generic). Register clusters with "
+             "foundry.cluster.register."},
 ]
 
 
@@ -478,6 +488,143 @@ FEATURES: List[Dict[str, Any]] = [
 )
 async def cap_features(trace_id=None) -> Dict:
     return {"features": FEATURES}
+
+
+# ── Cluster registry — clusters a provisioned host can be made to JOIN ───────────
+@capability(
+    "foundry.cluster.register",
+    http_method="POST", http_path="/foundry/cluster/register", http_tags=["foundry"],
+    memory="on",
+    description="Register a cluster / distributed-compute system a Foundry-provisioned "
+                "host can JOIN via the docker-swarm / distributed-compute / cluster:<name> "
+                "feature. Inputs: name (str!), kind (docker-swarm|k3s|nomad|ray|generic), "
+                "join_addr (str! except generic — manager/server address), token (str — "
+                "join token/secret, SEALED at rest), role (str — e.g. k3s server|agent), "
+                "port (int — override the default join port), command (str — for "
+                "kind=generic). Output: {ok, name, kind}.",
+)
+async def cap_cluster_register(name: str = "", kind: str = "", join_addr: str = "",
+                               token: str = "", role: str = "", port: int = 0,
+                               command: str = "", trace_id=None) -> Dict:
+    name = (name or "").strip()
+    kind = (kind or "").strip().lower()
+    if not name:
+        return {"error": "name required"}
+    if kind not in CLUSTER_KINDS:
+        return {"error": f"kind must be one of: {', '.join(CLUSTER_KINDS)}"}
+    if kind != "generic" and not (join_addr or "").strip():
+        return {"error": "join_addr required (the cluster manager/server address)"}
+    r = _redis()
+    if not r:
+        return {"error": "redis unavailable"}
+    opts: Dict[str, Any] = {}
+    if port:
+        opts["port"] = int(port)
+    if command:
+        opts["command"] = command
+    rec = {"name": name, "kind": kind, "join_addr": (join_addr or "").strip(),
+           "token": vsecrets.seal(token) if token else "",
+           "role": (role or "").strip(), "opts": opts, "updated": time.time()}
+    await r.hset(K_CLUSTERS, name, json.dumps(rec))
+    await emit_event({"type": "foundry.cluster.registered", "name": name, "kind": kind})
+    return {"ok": True, "name": name, "kind": kind}
+
+
+def _cluster_redacted(rec: Dict) -> Dict:
+    out = dict(rec)
+    out["token"] = "***" if rec.get("token") else ""
+    return out
+
+
+@capability(
+    "foundry.cluster.list",
+    http_method="GET", http_path="/foundry/cluster/list", http_tags=["foundry"],
+    memory="off", silent=True,
+    description="List registered clusters (tokens redacted). Output: {clusters:[...]}.",
+)
+async def cap_cluster_list(trace_id=None) -> Dict:
+    r = _redis()
+    if not r:
+        return {"clusters": []}
+    raw = await r.hgetall(K_CLUSTERS) or {}
+    out = []
+    for v in raw.values():
+        try:
+            out.append(_cluster_redacted(json.loads(v)))
+        except Exception:
+            continue
+    out.sort(key=lambda c: c.get("name", ""))
+    return {"clusters": out}
+
+
+@capability(
+    "foundry.cluster.delete",
+    http_method="POST", http_path="/foundry/cluster/delete", http_tags=["foundry"],
+    memory="on",
+    description="Remove a registered cluster. Inputs: name (str!). Output: {ok, removed}.",
+)
+async def cap_cluster_delete(name: str = "", trace_id=None) -> Dict:
+    name = (name or "").strip()
+    if not name:
+        return {"error": "name required"}
+    r = _redis()
+    if not r:
+        return {"error": "redis unavailable"}
+    n = await r.hdel(K_CLUSTERS, name)
+    await emit_event({"type": "foundry.cluster.deleted", "name": name})
+    return {"ok": True, "removed": bool(n)}
+
+
+async def _cluster_records() -> Dict[str, Dict]:
+    r = _redis()
+    if not r:
+        return {}
+    raw = await r.hgetall(K_CLUSTERS) or {}
+    byname: Dict[str, Dict] = {}
+    for v in raw.values():
+        try:
+            rec = json.loads(v)
+            byname[rec["name"]] = rec
+        except Exception:
+            pass
+    return byname
+
+
+async def _resolve_cluster_scripts(feats) -> List[str]:
+    """Turn cluster features into real join scripts (token unsealed just-in-time):
+    'cluster:<name>' joins that cluster; bare 'docker-swarm' joins the default (or
+    first) docker-swarm cluster; 'distributed-compute' the first registered cluster."""
+    byname = await _cluster_records()
+    if not byname:
+        return []
+    wanted: List[Dict] = []
+    for f in feats:
+        f = str(f)
+        if f.startswith("cluster:"):
+            nm = f.split(":", 1)[1].strip()
+            if nm in byname:
+                wanted.append(byname[nm])
+        elif f == "docker-swarm":
+            cand = next((c for c in byname.values()
+                         if c.get("name") == "default" and c.get("kind") == "docker-swarm"), None)
+            cand = cand or next((c for c in byname.values() if c.get("kind") == "docker-swarm"), None)
+            if cand:
+                wanted.append(cand)
+        elif f == "distributed-compute":
+            cand = next((c for c in byname.values()), None)
+            if cand:
+                wanted.append(cand)
+    scripts, seen = [], set()
+    for rec in wanted:
+        if rec["name"] in seen:
+            continue
+        seen.add(rec["name"])
+        tok = vsecrets.open_secret(rec["token"]) if rec.get("token") else ""
+        s = cluster_join_script(rec.get("kind", ""), rec.get("join_addr", ""), tok,
+                                rec.get("role", ""), rec.get("opts") or {})
+        if s:
+            scripts.append(s)
+    return scripts
 
 
 # hardening bundle (_HARDEN) is imported from foundry_core (app-free, testable).
@@ -546,6 +693,21 @@ async def _post_provision(cluster_id, node, vmid, kind, feats, fqdn, job_id="", 
             if "hardening" in feats:
                 steps.append({"hardening": {"status": "pending",
                               "note": "VM hardening over SSH is the next increment"}})
+        # apply cluster / distributed-compute joins (registry-resolved; token unsealed
+        # just-in-time) — CT via pct exec (root), VM over SSH as 'vera' with sudo.
+        if running:
+            for cs in await _resolve_cluster_scripts(feats):
+                body = "#!/bin/sh\n" + cs
+                if kind == "lxc":
+                    cj = await _apply_ct_feature(cluster_id, vmid, "lxc", body, node)
+                    steps.append({"cluster_join": {"ok": bool(cj.get("ok"))}})
+                elif kind == "qemu" and ip:
+                    b = base64.b64encode(body.encode()).decode()
+                    cj = await _call("exec.ssh.run", host=ip, user="vera",
+                                     key_path=_vera_key_path(),
+                                     command=f"echo {b} | base64 -d | sudo -n sh", timeout=600)
+                    steps.append({"cluster_join": {"ok": bool(cj.get("ok")),
+                                  "rc": cj.get("rc"), "error": cj.get("error")}})
     except Exception as e:
         steps.append({"post_error": str(e)})
     # patch the stored job (find by id in the K_JOBS list)
@@ -1194,7 +1356,8 @@ async def cap_pxe_render(profile_id: str = "", trace_id=None) -> Dict:
                 img = json.loads(iraw)
             except Exception:
                 img = {}
-    return {"ok": True, **_render_boot(prof, cfg, img)}
+    cscripts = await _resolve_cluster_scripts(prof.get("features") or [])
+    return {"ok": True, **_render_boot(prof, cfg, img, cscripts)}
 
 
 @capability(
@@ -1226,7 +1389,8 @@ async def cap_pxe_server_deploy(trace_id=None) -> Dict:
                     img = json.loads(iraw)
                 except Exception:
                     img = {}
-        rendered[p["id"]] = _render_boot(p, cfg, img)
+        cscripts = await _resolve_cluster_scripts(p.get("features") or [])
+        rendered[p["id"]] = _render_boot(p, cfg, img, cscripts)
     # The actual install (dnsmasq scoped-DHCP + TFTP + iPXE + HTTP) on the host is
     # gated until the vera-foundry CT + dedicated VLAN exist — never touch the main
     # LAN's DHCP. When ready this writes `rendered` to the host over SSH.
