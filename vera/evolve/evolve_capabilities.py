@@ -6435,6 +6435,69 @@ async def evolve_sandbox_exec(cmd: str = "", where: str = "container",
             "code": res["code"], "where": where, "target": tgt.get("container")}
 
 
+# Pure arg-sanitising / docker-argv / summary-parsing for the ephemeral test runner
+# below live in an app-free core so they're unit-testable without booting the app.
+from Vera.vera.evolve.evolve_unittest_core import (   # noqa: E402
+    sanitize_pytest_args as _ut_sanitize, build_inner_cmd as _ut_inner,
+    build_docker_argv as _ut_argv, parse_pytest_output as _ut_parse,
+)
+
+
+@capability("evolve.unittest.run", memory="off",
+            http_method="POST", http_path="/evolve/unittest/run", http_tags=["evolve"],
+            description="Run a branch's pytest suite in a FRESH, EPHEMERAL vera:latest "
+                        "container (docker run --rm) — NEVER the sandbox container that's "
+                        "serving HTTP, so it cannot hang the serving app (the real fix for "
+                        "dev-lifecycle §8.3 #9). The branch worktree is mounted READ-ONLY at "
+                        "/app/Vera with PYTHONPATH=/app:/app/Vera so BOTH Vera.vera.* and "
+                        "lowercase vera.* imports bind to the BRANCH code; no bytecode is written "
+                        "back (no root-owned .pyc pollution). pytest is pip-installed inside the "
+                        "throwaway if the image lacks it (bake it in via requirements-dev.txt to "
+                        "skip). MUST run on the managing instance (prod/native, which has docker) — "
+                        "a sandbox container has no docker socket. Inputs: branch (str — defaults "
+                        "to the primary sandbox's branch), paths (str='tests'), markers (str, e.g. "
+                        "'critical'), extra (str — extra pytest flags), timeout (int=600). Output: "
+                        "{ok, passed, failed, errors, skipped, total, summary, code, image, branch, out}.")
+async def evolve_unittest_run(branch: str = "", paths: str = "tests", markers: str = "",
+                              extra: str = "", timeout: int = 600, trace_id=None):
+    # 1. resolve the target branch's worktree (primary sandbox by default)
+    tgt = await _resolve_exec_target("", branch)
+    if tgt.get("error"):
+        return tgt
+    wt = tgt.get("worktree") or ""
+    if not wt or not Path(wt).exists():
+        return {"error": "no worktree for the target sandbox — bring it up first "
+                         "(evolve.sandbox.spawn / ensure)"}
+    # 2. sanitise the caller's pytest args (they're interpolated into a shell cmd)
+    tokens, err = _ut_sanitize(paths, markers, extra)
+    if err:
+        return {"error": err}
+    # 3. run the ephemeral test container. `docker` runs on THIS host (the managing
+    #    instance) — a sandbox container has no docker socket, prod-native does.
+    inner = _ut_inner(tokens)
+    argv = _ut_argv(DEV_IMAGE, str(Path(wt).resolve()), inner)
+    timeout = max(30, min(1800, int(timeout)))
+    res = await _sh(argv, timeout=timeout)
+    combined = ((res.get("out") or "") + "\n" + (res.get("err") or "")).strip()
+    if res.get("code") == -1 and "not found" in (res.get("err") or "").lower():
+        return {"error": "docker not available here — evolve.unittest.run must run on the "
+                         "managing instance (prod/native), not inside a sandbox container",
+                "detail": res.get("err")}
+    # No RC marker means pytest never ran — the container itself failed (image
+    # missing, bad volume, daemon error). Surface that instead of a bogus 0/0.
+    if "__VERA_RC=" not in combined:
+        return {"error": "ephemeral test container failed to run pytest",
+                "detail": combined[-1500:], "code": res.get("code", -1)}
+    parsed = _ut_parse(combined)
+    label = branch or tgt.get("container") or "primary"
+    await _audit("unittest.run", f"[{label}] {parsed['summary']}", ok=parsed["ok"])
+    await emit_event({"type": "evolve.unittest.done", "branch": branch or label,
+                      "ok": parsed["ok"], "passed": parsed["passed"],
+                      "failed": parsed["failed"], "errors": parsed["errors"]})
+    return {**parsed, "code": parsed["rc"], "image": DEV_IMAGE,
+            "branch": branch or label, "out": combined[-8000:]}
+
+
 @capability("evolve.sandbox.fs.list", memory="off", silent=True,
             http_method="GET", http_path="/evolve/sandbox/fs/list", http_tags=["evolve"],
             description="FILE EXPLORER: list a directory inside the sandbox "

@@ -1,0 +1,6 @@
+# Dev/test tooling baked into vera:latest (the dev-sandbox image) so the ephemeral
+# test runner (evolve.unittest.run) and in-container `make test-unit` need no
+# runtime pip install. Kept OUT of requirements.txt so prod deps stay lean.
+# (Prod runs natively, not from this image — see memory prod-restart-hazard.)
+pytest>=8
+pytest-asyncio>=0.23

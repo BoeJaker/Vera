@@ -766,6 +766,22 @@ fix so an agent (me, or another) can drive it cleanly:
    suite — but it converts most "pure helper" logic from compile-gate-only to actually-tested. Captured in
    memory `worktree-testable-cores-pattern`.
 
+   **✅ BUILT 2026-08-10 (branch `feat/evolve-unittest-runner`) — `evolve.unittest.run`, the ephemeral
+   test container.** The "real fix" above is now a capability: it runs a branch's pytest suite in a FRESH
+   `vera:latest` via `docker run --rm` — NEVER the container serving HTTP, so it cannot cause contention (b).
+   The branch worktree is mounted **read-only** at `/app/Vera` with `PYTHONPATH=/app:/app/Vera`, so **both**
+   `Vera.vera.*` and lowercase `vera.*` bind to the BRANCH code (fixing trap (a) inside the container too),
+   and `PYTHONDONTWRITEBYTECODE=1` means no root-owned `.pyc` is written back to the (read-only) worktree.
+   It MUST run on the managing instance (prod/native has docker; a sandbox container has no socket).
+   `git` is already in the image (C4a); **`pytest` is now baked in via `requirements-dev.txt`** (best-effort
+   Dockerfile install) with an in-container `pip install` fallback until the image is rebuilt
+   (`evolve.sandbox.up rebuild_image=true` / `make build`). Pure arg-sanitising / docker-argv /
+   summary-parsing live in app-free `vera/evolve/evolve_unittest_core.py` (unit-tested via
+   `tests/test_evolve_unittest_core.py`, 21/21 green app-free; the ephemeral run itself proven live —
+   30 passed in a throwaway container in ~7s, serving app untouched). Still open: wire it into the pipeline gate
+   so `adopt`/promote can require a real green run (today the gate is compile-only), and per-suite service
+   env for tests that need redis/pg.
+
 10. **⚠ No Vera-capability MCP server is exposed to the Claude Code session — the CI/CD flow falls
     back to raw HTTP, which MIS-ATTRIBUTES the caller (found 2026-08-10).** Driving `evolve.pipeline.*`
     / `evolve.sandbox.*` from an agent session currently means `curl` against `https://<host>:8999/…`
