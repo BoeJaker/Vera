@@ -277,6 +277,28 @@ async def cap_host_list(trace_id=None) -> Dict:
 
 
 @capability(
+    "identity.host.delete",
+    http_method="POST", http_path="/identity/host/delete", http_tags=["identity"],
+    memory="off",
+    description="Deregister (remove) an IPA host — the decommission counterpart of "
+                "identity.host.register, so a torn-down guest doesn't leave a stale "
+                "host record + DNS entry (real-VM E2E finding 2026-08-10). Inputs: "
+                "fqdn (str!), updatedns (bool=true — also remove its DNS A record). "
+                "Output: {ok, fqdn} or {error}.",
+)
+async def cap_host_delete(fqdn: str = "", updatedns: bool = True, trace_id=None) -> Dict:
+    if not fqdn:
+        return {"error": "fqdn required"}
+    st = await _state_opened()
+    opts: Dict[str, Any] = {"updatedns": True} if updatedns else {}
+    res, err = await _ipa_call(st, "host_del", args=[fqdn], options=opts)
+    if res is None:
+        return {"error": err}
+    await emit_event({"type": "identity.host.deleted", "fqdn": fqdn})
+    return {"ok": True, "fqdn": fqdn}
+
+
+@capability(
     "identity.user.register",
     http_method="POST", http_path="/identity/user/register", http_tags=["identity"],
     memory="off",

@@ -53,6 +53,8 @@ from fastapi.responses import HTMLResponse
 
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import APP, capability, emit_event, now_iso
+# app-free shell-script builder (unit-tested; waits for cloud-init/apt lock)
+from Vera.vera.networking.netsec_core import wireguard_install_script as _wireguard_install_script
 
 log = logging.getLogger("vera.netsec")
 _HERE = Path(__file__).parent
@@ -242,37 +244,12 @@ class WireGuardProvider(MeshProvider):
         # Detect whichever is present and use it, elevate with sudo -n when the
         # SSH user isn't root, and on failure return the install-log tail inline
         # so the operator doesn't have to SSH in to read /tmp/vera_wg_install.log.
-        cmd = r"""
-command -v wg >/dev/null 2>&1 && { echo VERA_WG_PRESENT; exit 0; }
-S=""; [ "$(id -u)" != "0" ] && command -v sudo >/dev/null 2>&1 && S="sudo -n"
-{
-  if command -v apt-get >/dev/null 2>&1; then
-    $S apt-get update -y && $S env DEBIAN_FRONTEND=noninteractive apt-get install -y wireguard wireguard-tools
-  elif command -v dnf >/dev/null 2>&1; then
-    $S dnf install -y wireguard-tools
-  elif command -v yum >/dev/null 2>&1; then
-    $S yum install -y epel-release 2>/dev/null; $S yum install -y wireguard-tools
-  elif command -v zypper >/dev/null 2>&1; then
-    $S zypper --non-interactive install wireguard-tools
-  elif command -v pacman >/dev/null 2>&1; then
-    $S pacman -Sy --noconfirm wireguard-tools
-  elif command -v apk >/dev/null 2>&1; then
-    $S apk add --no-cache wireguard-tools
-  elif command -v opkg >/dev/null 2>&1; then
-    $S opkg update && $S opkg install wireguard-tools kmod-wireguard
-  else
-    echo "VERA_WG_NOPKG: no supported package manager (apt/dnf/yum/zypper/pacman/apk/opkg)"
-  fi
-} >/tmp/vera_wg_install.log 2>&1
-if command -v wg >/dev/null 2>&1; then
-  echo VERA_WG_INSTALLED
-else
-  echo VERA_WG_FAIL
-  echo '---VERA_WG_LOG_TAIL---'
-  tail -n 15 /tmp/vera_wg_install.log 2>/dev/null
-fi
-""".strip()
-        r = await _ssh(host_id, cmd, timeout=300)
+        # Script builder lives in app-free netsec_core (unit-tested); it now waits
+        # for cloud-init + the apt/dpkg lock before installing, so a fresh cloud
+        # image's own apt doesn't make our install lose the lock race (real-VM E2E
+        # 2026-08-10: identity enrolled but mesh install hit the apt lock).
+        cmd = _wireguard_install_script()
+        r = await _ssh(host_id, cmd, timeout=360)
         out = (r.get("stdout") or "")
         if "VERA_WG_PRESENT" in out:
             return {"ok": True, "detail": "already installed"}
