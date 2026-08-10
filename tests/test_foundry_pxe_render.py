@@ -123,3 +123,28 @@ def test_pick_node_empty_or_bad_input():
     assert pick_node("not json") == ""
     assert pick_node("[]") == ""
     assert pick_node('{"node":"x"}') == ""   # not a list
+
+
+# ── cluster-join scripts baked into the first-boot feature bundle ─────────────────
+def test_render_boot_bakes_cluster_scripts_into_features_and_autoinstall():
+    import base64
+    prof = _prof(features=["enrol", "docker-swarm"])
+    cs = ["# --- join Docker Swarm ---\ndocker swarm join --token X mgr:2377"]
+    r = _render_boot(prof, CFG, {}, cs)
+    fb = r["artifacts"]["features.sh"]
+    assert "docker swarm join --token X mgr:2377" in fb
+    ud = r["artifacts"]["autoinstall/user-data"]
+    blob = [l for l in ud.splitlines() if l.strip().startswith("content:")][0].split("content:", 1)[1].strip()
+    assert "docker swarm join" in base64.b64decode(blob).decode()   # embedded in cloud-init too
+
+
+def test_features_script_legacy_docker_install_when_no_cluster():
+    fb = _render_features_script(["docker-swarm"])
+    assert "get.docker.com" in fb          # install-only fallback (host ready to join manually)
+    assert "swarm join" not in fb
+
+
+def test_features_script_prefers_cluster_scripts_over_legacy_fallback():
+    fb = _render_features_script(["docker-swarm"], ["# join\ndocker swarm join --token T a:2377"])
+    assert "docker swarm join --token T a:2377" in fb
+    assert "get.docker.com" not in fb      # a real join was provided → no bare-install fallback
