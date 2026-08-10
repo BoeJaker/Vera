@@ -242,8 +242,9 @@ html.vpb-nav-hosted body{padding-left:0}
     <div class="card-h"><span class="card-t">Board</span>
       <span class="hint" id="board-status">—</span>
       <span style="flex:1"></span>
-      <input id="board-fltrepo" placeholder="repo filter" style="width:100px" oninput="loadBoardTab()">
-      <input id="board-fltproj" placeholder="project filter" style="width:100px;margin-left:6px" oninput="loadBoardTab()">
+      <span class="hint">filter</span>
+      <select id="board-fltrepo" onchange="loadBoardTab()" style="min-width:100px" title="filter by repo"><option value="">all repos</option></select>
+      <select id="board-fltproj" onchange="loadBoardTab()" style="min-width:110px;margin-left:6px" title="filter by project"><option value="">all projects</option></select>
       <button class="btn sm" onclick="boardToggleNew()" style="margin-left:8px">+ New</button>
       <button class="btn sm" onclick="loadBoardTab()" style="margin-left:6px">&#8635;</button>
     </div>
@@ -1647,15 +1648,24 @@ async function boardDispatch(id){
 // NOTE: named loadBoardTab (not loadBoard) — a pre-existing loadBoard() renders the
 // overview SVG board into #ov-board; sharing the name shadowed this one and the tab
 // stayed blank.
+function _fillFilter(id,allLabel,vals){
+  const s=$(id);if(!s)return;const cur=s.value;
+  s.innerHTML='<option value="">'+allLabel+'</option>'+vals.map(v=>'<option value="'+esc(v)+'">'+esc(v)+'</option>').join('');
+  if(vals.indexOf(cur)>=0)s.value=cur;
+}
 async function loadBoardTab(){
   const el=$('board-body');if(!el)return;
-  const q=[];const fr=$('board-fltrepo'),fp=$('board-fltproj');
-  if(fr&&fr.value.trim())q.push('repo='+encodeURIComponent(fr.value.trim()));
-  if(fp&&fp.value.trim())q.push('project='+encodeURIComponent(fp.value.trim()));
-  const r=await api('/board/items'+(q.length?('?'+q.join('&')):''));
+  // Fetch ALL items, then filter client-side — so the dropdowns always list every
+  // repo/project, and filtering is instant.
+  const r=await api('/board/items');
   const st=$('board-status');
   if(!r||!r.ok){el.innerHTML='<div class="empty">Could not load board.</div>';return}
-  const items=r.items||[];if(st)st.textContent=items.length+' items · '+(r.provider||'file');
+  const all=r.items||[];
+  _fillFilter('board-fltrepo','all repos',[...new Set(all.map(i=>i.repo).filter(Boolean))].sort());
+  _fillFilter('board-fltproj','all projects',[...new Set(all.map(i=>i.project).filter(Boolean))].sort());
+  const fr=$('board-fltrepo')?$('board-fltrepo').value:'',fp=$('board-fltproj')?$('board-fltproj').value:'';
+  const items=all.filter(i=>(!fr||i.repo===fr)&&(!fp||i.project===fp));
+  if(st)st.textContent=items.length+(items.length!==all.length?(' / '+all.length):'')+' items · '+(r.provider||'file');
   const byLane={};for(const it of items){(byLane[it.lane]=byLane[it.lane]||[]).push(it)}
   const lanes=_LANES.filter(l=>byLane[l]||['inbox','ready','in_progress','needs_review','done'].includes(l));
   let h='';
@@ -1668,22 +1678,77 @@ async function loadBoardTab(){
       const moves=_LANES.map(l=>'<option value="'+l+'"'+(l===it.lane?' selected':'')+'>'+l+'</option>').join('');
       const canDispatch=(lane==='ready'||lane==='inbox');
       h+='<div style="background:var(--bg2);border-radius:6px;padding:6px;margin-bottom:6px;border-left:3px solid '+c+'">'
-        +'<div style="font-size:11.5px;cursor:pointer" onclick="boardEdit(\''+esc(it.id)+'\')" title="edit">'+esc(it.title||'(untitled)')+'</div>'
+        +'<div style="font-size:11.5px;cursor:pointer;font-weight:500" onclick="openBoardItem(\''+esc(it.id)+'\')" title="open details">'+esc(it.title||'(untitled)')+'</div>'
         +(meta?'<div class="hint" style="font-size:9.5px;margin-top:2px">'+meta+'</div>':'')
         +(labels?'<div style="margin-top:3px">'+labels+'</div>':'')
         +'<div class="row" style="gap:4px;margin-top:5px">'
-          +'<select onchange="boardMove(\''+esc(it.id)+'\',this.value)" style="font-size:9px;flex:1">'+moves+'</select>'
+          +'<select onchange="boardMove(\''+esc(it.id)+'\',this.value)" onclick="event.stopPropagation()" style="font-size:9px;flex:1">'+moves+'</select>'
           +(canDispatch?'<button class="btn sm" style="font-size:9px;padding:2px 5px" onclick="boardDispatch(\''+esc(it.id)+'\')" title="orchestrate: begin→work→gate">▷</button>':'')
-          +'<button class="btn sm" style="font-size:9px;padding:2px 5px" onclick="boardClaim(\''+esc(it.id)+'\')">claim</button>'
-          +'<button class="btn sm" style="font-size:9px;padding:2px 5px" onclick="boardComment(\''+esc(it.id)+'\')" title="comment">✎</button>'
+          +'<button class="btn sm" style="font-size:9px;padding:2px 5px" onclick="openBoardItem(\''+esc(it.id)+'\')" title="details / comments / drill-down">open</button>'
         +'</div>'
-        +(it.comment_count?'<div class="hint" style="font-size:9px;margin-top:2px">'+it.comment_count+' comments</div>':'')
+        +(it.comment_count?'<div class="hint" style="font-size:9px;margin-top:2px;cursor:pointer" onclick="openBoardItem(\''+esc(it.id)+'\')">'+it.comment_count+' comment'+(it.comment_count>1?'s':'')+' ▸</div>':'')
       +'</div>';
     }
     h+='</div>';
   }
-  el.innerHTML=h||'<div class="empty">No items. Click “+ New”.</div>';
+  el.innerHTML=h||'<div class="empty">No items in this filter. Click “+ New”.</div>';
 }
+/* ── board item DETAIL drawer: body + meta + comment thread + inline comment + drill-down ── */
+const _CKINDS=['progress','note','help-request','reply','blocked','handoff','steer'];
+async function openBoardItem(id){
+  const r=await api('/board/item?id='+encodeURIComponent(id));const it=r&&r.item;
+  if(!it){toast('item not found');return}
+  const c=_LANE_COLOR[it.lane]||'#666';
+  let h='<div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">'
+    +'<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:'+c+'"></span>'
+    +'<span class="card-t" style="font-size:14px">'+esc(it.title||'(untitled)')+'</span>'
+    +'<span class="tag">'+esc(it.lane)+'</span>'+(it.agent?'<span class="tag">@'+esc(it.agent)+'</span>':'')
+    +'<span style="flex:1"></span><button class="btn sm" onclick="closeModal()">✕</button></div>';
+  const meta=[];
+  if(it.repo)meta.push('repo <b>'+esc(it.repo)+'</b>');
+  if(it.project)meta.push('project <b>'+esc(it.project)+'</b>');
+  if(it.executor)meta.push('executor '+esc(it.executor));
+  if((it.labels||[]).length)meta.push((it.labels).map(l=>'<span class="tag" style="font-size:9px">'+esc(l)+'</span>').join(' '));
+  if(meta.length)h+='<div class="hint" style="margin:6px 0">'+meta.join(' · ')+'</div>';
+  // drill-down row
+  h+='<div class="row" style="gap:6px;flex-wrap:wrap;margin:8px 0">'
+    +'<button class="btn sm" onclick="boardEdit(\''+esc(it.id)+'\');closeModal()">Edit</button>'
+    +((it.lane==='ready'||it.lane==='inbox')?'<button class="btn sm" onclick="closeModal();boardDispatch(\''+esc(it.id)+'\')" title="orchestrate begin→work→gate">▷ Dispatch</button>':'')
+    +(it.branch?'<button class="btn sm" onclick="openBranchSandbox(\''+esc(it.branch)+'\')" title="open the dev container for this branch">⌨ Dev container</button>':'')
+    +(it.pipeline?'<button class="btn sm" onclick="closeModal();openPipe(\''+esc(it.pipeline)+'\')">⎇ Pipeline '+esc(it.pipeline)+'</button>':'')
+    +(it.session?'<button class="btn sm" onclick="closeModal();openSessionChat(\''+esc(it.session)+'\')">◈ Session chat</button>':'')
+    +(it.branch?'<span class="tag" style="font-size:9px">'+esc(it.branch)+'</span>':'')
+    +'</div>';
+  if(it.body&&it.body.trim())h+='<div style="background:var(--bg1);border-radius:6px;padding:8px;font-size:12px;white-space:pre-wrap;max-height:200px;overflow:auto;margin:6px 0">'+esc(it.body)+'</div>';
+  const cms=it.comments||[];
+  h+='<label class="fld" style="margin-top:8px">Comments / activity ('+cms.length+')</label><div style="max-height:240px;overflow:auto">';
+  for(const cm of cms){
+    h+='<div style="border-left:2px solid var(--border);padding:4px 8px;margin-bottom:5px">'
+      +'<div class="row" style="gap:6px;align-items:center"><span class="tag" style="font-size:9px">'+esc(cm.kind)+'</span>'
+      +'<span class="mono" style="font-size:10px">'+esc(cm.from||'')+'</span>'
+      +(cm.done_when?'<span class="hint" style="font-size:9px">done-when: '+esc(cm.done_when)+'</span>':'')
+      +'<span style="flex:1"></span><span class="hint" style="font-size:9px">'+esc((cm.created_at||'').slice(0,19).replace('T',' '))+'</span></div>'
+      +(cm.body?'<div style="font-size:11.5px;margin-top:2px;white-space:pre-wrap">'+esc(cm.body)+'</div>':'')+'</div>';
+  }
+  if(!cms.length)h+='<div class="empty">No comments yet.</div>';
+  h+='</div>';
+  h+='<div class="row" style="gap:6px;margin-top:8px">'
+    +'<select id="bd-ckind" style="width:110px">'+_CKINDS.map(k=>'<option value="'+k+'">'+k+'</option>').join('')+'</select>'
+    +'<input id="bd-cbody" placeholder="comment — point at file:line, not a dump" style="flex:1" onkeydown="if(event.key===\'Enter\')boardPostComment(\''+esc(it.id)+'\')">'
+    +'<button class="btn primary sm" onclick="boardPostComment(\''+esc(it.id)+'\')">Post</button></div>';
+  openModal(h);
+  const cb=$('bd-cbody');if(cb)cb.focus();
+}
+async function boardPostComment(id){
+  const bodyEl=$('bd-cbody');const body=bodyEl?bodyEl.value.trim():'';if(!body){toast('empty comment');return}
+  const kind=$('bd-ckind')?$('bd-ckind').value:'note';
+  const r=await post('/board/comment',{id,frm:_boardAgent(),kind,body});
+  if(r&&r.ok){openBoardItem(id)}else toast((r&&r.error)||'failed')}
+async function openBranchSandbox(branch){
+  toast('opening dev container for '+branch+'… (may take a moment)');
+  const r=await post('/evolve/sandbox/up',{branch});
+  if(r&&(r.ok||r.healthy)){closeModal();nav('sandbox');const sb=r.sandbox||{};try{embedSandbox(branch,sb.port)}catch(e){toast('sandbox up; open it from the Sandbox tab')}}
+  else toast((r&&r.error)||'could not bring up the dev container')}
 function loadNotes(){/* <vera-session-notes> self-loads via notes.* — nothing to fetch */}
 function notesScope(){const el=$('ll-notes-el'),s=$('notes-scope');if(el&&s){el.setAttribute('scope',s.value);if(el.reload)try{el.reload()}catch(_){}}}
 
