@@ -14,11 +14,24 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shlex
 from typing import List, Optional
 
-from Vera.vera.capability_orchestration import APP, capability, CAPABILITY_REGISTRY
+from Vera.vera.capability_orchestration import APP, capability, CAPABILITY_REGISTRY, emit_event
 from Vera.vera.board import board_core as bc
 from Vera.vera.sandbox_guard import write_blocked as _sbx_write_blocked
+
+
+async def _call(name: str, **kw):
+    reg = CAPABILITY_REGISTRY.get(name) or {}
+    fn = reg.get("func")
+    if not fn:
+        return None
+    try:
+        return await fn(**kw)
+    except Exception as e:
+        log.debug("board dispatch: %s failed: %s", name, e)
+        return None
 
 log = logging.getLogger("vera.board")
 
@@ -306,6 +319,124 @@ if True:  # capability registration (mirrors the guard style of the other module
             ids.append(saved.id)
         return {"ok": True, "project": project, "imported": len(ids), "ids": ids,
                 "items": [{"id": i} for i in ids]}
+
+    @capability(
+        "board.dispatch", http_method="POST", http_path="/board/dispatch",
+        http_tags=["board"], memory="on",
+        description="ORCHESTRATE one board item through the SAME pipeline used to build Vera "
+                    "(§0.2 #1): claim it → evolve.pipeline.begin (typed branch + worktree + "
+                    "[for model executors] a dev sandbox + a CI/CD pipeline record) → run the "
+                    "executor → move to needs_review (HITL: a human always promotes, §10.1) or "
+                    "blocked on failure. Records branch/pipeline/executor on the item + announces "
+                    "each step. Executors (§5): deterministic (no model — runs `check` or a marker "
+                    "change in the worktree, host-side), vera (local Ollama via ide.remote.run, "
+                    "needs a target), capable (Claude — picks an AVAILABLE pinned (target,seat) "
+                    "from capacity.status, REFUSES if none rather than downgrading, §6.5). Inputs: "
+                    "id (str!), executor (deterministic|vera|capable, default deterministic), "
+                    "agent (str='orchestrator'), instance_id (str — target for vera; overrides the "
+                    "seat's target for capable), check (str — deterministic command), session_id "
+                    "(str). Output: {ok, item, lane, executor, pipeline, branch, worktree, url}.",
+    )
+    async def cap_board_dispatch(id: str = "", executor: str = "deterministic",
+                                 agent: str = "orchestrator", instance_id: str = "",
+                                 check: str = "", session_id: str = "", trace_id=None) -> dict:
+        it = await provider().get(id)
+        if it is None:
+            return {"ok": False, "error": f"no such item: {id}"}
+        if it.lane in ("done", "dropped", "needs_review", "review"):
+            return {"ok": False, "error": f"item is '{it.lane}' — nothing to dispatch"}
+        executor = (executor or "deterministic").lower()
+        if executor not in ("deterministic", "vera", "capable"):
+            return {"ok": False, "error": f"unknown executor: {executor}"}
+
+        # Resolve target/seat for model executors (refuse, don't downgrade — §6.5).
+        seat = None
+        target = instance_id
+        if executor == "capable":
+            cst = await _call("capacity.status") or {}
+            free = [s for s in (cst.get("seats") or [])
+                    if s.get("state") == "available" and s.get("free", 0) > 0]
+            if not free:
+                return {"ok": False, "error": "no available Claude seat — leaving the item "
+                        "queued (refuse, don't downgrade §6.5). Enrol a seat: capacity.seat.register.",
+                        "need": "seat"}
+            seat = free[0]
+            target = instance_id or seat.get("target")
+        if executor in ("vera", "capable") and not target:
+            return {"ok": False, "error": f"executor={executor} needs a target instance_id "
+                    "(or a pinned seat's target)"}
+
+        # Claim (the §3.3 lease).
+        claim = await provider().claim(id, agent)
+        if not claim.ok:
+            return {"ok": False, "error": "claim lost to another agent", "held_by": claim.held_by}
+
+        # begin the pipeline (spawn a container only for model executors).
+        spawn = executor in ("vera", "capable")
+        beg = await _call("evolve.pipeline.begin", title=it.title, spawn=spawn,
+                          repo=(it.repo or "vera"), session_id=session_id)
+        if not (beg and beg.get("ok")):
+            await provider().move(id, "blocked")
+            return {"ok": False, "error": "evolve.pipeline.begin failed", "begin": beg}
+        branch, pid = beg.get("branch", ""), beg.get("id", "")
+        wt, url = beg.get("worktree", ""), beg.get("url", "")
+
+        # Record the pipeline linkage on the item + move to in_progress.
+        it = await provider().get(id)
+        it.branch, it.pipeline, it.executor = branch, pid, executor
+        it.session = session_id or it.session
+        if seat:
+            it.model = seat.get("seat_id", "")
+        it.lane = "in_progress"
+        await provider().upsert(it)
+        await provider().comment(id, bc.AgentMessage(
+            kind="progress", frm=agent, item=id,
+            body=f"dispatched · executor={executor} · pipeline {pid} · branch {branch}"
+                 + (f" · seat {seat['seat_id']}@{target}" if seat else "")))
+        await emit_event({"type": "board.dispatch", "id": id, "executor": executor,
+                          "pipeline": pid, "branch": branch, "target": target})
+
+        # Execute.
+        ok = False
+        result = {}
+        if executor == "deterministic":
+            work = check or ("printf '%s\\n' " + shlex.quote("dispatched: " + it.title)
+                             + " >> DISPATCH_NOTE.md && "
+                             "git -c user.name=BoeJaker -c user.email=boejaker80@gmail.com "
+                             "add DISPATCH_NOTE.md && "
+                             "git -c user.name=BoeJaker -c user.email=boejaker80@gmail.com "
+                             "commit -q -m " + shlex.quote(f"board.dispatch: {it.title[:60]}")
+                             + " && echo VERA_DISPATCH_OK")
+            ex = await _call("evolve.sandbox.exec", where="worktree", branch=branch, cmd=work)
+            result = {"exec": ex}
+            ok = bool(ex and ex.get("ok") and (not check or "VERA_DISPATCH_OK" in str(ex.get("out", "")) or ex.get("code") == 0))
+            if check:
+                ok = bool(ex and ex.get("code") == 0)
+        else:
+            engine = "vera-agent" if executor == "vera" else "claude"
+            run = await _call("ide.remote.run", instance_id=target,
+                              task=(it.title + "\n\n" + (it.body or ""))[:4000],
+                              engine=engine, session_id=session_id, source="dispatch")
+            result = {"run": run}
+            ok = bool(run and run.get("ok"))
+
+        # Gate → needs_review (HITL human-promote §10.1) or blocked on failure.
+        if ok:
+            await provider().move(id, "needs_review")
+            await provider().comment(id, bc.AgentMessage(
+                kind="progress", frm=agent, item=id,
+                body=f"work done → needs_review. A human promotes pipeline {pid} to land (§10.1)."))
+            lane = "needs_review"
+        else:
+            await provider().move(id, "blocked")
+            await provider().comment(id, bc.AgentMessage(
+                kind="blocked", frm=agent, item=id,
+                body=f"dispatch failed — see pipeline {pid}."))
+            lane = "blocked"
+        await emit_event({"type": "board.dispatch.done", "id": id, "ok": ok, "lane": lane,
+                          "pipeline": pid})
+        return {"ok": ok, "item": id, "lane": lane, "executor": executor, "pipeline": pid,
+                "branch": branch, "worktree": wt, "url": url, "target": target, "result": result}
 
     @capability(
         "board.index", http_method="POST", http_path="/board/index",
