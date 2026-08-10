@@ -18,7 +18,28 @@ in NO app dependencies).
 from __future__ import annotations
 
 import base64
+import json
 from typing import Dict, List
+
+
+def pick_node(nodes_json: str) -> str:
+    """From `pvesh get /nodes --output-format json`, return the first ONLINE node's
+    name (else the first node with a name, else ''). foundry.provision needs a node
+    for clone/create — an empty node builds the API path /nodes//… → HTTP 501 (the
+    real-VM E2E 2026-08-10 clone failure)."""
+    try:
+        nodes = json.loads(nodes_json or "[]")
+    except Exception:
+        return ""
+    if not isinstance(nodes, list):
+        return ""
+    for n in nodes:
+        if isinstance(n, dict) and n.get("status") == "online" and n.get("node"):
+            return str(n["node"])
+    for n in nodes:
+        if isinstance(n, dict) and n.get("node"):
+            return str(n["node"])
+    return ""
 
 
 # hardening bundle — small, idempotent, POSIX-ish (Debian/EL both handled).
