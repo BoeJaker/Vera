@@ -50,6 +50,13 @@ RUN git config --system --add safe.directory '*'
 COPY --from=deps /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=deps /usr/local/bin /usr/local/bin
 
+# Dev/test tooling (pytest) baked in so dev sandboxes + the ephemeral test runner
+# (evolve.unittest.run) don't pip-install at runtime. Best-effort: a PyPI hiccup at
+# build time must not kill the image (the runner falls back to an in-container install).
+COPY requirements-dev.txt .
+RUN pip install --no-cache-dir -r requirements-dev.txt \
+    || echo "dev tools not installed at build — evolve.unittest.run will pip-install at run"
+
 # Copy application code. The build context is the REPO ROOT, whose `vera/`
 # package directory must land at /app/Vera/vera so that
 # `python -m Vera.vera.capability_orchestration` (with PYTHONPATH=/app)
