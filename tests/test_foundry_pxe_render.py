@@ -8,7 +8,7 @@ Imported from the app-free core via the lowercase `vera.*` path so it resolves t
 THIS worktree (Vera.vera.* would resolve to the main checkout) and pulls in no app
 dependencies — see foundry_core.py header + dev-lifecycle §8.3."""
 from vera.foundry.foundry_core import (
-    _render_boot, _render_features_script, _pxe_slug,
+    _render_boot, _render_features_script, _pxe_slug, pick_node,
 )
 
 CFG = {"gateway": "10.42.0.1", "http_base": "http://10.42.0.1/foundry"}
@@ -102,3 +102,24 @@ def test_xpt2046_display_opts_override_pins_and_panel():
 def test_slug():
     assert _pxe_slug("Work Station!") == "work-station"
     assert _pxe_slug("") == "node"
+
+
+# ── node auto-resolve (real-VM E2E: empty node → clone HTTP 501) ──────────────────
+def test_pick_node_prefers_online():
+    j = '[{"node":"a","status":"offline"},{"node":"corp","status":"online"}]'
+    assert pick_node(j) == "corp"
+
+
+def test_pick_node_single():
+    assert pick_node('[{"node":"corp","status":"online","cpu":0.1}]') == "corp"
+
+
+def test_pick_node_falls_back_to_first_named_when_none_online():
+    assert pick_node('[{"node":"a","status":"unknown"}]') == "a"
+
+
+def test_pick_node_empty_or_bad_input():
+    assert pick_node("") == ""
+    assert pick_node("not json") == ""
+    assert pick_node("[]") == ""
+    assert pick_node('{"node":"x"}') == ""   # not a list

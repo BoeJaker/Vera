@@ -56,6 +56,7 @@ from Vera.vera.capability_orchestration import (
 from Vera.vera.foundry.foundry_core import (
     _HARDEN, _pxe_slug, _render_features_script, _render_rpi_config,
     _render_rpi_cmdline, _render_ipxe, _render_autoinstall, _render_boot,
+    pick_node,
 )
 
 _HERE = Path(__file__).parent
@@ -97,6 +98,16 @@ async def _resolve_storage(cluster_id: str) -> str:
             if not best and p[1] in ("dir", "nfs", "cifs"):
                 best = p[0]
     return best
+
+
+async def _resolve_node(cluster_id: str) -> str:
+    """Resolve a node name when the caller gave none — clone/create need it, and an
+    empty node builds the Proxmox path /nodes//… → HTTP 501 (real-VM E2E finding)."""
+    res = await _call("proxmox.node.exec", cluster_id=cluster_id,
+                      command="pvesh get /nodes --output-format json 2>/dev/null")
+    if res.get("error"):
+        return ""
+    return pick_node(res.get("stdout", "") or "")
 
 
 def _vera_pubkey() -> str:
@@ -611,6 +622,9 @@ async def cap_provision(target: str = "", image_id: str = "", name: str = "",
     def step(k, v):
         job["steps"].append({k: v}); return v
 
+    # resolve a node when none given — clone/create need it; empty → /nodes//… 501
+    if target in ("ct", "vm") and not node:
+        node = await _resolve_node(cluster_id) or node
     # resolve a real node storage if none/invalid given (local-lvm may not exist)
     if target in ("ct", "vm") and (not storage or storage == "local-lvm"):
         storage = await _resolve_storage(cluster_id) or storage
