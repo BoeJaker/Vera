@@ -1823,7 +1823,9 @@ async function loadCSessions(){
     const pipes=(s.pipelines||[]).map(p=>esc((p.branch||p.id||'')+' ('+(p.decision||'?')+')')).join(', ')||'—';
     h+='<tr style="border-top:1px solid var(--border)">'
       +'<td style="white-space:nowrap"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+c+';margin-right:5px"></span>'+esc(s.state)+(s.action&&s.action!=='none'?' <span class="hint">→'+esc(s.action)+'</span>':'')+'</td>'
-      +'<td class="mono" title="'+esc(s.claude_session_id)+'">'+esc((s.claude_session_id||'').slice(0,12))+'</td>'
+      +'<td style="cursor:pointer;max-width:230px" onclick="openSessionChat(\''+esc(s.claude_session_id)+'\')" title="open chat · '+esc(s.claude_session_id)+'">'
+        +'<div style="font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(s.title||('session '+(s.claude_session_id||'').slice(0,8)))+'</div>'
+        +'<div class="hint mono" style="font-size:8.5px">'+esc((s.claude_session_id||'').slice(0,8))+(s.project_dir?(' · '+esc((s.project_dir||'').replace(/\/+$/,'').split('/').pop())):'')+'</div></td>'
       +'<td>'+(s.turns||0)+'</td>'
       +'<td>'+_csessAge(s.age_s)+'</td>'
       +'<td>'+claims+'</td>'

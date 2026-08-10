@@ -136,6 +136,7 @@ if True:  # capability registration
             by_state[c["state"]] = by_state.get(c["state"], 0) + 1
             out.append({
                 "claude_session_id": sid,
+                "title": s.get("title", ""),
                 "project_dir": s.get("project_dir", ""),
                 "last_ts": s.get("last_ts", ""),
                 "turns": s.get("turns", 0),

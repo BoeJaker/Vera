@@ -65,6 +65,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -646,6 +647,7 @@ async def cap_claude_sessions_list_sessions(scan_limit: int = 3000, max_sessions
             continue
         sid = data.get("claude_session_id") or "unknown"
         ts = data.get("ts") or row.get("created_at") or ""
+        role = data.get("role", "")
         s = sessions.get(sid)
         if s is None:
             # Rows are scanned newest-first, so the first row seen per
@@ -656,12 +658,21 @@ async def cap_claude_sessions_list_sessions(scan_limit: int = 3000, max_sessions
                 "instance_id": data.get("instance_id", ""),
                 "turns": 0,
                 "first_ts": ts, "last_ts": ts,
-                "last_role": data.get("role", ""),
+                "last_role": role,
                 "last_preview": (data.get("text") or "")[:180],
+                "_first_user": "",
             }
         s["turns"] += 1
         if ts and ts < s["first_ts"]:
             s["first_ts"] = ts
+        # Rows are newest→oldest, so the LAST user row seen per session is its
+        # OLDEST turn — the goal the session was given. Overwrite so it ends as
+        # the first user message; that becomes the descriptive title.
+        if role == "user" and (data.get("text") or "").strip():
+            s["_first_user"] = data.get("text") or ""
+    for s in sessions.values():
+        s["title"] = _derive_session_title(s)
+        s.pop("_first_user", None)
     out = sorted(sessions.values(), key=lambda s: s["last_ts"], reverse=True)
     # Correlation: which commit(s) to THIS repo landed during each session's
     # own time window — the shared join key with Loop Lab's evolve.* runs
@@ -694,6 +705,28 @@ async def cap_claude_sessions_list_sessions(scan_limit: int = 3000, max_sessions
                              and lo <= c.get("ts", 0) <= hi]
                             if lo is not None and hi is not None else [])
     return {"sessions": out}
+
+
+def _derive_session_title(s: dict) -> str:
+    """A short, human title for a session — its first user message (the goal),
+    cleaned to one line — so the Sessions list reads like tasks, not UUIDs.
+    Falls back to a recent preview, then the id."""
+    src = (s.get("_first_user") or s.get("last_preview") or "").strip()
+    # Strip leading injected wrapper blocks (system-reminder / ide_* / command-* /
+    # local-command-*) that Claude Code prepends — they aren't the user's goal.
+    for _ in range(4):
+        n = re.sub(r"^\s*<(system-reminder|ide_[a-z_]+|command-[a-z-]+|"
+                   r"local-command-[a-z-]+|caveat)[^>]*>.*?</\1>\s*", "", src,
+                   flags=re.S | re.I)
+        n = re.sub(r"^\s*<[a-zA-Z_][\w-]*[^>]*>\s*", "", n)   # stray open tag
+        if n == src:
+            break
+        src = n
+    line = next((ln.strip() for ln in src.splitlines() if ln.strip()), "")
+    line = re.sub(r"^[#>*_`\-\s]+", "", line).strip()          # markdown prefixes
+    if line:
+        return line[:72] + ("…" if len(line) > 72 else "")
+    return "session " + (s.get("claude_session_id", "") or "?")[:8]
 
 
 def _parse_epoch(ts: str) -> Optional[float]:
