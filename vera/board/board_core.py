@@ -49,7 +49,7 @@ ENVELOPE_KINDS = {
 
 # board-meta scalar fields (everything but title/body/comments).
 META_FIELDS = [
-    "lane", "labels", "agent", "repo", "project", "branch", "pipeline",
+    "lane", "labels", "agent", "repo", "project", "plan", "branch", "pipeline",
     "session", "executor", "model", "reviewed_by", "heartbeat", "hops",
     "created_at", "updated_at",
 ]
@@ -88,6 +88,7 @@ class BoardItem:
     agent: str = ""          # owner — the agent:<name> whose lease is current
     repo: str = ""           # WHERE it lands (evolve.repo.add id) — §0.2 #2
     project: str = ""        # the project/effort it belongs to (may be non-code)
+    plan: str = ""           # id of the umbrella PLAN item this work belongs to
     branch: str = ""
     pipeline: str = ""
     session: str = ""
@@ -232,6 +233,7 @@ def item_from_markdown(text: str, item_id: str) -> BoardItem:
         agent=meta.get("agent", ""),
         repo=meta.get("repo", ""),
         project=meta.get("project", ""),
+        plan=meta.get("plan", ""),
         branch=meta.get("branch", ""),
         pipeline=meta.get("pipeline", ""),
         session=meta.get("session", ""),
@@ -323,6 +325,69 @@ def parse_plan_items(text: str, project: str = "", repo: str = "",
     return out
 
 
+# Headings that are OVERALL CONTEXT (apply to every step), not a discrete task —
+# these should NOT clutter the board as work items; they belong to the plan.
+_CONTEXT_HEAD = re.compile(
+    r"\b(why|overview|introduction|intro|principles?|rationale|background|context|"
+    r"decisions?|glossary|appendix|summary|scope|non-?goals?|open questions?|"
+    r"known (failure|issue)|references?|changelog|revision|status|legend|"
+    r"terminology|assumptions?|design decision)\b", re.I)
+_WORK_HEAD = re.compile(
+    r"\b(phase|stage|step|task|milestone|deliverable|build|implement|fix|add|create|"
+    r"deploy|migrate|refactor|wire|write|remove|enable|ship|slice)\b", re.I)
+_CHECKLIST = re.compile(r"^\s*[-*]\s*\[[ xX]\]", re.M)
+
+
+def classify_plan_section(title: str, body: str) -> str:
+    """work | context — is a plan section a discrete WORK item, or OVERALL CONTEXT
+    that applies to every step? Heuristic (a design doc is mostly context): a
+    section with a checklist, or a phase/stage/task heading, is work; a why/
+    overview/principles/decisions heading is context; else default to context so
+    descriptive sections don't clutter the board as fake work items."""
+    if _CHECKLIST.search(body or ""):
+        return "work"
+    t = title or ""
+    if _WORK_HEAD.search(t):
+        return "work"
+    if _CONTEXT_HEAD.search(t):
+        return "context"
+    # Default WORK: a plan section is a task unless it's CLEARLY overall guidance
+    # (why/principles/decisions/…). Folding only the clear context is what removes
+    # the "overall instructions on the board" noise without emptying the board.
+    return "work"
+
+
+def parse_plan(text: str, project: str = "", repo: str = "",
+               level: int = 2, lane: str = "inbox") -> dict:
+    """Split a plan into ONE umbrella PLAN item (the title + all overall CONTEXT
+    sections — the guidance that applies to every step) and the discrete WORK
+    items, each tagged `plan=<umbrella id>` so they group under it and the shared
+    context travels with a task. Context sections do NOT become separate board
+    items — that was the noise. Deterministic ids (re-import updates in place).
+    Output: {plan_item, work_items, work_count, context_count}. Pure."""
+    rows = parse_plan_items(text, project=project, repo=repo, level=level, lane=lane)
+    m = re.search(r"^#\s+(.+)$", text or "", re.M)
+    plan_title = _MD_NOISE.sub("", (m.group(1).strip() if m else (project or "Plan"))).strip()
+    plan_id = "plan-" + (slugify(project) if project else slugify(plan_title))
+    context_parts: List[str] = []
+    work_items: List[dict] = []
+    for r in rows:
+        if classify_plan_section(r["title"], r["body"]) == "context":
+            context_parts.append("## " + r["title"] + "\n\n" + r["body"])
+        else:
+            r["plan"] = plan_id
+            r["labels"] = [x for x in (r.get("labels") or []) if x != "plan"] + ["work"]
+            work_items.append(r)
+    plan_body = ("_Overall plan context — applies to every work item below._\n\n"
+                 + "\n\n---\n\n".join(context_parts))
+    plan_item = {
+        "id": plan_id, "title": plan_title[:200], "lane": lane, "labels": ["plan"],
+        "project": project, "repo": repo, "plan": "", "body": plan_body[:16000],
+    }
+    return {"plan_item": plan_item, "work_items": work_items,
+            "work_count": len(work_items), "context_count": len(context_parts)}
+
+
 # ── fabric index projection (§6.3) ───────────────────────────────────────────
 def index_row(it: BoardItem) -> dict:
     """A flat, fabric-ingestable row for one item (keyed by id). Labels/comments
@@ -336,6 +401,7 @@ def index_row(it: BoardItem) -> dict:
         "agent": it.agent,
         "repo": it.repo,
         "project": it.project,
+        "plan": it.plan,
         "branch": it.branch,
         "pipeline": it.pipeline,
         "session": it.session,
