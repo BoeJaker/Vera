@@ -2552,7 +2552,12 @@ async function openPipe(id){
     +(p.gate_delta!=null?' <span class="pill" style="color:'+(p.gate_passed?'var(--ok)':'var(--err)')+'">Δ '+(p.gate_delta>0?'+':'')+p.gate_delta+'</span>':'')
     +(p.branch?' <span class="tag">'+esc(p.branch)+'</span>':'')
     +(p.adopted?' <span class="tag" style="background:var(--acc3);color:#111" title="hand-authored branch adopted into CI/CD">adopted → '+esc(p.to||'main')+'</span>':'')+'</div>';
-  if(p.current)h+='<div class="row" style="margin-bottom:6px"><span class="spin"></span><span class="hint">'+esc(p.current)+'</span></div>';
+  // p.current = the pipeline's current stage text. Only SPIN when it's actually
+  // live/running; a begun-but-idle pipeline (e.g. "branch + worktree ready") is a
+  // settled state, not loading — a permanent spinner made it look stuck forever.
+  if(p.current)h+='<div class="row" style="margin-bottom:6px;gap:6px;align-items:center;background:var(--bg2);border-radius:5px;padding:5px 8px">'
+    +(p.live?'<span class="spin"></span>':'<span style="color:var(--acc3)">▸</span>')
+    +'<span class="hint">'+(p.live?'':'awaiting next step · ')+esc(p.current)+'</span></div>';
   // Session attribution: which chat/session drove this run. Drill into the chat
   // (resolves against ide.claude_sessions once that session is ingested).
   if(p.session_id){
@@ -2571,6 +2576,13 @@ async function openPipe(id){
   }
   h+='<label class="fld" style="margin-top:8px">stages</label>';
   for(const st of p.steps||[])h+='<div class="mono" style="font-size:10px;padding:2px 0;color:'+(st.ok?'var(--ok)':'var(--err)')+'">'+(st.ok?'✓':'✗')+' '+esc(st.stage)+' — <span style="color:var(--dim2)">'+esc(st.detail)+'</span></div>';
+  // Inline colored diff — right in the run view (code pipelines), no hunting.
+  if(p.kind==='code'&&(p.branch||(p.repo&&p.repo!=='vera'))){
+    h+='<div class="row" style="margin-top:10px;align-items:center;gap:6px"><label class="fld" style="margin:0">changes</label>'
+      +(p.changed_files&&p.changed_files.length?'<span class="hint">'+p.changed_files.length+' file(s)</span>':'')
+      +'<span style="flex:1"></span><button class="btn sm" onclick="pipeInlineDiff(\''+esc(id)+'\')">show diff</button></div>'
+      +'<div id="pipe-diff-'+esc(id)+'" style="margin-top:6px"></div>';
+  }
   const reviews=p.reviews||[];
   if(reviews.length||p.review_requested){
     h+='<label class="fld" style="margin-top:8px">adversarial review</label>';
@@ -2589,6 +2601,14 @@ async function openPipe(id){
   }
   h+='<span style="flex:1"></span><button class="btn" onclick="closeModal()">Close</button></div>';
   openModal(h);
+}
+async function pipeInlineDiff(id){
+  const el=$('pipe-diff-'+id);if(!el)return;
+  if(el.dataset.loaded){el.style.display=(el.style.display==='none'?'':'none');return}
+  el.innerHTML='<span class="spin"></span> loading diff…';
+  const d=await api('/evolve/pipeline/diff?id='+encodeURIComponent(id));
+  el.innerHTML=(d&&d.diff!=null)?_renderDiff(d.diff||'(no changes)'):'<div class="hint">'+esc((d&&d.error)||'no diff for this pipeline')+'</div>';
+  el.dataset.loaded='1';
 }
 async function pipePromote(id){const r=await post('/evolve/pipeline/promote',{id});toast(r&&r.ok?'Promoted':(r&&r.error)||'failed');closeModal();loadPipelines();if($('review-body'))loadReview()}
 async function pipeRollback(id){const r=await post('/evolve/pipeline/rollback',{id});toast(r&&r.ok?'Rolled back':(r&&r.error)||'failed');closeModal();loadPipelines();if($('review-body'))loadReview()}
@@ -2721,13 +2741,32 @@ function reviewCard(p){
       :'')
     +'</div></div>';
 }
+/* Colour a unified git diff: file/hunk headers bold, +added green, -removed red,
+   context dim. Caps rendered lines so a huge diff can't freeze the browser. */
+function _renderDiff(text, maxH){
+  const lines=(text||'').split('\n');
+  const CAP=2500;
+  const shown=lines.slice(0,CAP);
+  let h='<div style="font-family:var(--mono,ui-monospace,monospace);font-size:10.5px;line-height:1.5;background:var(--bg2);border-radius:6px;overflow:auto;max-height:'+(maxH||'62vh')+'">';
+  for(const ln of shown){
+    let bg='',color='var(--dim2)',w='';
+    if(/^(diff --git|index |new file|deleted file|similarity |rename |old mode|new mode)/.test(ln)){color='var(--acc4)';w='font-weight:600;';}
+    else if(/^(\+\+\+|---) /.test(ln)){color='var(--acc)';w='font-weight:600;';}
+    else if(ln.startsWith('@@')){color='var(--acc3)';bg='rgba(130,130,180,.10)';w='font-weight:600;';}
+    else if(ln.startsWith('+')){color='#4bb97a';bg='rgba(75,185,122,.10)';}
+    else if(ln.startsWith('-')){color='#dd6a6a';bg='rgba(221,106,106,.10)';}
+    h+='<div style="white-space:pre-wrap;padding:0 8px;'+(bg?('background:'+bg+';'):'')+'color:'+color+';'+w+'">'+esc(ln===''?' ':ln)+'</div>';
+  }
+  if(lines.length>CAP)h+='<div class="hint" style="padding:5px 8px">… '+(lines.length-CAP)+' more lines — diff truncated for display (open the branch/dev container for the full change).</div>';
+  return h+'</div>';
+}
 async function toggleReviewDiff(id){
   const el=$('rv-diff-'+id);if(!el)return;
   if(el.style.display!=='none'){el.style.display='none';return}
   el.style.display='';el.innerHTML='<span class="spin"></span> loading diff…';
   const d=await api('/evolve/pipeline/diff?id='+encodeURIComponent(id));
   el.innerHTML=(d&&d.diff!=null)
-    ?'<pre style="max-height:300px;overflow:auto;font-size:10px;background:var(--bg2);border-radius:6px;padding:8px;white-space:pre-wrap">'+esc(d.diff||'(no changes)')+'</pre>'
+    ?_renderDiff(d.diff||'(no changes)','300px')
     :'<div class="hint">'+esc((d&&d.error)||'no diff (variant pipeline)')+'</div>';
 }
 async function reviewVerdict(id,verdict){
