@@ -229,6 +229,33 @@ def test_query_by_repo_and_project(prov):
     assert {i.title for i in by_proj} == {"a", "b"}
 
 
+def test_parse_plan_items():
+    md = (
+        "# Big Plan\n\nintro\n\n"
+        "## Phase A\n\ndo the A things\nmore A\n\n"
+        "### A.1 sub\nignored at level 2\n\n"
+        "## Phase B — the *hard* one\n\nthe B body\n\n"
+        "## Phase C\n\ncee\n"
+    )
+    rows = bc.parse_plan_items(md, project="dev-lifecycle", repo="vera", level=2)
+    assert [r["title"] for r in rows] == ["Phase A", "Phase B — the hard one", "Phase C"]
+    a = rows[0]
+    assert a["id"] == "plan-dev-lifecycle-phase-a"
+    assert a["project"] == "dev-lifecycle" and a["repo"] == "vera" and a["lane"] == "inbox"
+    assert "do the A things" in a["body"] and "more A" in a["body"]
+    # a level-2 section's body includes its level-3 children (until the next ##)
+    assert "ignored at level 2" in a["body"]
+    # markdown noise stripped from the title, slug is clean
+    assert rows[1]["id"] == "plan-dev-lifecycle-phase-b-the-hard-one"
+
+
+def test_parse_plan_items_deterministic_ids_for_reimport():
+    md = "## Same Heading\n\nbody v1\n"
+    r1 = bc.parse_plan_items(md, project="p", level=2)
+    r2 = bc.parse_plan_items("## Same Heading\n\nbody v2\n", project="p", level=2)
+    assert r1[0]["id"] == r2[0]["id"]        # re-import updates in place
+
+
 def test_summarize_rollup():
     items = [
         bc.BoardItem(id="1", lane="blocked", title="b1", agent="claude-a"),

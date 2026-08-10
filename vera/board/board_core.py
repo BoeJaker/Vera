@@ -279,6 +279,50 @@ def item_matches(it: BoardItem, q: Optional[BoardQuery]) -> bool:
     return True
 
 
+# ── plan import (structured doc → board items, §1 capture→work) ──────────────
+_SLUG_RE = re.compile(r"[^a-z0-9]+")
+_MD_NOISE = re.compile(r"[`*_]+")
+
+
+def slugify(s: str, n: int = 40) -> str:
+    return _SLUG_RE.sub("-", (s or "").lower()).strip("-")[:n] or "x"
+
+
+def parse_plan_items(text: str, project: str = "", repo: str = "",
+                     level: int = 2, lane: str = DEFAULT_LANE,
+                     labels: Optional[List[str]] = None) -> List[dict]:
+    """Turn a markdown PLAN (more structured than a braindump) into board items —
+    one per heading at `level`, body = the section text up to the next heading of
+    the same or higher level. Ids are deterministic per (project, heading) so a
+    re-import UPDATES in place rather than duplicating. Returns plain dicts (the
+    cap layer converts to BoardItem + upserts). Pure — unit-tested."""
+    base_labels = list(labels or ["plan"])
+    lines = (text or "").splitlines()
+    hpat = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
+    heads = []
+    for i, l in enumerate(lines):
+        m = hpat.match(l)
+        if m:
+            heads.append((i, len(m.group(1)), m.group(2).strip()))
+    out: List[dict] = []
+    for idx, (li, lv, title) in enumerate(heads):
+        if lv != level:
+            continue
+        end = len(lines)
+        for (li2, lv2, _t) in heads[idx + 1:]:
+            if lv2 <= lv:
+                end = li2
+                break
+        body = "\n".join(lines[li + 1:end]).strip()
+        t = _MD_NOISE.sub("", title).strip()
+        iid = ("plan-" + (slugify(project) + "-" if project else "") + slugify(t))
+        out.append({
+            "id": iid, "title": t[:200], "body": body[:8000], "lane": lane,
+            "labels": base_labels, "project": project, "repo": repo,
+        })
+    return out
+
+
 # ── fabric index projection (§6.3) ───────────────────────────────────────────
 def index_row(it: BoardItem) -> dict:
     """A flat, fabric-ingestable row for one item (keyed by id). Labels/comments

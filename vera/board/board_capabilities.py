@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import List, Optional
 
@@ -250,6 +251,61 @@ if True:  # capability registration (mirrors the guard style of the other module
     async def cap_board_provider(trace_id=None) -> dict:
         p = provider()
         return {"ok": True, "active": p.name, "root": str(p.root), "degraded": False}
+
+    @capability(
+        "board.import_plan", http_method="POST", http_path="/board/import_plan",
+        http_tags=["board"], memory="on",
+        description="Pull an EXISTING structured plan (a markdown doc — more structured than a "
+                    "braindump) into the board as items: one item per heading at `level` (default "
+                    "2 = '## '), body = that section's text, deterministic id per (project, "
+                    "heading) so re-import UPDATES rather than duplicates. Inputs: path (str — a "
+                    "file to read; absolute, or repo-relative) OR text (str — inline markdown), "
+                    "project (str! — the effort these items belong to; §0.2 #2), repo (str=vera), "
+                    "level (int=2), lane (str=inbox), labels (list, default ['plan']), title "
+                    "(str — a title label appended). Output: {ok, project, imported, ids, items}.",
+    )
+    async def cap_board_import_plan(path: str = "", text: str = "", project: str = "",
+                                    repo: str = "vera", level: int = 2, lane: str = "inbox",
+                                    labels: Optional[List[str]] = None, trace_id=None) -> dict:
+        if not project:
+            return {"ok": False, "error": "project is required — the effort these items belong to"}
+        if lane not in bc.LANE_SET:
+            return {"ok": False, "error": f"unknown lane: {lane}", "lanes": bc.LANES}
+        body_text = text
+        if not body_text and path:
+            p = os.path.expanduser(path)
+            cands = [p]
+            if not os.path.isabs(p):
+                try:
+                    from Vera.vera import state_paths
+                    cands.append(str(state_paths.repo_root() / p))
+                except Exception:
+                    pass
+            for cand in cands:
+                try:
+                    with open(cand, "r", encoding="utf-8", errors="replace") as fh:
+                        body_text = fh.read()
+                    break
+                except Exception:
+                    continue
+            if not body_text:
+                return {"ok": False, "error": f"could not read plan file (tried: {cands})"}
+        if not (body_text or "").strip():
+            return {"ok": False, "error": "provide a non-empty `text` or a readable `path`"}
+        rows = bc.parse_plan_items(body_text, project=project, repo=repo,
+                                   level=int(level or 2), lane=lane,
+                                   labels=list(labels) if labels else None)
+        if not rows:
+            return {"ok": True, "imported": 0, "project": project,
+                    "note": f"no level-{level} headings found — try a different level"}
+        ids = []
+        for r in rows:
+            it = bc.BoardItem(id=r["id"], title=r["title"], lane=r["lane"], body=r["body"],
+                              labels=r["labels"], project=r["project"], repo=r["repo"])
+            saved = await provider().upsert(it)
+            ids.append(saved.id)
+        return {"ok": True, "project": project, "imported": len(ids), "ids": ids,
+                "items": [{"id": i} for i in ids]}
 
     @capability(
         "board.index", http_method="POST", http_path="/board/index",
