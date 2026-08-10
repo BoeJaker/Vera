@@ -189,6 +189,7 @@ html.vpb-nav-hosted body{padding-left:0}
   <button class="btn" data-sec="csessions" onclick="nav('csessions')"><span class="ic">◈</span>Sessions</button>
   <button class="btn" data-sec="board" onclick="nav('board')"><span class="ic">▤</span>Board</button>
   <button class="btn" data-sec="notes" onclick="nav('notes')"><span class="ic">✎</span>Notes</button>
+  <button class="btn" data-sec="capacity" onclick="nav('capacity')"><span class="ic">▰</span>Capacity</button>
   <div class="rail-grp">Library</div>
   <button class="btn" data-sec="tasks" onclick="nav('tasks')"><span class="ic">☰</span>Tasks</button>
   <button class="btn" data-sec="runs" onclick="nav('runs')"><span class="ic">↻</span>Runs</button>
@@ -288,6 +289,32 @@ html.vpb-nav-hosted body{padding-left:0}
       <vera-session-notes id="ll-notes-el" scope="general" title="Loop Lab notepad" style="display:block"></vera-session-notes>
     </div>
     <div class="hint" style="margin-top:6px">The capture plane (§1) — cheap, messy, human-editable; structure begins at promotion into a board item. Backed by <code>notes.*</code>; the same editor used across chat/dream/IDE.</div>
+  </div>
+</div>
+
+<!-- ── CAPACITY: seats (subscription, pinned to targets) + Ollama nodes (§6.5) ── -->
+<div class="sec" id="sec-capacity" style="display:none">
+  <div class="card">
+    <div class="card-h"><span class="card-t">Capacity</span>
+      <span class="hint" id="cap-status">—</span>
+      <span style="flex:1"></span>
+      <button class="btn sm" onclick="capToggleNew()">+ Seat</button>
+      <button class="btn sm" onclick="loadCapacity()" style="margin-left:6px">&#8635;</button>
+    </div>
+    <div id="cap-new" style="display:none;background:var(--bg2);border-radius:6px;padding:8px;margin:6px 0">
+      <div class="row" style="gap:6px;flex-wrap:wrap">
+        <input id="cs-id" placeholder="seat_id (e.g. acct-a)" style="width:150px">
+        <input id="cs-target" placeholder="target instance_id" style="width:160px">
+        <input id="cs-label" placeholder="label" style="flex:1;min-width:120px">
+        <select id="cs-auth" style="width:130px"><option value="oauth-token">oauth-token</option><option value="host-login">host-login</option></select>
+        <button class="btn primary sm" onclick="capRegister()">Register</button>
+        <button class="btn sm" onclick="capToggleNew(true)">Cancel</button>
+      </div>
+      <div class="hint" style="margin-top:5px">Subscription seats only (api-key is out of scope, §10.1). A seat is <b>pinned to a target</b>. Registering records the seat; the one-time credential enrolment (browser OAuth / <code>claude setup-token</code>) is a human step done out-of-band — a <code>host-login</code> seat is enrolled by definition.</div>
+    </div>
+    <div id="cap-seats"><div class="empty">Loading…</div></div>
+    <div id="cap-ollama" class="hint" style="margin-top:8px"></div>
+    <div class="hint" style="margin-top:6px">Seat spend joins onto the providers-usage view (Workers &amp; Ollama UI); subscription seats have no per-token signal, only inferred state. Ollama occupancy is read live from the GPU/CPU gate.</div>
   </div>
 </div>
 
@@ -877,7 +904,7 @@ function nav(sec){
   document.querySelectorAll('#nav .btn').forEach(b=>b.classList.toggle('on',b.dataset.sec===sec));
   document.querySelectorAll('.sec').forEach(s=>s.style.display=s.id==='sec-'+sec?'':'none');
   const f={test:loadTest,tasks:loadTasks,runs:loadRuns,improve:loadSessions,watch:loadWatch,pipelines:()=>{loadGit();loadPipelines()},
-    review:loadReview,logs:loadLogs,csessions:loadCSessions,board:loadBoardTab,notes:loadNotes,
+    review:loadReview,logs:loadLogs,csessions:loadCSessions,board:loadBoardTab,notes:loadNotes,capacity:loadCapacity,
     sources:loadSources,sandbox:loadSandbox,activity:loadAudit,variants:loadVariants,settings:fillSettings,overview:loadOverview,errors:loadErrors}[sec];
   if(f)f();
   // Keep the outer shell's injected top-level sub-menu in sync when this
@@ -895,7 +922,7 @@ if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
   {id:'test', label:'Test'}, {id:'improve', label:'Improve'}, {id:'watch', label:'Watch'},
   {id:'overview', label:'Suite'}, {id:'errors', label:'Errors'}, {id:'variants', label:'Variants'},
   {id:'activity', label:'Activity'},
-  {id:'pipelines', label:'CI / CD'}, {id:'review', label:'Review'}, {id:'sources', label:'Sources'}, {id:'sandbox', label:'Sandbox'}, {id:'logs', label:'Logs'}, {id:'csessions', label:'Sessions'}, {id:'board', label:'Board'}, {id:'notes', label:'Notes'},
+  {id:'pipelines', label:'CI / CD'}, {id:'review', label:'Review'}, {id:'sources', label:'Sources'}, {id:'sandbox', label:'Sandbox'}, {id:'logs', label:'Logs'}, {id:'csessions', label:'Sessions'}, {id:'board', label:'Board'}, {id:'notes', label:'Notes'}, {id:'capacity', label:'Capacity'},
   {id:'tasks', label:'Tasks'}, {id:'runs', label:'Runs'}, {id:'settings', label:'Settings'},
 ]);
 
@@ -1659,6 +1686,42 @@ async function loadBoardTab(){
 }
 function loadNotes(){/* <vera-session-notes> self-loads via notes.* — nothing to fetch */}
 function notesScope(){const el=$('ll-notes-el'),s=$('notes-scope');if(el&&s){el.setAttribute('scope',s.value);if(el.reload)try{el.reload()}catch(_){}}}
+
+/* ═══ CAPACITY: subscription seats (pinned to targets) + Ollama nodes (§6.5) ═══ */
+const _SEAT_COLOR={available:'#3cb371',cooling:'#e0a030',expired:'#d05a5a',unauthed:'#8a8a8a'};
+function capToggleNew(hide){const el=$('cap-new');if(!el)return;el.style.display=(hide||el.style.display!=='none')?'none':'block';if(el.style.display==='block'){['cs-id','cs-target','cs-label'].forEach(i=>{if($(i))$(i).value=''});$('cs-id').focus()}}
+async function capRegister(){
+  const id=$('cs-id').value.trim(),target=$('cs-target').value.trim();
+  if(!id||!target){toast('seat_id + target required');return}
+  const r=await post('/capacity/seat/register',{seat_id:id,target,label:$('cs-label').value.trim(),auth_pool:$('cs-auth').value});
+  toast(r&&r.ok?'seat registered':(r&&r.error)||'failed');if(r&&r.ok){capToggleNew(true);loadCapacity()}}
+async function capCool(id){const s=prompt('cool for how many seconds? (0 clears)','3600');if(s==null)return;const r=await post('/capacity/seat/cool',{seat_id:id,cooling_s:parseInt(s)||0});toast(r&&r.ok?'updated':(r&&r.error)||'failed');loadCapacity()}
+async function capRemove(id){if(!confirm('Remove seat '+id+'?'))return;const r=await post('/capacity/seat/remove',{seat_id:id});toast(r&&r.ok?'removed':(r&&r.error)||'failed');loadCapacity()}
+async function loadCapacity(){
+  const el=$('cap-seats');if(!el)return;
+  const r=await api('/capacity/status');const st=$('cap-status');
+  if(!r||!r.ok){el.innerHTML='<div class="empty">Could not load capacity.</div>';return}
+  const seats=r.seats||[],sm=r.summary||{};
+  if(st)st.textContent=(sm.seats||0)+' seats · '+(sm.available||0)+' available · '+(sm.cooling||0)+' cooling';
+  if(!seats.length){el.innerHTML='<div class="empty">No seats registered. Click “+ Seat”. (Subscription seats only, §10.1.)</div>'}
+  else{
+    let h='<table style="width:100%;border-collapse:collapse;font-size:12px"><tr style="text-align:left;color:var(--muted)"><th>seat</th><th>state</th><th>target</th><th>auth</th><th>use</th><th>act</th></tr>';
+    for(const s of seats){
+      const c=_SEAT_COLOR[s.state]||'#666';
+      h+='<tr style="border-top:1px solid var(--border)">'
+        +'<td class="mono">'+esc(s.label||s.seat_id)+'</td>'
+        +'<td style="white-space:nowrap"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+c+';margin-right:5px"></span>'+esc(s.state)+'</td>'
+        +'<td class="mono" style="font-size:10px">'+esc(s.target||'—')+'</td>'
+        +'<td class="hint">'+esc(s.auth_pool||'')+'</td>'
+        +'<td>'+(s.held||0)+'/'+(s.slots||1)+'</td>'
+        +'<td style="white-space:nowrap"><button class="btn sm" style="font-size:9px;padding:2px 5px" onclick="capCool(\''+esc(s.seat_id)+'\')">cool</button> <button class="btn sm err-btn" style="font-size:9px;padding:2px 5px" onclick="capRemove(\''+esc(s.seat_id)+'\')" title="remove">×</button></td>'
+        +'</tr>';
+    }
+    el.innerHTML=h+'</table>';
+  }
+  const ol=$('cap-ollama'),o=r.ollama||{};
+  if(ol)ol.innerHTML='<b>Ollama gate:</b> '+(o.enabled?'<span style="color:var(--ok)">enabled</span>':'<span class="hint">disabled</span>')+(o.coord_connected!=null?(' · coord '+(o.coord_connected?'connected':'<span style="color:var(--warn)">down</span>')):'')+(o.gpu_cap!=null?(' · GPU cap '+esc(String(o.gpu_cap))):'');
+}
 
 /* ═══ SESSIONS: Claude Code session watch (§6.6) — read-only classify ═══ */
 function _csessAge(s){if(s==null)return '—';s=Math.round(s);if(s<90)return s+'s';if(s<5400)return Math.round(s/60)+'m';if(s<172800)return Math.round(s/3600)+'h';return Math.round(s/86400)+'d'}
