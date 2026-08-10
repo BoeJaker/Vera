@@ -1711,14 +1711,18 @@ async function openBoardItem(id){
   if((it.labels||[]).length)meta.push((it.labels).map(l=>'<span class="tag" style="font-size:9px">'+esc(l)+'</span>').join(' '));
   if(meta.length)h+='<div class="hint" style="margin:6px 0">'+meta.join(' · ')+'</div>';
   // drill-down row
+  const isPlan=(it.labels||[]).indexOf('plan')>=0;
   h+='<div class="row" style="gap:6px;flex-wrap:wrap;margin:8px 0">'
     +'<button class="btn sm" onclick="boardEdit(\''+esc(it.id)+'\');closeModal()">Edit</button>'
     +((it.lane==='ready'||it.lane==='inbox')?'<button class="btn sm" onclick="closeModal();boardDispatch(\''+esc(it.id)+'\')" title="orchestrate begin→work→gate">▷ Dispatch</button>':'')
+    +(it.plan?'<button class="btn sm" onclick="openBoardItem(\''+esc(it.plan)+'\')" title="open the umbrella plan this belongs to">◔ Plan</button>':'')
+    +(!isPlan?'<button class="btn sm" onclick="boardShowContext(\''+esc(it.id)+'\')" title="the full context an agent gets: plan + this item + siblings">⧉ Full context</button>':'')
     +(it.branch?'<button class="btn sm" onclick="openBranchSandbox(\''+esc(it.branch)+'\')" title="open the dev container for this branch">⌨ Dev container</button>':'')
     +(it.pipeline?'<button class="btn sm" onclick="closeModal();openPipe(\''+esc(it.pipeline)+'\')">⎇ Pipeline '+esc(it.pipeline)+'</button>':'')
     +(it.session?'<button class="btn sm" onclick="closeModal();openSessionChat(\''+esc(it.session)+'\')">◈ Session chat</button>':'')
     +(it.branch?'<span class="tag" style="font-size:9px">'+esc(it.branch)+'</span>':'')
     +'</div>';
+  if(isPlan){const wc=(it.body||'').length;h+='<div class="hint" style="margin:2px 0">◔ This is a PLAN umbrella — its work items are grouped under it (open one to dispatch). The body below is the overall context that applies to every item.</div>';}
   if(it.body&&it.body.trim())h+='<div style="background:var(--bg1);border-radius:6px;padding:8px;font-size:12px;white-space:pre-wrap;max-height:200px;overflow:auto;margin:6px 0">'+esc(it.body)+'</div>';
   const cms=it.comments||[];
   h+='<label class="fld" style="margin-top:8px">Comments / activity ('+cms.length+')</label><div style="max-height:240px;overflow:auto">';
@@ -1749,6 +1753,15 @@ async function openBranchSandbox(branch){
   const r=await post('/evolve/sandbox/up',{branch});
   if(r&&(r.ok||r.healthy)){closeModal();nav('sandbox');const sb=r.sandbox||{};try{embedSandbox(branch,sb.port)}catch(e){toast('sandbox up; open it from the Sandbox tab')}}
   else toast((r&&r.error)||'could not bring up the dev container')}
+async function boardShowContext(id){
+  const r=await api('/board/context?id='+encodeURIComponent(id));
+  if(!r||!r.ok){toast((r&&r.error)||'failed');return}
+  let h='<div class="row" style="align-items:center"><span class="card-t">Full context — what a dispatched agent gets</span><span style="flex:1"></span>'
+    +'<button class="btn sm" onclick="openBoardItem(\''+esc(id)+'\')">‹ back</button> <button class="btn sm" onclick="closeModal()">✕</button></div>'
+    +'<div class="hint" style="margin:4px 0">The umbrella plan + this item + its sibling work items — this is exactly what <code>board.dispatch</code> feeds a model executor so it sees the plan and the part it plays (the code it reads from the repo/branch).</div>'
+    +'<pre style="background:var(--bg1);border-radius:6px;padding:8px;font-size:11px;white-space:pre-wrap;max-height:60vh;overflow:auto">'+esc(r.context||'')+'</pre>';
+  openModal(h);
+}
 function loadNotes(){/* <vera-session-notes> self-loads via notes.* — nothing to fetch */}
 function notesScope(){const el=$('ll-notes-el'),s=$('notes-scope');if(el&&s){el.setAttribute('scope',s.value);if(el.reload)try{el.reload()}catch(_){}}}
 
