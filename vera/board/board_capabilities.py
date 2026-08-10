@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -32,6 +33,77 @@ async def _call(name: str, **kw):
     except Exception as e:
         log.debug("board dispatch: %s failed: %s", name, e)
         return None
+
+
+async def _dispatch_run(item_id: str, executor: str, agent: str, target: str,
+                        seat: Optional[dict], check: str, session_id: str) -> None:
+    """The heavy half of board.dispatch, run as a BACKGROUND task so a caller's
+    timeout can never cancel it mid-flight (begin + a secret-scanned commit is
+    slow). Drives begin → record → execute → gate, reflecting progress on the
+    board the whole way. Never raises — failures land the item in 'blocked'."""
+    try:
+        prov = provider()
+        spawn = executor in ("vera", "capable")
+        beg = await _call("evolve.pipeline.begin", title=(await prov.get(item_id)).title,
+                          spawn=spawn, repo=((await prov.get(item_id)).repo or "vera"),
+                          session_id=session_id)
+        if not (beg and beg.get("ok")):
+            await prov.move(item_id, "blocked")
+            await prov.comment(item_id, bc.AgentMessage(kind="blocked", frm=agent, item=item_id,
+                               body="evolve.pipeline.begin failed — cannot dispatch."))
+            return
+        branch, pid = beg.get("branch", ""), beg.get("id", "")
+
+        it = await prov.get(item_id)
+        it.branch, it.pipeline, it.executor = branch, pid, executor
+        it.session = session_id or it.session
+        if seat:
+            it.model = seat.get("seat_id", "")
+        it.lane = "in_progress"
+        await prov.upsert(it)
+        await prov.comment(item_id, bc.AgentMessage(
+            kind="progress", frm=agent, item=item_id,
+            body=f"dispatched · executor={executor} · pipeline {pid} · branch {branch}"
+                 + (f" · seat {seat['seat_id']}@{target}" if seat else "")))
+        await emit_event({"type": "board.dispatch", "id": item_id, "executor": executor,
+                          "pipeline": pid, "branch": branch, "target": target})
+
+        ok = False
+        if executor == "deterministic":
+            work = check or ("printf '%s\\n' " + shlex.quote("dispatched: " + it.title)
+                             + " >> DISPATCH_NOTE.md && "
+                             "git -c user.name=BoeJaker -c user.email=boejaker80@gmail.com "
+                             "add DISPATCH_NOTE.md && "
+                             "git -c user.name=BoeJaker -c user.email=boejaker80@gmail.com "
+                             "commit -q -m " + shlex.quote(f"board.dispatch: {it.title[:60]}")
+                             + " && echo VERA_DISPATCH_OK")
+            ex = await _call("evolve.sandbox.exec", where="worktree", branch=branch, cmd=work)
+            ok = bool(ex and (ex.get("code") == 0))
+        else:
+            engine = "vera-agent" if executor == "vera" else "claude"
+            run = await _call("ide.remote.run", instance_id=target,
+                              task=(it.title + "\n\n" + (it.body or ""))[:4000],
+                              engine=engine, session_id=session_id, source="dispatch")
+            ok = bool(run and run.get("ok"))
+
+        if ok:
+            await prov.move(item_id, "needs_review")
+            await prov.comment(item_id, bc.AgentMessage(
+                kind="progress", frm=agent, item=item_id,
+                body=f"work done → needs_review. A human promotes pipeline {pid} to land (§10.1)."))
+        else:
+            await prov.move(item_id, "blocked")
+            await prov.comment(item_id, bc.AgentMessage(
+                kind="blocked", frm=agent, item=item_id, body=f"dispatch failed — see pipeline {pid}."))
+        await emit_event({"type": "board.dispatch.done", "id": item_id, "ok": ok, "pipeline": pid})
+    except Exception as e:
+        log.error("board.dispatch background run for %s failed: %s", item_id, e)
+        try:
+            await provider().move(item_id, "blocked")
+            await provider().comment(item_id, bc.AgentMessage(
+                kind="blocked", frm=agent, item=item_id, body=f"dispatch crashed: {e}"))
+        except Exception:
+            pass
 
 log = logging.getLogger("vera.board")
 
@@ -366,77 +438,20 @@ if True:  # capability registration (mirrors the guard style of the other module
             return {"ok": False, "error": f"executor={executor} needs a target instance_id "
                     "(or a pinned seat's target)"}
 
-        # Claim (the §3.3 lease).
+        # Claim (the §3.3 lease) — this moves the item to in_progress + posts a
+        # claim comment, so the board reflects the dispatch immediately.
         claim = await provider().claim(id, agent)
         if not claim.ok:
             return {"ok": False, "error": "claim lost to another agent", "held_by": claim.held_by}
 
-        # begin the pipeline (spawn a container only for model executors).
-        spawn = executor in ("vera", "capable")
-        beg = await _call("evolve.pipeline.begin", title=it.title, spawn=spawn,
-                          repo=(it.repo or "vera"), session_id=session_id)
-        if not (beg and beg.get("ok")):
-            await provider().move(id, "blocked")
-            return {"ok": False, "error": "evolve.pipeline.begin failed", "begin": beg}
-        branch, pid = beg.get("branch", ""), beg.get("id", "")
-        wt, url = beg.get("worktree", ""), beg.get("url", "")
-
-        # Record the pipeline linkage on the item + move to in_progress.
-        it = await provider().get(id)
-        it.branch, it.pipeline, it.executor = branch, pid, executor
-        it.session = session_id or it.session
-        if seat:
-            it.model = seat.get("seat_id", "")
-        it.lane = "in_progress"
-        await provider().upsert(it)
-        await provider().comment(id, bc.AgentMessage(
-            kind="progress", frm=agent, item=id,
-            body=f"dispatched · executor={executor} · pipeline {pid} · branch {branch}"
-                 + (f" · seat {seat['seat_id']}@{target}" if seat else "")))
-        await emit_event({"type": "board.dispatch", "id": id, "executor": executor,
-                          "pipeline": pid, "branch": branch, "target": target})
-
-        # Execute.
-        ok = False
-        result = {}
-        if executor == "deterministic":
-            work = check or ("printf '%s\\n' " + shlex.quote("dispatched: " + it.title)
-                             + " >> DISPATCH_NOTE.md && "
-                             "git -c user.name=BoeJaker -c user.email=boejaker80@gmail.com "
-                             "add DISPATCH_NOTE.md && "
-                             "git -c user.name=BoeJaker -c user.email=boejaker80@gmail.com "
-                             "commit -q -m " + shlex.quote(f"board.dispatch: {it.title[:60]}")
-                             + " && echo VERA_DISPATCH_OK")
-            ex = await _call("evolve.sandbox.exec", where="worktree", branch=branch, cmd=work)
-            result = {"exec": ex}
-            ok = bool(ex and ex.get("ok") and (not check or "VERA_DISPATCH_OK" in str(ex.get("out", "")) or ex.get("code") == 0))
-            if check:
-                ok = bool(ex and ex.get("code") == 0)
-        else:
-            engine = "vera-agent" if executor == "vera" else "claude"
-            run = await _call("ide.remote.run", instance_id=target,
-                              task=(it.title + "\n\n" + (it.body or ""))[:4000],
-                              engine=engine, session_id=session_id, source="dispatch")
-            result = {"run": run}
-            ok = bool(run and run.get("ok"))
-
-        # Gate → needs_review (HITL human-promote §10.1) or blocked on failure.
-        if ok:
-            await provider().move(id, "needs_review")
-            await provider().comment(id, bc.AgentMessage(
-                kind="progress", frm=agent, item=id,
-                body=f"work done → needs_review. A human promotes pipeline {pid} to land (§10.1)."))
-            lane = "needs_review"
-        else:
-            await provider().move(id, "blocked")
-            await provider().comment(id, bc.AgentMessage(
-                kind="blocked", frm=agent, item=id,
-                body=f"dispatch failed — see pipeline {pid}."))
-            lane = "blocked"
-        await emit_event({"type": "board.dispatch.done", "id": id, "ok": ok, "lane": lane,
-                          "pipeline": pid})
-        return {"ok": ok, "item": id, "lane": lane, "executor": executor, "pipeline": pid,
-                "branch": branch, "worktree": wt, "url": url, "target": target, "result": result}
+        # The heavy work (begin + worktree + a secret-scanned commit / agent run)
+        # is SLOW; run it in the BACKGROUND so a caller's timeout can't cancel it
+        # mid-flight and strand the item. The board reflects progress; poll it.
+        asyncio.ensure_future(_dispatch_run(id, executor, agent, target, seat, check, session_id))
+        return {"ok": True, "dispatched": True, "item": id, "executor": executor,
+                "target": target, "status": "running",
+                "note": "dispatched in the background — poll board.item / board.items; the "
+                        "item moves in_progress → needs_review (a human then promotes) or blocked."}
 
     @capability(
         "board.index", http_method="POST", http_path="/board/index",
