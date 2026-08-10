@@ -190,6 +190,7 @@ html.vpb-nav-hosted body{padding-left:0}
   <button class="btn" data-sec="board" onclick="nav('board')"><span class="ic">▤</span>Board</button>
   <button class="btn" data-sec="notes" onclick="nav('notes')"><span class="ic">✎</span>Notes</button>
   <button class="btn" data-sec="capacity" onclick="nav('capacity')"><span class="ic">▰</span>Capacity</button>
+  <button class="btn" data-sec="swarm" onclick="nav('swarm')"><span class="ic">◇</span>Swarm</button>
   <div class="rail-grp">Library</div>
   <button class="btn" data-sec="tasks" onclick="nav('tasks')"><span class="ic">☰</span>Tasks</button>
   <button class="btn" data-sec="runs" onclick="nav('runs')"><span class="ic">↻</span>Runs</button>
@@ -316,6 +317,21 @@ html.vpb-nav-hosted body{padding-left:0}
     <div id="cap-seats"><div class="empty">Loading…</div></div>
     <div id="cap-ollama" class="hint" style="margin-top:8px"></div>
     <div class="hint" style="margin-top:6px">Seat spend joins onto the providers-usage view (Workers &amp; Ollama UI); subscription seats have no per-token signal, only inferred state. Ollama occupancy is read live from the GPU/CPU gate.</div>
+  </div>
+</div>
+
+<!-- ── SWARM: live activity across the whole system (loops / agents / dispatches) ── -->
+<div class="sec" id="sec-swarm" style="display:none">
+  <div class="card">
+    <div class="card-h"><span class="card-t">Swarm — live activity</span>
+      <span class="hint" id="swarm-status">—</span>
+      <span style="flex:1"></span>
+      <label class="hint" style="margin-right:8px"><input type="checkbox" id="swarm-follow" checked> follow</label>
+      <button class="btn sm" onclick="loadSwarm()">&#8635;</button>
+    </div>
+    <div id="swarm-summary" class="row" style="gap:6px;flex-wrap:wrap;margin:6px 0"></div>
+    <div id="swarm-body"><div class="empty">Loading…</div></div>
+    <div class="hint" style="margin-top:6px">A live cross-section of what the swarm is doing right now — running Loop Lab loops, edit-queue agents, live CI/CD pipelines, dispatched board work, active Claude sessions and dev containers — aggregated from their own feeds. Click through to the relevant tab / drill-down.</div>
   </div>
 </div>
 
@@ -905,7 +921,7 @@ function nav(sec){
   document.querySelectorAll('#nav .btn').forEach(b=>b.classList.toggle('on',b.dataset.sec===sec));
   document.querySelectorAll('.sec').forEach(s=>s.style.display=s.id==='sec-'+sec?'':'none');
   const f={test:loadTest,tasks:loadTasks,runs:loadRuns,improve:loadSessions,watch:loadWatch,pipelines:()=>{loadGit();loadPipelines()},
-    review:loadReview,logs:loadLogs,csessions:loadCSessions,board:loadBoardTab,notes:loadNotes,capacity:loadCapacity,
+    review:loadReview,logs:loadLogs,csessions:loadCSessions,board:loadBoardTab,notes:loadNotes,capacity:loadCapacity,swarm:loadSwarm,
     sources:loadSources,sandbox:loadSandbox,activity:loadAudit,variants:loadVariants,settings:fillSettings,overview:loadOverview,errors:loadErrors}[sec];
   if(f)f();
   // Keep the outer shell's injected top-level sub-menu in sync when this
@@ -923,7 +939,7 @@ if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
   {id:'test', label:'Test'}, {id:'improve', label:'Improve'}, {id:'watch', label:'Watch'},
   {id:'overview', label:'Suite'}, {id:'errors', label:'Errors'}, {id:'variants', label:'Variants'},
   {id:'activity', label:'Activity'},
-  {id:'pipelines', label:'CI / CD'}, {id:'review', label:'Review'}, {id:'sources', label:'Sources'}, {id:'sandbox', label:'Sandbox'}, {id:'logs', label:'Logs'}, {id:'csessions', label:'Sessions'}, {id:'board', label:'Board'}, {id:'notes', label:'Notes'}, {id:'capacity', label:'Capacity'},
+  {id:'pipelines', label:'CI / CD'}, {id:'review', label:'Review'}, {id:'sources', label:'Sources'}, {id:'sandbox', label:'Sandbox'}, {id:'logs', label:'Logs'}, {id:'csessions', label:'Sessions'}, {id:'board', label:'Board'}, {id:'notes', label:'Notes'}, {id:'capacity', label:'Capacity'}, {id:'swarm', label:'Swarm'},
   {id:'tasks', label:'Tasks'}, {id:'runs', label:'Runs'}, {id:'settings', label:'Settings'},
 ]);
 
@@ -1799,6 +1815,48 @@ async function loadCapacity(){
   }
   const ol=$('cap-ollama'),o=r.ollama||{};
   if(ol)ol.innerHTML='<b>Ollama gate:</b> '+(o.enabled?'<span style="color:var(--ok)">enabled</span>':'<span class="hint">disabled</span>')+(o.coord_connected!=null?(' · coord '+(o.coord_connected?'connected':'<span style="color:var(--warn)">down</span>')):'')+(o.gpu_cap!=null?(' · GPU cap '+esc(String(o.gpu_cap))):'');
+}
+
+/* ═══ SWARM: live cross-section of everything running now (client aggregation) ═══ */
+function _swRow(dot,main,sub,onclick){
+  return '<div class="row" style="gap:8px;padding:4px 0;border-bottom:1px solid var(--border)'+(onclick?';cursor:pointer':'')+'"'+(onclick?' onclick="'+onclick+'"':'')
+    +'><span style="width:8px;height:8px;border-radius:50%;background:'+dot+';flex-shrink:0;margin-top:4px"></span>'
+    +'<div style="flex:1;min-width:0"><div style="font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+main+'</div>'
+    +(sub?'<div class="hint" style="font-size:9px">'+sub+'</div>':'')+'</div></div>';
+}
+function _swSect(title,items,render,navTo){
+  if(!items.length)return '';
+  return '<div style="margin-top:10px"><label class="fld"'+(navTo?' style="cursor:pointer" onclick="nav(\''+navTo+'\')"':'')+'>'+title+' ('+items.length+')'+(navTo?' ▸':'')+'</label>'+items.map(render).join('')+'</div>';
+}
+async function loadSwarm(){
+  const el=$('swarm-body');if(!el)return;
+  const [imp,eq,pl,bd,cs,sb]=await Promise.all([
+    api('/evolve/improve/list?limit=20').catch(()=>null),
+    api('/evolve/editq?limit=40').catch(()=>null),
+    api('/evolve/pipeline/list?limit=30').catch(()=>null),
+    api('/board/items').catch(()=>null),
+    api('/ide/claude_sessions/watch?max_sessions=40').catch(()=>null),
+    api('/evolve/sandbox/list').catch(()=>null)
+  ]);
+  const loops=((imp&&imp.sessions)||[]).filter(s=>s.live||s.status==='running');
+  const editors=((eq&&eq.queue)||[]).filter(a=>a.status==='running'||a.status==='queued');
+  const livePipes=((pl&&pl.pipelines)||[]).filter(p=>p.live);
+  const dispatched=((bd&&bd.items)||[]).filter(i=>i.lane==='in_progress');
+  const liveSess=((cs&&cs.sessions)||[]).filter(s=>['live','resumable','stalled','declared-block'].indexOf(s.state)>=0);
+  const sandboxes=(sb&&(sb.sandboxes||sb.list||sb.containers))||[];
+  const active=loops.length+editors.length+livePipes.length+dispatched.length;
+  const st=$('swarm-status');if(st)st.textContent=active?(active+' active'):'idle';
+  const sum=$('swarm-summary');
+  if(sum)sum.innerHTML=[['loops',loops.length,'#e0a030'],['editors',editors.length,'#b070d0'],['pipelines',livePipes.length,'#4a9ed0'],['dispatches',dispatched.length,'#3cb371'],['sessions',liveSess.length,'#8a8a8a'],['containers',sandboxes.length,'#6a6a6a']].map(a=>'<span class="tag" style="border-left:3px solid '+a[2]+'">'+a[0]+' '+a[1]+'</span>').join('');
+  let h='';
+  h+=_swSect('Loop Lab loops running',loops,s=>_swRow('#e0a030','<span class="spin"></span> '+esc(s.id)+' <span class="tag">'+esc(s.profile||'')+'</span>',esc((s.phase||s.status||'')+' · r'+(s.rounds_done||0)+'/'+(s.max_rounds||'?')),''),'watch');
+  h+=_swSect('Edit-queue agents',editors,a=>_swRow('#b070d0',(a.status==='running'?'<span class="spin"></span> ':'')+esc((a.id||'').slice(0,8))+' <span class="tag">editor</span>',esc((a.model||'')+(a.instance?(' @'+a.instance):'')+' · '+a.status),''),'watch');
+  h+=_swSect('Live CI/CD pipelines',livePipes,p=>_swRow('#4a9ed0','<span class="spin"></span> '+esc(p.id)+' <span class="tag">'+esc(p.kind)+'</span>'+(p.branch?' <span class="tag">'+esc(p.branch)+'</span>':''),esc(p.current||p.status||''),'openPipe(\''+esc(p.id)+'\')'),'pipelines');
+  h+=_swSect('Dispatched board work',dispatched,i=>_swRow('#3cb371',esc(i.title||i.id)+(i.executor?' <span class="tag">'+esc(i.executor)+'</span>':''),esc((i.agent?('@'+i.agent):'')+(i.branch?(' · '+i.branch):'')),'openBoardItem(\''+esc(i.id)+'\')'),'board');
+  h+=_swSect('Active Claude sessions',liveSess,s=>_swRow(_CSESS_COLOR[s.state]||'#888',esc(s.title||(s.claude_session_id||'').slice(0,8))+' <span class="tag">'+esc(s.state)+'</span>',esc(_csessAge(s.age_s)+' idle'),'openSessionChat(\''+esc(s.claude_session_id)+'\')'),'csessions');
+  h+=_swSect('Dev containers',sandboxes,c=>_swRow('#6a6a6a',esc(c.branch||c.name||c.container||'?'),esc((c.port?(':'+c.port):'')+(c.active?' · active':'')),c.branch?('openBranchSandbox(\''+esc(c.branch)+'\')'):''),'sandbox');
+  el.innerHTML=h||'<div class="empty">The swarm is idle — no running loops, pipelines, dispatches or active sessions right now.</div>';
+  if($('swarm-follow')&&$('swarm-follow').checked&&typeof _curSec==='function'&&_curSec()==='swarm'){clearTimeout(window._swarmT);window._swarmT=setTimeout(loadSwarm,4000)}
 }
 
 /* ═══ SESSIONS: Claude Code session watch (§6.6) — read-only classify ═══ */
