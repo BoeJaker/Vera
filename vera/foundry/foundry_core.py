@@ -19,7 +19,75 @@ from __future__ import annotations
 
 import base64
 import json
+import shlex
 from typing import Dict, List
+
+# cluster / distributed-compute systems a Foundry-provisioned host can be made to
+# join via a feature bundle (see cluster_join_script).
+CLUSTER_KINDS = ("docker-swarm", "k3s", "nomad", "ray", "generic")
+
+
+def cluster_join_script(kind: str, join_addr: str = "", token: str = "",
+                        role: str = "", opts: Dict = None) -> str:
+    """Pure POSIX snippet that makes THIS host join an existing cluster / distributed-
+    compute system, for a Foundry feature bundle. kind ∈ CLUSTER_KINDS. Dynamic
+    values are shell-quoted; the token is a SECRET (the caller unseals it just before
+    render and must not log the rendered script). Returns '' for an unknown kind."""
+    opts = opts or {}
+    kind = (kind or "").lower().strip()
+    role = (role or "").lower().strip()
+    A = shlex.quote(join_addr or "")
+    T = shlex.quote(token or "")
+
+    if kind == "docker-swarm":
+        port = int(opts.get("port", 2377))
+        return "\n".join([
+            "# --- join Docker Swarm ---",
+            "command -v docker >/dev/null 2>&1 || (curl -fsSL https://get.docker.com | sh) || true",
+            f"docker swarm join --token {T} {A}:{port} || "
+            "echo 'VERA_JOIN_WARN: docker swarm join failed (already joined? bad token/addr?)'",
+        ])
+    if kind == "k3s":
+        api = int(opts.get("port", 6443))
+        if role in ("server", "manager", "control-plane", "control_plane"):
+            return "\n".join([
+                "# --- join k3s (HA control-plane) ---",
+                f"curl -sfL https://get.k3s.io | K3S_TOKEN={T} sh -s - server --server https://{A}:{api}",
+            ])
+        return "\n".join([
+            "# --- join k3s (agent) ---",
+            f"curl -sfL https://get.k3s.io | K3S_URL=https://{A}:{api} K3S_TOKEN={T} sh -",
+        ])
+    if kind == "nomad":
+        srv = int(opts.get("port", 4647))
+        return "\n".join([
+            "# --- join HashiCorp Nomad (client) ---",
+            "if ! command -v nomad >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then",
+            "  curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp.gpg 2>/dev/null || true",
+            '  . /etc/os-release; echo "deb [signed-by=/usr/share/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com $VERSION_CODENAME main" >/etc/apt/sources.list.d/hashicorp.list',
+            "  apt-get update -y && apt-get install -y nomad || true",
+            "fi",
+            "mkdir -p /etc/nomad.d /opt/nomad",
+            "cat >/etc/nomad.d/client.hcl <<VERA_NOMAD_EOF",
+            'data_dir = "/opt/nomad"',
+            "client {",
+            "  enabled = true",
+            f'  servers = ["{join_addr}:{srv}"]',
+            "}",
+            "VERA_NOMAD_EOF",
+            "systemctl enable --now nomad 2>/dev/null || (nomad agent -config=/etc/nomad.d >/var/log/nomad.log 2>&1 &)",
+        ])
+    if kind == "ray":
+        rport = int(opts.get("port", 6379))
+        pw = f" --redis-password={T}" if token else ""
+        return "\n".join([
+            "# --- join Ray cluster (worker) ---",
+            "command -v ray >/dev/null 2>&1 || pip install -q 'ray[default]' 2>/dev/null || pip3 install -q 'ray[default]' 2>/dev/null || true",
+            f"ray start --address={A}:{rport}{pw} || echo 'VERA_JOIN_WARN: ray start failed'",
+        ])
+    if kind == "generic":
+        return "\n".join(["# --- generic cluster join ---", str(opts.get("command", "true"))])
+    return ""
 
 
 def pick_node(nodes_json: str) -> str:
@@ -78,8 +146,11 @@ def _pxe_slug(s: str) -> str:
     return ("".join(c if (c.isalnum() or c == "-") else "-" for c in s).strip("-")) or "node"
 
 
-def _render_features_script(feats: List[str]) -> str:
-    """First-boot script applying the SAME feature bundles as CT/VM (target-agnostic)."""
+def _render_features_script(feats: List[str], cluster_scripts: List[str] = None) -> str:
+    """First-boot script applying the SAME feature bundles as CT/VM (target-agnostic).
+    `cluster_scripts` are pre-rendered cluster-join snippets (from cluster_join_script,
+    resolved against the Foundry cluster registry in the app layer and passed in so
+    this stays pure) — e.g. join a Docker Swarm / k3s / Nomad / Ray cluster."""
     out = ["#!/bin/sh", "set -e", "# Foundry feature bundles — applied on first boot"]
     if "hardening" in feats:
         out += ["# --- hardening ---", _HARDEN]
@@ -87,8 +158,15 @@ def _render_features_script(feats: List[str]) -> str:
         out += ["# --- file-client ---",
                 "command -v apt-get >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive "
                 "apt-get install -y cifs-utils nfs-common autofs >/dev/null 2>&1 || true"]
-    if "docker-swarm" in feats or "distributed-compute" in feats:
-        out += ["# --- docker (swarm / compute) ---",
+    # real cluster / distributed-compute joins resolved from the registry
+    for cs in (cluster_scripts or []):
+        if cs and cs.strip():
+            out += ["", cs]
+    # legacy fallback: a swarm/compute feature with no cluster registered → install
+    # the runtime only (so the host is ready to be joined manually).
+    if (("docker-swarm" in feats or "distributed-compute" in feats)
+            and not (cluster_scripts or [])):
+        out += ["# --- docker (no cluster registered — runtime install only) ---",
                 "command -v docker >/dev/null 2>&1 || (curl -fsSL https://get.docker.com | sh) || true"]
     out += ["# enrol/mesh: host registers with Foundry on check-in (SSH-cert + FreeIPA + mesh)",
             "echo foundry-features-done"]
@@ -148,7 +226,8 @@ def _render_ipxe(profile: Dict, cfg: Dict, image: Dict, http: str) -> str:
     ]) + "\n"
 
 
-def _render_autoinstall(profile: Dict, cfg: Dict, feats: List[str]) -> str:
+def _render_autoinstall(profile: Dict, cfg: Dict, feats: List[str],
+                        cluster_scripts: List[str] = None) -> str:
     """cloud-init NoCloud user-data: static net + run the feature bundle on first boot."""
     ip = profile.get("ip", "")
     gw = cfg.get("gateway", "")
@@ -158,7 +237,7 @@ def _render_autoinstall(profile: Dict, cfg: Dict, feats: List[str]) -> str:
                f"      addresses: [{ip}/24]\n      routes: [{{to: default, via: {gw}}}]\n")
     # embed the feature script base64 (encoding: b64) so arbitrary shell content
     # can never break the YAML block-scalar indentation.
-    fb64 = base64.b64encode(_render_features_script(feats).encode()).decode()
+    fb64 = base64.b64encode(_render_features_script(feats, cluster_scripts).encode()).decode()
     return ("#cloud-config\n"
             f"hostname: {_pxe_slug(profile.get('name','node'))}\n"
             "ssh_pwauth: false\n"
@@ -169,15 +248,18 @@ def _render_autoinstall(profile: Dict, cfg: Dict, feats: List[str]) -> str:
               "runcmd:\n  - [ sh, /var/lib/foundry/features.sh ]\n")
 
 
-def _render_boot(profile: Dict, cfg: Dict, image: Dict) -> Dict:
-    """Turn a PXE profile into its netboot artifacts — unified across x86 + RPi."""
+def _render_boot(profile: Dict, cfg: Dict, image: Dict,
+                 cluster_scripts: List[str] = None) -> Dict:
+    """Turn a PXE profile into its netboot artifacts — unified across x86 + RPi.
+    `cluster_scripts` (from the app, resolved against the cluster registry) bake
+    Docker Swarm / k3s / Nomad / Ray joins into the first-boot feature script."""
     arch = (profile.get("arch") or "amd64").lower()
     boot_type = (profile.get("boot_type")
                  or ("rpi-netboot" if arch in ("arm64", "armhf") else "uefi")).lower()
     display = (profile.get("display") or "hdmi").lower()
     feats = profile.get("features") or []
     http = cfg.get("http_base") or f"http://{cfg.get('gateway','10.42.0.1')}/foundry"
-    artifacts: Dict[str, str] = {"features.sh": _render_features_script(feats)}
+    artifacts: Dict[str, str] = {"features.sh": _render_features_script(feats, cluster_scripts)}
     if boot_type in ("rpi-netboot", "rpi-flash"):
         artifacts["config.txt"] = _render_rpi_config(display, profile.get("display_opts"))
         artifacts["cmdline.txt"] = _render_rpi_cmdline(profile, cfg)
@@ -190,7 +272,7 @@ def _render_boot(profile: Dict, cfg: Dict, image: Dict) -> Dict:
                 "# 3) copy features.sh + a firstrun hook into the rootfs\n")
     else:
         artifacts["boot.ipxe"] = _render_ipxe(profile, cfg, image, http)
-        artifacts["autoinstall/user-data"] = _render_autoinstall(profile, cfg, feats)
+        artifacts["autoinstall/user-data"] = _render_autoinstall(profile, cfg, feats, cluster_scripts)
         artifacts["autoinstall/meta-data"] = \
             f"instance-id: {_pxe_slug(profile.get('name','node'))}\n"
     return {"boot_type": boot_type, "arch": arch, "display": display,
