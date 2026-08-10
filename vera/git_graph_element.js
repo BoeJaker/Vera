@@ -146,6 +146,15 @@
             pending.splice(i, 1);
           }
         }
+        // CONVERGE + RECLAIM: any OTHER lane that was also waiting for this same
+        // hash (a merged branch meeting its branch-point / the mainline) converges
+        // into THIS row's lane, so FREE it. Without this, a converged lane keeps
+        // its hash forever and the lane count only ever GROWS — the graph gets
+        // wider with every branch and never narrows. Freeing lets the next branch
+        // REUSE the slot (x position can decrement, not just increment).
+        for (let j = 0; j < lanes.length; j++) {
+          if (j !== li && lanes[j] === c.hash) lanes[j] = null;
+        }
         const parents = c.parents || [];
         if (!parents.length) {
           lanes[li] = null; // lane terminates here (root commit)
@@ -164,7 +173,13 @@
           });
         }
       });
-      return { rows, edges, laneCount: lanes.length };
+      // Width = the true peak of lanes actually USED (placed commits + routed
+      // edges), not lanes.length — which counts every slot ever allocated even
+      // after it was freed, keeping the graph permanently wide.
+      let laneCount = 0;
+      rows.forEach(r => { if (r.lane + 1 > laneCount) laneCount = r.lane + 1; });
+      edges.forEach(e => { laneCount = Math.max(laneCount, e.fromLane + 1, e.toLane + 1); });
+      return { rows, edges, laneCount: Math.max(1, laneCount) };
     }
 
     _render(commits, error) {
