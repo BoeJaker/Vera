@@ -249,6 +249,55 @@ def test_parse_plan_items():
     assert rows[1]["id"] == "plan-dev-lifecycle-phase-b-the-hard-one"
 
 
+def test_classify_plan_section():
+    assert bc.classify_plan_section("Phase A — build the thing", "do stuff") == "work"
+    assert bc.classify_plan_section("3. Implement the seam", "") == "work"
+    assert bc.classify_plan_section("Overview", "prose") == "context"
+    assert bc.classify_plan_section("Why this exists", "prose") == "context"
+    assert bc.classify_plan_section("Decisions record", "prose") == "context"
+    # a checklist forces work even under a context-ish heading
+    assert bc.classify_plan_section("Notes", "- [ ] do a thing\n- [x] done") == "work"
+    # unknown/descriptive heading defaults to WORK (fold only CLEAR context)
+    assert bc.classify_plan_section("The comms plane", "descriptive prose") == "work"
+
+
+def test_parse_plan_splits_context_from_work():
+    md = (
+        "# My Plan\n\nintro\n\n"
+        "## Why this exists\n\nbecause reasons\n\n"
+        "## Principles\n\nkeep it simple\n\n"
+        "## Phase A — build\n\ndo the A work\n\n"
+        "## Phase B — ship\n\ndo the B work\n\n"
+        "## Decisions record\n\nwe decided X\n"
+    )
+    p = bc.parse_plan(md, project="myproj", repo="vera", level=2)
+    assert p["work_count"] == 2 and p["context_count"] == 3
+    plan = p["plan_item"]
+    assert plan["id"] == "plan-myproj" and plan["title"] == "My Plan"
+    assert plan["labels"] == ["plan"]
+    # context folded into the plan body, NOT separate work items
+    assert "because reasons" in plan["body"] and "keep it simple" in plan["body"]
+    # work items reference the plan + are labelled work
+    wtitles = [w["title"] for w in p["work_items"]]
+    assert "Phase A — build" in wtitles and "Phase B — ship" in wtitles
+    for w in p["work_items"]:
+        assert w["plan"] == "plan-myproj" and "work" in w["labels"] and "plan" not in w["labels"]
+
+
+def test_parse_plan_deterministic_ids():
+    md = "# P\n\n## Phase A — x\n\nbody v1\n"
+    a = bc.parse_plan(md, project="p")
+    b = bc.parse_plan("# P\n\n## Phase A — x\n\nbody v2\n", project="p")
+    assert a["work_items"][0]["id"] == b["work_items"][0]["id"]
+    assert a["plan_item"]["id"] == b["plan_item"]["id"]
+
+
+def test_plan_field_round_trips(prov):
+    it = run(prov.upsert(bc.BoardItem(title="w", lane="ready", plan="plan-x", project="x")))
+    assert run(prov.get(it.id)).plan == "plan-x"
+    assert bc.index_row(run(prov.get(it.id)))["plan"] == "plan-x"
+
+
 def test_parse_plan_items_deterministic_ids_for_reimport():
     md = "## Same Heading\n\nbody v1\n"
     r1 = bc.parse_plan_items(md, project="p", level=2)

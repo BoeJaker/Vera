@@ -81,8 +81,13 @@ async def _dispatch_run(item_id: str, executor: str, agent: str, target: str,
             ok = bool(ex and (ex.get("code") == 0))
         else:
             engine = "vera-agent" if executor == "vera" else "claude"
-            run = await _call("ide.remote.run", instance_id=target,
-                              task=(it.title + "\n\n" + (it.body or ""))[:4000],
+            # Hand the agent the FULL context — the umbrella plan + this item + its
+            # siblings (§0.3) — so it sees the code (repo/branch), the plan, and the
+            # part it plays, not just a bare title.
+            ctx = await _call("board.context", id=item_id)
+            brief = (ctx.get("context") if (ctx and ctx.get("ok")) else
+                     (it.title + "\n\n" + (it.body or "")))
+            run = await _call("ide.remote.run", instance_id=target, task=brief[:8000],
                               engine=engine, session_id=session_id, source="dispatch")
             ok = bool(run and run.get("ok"))
 
@@ -131,7 +136,7 @@ def _msg_dict(m: bc.AgentMessage) -> dict:
 
 def _item_dict(it: bc.BoardItem, full: bool = False) -> dict:
     d = {"id": it.id, "title": it.title, "lane": it.lane, "labels": it.labels,
-         "agent": it.agent, "repo": it.repo, "project": it.project,
+         "agent": it.agent, "repo": it.repo, "project": it.project, "plan": it.plan,
          "branch": it.branch, "pipeline": it.pipeline,
          "session": it.session, "executor": it.executor, "model": it.model,
          "reviewed_by": it.reviewed_by, "heartbeat": it.heartbeat,
@@ -212,7 +217,7 @@ if True:  # capability registration (mirrors the guard style of the other module
     async def cap_board_item_upsert(id: str = "", title: str = "", lane: str = "inbox",
                                     body: str = "", labels: Optional[List[str]] = None,
                                     agent: str = "", repo: str = "", project: str = "",
-                                    branch: str = "", pipeline: str = "",
+                                    plan: str = "", branch: str = "", pipeline: str = "",
                                     session: str = "", executor: str = "", model: str = "",
                                     reviewed_by: str = "", hops: int = 0, trace_id=None) -> dict:
         if lane not in bc.LANE_SET:
@@ -220,7 +225,7 @@ if True:  # capability registration (mirrors the guard style of the other module
         it = bc.BoardItem(
             id=id or "", title=title, lane=lane, body=body,
             labels=list(labels or []), agent=agent, repo=repo, project=project,
-            branch=branch, pipeline=pipeline,
+            plan=plan, branch=branch, pipeline=pipeline,
             session=session, executor=executor, model=model, reviewed_by=reviewed_by,
             hops=int(hops or 0))
         saved = await provider().upsert(it)
@@ -340,18 +345,23 @@ if True:  # capability registration (mirrors the guard style of the other module
     @capability(
         "board.import_plan", http_method="POST", http_path="/board/import_plan",
         http_tags=["board"], memory="on",
-        description="Pull an EXISTING structured plan (a markdown doc — more structured than a "
-                    "braindump) into the board as items: one item per heading at `level` (default "
-                    "2 = '## '), body = that section's text, deterministic id per (project, "
-                    "heading) so re-import UPDATES rather than duplicates. Inputs: path (str — a "
-                    "file to read; absolute, or repo-relative) OR text (str — inline markdown), "
-                    "project (str! — the effort these items belong to; §0.2 #2), repo (str=vera), "
-                    "level (int=2), lane (str=inbox), labels (list, default ['plan']), title "
-                    "(str — a title label appended). Output: {ok, project, imported, ids, items}.",
+        description="Pull an EXISTING structured plan (a markdown doc) into the board. By default "
+                    "(group=true) it SEPARATES overall CONTEXT from discrete WORK: it creates one "
+                    "umbrella PLAN item (id 'plan-<project>', holding the title + all the why/"
+                    "overview/principles/decisions sections — the guidance that applies to every "
+                    "step) and WORK items for the actionable sections (phase/stage/task/…, or any "
+                    "with a checklist), each tagged plan=<umbrella id> so they group under it. "
+                    "Context sections do NOT clutter the board as fake work items. group=false "
+                    "restores the old flat one-item-per-heading behaviour. Deterministic ids "
+                    "(re-import UPDATES in place). Inputs: path (file, absolute or repo-relative) OR "
+                    "text (inline md), project (str!), repo (str=vera), level (int=2), lane "
+                    "(str=inbox), group (bool=true). Output: {ok, project, plan, work_count, "
+                    "context_count, ids}.",
     )
     async def cap_board_import_plan(path: str = "", text: str = "", project: str = "",
                                     repo: str = "vera", level: int = 2, lane: str = "inbox",
-                                    labels: Optional[List[str]] = None, trace_id=None) -> dict:
+                                    group: bool = True, labels: Optional[List[str]] = None,
+                                    trace_id=None) -> dict:
         if not project:
             return {"ok": False, "error": "project is required — the effort these items belong to"}
         if lane not in bc.LANE_SET:
@@ -377,20 +387,33 @@ if True:  # capability registration (mirrors the guard style of the other module
                 return {"ok": False, "error": f"could not read plan file (tried: {cands})"}
         if not (body_text or "").strip():
             return {"ok": False, "error": "provide a non-empty `text` or a readable `path`"}
-        rows = bc.parse_plan_items(body_text, project=project, repo=repo,
-                                   level=int(level or 2), lane=lane,
-                                   labels=list(labels) if labels else None)
-        if not rows:
+
+        async def _upsert_row(r: dict):
+            it = bc.BoardItem(id=r["id"], title=r["title"], lane=r["lane"], body=r["body"],
+                              labels=list(r.get("labels") or []), project=r.get("project", ""),
+                              repo=r.get("repo", ""), plan=r.get("plan", ""))
+            return (await provider().upsert(it)).id
+
+        if not group:
+            rows = bc.parse_plan_items(body_text, project=project, repo=repo,
+                                       level=int(level or 2), lane=lane,
+                                       labels=list(labels) if labels else None)
+            if not rows:
+                return {"ok": True, "imported": 0, "project": project,
+                        "note": f"no level-{level} headings found — try a different level"}
+            ids = [await _upsert_row(r) for r in rows]
+            return {"ok": True, "project": project, "imported": len(ids), "grouped": False, "ids": ids}
+
+        parsed = bc.parse_plan(body_text, project=project, repo=repo,
+                               level=int(level or 2), lane=lane)
+        if not parsed["work_items"] and parsed["context_count"] == 0:
             return {"ok": True, "imported": 0, "project": project,
                     "note": f"no level-{level} headings found — try a different level"}
-        ids = []
-        for r in rows:
-            it = bc.BoardItem(id=r["id"], title=r["title"], lane=r["lane"], body=r["body"],
-                              labels=r["labels"], project=r["project"], repo=r["repo"])
-            saved = await provider().upsert(it)
-            ids.append(saved.id)
-        return {"ok": True, "project": project, "imported": len(ids), "ids": ids,
-                "items": [{"id": i} for i in ids]}
+        plan_id = await _upsert_row(parsed["plan_item"])
+        work_ids = [await _upsert_row(r) for r in parsed["work_items"]]
+        return {"ok": True, "project": project, "grouped": True, "plan": plan_id,
+                "work_count": len(work_ids), "context_count": parsed["context_count"],
+                "ids": [plan_id] + work_ids}
 
     @capability(
         "board.dispatch", http_method="POST", http_path="/board/dispatch",
@@ -452,6 +475,46 @@ if True:  # capability registration (mirrors the guard style of the other module
                 "target": target, "status": "running",
                 "note": "dispatched in the background — poll board.item / board.items; the "
                         "item moves in_progress → needs_review (a human then promotes) or blocked."}
+
+    @capability(
+        "board.context", http_method="GET", http_path="/board/context",
+        http_tags=["board"], memory="off", silent=True,
+        description="Assemble the FULL context to hand an agent working an item: the umbrella "
+                    "PLAN's overall guidance (if the item has plan=), this item's own body + "
+                    "done-when, its repo/branch pointers, and the sibling work items in the same "
+                    "plan (so it knows the part it plays). This is what makes a dispatched task "
+                    "see 'the code, the plan, and its part'. Input: id (str!). Output: {ok, plan, "
+                    "context}.",
+    )
+    async def cap_board_context(id: str = "", trace_id=None) -> dict:
+        it = await provider().get(id)
+        if it is None:
+            return {"ok": False, "error": f"no such item: {id}"}
+        parts = [f"# Task: {it.title}"]
+        ptrs = []
+        if it.repo:
+            ptrs.append(f"repo: {it.repo}")
+        if it.branch:
+            ptrs.append(f"branch: {it.branch}")
+        if it.project:
+            ptrs.append(f"project: {it.project}")
+        if ptrs:
+            parts.append(" · ".join(ptrs))
+        plan = None
+        if it.plan:
+            plan = await provider().get(it.plan)
+            if plan:
+                parts.append(f"\n## Overall plan — {plan.title}\n\n{plan.body}")
+        if (it.body or "").strip():
+            parts.append(f"\n## This work item\n\n{it.body}")
+        if it.plan:
+            sibs = [s for s in await provider().items()
+                    if s.plan == it.plan and s.id != it.id]
+            if sibs:
+                parts.append("\n## Sibling work items in this plan (the parts around yours)\n"
+                             + "\n".join(f"- [{s.lane}] {s.title}" for s in sibs))
+        return {"ok": True, "item": id, "plan": it.plan,
+                "context": "\n".join(parts)}
 
     @capability(
         "board.index", http_method="POST", http_path="/board/index",
