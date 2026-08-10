@@ -168,6 +168,20 @@ html.vpb-nav-hosted body{padding-left:0}
   <button class="btn sm" onclick="loadAll()">&#8635;</button>
 </div>
 
+<!-- GLOBAL CONTEXT: repo + sandbox/branch every section defaults to. Empty = see all.
+     Each section keeps its own selector (per-element override); this just sets the default. -->
+<div id="ctxbar" style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:10px;padding:6px 10px;background:var(--bg1);border:1px solid var(--border);border-radius:6px">
+  <span class="hint" style="font-weight:700;letter-spacing:1px;color:var(--acc4)">CONTEXT</span>
+  <label class="hint">repo</label>
+  <select id="ctx-repo" onchange="ctxSet('repo',this.value)" style="min-width:110px" title="Global repo — sections default to this; each section can still override"><option value="">all repos</option></select>
+  <label class="hint">sandbox / branch</label>
+  <select id="ctx-sandbox" onchange="ctxSet('branch',this.value)" style="min-width:210px" title="Global sandbox/branch — sections default to this; each section can still override"><option value="">all sandboxes</option></select>
+  <button class="btn sm" onclick="ctxMakeActive()" title="Bring the primary dev sandbox up on this branch so loop/agent/test runs execute against it">&#9881; make active</button>
+  <span class="hint" id="ctx-active">—</span>
+  <span style="flex:1"></span>
+  <button class="btn sm" onclick="ctxReset()" title="Clear the global filter — see all repos and branches">see all</button>
+</div>
+
 <!-- live activity strip (event + poll driven) -->
 <div id="live"></div>
 
@@ -1501,11 +1515,61 @@ async function testSuiteRefresh(){
   }
 }
 
+/* ═══ GLOBAL CONTEXT — repo + sandbox/branch that every section defaults to ═══
+   "See all" by default (empty filter). Selecting a repo/branch sets the global
+   default; each section still carries its own selector so it can be swapped on a
+   per-element basis. "make active" brings the primary dev sandbox up on the chosen
+   branch so the pre-existing loop/agent/test runners (sandbox-first) target it. */
+const LLCtx={
+  _s:(()=>{try{return JSON.parse(localStorage.getItem('ll_ctx')||'{}')}catch(e){return {}}})(),
+  repo(){return this._s.repo||''},
+  branch(){return this._s.branch||''},
+  set(k,v){this._s[k]=v||'';try{localStorage.setItem('ll_ctx',JSON.stringify(this._s))}catch(e){}}
+};
+window.LLCtx=LLCtx;
+let _ctxSandboxes=[];
+async function loadCtxBar(){
+  const [rp,sb]=await Promise.all([api('/evolve/repo/list').catch(()=>null),api('/evolve/sandbox/list').catch(()=>null)]);
+  const repos=(rp&&rp.repos)||[];
+  _ctxSandboxes=(sb&&sb.sandboxes)||[];
+  const rsel=$('ctx-repo');
+  if(rsel){rsel.innerHTML='<option value="">all repos</option>'+repos.map(r=>'<option value="'+esc(r.id)+'">'+esc(r.label||r.id)+(r.protected?' \u{1f512}':'')+'</option>').join('');rsel.value=LLCtx.repo()}
+  const ssel=$('ctx-sandbox');
+  if(ssel){ssel.innerHTML='<option value="">all sandboxes</option>'+_ctxSandboxes.map(s=>'<option value="'+esc(s.branch)+'">'+esc(s.branch)+' · :'+esc(String(s.port||''))+(s.running?'':' (down)')+(s.role==='primary'?' ★':'')+'</option>').join('');ssel.value=LLCtx.branch()}
+  const prim=_ctxSandboxes.find(s=>s.role==='primary');
+  const ael=$('ctx-active');
+  if(ael)ael.innerHTML=prim?('runner: <span class="tag" title="the primary dev sandbox — where sandbox-first loop/agent/test runs execute">'+esc(prim.branch)+'</span> <span class="hint">:'+esc(String(prim.port||''))+(prim.running?'':' down')+'</span>'):'<span class="hint">no active runner</span>';
+}
+function ctxSet(k,v){LLCtx.set(k,v);_ctxBroadcast()}
+function ctxReset(){LLCtx.set('repo','');LLCtx.set('branch','');if($('ctx-repo'))$('ctx-repo').value='';if($('ctx-sandbox'))$('ctx-sandbox').value='';_ctxBroadcast()}
+function _ctxBroadcast(){
+  // Sections listen for this to re-seed their own (overridable) filters.
+  try{document.dispatchEvent(new CustomEvent('llctx:change',{detail:{repo:LLCtx.repo(),branch:LLCtx.branch()}}))}catch(e){}
+  // Boards mirrors the global repo/branch into its own filters, then reloads if visible.
+  const br=$('board-fltrepo'),bb=$('board-fltbranch');
+  if(br)br.value=LLCtx.repo();
+  if(bb)bb.value=LLCtx.branch();
+  const s=_curSec&&_curSec();
+  if(s==='board')loadBoardTab();
+  else if(s==='swarm')loadSwarm();
+  else if(s==='pipelines')loadPipelines();
+}
+async function ctxMakeActive(){
+  const br=LLCtx.branch();
+  if(!br){toast('pick a sandbox / branch first');return}
+  if(!confirm('Bring the primary dev sandbox up on "'+br+'"?\n\nSandbox-first loop / agent / test runs will then execute against this branch.'))return;
+  toast('activating '+br+' …');
+  const r=await post('/evolve/sandbox/up',{branch:br});
+  toast(r&&(r.ok||r.sandbox)?('active runner → '+br):((r&&r.error)||'failed'));
+  await loadCtxBar();
+  if(typeof renderSafePill==='function')renderSafePill();
+}
 async function loadAll(){
   const [pv,pr,cf]=await Promise.all([api('/evolve/providers'),api('/loops/profiles'),api('/evolve/config')]);
   _providers=(pv&&pv.providers)||[];_profiles=(pr&&pr.profiles)||[];_cfg=(cf&&cf.config)||{};
   $('cfg-line').textContent='critic: '+(_cfg.critic_provider||'?')+' · editor: '+(_cfg.editor_provider||'?')+' · target '+(_cfg.target_score||'?');
   renderSafePill();
+  loadCtxBar();
   const em=_cfg.editq_model||'gpt-oss:20b';
   if($('editq-model-lbl'))$('editq-model-lbl').textContent=em;
   if($('im-editq-lbl'))$('im-editq-lbl').textContent=em;
@@ -1672,8 +1736,15 @@ function _fillFilter(id,allLabel,vals){
   s.innerHTML='<option value="">'+allLabel+'</option>'+vals.map(v=>'<option value="'+esc(v)+'">'+esc(v)+'</option>').join('');
   if(vals.indexOf(cur)>=0)s.value=cur;
 }
+let _boardCtxSeeded=false;
 async function loadBoardTab(){
   const el=$('board-body');if(!el)return;
+  // First open: inherit the global context (repo/branch) as the board's default
+  // filter. After that the board's own dropdowns are free to override it.
+  if(!_boardCtxSeeded){_boardCtxSeeded=true;
+    if($('board-fltrepo')&&window.LLCtx&&LLCtx.repo())$('board-fltrepo').value=LLCtx.repo();
+    if($('board-fltbranch')&&window.LLCtx&&LLCtx.branch())$('board-fltbranch').value=LLCtx.branch();
+  }
   // Fetch ALL items, then filter client-side — so the dropdowns always list every
   // repo/project, and filtering is instant.
   const r=await api('/board/items');
@@ -1842,14 +1913,17 @@ async function loadSwarm(){
     api('/ide/claude_sessions/watch?max_sessions=40').catch(()=>null),
     api('/evolve/sandbox/list').catch(()=>null)
   ]);
+  // Global context (repo/branch) narrows the branch-scoped rows here; global
+  // agents/sessions (no branch attribution) stay visible.
+  const _fB=(window.LLCtx&&LLCtx.branch())||'', _fR=(window.LLCtx&&LLCtx.repo())||'';
   const loops=((imp&&imp.sessions)||[]).filter(s=>s.live||s.status==='running');
   const editors=((eq&&eq.queue)||[]).filter(a=>a.status==='running'||a.status==='queued');
-  const livePipes=((pl&&pl.pipelines)||[]).filter(p=>p.live);
-  const dispatched=((bd&&bd.items)||[]).filter(i=>i.lane==='in_progress');
+  const livePipes=((pl&&pl.pipelines)||[]).filter(p=>p.live&&(!_fB||p.branch===_fB)&&(!_fR||p.repo===_fR));
+  const dispatched=((bd&&bd.items)||[]).filter(i=>i.lane==='in_progress'&&(!_fB||i.branch===_fB)&&(!_fR||i.repo===_fR));
   const liveSess=((cs&&cs.sessions)||[]).filter(s=>['live','resumable','stalled','declared-block'].indexOf(s.state)>=0);
-  const sandboxes=(sb&&(sb.sandboxes||sb.list||sb.containers))||[];
+  const sandboxes=((sb&&(sb.sandboxes||sb.list||sb.containers))||[]).filter(c=>!_fB||c.branch===_fB);
   const active=loops.length+editors.length+livePipes.length+dispatched.length;
-  const st=$('swarm-status');if(st)st.textContent=active?(active+' active'):'idle';
+  const st=$('swarm-status');if(st)st.textContent=(active?(active+' active'):'idle')+((_fB||_fR)?(' · filtered'+(_fB?(' · '+_fB):'')+(_fR?(' · '+_fR):'')):'');
   const sum=$('swarm-summary');
   if(sum)sum.innerHTML=[['loops',loops.length,'#e0a030'],['editors',editors.length,'#b070d0'],['pipelines',livePipes.length,'#4a9ed0'],['dispatches',dispatched.length,'#3cb371'],['sessions',liveSess.length,'#8a8a8a'],['containers',sandboxes.length,'#6a6a6a']].map(a=>'<span class="tag" style="border-left:3px solid '+a[2]+'">'+a[0]+' '+a[1]+'</span>').join('');
   let h='';
