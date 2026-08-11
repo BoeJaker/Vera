@@ -574,7 +574,9 @@ async def cap_web_search(
                 "Input: url (str!), timeout (float default 8.0), max_chars (int default 16000), "
                 "ingest_to_fabric (bool default True), dataset_id (str — discovery dataset). "
                 "Output: {url, title, text, domain, status_code, fetched_at, chars, elapsed_ms, "
-                "blocked, block_reason, via_reader, recalled, entities, fabric_dataset}.",
+                "blocked, block_reason, via_reader, reader_error (non-empty when the reader "
+                "fallback was tried and did NOT rescue a blocked page — e.g. it timed out), "
+                "recalled, entities, fabric_dataset}.",
 )
 async def cap_web_fetch(
     url:               str,
@@ -611,6 +613,7 @@ async def cap_web_fetch(
     block_reason = fp.get("block_reason", "")
     via_reader   = bool(fp.get("via_reader"))
     via_api      = fp.get("via_api", "")
+    reader_error = fp.get("reader_error", "")
 
     elapsed_ms = int((time.monotonic() - t0) * 1000)
     fetched_at = _now_iso()
@@ -628,6 +631,7 @@ async def cap_web_fetch(
         "block_reason": block_reason,
         "via_reader":   via_reader,
         "via_api":      via_api,
+        "reader_error": reader_error,
     }
 
     recalled = {"pages": [], "entities": []}
