@@ -170,6 +170,13 @@ _LUCENE_SPECIAL = re.compile(r'([+\-&|!(){}\[\]^"~*?:\\/])')
 def _lucene_escape(q: str) -> str:
     return _LUCENE_SPECIAL.sub(r"\\\1", q or "")
 
+# HybridMemoryStore.search() truncates any incoming query to this many
+# characters before embedding it or handing it to a backend — see the
+# comment at that call site for why. Generous for a real search query's
+# intent, nowhere near Neo4j's 1024-Lucene-clause cap even in the worst
+# case (every character its own word).
+_HYBRID_SEARCH_QUERY_MAX_CHARS = 600
+
 # ─────────────────────────────────────────────────────────────────────────────
 # MEMORY RECORD  —  the universal schema
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1514,6 +1521,24 @@ class HybridMemoryStore:
         Generates an embedding for the query and passes it to vector backends.
         Results are merged, deduplicated by id, and re-ranked by a combined score.
         """
+        # Cap query length HERE, at the single entry point every backend and
+        # the embedder both go through — callers occasionally pass something
+        # far bigger than a search query (a chat/loop caller's full turn
+        # text, which for an agentic-loop specialist step can run to tens of
+        # thousands of characters). Two live-confirmed costs scale with that:
+        # (1) embed_text() below tokenizes + embeds the WHOLE string before
+        # any backend even starts — the dominant cost for a long query, and
+        # (2) Neo4jBackend.search()'s fulltext index treats each whitespace
+        # -separated word as its own Lucene OR-clause; past the 1024-clause
+        # cap it doesn't just get slow, it throws outright ("TooManyClauses:
+        # maxClauseCount is set to 1024" — live-caught 2026-08-11, a
+        # memory-enabled chat pre-request delay of 7+s per the orchestrator's
+        # own "slow to appear in the queue" warning, on runs that reported
+        # minutes of pause before the LLM even started). A search QUERY
+        # doesn't need to be more than a couple hundred characters to convey
+        # its intent — cap it once here rather than trust every caller (and
+        # every future one) to do it themselves.
+        query = (query or "")[:_HYBRID_SEARCH_QUERY_MAX_CHARS]
         embedding = await embed_text(query)
         active = {k: v for k, v in self._backends.items()
                   if backends is None or k in backends}
