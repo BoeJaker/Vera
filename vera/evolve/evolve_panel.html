@@ -164,7 +164,7 @@ html.vpb-nav-hosted body{padding-left:0}
   <span class="pill" id="safe-pill" title="Where tests run — sandbox-first keeps them off real Vera" style="cursor:pointer" onclick="nav('sandbox')">🛡 —</span>
   <span class="hint" id="cfg-line">—</span>
   <vera-error-radar id="err-radar"></vera-error-radar>
-  <button class="btn sm" onclick="selftest()" title="Pre-flight: is anything actually going to run?">✓ Self-test</button>
+  <button class="btn sm" onclick="selftest()" title="Pre-flight redis · tasks · loops.run · critic · editor — and show which runner (active sandbox / in-process) they ran against">✓ Self-test</button>
   <button class="btn sm" onclick="loadAll()">&#8635;</button>
 </div>
 
@@ -2189,9 +2189,20 @@ async function errToggleAutosync(){const on=$('err-autosync').checked;const r=aw
 /* ═══ SELF-TEST ═══ */
 async function selftest(){
   openModal('<div class="card-h"><span class="card-t">Self-test</span></div><div id="stx"><span class="spin"></span> pre-flighting redis · tasks · loops.run · critic · editor…</div>');
-  const r=await post('/evolve/selftest',{});
+  // Pre-flight AND report WHERE it ran: the sandbox-first / active-runner model means
+  // the loops.run check executes in the active sandbox (or in-process) — surface which.
+  const [r,sbx]=await Promise.all([post('/evolve/selftest',{}),api('/evolve/sandbox/status').catch(()=>null)]);
   if(!r){$('stx').innerHTML='request failed';return}
-  let h='<div class="row" style="margin-bottom:8px">'+(r.ok?'<span class="pill" style="color:var(--ok)">ALL GREEN</span>':'<span class="pill" style="color:var(--err)">problems found</span>')+'</div><table>';
+  const mode=(_cfg&&_cfg.sandbox_mode)||'prefer';
+  const sb=(sbx&&sbx.sandbox)||{}, up=sbx&&sbx.up;
+  const runner=(mode==='off')
+    ?'<span style="color:var(--warn)">in-process (can touch real Vera)</span>'
+    :(up?('sandbox <span class="tag">'+esc(sb.branch||'?')+'</span> :'+esc(String((sbx&&sbx.dev_port)||'')))
+        :('<span style="color:var(--warn)">no sandbox up — '+(mode==='require'?'runs will REFUSE':'falls back in-process')+'</span>'
+          +' <button class="btn sm" onclick="closeModal();nav(\'sandbox\')">open Sandbox tab</button>'));
+  let h='<div class="row" style="margin-bottom:6px;gap:8px;align-items:center;flex-wrap:wrap">'
+    +(r.ok?'<span class="pill" style="color:var(--ok)">ALL GREEN</span>':'<span class="pill" style="color:var(--err)">problems found</span>')
+    +'<span class="hint">runner: '+runner+' · mode <b>'+esc(mode)+'</b></span></div><table>';
   for(const c of r.checks||[])h+='<tr><td>'+(c.ok?'<span style="color:var(--ok)">✓</span>':'<span style="color:var(--err)">✗</span>')+'</td><td class="mono">'+esc(c.name)+'</td><td style="font-size:10px">'+esc(c.detail)+'</td></tr>';
   h+='</table>'+(r.hint?'<div class="hint" style="margin-top:8px;color:var(--warn)">'+esc(r.hint)+'</div>':'');
   h+='<div class="row" style="margin-top:10px"><span style="flex:1"></span><button class="btn" onclick="closeModal()">Close</button></div>';
