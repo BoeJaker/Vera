@@ -6465,10 +6465,33 @@ from Vera.vera.evolve.evolve_unittest_core import (   # noqa: E402
                         "skip). MUST run on the managing instance (prod/native, which has docker) — "
                         "a sandbox container has no docker socket. Inputs: branch (str — defaults "
                         "to the primary sandbox's branch), paths (str='tests'), markers (str, e.g. "
-                        "'critical'), extra (str — extra pytest flags), timeout (int=600). Output: "
-                        "{ok, passed, failed, errors, skipped, total, summary, code, image, branch, out}.")
+                        "'critical'), extra (str — extra pytest flags), timeout (int=600), "
+                        "repo (str — a registered non-vera repo runs ITS OWN test_cmd in its "
+                        "checkout instead of Vera pytest; default '' / 'vera' keeps the ephemeral "
+                        "pytest path). Output: {ok, summary, code, out, repo, branch, ...}.")
 async def evolve_unittest_run(branch: str = "", paths: str = "tests", markers: str = "",
-                              extra: str = "", timeout: int = 600, trace_id=None):
+                              extra: str = "", timeout: int = 600, repo: str = "",
+                              trace_id=None):
+    # Non-Vera repo: run ITS OWN test_cmd in its checkout (the same gate the code
+    # pipeline uses), so the Test tab can exercise ANY registered repo — not just
+    # Vera. Vera (repo empty/'vera') keeps the ephemeral-container pytest below.
+    if repo and repo != DEFAULT_REPO_ID:
+        rec = (await _get_repos()).get(repo)
+        if not rec:
+            return {"error": f"unknown repo '{repo}' — register it via evolve.repo.add"}
+        root = Path(rec.get("path", ""))
+        if not root.exists():
+            return {"error": f"repo '{repo}' path missing: {root}"}
+        test_cmd = (rec.get("test_cmd") or DEFAULT_TEST_CMD).strip()
+        if not test_cmd:
+            return {"error": f"repo '{repo}' has no test_cmd — set one via evolve.repo.add"}
+        g = await _repo_test_gate(str(root), test_cmd,
+                                  timeout=max(30, min(1800, int(timeout))))
+        if g.get("error"):
+            return {"error": g["error"], "repo": repo}
+        return {"ok": bool(g.get("passed")), "summary": g.get("summary", ""),
+                "code": g.get("rc"), "out": g.get("output", ""),
+                "repo": repo, "branch": "", "test_cmd": test_cmd}
     # 1. resolve the target branch's worktree (primary sandbox by default)
     tgt = await _resolve_exec_target("", branch)
     if tgt.get("error"):
@@ -6504,7 +6527,7 @@ async def evolve_unittest_run(branch: str = "", paths: str = "tests", markers: s
                       "ok": parsed["ok"], "passed": parsed["passed"],
                       "failed": parsed["failed"], "errors": parsed["errors"]})
     return {**parsed, "code": parsed["rc"], "image": DEV_IMAGE,
-            "branch": branch or label, "out": combined[-8000:]}
+            "branch": branch or label, "out": combined[-8000:], "repo": DEFAULT_REPO_ID}
 
 
 @capability("evolve.sandbox.fs.list", memory="off", silent=True,
