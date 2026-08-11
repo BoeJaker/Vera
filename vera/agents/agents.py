@@ -1894,8 +1894,11 @@ class AgentRunner:
         # Models like qwen3 have built-in thinking activated by body["think"]=True
 
         # Memory injection — retrieve relevant past context (bounded: see
-        # CTX_INJECT_TIMEOUT — a busy embed node must not stall the reply)
-        if getattr(agent, 'memory_inject', False) and session_id:
+        # CTX_INJECT_TIMEOUT — a busy embed node must not stall the reply).
+        # Skipped entirely for the duration of an agentic-loop run — see
+        # SUPPRESS_MEMORY_INJECT in capability_orchestration.py for why.
+        if (getattr(agent, 'memory_inject', False) and session_id
+                and not _orch.SUPPRESS_MEMORY_INJECT.get()):
             try:
                 mem_hooks = sys.modules.get("memory_hooks")
                 if mem_hooks:
@@ -2071,8 +2074,11 @@ class AgentRunner:
             system = system_prefix.strip() + ("\n\n" + system if system else "")
         # think flag set on body below — native Ollama flag, no system prompt injection
 
-        # Memory injection (bounded: a busy embed node must not stall the chat)
-        if getattr(agent, 'memory_inject', False) and session_id:
+        # Memory injection (bounded: a busy embed node must not stall the chat).
+        # Skipped for the duration of an agentic-loop run — see
+        # SUPPRESS_MEMORY_INJECT in capability_orchestration.py for why.
+        if (getattr(agent, 'memory_inject', False) and session_id
+                and not _orch.SUPPRESS_MEMORY_INJECT.get()):
             try:
                 _mh = sys.modules.get("memory_hooks")
                 if _mh:

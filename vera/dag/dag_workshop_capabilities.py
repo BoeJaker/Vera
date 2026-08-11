@@ -16301,10 +16301,13 @@ async def cap_dag_agent_loop_v5(
     code_push_gitea:    bool = False,
     await_long_running: bool = True,
     long_running_timeout_secs: int = 1800,
+    disable_memory_inject: bool = True,    # skip memory_inject for every agent turn this loop triggers — see SUPPRESS_MEMORY_INJECT
     trace_id=None,
 ):
     if not goal:
         return {"error": "goal required"}
+    if disable_memory_inject:
+        _orch.SUPPRESS_MEMORY_INJECT.set(True)
     sid = session_id or str(uuid.uuid4())
     max_steps = max(1, min(20, int(max_steps)))
     step_cycle_budget = max(1, min(20, int(step_cycle_budget)))
