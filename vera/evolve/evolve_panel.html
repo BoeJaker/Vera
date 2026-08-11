@@ -3213,6 +3213,8 @@ async function sandboxDownNamed(name){
 }
 
 let _sbxTarget=null; // {name,branch,active} the Connection panel is bound to
+// GET query suffix that routes fs/diff to the bound container (backend name= param).
+function _sbxQ(){return (_sbxTarget&&_sbxTarget.name)?('&name='+encodeURIComponent(_sbxTarget.name)):''}
 async function loadSandbox(){
   if($('sb-mode')&&_cfg.sandbox_mode)$('sb-mode').value=_cfg.sandbox_mode;
   loadGit();
@@ -3253,14 +3255,14 @@ function renderSbxList(items){
       if(https)btns+='<button class="btn sm" onclick="embedSandbox(\''+(br||nm)+'\','+esc(String(s.port))+')" title="embed this sandbox\'s Vera UI in-page">▣ embed</button>';
       btns+='<a class="btn sm" href="'+esc(web)+'" target="_blank" title="open this sandbox\'s Vera UI in a new tab">open ↗</a>';
       btns+='<button class="btn sm" onclick="sbxConnect(\''+nm+'\',\''+br+'\','+a+',\'term\')" title="terminal in this container">▮ terminal</button>';
+      btns+='<button class="btn sm" onclick="sbxConnect(\''+nm+'\',\''+br+'\','+a+',\'files\')" title="browse + edit this container\'s worktree">🗀 files</button>';
+      btns+='<button class="btn sm" onclick="sbxConnect(\''+nm+'\',\''+br+'\','+a+',\'diff\')" title="git diff of this container\'s worktree vs main">⧉ diff</button>';
       btns+='<button class="btn sm" onclick="copySandboxSsh(\''+nm+'\')" title="copy the ssh/exec shell command">⌨ shell</button>';
       if(active){
-        btns+='<button class="btn sm" onclick="sbxConnect(\''+nm+'\',\''+br+'\',true,\'files\')">🗀 files</button>';
-        btns+='<button class="btn sm" onclick="sbxConnect(\''+nm+'\',\''+br+'\',true,\'diff\')">⧉ diff</button>';
         btns+='<button class="btn sm" onclick="sbxConnect(\''+nm+'\',\''+br+'\',true,\'code\')">⟨⟩ VS Code</button>';
         btns+='<button class="btn sm" onclick="sandboxSnapshot()" title="snapshot prod data into this sandbox">snapshot</button>';
       } else {
-        btns+='<button class="btn sm" onclick="sandboxUpNamed(\''+br+'\')" title="make primary runner: enables files/diff/VS Code + routes sandbox-first test/loop runs here">★ make active</button>';
+        btns+='<button class="btn sm" onclick="sandboxUpNamed(\''+br+'\')" title="make primary runner: enables the VS Code sidecar + routes sandbox-first test/loop runs here">★ make active</button>';
       }
     } else {
       btns+='<span class="hint">down · </span><button class="btn sm" onclick="sandboxUpNamed(\''+br+'\')" title="bring this sandbox up on its branch">▲ bring up</button>';
@@ -3284,16 +3286,16 @@ function sbxConnect(name,branch,active,tool){
   $('sbx-tools').style.display='';
   if($('sbx-tools-tgt'))$('sbx-tools-tgt').textContent=branch||name;
   const note=$('sbx-tools-note');
-  if(note)note.textContent=active?'':'(files / diff / VS Code bind to the ACTIVE sandbox — this one isn\'t active)';
+  if(note)note.textContent=active?'':'(terminal · files · diff work here; the VS Code sidecar needs this sandbox active)';
   sbxTool(tool);
   try{$('sbx-tools').scrollIntoView({behavior:'smooth',block:'nearest'})}catch(e){}
 }
 function sbxTool(tool){
-  // files/diff/VS Code are jailed to the ACTIVE (primary) worktree in the backend —
-  // if the bound sandbox isn't active, fall back to the terminal (which IS per-container).
-  if((tool==='files'||tool==='diff'||tool==='code')&&_sbxTarget&&!_sbxTarget.active){
-    toast('Files / Diff / VS Code operate on the ACTIVE sandbox — make this one active (★) first.');
-    tool='term';
+  // Terminal, Files and Diff are per-container (backend routes by name=). Only the
+  // VS Code sidecar still attaches to the ACTIVE worktree — gate just that one.
+  if(tool==='code'&&_sbxTarget&&!_sbxTarget.active){
+    toast('The VS Code sidecar attaches to the ACTIVE sandbox — make this one active (★) first.');
+    tool='files';
   }
   ['term','files','diff','code'].forEach(function(t){
     const p=$('sbxp-'+t),b=$('sbxtab-'+t);
@@ -3339,7 +3341,7 @@ async function sbxTermRun(){
 /* ── sandbox FILE EXPLORER (worktree-jailed) ── */
 let _sbfCur='',_sbfOpen='';
 async function sbxFsList(path){
-  const r=await api('/evolve/sandbox/fs/list?path='+encodeURIComponent(path||''));
+  const r=await api('/evolve/sandbox/fs/list?path='+encodeURIComponent(path||'')+_sbxQ());
   const t=$('sbf-tree');if(!t)return;
   if(!r||r.error){t.innerHTML='<div class="empty">'+esc((r&&r.error)||'failed')+'</div>';return}
   _sbfCur=r.path||'';
@@ -3351,7 +3353,7 @@ async function sbxFsList(path){
 }
 function sbxFsUp(){if(!_sbfCur)return;const i=_sbfCur.lastIndexOf('/');sbxFsList(i<0?'':_sbfCur.slice(0,i))}
 async function sbxFsOpen(path){
-  const r=await api('/evolve/sandbox/fs/read?path='+encodeURIComponent(path));
+  const r=await api('/evolve/sandbox/fs/read?path='+encodeURIComponent(path)+_sbxQ());
   if(!r||r.error){toast((r&&r.error)||'read failed');return}
   _sbfOpen=path;
   $('sbf-file').textContent=path+(r.truncated?' (truncated — too large to edit safely)':'');
@@ -3360,7 +3362,9 @@ async function sbxFsOpen(path){
 }
 async function sbxFsSave(){
   if(!_sbfOpen)return;
-  const r=await post('/evolve/sandbox/fs/write',{path:_sbfOpen,content:$('sbf-edit').value});
+  const wbody={path:_sbfOpen,content:$('sbf-edit').value};
+  if(_sbxTarget&&_sbxTarget.name)wbody.name=_sbxTarget.name;
+  const r=await post('/evolve/sandbox/fs/write',wbody);
   toast(r&&r.ok?('saved '+_sbfOpen+' → branch'):((r&&r.error)||'save failed'));
   if(r&&r.ok)loadSbxDiff('');
 }
@@ -3407,7 +3411,10 @@ function diffHtml(t){
 }
 async function loadSbxDiff(file){
   const fl=$('sbd-files'),v=$('sbd-view');if(!fl)return;
-  const r=await api('/evolve/sandbox/diff'+(file?'?file='+encodeURIComponent(file):''));
+  const params=[];
+  if(file)params.push('file='+encodeURIComponent(file));
+  if(_sbxTarget&&_sbxTarget.name)params.push('name='+encodeURIComponent(_sbxTarget.name));
+  const r=await api('/evolve/sandbox/diff'+(params.length?('?'+params.join('&')):''));
   if(!r||r.error){fl.innerHTML='<div class="empty">'+esc((r&&r.error)||'diff failed')+'</div>';return}
   const rows=(r.files||[]).map(f=>'<div class="sbd-f'+(file===f.path?' on':'')+'" onclick="loadSbxDiff(\''+esc(f.path)+'\')" title="'+esc(f.path)+'"><span class="tag">'+esc(f.status)+'</span> '+esc(f.path)+' <span class="hint">+'+esc(f.adds)+' −'+esc(f.dels)+'</span></div>').join('');
   const un=(r.untracked||[]).map(p=>'<div class="sbd-f'+(file===p?' on':'')+'" onclick="loadSbxDiff(\''+esc(p)+'\')" title="'+esc(p)+'"><span class="tag" style="color:var(--warn)">new</span> '+esc(p)+'</div>').join('');
