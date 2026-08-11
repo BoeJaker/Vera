@@ -90,7 +90,7 @@ _SETTINGS_FILE  = _HERE / ".vera_remote_settings.json"
 _DEFAULT_SETTINGS = {"autopilot": False, "max_concurrency": 1}
 
 
-def _load_json(path: Path, default):
+def _load_json_sync(path: Path, default):
     try:
         if path.exists():
             return json.loads(path.read_text(encoding="utf-8"))
@@ -99,44 +99,66 @@ def _load_json(path: Path, default):
     return default
 
 
-def _save_json(path: Path, data) -> None:
+def _save_json_sync(path: Path, data) -> None:
     try:
         path.write_text(json.dumps(data, indent=2), encoding="utf-8")
     except Exception as e:
         log.warning("remote: could not write %s: %s", path.name, e)
 
 
-def _load_instances() -> List[dict]:
-    return _load_json(_INSTANCES_FILE, [])
+async def _load_json(path: Path, default):
+    """Off-loop read. See _save_json — same reasoning."""
+    return await asyncio.to_thread(_load_json_sync, path, default)
 
 
-def _save_instances(rows: List[dict]) -> None:
-    _save_json(_INSTANCES_FILE, rows)
+async def _save_json(path: Path, data) -> None:
+    """Off-loop write via asyncio.to_thread.
+
+    ide_remote_client_poll calls _save_instances on EVERY poll, in a tight
+    reconnect loop hit by every connected vscode-client — this used to be a
+    bare, synchronous path.write_text() right on the event loop. A live
+    trace caught it as the exact blocking frame in an "EVENT LOOP HUNG"
+    watchdog event (3.3s stall, ide_remote_capabilities.py:_save_json,
+    2026-08-11 00:05:25) — the write itself is tiny (~1KB), but whenever the
+    underlying disk op has even a brief hiccup, an un-off-loaded call like
+    this freezes WS ping/frame delivery for every other connection on the
+    process, which is what showed up as intermittent WS flapping. All
+    callers below are awaited from async capability/route handlers, so this
+    fixes the whole _load_json/_save_json family, not just the poll path."""
+    await asyncio.to_thread(_save_json_sync, path, data)
 
 
-def _get_instance(instance_id: str) -> Optional[dict]:
-    for r in _load_instances():
+async def _load_instances() -> List[dict]:
+    return await _load_json(_INSTANCES_FILE, [])
+
+
+async def _save_instances(rows: List[dict]) -> None:
+    await _save_json(_INSTANCES_FILE, rows)
+
+
+async def _get_instance(instance_id: str) -> Optional[dict]:
+    for r in await _load_instances():
         if r.get("id") == instance_id:
             return r
     return None
 
 
-def _load_queue() -> List[dict]:
-    return _load_json(_QUEUE_FILE, [])
+async def _load_queue() -> List[dict]:
+    return await _load_json(_QUEUE_FILE, [])
 
 
-def _save_queue(rows: List[dict]) -> None:
-    _save_json(_QUEUE_FILE, rows)
+async def _save_queue(rows: List[dict]) -> None:
+    await _save_json(_QUEUE_FILE, rows)
 
 
-def _load_settings() -> dict:
+async def _load_settings() -> dict:
     s = dict(_DEFAULT_SETTINGS)
-    s.update(_load_json(_SETTINGS_FILE, {}) or {})
+    s.update(await _load_json(_SETTINGS_FILE, {}) or {})
     return s
 
 
-def _save_settings(s: dict) -> None:
-    _save_json(_SETTINGS_FILE, s)
+async def _save_settings(s: dict) -> None:
+    await _save_json(_SETTINGS_FILE, s)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -301,7 +323,7 @@ def _parse_kv(text: str) -> Dict[str, str]:
                 "url, port, workdir, status, has_token, has_api_key}], count}.",
 )
 async def ide_remote_instances(trace_id=None):
-    rows = [_public_instance(r) for r in _load_instances()]
+    rows = [_public_instance(r) for r in await _load_instances()]
     return {"instances": rows, "count": len(rows)}
 
 
@@ -355,7 +377,7 @@ async def ide_remote_register(
     if auth and auth not in ("api-key", "subscription"):
         return {"ok": False, "error": f"unknown auth: {auth}"}
 
-    rows = _load_instances()
+    rows = await _load_instances()
     rec = next((r for r in rows if r.get("id") == id), None) if id else None
     created = rec is None
     if rec is None:
@@ -389,7 +411,7 @@ async def ide_remote_register(
     # auth_pool (gap 4) is DERIVED from the auth mode, recorded for routing/attribution.
     rec["auth_pool"] = _core_auth_pool_for(rec)
 
-    _save_instances(rows)
+    await _save_instances(rows)
     await emit_event({"type": "ide.remote.instance", "action": "saved",
                       "id": rec["id"], "kind": kind, "label": rec["label"]})
     asyncio.ensure_future(_record(
@@ -417,11 +439,11 @@ async def ide_remote_register(
 async def ide_remote_delete(id: str = "", trace_id=None):
     if not id:
         return {"ok": False, "error": "id required"}
-    rows = _load_instances()
+    rows = await _load_instances()
     keep = [r for r in rows if r.get("id") != id]
     if len(keep) == len(rows):
         return {"ok": False, "error": f"instance not found: {id}"}
-    _save_instances(keep)
+    await _save_instances(keep)
     await emit_event({"type": "ide.remote.instance", "action": "deleted", "id": id})
     return {"ok": True, "deleted": id}
 
@@ -440,7 +462,7 @@ async def ide_remote_delete(id: str = "", trace_id=None):
 )
 async def ide_remote_detect(host_id: str = "", instance_id: str = "", trace_id=None):
     if instance_id and not host_id:
-        inst = _get_instance(instance_id) or {}
+        inst = await _get_instance(instance_id) or {}
         host_id = inst.get("host_id", "")
     if not host_id:
         return {"ok": False, "error": "host_id (or a host-backed instance_id) required"}
@@ -515,17 +537,17 @@ async def ide_remote_provision(
     )
     inst = reg.get("instance", {})
     if inst.get("id"):
-        rows = _load_instances()
+        rows = await _load_instances()
         for r in rows:
             if r.get("id") == inst["id"]:
                 r["status"] = "running"
                 r["claude_installed"] = bool(ok_claude)
                 r["updated_at"] = now_iso()
-        _save_instances(rows)
+        await _save_instances(rows)
 
     await emit_event({"type": "ide.remote.provision", "stage": "done",
                       "host_id": host_id, "url": url, "message": "provisioned"})
-    return {"ok": True, "instance": _public_instance(_get_instance(inst.get("id", "")) or inst),
+    return {"ok": True, "instance": _public_instance(await _get_instance(inst.get("id", "")) or inst),
             "url": url, "password": token, "claude_installed": ok_claude, "steps": steps}
 
 
@@ -539,7 +561,7 @@ async def ide_remote_provision(
                 "code_server, claude, claude_login, bridge, url_reachable}.",
 )
 async def ide_remote_status(instance_id: str = "", trace_id=None):
-    inst = _get_instance(instance_id)
+    inst = await _get_instance(instance_id)
     if not inst:
         return {"ok": False, "error": f"instance not found: {instance_id}"}
     out: Dict[str, Any] = {"ok": True, "instance_id": instance_id, "kind": inst.get("kind")}
@@ -548,12 +570,12 @@ async def ide_remote_status(instance_id: str = "", trace_id=None):
     if inst.get("kind") == "vscode-client":
         out["client_connected"] = _client_alive(instance_id)
         out["last_seen"] = inst.get("last_seen", "")
-        rows = _load_instances()
+        rows = await _load_instances()
         for r in rows:
             if r.get("id") == instance_id:
                 r["status"] = "running" if out["client_connected"] else "down"
                 r["updated_at"] = now_iso()
-        _save_instances(rows)
+        await _save_instances(rows)
         return out
 
     # SSH probe (code-server / claude / bridge) when host-backed.
@@ -582,18 +604,18 @@ async def ide_remote_status(instance_id: str = "", trace_id=None):
             out["url_error"] = str(e)[:160]
 
     # Persist a coarse status label.
-    rows = _load_instances()
+    rows = await _load_instances()
     for r in rows:
         if r.get("id") == instance_id:
             r["status"] = ("running" if out.get("code_server") == "up"
                            or out.get("url_reachable") else "down")
             r["updated_at"] = now_iso()
-    _save_instances(rows)
+    await _save_instances(rows)
     return out
 
 
 async def _codeserver_ctl(instance_id: str, action: str) -> dict:
-    inst = _get_instance(instance_id)
+    inst = await _get_instance(instance_id)
     if not inst:
         return {"ok": False, "error": f"instance not found: {instance_id}"}
     if not inst.get("host_id"):
@@ -639,7 +661,7 @@ async def ide_remote_stop(instance_id: str = "", trace_id=None):
                 "Input: instance_id (str!). Output: {ok, url, proxy_url, kind, needs_password}.",
 )
 async def ide_remote_open(instance_id: str = "", trace_id=None):
-    inst = _get_instance(instance_id)
+    inst = await _get_instance(instance_id)
     if not inst:
         return {"ok": False, "error": f"instance not found: {instance_id}"}
     return {"ok": True, "url": inst.get("url", ""),
@@ -907,7 +929,7 @@ async def _run_task(instance_id: str, task: str, engine: str = "claude",
     (optional) overrides the instance's project root for this run — used by
     Loop Lab to pin edits to a branch WORKTREE so the real source is never
     touched."""
-    inst = _get_instance(instance_id)
+    inst = await _get_instance(instance_id)
     if not inst:
         return {"ok": False, "error": f"instance not found: {instance_id}"}
     sid = session_id or _ide_get_session_id()
@@ -1057,7 +1079,7 @@ async def ide_remote_run_stream(request: Request):
     model       = (body.get("model") or "").strip()
     session_id  = body.get("session_id", "") or _ide_get_session_id()
 
-    inst = _get_instance(instance_id)
+    inst = await _get_instance(instance_id)
 
     def _err(msg: str):
         async def _g():
@@ -1269,7 +1291,7 @@ async def ide_remote_client_dispatch(
     instance_id: str = "", action: str = "", args: Optional[dict] = None,
     wait: int = 0, trace_id=None,
 ):
-    inst = _get_instance(instance_id)
+    inst = await _get_instance(instance_id)
     if not inst:
         return {"ok": False, "error": f"instance not found: {instance_id}"}
     if inst.get("kind") != "vscode-client":
@@ -1293,7 +1315,7 @@ async def ide_remote_client_poll(request: Request):
     except Exception:
         body = {}
     iid = body.get("instance_id", "")
-    inst = _get_instance(iid)
+    inst = await _get_instance(iid)
     if not inst or inst.get("kind") != "vscode-client":
         return {"ok": False, "error": f"vscode-client instance not found: {iid}"}
     if not _client_token_ok(inst, body.get("token", "")):
@@ -1302,12 +1324,12 @@ async def ide_remote_client_poll(request: Request):
 
     first_poll = not _client_alive(iid)
     _CLIENT_LAST_POLL[iid] = time.time()
-    rows = _load_instances()
+    rows = await _load_instances()
     for r in rows:
         if r.get("id") == iid:
             r["status"] = "running"
             r["last_seen"] = now_iso()
-    _save_instances(rows)
+    await _save_instances(rows)
     if first_poll:
         await emit_event({"type": "ide.remote.client", "stage": "connected",
                           "instance_id": iid, "label": inst.get("label", "")})
@@ -1333,7 +1355,7 @@ async def ide_remote_client_result(request: Request):
     except Exception:
         body = {}
     iid = body.get("instance_id", "")
-    inst = _get_instance(iid)
+    inst = await _get_instance(iid)
     if not inst or inst.get("kind") != "vscode-client":
         return {"ok": False, "error": f"vscode-client instance not found: {iid}"}
     if not _client_token_ok(inst, body.get("token", "")):
@@ -1414,9 +1436,9 @@ async def ide_remote_queue_add(
         "status": "queued", "created_at": now_iso(),
         "started_at": "", "finished_at": "", "summary": "", "ok": None,
     }
-    q = _load_queue()
+    q = await _load_queue()
     q.append(item)
-    _save_queue(q)
+    await _save_queue(q)
     await emit_event({"type": "ide.remote.queue", "action": "added", "id": item["id"],
                       "source": item["source"], "task": task[:120]})
     return {"ok": True, "item": item}
@@ -1430,13 +1452,13 @@ async def ide_remote_queue_add(
                 "Output: {items: [...], counts: {queued, running, done, error}, autopilot}.",
 )
 async def ide_remote_queue_list(status: str = "", trace_id=None):
-    q = _load_queue()
+    q = await _load_queue()
     if status:
         q = [i for i in q if i.get("status") == status]
     counts: Dict[str, int] = {}
-    for i in _load_queue():
+    for i in await _load_queue():
         counts[i.get("status", "?")] = counts.get(i.get("status", "?"), 0) + 1
-    s = _load_settings()
+    s = await _load_settings()
     return {"items": q, "counts": counts, "autopilot": s.get("autopilot"),
             "max_concurrency": s.get("max_concurrency"), "busy": list(_BUSY)}
 
@@ -1451,13 +1473,13 @@ async def ide_remote_queue_list(status: str = "", trace_id=None):
 async def ide_remote_queue_cancel(id: str = "", trace_id=None):
     if not id:
         return {"ok": False, "error": "id required"}
-    q = _load_queue()
+    q = await _load_queue()
     for i in q:
         if i.get("id") == id:
             if i.get("status") in ("queued", "running"):
                 i["status"] = "cancelled"
                 i["finished_at"] = now_iso()
-            _save_queue(q)
+            await _save_queue(q)
             await emit_event({"type": "ide.remote.queue", "action": "cancelled", "id": id})
             return {"ok": True, "item": i}
     return {"ok": False, "error": f"item not found: {id}"}
@@ -1472,14 +1494,14 @@ async def ide_remote_queue_cancel(id: str = "", trace_id=None):
     schema=enum_schema(which=["finished", "all"]),
 )
 async def ide_remote_queue_clear(which: str = "finished", trace_id=None):
-    q = _load_queue()
+    q = await _load_queue()
     if which == "all":
         removed = len(q)
-        _save_queue([])
+        await _save_queue([])
     else:
         keep = [i for i in q if i.get("status") in ("queued", "running")]
         removed = len(q) - len(keep)
-        _save_queue(keep)
+        await _save_queue(keep)
     return {"ok": True, "removed": removed}
 
 
@@ -1493,12 +1515,12 @@ async def ide_remote_queue_clear(which: str = "finished", trace_id=None):
 )
 async def ide_remote_autopilot(enabled: Optional[bool] = None,
                                max_concurrency: int = 0, trace_id=None):
-    s = _load_settings()
+    s = await _load_settings()
     if enabled is not None:
         s["autopilot"] = bool(enabled)
     if max_concurrency and max_concurrency > 0:
         s["max_concurrency"] = int(max_concurrency)
-    _save_settings(s)
+    await _save_settings(s)
     await emit_event({"type": "ide.remote.autopilot", "autopilot": s["autopilot"],
                       "max_concurrency": s["max_concurrency"]})
     return {"ok": True, "autopilot": s["autopilot"], "max_concurrency": s["max_concurrency"]}
@@ -1525,14 +1547,14 @@ async def _run_queue_item(item: dict, inst: dict):
     iid = inst["id"]
     _BUSY.add(iid)
 
-    def _update(**fields):
-        q = _load_queue()
+    async def _update(**fields):
+        q = await _load_queue()
         for it in q:
             if it.get("id") == item["id"]:
                 it.update(fields)
-        _save_queue(q)
+        await _save_queue(q)
 
-    _update(status="running", started_at=now_iso(), instance_id=iid)
+    await _update(status="running", started_at=now_iso(), instance_id=iid)
     await emit_event({"type": "ide.remote.queue", "action": "running",
                       "id": item["id"], "instance_id": iid})
     try:
@@ -1543,36 +1565,36 @@ async def _run_queue_item(item: dict, inst: dict):
                               workdir=item.get("workdir", ""),
                               model=item.get("model", ""))
         # Respect a cancel that landed mid-run.
-        cur = next((i for i in _load_queue() if i.get("id") == item["id"]), {})
+        cur = next((i for i in await _load_queue() if i.get("id") == item["id"]), {})
         if cur.get("status") == "cancelled":
-            _update(finished_at=now_iso(), summary=out.get("summary", "")[:2000], ok=out.get("ok"))
+            await _update(finished_at=now_iso(), summary=out.get("summary", "")[:2000], ok=out.get("ok"))
         else:
-            _update(status="done" if out.get("ok") else "error",
+            await _update(status="done" if out.get("ok") else "error",
                     finished_at=now_iso(), summary=out.get("summary", "")[:2000],
                     ok=bool(out.get("ok")))
         await emit_event({"type": "ide.remote.queue", "action": "finished",
                           "id": item["id"], "ok": out.get("ok")})
     except Exception as e:
         log.exception("queue item %s failed", item["id"])
-        _update(status="error", finished_at=now_iso(), summary=f"{type(e).__name__}: {e}", ok=False)
+        await _update(status="error", finished_at=now_iso(), summary=f"{type(e).__name__}: {e}", ok=False)
     finally:
         _BUSY.discard(iid)
 
 
 async def _queue_tick():
     """Scheduler tick: dispatch queued items to free instances (autopilot on)."""
-    s = _load_settings()
+    s = await _load_settings()
     if not s.get("autopilot"):
         return
     max_conc = int(s.get("max_concurrency", 1) or 1)
     if len(_BUSY) >= max_conc:
         return
-    q = _load_queue()
+    q = await _load_queue()
     queued = sorted([i for i in q if i.get("status") == "queued"],
                     key=lambda i: (i.get("priority", 5), i.get("created_at", "")))
     if not queued:
         return
-    instances = _load_instances()
+    instances = await _load_instances()
     for item in queued:
         if len(_BUSY) >= max_conc:
             break
@@ -1604,10 +1626,10 @@ async def ide_remote_summary(session_id: str = "", trace_id=None):
         except Exception as e:
             log.debug("remote summary search: %s", e)
     qcounts: Dict[str, int] = {}
-    for i in _load_queue():
+    for i in await _load_queue():
         qcounts[i.get("status", "?")] = qcounts.get(i.get("status", "?"), 0) + 1
     return {"session_id": session_id, "runs": cats.get("ide.remote.run", 0),
-            "instances": len(_load_instances()), "queue_counts": qcounts,
+            "instances": len(await _load_instances()), "queue_counts": qcounts,
             "categories": cats}
 
 
@@ -1643,7 +1665,7 @@ def _vera_base_url() -> str:
 async def ide_remote_bridge_install(
     instance_id: str = "", vera_url: str = "", allow: str = "", trace_id=None,
 ):
-    inst = _get_instance(instance_id)
+    inst = await _get_instance(instance_id)
     if not inst:
         return {"ok": False, "error": f"instance not found: {instance_id}"}
     host_id = inst.get("host_id", "")
@@ -1688,13 +1710,13 @@ async def ide_remote_bridge_install(
     steps.append({"step": ".mcp.json", "ok": w.get("ok")})
 
     ok = all(s.get("ok") for s in steps)
-    rows = _load_instances()
+    rows = await _load_instances()
     for r in rows:
         if r.get("id") == instance_id:
             r["bridge_installed"] = ok
             r["bridge_url"] = base
             r["updated_at"] = now_iso()
-    _save_instances(rows)
+    await _save_instances(rows)
     await emit_event({"type": "ide.remote.bridge", "action": "installed",
                       "instance_id": instance_id, "ok": ok, "url": base})
     return {"ok": ok, "url": base, "registered": registered, "steps": steps}
@@ -1708,7 +1730,7 @@ async def ide_remote_bridge_install(
                 "Input: instance_id (str!). Output: {ok, bridge_file, claude_registered}.",
 )
 async def ide_remote_bridge_status(instance_id: str = "", trace_id=None):
-    inst = _get_instance(instance_id)
+    inst = await _get_instance(instance_id)
     if not inst or not inst.get("host_id"):
         return {"ok": False, "error": "host-backed instance required"}
     cmd = ("echo \"bridge=$(test -f ~/.vera/vera_mcp_bridge.py && echo yes || echo no)\"; "
@@ -1794,4 +1816,5 @@ register_ui(
 schedule(_queue_tick, interval=10, name="ide_remote_queue")
 
 log.info("ide_remote_capabilities loaded — %d instances, autopilot=%s",
-         len(_load_instances()), _load_settings().get("autopilot"))
+         len(_load_json_sync(_INSTANCES_FILE, [])),
+         (_load_json_sync(_SETTINGS_FILE, {}) or {}).get("autopilot"))
