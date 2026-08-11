@@ -762,97 +762,94 @@ html.vpb-nav-hosted body{padding-left:0}
 <!-- ── SANDBOX ── -->
 <div class="sec" id="sec-sandbox" style="display:none">
   <div class="card">
-    <div class="card-h"><span class="card-t">Dev sandbox</span>
-      <span class="hint">an isolated Vera on another port running a branch's code, with a data snapshot</span>
+    <div class="card-h"><span class="card-t">Dev sandboxes</span>
+      <span class="hint">isolated Vera instances, each on its own port + Redis DB, running a branch's code with a data snapshot</span>
       <span style="flex:1"></span><button class="btn sm" onclick="loadSandbox()">&#8635;</button>
     </div>
-    <div id="sandbox-body"><div class="empty">Loading…</div></div>
-    <div id="sandbox-pool" style="margin-top:12px"></div>
-    <div class="row" style="margin-top:8px;gap:6px;align-items:center;flex-wrap:wrap">
-      <input id="sbx-spawn-branch" placeholder="branch to run as its own container" style="min-width:230px">
-      <button class="btn sm" onclick="sandboxSpawn()">＋ Spawn container</button>
-      <span class="hint">gives a branch its own isolated dev container — allocated port + Redis DB, alongside the others</span>
-    </div>
-    <div class="row" style="margin-top:10px">
+    <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
       <label class="fld" style="margin:0">Test execution</label>
       <select id="sb-mode" onchange="saveMode()" title="Where benchmark loops run">
-        <option value="prefer">prefer sandbox (use it when up)</option>
-        <option value="require">require sandbox (refuse in-process)</option>
-        <option value="off">off (run in-process — can touch real Vera)</option>
+        <option value="prefer">prefer sandbox</option>
+        <option value="require">require sandbox</option>
+        <option value="off">off (in-process)</option>
       </select>
-      <button class="btn primary" onclick="sandboxEnsure()" title="Bring up an isolation sandbox so tests run safely">🛡 Ensure sandbox</button>
+      <button class="btn primary sm" onclick="sandboxEnsure()" title="Bring up an isolation sandbox so tests run safely">&#128737; Ensure</button>
+      <span style="flex:1"></span>
+      <input id="sbx-spawn-branch" placeholder="branch &#8594; its own container" style="min-width:190px">
+      <button class="btn sm" onclick="sandboxSpawn()">&#65291; Spawn</button>
+      <input id="sb-port" type="number" min="1024" max="65535" style="width:84px" placeholder="port" title="Host port for a NEW sandbox — must differ from prod's">
+      <button class="btn sm" onclick="savePort()">save port</button>
     </div>
-    <div class="hint" style="margin-top:6px">Default posture is <b>sandbox-first</b>: agent-loop tests run in an isolated Vera on another port (isolated Redis DB) so they can't act on real Vera; write/exec/comms/deploy caps are stripped from test loops as defence in depth. Set <b>require</b> for hard isolation.</div>
-    <div class="row" style="margin-top:10px">
-      <select id="sb-branch" style="min-width:200px"><option value="">— pick a loop-lab branch —</option></select>
-      <button class="btn" onclick="sandboxUp()">▲ Bring up on branch</button>
-      <button class="btn err-btn" onclick="sandboxDown()">▼ Tear down</button>
-      <button class="btn sm" onclick="sandboxSnapshot()">Snapshot data</button>
-    </div>
-    <div class="row" style="margin-top:10px;align-items:center">
-      <label class="fld" style="margin:0" title="Host port the isolated dev-sandbox Vera binds. MUST differ from prod's port or 'Bring up' collides ('port already in use').">Sandbox host port</label>
-      <input id="sb-port" type="number" min="1024" max="65535" style="width:100px" placeholder="8998">
-      <button class="btn sm" onclick="savePort()">Save port</button>
-      <span class="hint" id="sb-port-hint">must differ from prod's port</span>
-    </div>
-    <div class="hint" style="margin-top:8px">Requires docker on the orchestrator host. Prod's working tree stays on main (the branch runs in a git worktree).</div>
+    <div class="hint" id="sb-status-line" style="margin-top:6px">—</div>
+    <div class="hint" style="margin-top:2px">Default posture is <b>sandbox-first</b>: agent-loop tests run in an isolated Vera (isolated Redis DB) so they can't act on real Vera; write/exec/comms/deploy caps are stripped from test loops. Requires docker on the host; prod's tree stays on main (branches run in worktrees).</div>
   </div>
 
   <div class="card" style="margin-top:10px">
-    <div class="card-h"><span class="card-t">Changes on the branch</span>
-      <span class="hint">git diff of the worktree vs <b>main</b> — committed + uncommitted pipeline edits</span>
-      <span style="flex:1"></span><button class="btn sm" onclick="loadSbxDiff('')">&#8635;</button>
+    <div class="card-h"><span class="card-t">Sandboxes &amp; connections</span>
+      <span class="hint">click <b>connect</b> on a sandbox to open its web UI, VS Code, terminal, files, diff or shell</span>
+      <span style="flex:1"></span><span class="hint" id="sbx-count">—</span>
     </div>
-    <div class="row" style="align-items:flex-start;gap:10px">
-      <div id="sbd-files" style="min-width:200px;max-width:300px;max-height:420px;overflow:auto"><div class="empty">—</div></div>
-      <div style="flex:1;min-width:0">
-        <pre id="sbd-view" class="sbd-pre"><span class="hint">Bring up a sandbox, then pick a file (or ↻ for the full diff).</span></pre>
+    <div id="sbx-list"><div class="empty">Loading…</div></div>
+  </div>
+
+  <!-- ONE contextual connection panel, bound to the sandbox you clicked -->
+  <div class="card" id="sbx-tools" style="margin-top:10px;display:none">
+    <div class="card-h"><span class="card-t">Connection</span>
+      <span class="tag" id="sbx-tools-tgt">—</span>
+      <span class="hint" id="sbx-tools-note"></span>
+      <span style="flex:1"></span>
+      <div class="seg">
+        <button class="btn sm" id="sbxtab-term" onclick="sbxTool('term')" title="run commands in the container / worktree">&#9646; Terminal</button>
+        <button class="btn sm" id="sbxtab-files" onclick="sbxTool('files')" title="browse + edit the branch worktree (active sandbox)">&#128449; Files</button>
+        <button class="btn sm" id="sbxtab-diff" onclick="sbxTool('diff')" title="git diff of the worktree vs main (active sandbox)">&#9187; Diff</button>
+        <button class="btn sm" id="sbxtab-code" onclick="sbxTool('code')" title="VS Code sidecar on the worktree (active sandbox)">&#10216;&#10217; VS Code</button>
+      </div>
+      <button class="btn sm" onclick="$('sbx-tools').style.display='none'" title="close">&#10005;</button>
+    </div>
+
+    <div id="sbxp-term" class="sbxp" style="display:none">
+      <div class="row" style="justify-content:flex-end;margin-bottom:4px">
+        <select id="sbt-where" style="width:120px"><option value="container">container</option><option value="worktree">worktree</option></select>
+        <button class="btn sm" onclick="$('sbt-out').textContent=''">clear</button>
+      </div>
+      <pre id="sbt-out" class="sbd-pre" style="max-height:260px;min-height:80px;overflow:auto"><span class="hint">e.g.  ls vera/evolve   ·   python -m py_compile vera/evolve/evolve_capabilities.py</span></pre>
+      <div class="row" style="margin-top:6px">
+        <span class="mono" style="color:var(--acc)">$</span>
+        <input id="sbt-cmd" class="mono" style="flex:1" placeholder="command…" onkeydown="if(event.key==='Enter')sbxTermRun();if(event.key==='ArrowUp'){this.value=window._sbtLast||this.value}">
+        <button class="btn primary sm" onclick="sbxTermRun()">Run</button>
       </div>
     </div>
-  </div>
 
-  <div class="card" style="margin-top:10px">
-    <div class="card-h"><span class="card-t">VS Code on the branch</span>
-      <span class="hint">a code-server sidecar on the worktree — watch edits land live</span>
-      <span style="flex:1"></span><span id="sbc-state" class="pill">—</span>
+    <div id="sbxp-files" class="sbxp" style="display:none">
+      <div class="row" style="margin-bottom:4px"><span id="sbf-path" class="mono hint">/</span><span style="flex:1"></span>
+        <button class="btn sm" onclick="sbxFsList('')" title="root">&#8962;</button><button class="btn sm" onclick="sbxFsUp()" title="up">&#8593;</button></div>
+      <div class="row" style="align-items:flex-start;gap:10px">
+        <div id="sbf-tree" style="min-width:220px;max-width:320px;max-height:380px;overflow:auto"><div class="empty">—</div></div>
+        <div style="flex:1;min-width:0">
+          <div class="row" style="margin-bottom:4px"><span id="sbf-file" class="mono hint">— no file open —</span><span style="flex:1"></span><button class="btn sm primary" id="sbf-save" style="display:none" onclick="sbxFsSave()">&#128190; Save to branch</button></div>
+          <textarea id="sbf-edit" class="mono" style="width:100%;min-height:320px;display:none;font-size:11px;line-height:1.5;background:var(--bg1);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:8px" spellcheck="false"></textarea>
+        </div>
+      </div>
     </div>
-    <div class="row">
-      <button class="btn" onclick="sbxCodeAttach()">⧉ Attach VS Code</button>
-      <button class="btn" id="sbc-open" onclick="sbxCodeToggle()" style="display:none">Open here</button>
-      <button class="btn err-btn" onclick="sbxCodeDetach()">Detach</button>
-      <span id="sbc-pw" class="hint" style="cursor:pointer" title="click to copy the login password" onclick="if(window._sbcPw){navigator.clipboard.writeText(window._sbcPw);toast('password copied')}"></span>
-    </div>
-    <div id="sbc-frame-wrap" style="display:none;margin-top:8px;height:64vh;border:1px solid var(--bg3);border-radius:6px;overflow:hidden">
-      <iframe id="sbc-frame" style="width:100%;height:100%;border:none;background:#1e1e1e" allow="clipboard-read; clipboard-write"></iframe>
-    </div>
-  </div>
 
-  <div class="card" style="margin-top:10px">
-    <div class="card-h"><span class="card-t">▮ Terminal</span>
-      <span class="hint">runs inside the vera-dev container (or the branch worktree) — never the real source</span>
-      <span style="flex:1"></span>
-      <select id="sbt-where" style="width:120px"><option value="container">container</option><option value="worktree">worktree</option></select>
-      <button class="btn sm" onclick="$('sbt-out').textContent=''">clear</button>
+    <div id="sbxp-diff" class="sbxp" style="display:none">
+      <div class="row" style="margin-bottom:4px"><span class="hint">git diff of the worktree vs <b>main</b> — committed + uncommitted edits</span><span style="flex:1"></span><button class="btn sm" onclick="loadSbxDiff('')">&#8635;</button></div>
+      <div class="row" style="align-items:flex-start;gap:10px">
+        <div id="sbd-files" style="min-width:200px;max-width:300px;max-height:420px;overflow:auto"><div class="empty">—</div></div>
+        <div style="flex:1;min-width:0"><pre id="sbd-view" class="sbd-pre"><span class="hint">pick a file, or &#8635; for the full diff.</span></pre></div>
+      </div>
     </div>
-    <pre id="sbt-out" class="sbd-pre" style="max-height:260px;min-height:80px;overflow:auto"><span class="hint">e.g.  ls vera/evolve   ·   python -m py_compile vera/evolve/evolve_capabilities.py   ·   redis-cli -n 3 keys 'vera:evolve:*'</span></pre>
-    <div class="row" style="margin-top:6px">
-      <span class="mono" style="color:var(--acc)">$</span>
-      <input id="sbt-cmd" class="mono" style="flex:1" placeholder="command…" onkeydown="if(event.key==='Enter')sbxTermRun();if(event.key==='ArrowUp'){this.value=window._sbtLast||this.value}">
-      <button class="btn primary sm" onclick="sbxTermRun()">Run</button>
-    </div>
-  </div>
 
-  <div class="card" style="margin-top:10px">
-    <div class="card-h"><span class="card-t">🗀 Files</span>
-      <span class="hint">the branch worktree — edits here land on the branch, reach main only via promote</span>
-      <span style="flex:1"></span><span id="sbf-path" class="mono hint">/</span>
-      <button class="btn sm" onclick="sbxFsList('')">⌂</button><button class="btn sm" onclick="sbxFsUp()">↑</button>
-    </div>
-    <div class="row" style="align-items:flex-start;gap:10px">
-      <div id="sbf-tree" style="min-width:220px;max-width:320px;max-height:380px;overflow:auto"><div class="empty">Bring up a sandbox first.</div></div>
-      <div style="flex:1;min-width:0">
-        <div class="row" style="margin-bottom:4px"><span id="sbf-file" class="mono hint">— no file open —</span><span style="flex:1"></span><button class="btn sm primary" id="sbf-save" style="display:none" onclick="sbxFsSave()">💾 Save to branch</button></div>
-        <textarea id="sbf-edit" class="mono" style="width:100%;min-height:320px;display:none;font-size:11px;line-height:1.5;background:var(--bg1);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:8px" spellcheck="false"></textarea>
+    <div id="sbxp-code" class="sbxp" style="display:none">
+      <div class="row">
+        <button class="btn" onclick="sbxCodeAttach()">&#10216;&#10217; Attach VS Code</button>
+        <button class="btn" id="sbc-open" onclick="sbxCodeToggle()" style="display:none">Open here</button>
+        <button class="btn err-btn" onclick="sbxCodeDetach()">Detach</button>
+        <span id="sbc-state" class="pill">—</span>
+        <span id="sbc-pw" class="hint" style="cursor:pointer" title="click to copy the login password" onclick="if(window._sbcPw){navigator.clipboard.writeText(window._sbcPw);toast('password copied')}"></span>
+      </div>
+      <div id="sbc-frame-wrap" style="display:none;margin-top:8px;height:64vh;border:1px solid var(--bg3);border-radius:6px;overflow:hidden">
+        <iframe id="sbc-frame" style="width:100%;height:100%;border:none;background:#1e1e1e" allow="clipboard-read; clipboard-write"></iframe>
       </div>
     </div>
   </div>
@@ -3195,52 +3192,117 @@ async function sandboxSpawn(){
   toast('spawning '+b+' — may take a minute…');
   const r=await post('/evolve/sandbox/spawn',{branch:b});
   toast(r&&r.ok?('spawned '+r.name+' on :'+r.port):(r&&r.error)||'failed');
-  loadSandboxPool();
+  loadSandbox();
 }
 async function sandboxDownNamed(name){
   if(!confirm('Tear down '+name+' (its container + worktree)?'))return;
   const r=await post('/evolve/sandbox/down',{name:name});
   toast(r&&r.ok?('torn down '+name):(r&&r.error)||'failed');
-  loadSandboxPool();
+  loadSandbox();
 }
 
+let _sbxTarget=null; // {name,branch,active} the Connection panel is bound to
 async function loadSandbox(){
   if($('sb-mode')&&_cfg.sandbox_mode)$('sb-mode').value=_cfg.sandbox_mode;
   loadGit();
-  const r=await api('/evolve/sandbox/status');
-  if(!r){$('sandbox-body').innerHTML='<div class="empty">status failed</div>';return}
-  const sb=r.sandbox||{};const up=r.up;
-  // Reflect the configured port (leave alone while the user is editing it)
-  if($('sb-port')&&document.activeElement!==$('sb-port')&&r.dev_port!=null)$('sb-port').value=r.dev_port;
-  if($('sb-port-hint')&&r.prod_port!=null)$('sb-port-hint').textContent='prod is on '+r.prod_port+' — pick a different free port';
-  const stale=!!(r.probe&&r.probe.stale);
-  let h='<div class="row"><span class="pill" style="color:'+(up?'var(--ok)':(stale?'var(--warn)':'var(--dim2)'))+'">'+(up?'● UP':(stale?'▲ STALE':'○ down'))+'</span>';
-  if(sb.branch)h+=' <span class="tag">'+esc(sb.branch)+'</span>';
-  h+=' <span class="hint">port '+esc(r.dev_port)+' · redis db '+esc(r.dev_redis_db)+(r.probe&&r.probe.tool_count?(' · '+r.probe.tool_count+' caps'):'')+'</span>';
-  if(up)h+=' <a href="http://localhost:'+esc(r.dev_port)+'/" target="_blank">open dev →</a>';
-  h+='</div>';
-  if(stale){
-    // Cause-aware: a stale MOUNT (or a behind BRANCH) is fixed by recreating the
-    // container — NOT by a multi-minute image rebuild. Only a genuinely stale
-    // image needs the rebuild. The backend diagnoses which (r.probe.cause).
-    const cause=(r.probe&&r.probe.cause)||'image';
-    const msg=(r.probe&&r.probe.error)||'The sandbox is missing newer capabilities (e.g. loops.run), so runs routed into it 404.';
-    h+='<div class="hint" style="margin-top:5px;color:var(--warn)">▲ '+esc(msg)+'</div>';
-    if(cause==='image'){
-      h+='<div class="row" style="margin-top:5px"><button class="btn primary" onclick="sandboxRebuild()" title="Force-rebuild vera:latest from source, then recreate the sandbox container on it (a few minutes)">🛠 Rebuild image &amp; recreate</button></div>';
-    }else{
-      // mount / branch → cheap recreate (down → up; up force-recreates + updates the worktree)
-      h+='<div class="row" style="margin-top:5px"><button class="btn primary" onclick="sandboxRecreate()" title="Recreate the sandbox container so it picks up the current worktree source (seconds — no image rebuild)">♻ Recreate container</button>'
-        +' <button class="btn" onclick="sandboxRebuild()" title="Full image rebuild — only needed if recreate does not clear it">🛠 Rebuild image</button></div>';
+  const [r,ls]=await Promise.all([api('/evolve/sandbox/status'),api('/evolve/sandbox/list')]);
+  // ── primary-runner status line (where sandbox-first runs execute) ──
+  if(r){
+    const sb=r.sandbox||{},up=r.up,stale=!!(r.probe&&r.probe.stale);
+    if($('sb-port')&&document.activeElement!==$('sb-port')&&r.dev_port!=null)$('sb-port').value=r.dev_port;
+    let sl='<b>primary runner:</b> '+(up?'<span style="color:var(--ok)">● up</span>':(stale?'<span style="color:var(--warn)">▲ stale</span>':'<span style="color:var(--dim2)">○ down</span>'));
+    if(sb.branch)sl+=' · <span class="tag">'+esc(sb.branch)+'</span>';
+    sl+=' · port '+esc(r.dev_port)+' · db '+esc(r.dev_redis_db)+(r.probe&&r.probe.tool_count?(' · '+r.probe.tool_count+' caps'):'');
+    if(r.prod_port!=null)sl+=' · prod on '+esc(r.prod_port);
+    if(stale){
+      // Cause-aware remediation: a stale MOUNT/behind-BRANCH is a cheap recreate;
+      // only a genuinely stale IMAGE needs the multi-minute rebuild (r.probe.cause).
+      const cause=(r.probe&&r.probe.cause)||'image';
+      sl+=' — <span style="color:var(--warn)">'+esc((r.probe&&r.probe.error)||'missing newer caps (runs routed in 404)')+'</span> '
+        +(cause==='image'
+           ?'<button class="btn sm" onclick="sandboxRebuild()" title="Force-rebuild vera:latest + recreate (minutes)">🛠 rebuild image</button>'
+           :'<button class="btn sm" onclick="sandboxRecreate()" title="Recreate the container so it re-reads the worktree (seconds)">♻ recreate</button>');
+    } else if(r.probe&&r.probe.error&&sb.branch){
+      sl+=' · <span style="color:var(--warn)">probe: '+esc(r.probe.error)+'</span>';
     }
-  } else if(r.probe&&r.probe.error&&sb.branch){
-    h+='<div class="hint" style="margin-top:4px;color:var(--warn)">probe: '+esc(r.probe.error)+'</div>';
+    if($('sb-status-line'))$('sb-status-line').innerHTML=sl;
   }
-  $('sandbox-body').innerHTML=h;
-  loadSandboxPool();
-  renderSbxCode(sb.code||null);
-  loadSbxDiff('');
-  if(sb.worktree)sbxFsList(_sbfCur||'');
+  renderSbxList((ls&&ls.sandboxes)||[]);
+}
+function renderSbxList(items){
+  const el=$('sbx-list');if(!el)return;
+  if($('sbx-count'))$('sbx-count').textContent=items.length+' sandbox'+(items.length===1?'':'es');
+  if(!items.length){el.innerHTML='<div class="empty">No dev sandboxes. Spawn one for a branch, or Ensure an isolation sandbox.</div>';return}
+  el.innerHTML=items.map(function(s){
+    const on=s.running, active=(s.role==='primary');
+    const sc=s.scheme||'http', https=(sc==='https'), web=sc+'://'+location.hostname+':'+s.port+'/';
+    const nm=esc(s.name||''), br=esc(s.branch||''), a=(active?'true':'false');
+    let btns='';
+    if(on){
+      if(https)btns+='<button class="btn sm" onclick="embedSandbox(\''+(br||nm)+'\','+esc(String(s.port))+')" title="embed this sandbox\'s Vera UI in-page">▣ embed</button>';
+      btns+='<a class="btn sm" href="'+esc(web)+'" target="_blank" title="open this sandbox\'s Vera UI in a new tab">open ↗</a>';
+      btns+='<button class="btn sm" onclick="sbxConnect(\''+nm+'\',\''+br+'\','+a+',\'term\')" title="terminal in this container">▮ terminal</button>';
+      btns+='<button class="btn sm" onclick="copySandboxSsh(\''+nm+'\')" title="copy the ssh/exec shell command">⌨ shell</button>';
+      if(active){
+        btns+='<button class="btn sm" onclick="sbxConnect(\''+nm+'\',\''+br+'\',true,\'files\')">🗀 files</button>';
+        btns+='<button class="btn sm" onclick="sbxConnect(\''+nm+'\',\''+br+'\',true,\'diff\')">⧉ diff</button>';
+        btns+='<button class="btn sm" onclick="sbxConnect(\''+nm+'\',\''+br+'\',true,\'code\')">⟨⟩ VS Code</button>';
+        btns+='<button class="btn sm" onclick="sandboxSnapshot()" title="snapshot prod data into this sandbox">snapshot</button>';
+      } else {
+        btns+='<button class="btn sm" onclick="sandboxUpNamed(\''+br+'\')" title="make primary runner: enables files/diff/VS Code + routes sandbox-first test/loop runs here">★ make active</button>';
+      }
+    } else {
+      btns+='<span class="hint">down · </span><button class="btn sm" onclick="sandboxUpNamed(\''+br+'\')" title="bring this sandbox up on its branch">▲ bring up</button>';
+    }
+    if(s.role==='spawned')btns+='<button class="btn sm err-btn" onclick="sandboxDownNamed(\''+nm+'\')">✕ down</button>';
+    return '<div style="padding:7px 0;border-bottom:1px solid var(--border)">'
+      +'<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">'
+        +'<span class="pill" style="color:'+(on?'var(--ok)':'var(--dim2)')+'">'+(on?'● running':'○ down')+'</span>'
+        +(active?'<span class="tag" style="background:var(--acc3);color:#111" title="the primary runner — sandbox-first test/loop runs execute here; files/diff/VS Code bind to it">★ active</span>':'<span class="tag">'+esc(s.role||'')+'</span>')
+        +'<span class="tag">'+(br||'(no branch)')+'</span>'
+        +'<span class="mono" style="font-size:10px;color:var(--dim2)">'+nm+'</span>'
+        +'<span class="hint">:'+esc(String(s.port||''))+' · db '+esc(String(s.redis_db||''))+'</span>'
+      +'</div>'
+      +'<div class="row" style="gap:4px;flex-wrap:wrap;margin-top:5px">'+btns+'</div>'
+    +'</div>';
+  }).join('');
+}
+// Bind the single Connection panel to a chosen sandbox + open a tool on it.
+function sbxConnect(name,branch,active,tool){
+  _sbxTarget={name:name,branch:branch,active:!!active};
+  $('sbx-tools').style.display='';
+  if($('sbx-tools-tgt'))$('sbx-tools-tgt').textContent=branch||name;
+  const note=$('sbx-tools-note');
+  if(note)note.textContent=active?'':'(files / diff / VS Code bind to the ACTIVE sandbox — this one isn\'t active)';
+  sbxTool(tool);
+  try{$('sbx-tools').scrollIntoView({behavior:'smooth',block:'nearest'})}catch(e){}
+}
+function sbxTool(tool){
+  // files/diff/VS Code are jailed to the ACTIVE (primary) worktree in the backend —
+  // if the bound sandbox isn't active, fall back to the terminal (which IS per-container).
+  if((tool==='files'||tool==='diff'||tool==='code')&&_sbxTarget&&!_sbxTarget.active){
+    toast('Files / Diff / VS Code operate on the ACTIVE sandbox — make this one active (★) first.');
+    tool='term';
+  }
+  ['term','files','diff','code'].forEach(function(t){
+    const p=$('sbxp-'+t),b=$('sbxtab-'+t);
+    if(p)p.style.display=(t===tool?'':'none');
+    if(b)b.classList.toggle('on',t===tool);
+  });
+  if(tool==='term'){const c=$('sbt-cmd');if(c)c.focus()}
+  else if(tool==='files')sbxFsList('');
+  else if(tool==='diff')loadSbxDiff('');
+  else if(tool==='code')api('/evolve/sandbox/status').then(function(r){renderSbxCode((r&&r.sandbox&&r.sandbox.code)||null)});
+}
+// Make a listed sandbox the primary runner (light run-targeting — reuses sandbox.up).
+async function sandboxUpNamed(branch){
+  if(!branch){toast('this sandbox has no branch to bring up');return}
+  if(!confirm('Make "'+branch+'" the primary runner?\n\nBrings the primary dev sandbox up on it; sandbox-first loop/agent/test runs then execute here.'))return;
+  toast('activating '+branch+' …');
+  const r=await post('/evolve/sandbox/up',{branch:branch});
+  toast(r&&(r.ok||r.healthy)?('active runner → '+branch):((r&&r.error)||'failed'));
+  loadSandbox();
+  if(typeof loadCtxBar==='function')loadCtxBar();
 }
 
 /* ── sandbox TERMINAL (container / worktree — never the real source) ── */
@@ -3250,7 +3312,9 @@ async function sbxTermRun(){
   const out=$('sbt-out');
   if(out.querySelector('.hint'))out.textContent='';
   out.textContent+='$ '+cmd+'\n';
-  const r=await post('/evolve/sandbox/exec',{cmd,where:$('sbt-where').value});
+  const body={cmd,where:$('sbt-where').value};
+  if(_sbxTarget&&_sbxTarget.name)body.name=_sbxTarget.name;  // target the bound container
+  const r=await post('/evolve/sandbox/exec',body);
   if(!r){out.textContent+='(request failed)\n';return}
   if(r.error){out.textContent+='! '+r.error+'\n'}
   else{
