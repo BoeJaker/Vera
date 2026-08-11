@@ -19224,13 +19224,16 @@ async def _v7_prestep_info(step: Dict[str, Any], results: List[Dict[str, Any]],
         "directory and is told the path when it does; asking for it first sends the "
         "step hunting for a file that does not exist yet. Gaps are EXTERNAL facts "
         "only (data, parameters, decisions) that the step cannot derive.\n"
-        "EXCLUDE any file or artifact an EARLIER step already produced, even when "
-        "ALREADY-COLLECTED names it (e.g. a saved research/report file) — that "
-        "file already exists; the capability this step calls (e.g. prose.author) "
-        "takes its name/path as an argument and loads it internally. Never list "
-        "that filename as something to 'make sure you have' or go verify first — "
-        "the step should simply call the capability and pass the filename; it "
-        "does not read, open, or check the file itself beforehand.\n"
+        "NEVER list a filename or file path as a gap, for ANY reason, even one "
+        "you don't see named in ALREADY-COLLECTED. Every file this run produces "
+        "is TRUSTED — verified correct at the moment it was created — and its "
+        "shape is already communicated in the running context (a SCHEMA line "
+        "accompanies every tool result). A step is NEVER required to open, "
+        "read, inspect, or verify a file before using it; it simply passes the "
+        "filename to whatever capability needs it (e.g. prose.author), which "
+        "loads that file internally. Listing a filename as something to 'make "
+        "sure you have' or 'check the structure of' sends the step off on a "
+        "pointless read that accomplishes nothing.\n"
         "EXCLUDE anything that would have to come from the USER — a preferred time "
         "range, preferred sources or domains, extra keywords, format/tone/length "
         "preferences, or any confirmation. The step CANNOT ask; there is no "
@@ -19259,17 +19262,19 @@ async def _v7_prestep_info(step: Dict[str, Any], results: List[Dict[str, Any]],
         gaps = [g for g in gaps
                 if not _V7_SELF_ANSWERED_GAP_RE.search(g)
                 and not _V7_ASK_THE_USER_GAP_RE.search(g)]
-        # Structural backstop for the prompt exclusion above: a gap that IS (or
-        # contains) the exact filename of an artifact an earlier step already
-        # produced — ALREADY-COLLECTED step summaries often mention the file
-        # they saved — is self-answered by construction, regardless of how the
-        # model phrases it. Live bug (2026-08-11): the model echoed a prior
-        # web.research step's saved filename straight back as a "gap", which
-        # sent the next step off to ide.fs.read it before ever calling the
-        # capability (prose.author) that would have loaded it automatically.
-        _known_fnames = {m.group(0) for m in _V5_FNAME_RE.finditer(known)}
-        if _known_fnames:
-            gaps = [g for g in gaps if not any(fn in g for fn in _known_fnames)]
+        # Structural backstop for the prompt exclusion above — and deliberately
+        # UNCONDITIONAL, not scoped to filenames appearing in ALREADY-COLLECTED.
+        # First attempt (2026-08-11) only dropped a gap if its filename matched
+        # one already named in `known`, on the theory the model was echoing a
+        # prior step's summary back — but a live re-check on prod showed it
+        # STILL happening: the model predicts/invents a filename following this
+        # run's own deterministic naming convention (tool__slug__cN.ext, visible
+        # all over its context) even when that exact string never appeared in
+        # `known`, then lists it as a gap anyway. Per the file-honesty design
+        # here, a filename is NEVER a legitimate gap — files are trusted at
+        # creation, their schema already travels with every tool result — so
+        # drop ANY gap shaped like one outright, known or not.
+        gaps = [g for g in gaps if not _V5_FNAME_RE.search(g)]
     except Exception as e:
         log.debug("v7 prestep info failed: %s", e)
         gaps = []
