@@ -112,6 +112,30 @@ BACKGROUND_LLM: "contextvars.ContextVar[str]" = contextvars.ContextVar(
 CALLER_KIND: "contextvars.ContextVar[str]" = contextvars.ContextVar(
     "vera_caller_kind", default="")
 
+# Set to True by the agentic loop (cap_dag_agent_loop_v6, which powers v5-v8)
+# for the duration of its run, same propagation idiom as BACKGROUND_LLM above
+# (contextvars flow through create_task, so one set() at the loop's entry
+# covers every agent turn the loop triggers, however deep). agents.py's
+# run_stream()/AGENT_RUNNER.run() check this before doing memory_inject.
+#
+# Why: a loop step's own turn text can run to tens of thousands of characters
+# (a real prod run had step prompts up to 30588 chars), and get_agent_memory_
+# context() -> HybridMemoryStore.search() always calls embed_text() once
+# before anything else. Live-measured (2026-08-11): embed_text() on this
+# instance's CPU embed nodes (cpu-246/cpu-247, shared with a high volume of
+# unrelated background embed traffic — sandbox session syncs, fabric
+# ingestion) costs 3.5-8.5s PER CALL regardless of input size — a separate,
+# infra-level bottleneck from the query-length bug fixed earlier the same
+# day (commit d93cdb6), and NOT something a code-side query cap can fix. A
+# controlled A/B on the live instance showed ~9-10s of memory_inject-
+# attributable overhead per turn even with that cap in place. A user-driven
+# loop can trigger many agent turns per run, so that cost compounds — and
+# per explicit user request, loop-driven turns skip memory_inject entirely
+# rather than pay it. Plain single-turn chat is UNAFFECTED (this is only
+# ever set for the duration of a loop run).
+SUPPRESS_MEMORY_INJECT: "contextvars.ContextVar[bool]" = contextvars.ContextVar(
+    "vera_suppress_memory_inject", default=False)
+
 # The capability currently being served over HTTP (set by the REST handler
 # factories). Lets a cap distinguish a DIRECT human/UI HTTP invocation of
 # itself from an internal (agentic / pipeline) call — used e.g. by the fabric
