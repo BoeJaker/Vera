@@ -19224,6 +19224,13 @@ async def _v7_prestep_info(step: Dict[str, Any], results: List[Dict[str, Any]],
         "directory and is told the path when it does; asking for it first sends the "
         "step hunting for a file that does not exist yet. Gaps are EXTERNAL facts "
         "only (data, parameters, decisions) that the step cannot derive.\n"
+        "EXCLUDE any file or artifact an EARLIER step already produced, even when "
+        "ALREADY-COLLECTED names it (e.g. a saved research/report file) — that "
+        "file already exists; the capability this step calls (e.g. prose.author) "
+        "takes its name/path as an argument and loads it internally. Never list "
+        "that filename as something to 'make sure you have' or go verify first — "
+        "the step should simply call the capability and pass the filename; it "
+        "does not read, open, or check the file itself beforehand.\n"
         "EXCLUDE anything that would have to come from the USER — a preferred time "
         "range, preferred sources or domains, extra keywords, format/tone/length "
         "preferences, or any confirmation. The step CANNOT ask; there is no "
@@ -19252,6 +19259,17 @@ async def _v7_prestep_info(step: Dict[str, Any], results: List[Dict[str, Any]],
         gaps = [g for g in gaps
                 if not _V7_SELF_ANSWERED_GAP_RE.search(g)
                 and not _V7_ASK_THE_USER_GAP_RE.search(g)]
+        # Structural backstop for the prompt exclusion above: a gap that IS (or
+        # contains) the exact filename of an artifact an earlier step already
+        # produced — ALREADY-COLLECTED step summaries often mention the file
+        # they saved — is self-answered by construction, regardless of how the
+        # model phrases it. Live bug (2026-08-11): the model echoed a prior
+        # web.research step's saved filename straight back as a "gap", which
+        # sent the next step off to ide.fs.read it before ever calling the
+        # capability (prose.author) that would have loaded it automatically.
+        _known_fnames = {m.group(0) for m in _V5_FNAME_RE.finditer(known)}
+        if _known_fnames:
+            gaps = [g for g in gaps if not any(fn in g for fn in _known_fnames)]
     except Exception as e:
         log.debug("v7 prestep info failed: %s", e)
         gaps = []
