@@ -982,15 +982,30 @@ async def write_artifact_file(*, relpath: str, content: str, session_id: str = "
     _has_sandbox = False
     if session_id and sb is not None and hasattr(sb, "route_artifact_dir") \
             and hasattr(sb, "route_fs_write"):
-        # Retry once. Routing can fail transiently while a container is being
-        # woken from idle-sleep, and a single miss here is not a harmless
+        # Retry with backoff. Routing can fail transiently while a container is
+        # being woken from idle-sleep, and a miss here is not a harmless
         # fallback: the file lands on the HOST while every exec/read for this
         # session routes into the CONTAINER, so the run is told
         # "saved to ./x.json" and can then never open it. Seen live — two
         # 120 KB search results written to the host artifact dir an hour into a
         # run whose earlier writes had gone to /workspace, after which the agent
         # burned cycles on "File not found".
-        for _attempt in (1, 2):
+        #
+        # A single 1s retry (the original mitigation) turned out to still not
+        # be enough — a live ARTIFACT SPLIT warning fired again with routing
+        # "failed twice" as documented. _wake()'s own docker start/unpause call
+        # is awaited with a generous internal timeout (90s), so by the time
+        # route_artifact_dir returns, a genuinely slow wake has usually already
+        # finished — the remaining failure mode is largely the narrow window
+        # right after docker reports a container "running" but before it's
+        # actually ready to accept `docker exec` (its entrypoint/init still
+        # settling), which gets WORSE, not better, under host load — and this
+        # host visibly runs many concurrent docker operations across sessions.
+        # More attempts with a longer backoff covers both a slower wake and a
+        # longer settle without materially delaying the common case (each
+        # attempt returns immediately on success).
+        _backoff = (1.0, 2.0, 3.0)
+        for _attempt in range(1, len(_backoff) + 2):
             try:
                 base = await sb.route_artifact_dir(session_id, create=True)
                 if base:
@@ -1003,8 +1018,8 @@ async def write_artifact_file(*, relpath: str, content: str, session_id: str = "
                               _attempt, (res or {}).get("error"))
             except Exception as e:
                 log.debug("sandbox artifact write attempt %d raised: %s", _attempt, e)
-            if _attempt == 1:
-                await asyncio.sleep(1.0)      # give a waking container a moment
+            if _attempt <= len(_backoff):
+                await asyncio.sleep(_backoff[_attempt - 1])  # give a waking container a moment
         # Does the session HAVE a sandbox even though routing failed? If so the
         # host write below is a SPLIT, not a fallback — say so loudly rather than
         # letting the run discover it as a mysterious missing file.
@@ -1027,8 +1042,9 @@ async def write_artifact_file(*, relpath: str, content: str, session_id: str = "
         log.warning(
             "ARTIFACT SPLIT: '%s' was written to the HOST (%s) even though session %s has a "
             "sandbox — the session's exec/reads resolve inside the CONTAINER, so this file "
-            "will read as 'File not found'. Sandbox routing failed twice (container waking "
-            "or docker host unreachable).", "/".join(parts), target, session_id)
+            "will read as 'File not found'. Sandbox routing failed across all %d attempts "
+            "(%.0fs of backoff) — container waking or docker host unreachable.",
+            "/".join(parts), target, session_id, len(_backoff) + 1, sum(_backoff))
     return target
 
 
