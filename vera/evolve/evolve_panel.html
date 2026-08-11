@@ -564,8 +564,8 @@ html.vpb-nav-hosted body{padding-left:0}
       <button class="btn" onclick="capTest()">▶ Test cap</button>
     </div>
     <div class="row" style="margin-top:6px">
-      <input id="ut-path" placeholder="path (e.g. vera/evolve)" value="vera/evolve" style="min-width:190px">
-      <select id="ut-mode" style="width:150px"><option value="compile">compile check (safe)</option><option value="pytest">pytest</option></select>
+      <input id="ut-path" placeholder="pytest path (Vera only, e.g. tests)" value="tests" style="min-width:180px">
+      <span class="hint" id="ut-repo-hint" title="Which repo the Unit test runs against — set by the CONTEXT bar. Vera runs pytest in an ephemeral container; a registered repo runs its own test_cmd in its checkout.">repo: vera</span>
       <button class="btn" onclick="unitTest()">▶ Unit test</button>
       <div id="qt-out" class="hint" style="flex:1"></div>
     </div>
@@ -1533,6 +1533,7 @@ async function loadCtxBar(){
   if(rsel){rsel.innerHTML='<option value="">all repos</option>'+repos.map(r=>'<option value="'+esc(r.id)+'">'+esc(r.label||r.id)+(r.protected?' \u{1f512}':'')+'</option>').join('');rsel.value=LLCtx.repo()}
   const ssel=$('ctx-sandbox');
   if(ssel){ssel.innerHTML='<option value="">all sandboxes</option>'+_ctxSandboxes.map(s=>'<option value="'+esc(s.branch)+'">'+esc(s.branch)+' · :'+esc(String(s.port||''))+(s.running?'':' (down)')+(s.role==='primary'?' ★':'')+'</option>').join('');ssel.value=LLCtx.branch()}
+  if($('ut-repo-hint'))$('ut-repo-hint').textContent='repo: '+(LLCtx.repo()||'vera');
   const prim=_ctxSandboxes.find(s=>s.role==='primary');
   const ael=$('ctx-active');
   if(ael)ael.innerHTML=prim?('runner: <span class="tag" title="the primary dev sandbox — where sandbox-first loop/agent/test runs execute">'+esc(prim.branch)+'</span> <span class="hint">:'+esc(String(prim.port||''))+(prim.running?'':' down')+'</span>'):'<span class="hint">no active runner</span>';
@@ -1546,6 +1547,7 @@ function _ctxBroadcast(){
   const br=$('board-fltrepo'),bb=$('board-fltbranch');
   if(br)br.value=LLCtx.repo();
   if(bb)bb.value=LLCtx.branch();
+  if($('ut-repo-hint'))$('ut-repo-hint').textContent='repo: '+(LLCtx.repo()||'vera');
   const s=_curSec&&_curSec();
   if(s==='board')loadBoardTab();
   else if(s==='swarm')loadSwarm();
@@ -3110,13 +3112,18 @@ async function capTest(){
   else{$('qt-out').textContent=(r&&r.error)||'failed'}
 }
 async function unitTest(){
-  const path=$('ut-path').value.trim()||'vera';
-  $('qt-out').innerHTML='<span class="spin"></span> '+$('ut-mode').value+' '+path+'…';
-  const r=await post('/evolve/unittest/run',{path,mode:$('ut-mode').value});
+  // Repo-aware: Vera runs pytest in an ephemeral container; a registered repo runs
+  // its own test_cmd in its checkout. The target repo comes from the CONTEXT bar.
+  const repo=(window.LLCtx&&LLCtx.repo())||'vera';
+  const paths=($('ut-path').value||'').trim();
+  $('qt-out').innerHTML='<span class="spin"></span> testing <b>'+esc(repo)+'</b>'+(repo==='vera'&&paths?(' · '+esc(paths)):'')+'…';
+  const body={repo}; if(repo==='vera'&&paths)body.paths=paths;
+  const r=await post('/evolve/unittest/run',body);
   if(!r){$('qt-out').textContent='failed';return}
   if(r.error){$('qt-out').innerHTML='<span style="color:var(--err)">'+esc(r.error)+'</span>';return}
-  $('qt-out').innerHTML='<span style="color:'+(r.passed?'var(--ok)':'var(--err)')+'">'+(r.passed?'✓ ':'✗ ')+esc(r.summary)+'</span> (rc '+r.rc+')';
-  if(!r.passed)openModal('<div class="card-h"><span class="card-t">Unit test — '+esc(path)+'</span></div><pre>'+esc(r.output||'')+'</pre><div class="row" style="margin-top:8px"><span style="flex:1"></span><button class="btn" onclick="closeModal()">Close</button></div>');
+  $('qt-out').innerHTML='<span style="color:'+(r.ok?'var(--ok)':'var(--err)')+'">'+(r.ok?'✓ ':'✗ ')+esc(r.summary||'')+'</span>'
+    +' <span class="hint">'+esc(r.repo||repo)+(r.branch?(' · '+esc(r.branch)):'')+(r.test_cmd?(' · '+esc(r.test_cmd)):'')+' · rc '+esc(String(r.code))+'</span>';
+  if(!r.ok)openModal('<div class="card-h"><span class="card-t">Unit test — '+esc(r.repo||repo)+'</span></div><pre>'+esc(r.out||'')+'</pre><div class="row" style="margin-top:8px"><span style="flex:1"></span><button class="btn" onclick="closeModal()">Close</button></div>');
 }
 async function saveMode(){
   const r=await post('/evolve/config/set',{sandbox_mode:$('sb-mode').value});
