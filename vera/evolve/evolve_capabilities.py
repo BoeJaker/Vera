@@ -6349,11 +6349,20 @@ async def _get_sandbox() -> Dict[str, Any]:
 #    evolve.sandbox.code.attach) — all scoped to the WORKTREE / dev container,
 #    never the real source.
 
-async def _wt_jail(path: str) -> Any:
-    """Resolve `path` inside the sandbox worktree; refuse escapes. Returns a
+async def _wt_jail(path: str, name: str = "", branch: str = "") -> Any:
+    """Resolve `path` inside a sandbox worktree; refuse escapes. Targets the
+    PRIMARY vera-dev worktree by default, or a SPAWNED per-branch sandbox by
+    name/branch (same routing as evolve.sandbox.exec, so the file explorer /
+    diff can reach ANY container — not just the primary). Returns a
     (root, absolute Path) tuple or {'error': ...}."""
-    sb = await _get_sandbox()
-    wt = sb.get("worktree", "")
+    if (name or "").strip() or (branch or "").strip():
+        tgt = await _resolve_exec_target(name, branch)
+        if tgt.get("error"):
+            return tgt
+        wt = tgt.get("worktree", "")
+    else:
+        sb = await _get_sandbox()
+        wt = sb.get("worktree", "")
     if not wt:
         return {"error": "no sandbox worktree — bring the sandbox up first "
                          "(evolve.sandbox.ensure)"}
@@ -6500,12 +6509,16 @@ async def evolve_unittest_run(branch: str = "", paths: str = "tests", markers: s
 
 @capability("evolve.sandbox.fs.list", memory="off", silent=True,
             http_method="GET", http_path="/evolve/sandbox/fs/list", http_tags=["evolve"],
-            description="FILE EXPLORER: list a directory inside the sandbox "
+            description="FILE EXPLORER: list a directory inside a sandbox "
                         "worktree (the branch's copy of the source — never the "
-                        "real tree). Query: path (str — relative, default root). "
-                        "Output: {path, dirs:[..], files:[{name,size}]}.")
-async def evolve_sandbox_fs_list(path: str = "", trace_id=None):
-    j = await _wt_jail(path)
+                        "real tree). Targets the primary vera-dev by default; pass "
+                        "name (container/slug) or branch to browse a SPAWNED "
+                        "per-branch sandbox. Query: path (str — relative, default "
+                        "root), name (str), branch (str). Output: {path, dirs:[..], "
+                        "files:[{name,size}]}.")
+async def evolve_sandbox_fs_list(path: str = "", name: str = "", branch: str = "",
+                                 trace_id=None):
+    j = await _wt_jail(path, name, branch)
     if isinstance(j, dict):
         return j
     root, p = j
@@ -6536,8 +6549,8 @@ async def evolve_sandbox_fs_list(path: str = "", trace_id=None):
                         "Query: path (str!), max_bytes (int=120000). Output: "
                         "{path, content, truncated}.")
 async def evolve_sandbox_fs_read(path: str = "", max_bytes: int = 120000,
-                                 trace_id=None):
-    j = await _wt_jail(path)
+                                 name: str = "", branch: str = "", trace_id=None):
+    j = await _wt_jail(path, name, branch)
     if isinstance(j, dict):
         return j
     root, p = j
@@ -6558,10 +6571,11 @@ async def evolve_sandbox_fs_read(path: str = "", max_bytes: int = 120000,
                         "(the branch's copy — the real source is never touched; "
                         "changes reach main only via pipeline promote). Inputs: "
                         "path (str!), content (str). Output: {ok, path, bytes}.")
-async def evolve_sandbox_fs_write(path: str = "", content: str = "", trace_id=None):
+async def evolve_sandbox_fs_write(path: str = "", content: str = "",
+                                  name: str = "", branch: str = "", trace_id=None):
     if not path:
         return {"error": "path required"}
-    j = await _wt_jail(path)
+    j = await _wt_jail(path, name, branch)
     if isinstance(j, dict):
         return j
     root, p = j
@@ -7401,25 +7415,38 @@ async def _worktree_diff(wt: str, base: str = "main", file: str = "",
 
 @capability("evolve.sandbox.diff", memory="off", silent=True,
             http_method="GET", http_path="/evolve/sandbox/diff", http_tags=["evolve"],
-            description="Unified diff of the dev-sandbox worktree (committed + "
+            description="Unified diff of a dev-sandbox worktree (committed + "
                         "uncommitted branch edits) against a base ref, so you can "
-                        "see exactly what Loop Lab changed. Inputs: base (str, "
+                        "see exactly what Loop Lab changed. Targets the primary "
+                        "vera-dev by default; pass name (container/slug) or branch "
+                        "to diff a SPAWNED per-branch sandbox. Inputs: base (str, "
                         "default 'main'), file (str — scope to one path), context "
-                        "(int=3), max_bytes (int=200000). Output: {ok, branch, "
-                        "base, files: [{path, status, adds, dels}], untracked, "
-                        "diff, truncated}.")
+                        "(int=3), max_bytes (int=200000), name (str), branch (str). "
+                        "Output: {ok, branch, base, files: [{path, status, adds, "
+                        "dels}], untracked, diff, truncated}.")
 async def evolve_sandbox_diff(base: str = "main", file: str = "",
                               context: int = 3, max_bytes: int = 200000,
-                              trace_id=None):
-    sb = await _get_sandbox()
-    wt = sb.get("worktree", "")
+                              name: str = "", branch: str = "", trace_id=None):
+    # Target the primary vera-dev worktree by default, or a SPAWNED per-branch
+    # sandbox by name/branch (same routing as evolve.sandbox.exec) so the Sandbox
+    # tab's Diff works for ANY container, not only the active one.
+    if (name or "").strip() or (branch or "").strip():
+        tgt = await _resolve_exec_target(name, branch)
+        if tgt.get("error"):
+            return tgt
+        wt = tgt.get("worktree", "")
+        sb_branch = branch or ""
+    else:
+        sb = await _get_sandbox()
+        wt = sb.get("worktree", "")
+        sb_branch = sb.get("branch", "")
     if not wt or not Path(wt).exists():
         return {"error": "no dev sandbox worktree — bring one up first "
                          "(evolve.sandbox.up / ensure)"}
     res = await _worktree_diff(wt, base, file, context, max_bytes)
     if res.get("error"):
         return res
-    res["branch"] = sb.get("branch", "")
+    res["branch"] = sb_branch
     return res
 
 
