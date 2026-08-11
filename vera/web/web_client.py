@@ -45,7 +45,7 @@ Usage
 
     page = {url, final_url, domain, status, html, text, title, chars,
             blocked, block_reason, via ("direct"|"reader"|"api:<id>"),
-            via_reader, via_api, elapsed_ms, error}
+            via_reader, via_api, elapsed_ms, error, reader_error}
 
 `text` is always extracted plain text (already de-HTML'd — do NOT run it
 through an HTML stripper again). `html` is the raw body when the page came
@@ -56,6 +56,12 @@ Env knobs
   VERA_WEB_UA               — override the browser UA string
   VERA_WEB_READER           — reader proxy prefix (default https://r.jina.ai/)
   VERA_WEB_READER_KEY       — optional reader API key (higher rate limit)
+  VERA_WEB_READER_TIMEOUT   — floor timeout (s) for the reader fallback call
+                              (default 25.0 — server-side rendering to clear
+                              a JS challenge is reliably slower than a direct
+                              fetch; too tight a timeout here silently
+                              defeats the fallback on exactly the pages it
+                              exists to rescue)
   VERA_WEB_REWRITES         — extra rewrites "host=target,host2=target2"
                               ("host=" with empty target removes a default)
   VERA_WEB_DOMAIN_INTERVAL  — min seconds between hits to one domain (def 1.0)
@@ -121,6 +127,19 @@ READER_KEY   = os.getenv("VERA_WEB_READER_KEY", "").strip()
 MAX_PAGE_CHARS = int(os.getenv("VERA_WEB_MAX_PAGE_CHARS", "16000"))
 
 DEFAULT_TIMEOUT = float(os.getenv("VERA_WEB_TIMEOUT", "8.0"))
+
+# The reader proxy does server-side rendering (launches a real browser to
+# clear a JS challenge) — that's reliably slower than a direct fetch, not
+# just "a bit slower": a live probe against a Cloudflare-"Just a moment..."
+# page (bulbapedia.bulbagarden.net, 2026-08-11) took 16.5s end to end. The
+# old floor of max(timeout, 15.0) — inherited from the direct-fetch timeout,
+# itself defaulting to 8s — was routinely too tight for exactly the pages
+# this fallback exists to rescue, so the fallback's own httpx call hit ITS
+# timeout, raised, and got swallowed by the `except Exception: log.debug`
+# below (invisible at the orchestrator's default INFO log level) — the page
+# came back reporting blocked=True, via_reader=False, with no visible error
+# anywhere. Give it a floor generous enough to actually finish.
+READER_TIMEOUT = float(os.getenv("VERA_WEB_READER_TIMEOUT", "25.0"))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Domain rewrites — hostile host → friendlier equivalent serving the same
@@ -360,11 +379,21 @@ async def _fetch_via_reader(url: str, timeout: float) -> Tuple[str, int, str]:
     if not READER_PROXY:
         return "", 0, ""
     proxied = READER_PROXY.rstrip("/") + "/" + url
-    hdrs = dict(BROWSER_HEADERS)
+    # NEITHER BROWSER_HEADERS NOR the shared USER_AGENT. This call's target
+    # is the reader PROXY (e.g. r.jina.ai), not the page being rescued — and
+    # USER_AGENT itself is a Chrome-browser CLAIM (module docstring: "Browser
+    # fingerprint"). Live-verified against r.jina.ai (2026-08-11): sending
+    # either the full BROWSER_HEADERS set OR just USER_AGENT alone got an
+    # instant 403 "Just a moment..." from Cloudflare in front of THE READER
+    # ITSELF, while a plain, honestly-non-browser UA succeeded immediately.
+    # httpx's TLS handshake doesn't match real Chrome's, so CLAIMING Chrome
+    # via headers is what trips the mismatch — there's no page here to
+    # impersonate a browser navigating to, so don't claim to be one.
+    hdrs = {"User-Agent": "Vera/1.0 (+reader-fallback)", "Accept": "*/*"}
     if READER_KEY:
         hdrs["Authorization"] = f"Bearer {READER_KEY}"
     await throttle_domain(urlparse(READER_PROXY).netloc)
-    async with httpx.AsyncClient(timeout=max(timeout, 15.0), headers=hdrs,
+    async with httpx.AsyncClient(timeout=max(timeout, READER_TIMEOUT), headers=hdrs,
                                  follow_redirects=True) as c:
         r = await c.get(proxied)
     text = (r.text or "").strip()
@@ -396,6 +425,7 @@ async def fetch_page(url: str, *,
         "status": 0, "html": "", "text": "", "title": "", "chars": 0,
         "blocked": False, "block_reason": "", "via": "direct",
         "via_reader": False, "via_api": "", "elapsed_ms": 0, "error": "",
+        "reader_error": "",
     }
     if not url:
         out["error"] = "url required"
@@ -474,8 +504,19 @@ async def fetch_page(url: str, *,
                     "via_reader":   True,
                 })
                 transport_err = ""
+            elif rtext:
+                # Reader responded but its own output looked blocked/short —
+                # worth knowing, distinct from a hard failure below.
+                out["reader_error"] = f"reader returned no better than direct fetch (status={rstatus})"
         except Exception as e:
-            log.debug("reader fallback %s: %s", url[:80], e)
+            # This used to be silent at log.debug (invisible at the
+            # orchestrator's default INFO level) — the fallback existing
+            # specifically to rescue a blocked page failing without a trace
+            # is exactly what made the too-tight READER_TIMEOUT above go
+            # undiagnosed. Log it where it'll actually be seen, and hand the
+            # reason back to the caller instead of a bare blocked=True.
+            out["reader_error"] = f"{type(e).__name__}: {e}"
+            log.warning("web.fetch reader fallback failed for %s: %s", url[:80], e)
 
     if transport_err and not out["text"]:
         out["error"] = transport_err
