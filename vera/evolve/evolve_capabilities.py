@@ -7555,6 +7555,129 @@ async def _scaffolding_sweep() -> None:
 schedule(_scaffolding_sweep, _SCAFFOLD_SWEEP_INTERVAL_S, name="evolve.scaffolding.sweep")
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# CONTENT WRITEBACK (Phase E) — a sanctioned, PATH-LOCKED way for Vera (running on
+# prod) to land docs / skills / notes / tracked images onto `main` WITHOUT a dev
+# container and WITHOUT dirtying prod's live checkout. Writes go into a machine-
+# managed worktree on `docs/content-sync` (OUT of the repo tree, under the state
+# root), commit through the repo hooks (secret-scan / no-AI-trailer / human author),
+# and safe-merge into main so prod serves them immediately. The allowlist means it
+# can NEVER touch runtime code (vera/, arbitrary paths).
+# ═════════════════════════════════════════════════════════════════════════════
+_CONTENT_ALLOW_PREFIXES = ("documentation/", ".claude/skills/")
+_CONTENT_DENY_PREFIXES = ("documentation/assets/",)   # gitignored machine output
+_CONTENT_BRANCH = "docs/content-sync"
+
+
+def _content_path_ok(path: str):
+    """Validate a content-writeback path against the allowlist. Returns (True, rel)
+    or (False, reason). Structurally excludes runtime code — only documentation/
+    (not assets/) and .claude/skills/ are writable."""
+    p = (path or "").strip().replace("\\", "/").lstrip("/")
+    if not p:
+        return False, "path required"
+    if ".." in p.split("/"):
+        return False, "path may not contain '..'"
+    if not p.startswith(_CONTENT_ALLOW_PREFIXES):
+        return False, ("path must be under " + " or ".join(_CONTENT_ALLOW_PREFIXES)
+                       + " — content-writeback is locked to docs + skills, never runtime code")
+    if p.startswith(_CONTENT_DENY_PREFIXES):
+        return False, "documentation/assets/ is gitignored machine output — not a content target"
+    return True, p
+
+
+async def _content_sync_worktree():
+    """Ensure the machine-managed content worktree on docs/content-sync exists and
+    is reset to the current main tip. Lives OUTSIDE the repo tree (state root) so it
+    never dirties prod's checkout, and it is EXCLUSIVELY machine-managed (only
+    content.edit writes here, every edit commits+merges+resets), so a hard reset is
+    always safe — there is never human WIP to lose here."""
+    root = str(_repo_root())
+    wt = str(state_root() / "content-sync-wt")
+    if not Path(wt, ".git").exists():
+        await _sh(["git", "-C", root, "worktree", "prune"], timeout=60)
+        has_branch = (await _git("rev-parse", "--verify", f"refs/heads/{_CONTENT_BRANCH}",
+                                 repo_root=root)).get("ok")
+        argv = (["git", "-C", root, "worktree", "add", "--force", wt, _CONTENT_BRANCH]
+                if has_branch else
+                ["git", "-C", root, "worktree", "add", "-b", _CONTENT_BRANCH, wt, "main"])
+        add = await _sh(argv, timeout=120)
+        if not Path(wt, ".git").exists():
+            return {"error": f"content worktree add failed: {(add.get('err') or '')[:200]}"}
+    await _sh(_git_wt_argv(wt, "reset", "--hard", "main"), cwd=wt, timeout=60)
+    await _sh(_git_wt_argv(wt, "clean", "-fd"), cwd=wt, timeout=60)
+    return {"path": wt, "branch": _CONTENT_BRANCH}
+
+
+@capability("content.edit", memory="on",
+            http_method="POST", http_path="/content/edit", http_tags=["content"],
+            description="Land a DOC / SKILL / note / tracked image onto main WITHOUT a dev "
+                        "container and WITHOUT dirtying prod's checkout (Phase E). Writes "
+                        "`body` to `path` inside a machine-managed docs/content-sync worktree "
+                        "(out-of-tree), commits through the repo hooks (secret-scan, "
+                        "no-AI-trailer, human author), and safe-merges into main so prod serves "
+                        "it immediately. LOCKED to an allowlist: path must be under "
+                        "documentation/ (not assets/) or .claude/skills/ — never runtime code. "
+                        "Inputs: path (str!), body (str!), message (str — commit subject). "
+                        "Output: {ok, path, sha, merged, commit, push_pending}.")
+async def content_edit(path: str = "", body: str = "", message: str = "", trace_id=None):
+    okp, res = _content_path_ok(path)
+    if not okp:
+        return {"error": res}
+    rel = res
+    if body is None:
+        return {"error": "body required"}
+    wtr = await _content_sync_worktree()
+    if wtr.get("error"):
+        return wtr
+    wt = wtr["path"]
+    target = Path(wt) / rel
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body, encoding="utf-8")
+    except Exception as e:
+        return {"error": f"write failed: {e}"}
+    await _sh(_git_wt_argv(wt, "add", "--", rel), cwd=wt, timeout=60)
+    # identical content → nothing staged → no-op success
+    if (await _sh(_git_wt_argv(wt, "diff", "--cached", "--quiet"), cwd=wt, timeout=60)).get("ok"):
+        return {"ok": True, "path": rel, "sha": "", "merged": False, "note": "no change (identical content)"}
+    subj = ((message or "").strip().splitlines() or [""])[0][:120] or f"docs: update {rel}"
+    commit = await _sh(_git_wt_argv(wt, "-c", "user.name=BoeJaker",
+                                    "-c", "user.email=boejaker80@gmail.com",
+                                    "commit", "-m", subj), cwd=wt, timeout=180)
+    if not commit.get("ok"):
+        # a hook (secret-scan / AI-trailer / author) blocked it — surface why
+        return {"error": "commit blocked (hook or empty)",
+                "detail": (commit.get("err") or commit.get("out") or "")[-600:]}
+    sha = (await _sh(_git_wt_argv(wt, "rev-parse", "HEAD"), cwd=wt)).get("out", "").strip()
+    mres = await _merge_in_checkout(str(_repo_root()), _CONTENT_BRANCH, "main",
+                                    str(_repo_root()), f"content: {subj}")
+    if not mres.get("ok"):
+        return {"ok": False, "path": rel, "sha": sha, "merged": False,
+                "error": f"merge to main failed: {mres.get('error')}"}
+    await _audit("content.edit", f"{rel} -> main ({sha[:8]})", path=rel)
+    await emit_event({"type": "content.edit", "path": rel, "sha": sha})
+    return {"ok": True, "path": rel, "sha": sha, "merged": True, "commit": mres.get("commit"),
+            "push_pending": True,
+            "note": "landed on main (prod serves it); GitHub push piggybacks the normal flow / prod's deploy key"}
+
+
+@capability("content.status", memory="off", silent=True,
+            http_method="GET", http_path="/content/status", http_tags=["content"],
+            description="Content-writeback status: the allowlist, the docs/content-sync "
+                        "worktree, and how many local main commits are AHEAD of origin/main "
+                        "(pending a GitHub push). Output: {ok, worktree, branch, "
+                        "unpushed_main_commits, allow, deny}.")
+async def content_status(trace_id=None):
+    root = str(_repo_root())
+    ahead = await _git("rev-list", "--count", "origin/main..main", repo_root=root)
+    return {"ok": True, "worktree": str(state_root() / "content-sync-wt"),
+            "branch": _CONTENT_BRANCH,
+            "unpushed_main_commits": ((ahead.get("out", "") or "0").strip()
+                                      if ahead.get("ok") else "unknown (no origin/main ref)"),
+            "allow": list(_CONTENT_ALLOW_PREFIXES), "deny": list(_CONTENT_DENY_PREFIXES)}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SANDBOX DIFF + VS CODE SIDECAR — see the branch's edits as they happen
 # ─────────────────────────────────────────────────────────────────────────────
