@@ -787,7 +787,9 @@ html.vpb-nav-hosted body{padding-left:0}
   <div class="card" style="margin-top:10px">
     <div class="card-h"><span class="card-t">Sandboxes &amp; connections</span>
       <span class="hint">click <b>connect</b> on a sandbox to open its web UI, VS Code, terminal, files, diff or shell</span>
-      <span style="flex:1"></span><span class="hint" id="sbx-count">—</span>
+      <span style="flex:1"></span>
+      <button class="btn sm" onclick="sbxReap()" title="Pause idle spawned containers so they stop sharing the Ollama nodes (previews first; pinned + actively-dispatched are exempt)">⏸ Reap idle</button>
+      <span class="hint" id="sbx-count" style="margin-left:8px">—</span>
     </div>
     <div id="sbx-list"><div class="empty">Loading…</div></div>
   </div>
@@ -3254,11 +3256,17 @@ function renderSbxList(items){
   if($('sbx-count'))$('sbx-count').textContent=items.length+' sandbox'+(items.length===1?'':'es');
   if(!items.length){el.innerHTML='<div class="empty">No dev sandboxes. Spawn one for a branch, or Ensure an isolation sandbox.</div>';return}
   el.innerHTML=items.map(function(s){
-    const on=s.running, active=(s.role==='primary');
+    const on=s.running, active=(s.role==='primary'), paused=!!s.paused, pinned=!!s.pinned;
     const sc=s.scheme||'http', https=(sc==='https'), web=sc+'://'+location.hostname+':'+s.port+'/';
     const nm=esc(s.name||''), br=esc(s.branch||''), a=(active?'true':'false');
     let btns='';
-    if(on){
+    if(paused){
+      // Frozen by the idle-reaper. Files/Diff still work (host worktree); terminal
+      // auto-resumes on use; resume unpauses it explicitly.
+      btns+='<button class="btn sm ok-btn" onclick="sbxResume(\''+nm+'\')" title="unpause this container">▶ resume</button>';
+      btns+='<button class="btn sm" onclick="sbxConnect(\''+nm+'\',\''+br+'\','+a+',\'files\')" title="browse the worktree (works while paused)">🗀 files</button>';
+      btns+='<button class="btn sm" onclick="sbxConnect(\''+nm+'\',\''+br+'\','+a+',\'diff\')" title="git diff (works while paused)">⧉ diff</button>';
+    } else if(on){
       if(https)btns+='<button class="btn sm" onclick="embedSandbox(\''+(br||nm)+'\','+esc(String(s.port))+')" title="embed this sandbox\'s Vera UI in-page">▣ embed</button>';
       btns+='<a class="btn sm" href="'+esc(web)+'" target="_blank" title="open this sandbox\'s Vera UI in a new tab">open ↗</a>';
       btns+='<button class="btn sm" onclick="sbxConnect(\''+nm+'\',\''+br+'\','+a+',\'term\')" title="terminal in this container">▮ terminal</button>';
@@ -3274,10 +3282,15 @@ function renderSbxList(items){
     } else {
       btns+='<span class="hint">down · </span><button class="btn sm" onclick="sandboxUpNamed(\''+br+'\')" title="bring this sandbox up on its branch">▲ bring up</button>';
     }
-    if(s.role==='spawned')btns+='<button class="btn sm err-btn" onclick="sandboxDownNamed(\''+nm+'\')">✕ down</button>';
+    if(s.role==='spawned'){
+      btns+='<button class="btn sm'+(pinned?' ok-btn':'')+'" onclick="sbxPin(\''+nm+'\','+(pinned?'false':'true')+')" title="'+(pinned?'unpin — allow idle auto-pause':'pin — keep up, exempt from idle auto-pause')+'">'+(pinned?'📌 pinned':'pin')+'</button>';
+      btns+='<button class="btn sm err-btn" onclick="sandboxDownNamed(\''+nm+'\')">✕ down</button>';
+    }
+    const pill=paused?'<span class="pill" style="color:var(--warn)" title="idle-paused — frozen so it stops sharing the Ollama nodes; wakes on next use">⏸ paused</span>'
+      :(on?'<span class="pill" style="color:var(--ok)">● running</span>':'<span class="pill" style="color:var(--dim2)">○ down</span>');
     return '<div style="padding:7px 0;border-bottom:1px solid var(--border)">'
       +'<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">'
-        +'<span class="pill" style="color:'+(on?'var(--ok)':'var(--dim2)')+'">'+(on?'● running':'○ down')+'</span>'
+        +pill
         +(active?'<span class="tag" style="background:var(--acc3);color:#111" title="the primary runner — sandbox-first test/loop runs execute here; files/diff/VS Code bind to it">★ active</span>':'<span class="tag">'+esc(s.role||'')+'</span>')
         +'<span class="tag">'+(br||'(no branch)')+'</span>'
         +'<span class="mono" style="font-size:10px;color:var(--dim2)">'+nm+'</span>'
@@ -3286,6 +3299,37 @@ function renderSbxList(items){
       +'<div class="row" style="gap:4px;flex-wrap:wrap;margin-top:5px">'+btns+'</div>'
     +'</div>';
   }).join('');
+}
+// Pin/unpin a spawned container so the idle-reaper never auto-pauses it.
+async function sbxPin(name,on){
+  const r=await post('/evolve/sandbox/pin',{name:name,on:on});
+  toast(r&&r.ok?((on?'pinned ':'unpinned ')+name):((r&&r.error)||'failed'));
+  loadSandbox();
+}
+// Explicitly unpause a reaped container (exec auto-unpauses via a no-op).
+async function sbxResume(name){
+  toast('resuming '+name+' …');
+  const r=await post('/evolve/sandbox/exec',{cmd:'true',name:name});
+  toast(r&&(r.ok||r.code===0)?('resumed '+name):((r&&r.error)||'failed'));
+  loadSandbox();
+}
+// Reap: preview (dry-run) which idle spawned containers would be paused, then confirm.
+async function sbxReap(){
+  const r=await post('/evolve/sandbox/reap',{dry_run:true});
+  if(!r||!r.ok){toast((r&&r.error)||'reap failed');return}
+  const c=r.candidates||[], mins=Math.round((r.threshold_s||1800)/60);
+  if(!c.length){toast('nothing idle to pause (threshold '+mins+'m)');loadSandbox();return}
+  const rows=c.map(x=>'<div class="row" style="gap:8px;padding:2px 0"><span class="tag">'+esc(x.branch||x.name)+'</span><span class="hint">'+esc(x.name)+' · idle '+Math.round(x.idle_s/60)+'m</span></div>').join('');
+  openModal('<div class="card-h"><span class="card-t">Reap idle sandboxes</span></div>'
+    +'<div class="hint" style="margin-bottom:8px;line-height:1.5">These spawned containers are idle past '+mins+'m and will be <b>paused</b> (frozen, so they stop sharing the Ollama nodes — reversible; they wake on next use). Pinned containers and branches with a live board dispatch are exempt.</div>'
+    +rows
+    +'<div class="row" style="margin-top:12px"><button class="btn primary" onclick="sbxReapGo()">⏸ Pause '+c.length+' idle</button><span style="flex:1"></span><button class="btn" onclick="closeModal()">Cancel</button></div>');
+}
+async function sbxReapGo(){
+  const r=await post('/evolve/sandbox/reap',{dry_run:false});
+  const n=r&&r.candidates?r.candidates.filter(function(x){return x.paused}).length:0;
+  toast(r&&r.ok?('paused '+n+' idle sandbox'+(n===1?'':'es')):((r&&r.error)||'failed'));
+  closeModal();loadSandbox();
 }
 // Bind the single Connection panel to a chosen sandbox + open a tool on it.
 function sbxConnect(name,branch,active,tool){
