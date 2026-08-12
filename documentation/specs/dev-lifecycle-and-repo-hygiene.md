@@ -431,10 +431,16 @@ land (per §2.5 this doc is the living record, not a snapshot of original intent
     non-deterministic planner sampling (the logic behind both incidents). `evolve.unittest
     .run` fixed to use `sys.executable` (was bare `python`, not on PATH). Live-verified
     2026-08-08: `dag.plan` on two diverse goals produced on-topic plans, no drift.
-  - ◐ **Pre-commit hooks (§3)** — only the **secret-scan** gate is wired
-    (`tools/hooks/pre-commit`). Still to add: reject AI-attribution trailer; reject non-user
-    author; block direct commit to `main`; enforce the typed branch-name pattern. (Also: the
-    hook isn't executable in fresh worktrees, so it silently skips there — fix it.)
+  - ✓ **Pre-commit hooks (§3) — DONE (verified live 2026-08-12).** `tools/hooks/pre-commit`
+    (mode 100755) blocks direct `main` commits (`MERGE_HEAD` + `VERA_ALLOW_MAIN_COMMIT` exempt),
+    enforces the typed `<type>/<slug>` branch pattern, rejects AI author/committer identities,
+    and runs the secret-scan; `tools/hooks/commit-msg` rejects AI-attribution trailers
+    (`Co-Authored-By: Claude`, "Generated with Claude", 🤖). Enabled via `core.hooksPath
+    tools/hooks` (`make install-hooks`). **Live-verified end-to-end in a FRESH WORKTREE** — a
+    bad branch name, an AI trailer, and an AI author were each blocked (rc=1); a clean BoeJaker
+    commit on a `fix/` branch passed. The old "not executable in fresh worktrees" concern is
+    resolved (files are 100755 and fired in the throwaway test). Note: the author gate rejects
+    AI identities rather than hard-pinning one human name (kept deliberately non-brittle).
   - ◐ **Fold hygiene into how I work** — branch-per-unit + document-in-repo in force; §2.2b
     (branch/worktree lifecycle) added 2026-08-08 after a sprawl incident (§8.1).
 
@@ -561,7 +567,15 @@ Recorded from actually building Phases A / A+ / D, so the plan reflects reality,
 4. **Land content once, via one mechanism; leave no scaffolding (§2.2b).** Cherry-picks,
    throwaway "boot-test" merges, and mixing fast-forward/merge/file-copy created duplicate-
    content commits (phantom "unmerged" branches) and stray branches/worktrees. The 2026-08-07
-   cleanup + §2.2b address it; the periodic-sweep guardrail is still to build.
+   cleanup + §2.2b address it. **✓ Periodic-sweep guardrail BUILT (2026-08-12):**
+   `evolve.sandbox.prune` (already safe — reaps only merged+clean worktrees with no live
+   container; unmerged → `review`, never auto-removed; dirty worktrees protected) gained
+   `delete_merged_branches` (deletes STANDALONE fully-merged typed branches via `git branch -d`,
+   which re-verifies merged so WIP can never be lost), and a **scheduled `_scaffolding_sweep`**
+   (`evolve.scaffolding.sweep`, hourly, `VERA_SCAFFOLD_SWEEP_ENABLED=0` to disable) now runs it
+   automatically. The C3 root-owned-dir removal works (`_remove_worktree_robust`'s alpine
+   root-container fallback verified reaping a root-owned worktree 2026-08-12). One-off backlog
+   cleared the same day: 2 stale worktrees reaped + 23 merged branches deleted.
 5. **"No error" ≠ "it ran" — probe the real thing, the right way (reinforces §2.6).** A
    dev-container probe (`host.docker.internal:8999`) misreported prod as missing caps; the
    direct host probe was the truth. Verify against prod itself, not through a proxy.
