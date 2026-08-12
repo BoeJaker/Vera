@@ -9974,26 +9974,35 @@ async def _package_hint(session_id: str, language: str = "python") -> str:
 @capability(
     "code.author", memory="on",
     http_method="POST", http_path="/code/author", http_tags=["code", "fabric"],
-    description="Write a source file with the CODING specialist and save it — the one call to "
-                "use whenever code has to be produced. It hands the job to the coder role "
-                "(coding-cohort model + deterministic sampling), grounds it on any context "
-                "files you name (read sandbox-aware, so the code is written against the REAL "
-                "data shape instead of a guess), strips any fence/JSON wrapper, writes the file "
-                "to your working directory AND versions it in the code store. "
-                "USE THIS INSTEAD OF: llm.generate for code, ide.fs.write for a script, or "
-                "typing code into exec.* — those hand-write worse code and skip versioning. "
-                "Input: task (str! — what the file must do, in detail), path (str! — the target "
-                "filename, e.g. 'build_pokedex.py'), context_files (str|list — files whose REAL "
-                "content the code must work against, e.g. ['./http_get__x__c1.json']), language "
-                "(str — inferred from `path` when omitted), requirements (str — constraints, "
-                "libraries, I/O contract), session_id (str). "
+    # rich_cap_signature() (the loop's per-step tool catalog) truncates this
+    # description to 300 chars — live-confirmed the OLD text cut off mid-
+    # sentence at "against the REAL " and NEVER reached "task (str! — what
+    # the file must do)" or the "USE THIS INSTEAD OF ... exec.*" warning, so
+    # a specialist saw a required `task` param with zero explanation of what
+    # it should contain and, by cycle 15+ of a long run, guessed wrong
+    # hundreds of times in a row (2026-08-12 live traces: 733-1081 code.
+    # author calls in single runs, most missing `task` entirely). The load-
+    # bearing sentence is now FIRST, so it survives the truncation.
+    description="task = WHAT the file must do, described in WORDS — never the code itself. "
+                "The CODING SPECIALIST writes it from your description (grounded, syntax-"
+                "checked, versioned). Already wrote the code? Pass it as content — verified "
+                "& saved, not discarded. NEVER hand-write code via exec.bash.run/"
+                "exec.python.run/ide.fs.write — use this instead; those skip versioning "
+                "and grounding. "
+                "Input: task (str — description; required unless content given), path (str! — "
+                "target filename, e.g. 'build_pokedex.py'), content (str — an already-drafted "
+                "file to verify/clean up instead of authoring from scratch), context_files "
+                "(str|list — files whose REAL content the code must work against, e.g. "
+                "['./http_get__x__c1.json']), language (str — inferred from `path` when "
+                "omitted), requirements (str — constraints, libraries, I/O contract), "
+                "session_id (str). "
                 "Output: {ok, path, fs_path, version, bytes, lang, chars}. Then RUN it with "
                 "exec.python.run(path=<path>).",
 )
-async def cap_code_author(task: str, path: str = "", context_files=None,
+async def cap_code_author(task: str = "", path: str = "", context_files=None,
                           language: str = "", requirements: str = "",
                           session_id: str = "", trace_id=None,
-                          stream_cb=None) -> Dict[str, Any]:
+                          stream_cb=None, content: str = "") -> Dict[str, Any]:
     """Author ONE code file with the coding specialist and persist it.
 
     This exists because prompt-steering a general specialist toward "use
@@ -10004,8 +10013,24 @@ async def cap_code_author(task: str, path: str = "", context_files=None,
     that always routes to the coder, always grounds on the named files, always
     lands a real file on disk, versioned."""
     task = str(task or "").strip()
+    if not task and str(content or "").strip():
+        # Mirrors prose.author's established recovery for the exact same
+        # mistake (see its own docstring note): a specialist that had
+        # already hand-authored the code itself called this the ide.fs.write
+        # way — path= + content=. Previously `content` wasn't an accepted
+        # param at all, so it was silently dropped by the caller's arg-
+        # coercion layer, the call then failed on missing `task`, and the
+        # code the specialist had just written was lost outright — not even
+        # salvaged. Recover instead: the draft becomes material for the
+        # SAME coder role to verify/clean up and version, rather than
+        # discarded and re-attempted from scratch (live-observed: this
+        # exact failure recurring hundreds of times in one run).
+        task = ("The following code was already drafted — verify it is correct and "
+                "complete, fix anything wrong, and write the final version:\n\n"
+                + str(content).strip()[:12000])
     if not task:
-        return {"ok": False, "error": "task is required — describe what the file must do"}
+        return {"ok": False, "error": "task is required — describe what the file must do "
+                                       "(or pass content with an existing draft to verify and save)"}
     path = _code_norm_path(str(path or "").strip()) or "generated.py"
     lang = (str(language or "").strip().lower()
             or _code_lang_for(path) or "python")
@@ -10261,17 +10286,20 @@ def _v5_prose_ungrounded_refs(text: str, real_files: Optional[List[str]]) -> Lis
 @capability(
     "prose.author", memory="on",
     http_method="POST", http_path="/prose/author", http_tags=["fabric", "docs"],
-    description="Write a prose/document file (README, report, write-up) with the WRITER role "
-                "and save it — the one call to use for a document that describes something this "
-                "run actually built. It attaches the REAL files that exist in your working "
-                "directory as required grounding (so it can't invent a service/framework that "
-                "was never built), and mechanically checks any install/build command it writes "
-                "(npm/pip/cargo/...) against whether that ecosystem's real manifest file is "
-                "actually present, correcting or flagging it if not. "
-                "USE THIS INSTEAD OF: a bare llm.generate call for a README/report/write-up — "
-                "llm.generate has no grounding against what was really produced and has been "
-                "observed inventing an entire fictional architecture, then issuing install "
-                "commands for it. "
+    # Same 300-char rich_cap_signature() truncation issue as code.author (see
+    # its comment above) — the OLD text cut off mid-sentence before ever
+    # reaching "if you already drafted the document yourself, pass it as
+    # content/text instead", the one sentence a specialist most needs to see
+    # when it's already written the draft itself. Load-bearing sentence
+    # first so it survives truncation.
+    description="task = WHAT the document must cover, in WORDS — never the document itself. "
+                "The WRITER role writes it from your description, grounded on the REAL files "
+                "in your working directory (can't invent what wasn't built), checked against "
+                "real install manifests. Already drafted it? Pass it as content/text — "
+                "incorporated & grounded, not saved ungrounded. USE THIS INSTEAD OF a bare "
+                "llm.generate call for a README/report/write-up — llm.generate has no "
+                "grounding and has been observed inventing a fictional architecture, then "
+                "issuing install commands for it. "
                 "Input: task (str! — what the document must cover, in detail; if you already "
                 "drafted the document yourself, pass it as content/text instead — it becomes "
                 "material this call incorporates and grounds, rather than saving your draft "
