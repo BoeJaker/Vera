@@ -1903,7 +1903,7 @@ class AgentRunner:
                 mem_hooks = sys.modules.get("memory_hooks")
                 if mem_hooks:
                     mem_context = await asyncio.wait_for(
-                        mem_hooks.get_agent_memory_context(
+                        mem_hooks.get_agent_memory_context_v2(
                             session_id  = session_id,
                             query       = message,
                             agent_name  = agent.name,
@@ -2082,7 +2082,7 @@ class AgentRunner:
             try:
                 _mh = sys.modules.get("memory_hooks")
                 if _mh:
-                    _ctx = await asyncio.wait_for(_mh.get_agent_memory_context(
+                    _ctx = await asyncio.wait_for(_mh.get_agent_memory_context_v2(
                         session_id=session_id, query=message, agent_name=agent.name,
                         limit=getattr(agent, 'memory_inject_limit', 5),
                         tags=[t.strip() for t in getattr(agent,'memory_tags','').split(',') if t.strip()] or None,
