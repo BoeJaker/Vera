@@ -7401,9 +7401,13 @@ async def _list_worktrees() -> List[Dict[str, Any]]:
                         "sandbox's worktree and the main checkout are NEVER touched. "
                         "Inputs: dry_run (bool=True), delete_branches (bool=False — "
                         "off keeps every reap fully restorable via git worktree add), "
+                        "delete_merged_branches (bool=False — also delete STANDALONE "
+                        "fully-merged typed branches that have no worktree/live sandbox; "
+                        "uses `git branch -d` which re-verifies merged, never loses WIP), "
                         "base (str=''=default branch), protect (list[str] branch names).")
 async def evolve_sandbox_prune(dry_run: bool = True, delete_branches: bool = False,
-                               base: str = "", protect: List[str] = None, trace_id=None):
+                               base: str = "", protect: List[str] = None,
+                               delete_merged_branches: bool = False, trace_id=None):
     base = (base or "").strip() or await _default_branch()
     protect = list(protect or [])
     wts = await _list_worktrees()
@@ -7453,6 +7457,21 @@ async def evolve_sandbox_prune(dry_run: bool = True, delete_branches: bool = Fal
     plan = _plan_reap(worktrees=wts, protected_paths=protected_paths,
                       merged_branches=merged, protected_branches=protect,
                       dirty_paths=dirty_paths, base_branch=base)
+    # STANDALONE fully-merged typed branches — dead refs with NO worktree and no
+    # live sandbox, whose commits are all in `base` (so deleting loses nothing;
+    # they stay recoverable from base's history). Never an unmerged branch.
+    _wt_branches = {w.get("branch") for w in wts if w.get("branch")}
+    _live_branches = {prim.get("branch")} | {d.get("branch") for d in pool.values()}
+    _typed = ("feat/", "fix/", "refactor/", "perf/", "docs/", "test/",
+              "chore/", "spike/", "hotfix/", "loop-lab/")
+    merged_branches: List[str] = []
+    _mb = await _git("branch", "--merged", base, "--format=%(refname:short)", timeout=60)
+    for _b in (_mb.get("out", "") or "").splitlines():
+        _b = _b.strip()
+        if (not _b or _b == base or _b in protect or _b in _wt_branches
+                or _b in _live_branches or not _b.startswith(_typed)):
+            continue
+        merged_branches.append(_b)
     # orphaned auto-generated compose files
     try:
         composes = [p.name for p in _repo_root().glob("docker-compose.dev-*.yml")]
@@ -7462,8 +7481,9 @@ async def evolve_sandbox_prune(dry_run: bool = True, delete_branches: bool = Fal
 
     result = {"dry_run": dry_run, "base": base, "keep": plan["keep"],
               "reap": plan["reap"], "review": plan["review"],
+              "merged_branches": merged_branches,
               "orphan_composes": orphan_yml, "stale_pool_entries": stale_pool,
-              "removed": [], "errors": []}
+              "removed": [], "errors": [], "removed_branches": []}
     if dry_run:
         result["note"] = ("dry-run — nothing changed. Re-run with dry_run=false to "
                           "remove the `reap` worktrees + orphan composes + dead pool "
@@ -7489,13 +7509,50 @@ async def evolve_sandbox_prune(dry_run: bool = True, delete_branches: bool = Fal
             (_repo_root() / fn).unlink()
         except Exception:
             pass
+    # delete standalone fully-merged branches — `git branch -d` (NOT -D) re-verifies
+    # merged-into-HEAD as a safety belt, so an unmerged branch can never be lost here.
+    if delete_merged_branches:
+        for _b in merged_branches:
+            dr = await _git("branch", "-d", _b, timeout=30)
+            if dr.get("ok"):
+                result["removed_branches"].append(_b)
     await _audit("sandbox.prune",
                  f"reaped {len(result['removed'])} worktree(s), "
+                 f"{len(result['removed_branches'])} merged branch(es), "
                  f"{len(orphan_yml)} compose(s), {len(stale_pool)} dead pool entr(ies)")
     await emit_event({"type": "evolve.sandbox.prune",
                       "removed": len(result["removed"]),
+                      "removed_branches": len(result["removed_branches"]),
                       "review": len(plan["review"])})
     return result
+
+
+_SCAFFOLD_SWEEP_INTERVAL_S = int(os.getenv("VERA_SCAFFOLD_SWEEP_INTERVAL_S", "3600"))
+_SCAFFOLD_SWEEP_ENABLED = os.getenv("VERA_SCAFFOLD_SWEEP_ENABLED", "1") != "0"
+
+
+async def _scaffolding_sweep() -> None:
+    """Scheduled 'leave no scaffolding behind' guardrail (§2.2b / §8.1 #4): reap
+    merged+clean worktrees with no live container, and delete standalone
+    fully-merged branches. SAFE by construction — every removal is gated on
+    'fully merged into base' (0 unique commits) AND 'not dirty', so work-in-
+    progress is never touched (an unmerged worktree lands in `review`, left
+    alone; `git branch -d` re-verifies each branch). Disable with
+    VERA_SCAFFOLD_SWEEP_ENABLED=0."""
+    if not _SCAFFOLD_SWEEP_ENABLED:
+        return
+    try:
+        res = await evolve_sandbox_prune(dry_run=False, delete_branches=True,
+                                         delete_merged_branches=True)
+        n_wt, n_br = len(res.get("removed", [])), len(res.get("removed_branches", []))
+        if n_wt or n_br:
+            log.info("evolve: scaffolding sweep reaped %d worktree(s) + %d merged branch(es)",
+                     n_wt, n_br)
+    except Exception as e:
+        log.debug("scaffolding sweep: %s", e)
+
+
+schedule(_scaffolding_sweep, _SCAFFOLD_SWEEP_INTERVAL_S, name="evolve.scaffolding.sweep")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
