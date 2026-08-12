@@ -7592,8 +7592,9 @@ async def _content_sync_worktree():
     never dirties prod's checkout, and it is EXCLUSIVELY machine-managed (only
     content.edit writes here, every edit commits+merges+resets), so a hard reset is
     always safe — there is never human WIP to lose here."""
+    from Vera.vera import state_paths
     root = str(_repo_root())
-    wt = str(state_root() / "content-sync-wt")
+    wt = str(state_paths.state_root() / "content-sync-wt")
     if not Path(wt, ".git").exists():
         await _sh(["git", "-C", root, "worktree", "prune"], timeout=60)
         has_branch = (await _git("rev-parse", "--verify", f"refs/heads/{_CONTENT_BRANCH}",
@@ -7669,9 +7670,10 @@ async def content_edit(path: str = "", body: str = "", message: str = "", trace_
                         "(pending a GitHub push). Output: {ok, worktree, branch, "
                         "unpushed_main_commits, allow, deny}.")
 async def content_status(trace_id=None):
+    from Vera.vera import state_paths
     root = str(_repo_root())
     ahead = await _git("rev-list", "--count", "origin/main..main", repo_root=root)
-    return {"ok": True, "worktree": str(state_root() / "content-sync-wt"),
+    return {"ok": True, "worktree": str(state_paths.state_root() / "content-sync-wt"),
             "branch": _CONTENT_BRANCH,
             "unpushed_main_commits": ((ahead.get("out", "") or "0").strip()
                                       if ahead.get("ok") else "unknown (no origin/main ref)"),
