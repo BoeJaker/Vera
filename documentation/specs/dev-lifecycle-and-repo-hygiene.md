@@ -520,14 +520,20 @@ land (per §2.5 this doc is the living record, not a snapshot of original intent
   Make §2.5 partly automatic: a branch's plan doc created on `evolve.pipeline.run`; the auto-
   postmortem writes to `documentation/postmortems/`; a check warns when a merged branch
   changed code with no matching docs/tests.
-  - **A sanctioned place for Vera to update non-code content — WITHOUT a dev container
-    (reframed 2026-08-09 per the user).** The user should NOT have to spin up a dev container just
-    for Vera to change **documentation, notes, skills, plans, or images**. Vera (running on prod)
-    needs a first-class content-edit surface that lands these to `main` safely: a cap like
-    `content.edit(path, body)` scoped to an allowlist (`documentation/`, `.claude/skills/`, notes,
-    image assets) that commits (author = the human, **no AI trailer**, secret-scan gated) and a
-    **scheduled ~24h auto-push** of any pending content changes to GitHub. This is the natural home
-    for the doc/skill/plan edits currently done by hand this session.
+  - **✓ Content-edit surface BUILT (2026-08-12) — Vera updates non-code content WITHOUT a dev
+    container.** `content.edit(path, body, message)` lands docs/skills/notes/tracked-images onto
+    `main` safely: it writes into a machine-managed **`docs/content-sync` worktree kept OUT of the
+    repo tree** (under the state root, so prod's live checkout is never dirtied), commits through
+    the repo hooks (secret-scan / no-AI-trailer / human author), and safe-merges into `main` via
+    `_merge_in_checkout` (per edit) so prod serves it immediately. **Path-LOCKED** to an allowlist —
+    `documentation/` (not `assets/`) or `.claude/skills/`, `..` rejected — so it can never touch
+    runtime code (`vera/`). `content.status` reports the allowlist + how many local `main` commits
+    are ahead of `origin/main`. **GitHub push:** prod historically had no push creds (pushes ran
+    from the Windows host); a repo-scoped **deploy key** was added to llm.int (host-only
+    `url.insteadOf`, so the shared repo config / Windows flow is untouched) so prod can now push —
+    but content lands on `main` locally regardless and prod serves it. A scheduled auto-push is a
+    small follow-on (the plan's original "~24h auto-push"). This is the home for the doc/skill/plan
+    edits previously done by hand.
   - **Cross-container reconciliation — NOT needed (user, 2026-08-09).** We do not need to merge doc
     edits made concurrently from multiple containers; the content-edit surface above lands from
     prod. (Still SEPARATE from §8.2 #7's *generated* files — `docs.build` screenshots stay
