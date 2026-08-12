@@ -6202,6 +6202,46 @@ _SANDBOX_CONTAINER = "vera-dev"
 # added later, etc.) — without losing container state, so resume is a plain
 # unpause + a few seconds' wait, not a full evolve.sandbox.up rebuild.
 _SANDBOX_IDLE_PAUSE_S = int(os.getenv("VERA_SANDBOX_IDLE_PAUSE_S", "1800"))
+KEY_SANDBOX_PINNED = "vera:evolve:sandbox:pinned"      # set: pinned container names (never auto-paused)
+KEY_SANDBOX_ACTIVITY = "vera:evolve:sandbox:activity"  # hash: container name -> last-activity iso
+_SANDBOX_KEEP_ALWAYS = {"vera-dev-code"}               # the VS Code sidecar is not an Ollama consumer
+
+
+async def _sandbox_pool_touch(name: str) -> None:
+    """Mark a SPAWNED container as just-used so the idle-reaper keeps it warm
+    (the primary uses _sandbox_touch/KEY_SANDBOX instead)."""
+    r = _redis()
+    if not r or not name:
+        return
+    try:
+        await r.hset(KEY_SANDBOX_ACTIVITY, name, now_iso())
+    except Exception:
+        pass
+
+
+async def _sandbox_pinned() -> set:
+    r = _redis()
+    if not r:
+        return set()
+    try:
+        vals = await r.smembers(KEY_SANDBOX_PINNED) or set()
+        return {v.decode() if isinstance(v, (bytes, bytearray)) else v for v in vals}
+    except Exception:
+        return set()
+
+
+async def _sandbox_unpause_if_paused(name: str) -> bool:
+    """Auto-resume a paused container before docker-exec'ing into it. The idle
+    reaper may have frozen it; this makes over-pausing HARMLESS — the next real
+    use transparently wakes it. (fs/diff read the host worktree and never need
+    the container running, so exec is the only path that must unpause.)"""
+    if not name:
+        return False
+    st = await _sh(["docker", "inspect", "-f", "{{.State.Status}}", name], timeout=10)
+    if (st.get("out") or "").strip() == "paused":
+        await _sh(["docker", "unpause", name], timeout=15)
+        return True
+    return False
 
 
 async def _sandbox_touch() -> None:
@@ -6360,6 +6400,7 @@ async def _wt_jail(path: str, name: str = "", branch: str = "") -> Any:
         if tgt.get("error"):
             return tgt
         wt = tgt.get("worktree", "")
+        await _sandbox_pool_touch(tgt.get("container"))   # browsing files keeps it warm
     else:
         sb = await _get_sandbox()
         wt = sb.get("worktree", "")
@@ -6433,6 +6474,9 @@ async def evolve_sandbox_exec(cmd: str = "", where: str = "container",
         res = await _sh(["sh", "-lc", cmd] if os.name != "nt"
                         else ["cmd", "/c", cmd], cwd=str(root), timeout=timeout)
     else:
+        # The idle-reaper may have frozen this spawned container — wake it first so
+        # a terminal command transparently resumes it (over-pausing stays harmless).
+        await _sandbox_unpause_if_paused(tgt["container"])
         res = await _sh(["docker", "exec", tgt["container"], "sh", "-lc", cmd],
                         timeout=timeout)
         if not res["ok"] and "No such container" in (res["err"] or ""):
@@ -6440,6 +6484,7 @@ async def evolve_sandbox_exec(cmd: str = "", where: str = "container",
                              "sandbox up first (evolve.sandbox.ensure/spawn)",
                     "where": where}
     await _audit("sandbox.exec", f"[{where}:{tgt.get('container')}] {cmd[:120]}", ok=res["ok"])
+    await _sandbox_pool_touch(tgt.get("container"))   # keep this container warm
     return {"ok": res["ok"], "out": res["out"][-8000:], "err": res["err"][-2000:],
             "code": res["code"], "where": where, "target": tgt.get("container")}
 
@@ -6723,7 +6768,116 @@ async def evolve_sandbox_resume(trace_id=None):
     return {"ok": ok, "error": "" if ok else "docker unpause failed"}
 
 
+@capability("evolve.sandbox.reap", memory="off",
+            http_method="POST", http_path="/evolve/sandbox/reap", http_tags=["evolve"],
+            description="Pause SPAWNED dev containers idle past the threshold "
+                        "(VERA_SANDBOX_IDLE_PAUSE_S) so they stop sharing prod's Ollama "
+                        "nodes — the policy 'only up if pinned or actively worked in'. "
+                        "Exempts the primary, the VS Code sidecar, PINNED containers, and "
+                        "branches with a live board dispatch. A paused container wakes "
+                        "transparently on its next exec. Input: dry_run (bool=true — preview "
+                        "the plan without pausing). Output: {ok, dry_run, "
+                        "candidates:[{name,branch,idle_s,paused}], pinned, threshold_s}.")
+async def evolve_sandbox_reap(dry_run: bool = True, trace_id=None):
+    return await _sandbox_reap(dry_run=dry_run)
+
+
+@capability("evolve.sandbox.pin", memory="off",
+            http_method="POST", http_path="/evolve/sandbox/pin", http_tags=["evolve"],
+            description="Pin/unpin a spawned dev container so the idle-reaper never "
+                        "auto-pauses it (keep it up for a burst of work). Inputs: name "
+                        "(str! — container name), on (bool=true to pin, false to unpin). "
+                        "Output: {ok, name, pinned}.")
+async def evolve_sandbox_pin(name: str = "", on: bool = True, trace_id=None):
+    if not name:
+        return {"error": "name required"}
+    r = _redis()
+    if not r:
+        return {"error": "redis unavailable"}
+    try:
+        if on:
+            await r.sadd(KEY_SANDBOX_PINNED, name)
+        else:
+            await r.srem(KEY_SANDBOX_PINNED, name)
+    except Exception as e:
+        return {"error": str(e)}
+    await _audit("sandbox.pin", f"{'pinned' if on else 'unpinned'} {name}")
+    await emit_event({"type": "evolve.sandbox.pin", "name": name, "pinned": bool(on)})
+    return {"ok": True, "name": name, "pinned": bool(on)}
+
+
 _SANDBOX_IDLE_SWEEP_INTERVAL_S = int(os.getenv("VERA_SANDBOX_IDLE_SWEEP_INTERVAL_S", "300"))
+
+
+async def _sandbox_reap(dry_run: bool = False) -> Dict[str, Any]:
+    """Pause SPAWNED dev containers idle past VERA_SANDBOX_IDLE_PAUSE_S — the
+    policy 'a sandbox should only be up if it is pinned or actively being worked
+    in' (each idle-but-running one is a full Vera quietly sharing prod's Ollama
+    nodes). Exempt: the primary (its own sweep handles it), the VS Code sidecar,
+    PINNED containers, branches with a live board dispatch, and anything used
+    within the idle window. Safe by design — a wrongly-paused container is woken
+    transparently on its next exec (_sandbox_unpause_if_paused)."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    primary = _SANDBOX_CONTAINER
+    pinned = await _sandbox_pinned()
+    activity: Dict[str, str] = {}
+    r = _redis()
+    if r:
+        try:
+            h = await r.hgetall(KEY_SANDBOX_ACTIVITY) or {}
+            activity = {(k.decode() if isinstance(k, (bytes, bytearray)) else k):
+                        (v.decode() if isinstance(v, (bytes, bytearray)) else v)
+                        for k, v in h.items()}
+        except Exception:
+            pass
+    # branches with a live board dispatch = actively being worked -> never pause
+    active_branches: set = set()
+    try:
+        bi = await _call("board.items")
+        for it in (bi.get("items") if isinstance(bi, dict) else None) or []:
+            if it.get("lane") == "in_progress" and it.get("branch"):
+                active_branches.add(it["branch"])
+    except Exception:
+        pass
+    pool = await _sandbox_pool()
+    branch_by_name = {d.get("name"): d.get("branch", "") for d in pool.values()}
+    ps = await _sh(["docker", "ps", "--filter", "name=vera-dev", "--format", "{{.Names}}"],
+                   timeout=15)
+    names = [ln.strip() for ln in (ps.get("out") or "").splitlines() if ln.strip()]
+    plan: List[Dict[str, Any]] = []
+    for name in names:
+        if name == primary or name in _SANDBOX_KEEP_ALWAYS or name in pinned:
+            continue
+        insp = await _sh(["docker", "inspect", "-f",
+                          "{{.State.Status}}|{{.State.StartedAt}}", name], timeout=10)
+        status, _sep, started = (insp.get("out") or "").strip().partition("|")
+        if status != "running":
+            continue
+        branch = branch_by_name.get(name, "")
+        if branch and branch in active_branches:
+            continue
+        ref = activity.get(name) or started
+        try:
+            ref_dt = datetime.fromisoformat(str(ref).replace("Z", "+00:00"))
+            idle_s = int((now - ref_dt).total_seconds())
+        except Exception:
+            idle_s = 0
+        if idle_s < _SANDBOX_IDLE_PAUSE_S:
+            continue
+        plan.append({"name": name, "branch": branch, "idle_s": idle_s})
+    if not dry_run:
+        for p in plan:
+            rr = await _sh(["docker", "pause", p["name"]], timeout=15)
+            p["paused"] = bool(rr["ok"])
+            if rr["ok"]:
+                await _audit("sandbox.reap", f"idle-paused {p['name']} ({p['idle_s']}s idle)")
+        n = sum(1 for p in plan if p.get("paused"))
+        if n:
+            await emit_event({"type": "evolve.sandbox.reaped", "count": n})
+            log.info("evolve: idle-reaped %d spawned sandbox container(s)", n)
+    return {"ok": True, "dry_run": dry_run, "candidates": plan,
+            "pinned": sorted(pinned), "threshold_s": _SANDBOX_IDLE_PAUSE_S}
 
 
 async def _sandbox_idle_sweep() -> None:
@@ -6735,6 +6889,10 @@ async def _sandbox_idle_sweep() -> None:
     pausing freezes it completely (see _SANDBOX_CONTAINER's docstring) until
     genuinely needed again."""
     try:
+        # Reap idle SPAWNED containers every sweep (independent of the primary's
+        # own idle state below) — this is what stops leftover per-branch sandboxes
+        # from quietly sharing prod's Ollama nodes forever.
+        await _sandbox_reap(dry_run=False)
         if _RUN_LIVE.get("where") == "sandbox" and _RUN_LIVE.get("run_id") in _BG_RUNS \
                 and not _BG_RUNS[_RUN_LIVE["run_id"]].done():
             return  # actively in use right now — never pause out from under it
@@ -7107,6 +7265,11 @@ async def evolve_sandbox_ensure(branch: str = "", rebuild_image: bool = False,
 async def evolve_sandbox_list(trace_id=None):
     ps = await _sh(["docker", "ps", "--format", "{{.Names}}"])
     running = {n.strip() for n in (ps.get("out", "") or "").splitlines() if n.strip()}
+    # docker ps lists PAUSED containers too — separate them so 'running' is honest
+    # and the UI can show a paused (idle-reaped) state distinctly.
+    psp = await _sh(["docker", "ps", "--filter", "status=paused", "--format", "{{.Names}}"])
+    paused = {n.strip() for n in (psp.get("out", "") or "").splitlines() if n.strip()}
+    pinned = await _sandbox_pinned()
     out: List[Dict[str, Any]] = []
     r = _redis()
     if r:
@@ -7119,17 +7282,22 @@ async def evolve_sandbox_list(trace_id=None):
                 out.append({"role": "primary", "branch": pri.get("branch"),
                             "name": _SANDBOX_CONTAINER, "port": _pp,
                             "redis_db": pri.get("redis_db"),
-                            "running": _SANDBOX_CONTAINER in running,
+                            "running": _SANDBOX_CONTAINER in running and _SANDBOX_CONTAINER not in paused,
+                            "paused": _SANDBOX_CONTAINER in paused,
+                            "pinned": _SANDBOX_CONTAINER in pinned,
                             "url": f"{_psc or 'http'}://localhost:{_pp}",
                             "scheme": _psc or "http",
                             "worktree": pri.get("worktree")})
         except Exception:
             pass
     for slug, d in (await _sandbox_pool()).items():
+        _nm = d.get("name")
         out.append({"role": "spawned", "branch": d.get("branch"), "slug": slug,
-                    "name": d.get("name"), "port": d.get("port"),
+                    "name": _nm, "port": d.get("port"),
                     "redis_db": d.get("redis_db"),
-                    "running": d.get("name") in running,
+                    "running": _nm in running and _nm not in paused,
+                    "paused": _nm in paused,
+                    "pinned": _nm in pinned,
                     "url": d.get("url") or f"http://localhost:{d.get('port')}",
                     "worktree": d.get("worktree")})
     return {"sandboxes": out, "count": len(out)}
