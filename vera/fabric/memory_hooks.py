@@ -57,6 +57,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import sys
 import time
 import uuid
@@ -632,6 +633,29 @@ async def record_dag_execution(
 # MEMORY CONTEXT INJECTION
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Chat executes caps only via inline [[cap:name {json}]] markers scanned out
+# of the MODEL'S OWN reply text, with no way to tell "this came from a
+# recalled memory" apart from "asserted just now" -- so any recalled text
+# that happens to contain that syntax is live-executable the moment it's
+# echoed back. Live-caught 2026-08-13: a stored AI reply was, verbatim,
+# "[[loop: stop running dags over and over]]" (itself an echo of earlier
+# injected noise) -- recalling that record later re-surfaced the same
+# live-executable text and it triggered a real, unwanted agentic loop on an
+# unrelated later turn. Defang the opening bracket pair so recalled text
+# stays readable but can never itself be re-executed, regardless of which
+# backend/tier surfaced it or whether the record is human- or AI-authored.
+_LIVE_MARKER_RE = re.compile(r"\[\[\s*(cap|loop|suggest)\s*:", re.I)
+
+
+def _sanitize_recalled_text(text: str) -> str:
+    if not text:
+        return text
+    text = _LIVE_MARKER_RE.sub(lambda m: f"[{m.group(1)}:", text)
+    if text.strip() in ("[Retrieved Context]", "[memory]"):
+        return ""
+    return text
+
+
 async def get_agent_memory_context(
     session_id:  str,
     query:       str,
@@ -699,6 +723,7 @@ async def get_agent_memory_context(
             human_text = getattr(rec, "human_text", True)
             text       = (getattr(rec, "text", "") or "")[:200]
 
+        text = _sanitize_recalled_text(text)
         ts = created_at[:16].replace("T", " ") if created_at else ""
         role = "User" if human_text else "Assistant"
         if text:
@@ -776,6 +801,7 @@ def _extract_record_fields(item: Any) -> Optional[Dict[str, Any]]:
         created_at = getattr(rec, "created_at", "") or ""
         human_text = getattr(rec, "human_text", True)
         text       = (getattr(rec, "text", "") or "")[:200]
+    text = _sanitize_recalled_text(text)
     if not text or not rid:
         return None
     return {"id": rid, "created_at": created_at, "human_text": bool(human_text),
