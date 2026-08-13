@@ -12445,7 +12445,15 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                        long_running_timeout_secs: int = 1800,
                        enable_code_autosave: bool = True,
                        code_push_gitea: bool = False,
-                       enable_chaining: bool = True,
+                       # Off by default 2026-08-13: chaining (piping one hop's raw
+                       # output into the next cap's input via $N refs) was landing
+                       # the model in death-spiral retries instead of helping — a
+                       # live incident chained podcast.script's output into
+                       # code.author and produced 891 broken-syntax retries over
+                       # roughly an hour without ever reaching podcast.generate.
+                       # Mechanism stays intact (still explicitly enable-able per
+                       # run) pending further development, per user instruction.
+                       enable_chaining: bool = False,
                        enable_step_questions: bool = False,
                        clarify_channel: str = "ui",
                        question_timeout_secs: int = 180,
@@ -15673,7 +15681,7 @@ async def _v5_run_phased_step(step: Dict[str, Any], phases: List[str], *, goal: 
                               long_running_timeout_secs: int = 1800,
                               enable_code_autosave: bool = True,
                               code_push_gitea: bool = False,
-                              enable_chaining: bool = True,
+                              enable_chaining: bool = False,  # see _v5_run_step_inner's own default note
                               enable_step_questions: bool = False,
                               clarify_channel: str = "ui",
                               question_timeout_secs: int = 180,
@@ -19574,7 +19582,7 @@ async def cap_dag_agent_loop_v6(
     max_caps_per_piece: int  = 6,          # piecewise: how many caps each stage (piece) may suggest
     max_plan_pieces:    int  = 6,          # piecewise: how many phases the master plan splits into (2..30)
     cap_override_mode:  str  = "off",      # off|piece — 'piece' scopes each piece's steps to its own caps
-    enable_chaining:    bool = True,       # stage agents may chain caps in one turn (output→input)
+    enable_chaining:    bool = False,      # off by default 2026-08-13 — see _v5_run_step_inner's default note
     condense_output:    bool = False,      # long tool outputs → LLM-condensed (keep key detail), full kept on disk
     # RAW-CONTEXT ESCAPE HATCH: one switch that turns OFF every LLM pass that
     # REWRITES run material before another part of the run reads it — step
@@ -21112,7 +21120,9 @@ async def cap_dag_agent_loop_v7(goal: str, **kwargs):
     # in one turn, may ask the user mid-step, and each piece's steps are scoped to
     # that piece's own suggested caps (full catalog still reachable via need_caps).
     kwargs.setdefault("cap_override_mode", "piece")
-    kwargs.setdefault("enable_chaining", True)
+    # Chaining off by default 2026-08-13 — see _v5_run_step_inner's default note;
+    # still explicitly enable-able per call pending further development.
+    kwargs.setdefault("enable_chaining", False)
     kwargs.setdefault("enable_step_questions", True)
     return await v6["func"](goal=goal, **kwargs)
 
@@ -21339,7 +21349,9 @@ async def workshop_agent_loop_stream(request: Request):
     v6_max_plan_pieces   = int(body.get("max_plan_pieces", 6) or 6)
     v6_cap_override_mode = (body.get("cap_override_mode", "piece" if _v7_default else "off")
                             or "off").strip().lower()
-    v6_enable_chaining   = bool(body.get("enable_chaining", True))
+    # Off by default 2026-08-13 — see _v5_run_step_inner's default note; a caller
+    # can still opt back in by passing enable_chaining:true explicitly.
+    v6_enable_chaining   = bool(body.get("enable_chaining", False))
     v6_condense_output   = bool(body.get("condense_output", _v7_default))
     v6_raw_context       = bool(body.get("raw_context", False))
     v6_enable_step_questions = bool(body.get("enable_step_questions", _v7_default))
