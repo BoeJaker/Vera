@@ -58,6 +58,7 @@ import asyncio
 import json
 import logging
 import sys
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -704,6 +705,263 @@ async def get_agent_memory_context(
             lines.append(f"[{ts}] {role}: {text}")
 
     return "\n".join(lines) if len(lines) > 1 else ""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TWO-TIER MEMORY INJECTION (fast this turn, slow delivered to the next)
+# ─────────────────────────────────────────────────────────────────────────────
+# get_agent_memory_context() above blocks the WHOLE turn on MEMORY.search(),
+# whose dominant cost is embed_text() — live-measured 3.5-8.5s PER CALL on
+# this instance's shared CPU embed nodes, saturated by a near-continuous
+# stream of unrelated background embed traffic (fabric ingestion, sandbox
+# session syncs; live-observed back-to-back ~4s embeds with almost no gaps).
+# That is the entire reported symptom: a chat turn with memory on pays that
+# tax before the LLM even starts.
+#
+# get_agent_memory_context_v2 splits this per the requested design:
+#   FAST  — Postgres + Neo4j fulltext search, neither of which needs an
+#           embedding at all (HybridMemoryStore.search_fast_and_slow), capped
+#           at a couple seconds. Injected THIS turn.
+#   SLOW  — the full hybrid search including the Chroma vector hits, running
+#           in the background against the SAME already-started embed call.
+#           Its result is stored for session_id and picked up at the START
+#           of the NEXT turn — so the expensive semantic pass still happens,
+#           it just never blocks the turn that triggered it.
+#   DECAY — memories injected in past turns don't just accumulate forever or
+#           vanish the instant they're not re-surfaced; each turn a record
+#           isn't refreshed by a fresh fast/slow hit, its effective weight is
+#           multiplied down (attention-style recency decay) until it drops
+#           out, so context stays focused on what's actually still relevant.
+_CHATMEM_DECAY_FACTOR   = float(_os.getenv("VERA_CHATMEM_DECAY_FACTOR", "0.65"))
+_CHATMEM_DECAY_MIN      = float(_os.getenv("VERA_CHATMEM_DECAY_MIN", "0.05"))
+_CHATMEM_DECAY_MAX_TURNS = int(_os.getenv("VERA_CHATMEM_DECAY_MAX_TURNS", "6"))
+_CHATMEM_FAST_TIMEOUT_S = float(_os.getenv("VERA_CHATMEM_FAST_TIMEOUT_S", "2.5"))
+_CHATMEM_PENDING_TTL_S  = int(_os.getenv("VERA_CHATMEM_PENDING_TTL_S", "300"))
+_CHATMEM_ACTIVE_TTL_S   = int(_os.getenv("VERA_CHATMEM_ACTIVE_TTL_S", "3600"))
+
+
+def _chatmem_pending_key(session_id: str) -> str:
+    return f"vera:chatmem:pending:{session_id}"
+
+
+def _chatmem_active_key(session_id: str) -> str:
+    return f"vera:chatmem:active:{session_id}"
+
+
+def _extract_record_fields(item: Any) -> Optional[Dict[str, Any]]:
+    """Normalise one HybridMemoryStore.search() result item — {"record":...,
+    "score":...} dict OR a bare (MemoryRecord, float) tuple — into the flat
+    shape this module stores/formats. Mirrors get_agent_memory_context's own
+    inline handling of both shapes; extracted so the two-tier path can share
+    it instead of re-deriving the same logic a second time."""
+    if isinstance(item, dict):
+        rec_data = item.get("record") or item
+        score = item.get("score", 0.0)
+        if isinstance(rec_data, dict):
+            rid        = rec_data.get("id") or ""
+            created_at = rec_data.get("created_at") or ""
+            human_text = rec_data.get("human_text", True)
+            text       = (rec_data.get("text") or "")[:200]
+        else:
+            rid        = getattr(rec_data, "id", "") or ""
+            created_at = getattr(rec_data, "created_at", "") or ""
+            human_text = getattr(rec_data, "human_text", True)
+            text       = (getattr(rec_data, "text", "") or "")[:200]
+    else:
+        try:
+            rec, score = item
+        except (TypeError, ValueError):
+            return None
+        rid        = getattr(rec, "id", "") or ""
+        created_at = getattr(rec, "created_at", "") or ""
+        human_text = getattr(rec, "human_text", True)
+        text       = (getattr(rec, "text", "") or "")[:200]
+    if not text or not rid:
+        return None
+    return {"id": rid, "created_at": created_at, "human_text": bool(human_text),
+            "text": text, "score": float(score or 0.0)}
+
+
+async def _chatmem_load_active(session_id: str) -> Dict[str, Dict[str, Any]]:
+    r = _redis()
+    if r is None:
+        return {}
+    try:
+        raw = await r.get(_chatmem_active_key(session_id))
+        if not raw:
+            return {}
+        items = json.loads(raw)
+        return {it["id"]: it for it in items if isinstance(it, dict) and it.get("id")}
+    except Exception as e:
+        log.debug("chatmem load active: %s", e)
+        return {}
+
+
+async def _chatmem_save_active(session_id: str, active: Dict[str, Dict[str, Any]]) -> None:
+    r = _redis()
+    if r is None:
+        return
+    try:
+        await r.set(_chatmem_active_key(session_id), json.dumps(list(active.values())),
+                    ex=_CHATMEM_ACTIVE_TTL_S)
+    except Exception as e:
+        log.debug("chatmem save active: %s", e)
+
+
+async def _chatmem_take_pending(session_id: str) -> List[Dict[str, Any]]:
+    """Read AND clear the slow-tier result the previous turn left behind, if
+    it finished in time. GETDEL-shaped (get then delete) so it's delivered
+    exactly once, to the next turn that asks."""
+    r = _redis()
+    if r is None:
+        return []
+    key = _chatmem_pending_key(session_id)
+    try:
+        raw = await r.get(key)
+        if not raw:
+            return []
+        await r.delete(key)
+        return json.loads(raw)
+    except Exception as e:
+        log.debug("chatmem take pending: %s", e)
+        return []
+
+
+def _chatmem_merge_refresh(active: Dict[str, Dict[str, Any]],
+                           fresh: List[Dict[str, Any]]) -> None:
+    """Upsert fresh hits into the active set, resetting each one's decay
+    clock — a record that got re-surfaced is, by definition, still
+    relevant right now. Mutates `active` in place."""
+    for f in fresh:
+        fid = f.get("id")
+        if not fid:
+            continue
+        prev = active.get(fid)
+        score = max(float(f.get("score", 0.0)), float(prev["score"]) if prev else 0.0)
+        active[fid] = {**f, "score": score, "turns_since_seen": 0}
+
+
+def _chatmem_decay_and_prune(active: Dict[str, Dict[str, Any]],
+                             just_refreshed: set) -> None:
+    """Age every entry NOT freshly refreshed this turn, then drop whatever
+    decayed past the floor or has gone stale too many turns running —
+    attention-style recency weighting so old context fades rather than
+    piling up forever or needing an explicit clear."""
+    drop = []
+    for rid, it in active.items():
+        if rid in just_refreshed:
+            continue
+        turns = int(it.get("turns_since_seen", 0)) + 1
+        it["turns_since_seen"] = turns
+        it["score"] = float(it.get("score", 0.0)) * _CHATMEM_DECAY_FACTOR
+        if it["score"] < _CHATMEM_DECAY_MIN or turns > _CHATMEM_DECAY_MAX_TURNS:
+            drop.append(rid)
+    for rid in drop:
+        active.pop(rid, None)
+
+
+def _chatmem_format(items: List[Dict[str, Any]]) -> str:
+    if not items:
+        return ""
+    lines = ["=== Relevant memories from past conversations ==="]
+    for it in items:
+        ts = (it.get("created_at") or "")[:16].replace("T", " ")
+        role = "User" if it.get("human_text", True) else "Assistant"
+        text = it.get("text", "")
+        if text:
+            lines.append(f"[{ts}] {role}: {text}")
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
+async def _chatmem_deliver_slow(session_id: str, slow_task: "asyncio.Task") -> None:
+    """Background continuation: wait for the slow tier (embed + Chroma) to
+    finish, then stash its result for the NEXT turn to pick up. Runs
+    detached from the request that spawned it — never awaited by the
+    caller, never allowed to raise into anything."""
+    try:
+        slow_results = await slow_task
+    except Exception as e:
+        log.debug("chatmem slow tier failed for %s: %s", session_id, e)
+        return
+    fresh = [f for f in (_extract_record_fields(it) for it in (slow_results or [])) if f]
+    if not fresh:
+        return
+    r = _redis()
+    if r is None:
+        return
+    try:
+        await r.set(_chatmem_pending_key(session_id), json.dumps(fresh),
+                    ex=_CHATMEM_PENDING_TTL_S)
+        log.info("chatmem: slow tier delivered %d hit(s) for %s, queued for next turn",
+                 len(fresh), session_id[:12])
+    except Exception as e:
+        log.debug("chatmem stash pending for %s: %s", session_id, e)
+
+
+async def get_agent_memory_context_v2(
+    session_id:  str,
+    query:       str,
+    agent_name:  str  = "",
+    limit:       int  = 5,
+    tags:        Optional[List[str]] = None,
+) -> str:
+    """Two-tier, decaying version of get_agent_memory_context — same return
+    shape (a formatted context-injection string), same call signature, but
+    returns as soon as the FAST tier (+ any slow-tier delivery already
+    waiting from a prior turn) is ready instead of blocking on embed_text().
+    Falls back to the plain single-tier path if Redis or the two-tier
+    method aren't available, so this degrades to the old (correct, just
+    slower) behaviour rather than ever failing outright."""
+    MEMORY, _ = _memory()
+    if not MEMORY:
+        return ""
+    if _redis() is None or not hasattr(MEMORY, "search_fast_and_slow") or not session_id:
+        return await get_agent_memory_context(
+            session_id=session_id, query=query, agent_name=agent_name,
+            limit=limit, tags=tags)
+
+    filters: Dict = {}
+    if agent_name:
+        filters["tags"] = [agent_name]
+    elif tags:
+        filters["tags"] = tags
+
+    active = await _chatmem_load_active(session_id)
+
+    # 1. Deliver whatever the PREVIOUS turn's slow tier finished in time for.
+    pending = await _chatmem_take_pending(session_id)
+    just_refreshed = {f["id"] for f in pending if f.get("id")}
+    _chatmem_merge_refresh(active, pending)
+    if pending:
+        log.info("chatmem: turn for %s picked up %d hit(s) delivered by a prior turn's slow tier",
+                 session_id[:12], len(pending))
+
+    # 2. Fast tier for THIS turn.
+    t0 = time.monotonic()
+    try:
+        fast_out, slow_task = await MEMORY.search_fast_and_slow(
+            query=query, limit=limit, filters=filters if filters else None,
+            fast_timeout=_CHATMEM_FAST_TIMEOUT_S)
+    except Exception as e:
+        log.debug("get_agent_memory_context_v2 fast tier: %s", e)
+        fast_out, slow_task = [], None
+    log.info("chatmem: fast tier for %s took %.2fs, %d hit(s)",
+             session_id[:12], time.monotonic() - t0, len(fast_out))
+
+    fresh_fast = [f for f in (_extract_record_fields(it) for it in fast_out) if f]
+    just_refreshed |= {f["id"] for f in fresh_fast}
+    _chatmem_merge_refresh(active, fresh_fast)
+
+    # 3. Age everything else and drop what's decayed out.
+    _chatmem_decay_and_prune(active, just_refreshed)
+    await _chatmem_save_active(session_id, active)
+
+    # 4. Kick the slow tier's delivery off in the background — NOT awaited.
+    if slow_task is not None:
+        asyncio.create_task(_chatmem_deliver_slow(session_id, slow_task))
+
+    ranked = sorted(active.values(), key=lambda it: it.get("score", 0.0), reverse=True)
+    return _chatmem_format(ranked[:limit])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
