@@ -484,6 +484,28 @@ async def _serve_loop_graph_js():
     )
 
 
+# Serve loop_throbber.js — the <vera-wiremesh-throbber> "the loop is doing
+# work" indicator: a small wireframe polygon whose vertices deform in place
+# continuously while active. Deliberately its own tiny element (not folded
+# into <vera-agent-loop-output>) so ANY panel that launches a loop — chat,
+# dream, netmap, dag workshop — can drop one somewhere persistently visible
+# (e.g. the top bar) rather than relying on the many per-step spinners inside
+# the scrolling loop transcript, which age out of view as a long run goes on.
+@APP.get("/ui/elements/loop_throbber.js", include_in_schema=False)
+async def _serve_loop_throbber_js():
+    from fastapi.responses import Response
+    from pathlib import Path
+    p = Path(__file__).parent.parent / "loop_throbber_element.js"
+    if p.exists():
+        return Response(content=p.read_text(encoding="utf-8"),
+                        media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache"})
+    return Response(
+        content="console.warn('loop_throbber element JS not found');",
+        media_type="application/javascript"
+    )
+
+
 # Serve sparkline_element.js — the <vera-sparkline> dashboard history sparkline.
 @APP.get("/ui/elements/sparkline.js", include_in_schema=False)
 async def _serve_sparkline_js():
