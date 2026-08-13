@@ -57,6 +57,7 @@ from Vera.vera.foundry.foundry_core import (
     _HARDEN, _pxe_slug, _render_features_script, _render_rpi_config,
     _render_rpi_cmdline, _render_ipxe, _render_autoinstall, _render_boot,
     pick_node, cluster_join_script, CLUSTER_KINDS,
+    cluster_init_script, parse_init_token,
 )
 from Vera.vera.security import secrets as vsecrets
 
@@ -573,6 +574,67 @@ async def cap_cluster_delete(name: str = "", trace_id=None) -> Dict:
     n = await r.hdel(K_CLUSTERS, name)
     await emit_event({"type": "foundry.cluster.deleted", "name": name})
     return {"ok": True, "removed": bool(n)}
+
+
+@capability(
+    "foundry.cluster.init",
+    http_method="POST", http_path="/foundry/cluster/init", http_tags=["foundry"],
+    memory="on",
+    description="Bootstrap a NEW cluster on a host and REGISTER it with the join token "
+                "captured + sealed — so other hosts can then be provisioned to join it "
+                "(feature cluster:<name>). Runs the init on the target over SSH (host + "
+                "ssh_user/ssh_key_path, defaults to Vera's key) OR on a Proxmox LXC guest "
+                "(cluster_id/node/vmid). Inputs: name (str!), kind (docker-swarm|k3s), "
+                "advertise_addr (str — address peers join; defaults to host), host (str — "
+                "ssh IP), ssh_user (str=root), ssh_key_path (str), cluster_id (str), node "
+                "(str), vmid (int — LXC guest instead of ssh), register (bool=true). "
+                "Output: {ok, name, kind, addr, token_captured, registered}.",
+)
+async def cap_cluster_init(name: str = "", kind: str = "", advertise_addr: str = "",
+                           host: str = "", ssh_user: str = "root", ssh_key_path: str = "",
+                           cluster_id: str = "", node: str = "", vmid: int = 0,
+                           register: bool = True, trace_id=None) -> Dict:
+    name = (name or "").strip()
+    kind = (kind or "").strip().lower()
+    if not name:
+        return {"error": "name required"}
+    if kind not in ("docker-swarm", "k3s"):
+        return {"error": "kind must be docker-swarm or k3s (nomad/ray/generic join an "
+                         "existing control plane — use foundry.cluster.register)"}
+    adv = (advertise_addr or host or "").strip()
+    script = "#!/bin/sh\n" + cluster_init_script(kind, adv)
+    out = ""
+    if vmid:
+        res = await _apply_ct_feature(cluster_id, vmid, "lxc", script, node)
+        if res.get("error"):
+            return {"error": f"init on guest {vmid} failed: {res.get('error')}"}
+        out = res.get("stdout") or res.get("out") or ""
+    elif host:
+        b = base64.b64encode(script.encode()).decode()
+        run = "sudo -n sh" if (ssh_user or "root") != "root" else "sh"
+        res = await _call("exec.ssh.run", host=host, user=ssh_user or "root",
+                          key_path=ssh_key_path or _vera_key_path(),
+                          command=f"echo {b} | base64 -d | {run}", timeout=600)
+        out = res.get("stdout", "") or ""
+        # the captured token (below) is the real success signal, not the exit code —
+        # only bail here if SSH itself never reached the host (no output at all).
+        if res.get("error") and not out:
+            return {"error": f"init over SSH to {host} failed: {res.get('error')}"}
+    else:
+        return {"error": "give a target: host (ssh) or cluster_id+vmid (Proxmox LXC)"}
+    parsed = parse_init_token(kind, out)
+    tok = parsed.get("token", "")
+    if not tok:
+        return {"error": "init ran but no join token captured — is the docker/k3s daemon "
+                         "up on the host?", "output": (out or "")[-800:]}
+    addr = adv or parsed.get("addr", "")
+    result = {"ok": True, "name": name, "kind": kind, "addr": addr, "token_captured": True}
+    if register:
+        reg = await cap_cluster_register(name=name, kind=kind, join_addr=addr, token=tok,
+                                         role=("worker" if kind == "docker-swarm" else "agent"))
+        result["registered"] = bool(reg.get("ok"))
+    await emit_event({"type": "foundry.cluster.init", "name": name, "kind": kind})
+    return result
 
 
 async def _cluster_records() -> Dict[str, Dict]:

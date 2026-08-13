@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import shlex
 from typing import Dict, List
 
@@ -88,6 +89,51 @@ def cluster_join_script(kind: str, join_addr: str = "", token: str = "",
     if kind == "generic":
         return "\n".join(["# --- generic cluster join ---", str(opts.get("command", "true"))])
     return ""
+
+
+def cluster_init_script(kind: str, advertise_addr: str = "", opts: Dict = None) -> str:
+    """Pure: bootstrap a NEW cluster on THIS host and print its join token behind a
+    VERA_*_TOKEN= marker the caller parses. Idempotent (re-running on an existing
+    manager just re-reads the token). docker-swarm → `docker swarm init` + the worker
+    join-token; k3s → install a k3s server + read its node-token. '' for kinds that
+    can't self-init (nomad/ray/generic — point them at an existing control plane)."""
+    opts = opts or {}
+    kind = (kind or "").lower().strip()
+    A = shlex.quote(advertise_addr or "")
+    if kind == "docker-swarm":
+        adv = f"--advertise-addr {A} " if advertise_addr else ""
+        return "\n".join([
+            "# --- init Docker Swarm ---",
+            "command -v docker >/dev/null 2>&1 || (curl -fsSL https://get.docker.com | sh) || true",
+            f"docker swarm init {adv}>/dev/null 2>&1 || true",   # no-op if already a manager
+            "echo VERA_SWARM_TOKEN=$(docker swarm join-token -q worker 2>/dev/null)",
+            "echo VERA_SWARM_MGR=$(docker info --format '{{.Swarm.NodeAddr}}' 2>/dev/null)",
+        ])
+    if kind == "k3s":
+        return "\n".join([
+            "# --- init k3s server ---",
+            "command -v k3s >/dev/null 2>&1 || curl -sfL https://get.k3s.io | sh - >/dev/null 2>&1 || true",
+            "echo VERA_K3S_TOKEN=$(cat /var/lib/rancher/k3s/server/node-token 2>/dev/null)",
+        ])
+    return ""
+
+
+def parse_init_token(kind: str, output: str) -> Dict:
+    """Extract the captured join token (+ manager addr for swarm) from cluster_init_script
+    output. Returns {token, addr}; token '' when nothing was captured (init failed /
+    daemon not up)."""
+    text = output or ""
+    kind = (kind or "").lower().strip()
+    token, addr = "", ""
+    if kind == "docker-swarm":
+        m = re.search(r"VERA_SWARM_TOKEN=(\S+)", text)
+        token = m.group(1) if m else ""
+        m2 = re.search(r"VERA_SWARM_MGR=(\S+)", text)
+        addr = m2.group(1) if m2 else ""
+    elif kind == "k3s":
+        m = re.search(r"VERA_K3S_TOKEN=(\S+)", text)
+        token = m.group(1) if m else ""
+    return {"token": token, "addr": addr}
 
 
 def pick_node(nodes_json: str) -> str:
