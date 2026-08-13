@@ -1547,22 +1547,111 @@ class HybridMemoryStore:
             for name, b in active.items()
         }
         all_results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+        return self._merge_and_rank(tasks.keys(), all_results, limit)
 
-        # Merge and deduplicate — higher score wins when same id appears in multiple backends
+    def _merge_and_rank(self, names, all_results, limit: int) -> List[Dict]:
         merged: Dict[str, Tuple[MemoryRecord, float]] = {}
-        for name, results in zip(tasks.keys(), all_results):
+        for name, results in zip(names, all_results):
             if isinstance(results, Exception): continue
             for rec, score in results:
                 if rec.id not in merged or merged[rec.id][1] < score:
                     merged[rec.id] = (rec, score)
-
-        # Re-rank: importance × backend_score
         ranked = sorted(
             merged.values(),
             key=lambda x: x[1] * (0.5 + 0.5 * x[0].importance),
             reverse=True,
         )[:int(limit)]
         return [{"record": r.to_dict(), "score": round(s, 4)} for r, s in ranked]
+
+    async def search_fast_and_slow(
+        self,
+        query:   str,
+        limit:   int             = 10,
+        filters: Optional[Dict]  = None,
+        fast_timeout: float      = 2.5,
+    ) -> Tuple[List[Dict], "asyncio.Task"]:
+        """
+        Two-tier search for latency-sensitive callers (chat's memory_inject).
+
+        embed_text() is the dominant cost of a normal search() on this
+        instance — live-measured 3.5-8.5s PER CALL on the shared CPU embed
+        nodes regardless of query size, because of a near-continuous stream
+        of unrelated background embed traffic (fabric ingestion, sandbox
+        session syncs) that saturates them. Postgres (plainto_tsquery) and
+        Neo4j (fulltext index) searches need NO embedding at all, but the
+        plain search() above still makes them wait for one anyway since it
+        fetches the embedding before starting ANY backend.
+
+        Returns (fast_results, slow_task):
+          fast_results — Postgres + Neo4j hits only, gathered directly and
+            capped at fast_timeout (typically well under 1s once index-
+            warm). Available immediately for the CURRENT turn.
+          slow_task — a background asyncio.Task, already running, that
+            awaits the embedding (started in parallel with the fast tier,
+            not after it) and folds in a Chroma vector search once ready,
+            reusing the fast tier's Postgres/Neo4j hits rather than
+            re-querying them. Resolves to the full merged+reranked result
+            set. Callers should hand this to a delivery mechanism for the
+            NEXT turn (see memory_hooks.get_agent_memory_context_v2) rather
+            than await it inline — awaiting it defeats the entire point.
+        """
+        query = (query or "")[:_HYBRID_SEARCH_QUERY_MAX_CHARS]
+
+        # Start the embed NOW, in parallel with the fast tier below — not
+        # after it finishes. It's the long pole; every second it's not
+        # already running is a second added to the slow tier's total time.
+        embed_task = asyncio.create_task(embed_text(query))
+
+        fast_names = [n for n in ("postgres", "neo4j") if n in self._backends]
+        fast_tasks = {n: self._backends[n].search(query, limit=limit * 2,
+                                                   filters=filters, embedding=None)
+                      for n in fast_names}
+        if fast_tasks:
+            try:
+                fast_all = await asyncio.wait_for(
+                    asyncio.gather(*fast_tasks.values(), return_exceptions=True),
+                    timeout=fast_timeout)
+            except asyncio.TimeoutError:
+                fast_all = [TimeoutError("fast-tier timed out")] * len(fast_tasks)
+        else:
+            fast_all = []
+        fast_out = self._merge_and_rank(fast_tasks.keys(), fast_all, limit)
+
+        # Keep the raw (record, score) pairs too, cheaply, so the slow task
+        # can reuse them without re-parsing fast_out's dict shape.
+        fast_pairs: Dict[str, Tuple[MemoryRecord, float]] = {}
+        for name, results in zip(fast_tasks.keys(), fast_all):
+            if isinstance(results, Exception): continue
+            for rec, score in results:
+                if rec.id not in fast_pairs or fast_pairs[rec.id][1] < score:
+                    fast_pairs[rec.id] = (rec, score)
+
+        async def _slow() -> List[Dict]:
+            try:
+                embedding = await embed_task
+            except Exception:
+                embedding = None
+            chroma = self._backends.get("chroma")
+            chroma_results: List[Tuple[MemoryRecord, float]] = []
+            if chroma is not None and embedding:
+                try:
+                    chroma_results = await chroma.search(
+                        query, limit=limit * 2, filters=filters, embedding=embedding)
+                except Exception:
+                    chroma_results = []
+            merged = dict(fast_pairs)
+            for rec, score in chroma_results:
+                if rec.id not in merged or merged[rec.id][1] < score:
+                    merged[rec.id] = (rec, score)
+            ranked = sorted(
+                merged.values(),
+                key=lambda x: x[1] * (0.5 + 0.5 * x[0].importance),
+                reverse=True,
+            )[:int(limit)]
+            return [{"record": r.to_dict(), "score": round(s, 4)} for r, s in ranked]
+
+        slow_task = asyncio.create_task(_slow())
+        return fast_out, slow_task
 
     async def get(self, record_id: str) -> Optional[MemoryRecord]:
         for b in self._backends.values():
