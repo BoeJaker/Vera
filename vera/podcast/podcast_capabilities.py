@@ -348,8 +348,17 @@ async def _generate_script(topic: str, blocks: List[Dict[str, str]],
         "nothing that cannot be read aloud verbatim by a TTS engine. Numbers and "
         "abbreviations written out the way a person says them."
     )
+    # No topic given — this is a "just hand it the material" call (a file, a
+    # prior cap's output, a report). Point the writer at the source material
+    # itself rather than an empty subject line; it still has to pick title
+    # (below, no bare fallback text possible) and description from what's
+    # actually there.
+    topic_line = (f"Write a podcast script about: {topic}\n\n" if topic else
+                  "Write a podcast script. Determine the subject yourself from the "
+                  "SOURCE MATERIAL below — do not ask for a topic, just cover what's "
+                  "actually in it.\n\n")
     prompt = (
-        f"Write a podcast script about: {topic}\n\n"
+        f"{topic_line}"
         f"Format: {style_hint}.\n"
         f"Speakers ({len(names)}):\n{roster}\n\n"
         f"Length: about {words} words total (~{minutes} min spoken). "
@@ -687,9 +696,13 @@ def _normalize_args(topic, sources, speakers, style, minutes, gap_ms, engine,
     "podcast.script",
     http_method="POST", http_path="/podcast/script", http_tags=["podcast"],
     memory="on",
-    description="Write a multi-speaker podcast script (no audio) about a topic, optionally "
-                "grounded in data sources. Use to preview/edit before podcast.generate. "
-                "Input: topic (str!), sources (JSON list — see podcast.generate), "
+    description="Write a multi-speaker podcast script (no audio) about a topic, or straight "
+                "from source material with no topic at all — e.g. hand it a research file or "
+                "another cap's output and it determines the subject itself. "
+                "Use to preview/edit before podcast.generate. "
+                "Input: topic (str — omit it if sources are given; required only when there "
+                "are none), sources (JSON list — see podcast.generate; either topic or "
+                "sources is required), "
                 "speakers (JSON list [{name,voice,speed,persona}]), style "
                 "(conversational|interview|news|deep-dive|debate|story), minutes (float), "
                 "instructions (str — extra creative direction). "
@@ -699,10 +712,10 @@ async def cap_podcast_script(topic: str = "", sources=None, speakers=None,
                              style: str = "", minutes: float = 0,
                              instructions: str = "", show_name: str = "",
                              session_id: str = "", trace_id=None) -> dict:
-    if not (topic or "").strip():
-        return {"error": "topic is required"}
     a = _normalize_args(topic, sources, speakers, style, minutes, None, None,
                         None, None, show_name, None, instructions, session_id)
+    if not a["topic"] and not a["sources"]:
+        return {"error": "topic or sources is required"}
     blocks = await _gather_sources(a["sources"], a["topic"],
                                    session_id=a["session_id"]) if a["sources"] else []
     script = await _generate_script(a["topic"], blocks, a["speakers"], a["style"],
@@ -724,12 +737,17 @@ async def cap_podcast_script(topic: str = "", sources=None, speakers=None,
                 "speaker on the GPU TTS engine, stitches the audio, AND saves the finished audio "
                 "+ a readable script INTO this session's artifact workspace — so you do NOT need a "
                 "separate step to save anything. "
-                "WHEN TO USE: the user asks for a podcast / audio briefing / spoken digest. "
-                "Input: topic (str!). sources — the material to base it on; pass whatever you "
-                "have: a FILE PATH (e.g. './script.txt' — read from the workspace), a URL, plain "
-                "TEXT, or a JSON list mixing those and richer specs "
-                "({type:text|file|url|dataset|fabric|cap,...}); a bare string or newline/comma "
-                "list is auto-classified, so a file reference from a prior step Just Works. "
+                "WHEN TO USE: the user asks for a podcast / audio briefing / spoken digest — "
+                "including turning a research file or a prior cap's output straight into an "
+                "episode, with no topic at all. "
+                "Input: topic (str — optional if sources are given; the script writer "
+                "determines the subject from the source material itself). sources — the "
+                "material to base it on; pass whatever you have: a FILE PATH (e.g. "
+                "'./research.md' — read from the workspace), a URL, plain TEXT, or a JSON list "
+                "mixing those and richer specs ({type:text|file|url|dataset|fabric|cap,...}); a "
+                "bare string or newline/comma list is auto-classified, so a file or a prior "
+                "step's output Just Works — no topic needed, just pass the file/output as a "
+                "source. Either topic or sources is required (or script.segments). "
                 "script (JSON pre-written {segments:[{speaker,text}]} skips the LLM). "
                 "speakers (JSON list [{name,voice,speed,persona}] — voices from tts.voices), "
                 "style (conversational|interview|news|deep-dive|debate|story), minutes (float), "
@@ -750,8 +768,8 @@ async def cap_podcast_generate(topic: str = "", sources=None, speakers=None,
                                wait: bool = False, trace_id=None) -> dict:
     a = _normalize_args(topic, sources, speakers, style, minutes, gap_ms, engine,
                         format, script, show_name, intro, instructions, session_id)
-    if not a["topic"] and not (a["script"] and a["script"].get("segments")):
-        return {"error": "topic is required (or provide script.segments)"}
+    if not a["topic"] and not a["sources"] and not (a["script"] and a["script"].get("segments")):
+        return {"error": "topic, sources, or script.segments is required"}
 
     job_id = uuid.uuid4().hex[:10]
     _JOBS[job_id] = {"job_id": job_id, "status": "running", "stage": "queued",

@@ -14457,8 +14457,8 @@ window.addEventListener('DOMContentLoaded',()=>{
           <input type="checkbox" id="podChatSrc" style="width:11px;height:11px" onchange="CH._podUiSave()">this chat</label>
         <select id="podDsSel" style="width:auto;max-width:170px;font-size:9.5px" title="Data-fabric datasets (feeds)"><option value="">fabric dataset…</option></select>
         <button class="btn xs" onclick="CH._podAddDs()" title="Add the selected fabric dataset as source material">+ feed</button>
-        <input id="podSrcVal" placeholder="url or note…" style="flex:1;min-width:110px;font-size:9.5px">
-        <select id="podSrcType" style="width:auto;font-size:9.5px"><option value="url">url</option><option value="text">note</option><option value="web">web search</option></select>
+        <input id="podSrcVal" placeholder="url, workspace file path, or note…" style="flex:1;min-width:110px;font-size:9.5px">
+        <select id="podSrcType" style="width:auto;font-size:9.5px" title="A file/cap source needs no topic — the script writer figures out the subject from it"><option value="url">url</option><option value="text">note</option><option value="file">file</option><option value="web">web search</option></select>
         <button class="btn xs" onclick="CH._podAddSrc()">+ add</button>
       </div>
       <div id="podSrcChips" style="display:flex;gap:4px;flex-wrap:wrap"></div>
@@ -14536,7 +14536,8 @@ window.addEventListener('DOMContentLoaded',()=>{
   function renderChips(){
     $('podSrcChips').innerHTML=SOURCES.map((s,i)=>{
       const lbl=s.type==='dataset'?('feed: '+s.dataset_id):s.type==='url'?('url: '+(s.url||'').slice(0,40))
-              :s.type==='cap'?('cap: '+s.name):('note: '+(s.text||'').slice(0,30));
+              :s.type==='cap'?('cap: '+s.name):s.type==='file'?('file: '+(s.path||'').slice(0,40))
+              :('note: '+(s.text||'').slice(0,30));
       return `<span style="display:inline-flex;align-items:center;gap:4px;font-size:9px;padding:2px 6px;background:var(--bg0);border:1px solid var(--border);border-radius:8px;font-family:var(--mono)">${esc(lbl)}<a style="cursor:pointer;color:var(--dim)" onclick="CH._podRmSrc(${i})">&#10005;</a></span>`;
     }).join('');
   }
@@ -14607,6 +14608,7 @@ window.addEventListener('DOMContentLoaded',()=>{
       if(!v) return;
       if(t==='url') SOURCES.push({type:'url', url:v});
       else if(t==='web') SOURCES.push({type:'cap', name:'web.search', args:{query:v}, label:'web: '+v});
+      else if(t==='file') SOURCES.push({type:'file', path:v});
       else SOURCES.push({type:'text', text:v, label:'note'});
       $('podSrcVal').value=''; renderChips(); uiSave();
     },
@@ -14621,12 +14623,13 @@ window.addEventListener('DOMContentLoaded',()=>{
     },
     async _podScript(){
       const topic=$('podTopic').value.trim();
-      if(!topic){ status('enter a topic first', true); return; }
+      const srcs=collectSources();
+      if(!topic && !srcs.length){ status('enter a topic, or add a source (file/url/note) first', true); return; }
       status('writing script…'); $('podScriptWrap').style.display='flex';
       $('podScript').value='… thinking …';
       try{
         const r=await fetch(_base()+'/podcast/script',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({topic, sources:collectSources(), speakers:readSpeakers(),
+          body:JSON.stringify({topic, sources:srcs, speakers:readSpeakers(),
                                style:$('podStyle').value, minutes:parseFloat($('podMin').value)||3})});
         const j=await r.json();
         if(j.error){ $('podScript').value=''; status('script failed: '+j.error, true); return; }
@@ -14637,9 +14640,10 @@ window.addEventListener('DOMContentLoaded',()=>{
     },
     async _podGenerate(){
       const topic=$('podTopic').value.trim();
+      const srcs=collectSources();
       const edited=$('podScriptWrap').style.display!=='none' ? parseScriptText($('podScript').value) : null;
-      if(!topic && !edited){ status('enter a topic (or make a script preview) first', true); return; }
-      const body={topic, sources:collectSources(), speakers:readSpeakers(),
+      if(!topic && !srcs.length && !edited){ status('enter a topic, add a source (file/url/note), or make a script preview first', true); return; }
+      const body={topic, sources:srcs, speakers:readSpeakers(),
                   style:$('podStyle').value, minutes:parseFloat($('podMin').value)||3, wait:false};
       if(edited){ body.script={title:(SCRIPT_PREVIEW&&SCRIPT_PREVIEW.title)||topic,
                               description:(SCRIPT_PREVIEW&&SCRIPT_PREVIEW.description)||'',
