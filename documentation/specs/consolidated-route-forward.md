@@ -93,9 +93,10 @@ Verified live against prod this pass unless noted.
 
 ## 3. The route forward — sequenced
 
-**M0 — Stabilise the sweep/lifecycle (now).** Fix T1 (sweep restart-race over-reaping) +
-T2 (self-heal stale pool). Highest priority: the cleanup mechanisms must not break active
-sandboxes. Small, backend, gated.
+**M0 — Stabilise the sweep/lifecycle. ✓ DONE (2026-08-12, main `cf6dee1`).** Fixed T1 +
+T2 below. **Verified by reproduction:** a merged-branch sandbox with a STOPPED container
+(absent from `docker ps`, the exact restart-window trigger) survived the sweep — the old
+code would have reaped it.
 
 **M1 — Close the content loop (after D1).** User adds the deploy key → verify prod push →
 scheduled content auto-push → `content.remove`/rename. Retire prod-share editing warning
@@ -124,13 +125,21 @@ lay the safety net (M2/M3) before widening autonomy (M4–M6).
 
 ## 4. Tech debt & known issues (from QC 2026-08-12)
 
-- **T1 — Scaffolding sweep restart-race over-reaping.** The hourly sweep ran in the restart
+- **T1 — Scaffolding sweep restart-race over-reaping. ✓ FIXED (`cf6dee1`).** Protection now
+  keys off `docker ps -a` (existence in any state) + pool membership (every registered
+  sandbox worktree is protected regardless of container state), so a paused/stopped/
+  transitioning sandbox is never treated as dead. Belt-and-suspenders: the scheduled sweep
+  skips a startup-grace window (`VERA_SWEEP_STARTUP_GRACE_S`). Original description:
+  The hourly sweep ran in the restart
   window when paused/starting containers were momentarily absent from `docker ps`, so it
   reaped worktrees that BACK live (paused) sandboxes — including the primary's (it was on a
   merged branch). Fix: protect any worktree with a **pool entry** (not just one with a live
   `docker ps` container), and/or skip the sweep for ~N seconds after startup, and/or consult
   `docker ps -a`. Until fixed, keep `VERA_SCAFFOLD_SWEEP_ENABLED` handy.
-- **T2 — Stale pool descriptors / half-alive sandboxes.** After T1, several pool entries point
+- **T2 — Stale pool descriptors / half-alive sandboxes. ✓ FIXED (`cf6dee1`).** `evolve.sandbox.prune`
+  now self-heals: a pool entry whose worktree is missing is reconciled (its useless
+  port-holding container removed + descriptor dropped) so the branch can re-spawn clean.
+  Original description: After T1, several pool entries point
   at reaped worktrees while their paused containers remain; `evolve.sandbox.down(name=…)`
   fails on them (worktree-gone). Fix: self-heal — a sandbox whose worktree is missing is dead;
   reconcile (remove container + pool entry, or `sandbox.up` to recreate). The primary
