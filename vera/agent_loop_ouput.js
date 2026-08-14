@@ -65,6 +65,18 @@
 (function(){
   if(window.customElements && window.customElements.get('vera-agent-loop-output')) return;
 
+  // Self-load <vera-wiremesh-throbber> — the "still working…" gap card (see
+  // _armGap) needs it. This element gets embedded in many different panels
+  // (chat, dream, dag workshop, …) that shouldn't each have to remember an
+  // extra <script> include for a dependency of THIS element's own internals.
+  if(!(window.customElements && window.customElements.get('vera-wiremesh-throbber'))
+     && !document.querySelector('script[data-vera-loop-throbber]')){
+    const _s = document.createElement('script');
+    _s.src = '/ui/elements/loop_throbber.js';
+    _s.setAttribute('data-vera-loop-throbber', '1');
+    document.head.appendChild(_s);
+  }
+
   // ───────────────────── Helpers (scoped to this module) ────────────────────
   function _esc(s){
     return String(s==null?'':s)
@@ -390,6 +402,12 @@
 /* v5: joined thought-only "reasoning" card — muted, not an error/result. */
 .alo-cycle.thinking{border-style:dashed;border-color:var(--border2,#3a3530);background:transparent}
 .alo-cycle.thinking .alo-cycle-dot{border-color:var(--dim2,#8a7e70)}
+/* "still working…" gap-fill card — appears only after ~3.5s of no events
+   (see _armGap/_dismissGap), so a genuine backend gap (controller/planner
+   thinking, a long tool call) doesn't read as the run having stalled. Same
+   ephemeral-dashed language as .thinking; never itself a recorded step. */
+.alo-cycle.gap{border-style:dashed;border-color:var(--border2,#3a3530);background:transparent;opacity:.85}
+.alo-cycle.gap .alo-cycle-dot{border-color:var(--dim2,#8a7e70)}
 .alo-think-join{margin-top:4px;font-size:10px;line-height:1.45;color:var(--text2,#bfb6a8);white-space:pre-wrap;font-style:italic}
 /* Timeline: a dot + timestamp per card on a rail down the right side. The rail
    is composed of per-card connector segments (::after) rather than one long
@@ -686,6 +704,8 @@
       this._showThinking = true;
       this._activeWsJobs = new Set();     // job_ids with an active WS — SSE tokens for these are suppressed
       this._startCardEl = null;           // the single "Starting" card — re-used if `start` fires twice
+      this._gapTimer = null;              // pending "still working…" card timeout
+      this._gapCard = null;               // the shown gap card, if any
     }
 
     connectedCallback(){
@@ -735,6 +755,7 @@
 
     disconnectedCallback(){
       if(this._phraseTimer){ clearInterval(this._phraseTimer); this._phraseTimer = null; }
+      if(this._gapTimer){ clearTimeout(this._gapTimer); this._gapTimer = null; }
     }
 
     // Rolling thinking phrases — any .alo-phrase inside this instance fades
@@ -851,6 +872,11 @@
       this._hitlPending.clear();
       this._activeWsJobs.clear();
       this._lastResult = null;
+      // .alo-cycles is about to be wiped below — drop the stale JS reference
+      // too, or a timer armed just before reset() would find this._gapCard
+      // truthy (a detached node) and wrongly skip creating a real one.
+      if(this._gapTimer){ clearTimeout(this._gapTimer); this._gapTimer = null; }
+      this._gapCard = null;
       const cycles = this._sr.querySelector('.alo-cycles');
       if(cycles) cycles.innerHTML = '<div class="alo-empty">Waiting for events…</div>';
       const cc = this._sr.querySelector('[data-part="cycles-count"]');
@@ -933,6 +959,15 @@
     // ───────────────────── Internal: event dispatch ──────────────────
     _handleEvent(ev){
       const t = ev.type || '';
+
+      // Any event is a sign of life: dismiss a showing/pending gap card and
+      // start a fresh watch for the NEXT gap. A terminal event (the run's
+      // own '.done', or an error) just dismisses — arming a timer that
+      // outlives the run would show a stray card after everything's over.
+      this._dismissGap();
+      const _terminal = t === 'error' || t === 'agent_loop_v5.error'
+        || t === 'agent_loop_v6.error' || t.endsWith('.done');
+      if(!_terminal) this._armGap();
 
       // start
       if(t === 'start'){
@@ -2457,6 +2492,37 @@
       }
       body.innerHTML = `<pre class="alo-file-src">${_esc(text.slice(0, 20000))}</pre>`
         + (text.length > 20000 ? `<div class="alo-file-more">… ${text.length-20000} more chars — use download for the full file</div>` : '');
+    }
+
+    // "the loop is doing work" gap-fill: a step/cycle finishing and the next
+    // one's card appearing are two separate backend round-trips (controller
+    // assess, next-step planning, a long tool call, …) with nothing rendered
+    // client-side in between — on a slow gap this reads as the run having
+    // silently died. _dismissGap()+_armGap() run around EVERY event in
+    // _handleEvent: any event is proof of life, so it cancels whatever was
+    // pending and starts a fresh 3.5s countdown; only once that elapses with
+    // total silence does a card actually appear, so a normal fast cadence
+    // never shows it. The card is dropped the instant real content arrives.
+    _dismissGap(){
+      if(this._gapTimer){ clearTimeout(this._gapTimer); this._gapTimer = null; }
+      if(this._gapCard){ this._gapCard.remove(); this._gapCard = null; }
+    }
+    _armGap(){
+      this._gapTimer = setTimeout(() => {
+        this._gapTimer = null;
+        if(this._gapCard) return;
+        const host = this._sr.querySelector('.alo-cycles');
+        if(!host) return;
+        const d = document.createElement('div');
+        d.className = 'alo-cycle gap';
+        d.innerHTML = `<div class="alo-cycle-h">
+            <vera-wiremesh-throbber active style="width:14px;height:14px;vertical-align:middle;margin-right:2px"></vera-wiremesh-throbber>
+            <span class="alo-cycle-tool"><span class="alo-phrase">still working…</span></span>
+          </div>`;
+        host.appendChild(d);
+        _follow(host);
+        this._gapCard = d;
+      }, 3500);
     }
 
     _cycleEl(html, cls){
