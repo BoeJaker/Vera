@@ -7411,9 +7411,16 @@ async def evolve_sandbox_prune(dry_run: bool = True, delete_branches: bool = Fal
     base = (base or "").strip() or await _default_branch()
     protect = list(protect or [])
     wts = await _list_worktrees()
-    # which worktree paths are backed by a LIVE container → protected
-    ps = await _sh(["docker", "ps", "--format", "{{.Names}}"])
-    running = {n.strip() for n in (ps.get("out", "") or "").splitlines() if n.strip()}
+    # Which worktree paths are OWNED by a sandbox → protected. **T1 FIX (2026-08-12):** a
+    # container that EXISTS in ANY state (running/paused/stopped/exited) still owns its
+    # worktree; only a fully-REMOVED container frees it. The old check used `docker ps`
+    # (running/paused only), so a paused or transitioning sandbox looked dead during the
+    # restart window and its worktree got reaped — breaking the primary and leaving stale
+    # pool descriptors. Now: existence is keyed off `docker ps -a`, AND every registered
+    # sandbox's worktree is protected regardless of container state (a pool worktree is
+    # owned by the sandbox lifecycle / evolve.sandbox.down, never by the merged-reap here).
+    ps = await _sh(["docker", "ps", "-a", "--format", "{{.Names}}"])
+    exists = {n.strip() for n in (ps.get("out", "") or "").splitlines() if n.strip()}
     protected_paths: List[str] = []
     pool = await _sandbox_pool()
     r = _redis()
@@ -7425,17 +7432,21 @@ async def evolve_sandbox_prune(dry_run: bool = True, delete_branches: bool = Fal
                 prim = json.loads(raw.decode() if isinstance(raw, (bytes, bytearray)) else raw)
         except Exception:
             prim = {}
-    if prim.get("worktree") and _SANDBOX_CONTAINER in running:
-        protected_paths.append(prim["worktree"])
+    if prim.get("worktree"):
+        protected_paths.append(prim["worktree"])          # ALWAYS protect the primary's worktree
     live_composes: List[str] = []
     stale_pool: List[str] = []
+    heal_pool: List[str] = []                             # T2: pool entries whose worktree is GONE
     for slug, d in pool.items():
-        if d.get("name") in running:
-            if d.get("worktree"):
-                protected_paths.append(d["worktree"])
+        wt = d.get("worktree")
+        if wt:
+            protected_paths.append(wt)                    # ALWAYS protect a registered sandbox's worktree
+            if not Path(wt).exists():
+                heal_pool.append(slug)                    # half-alive: descriptor kept, worktree gone
+        if d.get("name") in exists:
             live_composes.append(d.get("compose", f"docker-compose.dev-{slug}.yml"))
         else:
-            stale_pool.append(slug)  # descriptor with a dead container
+            stale_pool.append(slug)                       # container TRULY removed (not in docker ps -a)
     # which candidate branches are fully merged into base (0 unique commits) —
     # and which worktrees hold UNCOMMITTED changes (never reap those, even if
     # merged: rev-list only sees committed history, so WIP left in a worktree
@@ -7483,11 +7494,14 @@ async def evolve_sandbox_prune(dry_run: bool = True, delete_branches: bool = Fal
               "reap": plan["reap"], "review": plan["review"],
               "merged_branches": merged_branches,
               "orphan_composes": orphan_yml, "stale_pool_entries": stale_pool,
-              "removed": [], "errors": [], "removed_branches": []}
+              "heal_pool_entries": heal_pool,
+              "removed": [], "errors": [], "removed_branches": [], "reconciled_pool": []}
     if dry_run:
         result["note"] = ("dry-run — nothing changed. Re-run with dry_run=false to "
                           "remove the `reap` worktrees + orphan composes + dead pool "
-                          "entries. `review` items are left for a manual decision.")
+                          "entries, and RECONCILE `heal_pool_entries` (broken sandboxes "
+                          "whose worktree is gone). `review` items are left for a manual "
+                          "decision; every registered sandbox's worktree is protected.")
         return result
 
     # ── execute: only the proven-safe reap set ──
@@ -7504,6 +7518,20 @@ async def evolve_sandbox_prune(dry_run: bool = True, delete_branches: bool = Fal
                 await r.hdel(KEY_SANDBOX_POOL, slug)
             except Exception:
                 pass
+    # T2 self-heal: a pool entry whose worktree is GONE is a broken (half-alive) sandbox —
+    # remove its useless, port-holding container and drop the descriptor so the branch can
+    # be re-spawned clean. (The primary is not in the pool, so this never touches vera-dev.)
+    for slug in heal_pool:
+        d = pool.get(slug) or {}
+        nm = d.get("name")
+        if nm:
+            await _sh(["docker", "rm", "-f", nm], timeout=60)
+        if r:
+            try:
+                await r.hdel(KEY_SANDBOX_POOL, slug)
+            except Exception:
+                pass
+        result["reconciled_pool"].append(slug)
     for fn in orphan_yml:
         try:
             (_repo_root() / fn).unlink()
@@ -7519,7 +7547,8 @@ async def evolve_sandbox_prune(dry_run: bool = True, delete_branches: bool = Fal
     await _audit("sandbox.prune",
                  f"reaped {len(result['removed'])} worktree(s), "
                  f"{len(result['removed_branches'])} merged branch(es), "
-                 f"{len(orphan_yml)} compose(s), {len(stale_pool)} dead pool entr(ies)")
+                 f"{len(orphan_yml)} compose(s), {len(stale_pool)} dead pool entr(ies), "
+                 f"{len(result['reconciled_pool'])} reconciled (worktree-gone)")
     await emit_event({"type": "evolve.sandbox.prune",
                       "removed": len(result["removed"]),
                       "removed_branches": len(result["removed_branches"]),
@@ -7529,6 +7558,8 @@ async def evolve_sandbox_prune(dry_run: bool = True, delete_branches: bool = Fal
 
 _SCAFFOLD_SWEEP_INTERVAL_S = int(os.getenv("VERA_SCAFFOLD_SWEEP_INTERVAL_S", "3600"))
 _SCAFFOLD_SWEEP_ENABLED = os.getenv("VERA_SCAFFOLD_SWEEP_ENABLED", "1") != "0"
+_SWEEP_STARTUP_GRACE_S = int(os.getenv("VERA_SWEEP_STARTUP_GRACE_S", "180"))
+_SWEEP_PROC_START = time.time()
 
 
 async def _scaffolding_sweep() -> None:
@@ -7540,6 +7571,10 @@ async def _scaffolding_sweep() -> None:
     alone; `git branch -d` re-verifies each branch). Disable with
     VERA_SCAFFOLD_SWEEP_ENABLED=0."""
     if not _SCAFFOLD_SWEEP_ENABLED:
+        return
+    # T1 belt-and-suspenders: never sweep during the startup settling window — docker/pool
+    # state can be mid-transition right after a restart (that was one way T1 fired).
+    if (time.time() - _SWEEP_PROC_START) < _SWEEP_STARTUP_GRACE_S:
         return
     try:
         res = await evolve_sandbox_prune(dry_run=False, delete_branches=True,
