@@ -1,10 +1,17 @@
 # Vera Dev Lifecycle, Repo Hygiene & Observability — Plan / Standard
 
-> **⏸ ON HOLD (2026-08-09).** Active focus moved to the companion plan
-> `~/vera_sandbox/agentic swarm.md` (**Agent Boards & Comms**), Stage 1. This plan
-> is paused, not abandoned — Phases C/D/E remainders (C4b, heatmap/auto-postmortem,
-> the content-edit surface) resume after the board foundation lands. The §8.2 #7
-> boundary work (`state_paths`) shipped and directly unblocks that plan's Stage 0.
+> **▶ PARTIALLY RESUMED (2026-08-12).** The board foundation (swarm plan Stage 1) landed,
+> and several Phase C/D/E items have since shipped: **pre-commit/commit-msg hooks (§3)**,
+> the **periodic scaffolding sweep (§8.1 #4)**, and the **content-edit surface (Phase E)**
+> are all done + verified. The §8.2 #7 `state_paths` boundary shipped. Remaining: Phase B
+> (test-tier gate), Phase D (heatmap/auto-postmortem), Phase E remainder (doc/test-presence
+> check, `content.remove`, scheduled auto-push), C4b (`.devcontainer/` + retire prod-share
+> editing).
+>
+> **➜ Single route-forward view:** `documentation/specs/consolidated-route-forward.md`
+> synthesises THIS plan + the swarm plan into one prioritised roadmap (M0–M6) with QC-verified
+> status and the tech debt found while verifying (T1 sweep restart-race, T2 stale pool). Keep
+> this plan's §-level detail authoritative; keep its status glyphs in sync with that roadmap.
 
 **Status:** proposed (plan) · **Author of plan:** drafted with Claude Code · **Date:** 2026-08-07
 **Owner:** admin (user) · **Home of the standard once ratified:** this file (versioned in-repo)
@@ -582,6 +589,11 @@ Recorded from actually building Phases A / A+ / D, so the plan reflects reality,
    automatically. The C3 root-owned-dir removal works (`_remove_worktree_robust`'s alpine
    root-container fallback verified reaping a root-owned worktree 2026-08-12). One-off backlog
    cleared the same day: 2 stale worktrees reaped + 23 merged branches deleted.
+   **⚠ BUG found in QC (T1, route-forward M0):** the hourly sweep run in the RESTART WINDOW
+   reaped worktrees backing paused/starting sandboxes (momentarily absent from `docker ps`),
+   including the primary's — leaving stale pool descriptors (T2). Harden: protect any worktree
+   with a POOL ENTRY (not just a live-`docker ps` one), skip the sweep for ~N s after startup,
+   and self-heal a sandbox whose worktree is missing. See the consolidated route-forward doc.
 5. **"No error" ≠ "it ran" — probe the real thing, the right way (reinforces §2.6).** A
    dev-container probe (`host.docker.internal:8999`) misreported prod as missing caps; the
    direct host probe was the truth. Verify against prod itself, not through a proxy.
