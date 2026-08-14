@@ -986,12 +986,10 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
 </style>
 </head>
 <body data-view="minimal">
-<script src="/ui/elements/loop_throbber.js"></script>
 
 <div id="topBar">
   <span class="tb-logo">VERA</span>
   <div class="conn-dot" id="connDot"></div>
-  <vera-wiremesh-throbber id="loopThrob" title="Agentic loop running…" style="margin-left:2px"></vera-wiremesh-throbber>
   <div class="tb-sep"></div>
 
   <!-- Agent selector — moved up from the old #agentBar so the two top bars
@@ -7670,15 +7668,6 @@ Your task: decide what to do next to advance toward the goal.
   // True while a server-side agentic loop is streaming — lets stopAll() report
   // whether a loop (vs a plain chat stream) was actually cancelled.
   let _serverLoopActive = false;
-  // Sync the top-bar "loop is doing work" throbber to this flag. Polled
-  // rather than wired into every _serverLoopActive assignment site (there
-  // are several, scattered across stream-start / stream-end / abort / element
-  // done-and-error listeners) — one small interval is far lower-risk than
-  // patching each site and can't be left stale by a future one that forgets to.
-  setInterval(() => {
-    const el = document.getElementById('loopThrob');
-    if (el) el.active = _serverLoopActive;
-  }, 350);
 
   // Message a RUNNING agentic loop mid-plan: the text is queued server-side and
   // folded into the loop's context at the next step boundary (it does NOT start a
