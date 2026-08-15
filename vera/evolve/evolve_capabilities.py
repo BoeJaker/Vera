@@ -4262,6 +4262,83 @@ async def _refresh_worktree(wt_abs: str, branch: str) -> Dict[str, Any]:
     return {"ok": True, "head": (head.get("out") or "").strip()}
 
 
+# 2026-08-15 chat-send-latency / infra-audit follow-up: "sandbox.up with no
+# branch" used to resolve to _default_branch() — literally "main" — and try to
+# git-worktree it. Git refuses that unconditionally: a branch can only be
+# checked out in ONE place at a time, and the primary repo checkout already
+# holds main. Every "reset the sandbox to mainline" call either hung or failed
+# outright with "already exists"/"already checked out" for exactly this
+# reason — not a stale-directory bug (_ensure_worktree's self-heal handles
+# those fine), a structural one: the request was asking git to do something
+# it cannot do, no matter how many times you retry or clean up first.
+#
+# Fix: a dedicated, LOCAL-ONLY branch that mirrors mainline and is what
+# "sandbox.up with no branch" actually targets. Nothing is ever committed
+# onto it directly and it is never pushed anywhere — it exists solely so a
+# second worktree has a legal branch name to hold. Kept fresh two ways: a
+# scheduled nightly fast-forward (see _scheduled_mainline_mirror_refresh
+# below), and an opportunistic refresh inline in evolve_sandbox_up itself so
+# a sandbox brought up between nightly runs still gets today's mainline.
+MAINLINE_MIRROR_BRANCH = "loop-lab/mainline-mirror"
+
+
+async def _refresh_mainline_mirror(repo_root: Optional[Path] = None) -> Dict[str, Any]:
+    """Create (first run) or fast-forward MAINLINE_MIRROR_BRANCH to the real
+    mainline's current tip. Safe to call whether or not the mirror currently
+    has a live worktree — sourced from LOCAL mainline (not a remote), since
+    this branch is never pushed. If a worktree has it checked out, the
+    fast-forward happens IN that worktree (ref + files move together, exactly
+    like _refresh_worktree); otherwise it's a plain ref move, safe because
+    nothing has the branch checked out to conflict with."""
+    root = repo_root or _repo_root()
+    base = await _default_branch(repo_root=root)  # the REAL mainline, e.g. "main"
+    have = await _git("rev-parse", "--verify", f"refs/heads/{MAINLINE_MIRROR_BRANCH}",
+                      repo_root=root)
+    if not have["ok"]:
+        cr = await _git("branch", MAINLINE_MIRROR_BRANCH, base, repo_root=root)
+        if not cr["ok"]:
+            return {"error": f"mirror branch create failed: {cr['err'] or cr['out']}"}
+        return {"ok": True, "action": "created", "base": base}
+    wt_abs = root / _WORKTREE_DIR / _safe_branch(MAINLINE_MIRROR_BRANCH)
+    if wt_abs.exists() and (wt_abs / ".git").exists():
+        st = await _sh(_git_wt_argv(str(wt_abs), "status", "--porcelain"), cwd=str(wt_abs))
+        if (st.get("out") or "").strip():
+            # Should never happen — nothing is meant to commit onto the mirror
+            # directly — but if it does, don't silently discard it.
+            return {"ok": False,
+                    "reason": "mirror worktree has uncommitted changes — not refreshed"}
+        ff = await _sh(_git_wt_argv(str(wt_abs), "merge", "--ff-only", base), cwd=str(wt_abs))
+        if not ff.get("ok"):
+            return {"ok": False, "reason": (ff.get("err") or "not fast-forwardable")[:200]}
+        head = await _sh(_git_wt_argv(str(wt_abs), "rev-parse", "--short", "HEAD"),
+                         cwd=str(wt_abs))
+        return {"ok": True, "action": "fast-forwarded worktree",
+                "head": (head.get("out") or "").strip()}
+    mv = await _git("branch", "-f", MAINLINE_MIRROR_BRANCH, base, repo_root=root)
+    if not mv["ok"]:
+        return {"error": f"mirror branch fast-forward failed: {mv['err'] or mv['out']}"}
+    return {"ok": True, "action": "fast-forwarded ref (no live worktree)", "base": base}
+
+
+_MAINLINE_MIRROR_REFRESH_INTERVAL_S = int(
+    os.getenv("VERA_MAINLINE_MIRROR_REFRESH_INTERVAL_S", str(24 * 3600)))
+
+
+async def _scheduled_mainline_mirror_refresh() -> None:
+    try:
+        res = await _refresh_mainline_mirror()
+        if res.get("ok"):
+            log.info("evolve: mainline mirror refreshed (%s)", res.get("action"))
+        elif res.get("error"):
+            log.warning("evolve: mainline mirror refresh failed: %s", res["error"])
+    except Exception as e:
+        log.debug("mainline mirror refresh: %s", e)
+
+
+schedule(_scheduled_mainline_mirror_refresh, _MAINLINE_MIRROR_REFRESH_INTERVAL_S,
+         name="evolve.mainline_mirror.refresh", skip_in_sandbox=True)
+
+
 async def _ensure_worktree(branch: str, repo_root: Optional[Path] = None) -> Dict[str, Any]:
     """Materialise the branch's WORKTREE at <repo>/.loop-lab-worktrees/<branch>
     WITHOUT ever switching the real working tree — this is the ONLY place a
@@ -7084,9 +7161,20 @@ async def evolve_sandbox_up(branch: str = "", snapshot: bool = True,
     # be exercising week-old code. The sensible default is the current mainline,
     # refreshed; running against a BRANCH is the deliberate act (pass one
     # explicitly — which is what re-running a specific improvement/test does).
+    #
+    # "The current mainline" is NOT the literal _default_branch() (e.g. "main")
+    # — git refuses to check the same branch out in a second worktree while the
+    # primary repo already holds it, so that always failed or hung. Target the
+    # dedicated MAINLINE_MIRROR_BRANCH instead (kept fast-forwarded to real
+    # mainline nightly + opportunistically here) — same effect, no collision.
     _explicit = bool(branch)
+    _mirror_refresh = None
     if not branch:
-        branch = await _default_branch()
+        _mirror_refresh = await _refresh_mainline_mirror()
+        if _mirror_refresh.get("error"):
+            return {"error": f"could not prepare the mainline mirror: "
+                             f"{_mirror_refresh['error']}"}
+        branch = MAINLINE_MIRROR_BRANCH
     # Resolve the configured host port up front. Refuse the prod port outright —
     # binding it is the "port 8999 already in use" failure — and point at the fix.
     port = await _dev_port()
@@ -7112,7 +7200,13 @@ async def evolve_sandbox_up(branch: str = "", snapshot: bool = True,
     # the user. Best-effort — a local-only repo with no remote is normal.
     refreshed = None
     if not _explicit:
-        refreshed = await _refresh_worktree(str(wt_abs), branch)
+        # The mirror branch was already refreshed (from local mainline) above,
+        # before the worktree even existed — _refresh_worktree pulls from a
+        # REMOTE (origin/<branch>), which the mirror never has, so calling it
+        # here too would just fail harmlessly but pointlessly. Reuse that
+        # result instead of re-deriving it.
+        refreshed = _mirror_refresh if branch == MAINLINE_MIRROR_BRANCH \
+            else await _refresh_worktree(str(wt_abs), branch)
         await emit_event({"type": "evolve.sandbox.refresh", "branch": branch,
                           "ok": bool(refreshed.get("ok")),
                           "head": refreshed.get("head", ""),
