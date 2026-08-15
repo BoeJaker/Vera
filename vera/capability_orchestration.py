@@ -3894,6 +3894,21 @@ _ACT_SKIP_GROUPS = frozenset({
     "fabric",
     # Agent infrastructure — high frequency, handled separately
     "agent",
+    # Sandbox lifecycle housekeeping (fs.write, commit, stop, context
+    # packaging — including calls that error out entirely, e.g. against an
+    # already-removed container) — high-frequency operational noise, not
+    # semantically-searchable content. This is the REAL gate: it's checked
+    # at _act_enqueue() time, before anything reaches the queue, so it
+    # covers BOTH the per-cap MEMORY.store() graph node AND the
+    # fabric.ingest_dataset() call inside _activity_worker() — unlike the
+    # activity_worker's own local _SKIP_GROUPS (a few hundred lines below),
+    # which only ever gated the fabric-ingest half and left MEMORY.store()
+    # unguarded. 2026-08-15 chat-send-latency investigation, part 2: the
+    # first attempt at this fix (adding "sandbox" to that local set only)
+    # was promoted and live-tested against a real restarted instance, and
+    # sandbox.session.fs.write STILL triggered an embed afterward — this is
+    # the correction, added here instead.
+    "sandbox",
 })
 
 # NOTE: there used to be a separate _ACT_RICH_GROUPS set for ide/research/nlp
