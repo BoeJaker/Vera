@@ -4373,7 +4373,21 @@ async def _activity_worker():
                 # Never ingest fabric/memory/obs cap activity back into
                 # fabric — doing so creates an event → ingest → event
                 # cascade that doubles memory every ~20s.
-                _SKIP_GROUPS = {"fabric", "memory", "obs", "health", "ui"}
+                #
+                # sandbox added 2026-08-15 (chat-send-latency investigation):
+                # every sandbox.* call — routine, high-frequency housekeeping
+                # like fs.write/commit/stop, INCLUDING ones that error out
+                # ("No such container") — was landing here and getting
+                # ingested (and therefore embedded) into caps.sandbox. Each
+                # embed live-measured 3.9-4.4s on this instance's shared
+                # embed node (cpu-246), and these fired back-to-back for
+                # ordinary idle-sandbox lifecycle traffic, saturating the
+                # SAME node genuinely time-sensitive callers (e.g. a chat
+                # send's own memory/fabric lookups) depend on. This activity
+                # is operational infrastructure noise, not something worth
+                # semantic-searchable recall — same judgment already applied
+                # to fabric/memory/obs/health/ui below.
+                _SKIP_GROUPS = {"fabric", "memory", "obs", "health", "ui", "sandbox"}
                 if group not in _SKIP_GROUPS and fabric:
                     dk = "cap:" + sid + ":" + trace_id
                     if dk not in _ACT_FABRIC_DEDUP:
