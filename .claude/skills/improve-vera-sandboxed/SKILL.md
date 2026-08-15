@@ -32,6 +32,14 @@ editing is the rare exception (small, urgent, explicitly sanctioned infra fix).
   the same session) causes transient `EOF`/`SSL` errors on any call, including
   plain `GET /health`, for up to ~30s. Retry with a short poll loop before
   concluding it's actually down.
+- **A standing bleeding-edge container may exist** — `evolve.bleeding_edge.
+  container.ensure` brings up (or confirms) a PERSISTENT, pinned sandbox
+  permanently tracking bleeding-edge's tip (auto-refreshed after every promote
+  into it), distinct from the ephemeral per-branch one `pipeline.begin` gives
+  you. Useful if you want a stable place to poke at "what's actually on
+  bleeding-edge right now" without spinning up your own. It's still a sandbox
+  container though — no docker socket (§6), so it doesn't help with
+  `evolve.unittest.run`.
 - **Never edit the main checkout directly, not even a "trivial" docs/skill
   file.** It's tempting — no gate applies, no container to spin up — but it
   leaves `main` dirty (blocks the next promote) and skips `bleeding-edge`
@@ -82,16 +90,18 @@ it's tempting to shortcut straight to `main`. Don't. Route it through
 gate will report `gate_passed: null` for it (nothing to compile-check) and
 `promote` needs `force=true` (no code gate to satisfy).
 
-**Branch off `bleeding-edge`, not `main`:**
-```
-git -C \\llm.int\boejaker\Vera fetch origin bleeding-edge
-git -C \\llm.int\boejaker\Vera branch feat/<name> origin/bleeding-edge
-```
-`evolve.pipeline.begin` (§3) bases new branches off `main` by default — it
-doesn't know about this convention. Either branch manually off
-`origin/bleeding-edge` first (as above) then `evolve.sandbox.up(branch=…)` on
-it, or use `evolve.pipeline.begin` and just be aware the base is `main` (fine
-if `main`==`bleeding-edge` at that moment — check with the diff below first).
+**This is now automatic, not a manual convention.** As of 2026-08-16
+(`_default_pipeline_base` in evolve_capabilities.py — landed the same day as
+this skill update, by a different concurrent session; genuinely the swarm
+converging on the same conclusion independently), both `evolve.pipeline.begin`
+(§3) and `evolve.pipeline.promote` (§7) default to `bleeding-edge` — branching
+off it and merging into it — whenever a `bleeding-edge` branch exists for the
+repo, falling back to the real mainline only if it doesn't. You don't need to
+branch off it by hand any more; the plumbing above (`git branch feat/<name>
+origin/bleeding-edge`) is the fallback for when you want explicit control, not
+the normal path. Still pass `to="bleeding-edge"` explicitly on `adopt`/`promote`
+anyway (§7) — `adopt`'s own default wasn't updated to match, so relying on the
+default there specifically still lands you on `main`.
 
 **Before landing, check the branches haven't diverged** (another agent may
 have promoted something to `bleeding-edge` since you branched):
@@ -116,18 +126,18 @@ already-merged work, not just yours.
 evolve.pipeline.begin(title="<what you're doing>", spawn=true, session_id="<yours>")
 ```
 This does everything at once: creates a **typed** branch (`feat/<slug>`) off
-`main` (see §2 — branch off `bleeding-edge` manually first if you want that),
-materialises its worktree, brings up your **own** dev container (`spawn=true`,
-so you don't disturb other agents' primary sandbox — now with `VERA_DEV_MODE=1`),
-and records the CI/CD pipeline **with its worktree** (so diff/test work). It
+`bleeding-edge` (§2 — automatic since 2026-08-16, falls back to the real
+mainline only if `bleeding-edge` doesn't exist for this repo), materialises
+its worktree, brings up your **own** dev container (`spawn=true`, so you don't
+disturb other agents' primary sandbox — now with `VERA_DEV_MODE=1`), and
+records the CI/CD pipeline **with its worktree** (so diff/test work). It
 returns `{id, branch, worktree, url, next[]}` — the exact next caps. No more
 guessing the setup steps.
 
 Lower-level alternative (if you need control, or the pool is full — see §0):
 `evolve.sandbox.up(branch=…)` (your primary sandbox, reused/switched) or
 `evolve.sandbox.spawn(branch=…)` (own container, needs a free pool slot); create
-the branch first with `git branch feat/<name> origin/bleeding-edge` (§2) or
-`evolve.sandbox.exec(where="worktree", cmd="git branch feat/<name> main")`.
+the branch first with `git branch feat/<name> origin/bleeding-edge` (§2).
 Poll `evolve.sandbox.status` for `reachable`.
 
 **Edit only inside the returned worktree.** Never the main checkout.
@@ -229,11 +239,14 @@ evolve.pipeline.adopt(branch="feat/<name>", to="bleeding-edge", title, summary, 
 evolve.pipeline.review_request(id, reason)
 evolve.pipeline.promote(id, to="bleeding-edge"[, force=true])   # force for docs/UI/infra
 ```
-`to="bleeding-edge"` is the default target per §2 — **not** `main`. If you
-started with `evolve.pipeline.begin` (§3) you already have the pipeline `id`;
-it defaults `to` to `main`, so pass `to="bleeding-edge"` explicitly, or skip
-`adopt` and go straight to `review_request` + `promote(to="bleeding-edge")`
-(promote refreshes the branch's commits before merging).
+`to="bleeding-edge"` per §2 — `evolve.pipeline.promote`'s own default is
+`bleeding-edge` too now (as of 2026-08-16), but `adopt`'s default is still
+`main`, so pass it explicitly on `adopt` regardless. If you started with
+`evolve.pipeline.begin` (§3) you already have the pipeline `id` — skip `adopt`
+and go straight to `review_request` + `promote(to="bleeding-edge")` (promote
+refreshes the branch's commits before merging; if you omit `to`, it defaults
+there anyway, but pass it — explicit beats relying on a default that could
+change again).
 
 **`gate_passed` is TWO checks, not one** (as of the 2026-08-16 M3 work — the
 description on the cap itself is the source of truth if this drifts):
@@ -255,9 +268,12 @@ merged into, which it isn't for `bleeding-edge`. **Refuses a dirty target
 tree** — that's the guard protecting WIP, not a failure.
 
 **Promoting `bleeding-edge` itself into `main`** is the separate step from §2 —
-same `adopt`/`review_request`/`promote` shape, with `branch="bleeding-edge"`,
-`to="main"`. Only do this with explicit authorization (§2); it's the one that
-actually reaches prod (§8).
+use the dedicated `evolve.bleeding_edge.promote_to_main(repo="vera")` (not a
+manual `adopt`/`promote` with `branch="bleeding-edge"`, though that shape
+still works too). Same safe-merge machinery underneath, one call, no `id` to
+track — this is a deliberate release action, never called automatically by
+any gate/scheduler/other capability. Only do this with explicit authorization
+(§2); it's the one that actually reaches prod (§8).
 
 ## 8. Deploy = push + restart (only `main` reaching prod, and only for `.py`)
 - **Push:** creds live on the Windows host — push from there. Push
