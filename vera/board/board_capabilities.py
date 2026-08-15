@@ -137,7 +137,7 @@ def _msg_dict(m: bc.AgentMessage) -> dict:
 def _item_dict(it: bc.BoardItem, full: bool = False) -> dict:
     d = {"id": it.id, "title": it.title, "lane": it.lane, "labels": it.labels,
          "agent": it.agent, "repo": it.repo, "project": it.project, "plan": it.plan,
-         "branch": it.branch, "pipeline": it.pipeline,
+         "branch": it.branch, "pipeline": it.pipeline, "sync_sig": it.sync_sig,
          "session": it.session, "executor": it.executor, "model": it.model,
          "reviewed_by": it.reviewed_by, "heartbeat": it.heartbeat,
          "hops": it.hops, "created_at": it.created_at, "updated_at": it.updated_at,
@@ -553,3 +553,90 @@ if True:  # capability registration (mirrors the guard style of the other module
                          mode="replace", source="board.index", tags="board,index")
         return {"ok": True, "indexed": len(rows), "dataset": _INDEX_DATASET,
                 "summary": summary, "fabric": res}
+
+
+    # â”€â”€ board.sync (M4, route-forward.md â€” Stage 2 start, local/no GitHub) â”€â”€
+    # Reflects a linked pipeline's CURRENT state onto its board item(s), so the
+    # board is the single work view instead of something cross-referenced by
+    # hand against the CI/CD tab. Every board.dispatch already stamps
+    # it.pipeline/it.branch (see _dispatch_run above) â€” this is the other half:
+    # keeping the item's lane/comments in sync with what that pipeline is
+    # ACTUALLY doing as it moves through adopt â†’ review â†’ promote.
+    def _lane_for_pipeline(rec: dict) -> str:
+        """Map a pipeline record's decision/gate/review state onto a board
+        lane. decision is 'pending' throughout adopt/review, 'held' if the
+        gate blocked promote or a merge conflicted, 'promoted' once merged
+        (evolve_capabilities.py evolve_pipeline_promote) â€” variant pipelines
+        use 'promoted' too (evolve_variant_promote path)."""
+        decision = (rec.get("decision") or "pending").lower()
+        if decision == "promoted":
+            return "done"
+        if decision == "held":
+            return "blocked"
+        if rec.get("review_requested"):
+            return "needs_review"
+        return "in_progress"
+
+    async def _sync_one(it: "bc.BoardItem") -> dict:
+        """Pull `it`'s linked pipeline onto the item. Idempotent via
+        it.sync_sig (a fingerprint of decision/gate/review/lane) â€” a repeated
+        sync with nothing changed is a cheap no-op, not a duplicate comment,
+        so this is safe to call on a timer or after every board view load."""
+        if not it.pipeline:
+            return {"id": it.id, "synced": False, "reason": "no linked pipeline"}
+        got = await _call("evolve.pipeline.get", id=it.pipeline)
+        rec = (got or {}).get("pipeline")
+        if not rec:
+            return {"id": it.id, "synced": False,
+                    "reason": (got or {}).get("error") or "pipeline not found"}
+        new_lane = _lane_for_pipeline(rec)
+        gate = rec.get("gate_passed")
+        sig = f"{rec.get('decision')}|{gate}|{bool(rec.get('review_requested'))}|{new_lane}"
+        if it.sync_sig == sig:
+            return {"id": it.id, "synced": False, "reason": "unchanged"}
+        # Never yank an item OUT of a lane a human parked it in on purpose â€”
+        # only advance/reflect while it's still in a pipeline-driven lane.
+        changed_lane = new_lane != it.lane and it.lane not in ("dropped", "done")
+        if changed_lane:
+            it.lane = new_lane
+        it.sync_sig = sig
+        await provider().upsert(it)
+        gate_txt = "n/a" if gate is None else ("PASS" if gate else "FAIL")
+        body = (f"pipeline {it.pipeline}: decision={rec.get('decision')}, gate={gate_txt}"
+                + (", review requested" if rec.get("review_requested") else "")
+                + (f" \u2192 lane: {new_lane}" if changed_lane else ""))
+        await provider().comment(it.id, bc.AgentMessage(
+            kind="progress", frm="board.sync", item=it.id, body=body))
+        await emit_event({"type": "board.synced", "id": it.id, "pipeline": it.pipeline,
+                          "lane": new_lane, "changed_lane": changed_lane})
+        return {"id": it.id, "synced": True, "lane": new_lane, "changed_lane": changed_lane}
+
+    @capability(
+        "board.sync", http_method="POST", http_path="/board/sync",
+        http_tags=["board"], memory="on",
+        description="Reflect a linked pipeline's CURRENT state (decision/gate/review) "
+                    "onto its board item(s) \u2014 lane + a progress comment \u2014 so the board "
+                    "is the single work view (route-forward.md M4, Stage 2 start; local "
+                    "only, no GitHub needed \u2014 GitHub provider + board.budget are the next "
+                    "part of Stage 2, not this). Idempotent: a repeated sync with nothing "
+                    "changed is a cheap no-op, not a duplicate comment \u2014 safe to call "
+                    "after every board load or on a timer. Never yanks an item out of "
+                    "'dropped'/'done' \u2014 those are human decisions, not pipeline-driven. "
+                    "Input: id (str \u2014 sync one item; empty = every item with a linked "
+                    "pipeline). Output: {ok, synced:[{id,lane,changed_lane}], "
+                    "skipped:[{id,reason}], total}.",
+    )
+    async def cap_board_sync(id: str = "", trace_id=None) -> dict:
+        if id:
+            it = await provider().get(id)
+            if not it:
+                return {"ok": False, "error": f"no such item: {id}"}
+            targets = [it]
+        else:
+            targets = [it for it in await provider().items() if it.pipeline]
+        synced: list = []
+        skipped: list = []
+        for it in targets:
+            res = await _sync_one(it)
+            (synced if res.get("synced") else skipped).append(res)
+        return {"ok": True, "synced": synced, "skipped": skipped, "total": len(targets)}
