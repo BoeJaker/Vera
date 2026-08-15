@@ -1539,9 +1539,15 @@ class HybridMemoryStore:
         # its intent — cap it once here rather than trust every caller (and
         # every future one) to do it themselves.
         query = (query or "")[:_HYBRID_SEARCH_QUERY_MAX_CHARS]
-        embedding = await embed_text(query)
         active = {k: v for k, v in self._backends.items()
                   if backends is None or k in backends}
+        # Only Chroma's vector search actually reads `embedding` — Postgres
+        # (plainto_tsquery) and Neo4j (fulltext index) both accept and ignore
+        # it. embed_text() is the dominant cost here (3.5-8.5s on this
+        # instance's shared embed nodes) and was being paid unconditionally
+        # even for callers who explicitly restrict `backends` to exclude
+        # chroma — pure waste. Skip it when nothing active needs it.
+        embedding = await embed_text(query) if "chroma" in active else None
         tasks = {
             name: b.search(query, limit=limit*2, filters=filters, embedding=embedding)
             for name, b in active.items()
