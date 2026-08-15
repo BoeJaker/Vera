@@ -3304,12 +3304,26 @@ async def _persist_loop_event(event: dict, ev_json: str):
     """Best-effort append of an agent-loop event to its session's replay list +
     keep the run-state current. Skips transient high-frequency token events (the
     final cards carry the result); unrelated events (no session_id / not a loop
-    event) are ignored."""
+    event) are ignored.
+
+    `_delta` (agent_loop_v4/v5 think_delta, agent_loop_v5 tool_stream_delta) is
+    the CURRENT name for exactly the per-token streaming this was already meant
+    to skip — the `_token` suffix this originally matched predates it and no
+    loop event has ever actually used that suffix, so the skip was a no-op.
+    Live-observed: a single step's streaming filled 3,746 of a 4,000-event
+    session replay list (94%), evicting all real step/tool/journal history
+    within minutes on a long run and making a stall invisible to anyone reading
+    session_state. The `_end` event for each stream (tool_stream_end,
+    think_stream_end) already carries/summarises the accumulated text, so
+    nothing durable is lost — only a client reattaching mid-stream (rare: the
+    live pub/sub tail already covers the common case) won't see the in-flight
+    partial text until that stream's `_end` event lands."""
     if not REDIS:
         return
     sid   = event.get("session_id") or ""
     etype = event.get("type") or ""
-    if not sid or not etype.startswith("agent_loop") or etype.endswith("_token"):
+    if (not sid or not etype.startswith("agent_loop")
+            or etype.endswith("_token") or etype.endswith("_delta")):
         return
     try:
         lkey, rkey = f"vera:loop:events:{sid}", f"vera:loop:run:{sid}"

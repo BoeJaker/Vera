@@ -17908,6 +17908,48 @@ async def _v6_finalize_step(step: Dict[str, Any], res: Dict[str, Any], goal: str
 # continuation step. Bounded by the run's recovery budget (max_branches).
 # ═════════════════════════════════════════════════════════════════════════════
 
+def _v6_recovery_lineage(failed_step: Dict[str, Any], failed_res: Dict[str, Any],
+                         why: str) -> List[Dict[str, Any]]:
+    """Append this attempt to the failed step's own recovery history (empty if
+    this is the first attempt — a step only carries `_recovery_history` once it
+    IS itself a recovery step, see both callers below). Threaded forward onto
+    every subsequent recovery step's dict, so a lineage of N rounds accumulates
+    N records rather than each round only ever seeing the immediately-prior one.
+
+    Exists because `_v6_adjust_step`/`_v6_make_recovery_step` used to reseed
+    each new attempt from ONLY the single most-recent failure — a fresh
+    tool-call counter, a fresh arg-fix budget, no record that this exact
+    tactic already failed in an earlier round. Live-observed: a run stuck for
+    2 hours / 65+ cycles repeatedly re-trying the same malformed `code.author`
+    argument name across recovery rounds, each round individually bounded (its
+    own stuck-loop guard fired every time) but the SEQUENCE of rounds never
+    accumulating the memory that would let the model — or the run — recognize
+    it was repeating itself."""
+    lineage = list(failed_step.get("_recovery_history") or [])
+    lineage.append({
+        "title": str(failed_step.get("title") or "")[:120],
+        "caps": list(failed_step.get("caps") or [])[:6],
+        "why": why[:300],
+    })
+    return lineage
+
+
+def _v6_recovery_lineage_block(lineage: List[Dict[str, Any]]) -> str:
+    """Render prior recovery attempts as a prompt block, or '' when this is the
+    first attempt. Told explicitly not to repeat any of them — the model has no
+    other way to know a tactic was already tried and already failed."""
+    if not lineage:
+        return ""
+    lines = "\n".join(
+        f"  {i}. tried: {a['title']} (caps: {', '.join(a['caps']) or 'none'}) "
+        f"— failed: {a['why']}"
+        for i, a in enumerate(lineage, 1))
+    return ("\n\nPRIOR RECOVERY ATTEMPTS FOR THIS STEP — each of these was already "
+            "tried and already failed. Do NOT repeat the same tactic, the same "
+            "capability with the same arguments, or anything that reads like a "
+            "reword of one of these — pick something genuinely different:\n" + lines)
+
+
 def _v6_make_recovery_step(failed_step: Dict[str, Any], failed_res: Dict[str, Any],
                            new_id: int) -> Dict[str, Any]:
     """Plain continuation step for the `extra_step` failure strategy — the static
@@ -17921,6 +17963,7 @@ def _v6_make_recovery_step(failed_step: Dict[str, Any], failed_res: Dict[str, An
     prior = str(failed_res.get("summary")
                 or failed_res.get("raw_summary") or "")[:2000]
     crit = str(failed_step.get("success") or "").strip()
+    lineage = _v6_recovery_lineage(failed_step, failed_res, why)
     goal_txt = (
         "CONTINUE the previous step toward its goal — it ran but did NOT yet meet its "
         "success bar. Do the SPECIFIC missing work and build DIRECTLY on what the "
@@ -17930,7 +17973,8 @@ def _v6_make_recovery_step(failed_step: Dict[str, Any], failed_res: Dict[str, An
         f"  its goal: {str(failed_step.get('goal', ''))[:600]}\n"
         + (f"  why it fell short: {why}\n" if why else "")
         + (f"\nOUTPUT SO FAR (build on this — this is what the previous step returned):\n{prior}\n"
-           if prior else ""))
+           if prior else "")
+        + _v6_recovery_lineage_block(lineage))
     return {
         "id": new_id,
         "title": f"Recover: {str(failed_step.get('title', ''))[:90]}",
@@ -17941,6 +17985,7 @@ def _v6_make_recovery_step(failed_step: Dict[str, Any], failed_res: Dict[str, An
         "success": crit,
         "_recovery": True,
         "_prereq_done": True,   # context is already embedded; skip prestep-info
+        "_recovery_history": lineage,
     }
 
 
@@ -17957,6 +18002,10 @@ async def _v6_adjust_step(failed_step: Dict[str, Any], failed_res: Dict[str, Any
     step's own prior output so it builds forward. Falls back to a plain continuation
     step on any failure. Returns a canonical step dict with id == new_id."""
     fallback = _v6_make_recovery_step(failed_step, failed_res, new_id)
+    # Reuse the lineage _v6_make_recovery_step already computed (appends THIS
+    # attempt onto whatever _recovery_history failed_step itself carried) so
+    # both the LLM-adjusted path below and the fallback agree on one history.
+    lineage = fallback["_recovery_history"]
     crit = str(failed_step.get("success") or "").strip()
     why = (str(failed_res.get("met_reason") or "")[:400]
            or str(failed_res.get("raw_summary") or failed_res.get("summary") or "")[:500])
@@ -17998,7 +18047,8 @@ async def _v6_adjust_step(failed_step: Dict[str, Any], failed_res: Dict[str, Any
               + (f"OUTPUT SO FAR (build on this):\n{prior}\n\n" if prior else "")
               + (f"USER STEERED (mid-step answers — these override the original criterion where "
                  f"they conflict):\n{user_steer}\n\n" if user_steer else "")
-              + f"AVAILABLE CAPABILITIES:\n{cap_lines}\n\nDesign the adjusted step.")
+              + f"AVAILABLE CAPABILITIES:\n{cap_lines}\n\nDesign the adjusted step."
+              + _v6_recovery_lineage_block(lineage))
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
@@ -18046,6 +18096,7 @@ async def _v6_adjust_step(failed_step: Dict[str, Any], failed_res: Dict[str, Any
         "_recovery": True,
         "_adjusted": True,
         "_prereq_done": True,
+        "_recovery_history": lineage,
     }
 
 
@@ -20347,6 +20398,13 @@ async def cap_dag_agent_loop_v6(
     gcycle = 0
     branches_used = 0                      # total alternate branches explored this run
     extra_steps_used = 0                    # total extra_step recovery inserts this run
+    # Per-LINEAGE cap, on top of extra_steps_used's run-wide budget: even with
+    # cross-round memory (_v6_recovery_lineage) telling the adjuster what
+    # already failed, bound how many times any ONE logical step gets to keep
+    # trying before the run accepts its best-effort result and moves on —
+    # the run-wide budget alone doesn't stop one step from consuming it
+    # entirely. 3 rounds = 4 total attempts at the same underlying step.
+    _MAX_RECOVERY_ROUNDS = 3
     max_id = max((s["id"] for s in steps), default=0)
 
     async def _recovery_step(failed_step, failed_res, new_id):
@@ -20810,7 +20868,8 @@ async def cap_dag_agent_loop_v6(
             elif br["records"]:
                 res["pruned_branches"] = br["records"]
         elif (failure_strategy == "extra_step" and step_failed
-              and extra_steps_used < max_branches and executed < hard_cap):
+              and extra_steps_used < max_branches and executed < hard_cap
+              and len(step.get("_recovery_history") or []) < _MAX_RECOVERY_ROUNDS):
             extra_steps_used += 1
             max_id += 1
             rec = await _recovery_step(step, res, max_id)
@@ -20985,7 +21044,8 @@ async def cap_dag_agent_loop_v6(
                 elif br["records"]:
                     res["pruned_branches"] = br["records"]
             elif (failure_strategy == "extra_step" and step_failed
-                  and extra_steps_used < max_branches and executed < hard_cap):
+                  and extra_steps_used < max_branches and executed < hard_cap
+                  and len(step.get("_recovery_history") or []) < _MAX_RECOVERY_ROUNDS):
                 extra_steps_used += 1
                 max_id += 1
                 rec = await _recovery_step(step, res, max_id)
@@ -21180,6 +21240,21 @@ async def workshop_agent_loop_cancel(request: Request):
     if task and not task.done():
         task.cancel()
         _AGENT_LOOP_TASKS.pop(session_id, None)
+        # Write the terminal status now rather than leaving the run-state hash
+        # at "running" for the runner's own finally-block to fix — a task
+        # cancellation unwinds via CancelledError, and depending on exactly
+        # where it lands that cleanup may not always execute. Without this,
+        # session_state/`/sessions` kept reporting a just-cancelled run as
+        # "running" for up to VERA_LOOP_STALE_SECS (10 minutes) until the
+        # staleness fallback overrode it — live-observed after cancelling a
+        # genuinely stuck run mid-audit.
+        try:
+            r = _redis()
+            if r:
+                await r.hset(f"vera:loop:run:{session_id}",
+                             mapping={"status": "cancelled", "updated_at": now_iso()})
+        except Exception as e:
+            log.debug("cancel: status write failed for %s: %s", session_id, e)
         return {"ok": True, "cancelled": True, "session_id": session_id}
     _AGENT_LOOP_TASKS.pop(session_id, None)
     return {"ok": True, "cancelled": False, "session_id": session_id,
