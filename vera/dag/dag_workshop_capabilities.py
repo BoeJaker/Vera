@@ -3849,6 +3849,16 @@ def _coerce_to_known_category(cat: str, keywords: List[Any]) -> str:
 #     OWN goal decomposition; planning is never delegated to a capability.
 #   • dag.run / dag.store_run execute stored DAGs — same handover problem.
 #   • dag.agent_loop* would recurse the loop into itself.
+#   • ide.workspace.create is a HUMAN-facing named-project-folder tool, not
+#     loop scratch space — it auto-links the calling session to a NEW shared
+#     `ws-<name>` sandbox (session_sandbox_capabilities.sandbox.session.link),
+#     which reroutes ALL of that session's subsequent exec/fs-write routing
+#     away from wherever the loop's own steps had already been writing. A
+#     specialist picking it mid-plan (it reads like a generic "create a
+#     project/workspace" cap) silently orphaned prior steps' artifacts even
+#     after the session-already-routed guard was added — the loop's real
+#     artifact/session sandbox (exec.*, ide.fs.write, code.save) is already
+#     session-aware and is what a plan should use instead.
 _DEFAULT_CAP_BLACKLIST: set = {
     "llm.plan",
     "dag.plan", "dag.plan_and_run", "dag.from_goal",
@@ -3860,6 +3870,7 @@ _DEFAULT_CAP_BLACKLIST: set = {
     # mid-step (and every other loop, chat stream and queued job with it). Never
     # offer it — this is an operator control, not a tool.
     "sys.dev.restart",
+    "ide.workspace.create",
 }
 
 
