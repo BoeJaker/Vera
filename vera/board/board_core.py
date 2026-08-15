@@ -51,7 +51,7 @@ ENVELOPE_KINDS = {
 META_FIELDS = [
     "lane", "labels", "agent", "repo", "project", "plan", "branch", "pipeline",
     "session", "executor", "model", "reviewed_by", "heartbeat", "hops",
-    "created_at", "updated_at",
+    "created_at", "updated_at", "sync_sig",
 ]
 
 
@@ -91,6 +91,11 @@ class BoardItem:
     plan: str = ""           # id of the umbrella PLAN item this work belongs to
     branch: str = ""
     pipeline: str = ""
+    # Opaque fingerprint of the linked pipeline's state as of the last
+    # board.sync â€” decision|gate_passed|review_requested|lane. Lets sync be
+    # idempotent (a repeated call with nothing changed is a no-op, not a
+    # duplicate comment) without needing a separate side-store.
+    sync_sig: str = ""
     session: str = ""
     executor: str = ""       # deterministic|vera|capable
     model: str = ""
@@ -244,6 +249,7 @@ def item_from_markdown(text: str, item_id: str) -> BoardItem:
         hops=int(meta.get("hops", 0) or 0),
         created_at=meta.get("created_at", ""),
         updated_at=meta.get("updated_at", ""),
+        sync_sig=meta.get("sync_sig", ""),
         comments=comments,
     )
 
