@@ -7310,13 +7310,28 @@ Your task: decide what to do next to advance toward the goal.
     // ── Context freshness guard ───────────────────────────────────────
     // In live-context mode, if CTX_NODES were gathered for a DIFFERENT input
     // (the user edited the box and sent before the debounced fetch ran),
-    // re-run retrieval for THIS message synchronously so the turn carries its
-    // own context instead of the previous message's. buildCtxInj(msg) already
-    // returns '' on a mismatch, so even if this fetch is skipped or fails we
-    // never leak stale context — worst case the turn just carries none.
+    // re-run retrieval for THIS message so the turn carries its own context
+    // instead of the previous message's.
+    //
+    // BOUNDED, not awaited unconditionally: ctxFetch() hits /memory/search
+    // and /fabric/query, and both compute a full query embedding before
+    // touching any backend even when postgres/neo4j alone would answer —
+    // live-measured 3.5-8.5s PER CALL on this instance's shared embed nodes
+    // (2026-08 chat-send-latency investigation). Awaiting it unconditionally
+    // here meant EVERY send that didn't already have fresh context paid that
+    // cost before the chat request was even dispatched — this WAS the "delay
+    // from sending a message" complaint, entirely separate from (and unfixed
+    // by) the server-side memory_inject two-tier work, which only covers the
+    // agent's own recall, not this client-side preview panel's pre-send
+    // refetch. Race it against a short bound instead: if it lands in time
+    // this turn gets fresh context same as before; if not, buildCtxInj(msg)
+    // already returns '' on a mismatch, so the turn just carries none THIS
+    // time — the fetch keeps running in the background and CTX_NODES will be
+    // ready for the next one. Send is never blocked by more than the bound.
     if(document.getElementById('ctxInject')?.checked && _ctxLiveOn()
        && msg.trim().length>2 && !_ctxMatches(msg)){
-      try{ await ctxFetch(false,msg); }catch(_){}
+      const _fetchP=ctxFetch(false,msg,true).catch(()=>{});
+      await Promise.race([_fetchP, new Promise(res=>setTimeout(res,600))]);
     }
     // Recompute injection now that context is guaranteed to match this msg,
     // then reconcile the "+N ctx" pill on the already-painted user message.
@@ -8832,7 +8847,7 @@ Your task: decide what to do next to advance toward the goal.
     return 0;
   }
 
-  async function ctxFetch(force=false,queryOverride=''){
+  async function ctxFetch(force=false,queryOverride='',fast=false){
     const query=(queryOverride||document.getElementById('chatInput')?.value?.trim()||HISTORY.slice(-1)[0]?.content||'').trim();
     if(!query&&!force)return;
 
@@ -8885,9 +8900,16 @@ Your task: decide what to do next to advance toward the goal.
 
     // Kick the fabric query off NOW so it overlaps the memory round-trips
     // below (the two are independent). It's awaited in §2. — speed win.
+    // fast=true uses text= (keyword) instead of vector= (semantic): passing
+    // vector makes fabric.query compute a query embedding the same way
+    // memory.search's chroma leg does — live-measured 3.75s vs 0.06s for
+    // text-only on this instance's shared embed nodes (same investigation
+    // as the memory leg above).
     let _fabricPromise=null;
     if(CTX_SRCS.has('fabric')){
-      const fq={vector:query,top_k:Math.max(fabK*2,8),include_data:true};if(fabDS)fq.dataset_id=fabDS;
+      const fq=fast?{text:query,top_k:Math.max(fabK*2,8),include_data:true}
+                   :{vector:query,top_k:Math.max(fabK*2,8),include_data:true};
+      if(fabDS)fq.dataset_id=fabDS;
       _fabricPromise=fetchA('/fabric/query','POST',{query:JSON.stringify(fq)});
     }
 
@@ -8899,7 +8921,16 @@ Your task: decide what to do next to advance toward the goal.
     if(CTX_SRCS.has('memory')&&!stale()){
       // Fetch ~3x the desired k so the rerank has headroom — server ignores
       // hits below its own min similarity, so this is an upper bound.
-      const hr=await fetchA('/memory/search','POST',{query,limit:Math.max(k*3,12)});
+      // fast=true (the pre-send freshness-guard call in send()) restricts to
+      // postgres+neo4j: chroma's vector leg requires a query embedding that
+      // memory.search computes unconditionally when chroma is in play —
+      // live-measured 4.65s vs 0.08s with it excluded (2026-08 chat-send-
+      // latency investigation) on this instance's shared embed nodes. The
+      // on-type live-preview call (fast=false) keeps the richer chroma-
+      // inclusive search since nothing is blocking on it.
+      const mBody={query,limit:Math.max(k*3,12)};
+      if(fast) mBody.backends='postgres,neo4j';
+      const hr=await fetchA('/memory/search','POST',mBody);
       if(!stale()){
         const candidates=[];
         (hr?.results||[]).forEach(r=>{
