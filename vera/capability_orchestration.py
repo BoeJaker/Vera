@@ -3882,7 +3882,6 @@ import queue as _queue_mod
 _ACT_QUEUE: "asyncio.Queue" = None           # created lazily in first enqueue
 _ACT_SESSION_CURSOR: dict   = {}             # session_id -> last node_id
 _ACT_SESSION_ROOT:   dict   = {}             # session_id -> root node_id (cached)
-_ACT_FABRIC_DEDUP:   set    = set()          # trace_id dedup
 _CURRENT_SESSION:    str    = ""             # last known session_id (fallback for caps without explicit session)
 
 # Capability groups that are too noisy / infrastructure — skip recording
@@ -3899,15 +3898,14 @@ _ACT_SKIP_GROUPS = frozenset({
     # already-removed container) — high-frequency operational noise, not
     # semantically-searchable content. This is the REAL gate: it's checked
     # at _act_enqueue() time, before anything reaches the queue, so it
-    # covers BOTH the per-cap MEMORY.store() graph node AND the
-    # fabric.ingest_dataset() call inside _activity_worker() — unlike the
-    # activity_worker's own local _SKIP_GROUPS (a few hundred lines below),
-    # which only ever gated the fabric-ingest half and left MEMORY.store()
-    # unguarded. 2026-08-15 chat-send-latency investigation, part 2: the
-    # first attempt at this fix (adding "sandbox" to that local set only)
-    # was promoted and live-tested against a real restarted instance, and
-    # sandbox.session.fs.write STILL triggered an embed afterward — this is
-    # the correction, added here instead.
+    # covers the per-cap MEMORY.store() graph node. 2026-08-15
+    # chat-send-latency investigation, part 2: the first attempt at this fix
+    # added "sandbox" to a local _SKIP_GROUPS set that lived inside
+    # _activity_worker() and only gated its (now entirely removed, see
+    # "option A" 2026-08-15) fabric.ingest_dataset() call — it left
+    # MEMORY.store() unguarded, so sandbox.session.fs.write still triggered
+    # an embed after that fix was promoted and live-tested. This module-level
+    # gate, checked before the queue, is the correction.
     "sandbox",
 })
 
@@ -4205,8 +4203,7 @@ async def record_stream_activity(
 async def _activity_worker():
     """
     Background coroutine. Drains _ACT_QUEUE every 2s, writes ONE rich
-    graph node per cap call, plus a fabric entry. Runs for the lifetime
-    of the server.
+    graph node per cap call. Runs for the lifetime of the server.
 
     Graph structure produced per cap call (single node, not a pair):
 
@@ -4257,7 +4254,6 @@ async def _activity_worker():
 
             mem_mod = sys.modules.get("memory")
             hooks   = sys.modules.get("memory_hooks")
-            fabric  = sys.modules.get("data_fabric")
 
             for item in batch:
                 sid          = item["session_id"]
@@ -4384,53 +4380,25 @@ async def _activity_worker():
                 if graph_ok:
                     _ACT_SESSION_CURSOR[sid] = cap_id
 
-                # ── Fabric ─────────────────────────────────────────────────
-                # Never ingest fabric/memory/obs cap activity back into
-                # fabric — doing so creates an event → ingest → event
-                # cascade that doubles memory every ~20s.
-                #
-                # sandbox added 2026-08-15 (chat-send-latency investigation):
-                # every sandbox.* call — routine, high-frequency housekeeping
-                # like fs.write/commit/stop, INCLUDING ones that error out
-                # ("No such container") — was landing here and getting
-                # ingested (and therefore embedded) into caps.sandbox. Each
-                # embed live-measured 3.9-4.4s on this instance's shared
-                # embed node (cpu-246), and these fired back-to-back for
-                # ordinary idle-sandbox lifecycle traffic, saturating the
-                # SAME node genuinely time-sensitive callers (e.g. a chat
-                # send's own memory/fabric lookups) depend on. This activity
-                # is operational infrastructure noise, not something worth
-                # semantic-searchable recall — same judgment already applied
-                # to fabric/memory/obs/health/ui below.
-                _SKIP_GROUPS = {"fabric", "memory", "obs", "health", "ui", "sandbox"}
-                if group not in _SKIP_GROUPS and fabric:
-                    dk = "cap:" + sid + ":" + trace_id
-                    if dk not in _ACT_FABRIC_DEDUP:
-                        try:
-                            await fabric.ingest_dataset(
-                                dataset_id="caps." + group,
-                                data=[{
-                                    "text":       text,
-                                    "cap_name":   cap_name,
-                                    "group":      group,
-                                    "trace_id":   trace_id,
-                                    "session_id": sid,
-                                    "elapsed_ms": elapsed_ms,
-                                    "params":     params_json,
-                                    "result":     result_json,
-                                    "preview":    preview,
-                                    "node_id":    cap_id,
-                                    "ts":         ts,
-                                }],
-                                source="capability_framework",
-                                source_id=sid,
-                                tags=[group, cap_name, "capability"],
-                            )
-                            _ACT_FABRIC_DEDUP.add(dk)
-                            if len(_ACT_FABRIC_DEDUP) > 50000:
-                                _ACT_FABRIC_DEDUP.clear()
-                        except Exception as e:
-                            log.debug("activity_worker fabric [%s]: %s", cap_name, e)
+                # ── Fabric — REMOVED 2026-08-15 (infra audit, option A) ────
+                # This used to ALSO write every cap call into a caps.<group>
+                # fabric dataset via fabric.ingest_dataset(), on top of the
+                # MEMORY.store(rec) graph node above — two independent stores
+                # holding near-identical [cap_name] params -> result text,
+                # each computing its OWN embedding of it. Live-confirmed
+                # double cost: excluding a group (e.g. "sandbox", 2026-08-15
+                # chat-send-latency investigation) from JUST this fabric path
+                # still left it getting embedded via the memory-graph write,
+                # proving both were paying the cost independently for the
+                # same content. No consumer was found that reads caps.*
+                # fabric datasets specifically (memory.map(prefix="caps") is
+                # a generic namespace browser, not a dependent reader — it
+                # simply shows nothing under that prefix now, same as any
+                # other genuinely-empty namespace). The memory-graph node is
+                # the single source of truth going forward: still
+                # keyword/semantic-searchable via memory.search/.recall/
+                # .seek (tag=group, tag=cap_name), still linked via
+                # FOLLOWS_ACTIVITY/TRIGGERED_BY_MSG, at HALF the embed cost.
 
         except _act_asyncio.CancelledError:
             break
@@ -4449,7 +4417,7 @@ def capability(
     # memory: how the unified activity recorder treats this cap.
     #   "on"   — record richly (call + output graph nodes, full params/result
     #            text, FOLLOWS_ACTIVITY chain links). DEFAULT.
-    #   "off"  — opt out entirely (no graph node, no fabric entry).
+    #   "off"  — opt out entirely (no graph node recorded).
     # The legacy "auto" value is accepted for compatibility and treated as "on".
     memory:      str            = "on",
     silent:      bool           = False,   # suppress cap.call/cap.ok events (polling caps)
