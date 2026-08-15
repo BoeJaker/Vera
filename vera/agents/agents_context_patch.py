@@ -16,9 +16,19 @@ This module patches both runners with a single helper that:
        attach_caps        = "auto" if tool_mode != "none" and agent.domain_caps else
                             ",".join(agent.domain_caps) for explicit list
        attach_dags        = "auto" if agent.attach_dags is True (new optional field)
-  3. Injects memory context (existing behaviour kept).
-  4. Emits an event noting which skills/ontologies/dags were applied so the
+  3. Emits an event noting which skills/ontologies/dags were applied so the
      UI can show what's loaded in this turn.
+
+  Memory injection is deliberately NOT this module's job (2026-08-15,
+  unify-v2 fix): it used to duplicate the original run/run_stream's own
+  memory block with a second, hand-rolled v1 call here, forcing
+  agent.memory_inject=False before calling through so the original's block
+  never ran. That left two implementations doing the same thing — one dead
+  (the original's, already on get_agent_memory_context_v2 and already
+  SUPPRESS_MEMORY_INJECT-aware), one live (this module's, v1, and NOT
+  SUPPRESS_MEMORY_INJECT-aware). The patch now passes agent.memory_inject
+  through unchanged and lets the original run/run_stream inject memory
+  themselves, same as before this module existed.
 
 Import order
 ────────────
@@ -290,36 +300,8 @@ async def build_agent_system_prompt(agent, message: str, session_id: str = "") -
     except Exception as e:
         log.debug("domain enrich failed for %s: %s", getattr(agent, "name", "?"), e)
 
-    # Memory injection — preserved from original, but BOUNDED. agents.py's own
-    # run/run_stream wraps this same call in asyncio.wait_for(CTX_INJECT_TIMEOUT)
-    # specifically because "a busy embed node must not stall the reply" — this
-    # patch module replaces those methods wholesale and had silently dropped
-    # that timeout, so a slow/contended memory search here just blocked the
-    # whole chat turn (and the agent loop it would have started) with no
-    # exception, no log, and no loop session ever created — indistinguishable
-    # from a plain hang until you turn memory off and it goes away.
-    if getattr(agent, "memory_inject", False) and session_id:
-        try:
-            mh = sys.modules.get("memory_hooks")
-            if mh:
-                _timeout = getattr(_agents_module(), "CTX_INJECT_TIMEOUT", 12.0)
-                mem_ctx = await asyncio.wait_for(
-                    mh.get_agent_memory_context(
-                        session_id  = session_id,
-                        query       = message,
-                        agent_name  = agent.name,
-                        limit       = getattr(agent, "memory_inject_limit", 5),
-                        tags        = [t.strip() for t in
-                                        getattr(agent, "memory_tags", "").split(",")
-                                        if t.strip()] or None,
-                    ), timeout=_timeout)
-                if mem_ctx:
-                    base += "\n\n" + mem_ctx
-        except asyncio.TimeoutError:
-            log.warning("agent context [%s]: memory inject skipped after %.0fs "
-                        "(embed/graph stack busy)", agent.name, _timeout)
-        except Exception as e:
-            log.debug("agent memory inject: %s", e)
+    # Memory injection intentionally lives back in the original run/run_stream
+    # (see module docstring, unify-v2) — this function no longer touches it.
 
     # Emit a single event so the UI can show what was loaded this turn
     try:
@@ -352,10 +334,10 @@ def _patch_run_method(orig_run):
         # Preserve domain_description=None so the inner code doesn't append it
         # again — we've already included it in the assembled prompt.
         agent2.domain_description = ""
-        # Tell the inner run to skip its own domain_caps + memory injection —
-        # we've already done both.
+        # Tell the inner run to skip its own domain_caps — we've already done
+        # that. memory_inject is left as the agent's real setting: the inner
+        # run injects memory itself (unify-v2, see module docstring).
         agent2.domain_caps        = []
-        agent2.memory_inject      = False
         return await orig_run(self, agent2, message, history, session_id)
 
     patched_run.__name__ = "run"
@@ -376,8 +358,8 @@ def _patch_run_stream_method(orig_stream):
         agent2 = copy.copy(agent)
         agent2.system_prompt      = new_system
         agent2.domain_description = ""
+        # memory_inject left as the agent's real setting — see _patch_run_method.
         agent2.domain_caps        = []
-        agent2.memory_inject      = False
         async for chunk in orig_stream(self, agent2, message, history,
                                         session_id, use_tts):
             yield chunk
