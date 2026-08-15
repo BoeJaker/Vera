@@ -4881,10 +4881,14 @@ async def evolve_pipeline_run(kind: str = "variant", profile: str = "",
                         "same pipeline-record shape so the change is tracked + ATTRIBUTED "
                         "(controller = the triggering agent/session) in the CI/CD UI and "
                         "flows through the SAME review + safe promote as a generated change — "
-                        "it just skips the code-gen dispatch. Runs a fast compile/smoke gate "
-                        "(ast.parse of the branch's changed .py) so gate_passed reflects "
-                        "'branch parses clean'; a behavioural change should ALSO be run through "
-                        "the dev sandbox suite before promote. Inputs: branch (str!), to "
+                        "it just skips the code-gen dispatch. Gate has two parts: a fast "
+                        "compile/smoke check (ast.parse of the branch's changed .py) and, "
+                        "when the branch has a live worktree (evolve.sandbox.up), the "
+                        "critical-system regression tier (`pytest -m critical`, tests/conftest.py) "
+                        "run in an ISOLATED ephemeral container via evolve.unittest.run — never "
+                        "the container serving this request. gate_passed is true only when BOTH "
+                        "pass; a docs/UI-only branch (no .py changed) or one with no live worktree "
+                        "yet falls back to the compile check alone. Inputs: branch (str!), to "
                         "(str=main), title (str), summary (str), repo (str=vera). "
                         "Output: {ok, id, ahead_by, changed_files, gate_passed}.")
 async def evolve_pipeline_adopt(branch: str = "", to: str = "main", title: str = "",
@@ -4936,7 +4940,7 @@ async def evolve_pipeline_adopt(branch: str = "", to: str = "main", title: str =
 
     # Compile/smoke gate: ast.parse each changed .py AT THE BRANCH (git show) —
     # dependency-free, fast, and catches the syntax breakage that would stop the
-    # branch booting. NOT a substitute for the behavioural suite on a loop change.
+    # branch booting. Proves the branch PARSES, nothing about BEHAVIOUR.
     import ast as _ast
     py = [f for f in changed if f.endswith(".py")]
     bad: List[str] = []
@@ -4949,13 +4953,53 @@ async def evolve_pipeline_adopt(branch: str = "", to: str = "main", title: str =
         except SyntaxError as e:
             bad.append(f"{f}: {e}")
     if py:
-        rec["gate_passed"] = not bad
-        _pstep(rec, "gate", not bad,
+        compile_ok = not bad
+        _pstep(rec, "gate", compile_ok,
                f"compile-check {len(py)} .py file(s): "
-               + ("PASS" if not bad else "FAIL — " + "; ".join(bad[:3])))
+               + ("PASS" if compile_ok else "FAIL — " + "; ".join(bad[:3])))
     else:
+        compile_ok = True
         _pstep(rec, "gate", True,
                "no .py changes — compile gate n/a; promote with force for docs/infra")
+
+    # Critical-system regression gate (dev-lifecycle §6 / route-forward M3) — the
+    # compile check above never behaviourally exercised anything, so a fix could
+    # parse clean and still be wrong; every fix landed by hand this session had to
+    # be manually unit-tested and live-verified in a sandbox to get real confidence
+    # because THIS gate couldn't provide it (route-forward.md T6). Run the
+    # critical-tier pytest suite (tests/conftest.py's `critical` marker — pure,
+    # deterministic tests guarding systems where a regression is expensive and was
+    # actually hit) against the branch's OWN worktree, via the existing ephemeral-
+    # container runner (evolve.unittest.run — ISOLATED from whatever container is
+    # serving this request, so it can never hang the app it's gating). Only for
+    # the vera repo — a registered generic repo already gates on its own test_cmd
+    # via evolve.pipeline.test. Only when .py actually changed — a docs/UI-only
+    # branch has nothing for pytest to exercise. `critical_ok` stays None (not
+    # counted against the gate) when the branch has no live worktree yet or the
+    # ephemeral-container run itself fails to execute (infra hiccup, not a code
+    # regression) — surfaced either way so it's never silently skipped unnoticed.
+    critical_ok: Optional[bool] = None
+    if py and repo == DEFAULT_REPO_ID:
+        tgt = await _resolve_exec_target("", branch)
+        if tgt.get("worktree"):
+            try:
+                crit = await evolve_unittest_run(branch=branch, paths="tests",
+                                                 markers="critical", timeout=300)
+            except Exception as e:
+                crit = {"error": str(e)}
+            if crit.get("error"):
+                _pstep(rec, "critical-tests", False,
+                       f"could not run critical-tier tests: {crit['error']}")
+            else:
+                critical_ok = bool(crit.get("ok"))
+                _pstep(rec, "critical-tests", critical_ok,
+                       crit.get("summary", "") or ("PASS" if critical_ok else "FAIL"))
+        else:
+            _pstep(rec, "critical-tests", True,
+                   "no live worktree for this branch — critical-tier gate skipped "
+                   "(bring a sandbox up with evolve.sandbox.up for full gating)")
+
+    rec["gate_passed"] = compile_ok if critical_ok is None else (compile_ok and critical_ok)
 
     await _save_pipeline(rec)
     await _audit("pipeline.adopt",
