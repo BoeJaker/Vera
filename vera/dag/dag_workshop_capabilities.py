@@ -19711,17 +19711,18 @@ async def cap_dag_agent_loop_v6(
     await emit_event({"type": "agent_loop_v6.triage_start", "goal": goal[:200], "session_id": sid})
 
     # ── Cross-session relevant memory ──────────────────────────────────────────
-    # The SAME mechanism plain chat uses on every turn (memory_hooks.
-    # get_agent_memory_context — embedding search against the query, relevance-
-    # ranked, bounded to `limit` results) so the loop can see a recent relevant
-    # artifact/answer and reuse it instead of redoing the work from zero. The
-    # loop already WRITES its own turns into this exact store (see
-    # _record_history_turn → memory_hooks.record_agent_turn below) — chat both
-    # writes AND reads it, the loop only ever did the write half. Folded into
-    # `goal` itself (not just one step's context) so planning sees it too —
-    # the planner is what decides whether a step re-fetches data that may
-    # already exist. Best-effort and bounded; a failure here never blocks the
-    # run, same as the identical inject in agents.py's chat path.
+    # The same store plain chat reads on every turn (memory_hooks.
+    # get_agent_memory_context_v2 — fast Postgres+Neo4j tier this call, the
+    # slower semantic/Chroma pass delivered on the NEXT call rather than
+    # blocking this one, relevance-ranked, bounded to `limit` results) so the
+    # loop can see a recent relevant artifact/answer and reuse it instead of
+    # redoing the work from zero. The loop already WRITES its own turns into
+    # this exact store (see _record_history_turn → memory_hooks.record_agent_turn
+    # below) — chat both writes AND reads it, the loop only ever did the write
+    # half. Folded into `goal` itself (not just one step's context) so planning
+    # sees it too — the planner is what decides whether a step re-fetches data
+    # that may already exist. Best-effort and bounded; a failure here never
+    # blocks the run.
     # The PRISTINE user goal, captured before memory injection below can widen
     # it — the final gate's deterministic overrides (_V5_PROSE_STEP_NOUN_RE et
     # al.) must judge what the USER actually asked for, not vocabulary that
@@ -19748,8 +19749,15 @@ async def cap_dag_agent_loop_v6(
     try:
         _mh = sys.modules.get("memory_hooks") if _V6_PLANNER_RECALL else None
         if _mh:
+            # get_agent_memory_context_v2: same signature/return shape (see
+            # memory_hooks.py) but fast-tier (Postgres+Neo4j, no embed) this
+            # turn with the slow semantic pass delivered to the next one,
+            # instead of blocking the planner on embed_text() every run.
+            # Falls back to the v1 path itself if Redis or the two-tier
+            # method aren't available, so this never regresses below the
+            # previous behaviour.
             _mem_ctx = await asyncio.wait_for(
-                _mh.get_agent_memory_context(session_id=sid, query=goal, limit=5), timeout=8)
+                _mh.get_agent_memory_context_v2(session_id=sid, query=goal, limit=5), timeout=8)
             # Strip the WORTHLESS recall before deciding to inject anything.
             # Almost everything this query returns is the loop's own history:
             # `[[loop: <the same goal>]]` trigger lines and verbatim echoes of
