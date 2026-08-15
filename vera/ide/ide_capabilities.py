@@ -1745,17 +1745,41 @@ async def ide_workspace_create(
     # Per-workspace sandbox: link the opening session to a SHARED `ws-<name>`
     # container so every session working in this workspace shares one confined
     # environment (auto-created on first exec when auto_create is on).
+    #
+    # Guard: only link a FRESH session (no sandbox of its own, not already
+    # aliased elsewhere). Without this, a mid-agentic-loop session that
+    # already has real work in its own container (files an earlier step
+    # wrote, via exec.*/ide.fs.write/code.save) got silently REROUTED —
+    # session.link overwrites the session's alias, so every subsequent
+    # exec/fs-write call for that session resolves into the new, empty
+    # ws-<name> container instead, orphaning the loop's prior work. The
+    # RUN-OWNER guard in sandbox.session.link only covers governed runs
+    # (dream/goal/V8 — see set_run_owner); an ordinary chat/v7 loop session
+    # is not one, so it hit this every time the planner picked this cap.
     if sid:
         try:
             sb = _sandbox_mod()
             if sb is not None and hasattr(sb, "link_session"):
-                await sb.link_session(sid, f"ws-{name}", kind="workspace", label=name)
-                rec["sandbox"] = f"ws-{name}"
-                # Seed the shared container from the workspace's HOST files so any
-                # session OR agentic loop working in ws-<name> sees the real
-                # project (applied when a fresh container comes up empty).
-                if hasattr(sb, "set_seed_path"):
-                    await sb.set_seed_path(f"ws-{name}", str(ws_path))
+                already_routed = False
+                try:
+                    resolve_sid = getattr(sb, "_resolve_sid", None)
+                    get_rec = getattr(sb, "_get_rec", None)
+                    if resolve_sid is not None and (await resolve_sid(sid)) != sid:
+                        already_routed = True
+                    elif get_rec is not None and await get_rec(sid):
+                        already_routed = True
+                except Exception:
+                    already_routed = False
+                if already_routed:
+                    rec["sandbox_link_skipped"] = "session already routed to an active sandbox"
+                else:
+                    await sb.link_session(sid, f"ws-{name}", kind="workspace", label=name)
+                    rec["sandbox"] = f"ws-{name}"
+                    # Seed the shared container from the workspace's HOST files so any
+                    # session OR agentic loop working in ws-<name> sees the real
+                    # project (applied when a fresh container comes up empty).
+                    if hasattr(sb, "set_seed_path"):
+                        await sb.set_seed_path(f"ws-{name}", str(ws_path))
         except Exception as e:
             log.debug("workspace sandbox link failed for %s: %s", name, e)
     return rec
