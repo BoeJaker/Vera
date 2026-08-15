@@ -4136,6 +4136,14 @@ def _have_useful_caps(toolkit: List[str], category: str) -> bool:
 # the alias in `_arg_key` normalised form (lowercased, separators stripped).
 _ARG_ALIAS = {
     "filepath": "path", "fpath": "path", "pathname": "path", "fname": "path",
+    # Added after a live 2-hour v7 stall (audit, 2026-08-15): a recovery step
+    # for code.author kept sending `target_path` instead of `path`, correctly
+    # diagnosed the mistake in its own journal each round, then repeated it —
+    # because nothing actually RENAMED the arg, `target_path` was silently
+    # dropped every time (this function already existed for exactly this
+    # class of mistake, this one alias just wasn't in the table yet).
+    "targetpath": "path", "outputpath": "path", "destpath": "path",
+    "savepath": "path", "destinationpath": "path", "outfile": "path",
     "cmdline": "command", "commandline": "command", "shellcommand": "command",
     "uri": "url", "weburl": "url", "link": "url",
     "sourcecode": "code", "scriptcode": "code",
@@ -12140,6 +12148,131 @@ def _v5_path_is_proven(artifacts: Dict[str, Dict[str, Any]], path: str) -> bool:
     return bool(rec.get("parse_ok")) and int(rec.get("size") or 0) >= 200
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# WRITE-PROTECTION ROUTING — the 3 rules shared by BOTH tool-dispatch paths.
+# ─────────────────────────────────────────────────────────────────────────────
+# `_v5_run_step_inner` dispatches a tool call two ways: a "chain" hop (a step
+# pipes one cap's output into the next via $N refs) and a plain single-tool
+# call. Both need the SAME write-protection judgment — don't let a re-author
+# discard proven-good code, don't let a raw ide.fs.write clobber a proven
+# file, route hand-typed source through code.author instead of ide.fs.write —
+# but each hand-duplicated its own copy of all three rules (their own
+# comments said so explicitly: "same as the single-tool path, see its
+# comment"). That divergence is exactly how a chain hop ended up MISSING the
+# single-tool path's stronger, unconditional raw-ide.fs.write-against-a-
+# proven-file protection — live-observed: a 5-hop chain issued three full
+# code.author-free ide.fs.write overwrites of the same proven file back to
+# back, because the chain path had never grown that specific rule.
+#
+# This function is the single source of truth for all three rules (now
+# harmonized — a chain hop gets the same protection the single-tool path
+# does). It is deliberately PURE: it judges (tool, args) against read-only
+# context and returns a routing decision or None, but never mutates caller
+# state or emits events — the two call sites keep genuinely different local
+# bookkeeping (tool_calls/granted/pending_note exist only in the single-tool
+# path), so each applies the decision with its own accounting rather than
+# being forced into an artificial shared side-effect shape.
+def _v5_route_write_call(
+    tool: str, args: Any, *, artifacts: Dict[str, Dict[str, Any]], catalog_set: set,
+    proven_redirects: int, code_write_redirects: int,
+    max_proven_redirects: int, max_code_write_redirects: int,
+    step_goal: str, saved_run_files, session_id: str,
+) -> Optional[Dict[str, Any]]:
+    """Returns None (call proceeds unchanged) or a routing decision:
+    {kind, budget ('proven'|'code_write'|None), tool, args, path, orig_tool,
+    note, reason, context_files}. `budget` names which of the caller's two
+    redirect counters to increment (None = the unconditional rule, no
+    budget)."""
+    if not isinstance(args, dict):
+        return None
+
+    # RULE 1 — re-authoring a PROVEN file: code.author REPLACES the whole
+    # file. Route to code.edit (shows the coder the CURRENT file, applies a
+    # targeted change) instead of discarding working code on the chance the
+    # next generation is as good — live-observed it frequently is not.
+    if (tool == "code.author" and "code.edit" in catalog_set
+            and proven_redirects < max_proven_redirects):
+        tp = _v5_art_key(str(args.get("path") or ""))
+        if tp and _v5_path_is_proven(artifacts, tp):
+            return {
+                "kind": "proven_author", "budget": "proven",
+                "tool": "code.edit", "path": tp, "orig_tool": tool,
+                "args": {"path": tp,
+                         "task": str(args.get("task") or args.get("requirements") or ""),
+                         "session_id": session_id},
+                "note": (f"(`{tp}` has already RUN successfully in this run, so re-writing "
+                         "it wholesale would discard working code. Your request was routed "
+                         "to code.edit, which changes only what you asked for and leaves the "
+                         "rest intact. If you genuinely need a from-scratch rewrite, author "
+                         "it under a DIFFERENT filename.)"),
+                "reason": "re-author of a file that already ran ok — redirected to code.edit",
+                "context_files": [],
+            }
+
+    # RULE 2 — a raw ide.fs.write aimed at an already-proven file. Judge the
+    # PATH, not the content: unconditional (no budget) because this protects
+    # EXISTING good work rather than just steering new code.
+    if tool == "ide.fs.write" and "code.edit" in catalog_set:
+        pw_path = str(args.get("path") or args.get("file") or "").strip()
+        if pw_path and _v5_path_is_proven(artifacts, pw_path):
+            pw_key = _v5_art_key(pw_path)
+            pw_draft = str(args.get("content") or args.get("text") or "")
+            return {
+                "kind": "proven_write", "budget": None,
+                "tool": "code.edit", "path": pw_path, "orig_tool": tool,
+                "args": {"path": pw_key or pw_path,
+                         "task": ("An executor tried to overwrite this file directly with "
+                                  "ide.fs.write instead of editing it. This file already has "
+                                  "proven, working content — a blind overwrite would discard "
+                                  "it. Here is what the write attempted to change it to; apply "
+                                  f"only the INTENDED change, keep the rest:\n{pw_draft[:4000]}"),
+                         "session_id": session_id},
+                "note": (f"(`{pw_path}` already has proven, working content, so the loop "
+                         "redirected your direct ide.fs.write to code.edit instead — it "
+                         "applies your intended change without discarding the rest of the "
+                         "file. ide.fs.write must never be used to overwrite a file this run "
+                         "has already produced good content for.)"),
+                "reason": "raw ide.fs.write against a proven file — redirected to code.edit",
+                "context_files": [],
+            }
+
+    # RULE 3 — CODE-WRITE GATE: ide.fs.write/code.save is for DATA and
+    # documents. Hand-writing a script through it skips the coding model,
+    # skips grounding on real input files, and skips versioning — route it to
+    # code.author, which does all three.
+    if (tool in ("ide.fs.write", "code.save") and "code.author" in catalog_set
+            and code_write_redirects < max_code_write_redirects):
+        target = _v5_write_is_code(args)
+        if target:
+            draft = str(args.get("content") or args.get("text") or "")
+            ctx_files = [n for n in sorted(saved_run_files or [])
+                        if n.rsplit(".", 1)[-1].lower() in ("json", "csv", "txt", "md", "xml", "yaml")][:4]
+            return {
+                "kind": "code_write_gate", "budget": "code_write",
+                "tool": "code.author", "path": target, "orig_tool": tool,
+                "args": {
+                    "path": target,
+                    "task": (f"{step_goal}\n\nWrite `{target}`. An executor drafted the file by "
+                             "hand; use the draft ONLY to understand the intent, then write it "
+                             f"properly:\n{draft[:4000]}"),
+                    "context_files": ctx_files,
+                    "requirements": ("Parse the context files as they ACTUALLY are — do not "
+                                     "guess a schema and do not add branches for shapes you "
+                                     "were not shown. Refer to data files by their relative "
+                                     "names."),
+                    "session_id": session_id,
+                },
+                "note": (f"(the loop redirected your hand-written `{target}` to code.author — "
+                         "the coding specialist wrote it against the real data files and it is "
+                         "versioned. Use ide.fs.write only for DATA or documents; call "
+                         "code.author yourself next time.)"),
+                "reason": "",
+                "context_files": ctx_files,
+            }
+
+    return None
+
+
 # Files worth eagerly schema-probing when they show up in a workdir listing but
 # were never registered (an exec.python.run script wrote them directly, not
 # via a tracked write path). Free-text/code/binary extensions are excluded —
@@ -13449,67 +13582,45 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                     _h_step_goal = _v5_navigate_goal_fallback(step)
                     if _h_step_goal:
                         h_args["goal"] = _h_step_goal
-            # PROTECT PROVEN-GOOD CODE (same as the single-tool path, see its
-            # comment): a chain hop re-authoring a path that already has real
-            # prior work redirects to code.edit instead of blindly replacing it.
-            # Without this, a chain was the easiest way to skip the protection
-            # entirely: a hop calls `call_tool` directly (below), so a chain
-            # never passed through the single-tool path's own version of this
-            # check at all — observed live, a 5-hop chain issued THREE full
-            # code.author-free `ide.fs.write` overwrites of the same file
-            # back-to-back in under a second.
-            if (hop_tool == "code.author" and isinstance(h_args, dict)
-                    and "code.edit" in catalog_set
-                    and proven_redirects < _MAX_PROVEN_REDIRECTS):
-                _htp = _v5_art_key(str(h_args.get("path") or ""))
-                if _htp and _v5_path_is_proven(artifacts, _htp):
+            # WRITE-PROTECTION ROUTING (shared with the single-tool path — see
+            # _v5_route_write_call): proven-file re-author protection, the
+            # newly-harmonized raw-ide.fs.write-against-a-proven-file guard
+            # (the chain path never had this before), and the code-write
+            # gate. A chain hop calls `call_tool` directly below, bypassing
+            # the single-tool path entirely, which is why this has to be
+            # applied here too — observed live, a 5-hop chain issued THREE
+            # full code.author-free `ide.fs.write` overwrites of the same
+            # proven file back-to-back in under a second.
+            _hroute = _v5_route_write_call(
+                hop_tool, h_args, artifacts=artifacts, catalog_set=catalog_set,
+                proven_redirects=proven_redirects, code_write_redirects=code_write_redirects,
+                max_proven_redirects=_MAX_PROVEN_REDIRECTS,
+                max_code_write_redirects=_MAX_CODE_WRITE_REDIRECTS,
+                step_goal=(step.get("goal") or goal), saved_run_files=saved_run_files,
+                session_id=sid)
+            if _hroute:
+                if _hroute["budget"] == "proven":
                     proven_redirects += 1
-                    if "code.edit" not in allowed:
-                        allowed.append("code.edit")
-                        _hesig = rich_cap_signature("code.edit")
-                        dynamic_caps_block = ((dynamic_caps_block + "\n" + _hesig)
-                                              if dynamic_caps_block else _hesig)
-                    hop_tool = "code.edit"
-                    h_args = {"path": _htp,
-                              "task": str(h_args.get("task") or h_args.get("requirements") or ""),
-                              "session_id": sid}
-                    await emit_event({"type": "agent_loop_v5.proven_code_protected",
-                                      "stream_id": stream_id, "cycle": gc, "step_id": step_id,
-                                      "session_id": sid, "path": _htp,
-                                      "reason": "chain hop re-author of a proven file — "
-                                                "redirected to code.edit"})
-            # CODE-WRITE GATE (same as the single-tool path, see its comment):
-            # ide.fs.write/code.save is for DATA and documents, not hand-typed
-            # source — route it to code.author. Same chain-bypass reasoning as
-            # the block above: a chain hop never saw this check before either.
-            _hcw_target = ""
-            if (hop_tool in ("ide.fs.write", "code.save") and "code.author" in catalog_set
-                    and code_write_redirects < _MAX_CODE_WRITE_REDIRECTS):
-                _hcw_target = _v5_write_is_code(h_args)
-            if _hcw_target:
-                code_write_redirects += 1
-                if "code.author" not in allowed:
-                    allowed.append("code.author")
-                _hdraft = str((h_args or {}).get("content") or (h_args or {}).get("text") or "")
-                _hctx_files = [n for n in sorted(saved_run_files)
-                              if n.rsplit(".", 1)[-1].lower() in ("json", "csv", "txt", "md", "xml", "yaml")][:4]
-                hop_tool = "code.author"
-                h_args = {
-                    "path": _hcw_target,
-                    "task": (f"{step.get('goal') or goal}\n\n"
-                             f"Write `{_hcw_target}`. An executor drafted the file by hand; use "
-                             "the draft ONLY to understand the intent, then write it properly:\n"
-                             f"{_hdraft[:4000]}"),
-                    "context_files": _hctx_files,
-                    "requirements": ("Parse the context files as they ACTUALLY are — do not guess a "
-                                     "schema and do not add branches for shapes you were not shown. "
-                                     "Refer to data files by their relative names."),
-                    "session_id": sid,
-                }
-                await emit_event({"type": "agent_loop_v5.code_write_redirect", "stream_id": stream_id,
-                                  "cycle": gc, "step_id": step_id, "session_id": sid,
-                                  "from_tool": "ide.fs.write", "path": _hcw_target,
-                                  "context_files": _hctx_files})
+                elif _hroute["budget"] == "code_write":
+                    code_write_redirects += 1
+                if _hroute["tool"] not in allowed:
+                    allowed.append(_hroute["tool"])
+                    _hesig = rich_cap_signature(_hroute["tool"])
+                    dynamic_caps_block = ((dynamic_caps_block + "\n" + _hesig)
+                                          if dynamic_caps_block else _hesig)
+                hop_tool = _hroute["tool"]
+                h_args = _hroute["args"]
+                _hevent = {"type": ("agent_loop_v5.code_write_redirect"
+                                    if _hroute["kind"] == "code_write_gate"
+                                    else "agent_loop_v5.proven_code_protected"),
+                          "stream_id": stream_id, "cycle": gc, "step_id": step_id,
+                          "session_id": sid, "path": _hroute["path"]}
+                if _hroute["kind"] == "code_write_gate":
+                    _hevent["from_tool"] = _hroute["orig_tool"]
+                    _hevent["context_files"] = _hroute["context_files"]
+                else:
+                    _hevent["reason"] = _hroute["reason"]
+                await emit_event(_hevent)
             # ── Duplicate-hop short-circuit — the single-tool path's own
             # version of this (`success_sigs`, used below the chain loop)
             # never sees chain hops at all: they call `call_tool` directly
@@ -14785,148 +14896,61 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                               "session_id": sid})
             continue
 
-        # ── PROTECT PROVEN-GOOD CODE: re-author → surgical edit ──────────────
-        # code.author REPLACES the whole file. Aimed at a path that has already
-        # EXECUTED successfully, that throws away working code on the chance the
-        # next generation is as good — and observed live, it frequently is not:
-        # a script that had just loaded 151 records was re-authored and replaced
-        # by one that raised, and the run continued with the broken copy.
-        #
-        # The change the model wants is almost always small, so route it to
-        # code.edit, which shows the coder the CURRENT file and applies targeted
-        # edits, keeping everything it was not asked to change. Bounded, and only
-        # when the file is genuinely proven — an unrun or already-broken file is
-        # re-authored exactly as before.
-        if (tool == "code.author" and isinstance(args, dict)
-                and "code.edit" in catalog_set
-                and proven_redirects < _MAX_PROVEN_REDIRECTS):
-            _tp = _v5_art_key(str(args.get("path") or ""))
-            if _tp and _v5_path_is_proven(artifacts, _tp):
+        # WRITE-PROTECTION ROUTING (shared with the chain-hop path — see
+        # _v5_route_write_call): proven-file re-author protection (RULE 1),
+        # raw ide.fs.write against an already-proven file (RULE 2,
+        # unconditional — protects EXISTING good work), and the code-write
+        # gate (RULE 3 — ide.fs.write/code.save used to hand-write actual
+        # source gets routed to code.author instead, which grounds, versions,
+        # and skips none of that silently). At most one rule ever applies per
+        # call — each mutates `tool` on match, which naturally excludes the
+        # later rules' `tool ==` checks, same as the original inline cascade.
+        if isinstance(args, dict):
+            _route = _v5_route_write_call(
+                tool, args, artifacts=artifacts, catalog_set=catalog_set,
+                proven_redirects=proven_redirects, code_write_redirects=code_write_redirects,
+                max_proven_redirects=_MAX_PROVEN_REDIRECTS,
+                max_code_write_redirects=_MAX_CODE_WRITE_REDIRECTS,
+                step_goal=(step.get("goal") or goal), saved_run_files=saved_run_files,
+                session_id=sid)
+        else:
+            _route = None
+        if _route:
+            if _route["budget"] == "proven":
                 proven_redirects += 1
-                if "code.edit" not in allowed:
-                    allowed.append("code.edit")
-                    _esig = rich_cap_signature("code.edit")
-                    dynamic_caps_block = ((dynamic_caps_block + "\n" + _esig)
-                                          if dynamic_caps_block else _esig)
-                _orig_task = str(args.get("task") or args.get("requirements") or "")
-                tool = "code.edit"
-                args = {"path": _tp, "task": _orig_task, "session_id": sid}
-                pending_note = (
-                    f"(`{_tp}` has already RUN successfully in this run, so re-writing it "
-                    "wholesale would discard working code. Your request was routed to "
-                    "code.edit, which changes only what you asked for and leaves the rest "
-                    "intact. If you genuinely need a from-scratch rewrite, author it under "
-                    "a DIFFERENT filename.)")
-                _call_sig = _v5_call_sig(tool, args)
-                await emit_event({"type": "agent_loop_v5.proven_code_protected",
-                                  "stream_id": stream_id, "cycle": cur_cycle,
-                                  "step_id": step_id, "session_id": sid, "path": _tp,
-                                  "reason": "re-author of a file that already ran ok — "
-                                            "redirected to code.edit"})
-
-        # ── PROTECT PROVEN-GOOD FILES FROM RAW ide.fs.write ───────────────────
-        # The CODE-WRITE GATE below only judges the CONTENT of an ide.fs.write
-        # call (does it look like code, is it long enough to bother) — and is
-        # bounded by _MAX_CODE_WRITE_REDIRECTS. That leaves exactly the reported
-        # clobber: a SHORT or non-code-shaped write (a truncated retry, an error
-        # stub, a plain-text dump) landing on a path code.author/code.edit
-        # already produced real, working content for — and it goes unguarded
-        # forever once the budget below is spent. Judge the PATH instead: any
-        # ide.fs.write aimed at an already-proven file is redirected to
-        # code.edit — unconditionally, with no redirect budget, because this
-        # protects EXISTING good work rather than just steering new code.
-        if tool == "ide.fs.write" and isinstance(args, dict):
-            _pw_path = str(args.get("path") or args.get("file") or "").strip()
-            if _pw_path and _v5_path_is_proven(artifacts, _pw_path) and "code.edit" in catalog_set:
-                _pw_key = _v5_art_key(_pw_path)
-                if "code.edit" not in allowed:
-                    allowed.append("code.edit")
+            elif _route["budget"] == "code_write":
+                code_write_redirects += 1
+            if _route["tool"] not in allowed:
+                allowed.append(_route["tool"])
+                if _route["kind"] != "proven_author":   # RULE 1 never touched `granted`
                     try:
-                        granted.append("code.edit")
+                        granted.append(_route["tool"])
                     except Exception:
                         pass
-                    _esig = rich_cap_signature("code.edit")
-                    dynamic_caps_block = ((dynamic_caps_block + "\n" + _esig)
-                                          if dynamic_caps_block else _esig)
-                _pw_draft = str(args.get("content") or args.get("text") or "")
-                _orig_tool = tool
-                tool = "code.edit"
-                tool_calls[tool] = tool_calls.get(tool, 0) + tool_calls.pop(_orig_tool, 1)
-                args = {
-                    "path": _pw_key or _pw_path,
-                    "task": ("An executor tried to overwrite this file directly with "
-                             "ide.fs.write instead of editing it. This file already has "
-                             "proven, working content — a blind overwrite would discard "
-                             "it. Here is what the write attempted to change it to; apply "
-                             f"only the INTENDED change, keep the rest:\n{_pw_draft[:4000]}"),
-                    "session_id": sid,
-                }
-                pending_note = (
-                    f"(`{_pw_path}` already has proven, working content, so the loop "
-                    "redirected your direct ide.fs.write to code.edit instead — it applies "
-                    "your intended change without discarding the rest of the file. "
-                    "ide.fs.write must never be used to overwrite a file this run has "
-                    "already produced good content for.)")
-                _call_sig = _v5_call_sig(tool, args)
-                await emit_event({"type": "agent_loop_v5.proven_code_protected",
-                                  "stream_id": stream_id, "cycle": cur_cycle,
-                                  "step_id": step_id, "session_id": sid, "path": _pw_path,
-                                  "reason": "raw ide.fs.write against a proven file — "
-                                            "redirected to code.edit"})
-
-        # ── CODE-WRITE GATE ──────────────────────────────────────────────────
-        # ide.fs.write is for DATA and documents. Hand-writing a script through
-        # it skips the coding model, skips grounding on the real input files, and
-        # skips versioning — so it produces worse code than the coding specialist
-        # would, silently. Route it to code.author, which does all three.
-        _code_write_target = ""
-        if (tool in ("ide.fs.write", "code.save") and "code.author" in catalog_set
-                and code_write_redirects < _MAX_CODE_WRITE_REDIRECTS):
-            _code_write_target = _v5_write_is_code(args)
-        if _code_write_target:
-            # DO the right thing rather than ask for it. Asking costs a turn and
-            # depends on the model complying; every argument code.author needs is
-            # already derivable here — the target path from the write call, the
-            # intent from the step goal plus the draft the model just typed, and
-            # the grounding files from what this run has actually saved. So the
-            # call is REWRITTEN in place and falls through to the normal invoke.
-            code_write_redirects += 1
-            if "code.author" not in allowed:
-                allowed.append("code.author")
-                try:
-                    granted.append("code.author")
-                except Exception:
-                    pass
-            _draft = str((args or {}).get("content") or (args or {}).get("text") or "")
-            _ctx_files = [n for n in sorted(saved_run_files)
-                          if n.rsplit(".", 1)[-1].lower() in ("json", "csv", "txt", "md", "xml", "yaml")][:4]
+                _esig = rich_cap_signature(_route["tool"])
+                dynamic_caps_block = ((dynamic_caps_block + "\n" + _esig)
+                                      if dynamic_caps_block else _esig)
             _orig_tool = tool
-            tool = "code.author"
-            # Carry the call count onto the tool that will ACTUALLY run — see the
-            # exec-authoring gate above (an unseeded key here raised KeyError in
-            # the stuck-loop guard and took the entire run down with it).
-            tool_calls[tool] = tool_calls.get(tool, 0) + tool_calls.pop(_orig_tool, 1)
-            args = {
-                "path": _code_write_target,
-                "task": (f"{step.get('goal') or goal}\n\n"
-                         f"Write `{_code_write_target}`. An executor drafted the file by hand; use "
-                         "the draft ONLY to understand the intent, then write it properly:\n"
-                         f"{_draft[:4000]}"),
-                "context_files": _ctx_files,
-                "requirements": ("Parse the context files as they ACTUALLY are — do not guess a "
-                                 "schema and do not add branches for shapes you were not shown. "
-                                 "Refer to data files by their relative names."),
-                "session_id": sid,
-            }
-            pending_note = (
-                f"(the loop redirected your hand-written `{_code_write_target}` to code.author — "
-                "the coding specialist wrote it against the real data files and it is versioned. "
-                "Use ide.fs.write only for DATA or documents; call code.author yourself next time.)")
+            tool = _route["tool"]
+            args = _route["args"]
+            if _route["kind"] != "proven_author":   # RULE 1 never carried tool_calls either
+                # Carry the call count onto the tool that will ACTUALLY run — an
+                # unseeded key here once raised KeyError in the stuck-loop guard
+                # and took the entire run down with it.
+                tool_calls[tool] = tool_calls.get(tool, 0) + tool_calls.pop(_orig_tool, 1)
+            pending_note = _route["note"]
             _call_sig = _v5_call_sig(tool, args)       # the call that will ACTUALLY run
-            await emit_event({"type": "agent_loop_v5.code_write_redirect", "stream_id": stream_id,
-                              "cycle": cur_cycle, "step_id": step_id, "session_id": sid,
-                              "from_tool": _orig_tool, "path": _code_write_target,
-                              "context_files": _ctx_files})
+            _revent = {"type": ("agent_loop_v5.code_write_redirect"
+                                if _route["kind"] == "code_write_gate"
+                                else "agent_loop_v5.proven_code_protected"),
+                      "stream_id": stream_id, "cycle": cur_cycle, "step_id": step_id,
+                      "session_id": sid, "path": _route["path"]}
+            if _route["kind"] == "code_write_gate":
+                _revent["from_tool"] = _route["orig_tool"]
+                _revent["context_files"] = _route["context_files"]
+            else:
+                _revent["reason"] = _route["reason"]
+            await emit_event(_revent)
 
         # ── INVENTED-PATH GUARD ──────────────────────────────────────────────
         # An absolute path pointing outside the working directory is a path the
