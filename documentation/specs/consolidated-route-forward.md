@@ -159,26 +159,35 @@ real, careful work per module, not a mechanical bulk move.
 Full findings + the detailed split-order rationale: session audit artifact ("Loop Stall
 Postmortem", 2026-08-15).
 
-**M3.6 — Main-merge guardrail (anti-recurrence). (○, added 2026-08-16 — HIGH priority.)**
+**M3.6 — Main-merge guardrail (anti-recurrence). (◐ IN PROGRESS — part 1 landed on
+`bleeding-edge` 2026-08-16; HIGH priority.)**
 The 2026-08-16 direct-to-main incident proved branch discipline as a *convention* is not
 enough — it was broken by relying on `evolve.pipeline.adopt`'s default `to="main"`, landing
 four changes on `main` before they were rolled back and re-landed via `bleeding-edge`. Build
 a system that makes a local `main` merge *impossible without explicit user authorization* and
 *reminds* any actor the moment they try:
-1. **Cap-layer refusal.** `evolve.pipeline.adopt`/`promote` refuse `to` in {`main`, `master`}
-   unless an explicit per-call authorization token is present (not a default, not a
-   left-set env), and flip `adopt`'s default to `bleeding-edge` so the dangerous default is
-   gone. The one sanctioned path to `main` stays `evolve.bleeding_edge.promote_to_main`,
-   itself gated on an explicit-authorization argument.
-2. **Git-level hook (defense in depth).** A `pre-commit`/`pre-merge-commit` hook refusing any
-   commit/merge that lands on local `main` (HEAD==main) unless `VERA_ALLOW_MAIN_MERGE=1` —
-   the local-merge counterpart of the `pre-push` protected-branch guard this session
-   re-landed (`bdab162`, `tests/test_pre_push_guard.py`, critical tier).
-3. **Loud reminder.** Any main-targeting attempt emits the HARD RULE (top of this doc) with
-   the reason it's blocked and the one sanctioned path, so a mistaken attempt self-corrects
-   instead of silently succeeding.
+1. **Cap-layer refusal. ✓ DONE (bleeding-edge `1520ba3`, pipeline `5e949d7b`).**
+   `evolve.pipeline.adopt`/`promote` now refuse `to` in {`main`, `master`, resolved-mainline}
+   unless `authorize_main` equals the explicit sentinel `I-HAVE-EXPLICIT-USER-GO-AHEAD`
+   (a per-call token, never a default or a left-set env). `adopt`'s default was already
+   `bleeding-edge`. Pure guard (`main_merge_refusal`/`protected_mainline_names`/
+   `MAIN_MERGE_SENTINEL`) in `evolve_git_core.py`, wired into both caps, + 10 critical-tier
+   tests (`tests/test_main_merge_guard.py`; critical tier now 57/57). The one sanctioned path
+   to `main` stays `evolve.bleeding_edge.promote_to_main`, which merges directly and does NOT
+   route through the guarded caps (so it's unaffected). **Not yet active in prod** — it lives
+   on `bleeding-edge`; it only takes effect after a `bleeding-edge`→`main` promotion + restart
+   (itself the gated step). Part 3's loud reminder is delivered here at the cap layer (the
+   refusal message names the HARD RULE + the sanctioned path).
+2. **Git-level hook (defense in depth). (○ remaining.)** A `pre-commit`/`pre-merge-commit`
+   hook refusing any commit/merge that lands on local `main` (HEAD==main) unless
+   `VERA_ALLOW_MAIN_MERGE=1` — the local-merge counterpart of the `pre-push` protected-branch
+   guard this session re-landed (`bdab162`, `tests/test_pre_push_guard.py`, critical tier).
+   This catches a raw `git merge`/`git commit` that never touches the caps.
+3. **`promote_to_main` confirm-gate. (○ remaining.)** Gate the sanctioned path itself on an
+   explicit-authorization argument (today calling it *is* the deliberate act, but a single
+   call ships everything on `bleeding-edge` to `main` + restarts prod with no confirm).
 Reuses the exact pattern already on `bleeding-edge` (the remote-push guard); this is its
-local-merge twin. Do this BEFORE M4/M5/M6 widen autonomy.
+local-merge twin. Finish parts 2–3 BEFORE M4/M5/M6 widen autonomy.
 
 **M4 — Board ↔ pipeline sync (Stage 2 start).** `board.sync` first (local, no GitHub needed) —
 reflect pipeline/run/error state onto board items so the board is the single work view.
@@ -244,6 +253,18 @@ file's concurrent-edit pressure eases → widen autonomy / add coordination visi
   instead (`docs/route-forward-m3-5`). Needs a real fix before Phase E / M1 can rely on
   `content.edit` again — likely a `git worktree repair` or `git worktree add` re-link
   against the existing directory, but verify no in-flight edits would be lost first.
+- **T8 — `bleeding-edge` mirror can't refresh: root-owned `.git/refs/heads/loop-lab/`
+  (found 2026-08-16).** Every `promote` into `bleeding-edge` now reports
+  `standing_container_refresh: {ok:false, "cannot lock ref
+  refs/heads/loop-lab/bleeding-edge-mirror ... Permission denied"}`. Cause:
+  `/home/boejaker/Vera/.git/refs/heads/loop-lab` is owned `root:root` (mode 755), so the
+  `boejaker` process can't create the mirror lock — the standing bleeding-edge container's
+  mirror branch is frozen at an old tip. The merges themselves succeed; only the mirror
+  fast-forward fails, so it's non-blocking (prod runs `main`, unaffected). Fix: one-time
+  `sudo chown -R boejaker: /home/boejaker/Vera/.git/refs/heads/loop-lab` (needs root — a
+  root-owned artifact from an earlier in-container/root git op, same class as the C3
+  root-owned-removal cases). Until then, `evolve.bleeding_edge.container.ensure` is the manual
+  way to point the standing container at the current tip.
 
 ---
 
@@ -259,6 +280,7 @@ file's concurrent-edit pressure eases → widen autonomy / add coordination visi
 | M6 | — | Stage 5, §5.3 |
 | T1/T2 | §8.1 #4 (sweep) | §6.5 lifecycle |
 | T6/T7 | Phase B / Phase E | — |
+| T8 | — (infra: root-owned `.git` refs) | §6.5 lifecycle |
 
 Board tracking: an umbrella board item per plan (dev-lifecycle, agent-swarm, this route-forward)
 plus work items for M0–M6 (incl. M3.5) and T1–T7, tied to their branches when opened.
