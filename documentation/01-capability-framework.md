@@ -1,6 +1,10 @@
 # 01 · Capability Framework
 
-The `@capability` decorator is the single registration primitive in Vera. Every function in the system goes through it, and every interface (MCP, REST, DAG, WebSocket, distributed dispatch) is wired up from the registry to the decorator builds.
+![Capability Hub captured from the running Vera UI](assets/overview/cap-hub.png)
+
+The `@capability` decorator is Vera's single registration primitive. Every
+capability enters one registry, and Vera derives its MCP, REST, DAG, WebSocket,
+UI, and distributed-dispatch surfaces from that registration.
 
 Skills, ontologies, DAGs, pipelines, and external MCP servers are all defined as — or proxied through — capabilities. There is one registry, one event surface, one observability layer, regardless of where the underlying work comes from.
 

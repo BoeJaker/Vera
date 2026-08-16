@@ -1,5 +1,7 @@
 # 34 · Operator
 
+![Operator Studio captured from the running Vera UI](assets/overview/operator-studio.png)
+
 The **operator** gives Vera hands and eyes on a web browser. It drives *any* web
 page — and any machine whose desktop is served through a web page (noVNC,
 Guacamole, code-server) — the way a person would: it **observes** (screenshot +
@@ -367,7 +369,7 @@ browser is present.
 | [`vera/operator/docs/directives.py`](../vera/operator/docs/directives.py) | `VERA:CAPTURE` directive parse + insert |
 | [`vera/operator/missions/`](../vera/operator/missions) | mission registry + `documentation` + seeds |
 | [`vera/operator/docs/`](../vera/operator/docs) | domain map, doc scaffolder, gallery |
-| [`vera/operator/operator_capabilities.py`](../vera/operator/operator_capabilities.py) | the `operator.*` / `docs.*` caps + panel |
+| [`vera/operator/operator_web_capabilities.py`](../vera/operator/operator_web_capabilities.py) | the `operator.*` / `docs.*` caps + panel |
 | [`tools/vera-docgen/`](../tools/vera-docgen) | the `docgen` CLI |
 
 ---
