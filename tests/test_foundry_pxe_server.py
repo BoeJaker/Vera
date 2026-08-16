@@ -88,6 +88,16 @@ def test_ops_apkovl_is_worker_only():
 
 def test_ops_apkovl_autologin_and_tui():
     f = pxe_ops_apkovl_files("10.22.22.25")
-    assert "agetty --autologin root" in f["etc/inittab"]
+    # busybox `login -f root` (in the Alpine base) — NOT agetty, which isn't present
+    # at boot and panicked init.
+    assert "/bin/login -f root" in f["etc/inittab"]
+    assert "agetty" not in f["etc/inittab"]
     assert "foundry-tui" in f["root/.profile"]
     assert "whiptail" in f["usr/local/bin/foundry-tui"]
+
+
+def test_ops_apkovl_has_proxmox_vms_console():
+    f = pxe_ops_apkovl_files("10.22.22.25")
+    tui = f["usr/local/bin/foundry-tui"]
+    assert "pct enter" in tui and "qm terminal" in tui   # console into CTs / VMs
+    assert f.get("etc/foundry/pve")                        # default Proxmox host configured

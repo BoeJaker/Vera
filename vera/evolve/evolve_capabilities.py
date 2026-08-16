@@ -5299,6 +5299,7 @@ async def evolve_pipeline_test(id: str = "", trace_id=None):
 
 
 from Vera.vera.evolve.evolve_git_core import worktree_paths_by_branch as _worktree_paths_by_branch  # noqa: E402
+from Vera.vera.evolve.evolve_git_core import tracked_dirty_lines as _tracked_dirty_lines  # noqa: E402
 
 
 async def _sync_branch_with_target(root: str, branch: str, to: str) -> Dict[str, Any]:
@@ -5372,9 +5373,17 @@ async def _merge_in_checkout(root: str, branch: str, into: str, wt: str, msg: st
         return {"ok": False, "commit": "", "conflicts": [],
                 "error": f"target worktree is on '{cur}', not '{into}' — refusing to switch a live checkout"}
     st = await _sh(_git_wt_argv(wt, "status", "--porcelain"), cwd=wt)
-    if (st.get("out", "") or "").strip():
+    # Refuse only on TRACKED uncommitted work (staged/modified) — that's the WIP a
+    # merge could clobber. Unrelated UNTRACKED files (e.g. a scratch/spec doc left
+    # open in the standing bleeding-edge worktree) must not block an in-checkout
+    # promote: git merge below refuses on its own to overwrite an untracked file it
+    # would actually touch, so a real collision still fails safely.
+    _dirty = _tracked_dirty_lines(st.get("out", "") or "")
+    if _dirty:
         return {"ok": False, "commit": "", "conflicts": [],
-                "error": "target checkout has uncommitted changes — refusing (protect WIP); commit or clean it first"}
+                "error": "target checkout has uncommitted TRACKED changes — refusing "
+                         "(protect WIP); commit or clean it first",
+                "dirty": _dirty[:20]}
     mt = await _sh(_git_wt_argv(wt, "merge-tree", "--write-tree", into, branch), cwd=wt)
     if not mt["ok"]:
         return {"ok": False, "commit": "", "conflicts": ["(merge-tree reported conflicts)"],
