@@ -28,6 +28,7 @@ _CRITICAL_MODULES = {
     "test_attribution_core",   # honest Codex/Claude/autonomous/user controller mapping
     "test_mcp_bridge_attribution",  # agent bridge must not misattribute Codex as Claude
     "test_autonomous_lock_core",  # closed-loop Phase A — hard main-lockout while autonomous mode is engaged
+    "test_orchestrator_core",  # closed-loop Phase B — orchestrator decision logic (dispatch/idle, interlock, no v7)
 }
 
 
