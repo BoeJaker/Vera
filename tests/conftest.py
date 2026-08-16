@@ -23,6 +23,7 @@ _CRITICAL_MODULES = {
     "test_main_merge_guard",   # M3.6 adopt/promote refuse to=main without explicit auth (2026-08-16 incident)
     "test_pre_merge_commit_guard",  # M3.6 part 2 — block hand-run `git merge` onto main (sanctioned override bypasses)
     "test_board_sync",         # M4 board.sync — pipeline->lane mapping, idempotency sig, human-parked-lane guard
+    "test_test_gen_core",      # M3.4 test-generation — module filter, import/test-path mapping, fence strip
 }
 
 
