@@ -27,6 +27,7 @@ _CRITICAL_MODULES = {
     "test_perf_gate_core",     # M3 perf-gating — perf.scan summary -> verdict, strict-vs-advisory blocking
     "test_attribution_core",   # honest Codex/Claude/autonomous/user controller mapping
     "test_mcp_bridge_attribution",  # agent bridge must not misattribute Codex as Claude
+    "test_autonomous_lock_core",  # closed-loop Phase A — hard main-lockout while autonomous mode is engaged
 }
 
 
