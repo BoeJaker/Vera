@@ -58,7 +58,7 @@ from Vera.vera.foundry.foundry_core import (
     _render_rpi_cmdline, _render_ipxe, _render_autoinstall, _render_boot,
     pick_node, cluster_join_script, CLUSTER_KINDS,
     cluster_init_script, parse_init_token,
-    pxe_dnsmasq_conf, pxe_ipxe_menu,
+    pxe_dnsmasq_conf, pxe_ipxe_menu, swarm_service_cmd,
 )
 from Vera.vera.security import secrets as vsecrets
 
@@ -636,6 +636,79 @@ async def cap_cluster_init(name: str = "", kind: str = "", advertise_addr: str =
         result["registered"] = bool(reg.get("ok"))
     await emit_event({"type": "foundry.cluster.init", "name": name, "kind": kind})
     return result
+
+
+@capability(
+    "foundry.cluster.run", http_method="POST", http_path="/foundry/cluster/run",
+    http_tags=["foundry"], memory="on",
+    description="Dispatch COMPUTE to the Docker Swarm (Vera's distributed-compute cluster): "
+                "creates a swarm service that runs across the worker nodes (the netbooted ops "
+                "nodes). Runs via the swarm manager (a CT/VM) with pct exec, so no direct network "
+                "route to the isolated provisioning subnet is needed. Inputs: cluster_id (str), "
+                "node (str — auto-resolved), manager_vmid (int=201 — the swarm-manager guest), "
+                "name (str), image (str='alpine'), replicas (int=1), command (str — runs in the "
+                "container). Output: {ok, service, replicas, output}.",
+)
+async def cap_cluster_run(cluster_id: str = "", node: str = "", manager_vmid: int = 201,
+                          name: str = "vera-job", image: str = "alpine", replicas: int = 1,
+                          command: str = "", trace_id=None) -> Dict:
+    if not node:
+        node = await _resolve_node(cluster_id)
+    cmd = swarm_service_cmd(name, image, replicas, command)
+    if not cmd:
+        return {"error": f"unsafe/empty image reference: {image!r}"}
+    res = await _apply_ct_feature(cluster_id, int(manager_vmid), "lxc", cmd, node)
+    out = res.get("stdout") or res.get("out") or ""
+    if res.get("error"):
+        return {"error": f"dispatch failed on manager {manager_vmid}: {res.get('error')}",
+                "output": out[-800:]}
+    await emit_event({"type": "foundry.cluster.run", "service": name, "image": image,
+                      "replicas": replicas})
+    return {"ok": True, "service": name, "image": image, "replicas": replicas,
+            "output": out[-800:]}
+
+
+@capability(
+    "foundry.cluster.ps", http_method="GET", http_path="/foundry/cluster/ps",
+    http_tags=["foundry"], memory="off", silent=True,
+    description="What's running on the Docker Swarm + where: nodes, services, and task "
+                "placement (across the netbooted worker nodes). Runs on the swarm manager via "
+                "pct exec. Inputs: cluster_id, node (auto), manager_vmid (int=201). "
+                "Output: {ok, output}.",
+)
+async def cap_cluster_ps(cluster_id: str = "", node: str = "", manager_vmid: int = 201,
+                         trace_id=None) -> Dict:
+    if not node:
+        node = await _resolve_node(cluster_id)
+    cmd = ("echo '== NODES =='; docker node ls 2>&1; echo; echo '== SERVICES =='; "
+           "docker service ls 2>&1; echo; echo '== TASKS =='; "
+           "for s in $(docker service ls -q 2>/dev/null); do docker service ps "
+           "--format '{{.Name}} -> {{.Node}} [{{.CurrentState}}]' $s 2>/dev/null; done | head -40")
+    res = await _apply_ct_feature(cluster_id, int(manager_vmid), "lxc", cmd, node)
+    return {"ok": not res.get("error"),
+            "output": (res.get("stdout") or res.get("out") or res.get("error") or "")[-2500:]}
+
+
+@capability(
+    "foundry.cluster.rm", http_method="POST", http_path="/foundry/cluster/rm",
+    http_tags=["foundry"], memory="on",
+    description="Remove a swarm service (stop the dispatched compute). Inputs: cluster_id, "
+                "node (auto), manager_vmid (int=201), name (str!). Output: {ok, output}.",
+)
+async def cap_cluster_rm(cluster_id: str = "", node: str = "", manager_vmid: int = 201,
+                         name: str = "", trace_id=None) -> Dict:
+    name = (name or "").strip()
+    if not name:
+        return {"error": "name required"}
+    import re as _re
+    safe = _re.sub(r"[^A-Za-z0-9_.-]", "-", name)
+    if not node:
+        node = await _resolve_node(cluster_id)
+    res = await _apply_ct_feature(cluster_id, int(manager_vmid), "lxc",
+                                  f"docker service rm {safe}", node)
+    await emit_event({"type": "foundry.cluster.rm", "service": safe})
+    return {"ok": not res.get("error"),
+            "output": (res.get("stdout") or res.get("out") or res.get("error") or "")[-500:]}
 
 
 async def _cluster_records() -> Dict[str, Dict]:
