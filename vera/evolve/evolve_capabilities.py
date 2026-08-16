@@ -5429,6 +5429,63 @@ async def _merge_in_checkout(root: str, branch: str, into: str, wt: str, msg: st
     return {"ok": True, "commit": sha, "conflicts": [], "restart_required": True, "error": ""}
 
 
+async def _release_fast_forward_in_checkout(root: str, branch: str, into: str, wt: str,
+                                            expected_branch: str,
+                                            expected_into: str) -> Dict[str, Any]:
+    """Advance a checked-out release target without creating target-only history.
+
+    Both refs are compared with the preflight snapshots immediately before the
+    fast-forward. A concurrent landing therefore causes a safe retry instead of
+    silently changing the release contents or overwriting another update.
+    """
+    cur = (await _sh(_git_wt_argv(wt, "symbolic-ref", "--short", "-q", "HEAD"), cwd=wt)).get("out", "")
+    if cur != into:
+        return {"ok": False, "commit": "", "conflicts": [],
+                "error": f"target worktree is on '{cur}', not '{into}' — refusing to switch it"}
+    st = await _sh(_git_wt_argv(wt, "status", "--porcelain"), cwd=wt)
+    dirty = _tracked_dirty_lines(st.get("out", "") or "")
+    if dirty:
+        return {"ok": False, "commit": "", "conflicts": [],
+                "error": "target checkout has uncommitted TRACKED changes — refusing (protect WIP)",
+                "dirty": dirty[:20]}
+    now_branch = (await _git("rev-parse", branch, repo_root=root)).get("out", "")
+    now_into = (await _git("rev-parse", into, repo_root=root)).get("out", "")
+    if now_branch != expected_branch or now_into != expected_into:
+        return {"ok": False, "commit": "", "conflicts": [],
+                "error": "release refs changed after preflight — nothing was changed; retry to review the new tips",
+                "ref_changed": True}
+    # Merge the immutable snapshot, not the moving branch name. If `branch`
+    # advances after the check, that newer work remains for the next release.
+    # If `into` advances concurrently, --ff-only refuses unless that update is
+    # already contained by the reviewed snapshot.
+    mg = await _sh(_git_wt_argv(wt, "merge", "--ff-only", expected_branch), cwd=wt)
+    if not mg.get("ok"):
+        return {"ok": False, "commit": "", "conflicts": [],
+                "error": f"fast-forward refused: {mg.get('err') or mg.get('out')}"}
+    sha = (await _sh(_git_wt_argv(wt, "rev-parse", "HEAD"), cwd=wt)).get("out", "")
+    return {"ok": True, "commit": sha, "conflicts": [], "restart_required": True,
+            "action": "fast-forward", "error": ""}
+
+
+async def _release_fast_forward_isolated(root: str, branch: str, into: str,
+                                         expected_branch: str,
+                                         expected_into: str) -> Dict[str, Any]:
+    """Run the same guarded release in a disposable worktree."""
+    import uuid
+    tmp = str(Path(root) / ".loop-lab-worktrees" / f"_release-{uuid.uuid4().hex[:8]}")
+    add = await _sh(_git_wt_argv(str(root), "worktree", "add", tmp, into), cwd=str(root))
+    if not add.get("ok"):
+        return {"ok": False, "commit": "", "conflicts": [],
+                "error": f"worktree add failed: {add.get('err') or add.get('out')}"}
+    try:
+        res = await _release_fast_forward_in_checkout(
+            root, branch, into, tmp, expected_branch, expected_into)
+        res.pop("restart_required", None)
+        return res
+    finally:
+        await _sh(_git_wt_argv(str(root), "worktree", "remove", "--force", tmp), cwd=str(root))
+
+
 @capability("evolve.pipeline.promote", memory="on",
             http_method="POST", http_path="/evolve/pipeline/promote", http_tags=["evolve"],
             description="Promote a pipeline's change. Variant → set the overlay. Code → "
@@ -5606,11 +5663,17 @@ async def evolve_pipeline_promote(id: str = "", to: str = "bleeding-edge", force
                         "the normal per-pipeline evolve.pipeline.promote (which now "
                         "targets bleeding-edge by default): this is manual-only, "
                         "never called automatically by any gate, scheduler, or "
-                        "other capability. Same safe-merge machinery as pipeline "
-                        "promote (in-checkout guarded merge or isolated worktree "
-                        "merge, never a blind checkout). Input: repo (str=vera). "
+                        "other capability. Requires confirm=true and permits only "
+                        "an ancestry-checked, expected-tip-checked fast-forward; "
+                        "main-ahead or diverged history is preserved and refused for "
+                        "reviewed reconciliation into bleeding-edge. Input: repo "
+                        "(str=vera), confirm (bool=false). "
                         "Output: {ok, into, commit, conflicts, restart_required}.")
-async def evolve_bleeding_edge_promote_to_main(repo: str = DEFAULT_REPO_ID, trace_id=None):
+async def evolve_bleeding_edge_promote_to_main(repo: str = DEFAULT_REPO_ID,
+                                               confirm: bool = False, trace_id=None):
+    if not confirm:
+        return {"ok": False, "error": "release requires confirm=true after explicit user authorization",
+                "refused": "confirmation-required"}
     root = await _resolve_repo_root(repo)
     if not (await _git("rev-parse", "--verify", f"refs/heads/{BLEEDING_EDGE_BRANCH}",
                        repo_root=root))["ok"]:
@@ -5628,17 +5691,34 @@ async def evolve_bleeding_edge_promote_to_main(repo: str = DEFAULT_REPO_ID, trac
                      branch=BLEEDING_EDGE_BRANCH, ok=False, repo=repo)
         return {"ok": False, "into": to, "commit": "", "conflicts": [],
                 "error": _alock["reason"], "refused": "autonomous-lock"}
-    msg = f"Loop Lab: release {BLEEDING_EDGE_BRANCH} → {to}"
+    main_sha = (await _git("rev-parse", to, repo_root=root)).get("out", "")
+    bleeding_sha = (await _git("rev-parse", BLEEDING_EDGE_BRANCH, repo_root=root)).get("out", "")
+    main_anc = (await _git("merge-base", "--is-ancestor", to, BLEEDING_EDGE_BRANCH,
+                           repo_root=root)).get("ok", False)
+    bleeding_anc = (await _git("merge-base", "--is-ancestor", BLEEDING_EDGE_BRANCH, to,
+                               repo_root=root)).get("ok", False)
+    from Vera.vera.evolve.evolve_git_core import release_preflight as _release_preflight  # noqa: E402
+    preflight = _release_preflight(main_sha, bleeding_sha, main_anc, bleeding_anc)
+    if not preflight["ok"]:
+        await _audit("bleeding_edge.promote_to_main", preflight["error"], kind="release",
+                     branch=BLEEDING_EDGE_BRANCH, ok=False, repo=repo)
+        return {"ok": False, "into": to, "commit": "", "conflicts": [],
+                "error": preflight["error"], "refused": "non-fast-forward"}
+    if preflight["action"] == "already-up-to-date":
+        return {"ok": True, "into": to, "commit": main_sha, "conflicts": [],
+                "error": "", "action": "already-up-to-date", "restart_required": False}
     wl = await _git("worktree", "list", "--porcelain", repo_root=root)
     wt_of = _worktree_paths_by_branch(wl.get("out", ""))
     if to in wt_of:
-        res = await _merge_in_checkout(str(root), BLEEDING_EDGE_BRANCH, to, wt_of[to], msg)
+        res = await _release_fast_forward_in_checkout(
+            str(root), BLEEDING_EDGE_BRANCH, to, wt_of[to], bleeding_sha, main_sha)
     else:
-        res = await _merge_isolated(str(root), BLEEDING_EDGE_BRANCH, to, msg)
+        res = await _release_fast_forward_isolated(
+            str(root), BLEEDING_EDGE_BRANCH, to, bleeding_sha, main_sha)
     ok = res["ok"]
     await _audit("bleeding_edge.promote_to_main",
-                 f"MERGED {BLEEDING_EDGE_BRANCH} → {to} @ {(res.get('commit') or '')[:10]}"
-                 if ok else f"merge {BLEEDING_EDGE_BRANCH} → {to} FAILED: "
+                 f"FAST-FORWARDED {BLEEDING_EDGE_BRANCH} → {to} @ {(res.get('commit') or '')[:10]}"
+                 if ok else f"release {BLEEDING_EDGE_BRANCH} → {to} REFUSED: "
                             f"{(res.get('error') or '')[:120]}",
                  kind="release", branch=BLEEDING_EDGE_BRANCH, ok=ok, repo=repo)
     await emit_event({"type": "evolve.bleeding_edge.promoted_to_main", "ok": ok,
