@@ -1011,7 +1011,7 @@ function _masterAutoToggle(){
 }
 async function loadMaster(){
   const [pl,bd,au]=await Promise.all([
-    api('/evolve/pipelines').catch(()=>null),
+    api('/evolve/pipeline/list?limit=60').catch(()=>null),
     api('/board/items').catch(()=>null),
     api('/evolve/audit?limit=40').catch(()=>null)]);
   const pipes=((pl&&(pl.pipelines||pl.runs))||[]);
