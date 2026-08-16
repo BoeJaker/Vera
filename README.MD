@@ -18,7 +18,7 @@ reviewed self-improvement workflow.
 > requests, documentation improvements, and reproducible bug reports are very
 > welcome.
 
-![Vera Capability Hub](documentation/assets/overview/cap-hub.png)
+![Vera main dashboard](documentation/assets/overview/dashboard.png)
 
 ## Why Vera is different
 
