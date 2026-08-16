@@ -67,6 +67,9 @@ Verified live against prod this pass unless noted.
   pane. QC: board 36 items, capacity/status, sessions.watch all respond.
 
 **Loop Lab UI (this session's roadmap — all 13 items live)**
+- ✓ **Codex attribution** — Codex is a first-class pipeline controller and
+  authorship-map category; the shared stdio MCP bridge accepts an explicit
+  `--caller-kind` so Codex and Claude sessions retain honest, distinct provenance.
 - ✓ Pipeline rich UI + colored/syntax-highlighted diffs + draft-idle callout; **Swarm** live
   tab; **global context bar** (repo/sandbox, per-element override) wired to boards+swarm;
   make-active run-targeting; **Sandbox tab rewrite** (sandbox-centric list + Connection
