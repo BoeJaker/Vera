@@ -5348,7 +5348,10 @@ async def _merge_isolated(root: str, branch: str, into: str, msg: str) -> Dict[s
     conflicts: List[str] = []
     sha = ""
     try:
-        mg = await _sh(_git_wt_argv(tmp, "merge", "--no-ff", "-m", msg, branch), cwd=tmp)
+        # M3.6 part 2: sanctioned-deploy override so the pre-merge-commit hook allows
+        # THIS pipeline merge (a hand-run merge onto main carries no such env → blocked).
+        mg = await _sh(["env", "VERA_ALLOW_MAIN_COMMIT=1",
+                        *_git_wt_argv(tmp, "merge", "--no-ff", "-m", msg, branch)], cwd=tmp)
         if mg["ok"]:
             sha = (await _sh(_git_wt_argv(tmp, "rev-parse", "HEAD"), cwd=tmp)).get("out", "")
         else:
@@ -5388,7 +5391,10 @@ async def _merge_in_checkout(root: str, branch: str, into: str, wt: str, msg: st
     if not mt["ok"]:
         return {"ok": False, "commit": "", "conflicts": ["(merge-tree reported conflicts)"],
                 "error": "merge conflict — resolve on the branch, then re-promote"}
-    mg = await _sh(_git_wt_argv(wt, "merge", "--no-ff", "-m", msg, branch), cwd=wt)
+    # M3.6 part 2: sanctioned-deploy override so the pre-merge-commit hook allows THIS
+    # pipeline merge (a hand-run merge onto main carries no such env, so it stays blocked).
+    mg = await _sh(["env", "VERA_ALLOW_MAIN_COMMIT=1",
+                    *_git_wt_argv(wt, "merge", "--no-ff", "-m", msg, branch)], cwd=wt)
     if not mg["ok"]:
         await _sh(_git_wt_argv(wt, "merge", "--abort"), cwd=wt)
         return {"ok": False, "commit": "", "conflicts": [],
