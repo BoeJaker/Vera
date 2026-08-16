@@ -1,0 +1,12 @@
+FROM python:3.11-slim
+# Pinned — see agentbridge_registry.py's BridgeSpec.pip_packages for the
+# authoritative version (agentbridge.check_updates compares this file's pins
+# against PyPI); keep them in sync when bumping.
+RUN pip install --no-cache-dir pydantic-ai-slim[openai]==2.31.0
+WORKDIR /app
+COPY pydanticai_entrypoint.py /app/pydanticai_entrypoint.py
+# Belt-and-suspenders alongside the entrypoint's own flush=True on every
+# print: guarantees stdout is never block-buffered, so BRIDGE_STEP: lines
+# reach the host as they're produced instead of only at process exit.
+ENV PYTHONUNBUFFERED=1
+ENTRYPOINT ["python3", "/app/pydanticai_entrypoint.py"]
