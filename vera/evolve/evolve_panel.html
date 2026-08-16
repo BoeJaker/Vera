@@ -234,6 +234,16 @@ html.vpb-nav-hosted body{padding-left:0}
     </div>
     <div id="ut-lanes"><div class="empty">—</div></div>
   </div>
+  <div class="card" style="margin-top:10px">
+    <div class="card-h"><span class="card-t">Test generation (M3.4)</span>
+      <span class="hint">LLM-propose pytest for a branch's changed pure modules — review, then save</span>
+      <span style="flex:1"></span>
+      <input id="tg-branch" placeholder="branch, e.g. feat/x" style="width:170px">
+      <button class="btn sm" onclick="genTests()">Generate</button>
+    </div>
+    <div class="hint" style="margin-bottom:6px">Proposals are drafts — nothing is written to the branch. Review, copy into <span class="mono">tests/</span> and commit; promote the module into <span class="mono">_CRITICAL_MODULES</span> once it's solid. LLM-backed, so it can take a while.</div>
+    <div id="tg-body"><div class="empty">Enter a branch and click Generate.</div></div>
+  </div>
 </div>
 
 <!-- ── LOGS: unified sandbox log/error/perf capture ── -->
@@ -981,6 +991,30 @@ if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
   {id:'pipelines', label:'CI / CD'}, {id:'review', label:'Review'}, {id:'sources', label:'Sources'}, {id:'sandbox', label:'Sandbox'}, {id:'logs', label:'Logs'}, {id:'csessions', label:'Sessions'}, {id:'board', label:'Board'}, {id:'notes', label:'Notes'}, {id:'capacity', label:'Capacity'}, {id:'swarm', label:'Swarm'},
   {id:'tasks', label:'Tasks'}, {id:'runs', label:'Runs'}, {id:'unittests', label:'Unit tests'}, {id:'settings', label:'Settings'},
 ]);
+
+/* ═══ TEST GENERATION — LLM-propose pytest for a branch (route-forward M3.4) ═══ */
+async function genTests(){
+  const br=(document.getElementById('tg-branch').value||'').trim();
+  const body=document.getElementById('tg-body');
+  if(!br){body.innerHTML='<div class="empty">Enter a branch name first.</div>';return;}
+  body.innerHTML='<div class="empty">Generating tests for <b>'+esc(br)+'</b> (LLM — this can take a while)…</div>';
+  const r=await post('/evolve/tests/generate',{branch:br});
+  if(!r||r.error){body.innerHTML='<div class="empty">Generation failed: '+esc((r&&r.error)||'no response — restart prod if evolve.tests.generate was just deployed')+'</div>';return;}
+  if(!r.proposals||!r.proposals.length){body.innerHTML='<div class="empty">No changed <span class="mono">vera/*.py</span> source modules on <b>'+esc(br)+'</b> to generate tests for.</div>';return;}
+  body.innerHTML=r.proposals.map(p=>{
+    const tag=p.error?('<span class="hint" style="color:var(--err,#e66)">'+esc(p.error)+'</span>')
+      :(p.exists?'<span class="hint" style="color:var(--warn,#d90)">test file exists — merge on save</span>':'<span class="hint">new test file</span>');
+    return '<div class="card" style="margin:6px 0"><div class="card-h">'
+      +'<span class="card-t mono">'+esc(p.suggested_test||'')+'</span> '+tag
+      +'<span style="flex:1"></span><span class="hint mono">from '+esc(p.import_name||p.module||'')+'</span>'
+      +(p.tests_code?'<button class="btn sm" onclick="_copyTG(this)">copy</button>':'')+'</div>'
+      +'<pre class="mono" style="max-height:320px;overflow:auto;white-space:pre-wrap;margin:0">'+esc(p.tests_code||'(no code produced)')+'</pre></div>';
+  }).join('');
+}
+function _copyTG(btn){
+  const pre=btn.closest('.card').querySelector('pre');
+  if(navigator.clipboard&&pre){navigator.clipboard.writeText(pre.textContent);btn.textContent='copied';setTimeout(()=>btn.textContent='copy',1200);}
+}
 
 /* ═══ UNIT TESTS — coverage matrix + gate race-to-green (route-forward M3.2) ═══ */
 let _utMatrix=null;

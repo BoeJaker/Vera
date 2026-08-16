@@ -123,8 +123,8 @@ scheduled content auto-push → `content.remove`/rename. Retire prod-share editi
 **M2 — Traceability guardrails (Phase D/E lite).** Doc/test-presence check on merge +
 auto-postmortem writer. Cheap, high-leverage, reuses the pipeline + `evolve.errors`.
 
-**M3 — Test-tier gate (Phase B). ◐ IN PROGRESS (M3.1–M3.3 landed on `bleeding-edge`
-2026-08-16; M3.4 not started).** Tier `tests/`; wire the merge gate to run the critical-system
+**M3 — Test-tier gate (Phase B). ◐ IN PROGRESS (M3.1–M3.4 all landed on `bleeding-edge`
+2026-08-16; only perf-gating remains).** Tier `tests/`; wire the merge gate to run the critical-system
 tier — the safety net both plans lean on. Closes **T6**. Broken into:
 
 - **M3.1 — Critical-tier gate for any branch worktree. ✓ DONE (bleeding-edge).** `gate_passed`
@@ -145,14 +145,17 @@ tier — the safety net both plans lean on. Closes **T6**. Broken into:
   grew across the session to **78/78** (adds M3.6 guard, pre-merge guard, merge-tolerance, and
   M4 `board_sync`). More backfill remains as systems grow (e.g. content path-lock, reaper
   idle-logic).
-- **M3.4 — Test generation. ○ NOT STARTED (confirmed 2026-08-16).** Auto-propose unit tests
-  for a branch's changed code (feeds the gate), so new code arrives with coverage instead of
-  needing hand-written tests every time. **Note:** the session's test growth (critical tier
-  47→81) was all HAND-written — extracting pure cores and writing pytest by hand — which is the
-  *opposite* of this item; and `evolve.tasks.generate` makes *benchmark* tasks (loop/cap
-  comparative runs), not unit tests for a diff. Real M3.4 is a distinct build: take `git diff`
-  → LLM-generate pytest for the changed pure logic → propose/save → optionally auto-mark
-  critical. Reuses the code-gen pipeline, not `evolve.tasks.generate`.
+- **M3.4 — Test generation. ✓ DONE (bleeding-edge `daa4db9`).** `evolve.tests.generate` takes a
+  branch's changed pure `vera/**/*.py` modules (excludes `tests/`, `__init__`, existing `test_*`),
+  and LLM-proposes pytest that follows the repo convention (`sys.path.insert` + lowercase
+  `from vera.X import …`). **Proposes for review — never writes files** (copy from the panel,
+  commit, then promote into `_CRITICAL_MODULES` once solid). Pure decision logic (module filter,
+  import/test-path mapping, fence-strip) is in `vera/evolve/test_gen_core.py` with **11
+  critical-tier tests**. **Integrated into the visuals:** a "Test generation (M3.4)" card in the
+  Loop Lab Unit-tests panel (branch input → Generate → per-module proposals with copy), beside
+  the M3.2 matrix. **Live-verified:** generated a correct 5.7 KB `test_sandbox_reap.py` proposal
+  end-to-end. `evolve.tasks.generate` (benchmark tasks) is unrelated. Follow-on: a one-click
+  "save to branch" from the panel (today it's copy-and-commit).
 - **Perf-based gating** (socket-flap / bad response-time / Ollama-contention thresholds) is a
   sibling of M3.4, tracked separately (originally scoped under M3); see §2.A / the perf subsystem.
 
@@ -336,6 +339,19 @@ file's concurrent-edit pressure eases → widen autonomy / add coordination visi
   tests reproduce the incident. **Reaches prod's running sweep only after a `bleeding-edge`→
   `main` release + restart** — until then the branch-only trunk + the live mirror container are
   the interim guards.
+- **T10 — the standing bleeding-edge container served a STALE/BROKEN mirror worktree. ✓
+  recovered 2026-08-16; root fix pending.** After several promotes reported
+  `standing_container_refresh: {ok:true, "mirror refreshed + container restarted"}`, the mirror
+  worktree (`.loop-lab-worktrees/bleeding-edge-mirror`) was actually frozen commits behind
+  `bleeding-edge` with a **severed git link** (`fatal: not a git repository:
+  .git/worktrees/bleeding-edge-mirror`), so the container served old code (a just-landed cap
+  read as "Unknown capability"). The refresh's success report is not trustworthy — it updates
+  the mirror ref but the worktree checkout can silently fail. **Recovery:** `evolve.sandbox.down`
+  the container (remove_worktree) → `git worktree prune` → `git branch -f
+  loop-lab/bleeding-edge-mirror bleeding-edge` → `evolve.bleeding_edge.container.ensure` rebuilt
+  it clean (now current, caps registered, `https://localhost:8984`). **Root fix (pending):** the
+  refresh must verify the worktree HEAD actually moved (and `git worktree repair` / rebuild if
+  the link is severed), not just report ok — same class as T7's content-sync worktree link.
 
 ---
 
