@@ -442,24 +442,35 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21") -> Dict:
         'command -v whiptail >/dev/null 2>&1 || { echo "Ops node still installing..."; '
         "while ! command -v whiptail >/dev/null 2>&1; do sleep 3; done; }\n"
         "T=/tmp/ftui.out\n"
+        "PVE=$(cat /etc/foundry/pve 2>/dev/null || echo 192.168.0.200)\n"
+        "sshkey(){ [ -s /root/.ssh/id_estate ] && echo '-i /root/.ssh/id_estate' || echo ''; }\n"
         "while true; do\n"
-        '  CH=$(whiptail --title "Vera Foundry - Ops Node ($(hostname))" --menu "Diskless compute worker" 20 74 9 '
-        'status "Node + Docker + swarm status" dps "Running containers" nodes "Swarm nodes" '
-        'ssh "SSH into an estate host" join "Re-run swarm join" log "Boot/join log" '
+        '  CH=$(whiptail --title "Vera Foundry - Ops Node ($(hostname))" --menu "Diskless compute worker" 21 76 11 '
+        'status "Node + Docker + swarm status" vms "Proxmox VMs / CTs -- list + console in" '
+        'dps "Running containers" nodes "Swarm nodes" ssh "SSH into an estate host" '
+        'join "Re-run swarm join" pve "Set Proxmox host" log "Boot/join log" '
         'shell "Shell" reboot "Reboot" 3>&1 1>&2 2>&3) || { clear; exec sh; }\n'
+        "  K=$(sshkey)\n"
         "  case \"$CH\" in\n"
         '    status) { echo HOST: $(hostname); ip -4 addr show eth0 2>/dev/null|grep inet; docker node ls 2>/dev/null||echo "(not in a swarm)"; } >$T 2>&1; whiptail --scrolltext --textbox $T 24 78;;\n'
+        '    vms) ssh $K -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 root@$PVE "echo == CONTAINERS ==; pct list 2>/dev/null; echo; echo == VMs ==; qm list 2>/dev/null" >$T 2>&1; '
+        'whiptail --title "Proxmox $PVE" --scrolltext --textbox $T 26 100; '
+        'ID=$(whiptail --inputbox "Console INTO which CT/VM id? (CT=pct enter, VM=serial console; blank cancels)" 9 68 "" 3>&1 1>&2 2>&3); '
+        '[ -n "$ID" ] && { clear; ssh $K -t root@$PVE "if pct status $ID >/dev/null 2>&1; then pct enter $ID; else qm terminal $ID; fi"; };;\n'
         "    dps) docker ps >$T 2>&1; whiptail --scrolltext --textbox $T 24 100;;\n"
         "    nodes) docker node ls >$T 2>&1; whiptail --scrolltext --textbox $T 24 100;;\n"
-        '    ssh) H=$(whiptail --inputbox "SSH target (user@host):" 8 60 "root@192.168.0.200" 3>&1 1>&2 2>&3) && { clear; ssh -o StrictHostKeyChecking=accept-new $H; };;\n'
+        '    ssh) H=$(whiptail --inputbox "SSH target (user@host):" 8 60 "root@$PVE" 3>&1 1>&2 2>&3) && { clear; ssh $K -o StrictHostKeyChecking=accept-new $H; };;\n'
         f'    join) {{ TK=$(wget -qO- http://{server_ip}/swarm/worker-token|tr -d "\\r\\n"); M=$(wget -qO- http://{server_ip}/swarm/manager|tr -d "\\r\\n"); docker swarm join --token "$TK" "${{M}}:2377"; }} >$T 2>&1; whiptail --scrolltext --textbox $T 20 90;;\n'
+        '    pve) NP=$(whiptail --inputbox "Proxmox host IP/name:" 8 60 "$PVE" 3>&1 1>&2 2>&3) && { echo "$NP" > /etc/foundry/pve; PVE="$NP"; };;\n'
         "    log) whiptail --scrolltext --textbox /var/log/foundry-node.log 24 100;;\n"
         '    shell) clear; echo "type exit to return to the menu"; sh;;\n'
         "    reboot) reboot;;\n"
         "  esac\ndone\n"
     )
+    # busybox `login -f root` (present in the Alpine base) autologins tty1 — agetty is
+    # NOT in the base and isn't installed until local.d runs, which panicked init.
     inittab = ("::sysinit:/sbin/openrc sysinit\n::sysinit:/sbin/openrc boot\n::wait:/sbin/openrc default\n"
-               "tty1::respawn:/sbin/agetty --autologin root --noclear tty1 linux\n"
+               "tty1::respawn:/bin/login -f root\n"
                "tty2::respawn:/sbin/getty 38400 tty2\n"
                "::ctrlaltdel:/sbin/reboot\n::shutdown:/sbin/openrc shutdown\n")
     profile = ('if [ "$(tty)" = "/dev/tty1" ] && [ -z "$FTUI_RUN" ]; then '
@@ -470,6 +481,7 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21") -> Dict:
         "usr/local/bin/foundry-tui": tui,
         "etc/inittab": inittab,
         "root/.profile": profile,
+        "etc/foundry/pve": "192.168.0.200\n",   # default Proxmox host for the VMs/CTs menu
     }
 
 
