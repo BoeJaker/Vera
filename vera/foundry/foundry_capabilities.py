@@ -1511,7 +1511,7 @@ def _apkovl_tar_b64(files: Dict) -> str:
     return base64.b64encode(buf.getvalue()).decode()
 
 
-def _pxe_server_setup_script(server_ip, iface, uplink, subnet, conf_b64, menu_b64, apkovl_b64) -> str:
+def _pxe_server_setup_script(server_ip, iface, uplink, subnet, conf_b64, menu_b64, apkovl_b64, tui_b64="", sdwrite_b64="") -> str:
     """The node-side setup shell — reproduces the hand-proven netboot server: install
     dnsmasq+iPXE, write the (core-generated) fenced dnsmasq conf + iPXE menu + ops
     apkovl, fetch iPXE/Alpine/netboot.xyz/Debian-d-i assets, enable scoped NAT, then
@@ -1525,6 +1525,12 @@ systemctl stop dnsmasq 2>/dev/null
 echo {conf_b64} | base64 -d > /etc/dnsmasq.d/vera-foundry.conf
 echo {menu_b64} | base64 -d > /srv/foundry/tftp/boot.ipxe
 echo {apkovl_b64} | base64 -d > /srv/foundry/http/alpine/node.apkovl.tar.gz
+echo {tui_b64} | base64 -d > /srv/foundry/http/ops/foundry-tui 2>/dev/null; chmod +x /srv/foundry/http/ops/foundry-tui 2>/dev/null
+echo {sdwrite_b64} | base64 -d > /srv/foundry/http/ops/foundry-sdwrite 2>/dev/null; chmod +x /srv/foundry/http/ops/foundry-sdwrite 2>/dev/null
+printf 'proxmox {server_ip}\\n' > /srv/foundry/http/ops/pve_hosts
+printf 'raspios-lite-arm64 https://downloads.raspberrypi.com/raspios_lite_arm64_latest\\nraspios-desktop-arm64 https://downloads.raspberrypi.com/raspios_arm64_latest\\nraspios-full-arm64 https://downloads.raspberrypi.com/raspios_full_arm64_latest\\nraspios-lite-armhf https://downloads.raspberrypi.com/raspios_lite_armhf_latest\\n' > /srv/foundry/http/ops/pi_images
+[ -f /srv/foundry/http/ops/authorized_keys ] || : > /srv/foundry/http/ops/authorized_keys
+[ -f /srv/foundry/http/ops/id_estate ] || : > /srv/foundry/http/ops/id_estate
 for f in undionly.kpxe ipxe.efi snponly.efi; do cp -f /usr/lib/ipxe/$f /srv/foundry/tftp/ 2>/dev/null; done
 NB=https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/x86_64/netboot
 for f in vmlinuz-lts initramfs-lts modloop-lts; do [ -s /srv/foundry/http/alpine/$f ] || curl -fsS --max-time 220 -o /srv/foundry/http/alpine/$f "$NB/$f"; done
@@ -1572,9 +1578,12 @@ async def cap_pxe_server_deploy(cluster_id: str = "", node: str = "", iface: str
     install_images = [{"id": "debian12", "os": "Debian", "version": "12"}]
     conf = pxe_dnsmasq_conf(server_ip, iface, range_lo, range_hi, except_ifaces=[uplink])
     menu = pxe_ipxe_menu(server_ip, install_images=install_images)
-    apk_b64 = _apkovl_tar_b64(pxe_ops_apkovl_files(server_ip))
+    ops_files = pxe_ops_apkovl_files(server_ip)
+    apk_b64 = _apkovl_tar_b64(ops_files)
     _b = lambda s: base64.b64encode(s.encode()).decode()
-    script = _pxe_server_setup_script(server_ip, iface, uplink, subnet, _b(conf), _b(menu), apk_b64)
+    tui_b64 = _b(ops_files["usr/local/bin/foundry-tui"])
+    sdwrite_b64 = _b(ops_files["usr/local/bin/foundry-sdwrite"])
+    script = _pxe_server_setup_script(server_ip, iface, uplink, subnet, _b(conf), _b(menu), apk_b64, tui_b64, sdwrite_b64)
     res = await _call("proxmox.node.exec", cluster_id=cluster_id, command=script, timeout=520)
     out = (res.get("stdout") or "") + (res.get("error") or "")
     fenced = "FENCE_OK" in out
