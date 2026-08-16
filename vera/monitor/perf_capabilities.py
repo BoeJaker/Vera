@@ -393,6 +393,40 @@ async def perf_scan(trace_id=None) -> Dict:
     return {"findings": findings, "summary": summary, "ts": now_iso()}
 
 
+# ── perf.gate (M3 perf-gating) ──────────────────────────────────────────────────
+@capability(
+    "perf.gate",
+    http_method="GET", http_path="/perf/gate", http_tags=["monitor", "perf"],
+    memory="off", silent=True,
+    description="Perf-based GATE check (M3 perf-gating): runs perf.scan and reduces "
+                "it to a promote verdict — pass|warn|fail — against thresholds. Covers "
+                "event-loop stalls (~ socket flap / hangs), Ollama saturation + node "
+                "health (contention), host CPU/RAM, stale consumers, zombie jobs — all "
+                "from perf.scan. ADVISORY by default (surfaced on the pipeline, does NOT "
+                "block); set VERA_PERF_GATE_STRICT=1 to make a 'fail' block a promote. "
+                "Env overrides: VERA_PERF_GATE_MAX_CRIT (0), VERA_PERF_GATE_MAX_WARN (4). "
+                "Output: {ok, verdict, blocking, strict, summary, reason, top_findings}.")
+async def perf_gate(trace_id=None) -> Dict:
+    from Vera.vera.monitor.perf_gate_core import (
+        perf_verdict, gate_blocks_promote, top_findings)
+    scan = await _call("perf.scan")
+    if not isinstance(scan, dict):
+        scan = {}
+    summary = scan.get("summary") or {}
+    thresholds = {}
+    try:
+        thresholds["max_crit"] = int(os.environ.get("VERA_PERF_GATE_MAX_CRIT", "0"))
+        thresholds["max_warn"] = int(os.environ.get("VERA_PERF_GATE_MAX_WARN", "4"))
+    except ValueError:
+        thresholds = {}
+    v = perf_verdict(summary, thresholds)
+    strict = os.environ.get("VERA_PERF_GATE_STRICT", "") == "1"
+    return {"ok": True, "verdict": v["verdict"],
+            "blocking": gate_blocks_promote(v["verdict"], strict), "strict": strict,
+            "summary": summary, "reason": v["reason"],
+            "top_findings": top_findings(scan.get("findings") or [])}
+
+
 # ── perf.remediate ────────────────────────────────────────────────────────────
 async def _remediate_prune_consumers() -> Dict:
     try:
