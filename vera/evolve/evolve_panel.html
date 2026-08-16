@@ -168,6 +168,14 @@ html.vpb-nav-hosted body{padding-left:0}
   <button class="btn sm" onclick="loadAll()">&#8635;</button>
 </div>
 
+<!-- Phase D: autonomous-mode banner — closed-loop safety visibility (main LOCKED when engaged) -->
+<div id="auto-banner" style="display:none;margin-bottom:10px;padding:8px 14px;border-radius:6px;background:rgba(210,60,60,.14);border:1px solid #c0392b;border-left:4px solid #e74c3c;align-items:center;gap:10px">
+  <span style="font-weight:800;letter-spacing:1px;color:#e74c3c">&#9940; AUTONOMOUS MODE</span>
+  <span id="auto-banner-msg" class="hint">main is <b>LOCKED</b> &mdash; no promote/merge to main</span>
+  <span style="flex:1"></span>
+  <button class="btn sm" onclick="autonomousRelease()" title="Kill switch — unlock main + stand the loop down">Release (kill switch)</button>
+</div>
+
 <!-- GLOBAL CONTEXT: repo + sandbox/branch every section defaults to. Empty = see all.
      Each section keeps its own selector (per-element override); this just sets the default. -->
 <div id="ctxbar" style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:10px;padding:6px 10px;background:var(--bg1);border:1px solid var(--border);border-radius:6px">
@@ -207,11 +215,45 @@ html.vpb-nav-hosted body{padding-left:0}
   <button class="btn" data-sec="notes" onclick="nav('notes')"><span class="ic">✎</span>Notes</button>
   <button class="btn" data-sec="capacity" onclick="nav('capacity')"><span class="ic">▰</span>Capacity</button>
   <button class="btn" data-sec="swarm" onclick="nav('swarm')"><span class="ic">◇</span>Swarm</button>
+  <button class="btn" data-sec="master" onclick="nav('master')"><span class="ic">◉</span>Master</button>
   <div class="rail-grp">Library</div>
   <button class="btn" data-sec="tasks" onclick="nav('tasks')"><span class="ic">☰</span>Tasks</button>
   <button class="btn" data-sec="runs" onclick="nav('runs')"><span class="ic">↻</span>Runs</button>
   <button class="btn" data-sec="unittests" onclick="nav('unittests')"><span class="ic">◫</span>Unit tests</button>
   <button class="btn" data-sec="settings" onclick="nav('settings')"><span class="ic">⚙</span>Settings</button>
+</div>
+
+<!-- Phase D: MASTER — one page for the whole loop (activity · board · promotions · gates) -->
+<div class="sec" id="sec-master" style="display:none">
+  <div class="row" style="gap:10px;align-items:center;margin-bottom:8px">
+    <span class="card-t" style="font-size:14px">◉ Mission Control</span>
+    <span class="hint" id="master-sub">the whole loop at a glance — refreshes live</span>
+    <span style="flex:1"></span>
+    <label class="hint"><input type="checkbox" id="master-auto" checked onchange="_masterAutoToggle()"> auto-refresh</label>
+    <button class="btn sm" onclick="loadMaster()">&#8635;</button>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+    <div class="card">
+      <div class="card-h"><span class="card-t">Needs promotion</span><span class="hint" id="m-promo-n">—</span>
+        <span style="flex:1"></span><span class="hint">gated / reviewed, not yet promoted</span></div>
+      <div id="m-promo"><div class="empty">…</div></div>
+    </div>
+    <div class="card">
+      <div class="card-h"><span class="card-t">Active board items</span><span class="hint" id="m-board-n">—</span>
+        <span style="flex:1"></span><span class="hint">in-progress · review · ready · blocked</span></div>
+      <div id="m-board"><div class="empty">…</div></div>
+    </div>
+    <div class="card">
+      <div class="card-h"><span class="card-t">Recent gate / test results</span>
+        <span style="flex:1"></span><span class="hint">code-pipeline gates, newest first</span></div>
+      <div id="m-gates"><div class="empty">…</div></div>
+    </div>
+    <div class="card">
+      <div class="card-h"><span class="card-t">Agent activity</span>
+        <span style="flex:1"></span><span class="hint">every Loop Lab action, newest first</span></div>
+      <div id="m-activity"><div class="empty">…</div></div>
+    </div>
+  </div>
 </div>
 
 <!-- ── UNIT TESTS: coverage matrix + gate race-to-green ── -->
@@ -959,6 +1001,59 @@ let _providers=[],_profiles=[],_cfg={};
 async function api(p,o){try{const r=await fetch(p,Object.assign({headers:{'Content-Type':'application/json'}},o||{}));return await r.json()}catch(e){toast('err: '+e.message);return null}}
 async function post(p,b){return api(p,{method:'POST',body:JSON.stringify(b||{})})}
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+
+/* ═══ MASTER / MISSION CONTROL + autonomous-mode banner (closed-loop Phase D) ═══ */
+let _masterTimer=null;
+function _masterAutoToggle(){
+  const on=(($('master-auto')||{}).checked);
+  if(on&&!_masterTimer){_masterTimer=setInterval(()=>{const s=$('sec-master');if(s&&s.style.display!=='none')loadMaster();},6000);}
+  else if(!on&&_masterTimer){clearInterval(_masterTimer);_masterTimer=null;}
+}
+async function loadMaster(){
+  const [pl,bd,au]=await Promise.all([
+    api('/evolve/pipeline/list?limit=60').catch(()=>null),
+    api('/board/items').catch(()=>null),
+    api('/evolve/audit?limit=40').catch(()=>null)]);
+  const pipes=((pl&&(pl.pipelines||pl.runs))||[]);
+  const needs=pipes.filter(p=>{const d=(p.decision||'').toLowerCase();return d!=='promoted'&&d!=='rolled_back'&&(p.review_requested||p.gate_passed===true);});
+  if($('m-promo-n'))$('m-promo-n').textContent=needs.length;
+  if($('m-promo'))$('m-promo').innerHTML=needs.length?needs.slice(0,12).map(p=>{
+    const g=p.gate_passed===true?'<span class="tag" style="color:var(--acc)">gated</span>':(p.review_requested?'<span class="tag" style="color:var(--acc3)">review</span>':'');
+    return '<div style="padding:4px 0;border-bottom:1px solid var(--border);font-size:10.5px"><b class="mono">'+esc((p.id||'').slice(0,8))+'</b> '+g+' <span class="mono">'+esc(p.branch||'')+'</span> &rarr; '+esc(p.to||'bleeding-edge')+'</div>';
+  }).join(''):'<div class="empty">nothing awaiting promotion</div>';
+  const ACT=['in_progress','needs_review','review','ready','blocked','in_progress_vera'];
+  const its=((bd&&bd.items)||[]).filter(i=>ACT.includes(i.lane));
+  if($('m-board-n'))$('m-board-n').textContent=its.length;
+  if($('m-board'))$('m-board').innerHTML=its.length?its.slice(0,14).map(i=>
+    '<div style="padding:4px 0;border-bottom:1px solid var(--border);font-size:10.5px"><span class="tag">'+esc(i.lane)+'</span> '+esc((i.title||'').slice(0,52))+(i.agent?(' <span class="hint mono" style="font-size:9px">@'+esc(i.agent)+'</span>'):'')+(i.comment_count?(' <span class="hint" style="font-size:9px">'+i.comment_count+'&#128172;</span>'):'')+'</div>'
+  ).join(''):'<div class="empty">no active items</div>';
+  const gated=pipes.filter(p=>p.gate_passed!=null||['promoted','held','rolled_back'].includes((p.decision||'').toLowerCase())).slice(0,12);
+  if($('m-gates'))$('m-gates').innerHTML=gated.length?gated.map(p=>{
+    const ok=p.gate_passed===true?'var(--acc)':(p.gate_passed===false?'#e74c3c':'var(--dim2)');
+    return '<div style="padding:4px 0;border-bottom:1px solid var(--border);font-size:10.5px"><span style="color:'+ok+'">&#9679;</span> <span class="mono">'+esc((p.branch||p.id||'').slice(0,34))+'</span> <span class="hint mono" style="font-size:9px">gate '+(p.gate_passed===true?'pass':(p.gate_passed===false?'FAIL':'n/a'))+' &middot; '+esc((p.decision||'pending'))+'</span></div>';
+  }).join(''):'<div class="empty">no recent gates</div>';
+  const rows=((au&&au.audit)||[]).slice(0,30);
+  if($('m-activity'))$('m-activity').innerHTML=rows.length?rows.map(e=>{
+    const t=(e.ts||'').slice(11,19); const who=e.controller||e.by||'';
+    const mine=/claude/i.test(who)?'style="background:rgba(90,158,143,.08)"':'';
+    return '<div '+mine+' style="padding:3px 0;border-bottom:1px solid var(--border);font-size:10px"><span class="hint mono" style="font-size:9px">'+esc(t)+'</span> <span class="mono" style="color:'+(e.ok===false?'#e74c3c':'var(--acc)')+'">'+esc(e.action||'')+'</span> '+esc((e.summary||'').slice(0,60))+'</div>';
+  }).join(''):'<div class="empty">no activity</div>';
+  pollAutonomous();
+  if((($('master-auto')||{}).checked)&&!_masterTimer)_masterAutoToggle();
+}
+async function pollAutonomous(){
+  const s=await api('/autonomous/status').catch(()=>null);
+  const b=$('auto-banner'); if(!b) return;
+  if(s&&s.engaged){ b.style.display='flex';
+    const since=(s.since||'').slice(0,19).replace('T',' ');
+    if($('auto-banner-msg'))$('auto-banner-msg').innerHTML='main is <b>LOCKED</b>'+(s.reason?(' &mdash; '+esc(s.reason)):'')+(since?(' &middot; since '+esc(since)):''); }
+  else { b.style.display='none'; }
+}
+async function autonomousRelease(){
+  if(!confirm('Release the autonomous lock? This unlocks promote/merge to MAIN and stands the loop down.')) return;
+  const r=await post('/autonomous/release',{confirm:true});
+  if(window.toast)toast(r&&r.ok?'autonomous lock released — main unlocked':'release failed'); pollAutonomous();
+}
 function toast(m){const t=document.createElement('div');t.className='toast';t.textContent=m;document.body.appendChild(t);setTimeout(()=>{t.style.opacity=0;t.style.transition='opacity .3s';setTimeout(()=>t.remove(),300)},3400)}
 function openModal(h){$('modal').innerHTML=h;$('modal-bg').classList.add('on')}
 function closeModal(){$('modal-bg').classList.remove('on')}
@@ -969,7 +1064,7 @@ function scChip(v){return '<span class="sc" style="color:'+scColor(v)+';backgrou
 function nav(sec){
   document.querySelectorAll('#nav .btn').forEach(b=>b.classList.toggle('on',b.dataset.sec===sec));
   document.querySelectorAll('.sec').forEach(s=>s.style.display=s.id==='sec-'+sec?'':'none');
-  const f={test:loadTest,tasks:loadTasks,runs:loadRuns,unittests:loadUnitTests,improve:loadSessions,watch:loadWatch,pipelines:()=>{loadGit();loadPipelines()},
+  const f={test:loadTest,tasks:loadTasks,runs:loadRuns,unittests:loadUnitTests,master:loadMaster,improve:loadSessions,watch:loadWatch,pipelines:()=>{loadGit();loadPipelines()},
     review:loadReview,logs:loadLogs,csessions:loadCSessions,board:loadBoardTab,notes:loadNotes,capacity:loadCapacity,swarm:loadSwarm,
     sources:loadSources,sandbox:loadSandbox,activity:loadAudit,variants:loadVariants,settings:fillSettings,overview:loadOverview,errors:loadErrors}[sec];
   if(f)f();
@@ -1677,6 +1772,7 @@ async function loadAll(){
   _providers=(pv&&pv.providers)||[];_profiles=(pr&&pr.profiles)||[];_cfg=(cf&&cf.config)||{};
   $('cfg-line').textContent='critic: '+(_cfg.critic_provider||'?')+' · editor: '+(_cfg.editor_provider||'?')+' · target '+(_cfg.target_score||'?');
   renderSafePill();
+  pollAutonomous();
   loadCtxBar();
   const em=_cfg.editq_model||'gpt-oss:20b';
   if($('editq-model-lbl'))$('editq-model-lbl').textContent=em;
@@ -3762,6 +3858,7 @@ function renderSbxStrip(sb){
   if(drift)drift.style.display=(sb.routing_drift&&sb.routing_drift.checked&&(sb.routing_drift.mismatches||[]).length)?'':'none';
 }
 setInterval(refreshActiveRun,4000);
+setInterval(pollAutonomous,12000);
 refreshActiveRun();
 
 /* Branch race lanes (Pipelines tab) → click a run block to open its real

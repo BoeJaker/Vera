@@ -806,7 +806,11 @@ register_ui(
     "",
     ui_caps=["mcp.catalog.list", "mcp.catalog.get", "mcp.catalog.upsert",
              "mcp.catalog.delete", "mcp.catalog.reseed", "mcp.catalog.connect"],
-    mode="inject",
+    # mode="tab" (2026-08-16 fix, was "inject" — invisible by default:
+    # "inject" only shows up inside the Media sub-switcher, a specific host
+    # panel a user has to already know to open; "tab" auto-creates its own
+    # top-level harness tab, which is what "surface it somewhere" needs).
+    mode="tab",
     tab_order=72,
 )
 

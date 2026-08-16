@@ -422,15 +422,38 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21") -> Dict:
     start = (
         "#!/bin/sh\n"
         "exec >/var/log/foundry-node.log 2>&1\n"
-        'echo "[foundry] ops node boot $(date)"\n'
-        "apk update; apk add newt\n"
+        'echo "[foundry] ops node boot $(date); kernel=$(uname -r)"\n'
+        # modloop (the kernel-module squashfs) must be mounted before Docker's
+        # overlay/bridge/netfilter drivers can load, or dockerd cannot start.
+        "rc-service modloop start 2>/dev/null\n"
+        "KREL=$(uname -r)\n"
+        'for i in $(seq 1 12); do [ -d "/lib/modules/$KREL/kernel" ] && break; '
+        "rc-service modloop start 2>/dev/null; sleep 2; done\n"
+        "depmod -a 2>/dev/null\n"
+        "modprobe -a overlay br_netfilter bridge veth nf_nat nf_conntrack ip_tables "
+        "iptable_nat iptable_filter ip6_tables ip6table_nat xt_conntrack tun 2>/dev/null\n"
+        "mkdir -p /etc/modules-load.d && printf '%s\\n' overlay br_netfilter bridge veth "
+        "nf_nat ip_tables iptable_nat tun > /etc/modules-load.d/foundry.conf\n"
+        "apk update; apk add newt eudev\n"
         "apk add docker docker-cli openssh openssh-client curl jq bash rsync ca-certificates\n"
-        "rc-update add docker default && service docker start\n"
-        "rc-update add sshd default && service sshd start\n"
+        # On RAM/diskless boot the OpenRC boot runlevel does not complete (fsck/sysfs
+        # report 'would not start'), which both prevents the udev-trigger coldplug and
+        # makes `service docker start` fail its dependency check. Start udevd directly,
+        # coldplug by hand, and start cgroups+docker with --nodeps to bypass the phantom
+        # dependency failure. Verified live on a diskless ThinkPad ops node.
+        "pgrep -x udevd >/dev/null 2>&1 || /sbin/udevd --daemon 2>/dev/null\n"
+        "udevadm trigger --action=add 2>/dev/null; udevadm settle --timeout=20 2>/dev/null\n"
+        "rc-update add cgroups boot 2>/dev/null; rc-service --nodeps cgroups start 2>/dev/null\n"
+        "rc-update add docker default; rc-service --nodeps docker start 2>/dev/null\n"
+        "for i in $(seq 1 12); do docker info >/dev/null 2>&1 && break; sleep 2; done\n"
+        "docker info 2>&1 | grep -iE 'Server Version|Storage Driver' | "
+        "sed 's/^/[foundry] docker: /'\n"
+        "rc-update add sshd default; rc-service --nodeps sshd start 2>/dev/null || "
+        "service sshd start\n"
         "mkdir -p /root/.ssh; chmod 700 /root/.ssh\n"
         f"wget -qO- http://{server_ip}/ops/authorized_keys 2>/dev/null > /root/.ssh/authorized_keys; "
         "chmod 600 /root/.ssh/authorized_keys 2>/dev/null\n"
-        "sleep 5\n"
+        "sleep 3\n"
         f"TOKEN=$(wget -qO- http://{server_ip}/swarm/worker-token 2>/dev/null | tr -d '\\r\\n')\n"
         f"MGR=$(wget -qO- http://{server_ip}/swarm/manager 2>/dev/null | tr -d '\\r\\n')\n"
         'if [ -n "$TOKEN" ] && [ -n "$MGR" ]; then '

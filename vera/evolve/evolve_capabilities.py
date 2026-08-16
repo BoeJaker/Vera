@@ -92,18 +92,18 @@ from Vera.vera.capability_orchestration import (
 
 log = logging.getLogger("vera.evolve")
 
+try:
+    from .attribution_core import author_agent_for, controller_for, effective_controller
+except ImportError:
+    from attribution_core import author_agent_for, controller_for, effective_controller
+
 
 def _triggered_by() -> str:
     """Real, honest run-trigger bucket — never guessed beyond what's actually
-    knowable: CALLER_KIND is set only by the MCP bridge (a real Claude Code
-    session), BACKGROUND_LLM only by autonomous drivers (dream/V8/fabric
-    ingest); anything else (the browser chat UI, or any other caller) is
+    knowable: CALLER_KIND is set by an agent bridge/request, BACKGROUND_LLM
+    only by autonomous drivers (dream/V8/fabric ingest); anything else is
     the residual default "user" — not invented, just what's left over."""
-    if CALLER_KIND.get() == "mcp":
-        return "claude_code"
-    if BACKGROUND_LLM.get():
-        return "autonomous"
-    return "user"
+    return controller_for(CALLER_KIND.get(), bool(BACKGROUND_LLM.get()))
 
 _HERE = Path(__file__).parent
 _PANEL_PATH = _HERE / "evolve_panel.html"
@@ -120,6 +120,7 @@ KEY_SESSION  = "vera:evolve:session:"    # + session_id
 KEY_VARIANTS = "vera:evolve:variants:"   # + profile
 KEY_OVERLAY  = "vera:evolve:overlay:"    # + profile
 KEY_AUDIT    = "vera:evolve:audit"       # verbose activity/change log (newest first)
+KEY_AUTONOMOUS = "vera:autonomous:mode"  # closed-loop hard main-lockout flag (Phase A)
 KEY_REPOS    = "vera:evolve:repos"       # hash: repo_id -> repo record JSON — see
                                           # the REPO REGISTRY section below for the
                                           # functions/capabilities; these two names
@@ -2241,7 +2242,8 @@ async def _runs_window_commits_batch(recs: List[Dict[str, Any]]) -> None:
 @capability("evolve.authors", memory="off", silent=True,
             http_method="GET", http_path="/evolve/authors", http_tags=["evolve"],
             description="Real authorship map: recent commits to this repo, each "
-                        "tagged with WHO/WHAT actually produced it — a Claude Code "
+                        "tagged with WHO/WHAT actually produced it — an attributed "
+                        "Codex/Claude pipeline, a Claude Code "
                         "session (via ide.claude_sessions.list_sessions' own git-"
                         "log time-window correlation), a Vera evolve.ide.improve "
                         "run (tagged with its real engine: claude|vera-agent), or "
@@ -2292,12 +2294,27 @@ async def evolve_authors(hours: int = 72, branch: str = "", trace_id=None):
             engine_by_hash[c["hash"]] = {"engine": r.get("engine"), "run_id": r.get("run_id"),
                                          "task": r.get("task", "")}
 
+    # Pipeline records are the authoritative correlation for external coding
+    # agents such as Codex. Unlike a timestamp join, this maps the exact authored
+    # commit to the controller and session that created the pipeline.
+    pipeline_by_hash = await _commit_attribution_map()
+
     out_commits = []
     for c in commits:
         h = c.get("hash", "")
         cs = claude_by_hash.get(h)
         er = engine_by_hash.get(h)
-        if cs:
+        pa = next((v for sha, v in pipeline_by_hash.items() if h.startswith(sha)), None)
+        if pa and pa.get("controller"):
+            controller = effective_controller(pa.get("controller"), pa.get("via"))
+            agent = author_agent_for(controller)
+            labels = {"codex": "Codex", "claude": "Claude Code",
+                      "vera-agent": "Vera agent", "direct": "direct"}
+            out_commits.append({**c, "agent": agent, "agent_label": labels[agent],
+                                "controller": controller,
+                                "session_id": pa.get("session_id", ""),
+                                "pipeline_id": pa.get("pipeline_id", "")})
+        elif cs:
             out_commits.append({**c, "agent": "claude", "agent_label": "Claude Code",
                                 "session_id": cs["session_id"], "project_dir": cs["project_dir"]})
         elif er:
@@ -4961,6 +4978,15 @@ async def evolve_pipeline_adopt(branch: str = "", to: str = "bleeding-edge", tit
         return {"error": f"unknown branch: {branch}"}
     if not (await _git("rev-parse", "--verify", f"refs/heads/{to}", repo_root=root))["ok"]:
         return {"error": f"unknown target branch: {to}"}
+    # Autonomous-mode hard lockout (Phase A): while engaged, targeting the real
+    # mainline is IMPOSSIBLE — unconditional, checked BEFORE the M3.6 sentinel so no
+    # authorize_main / force can bypass it. bleeding-edge + feature branches pass.
+    from Vera.vera.evolve.autonomous_lock_core import main_is_locked as _main_is_locked  # noqa: E402
+    _alock = _main_is_locked(await _autonomous_state(), to, await _default_branch(repo_root=root))
+    if _alock["locked"]:
+        await _audit("pipeline.adopt", f"REFUSED adopt {branch} -> {to}: autonomous lock",
+                     kind="code", branch=branch, ok=False, repo=repo)
+        return {"error": _alock["reason"], "refused": "autonomous-lock"}
     # M3.6 main-merge guardrail: refuse adopting a feature branch toward the real
     # mainline unless the caller passes the explicit authorization sentinel. All
     # code lands on bleeding-edge; main advances only on the user's go-ahead via
@@ -5403,6 +5429,63 @@ async def _merge_in_checkout(root: str, branch: str, into: str, wt: str, msg: st
     return {"ok": True, "commit": sha, "conflicts": [], "restart_required": True, "error": ""}
 
 
+async def _release_fast_forward_in_checkout(root: str, branch: str, into: str, wt: str,
+                                            expected_branch: str,
+                                            expected_into: str) -> Dict[str, Any]:
+    """Advance a checked-out release target without creating target-only history.
+
+    Both refs are compared with the preflight snapshots immediately before the
+    fast-forward. A concurrent landing therefore causes a safe retry instead of
+    silently changing the release contents or overwriting another update.
+    """
+    cur = (await _sh(_git_wt_argv(wt, "symbolic-ref", "--short", "-q", "HEAD"), cwd=wt)).get("out", "")
+    if cur != into:
+        return {"ok": False, "commit": "", "conflicts": [],
+                "error": f"target worktree is on '{cur}', not '{into}' — refusing to switch it"}
+    st = await _sh(_git_wt_argv(wt, "status", "--porcelain"), cwd=wt)
+    dirty = _tracked_dirty_lines(st.get("out", "") or "")
+    if dirty:
+        return {"ok": False, "commit": "", "conflicts": [],
+                "error": "target checkout has uncommitted TRACKED changes — refusing (protect WIP)",
+                "dirty": dirty[:20]}
+    now_branch = (await _git("rev-parse", branch, repo_root=root)).get("out", "")
+    now_into = (await _git("rev-parse", into, repo_root=root)).get("out", "")
+    if now_branch != expected_branch or now_into != expected_into:
+        return {"ok": False, "commit": "", "conflicts": [],
+                "error": "release refs changed after preflight — nothing was changed; retry to review the new tips",
+                "ref_changed": True}
+    # Merge the immutable snapshot, not the moving branch name. If `branch`
+    # advances after the check, that newer work remains for the next release.
+    # If `into` advances concurrently, --ff-only refuses unless that update is
+    # already contained by the reviewed snapshot.
+    mg = await _sh(_git_wt_argv(wt, "merge", "--ff-only", expected_branch), cwd=wt)
+    if not mg.get("ok"):
+        return {"ok": False, "commit": "", "conflicts": [],
+                "error": f"fast-forward refused: {mg.get('err') or mg.get('out')}"}
+    sha = (await _sh(_git_wt_argv(wt, "rev-parse", "HEAD"), cwd=wt)).get("out", "")
+    return {"ok": True, "commit": sha, "conflicts": [], "restart_required": True,
+            "action": "fast-forward", "error": ""}
+
+
+async def _release_fast_forward_isolated(root: str, branch: str, into: str,
+                                         expected_branch: str,
+                                         expected_into: str) -> Dict[str, Any]:
+    """Run the same guarded release in a disposable worktree."""
+    import uuid
+    tmp = str(Path(root) / ".loop-lab-worktrees" / f"_release-{uuid.uuid4().hex[:8]}")
+    add = await _sh(_git_wt_argv(str(root), "worktree", "add", tmp, into), cwd=str(root))
+    if not add.get("ok"):
+        return {"ok": False, "commit": "", "conflicts": [],
+                "error": f"worktree add failed: {add.get('err') or add.get('out')}"}
+    try:
+        res = await _release_fast_forward_in_checkout(
+            root, branch, into, tmp, expected_branch, expected_into)
+        res.pop("restart_required", None)
+        return res
+    finally:
+        await _sh(_git_wt_argv(str(root), "worktree", "remove", "--force", tmp), cwd=str(root))
+
+
 @capability("evolve.pipeline.promote", memory="on",
             http_method="POST", http_path="/evolve/pipeline/promote", http_tags=["evolve"],
             description="Promote a pipeline's change. Variant → set the overlay. Code → "
@@ -5445,6 +5528,16 @@ async def evolve_pipeline_promote(id: str = "", to: str = "bleeding-edge", force
         return {"error": f"unknown branch: {branch}"}
     if not (await _git("rev-parse", "--verify", f"refs/heads/{to}", repo_root=root))["ok"]:
         return {"error": f"unknown target branch: {to}"}
+    # Autonomous-mode hard lockout (Phase A) — see adopt. Unconditional, before M3.6.
+    from Vera.vera.evolve.autonomous_lock_core import main_is_locked as _main_is_locked  # noqa: E402
+    _alock = _main_is_locked(await _autonomous_state(), to, await _default_branch(repo_root=root))
+    if _alock["locked"]:
+        rec["decision"] = "held"
+        _pstep(rec, "promote", False, "promote blocked - autonomous lock")
+        await _save_pipeline(rec)
+        await _audit("pipeline.promote", f"REFUSED {branch} -> {to}: autonomous lock",
+                     id=id, kind="code", branch=branch, ok=False, repo=rec.get("repo"))
+        return {"ok": False, "held": True, "refused": "autonomous-lock", "error": _alock["reason"]}
     # M3.6 main-merge guardrail (see adopt): refuse promoting a feature branch to
     # the real mainline unless the explicit authorization sentinel is present. The
     # sanctioned mainline path is evolve.bleeding_edge.promote_to_main (does NOT
@@ -5570,11 +5663,17 @@ async def evolve_pipeline_promote(id: str = "", to: str = "bleeding-edge", force
                         "the normal per-pipeline evolve.pipeline.promote (which now "
                         "targets bleeding-edge by default): this is manual-only, "
                         "never called automatically by any gate, scheduler, or "
-                        "other capability. Same safe-merge machinery as pipeline "
-                        "promote (in-checkout guarded merge or isolated worktree "
-                        "merge, never a blind checkout). Input: repo (str=vera). "
+                        "other capability. Requires confirm=true and permits only "
+                        "an ancestry-checked, expected-tip-checked fast-forward; "
+                        "main-ahead or diverged history is preserved and refused for "
+                        "reviewed reconciliation into bleeding-edge. Input: repo "
+                        "(str=vera), confirm (bool=false). "
                         "Output: {ok, into, commit, conflicts, restart_required}.")
-async def evolve_bleeding_edge_promote_to_main(repo: str = DEFAULT_REPO_ID, trace_id=None):
+async def evolve_bleeding_edge_promote_to_main(repo: str = DEFAULT_REPO_ID,
+                                               confirm: bool = False, trace_id=None):
+    if not confirm:
+        return {"ok": False, "error": "release requires confirm=true after explicit user authorization",
+                "refused": "confirmation-required"}
     root = await _resolve_repo_root(repo)
     if not (await _git("rev-parse", "--verify", f"refs/heads/{BLEEDING_EDGE_BRANCH}",
                        repo_root=root))["ok"]:
@@ -5582,17 +5681,44 @@ async def evolve_bleeding_edge_promote_to_main(repo: str = DEFAULT_REPO_ID, trac
     to = await _default_branch(repo_root=root)
     if not (await _git("rev-parse", "--verify", f"refs/heads/{to}", repo_root=root))["ok"]:
         return {"error": f"unknown target branch: {to}"}
-    msg = f"Loop Lab: release {BLEEDING_EDGE_BRANCH} → {to}"
+    # Autonomous-mode hard lockout (Phase A): the release path to prod is sealed
+    # while the loop is engaged — unconditional, no override.
+    from Vera.vera.evolve.autonomous_lock_core import main_is_locked as _main_is_locked  # noqa: E402
+    _alock = _main_is_locked(await _autonomous_state(), to, to)
+    if _alock["locked"]:
+        await _audit("bleeding_edge.promote_to_main",
+                     f"REFUSED release -> {to}: autonomous lock", kind="release",
+                     branch=BLEEDING_EDGE_BRANCH, ok=False, repo=repo)
+        return {"ok": False, "into": to, "commit": "", "conflicts": [],
+                "error": _alock["reason"], "refused": "autonomous-lock"}
+    main_sha = (await _git("rev-parse", to, repo_root=root)).get("out", "")
+    bleeding_sha = (await _git("rev-parse", BLEEDING_EDGE_BRANCH, repo_root=root)).get("out", "")
+    main_anc = (await _git("merge-base", "--is-ancestor", to, BLEEDING_EDGE_BRANCH,
+                           repo_root=root)).get("ok", False)
+    bleeding_anc = (await _git("merge-base", "--is-ancestor", BLEEDING_EDGE_BRANCH, to,
+                               repo_root=root)).get("ok", False)
+    from Vera.vera.evolve.evolve_git_core import release_preflight as _release_preflight  # noqa: E402
+    preflight = _release_preflight(main_sha, bleeding_sha, main_anc, bleeding_anc)
+    if not preflight["ok"]:
+        await _audit("bleeding_edge.promote_to_main", preflight["error"], kind="release",
+                     branch=BLEEDING_EDGE_BRANCH, ok=False, repo=repo)
+        return {"ok": False, "into": to, "commit": "", "conflicts": [],
+                "error": preflight["error"], "refused": "non-fast-forward"}
+    if preflight["action"] == "already-up-to-date":
+        return {"ok": True, "into": to, "commit": main_sha, "conflicts": [],
+                "error": "", "action": "already-up-to-date", "restart_required": False}
     wl = await _git("worktree", "list", "--porcelain", repo_root=root)
     wt_of = _worktree_paths_by_branch(wl.get("out", ""))
     if to in wt_of:
-        res = await _merge_in_checkout(str(root), BLEEDING_EDGE_BRANCH, to, wt_of[to], msg)
+        res = await _release_fast_forward_in_checkout(
+            str(root), BLEEDING_EDGE_BRANCH, to, wt_of[to], bleeding_sha, main_sha)
     else:
-        res = await _merge_isolated(str(root), BLEEDING_EDGE_BRANCH, to, msg)
+        res = await _release_fast_forward_isolated(
+            str(root), BLEEDING_EDGE_BRANCH, to, bleeding_sha, main_sha)
     ok = res["ok"]
     await _audit("bleeding_edge.promote_to_main",
-                 f"MERGED {BLEEDING_EDGE_BRANCH} → {to} @ {(res.get('commit') or '')[:10]}"
-                 if ok else f"merge {BLEEDING_EDGE_BRANCH} → {to} FAILED: "
+                 f"FAST-FORWARDED {BLEEDING_EDGE_BRANCH} → {to} @ {(res.get('commit') or '')[:10]}"
+                 if ok else f"release {BLEEDING_EDGE_BRANCH} → {to} REFUSED: "
                             f"{(res.get('error') or '')[:120]}",
                  kind="release", branch=BLEEDING_EDGE_BRANCH, ok=ok, repo=repo)
     await emit_event({"type": "evolve.bleeding_edge.promoted_to_main", "ok": ok,
@@ -5610,6 +5736,77 @@ async def evolve_bleeding_edge_promote_to_main(repo: str = DEFAULT_REPO_ID, trac
         except Exception as e:
             log.debug("mainline mirror refresh after release: %s", e)
     return out
+
+
+# ── Autonomous-mode hard lockout (closed-loop Phase A) ────────────────────────
+# The safety seal for autonomous operation: while ENGAGED, promoting/merging into
+# the real mainline is IMPOSSIBLE — unconditional, no sentinel, no force. Read by
+# adopt/promote/promote_to_main. Only autonomous.release (human-confirmed) unlocks.
+async def _autonomous_state() -> Dict[str, Any]:
+    r = _redis()
+    if not r:
+        return {"mode": "off"}
+    try:
+        raw = await r.get(KEY_AUTONOMOUS)
+        if raw:
+            return json.loads(raw.decode() if isinstance(raw, (bytes, bytearray)) else raw)
+    except Exception:
+        pass
+    return {"mode": "off"}
+
+
+@capability("autonomous.status", memory="off", silent=True,
+            http_method="GET", http_path="/autonomous/status", http_tags=["autonomous"],
+            description="Closed-loop autonomous-mode state. While ENGAGED, every promote/merge to "
+                        "the real mainline (main/master) is UNCONDITIONALLY refused (no sentinel, "
+                        "no force) — the hard prod lockout for autonomous operation. Output: "
+                        "{ok, engaged, mode, reason, since, by}.")
+async def autonomous_status(trace_id=None):
+    from Vera.vera.evolve.autonomous_lock_core import is_engaged
+    st = await _autonomous_state()
+    return {"ok": True, "engaged": is_engaged(st), "mode": st.get("mode", "off"),
+            "reason": st.get("reason", ""), "since": st.get("since", ""),
+            "by": st.get("by", "")}
+
+
+@capability("autonomous.engage", memory="on",
+            http_method="POST", http_path="/autonomous/engage", http_tags=["autonomous"],
+            description="ENGAGE autonomous mode: seal prod off — every promote/merge to main is "
+                        "then refused unconditionally until autonomous.release. The closed-loop "
+                        "orchestrator calls this before doing any autonomous work. Input: reason "
+                        "(str), by (str). Output: {ok, engaged, since}.")
+async def autonomous_engage(reason: str = "", by: str = "", trace_id=None):
+    r = _redis()
+    st = {"mode": "on", "reason": (reason or "").strip(),
+          "by": (by or _triggered_by() or "").strip(), "since": now_iso()}
+    if r:
+        await r.set(KEY_AUTONOMOUS, json.dumps(st))
+    await _audit("autonomous.engage",
+                 f"ENGAGED — main locked ({st['reason'] or 'no reason'})",
+                 kind="autonomous", ok=True)
+    await emit_event({"type": "autonomous.engaged", **st})
+    return {"ok": True, "engaged": True, "since": st["since"]}
+
+
+@capability("autonomous.release", memory="on",
+            http_method="POST", http_path="/autonomous/release", http_tags=["autonomous"],
+            description="RELEASE the autonomous-mode lock — the KILL SWITCH. Turns off the hard "
+                        "main-lockout so a human regains promote/merge-to-main access (and signals "
+                        "the loop to stand down). DELIBERATE: requires confirm=true. Input: "
+                        "confirm (bool!), by (str). Output: {ok, engaged}.")
+async def autonomous_release(confirm: bool = False, by: str = "", trace_id=None):
+    if not confirm:
+        return {"error": "autonomous.release requires confirm=true — this is the kill switch "
+                         "that unlocks prod; call it deliberately."}
+    r = _redis()
+    st = {"mode": "off", "reason": "released",
+          "by": (by or _triggered_by() or "").strip(), "since": now_iso()}
+    if r:
+        await r.set(KEY_AUTONOMOUS, json.dumps(st))
+    await _audit("autonomous.release", "RELEASED — main unlocked (kill switch)",
+                 kind="autonomous", ok=True)
+    await emit_event({"type": "autonomous.released", **st})
+    return {"ok": True, "engaged": False}
 
 
 @capability("evolve.pipeline.rollback", memory="on",
