@@ -323,3 +323,187 @@ def _render_boot(profile: Dict, cfg: Dict, image: Dict,
             f"instance-id: {_pxe_slug(profile.get('name','node'))}\n"
     return {"boot_type": boot_type, "arch": arch, "display": display,
             "features": feats, "artifacts": artifacts}
+
+
+# ── PXE NETBOOT SERVER config generation (pure) ─────────────────────────────────
+# Codifies the hand-proven netboot stack (dnsmasq + iPXE menu) so foundry.pxe.server.*
+# can (re)deploy it deterministically. All values are shell-quoted where interpolated.
+_ALPINE_MODULES = "loop,squashfs,sd-mod,usb-storage"
+
+
+def pxe_dnsmasq_conf(server_ip: str, iface: str, range_lo: str, range_hi: str,
+                     tftp_root: str = "/srv/foundry/tftp",
+                     except_ifaces: List[str] = None) -> str:
+    """Fenced dnsmasq config for a Foundry netboot server: DHCP + DNS + TFTP bound to
+    ONE interface only (interface=<iface> + bind-interfaces), so it can NEVER answer on
+    the main LAN — dnsmasq logs 'sockets bound exclusively to interface <iface>'. Raw
+    PXE clients chainload iPXE (undionly.kpxe / ipxe.efi); iPXE then fetches boot.ipxe."""
+    lines = [
+        f"# Vera Foundry netboot -- FENCED to {iface} ({server_ip}); never serves other bridges.",
+        f"interface={iface}", "bind-interfaces", "except-interface=lo",
+    ]
+    for i in (except_ifaces or []):
+        lines.append(f"except-interface={i}")
+    lines += [
+        f"dhcp-range={range_lo},{range_hi},255.255.255.0,12h",
+        f"dhcp-option=option:router,{server_ip}",
+        f"dhcp-option=option:dns-server,{server_ip}",
+        "enable-tftp", f"tftp-root={tftp_root}",
+        "dhcp-match=set:ipxe,175",
+        "dhcp-match=set:efi,option:client-arch,7",
+        "dhcp-match=set:efi,option:client-arch,9",
+        "dhcp-boot=tag:ipxe,boot.ipxe",
+        "dhcp-boot=tag:!ipxe,tag:!efi,undionly.kpxe",
+        "dhcp-boot=tag:!ipxe,tag:efi,ipxe.efi",
+        "log-dhcp",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _alpine_boot(server_ip: str, alpine_repo: str, apkovl: str = "") -> str:
+    ov = f" apkovl=http://{server_ip}/alpine/{apkovl}" if apkovl else ""
+    return ("kernel http://{s}/alpine/vmlinuz-lts initrd=initramfs-lts ip=dhcp "
+            "modloop=http://{s}/alpine/modloop-lts alpine_repo={r}{ov} "
+            "modules={m} console=tty0\n"
+            "initrd http://{s}/alpine/initramfs-lts\n"
+            "boot || goto start").format(s=server_ip, r=alpine_repo, ov=ov, m=_ALPINE_MODULES)
+
+
+def pxe_ipxe_menu(server_ip: str, install_images: List[Dict] = None,
+                  alpine_repo: str = "http://dl-cdn.alpinelinux.org/alpine/v3.21/main") -> str:
+    """Generate the iPXE boot menu. Built-ins: LOCAL DISK (default, protects the
+    installed OS), RAM ops node (terminal UI + Docker worker), Desktop+VNC, bare
+    Alpine, and netboot.xyz (all OSes incl. Kali live). `install_images` (from the
+    Foundry image catalogue: [{id, os, version}] with linux+initrd hosted at
+    http://<server>/<id>/) become the 'Install to disk' entries — so 'pick what to
+    install' is driven by the catalogue, not a hand-written list."""
+    S = server_ip
+    imgs = [i for i in (install_images or []) if i.get("id")]
+    out = ["#!ipxe", ":start", "menu Vera Foundry -- network boot",
+           "item --gap -- --- Run in RAM (nothing written to local disk) ---",
+           "item local    Boot from LOCAL DISK  (keep the installed OS)",
+           "item ops      Ops + Compute node -- Alpine RAM + terminal UI (Docker worker, joins swarm)",
+           "item desktop  Desktop + VNC (heavy) -- Alpine RAM + XFCE + Remmina (VNC/RDP/SSH)",
+           "item alpine   Alpine -- minimal RAM live (bare console)",
+           "item --gap -- --- Full OS catalogue: live + install (Ubuntu/Debian/Fedora/Alma/Arch/Kali/Mint...) ---",
+           "item nbxyz    Browse ALL OSes -- netboot.xyz  (incl. Kali live desktop w/ VNC)"]
+    if imgs:
+        out.append("item --gap -- --- Install to disk (OVERWRITES the target) ---")
+        for im in imgs:
+            label = f"Install {im.get('os','?')} {im.get('version','')}".strip()
+            out.append(f"item img_{_pxe_slug(im['id'])}    {label}")
+    out += ["item --gap -- ---", "item shell    iPXE shell",
+            "choose --default local --timeout 20000 target && goto ${target}", "",
+            ":local", "echo Booting local disk (installed OS untouched)...",
+            "sanboot --no-describe --drive 0x80 || goto start", "",
+            ":ops", _alpine_boot(S, alpine_repo, "node.apkovl.tar.gz"), "",
+            ":desktop", _alpine_boot(S, alpine_repo, "desktop.apkovl.tar.gz"), "",
+            ":alpine", _alpine_boot(S, alpine_repo), "",
+            ":nbxyz", "echo Loading netboot.xyz (all OSes)...",
+            f"iseq ${{platform}} efi && chain http://{S}/netboot.xyz.efi || kernel http://{S}/netboot.xyz.lkrn",
+            "boot || goto start", ""]
+    for im in imgs:
+        slug = _pxe_slug(im["id"])
+        out += [f":img_{slug}",
+                f"kernel http://{S}/{im['id']}/linux",
+                f"initrd http://{S}/{im['id']}/initrd.gz",
+                "boot || goto start", ""]
+    out += [":shell", "shell", ""]
+    return "\n".join(out)
+
+
+def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21") -> Dict:
+    """Files for the ops-node Alpine diskless overlay (apkovl), as {relpath: content}.
+    The node boots to RAM, installs Docker + SSH + tools, joins the swarm as a WORKER
+    only (never self-promotes to manager — managers are persistent VMs/CTs), and
+    auto-launches a whiptail terminal UI on the console. Pure → unit-testable."""
+    repos = (f"http://dl-cdn.alpinelinux.org/alpine/v{alpine_ver}/main\n"
+             f"http://dl-cdn.alpinelinux.org/alpine/v{alpine_ver}/community\n")
+    start = (
+        "#!/bin/sh\n"
+        "exec >/var/log/foundry-node.log 2>&1\n"
+        'echo "[foundry] ops node boot $(date)"\n'
+        "apk update; apk add newt\n"
+        "apk add docker docker-cli openssh openssh-client curl jq bash rsync ca-certificates\n"
+        "rc-update add docker default && service docker start\n"
+        "rc-update add sshd default && service sshd start\n"
+        "mkdir -p /root/.ssh; chmod 700 /root/.ssh\n"
+        f"wget -qO- http://{server_ip}/ops/authorized_keys 2>/dev/null > /root/.ssh/authorized_keys; "
+        "chmod 600 /root/.ssh/authorized_keys 2>/dev/null\n"
+        "sleep 5\n"
+        f"TOKEN=$(wget -qO- http://{server_ip}/swarm/worker-token 2>/dev/null | tr -d '\\r\\n')\n"
+        f"MGR=$(wget -qO- http://{server_ip}/swarm/manager 2>/dev/null | tr -d '\\r\\n')\n"
+        'if [ -n "$TOKEN" ] && [ -n "$MGR" ]; then '
+        'docker swarm join --token "$TOKEN" "${MGR}:2377"; '
+        'else echo "[foundry] no manager published -> standalone (worker-only, never a manager)"; fi\n'
+    )
+    tui = (
+        "#!/bin/sh\n"
+        'command -v whiptail >/dev/null 2>&1 || { echo "Ops node still installing..."; '
+        "while ! command -v whiptail >/dev/null 2>&1; do sleep 3; done; }\n"
+        "T=/tmp/ftui.out\n"
+        "PVE=$(cat /etc/foundry/pve 2>/dev/null || echo 192.168.0.200)\n"
+        "sshkey(){ [ -s /root/.ssh/id_estate ] && echo '-i /root/.ssh/id_estate' || echo ''; }\n"
+        "while true; do\n"
+        '  CH=$(whiptail --title "Vera Foundry - Ops Node ($(hostname))" --menu "Diskless compute worker" 21 76 11 '
+        'status "Node + Docker + swarm status" vms "Proxmox VMs / CTs -- list + console in" '
+        'dps "Running containers" nodes "Swarm nodes" ssh "SSH into an estate host" '
+        'join "Re-run swarm join" pve "Set Proxmox host" log "Boot/join log" '
+        'shell "Shell" reboot "Reboot" 3>&1 1>&2 2>&3) || { clear; exec sh; }\n'
+        "  K=$(sshkey)\n"
+        "  case \"$CH\" in\n"
+        '    status) { echo HOST: $(hostname); ip -4 addr show eth0 2>/dev/null|grep inet; docker node ls 2>/dev/null||echo "(not in a swarm)"; } >$T 2>&1; whiptail --scrolltext --textbox $T 24 78;;\n'
+        '    vms) ssh $K -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 root@$PVE "echo == CONTAINERS ==; pct list 2>/dev/null; echo; echo == VMs ==; qm list 2>/dev/null" >$T 2>&1; '
+        'whiptail --title "Proxmox $PVE" --scrolltext --textbox $T 26 100; '
+        'ID=$(whiptail --inputbox "Console INTO which CT/VM id? (CT=pct enter, VM=serial console; blank cancels)" 9 68 "" 3>&1 1>&2 2>&3); '
+        '[ -n "$ID" ] && { clear; ssh $K -t root@$PVE "if pct status $ID >/dev/null 2>&1; then pct enter $ID; else qm terminal $ID; fi"; };;\n'
+        "    dps) docker ps >$T 2>&1; whiptail --scrolltext --textbox $T 24 100;;\n"
+        "    nodes) docker node ls >$T 2>&1; whiptail --scrolltext --textbox $T 24 100;;\n"
+        '    ssh) H=$(whiptail --inputbox "SSH target (user@host):" 8 60 "root@$PVE" 3>&1 1>&2 2>&3) && { clear; ssh $K -o StrictHostKeyChecking=accept-new $H; };;\n'
+        f'    join) {{ TK=$(wget -qO- http://{server_ip}/swarm/worker-token|tr -d "\\r\\n"); M=$(wget -qO- http://{server_ip}/swarm/manager|tr -d "\\r\\n"); docker swarm join --token "$TK" "${{M}}:2377"; }} >$T 2>&1; whiptail --scrolltext --textbox $T 20 90;;\n'
+        '    pve) NP=$(whiptail --inputbox "Proxmox host IP/name:" 8 60 "$PVE" 3>&1 1>&2 2>&3) && { echo "$NP" > /etc/foundry/pve; PVE="$NP"; };;\n'
+        "    log) whiptail --scrolltext --textbox /var/log/foundry-node.log 24 100;;\n"
+        '    shell) clear; echo "type exit to return to the menu"; sh;;\n'
+        "    reboot) reboot;;\n"
+        "  esac\ndone\n"
+    )
+    # busybox `login -f root` (present in the Alpine base) autologins tty1 — agetty is
+    # NOT in the base and isn't installed until local.d runs, which panicked init.
+    inittab = ("::sysinit:/sbin/openrc sysinit\n::sysinit:/sbin/openrc boot\n::wait:/sbin/openrc default\n"
+               "tty1::respawn:/bin/login -f root\n"
+               "tty2::respawn:/sbin/getty 38400 tty2\n"
+               "::ctrlaltdel:/sbin/reboot\n::shutdown:/sbin/openrc shutdown\n")
+    profile = ('if [ "$(tty)" = "/dev/tty1" ] && [ -z "$FTUI_RUN" ]; then '
+               "export FTUI_RUN=1; /usr/local/bin/foundry-tui; fi\n")
+    return {
+        "etc/apk/repositories": repos,
+        "etc/local.d/foundry.start": start,
+        "usr/local/bin/foundry-tui": tui,
+        "etc/inittab": inittab,
+        "root/.profile": profile,
+        "etc/foundry/pve": "192.168.0.200\n",   # default Proxmox host for the VMs/CTs menu
+    }
+
+
+import re as _re
+
+
+def swarm_service_cmd(name: str, image: str, replicas: int = 1, command: str = "",
+                      detach: bool = True) -> str:
+    """Build a `docker service create` command to dispatch work onto the Docker Swarm
+    (Vera's distributed-compute cluster). Name is slugified; the image ref is validated
+    (returns '' if unsafe); the optional command runs inside the container. Pure →
+    unit-testable; the cap runs it on the swarm manager via `pct exec`."""
+    name = _re.sub(r"[^A-Za-z0-9_.-]", "-", (name or "vera-job")).strip("-") or "vera-job"
+    image = (image or "").strip()
+    if not _re.match(r"^[A-Za-z0-9][A-Za-z0-9_./:@-]*$", image):
+        return ""   # reject an unsafe/empty image reference
+    reps = max(1, min(int(replicas or 1), 100))
+    parts = ["docker", "service", "create", "--name", shlex.quote(name),
+             "--replicas", str(reps)]
+    if detach:
+        parts.append("--detach")
+    parts.append(shlex.quote(image))
+    if command and command.strip():
+        parts += ["sh", "-c", shlex.quote(command)]
+    return " ".join(parts)

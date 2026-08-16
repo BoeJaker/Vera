@@ -7614,6 +7614,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "ide/session_watch_capabilities.py"),
         os.path.join(_here, "capacity_capabilities.py"),
         os.path.join(_here, "openclaw/openclaw_capabilities.py"),
+        os.path.join(_here, "smolagents/smolagents_capabilities.py"),
         os.path.join(_here, "providers/providers_capabilities.py"),
         # os.path.join(_here, "dream/dream_research_integration.py"),
         # os.path.join(_here, "project_research_extension.py"),
