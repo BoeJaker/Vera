@@ -21,6 +21,7 @@ _CRITICAL_MODULES = {
     "test_sandbox_reap",       # prune keep/reap/review safety — never reap WIP/unmerged/live (T1/T2)
     "test_pre_push_guard",     # pre-push force/delete refusal — guards the GitHub deploy key
     "test_main_merge_guard",   # M3.6 adopt/promote refuse to=main without explicit auth (2026-08-16 incident)
+    "test_pre_merge_commit_guard",  # M3.6 part 2 — block hand-run `git merge` onto main (sanctioned override bypasses)
 }
 
 
