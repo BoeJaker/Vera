@@ -3,8 +3,9 @@ smolagents_capabilities.py — smolagents Agentic Loop Integration for Vera
 ============================================================================
 Optional module. Phase 2 of the external-agentic-loop plan: a genuinely
 independent, minimal (huggingface/smolagents, ~1,000 LOC core) agent loop,
-selectable in the chat UI's Loop pane alongside Vera's own v1-v8 and
-OpenClaw — none of which this module is imported by or imports.
+selectable in the chat UI's Loop pane alongside Vera's own v1-v8, OpenClaw,
+LangGraph and PydanticAI — none of which this module is imported by or
+imports.
 
 Unlike the OpenClaw bridge (a long-lived WS connection to an already-running
 external gateway), smolagents is a Python LIBRARY whose CodeAgent executes
@@ -13,9 +14,15 @@ throwaway Docker container per invocation (image: vera-smolagents, built
 from Dockerfile.smolagents in this directory) — never in Vera's own process,
 never in vera:latest. See Dockerfile.smolagents's own header for why.
 
-smolagents.run is EVENT-DRIVEN, same contract as openclaw.prompt (2026-08-16
-— was a single blocking call until a live turn per step was requested):
-it returns immediately once the container is launched, with {ok, run_id,
+The actual docker-launch/stream/stall/event-emit plumbing lives in
+agentbridge_runtime.py's stream_bridge_container(), shared by every
+container-based bridge (2026-08-16 — this module and langgraph_capabilities.py
+each hand-rolled their own copy of it first; extracted once a third bridge,
+PydanticAI, was about to become a fourth copy). This module supplies only
+what's genuinely smolagents-specific: the image, argv, and event-type prefix.
+
+smolagents.run is EVENT-DRIVEN, same contract as openclaw.prompt: it returns
+immediately once the container is launched, with {ok, run_id,
 status:"running"}. The actual progress and result arrive as events on the
 general bus (consume via GET /events, same as OpenClaw's chat-panel wiring):
   smolagents.run.start   - container launched
@@ -42,56 +49,30 @@ Configuration (env or runtime)
   SMOLAGENTS_TIMEOUT_S  default "300" - hard ceiling per run (docker itself
                         is killed past this; smolagents' own max_steps is a
                         softer bound reached first in the normal case)
-  SMOLAGENTS_STALL_S    default "60" - no new SMOLAGENTS_STEP/RESULT line for
-                        this long -> treated as stalled and killed (same
-                        "measure genuine progress, not raw byte arrival"
-                        lesson as the 2026-08-16 Ollama stream-stall fix)
+  SMOLAGENTS_STALL_S    default "60" - no new BRIDGE_STEP/RESULT line for
+                        this long -> treated as stalled and killed
 """
 from __future__ import annotations
 
 import asyncio
-import json
-import logging
 import os
-import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
+from Vera.vera.agentbridges.agentbridge_runtime import (
+    build_image, image_present, sh, stream_bridge_container,
+)
 from Vera.vera.capability_orchestration import (
     capability, emit_event, now_iso, OLLAMA_INSTANCES, OLLAMA_MODEL,
 )
-
-log = logging.getLogger("smolagents_bridge")
 
 _ENABLED = os.environ.get("SMOLAGENTS_ENABLED", "0") == "1"
 _IMAGE = os.environ.get("SMOLAGENTS_IMAGE", "vera-smolagents:latest")
 _TIMEOUT_S = int(os.environ.get("SMOLAGENTS_TIMEOUT_S", "300") or 300)
 _STALL_S = int(os.environ.get("SMOLAGENTS_STALL_S", "60") or 60)
 _DOCKERFILE_DIR = str(Path(__file__).parent)
-
-
-async def _sh(argv: list, timeout: float = 60) -> Dict[str, Any]:
-    """Run a host command, capturing stdout/stderr. Never raises. Used only
-    for the short, one-shot docker admin commands (status/build) below —
-    smolagents.run itself streams its own container (see
-    _stream_smolagents_container), it does not use this."""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        try:
-            out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
-            try:
-                proc.kill()
-            except Exception:
-                pass
-            return {"ok": False, "out": "", "err": f"timed out after {timeout}s"}
-        return {"ok": proc.returncode == 0,
-                "out": out.decode("utf-8", errors="replace"),
-                "err": err.decode("utf-8", errors="replace")}
-    except Exception as e:
-        return {"ok": False, "out": "", "err": str(e)}
+_EVENT_PREFIX = "smolagents.run"
 
 
 def _pick_ollama_url() -> str:
@@ -115,11 +96,6 @@ def _pick_ollama_url() -> str:
     return any_inst[0]["url"] if any_inst else ""
 
 
-async def _image_present() -> bool:
-    r = await _sh(["docker", "image", "inspect", _IMAGE], timeout=15)
-    return bool(r.get("ok"))
-
-
 @capability(
     "smolagents.status",
     http_method="GET", http_path="/smolagents/status", http_tags=["smolagents"],
@@ -129,9 +105,9 @@ async def _image_present() -> bool:
                 "Output: {enabled, docker_ok, image, image_present}.",
 )
 async def smolagents_status(trace_id=None) -> Dict[str, Any]:
-    docker_ok = (await _sh(["docker", "version", "--format", "{{.Server.Version}}"],
-                           timeout=10)).get("ok", False)
-    present = await _image_present() if docker_ok else False
+    docker_ok = (await sh(["docker", "version", "--format", "{{.Server.Version}}"],
+                          timeout=10)).get("ok", False)
+    present = await image_present(_IMAGE) if docker_ok else False
     return {"enabled": _ENABLED, "docker_ok": docker_ok,
             "image": _IMAGE, "image_present": present,
             "timeout_s": _TIMEOUT_S}
@@ -147,132 +123,13 @@ async def smolagents_status(trace_id=None) -> Dict[str, Any]:
                 "Inputs: force (bool). Output: {ok, present, action, log}.",
 )
 async def smolagents_image_ensure(force: bool = False, trace_id=None) -> Dict[str, Any]:
-    if not force and await _image_present():
+    if not force and await image_present(_IMAGE):
         return {"ok": True, "present": True, "action": "none"}
     await emit_event({"type": "smolagents.image.build", "image": _IMAGE})
-    r = await _sh(
-        ["docker", "build", "-t", _IMAGE, "-f",
-         str(Path(_DOCKERFILE_DIR) / "Dockerfile.smolagents"), _DOCKERFILE_DIR],
-        timeout=600)
-    present = await _image_present()
-    await emit_event({"type": "smolagents.image.ensured", "image": _IMAGE, "ok": present})
-    return {"ok": present, "present": present, "action": "build",
-            "log": (r.get("out", "") + "\n" + r.get("err", ""))[-2500:]}
-
-
-async def _drain_stderr(stream: asyncio.StreamReader, buf: List[str]) -> None:
-    """Consume the container's stderr concurrently with the stdout-reading
-    loop below. Not optional: an asyncio subprocess with two pipes where only
-    one is read can deadlock once the unread one's OS buffer fills — this
-    keeps stderr moving and captures a tail for error reporting."""
-    try:
-        while True:
-            line = await stream.readline()
-            if not line:
-                break
-            buf.append(line.decode("utf-8", errors="replace"))
-            if len(buf) > 200:
-                del buf[:100]
-    except Exception:
-        pass
-
-
-async def _stream_smolagents_container(run_id: str, session_id: str, goal: str,
-                                        ollama_url: str, ollama_model: str) -> None:
-    """Runs the throwaway container, emitting one smolagents.run.step event
-    per SMOLAGENTS_STEP: line as it arrives (real-time progress, not a
-    post-hoc replay) and a final smolagents.run.done/error when it finishes.
-    This is the background task smolagents_run() launches and returns from
-    immediately — same shape as openclaw.prompt's own fire-and-emit contract."""
-    name = f"vera-smolagents-{run_id}"
-    argv = ["docker", "run", "--rm", "--name", name,
-            "-e", f"GOAL={goal}",
-            "-e", f"OLLAMA_BASE_URL={ollama_url}",
-            "-e", f"OLLAMA_MODEL={ollama_model}",
-            "--memory", "1g", "--cpus", "2",
-            "--network", "host",
-            _IMAGE]
-
-    t0 = time.time()
-    base = {"run_id": run_id, "session_id": session_id}
-
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    except Exception as e:
-        await emit_event({**base, "type": "smolagents.run.error",
-                          "error": f"could not start container: {e}",
-                          "elapsed_s": round(time.time() - t0, 2)})
-        return
-
-    stderr_buf: List[str] = []
-    stderr_task = asyncio.ensure_future(_drain_stderr(proc.stderr, stderr_buf))
-
-    result: Optional[Dict[str, Any]] = None
-    action_steps_seen = 0
-    stalled = False
-    timed_out = False
-
-    try:
-        while True:
-            remaining = _TIMEOUT_S - (time.time() - t0)
-            if remaining <= 0:
-                timed_out = True
-                break
-            wait_for = min(_STALL_S, remaining)
-            try:
-                raw = await asyncio.wait_for(proc.stdout.readline(), timeout=wait_for)
-            except asyncio.TimeoutError:
-                stalled = True
-                break
-            if not raw:
-                break  # EOF — process finished producing output
-            line = raw.decode("utf-8", errors="replace").rstrip("\n")
-            if line.startswith("SMOLAGENTS_STEP:"):
-                try:
-                    info = json.loads(line[len("SMOLAGENTS_STEP:"):])
-                except Exception:
-                    continue
-                if info.get("kind") == "action":
-                    action_steps_seen += 1
-                await emit_event({**base, "type": "smolagents.run.step", **info})
-            elif line.startswith("SMOLAGENTS_RESULT:"):
-                try:
-                    result = json.loads(line[len("SMOLAGENTS_RESULT:"):])
-                except Exception as e:
-                    result = {"ok": False, "error": f"could not parse result: {e}"}
-                break
-    finally:
-        if stalled or timed_out:
-            try:
-                proc.kill()
-            except Exception:
-                pass
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=10)
-        except Exception:
-            pass
-        stderr_task.cancel()
-
-    elapsed = round(time.time() - t0, 2)
-
-    if result is not None:
-        result.setdefault("elapsed_s", elapsed)
-        result.setdefault("steps", action_steps_seen)
-        await emit_event({**base, "type": "smolagents.run.done",
-                          "ok": result.get("ok", False), "elapsed_s": elapsed,
-                          "result": result})
-        return
-
-    if stalled:
-        err = f"no progress for {_STALL_S}s (stalled) — action steps seen: {action_steps_seen}"
-    elif timed_out:
-        err = f"timed out after {_TIMEOUT_S}s — action steps seen: {action_steps_seen}"
-    else:
-        err = "container exited before printing SMOLAGENTS_RESULT"
-    err_tail = ("".join(stderr_buf))[-800:]
-    await emit_event({**base, "type": "smolagents.run.error",
-                      "error": err, "stderr_tail": err_tail, "elapsed_s": elapsed})
+    r = await build_image(_IMAGE, str(Path(_DOCKERFILE_DIR) / "Dockerfile.smolagents"),
+                          _DOCKERFILE_DIR)
+    await emit_event({"type": "smolagents.image.ensured", "image": _IMAGE, "ok": r["ok"]})
+    return {**r, "action": "build"}
 
 
 @capability(
@@ -281,20 +138,19 @@ async def _stream_smolagents_container(run_id: str, session_id: str, goal: str,
     memory="on",
     description="Launch ONE goal through a smolagents CodeAgent, in a fresh, "
                 "throwaway Docker container (never in Vera's own process). "
-                "EVENT-DRIVEN (2026-08-16): returns IMMEDIATELY once the "
-                "container is launched — {ok, run_id, status:'running'} — "
-                "does not block until the run finishes. Live progress and "
-                "the final result arrive as events on GET /events, filtered "
-                "by run_id: smolagents.run.step (one per streamed agent "
-                "step — task/planning/action/final, as it happens), "
-                "smolagents.run.done ({ok, answer, steps, elapsed_s, model} "
-                "under result), smolagents.run.error. A stalled or "
-                "over-time container is killed and reported as "
-                "smolagents.run.error rather than left to hang — same "
-                "contract as the chat UI's OpenClaw bridge. Model/instance "
-                "come from Vera's own live OLLAMA_INSTANCES registry "
-                "(whatever ollama_generate() itself would route to), not "
-                "env vars. Input: goal (str!), session_id (str). "
+                "EVENT-DRIVEN: returns IMMEDIATELY once the container is "
+                "launched — {ok, run_id, status:'running'} — does not block "
+                "until the run finishes. Live progress and the final result "
+                "arrive as events on GET /events, filtered by run_id: "
+                "smolagents.run.step (one per streamed agent step — task/"
+                "planning/action/final, as it happens), smolagents.run.done "
+                "({ok, answer, steps, elapsed_s, model} under result), "
+                "smolagents.run.error. A stalled or over-time container is "
+                "killed and reported as smolagents.run.error rather than "
+                "left to hang — same contract as the chat UI's OpenClaw "
+                "bridge. Model/instance come from Vera's own live "
+                "OLLAMA_INSTANCES registry, not env vars. "
+                "Input: goal (str!), session_id (str). "
                 "Output: {ok, run_id, status} | {ok:false, error}.",
 )
 async def smolagents_run(goal: str, session_id: str = "", trace_id=None) -> Dict[str, Any]:
@@ -311,20 +167,32 @@ async def smolagents_run(goal: str, session_id: str = "", trace_id=None) -> Dict
         return {"ok": False, "error": "no Ollama instance available "
                                       "(OLLAMA_INSTANCES empty or OLLAMA_MODEL unset)"}
 
-    if not await _image_present():
+    if not await image_present(_IMAGE):
         ens = await smolagents_image_ensure()
         if not ens.get("ok"):
             return {"ok": False, "error": f"vera-smolagents image unavailable: "
                                           f"{ens.get('log', '')[-400:]}"}
 
     run_id = uuid.uuid4().hex[:12]
-    await emit_event({"type": "smolagents.run.start", "run_id": run_id,
+    await emit_event({"type": f"{_EVENT_PREFIX}.start", "run_id": run_id,
                       "session_id": session_id, "goal": goal[:200], "ts": now_iso()})
+
+    argv = ["docker", "run", "--rm", "--name", f"vera-smolagents-{run_id}",
+            "-e", f"GOAL={goal}",
+            "-e", f"OLLAMA_BASE_URL={ollama_url}",
+            "-e", f"OLLAMA_MODEL={ollama_model}",
+            "--memory", "1g", "--cpus", "2",
+            "--network", "host",
+            _IMAGE]
 
     # Fire-and-emit: the caller gets run_id back now and follows progress via
     # /events, same as openclaw.prompt. Not awaited — this capability's own
     # HTTP response must not block on the container.
-    asyncio.ensure_future(_stream_smolagents_container(
-        run_id, session_id, goal, ollama_url, ollama_model))
+    asyncio.ensure_future(stream_bridge_container(
+        run_id=run_id, session_id=session_id, argv=argv,
+        event_type_prefix=_EVENT_PREFIX, emit=emit_event,
+        timeout_s=_TIMEOUT_S, stall_s=_STALL_S,
+        progress_kinds={"action"},
+    ))
 
     return {"ok": True, "run_id": run_id, "status": "running"}
