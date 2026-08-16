@@ -5990,6 +5990,7 @@ IMPORTANT:
     // "empty bubble + premature typing indicator" the user saw.
     const _autoRun=[];
     let _loopDefer=null;   // an [[loop]] goal to hand to the agentic loop after attach
+    let _loopDeferVariant='dag.agent_loop_v7';   // which server loop _loopDefer goes to — set alongside it
     for(const match of allMatches){
       if(match.idx>pos){
         const span=document.createElement('span');span.innerHTML=renderMd(text.slice(pos,match.idx));frag.appendChild(span);
@@ -6050,9 +6051,17 @@ IMPORTANT:
 
       }else if(match.type==='loop'){
         // LLM decided the request needs the full agentic loop. Defer the goal
-        // (marker text, else the last user turn) to the v7 server loop.
+        // (marker text, else the last user turn) to the server loop the user
+        // actually picked in the Loop pane (loopVariant) — was hardcoded to
+        // v7 here regardless of that selection (2026-08-16 fix: the dropdown
+        // only ever took effect via sendAgentLoop's own explicit-run path,
+        // never this LLM-auto-detected [[loop]] one). 'chat' (no server
+        // variant chosen) still falls back to v7, same as the old default.
         const auto=document.getElementById('cfgAutoDeferLoop')?.checked;
         const goal=_preferActualGoal((match.groups[0]||'').trim(), _lastUserMessage||'');
+        const _selVariant=document.getElementById('loopVariant')?.value;
+        const _autoVariant=(_selVariant && _selVariant!=='chat') ? _selVariant : 'dag.agent_loop_v7';
+        const _autoVariantLabel=_autoVariant.replace(/^dag\.agent_loop_?/,'') || 'v1';
         // Second-layer guard: a conversational message (greeting / thanks /
         // chit-chat) never goes to the loop, even if the LLM emitted [[loop]].
         if(_isTrivialChat(_lastUserMessage||'') && _isTrivialChat(goal)){
@@ -6061,15 +6070,15 @@ IMPORTANT:
           pos=match.end;continue;
         }
         if(auto && !_loopDefer && goal){
-          _loopDefer=goal;   // fired once, after the message is on the DOM (below)
+          _loopDefer=goal; _loopDeferVariant=_autoVariant;   // fired once, after the message is on the DOM (below)
           placeholder.className='cap-inline done';
-          placeholder.innerHTML='<div class="cap-inline-header"><span class="cap-dot"></span><span style="color:var(--acc)">&#9889; handed to the agentic loop (v7)</span></div>';
+          placeholder.innerHTML='<div class="cap-inline-header"><span class="cap-dot"></span><span style="color:var(--acc)">&#9889; handed to the agentic loop ('+esc(_autoVariantLabel)+')</span></div>';
         }else if(goal){
           // Auto-loop off (or a second marker) — offer a one-click run instead.
           placeholder.className='cap-inline';
           placeholder.innerHTML='<div class="cap-inline-header">&#127744; This needs the agentic loop.</div>';
           const b=document.createElement('button');b.className='btn xs';b.style.marginTop='4px';b.textContent='Run agentic loop';
-          b.onclick=()=>_sendAgentLoopServer(goal,'dag.agent_loop_v7');
+          b.onclick=()=>_sendAgentLoopServer(goal,_autoVariant);
           placeholder.appendChild(b);
         }else{
           placeholder.remove();
@@ -6085,8 +6094,10 @@ IMPORTANT:
     // …THEN run any auto-exec caps in order. Each may await its own follow-up
     // (continueConversation), but the message above is already on screen.
     for(const r of _autoRun){ await executeCapInline(r.placeholder,r.capName,r.capArgs); }
-    // Finally, if the LLM deferred to the agentic loop, hand the goal to v7.
-    if(_loopDefer){ try{ _sendAgentLoopServer(_loopDefer,'dag.agent_loop_v7'); }catch(e){ appendSys('<span style="color:var(--err)">Auto-loop failed: '+esc(String(e&&e.message||e))+'</span>'); } }
+    // Finally, if the LLM deferred to the agentic loop, hand the goal to
+    // whichever server variant was resolved above (loopVariant, or v7 if
+    // the user hadn't picked one).
+    if(_loopDefer){ try{ _sendAgentLoopServer(_loopDefer,_loopDeferVariant); }catch(e){ appendSys('<span style="color:var(--err)">Auto-loop failed: '+esc(String(e&&e.message||e))+'</span>'); } }
   }
 
   function renderCapPending(el,capName){
