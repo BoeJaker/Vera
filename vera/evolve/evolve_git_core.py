@@ -115,3 +115,29 @@ def tracked_dirty_lines(porcelain: str) -> list:
             continue
         out.append(line)
     return out
+
+
+def release_preflight(main_sha: str, bleeding_edge_sha: str,
+                      main_is_ancestor: bool, bleeding_edge_is_ancestor: bool) -> dict:
+    """Choose the only history-preserving bleeding-edge release action.
+
+    A release may be a no-op or a fast-forward. It must never manufacture a
+    main-only merge commit, and it must never guess how to combine diverged
+    histories. Divergence is reconciled into bleeding-edge through a normal,
+    reviewed pipeline before this release is retried.
+    """
+    if main_sha and main_sha == bleeding_edge_sha:
+        return {"ok": True, "action": "already-up-to-date", "error": ""}
+    if main_is_ancestor:
+        return {"ok": True, "action": "fast-forward", "error": ""}
+    reason = ("main is ahead of bleeding-edge" if bleeding_edge_is_ancestor
+              else "main and bleeding-edge have diverged")
+    return {
+        "ok": False,
+        "action": "refuse",
+        "error": (
+            f"REFUSED: {reason}. Preserve all changes by reconciling main into "
+            "bleeding-edge through an isolated reviewed pipeline, then retry the "
+            "fast-forward-only release."
+        ),
+    }

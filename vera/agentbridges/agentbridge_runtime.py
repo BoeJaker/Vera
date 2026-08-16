@@ -27,16 +27,94 @@ What's genuinely bridge-specific (and stays in each bridge's own module):
   - the emitted event TYPE prefix (kept per-bridge — "smolagents.run.*" vs
     "langgraph.run.*" — for backward compat with anything already filtering
     on it, and so the event stream stays greppable per system)
+
+GPU gate (2026-08-16, real bug fix — was the actual cause of "streamed
+outputs tend to time out and produce no output"): a bridge container makes
+a RAW HTTP call straight to Ollama — it has no idea Vera's own
+ollama_generate() calls all queue behind a cross-process gate
+(vera/ollama_gate.py, gpu_cap=1 on a GPU node, shared by prod AND every dev
+sandbox). Under real contention a bridge's single model call can queue
+invisibly at the Ollama server for a long time with ZERO stdout output
+during the wait — indistinguishable, from this module's own stall detector,
+from a genuinely hung container, so it gets killed exactly like one. Fixed
+by acquiring the SAME gate lease Vera's own calls use (same node key, same
+capacity/TTL/wait policy) BEFORE launching the container, so a bridge run
+queues fairly instead of firing blind — see acquire_gpu_gate/release_
+gpu_gate below, wired into stream_bridge_container via `gate_iid`.
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import time
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 STEP_PREFIX = "BRIDGE_STEP:"
 RESULT_PREFIX = "BRIDGE_RESULT:"
+
+
+def pick_ollama_instance(ollama_instances: Dict[str, Dict[str, Any]]
+                         ) -> Tuple[str, str]:
+    """(instance_id, url) for the best available Ollama instance — prefers an
+    online GPU instance, falls back to any online instance, then to whatever's
+    registered at all. Vera does NOT configure Ollama instances via env vars
+    on prod's own process (confirmed empty via /proc/<pid>/environ) — the
+    real source of truth is OLLAMA_INSTANCES, the same in-memory registry
+    ollama_generate()/pick_instance() read from. The instance_id is what the
+    GPU gate below keys its slots on — the same identifier Vera's own
+    generation calls use, so a bridge run queues in the SAME line, not a
+    separate invisible one."""
+    online_gpu = [(k, v) for k, v in ollama_instances.items()
+                  if v.get("has_gpu") and v.get("status") == "online" and v.get("enabled", True)]
+    if online_gpu:
+        return online_gpu[0][0], online_gpu[0][1]["url"]
+    online_any = [(k, v) for k, v in ollama_instances.items()
+                  if v.get("status") == "online" and v.get("enabled", True)]
+    if online_any:
+        return online_any[0][0], online_any[0][1]["url"]
+    any_inst = list(ollama_instances.items())
+    if any_inst:
+        return any_inst[0][0], any_inst[0][1].get("url", "")
+    return "", ""
+
+
+async def acquire_gpu_gate(instance_id: str) -> Optional[Dict[str, Any]]:
+    """Claim the SAME cross-process GPU slot lease Vera's own ollama_generate()
+    acquires for this instance (vera/ollama_gate.py) before launching a bridge
+    container — a bridge's raw HTTP call to Ollama has no other way to know
+    that gate exists. Fail-open by construction, same guarantee as the gate
+    itself: gate disabled, node ungated, coordination Redis down, or any
+    import/lookup error all just mean "proceed unslotted" (returns None) —
+    this can only ever ADD fair waiting before the container starts, never
+    block or break a run."""
+    if not instance_id:
+        return None
+    try:
+        import Vera.vera.capability_orchestration as orch
+        from Vera.vera import ollama_gate as gate
+        if not gate.gate_enabled():
+            return None
+        if orch.COORD_REDIS is None:
+            await orch._ensure_coord_redis()
+        inst = orch.OLLAMA_INSTANCES.get(instance_id, {})
+        cap = gate.capacity_for(bool(inst.get("has_gpu")))
+        if cap <= 0 or orch.COORD_REDIS is None:
+            return None
+        return await gate.acquire(orch.COORD_REDIS, instance_id, cap,
+                                  gate.ttl_ms(), gate.wait_s())
+    except Exception:
+        return None
+
+
+async def release_gpu_gate(lease: Optional[Dict[str, Any]]) -> None:
+    if lease is None:
+        return
+    try:
+        import Vera.vera.capability_orchestration as orch
+        from Vera.vera import ollama_gate as gate
+        await gate.release(orch.COORD_REDIS, lease)
+    except Exception:
+        pass
 
 EmitFn = Callable[[Dict[str, Any]], Awaitable[None]]
 
@@ -69,6 +147,7 @@ async def stream_bridge_container(
     step_line_prefix: str = STEP_PREFIX,
     result_line_prefix: str = RESULT_PREFIX,
     progress_kinds: Optional[set] = None,
+    gate_instance_id: str = "",
 ) -> None:
     """Launch `argv` (a `docker run ...` command), stream its stdout, and emit
     `{event_type_prefix}.step` / `.done` / `.error` events as it progresses.
@@ -77,6 +156,13 @@ async def stream_bridge_container(
     counts only "action" steps, langgraph only "tool_call"/"tool_result") —
     every step still gets its own event regardless, this only affects the
     summary count.
+
+    `gate_instance_id`, if given, acquires Vera's own cross-process GPU gate
+    lease for that Ollama instance BEFORE launching the container (released
+    after, whatever the outcome) — see acquire_gpu_gate's docstring for why
+    this matters: without it, a bridge's raw Ollama call can queue invisibly
+    behind Vera's own gated calls and get killed by the stall detector below
+    as if it had hung, when it was really just waiting its turn.
 
     Caller owns emitting the initial `{event_type_prefix}.start` event before
     calling this (this function only knows how to run+stream, not what a
@@ -87,6 +173,30 @@ async def stream_bridge_container(
     base = {"run_id": run_id, "session_id": session_id}
     t0 = time.time()
 
+    gate_lease = await acquire_gpu_gate(gate_instance_id) if gate_instance_id else None
+    if gate_lease is not None:
+        await emit({**base, "type": f"{event_type_prefix}.gate_acquired",
+                   "waited_s": gate_lease.get("waited_s", 0)})
+
+    try:
+        await _stream_bridge_container_inner(
+            base=base, t0=t0, argv=argv, event_type_prefix=event_type_prefix,
+            emit=emit, timeout_s=timeout_s, stall_s=stall_s,
+            step_line_prefix=step_line_prefix, result_line_prefix=result_line_prefix,
+            progress_kinds=progress_kinds,
+        )
+    finally:
+        # Released whatever happened above (done/error/stall/timeout/launch
+        # failure/an exception this function didn't even anticipate) — a
+        # bridge run must never strand a GPU slot for other callers.
+        await release_gpu_gate(gate_lease)
+
+
+async def _stream_bridge_container_inner(
+    *, base: Dict[str, str], t0: float, argv: List[str], event_type_prefix: str,
+    emit: EmitFn, timeout_s: int, stall_s: int, step_line_prefix: str,
+    result_line_prefix: str, progress_kinds: Optional[set],
+) -> None:
     try:
         proc = await asyncio.create_subprocess_exec(
             *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)

@@ -62,7 +62,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from Vera.vera.agentbridges.agentbridge_runtime import (
-    build_image, image_present, sh, stream_bridge_container,
+    build_image, image_present, pick_ollama_instance, sh, stream_bridge_container,
 )
 from Vera.vera.capability_orchestration import (
     capability, emit_event, now_iso, OLLAMA_INSTANCES, OLLAMA_MODEL,
@@ -74,21 +74,6 @@ _TIMEOUT_S = int(os.environ.get("LANGGRAPH_TIMEOUT_S", "300") or 300)
 _STALL_S = int(os.environ.get("LANGGRAPH_STALL_S", "60") or 60)
 _DOCKERFILE_DIR = str(Path(__file__).parent)
 _EVENT_PREFIX = "langgraph.run"
-
-
-def _pick_ollama_url() -> str:
-    """Same lesson as smolagents_capabilities.py's _pick_ollama_url(): the
-    real source of truth is OLLAMA_INSTANCES, not env vars."""
-    online_gpu = [i for i in OLLAMA_INSTANCES.values()
-                  if i.get("has_gpu") and i.get("status") == "online" and i.get("enabled", True)]
-    if online_gpu:
-        return online_gpu[0]["url"]
-    online_any = [i for i in OLLAMA_INSTANCES.values()
-                  if i.get("status") == "online" and i.get("enabled", True)]
-    if online_any:
-        return online_any[0]["url"]
-    any_inst = list(OLLAMA_INSTANCES.values())
-    return any_inst[0]["url"] if any_inst else ""
 
 
 @capability(
@@ -158,7 +143,7 @@ async def langgraph_run(goal: str, session_id: str = "", trace_id=None) -> Dict[
     if not goal:
         return {"ok": False, "error": "goal required"}
 
-    ollama_url = _pick_ollama_url()
+    instance_id, ollama_url = pick_ollama_instance(OLLAMA_INSTANCES)
     ollama_model = OLLAMA_MODEL
     if not ollama_url or not ollama_model:
         return {"ok": False, "error": "no Ollama instance available "
@@ -185,11 +170,15 @@ async def langgraph_run(goal: str, session_id: str = "", trace_id=None) -> Dict[
     # Fire-and-emit: the caller gets run_id back now and follows progress via
     # /events, same as smolagents.run/openclaw.prompt. Not awaited — this
     # capability's own HTTP response must not block on the container.
+    # gate_instance_id makes this container's Ollama call queue behind
+    # Vera's own gated generation instead of firing blind and risking a
+    # stall-kill under contention.
     asyncio.ensure_future(stream_bridge_container(
         run_id=run_id, session_id=session_id, argv=argv,
         event_type_prefix=_EVENT_PREFIX, emit=emit_event,
         timeout_s=_TIMEOUT_S, stall_s=_STALL_S,
         progress_kinds={"tool_call", "tool_result"},
+        gate_instance_id=instance_id,
     ))
 
     return {"ok": True, "run_id": run_id, "status": "running"}

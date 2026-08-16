@@ -67,6 +67,9 @@ Verified live against prod this pass unless noted.
   pane. QC: board 36 items, capacity/status, sessions.watch all respond.
 
 **Loop Lab UI (this session's roadmap — all 13 items live)**
+- ✓ **Codex attribution** — Codex is a first-class pipeline controller and
+  authorship-map category; the shared stdio MCP bridge accepts an explicit
+  `--caller-kind` so Codex and Claude sessions retain honest, distinct provenance.
 - ✓ Pipeline rich UI + colored/syntax-highlighted diffs + draft-idle callout; **Swarm** live
   tab; **global context bar** (repo/sandbox, per-element override) wired to boards+swarm;
   make-active run-targeting; **Sandbox tab rewrite** (sandbox-centric list + Connection
@@ -234,9 +237,13 @@ a system that makes a local `main` merge *impossible without explicit user autho
    prove both the hook and the bypass mechanism. **Residual gap (documented in the hook):** a
    *fast-forward* merge onto `main` creates no commit, so no hook fires — rare/odd by hand, and
    the cap-layer guard (part 1) plus `--no-ff` pipeline merges cover the real paths.
-3. **`promote_to_main` confirm-gate. (○ remaining.)** Gate the sanctioned path itself on an
-   explicit-authorization argument (today calling it *is* the deliberate act, but a single
-   call ships everything on `bleeding-edge` to `main` + restarts prod with no confirm).
+3. **`promote_to_main` confirm + history-safety gate. ✓ DONE (pipeline `823997e7`).** The
+   sanctioned release now requires `confirm=true`, snapshots both tips, and permits only a
+   no-op or `git merge --ff-only`. It rechecks both snapshots immediately before advancing
+   `main`, so a concurrent landing safely refuses for review. If `main` is ahead or the two
+   branches diverged, it preserves both histories and instructs the operator to reconcile
+   `main` into `bleeding-edge` through an isolated reviewed pipeline. Releases no longer
+   create a main-only merge commit, so `bleeding-edge` remains a superset of `main`.
 Reuses the exact pattern already on `bleeding-edge` (the remote-push guard); this is its
 local-merge twin. Finish parts 2–3 BEFORE M4/M5/M6 widen autonomy.
 
@@ -265,6 +272,32 @@ work with honest review. Gated by capacity pool (already built).
 
 **M6 — Autonomy relaxation (Stage 5).** Only after M2/M3 give the safety net; widen HITL
 gates as trust accrues.
+
+**M7 — Full autonomous closed loop (operated from a Claude Code session). ◔ STARTED
+2026-08-16.** Goal: board items worked autonomously in containers; sessions killed by the
+>5h token limit auto-resumed with "continue"; when the board is empty, the v1–v8 agentic
+loops (focus v7) are exercised/optimised and *generate* new board items → the loop continues;
+**promotion/edits to `main` are IMPOSSIBLE in this mode**; multiple Claude Codes on different
+machines share the one board and coordinate via envelopes. Most primitives already exist
+(`board.dispatch`/`claim`/`comment`, `ide.claude_sessions.watch/resume/policy`, session
+sandboxes, v1–v8 loops + dream idle-trigger, `capacity.*`). Built safety-first:
+- **Phase A — hard main-lockout + kill switch. ✓ DONE (bleeding-edge `b8e31ac`).**
+  `autonomous.engage` sets a Redis flag that makes promote/merge to `main` UNCONDITIONALLY
+  refused in adopt/promote/`promote_to_main` — checked BEFORE the M3.6 sentinel, so no
+  `authorize_main`/`force` bypasses it; `bleeding-edge`/feature branches still land freely.
+  `autonomous.release(confirm=true)` is the kill switch; `autonomous.status` reports state.
+  Pure `autonomous_lock_core.py` + 8 critical tests; **live-verified** (engaged →
+  `promote_to_main` refused → released), and prod-isolated.
+- **Phase D — live Loop-Lab UI feedback of the agent's actions. ○ NEXT.** Surface an
+  autonomous-mode banner (engaged/main-locked) + a live activity feed (dispatch·work·gate·
+  land·session-resume) — both the "more feedback about your actions" ask and mandatory to
+  operate the loop safely.
+- **Phase B — the orchestrator. ○** Continuous drive: pick top ready item → `board.dispatch`
+  into a container → monitor → next; empty board → exercise/optimise v7 (v1–v8) → generate items.
+- **Phase C — auto-resume on the >5h token limit** via `claude_sessions.policy` (inject "continue").
+- **Phase E — multi-agent coordination** (progress/help/handoff envelopes across machines).
+Build order: A (done) → D → B → C → E, so the lock + visibility exist before anything runs
+unattended.
 
 Ordering rationale: stabilise what's live (M0) → finish the half-built content loop (M1) →
 lay the safety net (M2/M3), which also de-risks the M3.5 structural refactor → M3.5 once the
@@ -348,6 +381,13 @@ file's concurrent-edit pressure eases → widen autonomy / add coordination visi
   tests reproduce the incident. **Reaches prod's running sweep only after a `bleeding-edge`→
   `main` release + restart** — until then the branch-only trunk + the live mirror container are
   the interim guards.
+- **T9b — release merges made `main` immediately ahead of `bleeding-edge`. ✓ FIXED (pipeline
+  `823997e7`).** The sanctioned release previously used `merge --no-ff`, manufacturing a new
+  release commit only on `main`. The next feature pipeline then hit a main-only ancestry snag
+  despite all released content originating on `bleeding-edge`. The release is now
+  fast-forward-only with ancestry and expected-tip checks. Divergence is never auto-resolved,
+  rebased, reset, or force-pushed; all commits remain reachable and reconciliation happens on
+  an isolated reviewed branch before retrying.
 - **T10 — the standing bleeding-edge container served a STALE/BROKEN mirror worktree. ✓
   recovered 2026-08-16; root fix pending.** After several promotes reported
   `standing_container_refresh: {ok:true, "mirror refreshed + container restarted"}`, the mirror
