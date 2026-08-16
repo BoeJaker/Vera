@@ -151,8 +151,9 @@ tier — the safety net both plans lean on. Closes **T6**. Broken into:
 - **Perf-based gating** (socket-flap / bad response-time / Ollama-contention thresholds) is a
   sibling of M3.4, tracked separately (originally scoped under M3); see §2.A / the perf subsystem.
 
-**Nothing in M3 runs in prod yet** — it all lives on `bleeding-edge` and activates only on a
-`bleeding-edge`→`main` promotion + restart (the gated, explicit step).
+**M3 is now ON `main`** (released via `f8497f4`/`ac35b34`, bundled with other agents' work) —
+it activates in prod on the next restart; it no longer lives only on `bleeding-edge`. The
+release was triggered by another session, not an explicit M3 promotion.
 
 **M3.5 — Agentic-loop runner file split (`dag_workshop_capabilities.py`).** (○, added
 2026-08-16, session finding — not tracked in either source plan.) After M3 lands the
@@ -307,6 +308,26 @@ file's concurrent-edit pressure eases → widen autonomy / add coordination visi
   dir), verified with `fsck --connectivity-only` clean. Confirmed end-to-end: the next
   `promote` reported `standing_container_refresh: {ok:true, mirror refreshed}`. Merges were
   never affected (only the mirror fast-forward), and prod (`main`) was never involved.
+- **T9 — the hourly sweep force-deleted the `bleeding-edge` trunk after a release. ✓ FIXED on
+  `bleeding-edge` (`9be3ce9`); needs a prod restart to protect the LIVE sweep.** Found
+  2026-08-16 when `refs/heads/bleeding-edge` vanished from the repo (only `origin/bleeding-edge`
+  remained). **Root cause:** after a `bleeding-edge`→`main` release, `bleeding-edge` is an
+  ancestor of `main` (0 unique commits), so it reads as "merged". The scheduled
+  `_scaffolding_sweep` runs `evolve_sandbox_prune(delete_branches=True,
+  delete_merged_branches=True)` hourly, which then deleted the trunk **two ways**: the
+  `bleeding-edge` branch via its reaped worktree + `delete_branches` (`git branch -D`), and
+  `loop-lab/bleeding-edge-mirror` via `delete_merged_branches`. With `refs/heads/bleeding-edge`
+  gone, `_default_pipeline_base` silently falls back to `main` — so **every agent's
+  `pipeline.begin`/`promote` starts defaulting to `main`** (mitigated only if the M3.6
+  cap-guard is live in prod). **Immediate recovery:** recreated `bleeding-edge` +
+  `loop-lab/bleeding-edge-mirror` from `origin/bleeding-edge` (`c88a721`, a strict ancestor of
+  `main` — nothing lost); kept `bleeding-edge` **branch-only** (no worktree) so neither sweep
+  path can hit it in the interim. **Durable fix (`9be3ce9`):** `TRUNK_PROTECTED_BRANCHES` in the
+  pure `sandbox_reap` core (bleeding-edge / main / master / both mirrors) — `plan_reap` keeps
+  them unconditionally and both cap-layer deletion sites skip them; 3 critical-tier regression
+  tests reproduce the incident. **Reaches prod's running sweep only after a `bleeding-edge`→
+  `main` release + restart** — until then the branch-only trunk + the live mirror container are
+  the interim guards.
 
 ---
 
