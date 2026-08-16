@@ -38,7 +38,9 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from Vera.vera.capability_orchestration import capability, emit_event, now_iso
+from Vera.vera.capability_orchestration import (
+    capability, emit_event, now_iso, OLLAMA_INSTANCES, OLLAMA_MODEL,
+)
 
 log = logging.getLogger("smolagents_bridge")
 
@@ -66,6 +68,27 @@ async def _sh(argv: list, timeout: float = 60) -> Dict[str, Any]:
                 "err": err.decode("utf-8", errors="replace")}
     except Exception as e:
         return {"ok": False, "out": "", "err": str(e)}
+
+
+def _pick_ollama_url() -> str:
+    """Vera does NOT configure Ollama instances via env vars — OLLAMA_GPU_URL
+    etc. are only ever the names copied INTO a spawned worker container's
+    environment (see docker_capabilities.py's _DEFAULT_BACKEND_ENV); on prod's
+    own process those names are never set (confirmed empty via /proc/<pid>/
+    environ). The real source of truth is OLLAMA_INSTANCES, the same
+    in-memory registry ollama_generate()/pick_instance() read from. Prefers a
+    GPU instance that's currently reporting online; falls back to any
+    online instance, then to whatever's registered at all."""
+    online_gpu = [i for i in OLLAMA_INSTANCES.values()
+                  if i.get("has_gpu") and i.get("status") == "online" and i.get("enabled", True)]
+    if online_gpu:
+        return online_gpu[0]["url"]
+    online_any = [i for i in OLLAMA_INSTANCES.values()
+                  if i.get("status") == "online" and i.get("enabled", True)]
+    if online_any:
+        return online_any[0]["url"]
+    any_inst = list(OLLAMA_INSTANCES.values())
+    return any_inst[0]["url"] if any_inst else ""
 
 
 async def _image_present() -> bool:
@@ -122,8 +145,9 @@ async def smolagents_image_ensure(force: bool = False, trace_id=None) -> Dict[st
                 "Not a streaming call — blocks until the run finishes, fails, "
                 "or the timeout (SMOLAGENTS_TIMEOUT_S) kills the container, "
                 "same 'stall becomes a clean error, not a hang' contract as "
-                "the chat UI's OpenClaw bridge. Model comes from Vera's own "
-                "GPU Ollama instance (OLLAMA_GPU_URL/OLLAMA_MODEL env). "
+                "the chat UI's OpenClaw bridge. Model/instance come from "
+                "Vera's own live OLLAMA_INSTANCES registry (whatever "
+                "ollama_generate() itself would route to), not env vars. "
                 "Input: goal (str!), session_id (str). "
                 "Output: {ok, answer, steps, elapsed_s, error}.",
 )
@@ -135,10 +159,11 @@ async def smolagents_run(goal: str, session_id: str = "", trace_id=None) -> Dict
     if not goal:
         return {"ok": False, "error": "goal required"}
 
-    ollama_url = os.environ.get("OLLAMA_GPU_URL", "") or os.environ.get("OLLAMA_CPU_A_URL", "")
-    ollama_model = os.environ.get("OLLAMA_MODEL", "")
+    ollama_url = _pick_ollama_url()
+    ollama_model = OLLAMA_MODEL
     if not ollama_url or not ollama_model:
-        return {"ok": False, "error": "OLLAMA_GPU_URL/OLLAMA_MODEL not configured on this instance"}
+        return {"ok": False, "error": "no Ollama instance available "
+                                      "(OLLAMA_INSTANCES empty or OLLAMA_MODEL unset)"}
 
     if not await _image_present():
         ens = await smolagents_image_ensure()
