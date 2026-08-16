@@ -4340,6 +4340,25 @@ async def _refresh_loop_lab_mirror(mirror_branch: str, base: str,
     wt_abs = root / _WORKTREE_DIR / _safe_branch(mirror_branch)
     if wt_abs.exists() and (wt_abs / ".git").exists():
         st = await _sh(_git_wt_argv(str(wt_abs), "status", "--porcelain"), cwd=str(wt_abs))
+        # T10 self-heal: the standing container bind-mounts this worktree, so an
+        # unrelated worktree prune/remove elsewhere can strip its admin entry while
+        # the dir + .git file survive (the live mount), SEVERING the git link. Every
+        # ff-only refresh below then fails silently and the container serves STALE
+        # code until a manual rebuild. `git worktree repair` can't fix a fully-severed
+        # worktree (admin dir gone) — recreate it: robust-remove the orphan dir +
+        # prune + re-add at base's tip. The caller's docker-restart then re-mounts the
+        # fresh worktree, so a severed mirror auto-corrects on the next promote.
+        if _worktree_is_severed(st.get("err") or ""):
+            log.warning("bleeding-edge mirror worktree severed (T10) — recreating")
+            await _remove_worktree_robust(str(wt_abs))
+            await _git("worktree", "prune", repo_root=root)
+            await _git("branch", "-f", mirror_branch, base, repo_root=root)
+            radd = await _git("worktree", "add", str(wt_abs), mirror_branch,
+                              timeout=120, repo_root=root)
+            if not radd.get("ok"):
+                return {"ok": False,
+                        "reason": f"mirror worktree severed; re-add failed: {radd.get('err')}"}
+            return {"ok": True, "action": "healed severed worktree (T10)", "base": base}
         if (st.get("out") or "").strip():
             # Should never happen — nothing is meant to commit onto the mirror
             # directly — but if it does, don't silently discard it.
@@ -5329,6 +5348,7 @@ async def evolve_pipeline_test(id: str = "", trace_id=None):
 
 from Vera.vera.evolve.evolve_git_core import worktree_paths_by_branch as _worktree_paths_by_branch  # noqa: E402
 from Vera.vera.evolve.evolve_git_core import tracked_dirty_lines as _tracked_dirty_lines  # noqa: E402
+from Vera.vera.evolve.evolve_git_core import worktree_is_severed as _worktree_is_severed  # noqa: E402
 
 
 async def _sync_branch_with_target(root: str, branch: str, to: str) -> Dict[str, Any]:
