@@ -3,8 +3,8 @@ langgraph_capabilities.py — LangGraph Agentic Loop Integration for Vera
 ============================================================================
 Optional module. Phase 3 of the external-agentic-loop plan: a genuinely
 independent agent-loop library (langchain-ai/langgraph), selectable in the
-chat UI's Loop pane alongside Vera's own v1-v8, OpenClaw, and smolagents —
-none of which this module is imported by or imports.
+chat UI's Loop pane alongside Vera's own v1-v8, OpenClaw, smolagents and
+PydanticAI — none of which this module is imported by or imports.
 
 Deliberately the OPPOSITE paradigm from smolagents (which runs LLM-generated
 Python as its action mechanism): LangGraph is an explicit graph of nodes and
@@ -17,11 +17,31 @@ Runs in a fresh, throwaway Docker container per invocation (image:
 vera-langgraph, built from Dockerfile.langgraph in this directory) — never
 in Vera's own process, never in vera:latest. See Dockerfile.langgraph.
 
+The actual docker-launch/stream/stall/event-emit plumbing lives in
+agentbridge_runtime.py's stream_bridge_container(), shared by every
+container-based bridge (2026-08-16 — this module and smolagents_capabilities.py
+each hand-rolled their own copy of it first; extracted once a third bridge,
+PydanticAI, was about to become a fourth copy). This module supplies only
+what's genuinely langgraph-specific: the image, argv, and event-type prefix.
+
+langgraph.run is EVENT-DRIVEN, same contract as smolagents.run/openclaw.
+prompt: it returns immediately once the container is launched, with {ok,
+run_id, status:"running"}. The actual progress and result arrive as events
+on the general bus (consume via GET /events):
+  langgraph.run.start   - container launched
+  langgraph.run.step    - one new message in the graph's growing state, as
+                          the container's own stdout produces it — see
+                          langgraph_entrypoint.py's stream_mode="values" loop
+  langgraph.run.done    - final result: {ok, answer, steps, elapsed_s, model}
+  langgraph.run.error   - container failed, stalled, or timed out
+Every event carries {run_id, session_id} so a consumer (chat UI) can filter
+to just its own run.
+
 Capabilities registered
 ------------------------
   langgraph.status        - docker + image availability, config
   langgraph.image.ensure  - build the vera-langgraph image if missing
-  langgraph.run           - run one goal through a LangGraph ReAct agent
+  langgraph.run           - launch one goal through a LangGraph ReAct agent
 
 Configuration (env or runtime)
 --------------------------------
@@ -30,58 +50,35 @@ Configuration (env or runtime)
   LANGGRAPH_TIMEOUT_S  default "300" - hard ceiling per run (docker itself
                         is killed past this; the agent's own max_steps is a
                         softer bound reached first in the normal case)
+  LANGGRAPH_STALL_S    default "60" - no new BRIDGE_STEP/RESULT line for
+                        this long -> treated as stalled and killed
 """
 from __future__ import annotations
 
 import asyncio
-import json
-import logging
 import os
-import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
+from Vera.vera.agentbridges.agentbridge_runtime import (
+    build_image, image_present, sh, stream_bridge_container,
+)
 from Vera.vera.capability_orchestration import (
     capability, emit_event, now_iso, OLLAMA_INSTANCES, OLLAMA_MODEL,
 )
 
-log = logging.getLogger("langgraph_bridge")
-
 _ENABLED = os.environ.get("LANGGRAPH_ENABLED", "0") == "1"
 _IMAGE = os.environ.get("LANGGRAPH_IMAGE", "vera-langgraph:latest")
 _TIMEOUT_S = int(os.environ.get("LANGGRAPH_TIMEOUT_S", "300") or 300)
+_STALL_S = int(os.environ.get("LANGGRAPH_STALL_S", "60") or 60)
 _DOCKERFILE_DIR = str(Path(__file__).parent)
-
-
-async def _sh(argv: list, timeout: float = 60) -> Dict[str, Any]:
-    """Run a host command, capturing stdout/stderr. Never raises."""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        try:
-            out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
-            try:
-                proc.kill()
-            except Exception:
-                pass
-            return {"ok": False, "out": "", "err": f"timed out after {timeout}s"}
-        return {"ok": proc.returncode == 0,
-                "out": out.decode("utf-8", errors="replace"),
-                "err": err.decode("utf-8", errors="replace")}
-    except Exception as e:
-        return {"ok": False, "out": "", "err": str(e)}
+_EVENT_PREFIX = "langgraph.run"
 
 
 def _pick_ollama_url() -> str:
-    """Same lesson as smolagents_capabilities.py's _pick_ollama_url(): Vera
-    does NOT configure Ollama instances via env vars on prod's own process
-    (confirmed empty via /proc/<pid>/environ) — the real source of truth is
-    OLLAMA_INSTANCES, the same in-memory registry ollama_generate()/
-    pick_instance() read from. Prefers a GPU instance that's currently
-    reporting online; falls back to any online instance, then to whatever's
-    registered at all."""
+    """Same lesson as smolagents_capabilities.py's _pick_ollama_url(): the
+    real source of truth is OLLAMA_INSTANCES, not env vars."""
     online_gpu = [i for i in OLLAMA_INSTANCES.values()
                   if i.get("has_gpu") and i.get("status") == "online" and i.get("enabled", True)]
     if online_gpu:
@@ -94,11 +91,6 @@ def _pick_ollama_url() -> str:
     return any_inst[0]["url"] if any_inst else ""
 
 
-async def _image_present() -> bool:
-    r = await _sh(["docker", "image", "inspect", _IMAGE], timeout=15)
-    return bool(r.get("ok"))
-
-
 @capability(
     "langgraph.status",
     http_method="GET", http_path="/langgraph/status", http_tags=["langgraph"],
@@ -108,9 +100,9 @@ async def _image_present() -> bool:
                 "Output: {enabled, docker_ok, image, image_present}.",
 )
 async def langgraph_status(trace_id=None) -> Dict[str, Any]:
-    docker_ok = (await _sh(["docker", "version", "--format", "{{.Server.Version}}"],
-                           timeout=10)).get("ok", False)
-    present = await _image_present() if docker_ok else False
+    docker_ok = (await sh(["docker", "version", "--format", "{{.Server.Version}}"],
+                          timeout=10)).get("ok", False)
+    present = await image_present(_IMAGE) if docker_ok else False
     return {"enabled": _ENABLED, "docker_ok": docker_ok,
             "image": _IMAGE, "image_present": present,
             "timeout_s": _TIMEOUT_S}
@@ -126,17 +118,13 @@ async def langgraph_status(trace_id=None) -> Dict[str, Any]:
                 "Inputs: force (bool). Output: {ok, present, action, log}.",
 )
 async def langgraph_image_ensure(force: bool = False, trace_id=None) -> Dict[str, Any]:
-    if not force and await _image_present():
+    if not force and await image_present(_IMAGE):
         return {"ok": True, "present": True, "action": "none"}
     await emit_event({"type": "langgraph.image.build", "image": _IMAGE})
-    r = await _sh(
-        ["docker", "build", "-t", _IMAGE, "-f",
-         str(Path(_DOCKERFILE_DIR) / "Dockerfile.langgraph"), _DOCKERFILE_DIR],
-        timeout=600)
-    present = await _image_present()
-    await emit_event({"type": "langgraph.image.ensured", "image": _IMAGE, "ok": present})
-    return {"ok": present, "present": present, "action": "build",
-            "log": (r.get("out", "") + "\n" + r.get("err", ""))[-2500:]}
+    r = await build_image(_IMAGE, str(Path(_DOCKERFILE_DIR) / "Dockerfile.langgraph"),
+                          _DOCKERFILE_DIR)
+    await emit_event({"type": "langgraph.image.ensured", "image": _IMAGE, "ok": r["ok"]})
+    return {**r, "action": "build"}
 
 
 @capability(
@@ -147,13 +135,20 @@ async def langgraph_image_ensure(force: bool = False, trace_id=None) -> Dict[str
                 "prebuilt.create_react_agent, structured tool-calling — the "
                 "opposite paradigm from smolagents' code-as-action), in a "
                 "fresh, throwaway Docker container (never in Vera's own "
-                "process). Not a streaming call — blocks until the run "
-                "finishes, fails, or the timeout (LANGGRAPH_TIMEOUT_S) kills "
-                "the container, same 'stall becomes a clean error, not a "
-                "hang' contract as smolagents/OpenClaw. Model/instance come "
-                "from Vera's own live OLLAMA_INSTANCES registry, not env "
-                "vars. Input: goal (str!), session_id (str). "
-                "Output: {ok, answer, steps, elapsed_s, error}.",
+                "process). EVENT-DRIVEN: returns IMMEDIATELY once the "
+                "container is launched — {ok, run_id, status:'running'} — "
+                "does not block until the run finishes. Live progress and "
+                "the final result arrive as events on GET /events, filtered "
+                "by run_id: langgraph.run.step (one per new graph-state "
+                "message — tool_call/tool_result/ai — as it happens), "
+                "langgraph.run.done ({ok, answer, steps, elapsed_s, model} "
+                "under result), langgraph.run.error. A stalled or over-time "
+                "container is killed and reported as langgraph.run.error "
+                "rather than left to hang — same contract as smolagents/"
+                "OpenClaw. Model/instance come from Vera's own live "
+                "OLLAMA_INSTANCES registry, not env vars. "
+                "Input: goal (str!), session_id (str). "
+                "Output: {ok, run_id, status} | {ok:false, error}.",
 )
 async def langgraph_run(goal: str, session_id: str = "", trace_id=None) -> Dict[str, Any]:
     if not _ENABLED:
@@ -169,18 +164,17 @@ async def langgraph_run(goal: str, session_id: str = "", trace_id=None) -> Dict[
         return {"ok": False, "error": "no Ollama instance available "
                                       "(OLLAMA_INSTANCES empty or OLLAMA_MODEL unset)"}
 
-    if not await _image_present():
+    if not await image_present(_IMAGE):
         ens = await langgraph_image_ensure()
         if not ens.get("ok"):
             return {"ok": False, "error": f"vera-langgraph image unavailable: "
                                           f"{ens.get('log', '')[-400:]}"}
 
     run_id = uuid.uuid4().hex[:12]
-    name = f"vera-langgraph-{run_id}"
-    await emit_event({"type": "langgraph.run.start", "run_id": run_id,
+    await emit_event({"type": f"{_EVENT_PREFIX}.start", "run_id": run_id,
                       "session_id": session_id, "goal": goal[:200], "ts": now_iso()})
 
-    argv = ["docker", "run", "--rm", "--name", name,
+    argv = ["docker", "run", "--rm", "--name", f"vera-langgraph-{run_id}",
             "-e", f"GOAL={goal}",
             "-e", f"OLLAMA_BASE_URL={ollama_url}",
             "-e", f"OLLAMA_MODEL={ollama_model}",
@@ -188,30 +182,14 @@ async def langgraph_run(goal: str, session_id: str = "", trace_id=None) -> Dict[
             "--network", "host",
             _IMAGE]
 
-    t0 = time.time()
-    r = await _sh(argv, timeout=_TIMEOUT_S)
-    elapsed = round(time.time() - t0, 2)
+    # Fire-and-emit: the caller gets run_id back now and follows progress via
+    # /events, same as smolagents.run/openclaw.prompt. Not awaited — this
+    # capability's own HTTP response must not block on the container.
+    asyncio.ensure_future(stream_bridge_container(
+        run_id=run_id, session_id=session_id, argv=argv,
+        event_type_prefix=_EVENT_PREFIX, emit=emit_event,
+        timeout_s=_TIMEOUT_S, stall_s=_STALL_S,
+        progress_kinds={"tool_call", "tool_result"},
+    ))
 
-    out = r.get("out", "")
-    line = next((ln for ln in out.splitlines() if ln.startswith("LANGGRAPH_RESULT:")), "")
-    if not line:
-        # Container was killed by the timeout, crashed before printing its
-        # result line, or docker itself failed to run — surface plainly
-        # rather than silently returning nothing.
-        err = (r.get("err", "") or "no LANGGRAPH_RESULT line in output")[-800:]
-        await emit_event({"type": "langgraph.run.error", "run_id": run_id,
-                          "session_id": session_id, "error": err, "elapsed_s": elapsed})
-        return {"ok": False, "error": err, "elapsed_s": elapsed,
-                "log_tail": out[-800:]}
-
-    try:
-        result = json.loads(line[len("LANGGRAPH_RESULT:"):])
-    except Exception as e:
-        return {"ok": False, "error": f"could not parse result: {e}",
-                "elapsed_s": elapsed, "raw": line[:800]}
-
-    result.setdefault("elapsed_s", elapsed)
-    await emit_event({"type": "langgraph.run.done", "run_id": run_id,
-                      "session_id": session_id, "ok": result.get("ok", False),
-                      "elapsed_s": elapsed})
-    return result
+    return {"ok": True, "run_id": run_id, "status": "running"}

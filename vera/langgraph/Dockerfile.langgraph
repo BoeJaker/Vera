@@ -10,4 +10,8 @@ RUN pip install --no-cache-dir \
     langchain-core==1.5.5
 WORKDIR /app
 COPY langgraph_entrypoint.py /app/langgraph_entrypoint.py
+# Belt-and-suspenders alongside the entrypoint's own flush=True on every
+# print: guarantees stdout is never block-buffered, so LANGGRAPH_STEP: lines
+# reach the host as they're produced instead of only at process exit.
+ENV PYTHONUNBUFFERED=1
 ENTRYPOINT ["python3", "/app/langgraph_entrypoint.py"]
