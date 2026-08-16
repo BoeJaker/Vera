@@ -122,3 +122,42 @@ def test_ops_apkovl_docker_survives_broken_openrc_diskless_boot():
     # the exact buggy pattern that never brought Docker up must not come back
     assert "&& service docker start" not in start
     assert "service docker start\n" not in start
+
+
+def test_ops_apkovl_tui_has_proxmox_host_picker():
+    """The menu must let you pick ANY published Proxmox host (not a single hard-coded
+    one) and SSH into it with the estate key — the 'easily connect to any Proxmox host'
+    requirement."""
+    f = pxe_ops_apkovl_files("10.22.22.25")
+    tui = f["usr/local/bin/foundry-tui"]
+    assert "choosepve" in tui                       # host-picker function exists
+    assert "/ops/pve_hosts" in tui                  # reads the published host list
+    assert 'host "Pick Proxmox host' in tui         # menu entry to switch host
+    assert "-i /root/.ssh/id_estate" in tui         # uses the estate key to reach Proxmox
+    # target defaults to the reachable server IP, not the old hard-coded LAN address
+    assert "192.168.0.200" not in tui
+    assert f["etc/foundry/pve"].strip() == "10.22.22.25"
+
+
+def test_ops_apkovl_start_fetches_estate_key_and_menu():
+    """The boot script must pull the estate SSH key (to reach Proxmox) and refresh the
+    menu from the server so TUI updates propagate without rebuilding the image."""
+    start = pxe_ops_apkovl_files("10.22.22.25")["etc/local.d/foundry.start"]
+    assert "http://10.22.22.25/ops/id_estate" in start
+    assert "/root/.ssh/id_estate" in start
+    assert "http://10.22.22.25/ops/foundry-tui" in start
+
+
+def test_ops_apkovl_sdwriter_present_and_safe():
+    """The SD-card writer must exist, be wired into the menu, and — critically — only
+    offer removable/USB/MMC disks so a laptop's internal system disk can't be wiped."""
+    f = pxe_ops_apkovl_files("10.22.22.25")
+    assert "usr/local/bin/foundry-sdwrite" in f
+    sd = f["usr/local/bin/foundry-sdwrite"]
+    # SAFETY: only removable / usb / mmc targets are ever listed as a write destination
+    assert 'case "$rmv:$trn" in 1:*|*:usb|*:mmc)' in sd
+    assert 'dd of="$DEV"' in sd                          # writes with dd to the chosen disk
+    assert "/ops/pi_images" in sd                        # Raspberry Pi image catalogue
+    assert "xz -dc" in sd                                # handles .img.xz (Raspberry Pi OS)
+    # wired into the ops menu
+    assert "sdcard) clear; /usr/local/bin/foundry-sdwrite" in f["usr/local/bin/foundry-tui"]
