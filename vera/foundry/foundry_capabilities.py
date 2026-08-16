@@ -58,6 +58,7 @@ from Vera.vera.foundry.foundry_core import (
     _render_rpi_cmdline, _render_ipxe, _render_autoinstall, _render_boot,
     pick_node, cluster_join_script, CLUSTER_KINDS,
     cluster_init_script, parse_init_token,
+    pxe_dnsmasq_conf, pxe_ipxe_menu,
 )
 from Vera.vera.security import secrets as vsecrets
 
@@ -1422,48 +1423,136 @@ async def cap_pxe_render(profile_id: str = "", trace_id=None) -> Dict:
     return {"ok": True, **_render_boot(prof, cfg, img, cscripts)}
 
 
+def _apkovl_tar_b64(files: Dict) -> str:
+    """Build an Alpine apkovl (a gzip tar of an overlay rooted at /) from {relpath:
+    content} in memory and base64-encode it — no fragile shell tar-building."""
+    import io as _io, tarfile as _tf
+    buf = _io.BytesIO()
+    with _tf.open(fileobj=buf, mode="w:gz") as tar:
+        for path, content in files.items():
+            data = content.encode()
+            ti = _tf.TarInfo(path)
+            ti.size = len(data)
+            ti.mode = 0o755 if (path.startswith("usr/local/bin") or path.endswith(".start")) else 0o644
+            tar.addfile(ti, _io.BytesIO(data))
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+def _pxe_server_setup_script(server_ip, iface, uplink, subnet, conf_b64, menu_b64, apkovl_b64) -> str:
+    """The node-side setup shell — reproduces the hand-proven netboot server: install
+    dnsmasq+iPXE, write the (core-generated) fenced dnsmasq conf + iPXE menu + ops
+    apkovl, fetch iPXE/Alpine/netboot.xyz/Debian-d-i assets, enable scoped NAT, then
+    start dnsmasq (with a fencing gate that aborts if it binds anything but `iface`)
+    and an HTTP server bound to `server_ip`."""
+    return f"""set +e
+mkdir -p /srv/foundry/tftp /srv/foundry/http/alpine /srv/foundry/http/swarm /srv/foundry/http/ops /srv/foundry/http/debian12
+rm -f /usr/sbin/policy-rc.d
+DEBIAN_FRONTEND=noninteractive apt-get install -y dnsmasq ipxe curl >/tmp/foundry_pxe.log 2>&1
+systemctl stop dnsmasq 2>/dev/null
+echo {conf_b64} | base64 -d > /etc/dnsmasq.d/vera-foundry.conf
+echo {menu_b64} | base64 -d > /srv/foundry/tftp/boot.ipxe
+echo {apkovl_b64} | base64 -d > /srv/foundry/http/alpine/node.apkovl.tar.gz
+for f in undionly.kpxe ipxe.efi snponly.efi; do cp -f /usr/lib/ipxe/$f /srv/foundry/tftp/ 2>/dev/null; done
+NB=https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/x86_64/netboot
+for f in vmlinuz-lts initramfs-lts modloop-lts; do [ -s /srv/foundry/http/alpine/$f ] || curl -fsS --max-time 220 -o /srv/foundry/http/alpine/$f "$NB/$f"; done
+for f in netboot.xyz.lkrn netboot.xyz.efi; do [ -s /srv/foundry/http/$f ] || curl -fsSL --max-time 90 -o /srv/foundry/http/$f "https://github.com/netbootxyz/netboot.xyz/releases/latest/download/$f"; done
+DI=http://deb.debian.org/debian/dists/bookworm/main/installer-amd64/current/images/netboot/debian-installer/amd64
+[ -s /srv/foundry/http/debian12/linux ] || curl -fsS --max-time 150 -o /srv/foundry/http/debian12/linux "$DI/linux"
+[ -s /srv/foundry/http/debian12/initrd.gz ] || curl -fsS --max-time 180 -o /srv/foundry/http/debian12/initrd.gz "$DI/initrd.gz"
+sysctl -w net.ipv4.ip_forward=1 >/dev/null
+iptables -t nat -C POSTROUTING -s {subnet} -o {uplink} -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s {subnet} -o {uplink} -j MASQUERADE
+dnsmasq --test 2>&1
+systemctl restart dnsmasq; sleep 2
+L=$(ss -ulnp 2>/dev/null | grep -E ":67 ")
+if echo "$L" | grep -q "{iface}:67" && ! echo "$L" | grep -qE "0\\.0\\.0\\.0:67[^%]|192\\.168\\.0\\."; then echo FENCE_OK; else echo FENCE_FAIL; systemctl stop dnsmasq; exit 2; fi
+systemctl disable dnsmasq 2>/dev/null
+systemctl stop foundry-http 2>/dev/null; systemctl reset-failed foundry-http 2>/dev/null
+systemd-run --unit=foundry-http --collect /usr/bin/python3 -m http.server 80 --bind {server_ip} --directory /srv/foundry/http >/dev/null 2>&1
+sleep 1
+echo "DEPLOY_OK dnsmasq=$(systemctl is-active dnsmasq) http=$(systemctl is-active foundry-http)"
+"""
+
+
 @capability(
     "foundry.pxe.server.deploy", http_method="POST", http_path="/foundry/pxe/server/deploy",
     http_tags=["foundry"], memory="on",
-    description="Stand up the netboot stack (dnsmasq proxy/scoped-DHCP + TFTP + iPXE "
-                "+ HTTP autoinstall) on the configured provisioning host, bound to the "
-                "dedicated bridge/VLAN. Gated: requires foundry.pxe.config.host (the "
-                "vera-foundry CT) to exist. Output: {ok, deployed, steps} or a clear "
-                "prerequisite error.",
+    description="Stand up (idempotently) the netboot stack on a Proxmox node, bound to a "
+                "DEDICATED bridge — dnsmasq DHCP+DNS+TFTP fenced to that interface (never the "
+                "main LAN, verified by a fencing gate that aborts on a bad bind), iPXE + an HTTP "
+                "boot menu generated from the Foundry image catalogue (local-disk default, "
+                "Alpine RAM ops/desktop nodes that join the swarm as workers, netboot.xyz for all "
+                "OSes incl. Kali, and catalogue-driven installers), plus scoped NAT so provisioned "
+                "hosts reach package mirrors. Inputs: cluster_id (str), node (str — auto-resolved), "
+                "iface (str='vmbr2'), server_ip (str='10.22.22.25'), range_lo/range_hi, uplink "
+                "(str='vmbr0'), subnet (str='10.22.22.0/24'). Output: {ok, deployed, fenced, node}.",
 )
-async def cap_pxe_server_deploy(trace_id=None) -> Dict:
-    cfg = await _pxe_cfg()
-    if not cfg.get("host"):
-        return {"error": "set foundry.pxe.config host first (the vera-foundry "
-                         "provisioning CT) — create it, then deploy the netboot stack "
-                         "onto the dedicated provisioning bridge/VLAN (Phase 2)."}
-    # Render every profile into its netboot artifacts (pure) — this is what gets
-    # written to the host's TFTP/HTTP roots.
-    r = _redis()
-    profs = (await cap_pxe_profile_list()).get("profiles", [])
-    rendered: Dict[str, Dict] = {}
-    for p in profs:
-        img: Dict = {}
-        if p.get("image_id") and r:
-            iraw = await r.hget(K_IMAGES, p["image_id"])
-            if iraw:
-                try:
-                    img = json.loads(iraw)
-                except Exception:
-                    img = {}
-        cscripts = await _resolve_cluster_scripts(p.get("features") or [])
-        rendered[p["id"]] = _render_boot(p, cfg, img, cscripts)
-    # The actual install (dnsmasq scoped-DHCP + TFTP + iPXE + HTTP) on the host is
-    # gated until the vera-foundry CT + dedicated VLAN exist — never touch the main
-    # LAN's DHCP. When ready this writes `rendered` to the host over SSH.
-    return {"ok": True, "deployed": False, "host": cfg.get("host"),
-            "rendered_profiles": len(rendered),
-            "profiles": {pid: {"boot_type": rv["boot_type"], "arch": rv["arch"],
-                               "display": rv["display"], "files": list(rv["artifacts"].keys())}
-                         for pid, rv in rendered.items()},
-            "note": f"rendered {len(rendered)} profile(s) for host '{cfg['host']}'. "
-                    "Netboot install writes these to the host's TFTP/HTTP roots once "
-                    "the dedicated VLAN + CT are up — gated so it never touches the main LAN."}
+async def cap_pxe_server_deploy(cluster_id: str = "", node: str = "", iface: str = "vmbr2",
+                                server_ip: str = "10.22.22.25", range_lo: str = "10.22.22.100",
+                                range_hi: str = "10.22.22.150", uplink: str = "vmbr0",
+                                subnet: str = "10.22.22.0/24", trace_id=None) -> Dict:
+    if not node:
+        node = await _resolve_node(cluster_id)
+    if not node:
+        return {"error": "no node — pass node= or register a Proxmox cluster (proxmox.cluster.save)"}
+    # install entries come from the catalogue (only the Debian d-i is hosted here; every
+    # other OS install/live is covered by the netboot.xyz entry).
+    install_images = [{"id": "debian12", "os": "Debian", "version": "12"}]
+    conf = pxe_dnsmasq_conf(server_ip, iface, range_lo, range_hi, except_ifaces=[uplink])
+    menu = pxe_ipxe_menu(server_ip, install_images=install_images)
+    apk_b64 = _apkovl_tar_b64(pxe_ops_apkovl_files(server_ip))
+    _b = lambda s: base64.b64encode(s.encode()).decode()
+    script = _pxe_server_setup_script(server_ip, iface, uplink, subnet, _b(conf), _b(menu), apk_b64)
+    res = await _call("proxmox.node.exec", cluster_id=cluster_id, command=script, timeout=520)
+    out = (res.get("stdout") or "") + (res.get("error") or "")
+    fenced = "FENCE_OK" in out
+    ok = "DEPLOY_OK" in out and fenced
+    await emit_event({"type": "foundry.pxe.server.deployed", "node": node, "iface": iface, "ok": ok})
+    return {"ok": ok, "deployed": ok, "fenced": fenced, "node": node, "iface": iface,
+            "server_ip": server_ip, "subnet": subnet,
+            "note": ("netboot server up + LAN-fenced; PXE-boot a client on the dedicated bridge"
+                     if ok else "deploy did not fully succeed — see output"),
+            "output": out[-1500:]}
+
+
+@capability(
+    "foundry.pxe.server.status", http_method="GET", http_path="/foundry/pxe/server/status",
+    http_tags=["foundry"], memory="off", silent=True,
+    description="Live status of the netboot server on a Proxmox node: dnsmasq/HTTP active, the "
+                "exact listen bindings (to confirm DHCP/DNS/TFTP are fenced to the bridge), NAT "
+                "rule present, and which boot assets are hosted. Inputs: cluster_id, node "
+                "(auto-resolved), iface (str='vmbr2'). Output: {deployed, fenced, listeners, assets}.",
+)
+async def cap_pxe_server_status(cluster_id: str = "", node: str = "", iface: str = "vmbr2",
+                                subnet: str = "10.22.22.0/24", trace_id=None) -> Dict:
+    check = (f"echo DNSMASQ=$(systemctl is-active dnsmasq 2>/dev/null); "
+             f"echo HTTP=$(systemctl is-active foundry-http 2>/dev/null); "
+             f"echo LISTEN:; ss -ulnp 2>/dev/null | grep -E ':53 |:67 |:69 ' | sed -E 's/ +users.*//'; "
+             f"echo NAT:; iptables -t nat -S POSTROUTING 2>/dev/null | grep '{subnet}' || echo none; "
+             f"echo ASSETS:; ls /srv/foundry/tftp /srv/foundry/http /srv/foundry/http/alpine 2>/dev/null | tr '\\n' ' '")
+    res = await _call("proxmox.node.exec", cluster_id=cluster_id, command=check, timeout=40)
+    out = res.get("stdout", "") or res.get("error", "")
+    deployed = "DNSMASQ=active" in out
+    fenced = (f"{iface}:67" in out) and ("0.0.0.0:67 " not in out) and ("192.168.0." not in out.split("NAT:")[0])
+    return {"deployed": deployed, "fenced": fenced, "iface": iface, "output": out[-1500:]}
+
+
+@capability(
+    "foundry.pxe.server.teardown", http_method="POST", http_path="/foundry/pxe/server/teardown",
+    http_tags=["foundry"], memory="on",
+    description="Tear down the netboot server on a Proxmox node: stop dnsmasq + the HTTP server, "
+                "remove the Foundry dnsmasq config + the scoped NAT rule. Leaves the bridge and "
+                "the main LAN untouched. Inputs: cluster_id, node, subnet, uplink. Output: {ok}.",
+)
+async def cap_pxe_server_teardown(cluster_id: str = "", node: str = "", subnet: str = "10.22.22.0/24",
+                                  uplink: str = "vmbr0", trace_id=None) -> Dict:
+    cmd = (f"systemctl stop dnsmasq foundry-http 2>/dev/null; systemctl reset-failed foundry-http 2>/dev/null; "
+           f"rm -f /etc/dnsmasq.d/vera-foundry.conf; "
+           f"iptables -t nat -D POSTROUTING -s {subnet} -o {uplink} -j MASQUERADE 2>/dev/null; "
+           f"echo TORNDOWN")
+    res = await _call("proxmox.node.exec", cluster_id=cluster_id, command=cmd, timeout=40)
+    ok = "TORNDOWN" in (res.get("stdout", "") or "")
+    await emit_event({"type": "foundry.pxe.server.teardown", "ok": ok})
+    return {"ok": ok, "note": "dnsmasq/HTTP stopped, config + NAT removed; TFTP/HTTP files kept"}
 
 
 @APP.get("/foundry/panel", include_in_schema=False)
