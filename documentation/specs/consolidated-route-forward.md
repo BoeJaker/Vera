@@ -214,11 +214,23 @@ a system that makes a local `main` merge *impossible without explicit user autho
 Reuses the exact pattern already on `bleeding-edge` (the remote-push guard); this is its
 local-merge twin. Finish parts 2–3 BEFORE M4/M5/M6 widen autonomy.
 
-**M4 — Board ↔ pipeline sync (Stage 2 start).** `board.sync` first (local, no GitHub needed) —
-reflect pipeline/run/error state onto board items so the board is the single work view.
-Then GitHub provider + `board.budget`. (Also would have surfaced the M3.5 concurrent-branch
-collision risk up front, rather than needing `evolve.sandbox.list` called speculatively to
-discover it.)
+**M4 — Board ↔ pipeline sync (Stage 2 start). ◐ IN PROGRESS (2026-08-16).** `board.sync`
+first (local, no GitHub needed) — reflect pipeline state onto board items so the board is
+the single work view. Then GitHub provider + `board.budget`.
+- **`board.sync` cap ✓ + hardened (bleeding-edge `457b908`).** Reflects a linked pipeline's
+  decision/gate/review onto its item — lane + an idempotent progress comment (dedupe via
+  `sync_sig`), never yanking an item out of a human-parked `done`/`dropped`. The lane mapping,
+  fingerprint, and parked-lane guard were extracted from the cap into pure `board_core.py`
+  helpers (`pipeline_lane`/`pipeline_sync_sig`/`should_apply_lane`) + a **critical-tier
+  `test_board_sync` (13 cases)**; a review-found gap was fixed (`decision=rolled_back` now maps
+  to `dropped`, was silently `in_progress`). Only reflects the `pipeline` link today (items
+  carry no `run`/`error` link field yet).
+- **○ remaining — scheduled poll.** `board.sync` is a cap but nothing calls it on a timer, so
+  the board only updates on an explicit call / board-load. Wire a `sched.*` entry (the spec's
+  "polls on a schedule") — small, and it makes the board self-updating.
+- **○ remaining — GitHub provider + `board.budget`.** Blocked on the deploy key (D1/T3); the
+  public write path also needs the full `secret_scan` wired in (board's `_scan_secret` is
+  deliberately conservative defence-in-depth until then).
 
 **M5 — Vera executor tier (Stage 4).** Independent of 2/3; local models doing idle-only board
 work with honest review. Gated by capacity pool (already built).
@@ -278,18 +290,16 @@ file's concurrent-edit pressure eases → widen autonomy / add coordination visi
   instead (`docs/route-forward-m3-5`). Needs a real fix before Phase E / M1 can rely on
   `content.edit` again — likely a `git worktree repair` or `git worktree add` re-link
   against the existing directory, but verify no in-flight edits would be lost first.
-- **T8 — `bleeding-edge` mirror can't refresh: root-owned `.git/refs/heads/loop-lab/`
-  (found 2026-08-16).** Every `promote` into `bleeding-edge` now reports
-  `standing_container_refresh: {ok:false, "cannot lock ref
-  refs/heads/loop-lab/bleeding-edge-mirror ... Permission denied"}`. Cause:
-  `/home/boejaker/Vera/.git/refs/heads/loop-lab` is owned `root:root` (mode 755), so the
-  `boejaker` process can't create the mirror lock — the standing bleeding-edge container's
-  mirror branch is frozen at an old tip. The merges themselves succeed; only the mirror
-  fast-forward fails, so it's non-blocking (prod runs `main`, unaffected). Fix: one-time
-  `sudo chown -R boejaker: /home/boejaker/Vera/.git/refs/heads/loop-lab` (needs root — a
-  root-owned artifact from an earlier in-container/root git op, same class as the C3
-  root-owned-removal cases). Until then, `evolve.bleeding_edge.container.ensure` is the manual
-  way to point the standing container at the current tip.
+- **T8 — `bleeding-edge` mirror couldn't refresh: root-owned `.git/refs/heads/loop-lab/`.
+  ✓ FIXED (2026-08-16).** Every `promote` into `bleeding-edge` had reported
+  `standing_container_refresh: {ok:false, "cannot lock ref … Permission denied"}` because
+  `.git/refs/heads/loop-lab/` (and its reflog `.git/logs/refs/heads/loop-lab/`, and a handful
+  of loose objects under `.git/objects/`) were owned `root:root` from an earlier
+  in-container/root git op, so the `boejaker` process couldn't take a ref lock. Fix applied:
+  `sudo chown -R boejaker: /home/boejaker/Vera/.git` (swept the whole class, not just the one
+  dir), verified with `fsck --connectivity-only` clean. Confirmed end-to-end: the next
+  `promote` reported `standing_container_refresh: {ok:true, mirror refreshed}`. Merges were
+  never affected (only the mirror fast-forward), and prod (`main`) was never involved.
 
 ---
 
