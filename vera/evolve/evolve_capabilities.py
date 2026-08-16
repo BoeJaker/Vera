@@ -7025,6 +7025,95 @@ async def evolve_tests_matrix(trace_id=None):
             "critical_names": sorted(critical)}
 
 
+# ── M3.4 test generation (evolve.tests.generate) ──────────────────────────────
+_TEST_GEN_SYSTEM = (
+    "You are a senior Python test engineer. You write focused, DETERMINISTIC "
+    "pytest unit tests for PURE functions only — no network, no filesystem, no "
+    "database, no async, no global state, no mocks unless trivial. You output ONLY "
+    "the complete test file content: no prose, no explanation, no markdown fences."
+)
+_TEST_GEN_PROMPT = (
+    "Write pytest unit tests for the pure functions in the module below.\n\n"
+    "Source path: {path}\n"
+    "The test file MUST start like this (repo convention — the Vera.vera namespace "
+    "trap means only the lowercase import binds to the branch code):\n"
+    "    import os, sys\n"
+    "    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))\n"
+    "    from {import_name} import <names>\n"
+    "Target test file: {suggested_test}\n\n"
+    "Rules:\n"
+    "- Test ONLY pure, deterministic functions (inputs -> outputs). SKIP anything "
+    "doing I/O, network, DB, async, or relying on global/mutable state.\n"
+    "- Cover normal, edge, empty/None and boundary cases; descriptive test names, "
+    "one behaviour per test.\n"
+    "- Output ONLY the complete test file content, nothing else.\n\n"
+    "Module source:\n{src}\n"
+)
+
+
+@capability("evolve.tests.generate", memory="off",
+            http_method="POST", http_path="/evolve/tests/generate", http_tags=["evolve"],
+            description="M3.4 TEST GENERATION: for a branch's changed pure-logic modules "
+                        "(vera/**/*.py, excluding tests/ and __init__), LLM-PROPOSE pytest unit "
+                        "tests that follow the repo's sys.path-insert + lowercase-import style so "
+                        "new code can arrive with coverage. PROPOSES content for review in the Loop "
+                        "Lab Unit-tests panel; does NOT write files (review, then save via a branch "
+                        "commit / content.edit). LLM-backed — slow, one call per module. Inputs: "
+                        "branch (str!), base (str — default bleeding-edge), module (str — one "
+                        "explicit vera/ path, else the branch's changed modules), provider (str — "
+                        "editor LLM), max_modules (int=3). Output: {ok, base, branch, "
+                        "proposals:[{module, import_name, suggested_test, exists, tests_code}], count}.")
+async def evolve_tests_generate(branch: str = "", base: str = "", module: str = "",
+                                provider: str = "", max_modules: int = 3, trace_id=None):
+    from Vera.vera.evolve.test_gen_core import (          # noqa: E402
+        strip_code_fence as _strip_fence,
+        test_target_for as _test_target,
+        generatable_modules as _gen_mods,
+    )
+    branch = (branch or "").strip()
+    if not branch:
+        return {"error": "branch required"}
+    root = str(_repo_root())
+    base = (base or "").strip() or await _default_pipeline_base()
+    if not (await _git("rev-parse", "--verify", f"refs/heads/{branch}", repo_root=root))["ok"]:
+        return {"error": f"unknown branch: {branch}"}
+    if module.strip():
+        candidates = _gen_mods([module.strip()], max_n=1)
+    else:
+        df = await _git("diff", "--name-only", f"{base}...{branch}", repo_root=root)
+        changed = [ln for ln in (df.get("out", "") or "").splitlines() if ln.strip()]
+        candidates = _gen_mods(changed, max_n=max_modules)
+    if not candidates:
+        return {"ok": True, "base": base, "branch": branch, "proposals": [], "count": 0,
+                "note": "no changed vera/*.py source modules to generate tests for"}
+    proposals: List[Dict[str, Any]] = []
+    for path in candidates:
+        show = await _git("show", f"{branch}:{path}", repo_root=root)
+        if not show.get("ok"):
+            continue
+        src = (show.get("out", "") or "")[:12000]        # bound the prompt
+        tgt = _test_target(path)
+        prompt = _TEST_GEN_PROMPT.format(path=path, import_name=tgt["import_name"],
+                                         suggested_test=tgt["suggested_test"], src=src)
+        gen = await _call("llm.generate", prompt=prompt, system=_TEST_GEN_SYSTEM,
+                          model=(provider or None), job_type="chat",
+                          caller="evolve.tests.generate")
+        if isinstance(gen, dict) and gen.get("error"):
+            proposals.append({"module": path, "import_name": tgt["import_name"],
+                              "suggested_test": tgt["suggested_test"], "exists": False,
+                              "tests_code": "", "error": gen["error"]})
+            continue
+        code = _strip_fence((gen or {}).get("text", "") if isinstance(gen, dict) else str(gen))
+        proposals.append({"module": path, "import_name": tgt["import_name"],
+                          "suggested_test": tgt["suggested_test"],
+                          "exists": (Path(root) / tgt["suggested_test"]).exists(),
+                          "tests_code": code})
+    await emit_event({"type": "evolve.tests.generated", "branch": branch,
+                      "count": len(proposals)})
+    return {"ok": True, "base": base, "branch": branch,
+            "proposals": proposals, "count": len(proposals)}
+
+
 @capability("evolve.sandbox.fs.list", memory="off", silent=True,
             http_method="GET", http_path="/evolve/sandbox/fs/list", http_tags=["evolve"],
             description="FILE EXPLORER: list a directory inside a sandbox "
