@@ -210,7 +210,30 @@ html.vpb-nav-hosted body{padding-left:0}
   <div class="rail-grp">Library</div>
   <button class="btn" data-sec="tasks" onclick="nav('tasks')"><span class="ic">☰</span>Tasks</button>
   <button class="btn" data-sec="runs" onclick="nav('runs')"><span class="ic">↻</span>Runs</button>
+  <button class="btn" data-sec="unittests" onclick="nav('unittests')"><span class="ic">◫</span>Unit tests</button>
   <button class="btn" data-sec="settings" onclick="nav('settings')"><span class="ic">⚙</span>Settings</button>
+</div>
+
+<!-- ── UNIT TESTS: coverage matrix + gate race-to-green ── -->
+<div class="sec" id="sec-unittests" style="display:none">
+  <div class="card">
+    <div class="card-h"><span class="card-t">Unit tests — coverage &amp; gate tier</span>
+      <span class="hint" id="ut-matrix-status">—</span>
+      <span style="flex:1"></span>
+      <input id="ut-filter" placeholder="filter module…" style="width:150px" oninput="_utRender()">
+      <label class="hint" style="margin:0 6px"><input type="checkbox" id="ut-only-gated" onchange="_utRender()"> gated only</label>
+      <button class="btn sm" onclick="loadUnitTests()">&#8635;</button>
+    </div>
+    <div id="ut-matrix-summary" class="row" style="gap:6px;flex-wrap:wrap;margin:4px 0"></div>
+    <div class="hint" style="margin-bottom:6px">Only the <b>critical</b> tier gates a merge (M3.1). Non-critical modules run but don't block — promote them into the tier (tests/conftest.py <span class="mono">_CRITICAL_MODULES</span>) as they harden.</div>
+    <div id="ut-matrix-body"><div class="empty">Loading…</div></div>
+  </div>
+  <div class="card" style="margin-top:10px">
+    <div class="card-h"><span class="card-t">Gate race-to-green</span>
+      <span class="hint">recent code-pipeline gate results (newest right) — click a cell to open the run</span>
+    </div>
+    <div id="ut-lanes"><div class="empty">—</div></div>
+  </div>
 </div>
 
 <!-- ── LOGS: unified sandbox log/error/perf capture ── -->
@@ -936,7 +959,7 @@ function scChip(v){return '<span class="sc" style="color:'+scColor(v)+';backgrou
 function nav(sec){
   document.querySelectorAll('#nav .btn').forEach(b=>b.classList.toggle('on',b.dataset.sec===sec));
   document.querySelectorAll('.sec').forEach(s=>s.style.display=s.id==='sec-'+sec?'':'none');
-  const f={test:loadTest,tasks:loadTasks,runs:loadRuns,improve:loadSessions,watch:loadWatch,pipelines:()=>{loadGit();loadPipelines()},
+  const f={test:loadTest,tasks:loadTasks,runs:loadRuns,unittests:loadUnitTests,improve:loadSessions,watch:loadWatch,pipelines:()=>{loadGit();loadPipelines()},
     review:loadReview,logs:loadLogs,csessions:loadCSessions,board:loadBoardTab,notes:loadNotes,capacity:loadCapacity,swarm:loadSwarm,
     sources:loadSources,sandbox:loadSandbox,activity:loadAudit,variants:loadVariants,settings:fillSettings,overview:loadOverview,errors:loadErrors}[sec];
   if(f)f();
@@ -956,8 +979,58 @@ if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
   {id:'overview', label:'Suite'}, {id:'errors', label:'Errors'}, {id:'variants', label:'Variants'},
   {id:'activity', label:'Activity'},
   {id:'pipelines', label:'CI / CD'}, {id:'review', label:'Review'}, {id:'sources', label:'Sources'}, {id:'sandbox', label:'Sandbox'}, {id:'logs', label:'Logs'}, {id:'csessions', label:'Sessions'}, {id:'board', label:'Board'}, {id:'notes', label:'Notes'}, {id:'capacity', label:'Capacity'}, {id:'swarm', label:'Swarm'},
-  {id:'tasks', label:'Tasks'}, {id:'runs', label:'Runs'}, {id:'settings', label:'Settings'},
+  {id:'tasks', label:'Tasks'}, {id:'runs', label:'Runs'}, {id:'unittests', label:'Unit tests'}, {id:'settings', label:'Settings'},
 ]);
+
+/* ═══ UNIT TESTS — coverage matrix + gate race-to-green (route-forward M3.2) ═══ */
+let _utMatrix=null;
+async function loadUnitTests(){
+  const el=$('ut-matrix-body');if(!el)return;
+  const [m,pl]=await Promise.all([api('/evolve/tests/matrix').catch(()=>null),
+                                  api('/evolve/pipeline/list?limit=40').catch(()=>null)]);
+  _utMatrix=(m&&m.ok)?m:null;
+  if(_utMatrix){
+    if($('ut-matrix-status'))$('ut-matrix-status').textContent=m.total_tests+' tests · '+m.total_modules+' modules';
+    const sum=$('ut-matrix-summary');
+    if(sum)sum.innerHTML=[['modules',m.total_modules,'#6a6a6a'],['tests',m.total_tests,'#4a9ed0'],
+      ['gated modules',m.critical_modules,'#3cb371'],['gated tests',m.critical_tests,'#3cb371'],
+      ['ungated tests',(m.total_tests-m.critical_tests),'#d0902a']]
+      .map(a=>'<span class="tag" style="border-left:3px solid '+a[2]+'">'+a[0]+' '+a[1]+'</span>').join('');
+  } else {
+    if($('ut-matrix-status'))$('ut-matrix-status').textContent='—';
+    el.innerHTML='<div class="empty">Could not load the test matrix — restart prod if evolve.tests.matrix was just deployed.</div>';
+  }
+  _utRender();
+  const lanes=$('ut-lanes');
+  if(lanes){
+    const pipes=((pl&&pl.pipelines)||[]).filter(p=>p.kind==='code').slice(0,30).reverse();
+    if(!pipes.length){lanes.innerHTML='<div class="empty">No code-pipeline runs yet.</div>';}
+    else lanes.innerHTML='<div class="row" style="gap:3px;flex-wrap:wrap;align-items:flex-end">'+pipes.map(function(p){
+      const c=p.gate_passed===true?'#3cb371':(p.gate_passed===false?'#dd6a6a':'#6a6a6a');
+      const lbl=(p.gate_passed===true?'gate PASS':(p.gate_passed===false?'gate FAIL':'pending'));
+      return '<span onclick="openPipe(\''+esc(p.id)+'\')" title="'+esc(lbl+' · '+(p.branch||'')+' · '+p.id)+'" style="width:13px;height:24px;border-radius:3px;background:'+c+';cursor:pointer;display:inline-block"></span>';
+    }).join('')+'</div><div class="hint" style="margin-top:5px">green = gate passed · red = failed (blocked) · grey = pending / no .py. Click to open the run.</div>';
+  }
+}
+function _utRender(){
+  const el=$('ut-matrix-body');if(!el||!_utMatrix)return;
+  const q=(($('ut-filter')||{}).value||'').toLowerCase().trim();
+  const onlyGated=$('ut-only-gated')&&$('ut-only-gated').checked;
+  let mods=(_utMatrix.modules||[]).filter(x=>(!q||x.module.toLowerCase().indexOf(q)>=0)&&(!onlyGated||x.critical));
+  mods=mods.slice().sort((a,b)=>(b.critical-a.critical)||(b.tests-a.tests)||a.module.localeCompare(b.module));
+  if(!mods.length){el.innerHTML='<div class="empty">No modules match.</div>';return}
+  const rows=mods.map(function(x){
+    const g=x.critical
+      ?'<span class="tag" style="background:var(--acc3);color:#111" title="critical gate tier — a regression here blocks promote">★ gate</span>'
+      :'<span class="hint" title="runs but does not block a merge yet">not gated</span>';
+    const w=Math.min(100,Math.round(x.tests/60*100));
+    return '<tr'+(x.critical?' style="background:rgba(60,179,113,.06)"':'')+'>'
+      +'<td class="mono" style="font-size:10.5px">'+esc(x.module)+'</td>'
+      +'<td style="white-space:nowrap"><span class="bar" style="display:inline-block;width:70px;vertical-align:middle"><span style="width:'+w+'%;background:'+(x.critical?'var(--ok)':'var(--dim2)')+'"></span></span> <span class="mono">'+x.tests+'</span></td>'
+      +'<td>'+g+'</td></tr>';
+  }).join('');
+  el.innerHTML='<table style="width:100%"><tr><th style="text-align:left">module</th><th style="text-align:left">tests</th><th style="text-align:left">gate</th></tr>'+rows+'</table>';
+}
 
 /* ═══ TARGET SELECTOR (categorised: what am I improving?) ═══ */
 let _targets=null;
