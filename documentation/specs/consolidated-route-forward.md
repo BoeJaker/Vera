@@ -123,8 +123,8 @@ scheduled content auto-push → `content.remove`/rename. Retire prod-share editi
 **M2 — Traceability guardrails (Phase D/E lite).** Doc/test-presence check on merge +
 auto-postmortem writer. Cheap, high-leverage, reuses the pipeline + `evolve.errors`.
 
-**M3 — Test-tier gate (Phase B). ◐ IN PROGRESS (M3.1–M3.4 all landed on `bleeding-edge`
-2026-08-16; only perf-gating remains).** Tier `tests/`; wire the merge gate to run the critical-system
+**M3 — Test-tier gate (Phase B). ✓ CORE COMPLETE (M3.1–M3.4 + perf-gating first slice all
+landed 2026-08-16; only perf-gating follow-ons remain).** Tier `tests/`; wire the merge gate to run the critical-system
 tier — the safety net both plans lean on. Closes **T6**. Broken into:
 
 - **M3.1 — Critical-tier gate for any branch worktree. ✓ DONE (bleeding-edge).** `gate_passed`
@@ -156,8 +156,17 @@ tier — the safety net both plans lean on. Closes **T6**. Broken into:
   the M3.2 matrix. **Live-verified:** generated a correct 5.7 KB `test_sandbox_reap.py` proposal
   end-to-end. `evolve.tasks.generate` (benchmark tasks) is unrelated. Follow-on: a one-click
   "save to branch" from the panel (today it's copy-and-commit).
-- **Perf-based gating** (socket-flap / bad response-time / Ollama-contention thresholds) is a
-  sibling of M3.4, tracked separately (originally scoped under M3); see §2.A / the perf subsystem.
+- **Perf-based gating. ◑ FIRST SLICE DONE (bleeding-edge `e08ba46`).** `perf.gate` reduces
+  `perf.scan` (event-loop stalls ≈ socket flap, Ollama saturation/contention, host CPU/RAM,
+  stale consumers, zombie jobs) to a promote verdict `pass|warn|fail`. Pure evaluator
+  (`perf_gate_core.py`, thresholds + strict-vs-advisory blocking + top-findings) with **12
+  critical-tier tests**; live-verified returning `pass`. Wired into `evolve.pipeline.promote`
+  for **code pipelines**, best-effort: records the verdict + a perf step, **advisory by default**
+  (never blocks a merge on transient system load), `VERA_PERF_GATE_STRICT=1` makes a `fail` hold
+  it, `force=true` overrides. Env: `VERA_PERF_GATE_MAX_CRIT`/`MAX_WARN`. **Follow-ons:** a
+  socket-flap-specific detector (vs. the general event-loop-stall proxy), a chat/Ollama p95
+  response-time finding, a perf-verdict indicator in the Unit-tests/Perf panel, and a decision
+  on turning strict mode on once thresholds are tuned against real load.
 
 **M3 is now LIVE IN PROD.** Released to `main` (`f8497f4`/`ac35b34`, then `15644fe` on explicit
 user go-ahead) and **prod was restarted 2026-08-16** — so the whole session's work (M3.1–M3.3
