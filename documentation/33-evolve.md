@@ -1,5 +1,7 @@
 # 33 — Loop Lab (Evolve): CI/CD for the agentic loops
 
+![Loop Lab captured from the running Vera UI](assets/overview/evolve.png)
+
 `vera/evolve/evolve_capabilities.py` is a **CI/CD suite for Vera's agent
 engines** — and, through cap-type tasks, a smoke-test harness for every other
 subsystem. It implements the "**Vera runs, Claude edits, until Vera can take
@@ -583,8 +585,8 @@ the audit log, and a **Sandbox** tab with the `sandbox_mode` control.
 - [Agentic Loops / DAG Workshop](./03-dag-engine.md) — `loops.run`, the profiles the harness tunes; Loop Lab is embedded in its Loop Eval tab
 - [Dream](./17-dream.md) — `loop_eval_nightly`, `markets_evolve_nightly`, `observe_selfheal` triggers; dream source review feeds `evolve.pipeline.from_review`
 - [Markets](./15-markets.md) — the backtest/sweep engine the markets loop drives
-- [Business Simulation](./business-sim) — `business.sim.*`, the ground-truth scorer for `sim`-type tasks
-- [Remote IDE / Claude Code driver](./remote-ide) — where queued code edits execute
+- **Business Simulation** — `business.sim.*`, the ground-truth scorer for `sim`-type tasks
+- [IDE and remote development](08-ide.md) — where queued code edits execute
 - Providers registry — Workers & Ollama → API (critic/editor API keys)
 
 ## Screenshots

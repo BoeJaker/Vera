@@ -1,49 +1,135 @@
-# Vera — Documentation
+# Vera documentation
 
-Auto-generated gallery. Each card links to the full write-up for that domain;
-screenshots are captured by the **operator** (`operator.mission.run
-documentation`) against a loop-lab sandbox and refreshed in place.
+Welcome to the map of Vera. Start with a goal below, then move into the numbered
+reference guides when you need implementation details.
 
-> Regenerate: `python tools/vera-docgen/docgen.py run`  ·  or the capability
-> `docs.build`. Only the images and reference tables are regenerated — authored
-> prose is preserved.
+> [!TIP]
+> New to Vera? Read the [project overview](../README.MD), check
+> [performance and sizing](00-performance-and-sizing.md), and follow
+> [Getting started](../docs/GETTING_STARTED.md).
 
-*Last generated: 2026-08-05 03:11 UTC*
-**34 domains · 0 screenshots · 0 capabilities**
+## See Vera
 
-| Domain | Preview | Capabilities |
-|---|---|---|
-| [**Capability Framework**](01-capability-framework.md) | _(no screenshot)_ | 0 |
-| [**Harness UI**](02-harness-ui.md) | _(no screenshot)_ | 0 |
-| [**DAG & Loop Engine**](03-dag-engine.md) | _(no screenshot)_ | 0 |
-| [**Ollama Cluster**](04-ollama-cluster.md) | _(no screenshot)_ | 0 |
-| [**Memory Graph**](05-memory-graph.md) | _(no screenshot)_ | 0 |
-| [**Data Fabric**](06-data-fabric.md) | _(no screenshot)_ | 0 |
-| [**Research**](07-research.md) | _(no screenshot)_ | 0 |
-| [**IDE & Remote**](08-ide.md) | _(no screenshot)_ | 0 |
-| [**Galaxy Graph**](09-galaxy-graph.md) | _(no screenshot)_ | 0 |
-| [**Configuration**](10-configuration.md) | _(no screenshot)_ | 0 |
-| [**Worldview**](11-worldview.md) | _(no screenshot)_ | 0 |
-| [**Execution**](12-execution.md) | _(no screenshot)_ | 0 |
-| [**Docker**](13-docker.md) | _(no screenshot)_ | 0 |
-| [**Mesh Manager**](14-mesh.md) | _(no screenshot)_ | 0 |
-| [**Markets & Quant Studio**](15-markets.md) | _(no screenshot)_ | 0 |
-| [**Machine Learning**](16-machine-learning.md) | _(no screenshot)_ | 0 |
-| [**Dream**](17-dream.md) | _(no screenshot)_ | 0 |
-| [**Skills & Ontologies**](18-skills-ontologies.md) | _(no screenshot)_ | 0 |
-| [**Agents & Chat**](19-agents-chat.md) | _(no screenshot)_ | 0 |
-| [**Flow Builder**](20-flow-builder.md) | _(no screenshot)_ | 0 |
-| [**vLLM**](21-vllm.md) | _(no screenshot)_ | 0 |
-| [**Workers, Jobs & Syslog**](22-workers-jobs-syslog.md) | _(no screenshot)_ | 0 |
-| [**Integrations (Comms)**](23-integrations.md) | _(no screenshot)_ | 0 |
-| [**Web Browser**](24-web-browser.md) | _(no screenshot)_ | 0 |
-| [**Vector Browser**](25-vector-browser.md) | _(no screenshot)_ | 0 |
-| [**UI Builder**](26-ui-builder.md) | _(no screenshot)_ | 0 |
-| [**OpenClaw**](27-openclaw.md) | _(no screenshot)_ | 0 |
-| [**Render & Media**](28-render.md) | _(no screenshot)_ | 0 |
-| [**Security**](29-security.md) | _(no screenshot)_ | 0 |
-| [**ONNX**](30-onnx.md) | _(no screenshot)_ | 0 |
-| [**Podcast**](31-podcast.md) | _(no screenshot)_ | 0 |
-| [**Cluster Encryption**](32-cluster-encryption.md) | _(no screenshot)_ | 0 |
-| [**Loop Lab (Evolve)**](33-evolve.md) | _(no screenshot)_ | 0 |
-| [**Operator**](34-operator.md) | _(no screenshot)_ | 0 |
+These screenshots were captured from the running Vera UI with Operator on
+2026-08-16. They are stored in the repository, so they render on GitHub and in
+offline documentation.
+
+| Capability Hub | Operator Studio |
+|---|---|
+| [![Capability Hub](assets/overview/cap-hub.png)](assets/overview/cap-hub.png) | [![Operator Studio](assets/overview/operator-studio.png)](assets/overview/operator-studio.png) |
+
+| Performance Monitor | Loop Lab |
+|---|---|
+| [![Performance Monitor](assets/overview/perf-monitor.png)](assets/overview/perf-monitor.png) | [![Loop Lab](assets/overview/evolve.png)](assets/overview/evolve.png) |
+
+| Data Fabric | Agent Loop Graph |
+|---|---|
+| [![Data Fabric](assets/overview/fabric-panel.png)](assets/overview/fabric-panel.png) | [![Agent Loop Graph](assets/overview/loop-graph.png)](assets/overview/loop-graph.png) |
+
+## Choose a path
+
+### Learn the platform
+
+1. [Capability framework](01-capability-framework.md)
+2. [Harness UI](02-harness-ui.md)
+3. [DAG and loop engine](03-dag-engine.md)
+4. [Configuration](10-configuration.md)
+
+### Run models and distributed work
+
+- [Performance and sizing](00-performance-and-sizing.md)
+- [Ollama cluster](04-ollama-cluster.md)
+- [Execution](12-execution.md)
+- [Docker](13-docker.md)
+- [vLLM](21-vllm.md)
+- [Workers, jobs, and syslog](22-workers-jobs-syslog.md)
+
+### Build knowledge systems
+
+- [Memory graph](05-memory-graph.md)
+- [Data fabric](06-data-fabric.md)
+- [Research](07-research.md)
+- [Galaxy graph](09-galaxy-graph.md)
+- [Worldview](11-worldview.md)
+- [Skills and ontologies](18-skills-ontologies.md)
+- [Vector browser](25-vector-browser.md)
+
+### Build agents and interfaces
+
+- [Agents and chat](19-agents-chat.md)
+- [Flow Builder](20-flow-builder.md)
+- [UI Builder](26-ui-builder.md)
+- [Operator](34-operator.md)
+
+### Operate and extend Vera
+
+- [IDE and remote development](08-ide.md)
+- [Integrations](23-integrations.md)
+- [Web browser](24-web-browser.md)
+- [Security](29-security.md)
+- [Cluster encryption](32-cluster-encryption.md)
+- [Loop Lab](33-evolve.md)
+
+## Complete guide index
+
+| # | Guide | Scope |
+|---:|---|---|
+| 00 | [Performance and sizing](00-performance-and-sizing.md) | Hardware planning, runtime thresholds, benchmarks, and SLOs |
+| 01 | [Capability framework](01-capability-framework.md) | Registration, schemas, modes, events, and invocation |
+| 02 | [Harness UI](02-harness-ui.md) | Panels, custom elements, and UI extension |
+| 03 | [DAG and loop engine](03-dag-engine.md) | Workflows, planners, supervision, and loop profiles |
+| 04 | [Ollama cluster](04-ollama-cluster.md) | Nodes, models, routing, health, and shared GPU policy |
+| 05 | [Memory graph](05-memory-graph.md) | Sessions, recall, graph traversal, and retention |
+| 06 | [Data fabric](06-data-fabric.md) | Ingestion, vectors, graphs, SQL, objects, and context |
+| 07 | [Research](07-research.md) | Search, deep research, notebooks, and projects |
+| 08 | [IDE and remote](08-ide.md) | Workspaces, coding agents, inspection, and code-server |
+| 09 | [Galaxy graph](09-galaxy-graph.md) | Interactive graph visualization |
+| 10 | [Configuration](10-configuration.md) | Environment, backend endpoints, and runtime settings |
+| 11 | [Worldview](11-worldview.md) | Representation learning, concepts, prediction, and drift |
+| 12 | [Execution](12-execution.md) | Shell, PowerShell, SSH, and code execution |
+| 13 | [Docker](13-docker.md) | Hosts, containers, images, and operations |
+| 14 | [Mesh Manager](14-mesh.md) | ESP32 nodes, telemetry, firmware, screens, and radio tools |
+| 15 | [Markets and Quant Studio](15-markets.md) | Market data, strategies, simulation, and evolution |
+| 16 | [Machine learning](16-machine-learning.md) | Training and model workshop |
+| 17 | [Dream](17-dream.md) | Background reflection and autonomous projects |
+| 18 | [Skills and ontologies](18-skills-ontologies.md) | Reusable instructions and domain models |
+| 19 | [Agents and chat](19-agents-chat.md) | Personas, conversations, tools, and retrieval |
+| 20 | [Flow Builder](20-flow-builder.md) | Visual workflows |
+| 21 | [vLLM](21-vllm.md) | OpenAI-compatible serving and model management |
+| 22 | [Workers, jobs, and syslog](22-workers-jobs-syslog.md) | Distributed work, job recovery, events, and logs |
+| 23 | [Integrations](23-integrations.md) | Accounts, mail, calendar, Telegram, and external apps |
+| 24 | [Web browser](24-web-browser.md) | Fetching, crawling, Playwright, and browser automation |
+| 25 | [Vector browser](25-vector-browser.md) | Chroma/FAISS inspection and audits |
+| 26 | [UI Builder](26-ui-builder.md) | Themes, panels, and capability access |
+| 27 | [OpenClaw](27-openclaw.md) | External agent gateway |
+| 28 | [Render and media](28-render.md) | Documents, Mermaid, HTML, charts, and galleries |
+| 29 | [Security](29-security.md) | Secrets and access boundaries |
+| 30 | [ONNX](30-onnx.md) | ONNX workflows |
+| 31 | [Podcast](31-podcast.md) | Script and audio generation |
+| 32 | [Cluster encryption](32-cluster-encryption.md) | Encrypted cluster communication |
+| 33 | [Loop Lab](33-evolve.md) | Isolated changes, tests, review, and promotion |
+| 34 | [Operator](34-operator.md) | Browser observation, action, missions, and captures |
+
+## Specifications and operations
+
+- [Consolidated route forward](specs/consolidated-route-forward.md)
+- [Development lifecycle and repository hygiene](specs/dev-lifecycle-and-repo-hygiene.md)
+- [External agentic-loop integration](specs/external-agentic-loop-integration.md)
+- [Planner drift postmortem](postmortems/2026-08-06-agentic-loop-planner-drift.md)
+
+Specifications describe intended direction as well as shipped behavior. The
+numbered guides and runtime capability schemas are the better source for current
+operator-facing behavior.
+
+## Screenshot maintenance
+
+Screenshots are produced by Vera's Operator, not hand-composited:
+
+```bash
+python tools/vera-docgen/docgen.py run --sandbox
+```
+
+Equivalent capabilities are `docs.build`, `docs.capture`, and
+`operator.screenshot`. Capture against an isolated sandbox whenever possible;
+use live only for read-only documentation evidence. Always inspect images,
+verify their repository-relative links, and record the capture date.
