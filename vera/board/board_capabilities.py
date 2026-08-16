@@ -18,7 +18,8 @@ import re
 import shlex
 from typing import List, Optional
 
-from Vera.vera.capability_orchestration import APP, capability, CAPABILITY_REGISTRY, emit_event
+from Vera.vera.capability_orchestration import (
+    APP, capability, CAPABILITY_REGISTRY, emit_event, schedule)
 from Vera.vera.board import board_core as bc
 from Vera.vera.sandbox_guard import write_blocked as _sbx_write_blocked
 
@@ -625,3 +626,29 @@ if True:  # capability registration (mirrors the guard style of the other module
             res = await _sync_one(it)
             (synced if res.get("synced") else skipped).append(res)
         return {"ok": True, "synced": synced, "skipped": skipped, "total": len(targets)}
+
+
+# ── board.sync scheduled poll (M4 / swarm plan "board.sync polls on a schedule") ──
+# Keep each board item's lane/comments current with its LINKED pipeline as that
+# pipeline moves through adopt -> review -> promote, WITHOUT a human calling
+# board.sync by hand — so the board stays a live work view, the primary planning +
+# inter-agent surface (route-forward.md M4). Idempotent via each item's sync_sig,
+# so a tick with nothing changed is a cheap no-op (no duplicate comments), safe to
+# run on a timer. Toggle/interval via env for ops.
+_BOARD_SYNC_INTERVAL_S = int(os.environ.get("VERA_BOARD_SYNC_INTERVAL_S", "300"))
+_BOARD_SYNC_ENABLED = os.environ.get("VERA_BOARD_SYNC_ENABLED", "1") != "0"
+
+
+async def _board_sync_sweep() -> None:
+    """Scheduled: reflect every linked pipeline's current state onto its board item."""
+    try:
+        res = await _call("board.sync")            # every item with a pipeline link
+        n = len((res or {}).get("synced", []) or [])
+        if n:
+            log.info("board.sync scheduled poll: %d item(s) updated", n)
+    except Exception as e:                          # a transient must never kill the timer
+        log.debug("board.sync scheduled poll failed: %s", e)
+
+
+if _BOARD_SYNC_ENABLED:
+    schedule(_board_sync_sweep, _BOARD_SYNC_INTERVAL_S, name="board.sync.poll")

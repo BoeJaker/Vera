@@ -145,15 +145,21 @@ tier — the safety net both plans lean on. Closes **T6**. Broken into:
   grew across the session to **78/78** (adds M3.6 guard, pre-merge guard, merge-tolerance, and
   M4 `board_sync`). More backfill remains as systems grow (e.g. content path-lock, reaper
   idle-logic).
-- **M3.4 — Test generation. ○ NOT STARTED.** Auto-propose unit tests for a branch's changed
-  code (feeds the gate), so new code arrives with coverage instead of needing hand-written
-  tests every time. Reuses `evolve.tasks.generate` / the code-gen pipeline.
+- **M3.4 — Test generation. ○ NOT STARTED (confirmed 2026-08-16).** Auto-propose unit tests
+  for a branch's changed code (feeds the gate), so new code arrives with coverage instead of
+  needing hand-written tests every time. **Note:** the session's test growth (critical tier
+  47→81) was all HAND-written — extracting pure cores and writing pytest by hand — which is the
+  *opposite* of this item; and `evolve.tasks.generate` makes *benchmark* tasks (loop/cap
+  comparative runs), not unit tests for a diff. Real M3.4 is a distinct build: take `git diff`
+  → LLM-generate pytest for the changed pure logic → propose/save → optionally auto-mark
+  critical. Reuses the code-gen pipeline, not `evolve.tasks.generate`.
 - **Perf-based gating** (socket-flap / bad response-time / Ollama-contention thresholds) is a
   sibling of M3.4, tracked separately (originally scoped under M3); see §2.A / the perf subsystem.
 
-**M3 is now ON `main`** (released via `f8497f4`/`ac35b34`, bundled with other agents' work) —
-it activates in prod on the next restart; it no longer lives only on `bleeding-edge`. The
-release was triggered by another session, not an explicit M3 promotion.
+**M3 is now LIVE IN PROD.** Released to `main` (`f8497f4`/`ac35b34`, then `15644fe` on explicit
+user go-ahead) and **prod was restarted 2026-08-16** — so the whole session's work (M3.1–M3.3
+gate/matrix/backfill, the M3.6 guards, merge-tolerance, board.sync, and the T9 trunk-protection
+fix) is running in prod's process, not just on disk.
 
 **M3.5 — Agentic-loop runner file split (`dag_workshop_capabilities.py`).** (○, added
 2026-08-16, session finding — not tracked in either source plan.) After M3 lands the
@@ -233,9 +239,11 @@ the single work view. Then GitHub provider + `board.budget`.
   `test_board_sync` (13 cases)**; a review-found gap was fixed (`decision=rolled_back` now maps
   to `dropped`, was silently `in_progress`). Only reflects the `pipeline` link today (items
   carry no `run`/`error` link field yet).
-- **○ remaining — scheduled poll.** `board.sync` is a cap but nothing calls it on a timer, so
-  the board only updates on an explicit call / board-load. Wire a `sched.*` entry (the spec's
-  "polls on a schedule") — small, and it makes the board self-updating.
+- **✓ scheduled poll (bleeding-edge `ac0f6bd`).** `board.sync` now runs on a timer
+  (`board.sync.poll`, every `VERA_BOARD_SYNC_INTERVAL_S`=300s, toggle `VERA_BOARD_SYNC_ENABLED`),
+  mirroring the evolve scaffolding-sweep scheduling — so the board self-updates as pipelines
+  move through adopt→review→promote, no manual call. Idempotent via `sync_sig`. This is the
+  spec's "board.sync polls on a schedule"; it makes the board a live planning/inter-agent surface.
 - **○ remaining — GitHub provider + `board.budget`.** Blocked on the deploy key (D1/T3); the
   public write path also needs the full `secret_scan` wired in (board's `_scan_secret` is
   deliberately conservative defence-in-depth until then).
