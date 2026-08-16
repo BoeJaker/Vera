@@ -6376,6 +6376,7 @@ from Vera.vera.evolve.sandbox_pool import (          # noqa: E402
 from Vera.vera.evolve.sandbox_reap import (          # noqa: E402
     plan_reap as _plan_reap,
     orphan_composes as _orphan_composes,
+    is_trunk_protected as _is_trunk_protected,
 )
 
 KEY_SANDBOX_POOL = "vera:evolve:sandbox:pool"         # hash: slug -> per-branch descriptor
@@ -7974,7 +7975,8 @@ async def evolve_sandbox_prune(dry_run: bool = True, delete_branches: bool = Fal
     for _b in (_mb.get("out", "") or "").splitlines():
         _b = _b.strip()
         if (not _b or _b == base or _b in protect or _b in _wt_branches
-                or _b in _live_branches or not _b.startswith(_typed)):
+                or _b in _live_branches or _is_trunk_protected(_b)
+                or not _b.startswith(_typed)):
             continue
         merged_branches.append(_b)
     # orphaned auto-generated compose files
@@ -8003,7 +8005,8 @@ async def evolve_sandbox_prune(dry_run: bool = True, delete_branches: bool = Fal
         rm = await _remove_worktree_robust(e["path"])
         (result["removed"] if rm["ok"] else result["errors"]).append(
             {**e, "method": rm.get("method"), "detail": rm.get("detail", "")})
-        if rm["ok"] and delete_branches and e.get("branch"):
+        if (rm["ok"] and delete_branches and e.get("branch")
+                and not _is_trunk_protected(e["branch"])):
             await _git("branch", "-D", e["branch"], timeout=60)
     await _git("worktree", "prune", timeout=60)
     for slug in stale_pool:

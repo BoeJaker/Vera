@@ -8,7 +8,9 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from vera.evolve.sandbox_reap import plan_reap, orphan_composes  # noqa: E402
+from vera.evolve.sandbox_reap import (  # noqa: E402
+    plan_reap, orphan_composes, is_trunk_protected,
+)
 
 
 WT = ".loop-lab-worktrees"
@@ -102,6 +104,38 @@ def test_mixed_batch_partitions_correctly():
     assert [e["branch"] for e in res["reap"]] == ["feat/a"]
     assert [e["branch"] for e in res["review"]] == ["feat/b"]
     assert {e["branch"] for e in res["keep"]} == {"main", "feat/c"}
+
+
+def test_trunk_branches_are_recognized():
+    for b in ("bleeding-edge", "main", "master",
+              "loop-lab/bleeding-edge-mirror", "loop-lab/mainline-mirror"):
+        assert is_trunk_protected(b), b
+    for b in ("feat/x", "fix/y", "loop-lab/some-other", "", None):
+        assert not is_trunk_protected(b), b
+
+
+def test_bleeding_edge_worktree_never_reaped_even_when_merged():
+    # THE 2026-08-16 incident: after a release, bleeding-edge has 0 unique commits
+    # vs main, so it lands in merged_branches — but the trunk must be KEPT, not
+    # reaped (reaping it + delete_branches force-deleted the whole trunk before,
+    # breaking every agent's pipeline). No protected_branches passed on purpose:
+    # the core protects the trunk unconditionally.
+    res = plan_reap(
+        worktrees=[_wt(f"/home/x/Vera/{WT}/bleeding-edge", "bleeding-edge")],
+        merged_branches=["bleeding-edge"],   # looks merged post-release
+    )
+    assert res["reap"] == []
+    assert res["keep"][0]["branch"] == "bleeding-edge"
+    assert res["keep"][0]["reason"] == "protected branch"
+
+
+def test_mirror_branch_never_reaped_even_when_merged():
+    res = plan_reap(
+        worktrees=[_wt(f"/home/x/Vera/{WT}/be-mirror", "loop-lab/bleeding-edge-mirror")],
+        merged_branches=["loop-lab/bleeding-edge-mirror"],
+    )
+    assert res["reap"] == []
+    assert res["keep"][0]["reason"] == "protected branch"
 
 
 def test_orphan_composes_flags_only_unreferenced():
