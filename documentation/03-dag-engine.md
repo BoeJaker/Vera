@@ -1,5 +1,7 @@
 # 03 · DAG Engine
 
+![Agent Loop Graph captured from the running Vera UI](assets/overview/loop-graph.png)
+
 Vera's DAG engine lets you compose capabilities into multi-step workflows. A DAG is a list of nodes, each calling one cap and writing its output into a shared state dict. Nodes can run sequentially, in parallel branches, or conditionally. An LLM-powered planner can produce a DAG from a natural-language goal, and a supervised mode inserts LLM checkpoints between every step.
 
 The DAG Workshop tab in the harness is the interactive surface; the capabilities are also callable from MCP, REST, and as nodes inside other DAGs.
