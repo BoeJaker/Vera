@@ -4941,11 +4941,15 @@ async def evolve_pipeline_run(kind: str = "variant", profile: str = "",
                         "pass; a docs/UI-only branch (no .py changed) or one with no live worktree "
                         "yet falls back to the compile check alone. Inputs: branch (str!), to "
                         "(str — default bleeding-edge, the staging trunk; 2026-08-16), title "
-                        "(str), summary (str), repo (str=vera). "
+                        "(str), summary (str), repo (str=vera), authorize_main (str). "
+                        "M3.6 GUARDRAIL: adopting toward the real mainline (main/master) is "
+                        "REFUSED unless authorize_main is the explicit sentinel — all code lands "
+                        "on bleeding-edge; main advances only via evolve.bleeding_edge."
+                        "promote_to_main on the user's explicit, unambiguous go-ahead. "
                         "Output: {ok, id, ahead_by, changed_files, gate_passed}.")
 async def evolve_pipeline_adopt(branch: str = "", to: str = "bleeding-edge", title: str = "",
                                 summary: str = "", repo: str = DEFAULT_REPO_ID,
-                                session_id: str = "", trace_id=None):
+                                session_id: str = "", authorize_main: str = "", trace_id=None):
     branch = (branch or "").strip()
     if not branch:
         return {"error": "branch required"}
@@ -4957,6 +4961,16 @@ async def evolve_pipeline_adopt(branch: str = "", to: str = "bleeding-edge", tit
         return {"error": f"unknown branch: {branch}"}
     if not (await _git("rev-parse", "--verify", f"refs/heads/{to}", repo_root=root))["ok"]:
         return {"error": f"unknown target branch: {to}"}
+    # M3.6 main-merge guardrail: refuse adopting a feature branch toward the real
+    # mainline unless the caller passes the explicit authorization sentinel. All
+    # code lands on bleeding-edge; main advances only on the user's go-ahead via
+    # evolve.bleeding_edge.promote_to_main (which does NOT route through here).
+    from Vera.vera.evolve.evolve_git_core import main_merge_refusal as _main_merge_refusal  # noqa: E402
+    _mrefuse = _main_merge_refusal(to, await _default_branch(repo_root=root), authorize_main)
+    if _mrefuse:
+        await _audit("pipeline.adopt", f"REFUSED adopt {branch} -> {to}: main-merge guard",
+                     kind="code", branch=branch, ok=False, repo=repo)
+        return {"error": _mrefuse, "refused": "main-merge-guard"}
     # Commits + changed files this branch adds on top of `to`.
     lg = await _git("log", "--oneline", f"{to}..{branch}", repo_root=root)
     commits = [ln for ln in (lg.get("out", "") or "").splitlines() if ln.strip()]
@@ -5390,7 +5404,7 @@ async def _merge_in_checkout(root: str, branch: str, into: str, wt: str, msg: st
                         "action — evolve.bleeding_edge.promote_to_main — not this. "
                         "Input: id (str!), to (str — default bleeding-edge).")
 async def evolve_pipeline_promote(id: str = "", to: str = "bleeding-edge", force: bool = False,
-                                  trace_id=None):
+                                  authorize_main: str = "", trace_id=None):
     got = await evolve_pipeline_get(id=id)
     if got.get("error"):
         return got
@@ -5416,6 +5430,19 @@ async def evolve_pipeline_promote(id: str = "", to: str = "bleeding-edge", force
         return {"error": f"unknown branch: {branch}"}
     if not (await _git("rev-parse", "--verify", f"refs/heads/{to}", repo_root=root))["ok"]:
         return {"error": f"unknown target branch: {to}"}
+    # M3.6 main-merge guardrail (see adopt): refuse promoting a feature branch to
+    # the real mainline unless the explicit authorization sentinel is present. The
+    # sanctioned mainline path is evolve.bleeding_edge.promote_to_main (does NOT
+    # route through here), on the user's explicit, unambiguous go-ahead.
+    from Vera.vera.evolve.evolve_git_core import main_merge_refusal as _main_merge_refusal  # noqa: E402
+    _mrefuse = _main_merge_refusal(to, await _default_branch(repo_root=root), authorize_main)
+    if _mrefuse:
+        rec["decision"] = "held"
+        _pstep(rec, "promote", False, "promote blocked - main-merge guard")
+        await _save_pipeline(rec)
+        await _audit("pipeline.promote", f"REFUSED {branch} -> {to}: main-merge guard",
+                     id=id, kind="code", branch=branch, ok=False, repo=rec.get("repo"))
+        return {"ok": False, "held": True, "refused": "main-merge-guard", "error": _mrefuse}
     # Refresh the record's commits/changed_files from git so attribution + the UI
     # reflect what's actually on the branch NOW — essential for evolve.pipeline.begin
     # stubs (recorded before any commit) and harmless for adopt (keeps them current).
