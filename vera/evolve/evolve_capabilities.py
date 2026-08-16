@@ -5032,8 +5032,8 @@ async def evolve_pipeline_adopt(branch: str = "", to: str = "bleeding-edge", tit
     # regression) — surfaced either way so it's never silently skipped unnoticed.
     critical_ok: Optional[bool] = None
     if py and repo == DEFAULT_REPO_ID:
-        tgt = await _resolve_exec_target("", branch)
-        if tgt.get("worktree"):
+        wt = await _branch_worktree(branch)   # pool sandbox OR any plain git worktree
+        if wt:
             try:
                 crit = await evolve_unittest_run(branch=branch, paths="tests",
                                                  markers="critical", timeout=300)
@@ -5048,8 +5048,8 @@ async def evolve_pipeline_adopt(branch: str = "", to: str = "bleeding-edge", tit
                        crit.get("summary", "") or ("PASS" if critical_ok else "FAIL"))
         else:
             _pstep(rec, "critical-tests", True,
-                   "no live worktree for this branch — critical-tier gate skipped "
-                   "(bring a sandbox up with evolve.sandbox.up for full gating)")
+                   "no worktree for this branch — critical-tier gate skipped "
+                   "(git worktree add it, or evolve.sandbox.up, for full gating)")
 
     rec["gate_passed"] = compile_ok if critical_ok is None else (compile_ok and critical_ok)
 
@@ -6780,6 +6780,26 @@ async def _resolve_exec_target(name: str = "", branch: str = "") -> Dict[str, An
                      "(evolve.sandbox.list shows the running ones)"}
 
 
+async def _branch_worktree(branch: str) -> str:
+    """Filesystem path of the worktree checked out on `branch` — the sandbox POOL
+    first (a running/paused dev container), else ANY plain git worktree created by
+    `git worktree add`. This lets the unit-test GATE run for the NORMAL branch flow,
+    not only pool sandboxes: the ephemeral test runner just bind-mounts the path, so
+    a plain worktree (no running container) is enough. branch='' -> the primary."""
+    branch = (branch or "").strip()
+    tgt = await _resolve_exec_target("", branch)   # branch='' resolves the primary
+    wt = tgt.get("worktree") or ""
+    if wt and Path(wt).exists():
+        return wt
+    if branch:
+        for w in await _list_worktrees():
+            if w.get("branch") == branch and not w.get("is_main"):
+                p = w.get("path", "")
+                if p and Path(p).exists():
+                    return p
+    return ""
+
+
 @capability("evolve.sandbox.exec", memory="on",
             http_method="POST", http_path="/evolve/sandbox/exec", http_tags=["evolve"],
             description="TERMINAL into a sandbox: run a shell command inside the "
@@ -6884,14 +6904,11 @@ async def evolve_unittest_run(branch: str = "", paths: str = "tests", markers: s
         return {"ok": bool(g.get("passed")), "summary": g.get("summary", ""),
                 "code": g.get("rc"), "out": g.get("output", ""),
                 "repo": repo, "branch": "", "test_cmd": test_cmd}
-    # 1. resolve the target branch's worktree (primary sandbox by default)
-    tgt = await _resolve_exec_target("", branch)
-    if tgt.get("error"):
-        return tgt
-    wt = tgt.get("worktree") or ""
-    if not wt or not Path(wt).exists():
-        return {"error": "no worktree for the target sandbox — bring it up first "
-                         "(evolve.sandbox.spawn / ensure)"}
+    # 1. resolve the branch's worktree — pool sandbox OR any plain git worktree
+    wt = await _branch_worktree(branch)
+    if not wt:
+        return {"error": f"no worktree for branch '{branch or '(primary)'}' — "
+                         "git worktree add it, or spawn a sandbox (evolve.sandbox.spawn)"}
     # 2. sanitise the caller's pytest args (they're interpolated into a shell cmd)
     tokens, err = _ut_sanitize(paths, markers, extra)
     if err:
@@ -6920,6 +6937,49 @@ async def evolve_unittest_run(branch: str = "", paths: str = "tests", markers: s
                       "failed": parsed["failed"], "errors": parsed["errors"]})
     return {**parsed, "code": parsed["rc"], "image": DEV_IMAGE,
             "branch": branch or label, "out": combined[-8000:], "repo": DEFAULT_REPO_ID}
+
+
+@capability("evolve.tests.matrix", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/tests/matrix", http_tags=["evolve"],
+            description="Unit-test COVERAGE MATRIX: every module in tests/, its test count, and "
+                        "whether it is in the CRITICAL gate tier (conftest _CRITICAL_MODULES — the "
+                        "set the pre-merge gate runs and must keep green). Feeds the Loop Lab Tests "
+                        "view. Pure collect-only — runs no test bodies. Output: {ok, "
+                        "modules:[{module,tests,critical}], total_tests, total_modules, "
+                        "critical_modules, critical_tests, critical_names}.")
+async def evolve_tests_matrix(trace_id=None):
+    root = str(_repo_root())
+    coll = await _sh([sys.executable, "-m", "pytest", "tests/", "--collect-only", "-q",
+                      "--no-header", "-p", "no:cacheprovider"], cwd=root, timeout=120)
+    modules: Dict[str, int] = {}
+    for ln in (coll.get("out", "") or "").splitlines():
+        ln = ln.strip()
+        # pytest -q --collect-only prints one line per module: "tests/test_x.py: 27"
+        mm2 = re.match(r"^(tests/[^:]+\.py):\s*(\d+)\s*$", ln)
+        if mm2:
+            base = os.path.basename(mm2.group(1))
+            modules[base[:-3] if base.endswith(".py") else base] = int(mm2.group(2))
+            continue
+        # fallback (older pytest): one node id per line "tests/test_x.py::test_y"
+        if ln.startswith("tests/") and "::" in ln:
+            base = os.path.basename(ln.split("::", 1)[0])
+            name = base[:-3] if base.endswith(".py") else base
+            modules[name] = modules.get(name, 0) + 1
+    critical: set = set()
+    try:
+        conf = (Path(root) / "tests" / "conftest.py").read_text(encoding="utf-8")
+        mm = re.search(r"_CRITICAL_MODULES\s*=\s*\{([^}]*)\}", conf, re.S)
+        if mm:
+            critical = set(re.findall(r'"([^"]+)"', mm.group(1)))
+    except Exception:
+        pass
+    mods = [{"module": k, "tests": v, "critical": k in critical}
+            for k, v in sorted(modules.items())]
+    return {"ok": True, "modules": mods,
+            "total_tests": sum(modules.values()), "total_modules": len(mods),
+            "critical_modules": sum(1 for x in mods if x["critical"]),
+            "critical_tests": sum(x["tests"] for x in mods if x["critical"]),
+            "critical_names": sorted(critical)}
 
 
 @capability("evolve.sandbox.fs.list", memory="off", silent=True,
