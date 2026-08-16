@@ -2689,7 +2689,7 @@ async function promoteVar(profile,vid){const r=await post('/evolve/variant/promo
 
 /* ═══ CI / CD ═══ */
 let _repos=[];
-const CTRL_META={claude_code:{icon:'🧑‍💻',label:'Claude Code'},autonomous:{icon:'🌙',label:'Autonomous'},user:{icon:'🧑',label:'User'}};
+const CTRL_META={codex:{icon:'⌘',label:'Codex'},claude_code:{icon:'🧑‍💻',label:'Claude Code'},autonomous:{icon:'🌙',label:'Autonomous'},user:{icon:'🧑',label:'User'}};
 function ctrlBadge(who){
   const m=CTRL_META[who];
   if(!m)return who?'<span class="pill">'+esc(who)+'</span>':'';
@@ -3712,8 +3712,8 @@ async function refreshActiveRun(){
   $('arh-dot').style.background=running?'var(--ok)':'var(--dim)';
   $('arh-elapsed').textContent=(running&&cur.started_at)?
     (Math.max(0,Math.floor((Date.now()-Date.parse(cur.started_at))/1000))+'s'):'';
-  const TRIG_ICON={claude_code:'🧑‍💻',autonomous:'⚙',user:'👤'};
-  const TRIG_LBL={claude_code:'triggered by Claude Code',autonomous:'triggered autonomously',user:'triggered by user'};
+  const TRIG_ICON={codex:'⌘',claude_code:'🧑‍💻',autonomous:'⚙',user:'👤'};
+  const TRIG_LBL={codex:'triggered by Codex',claude_code:'triggered by Claude Code',autonomous:'triggered autonomously',user:'triggered by user'};
   const trigEl=$('arh-trigger');
   if(trigEl){trigEl.textContent=TRIG_ICON[cur.triggered_by]||'';trigEl.title=TRIG_LBL[cur.triggered_by]||''}
   const profEl=$('arh-profile');

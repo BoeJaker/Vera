@@ -25,6 +25,8 @@ _CRITICAL_MODULES = {
     "test_board_sync",         # M4 board.sync — pipeline->lane mapping, idempotency sig, human-parked-lane guard
     "test_test_gen_core",      # M3.4 test-generation — module filter, import/test-path mapping, fence strip
     "test_perf_gate_core",     # M3 perf-gating — perf.scan summary -> verdict, strict-vs-advisory blocking
+    "test_attribution_core",   # honest Codex/Claude/autonomous/user controller mapping
+    "test_mcp_bridge_attribution",  # agent bridge must not misattribute Codex as Claude
 }
 
 
