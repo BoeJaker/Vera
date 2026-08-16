@@ -297,3 +297,33 @@ landed. Promoting your own vetted change into `bleeding-edge` is normal and
 doesn't need to wait for permission. Promoting `bleeding-edge` → `main` (§2, §8)
 is a separate, higher-stakes step — always confirm first unless already
 authorized for the session. It all shows in the Loop Lab CI/CD + Review tabs.
+
+## 10. Keep the plan and the board current — the board is the primary planning surface
+Work isn't done when the code lands; it's done when the **shared planning state
+reflects reality**. Two standing obligations, every unit:
+
+- **Update the plan.** When a milestone/tech-debt item lands, changes status, or
+  a new issue is found, reflect it in the route-forward plan
+  (`documentation/specs/consolidated-route-forward.md`) and keep the source plans'
+  glyphs in sync (§2 — docs route through `bleeding-edge` like everything else).
+  A plan that lags the code is worse than no plan: other agents act on it. Mark
+  items ✓/◐/○ with the landing commit; record the *reason* for tech debt, not just
+  that it exists.
+- **Use the board as the primary planning + inter-agent communication mechanism.**
+  The board (`board.*`, out-of-tree file tier) — not chat, not a local note — is
+  the durable, shared work surface every agent reads and writes: capture work as
+  items, `board.claim` before starting (lease, lowest-comment-id wins), post
+  `progress`/`blocked`/`help-request` envelopes as you go, link the item to its
+  `pipeline`/`branch`, and move its lane. Precedence when sources disagree:
+  **files → board → fabric** (the fabric index is derived, never authoritative).
+  Re-read the board before resuming — the world moved while you were away; never
+  re-run work an item already shows finished (reconcile, don't repeat).
+
+**This is being automated, not left to discipline.** `board.sync` reflects a
+linked pipeline's state (decision/gate/review → lane + a comment) onto its item,
+and now runs on a **scheduled poll** (`board.sync.poll`, every
+`VERA_BOARD_SYNC_INTERVAL_S`, toggle `VERA_BOARD_SYNC_ENABLED`), so the board
+tracks pipeline movement without a human call — idempotent via each item's
+`sync_sig`. Plan-doc freshness is not yet automated: that stays a manual step
+here (a doc-staleness check on merge is the tracked follow-on — route-forward
+Phase E / M2).
