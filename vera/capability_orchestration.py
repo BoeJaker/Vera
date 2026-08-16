@@ -212,6 +212,20 @@ EMBED_PROVIDER     = getattr(cfg, "EMBED_PROVIDER", "ollama")
 # keep_alive keeps the model resident so the next call skips cold-load latency.
 OLLAMA_GEN_TIMEOUT = float(os.environ.get("OLLAMA_GEN_TIMEOUT", "900"))
 
+# 2026-08-16: the httpx read-timeout above is a STALL detector only in theory —
+# httpx measures it since the last byte received, so any trickle of bytes
+# (even ones that produce nothing usable: a blank keep-alive line, a stray
+# non-JSON chunk swallowed by the `except: pass` below) resets it and the
+# request never times out, no matter how long generation has actually been
+# dead. Live-caught: a chat-triggered planner call held the single GPU gate
+# slot (gpu_cap=1, shared by prod + every dev sandbox) for 22+ minutes — well
+# past OLLAMA_GEN_TIMEOUT's 900s — with zero recovery, wedging Ollama for the
+# whole system. This is an INDEPENDENT cap based on genuine progress (a real
+# token or thinking-fragment actually added to the buffer), not on raw
+# transport chunks — a generation that's actively producing tokens, however
+# slowly, is never killed by this; only a real stall is.
+OLLAMA_STALL_TIMEOUT = float(os.environ.get("OLLAMA_STALL_TIMEOUT", "240"))
+
 # ── Background vs foreground work ────────────────────────────────────────────
 # BACKGROUND jobs are self-scheduled thinking that nobody is waiting on: they
 # recur on a timer, so skipping one costs nothing. FOREGROUND work (a chat turn,
@@ -2257,17 +2271,38 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                             raise Exception(f"ollama returned {resp.status_code}: {err_body[:500]}")
                         buf=[]; tbuf=[]; meta={}
                         _last_beat = time.time()
-                        async for line in resp.aiter_lines():
+                        # No-progress stall cap (see OLLAMA_STALL_TIMEOUT) — polls
+                        # for the next line with a short timeout instead of a
+                        # plain `async for`, so we can check elapsed-since-real-
+                        # progress even while genuinely waiting on the socket, not
+                        # just between chunks that do arrive.
+                        _last_progress = time.time()
+                        _lines = resp.aiter_lines()
+                        while True:
+                            try:
+                                line = await asyncio.wait_for(_lines.__anext__(), timeout=5.0)
+                            except asyncio.TimeoutError:
+                                if time.time() - _last_progress > OLLAMA_STALL_TIMEOUT:
+                                    raise Exception(
+                                        f"ollama stream stalled: no new token for "
+                                        f"{OLLAMA_STALL_TIMEOUT:.0f}s (model={mdl}, "
+                                        f"instance={chosen}, tokens_so_far={len(buf) + len(tbuf)})")
+                                continue
+                            except StopAsyncIteration:
+                                break
                             if not line: continue
                             try:
                                 d=json.loads(line)
                                 tok=d.get("response","")
                                 if tok:
                                     buf.append(tok)
+                                    _last_progress = time.time()
                                     if stream_cb: await stream_cb(tok)
                                 # Reasoning models may emit only `thinking` tokens;
                                 # collect them (without streaming) as a fallback.
-                                elif d.get("thinking"): tbuf.append(d["thinking"])
+                                elif d.get("thinking"):
+                                    tbuf.append(d["thinking"])
+                                    _last_progress = time.time()
                                 if d.get("done"): meta = d
                             except Exception: pass
                             # A long but actively-progressing generation emits no
@@ -2434,12 +2469,31 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                                     log.warning("ollama_fallback [%s] %s returned %d: %s", req_id, fb_id, r.status_code, err_detail)
                                     continue
                                 fbuf=[]; ftbuf=[]
-                                async for line in r.aiter_lines():
+                                # Same no-progress stall cap as the primary path
+                                # (see OLLAMA_STALL_TIMEOUT) — a fallback attempt
+                                # is just as vulnerable to a silently-dead stream.
+                                _fb_last_progress = time.time()
+                                _fb_lines = r.aiter_lines()
+                                while True:
+                                    try:
+                                        line = await asyncio.wait_for(_fb_lines.__anext__(), timeout=5.0)
+                                    except asyncio.TimeoutError:
+                                        if time.time() - _fb_last_progress > OLLAMA_STALL_TIMEOUT:
+                                            raise Exception(
+                                                f"ollama fallback stream stalled: no new "
+                                                f"token for {OLLAMA_STALL_TIMEOUT:.0f}s "
+                                                f"(model={mdl}, instance={fb_id}, "
+                                                f"tokens_so_far={len(fbuf) + len(ftbuf)})")
+                                        continue
+                                    except StopAsyncIteration:
+                                        break
                                     if not line: continue
                                     try:
                                         d=json.loads(line)
-                                        if d.get("response"): fbuf.append(d["response"])
-                                        elif d.get("thinking"): ftbuf.append(d["thinking"])
+                                        if d.get("response"):
+                                            fbuf.append(d["response"]); _fb_last_progress = time.time()
+                                        elif d.get("thinking"):
+                                            ftbuf.append(d["thinking"]); _fb_last_progress = time.time()
                                     except Exception: pass
                         fb_elapsed = round(time.time() - t_start, 2)
                         log.info("ollama_fallback [%s] OK on %s after %.2fs",
