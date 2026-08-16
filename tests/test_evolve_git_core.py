@@ -92,6 +92,24 @@ def test_empty_and_blank_are_not_dirty():
     assert core.tracked_dirty_lines("\n  \n") == []
 
 
+# ── worktree_is_severed: detect the T10 broken-link state from git status stderr
+
+def test_severed_detected_from_status_stderr():
+    err = "fatal: not a git repository: /home/x/Vera/.git/worktrees/bleeding-edge-mirror"
+    assert core.worktree_is_severed(err) is True
+
+
+def test_severed_is_case_insensitive():
+    assert core.worktree_is_severed("Fatal: NOT A GIT REPOSITORY: ...") is True
+
+
+def test_healthy_status_is_not_severed():
+    assert core.worktree_is_severed("") is False
+    assert core.worktree_is_severed(None) is False
+    # a normal non-fatal stderr (e.g. a hint) must not read as severed
+    assert core.worktree_is_severed("warning: LF will be replaced by CRLF") is False
+
+
 def test_release_preflight_allows_same_tip_without_a_commit():
     got = core.release_preflight("abc", "abc", True, True)
     assert got == {"ok": True, "action": "already-up-to-date", "error": ""}
