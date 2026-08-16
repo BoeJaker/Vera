@@ -562,21 +562,6 @@ if True:  # capability registration (mirrors the guard style of the other module
     # it.pipeline/it.branch (see _dispatch_run above) â€” this is the other half:
     # keeping the item's lane/comments in sync with what that pipeline is
     # ACTUALLY doing as it moves through adopt â†’ review â†’ promote.
-    def _lane_for_pipeline(rec: dict) -> str:
-        """Map a pipeline record's decision/gate/review state onto a board
-        lane. decision is 'pending' throughout adopt/review, 'held' if the
-        gate blocked promote or a merge conflicted, 'promoted' once merged
-        (evolve_capabilities.py evolve_pipeline_promote) â€” variant pipelines
-        use 'promoted' too (evolve_variant_promote path)."""
-        decision = (rec.get("decision") or "pending").lower()
-        if decision == "promoted":
-            return "done"
-        if decision == "held":
-            return "blocked"
-        if rec.get("review_requested"):
-            return "needs_review"
-        return "in_progress"
-
     async def _sync_one(it: "bc.BoardItem") -> dict:
         """Pull `it`'s linked pipeline onto the item. Idempotent via
         it.sync_sig (a fingerprint of decision/gate/review/lane) â€” a repeated
@@ -589,14 +574,14 @@ if True:  # capability registration (mirrors the guard style of the other module
         if not rec:
             return {"id": it.id, "synced": False,
                     "reason": (got or {}).get("error") or "pipeline not found"}
-        new_lane = _lane_for_pipeline(rec)
+        new_lane = bc.pipeline_lane(rec)
         gate = rec.get("gate_passed")
-        sig = f"{rec.get('decision')}|{gate}|{bool(rec.get('review_requested'))}|{new_lane}"
+        sig = bc.pipeline_sync_sig(rec, new_lane)
         if it.sync_sig == sig:
             return {"id": it.id, "synced": False, "reason": "unchanged"}
         # Never yank an item OUT of a lane a human parked it in on purpose â€”
         # only advance/reflect while it's still in a pipeline-driven lane.
-        changed_lane = new_lane != it.lane and it.lane not in ("dropped", "done")
+        changed_lane = bc.should_apply_lane(it.lane, new_lane)
         if changed_lane:
             it.lane = new_lane
         it.sync_sig = sig
