@@ -21,6 +21,25 @@ from typing import Any, Dict, Iterable, List, Optional
 
 WORKTREE_MARK = ".loop-lab-worktrees"
 
+# Trunk / mirror refs the sweep must NEVER reap or delete, regardless of merge
+# status. After a release, `bleeding-edge` has 0 unique commits vs `main` (it's an
+# ancestor) and therefore looks "merged" — which once let the hourly scaffolding
+# sweep force-delete the ENTIRE trunk: the bleeding-edge branch (via its reaped
+# worktree + delete_branches) and the loop-lab mirror (via delete_merged_branches).
+# That silently broke every agent's pipeline, because _default_pipeline_base falls
+# back to `main` when refs/heads/bleeding-edge is gone. These are infrastructure
+# refs, not disposable feature worktrees; protect them unconditionally, here in the
+# pure core, so the guarantee holds no matter what the caller passes.
+TRUNK_PROTECTED_BRANCHES = frozenset({
+    "bleeding-edge", "main", "master",
+    "loop-lab/bleeding-edge-mirror", "loop-lab/mainline-mirror",
+})
+
+
+def is_trunk_protected(branch: str) -> bool:
+    """True if `branch` is a trunk/mirror ref the sweep must never reap or delete."""
+    return (branch or "").strip() in TRUNK_PROTECTED_BRANCHES
+
 
 def _norm(p: Optional[str]) -> str:
     return (p or "").replace("\\", "/").rstrip("/")
@@ -69,7 +88,7 @@ def plan_reap(
         if path in protected:
             keep.append({**entry, "reason": "live sandbox container"})
             continue
-        if branch and branch in prot_branches:
+        if branch and (branch in prot_branches or is_trunk_protected(branch)):
             keep.append({**entry, "reason": "protected branch"})
             continue
         # uncommitted changes trump a merged verdict — never silently discard WIP
