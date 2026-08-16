@@ -93,9 +93,9 @@ from Vera.vera.capability_orchestration import (
 log = logging.getLogger("vera.evolve")
 
 try:
-    from .attribution_core import author_agent_for, controller_for
+    from .attribution_core import author_agent_for, controller_for, effective_controller
 except ImportError:
-    from attribution_core import author_agent_for, controller_for
+    from attribution_core import author_agent_for, controller_for, effective_controller
 
 
 def _triggered_by() -> str:
@@ -2305,7 +2305,7 @@ async def evolve_authors(hours: int = 72, branch: str = "", trace_id=None):
         er = engine_by_hash.get(h)
         pa = next((v for sha, v in pipeline_by_hash.items() if h.startswith(sha)), None)
         if pa and pa.get("controller"):
-            controller = pa.get("controller") or ""
+            controller = effective_controller(pa.get("controller"), pa.get("via"))
             agent = author_agent_for(controller)
             labels = {"codex": "Codex", "claude": "Claude Code",
                       "vera-agent": "Vera agent", "direct": "direct"}
