@@ -1391,6 +1391,7 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
         <option value="dag.agent_loop_v6">v6 — adaptive specialists</option>
         <option value="dag.agent_loop_v7">v7 — tiered + branching</option>
         <option value="dag.agent_loop_v8">v8 — program orchestrator (long-horizon)</option>
+        <option value="openclaw">OpenClaw — external gateway (opt-in, needs connect)</option>
       </select>
       <span class="nlbl" style="flex:0 0 auto">Variant</span>
     </label>
@@ -6571,12 +6572,127 @@ IMPORTANT:
   }catch(_){}
   setTimeout(_applyAskBeforeActing,0);
 
+  // OpenClaw loop variant (2026-08-16) — an EXTERNAL gateway process, kept
+  // deliberately separate from _sendAgentLoopServer: its event shape
+  // (openclaw.stream / openclaw.response over the generic /events SSE feed,
+  // scoped by session_key — see vera/openclaw/openclaw_panel.html, the
+  // already-working reference for this contract) has nothing in common with
+  // the DAG-workshop SSE contract that function drives. Nothing here is
+  // reachable from — or changes anything about — v1–v8.
+  async function _sendOpenClawLoop(goal){
+    if(_agentLoopAbort){_agentLoopAbort.abort();_agentLoopAbort=null;}
+    _agentLoopAbort=new AbortController();
+    const abort=_agentLoopAbort;
+    const globalAbort=_GLOBAL_ABORT;
+    _streamStart();
+    _serverLoopActive=true;
+
+    const uMsg=_mkMsg('user','loop:openclaw',esc(goal).replace(/\n/g,'<br>'));
+    BOX().appendChild(uMsg.wrap);scroll();
+    HISTORY.push({role:'user',content:goal});
+
+    const aMsg=_mkMsg('agent','openclaw','<span style="color:var(--dim2)">Connecting…</span>');
+    BOX().appendChild(aMsg.wrap);scroll();
+    const bodyEl=aMsg.body;
+
+    let es=null, stallTimer=null, finished=false;
+    const finish=()=>{
+      if(finished)return; finished=true;
+      try{ es&&es.close(); }catch(_){}
+      if(stallTimer)clearInterval(stallTimer);
+      abort.signal.removeEventListener('abort', onAbort);
+      globalAbort.signal.removeEventListener('abort', onAbort);
+      _streamEnd();
+    };
+    const onAbort=()=>{
+      if(finished)return;
+      bodyEl.innerHTML += '<div style="color:var(--dim2);font-size:9px;margin-top:4px">(stopped)</div>';
+      finish();
+    };
+    abort.signal.addEventListener('abort', onAbort, {once:true});
+    globalAbort.signal.addEventListener('abort', onAbort, {once:true});
+
+    let result;
+    try{
+      result = await api('/openclaw/prompt','POST',{message:goal});
+    }catch(e){
+      bodyEl.innerHTML = '<span style="color:var(--err)">OpenClaw request failed: '+esc(String(e&&e.message||e))+'</span>';
+      finish(); return;
+    }
+    if(finished) return;   // stopped while the request was in flight
+    if(!result || result.ok===false || !result.session_key){
+      bodyEl.innerHTML = '<span style="color:var(--err)">'+esc((result&&result.error)||'OpenClaw returned no session')+'</span>';
+      finish(); return;
+    }
+    const sessionKey = result.session_key;
+    bodyEl.innerHTML = '<span style="color:var(--dim2)">Waiting for OpenClaw…</span>';
+
+    let text='';
+    // No-progress stall guard — the exact lesson from today's Ollama stream
+    // fix applies just as much to a call handed off to an external gateway
+    // we don't control: measure genuine progress, not raw event arrival,
+    // and give up cleanly rather than hang the chat turn forever.
+    const STALL_MS=120000;
+    let lastProgress=Date.now();
+    stallTimer=setInterval(()=>{
+      if(finished)return;
+      if(Date.now()-lastProgress>STALL_MS){
+        bodyEl.innerHTML=(text?renderMd(text)+'<br>':'')
+          +'<span style="color:var(--err)">[OpenClaw stalled — no response for '
+          +Math.round(STALL_MS/1000)+'s]</span>';
+        finish();
+      }
+    },5000);
+
+    try{
+      es=new EventSource(location.origin+'/events');
+    }catch(e){
+      bodyEl.innerHTML='<span style="color:var(--err)">Could not open event stream: '+esc(String(e&&e.message||e))+'</span>';
+      finish(); return;
+    }
+    es.onmessage=(ev)=>{
+      if(finished)return;
+      let msg; try{ msg=JSON.parse(ev.data); }catch(_){ return; }
+      const evt=msg.event||msg.type||'';
+      if(msg.session_key!==sessionKey) return;
+      if(evt==='openclaw.stream'){
+        text += (msg.delta||'');
+        lastProgress=Date.now();
+        bodyEl.innerHTML=renderMd(text)+' <span class="cap-dot"></span>';
+        scroll();
+      }else if(evt==='openclaw.response'){
+        text = msg.text || text;
+        bodyEl.innerHTML=renderMd(text);
+        bodyEl.dataset.markdown=text;
+        try{ HISTORY.push({role:'assistant', content:text}); }catch(_){}
+        scroll();
+        finish();
+      }else if(evt==='openclaw.error'){
+        bodyEl.innerHTML=(text?renderMd(text)+'<br>':'')
+          +'<span style="color:var(--err)">OpenClaw error: '+esc(msg.error||'unknown')+'</span>';
+        finish();
+      }
+    };
+  }
+
   async function sendAgentLoop(goal){
     _clearWatchedLoopOverride();
     // Variant dispatch: if the user picked a server-side loop in the
     // Loop pane, route through that capability and stream its events.
     // 'chat' (default) keeps the existing in-page step-by-step loop.
     const variant=(document.getElementById('loopVariant')?.value||'chat');
+    // OpenClaw is a genuinely external loop (a separate gateway process, own
+    // event shape — openclaw.stream/openclaw.response, not the DAG-workshop
+    // SSE contract _sendAgentLoopServer expects) — dispatched to its own
+    // function rather than folded into that one, so v1–v8 stay byte-for-byte
+    // untouched by this addition.
+    if(variant==='openclaw'){
+      try{ return await _sendOpenClawLoop(goal); }
+      catch(e){
+        appendSys(`<span style="color:var(--err)">OpenClaw loop failed: ${esc(e.message||e)}</span>`);
+      }
+      return;
+    }
     if(variant!=='chat'){
       try{ return await _sendAgentLoopServer(goal, variant); }
       catch(e){
@@ -8233,6 +8349,8 @@ Your task: decide what to do next to advance toward the goal.
     if(desc){
       if(v==='chat'){
         desc.textContent='Chat-side loop: builds prompts in-page, calls LLM directly. Best for quick experimentation.';
+      } else if(v==='openclaw'){
+        desc.textContent='External loop, entirely independent of Vera\'s own v1–v8 engines — runs against a separately-hosted OpenClaw gateway. Opt-in: needs OPENCLAW_ENABLED + openclaw.connect first, or a run will fail with a clear "not connected" error.';
       } else if(v.startsWith('preset:')){
         const pid=v.slice(7);
         const p=(_LOOP_PRESETS||[]).find(x=>x.id===pid);
