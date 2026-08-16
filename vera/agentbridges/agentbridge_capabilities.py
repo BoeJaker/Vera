@@ -173,7 +173,10 @@ register_ui(
 </div>""",
     "",
     ui_caps=["agentbridge.catalog", "agentbridge.check_updates", "agentbridge.image.ensure"],
-    mode="inject",
+    # mode="tab" (2026-08-16 fix, was "inject" — invisible by default: see
+    # the identical fix + rationale in mcp_catalog_capabilities.py, same day
+    # this panel was reported not showing up anywhere).
+    mode="tab",
     tab_order=73,
 )
 
