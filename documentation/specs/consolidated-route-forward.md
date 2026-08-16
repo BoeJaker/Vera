@@ -1,6 +1,6 @@
 # Vera Dev-Lifecycle × Agent-Swarm — Consolidated Route Forward
 
-**Status:** active roadmap · **Date:** 2026-08-12 (M3.5 added 2026-08-16) · **Owner:** admin (BoeJaker)
+**Status:** active roadmap · **Date:** 2026-08-12 (M3.5 added, M3.6 guardrail added, M3 gate landed 2026-08-16) · **Owner:** admin (BoeJaker)
 **Supersedes nothing; synthesises two plans:**
 - `documentation/specs/dev-lifecycle-and-repo-hygiene.md` (in-tree, the standard)
 - `~/vera_sandbox/agentic swarm.md` (out-of-tree, Agent Boards & Comms)
@@ -10,6 +10,15 @@
 > done** (checked live 2026-08-12, not just marked), and lists the tech debt found while
 > verifying. Update this doc as milestones land; keep the source plans' status glyphs in
 > sync.
+
+> **HARD RULE - branch/merge discipline (added 2026-08-16, after a direct-to-main incident).**
+> **ALL new code lands on `bleeding-edge`. `main` advances ONLY on the user's explicit,
+> unambiguous go-ahead**, and only via `evolve.bleeding_edge.promote_to_main` - never a
+> per-feature `adopt`/`promote` with `to="main"`. This is NOT a convention to remember; it
+> must be *enforced by the system* (see **M3.6**), because relying on `adopt`'s `to="main"`
+> default already broke it once (four changes landed on `main`, rolled back, re-landed via
+> `bleeding-edge`). Until M3.6 lands: treat every `to=` argument as main-until-checked, and
+> never promote `bleeding-edge` -> `main` without an explicit, unambiguous instruction.
 
 ---
 
@@ -109,8 +118,16 @@ scheduled content auto-push → `content.remove`/rename. Retire prod-share editi
 **M2 — Traceability guardrails (Phase D/E lite).** Doc/test-presence check on merge +
 auto-postmortem writer. Cheap, high-leverage, reuses the pipeline + `evolve.errors`.
 
-**M3 — Test-tier gate (Phase B).** Tier `tests/`; wire the merge gate to run the
-critical-system tier. This is the safety net both plans lean on.
+**M3 — Test-tier gate (Phase B). IN PROGRESS (landed on `bleeding-edge` 2026-08-16).** Tier
+`tests/`; wire the merge gate to run the critical-system tier. Landed this session on
+`bleeding-edge`: **M3.1** — `gate_passed` now runs the critical tier (`pytest -m critical`
+via `evolve.unittest.run`, isolated ephemeral container) for ANY branch worktree, alongside
+the `ast.parse` compile check; **M3.3** — reap-safety + pre-push-guard tests promoted into
+the `critical` tier (47 critical tests, all green); **M3.2** — `evolve.tests.matrix`
+coverage-matrix cap + panel view. Also re-landed the **pre-push force/destructive guard**
+(`bdab162`). Remaining: broaden the critical tier, test-generation (M3.4), and perf-based
+gating (socket-flap / bad response-time / Ollama-contention thresholds). This is the safety
+net both plans lean on. Closes **T6**.
 
 **M3.5 — Agentic-loop runner file split (`dag_workshop_capabilities.py`).** (○, added
 2026-08-16, session finding — not tracked in either source plan.) After M3 lands the
@@ -141,6 +158,27 @@ codebase's existing convention for that (see `_sandbox_mod()`/`_orch`-style lazy
 real, careful work per module, not a mechanical bulk move.
 Full findings + the detailed split-order rationale: session audit artifact ("Loop Stall
 Postmortem", 2026-08-15).
+
+**M3.6 — Main-merge guardrail (anti-recurrence). (○, added 2026-08-16 — HIGH priority.)**
+The 2026-08-16 direct-to-main incident proved branch discipline as a *convention* is not
+enough — it was broken by relying on `evolve.pipeline.adopt`'s default `to="main"`, landing
+four changes on `main` before they were rolled back and re-landed via `bleeding-edge`. Build
+a system that makes a local `main` merge *impossible without explicit user authorization* and
+*reminds* any actor the moment they try:
+1. **Cap-layer refusal.** `evolve.pipeline.adopt`/`promote` refuse `to` in {`main`, `master`}
+   unless an explicit per-call authorization token is present (not a default, not a
+   left-set env), and flip `adopt`'s default to `bleeding-edge` so the dangerous default is
+   gone. The one sanctioned path to `main` stays `evolve.bleeding_edge.promote_to_main`,
+   itself gated on an explicit-authorization argument.
+2. **Git-level hook (defense in depth).** A `pre-commit`/`pre-merge-commit` hook refusing any
+   commit/merge that lands on local `main` (HEAD==main) unless `VERA_ALLOW_MAIN_MERGE=1` —
+   the local-merge counterpart of the `pre-push` protected-branch guard this session
+   re-landed (`bdab162`, `tests/test_pre_push_guard.py`, critical tier).
+3. **Loud reminder.** Any main-targeting attempt emits the HARD RULE (top of this doc) with
+   the reason it's blocked and the one sanctioned path, so a mistaken attempt self-corrects
+   instead of silently succeeding.
+Reuses the exact pattern already on `bleeding-edge` (the remote-push guard); this is its
+local-merge twin. Do this BEFORE M4/M5/M6 widen autonomy.
 
 **M4 — Board ↔ pipeline sync (Stage 2 start).** `board.sync` first (local, no GitHub needed) —
 reflect pipeline/run/error state onto board items so the board is the single work view.
@@ -216,6 +254,7 @@ file's concurrent-edit pressure eases → widen autonomy / add coordination visi
 | §1 done | §3, §8.1 #4, Phase E, §8.2 #7 | Stage 1 (§9.1), §6.2 |
 | M2/M3 | Phase B, Phase D, Phase E | — |
 | M3.5 | — (session finding, 2026-08-16) | — |
+| M3.6 | Phase B (guardrail, 2026-08-16 incident) | — |
 | M4/M5 | — | Stage 2/§6.3, Stage 4 |
 | M6 | — | Stage 5, §5.3 |
 | T1/T2 | §8.1 #4 (sweep) | §6.5 lifecycle |
