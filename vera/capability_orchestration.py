@@ -7658,6 +7658,8 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "business/thermal_printer_capabilities.py"),
         os.path.join(_here, "mcp/mcp_catalog_capabilities.py"),
         os.path.join(_here, "evolve/evolve_capabilities.py"),
+        # Closed-loop orchestrator (M7 Phase B) — part of Loop Lab; dedicated module.
+        os.path.join(_here, "evolve/orchestrator_capabilities.py"),
         # Operator: general observe→think→act web/computer operator (drives any
         # web UI or web-served VM). Loaded after evolve so its documentation
         # mission can reach evolve.sandbox.* for the loop-lab target.
