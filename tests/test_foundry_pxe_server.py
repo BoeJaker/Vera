@@ -101,3 +101,24 @@ def test_ops_apkovl_has_proxmox_vms_console():
     tui = f["usr/local/bin/foundry-tui"]
     assert "pct enter" in tui and "qm terminal" in tui   # console into CTs / VMs
     assert f.get("etc/foundry/pve")                        # default Proxmox host configured
+
+
+def test_ops_apkovl_docker_survives_broken_openrc_diskless_boot():
+    """On a RAM/diskless boot the OpenRC boot runlevel never completes (fsck/sysfs
+    report 'would not start'), which kills the udev-trigger coldplug AND makes a plain
+    `service docker start` fail its dependency check, so dockerd never comes up. The
+    generated boot script must side-step all of that (root-caused + verified live on a
+    diskless ThinkPad ops node)."""
+    start = pxe_ops_apkovl_files("10.22.22.25")["etc/local.d/foundry.start"]
+    # modloop mounted + Docker's storage/net kernel modules loaded before dockerd
+    assert "rc-service modloop start" in start
+    assert "modprobe -a overlay" in start
+    # udevd started DIRECTLY (the udev-trigger service can't run in the broken runlevel)
+    assert "/sbin/udevd --daemon" in start
+    assert "udevadm trigger --action=add" in start
+    # cgroups + docker started with --nodeps to bypass the phantom dependency failure
+    assert "rc-service --nodeps cgroups start" in start
+    assert "rc-service --nodeps docker start" in start
+    # the exact buggy pattern that never brought Docker up must not come back
+    assert "&& service docker start" not in start
+    assert "service docker start\n" not in start
