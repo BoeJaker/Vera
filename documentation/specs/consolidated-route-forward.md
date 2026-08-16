@@ -237,9 +237,13 @@ a system that makes a local `main` merge *impossible without explicit user autho
    prove both the hook and the bypass mechanism. **Residual gap (documented in the hook):** a
    *fast-forward* merge onto `main` creates no commit, so no hook fires — rare/odd by hand, and
    the cap-layer guard (part 1) plus `--no-ff` pipeline merges cover the real paths.
-3. **`promote_to_main` confirm-gate. (○ remaining.)** Gate the sanctioned path itself on an
-   explicit-authorization argument (today calling it *is* the deliberate act, but a single
-   call ships everything on `bleeding-edge` to `main` + restarts prod with no confirm).
+3. **`promote_to_main` confirm + history-safety gate. ✓ DONE (pipeline `823997e7`).** The
+   sanctioned release now requires `confirm=true`, snapshots both tips, and permits only a
+   no-op or `git merge --ff-only`. It rechecks both snapshots immediately before advancing
+   `main`, so a concurrent landing safely refuses for review. If `main` is ahead or the two
+   branches diverged, it preserves both histories and instructs the operator to reconcile
+   `main` into `bleeding-edge` through an isolated reviewed pipeline. Releases no longer
+   create a main-only merge commit, so `bleeding-edge` remains a superset of `main`.
 Reuses the exact pattern already on `bleeding-edge` (the remote-push guard); this is its
 local-merge twin. Finish parts 2–3 BEFORE M4/M5/M6 widen autonomy.
 
@@ -377,6 +381,13 @@ file's concurrent-edit pressure eases → widen autonomy / add coordination visi
   tests reproduce the incident. **Reaches prod's running sweep only after a `bleeding-edge`→
   `main` release + restart** — until then the branch-only trunk + the live mirror container are
   the interim guards.
+- **T9b — release merges made `main` immediately ahead of `bleeding-edge`. ✓ FIXED (pipeline
+  `823997e7`).** The sanctioned release previously used `merge --no-ff`, manufacturing a new
+  release commit only on `main`. The next feature pipeline then hit a main-only ancestry snag
+  despite all released content originating on `bleeding-edge`. The release is now
+  fast-forward-only with ancestry and expected-tip checks. Divergence is never auto-resolved,
+  rebased, reset, or force-pushed; all commits remain reachable and reconciliation happens on
+  an isolated reviewed branch before retrying.
 - **T10 — the standing bleeding-edge container served a STALE/BROKEN mirror worktree. ✓
   recovered 2026-08-16; root fix pending.** After several promotes reported
   `standing_container_refresh: {ok:true, "mirror refreshed + container restarted"}`, the mirror
