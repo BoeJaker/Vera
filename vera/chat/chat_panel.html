@@ -6762,7 +6762,15 @@ IMPORTANT:
     // Same "measure genuine progress, not raw event arrival" stall guard as
     // OpenClaw's — belt-and-suspenders alongside the server's own
     // <BRIDGE>_STALL_S kill, in case an event itself gets lost in transit.
-    const STALL_MS=90000;
+    // 650s, not 90s (2026-08-16 fix — was the actual cause of "streamed
+    // outputs tend to time out and produce no output"): the container may
+    // now queue behind Vera's own GPU gate before it even starts (up to the
+    // gate's own 600s wait budget) — total silence on this stream during
+    // that wait is normal, not a stall. The real hang protection is
+    // server-side (<BRIDGE>_STALL_S), which only starts counting once the
+    // container is actually running; this client timer is defense-in-depth
+    // for a lost event, not the primary guard, so it can afford to be generous.
+    const STALL_MS=650000;
     let lastProgress=Date.now();
     stallTimer=setInterval(()=>{
       if(finished)return;
@@ -6785,7 +6793,15 @@ IMPORTANT:
       let msg; try{ msg=JSON.parse(ev.data); }catch(_){ return; }
       if(msg.run_id!==runId) return;
       const evt=msg.type||'';
-      if(evt===cfg.eventPrefix+'.step'){
+      if(evt===cfg.eventPrefix+'.gate_acquired'){
+        // Container was queued behind Vera's own GPU gate before starting —
+        // real progress (a slot was actually granted), just not a step yet.
+        lastProgress=Date.now();
+        const waited=Math.round(msg.waited_s||0);
+        bodyEl.innerHTML='<span style="color:var(--dim2)">'
+          +(waited>1?'Queued '+waited+'s for a GPU slot, s':'S')+'tarting…</span>';
+        scroll();
+      }else if(evt===cfg.eventPrefix+'.step'){
         lastProgress=Date.now();
         const icon=cfg.stepIcons[msg.kind]||'▸';
         const label=msg.kind==='action' && msg.step_number ? ('Step '+msg.step_number) : (msg.kind||'step');
