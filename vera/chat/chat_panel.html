@@ -1394,6 +1394,7 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
         <option value="openclaw">OpenClaw — external gateway (opt-in, needs connect)</option>
         <option value="smolagents">smolagents — minimal code-agent, containerized (opt-in)</option>
         <option value="langgraph">LangGraph — ReAct graph-agent, containerized (opt-in)</option>
+        <option value="pydanticai">PydanticAI — typed schema-first agent, containerized (opt-in)</option>
       </select>
       <span class="nlbl" style="flex:0 0 auto">Variant</span>
     </label>
@@ -6677,15 +6678,38 @@ IMPORTANT:
     };
   }
 
-  // smolagents loop variant (2026-08-16, Phase 2 of the external-agentic-loop
-  // plan; made event-driven the same day after "no live progress until it
-  // finishes" feedback) — a fresh, throwaway Docker container per turn,
-  // never Vera's own process. Now mirrors the OpenClaw SSE pattern above:
-  // /smolagents/run returns a run_id immediately, then real per-step
-  // progress (task/planning/action/final — smolagents' own agent.run(...,
-  // stream=True), not a fake spinner) arrives as smolagents.run.step events
-  // on GET /events, filtered by run_id, until smolagents.run.done/error.
-  async function _sendSmolagentsLoop(goal){
+  // Container-based agent-bridge loop variants (smolagents, LangGraph,
+  // PydanticAI — one generic function since 2026-08-16, after each bridge
+  // had independently grown byte-for-byte the same launch/stream/stall/
+  // finish shape around its own event-type prefix; a 4th bridge would have
+  // been a 4th copy). Each config entry is the only genuinely bridge-
+  // specific bit: which endpoint to launch, which event-type prefix to
+  // filter on, and how to label each step `kind` an icon. New bridges that
+  // follow the agentbridge_runtime.py container-streaming contract (see
+  // agentbridge_registry.py) plug in here with one config entry, not a new
+  // ~110-line function.
+  const _BRIDGE_UI_CONFIG = {
+    smolagents: {
+      apiPath: '/smolagents/run', eventPrefix: 'smolagents.run', label: 'smolagents',
+      stepsLabel: 'step',
+      stepIcons: {task:'🎯', planning:'🧭', action:'⚙️', final:'✅'},
+    },
+    langgraph: {
+      apiPath: '/langgraph/run', eventPrefix: 'langgraph.run', label: 'LangGraph',
+      stepsLabel: 'tool step',
+      stepIcons: {human:'🎯', tool_call:'⚙️', tool_result:'📥', ai:'💬'},
+    },
+    pydanticai: {
+      apiPath: '/pydanticai/run', eventPrefix: 'pydanticai.run', label: 'PydanticAI',
+      stepsLabel: 'tool step',
+      stepIcons: {task:'🎯', tool_call:'⚙️', tool_result:'📥', thinking:'💭', ai:'💬', final:'✅'},
+    },
+  };
+
+  async function _sendContainerBridgeLoop(goal, bridgeId){
+    const cfg=_BRIDGE_UI_CONFIG[bridgeId];
+    if(!cfg){ appendSys('<span style="color:var(--err)">Unknown bridge variant: '+esc(bridgeId)+'</span>'); return; }
+
     if(_agentLoopAbort){_agentLoopAbort.abort();_agentLoopAbort=null;}
     _agentLoopAbort=new AbortController();
     const abort=_agentLoopAbort;
@@ -6693,11 +6717,11 @@ IMPORTANT:
     _streamStart();
     _serverLoopActive=true;
 
-    const uMsg=_mkMsg('user','loop:smolagents',esc(goal).replace(/\n/g,'<br>'));
+    const uMsg=_mkMsg('user','loop:'+bridgeId,esc(goal).replace(/\n/g,'<br>'));
     BOX().appendChild(uMsg.wrap);scroll();
     HISTORY.push({role:'user',content:goal});
 
-    const aMsg=_mkMsg('agent','smolagents','<span style="color:var(--dim2)">Launching container…</span>');
+    const aMsg=_mkMsg('agent',bridgeId,'<span style="color:var(--dim2)">Launching container…</span>');
     BOX().appendChild(aMsg.wrap);scroll();
     const bodyEl=aMsg.body;
 
@@ -6720,32 +6744,31 @@ IMPORTANT:
 
     let r;
     try{
-      r = await api('/smolagents/run','POST',{goal});
+      r = await api(cfg.apiPath,'POST',{goal});
     }catch(e){
-      bodyEl.innerHTML='<span style="color:var(--err)">smolagents run failed: '+esc(String(e&&e.message||e))+'</span>';
+      bodyEl.innerHTML='<span style="color:var(--err)">'+esc(cfg.label)+' run failed: '+esc(String(e&&e.message||e))+'</span>';
       finish(); return;
     }
     if(finished) return;   // stopped while the request was in flight
     if(!r || r.ok===false || !r.run_id){
-      bodyEl.innerHTML='<span style="color:var(--err)">'+esc((r&&r.error)||'smolagents returned no run_id')+'</span>';
+      bodyEl.innerHTML='<span style="color:var(--err)">'+esc((r&&r.error)||(cfg.label+' returned no run_id'))+'</span>';
       finish(); return;
     }
     const runId=r.run_id;
     bodyEl.innerHTML='<span style="color:var(--dim2)">Waiting for the container…</span>';
 
-    const stepIcon={task:'🎯',planning:'🧭',action:'⚙️',final:'✅'};
     const stepBlocks=[];
 
     // Same "measure genuine progress, not raw event arrival" stall guard as
     // OpenClaw's — belt-and-suspenders alongside the server's own
-    // SMOLAGENTS_STALL_S kill, in case an event itself gets lost in transit.
+    // <BRIDGE>_STALL_S kill, in case an event itself gets lost in transit.
     const STALL_MS=90000;
     let lastProgress=Date.now();
     stallTimer=setInterval(()=>{
       if(finished)return;
       if(Date.now()-lastProgress>STALL_MS){
         bodyEl.innerHTML=(stepBlocks.length?renderMd(stepBlocks.join('\n\n'))+'<br>':'')
-          +'<span style="color:var(--err)">[smolagents stalled — no progress for '
+          +'<span style="color:var(--err)">['+esc(cfg.label)+' stalled — no progress for '
           +Math.round(STALL_MS/1000)+'s]</span>';
         finish();
       }
@@ -6762,14 +6785,14 @@ IMPORTANT:
       let msg; try{ msg=JSON.parse(ev.data); }catch(_){ return; }
       if(msg.run_id!==runId) return;
       const evt=msg.type||'';
-      if(evt==='smolagents.run.step'){
+      if(evt===cfg.eventPrefix+'.step'){
         lastProgress=Date.now();
-        const icon=stepIcon[msg.kind]||'▸';
+        const icon=cfg.stepIcons[msg.kind]||'▸';
         const label=msg.kind==='action' && msg.step_number ? ('Step '+msg.step_number) : (msg.kind||'step');
         stepBlocks.push(icon+' **'+label+'**\n\n'+(msg.text||''));
         bodyEl.innerHTML=renderMd(stepBlocks.join('\n\n'))+' <span class="cap-dot"></span>';
         scroll();
-      }else if(evt==='smolagents.run.done'){
+      }else if(evt===cfg.eventPrefix+'.done'){
         const res=msg.result||{};
         const answer=res.answer||'';
         bodyEl.innerHTML=renderMd(answer);
@@ -6777,120 +6800,14 @@ IMPORTANT:
         const stepsN=res.steps||0;
         const meta=document.createElement('div');
         meta.style.cssText='color:var(--dim2);font-size:9px;margin-top:4px';
-        meta.textContent=stepsN+' step'+(stepsN===1?'':'s')+' · '+(res.elapsed_s||msg.elapsed_s||'?')+'s · '+(res.model||'');
+        meta.textContent=stepsN+' '+cfg.stepsLabel+(stepsN===1?'':'s')+' · '+(res.elapsed_s||msg.elapsed_s||'?')+'s · '+(res.model||'');
         bodyEl.appendChild(meta);
         try{ HISTORY.push({role:'assistant', content:answer}); }catch(_){}
         scroll();
         finish();
-      }else if(evt==='smolagents.run.error'){
+      }else if(evt===cfg.eventPrefix+'.error'){
         bodyEl.innerHTML=(stepBlocks.length?renderMd(stepBlocks.join('\n\n'))+'<br>':'')
-          +'<span style="color:var(--err)">smolagents error: '+esc(msg.error||'unknown')+'</span>';
-        finish();
-      }
-    };
-  }
-
-  // LangGraph loop variant (event-driven since 2026-08-16, same day
-  // smolagents got the same treatment after "no live progress" feedback) —
-  // same containerized shape as smolagents, opposite agent paradigm under
-  // the hood: an explicit ReAct graph with real structured tool-calling,
-  // not code-as-action. See langgraph_capabilities.py.
-  async function _sendLangGraphLoop(goal){
-    if(_agentLoopAbort){_agentLoopAbort.abort();_agentLoopAbort=null;}
-    _agentLoopAbort=new AbortController();
-    const abort=_agentLoopAbort;
-    const globalAbort=_GLOBAL_ABORT;
-    _streamStart();
-    _serverLoopActive=true;
-
-    const uMsg=_mkMsg('user','loop:langgraph',esc(goal).replace(/\n/g,'<br>'));
-    BOX().appendChild(uMsg.wrap);scroll();
-    HISTORY.push({role:'user',content:goal});
-
-    const aMsg=_mkMsg('agent','langgraph','<span style="color:var(--dim2)">Launching container…</span>');
-    BOX().appendChild(aMsg.wrap);scroll();
-    const bodyEl=aMsg.body;
-
-    let es=null, stallTimer=null, finished=false;
-    const finish=()=>{
-      if(finished)return; finished=true;
-      try{ es&&es.close(); }catch(_){}
-      if(stallTimer)clearInterval(stallTimer);
-      abort.signal.removeEventListener('abort', onAbort);
-      globalAbort.signal.removeEventListener('abort', onAbort);
-      _streamEnd(); _serverLoopActive=false;
-    };
-    const onAbort=()=>{
-      if(finished)return;
-      bodyEl.innerHTML += '<div style="color:var(--dim2);font-size:9px;margin-top:4px">(stopped)</div>';
-      finish();
-    };
-    abort.signal.addEventListener('abort', onAbort, {once:true});
-    globalAbort.signal.addEventListener('abort', onAbort, {once:true});
-
-    let r;
-    try{
-      r = await api('/langgraph/run','POST',{goal});
-    }catch(e){
-      bodyEl.innerHTML='<span style="color:var(--err)">LangGraph run failed: '+esc(String(e&&e.message||e))+'</span>';
-      finish(); return;
-    }
-    if(finished) return;   // stopped while the request was in flight
-    if(!r || r.ok===false || !r.run_id){
-      bodyEl.innerHTML='<span style="color:var(--err)">'+esc((r&&r.error)||'LangGraph returned no run_id')+'</span>';
-      finish(); return;
-    }
-    const runId=r.run_id;
-    bodyEl.innerHTML='<span style="color:var(--dim2)">Waiting for the container…</span>';
-
-    const stepIcon={tool_call:'⚙️',tool_result:'📥',ai:'💬',human:'🎯'};
-    const stepBlocks=[];
-
-    const STALL_MS=90000;
-    let lastProgress=Date.now();
-    stallTimer=setInterval(()=>{
-      if(finished)return;
-      if(Date.now()-lastProgress>STALL_MS){
-        bodyEl.innerHTML=(stepBlocks.length?renderMd(stepBlocks.join('\n\n'))+'<br>':'')
-          +'<span style="color:var(--err)">[LangGraph stalled — no progress for '
-          +Math.round(STALL_MS/1000)+'s]</span>';
-        finish();
-      }
-    },5000);
-
-    try{
-      es=new EventSource(location.origin+'/events');
-    }catch(e){
-      bodyEl.innerHTML='<span style="color:var(--err)">Could not open event stream: '+esc(String(e&&e.message||e))+'</span>';
-      finish(); return;
-    }
-    es.onmessage=(ev)=>{
-      if(finished)return;
-      let msg; try{ msg=JSON.parse(ev.data); }catch(_){ return; }
-      if(msg.run_id!==runId) return;
-      const evt=msg.type||'';
-      if(evt==='langgraph.run.step'){
-        lastProgress=Date.now();
-        const icon=stepIcon[msg.kind]||'▸';
-        stepBlocks.push(icon+' **'+(msg.kind||'step')+'**\n\n'+(msg.text||''));
-        bodyEl.innerHTML=renderMd(stepBlocks.join('\n\n'))+' <span class="cap-dot"></span>';
-        scroll();
-      }else if(evt==='langgraph.run.done'){
-        const res=msg.result||{};
-        const answer=res.answer||'';
-        bodyEl.innerHTML=renderMd(answer);
-        bodyEl.dataset.markdown=answer;
-        const stepsN=res.steps||0;
-        const meta=document.createElement('div');
-        meta.style.cssText='color:var(--dim2);font-size:9px;margin-top:4px';
-        meta.textContent=stepsN+' tool step'+(stepsN===1?'':'s')+' · '+(res.elapsed_s||msg.elapsed_s||'?')+'s · '+(res.model||'');
-        bodyEl.appendChild(meta);
-        try{ HISTORY.push({role:'assistant', content:answer}); }catch(_){}
-        scroll();
-        finish();
-      }else if(evt==='langgraph.run.error'){
-        bodyEl.innerHTML=(stepBlocks.length?renderMd(stepBlocks.join('\n\n'))+'<br>':'')
-          +'<span style="color:var(--err)">LangGraph error: '+esc(msg.error||'unknown')+'</span>';
+          +'<span style="color:var(--err)">'+esc(cfg.label)+' error: '+esc(msg.error||'unknown')+'</span>';
         finish();
       }
     };
@@ -6920,14 +6837,9 @@ IMPORTANT:
       catch(e){ appendSys(`<span style="color:var(--err)">OpenClaw loop failed: ${esc(e.message||e)}</span>`); }
       return;
     }
-    if(variant==='smolagents'){
-      try{ return await _sendSmolagentsLoop(goal); }
-      catch(e){ appendSys(`<span style="color:var(--err)">smolagents loop failed: ${esc(e.message||e)}</span>`); }
-      return;
-    }
-    if(variant==='langgraph'){
-      try{ return await _sendLangGraphLoop(goal); }
-      catch(e){ appendSys(`<span style="color:var(--err)">LangGraph loop failed: ${esc(e.message||e)}</span>`); }
+    if(_BRIDGE_UI_CONFIG[variant]){
+      try{ return await _sendContainerBridgeLoop(goal, variant); }
+      catch(e){ appendSys(`<span style="color:var(--err)">${esc(_BRIDGE_UI_CONFIG[variant].label)} loop failed: ${esc(e.message||e)}</span>`); }
       return;
     }
     try{ return await _sendAgentLoopServer(goal, variant); }
@@ -8595,9 +8507,11 @@ Your task: decide what to do next to advance toward the goal.
       } else if(v==='openclaw'){
         desc.textContent='External loop, entirely independent of Vera\'s own v1–v8 engines — runs against a separately-hosted OpenClaw gateway. Opt-in: needs OPENCLAW_ENABLED + openclaw.connect first, or a run will fail with a clear "not connected" error.';
       } else if(v==='smolagents'){
-        desc.textContent='Minimal (~1,000 LOC) external code-agent loop — writes and executes Python as its actions instead of JSON tool-calls. Runs in a fresh, throwaway Docker container per turn, entirely independent of Vera\'s own engines. Not streaming — waits for the run to finish (or time out) before showing a result. Opt-in: needs SMOLAGENTS_ENABLED=1.';
+        desc.textContent='Minimal (~1,000 LOC) external code-agent loop — writes and executes Python as its actions instead of JSON tool-calls. Runs in a fresh, throwaway Docker container per turn, entirely independent of Vera\'s own engines. Live per-step progress as the agent works. Opt-in: needs SMOLAGENTS_ENABLED=1.';
       } else if(v==='langgraph'){
-        desc.textContent='External graph-agent loop (langchain-ai/langgraph) — explicit ReAct graph with real structured tool-calling, the opposite paradigm from smolagents\' code-as-action. Runs in a fresh, throwaway Docker container per turn, entirely independent of Vera\'s own engines. Not streaming — waits for the run to finish (or time out) before showing a result. Opt-in: needs LANGGRAPH_ENABLED=1.';
+        desc.textContent='External graph-agent loop (langchain-ai/langgraph) — explicit ReAct graph with real structured tool-calling, the opposite paradigm from smolagents\' code-as-action. Runs in a fresh, throwaway Docker container per turn, entirely independent of Vera\'s own engines. Live per-step progress as the graph runs. Opt-in: needs LANGGRAPH_ENABLED=1.';
+      } else if(v==='pydanticai'){
+        desc.textContent='External typed/schema-first agent loop (pydantic-ai) — a third distinct paradigm from smolagents (code-as-action) and LangGraph (message graph): tool args/results flow through Pydantic validation, and the model\'s own reasoning streams as a first-class step. Runs in a fresh, throwaway Docker container per turn, entirely independent of Vera\'s own engines. Opt-in: needs PYDANTICAI_ENABLED=1.';
       } else if(v.startsWith('preset:')){
         const pid=v.slice(7);
         const p=(_LOOP_PRESETS||[]).find(x=>x.id===pid);
