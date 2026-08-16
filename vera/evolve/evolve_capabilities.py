@@ -5482,6 +5482,31 @@ async def evolve_pipeline_promote(id: str = "", to: str = "bleeding-edge", force
                 "error": "gate not passed — run evolve.pipeline.test to gate the branch "
                          "first, or promote with force=true for a change the score-gate "
                          "can't evaluate (docs/infra)."}
+    # ── Perf gate (M3 perf-gating): is the SYSTEM healthy enough to merge into right
+    # now? Advisory by default — record the verdict on the pipeline + surface it, never
+    # blocking a merge on transient system load. Only a strict-mode 'fail'
+    # (VERA_PERF_GATE_STRICT=1) holds the promote, and force=true always overrides.
+    # Code pipelines only (a docs change doesn't warrant the perf.scan round-trip).
+    if rec.get("kind") == "code":
+        try:
+            _pg = await _call("perf.gate")
+            if isinstance(_pg, dict) and _pg.get("ok"):
+                rec["perf_gate"] = {"verdict": _pg.get("verdict"), "reason": _pg.get("reason"),
+                                    "blocking": bool(_pg.get("blocking")),
+                                    "top": _pg.get("top_findings") or []}
+                _pstep(rec, "perf", not _pg.get("blocking"),
+                       f"perf {_pg.get('verdict')}: {_pg.get('reason')}")
+                if _pg.get("blocking") and not force:
+                    rec["decision"] = "held"
+                    await _save_pipeline(rec)
+                    await _audit("pipeline.promote",
+                                 f"BLOCKED {branch} -> {to}: perf gate fail (strict)",
+                                 id=id, kind="code", branch=branch, ok=False, repo=rec.get("repo"))
+                    return {"ok": False, "held": True, "perf_gate": rec["perf_gate"],
+                            "error": "perf gate FAIL (strict mode) — " + (_pg.get("reason") or "")
+                                     + "; wait for the system to recover, or force=true to override."}
+        except Exception as e:                          # a perf-check failure never blocks a merge
+            log.debug("perf gate check failed (non-fatal): %s", e)
     # ── Anti-clobber sync (2026-08-16 bleeding-edge-trunk-workflow): bring
     # `branch` up to date with `to` BEFORE merging back. Without this, a
     # branch that forked from `to` a while ago can silently overwrite commits

@@ -17,6 +17,12 @@ RUN pip install --no-cache-dir smolagents openai
 WORKDIR /app
 COPY smolagents_entrypoint.py /app/smolagents_entrypoint.py
 
+# Belt-and-suspenders alongside the entrypoint's own flush=True on every
+# print: guarantees stdout is never block-buffered even if some library
+# code prints without an explicit flush, so SMOLAGENTS_STEP: lines reach the
+# host as they're produced instead of only at process exit.
+ENV PYTHONUNBUFFERED=1
+
 # GOAL, OLLAMA_BASE_URL, OLLAMA_MODEL are supplied via `docker run -e` at
 # invocation time (see smolagents_capabilities.py) — nothing baked in here.
 ENTRYPOINT ["python3", "/app/smolagents_entrypoint.py"]
