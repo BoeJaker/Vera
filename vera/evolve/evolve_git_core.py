@@ -117,6 +117,19 @@ def tracked_dirty_lines(porcelain: str) -> list:
     return out
 
 
+def worktree_is_severed(git_status_stderr: str) -> bool:
+    """True if a `git status` inside a worktree reports the T10 SEVERED-link
+    failure — the worktree's admin dir (.git/worktrees/<name>) was removed while the
+    worktree DIR + its .git file survived (e.g. the standing bleeding-edge container
+    keeps the bind-mount alive while an unrelated worktree prune/remove strips the
+    admin entry). git then errors 'not a git repository: …/.git/worktrees/<name>'.
+
+    A plain `wt.exists() and (wt/.git).exists()` check MISSES this (both still
+    exist), so callers must inspect the status stderr. `git worktree repair` cannot
+    fix it (the admin dir is gone) — the worktree must be removed + re-added. Pure."""
+    return "not a git repository" in (git_status_stderr or "").lower()
+
+
 def release_preflight(main_sha: str, bleeding_edge_sha: str,
                       main_is_ancestor: bool, bleeding_edge_is_ancestor: bool) -> dict:
     """Choose the only history-preserving bleeding-edge release action.
