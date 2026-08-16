@@ -93,9 +93,12 @@ from Vera.vera.capability_orchestration import (
 log = logging.getLogger("vera.evolve")
 
 try:
-    from .attribution_core import author_agent_for, controller_for, effective_controller
+    from Vera.vera.evolve.attribution_core import author_agent_for, controller_for, effective_controller
 except ImportError:
-    from attribution_core import author_agent_for, controller_for, effective_controller
+    try:
+        from .attribution_core import author_agent_for, controller_for, effective_controller
+    except ImportError:
+        from attribution_core import author_agent_for, controller_for, effective_controller
 
 
 def _triggered_by() -> str:
