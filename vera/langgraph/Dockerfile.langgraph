@@ -1,0 +1,13 @@
+FROM python:3.11-slim
+# Pinned: langgraph.prebuilt.create_react_agent is deprecated as of langgraph
+# 1.x (moving to langchain.agents.create_agent in V2) but still present and
+# working here. Pin so a future rebuild of this image doesn't silently land
+# on a version where it's been removed.
+RUN pip install --no-cache-dir \
+    langgraph==1.2.11 \
+    langgraph-prebuilt==1.1.0 \
+    langchain-openai==1.5.1 \
+    langchain-core==1.5.5
+WORKDIR /app
+COPY langgraph_entrypoint.py /app/langgraph_entrypoint.py
+ENTRYPOINT ["python3", "/app/langgraph_entrypoint.py"]
