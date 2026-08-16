@@ -1538,17 +1538,57 @@ for f in netboot.xyz.lkrn netboot.xyz.efi; do [ -s /srv/foundry/http/$f ] || cur
 DI=http://deb.debian.org/debian/dists/bookworm/main/installer-amd64/current/images/netboot/debian-installer/amd64
 [ -s /srv/foundry/http/debian12/linux ] || curl -fsS --max-time 150 -o /srv/foundry/http/debian12/linux "$DI/linux"
 [ -s /srv/foundry/http/debian12/initrd.gz ] || curl -fsS --max-time 180 -o /srv/foundry/http/debian12/initrd.gz "$DI/initrd.gz"
+# persist ip_forward + NAT as a boot-durable oneshot (ordered before dnsmasq)
+echo 'net.ipv4.ip_forward=1' > /etc/sysctl.d/99-foundry-netboot.conf
 sysctl -w net.ipv4.ip_forward=1 >/dev/null
-iptables -t nat -C POSTROUTING -s {subnet} -o {uplink} -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s {subnet} -o {uplink} -j MASQUERADE
+cat > /etc/systemd/system/foundry-nat.service <<'NATUNIT'
+[Unit]
+Description=Foundry netboot NAT (masquerade the provisioning subnet out the uplink)
+After=network-online.target
+Wants=network-online.target
+Before=dnsmasq.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'sysctl -w net.ipv4.ip_forward=1; iptables -t nat -C POSTROUTING -s {subnet} -o {uplink} -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s {subnet} -o {uplink} -j MASQUERADE'
+[Install]
+WantedBy=multi-user.target
+NATUNIT
+# dnsmasq boot-safety drop-in: refuse to start unless {iface} exists (never fall back to the LAN)
+mkdir -p /etc/systemd/system/dnsmasq.service.d
+cat > /etc/systemd/system/dnsmasq.service.d/foundry-order.conf <<'DNSD'
+[Unit]
+After=network-online.target foundry-nat.service
+Wants=network-online.target
+[Service]
+ExecStartPre=/bin/sh -c 'ip link show {iface} >/dev/null 2>&1 || {{ echo "{iface} absent - refusing to start dnsmasq"; exit 1; }}'
+DNSD
+systemctl daemon-reload
+systemctl enable --now foundry-nat >/dev/null 2>&1
 dnsmasq --test 2>&1
 systemctl restart dnsmasq; sleep 2
 L=$(ss -ulnp 2>/dev/null | grep -E ":67 ")
 if echo "$L" | grep -q "{iface}:67" && ! echo "$L" | grep -qE "0\\.0\\.0\\.0:67[^%]|192\\.168\\.0\\."; then echo FENCE_OK; else echo FENCE_FAIL; systemctl stop dnsmasq; exit 2; fi
-systemctl disable dnsmasq 2>/dev/null
-systemctl stop foundry-http 2>/dev/null; systemctl reset-failed foundry-http 2>/dev/null
-systemd-run --unit=foundry-http --collect /usr/bin/python3 -m http.server 80 --bind {server_ip} --directory /srv/foundry/http >/dev/null 2>&1
+# fence passed -> make dnsmasq durable across reboots (safe: config binds {iface} only)
+systemctl enable dnsmasq >/dev/null 2>&1
+# persistent HTTP unit replaces the old transient systemd-run (which died on reboot)
+systemctl stop foundry-http 2>/dev/null; systemctl reset-failed foundry-http 2>/dev/null; rm -f /run/systemd/transient/foundry-http.service 2>/dev/null
+cat > /etc/systemd/system/foundry-http.service <<'HTTPUNIT'
+[Unit]
+Description=Foundry netboot HTTP server (PXE assets)
+After=network-online.target foundry-nat.service
+Wants=network-online.target
+[Service]
+ExecStart=/usr/bin/python3 -m http.server 80 --bind {server_ip} --directory /srv/foundry/http
+Restart=on-failure
+RestartSec=3
+[Install]
+WantedBy=multi-user.target
+HTTPUNIT
+systemctl daemon-reload
+systemctl enable --now foundry-http >/dev/null 2>&1
 sleep 1
-echo "DEPLOY_OK dnsmasq=$(systemctl is-active dnsmasq) http=$(systemctl is-active foundry-http)"
+echo "DEPLOY_OK dnsmasq=$(systemctl is-active dnsmasq) http=$(systemctl is-active foundry-http) nat=$(systemctl is-active foundry-nat)"
 """
 
 
