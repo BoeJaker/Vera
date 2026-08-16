@@ -55,3 +55,38 @@ def test_worktree_paths_by_branch():
     # checkout that promote must merge into in-place (guarded), never git-checkout.
     assert "main" not in m
     assert core.worktree_paths_by_branch("") == {}
+
+
+# ── tracked_dirty_lines: the in-checkout promote must refuse only on TRACKED WIP,
+# never on an unrelated untracked scratch/spec doc left in the merge-target worktree.
+
+def test_untracked_only_is_not_dirty():
+    # a lone untracked file (e.g. a user's open spec doc) must NOT block a promote
+    porcelain = '?? "documentation/specs/External Agentic-Loop Integration.md"\n'
+    assert core.tracked_dirty_lines(porcelain) == []
+
+
+def test_tracked_modification_is_dirty():
+    assert core.tracked_dirty_lines(" M vera/evolve/evolve_capabilities.py\n")
+    assert core.tracked_dirty_lines("M  tests/conftest.py\n")   # staged
+    assert core.tracked_dirty_lines("A  tests/new_test.py\n")   # staged add
+    assert core.tracked_dirty_lines(" D vera/gone.py\n")        # deletion
+
+
+def test_mixed_keeps_only_tracked():
+    porcelain = (
+        " M vera/evolve/evolve_capabilities.py\n"
+        '?? "docs/scratch.md"\n'
+        "?? untracked_dir/\n"
+    )
+    got = core.tracked_dirty_lines(porcelain)
+    assert got == [" M vera/evolve/evolve_capabilities.py"]
+
+
+def test_ignored_entries_are_not_dirty():
+    assert core.tracked_dirty_lines("!! build/artifact.o\n") == []
+
+
+def test_empty_and_blank_are_not_dirty():
+    assert core.tracked_dirty_lines("") == []
+    assert core.tracked_dirty_lines("\n  \n") == []
