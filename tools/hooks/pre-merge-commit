@@ -1,0 +1,36 @@
+#!/bin/sh
+# ─────────────────────────────────────────────────────────────────────────────
+#  Vera pre-merge-commit — block ad-hoc merges onto `main` (M3.6 part 2)
+#  (documentation/specs/consolidated-route-forward.md M3.6)
+#
+#  The pre-commit hook (§2.1) blocks direct commits to `main` but deliberately
+#  EXEMPTS merge commits (MERGE_HEAD present) so the gate landing can merge onto
+#  main. That leaves one hole: a raw `git merge <branch>` run BY HAND on the live
+#  `main` checkout — no pre-commit block, no cap-layer guard. This hook closes it.
+#
+#  ALL new code lands on `bleeding-edge`; `main` advances ONLY via the sanctioned
+#  deploy step (evolve.bleeding_edge.promote_to_main), on the user's explicit,
+#  unambiguous go-ahead. That step sets VERA_ALLOW_MAIN_COMMIT=1 (same override
+#  the pre-commit hook documents), so its own merge passes; a hand-run merge does
+#  not. Runs only when a real merge COMMIT is about to be created (git skips it on
+#  a fast-forward or a conflicted merge).
+#
+#  Enabled via `git config core.hooksPath tools/hooks`.
+#  Emergency bypass (sanctioned deploy only):  VERA_ALLOW_MAIN_COMMIT=1 git merge …
+# ─────────────────────────────────────────────────────────────────────────────
+set -e
+branch=$(git symbolic-ref --short -q HEAD || echo HEAD)
+
+case "$branch" in
+    main|master)
+        if [ "${VERA_ALLOW_MAIN_COMMIT:-}" != "1" ]; then
+            echo "pre-merge-commit: merging onto '$branch' by hand is blocked (M3.6)." >&2
+            echo "  ALL new code lands on bleeding-edge; main advances ONLY via the" >&2
+            echo "  sanctioned deploy step evolve.bleeding_edge.promote_to_main, on the" >&2
+            echo "  user's explicit, unambiguous go-ahead." >&2
+            echo "  Sanctioned deploy only:  VERA_ALLOW_MAIN_COMMIT=1 git merge …" >&2
+            exit 1
+        fi
+        ;;
+esac
+exit 0
