@@ -434,7 +434,7 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21") -> Dict:
         "iptable_nat iptable_filter ip6_tables ip6table_nat xt_conntrack tun 2>/dev/null\n"
         "mkdir -p /etc/modules-load.d && printf '%s\\n' overlay br_netfilter bridge veth "
         "nf_nat ip_tables iptable_nat tun > /etc/modules-load.d/foundry.conf\n"
-        "apk update; apk add newt eudev\n"
+        "apk update; apk add newt eudev util-linux xz pv unzip\n"
         "apk add docker docker-cli openssh openssh-client curl jq bash rsync ca-certificates\n"
         # On RAM/diskless boot the OpenRC boot runlevel does not complete (fsck/sysfs
         # report 'would not start'), which both prevents the udev-trigger coldplug and
@@ -453,6 +453,12 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21") -> Dict:
         "mkdir -p /root/.ssh; chmod 700 /root/.ssh\n"
         f"wget -qO- http://{server_ip}/ops/authorized_keys 2>/dev/null > /root/.ssh/authorized_keys; "
         "chmod 600 /root/.ssh/authorized_keys 2>/dev/null\n"
+        # estate key for SSH-ing OUT to Proxmox / estate hosts, + refresh the menu from
+        # the server so TUI updates propagate without rebuilding the image.
+        f"wget -qO- http://{server_ip}/ops/id_estate 2>/dev/null > /root/.ssh/id_estate; "
+        "chmod 600 /root/.ssh/id_estate 2>/dev/null\n"
+        f"wget -qO- http://{server_ip}/ops/foundry-tui 2>/dev/null > /usr/local/bin/foundry-tui; "
+        "chmod +x /usr/local/bin/foundry-tui 2>/dev/null\n"
         "sleep 3\n"
         f"TOKEN=$(wget -qO- http://{server_ip}/swarm/worker-token 2>/dev/null | tr -d '\\r\\n')\n"
         f"MGR=$(wget -qO- http://{server_ip}/swarm/manager 2>/dev/null | tr -d '\\r\\n')\n"
@@ -464,18 +470,32 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21") -> Dict:
         "#!/bin/sh\n"
         'command -v whiptail >/dev/null 2>&1 || { echo "Ops node still installing..."; '
         "while ! command -v whiptail >/dev/null 2>&1; do sleep 3; done; }\n"
-        "T=/tmp/ftui.out\n"
-        "PVE=$(cat /etc/foundry/pve 2>/dev/null || echo 192.168.0.200)\n"
+        f"T=/tmp/ftui.out; SRV={server_ip}; mkdir -p /etc/foundry\n"
+        # target Proxmox host: saved choice -> first published host -> server itself.
+        "PVE=$(cat /etc/foundry/pve 2>/dev/null)\n"
+        "[ -z \"$PVE\" ] && PVE=$(wget -qO- http://$SRV/ops/pve_hosts 2>/dev/null | awk 'NR==1{print $2}')\n"
+        f"[ -z \"$PVE\" ] && PVE={server_ip}\n"
         "sshkey(){ [ -s /root/.ssh/id_estate ] && echo '-i /root/.ssh/id_estate' || echo ''; }\n"
+        # pick any Proxmox host from the published list (or type one) — sets $PVE.
+        "choosepve(){\n"
+        "  set --; wget -qO- http://$SRV/ops/pve_hosts 2>/dev/null > /tmp/pvh 2>/dev/null\n"
+        '  while read nm ip _; do [ -n "$ip" ] && set -- "$@" "$ip" "$nm ($ip)"; done < /tmp/pvh\n'
+        '  set -- "$@" other "enter manually..."\n'
+        '  SEL=$(whiptail --title "Proxmox hosts" --menu "Target which Proxmox host?" 16 66 8 "$@" 3>&1 1>&2 2>&3) || return 1\n'
+        '  [ "$SEL" = other ] && SEL=$(whiptail --inputbox "Host IP/name:" 8 60 "$PVE" 3>&1 1>&2 2>&3)\n'
+        '  [ -n "$SEL" ] && { echo "$SEL" > /etc/foundry/pve; PVE="$SEL"; }\n'
+        "}\n"
         "while true; do\n"
-        '  CH=$(whiptail --title "Vera Foundry - Ops Node ($(hostname))" --menu "Diskless compute worker" 21 76 11 '
-        'status "Node + Docker + swarm status" vms "Proxmox VMs / CTs -- list + console in" '
-        'dps "Running containers" nodes "Swarm nodes" ssh "SSH into an estate host" '
-        'join "Re-run swarm join" pve "Set Proxmox host" log "Boot/join log" '
-        'shell "Shell" reboot "Reboot" 3>&1 1>&2 2>&3) || { clear; exec sh; }\n'
+        '  CH=$(whiptail --title "Vera Foundry - Ops Node ($(hostname))" --menu "Compute worker | Proxmox: $PVE" 21 78 12 '
+        'status "Node + Docker + swarm status" host "Pick Proxmox host (now: $PVE)" '
+        'vms "Proxmox VMs / CTs -- list + console in" dps "Running containers" '
+        'nodes "Swarm nodes" ssh "SSH into an estate host" join "Re-run swarm join" '
+        'sdcard "Write a Raspberry Pi image to an SD card" '
+        'log "Boot / join log" shell "Shell" reboot "Reboot" 3>&1 1>&2 2>&3) || { clear; exec sh; }\n'
         "  K=$(sshkey)\n"
         "  case \"$CH\" in\n"
-        '    status) { echo HOST: $(hostname); ip -4 addr show eth0 2>/dev/null|grep inet; docker node ls 2>/dev/null||echo "(not in a swarm)"; } >$T 2>&1; whiptail --scrolltext --textbox $T 24 78;;\n'
+        '    status) { echo HOST: $(hostname); ip -4 addr 2>/dev/null|grep inet; docker node ls 2>/dev/null||echo "(not in a swarm)"; } >$T 2>&1; whiptail --scrolltext --textbox $T 24 80;;\n'
+        "    host) choosepve;;\n"
         '    vms) ssh $K -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 root@$PVE "echo == CONTAINERS ==; pct list 2>/dev/null; echo; echo == VMs ==; qm list 2>/dev/null" >$T 2>&1; '
         'whiptail --title "Proxmox $PVE" --scrolltext --textbox $T 26 100; '
         'ID=$(whiptail --inputbox "Console INTO which CT/VM id? (CT=pct enter, VM=serial console; blank cancels)" 9 68 "" 3>&1 1>&2 2>&3); '
@@ -483,9 +503,9 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21") -> Dict:
         "    dps) docker ps >$T 2>&1; whiptail --scrolltext --textbox $T 24 100;;\n"
         "    nodes) docker node ls >$T 2>&1; whiptail --scrolltext --textbox $T 24 100;;\n"
         '    ssh) H=$(whiptail --inputbox "SSH target (user@host):" 8 60 "root@$PVE" 3>&1 1>&2 2>&3) && { clear; ssh $K -o StrictHostKeyChecking=accept-new $H; };;\n'
-        f'    join) {{ TK=$(wget -qO- http://{server_ip}/swarm/worker-token|tr -d "\\r\\n"); M=$(wget -qO- http://{server_ip}/swarm/manager|tr -d "\\r\\n"); docker swarm join --token "$TK" "${{M}}:2377"; }} >$T 2>&1; whiptail --scrolltext --textbox $T 20 90;;\n'
-        '    pve) NP=$(whiptail --inputbox "Proxmox host IP/name:" 8 60 "$PVE" 3>&1 1>&2 2>&3) && { echo "$NP" > /etc/foundry/pve; PVE="$NP"; };;\n'
-        "    log) whiptail --scrolltext --textbox /var/log/foundry-node.log 24 100;;\n"
+        '    join) { TK=$(wget -qO- http://$SRV/swarm/worker-token|tr -d "\\r\\n"); M=$(wget -qO- http://$SRV/swarm/manager|tr -d "\\r\\n"); docker swarm join --token "$TK" "${M}:2377"; } >$T 2>&1; whiptail --scrolltext --textbox $T 20 90;;\n'
+        "    sdcard) clear; /usr/local/bin/foundry-sdwrite;;\n"
+        '    log) F=/var/log/foundry-node.log; [ -f $F ] || F=/var/log/foundry-desktop.log; whiptail --scrolltext --textbox $F 24 100;;\n'
         '    shell) clear; echo "type exit to return to the menu"; sh;;\n'
         "    reboot) reboot;;\n"
         "  esac\ndone\n"
@@ -498,13 +518,49 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21") -> Dict:
                "::ctrlaltdel:/sbin/reboot\n::shutdown:/sbin/openrc shutdown\n")
     profile = ('if [ "$(tty)" = "/dev/tty1" ] && [ -z "$FTUI_RUN" ]; then '
                "export FTUI_RUN=1; /usr/local/bin/foundry-tui; fi\n")
+    # SD-card writer: flash a Raspberry Pi (or any) OS image to a connected SD/USB card.
+    # SAFETY: only removable / USB / MMC disks are ever offered — the internal system disk
+    # (e.g. a laptop's own OS) is filtered out so it can't be clobbered by accident.
+    sdwrite = (
+        "#!/bin/sh\n"
+        f"SRV={server_ip}\n"
+        "for t in lsblk xz pv unzip; do command -v $t >/dev/null 2>&1 || apk add util-linux xz pv unzip 2>/dev/null; done\n"
+        "set --\n"
+        "for dev in $(lsblk -dno NAME,TYPE 2>/dev/null | awk '$2==\"disk\"{print $1}'); do\n"
+        "  rmv=$(lsblk -dno RM /dev/$dev 2>/dev/null); trn=$(lsblk -dno TRAN /dev/$dev 2>/dev/null)\n"
+        '  case "$rmv:$trn" in 1:*|*:usb|*:mmc) ;; *) continue ;; esac\n'
+        "  sz=$(lsblk -dno SIZE /dev/$dev 2>/dev/null); mdl=$(lsblk -dno MODEL /dev/$dev 2>/dev/null)\n"
+        '  set -- "$@" "/dev/$dev" "$sz ${trn:-?} rm=$rmv $mdl"\n'
+        "done\n"
+        '[ $# -eq 0 ] && { whiptail --msgbox "No removable/SD/USB disk found. Insert the card and retry.\\n(The internal system disk is hidden for safety.)" 9 66; exit 1; }\n'
+        'DEV=$(whiptail --title "SD-card writer" --menu "TARGET disk (will be ERASED):" 18 74 8 "$@" 3>&1 1>&2 2>&3) || exit 1\n'
+        "wget -qO- http://$SRV/ops/pi_images 2>/dev/null > /tmp/pimg; set --\n"
+        '  while read nm url _; do [ -n "$url" ] && set -- "$@" "$url" "$nm"; done < /tmp/pimg\n'
+        'set -- "$@" other "enter a URL..."\n'
+        'URL=$(whiptail --title "Image" --menu "Image to write to $DEV:" 18 76 8 "$@" 3>&1 1>&2 2>&3) || exit 1\n'
+        '[ "$URL" = other ] && URL=$(whiptail --inputbox "Image URL (.img/.img.xz/.img.gz/.zip):" 8 74 "" 3>&1 1>&2 2>&3)\n'
+        '[ -z "$URL" ] && exit 1\n'
+        'whiptail --yesno "ERASE $DEV and write:\\n$URL\\n\\nALL DATA ON $DEV WILL BE LOST. Continue?" 12 74 || exit 1\n'
+        'clear; echo "Unmounting partitions on $DEV..."; for p in $(lsblk -lno NAME "$DEV" 2>/dev/null | tail -n +2); do umount "/dev/$p" 2>/dev/null; done\n'
+        'P=cat; command -v pv >/dev/null 2>&1 && P=pv\n'
+        'echo "Writing $URL -> $DEV (several minutes; do not remove the card)..."\n'
+        'case "$URL" in\n'
+        '  *.xz)  wget -qO- "$URL" | xz -dc | $P | dd of="$DEV" bs=4M conv=fsync ;;\n'
+        '  *.gz)  wget -qO- "$URL" | gzip -dc | $P | dd of="$DEV" bs=4M conv=fsync ;;\n'
+        '  *.zip) wget -qO /tmp/pi.img.zip "$URL" && unzip -p /tmp/pi.img.zip | dd of="$DEV" bs=4M conv=fsync; rm -f /tmp/pi.img.zip ;;\n'
+        '  *)     wget -qO- "$URL" | $P | dd of="$DEV" bs=4M conv=fsync ;;\n'
+        'esac\n'
+        'sync\n'
+        'whiptail --msgbox "Done -> $DEV. Safe to remove.\\n(A Pi OS image expands its filesystem on first boot.)" 9 66\n'
+    )
     return {
         "etc/apk/repositories": repos,
         "etc/local.d/foundry.start": start,
         "usr/local/bin/foundry-tui": tui,
+        "usr/local/bin/foundry-sdwrite": sdwrite,
         "etc/inittab": inittab,
         "root/.profile": profile,
-        "etc/foundry/pve": "192.168.0.200\n",   # default Proxmox host for the VMs/CTs menu
+        "etc/foundry/pve": f"{server_ip}\n",   # default Proxmox target (reachable from the ops net)
     }
 
 

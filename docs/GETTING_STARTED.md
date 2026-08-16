@@ -1,47 +1,75 @@
-# Getting Started with Vera
+# Getting started with Vera
 
-Vera can run two ways: the **full docker stack** (everything wired up for you) or
-a **native** orchestrator process talking to backends you host elsewhere.
+This guide gets a first Vera instance running, verifies the important surfaces,
+and points out which services are optional.
 
-### Option A — Docker (everything in one command)
+## 1. Check the fit
+
+For a lightweight evaluation, use a machine with 4 modern CPU cores, 8–16 GB
+RAM, and 20 GB free disk, and route model calls to a hosted provider or separate
+Ollama node. Running local models and all databases on the same host generally
+needs substantially more.
+
+Read [Performance and sizing](../documentation/00-performance-and-sizing.md)
+before downloading models or planning a persistent deployment.
+
+You also need:
+
+- Git;
+- Docker with Compose for the recommended path;
+- a terminal that can run `make`, `build.sh`, or `build.ps1`; and
+- free ports for the services enabled by your Compose configuration.
+
+## 2. Clone and configure
 
 ```bash
-cp .env.example .env          # then edit secrets/hosts
-make secret                   # generate VERA_SECRET_KEY -> paste into .env
-make up                       # start vera + redis + postgres + chromadb + neo4j
-make logs                     # watch it boot
+git clone https://github.com/BoeJaker/Vera.git
+cd Vera
+cp .env.example .env
 ```
 
-Or without `make`:
+Review `.env` before starting. Generate Vera's secret key with:
+
+```bash
+make secret
+```
+
+Do not commit `.env`, access tokens, provider keys, or generated secrets.
+
+## 3. Start the Docker stack
+
+```bash
+make up
+make logs
+```
+
+Without `make`:
 
 ```bash
 # Linux / macOS
 ./build.sh up
 
-# Windows
+# Windows PowerShell
 .\build.ps1 up
 ```
 
-Then open the harness at **http://localhost:8999/** and the API docs at **http://localhost:8999/docs**.
+The first build can take time because images and browser/model dependencies may
+need to download.
 
-### Option B — Native (no docker)
+## 4. Verify the runtime
 
-You supply Redis / Postgres / Chroma / Neo4j (or let caps degrade gracefully —
-core capability registration and HTTP come up even without backends).
+Open:
 
-```bash
-make venv                     # create .venv + install requirements
-make run                      # python -m Vera.vera.capability_orchestration
-```
+- Harness: <http://localhost:8999/>
+- OpenAPI: <http://localhost:8999/docs>
+- Health: <http://localhost:8999/health>
+- MCP tools: <http://localhost:8999/mcp/tools>
 
-`make run` sets `PYTHONPATH` to the repo's parent so the `Vera.vera.capability_orchestration`
-package resolves, and binds `0.0.0.0:8999`.
-
-### Verify it's alive
+From the repository:
 
 ```bash
-make health                   # GET /health
-make caps                     # GET /mcp/tools  (list every capability)
+make health
+make caps
 ```
 
 Or invoke a capability directly:
@@ -52,22 +80,61 @@ curl -s http://localhost:8999/mcp/call \
   -d '{"name":"echo","arguments":{"message":"hello"}}'
 ```
 
-### Explore interactively
+A healthy response proves the registry and HTTP/MCP dispatch path are working.
+Optional databases may still be connecting in the background.
 
-| What | How |
-|---|---|
-| **Guided terminal tour** | `make tour` (or `python welcome/welcome.py`) |
-| **HTML welcome guide** | `make welcome` — opens `welcome/index.html` |
-| **Quickstart notebook** | `make notebook` — boot & test caps from Jupyter |
-| **Swagger API docs** | `make docs` — opens `http://localhost:8999/docs` |
+## 5. Connect models
 
-### Common commands
+Vera can route to Ollama, vLLM, or configured hosted providers. Model workers may
+run on the orchestrator host or elsewhere.
+
+After configuration, verify:
+
+```bash
+curl -s http://localhost:8999/mcp/call \
+  -H 'content-type: application/json' \
+  -d '{"name":"ollama.instances","arguments":{}}'
+```
+
+Do not assume a model fits from parameter count alone. Quantization, context,
+batching, and concurrent requests all add memory.
+
+## Native development
+
+For an orchestrator process with externally managed backends:
+
+```bash
+make venv
+make run
+```
+
+`make run` sets the package path and starts
+`Vera.vera.capability_orchestration` on `0.0.0.0:8999`.
+
+Core capability registration can start while optional backends are unavailable,
+but capabilities that depend on those services will be degraded.
+
+## Useful commands
 
 | Command | Action |
 |---|---|
-| `make up` / `make down` | start / stop the docker stack |
-| `make build` | rebuild the vera image and start |
-| `make logs` | follow orchestrator logs |
-| `make run` | run the orchestrator natively |
-| `make health` / `make caps` | smoke-test a running instance |
-| `make nuke` | stop **and delete volumes** (destructive) |
+| `make up` | Build/start the configured Docker stack |
+| `make down` | Stop the stack without deleting persistent volumes |
+| `make build` | Rebuild Vera and start it |
+| `make logs` | Follow orchestrator logs |
+| `make run` | Run the orchestrator natively |
+| `make health` | Check runtime health |
+| `make caps` | List registered capabilities |
+| `make tour` | Run the guided terminal tour |
+| `make notebook` | Open the quick-start notebook |
+| `make nuke` | **Destructive:** stop the stack and delete volumes |
+
+## First troubleshooting checks
+
+1. Run `make logs` and inspect the first startup error.
+2. Check `/health` to distinguish a core failure from an optional backend.
+3. Confirm the configured backend hostnames resolve inside the Vera container.
+4. Check disk space before rebuilding or downloading models.
+5. Run `perf.scan` if the UI connects but feels slow or WebSockets flap.
+
+Continue with the [documentation hub](../documentation/README.md).
