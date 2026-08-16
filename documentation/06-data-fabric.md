@@ -1,10 +1,10 @@
 # 06 · Data Fabric
 
+![Data Fabric captured from the running Vera UI](assets/overview/fabric-panel.png)
+
 The polyglot data fabric is Vera's unified data layer. It combines multiple database paradigms — vector (FAISS + Chroma), graph (Neo4j), relational (SQLite + PostgreSQL), and object storage (Garage / Ceph S3) — into a single ingestion pipeline and query DSL. Anything Vera produces or consumes that's worth keeping ends up in the fabric, where it can be recalled semantically, by relation, by exact filter, or by any combination of the three.
 
 The fabric is what makes Vera's components additive rather than siloed. A research result is fabric-recallable, so the IDE agent can find it. A crawled page is fabric-recallable, so dream cycles can use it. A chat message is fabric-recallable, so future sessions can build on it.
-
-![Data Fabric sources dashboard](https://github.com/BoeJaker/Vera/blob/main/images/DF%20-%20Sources%20-%20Dashbord.jpg)
 
 ---
 
