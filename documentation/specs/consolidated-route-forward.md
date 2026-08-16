@@ -118,16 +118,34 @@ scheduled content auto-push → `content.remove`/rename. Retire prod-share editi
 **M2 — Traceability guardrails (Phase D/E lite).** Doc/test-presence check on merge +
 auto-postmortem writer. Cheap, high-leverage, reuses the pipeline + `evolve.errors`.
 
-**M3 — Test-tier gate (Phase B). IN PROGRESS (landed on `bleeding-edge` 2026-08-16).** Tier
-`tests/`; wire the merge gate to run the critical-system tier. Landed this session on
-`bleeding-edge`: **M3.1** — `gate_passed` now runs the critical tier (`pytest -m critical`
-via `evolve.unittest.run`, isolated ephemeral container) for ANY branch worktree, alongside
-the `ast.parse` compile check; **M3.3** — reap-safety + pre-push-guard tests promoted into
-the `critical` tier (47 critical tests, all green); **M3.2** — `evolve.tests.matrix`
-coverage-matrix cap + panel view. Also re-landed the **pre-push force/destructive guard**
-(`bdab162`). Remaining: broaden the critical tier, test-generation (M3.4), and perf-based
-gating (socket-flap / bad response-time / Ollama-contention thresholds). This is the safety
-net both plans lean on. Closes **T6**.
+**M3 — Test-tier gate (Phase B). ◐ IN PROGRESS (M3.1–M3.3 landed on `bleeding-edge`
+2026-08-16; M3.4 not started).** Tier `tests/`; wire the merge gate to run the critical-system
+tier — the safety net both plans lean on. Closes **T6**. Broken into:
+
+- **M3.1 — Critical-tier gate for any branch worktree. ✓ DONE (bleeding-edge).** `gate_passed`
+  now runs the critical tier (`pytest -m critical` via `evolve.unittest.run`, in an isolated
+  ephemeral `vera:latest` container) for ANY branch with a live worktree, alongside the
+  `ast.parse` compile check — both must pass. `_branch_worktree` resolves a pool sandbox OR a
+  plain `git worktree`. **Proven:** every `adopt` this session returned `gate_passed: true`
+  after the tier ran live.
+- **M3.2 — Coverage matrix cap + panel view. ✓ DONE (bleeding-edge).** `evolve.tests.matrix`
+  parses `pytest --collect-only` into {module, tests, critical} (38 modules / 578 tests / 7
+  critical), surfaced in the evolve panel's "Unit tests" section with a race-to-green strip.
+  **Proven:** cap returns the matrix; ⚠ the panel view only renders in prod after a `main`
+  promotion (UI serves off the running checkout).
+- **M3.3 — Backfill the critical tier. ✓ DONE (bleeding-edge).** Promoted reap-safety
+  (`test_sandbox_reap`), pre-push guard (`test_pre_push_guard`), main-merge guard
+  (`test_main_merge_guard`), and merge-tolerance (`tracked_dirty_lines`, in `test_evolve_git_core`)
+  into the `critical` marker set (`tests/conftest.py`). **Proven:** critical tier is **62/62
+  green**. More backfill remains as systems grow (e.g. content path-lock, reaper idle-logic).
+- **M3.4 — Test generation. ○ NOT STARTED.** Auto-propose unit tests for a branch's changed
+  code (feeds the gate), so new code arrives with coverage instead of needing hand-written
+  tests every time. Reuses `evolve.tasks.generate` / the code-gen pipeline.
+- **Perf-based gating** (socket-flap / bad response-time / Ollama-contention thresholds) is a
+  sibling of M3.4, tracked separately (originally scoped under M3); see §2.A / the perf subsystem.
+
+**Nothing in M3 runs in prod yet** — it all lives on `bleeding-edge` and activates only on a
+`bleeding-edge`→`main` promotion + restart (the gated, explicit step).
 
 **M3.5 — Agentic-loop runner file split (`dag_workshop_capabilities.py`).** (○, added
 2026-08-16, session finding — not tracked in either source plan.) After M3 lands the
