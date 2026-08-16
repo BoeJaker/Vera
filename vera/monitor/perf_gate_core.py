@@ -18,6 +18,15 @@ DEFAULT_THRESHOLDS = {
 }
 
 
+def _safe_int(v) -> int:
+    """Coerce a count to a non-negative int, tolerating None/garbage (perf.scan
+    always sends ints, but the gate must never crash on a malformed summary)."""
+    try:
+        return max(0, int(v))
+    except (TypeError, ValueError):
+        return 0
+
+
 def perf_verdict(summary: Dict, thresholds: Dict = None) -> Dict:
     """Reduce a perf.scan `summary` ({crit,warn,info,ok} counts) to
     {verdict: 'pass'|'warn'|'fail', crit, warn, reason}. Pure.
@@ -27,8 +36,8 @@ def perf_verdict(summary: Dict, thresholds: Dict = None) -> Dict:
     - otherwise             → 'pass'
     """
     t = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
-    crit = max(0, int((summary or {}).get("crit", 0) or 0))
-    warn = max(0, int((summary or {}).get("warn", 0) or 0))
+    crit = _safe_int((summary or {}).get("crit", 0))
+    warn = _safe_int((summary or {}).get("warn", 0))
     if crit > int(t["max_crit"]):
         return {"verdict": "fail", "crit": crit, "warn": warn,
                 "reason": f"{crit} critical perf finding(s) (limit {t['max_crit']})"}
