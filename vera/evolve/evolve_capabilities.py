@@ -92,18 +92,18 @@ from Vera.vera.capability_orchestration import (
 
 log = logging.getLogger("vera.evolve")
 
+try:
+    from .attribution_core import author_agent_for, controller_for, effective_controller
+except ImportError:
+    from attribution_core import author_agent_for, controller_for, effective_controller
+
 
 def _triggered_by() -> str:
     """Real, honest run-trigger bucket — never guessed beyond what's actually
-    knowable: CALLER_KIND is set only by the MCP bridge (a real Claude Code
-    session), BACKGROUND_LLM only by autonomous drivers (dream/V8/fabric
-    ingest); anything else (the browser chat UI, or any other caller) is
+    knowable: CALLER_KIND is set by an agent bridge/request, BACKGROUND_LLM
+    only by autonomous drivers (dream/V8/fabric ingest); anything else is
     the residual default "user" — not invented, just what's left over."""
-    if CALLER_KIND.get() == "mcp":
-        return "claude_code"
-    if BACKGROUND_LLM.get():
-        return "autonomous"
-    return "user"
+    return controller_for(CALLER_KIND.get(), bool(BACKGROUND_LLM.get()))
 
 _HERE = Path(__file__).parent
 _PANEL_PATH = _HERE / "evolve_panel.html"
@@ -2242,7 +2242,8 @@ async def _runs_window_commits_batch(recs: List[Dict[str, Any]]) -> None:
 @capability("evolve.authors", memory="off", silent=True,
             http_method="GET", http_path="/evolve/authors", http_tags=["evolve"],
             description="Real authorship map: recent commits to this repo, each "
-                        "tagged with WHO/WHAT actually produced it — a Claude Code "
+                        "tagged with WHO/WHAT actually produced it — an attributed "
+                        "Codex/Claude pipeline, a Claude Code "
                         "session (via ide.claude_sessions.list_sessions' own git-"
                         "log time-window correlation), a Vera evolve.ide.improve "
                         "run (tagged with its real engine: claude|vera-agent), or "
@@ -2293,12 +2294,27 @@ async def evolve_authors(hours: int = 72, branch: str = "", trace_id=None):
             engine_by_hash[c["hash"]] = {"engine": r.get("engine"), "run_id": r.get("run_id"),
                                          "task": r.get("task", "")}
 
+    # Pipeline records are the authoritative correlation for external coding
+    # agents such as Codex. Unlike a timestamp join, this maps the exact authored
+    # commit to the controller and session that created the pipeline.
+    pipeline_by_hash = await _commit_attribution_map()
+
     out_commits = []
     for c in commits:
         h = c.get("hash", "")
         cs = claude_by_hash.get(h)
         er = engine_by_hash.get(h)
-        if cs:
+        pa = next((v for sha, v in pipeline_by_hash.items() if h.startswith(sha)), None)
+        if pa and pa.get("controller"):
+            controller = effective_controller(pa.get("controller"), pa.get("via"))
+            agent = author_agent_for(controller)
+            labels = {"codex": "Codex", "claude": "Claude Code",
+                      "vera-agent": "Vera agent", "direct": "direct"}
+            out_commits.append({**c, "agent": agent, "agent_label": labels[agent],
+                                "controller": controller,
+                                "session_id": pa.get("session_id", ""),
+                                "pipeline_id": pa.get("pipeline_id", "")})
+        elif cs:
             out_commits.append({**c, "agent": "claude", "agent_label": "Claude Code",
                                 "session_id": cs["session_id"], "project_dir": cs["project_dir"]})
         elif er:

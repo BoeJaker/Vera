@@ -103,12 +103,12 @@ BACKGROUND_LLM: "contextvars.ContextVar[str]" = contextvars.ContextVar(
 
 # Which KIND of caller is driving the current request, for the duration of
 # one /mcp/call — set only by _make_mcp_call_handler when the request body
-# carries an explicit caller_kind (currently just "mcp", sent by
-# vera_mcp_bridge.py, the shim Claude Code launches). /mcp/call is ALSO used
+# carries an explicit caller_kind (for example "claude" or "codex", sent by
+# vera_mcp_bridge.py; legacy Claude registrations send "mcp"). /mcp/call is ALSO used
 # by the browser chat UI to execute capabilities, which never sets this —
 # so the honest default (empty here) is "some UI/browser caller", never
 # guessed further. Read by evolve.* run-recording to populate a real
-# triggered_by field (claude_code / autonomous via BACKGROUND_LLM / user).
+# triggered_by field (codex / claude_code / autonomous via BACKGROUND_LLM / user).
 CALLER_KIND: "contextvars.ContextVar[str]" = contextvars.ContextVar(
     "vera_caller_kind", default="")
 

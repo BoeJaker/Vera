@@ -59,11 +59,15 @@ MCP bridge uses:
 ```
 POST https://llm.int:8999/mcp/call
 { "name":"<cap.name>", "arguments":{...},
-  "caller_kind":"mcp", "session_id":"<your claude session uuid>" }
+  "caller_kind":"claude", "session_id":"<your claude session uuid>" }
 ```
-`caller_kind:"mcp"` stamps the pipeline/commit as `controller=claude_code`; the
+`caller_kind:"claude"` stamps the pipeline/commit as `controller=claude_code`; the
 `session_id` links it to your chat (drill-down in the CI/CD UI). A bare curl or
 the browser tags `user` — use `/mcp/call` so your work is attributed.
+
+When registering the stdio bridge, pass `--caller-kind claude`. Codex uses
+`--caller-kind codex`; never reuse another agent's identity merely to obtain an
+attribution badge.
 
 **If a POST from Windows (PowerShell `Invoke-RestMethod`) fails with `EOF`/`SSL`
 errors while `GET` works fine**, don't assume the cap is broken — it's sometimes
