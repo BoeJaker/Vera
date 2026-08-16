@@ -5,10 +5,11 @@ Builds a minimal LangGraph ReAct agent (langgraph.prebuilt.create_react_agent)
 against a real Ollama instance via its OpenAI-compatible surface, executes one
 goal in STREAMING mode (graph.stream(..., stream_mode="values") — a native
 LangGraph feature: yields the full graph state after every step, not just the
-final result), and prints one LANGGRAPH_STEP:<json> line per new message that
-appears as the graph runs, then a final LANGGRAPH_RESULT:<json> line — same
-two-line-prefix protocol smolagents_entrypoint.py uses, so the host-side
-bridge (langgraph_capabilities.py) can stream progress the same way.
+final result), and prints one BRIDGE_STEP:<json> line per new message that
+appears as the graph runs, then a final BRIDGE_RESULT:<json> line — the
+standardized protocol agentbridge_runtime.py (host side) reads, shared by
+every container-based bridge (smolagents/LangGraph/PydanticAI) — was
+BRIDGE_STEP:/BRIDGE_RESULT: before that shared runner existed.
 
 Deliberately the opposite paradigm from smolagents: explicit graph of nodes/
 edges with real tool-calling (JSON tool-call protocol), not code-as-action.
@@ -70,10 +71,10 @@ def main() -> int:
     max_steps = int(os.environ.get("LANGGRAPH_MAX_STEPS", "8"))
 
     if not goal:
-        print("LANGGRAPH_RESULT:" + json.dumps({"ok": False, "error": "GOAL env var required"}))
+        print("BRIDGE_RESULT:" + json.dumps({"ok": False, "error": "GOAL env var required"}))
         return 1
     if not base_url or not model_id:
-        print("LANGGRAPH_RESULT:" + json.dumps({"ok": False, "error": "OLLAMA_BASE_URL/OLLAMA_MODEL env vars required"}))
+        print("BRIDGE_RESULT:" + json.dumps({"ok": False, "error": "OLLAMA_BASE_URL/OLLAMA_MODEL env vars required"}))
         return 1
 
     t0 = time.time()
@@ -108,7 +109,7 @@ def main() -> int:
                 info = _describe_message(m)
                 if info["kind"] in ("tool_call", "tool_result"):
                     tool_steps += 1
-                print("LANGGRAPH_STEP:" + json.dumps(info), flush=True)
+                print("BRIDGE_STEP:" + json.dumps(info), flush=True)
                 if info["kind"] == "ai":
                     answer = info["text"]
             seen = len(messages)
@@ -123,7 +124,7 @@ def main() -> int:
     except Exception as e:
         out = {"ok": False, "error": f"{type(e).__name__}: {e}", "elapsed_s": round(time.time() - t0, 2)}
 
-    print("LANGGRAPH_RESULT:" + json.dumps(out))
+    print("BRIDGE_RESULT:" + json.dumps(out))
     return 0 if out.get("ok") else 1
 
 

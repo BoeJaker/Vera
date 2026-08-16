@@ -7,13 +7,14 @@ turn against it in STREAMING mode (agent.run(goal, stream=True) — a real
 smolagents 1.x feature, not homegrown: it returns a generator yielding each
 TaskStep/PlanningStep/ActionStep/FinalAnswerStep as it's produced, instead
 of blocking until the whole run finishes). Each step is printed immediately
-as its own SMOLAGENTS_STEP:<json> line (flush=True — unbuffered, since the
+as its own BRIDGE_STEP:<json> line (flush=True — unbuffered, since the
 host side reads this line-by-line as it arrives, not after EOF), so the
 host-side bridge (smolagents_capabilities.py) can emit a live progress event
 per step rather than going quiet until the whole container exits. The final
-SMOLAGENTS_RESULT:<json> line is still printed last, unchanged in shape, so
-anything reading only that line (or the old blocking behaviour) keeps
-working.
+BRIDGE_RESULT:<json> line is still printed last. BRIDGE_STEP:/BRIDGE_RESULT:
+is the standardized protocol agentbridge_runtime.py (host side) reads,
+shared by every container-based bridge (smolagents/LangGraph/PydanticAI) —
+was BRIDGE_STEP:/BRIDGE_RESULT: before that shared runner existed.
 
 Deliberately has NO Vera capabilities wired in as tools — this is Phase 2
 of the external-agentic-loop plan, which the user explicitly wants
@@ -79,7 +80,7 @@ def main() -> int:
     base_url = os.environ.get("OLLAMA_BASE_URL", "").rstrip("/")
     model_id = os.environ.get("OLLAMA_MODEL", "")
     if not base_url or not model_id:
-        print("SMOLAGENTS_RESULT:" + json.dumps({
+        print("BRIDGE_RESULT:" + json.dumps({
             "ok": False,
             "error": "OLLAMA_BASE_URL / OLLAMA_MODEL not set",
         }))
@@ -110,7 +111,7 @@ def main() -> int:
             if info["kind"] == "action":
                 action_steps += 1
             step_texts.append(info["text"])
-            print("SMOLAGENTS_STEP:" + json.dumps(info), flush=True)
+            print("BRIDGE_STEP:" + json.dumps(info), flush=True)
             if info["kind"] == "final":
                 answer = info["text"]
 
@@ -129,13 +130,13 @@ def main() -> int:
             "elapsed_s": elapsed,
             "model": model_id,
         }
-        print("SMOLAGENTS_RESULT:" + json.dumps(result))
+        print("BRIDGE_RESULT:" + json.dumps(result))
         return 0
     except Exception as e:
         elapsed = round(time.time() - t0, 2)
         print(f"[smolagents] FAILED after {elapsed}s: {e}", file=sys.stderr, flush=True)
         traceback.print_exc()
-        print("SMOLAGENTS_RESULT:" + json.dumps({
+        print("BRIDGE_RESULT:" + json.dumps({
             "ok": False, "error": str(e), "elapsed_s": elapsed,
         }))
         return 1
