@@ -483,3 +483,27 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21") -> Dict:
         "root/.profile": profile,
         "etc/foundry/pve": "192.168.0.200\n",   # default Proxmox host for the VMs/CTs menu
     }
+
+
+import re as _re
+
+
+def swarm_service_cmd(name: str, image: str, replicas: int = 1, command: str = "",
+                      detach: bool = True) -> str:
+    """Build a `docker service create` command to dispatch work onto the Docker Swarm
+    (Vera's distributed-compute cluster). Name is slugified; the image ref is validated
+    (returns '' if unsafe); the optional command runs inside the container. Pure →
+    unit-testable; the cap runs it on the swarm manager via `pct exec`."""
+    name = _re.sub(r"[^A-Za-z0-9_.-]", "-", (name or "vera-job")).strip("-") or "vera-job"
+    image = (image or "").strip()
+    if not _re.match(r"^[A-Za-z0-9][A-Za-z0-9_./:@-]*$", image):
+        return ""   # reject an unsafe/empty image reference
+    reps = max(1, min(int(replicas or 1), 100))
+    parts = ["docker", "service", "create", "--name", shlex.quote(name),
+             "--replicas", str(reps)]
+    if detach:
+        parts.append("--detach")
+    parts.append(shlex.quote(image))
+    if command and command.strip():
+        parts += ["sh", "-c", shlex.quote(command)]
+    return " ".join(parts)
