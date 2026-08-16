@@ -3,7 +3,12 @@
 Runs INSIDE a dedicated, throwaway container (vera-langgraph:latest).
 Builds a minimal LangGraph ReAct agent (langgraph.prebuilt.create_react_agent)
 against a real Ollama instance via its OpenAI-compatible surface, executes one
-goal, and prints a single result line the host-side capability parses.
+goal in STREAMING mode (graph.stream(..., stream_mode="values") — a native
+LangGraph feature: yields the full graph state after every step, not just the
+final result), and prints one LANGGRAPH_STEP:<json> line per new message that
+appears as the graph runs, then a final LANGGRAPH_RESULT:<json> line — same
+two-line-prefix protocol smolagents_entrypoint.py uses, so the host-side
+bridge (langgraph_capabilities.py) can stream progress the same way.
 
 Deliberately the opposite paradigm from smolagents: explicit graph of nodes/
 edges with real tool-calling (JSON tool-call protocol), not code-as-action.
@@ -33,6 +38,29 @@ def _safe_calculator(expression: str) -> str:
         return str(eval(compile(node, "<calc>", "eval"), {"__builtins__": {}}, {}))
     except Exception as e:
         return f"error: {e}"
+
+
+def _describe_message(m) -> dict:
+    """Turn one new LangChain message (yielded via the growing `messages`
+    state list) into a small JSON-safe progress dict. An AI message
+    requesting tool calls and a tool message returning a result are the
+    two genuinely informative "something happened" moments in a ReAct
+    graph — surfaced distinctly from a plain AI reply."""
+    role = getattr(m, "type", type(m).__name__)
+    content = str(getattr(m, "content", "") or "")
+    tool_calls = getattr(m, "tool_calls", None) or []
+    if role == "ai" and tool_calls:
+        calls = "; ".join(f"{tc.get('name')}({tc.get('args')})" for tc in tool_calls)
+        text = (content + "\n" if content else "") + f"Calling tool: {calls}"
+        return {"kind": "tool_call", "text": text[:1500]}
+    if role == "tool":
+        name = getattr(m, "name", "") or "tool"
+        return {"kind": "tool_result", "text": f"{name} -> {content}"[:1500]}
+    if role == "ai":
+        return {"kind": "ai", "text": content[:2000]}
+    if role == "human":
+        return {"kind": "human", "text": f"Task received: {content[:200]}"}
+    return {"kind": role, "text": content[:500]}
 
 
 def main() -> int:
@@ -67,20 +95,28 @@ def main() -> int:
         )
         agent = create_react_agent(llm, tools=[calculator])
 
-        result = agent.invoke(
+        seen = 0
+        answer = ""
+        tool_steps = 0
+        for state in agent.stream(
             {"messages": [{"role": "user", "content": goal}]},
+            stream_mode="values",
             config={"recursion_limit": max_steps * 2},
-        )
-        messages = result.get("messages", [])
-        answer = messages[-1].content if messages else ""
-        steps = [
-            {"role": getattr(m, "type", m.__class__.__name__), "content": str(getattr(m, "content", ""))[:2000]}
-            for m in messages
-        ]
+        ):
+            messages = state.get("messages", [])
+            for m in messages[seen:]:
+                info = _describe_message(m)
+                if info["kind"] in ("tool_call", "tool_result"):
+                    tool_steps += 1
+                print("LANGGRAPH_STEP:" + json.dumps(info), flush=True)
+                if info["kind"] == "ai":
+                    answer = info["text"]
+            seen = len(messages)
+
         out = {
             "ok": True,
             "answer": answer,
-            "steps": steps,
+            "steps": tool_steps,
             "elapsed_s": round(time.time() - t0, 2),
             "model": model_id,
         }

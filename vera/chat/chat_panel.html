@@ -6790,13 +6790,16 @@ IMPORTANT:
     };
   }
 
-  // LangGraph loop variant — same containerized, non-streaming shape as
-  // smolagents above (mirrors it deliberately), but the opposite agent
-  // paradigm under the hood: an explicit ReAct graph with real structured
-  // tool-calling, not code-as-action. See langgraph_capabilities.py.
+  // LangGraph loop variant (event-driven since 2026-08-16, same day
+  // smolagents got the same treatment after "no live progress" feedback) —
+  // same containerized shape as smolagents, opposite agent paradigm under
+  // the hood: an explicit ReAct graph with real structured tool-calling,
+  // not code-as-action. See langgraph_capabilities.py.
   async function _sendLangGraphLoop(goal){
     if(_agentLoopAbort){_agentLoopAbort.abort();_agentLoopAbort=null;}
     _agentLoopAbort=new AbortController();
+    const abort=_agentLoopAbort;
+    const globalAbort=_GLOBAL_ABORT;
     _streamStart();
     _serverLoopActive=true;
 
@@ -6804,29 +6807,93 @@ IMPORTANT:
     BOX().appendChild(uMsg.wrap);scroll();
     HISTORY.push({role:'user',content:goal});
 
-    appendSys('🕸️ LangGraph: building/running a throwaway container for this goal — no live progress until it finishes…');
+    const aMsg=_mkMsg('agent','langgraph','<span style="color:var(--dim2)">Launching container…</span>');
+    BOX().appendChild(aMsg.wrap);scroll();
+    const bodyEl=aMsg.body;
+
+    let es=null, stallTimer=null, finished=false;
+    const finish=()=>{
+      if(finished)return; finished=true;
+      try{ es&&es.close(); }catch(_){}
+      if(stallTimer)clearInterval(stallTimer);
+      abort.signal.removeEventListener('abort', onAbort);
+      globalAbort.signal.removeEventListener('abort', onAbort);
+      _streamEnd(); _serverLoopActive=false;
+    };
+    const onAbort=()=>{
+      if(finished)return;
+      bodyEl.innerHTML += '<div style="color:var(--dim2);font-size:9px;margin-top:4px">(stopped)</div>';
+      finish();
+    };
+    abort.signal.addEventListener('abort', onAbort, {once:true});
+    globalAbort.signal.addEventListener('abort', onAbort, {once:true});
+
     let r;
     try{
       r = await api('/langgraph/run','POST',{goal});
     }catch(e){
-      appendSys('<span style="color:var(--err)">LangGraph run failed: '+esc(String(e&&e.message||e))+'</span>');
-      _streamEnd(); _serverLoopActive=false; return;
+      bodyEl.innerHTML='<span style="color:var(--err)">LangGraph run failed: '+esc(String(e&&e.message||e))+'</span>';
+      finish(); return;
     }
-    _streamEnd(); _serverLoopActive=false;
-    if(!r || r.ok===false){
-      appendSys('<span style="color:var(--err)">LangGraph: '+esc((r&&r.error)||'no response')+'</span>');
-      return;
+    if(finished) return;   // stopped while the request was in flight
+    if(!r || r.ok===false || !r.run_id){
+      bodyEl.innerHTML='<span style="color:var(--err)">'+esc((r&&r.error)||'LangGraph returned no run_id')+'</span>';
+      finish(); return;
     }
-    const answer=r.answer||'';
-    const stepsN=(r.steps||[]).length;
-    const m=_mkMsg('agent','langgraph',renderMd(answer));
-    m.body.dataset.markdown=answer;
-    const meta=document.createElement('div');
-    meta.style.cssText='color:var(--dim2);font-size:9px;margin-top:4px';
-    meta.textContent=stepsN+' step'+(stepsN===1?'':'s')+' · '+(r.elapsed_s||'?')+'s · '+(r.model||'');
-    m.body.appendChild(meta);
-    BOX().appendChild(m.wrap); scroll();
-    try{ HISTORY.push({role:'assistant', content:answer}); }catch(_){}
+    const runId=r.run_id;
+    bodyEl.innerHTML='<span style="color:var(--dim2)">Waiting for the container…</span>';
+
+    const stepIcon={tool_call:'⚙️',tool_result:'📥',ai:'💬',human:'🎯'};
+    const stepBlocks=[];
+
+    const STALL_MS=90000;
+    let lastProgress=Date.now();
+    stallTimer=setInterval(()=>{
+      if(finished)return;
+      if(Date.now()-lastProgress>STALL_MS){
+        bodyEl.innerHTML=(stepBlocks.length?renderMd(stepBlocks.join('\n\n'))+'<br>':'')
+          +'<span style="color:var(--err)">[LangGraph stalled — no progress for '
+          +Math.round(STALL_MS/1000)+'s]</span>';
+        finish();
+      }
+    },5000);
+
+    try{
+      es=new EventSource(location.origin+'/events');
+    }catch(e){
+      bodyEl.innerHTML='<span style="color:var(--err)">Could not open event stream: '+esc(String(e&&e.message||e))+'</span>';
+      finish(); return;
+    }
+    es.onmessage=(ev)=>{
+      if(finished)return;
+      let msg; try{ msg=JSON.parse(ev.data); }catch(_){ return; }
+      if(msg.run_id!==runId) return;
+      const evt=msg.type||'';
+      if(evt==='langgraph.run.step'){
+        lastProgress=Date.now();
+        const icon=stepIcon[msg.kind]||'▸';
+        stepBlocks.push(icon+' **'+(msg.kind||'step')+'**\n\n'+(msg.text||''));
+        bodyEl.innerHTML=renderMd(stepBlocks.join('\n\n'))+' <span class="cap-dot"></span>';
+        scroll();
+      }else if(evt==='langgraph.run.done'){
+        const res=msg.result||{};
+        const answer=res.answer||'';
+        bodyEl.innerHTML=renderMd(answer);
+        bodyEl.dataset.markdown=answer;
+        const stepsN=res.steps||0;
+        const meta=document.createElement('div');
+        meta.style.cssText='color:var(--dim2);font-size:9px;margin-top:4px';
+        meta.textContent=stepsN+' tool step'+(stepsN===1?'':'s')+' · '+(res.elapsed_s||msg.elapsed_s||'?')+'s · '+(res.model||'');
+        bodyEl.appendChild(meta);
+        try{ HISTORY.push({role:'assistant', content:answer}); }catch(_){}
+        scroll();
+        finish();
+      }else if(evt==='langgraph.run.error'){
+        bodyEl.innerHTML=(stepBlocks.length?renderMd(stepBlocks.join('\n\n'))+'<br>':'')
+          +'<span style="color:var(--err)">LangGraph error: '+esc(msg.error||'unknown')+'</span>';
+        finish();
+      }
+    };
   }
 
   // Shared server-loop dispatcher — the ONE place that knows which variants
