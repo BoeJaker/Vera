@@ -592,3 +592,48 @@ class FileBoardProvider:
             return bool(agent) and (agent in hay)
 
         return [it for it in items if relevant(it)]
+
+
+# ── board.sync decision logic (M4) — pure, unit-tested in test_board_sync.py ──
+# The cap (board_capabilities.cap_board_sync) wraps these with provider IO; the
+# lane mapping / idempotency fingerprint / human-parked-lane protection live here
+# so a regression in "which lane does a pipeline state imply" is caught by tests,
+# not in production board state.
+
+# Lanes a human parks an item in on purpose: board.sync reflects INTO them
+# (promoted -> done, rolled_back -> dropped) but never yanks an item back OUT.
+TERMINAL_LANES = {"dropped", "done"}
+
+
+def pipeline_lane(rec: dict) -> str:
+    """Map a linked pipeline record's decision/gate/review state onto a board lane.
+
+    `decision` is 'pending' through adopt/review, 'held' if the gate blocked the
+    promote or a merge conflicted, 'promoted' once merged, 'rolled_back' if the
+    change was discarded (evolve_pipeline_rollback). `review_requested` flags a
+    pending adversarial review. Everything still moving stays 'in_progress'."""
+    decision = (rec.get("decision") or "pending").lower()
+    if decision == "promoted":
+        return "done"
+    if decision == "rolled_back":
+        return "dropped"
+    if decision == "held":
+        return "blocked"
+    if rec.get("review_requested"):
+        return "needs_review"
+    return "in_progress"
+
+
+def pipeline_sync_sig(rec: dict, lane: str) -> str:
+    """Opaque fingerprint of the pipeline state board.sync last reflected onto an
+    item — decision|gate_passed|review_requested|lane. Equal signatures mean
+    nothing changed, so a repeat sync is a cheap no-op (no duplicate comment),
+    safe to call after every board load or on a timer."""
+    return f"{rec.get('decision')}|{rec.get('gate_passed')}|{bool(rec.get('review_requested'))}|{lane}"
+
+
+def should_apply_lane(current_lane: str, new_lane: str) -> bool:
+    """True if board.sync should move an item from current_lane to new_lane: the
+    lane actually differs AND the item isn't parked in a terminal lane (done /
+    dropped) that a human owns — those are reflected into, never yanked out of."""
+    return new_lane != current_lane and current_lane not in TERMINAL_LANES
