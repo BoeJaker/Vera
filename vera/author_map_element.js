@@ -1,7 +1,7 @@
 /**
  * <vera-author-map> — real authorship map: every recent commit to this
  * repo, tagged with WHO/WHAT actually produced it. Answers directly:
- * "can I see which changes were made by Claude Code vs Vera's own
+ * "can I see which changes were made by Codex vs Claude Code vs Vera's own
  * autonomous agent vs a direct human commit, mapped to branches?"
  *
  * Data: GET /evolve/authors?hours=&branch= (new capability) — which itself
@@ -14,9 +14,9 @@
  *
  * Visual language borrows bun.com's adversarial-review chat-bubble pattern
  * (colored avatar circle + bordered card per entry) applied to real commit
- * data instead: an avatar per AGENT (🧑‍💻 Claude Code, ⚙ Vera agent, ● direct
+ * data instead: an avatar per AGENT (⌘ Codex, 🧑‍💻 Claude Code, ⚙ Vera agent, ● direct
  * human), a monospace commit hash, the real message, and — for
- * Claude-Code-attributed commits — the real session id so it's traceable
+ * externally-attributed commits — the real session id so it's traceable
  * back to the exact transcript.
  *
  * Truthful animation: new commits (poll-diffed against the previously seen
@@ -30,6 +30,7 @@
   if (customElements.get('vera-author-map')) return;
 
   const AGENT_META = {
+    codex: { icon: '⌘', color: '#74a7ff', label: 'Codex' },
     claude: { icon: '🧑‍💻', color: '#fbf0df', label: 'Claude Code' },
     'vera-agent': { icon: '⚙', color: '#5a9e8f', label: 'Vera agent' },
     direct: { icon: '●', color: '#6a6058', label: 'direct' },
@@ -74,7 +75,7 @@
     <option value="168">7d</option>
   </select>
   <div class="legend">
-    <span>🧑‍💻 Claude Code</span><span>⚙ Vera agent</span><span>● direct</span>
+    <span>⌘ Codex</span><span>🧑‍💻 Claude Code</span><span>⚙ Vera agent</span><span>● direct</span>
   </div>
 </div>
 <div class="list" id="list"></div>`;
@@ -141,7 +142,7 @@
       list.innerHTML = commits.map((c, i) => {
         const meta = AGENT_META[c.agent] || AGENT_META.direct;
         const isNewRow = isNewSet && !this._knownHashes.has(c.hash);
-        const sub = c.agent === 'claude'
+        const sub = (c.agent === 'claude' || c.agent === 'codex')
           ? (c.session_id ? 'session ' + this._esc(String(c.session_id).slice(0, 12)) : '')
           : (c.agent === 'vera-agent' ? (c.task ? 'run · ' + this._esc(c.task) : '') : '');
         return '<div class="row' + (isNewRow ? ' enter' : '') + '" style="animation-delay:' +

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-vera_mcp_bridge.py  —  Expose Vera's capabilities to Claude Code as an MCP server
-=================================================================================
+vera_mcp_bridge.py  —  Expose Vera's capabilities to coding agents over MCP
+============================================================================
 Vera speaks a *custom* REST MCP surface (GET /mcp/tools, POST /mcp/call), not the
-native MCP stdio JSON-RPC protocol that Claude Code's `claude mcp add` expects.
+native MCP stdio JSON-RPC protocol that coding-agent clients expect.
 This tiny, dependency-free shim bridges the two: Claude Code launches it over
 stdio, and it forwards `tools/list` / `tools/call` to a running Vera server.
 
@@ -11,7 +11,11 @@ Deployed to remote hosts (~/.vera/vera_mcp_bridge.py) by ide.remote.bridge.insta
 then registered with:
 
     claude mcp add vera -- python3 ~/.vera/vera_mcp_bridge.py \
-        --url http://<vera-host>:<port> --allow ide.,fabric.,memory.,dream.,project.
+        --url http://<vera-host>:<port> --caller-kind claude \
+        --allow ide.,fabric.,memory.,dream.,project.
+
+Codex uses the same bridge with `--caller-kind codex`; this keeps Loop Lab
+pipeline and review attribution distinct and honest.
 
 so a remote Claude Code session can call back into Vera — record work, query
 memory, run Vera IDE tools — i.e. "use the Vera IDE features from VSCode".
@@ -38,10 +42,13 @@ SERVER_INFO = {"name": "vera", "version": "1.1.0"}
 # Vera REST client
 # ─────────────────────────────────────────────────────────────────────────────
 class Vera:
-    def __init__(self, base_url, allow_prefixes, timeout=120, insecure=False):
+    def __init__(self, base_url, allow_prefixes, timeout=120, insecure=False,
+                 caller_kind="mcp", session_id=""):
         self.base = base_url.rstrip("/")
         self.allow = [p.strip() for p in (allow_prefixes or "").split(",") if p.strip()]
         self.timeout = timeout
+        self.caller_kind = str(caller_kind or "mcp").strip()
+        self.session_id = str(session_id or "").strip()
         self._name_map = {}      # sanitized MCP name -> real Vera cap name
         # Vera serves HTTPS with an auto-generated self-signed cert when
         # TLS_ENABLED=1 — urllib rejects it by default. --insecure skips
@@ -113,15 +120,16 @@ class Vera:
             # Map may be empty if tools/list wasn't called first — rebuild it.
             self.list_tools()
             cap = self._name_map.get(mcp_name, mcp_name)
-        # caller_kind: "mcp" — the one honest, identifiable signal that this
-        # call came from a Claude Code session rather than the browser chat
-        # UI (which POSTs to this same /mcp/call endpoint but never sets
-        # this). Read server-side into evolve.* run records' triggered_by.
-        payload = {"name": cap, "arguments": arguments or {}, "caller_kind": "mcp"}
-        # Best-effort Claude session id, if the launcher exposes one (env). Lets
-        # server-side provenance stamp the EXACT session onto events (§5.1); when
-        # absent, caller_kind alone still marks the call as Claude-driven.
-        _sess = os.environ.get("CLAUDE_SESSION_ID") or os.environ.get("VERA_CLAUDE_SESSION") or ""
+        # Pass the caller identity explicitly. The legacy default remains "mcp"
+        # for existing Claude registrations; Codex launches with
+        # ``--caller-kind codex`` so Loop Lab does not misattribute its work.
+        payload = {"name": cap, "arguments": arguments or {},
+                   "caller_kind": self.caller_kind}
+        # An explicit launcher value wins; otherwise use the relevant agent's
+        # session environment when available.
+        _sess = (self.session_id or os.environ.get("CODEX_SESSION_ID")
+                 or os.environ.get("CLAUDE_SESSION_ID")
+                 or os.environ.get("VERA_CLAUDE_SESSION") or "")
         if _sess:
             payload["session_id"] = _sess
         resp = self._post("/mcp/call", payload)
@@ -214,12 +222,17 @@ def serve(vera):
 
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
-    ap = argparse.ArgumentParser(description="Vera MCP stdio bridge for Claude Code")
+    ap = argparse.ArgumentParser(description="Vera MCP stdio bridge for coding agents")
     ap.add_argument("--url", required=True, help="Base URL of the Vera server")
     ap.add_argument("--allow", default="",
                     help="CSV of cap-name prefixes to expose (empty = all), "
                          "e.g. 'ide.,fabric.,memory.'")
     ap.add_argument("--timeout", type=int, default=120)
+    ap.add_argument("--caller-kind", default="mcp",
+                    choices=("mcp", "claude", "codex"),
+                    help="Honest caller identity sent to Vera (default: mcp/Claude legacy)")
+    ap.add_argument("--session-id", default="",
+                    help="Optional stable agent session id for pipeline attribution")
     ap.add_argument("--insecure", action="store_true",
                     help="Skip TLS certificate verification (Vera's self-signed "
                          "https). No effect on http:// URLs.")
@@ -227,7 +240,8 @@ def main():
                     help="Fetch the tool list and print a summary, then exit.")
     args = ap.parse_args()
 
-    vera = Vera(args.url, args.allow, timeout=args.timeout, insecure=args.insecure)
+    vera = Vera(args.url, args.allow, timeout=args.timeout, insecure=args.insecure,
+                caller_kind=args.caller_kind, session_id=args.session_id)
 
     if args.selftest:
         try:
