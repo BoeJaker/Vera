@@ -6939,6 +6939,49 @@ async def evolve_unittest_run(branch: str = "", paths: str = "tests", markers: s
             "branch": branch or label, "out": combined[-8000:], "repo": DEFAULT_REPO_ID}
 
 
+@capability("evolve.tests.matrix", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/tests/matrix", http_tags=["evolve"],
+            description="Unit-test COVERAGE MATRIX: every module in tests/, its test count, and "
+                        "whether it is in the CRITICAL gate tier (conftest _CRITICAL_MODULES — the "
+                        "set the pre-merge gate runs and must keep green). Feeds the Loop Lab Tests "
+                        "view. Pure collect-only — runs no test bodies. Output: {ok, "
+                        "modules:[{module,tests,critical}], total_tests, total_modules, "
+                        "critical_modules, critical_tests, critical_names}.")
+async def evolve_tests_matrix(trace_id=None):
+    root = str(_repo_root())
+    coll = await _sh([sys.executable, "-m", "pytest", "tests/", "--collect-only", "-q",
+                      "--no-header", "-p", "no:cacheprovider"], cwd=root, timeout=120)
+    modules: Dict[str, int] = {}
+    for ln in (coll.get("out", "") or "").splitlines():
+        ln = ln.strip()
+        # pytest -q --collect-only prints one line per module: "tests/test_x.py: 27"
+        mm2 = re.match(r"^(tests/[^:]+\.py):\s*(\d+)\s*$", ln)
+        if mm2:
+            base = os.path.basename(mm2.group(1))
+            modules[base[:-3] if base.endswith(".py") else base] = int(mm2.group(2))
+            continue
+        # fallback (older pytest): one node id per line "tests/test_x.py::test_y"
+        if ln.startswith("tests/") and "::" in ln:
+            base = os.path.basename(ln.split("::", 1)[0])
+            name = base[:-3] if base.endswith(".py") else base
+            modules[name] = modules.get(name, 0) + 1
+    critical: set = set()
+    try:
+        conf = (Path(root) / "tests" / "conftest.py").read_text(encoding="utf-8")
+        mm = re.search(r"_CRITICAL_MODULES\s*=\s*\{([^}]*)\}", conf, re.S)
+        if mm:
+            critical = set(re.findall(r'"([^"]+)"', mm.group(1)))
+    except Exception:
+        pass
+    mods = [{"module": k, "tests": v, "critical": k in critical}
+            for k, v in sorted(modules.items())]
+    return {"ok": True, "modules": mods,
+            "total_tests": sum(modules.values()), "total_modules": len(mods),
+            "critical_modules": sum(1 for x in mods if x["critical"]),
+            "critical_tests": sum(x["tests"] for x in mods if x["critical"]),
+            "critical_names": sorted(critical)}
+
+
 @capability("evolve.sandbox.fs.list", memory="off", silent=True,
             http_method="GET", http_path="/evolve/sandbox/fs/list", http_tags=["evolve"],
             description="FILE EXPLORER: list a directory inside a sandbox "
