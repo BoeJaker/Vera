@@ -1392,6 +1392,7 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
         <option value="dag.agent_loop_v7">v7 — tiered + branching</option>
         <option value="dag.agent_loop_v8">v8 — program orchestrator (long-horizon)</option>
         <option value="openclaw">OpenClaw — external gateway (opt-in, needs connect)</option>
+        <option value="smolagents">smolagents — minimal code-agent, containerized (opt-in)</option>
       </select>
       <span class="nlbl" style="flex:0 0 auto">Variant</span>
     </label>
@@ -6675,6 +6676,48 @@ IMPORTANT:
     };
   }
 
+  // smolagents loop variant (2026-08-16, Phase 2 of the external-agentic-loop
+  // plan) — a fresh, throwaway Docker container per turn, never Vera's own
+  // process. Not streaming (smolagents.run blocks server-side until the run
+  // finishes or times out) — mirrors the existing v8 pattern in
+  // sendAgentLoop below (single blocking call, one result card), not the
+  // OpenClaw SSE pattern above, since there's no incremental event source to
+  // listen to here.
+  async function _sendSmolagentsLoop(goal){
+    if(_agentLoopAbort){_agentLoopAbort.abort();_agentLoopAbort=null;}
+    _agentLoopAbort=new AbortController();
+    _streamStart();
+    _serverLoopActive=true;
+
+    const uMsg=_mkMsg('user','loop:smolagents',esc(goal).replace(/\n/g,'<br>'));
+    BOX().appendChild(uMsg.wrap);scroll();
+    HISTORY.push({role:'user',content:goal});
+
+    appendSys('🐣 smolagents: building/running a throwaway container for this goal — no live progress until it finishes…');
+    let r;
+    try{
+      r = await api('/smolagents/run','POST',{goal});
+    }catch(e){
+      appendSys('<span style="color:var(--err)">smolagents run failed: '+esc(String(e&&e.message||e))+'</span>');
+      _streamEnd(); _serverLoopActive=false; return;
+    }
+    _streamEnd(); _serverLoopActive=false;
+    if(!r || r.ok===false){
+      appendSys('<span style="color:var(--err)">smolagents: '+esc((r&&r.error)||'no response')+'</span>');
+      return;
+    }
+    const answer=r.answer||'';
+    const stepsN=(r.steps||[]).length;
+    const m=_mkMsg('agent','smolagents',renderMd(answer));
+    m.body.dataset.markdown=answer;
+    const meta=document.createElement('div');
+    meta.style.cssText='color:var(--dim2);font-size:9px;margin-top:4px';
+    meta.textContent=stepsN+' step'+(stepsN===1?'':'s')+' · '+(r.elapsed_s||'?')+'s · '+(r.model||'');
+    m.body.appendChild(meta);
+    BOX().appendChild(m.wrap); scroll();
+    try{ HISTORY.push({role:'assistant', content:answer}); }catch(_){}
+  }
+
   async function sendAgentLoop(goal){
     _clearWatchedLoopOverride();
     // Variant dispatch: if the user picked a server-side loop in the
@@ -6690,6 +6733,13 @@ IMPORTANT:
       try{ return await _sendOpenClawLoop(goal); }
       catch(e){
         appendSys(`<span style="color:var(--err)">OpenClaw loop failed: ${esc(e.message||e)}</span>`);
+      }
+      return;
+    }
+    if(variant==='smolagents'){
+      try{ return await _sendSmolagentsLoop(goal); }
+      catch(e){
+        appendSys(`<span style="color:var(--err)">smolagents loop failed: ${esc(e.message||e)}</span>`);
       }
       return;
     }
@@ -8351,6 +8401,8 @@ Your task: decide what to do next to advance toward the goal.
         desc.textContent='Chat-side loop: builds prompts in-page, calls LLM directly. Best for quick experimentation.';
       } else if(v==='openclaw'){
         desc.textContent='External loop, entirely independent of Vera\'s own v1–v8 engines — runs against a separately-hosted OpenClaw gateway. Opt-in: needs OPENCLAW_ENABLED + openclaw.connect first, or a run will fail with a clear "not connected" error.';
+      } else if(v==='smolagents'){
+        desc.textContent='Minimal (~1,000 LOC) external code-agent loop — writes and executes Python as its actions instead of JSON tool-calls. Runs in a fresh, throwaway Docker container per turn, entirely independent of Vera\'s own engines. Not streaming — waits for the run to finish (or time out) before showing a result. Opt-in: needs SMOLAGENTS_ENABLED=1.';
       } else if(v.startsWith('preset:')){
         const pid=v.slice(7);
         const p=(_LOOP_PRESETS||[]).find(x=>x.id===pid);

@@ -1,0 +1,22 @@
+# vera-smolagents — isolated, throwaway container image for running a
+# smolagents CodeAgent against a single goal. Built once (docker.image.ensure
+# style — see smolagents_capabilities.py), then a fresh container is run per
+# invocation and discarded (--rm). No persistent state, no host mount besides
+# the entrypoint script and the goal passed in via env var.
+#
+# Deliberately NOT vera:latest or any variant of it — this must stay outside
+# Vera's own runtime image so a smolagents dependency bump, or a crash inside
+# an agent's generated code, can never touch the process actually serving
+# Vera. See the "stays outside the loop" constraint in the external-agentic-
+# loop plan this module implements Phase 2 of.
+
+FROM python:3.11-slim
+
+RUN pip install --no-cache-dir smolagents openai
+
+WORKDIR /app
+COPY smolagents_entrypoint.py /app/smolagents_entrypoint.py
+
+# GOAL, OLLAMA_BASE_URL, OLLAMA_MODEL are supplied via `docker run -e` at
+# invocation time (see smolagents_capabilities.py) — nothing baked in here.
+ENTRYPOINT ["python3", "/app/smolagents_entrypoint.py"]

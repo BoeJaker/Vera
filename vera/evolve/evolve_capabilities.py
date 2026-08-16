@@ -4941,11 +4941,15 @@ async def evolve_pipeline_run(kind: str = "variant", profile: str = "",
                         "pass; a docs/UI-only branch (no .py changed) or one with no live worktree "
                         "yet falls back to the compile check alone. Inputs: branch (str!), to "
                         "(str — default bleeding-edge, the staging trunk; 2026-08-16), title "
-                        "(str), summary (str), repo (str=vera). "
+                        "(str), summary (str), repo (str=vera), authorize_main (str). "
+                        "M3.6 GUARDRAIL: adopting toward the real mainline (main/master) is "
+                        "REFUSED unless authorize_main is the explicit sentinel — all code lands "
+                        "on bleeding-edge; main advances only via evolve.bleeding_edge."
+                        "promote_to_main on the user's explicit, unambiguous go-ahead. "
                         "Output: {ok, id, ahead_by, changed_files, gate_passed}.")
 async def evolve_pipeline_adopt(branch: str = "", to: str = "bleeding-edge", title: str = "",
                                 summary: str = "", repo: str = DEFAULT_REPO_ID,
-                                session_id: str = "", trace_id=None):
+                                session_id: str = "", authorize_main: str = "", trace_id=None):
     branch = (branch or "").strip()
     if not branch:
         return {"error": "branch required"}
@@ -4957,6 +4961,16 @@ async def evolve_pipeline_adopt(branch: str = "", to: str = "bleeding-edge", tit
         return {"error": f"unknown branch: {branch}"}
     if not (await _git("rev-parse", "--verify", f"refs/heads/{to}", repo_root=root))["ok"]:
         return {"error": f"unknown target branch: {to}"}
+    # M3.6 main-merge guardrail: refuse adopting a feature branch toward the real
+    # mainline unless the caller passes the explicit authorization sentinel. All
+    # code lands on bleeding-edge; main advances only on the user's go-ahead via
+    # evolve.bleeding_edge.promote_to_main (which does NOT route through here).
+    from Vera.vera.evolve.evolve_git_core import main_merge_refusal as _main_merge_refusal  # noqa: E402
+    _mrefuse = _main_merge_refusal(to, await _default_branch(repo_root=root), authorize_main)
+    if _mrefuse:
+        await _audit("pipeline.adopt", f"REFUSED adopt {branch} -> {to}: main-merge guard",
+                     kind="code", branch=branch, ok=False, repo=repo)
+        return {"error": _mrefuse, "refused": "main-merge-guard"}
     # Commits + changed files this branch adds on top of `to`.
     lg = await _git("log", "--oneline", f"{to}..{branch}", repo_root=root)
     commits = [ln for ln in (lg.get("out", "") or "").splitlines() if ln.strip()]
@@ -5032,8 +5046,8 @@ async def evolve_pipeline_adopt(branch: str = "", to: str = "bleeding-edge", tit
     # regression) — surfaced either way so it's never silently skipped unnoticed.
     critical_ok: Optional[bool] = None
     if py and repo == DEFAULT_REPO_ID:
-        tgt = await _resolve_exec_target("", branch)
-        if tgt.get("worktree"):
+        wt = await _branch_worktree(branch)   # pool sandbox OR any plain git worktree
+        if wt:
             try:
                 crit = await evolve_unittest_run(branch=branch, paths="tests",
                                                  markers="critical", timeout=300)
@@ -5048,8 +5062,8 @@ async def evolve_pipeline_adopt(branch: str = "", to: str = "bleeding-edge", tit
                        crit.get("summary", "") or ("PASS" if critical_ok else "FAIL"))
         else:
             _pstep(rec, "critical-tests", True,
-                   "no live worktree for this branch — critical-tier gate skipped "
-                   "(bring a sandbox up with evolve.sandbox.up for full gating)")
+                   "no worktree for this branch — critical-tier gate skipped "
+                   "(git worktree add it, or evolve.sandbox.up, for full gating)")
 
     rec["gate_passed"] = compile_ok if critical_ok is None else (compile_ok and critical_ok)
 
@@ -5285,6 +5299,7 @@ async def evolve_pipeline_test(id: str = "", trace_id=None):
 
 
 from Vera.vera.evolve.evolve_git_core import worktree_paths_by_branch as _worktree_paths_by_branch  # noqa: E402
+from Vera.vera.evolve.evolve_git_core import tracked_dirty_lines as _tracked_dirty_lines  # noqa: E402
 
 
 async def _sync_branch_with_target(root: str, branch: str, to: str) -> Dict[str, Any]:
@@ -5333,7 +5348,10 @@ async def _merge_isolated(root: str, branch: str, into: str, msg: str) -> Dict[s
     conflicts: List[str] = []
     sha = ""
     try:
-        mg = await _sh(_git_wt_argv(tmp, "merge", "--no-ff", "-m", msg, branch), cwd=tmp)
+        # M3.6 part 2: sanctioned-deploy override so the pre-merge-commit hook allows
+        # THIS pipeline merge (a hand-run merge onto main carries no such env → blocked).
+        mg = await _sh(["env", "VERA_ALLOW_MAIN_COMMIT=1",
+                        *_git_wt_argv(tmp, "merge", "--no-ff", "-m", msg, branch)], cwd=tmp)
         if mg["ok"]:
             sha = (await _sh(_git_wt_argv(tmp, "rev-parse", "HEAD"), cwd=tmp)).get("out", "")
         else:
@@ -5358,14 +5376,25 @@ async def _merge_in_checkout(root: str, branch: str, into: str, wt: str, msg: st
         return {"ok": False, "commit": "", "conflicts": [],
                 "error": f"target worktree is on '{cur}', not '{into}' — refusing to switch a live checkout"}
     st = await _sh(_git_wt_argv(wt, "status", "--porcelain"), cwd=wt)
-    if (st.get("out", "") or "").strip():
+    # Refuse only on TRACKED uncommitted work (staged/modified) — that's the WIP a
+    # merge could clobber. Unrelated UNTRACKED files (e.g. a scratch/spec doc left
+    # open in the standing bleeding-edge worktree) must not block an in-checkout
+    # promote: git merge below refuses on its own to overwrite an untracked file it
+    # would actually touch, so a real collision still fails safely.
+    _dirty = _tracked_dirty_lines(st.get("out", "") or "")
+    if _dirty:
         return {"ok": False, "commit": "", "conflicts": [],
-                "error": "target checkout has uncommitted changes — refusing (protect WIP); commit or clean it first"}
+                "error": "target checkout has uncommitted TRACKED changes — refusing "
+                         "(protect WIP); commit or clean it first",
+                "dirty": _dirty[:20]}
     mt = await _sh(_git_wt_argv(wt, "merge-tree", "--write-tree", into, branch), cwd=wt)
     if not mt["ok"]:
         return {"ok": False, "commit": "", "conflicts": ["(merge-tree reported conflicts)"],
                 "error": "merge conflict — resolve on the branch, then re-promote"}
-    mg = await _sh(_git_wt_argv(wt, "merge", "--no-ff", "-m", msg, branch), cwd=wt)
+    # M3.6 part 2: sanctioned-deploy override so the pre-merge-commit hook allows THIS
+    # pipeline merge (a hand-run merge onto main carries no such env, so it stays blocked).
+    mg = await _sh(["env", "VERA_ALLOW_MAIN_COMMIT=1",
+                    *_git_wt_argv(wt, "merge", "--no-ff", "-m", msg, branch)], cwd=wt)
     if not mg["ok"]:
         await _sh(_git_wt_argv(wt, "merge", "--abort"), cwd=wt)
         return {"ok": False, "commit": "", "conflicts": [],
@@ -5390,7 +5419,7 @@ async def _merge_in_checkout(root: str, branch: str, into: str, wt: str, msg: st
                         "action — evolve.bleeding_edge.promote_to_main — not this. "
                         "Input: id (str!), to (str — default bleeding-edge).")
 async def evolve_pipeline_promote(id: str = "", to: str = "bleeding-edge", force: bool = False,
-                                  trace_id=None):
+                                  authorize_main: str = "", trace_id=None):
     got = await evolve_pipeline_get(id=id)
     if got.get("error"):
         return got
@@ -5416,6 +5445,19 @@ async def evolve_pipeline_promote(id: str = "", to: str = "bleeding-edge", force
         return {"error": f"unknown branch: {branch}"}
     if not (await _git("rev-parse", "--verify", f"refs/heads/{to}", repo_root=root))["ok"]:
         return {"error": f"unknown target branch: {to}"}
+    # M3.6 main-merge guardrail (see adopt): refuse promoting a feature branch to
+    # the real mainline unless the explicit authorization sentinel is present. The
+    # sanctioned mainline path is evolve.bleeding_edge.promote_to_main (does NOT
+    # route through here), on the user's explicit, unambiguous go-ahead.
+    from Vera.vera.evolve.evolve_git_core import main_merge_refusal as _main_merge_refusal  # noqa: E402
+    _mrefuse = _main_merge_refusal(to, await _default_branch(repo_root=root), authorize_main)
+    if _mrefuse:
+        rec["decision"] = "held"
+        _pstep(rec, "promote", False, "promote blocked - main-merge guard")
+        await _save_pipeline(rec)
+        await _audit("pipeline.promote", f"REFUSED {branch} -> {to}: main-merge guard",
+                     id=id, kind="code", branch=branch, ok=False, repo=rec.get("repo"))
+        return {"ok": False, "held": True, "refused": "main-merge-guard", "error": _mrefuse}
     # Refresh the record's commits/changed_files from git so attribution + the UI
     # reflect what's actually on the branch NOW — essential for evolve.pipeline.begin
     # stubs (recorded before any commit) and harmless for adopt (keeps them current).
@@ -6780,6 +6822,26 @@ async def _resolve_exec_target(name: str = "", branch: str = "") -> Dict[str, An
                      "(evolve.sandbox.list shows the running ones)"}
 
 
+async def _branch_worktree(branch: str) -> str:
+    """Filesystem path of the worktree checked out on `branch` — the sandbox POOL
+    first (a running/paused dev container), else ANY plain git worktree created by
+    `git worktree add`. This lets the unit-test GATE run for the NORMAL branch flow,
+    not only pool sandboxes: the ephemeral test runner just bind-mounts the path, so
+    a plain worktree (no running container) is enough. branch='' -> the primary."""
+    branch = (branch or "").strip()
+    tgt = await _resolve_exec_target("", branch)   # branch='' resolves the primary
+    wt = tgt.get("worktree") or ""
+    if wt and Path(wt).exists():
+        return wt
+    if branch:
+        for w in await _list_worktrees():
+            if w.get("branch") == branch and not w.get("is_main"):
+                p = w.get("path", "")
+                if p and Path(p).exists():
+                    return p
+    return ""
+
+
 @capability("evolve.sandbox.exec", memory="on",
             http_method="POST", http_path="/evolve/sandbox/exec", http_tags=["evolve"],
             description="TERMINAL into a sandbox: run a shell command inside the "
@@ -6884,14 +6946,11 @@ async def evolve_unittest_run(branch: str = "", paths: str = "tests", markers: s
         return {"ok": bool(g.get("passed")), "summary": g.get("summary", ""),
                 "code": g.get("rc"), "out": g.get("output", ""),
                 "repo": repo, "branch": "", "test_cmd": test_cmd}
-    # 1. resolve the target branch's worktree (primary sandbox by default)
-    tgt = await _resolve_exec_target("", branch)
-    if tgt.get("error"):
-        return tgt
-    wt = tgt.get("worktree") or ""
-    if not wt or not Path(wt).exists():
-        return {"error": "no worktree for the target sandbox — bring it up first "
-                         "(evolve.sandbox.spawn / ensure)"}
+    # 1. resolve the branch's worktree — pool sandbox OR any plain git worktree
+    wt = await _branch_worktree(branch)
+    if not wt:
+        return {"error": f"no worktree for branch '{branch or '(primary)'}' — "
+                         "git worktree add it, or spawn a sandbox (evolve.sandbox.spawn)"}
     # 2. sanitise the caller's pytest args (they're interpolated into a shell cmd)
     tokens, err = _ut_sanitize(paths, markers, extra)
     if err:
@@ -6920,6 +6979,49 @@ async def evolve_unittest_run(branch: str = "", paths: str = "tests", markers: s
                       "failed": parsed["failed"], "errors": parsed["errors"]})
     return {**parsed, "code": parsed["rc"], "image": DEV_IMAGE,
             "branch": branch or label, "out": combined[-8000:], "repo": DEFAULT_REPO_ID}
+
+
+@capability("evolve.tests.matrix", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/tests/matrix", http_tags=["evolve"],
+            description="Unit-test COVERAGE MATRIX: every module in tests/, its test count, and "
+                        "whether it is in the CRITICAL gate tier (conftest _CRITICAL_MODULES — the "
+                        "set the pre-merge gate runs and must keep green). Feeds the Loop Lab Tests "
+                        "view. Pure collect-only — runs no test bodies. Output: {ok, "
+                        "modules:[{module,tests,critical}], total_tests, total_modules, "
+                        "critical_modules, critical_tests, critical_names}.")
+async def evolve_tests_matrix(trace_id=None):
+    root = str(_repo_root())
+    coll = await _sh([sys.executable, "-m", "pytest", "tests/", "--collect-only", "-q",
+                      "--no-header", "-p", "no:cacheprovider"], cwd=root, timeout=120)
+    modules: Dict[str, int] = {}
+    for ln in (coll.get("out", "") or "").splitlines():
+        ln = ln.strip()
+        # pytest -q --collect-only prints one line per module: "tests/test_x.py: 27"
+        mm2 = re.match(r"^(tests/[^:]+\.py):\s*(\d+)\s*$", ln)
+        if mm2:
+            base = os.path.basename(mm2.group(1))
+            modules[base[:-3] if base.endswith(".py") else base] = int(mm2.group(2))
+            continue
+        # fallback (older pytest): one node id per line "tests/test_x.py::test_y"
+        if ln.startswith("tests/") and "::" in ln:
+            base = os.path.basename(ln.split("::", 1)[0])
+            name = base[:-3] if base.endswith(".py") else base
+            modules[name] = modules.get(name, 0) + 1
+    critical: set = set()
+    try:
+        conf = (Path(root) / "tests" / "conftest.py").read_text(encoding="utf-8")
+        mm = re.search(r"_CRITICAL_MODULES\s*=\s*\{([^}]*)\}", conf, re.S)
+        if mm:
+            critical = set(re.findall(r'"([^"]+)"', mm.group(1)))
+    except Exception:
+        pass
+    mods = [{"module": k, "tests": v, "critical": k in critical}
+            for k, v in sorted(modules.items())]
+    return {"ok": True, "modules": mods,
+            "total_tests": sum(modules.values()), "total_modules": len(mods),
+            "critical_modules": sum(1 for x in mods if x["critical"]),
+            "critical_tests": sum(x["tests"] for x in mods if x["critical"]),
+            "critical_names": sorted(critical)}
 
 
 @capability("evolve.sandbox.fs.list", memory="off", silent=True,

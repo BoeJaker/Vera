@@ -1,6 +1,6 @@
 # Vera Dev-Lifecycle × Agent-Swarm — Consolidated Route Forward
 
-**Status:** active roadmap · **Date:** 2026-08-12 (M3.5 added 2026-08-16) · **Owner:** admin (BoeJaker)
+**Status:** active roadmap · **Date:** 2026-08-12 (M3.5 added, M3.6 guardrail added, M3 gate landed 2026-08-16) · **Owner:** admin (BoeJaker)
 **Supersedes nothing; synthesises two plans:**
 - `documentation/specs/dev-lifecycle-and-repo-hygiene.md` (in-tree, the standard)
 - `~/vera_sandbox/agentic swarm.md` (out-of-tree, Agent Boards & Comms)
@@ -10,6 +10,15 @@
 > done** (checked live 2026-08-12, not just marked), and lists the tech debt found while
 > verifying. Update this doc as milestones land; keep the source plans' status glyphs in
 > sync.
+
+> **HARD RULE - branch/merge discipline (added 2026-08-16, after a direct-to-main incident).**
+> **ALL new code lands on `bleeding-edge`. `main` advances ONLY on the user's explicit,
+> unambiguous go-ahead**, and only via `evolve.bleeding_edge.promote_to_main` - never a
+> per-feature `adopt`/`promote` with `to="main"`. This is NOT a convention to remember; it
+> must be *enforced by the system* (see **M3.6**), because relying on `adopt`'s `to="main"`
+> default already broke it once (four changes landed on `main`, rolled back, re-landed via
+> `bleeding-edge`). Until M3.6 lands: treat every `to=` argument as main-until-checked, and
+> never promote `bleeding-edge` -> `main` without an explicit, unambiguous instruction.
 
 ---
 
@@ -23,6 +32,11 @@ Verified live against prod this pass unless noted.
   worktree** test; clean BoeJaker `fix/` commit passed. (Plan §3 was stale, now ✓.)
 - ✓ **Safe pipeline promote** (`_merge_in_checkout`) — guarded in-checkout merge (on-branch,
   clean-tree, conflict-preflight, `restart_required` flag). Used all session.
+  **Refined 2026-08-16 (`cdcc3a9`):** the clean-tree guard now refuses only on **tracked**
+  uncommitted work (`tracked_dirty_lines` in `evolve_git_core.py`), not on unrelated
+  **untracked** files — an open scratch/spec doc left in the standing bleeding-edge worktree
+  no longer blocks every promote. `git merge` still refuses to overwrite a colliding untracked
+  file on its own, so a genuine collision fails safely. 5 critical-tier tests.
 - ✓ **Out-of-tree state boundary** (`state_paths`) — render/build/board/notebook/media write
   out of tree; tree stays clean. Machine-output leak (§8.2 #7) closed for current writers.
 - ✓ **Periodic scaffolding sweep** (§8.1 #4) — `evolve.sandbox.prune` (merged+clean+no-live-
@@ -109,8 +123,36 @@ scheduled content auto-push → `content.remove`/rename. Retire prod-share editi
 **M2 — Traceability guardrails (Phase D/E lite).** Doc/test-presence check on merge +
 auto-postmortem writer. Cheap, high-leverage, reuses the pipeline + `evolve.errors`.
 
-**M3 — Test-tier gate (Phase B).** Tier `tests/`; wire the merge gate to run the
-critical-system tier. This is the safety net both plans lean on.
+**M3 — Test-tier gate (Phase B). ◐ IN PROGRESS (M3.1–M3.3 landed on `bleeding-edge`
+2026-08-16; M3.4 not started).** Tier `tests/`; wire the merge gate to run the critical-system
+tier — the safety net both plans lean on. Closes **T6**. Broken into:
+
+- **M3.1 — Critical-tier gate for any branch worktree. ✓ DONE (bleeding-edge).** `gate_passed`
+  now runs the critical tier (`pytest -m critical` via `evolve.unittest.run`, in an isolated
+  ephemeral `vera:latest` container) for ANY branch with a live worktree, alongside the
+  `ast.parse` compile check — both must pass. `_branch_worktree` resolves a pool sandbox OR a
+  plain `git worktree`. **Proven:** every `adopt` this session returned `gate_passed: true`
+  after the tier ran live.
+- **M3.2 — Coverage matrix cap + panel view. ✓ DONE (bleeding-edge).** `evolve.tests.matrix`
+  parses `pytest --collect-only` into {module, tests, critical} (38 modules / 578 tests / 7
+  critical), surfaced in the evolve panel's "Unit tests" section with a race-to-green strip.
+  **Proven:** cap returns the matrix; ⚠ the panel view only renders in prod after a `main`
+  promotion (UI serves off the running checkout).
+- **M3.3 — Backfill the critical tier. ✓ DONE (bleeding-edge).** Promoted reap-safety
+  (`test_sandbox_reap`), pre-push guard (`test_pre_push_guard`), main-merge guard
+  (`test_main_merge_guard`), and merge-tolerance (`tracked_dirty_lines`, in `test_evolve_git_core`)
+  into the `critical` marker set (`tests/conftest.py`). **Proven:** critical tier is green and
+  grew across the session to **78/78** (adds M3.6 guard, pre-merge guard, merge-tolerance, and
+  M4 `board_sync`). More backfill remains as systems grow (e.g. content path-lock, reaper
+  idle-logic).
+- **M3.4 — Test generation. ○ NOT STARTED.** Auto-propose unit tests for a branch's changed
+  code (feeds the gate), so new code arrives with coverage instead of needing hand-written
+  tests every time. Reuses `evolve.tasks.generate` / the code-gen pipeline.
+- **Perf-based gating** (socket-flap / bad response-time / Ollama-contention thresholds) is a
+  sibling of M3.4, tracked separately (originally scoped under M3); see §2.A / the perf subsystem.
+
+**Nothing in M3 runs in prod yet** — it all lives on `bleeding-edge` and activates only on a
+`bleeding-edge`→`main` promotion + restart (the gated, explicit step).
 
 **M3.5 — Agentic-loop runner file split (`dag_workshop_capabilities.py`).** (○, added
 2026-08-16, session finding — not tracked in either source plan.) After M3 lands the
@@ -142,11 +184,60 @@ real, careful work per module, not a mechanical bulk move.
 Full findings + the detailed split-order rationale: session audit artifact ("Loop Stall
 Postmortem", 2026-08-15).
 
-**M4 — Board ↔ pipeline sync (Stage 2 start).** `board.sync` first (local, no GitHub needed) —
-reflect pipeline/run/error state onto board items so the board is the single work view.
-Then GitHub provider + `board.budget`. (Also would have surfaced the M3.5 concurrent-branch
-collision risk up front, rather than needing `evolve.sandbox.list` called speculatively to
-discover it.)
+**M3.6 — Main-merge guardrail (anti-recurrence). (◐ IN PROGRESS — parts 1-2 landed on
+`bleeding-edge` 2026-08-16; only part 3 remains; HIGH priority.)**
+The 2026-08-16 direct-to-main incident proved branch discipline as a *convention* is not
+enough — it was broken by relying on `evolve.pipeline.adopt`'s default `to="main"`, landing
+four changes on `main` before they were rolled back and re-landed via `bleeding-edge`. Build
+a system that makes a local `main` merge *impossible without explicit user authorization* and
+*reminds* any actor the moment they try:
+1. **Cap-layer refusal. ✓ DONE (bleeding-edge `1520ba3`, pipeline `5e949d7b`).**
+   `evolve.pipeline.adopt`/`promote` now refuse `to` in {`main`, `master`, resolved-mainline}
+   unless `authorize_main` equals the explicit sentinel `I-HAVE-EXPLICIT-USER-GO-AHEAD`
+   (a per-call token, never a default or a left-set env). `adopt`'s default was already
+   `bleeding-edge`. Pure guard (`main_merge_refusal`/`protected_mainline_names`/
+   `MAIN_MERGE_SENTINEL`) in `evolve_git_core.py`, wired into both caps, + 10 critical-tier
+   tests (`tests/test_main_merge_guard.py`; critical tier now 57/57). The one sanctioned path
+   to `main` stays `evolve.bleeding_edge.promote_to_main`, which merges directly and does NOT
+   route through the guarded caps (so it's unaffected). **Not yet active in prod** — it lives
+   on `bleeding-edge`; it only takes effect after a `bleeding-edge`→`main` promotion + restart
+   (itself the gated step). Part 3's loud reminder is delivered here at the cap layer (the
+   refusal message names the HARD RULE + the sanctioned path).
+2. **Git-level hook (defense in depth). ✓ DONE (bleeding-edge `6ee0de6`, pipeline `a024f25c`).**
+   The existing `pre-commit` hook already blocks direct NON-merge commits to `main`
+   (`VERA_ALLOW_MAIN_COMMIT=1` override) but deliberately exempts merge commits — so a raw
+   `git merge <branch>` onto the live `main` checkout was ungated. New
+   `tools/hooks/pre-merge-commit` refuses a merge landing on `main`/`master` unless
+   `VERA_ALLOW_MAIN_COMMIT=1` (the same sanctioned-deploy override). The pipeline's own
+   safe-merge (`_merge_in_checkout`/`_merge_isolated`) now sets that override on its merge, so
+   `promote_to_main` still works while a by-hand merge is refused. 3 critical-tier real-merge
+   tests (`tests/test_pre_merge_commit_guard.py`; block / override-allows / feature-branch-OK)
+   prove both the hook and the bypass mechanism. **Residual gap (documented in the hook):** a
+   *fast-forward* merge onto `main` creates no commit, so no hook fires — rare/odd by hand, and
+   the cap-layer guard (part 1) plus `--no-ff` pipeline merges cover the real paths.
+3. **`promote_to_main` confirm-gate. (○ remaining.)** Gate the sanctioned path itself on an
+   explicit-authorization argument (today calling it *is* the deliberate act, but a single
+   call ships everything on `bleeding-edge` to `main` + restarts prod with no confirm).
+Reuses the exact pattern already on `bleeding-edge` (the remote-push guard); this is its
+local-merge twin. Finish parts 2–3 BEFORE M4/M5/M6 widen autonomy.
+
+**M4 — Board ↔ pipeline sync (Stage 2 start). ◐ IN PROGRESS (2026-08-16).** `board.sync`
+first (local, no GitHub needed) — reflect pipeline state onto board items so the board is
+the single work view. Then GitHub provider + `board.budget`.
+- **`board.sync` cap ✓ + hardened (bleeding-edge `457b908`).** Reflects a linked pipeline's
+  decision/gate/review onto its item — lane + an idempotent progress comment (dedupe via
+  `sync_sig`), never yanking an item out of a human-parked `done`/`dropped`. The lane mapping,
+  fingerprint, and parked-lane guard were extracted from the cap into pure `board_core.py`
+  helpers (`pipeline_lane`/`pipeline_sync_sig`/`should_apply_lane`) + a **critical-tier
+  `test_board_sync` (13 cases)**; a review-found gap was fixed (`decision=rolled_back` now maps
+  to `dropped`, was silently `in_progress`). Only reflects the `pipeline` link today (items
+  carry no `run`/`error` link field yet).
+- **○ remaining — scheduled poll.** `board.sync` is a cap but nothing calls it on a timer, so
+  the board only updates on an explicit call / board-load. Wire a `sched.*` entry (the spec's
+  "polls on a schedule") — small, and it makes the board self-updating.
+- **○ remaining — GitHub provider + `board.budget`.** Blocked on the deploy key (D1/T3); the
+  public write path also needs the full `secret_scan` wired in (board's `_scan_secret` is
+  deliberately conservative defence-in-depth until then).
 
 **M5 — Vera executor tier (Stage 4).** Independent of 2/3; local models doing idle-only board
 work with honest review. Gated by capacity pool (already built).
@@ -206,6 +297,16 @@ file's concurrent-edit pressure eases → widen autonomy / add coordination visi
   instead (`docs/route-forward-m3-5`). Needs a real fix before Phase E / M1 can rely on
   `content.edit` again — likely a `git worktree repair` or `git worktree add` re-link
   against the existing directory, but verify no in-flight edits would be lost first.
+- **T8 — `bleeding-edge` mirror couldn't refresh: root-owned `.git/refs/heads/loop-lab/`.
+  ✓ FIXED (2026-08-16).** Every `promote` into `bleeding-edge` had reported
+  `standing_container_refresh: {ok:false, "cannot lock ref … Permission denied"}` because
+  `.git/refs/heads/loop-lab/` (and its reflog `.git/logs/refs/heads/loop-lab/`, and a handful
+  of loose objects under `.git/objects/`) were owned `root:root` from an earlier
+  in-container/root git op, so the `boejaker` process couldn't take a ref lock. Fix applied:
+  `sudo chown -R boejaker: /home/boejaker/Vera/.git` (swept the whole class, not just the one
+  dir), verified with `fsck --connectivity-only` clean. Confirmed end-to-end: the next
+  `promote` reported `standing_container_refresh: {ok:true, mirror refreshed}`. Merges were
+  never affected (only the mirror fast-forward), and prod (`main`) was never involved.
 
 ---
 
@@ -216,10 +317,12 @@ file's concurrent-edit pressure eases → widen autonomy / add coordination visi
 | §1 done | §3, §8.1 #4, Phase E, §8.2 #7 | Stage 1 (§9.1), §6.2 |
 | M2/M3 | Phase B, Phase D, Phase E | — |
 | M3.5 | — (session finding, 2026-08-16) | — |
+| M3.6 | Phase B (guardrail, 2026-08-16 incident) | — |
 | M4/M5 | — | Stage 2/§6.3, Stage 4 |
 | M6 | — | Stage 5, §5.3 |
 | T1/T2 | §8.1 #4 (sweep) | §6.5 lifecycle |
 | T6/T7 | Phase B / Phase E | — |
+| T8 | — (infra: root-owned `.git` refs) | §6.5 lifecycle |
 
 Board tracking: an umbrella board item per plan (dev-lifecycle, agent-swarm, this route-forward)
 plus work items for M0–M6 (incl. M3.5) and T1–T7, tied to their branches when opened.
