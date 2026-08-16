@@ -90,3 +90,28 @@ def test_ignored_entries_are_not_dirty():
 def test_empty_and_blank_are_not_dirty():
     assert core.tracked_dirty_lines("") == []
     assert core.tracked_dirty_lines("\n  \n") == []
+
+
+def test_release_preflight_allows_same_tip_without_a_commit():
+    got = core.release_preflight("abc", "abc", True, True)
+    assert got == {"ok": True, "action": "already-up-to-date", "error": ""}
+
+
+def test_release_preflight_requires_fast_forward_history():
+    got = core.release_preflight("main", "bleeding", True, False)
+    assert got == {"ok": True, "action": "fast-forward", "error": ""}
+
+
+def test_release_preflight_refuses_main_ahead_without_rewriting_it():
+    got = core.release_preflight("main", "bleeding", False, True)
+    assert not got["ok"]
+    assert got["action"] == "refuse"
+    assert "main is ahead" in got["error"]
+    assert "Preserve all changes" in got["error"]
+
+
+def test_release_preflight_refuses_diverged_history_without_auto_merge():
+    got = core.release_preflight("main", "bleeding", False, False)
+    assert not got["ok"]
+    assert "diverged" in got["error"]
+    assert "isolated reviewed pipeline" in got["error"]
