@@ -266,6 +266,32 @@ work with honest review. Gated by capacity pool (already built).
 **M6 — Autonomy relaxation (Stage 5).** Only after M2/M3 give the safety net; widen HITL
 gates as trust accrues.
 
+**M7 — Full autonomous closed loop (operated from a Claude Code session). ◔ STARTED
+2026-08-16.** Goal: board items worked autonomously in containers; sessions killed by the
+>5h token limit auto-resumed with "continue"; when the board is empty, the v1–v8 agentic
+loops (focus v7) are exercised/optimised and *generate* new board items → the loop continues;
+**promotion/edits to `main` are IMPOSSIBLE in this mode**; multiple Claude Codes on different
+machines share the one board and coordinate via envelopes. Most primitives already exist
+(`board.dispatch`/`claim`/`comment`, `ide.claude_sessions.watch/resume/policy`, session
+sandboxes, v1–v8 loops + dream idle-trigger, `capacity.*`). Built safety-first:
+- **Phase A — hard main-lockout + kill switch. ✓ DONE (bleeding-edge `b8e31ac`).**
+  `autonomous.engage` sets a Redis flag that makes promote/merge to `main` UNCONDITIONALLY
+  refused in adopt/promote/`promote_to_main` — checked BEFORE the M3.6 sentinel, so no
+  `authorize_main`/`force` bypasses it; `bleeding-edge`/feature branches still land freely.
+  `autonomous.release(confirm=true)` is the kill switch; `autonomous.status` reports state.
+  Pure `autonomous_lock_core.py` + 8 critical tests; **live-verified** (engaged →
+  `promote_to_main` refused → released), and prod-isolated.
+- **Phase D — live Loop-Lab UI feedback of the agent's actions. ○ NEXT.** Surface an
+  autonomous-mode banner (engaged/main-locked) + a live activity feed (dispatch·work·gate·
+  land·session-resume) — both the "more feedback about your actions" ask and mandatory to
+  operate the loop safely.
+- **Phase B — the orchestrator. ○** Continuous drive: pick top ready item → `board.dispatch`
+  into a container → monitor → next; empty board → exercise/optimise v7 (v1–v8) → generate items.
+- **Phase C — auto-resume on the >5h token limit** via `claude_sessions.policy` (inject "continue").
+- **Phase E — multi-agent coordination** (progress/help/handoff envelopes across machines).
+Build order: A (done) → D → B → C → E, so the lock + visibility exist before anything runs
+unattended.
+
 Ordering rationale: stabilise what's live (M0) → finish the half-built content loop (M1) →
 lay the safety net (M2/M3), which also de-risks the M3.5 structural refactor → M3.5 once the
 file's concurrent-edit pressure eases → widen autonomy / add coordination visibility (M4–M6).
