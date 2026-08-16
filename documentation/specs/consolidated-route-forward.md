@@ -32,6 +32,11 @@ Verified live against prod this pass unless noted.
   worktree** test; clean BoeJaker `fix/` commit passed. (Plan §3 was stale, now ✓.)
 - ✓ **Safe pipeline promote** (`_merge_in_checkout`) — guarded in-checkout merge (on-branch,
   clean-tree, conflict-preflight, `restart_required` flag). Used all session.
+  **Refined 2026-08-16 (`cdcc3a9`):** the clean-tree guard now refuses only on **tracked**
+  uncommitted work (`tracked_dirty_lines` in `evolve_git_core.py`), not on unrelated
+  **untracked** files — an open scratch/spec doc left in the standing bleeding-edge worktree
+  no longer blocks every promote. `git merge` still refuses to overwrite a colliding untracked
+  file on its own, so a genuine collision fails safely. 5 critical-tier tests.
 - ✓ **Out-of-tree state boundary** (`state_paths`) — render/build/board/notebook/media write
   out of tree; tree stays clean. Machine-output leak (§8.2 #7) closed for current writers.
 - ✓ **Periodic scaffolding sweep** (§8.1 #4) — `evolve.sandbox.prune` (merged+clean+no-live-
@@ -136,8 +141,10 @@ tier — the safety net both plans lean on. Closes **T6**. Broken into:
 - **M3.3 — Backfill the critical tier. ✓ DONE (bleeding-edge).** Promoted reap-safety
   (`test_sandbox_reap`), pre-push guard (`test_pre_push_guard`), main-merge guard
   (`test_main_merge_guard`), and merge-tolerance (`tracked_dirty_lines`, in `test_evolve_git_core`)
-  into the `critical` marker set (`tests/conftest.py`). **Proven:** critical tier is **62/62
-  green**. More backfill remains as systems grow (e.g. content path-lock, reaper idle-logic).
+  into the `critical` marker set (`tests/conftest.py`). **Proven:** critical tier is green and
+  grew across the session to **78/78** (adds M3.6 guard, pre-merge guard, merge-tolerance, and
+  M4 `board_sync`). More backfill remains as systems grow (e.g. content path-lock, reaper
+  idle-logic).
 - **M3.4 — Test generation. ○ NOT STARTED.** Auto-propose unit tests for a branch's changed
   code (feeds the gate), so new code arrives with coverage instead of needing hand-written
   tests every time. Reuses `evolve.tasks.generate` / the code-gen pipeline.
