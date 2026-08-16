@@ -94,3 +94,24 @@ def main_merge_refusal(to: str, mainline: str, authorize: str) -> str:
         f"authorize_main='{MAIN_MERGE_SENTINEL}'. "
         f"(HARD RULE / M3.6 - documentation/specs/consolidated-route-forward.md)"
     )
+
+
+def tracked_dirty_lines(porcelain: str) -> list:
+    """Lines from `git status --porcelain` that represent TRACKED changes (staged
+    or unstaged) — the work an in-checkout deploy merge could clobber and must
+    therefore refuse to run over.
+
+    Untracked files ('??' lines) are deliberately EXCLUDED: `git merge` refuses on
+    its own to overwrite an untracked file the merge would touch (so a genuine
+    collision still fails safely), while an UNRELATED untracked file — e.g. a
+    scratch/spec doc a user left open in the standing bleeding-edge worktree — must
+    not block a promote it has nothing to do with. Ignored (' !!') entries, if ever
+    surfaced, are treated like untracked. Pure — unit-tested in test_evolve_git_core."""
+    out: list = []
+    for line in (porcelain or "").splitlines():
+        if not line.strip():
+            continue
+        if line.startswith("??") or line.startswith("!!"):
+            continue
+        out.append(line)
+    return out
