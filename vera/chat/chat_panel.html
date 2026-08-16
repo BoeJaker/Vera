@@ -6081,7 +6081,7 @@ IMPORTANT:
           placeholder.className='cap-inline';
           placeholder.innerHTML='<div class="cap-inline-header">&#127744; This needs the agentic loop.</div>';
           const b=document.createElement('button');b.className='btn xs';b.style.marginTop='4px';b.textContent='Run agentic loop';
-          b.onclick=()=>_sendAgentLoopServer(goal,_autoVariant);
+          b.onclick=()=>_dispatchServerLoop(goal,_autoVariant);
           placeholder.appendChild(b);
         }else{
           placeholder.remove();
@@ -6100,7 +6100,7 @@ IMPORTANT:
     // Finally, if the LLM deferred to the agentic loop, hand the goal to
     // whichever server variant was resolved above (loopVariant, or v7 if
     // the user hadn't picked one).
-    if(_loopDefer){ try{ _sendAgentLoopServer(_loopDefer,_loopDeferVariant); }catch(e){ appendSys('<span style="color:var(--err)">Auto-loop failed: '+esc(String(e&&e.message||e))+'</span>'); } }
+    if(_loopDefer){ try{ _dispatchServerLoop(_loopDefer,_loopDeferVariant); }catch(e){ appendSys('<span style="color:var(--err)">Auto-loop failed: '+esc(String(e&&e.message||e))+'</span>'); } }
   }
 
   function renderCapPending(el,capName){
@@ -6758,44 +6758,52 @@ IMPORTANT:
     try{ HISTORY.push({role:'assistant', content:answer}); }catch(_){}
   }
 
+  // Shared server-loop dispatcher — the ONE place that knows which variants
+  // are genuinely external bridges (own function, own wire contract) vs.
+  // the DAG-workshop SSE variants _sendAgentLoopServer handles directly.
+  // Every caller that hands a goal to a server-side loop MUST go through
+  // this (not call _sendAgentLoopServer directly) — sendAgentLoop's own
+  // explicit-run path originally had this dispatch inline, but the
+  // LLM-auto-detected [[loop]] path (2026-08-16 v7-hardcode fix) and the
+  // manual "Run agentic loop" button both called _sendAgentLoopServer
+  // straight through, bypassing it entirely. Since _sendAgentLoopServer
+  // treats its variant argument as a dag.agent_loop_* capability name, a
+  // goal auto-deferred while 'smolagents'/'langgraph'/'openclaw' was the
+  // selected Loop-pane variant would hit the DAG-workshop endpoint with an
+  // unrecognized variant and fail — reliably, on almost every turn that
+  // auto-detected a loop, since that's the common path (not the explicit
+  // send button already routed through sendAgentLoop). Fixed by extracting
+  // this dispatch once and calling it from all three sites (§skill note:
+  // don't patch each copy of a duplicated pattern separately).
+  async function _dispatchServerLoop(goal, variantCap){
+    const variant = variantCap || 'chat';
+    if(variant==='openclaw'){
+      try{ return await _sendOpenClawLoop(goal); }
+      catch(e){ appendSys(`<span style="color:var(--err)">OpenClaw loop failed: ${esc(e.message||e)}</span>`); }
+      return;
+    }
+    if(variant==='smolagents'){
+      try{ return await _sendSmolagentsLoop(goal); }
+      catch(e){ appendSys(`<span style="color:var(--err)">smolagents loop failed: ${esc(e.message||e)}</span>`); }
+      return;
+    }
+    if(variant==='langgraph'){
+      try{ return await _sendLangGraphLoop(goal); }
+      catch(e){ appendSys(`<span style="color:var(--err)">LangGraph loop failed: ${esc(e.message||e)}</span>`); }
+      return;
+    }
+    try{ return await _sendAgentLoopServer(goal, variant); }
+    catch(e){ appendSys(`<span style="color:var(--err)">Server loop failed: ${esc(e.message||e)}</span>`); }
+  }
+
   async function sendAgentLoop(goal){
     _clearWatchedLoopOverride();
     // Variant dispatch: if the user picked a server-side loop in the
     // Loop pane, route through that capability and stream its events.
     // 'chat' (default) keeps the existing in-page step-by-step loop.
     const variant=(document.getElementById('loopVariant')?.value||'chat');
-    // OpenClaw is a genuinely external loop (a separate gateway process, own
-    // event shape — openclaw.stream/openclaw.response, not the DAG-workshop
-    // SSE contract _sendAgentLoopServer expects) — dispatched to its own
-    // function rather than folded into that one, so v1–v8 stay byte-for-byte
-    // untouched by this addition.
-    if(variant==='openclaw'){
-      try{ return await _sendOpenClawLoop(goal); }
-      catch(e){
-        appendSys(`<span style="color:var(--err)">OpenClaw loop failed: ${esc(e.message||e)}</span>`);
-      }
-      return;
-    }
-    if(variant==='smolagents'){
-      try{ return await _sendSmolagentsLoop(goal); }
-      catch(e){
-        appendSys(`<span style="color:var(--err)">smolagents loop failed: ${esc(e.message||e)}</span>`);
-      }
-      return;
-    }
-    if(variant==='langgraph'){
-      try{ return await _sendLangGraphLoop(goal); }
-      catch(e){
-        appendSys(`<span style="color:var(--err)">LangGraph loop failed: ${esc(e.message||e)}</span>`);
-      }
-      return;
-    }
     if(variant!=='chat'){
-      try{ return await _sendAgentLoopServer(goal, variant); }
-      catch(e){
-        appendSys(`<span style="color:var(--err)">Server loop failed: ${esc(e.message||e)}</span>`);
-      }
-      return;
+      return await _dispatchServerLoop(goal, variant);
     }
     if(_agentLoopAbort){_agentLoopAbort.abort();_agentLoopAbort=null;}
     _agentLoopAbort=new AbortController();
