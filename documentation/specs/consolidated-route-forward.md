@@ -177,8 +177,8 @@ real, careful work per module, not a mechanical bulk move.
 Full findings + the detailed split-order rationale: session audit artifact ("Loop Stall
 Postmortem", 2026-08-15).
 
-**M3.6 — Main-merge guardrail (anti-recurrence). (◐ IN PROGRESS — part 1 landed on
-`bleeding-edge` 2026-08-16; HIGH priority.)**
+**M3.6 — Main-merge guardrail (anti-recurrence). (◐ IN PROGRESS — parts 1-2 landed on
+`bleeding-edge` 2026-08-16; only part 3 remains; HIGH priority.)**
 The 2026-08-16 direct-to-main incident proved branch discipline as a *convention* is not
 enough — it was broken by relying on `evolve.pipeline.adopt`'s default `to="main"`, landing
 four changes on `main` before they were rolled back and re-landed via `bleeding-edge`. Build
@@ -196,11 +196,18 @@ a system that makes a local `main` merge *impossible without explicit user autho
    on `bleeding-edge`; it only takes effect after a `bleeding-edge`→`main` promotion + restart
    (itself the gated step). Part 3's loud reminder is delivered here at the cap layer (the
    refusal message names the HARD RULE + the sanctioned path).
-2. **Git-level hook (defense in depth). (○ remaining.)** A `pre-commit`/`pre-merge-commit`
-   hook refusing any commit/merge that lands on local `main` (HEAD==main) unless
-   `VERA_ALLOW_MAIN_MERGE=1` — the local-merge counterpart of the `pre-push` protected-branch
-   guard this session re-landed (`bdab162`, `tests/test_pre_push_guard.py`, critical tier).
-   This catches a raw `git merge`/`git commit` that never touches the caps.
+2. **Git-level hook (defense in depth). ✓ DONE (bleeding-edge `6ee0de6`, pipeline `a024f25c`).**
+   The existing `pre-commit` hook already blocks direct NON-merge commits to `main`
+   (`VERA_ALLOW_MAIN_COMMIT=1` override) but deliberately exempts merge commits — so a raw
+   `git merge <branch>` onto the live `main` checkout was ungated. New
+   `tools/hooks/pre-merge-commit` refuses a merge landing on `main`/`master` unless
+   `VERA_ALLOW_MAIN_COMMIT=1` (the same sanctioned-deploy override). The pipeline's own
+   safe-merge (`_merge_in_checkout`/`_merge_isolated`) now sets that override on its merge, so
+   `promote_to_main` still works while a by-hand merge is refused. 3 critical-tier real-merge
+   tests (`tests/test_pre_merge_commit_guard.py`; block / override-allows / feature-branch-OK)
+   prove both the hook and the bypass mechanism. **Residual gap (documented in the hook):** a
+   *fast-forward* merge onto `main` creates no commit, so no hook fires — rare/odd by hand, and
+   the cap-layer guard (part 1) plus `--no-ff` pipeline merges cover the real paths.
 3. **`promote_to_main` confirm-gate. (○ remaining.)** Gate the sanctioned path itself on an
    explicit-authorization argument (today calling it *is* the deliberate act, but a single
    call ships everything on `bleeding-edge` to `main` + restarts prod with no confirm).
