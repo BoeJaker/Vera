@@ -11275,16 +11275,15 @@ def _v5_extract_code_blocks(text: str, name_hint: str = "") -> List[Dict[str, st
 _SKILL_INJECT_BLACKLIST: set = set()
 
 
-def _v5_force_master_planner() -> bool:
-    """Operator switch (env VERA_LOOP_FORCE_MASTER_PLANNER, DEFAULT ON): run the
-    strategic master planner as the PRIMARY plan source, not only as an empty-plan
-    fallback. Set 2026-08-17 at the owner's request — the single-call primary planner
-    was emitting generic 'search for capabilities' steps that don't plan to the goal,
-    and the old `not plan.get('steps')` guard meant the goal-aware master planner never
-    fired whenever the primary returned ANY steps. The master plan REPLACES the primary
-    steps when it produces usable ones. Set the env to 0/false to restore the previous
-    fallback-only behaviour (master planner runs only when the primary is empty)."""
-    return str(os.getenv("VERA_LOOP_FORCE_MASTER_PLANNER", "1")).strip().lower() \
+def _v5_minimal_plan_primary() -> bool:
+    """Operator switch (env VERA_LOOP_MINIMAL_PLAN, DEFAULT ON, 2026-08-17): use the
+    MINIMAL / tolerant plan schema as the PRIMARY plan, not only as the empty-plan retry
+    fallback. The full-schema primary was emitting generic 'search for capabilities'
+    meta-steps that don't plan to the goal; the minimal schema ('ONE step per distinct
+    unit of work') plans directly to it — the fallback the owner observed producing
+    proper plans. Explicit minimal=True callers (the existing retries) are unaffected.
+    Set the env to 0/false to restore the full-schema primary."""
+    return str(os.getenv("VERA_LOOP_MINIMAL_PLAN", "1")).strip().lower() \
         not in ("0", "false", "no", "off")
 
 
@@ -11705,6 +11704,12 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
     them. Skills with no cap link are still pickable from the skill catalog by
     their description."""
     cap_skill_map = cap_skill_map or {}
+    # Use the MINIMAL / tolerant plan schema as the PRIMARY plan (VERA_LOOP_MINIMAL_PLAN,
+    # default ON) — it plans directly to the goal, where the full schema was emitting
+    # generic 'search for capabilities' meta-steps. Explicit minimal=True retries are
+    # already minimal; this only flips the primary calls that didn't ask for a schema.
+    if not minimal and _v5_minimal_plan_primary():
+        minimal = True
     # Planner tuning from the 'agentic-planner' agent: keep the caller's model if
     # one was pinned, otherwise inherit the agent's (empty = the user's default);
     # apply the agent's sampling/num_ctx options; prepend its persona to the task
@@ -16651,7 +16656,7 @@ async def cap_dag_agent_loop_v5(
     # reliably than an abstract goal. (The complexity=="extreme" branch below is
     # the planner OPTING IN to the same machinery; this branch is the failure
     # escalation.)
-    if enable_master_planner and (_v5_force_master_planner() or not plan.get("steps")):
+    if not plan.get("steps") and enable_master_planner:
         try:
             catalog_brief = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names[:24])
             mp = await _v5_master_plan(goal, catalog_brief, model=model,
@@ -20315,7 +20320,7 @@ async def cap_dag_agent_loop_v6(
     # weak planner decomposes a concrete document far more reliably than an
     # abstract goal). Distinct from the complexity=="extreme" opt-in below.
     _master_ran = False
-    if enable_master_planner and (_v5_force_master_planner() or not plan.get("steps")):
+    if not plan.get("steps") and enable_master_planner:
         try:
             catalog_brief = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names[:24])
             mp = await _v5_master_plan(goal, catalog_brief, model=model,
