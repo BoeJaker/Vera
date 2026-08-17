@@ -42,6 +42,7 @@ from fastapi.responses import HTMLResponse
 
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import APP, capability, emit_event, register_ui
+from Vera.vera.provisioning.components_core import rewrite_host, native_worker_cmd
 
 log = logging.getLogger("vera.provision.components")
 _HERE = Path(__file__).parent
@@ -55,6 +56,20 @@ _VENV = "$HOME/.vera/edge/venv"         # shared venv for the python components
 def _cap(name: str):
     c = _orch.CAPABILITY_REGISTRY.get(name)
     return c.get("func") if c else None
+
+
+def _primary_lan_ip() -> str:
+    """The orchestrator's own LAN address, so a remote worker's backend URLs can be
+    re-pointed away from 'localhost' (see components_core.rewrite_host)."""
+    import socket
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))          # no packet sent; just picks the egress iface
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -377,7 +392,7 @@ async def cap_component_stop(host_id: str = "", component: str = "",
 async def cap_worker(host_id: str = "", mode: str = "docker", name: str = "",
                      image: str = "", gpus: str = "", repo_url: str = "",
                      port: int = 8990, redis_url: str = "", timeout: int = 1200,
-                     trace_id=None) -> Dict:
+                     backend_host: str = "", trace_id=None) -> Dict:
     rec = await _host_rec(host_id)
     if not rec:
         return {"ok": False, "error": f"host_id not found: {host_id}"}
@@ -405,33 +420,26 @@ async def cap_worker(host_id: str = "", mode: str = "docker", name: str = "",
             return {"ok": False, "mode": "native",
                     "error": "native mode needs a git repo_url (or set VERA_REPO_URL on the Vera host). "
                              "Provide the URL of your Vera repository."}
-        # Mirror the Dockerfile layout: code lives under <root>/Vera/vera so that
-        # `python -m Vera.vera.capability_orchestration` imports cleanly.
-        root = "$HOME/.vera/app"
-        pkg = f"{root}/Vera/vera"
-        backend_env = " ".join(
-            f"{k}={shlex.quote(os.getenv(k, ''))}"
-            for k in ("POSTGRES_URL", "NEO4J_URI", "NEO4J_USER", "NEO4J_PASS", "OLLAMA_BASE_URL")
-            if os.getenv(k))
-        cmd = (
-            f"mkdir -p {root}/Vera && "
-            f"( [ -d {pkg}/.git ] && git -C {pkg} pull --ff-only || "
-            f"  git clone --depth 1 {shlex.quote(repo)} {pkg} ) && "
-            f"touch {root}/Vera/__init__.py {pkg}/__init__.py && "
-            f'python3 -m venv {pkg}/venv --system-site-packages && '
-            f'"{pkg}/venv/bin/pip" install -U pip wheel && '
-            f'"{pkg}/venv/bin/pip" install -r {pkg}/requirements.txt && '
-            f'cd {pkg} && '
-            f'{{ PYTHONPATH={root} REDIS_URL={shlex.quote(redis_url)} '
-            f'ORCHESTRATOR_HOST=0.0.0.0 ORCHESTRATOR_PORT={int(port)} {backend_env} '
-            f'nohup "{pkg}/venv/bin/python" -m Vera.vera.capability_orchestration '
-            f'> {root}/worker.log 2>&1 & echo $! > {root}/worker.pid ; }} && '
-            f'sleep 2 && echo "VERA_LAUNCHED pid=$(cat {root}/worker.pid 2>/dev/null)"'
-        )
+        # A remote worker can't reach the orchestrator's own localhost stores — re-point
+        # every backend URL at a LAN-reachable address (this box's IP, or backend_host).
+        bh = (backend_host or os.getenv("VERA_ADVERTISE_HOST", "") or _primary_lan_ip())
+        redis_url = rewrite_host(redis_url, bh)
+        backend_kv = {}
+        for k in ("POSTGRES_URL", "NEO4J_URI", "NEO4J_USER", "NEO4J_PASS",
+                  "CHROMA_HOST", "CHROMA_PORT", "OLLAMA_BASE_URL", "OLLAMA_GPU_URL",
+                  "OLLAMA_CPU_A_URL", "OLLAMA_CPU_B_URL", "OLLAMA_EMBED_URL",
+                  "OLLAMA_MODEL", "VERA_COORD_REDIS_DB"):
+            v = os.getenv(k)
+            if v:
+                backend_kv[k] = rewrite_host(v, bh)
+        # native_worker_cmd handles the repo's vera/ package layout, a neutral cwd (so
+        # vera/operator can't shadow stdlib operator), and a durable systemd unit.
+        cmd = native_worker_cmd(root="$HOME/.vera/worker", repo=repo, redis_url=redis_url,
+                                backend_kv=backend_kv, port=int(port))
         res = await _ssh(host_id, cmd, timeout=int(timeout or 1200))
         ok = bool(res.get("ok")) and "VERA_LAUNCHED" in (res.get("stdout", "") or "")
         await emit_event({"type": "provision.worker", "mode": "native", "host": rec.get("host", ""), "ok": ok})
-        return {"ok": ok, "mode": "native", "port": int(port),
+        return {"ok": ok, "mode": "native", "port": int(port), "backend_host": bh,
                 "log": ((res.get("stdout", "") or "") + "\n" + (res.get("stderr", "") or ""))[-3000:],
                 "error": "" if ok else (res.get("stderr") or res.get("error") or "native worker launch failed")}
 
