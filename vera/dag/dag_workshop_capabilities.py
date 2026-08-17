@@ -12729,10 +12729,21 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                        question_timeout_secs: int = 180,
                        prefer_terminal_tools: bool = False,
                        condense_output: bool = False,
-                       phase: str = "") -> Dict[str, Any]:
+                       phase: str = "",
+                       prior_history: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """Run ONE step as an ephemeral scoped sub-agent. Sees only: full schemas for
     its assigned caps, dynamically-loaded skill instructions, and the outputs of
     the prior steps it depends on. Returns {id,title,ok,summary,outputs,cycle_end}.
+
+    `prior_history` seeds this call's tool-call log with an EARLIER phase's
+    entries from the SAME planner step (see `_v5_run_phased_step`). Without
+    this, each phase (explore/think/act/verify) starts its local `history`
+    list empty, so the per-cycle "Your results so far:" slot (built from
+    `history[-4:]`) reports "(no tool calls yet...)" on phase 2's first cycle
+    even though phase 1 just did real work one cycle earlier — the model has
+    no memory of its own prior action and reissues it verbatim. Cycle numbers
+    (`cycle_offset`/`gc`) already thread continuously across phases of one
+    step; `history` now does too.
 
     `cycle_offset` seeds a GLOBAL monotonic cycle counter so each step's cycle
     cards get distinct ids in the shared renderer (which keys cards by cycle).
@@ -12764,6 +12775,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         if valid_phases:
             return await _v5_run_phased_step(
                 step, valid_phases, goal=goal, blackboard=blackboard, artifacts=artifacts,
+                journal=journal,
                 model=model,
                 instance_id=instance_id, prefer_gpu=prefer_gpu, session_id=session_id,
                 stream_id=stream_id, trace_id=trace_id, cycle_budget=cycle_budget,
@@ -13362,7 +13374,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         },
     })
 
-    history: List[Dict[str, Any]] = []
+    history: List[Dict[str, Any]] = list(prior_history) if prior_history else []
     outputs: Dict[str, Any] = {}
     all_thoughts: List[str] = []
     result_summary = ""
@@ -15838,6 +15850,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
 async def _v5_run_phased_step(step: Dict[str, Any], phases: List[str], *, goal: str,
                               blackboard: Dict[int, Dict[str, Any]],
                               artifacts: Optional[Dict[str, Dict[str, Any]]] = None,
+                              journal: Optional[List[Dict[str, Any]]] = None,
                               model: str, instance_id: str,
                               prefer_gpu: bool, session_id: str, stream_id: str, trace_id: Any,
                               cycle_budget: int, cycle_offset: int, artifact_dir_path: str,
@@ -15857,7 +15870,15 @@ async def _v5_run_phased_step(step: Dict[str, Any], phases: List[str], *, goal: 
     is handed to its OWN scoped ephemeral sub-agent, in canonical order, threading
     each phase's output to the next. Aggregates into a single step result; a VERIFY
     phase that reports 'FAIL…' marks the step not-ok so the normal failure→replan
-    fires."""
+    fires.
+
+    Cycle numbers (`cycle_offset`/`gc`) are already threaded continuously across
+    phases so the UI shows one uninterrupted cycle count for the whole step —
+    `history` and `journal` are threaded the same way (via `prior_history=`/
+    `journal=` on each phase's `_v5_run_step` call) so the per-cycle "Your
+    results so far:" prompt slot a later phase sees is NOT reset to empty just
+    because it's a new phase; without this a phase's first cycle had no memory
+    of the prior phase's work and could reissue the exact same call."""
     sid = session_id
     parent_id = step["id"]
     await emit_event({"type": "agent_loop_v5.step_start", "session_id": sid, "stream_id": stream_id,
@@ -15877,7 +15898,8 @@ async def _v5_run_phased_step(step: Dict[str, Any], phases: List[str], *, goal: 
                "caps": list(step.get("caps") or []), "skills": list(step.get("skills") or []),
                "needs": []}
         r = await _v5_run_step(
-            sub, goal=goal, blackboard=merged_bb, artifacts=artifacts, model=model, instance_id=instance_id,
+            sub, goal=goal, blackboard=merged_bb, artifacts=artifacts, journal=journal,
+            model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, session_id=sid, stream_id=stream_id, trace_id=trace_id,
             cycle_budget=cycle_budget, cycle_offset=gc, artifact_dir_path=artifact_dir_path,
             call_tool=call_tool, build_ctx=build_ctx, catalog_caps=catalog_caps,
@@ -15886,11 +15908,16 @@ async def _v5_run_phased_step(step: Dict[str, Any], phases: List[str], *, goal: 
             enable_code_autosave=enable_code_autosave, code_push_gitea=code_push_gitea,
             enable_chaining=enable_chaining, enable_step_questions=enable_step_questions,
             clarify_channel=clarify_channel, question_timeout_secs=question_timeout_secs,
-            prefer_terminal_tools=prefer_terminal_tools, condense_output=condense_output, phase=ph)
+            prefer_terminal_tools=prefer_terminal_tools, condense_output=condense_output, phase=ph,
+            prior_history=history)
         gc = r.get("cycle_end", gc)
         merged_bb[sub_id] = r
         phase_results.append(r)
-        history.extend(r.get("history") or [])
+        # REPLACE, not extend: `r["history"]` was already seeded with this same
+        # `history` list (via `prior_history=` above), so it's the full running
+        # log through this phase, not just its own new entries — extending would
+        # duplicate every earlier phase's entries once per later phase.
+        history = list(r.get("history") or history)
         user_clarifications.extend(r.get("user_clarifications") or [])
 
         # NOTE: phases deliberately run to completion. Skipping later phases once
