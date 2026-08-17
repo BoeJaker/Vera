@@ -121,3 +121,23 @@ def classify_session(session: Dict[str, Any],
                       f"undeclared silence {int(age)}s ≥ {pol['stalled_after_s']}s — "
                       "visible, not yet reclaimable")
     return result("live", "none", f"active {int(age)}s ago")
+
+
+def autoresume_candidates(watch_sessions: List[Dict[str, Any]],
+                          policy: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """The pure observe-vs-act gate for the auto-resume loop (Phase C).
+
+    Given watch()'s already-classified session rows + the effective policy, return
+    exactly the sessions to AUTO-resume this tick. Empty unless policy['auto'] is
+    truthy — so the loop OBSERVES by default and only acts once auto-resume is
+    explicitly turned on. A row qualifies solely on the classifier's own verdict:
+    action == 'resume' AND resume_ok. Every 'never auto-resume' case (human takeover,
+    declared blocked:quota, finished-unreported → reconcile, and past-max-attempts →
+    escalate) already carries a non-'resume' action, so it is excluded here by
+    construction rather than re-checked — the classifier stays the single source of
+    truth for that safety call.
+    """
+    if not (policy or {}).get("auto"):
+        return []
+    return [s for s in (watch_sessions or [])
+            if s.get("action") == "resume" and s.get("resume_ok")]
