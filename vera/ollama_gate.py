@@ -119,6 +119,78 @@ async def release(r, lease: Optional[Dict[str, Any]]) -> bool:
         return False
 
 
+def parse_owner(owner: str):
+    """Split an owner token 'host:pid:hash' -> (host, pid|None). Tolerant of odd
+    shapes (returns (raw, None) when the pid segment isn't an int)."""
+    parts = str(owner or "").split(":")
+    if len(parts) < 2:
+        return (str(owner or ""), None)
+    try:
+        return (parts[0], int(parts[1]))
+    except (ValueError, TypeError):
+        return (parts[0], None)
+
+
+def is_reapable_local_lease(owner: str, this_host: str, pid_alive) -> bool:
+    """Decide (purely) whether a leaked gate lease is SAFE to force-clear on startup.
+    Safe ONLY when the lease was minted on THIS host AND its pid is no longer alive
+    here — i.e. a crashed/restarted local process that never released its slot, which
+    otherwise wedges the node for the full 30-min TTL. Leases from ANOTHER host are
+    never touched (this node can't verify a peer's pid, and clearing a peer's live
+    slot would double-book the GPU). Unknown shapes are left alone."""
+    host, pid = parse_owner(owner)
+    if not host or host != this_host or pid is None:
+        return False
+    return not pid_alive(pid)
+
+
+def _pid_alive(pid: int) -> bool:
+    """True if a local pid exists. os.kill(pid, 0): no error = alive; ProcessLookupError
+    = dead; PermissionError = alive (owned by another user). Any other error -> assume
+    alive so the sweep never clears a lease it isn't sure is dead."""
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except Exception:
+        return True
+
+
+async def sweep_dead_local_leases(r) -> Dict[str, Any]:
+    """Startup sweep: clear gate slots leaked by a dead LOCAL process. A holder that
+    dies mid-generation (crash / kill / restart) leaves its TTL-fenced lease held for
+    the full TTL (default 30 min), wedging the node until it expires — the exact thing
+    that blocked the GPU on 2026-08-17. This clears such orphans on boot, cluster-safe
+    (this host's own dead-pid leases only) and owner-fenced (CAS del). Never raises."""
+    cleared = []
+    if r is None:
+        return {"cleared": [], "count": 0}
+    try:
+        keys = []
+        async for k in r.scan_iter(match="vera:ollama:gate:*:slot:*"):
+            keys.append(k.decode() if isinstance(k, (bytes, bytearray)) else str(k))
+    except Exception:
+        return {"cleared": [], "count": 0, "error": "scan_iter unavailable"}
+    for k in keys:
+        try:
+            v = await r.get(k)
+        except Exception:
+            continue
+        if v is None:
+            continue
+        owner = v.decode() if isinstance(v, (bytes, bytearray)) else str(v)
+        if is_reapable_local_lease(owner, _HOST, _pid_alive):
+            try:
+                if await r.eval(_RELEASE_LUA, 1, k, owner):   # owner-fenced del
+                    cleared.append({"key": k, "owner": owner})
+            except Exception:
+                pass
+    return {"cleared": cleared, "count": len(cleared)}
+
+
 async def occupancy(r, node: str, capacity: int) -> Dict[str, Any]:
     """Observability: how many of a node's slots are currently held, and by
     whom. Read-only; safe to call from a status cap."""
