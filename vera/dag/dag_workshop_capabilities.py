@@ -17904,8 +17904,9 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
     # verdict stays a judgement — this keeps the hard gate tight to real deliverables.
     # Hard-gate only when the criterion demands files EXIST/be produced AND is not merely
     # a LIST/identification of files (whose named files are content, not deliverables).
+    _crit_is_listing = bool(_V6_FILE_LIST_CRIT_RE.search(crit))
     _crit_wants_file = ((bool(_V6_FILE_CRIT_RE.search(crit)) or ("/workspace" in crit))
-                        and not _V6_FILE_LIST_CRIT_RE.search(crit))
+                        and not _crit_is_listing)
     missing_required = [p for p in crit_paths if exist.get(p) is False] if _crit_wants_file else []
     if missing_required:
         return {"met": False,
@@ -17914,7 +17915,17 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
                            + " — the summary claimed a result that was never written to disk.")[:300]}
     exist_block = ""
     checked = [p for p in all_paths if p in exist]
-    if checked:
+    if _crit_is_listing:
+        # A list/identification criterion names files as CONTENT, not deliverables — the
+        # filesystem says nothing about whether the LIST was produced. Tell the judge so
+        # it does not fail the step just because the named files are not on disk yet (the
+        # 2026-08-17 repeat: a 'generate a list of files' step failed on 'no files', was
+        # re-attempted, and duplicated its output).
+        exist_block = ("NOTE: this criterion asks for a LIST / identification of files, NOT for "
+                       "those files to exist on disk. Judge ONLY whether the list/description was "
+                       "produced in the step's output; do NOT fail it because the named files are "
+                       "absent from the working directory.\n")
+    elif checked:
         exist_block = ("ACTUAL FILESYSTEM CHECK (sandbox ground truth — this OVERRIDES any 'saved'/"
                        "'success' claim in the summary):\n"
                        + "\n".join(f"  - {p}: {'EXISTS' if exist[p] else 'MISSING (was NOT written)'}"
@@ -17922,8 +17933,10 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
     # The probe above only answers about paths someone NAMED. Listing what is really
     # there also catches the opposite error: a step that DID write its deliverable
     # under a slightly different name being failed because the summary quoted the
-    # wrong one — the judge can now see the real file and rule fairly.
-    if session_id:
+    # wrong one — the judge can now see the real file and rule fairly. Skipped for a
+    # LISTING criterion (files aren't its deliverable — the workdir + extension-class
+    # grounding below would only mislead the judge / hard-fail on absent files).
+    if session_id and not _crit_is_listing:
         try:
             _wf = await _v5_workdir_files(session_id, limit=40)
         except Exception:
