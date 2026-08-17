@@ -8805,6 +8805,18 @@ _V5_PROSE_TO_CODE_EXTS = {
     "html", "htm", "css", "scss", "sass", "less", "js", "jsx", "mjs", "cjs",
     "ts", "tsx", "py", "sh", "bash", "go", "rs", "rb", "php", "java", "cpp",
     "cc", "c", "h", "hpp", "sql", "vue", "svelte", "kt", "swift"}
+# The MIRROR set: extensions that are PROSE/DOCUMENT, never code — code.author
+# redirects these to prose.author so a document is authored by the WRITER role
+# (grounded on the real file listing), not the coder. Fixes 2026-08-17: a "Define
+# app requirements" step scoped with ONLY code.author authored
+# output_features_and_stack.md; the coder — whose whole system prompt is "write
+# REAL, complete, running code" — dutifully emitted a Python SCRIPT (#!/usr/bin/env
+# python3) into the .md instead of the requirements prose. Deliberately DISJOINT
+# from _V5_PROSE_TO_CODE_EXTS above (code exts), so the two redirects can never
+# ping-pong. Kept TIGHT to unambiguous prose types — data formats (json/csv/yaml/
+# xml) and markup that is really code (html/htm, which _V5_PROSE_TO_CODE_EXTS
+# already claims) are intentionally NOT here.
+_V5_CODE_TO_PROSE_EXTS = {"md", "markdown", "txt", "text", "rst", "adoc", "org"}
 
 
 def _v5_doc_ext(text: str) -> str:
@@ -10106,6 +10118,24 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
         return {"ok": False, "error": "task is required — describe what the file must do "
                                        "(or pass content with an existing draft to verify and save)"}
     path = _code_norm_path(str(path or "").strip()) or "generated.py"
+    # Redirect a PROSE/DOCUMENT file to prose.author — .md/.txt/.rst are documents,
+    # not code, and must be authored by the WRITER role (grounded on the real file
+    # listing), never by the coder whose system prompt demands "running code".
+    # Symmetric to prose.author's own redirect of CODE files to code.author (the
+    # two extension sets are disjoint, so this can't ping-pong). Reaches the global
+    # registry directly, exactly as that redirect does, so it fires even when the
+    # step was scoped with only code.author (the reported case — a requirements
+    # step had no prose.author in its caps, so the coder wrote a Python script into
+    # the .md). Falls through if prose.author isn't registered at all — better a
+    # code-styled document than a hard failure.
+    _pext = (os.path.splitext(path)[1].lstrip(".") or "").lower()
+    if _pext in _V5_CODE_TO_PROSE_EXTS:
+        _pa = CAPABILITY_REGISTRY.get("prose.author")
+        _pafn = (_pa or {}).get("func") if isinstance(_pa, dict) else None
+        if callable(_pafn):
+            return await _pafn(task=task, path=path, context_files=context_files,
+                               content=content, session_id=session_id,
+                               trace_id=trace_id, stream_cb=stream_cb)
     lang = (str(language or "").strip().lower()
             or _code_lang_for(path) or "python")
     files = context_files
