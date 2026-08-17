@@ -59,6 +59,7 @@ from Vera.vera.foundry.foundry_core import (
     pick_node, cluster_join_script, CLUSTER_KINDS,
     cluster_init_script, parse_init_token,
     pxe_dnsmasq_conf, pxe_ipxe_menu, swarm_service_cmd,
+    pxe_ops_apkovl_files, pxe_desktop_apkovl_files,
 )
 from Vera.vera.security import secrets as vsecrets
 
@@ -1511,7 +1512,7 @@ def _apkovl_tar_b64(files: Dict) -> str:
     return base64.b64encode(buf.getvalue()).decode()
 
 
-def _pxe_server_setup_script(server_ip, iface, uplink, subnet, conf_b64, menu_b64, apkovl_b64, tui_b64="", sdwrite_b64="") -> str:
+def _pxe_server_setup_script(server_ip, iface, uplink, subnet, conf_b64, menu_b64, apkovl_b64, tui_b64="", sdwrite_b64="", desk_apk_b64="") -> str:
     """The node-side setup shell — reproduces the hand-proven netboot server: install
     dnsmasq+iPXE, write the (core-generated) fenced dnsmasq conf + iPXE menu + ops
     apkovl, fetch iPXE/Alpine/netboot.xyz/Debian-d-i assets, enable scoped NAT, then
@@ -1525,6 +1526,7 @@ systemctl stop dnsmasq 2>/dev/null
 echo {conf_b64} | base64 -d > /etc/dnsmasq.d/vera-foundry.conf
 echo {menu_b64} | base64 -d > /srv/foundry/tftp/boot.ipxe
 echo {apkovl_b64} | base64 -d > /srv/foundry/http/alpine/node.apkovl.tar.gz
+echo {desk_apk_b64} | base64 -d > /srv/foundry/http/alpine/desktop.apkovl.tar.gz
 echo {tui_b64} | base64 -d > /srv/foundry/http/ops/foundry-tui 2>/dev/null; chmod +x /srv/foundry/http/ops/foundry-tui 2>/dev/null
 echo {sdwrite_b64} | base64 -d > /srv/foundry/http/ops/foundry-sdwrite 2>/dev/null; chmod +x /srv/foundry/http/ops/foundry-sdwrite 2>/dev/null
 printf 'proxmox {server_ip}\\n' > /srv/foundry/http/ops/pve_hosts
@@ -1538,17 +1540,57 @@ for f in netboot.xyz.lkrn netboot.xyz.efi; do [ -s /srv/foundry/http/$f ] || cur
 DI=http://deb.debian.org/debian/dists/bookworm/main/installer-amd64/current/images/netboot/debian-installer/amd64
 [ -s /srv/foundry/http/debian12/linux ] || curl -fsS --max-time 150 -o /srv/foundry/http/debian12/linux "$DI/linux"
 [ -s /srv/foundry/http/debian12/initrd.gz ] || curl -fsS --max-time 180 -o /srv/foundry/http/debian12/initrd.gz "$DI/initrd.gz"
+# persist ip_forward + NAT as a boot-durable oneshot (ordered before dnsmasq)
+echo 'net.ipv4.ip_forward=1' > /etc/sysctl.d/99-foundry-netboot.conf
 sysctl -w net.ipv4.ip_forward=1 >/dev/null
-iptables -t nat -C POSTROUTING -s {subnet} -o {uplink} -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s {subnet} -o {uplink} -j MASQUERADE
+cat > /etc/systemd/system/foundry-nat.service <<'NATUNIT'
+[Unit]
+Description=Foundry netboot NAT (masquerade the provisioning subnet out the uplink)
+After=network-online.target
+Wants=network-online.target
+Before=dnsmasq.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'sysctl -w net.ipv4.ip_forward=1; iptables -t nat -C POSTROUTING -s {subnet} -o {uplink} -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s {subnet} -o {uplink} -j MASQUERADE'
+[Install]
+WantedBy=multi-user.target
+NATUNIT
+# dnsmasq boot-safety drop-in: refuse to start unless {iface} exists (never fall back to the LAN)
+mkdir -p /etc/systemd/system/dnsmasq.service.d
+cat > /etc/systemd/system/dnsmasq.service.d/foundry-order.conf <<'DNSD'
+[Unit]
+After=network-online.target foundry-nat.service
+Wants=network-online.target
+[Service]
+ExecStartPre=/bin/sh -c 'ip link show {iface} >/dev/null 2>&1 || {{ echo "{iface} absent - refusing to start dnsmasq"; exit 1; }}'
+DNSD
+systemctl daemon-reload
+systemctl enable --now foundry-nat >/dev/null 2>&1
 dnsmasq --test 2>&1
 systemctl restart dnsmasq; sleep 2
 L=$(ss -ulnp 2>/dev/null | grep -E ":67 ")
 if echo "$L" | grep -q "{iface}:67" && ! echo "$L" | grep -qE "0\\.0\\.0\\.0:67[^%]|192\\.168\\.0\\."; then echo FENCE_OK; else echo FENCE_FAIL; systemctl stop dnsmasq; exit 2; fi
-systemctl disable dnsmasq 2>/dev/null
-systemctl stop foundry-http 2>/dev/null; systemctl reset-failed foundry-http 2>/dev/null
-systemd-run --unit=foundry-http --collect /usr/bin/python3 -m http.server 80 --bind {server_ip} --directory /srv/foundry/http >/dev/null 2>&1
+# fence passed -> make dnsmasq durable across reboots (safe: config binds {iface} only)
+systemctl enable dnsmasq >/dev/null 2>&1
+# persistent HTTP unit replaces the old transient systemd-run (which died on reboot)
+systemctl stop foundry-http 2>/dev/null; systemctl reset-failed foundry-http 2>/dev/null; rm -f /run/systemd/transient/foundry-http.service 2>/dev/null
+cat > /etc/systemd/system/foundry-http.service <<'HTTPUNIT'
+[Unit]
+Description=Foundry netboot HTTP server (PXE assets)
+After=network-online.target foundry-nat.service
+Wants=network-online.target
+[Service]
+ExecStart=/usr/bin/python3 -m http.server 80 --bind {server_ip} --directory /srv/foundry/http
+Restart=on-failure
+RestartSec=3
+[Install]
+WantedBy=multi-user.target
+HTTPUNIT
+systemctl daemon-reload
+systemctl enable --now foundry-http >/dev/null 2>&1
 sleep 1
-echo "DEPLOY_OK dnsmasq=$(systemctl is-active dnsmasq) http=$(systemctl is-active foundry-http)"
+echo "DEPLOY_OK dnsmasq=$(systemctl is-active dnsmasq) http=$(systemctl is-active foundry-http) nat=$(systemctl is-active foundry-nat)"
 """
 
 
@@ -1580,10 +1622,11 @@ async def cap_pxe_server_deploy(cluster_id: str = "", node: str = "", iface: str
     menu = pxe_ipxe_menu(server_ip, install_images=install_images)
     ops_files = pxe_ops_apkovl_files(server_ip)
     apk_b64 = _apkovl_tar_b64(ops_files)
+    desk_apk_b64 = _apkovl_tar_b64(pxe_desktop_apkovl_files(server_ip))
     _b = lambda s: base64.b64encode(s.encode()).decode()
     tui_b64 = _b(ops_files["usr/local/bin/foundry-tui"])
     sdwrite_b64 = _b(ops_files["usr/local/bin/foundry-sdwrite"])
-    script = _pxe_server_setup_script(server_ip, iface, uplink, subnet, _b(conf), _b(menu), apk_b64, tui_b64, sdwrite_b64)
+    script = _pxe_server_setup_script(server_ip, iface, uplink, subnet, _b(conf), _b(menu), apk_b64, tui_b64, sdwrite_b64, desk_apk_b64)
     res = await _call("proxmox.node.exec", cluster_id=cluster_id, command=script, timeout=520)
     out = (res.get("stdout") or "") + (res.get("error") or "")
     fenced = "FENCE_OK" in out
