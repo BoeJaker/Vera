@@ -165,6 +165,47 @@ def test_claim_race_earlier_wins(prov):
     assert any(c.kind == "withdraw" and c.frm == "claude-b" for c in got.comments)
 
 
+# ── handoff (Phase E cross-machine claim transfer) ───────────────────────────
+def test_handoff_plan_requires_current_holder():
+    # a claim by claude-a; claude-b tries to hand it off -> refused
+    cs = [bc.AgentMessage(kind="claim", frm="claude-a", id=1)]
+    assert bc.handoff_plan(cs, "claude-b", "claude-c")["ok"] is False
+    assert bc.handoff_plan(cs, "claude-a", "claude-b")["ok"] is True
+
+
+def test_handoff_plan_rejects_self_and_empty():
+    cs = [bc.AgentMessage(kind="claim", frm="claude-a", id=1)]
+    assert bc.handoff_plan(cs, "claude-a", "claude-a")["ok"] is False
+    assert bc.handoff_plan(cs, "claude-a", "")["ok"] is False
+    assert bc.handoff_plan([], "claude-a", "claude-b")["ok"] is False  # unclaimed
+
+
+def test_handoff_transfers_lease_and_assignment(prov):
+    it = run(prov.upsert(bc.BoardItem(title="h", lane="ready")))
+    run(prov.claim(it.id, "claude-a"))
+    res = run(prov.handoff(it.id, frm="claude-a", to="claude-b", body="picking up from a"))
+    assert res["ok"] and res["held_by"] == "claude-b"
+    got = run(prov.get(it.id))
+    assert got.agent == "claude-b" and got.lane == "in_progress"
+    assert "agent:claude-b" in got.labels and "agent:claude-a" not in got.labels
+    # resolve_claim agrees, and there is an auditable handoff envelope
+    assert bc.resolve_claim(got.comments) == "claude-b"
+    assert any(c.kind == "handoff" and c.frm == "claude-a" and c.to == "claude-b"
+               for c in got.comments)
+    # the new owner sees it in their inbox; the old one does not
+    assert any(i.id == it.id for i in run(prov.inbox("claude-b")))
+
+
+def test_handoff_refused_when_not_holder_leaves_state_untouched(prov):
+    it = run(prov.upsert(bc.BoardItem(title="h", lane="ready")))
+    run(prov.claim(it.id, "claude-a"))
+    res = run(prov.handoff(it.id, frm="claude-x", to="claude-b"))
+    assert res["ok"] is False and res["held_by"] == "claude-a"
+    got = run(prov.get(it.id))
+    assert got.agent == "claude-a"                 # unchanged
+    assert not any(c.kind == "handoff" for c in got.comments)
+
+
 def test_comment_appends_and_ids_monotonic(prov):
     it = run(prov.upsert(bc.BoardItem(title="c", lane="ready")))
     id1 = run(prov.comment(it.id, bc.AgentMessage(kind="progress", frm="a", body="p1")))
