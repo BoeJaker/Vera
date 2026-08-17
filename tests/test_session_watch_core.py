@@ -96,3 +96,35 @@ def test_parse_ts_tolerant():
     assert sw.parse_ts("not a date") is None
     assert sw.parse_ts("2026-08-09T00:00:00+00:00") is not None
     assert sw.parse_ts("2026-08-09T00:00:00Z") is not None
+
+
+# ── autoresume_candidates — the Phase C observe-vs-act gate ───────────────────
+def _row(action, resume_ok, sid="s1"):
+    return {"claude_session_id": sid, "action": action, "resume_ok": resume_ok}
+
+
+def test_autoresume_empty_when_auto_off():
+    rows = [_row("resume", True)]
+    assert sw.autoresume_candidates(rows, {"auto": False}) == []
+    assert sw.autoresume_candidates(rows, {}) == []          # default is observe-only
+    assert sw.autoresume_candidates(rows, None) == []
+
+
+def test_autoresume_picks_only_resume_ok_when_auto_on():
+    rows = [
+        _row("resume", True, "ok"),          # the only one that should fire
+        _row("resume", False, "escalated"),  # max attempts -> not resume_ok
+        _row("watch", False, "stalled"),
+        _row("reconcile", False, "finished"),
+        _row("wait", False, "declared"),
+        _row("none", False, "live"),
+    ]
+    picked = sw.autoresume_candidates(rows, {"auto": True})
+    assert [s["claude_session_id"] for s in picked] == ["ok"]
+
+
+def test_autoresume_never_touches_guarded_states_even_on():
+    # human / declared-block / finished-unreported / escalate all carry a
+    # non-'resume' action, so the gate excludes them by construction.
+    for action in ("none", "watch", "wait", "reconcile", "escalate"):
+        assert sw.autoresume_candidates([_row(action, True)], {"auto": True}) == []
