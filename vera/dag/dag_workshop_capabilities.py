@@ -17612,6 +17612,15 @@ _V6_FILE_CRIT_RE = re.compile(
     r"\b(contain\w*|creat\w*|writ\w*|wrote|sav\w*|produc\w*|generat\w*|output\w*|"
     r"exist\w*|present|stored?|persist\w*|download\w*|assembl\w*|build|built|"
     r"populat\w*|directory|folder|on disk|to disk)\b", re.I)
+# A criterion whose deliverable is a LIST / OUTLINE / IDENTIFICATION of files names them
+# as CONTENT of a planning step, not as files that must be on disk. When this matches,
+# the existence hard-gate is suppressed (the LLM judge still checks the list was actually
+# produced) — fixes a "generate a list of required files (index.html, style.css)" PLANNING
+# step being auto-failed for not creating those files (the filenames leak from the
+# criterion into a file-existence requirement the planner never intended).
+_V6_FILE_LIST_CRIT_RE = re.compile(
+    r"\b(list|listing|listed|outlin\w*|breakdown|identif\w*|specif\w*|enumerat\w*|"
+    r"describ\w*|determin\w*|which files|names? of)\b", re.I)
 # Extension tokens a criterion names as REQUIRED (e.g. "a document-shaped file
 # (.md/.txt/.html)") — reuses the same known-extension list as the path
 # extractors above so this only ever matches real file extensions, never an
@@ -17875,7 +17884,10 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
     # present (not just mentioning a filename in passing) AND that file is provably
     # absent. Otherwise the existence facts still go to the judge below, but the
     # verdict stays a judgement — this keeps the hard gate tight to real deliverables.
-    _crit_wants_file = bool(_V6_FILE_CRIT_RE.search(crit)) or ("/workspace" in crit)
+    # Hard-gate only when the criterion demands files EXIST/be produced AND is not merely
+    # a LIST/identification of files (whose named files are content, not deliverables).
+    _crit_wants_file = ((bool(_V6_FILE_CRIT_RE.search(crit)) or ("/workspace" in crit))
+                        and not _V6_FILE_LIST_CRIT_RE.search(crit))
     missing_required = [p for p in crit_paths if exist.get(p) is False] if _crit_wants_file else []
     if missing_required:
         return {"met": False,
