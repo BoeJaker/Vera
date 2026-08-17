@@ -48,9 +48,11 @@ _DRIVE_TASK: "asyncio.Task | None" = None
 
 async def _call(name: str, **kw) -> Any:
     """Invoke another capability by name (decoupled — the orchestrator drives the
-    board + dispatch caps, it does not import their internals)."""
-    fn = CAPABILITY_REGISTRY.get(name)
-    if not fn:
+    board + dispatch caps, it does not import their internals). CAPABILITY_REGISTRY
+    stores a dict per cap; the callable is under "func"."""
+    reg = CAPABILITY_REGISTRY.get(name) or {}
+    fn = reg.get("func") if isinstance(reg, dict) else reg  # tolerate either shape
+    if not callable(fn):
         return {"error": f"capability not found: {name}"}
     try:
         return await fn(**kw)
