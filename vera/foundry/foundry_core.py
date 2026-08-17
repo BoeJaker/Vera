@@ -564,6 +564,105 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21") -> Dict:
     }
 
 
+def pxe_desktop_apkovl_files(server_ip: str, alpine_ver: str = "3.21") -> Dict:
+    """Files for the desktop-node Alpine diskless overlay (apkovl): a full XFCE desktop
+    with Remmina/TigerVNC, the Foundry ops menu (Proxmox consoles + SD-card writer)
+    launchable from the desktop, and Docker so it also joins the swarm as a worker.
+
+    Codifies the hand-proven fix for diskless input: the OpenRC boot runlevel does not
+    complete on a RAM boot (fsck/sysfs 'would not start'), so udev-trigger never runs and
+    input devices never get their ID_INPUT udev tags, leaving X with no keyboard/mouse. We
+    start udevd DIRECTLY + coldplug by hand, and start services with --nodeps. Pure →
+    unit-testable."""
+    S = server_ip
+    repos = (f"http://dl-cdn.alpinelinux.org/alpine/v{alpine_ver}/main\n"
+             f"http://dl-cdn.alpinelinux.org/alpine/v{alpine_ver}/community\n")
+    start = (
+        "#!/bin/sh\n"
+        "exec >/var/log/foundry-desktop.log 2>&1\n"
+        'echo "[foundry] desktop boot $(date); kernel=$(uname -r)"\n'
+        "rc-service modloop start 2>/dev/null\n"
+        "KREL=$(uname -r)\n"
+        'for i in $(seq 1 12); do [ -d "/lib/modules/$KREL/kernel" ] && break; rc-service modloop start 2>/dev/null; sleep 2; done\n'
+        "depmod -a 2>/dev/null\n"
+        "modprobe -a evdev psmouse i2c-hid i2c_hid_acpi hid-multitouch hid_generic i2c-designware-platform i2c-designware-core i2c-designware-pci intel_lpss intel_lpss_pci intel_lpss_acpi 2>/dev/null\n"
+        "modprobe -a atkbd i8042 serio serio_raw usbhid hid xhci_hcd xhci_pci ehci_hcd uhci_hcd ohci_hcd rmi_smbus rmi_core hid-rmi 2>/dev/null\n"
+        "modprobe -a i915 amdgpu radeon nouveau qxl bochs_drm 2>/dev/null\n"
+        "modprobe -a overlay br_netfilter bridge veth nf_nat ip_tables iptable_nat tun 2>/dev/null\n"
+        "apk update\n"
+        "apk add eudev xinput util-linux xz pv unzip\n"
+        "# OpenRC boot runlevel is broken on diskless (fsck/sysfs 'would not start') -> udev-trigger\n"
+        "# never runs. Start udevd DIRECTLY, then coldplug by hand so input devices get ID_INPUT\n"
+        "# udev tags (X/libinput discover devices by those tags).\n"
+        "pgrep -x udevd >/dev/null 2>&1 || /sbin/udevd --daemon 2>/dev/null\n"
+        "sleep 1\n"
+        "udevadm hwdb --update 2>/dev/null\n"
+        "udevadm control --reload 2>/dev/null\n"
+        "udevadm trigger --type=subsystems --action=add 2>/dev/null\n"
+        "udevadm trigger --type=devices --action=add 2>/dev/null\n"
+        "udevadm settle --timeout=30 2>/dev/null\n"
+        "setup-xorg-base >/dev/null 2>&1\n"
+        "apk add libinput libinput-libs xf86-input-libinput\n"
+        "apk add mesa-dri-gallium xf86-video-fbdev xf86-video-vesa xf86-video-intel xf86-video-amdgpu xf86-video-nouveau xf86-video-qxl\n"
+        "apk add xfce4 xfce4-terminal dbus dbus-x11 elogind polkit-elogind font-dejavu xterm\n"
+        "apk add remmina remmina-plugins tigervnc\n"
+        "apk add docker docker-cli openssh openssh-client curl firefox-esr bash\n"
+        "# --nodeps bypasses the broken fsck/sysfs dependency chain (same root cause as udev-trigger)\n"
+        "rc-update add dbus; rc-update add elogind; rc-update add docker\n"
+        "rc-service --nodeps cgroups start 2>/dev/null\n"
+        "rc-service --nodeps dbus start 2>/dev/null\n"
+        "rc-service --nodeps elogind start 2>/dev/null\n"
+        "rc-service --nodeps docker start 2>/dev/null\n"
+        "rc-update add sshd default; rc-service --nodeps sshd start 2>/dev/null || service sshd start\n"
+        "mkdir -p /root/.ssh; chmod 700 /root/.ssh\n"
+        "wget -qO- http://@@SRV@@/ops/authorized_keys 2>/dev/null > /root/.ssh/authorized_keys; chmod 600 /root/.ssh/authorized_keys 2>/dev/null\n"
+        "wget -qO- http://@@SRV@@/ops/foundry-tui 2>/dev/null > /usr/local/bin/foundry-tui; chmod +x /usr/local/bin/foundry-tui 2>/dev/null\n"
+        "wget -qO- http://@@SRV@@/ops/foundry-sdwrite 2>/dev/null > /usr/local/bin/foundry-sdwrite; chmod +x /usr/local/bin/foundry-sdwrite 2>/dev/null\n"
+        "wget -qO- http://@@SRV@@/ops/id_estate 2>/dev/null > /root/.ssh/id_estate; chmod 600 /root/.ssh/id_estate 2>/dev/null\n"
+        "mkdir -p /etc/foundry; wget -qO- http://@@SRV@@/ops/pve_hosts 2>/dev/null | awk 'NR==1{print $2}' > /etc/foundry/pve\n"
+        "for i in 1 2 3 4 5; do docker info >/dev/null 2>&1 && break; sleep 2; done\n"
+        "TOKEN=$(wget -qO- http://@@SRV@@/swarm/worker-token 2>/dev/null|tr -d '\\r\\n')\n"
+        "MGR=$(wget -qO- http://@@SRV@@/swarm/manager 2>/dev/null|tr -d '\\r\\n')\n"
+        '[ -n "$TOKEN" ] && [ -n "$MGR" ] && docker swarm join --token "$TOKEN" "${MGR}:2377"\n'
+        "echo \"[foundry] libinput sees:\"; libinput list-devices 2>&1|grep -E 'Device:'|head\n"
+    ).replace("@@SRV@@", S)
+    inittab = ("::sysinit:/sbin/openrc sysinit\n::sysinit:/sbin/openrc boot\n::wait:/sbin/openrc default\n"
+               "tty1::respawn:/bin/login -f root\n"
+               "tty2::respawn:/sbin/getty 38400 tty2\n"
+               "::ctrlaltdel:/sbin/reboot\n::shutdown:/sbin/openrc shutdown\n")
+    profile = ('if [ "$(tty)" = "/dev/tty1" ] && [ -z "$DISPLAY" ]; then\n'
+               '  echo "Vera Foundry: preparing the desktop (X + XFCE + Remmina/VNC)... please wait."\n'
+               "  while ! command -v startxfce4 >/dev/null 2>&1; do sleep 4; done\n"
+               '  echo "waiting for input devices (keyboard/touchpad)..."\n'
+               "  for i in $(seq 1 25); do ls /dev/input/event* >/dev/null 2>&1 && break; sleep 2; done\n"
+               "  sleep 2; exec startx\n"
+               "fi\n")
+    xflags = 'Section "ServerFlags"\n  Option "AutoAddDevices" "on"\n  Option "AutoAddGPU" "on"\nEndSection\n'
+    xtouch = ('Section "InputClass"\n  Identifier "foundry touchpad tweaks"\n  MatchIsTouchpad "on"\n'
+              '  Driver "libinput"\n  Option "Tapping" "on"\n  Option "NaturalScrolling" "true"\nEndSection\n')
+    launcher = ("[Desktop Entry]\n"
+                "Version=1.0\n"
+                "Type=Application\n"
+                "Name=Foundry Ops Menu\n"
+                "Comment=Proxmox consoles, Docker swarm, SSH into estate hosts, SD-card writer\n"
+                "Exec=xfce4-terminal --title=Foundry-Ops --command=/usr/local/bin/foundry-tui\n"
+                "Icon=utilities-terminal-symbolic\n"
+                "Terminal=false\n"
+                "Categories=System;\n")
+    return {
+        "etc/apk/repositories": repos,
+        "etc/local.d/desktop.start": start,
+        "etc/inittab": inittab,
+        "root/.profile": profile,
+        "root/.xinitrc": "exec startxfce4\n",
+        "etc/X11/xorg.conf.d/10-foundry-fallback.conf": xflags,
+        "etc/X11/xorg.conf.d/40-libinput-touchpad.conf": xtouch,
+        "usr/share/applications/foundry-ops.desktop": launcher,
+        "root/Desktop/foundry-ops.desktop": launcher,
+        "root/.config/autostart/foundry-ops.desktop": launcher,
+    }
+
+
 import re as _re
 
 
