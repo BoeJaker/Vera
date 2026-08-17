@@ -11275,6 +11275,19 @@ def _v5_extract_code_blocks(text: str, name_hint: str = "") -> List[Dict[str, st
 _SKILL_INJECT_BLACKLIST: set = set()
 
 
+def _v5_force_master_planner() -> bool:
+    """Operator switch (env VERA_LOOP_FORCE_MASTER_PLANNER, DEFAULT ON): run the
+    strategic master planner as the PRIMARY plan source, not only as an empty-plan
+    fallback. Set 2026-08-17 at the owner's request — the single-call primary planner
+    was emitting generic 'search for capabilities' steps that don't plan to the goal,
+    and the old `not plan.get('steps')` guard meant the goal-aware master planner never
+    fired whenever the primary returned ANY steps. The master plan REPLACES the primary
+    steps when it produces usable ones. Set the env to 0/false to restore the previous
+    fallback-only behaviour (master planner runs only when the primary is empty)."""
+    return str(os.getenv("VERA_LOOP_FORCE_MASTER_PLANNER", "1")).strip().lower() \
+        not in ("0", "false", "no", "off")
+
+
 def _v5_brief_cap_line(name: str) -> str:
     """One-line 'name — description' for the orchestrator catalog (no schema)."""
     cap = CAPABILITY_REGISTRY.get(name)
@@ -16638,7 +16651,7 @@ async def cap_dag_agent_loop_v5(
     # reliably than an abstract goal. (The complexity=="extreme" branch below is
     # the planner OPTING IN to the same machinery; this branch is the failure
     # escalation.)
-    if not plan.get("steps") and enable_master_planner:
+    if enable_master_planner and (_v5_force_master_planner() or not plan.get("steps")):
         try:
             catalog_brief = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names[:24])
             mp = await _v5_master_plan(goal, catalog_brief, model=model,
@@ -20302,7 +20315,7 @@ async def cap_dag_agent_loop_v6(
     # weak planner decomposes a concrete document far more reliably than an
     # abstract goal). Distinct from the complexity=="extreme" opt-in below.
     _master_ran = False
-    if not plan.get("steps") and enable_master_planner:
+    if enable_master_planner and (_v5_force_master_planner() or not plan.get("steps")):
         try:
             catalog_brief = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names[:24])
             mp = await _v5_master_plan(goal, catalog_brief, model=model,
