@@ -82,6 +82,34 @@ def _redis():     return _orch.REDIS
 def _ctx():       return sys.modules.get("vera_context") or sys.modules.get("context")
 def _dag_store(): return sys.modules.get("dag_store")
 
+# Cooperative-cancel: the Stop button / cancel endpoint sets status="cancelled" on
+# vera:loop:run:<sid>, then cancels the runner TASK. But a cancelled task does not
+# reach fire-and-forget children or an in-flight generation running in a thread
+# executor — so an orphaned coroutine can keep looping/generating unreachably (the
+# 2026-08-17 incident: a "build a trading bot" loop kept churning the GPU after the
+# UI stop, un-cancelable by session id). The loop's cycle checks THIS flag each turn,
+# so any coroutine still running the loop for a cancelled session self-terminates on
+# its next turn, no task handle required.
+_LOOP_CANCEL_STATUSES = {"cancelled", "canceled", "stopped"}
+
+
+async def _loop_run_cancelled(sid: str) -> bool:
+    """True iff loop run <sid> has been marked cancelled/stopped in Redis. Fail-OPEN:
+    any missing client or read error returns False, so a transient Redis hiccup can
+    never abort a live run."""
+    if not sid:
+        return False
+    try:
+        r = _redis()
+        if r is None:
+            return False
+        st = await r.hget(f"vera:loop:run:{sid}", "status")
+        if isinstance(st, (bytes, bytearray)):
+            st = st.decode("utf-8", "replace")
+        return str(st or "").strip().lower() in _LOOP_CANCEL_STATUSES
+    except Exception:
+        return False
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LOOP ROUTING PROFILE — per-ROLE model / node / sampling for the loop's OWN LLM
@@ -13817,6 +13845,11 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
 
     while productive < max(1, cycle_budget) and turns < max_turns:
         turns += 1
+        # Cooperative cancel: stop the moment this run is marked cancelled, even if
+        # THIS coroutine is an orphan the cancel task-handle never reached. Raising
+        # CancelledError unwinds cleanly; the runner already handles it as a cancel.
+        if session_id and await _loop_run_cancelled(session_id):
+            raise asyncio.CancelledError(f"loop {session_id} cancelled — stopping cooperatively")
         obs = "\n\n".join(
             f"[result {i+1}] tool={h['tool']} ok={h['ok']}\n{h['preview']}"
             for i, h in enumerate(history[-4:])
