@@ -17970,8 +17970,26 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
         # contradicting the criterion it was just given. If the criterion lists
         # specific extensions, at least one file with one of them must actually
         # exist; no LLM vote overrides that any more than a named-path miss does.
+        #
+        # EXCEPT when the criterion's deliverable is a LIST / OUTLINE /
+        # IDENTIFICATION of files (a PLANNING step) — the SAME exclusion the
+        # named-path existence gate above already applies via
+        # `_V6_FILE_LIST_CRIT_RE` (see `_crit_wants_file`). Such a criterion
+        # NAMES the files the app WILL have as its CONTENT, not files that must
+        # be on disk now. Observed live (2026-08-17): a "Define app requirements
+        # and tech stack" step with criterion "A clear list of required files
+        # (index.html, style.css, script.js) ... is generated" was hard-failed
+        # here for producing a requirements .md instead of those web files —
+        # which then drove a retry that generated the whole app's CODE inside
+        # the requirements step (with llm.generate, no less). The extension
+        # leak into a hard file-existence requirement is exactly what the
+        # `_V6_FILE_LIST_CRIT_RE` guard exists to prevent; the named-path gate
+        # applied it and this one didn't. The LLM judge below still checks the
+        # list was actually produced, so a planning step that did nothing is
+        # still caught — it just isn't failed for the filesystem not yet
+        # containing files it only ENUMERATED.
         _crit_exts = set(m.lower() for m in _V6_CRIT_EXT_RE.findall(crit))
-        if _crit_exts and _wf is not None:
+        if _crit_exts and _wf is not None and not _V6_FILE_LIST_CRIT_RE.search(crit):
             _ext_ok = any(str(f).lower().endswith(tuple(f".{e}" for e in _crit_exts))
                           for f in _wf)
             if not _ext_ok:
