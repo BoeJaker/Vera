@@ -17896,6 +17896,20 @@ async def _v6_finalize_step(step: Dict[str, Any], res: Dict[str, Any], goal: str
     _hist = [h for h in (res.get("history") or []) if isinstance(h, dict) and h.get("tool")]
     if not res.get("ok") or (_hist and _hist[-1].get("ok") is False):
         return
+    # Deterministic finalize for a just-authored code file (same principle as the
+    # verify fast-path): when the step's terminal action is a successful code
+    # author/edit, the downstream-useful summary is simply "authored <file>, run it"
+    # — there is nothing for an LLM to distil, and the code author's own result is
+    # already the canonical concise output. Skip the synthesis LLM call. Together
+    # with the verify fast-path this means a pure code-authoring step costs ZERO
+    # extra LLM calls beyond the authoring itself.
+    _authored = _v6_authored_path(_hist[-1] if _hist else None)
+    if _authored:
+        res["raw_summary"] = raw
+        res["summary"] = (f"Authored `{_authored}`; its syntax was verified by the code "
+                          f"author. Run it with exec.python.run(path='{_authored}').")
+        res["finalized"] = True
+        return
     crit = str(step.get("success") or "").strip()
     outs = "\n".join(f"- {k}: {str(v)[:400]}"
                      for k, v in list((res.get("outputs") or {}).items())[:10])
