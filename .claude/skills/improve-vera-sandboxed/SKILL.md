@@ -11,26 +11,30 @@ this sandboxed pipeline, not a direct edit to prod's working tree. Direct-to-pro
 editing is the rare exception (small, urgent, explicitly sanctioned infra fix).
 
 ## 0. Still true, unchanged
-- **⛔ THE GPU GATE IS CAPACITY 1 — NEVER fire model-touching calls back-to-back
-  or concurrently.** This is the rule I break most; make it reflexive. Every call
-  that loads a model — `llm.generate`, `code.author`/`code.edit`/`prose.author`,
-  ANY `dag.agent_loop_v*` / dream, research caps, embeds — competes for ONE GPU
-  slot (`ollama.gate.status` → `gpu_cap: 1`). Concurrent calls don't run in
-  parallel, they **QUEUE**. The trap: a queued call *looks like a hang* — a
-  `code.author` that seems to take 200s is almost always waiting behind your own
-  previous call (a clean one is ~30s). Do NOT then "root-cause" a non-existent
-  hang. **Discipline, every time:** (1) before any model call, if one is already
-  in flight, DON'T fire another — check `ollama.gate.status`; if `held ≥ 1` with
-  an owner, WAIT. (2) Fire ONE, let it fully COMPLETE (or a single generous
-  timeout expire), read it, THEN the next. (3) Never two loops at once — check
-  `vera:loop:sessions` / `/workshop/agent_loop/sessions?status=running` is empty
-  first; a stuck loop is stopped via **`/workshop/agent_loop/cancel`
-  (`{session_id}`)**, NOT by restarting its sandbox — **loops persist in Redis and
-  AUTO-RESUME on restart** (a container restart interrupts the in-flight call but
-  the run comes back). (4) Any latency read from a window where >1 inference ran
-  is contention-confounded — discount it. Firing concurrently never saves time; it
-  serializes anyway and poisons every timing/stall finding. (See the user's
-  standing memory note of the same name.)
+- **⛔ NEVER assume how long an LLM/generation takes — it is UNBOUNDED.** A call
+  can run seconds or tens of minutes (model size, cold-load, context, queue depth).
+  Do NOT estimate a duration, set a mental deadline, or declare a call "hung/broken"
+  from **elapsed time alone** — that is the mistake I make most. To tell PROGRESSING
+  from STUCK, **monitor REAL ACTIVITY, never the clock:** the ollama server logs on
+  the node (is it decoding?), token/`eval_count` progress, the cap's own stream
+  (`code.author`/`prose.author` `stream_cb`; a loop's `/workshop/agent_loop/…` event
+  & journal stream advancing), and `ollama.gate.status` (who holds the slot). Only
+  when real activity has genuinely flatlined — no tokens, no log motion, no events —
+  is it stuck. Otherwise let it run and keep watching.
+- **⛔ THE GPU GATE IS CAPACITY 1 — never fire model-touching calls back-to-back or
+  concurrently.** Every model-loading call — `llm.generate`, `code.author`/
+  `code.edit`/`prose.author`, ANY `dag.agent_loop_v*`/dream, research caps, embeds —
+  competes for ONE GPU slot (`ollama.gate.status` → `gpu_cap: 1`). Concurrent calls
+  **QUEUE**, they don't parallelise, so a call that seems slow is very often just
+  waiting behind your own previous one — check the gate owner before blaming the cap.
+  **Discipline:** (1) before any model call, if one is in flight (`held ≥ 1` with an
+  owner), WAIT. (2) Fire ONE, watch its real activity until it COMPLETES, THEN the
+  next. (3) Never two loops at once — `vera:loop:sessions` /
+  `/workshop/agent_loop/sessions?status=running` must be empty first; stop a stuck
+  loop via **`/workshop/agent_loop/cancel` (`{session_id}`)**, NOT by restarting its
+  sandbox — **loops persist in Redis and AUTO-RESUME on restart**. (4) Any timing
+  read from a window where >1 inference ran is contention-confounded — discard it.
+  (See the user's standing memory note `no-concurrent-loop-tests`.)
 - **Multi-agent estate is live.** Other agents may be working in their own
   containers (`evolve.sandbox.list` shows them), all sharing one GPU. Never touch
   another agent's branch/container. Before a **prod restart**, check
