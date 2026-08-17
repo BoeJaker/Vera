@@ -273,14 +273,14 @@ work with honest review. Gated by capacity pool (already built).
 **M6 — Autonomy relaxation (Stage 5).** Only after M2/M3 give the safety net; widen HITL
 gates as trust accrues.
 
-**M7 — Full autonomous closed loop (operated from a Claude Code session). ◔ STARTED
-2026-08-16.** Goal: board items worked autonomously in containers; sessions killed by the
->5h token limit auto-resumed with "continue"; when the board is empty, the v1–v8 agentic
-loops (focus v7) are exercised/optimised and *generate* new board items → the loop continues;
-**promotion/edits to `main` are IMPOSSIBLE in this mode**; multiple Claude Codes on different
-machines share the one board and coordinate via envelopes. Most primitives already exist
-(`board.dispatch`/`claim`/`comment`, `ide.claude_sessions.watch/resume/policy`, session
-sandboxes, v1–v8 loops + dream idle-trigger, `capacity.*`). Built safety-first:
+**M7 — Full autonomous closed loop (operated from a Claude Code session). ◕ CORE COMPLETE
+(A·D·B·C·E all landed on bleeding-edge; 2026-08-16/17).** Goal: board items worked
+autonomously in containers; sessions killed by the >5h token limit auto-resumed with
+"continue"; when the board is empty the loop **idles** (v7/any v1–v8 auto-run is DISABLED
+per operator directive — no loop runs unattended); **promotion/edits to `main` are IMPOSSIBLE
+in this mode**; multiple Claude Codes on different machines share the one board and coordinate
+via envelopes. Built safety-first — every phase is dormant/observe by default and can never
+reach `main`:
 - **Phase A — hard main-lockout + kill switch. ✓ DONE (bleeding-edge `b8e31ac`).**
   `autonomous.engage` sets a Redis flag that makes promote/merge to `main` UNCONDITIONALLY
   refused in adopt/promote/`promote_to_main` — checked BEFORE the M3.6 sentinel, so no
@@ -288,16 +288,32 @@ sandboxes, v1–v8 loops + dream idle-trigger, `capacity.*`). Built safety-first
   `autonomous.release(confirm=true)` is the kill switch; `autonomous.status` reports state.
   Pure `autonomous_lock_core.py` + 8 critical tests; **live-verified** (engaged →
   `promote_to_main` refused → released), and prod-isolated.
-- **Phase D — live Loop-Lab UI feedback of the agent's actions. ○ NEXT.** Surface an
-  autonomous-mode banner (engaged/main-locked) + a live activity feed (dispatch·work·gate·
-  land·session-resume) — both the "more feedback about your actions" ask and mandatory to
-  operate the loop safely.
-- **Phase B — the orchestrator. ○** Continuous drive: pick top ready item → `board.dispatch`
-  into a container → monitor → next; empty board → exercise/optimise v7 (v1–v8) → generate items.
-- **Phase C — auto-resume on the >5h token limit** via `claude_sessions.policy` (inject "continue").
-- **Phase E — multi-agent coordination** (progress/help/handoff envelopes across machines).
-Build order: A (done) → D → B → C → E, so the lock + visibility exist before anything runs
-unattended.
+- **Phase D — live Loop-Lab UI feedback of the agent's actions. ✓ DONE.** Master (Mission
+  Control) tab + autonomous-mode banner + activity/test/unit-test cards in `evolve_panel.html`.
+- **Phase B — the orchestrator + drive loop. ✓ DONE (bleeding-edge `eda57bc`+`999cae7`).**
+  `orchestrator_core.next_action` (pure, 13 critical tests): pick the top ready item →
+  dispatch; empty board → **idle** (NEVER v7); not engaged → blocked. `autonomous.orchestrate`
+  is one guarded step (dry-run default, acts only when engaged); `autonomous.drive`
+  (start/stop/status) is the scheduled ticker — dormant unless `VERA_ORCHESTRATOR_ENABLED=1`,
+  observe unless `VERA_ORCHESTRATOR_LIVE=1`. Fixed a latent `_call` bug (registry entry is a
+  dict; the callable is under `func`) — proven live (engaged status now reads true).
+- **Phase C — auto-resume on the >5h token limit. ✓ DONE (bleeding-edge `999cae7`).**
+  Pure `session_watch_core.autoresume_candidates` gate (empty unless `policy.auto`; only
+  classifier `resume`+`resume_ok`, so human/declared-block/finished-unreported/escalate are
+  excluded by construction). `ide.claude_sessions.autoresume` (start/stop/status/tick) watches
+  → gates → resolves a target (only when exactly one instance workdir matches the session's
+  project_dir, else SKIP) → guarded `resume`. Dormant unless `VERA_SESSION_AUTORESUME_ENABLED=1`,
+  observes unless `policy.auto`. `test_session_watch_core` now critical.
+- **Phase E — multi-agent coordination. ✓ DONE (bleeding-edge `8199670`).** `board.handoff`:
+  atomic cross-machine claim transfer — only the current holder can hand off (pure, tested
+  `handoff_plan`); applies handoff+withdraw+claim in one write, swaps `agent:<name>`, the new
+  owner sees it in `board.inbox`. Progress/help envelopes already existed (`board.comment
+  kind=progress`, `board.help`). `test_board_core` now critical.
+Build order followed: A → D → B → C → E, so the lock + visibility existed before anything
+could run unattended. **Remaining to actually operate it:** release B/C/E to `main` (prod runs
+`main`; the drive loop + auto-resume + handoff are on bleeding-edge only), then engage +
+arm (`VERA_ORCHESTRATOR_ENABLED/LIVE`, `policy.auto`) under watch. Everything ships dormant, so
+a release is safe; arming is the deliberate go-live.
 
 Ordering rationale: stabilise what's live (M0) → finish the half-built content loop (M1) →
 lay the safety net (M2/M3), which also de-risks the M3.5 structural refactor → M3.5 once the
