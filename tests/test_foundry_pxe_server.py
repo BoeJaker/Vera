@@ -3,7 +3,8 @@
 These codify the hand-proven netboot stack: a LAN-fenced dnsmasq config and an iPXE
 boot menu (local-disk default + RAM ops/desktop/alpine + netboot.xyz + catalogue-
 driven install entries). Imported via lowercase vera.* so it binds to the worktree."""
-from vera.foundry.foundry_core import pxe_dnsmasq_conf, pxe_ipxe_menu, pxe_ops_apkovl_files
+from vera.foundry.foundry_core import (pxe_dnsmasq_conf, pxe_ipxe_menu, pxe_ops_apkovl_files,
+                                       pxe_desktop_apkovl_files)
 
 
 # ── dnsmasq config (LAN-safety is the critical property) ──────────────────────────
@@ -161,3 +162,33 @@ def test_ops_apkovl_sdwriter_present_and_safe():
     assert "xz -dc" in sd                                # handles .img.xz (Raspberry Pi OS)
     # wired into the ops menu
     assert "sdcard) clear; /usr/local/bin/foundry-sdwrite" in f["usr/local/bin/foundry-tui"]
+
+
+def test_desktop_apkovl_structure_and_input_fix():
+    """The desktop overlay must carry the diskless input fix (direct udevd + manual
+    coldplug, since the broken OpenRC boot runlevel skips udev-trigger) plus the full
+    XFCE desktop and the ops menu, so a fresh desktop node comes up with working
+    keyboard/touchpad and can reach Proxmox."""
+    f = pxe_desktop_apkovl_files("10.22.22.25")
+    for pth in ("etc/local.d/desktop.start", "etc/inittab", "root/.profile", "root/.xinitrc",
+                "etc/X11/xorg.conf.d/10-foundry-fallback.conf",
+                "etc/X11/xorg.conf.d/40-libinput-touchpad.conf",
+                "usr/share/applications/foundry-ops.desktop"):
+        assert pth in f and f[pth]
+    start = f["etc/local.d/desktop.start"]
+    # the diskless input fix
+    assert "/sbin/udevd --daemon" in start                       # udevd started directly
+    assert "udevadm trigger --type=devices --action=add" in start
+    assert "rc-service modloop start" in start
+    assert "rc-service --nodeps docker start" in start           # --nodeps bypass
+    # ops menu + SD writer + estate key fetched from the server
+    assert "http://10.22.22.25/ops/foundry-tui" in start
+    assert "http://10.22.22.25/ops/foundry-sdwrite" in start
+    assert "http://10.22.22.25/ops/id_estate" in start
+    # X input config lets libinput auto-add (no restrictive AllowEmptyInput=false)
+    xflags = f["etc/X11/xorg.conf.d/10-foundry-fallback.conf"]
+    assert 'AutoAddDevices" "on"' in xflags and "AllowEmptyInput" not in xflags
+    # X waits for input devices before starting (avoids the udev race)
+    assert "/dev/input/event*" in f["root/.profile"] and "startx" in f["root/.profile"]
+    # menu launcher opens the ops TUI in a terminal
+    assert "foundry-tui" in f["usr/share/applications/foundry-ops.desktop"]
