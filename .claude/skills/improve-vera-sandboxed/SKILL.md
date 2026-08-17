@@ -22,10 +22,15 @@ editing is the rare exception (small, urgent, explicitly sanctioned infra fix).
   per-session event/journal endpoints exist in source but confirm one actually returns
   data before relying on it). Only when real activity has genuinely flatlined — no
   tokens, no log motion, no status change — is it stuck. Otherwise let it run and watch.
-- **⛔ THE GPU GATE IS CAPACITY 1 — never fire GPU-routed model calls concurrently.**
-  Only ONE GPU generation runs at a time (`ollama.gate.status` → `gpu_cap: 1`, VERIFIED);
-  the rest **QUEUE**, so a call that seems slow is very often waiting behind your own
-  previous one — check the gate owner before blaming the cap.
+- **⛔ DON'T OVERWHELM VERA — fire ONE call, let it COMPLETE, THEN the next; never
+  back-to-back or in parallel.** Batching requests "to save time" doesn't save time — it
+  degrades the one shared instance and poisons every signal. It bites hardest on
+  model-loading calls (`llm.generate`, `code.author`/`code.edit`/`prose.author`, loops,
+  research) because the **GPU gate is capacity 1** (`ollama.gate.status` → `gpu_cap: 1`,
+  VERIFIED): concurrent GPU work doesn't parallelise, it **QUEUES** and serializes, so a
+  call in your own queue looks slow/hung — check the gate owner before blaming the cap. The
+  rule is general though: rapid-firing ANY calls (even read-only probes) overwhelms the
+  shared instance — pace them, one at a time.
   **Which roles run on the GPU is LIVE-CONFIGURABLE (Model Routing page overrides the
   source `deny_gpu` defaults) — VERIFY, don't assert from the code.** Confirmed facts
   (user): **planner and controllers run on the GPU; embeds run on CPU** (cpu-246/247).
