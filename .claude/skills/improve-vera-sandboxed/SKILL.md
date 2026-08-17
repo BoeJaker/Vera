@@ -15,26 +15,30 @@ editing is the rare exception (small, urgent, explicitly sanctioned infra fix).
   can run seconds or tens of minutes (model size, cold-load, context, queue depth).
   Do NOT estimate a duration, set a mental deadline, or declare a call "hung/broken"
   from **elapsed time alone** — that is the mistake I make most. To tell PROGRESSING
-  from STUCK, **monitor REAL ACTIVITY, never the clock:** the ollama server logs on
-  the node (is it decoding?), token/`eval_count` progress, the cap's own stream
-  (`code.author`/`prose.author` `stream_cb`; a loop's `/workshop/agent_loop/…` event
-  & journal stream advancing), and `ollama.gate.status` (who holds the slot). Only
-  when real activity has genuinely flatlined — no tokens, no log motion, no events —
-  is it stuck. Otherwise let it run and keep watching.
-- **⛔ THE GPU GATE IS CAPACITY 1 — never fire model-touching calls back-to-back or
-  concurrently.** Every model-loading call — `llm.generate`, `code.author`/
-  `code.edit`/`prose.author`, ANY `dag.agent_loop_v*`/dream, research caps, embeds —
-  competes for ONE GPU slot (`ollama.gate.status` → `gpu_cap: 1`). Concurrent calls
-  **QUEUE**, they don't parallelise, so a call that seems slow is very often just
-  waiting behind your own previous one — check the gate owner before blaming the cap.
-  **Discipline:** (1) before any model call, if one is in flight (`held ≥ 1` with an
-  owner), WAIT. (2) Fire ONE, watch its real activity until it COMPLETES, THEN the
-  next. (3) Never two loops at once — `vera:loop:sessions` /
-  `/workshop/agent_loop/sessions?status=running` must be empty first; stop a stuck
-  loop via **`/workshop/agent_loop/cancel` (`{session_id}`)**, NOT by restarting its
-  sandbox — **loops persist in Redis and AUTO-RESUME on restart**. (4) Any timing
-  read from a window where >1 inference ran is contention-confounded — discard it.
-  (See the user's standing memory note `no-concurrent-loop-tests`.)
+  from STUCK, **monitor REAL ACTIVITY, never the clock:** `ollama.gate.status` (who
+  holds the slot — VERIFIED useful), the ollama node's own server log (is it decoding),
+  streaming tokens from the cap (`code.author`/`prose.author` take a `stream_cb`), and
+  the loop's live state (`/workshop/agent_loop/sessions?status=running` works; the
+  per-session event/journal endpoints exist in source but confirm one actually returns
+  data before relying on it). Only when real activity has genuinely flatlined — no
+  tokens, no log motion, no status change — is it stuck. Otherwise let it run and watch.
+- **⛔ THE GPU GATE IS CAPACITY 1 — never fire GPU-routed model calls concurrently.**
+  Only ONE GPU generation runs at a time (`ollama.gate.status` → `gpu_cap: 1`, VERIFIED);
+  the rest **QUEUE**, so a call that seems slow is very often waiting behind your own
+  previous one — check the gate owner before blaming the cap.
+  **Which roles run on the GPU is LIVE-CONFIGURABLE (Model Routing page overrides the
+  source `deny_gpu` defaults) — VERIFY, don't assert from the code.** Confirmed facts
+  (user): **planner and controllers run on the GPU; embeds run on CPU** (cpu-246/247).
+  Do NOT extrapolate to "all roles". Safe takeaway: a running loop IS a GPU consumer
+  (its planner/controllers are GPU), so never add a concurrent GPU call while a loop runs.
+  **Discipline:** (1) before any GPU call, if one is in flight (`held ≥ 1` with an owner),
+  WAIT. (2) Fire ONE, watch its real activity until it COMPLETES, THEN the next. (3)
+  Never two loops at once — `/workshop/agent_loop/sessions?status=running` must be empty
+  first; stop a loop via **`/workshop/agent_loop/cancel` (`{session_id}`)** — a
+  sandbox/container restart is NOT a reliable stop (observed: after a restart the session
+  still showed `running` and `cancel` found no live task in the new process). (4) Any
+  timing read from a window where >1 inference ran is contention-confounded — discard it.
+  (See the standing memory note `no-concurrent-loop-tests`.)
 - **Multi-agent estate is live.** Other agents may be working in their own
   containers (`evolve.sandbox.list` shows them), all sharing one GPU. Never touch
   another agent's branch/container. Before a **prod restart**, check
