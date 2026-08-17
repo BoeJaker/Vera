@@ -111,6 +111,17 @@ async def _loop_run_cancelled(sid: str) -> bool:
         return False
 
 
+import contextvars
+# Set by the loop runner and INHERITED by every child coroutine it spawns (asyncio
+# copies the context at task creation). So an orphaned generation still knows which
+# loop session it belongs to, and can honour that session's cancel at the UNIVERSAL
+# generation chokepoint (_safe_ollama_generate_dw) — covering planner, controller,
+# branch strategist, finaliser, step turns and any fire-and-forget child, with no
+# task handle and no session_id threaded through every call site.
+_LOOP_SESSION_CV: "contextvars.ContextVar[str]" = contextvars.ContextVar(
+    "vera_loop_session", default="")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # LOOP ROUTING PROFILE — per-ROLE model / node / sampling for the loop's OWN LLM
 # calls, resolved through the generalized cluster router (threaded via
@@ -2473,6 +2484,14 @@ async def _safe_ollama_generate_dw(prompt, *, system="", json_mode=True,
     # finaliser, branch strategist, delivery agent, every version v1–v7) in the
     # real wall-clock time. This is the shared chokepoint all of them funnel
     # through, so injecting here beats editing each _vN_system_prompt string.
+    # Cooperative cancel at the UNIVERSAL chokepoint: if this coroutine belongs to a
+    # loop session that has been cancelled, abort BEFORE spending a generation. This is
+    # the complete fix — it covers every loop LLM call (planner/controller/branch/
+    # finaliser/step turns) and any orphaned child that inherited the session context,
+    # not just the step turn-loop.
+    _lsid = _LOOP_SESSION_CV.get()
+    if _lsid and await _loop_run_cancelled(_lsid):
+        raise asyncio.CancelledError(f"loop {_lsid} cancelled — aborting generation")
     system = _now_context_line() + ("\n\n" + system if system else "")
     import importlib
     try:
@@ -22126,6 +22145,9 @@ async def workshop_agent_loop_stream(request: Request):
         # dedicated handlers.
 
         async def _runner():
+            # Stamp this run's session onto the context so EVERY descendant coroutine
+            # (and any orphan it spawns) can self-cancel at the generation chokepoint.
+            _LOOP_SESSION_CV.set(session_id or "")
             cap = CAPABILITY_REGISTRY[cap_name]
             try:
                 kwargs = dict(

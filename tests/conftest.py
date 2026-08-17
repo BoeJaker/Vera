@@ -31,6 +31,7 @@ _CRITICAL_MODULES = {
     "test_orchestrator_core",  # closed-loop Phase B — orchestrator decision logic (dispatch/idle, interlock, no v7)
     "test_session_watch_core",  # closed-loop Phase C — auto-resume gate: never re-run finished/human/declared work
     "test_board_core",          # Agent Boards leasing — claim resolution + Phase E handoff (only holder can hand off)
+    "test_gate_sweep",          # Ollama-gate leaked-lease sweep — MUST never clear a peer host's live slot (double-books GPU)
 }
 
 

@@ -1045,6 +1045,29 @@ def _split_redis_url(url: str):
     return scheme, authority, data_db
 
 
+_GATE_LEASE_SWEPT = False
+
+
+async def _maybe_sweep_gate_leases():
+    """Once per process, clear gate slots leaked by a dead LOCAL process — a crash /
+    kill / restart leaves the TTL-fenced lease held for its full TTL (default 30 min),
+    wedging the GPU until it expires (the 2026-08-17 incident). Cluster-safe (this
+    host's own dead-pid leases only) + owner-fenced; see
+    ollama_gate.sweep_dead_local_leases. Never raises."""
+    global _GATE_LEASE_SWEPT
+    if _GATE_LEASE_SWEPT or COORD_REDIS is None:
+        return
+    _GATE_LEASE_SWEPT = True
+    try:
+        res = await _gate.sweep_dead_local_leases(COORD_REDIS)
+        if res.get("count"):
+            log.warning("Ollama gate: cleared %d leaked lease(s) from dead local "
+                        "process(es) at boot: %s", res["count"],
+                        [c.get("owner") for c in res.get("cleared", [])])
+    except Exception as e:
+        log.debug("gate lease sweep failed: %s", e)
+
+
 async def _ensure_coord_redis():
     """Lazily connect the SHARED coordination Redis for the Ollama gate — the
     'one big queue' lives here so prod + every dev container see the same slot
@@ -1060,6 +1083,7 @@ async def _ensure_coord_redis():
         if data_db == COORD_REDIS_DB and REDIS is not None:
             COORD_REDIS = REDIS
             log.info("✓ Ollama gate coord Redis = data Redis (DB %d)", COORD_REDIS_DB)
+            await _maybe_sweep_gate_leases()
             return COORD_REDIS
         coord_url = f"{scheme}://{authority}/{COORD_REDIS_DB}"
         _cr = aioredis.from_url(coord_url, decode_responses=False,
@@ -1068,6 +1092,7 @@ async def _ensure_coord_redis():
         COORD_REDIS = _cr
         log.info("✓ Ollama gate coord Redis connected: %s (data DB %d)",
                  coord_url, data_db)
+        await _maybe_sweep_gate_leases()
     except Exception as e:
         log.warning("coord Redis connect failed — Ollama gate stays a no-op: %s", e)
     return COORD_REDIS
