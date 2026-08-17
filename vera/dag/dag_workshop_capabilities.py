@@ -8797,6 +8797,14 @@ _V5_GEN_SAVE_ARGS = ("save_as", "save_to", "output_file", "output_path",
                      "out_file", "filename")
 _V5_DOC_EXTS = ("md", "txt", "json", "html", "htm", "csv", "yaml", "yml", "rst", "xml")
 _V5_FNAME_RE = re.compile(r"[\w./-]+\.(?:" + "|".join(_V5_DOC_EXTS) + r")\b", re.I)
+# Extensions that are CODE, never prose — prose.author redirects these to code.author
+# so they are syntax-checked and versioned as code. Fixes 2026-08-17: a specialist
+# authored index.html / style.css via prose.author, producing ungrounded, unchecked
+# 'documents'. HTML/CSS/JS especially were miscategorised (they sit in _V5_DOC_EXTS).
+_V5_PROSE_TO_CODE_EXTS = {
+    "html", "htm", "css", "scss", "sass", "less", "js", "jsx", "mjs", "cjs",
+    "ts", "tsx", "py", "sh", "bash", "go", "rs", "rb", "php", "java", "cpp",
+    "cc", "c", "h", "hpp", "sql", "vue", "svelte", "kt", "swift"}
 
 
 def _v5_doc_ext(text: str) -> str:
@@ -10401,6 +10409,16 @@ async def cap_prose_author(task: str = "", path: str = "", context_files=None,
         return {"ok": False, "error": "task is required — describe what the document must cover "
                                        "(or pass content/text with an existing draft to incorporate)"}
     path = _code_norm_path(str(path or "").strip()) or "generated.md"
+    # Redirect a CODE file to code.author — HTML/CSS/JS/... are code, not prose, and
+    # must be syntax-checked + versioned as code, not authored as an ungrounded document.
+    _pext = (os.path.splitext(path)[1].lstrip(".") or "").lower()
+    if _pext in _V5_PROSE_TO_CODE_EXTS:
+        _ca = CAPABILITY_REGISTRY.get("code.author")
+        _cafn = (_ca or {}).get("func") if isinstance(_ca, dict) else None
+        if callable(_cafn):
+            return await _cafn(task=task, path=path, context_files=context_files,
+                               content=_material, session_id=session_id,
+                               trace_id=trace_id, stream_cb=stream_cb)
     lang = _code_lang_for(path) or "markdown"
     files = context_files
     if isinstance(files, str):
