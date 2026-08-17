@@ -5162,6 +5162,49 @@ IMPORTANT:
       (m,src)=>{ const b=byName[src.replace(/^\.?\//,'')]; return b?('<script>'+b.code+'<\/script>'):m; });
     return html;
   }
+
+  /* Preview of an HTML ARTIFACT opened from the file tree: its relative
+     <link href="./style.css">/<script src="./script.js"> can't resolve against
+     about:srcdoc, and the siblings live in the ARTIFACT STORE (not _CODE_BLOCKS).
+     Resolve each ref against the HTML file's OWN directory, fetch it from the
+     session store, and inline it so the preview renders fully (CSS applied, JS run).
+     External (http/https/data) and unresolved refs are left untouched. */
+  async function _inlineArtifactAssets(html, htmlPath){
+    const dir=String(htmlPath||'').replace(/[^\/]*$/,'');   // '/a/b/index.html' -> '/a/b/'
+    const norm=p=>{
+      if(!p || /^(https?:)?\/\//i.test(p) || /^data:/i.test(p)) return null;
+      p=p.replace(/[?#].*$/,'');
+      if(p.startsWith('/')) return p;
+      return dir + p.replace(/^\.\//,'');
+    };
+    const isSheet=(tag,href)=>(/\brel=["']stylesheet["']/i.test(tag) || /\.css(\?|$)/i.test(href||''));
+    const refs=new Set();
+    (html.match(/<link\b[^>]*>/gi)||[]).forEach(tag=>{
+      const hm=/\bhref=["']([^"']+)["']/i.exec(tag);
+      if(hm && isSheet(tag,hm[1])) refs.add(hm[1]);
+    });
+    const _sr=/<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*><\/script>/gi; let m;
+    while((m=_sr.exec(html))){ if(!/^data:/i.test(m[1])) refs.add(m[1]); }
+    if(!refs.size) return html;
+    const got={};
+    for(const ref of refs){
+      const p=norm(ref); if(!p) continue;
+      try{
+        const r=await fetch(BASE+'/ide/code/read_lines',{method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({path:p, session_id:_artSid()})});
+        const j=await r.json();
+        if(j && !j.error) got[ref]=(j.content!=null?j.content:(Array.isArray(j.lines)?j.lines.join('\n'):''))||'';
+      }catch(_){}
+    }
+    html=html.replace(/<link\b[^>]*>/gi, tag=>{
+      const hm=/\bhref=["']([^"']+)["']/i.exec(tag);
+      return (hm && got[hm[1]]!=null && isSheet(tag,hm[1])) ? ('<style>'+got[hm[1]]+'</style>') : tag;
+    });
+    html=html.replace(/<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*><\/script>/gi,
+      (full,src)=> got[src]!=null ? ('<script>'+got[src]+'<\/script>') : full);
+    return html;
+  }
   function _codePreviewLoad(lang, code, runJs){
     const frame=document.getElementById('codePreviewFrame');
     const codeEl=document.getElementById('codePreviewCode');
@@ -5555,7 +5598,11 @@ IMPORTANT:
         document.getElementById('codeViewPreviewBtn')?.classList.add('on');
         document.getElementById('codeViewSourceBtn')?.classList.remove('on');
       } else {
-        _codePreviewLoad(lang, content, false);
+        let _c=content;
+        // HTML artifact: inline its relative CSS/JS siblings from the store so the
+        // preview renders fully (they can't resolve against about:srcdoc otherwise).
+        if(lang==='html'){ try{ _c=await _inlineArtifactAssets(content, path); }catch(_){} }
+        _codePreviewLoad(lang, _c, false);
         // Non-visual types open straight to Source so the file is readable.
         if(!(lang==='html'||lang==='css'||lang==='svg')) _codeViewMode('source');
       }
