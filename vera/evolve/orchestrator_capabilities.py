@@ -14,7 +14,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 from typing import Any, Dict, List
 
 from Vera.vera.capability_orchestration import (
@@ -22,6 +24,26 @@ from Vera.vera.capability_orchestration import (
 from Vera.vera.evolve.orchestrator_core import next_action
 
 log = logging.getLogger("vera.orchestrator")
+
+# --- Drive-loop configuration (M7 Phase B) -----------------------------------
+# The drive loop is a scheduled tick that repeatedly runs one orchestrator step.
+# It is SAFE-BY-DEFAULT in three layers:
+#   1. DISABLED unless VERA_ORCHESTRATOR_ENABLED=1        (no tick at all)
+#   2. OBSERVE (dry-run) unless VERA_ORCHESTRATOR_LIVE=1  (decides, never dispatches)
+#   3. even when live, autonomous_orchestrate itself only acts while ENGAGED (Phase A),
+#      which also hard-locks main — so the loop can never reach prod.
+# So enabling the tick lets you WATCH its decisions on the Master page before ever
+# letting it act; flipping LIVE=1 + engaging autonomous mode is the deliberate arming.
+def _env_flag(name: str) -> bool:
+    return str(os.environ.get(name, "")).strip().lower() in ("1", "true", "yes", "on")
+
+def _orch_interval_s() -> int:
+    try:
+        return max(15, int(os.environ.get("VERA_ORCHESTRATOR_INTERVAL_S", "60")))
+    except Exception:
+        return 60
+
+_DRIVE_TASK: "asyncio.Task | None" = None
 
 
 async def _call(name: str, **kw) -> Any:
@@ -67,3 +89,89 @@ async def autonomous_orchestrate(dry_run: bool = True, agent: str = "claude_code
                           "item": decision.get("item"), "ok": acted})
     return {"ok": True, "engaged": engaged, "dry_run": dry_run,
             "decision": decision, "acted": acted, "result": result}
+
+
+# --- The drive loop ----------------------------------------------------------
+async def _drive_loop() -> None:
+    """Scheduled drive loop: run one orchestrator step every interval while enabled.
+    OBSERVE (dry-run) unless VERA_ORCHESTRATOR_LIVE=1; even live it only dispatches
+    while autonomous mode is ENGAGED (which locks main). Each tick emits a
+    `autonomous.orchestrate.tick` event so the Master page can show what the loop is
+    deciding — visible before it is ever allowed to act."""
+    log.info("orchestrator drive loop started (interval=%ss live=%s)",
+             _orch_interval_s(), _env_flag("VERA_ORCHESTRATOR_LIVE"))
+    while True:
+        try:
+            live = _env_flag("VERA_ORCHESTRATOR_LIVE")
+            res = await autonomous_orchestrate(dry_run=not live)
+            dec = (res.get("decision") or {}) if isinstance(res, dict) else {}
+            await emit_event({"type": "autonomous.orchestrate.tick",
+                              "engaged": res.get("engaged"),
+                              "live": live,
+                              "acted": res.get("acted"),
+                              "action": dec.get("action"),
+                              "item": dec.get("item"),
+                              "reason": dec.get("reason")})
+        except asyncio.CancelledError:
+            log.info("orchestrator drive loop cancelled")
+            raise
+        except Exception as e:                          # a bad tick must never kill the loop
+            log.warning("orchestrator drive tick failed: %s", e)
+        try:
+            await asyncio.sleep(_orch_interval_s())
+        except asyncio.CancelledError:
+            raise
+
+
+def _drive_running() -> bool:
+    return _DRIVE_TASK is not None and not _DRIVE_TASK.done()
+
+
+@capability(
+    "autonomous.drive", memory="on",
+    http_method="POST", http_path="/autonomous/drive",
+    http_tags=["autonomous", "evolve"],
+    description="Control the closed-loop DRIVE LOOP (M7 Phase B, Loop Lab): the scheduled "
+                "ticker that runs autonomous.orchestrate on an interval. action=start|stop|status "
+                "(default status). Starting it is safe: it OBSERVES (dry-run, emits a tick event "
+                "per step) unless VERA_ORCHESTRATOR_LIVE=1, and even live only dispatches while "
+                "autonomous mode is ENGAGED (which locks main). Output: {ok, running, live, "
+                "interval_s, enabled_env}.")
+async def autonomous_drive(action: str = "status", trace_id=None) -> Dict[str, Any]:
+    global _DRIVE_TASK
+    action = (action or "status").strip().lower()
+    if action == "start":
+        if not _drive_running():
+            _DRIVE_TASK = asyncio.ensure_future(_drive_loop())
+        await emit_event({"type": "autonomous.drive.start",
+                          "live": _env_flag("VERA_ORCHESTRATOR_LIVE")})
+    elif action == "stop":
+        if _drive_running():
+            _DRIVE_TASK.cancel()
+        _DRIVE_TASK = None
+        await emit_event({"type": "autonomous.drive.stop"})
+    return {"ok": True, "running": _drive_running(),
+            "live": _env_flag("VERA_ORCHESTRATOR_LIVE"),
+            "interval_s": _orch_interval_s(),
+            "enabled_env": _env_flag("VERA_ORCHESTRATOR_ENABLED")}
+
+
+def _maybe_autostart_drive() -> None:
+    """Auto-start the drive loop at import ONLY if VERA_ORCHESTRATOR_ENABLED=1.
+    Off by default — prod boots with the loop dormant. Never raises: a scheduling
+    failure at import must not break module load (which would drop ~all evolve caps)."""
+    if not _env_flag("VERA_ORCHESTRATOR_ENABLED"):
+        return
+    try:
+        asyncio.get_running_loop()          # raises if no loop is running yet at import
+    except RuntimeError:
+        return                              # loaded before the loop; start via autonomous.drive
+    try:
+        global _DRIVE_TASK
+        _DRIVE_TASK = asyncio.ensure_future(_drive_loop())
+        log.info("orchestrator drive loop auto-started (VERA_ORCHESTRATOR_ENABLED=1)")
+    except Exception as e:
+        log.warning("orchestrator drive autostart skipped: %s", e)
+
+
+_maybe_autostart_drive()
