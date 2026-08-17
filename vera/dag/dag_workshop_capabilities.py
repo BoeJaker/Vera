@@ -21364,29 +21364,32 @@ async def workshop_agent_loop_cancel(request: Request):
     session_id = (body.get("session_id") or "").strip()
     if not session_id:
         return {"ok": False, "error": "session_id required"}
+    # ALWAYS set the cooperative-cancel flag FIRST, before (and regardless of) finding
+    # a runner task. This is the fix for the 2026-08-17 runaway: the Stop button hit a
+    # loop whose runner task we couldn't reach (an mcp-invoked run not in this registry,
+    # or an ORPHANED child coroutine that outlived a cancelled parent), so the old code
+    # returned "no running loop" and set NOTHING — the loop kept generating forever. The
+    # loop's per-turn / per-generation cooperative check (_loop_run_cancelled) reads this
+    # flag, so setting it unconditionally makes ANY coroutine still running this session
+    # self-terminate at its next turn, with or without a task handle.
+    _flag_set = False
+    try:
+        r = _redis()
+        if r:
+            await r.hset(f"vera:loop:run:{session_id}",
+                         mapping={"status": "cancelled", "updated_at": now_iso()})
+            _flag_set = True
+    except Exception as e:
+        log.debug("cancel: flag write failed for %s: %s", session_id, e)
     task = _AGENT_LOOP_TASKS.get(session_id)
     if task and not task.done():
-        task.cancel()
+        task.cancel()                       # also cancel the live task directly (fast path)
         _AGENT_LOOP_TASKS.pop(session_id, None)
-        # Write the terminal status now rather than leaving the run-state hash
-        # at "running" for the runner's own finally-block to fix — a task
-        # cancellation unwinds via CancelledError, and depending on exactly
-        # where it lands that cleanup may not always execute. Without this,
-        # session_state/`/sessions` kept reporting a just-cancelled run as
-        # "running" for up to VERA_LOOP_STALE_SECS (10 minutes) until the
-        # staleness fallback overrode it — live-observed after cancelling a
-        # genuinely stuck run mid-audit.
-        try:
-            r = _redis()
-            if r:
-                await r.hset(f"vera:loop:run:{session_id}",
-                             mapping={"status": "cancelled", "updated_at": now_iso()})
-        except Exception as e:
-            log.debug("cancel: status write failed for %s: %s", session_id, e)
-        return {"ok": True, "cancelled": True, "session_id": session_id}
+        return {"ok": True, "cancelled": True, "flag_set": _flag_set, "session_id": session_id}
     _AGENT_LOOP_TASKS.pop(session_id, None)
-    return {"ok": True, "cancelled": False, "session_id": session_id,
-            "note": "no running loop for this session"}
+    return {"ok": True, "cancelled": False, "flag_set": _flag_set, "session_id": session_id,
+            "note": "no live runner task in this process; cancel flag set — any running or "
+                    "orphaned coroutine for this session self-terminates at its next turn"}
 
 
 @APP.post("/workshop/agent_loop/message")
