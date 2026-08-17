@@ -266,6 +266,27 @@ def resolve_claim(comments: List[AgentMessage]) -> str:
     return min(active, key=lambda c: c.id or 10 ** 9).frm
 
 
+def handoff_plan(comments: List[AgentMessage], frm: str, to: str) -> dict:
+    """Validate an atomic claim handoff from `frm` to `to` (Phase E cross-machine
+    handoff). A handoff is legal ONLY when `frm` is the CURRENT lease holder — an
+    agent cannot give away a claim it does not hold, and cannot hand to itself or to
+    an empty identity. Returns {ok, error?}. The provider, on ok, appends a `handoff`
+    audit envelope + `frm`'s `withdraw` + `to`'s `claim`, after which
+    resolve_claim(...) == to. Pure + tested so the safety check has one home."""
+    frm = (frm or "").strip()
+    to = (to or "").strip()
+    if not frm or not to:
+        return {"ok": False, "error": "both frm and to are required"}
+    if frm == to:
+        return {"ok": False, "error": "cannot hand off to the same agent"}
+    holder = resolve_claim(comments)
+    if holder != frm:
+        return {"ok": False,
+                "error": f"{frm} does not hold the claim (holder={holder or 'unclaimed'}) "
+                         "— only the current holder can hand off"}
+    return {"ok": True}
+
+
 def item_matches(it: BoardItem, q: Optional[BoardQuery]) -> bool:
     if not q:
         return True
@@ -545,6 +566,35 @@ class FileBoardProvider:
                                comment_id=cid, reason="earlier claim wins")
         return ClaimResult(ok=True, held_by=agent, comment_id=cid)
 
+    def _handoff_sync(self, item_id: str, frm: str, to: str, body: str = "") -> dict:
+        """Atomic claim handoff frm→to in a single write (§3.3): validate `frm` holds
+        the lease, then append handoff+withdraw+claim envelopes and swap the assignee.
+        Returns {ok, held_by, error?}. Never partially applies — validation is up front."""
+        it = self._read(item_id)
+        if it is None:
+            raise KeyError(item_id)
+        plan = handoff_plan(it.comments, frm, to)
+        if not plan.get("ok"):
+            return {"ok": False, "held_by": resolve_claim(it.comments), "error": plan.get("error")}
+        for msg in (
+            AgentMessage(kind="handoff", frm=frm, to=to, item=item_id, body=body,
+                         id=self._next_comment_id(it), created_at=_now()),
+            AgentMessage(kind="withdraw", frm=frm, to=to, item=item_id,
+                         id=self._next_comment_id(it), created_at=_now()),
+            AgentMessage(kind="claim", frm=to, to=frm, item=item_id,
+                         id=self._next_comment_id(it), created_at=_now()),
+        ):
+            it.comments.append(msg)
+        it.labels = [x for x in it.labels if x != f"agent:{frm}"]
+        if f"agent:{to}" not in it.labels:
+            it.labels.append(f"agent:{to}")
+        it.agent = to
+        it.lane = "in_progress"
+        it.heartbeat = _now()
+        self._write(it)
+        winner = resolve_claim(it.comments)          # invariant: to now holds the lease
+        return {"ok": winner == to, "held_by": winner}
+
     def _comment_sync(self, item_id: str, msg: AgentMessage) -> str:
         it = self._read(item_id)
         if it is None:
@@ -572,6 +622,9 @@ class FileBoardProvider:
 
     async def claim(self, item_id: str, agent: str) -> ClaimResult:
         return await asyncio.to_thread(self._claim_sync, item_id, agent)
+
+    async def handoff(self, item_id: str, frm: str, to: str, body: str = "") -> dict:
+        return await asyncio.to_thread(self._handoff_sync, item_id, frm, to, body)
 
     async def comment(self, item_id: str, msg: AgentMessage) -> str:
         return await asyncio.to_thread(self._comment_sync, item_id, msg)

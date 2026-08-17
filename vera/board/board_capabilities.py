@@ -333,6 +333,35 @@ if True:  # capability registration (mirrors the guard style of the other module
         return {"ok": True, "comment_id": cid}
 
     @capability(
+        "board.handoff", http_method="POST", http_path="/board/handoff",
+        http_tags=["board"], memory="on",
+        description="Hand off an item's claim to another agent, atomically (Phase E cross-machine "
+                    "handoff). GUARDED: only the CURRENT lease holder can hand off (an agent can't "
+                    "give away work it doesn't hold), never to itself. Posts a handoff envelope + "
+                    "the holder's withdraw + the target's claim in one write, swaps the agent:<name> "
+                    "assignment, keeps it in_progress. The target sees it in board.inbox. Inputs: "
+                    "id (str!), frm (str! — current holder), to (str! — new owner), body (str — "
+                    "context for the pickup), done_when (str). Output: {ok, held_by, comment_id?}.",
+    )
+    async def cap_board_handoff(id: str = "", frm: str = "", to: str = "",
+                                body: str = "", done_when: str = "", trace_id=None) -> dict:
+        if not (frm and to):
+            return {"ok": False, "error": "frm and to are both required"}
+        reason = _scan_secret(body) or _scan_secret(done_when)
+        if reason:
+            return {"ok": False, "error": reason}
+        note = body + (f"\ndone_when: {done_when}" if done_when else "")
+        try:
+            res = await provider().handoff(id, frm=frm, to=to, body=note)
+        except KeyError:
+            return {"ok": False, "error": f"no such item: {id}"}
+        if not res.get("ok"):
+            return {"ok": False, "error": res.get("error") or "handoff refused",
+                    "held_by": res.get("held_by", "")}
+        await emit_event({"type": "board.handoff", "item": id, "frm": frm, "to": to})
+        return {"ok": True, "held_by": res.get("held_by"), "item": id, "to": to}
+
+    @capability(
         "board.provider", http_method="GET", http_path="/board/provider",
         http_tags=["board"], memory="off", silent=True,
         description="The active board provider and where it stores state. Output: {ok, active, "
