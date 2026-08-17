@@ -11,9 +11,26 @@ this sandboxed pipeline, not a direct edit to prod's working tree. Direct-to-pro
 editing is the rare exception (small, urgent, explicitly sanctioned infra fix).
 
 ## 0. Still true, unchanged
-- **Never run two Ollama-calling tests at once.** A sandbox loop is an Ollama
-  consumer. Check `vera:loop:sessions` first. The shared GPU is now gated
-  (`ollama.gate`) so calls queue rather than collide, but don't pile on.
+- **⛔ THE GPU GATE IS CAPACITY 1 — NEVER fire model-touching calls back-to-back
+  or concurrently.** This is the rule I break most; make it reflexive. Every call
+  that loads a model — `llm.generate`, `code.author`/`code.edit`/`prose.author`,
+  ANY `dag.agent_loop_v*` / dream, research caps, embeds — competes for ONE GPU
+  slot (`ollama.gate.status` → `gpu_cap: 1`). Concurrent calls don't run in
+  parallel, they **QUEUE**. The trap: a queued call *looks like a hang* — a
+  `code.author` that seems to take 200s is almost always waiting behind your own
+  previous call (a clean one is ~30s). Do NOT then "root-cause" a non-existent
+  hang. **Discipline, every time:** (1) before any model call, if one is already
+  in flight, DON'T fire another — check `ollama.gate.status`; if `held ≥ 1` with
+  an owner, WAIT. (2) Fire ONE, let it fully COMPLETE (or a single generous
+  timeout expire), read it, THEN the next. (3) Never two loops at once — check
+  `vera:loop:sessions` / `/workshop/agent_loop/sessions?status=running` is empty
+  first; a stuck loop is stopped via **`/workshop/agent_loop/cancel`
+  (`{session_id}`)**, NOT by restarting its sandbox — **loops persist in Redis and
+  AUTO-RESUME on restart** (a container restart interrupts the in-flight call but
+  the run comes back). (4) Any latency read from a window where >1 inference ran
+  is contention-confounded — discount it. Firing concurrently never saves time; it
+  serializes anyway and poisons every timing/stall finding. (See the user's
+  standing memory note of the same name.)
 - **Multi-agent estate is live.** Other agents may be working in their own
   containers (`evolve.sandbox.list` shows them), all sharing one GPU. Never touch
   another agent's branch/container. Before a **prod restart**, check
