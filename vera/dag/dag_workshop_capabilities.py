@@ -10209,6 +10209,9 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
     # bare `file=x.py` first line and NO fence would otherwise save it as line 1.
     code = (blocks[0]["code"] if blocks
             else _v5_strip_marker_line(_unescape_collapsed_code(text.strip())))
+    # Salvage an unclosed fence (survives as line 1 -> SyntaxError) and a trailing
+    # editor-JSON leak the coder appended — both fall through extraction untouched.
+    code = _v5_clean_code_body(code)
     if not code.strip():
         return {"ok": False, "error": "no code in the generation"}
     _lang_used = blocks[0]["lang"] if blocks else lang
@@ -10881,6 +10884,46 @@ def _v5_strip_marker_line(code: str) -> str:
         del lines[i]
         return "\n".join(lines)
     return code
+
+
+# A markdown fence line: opening (```lang / ```py file=x) or bare/closing (```).
+_CODE_OPEN_FENCE_RE = re.compile(r"^\s*```[^\n`]*$")
+_CODE_CLOSE_FENCE_RE = re.compile(r"^\s*```+\s*$")
+# The EDITOR repair role's own output schema. A confused coder sometimes appends it
+# after the code ({"edits":[...],"note":...}); a real source file never opens a
+# top-level line with {"edits" / {"note", so a trailing run of those is junk to drop.
+_CODE_EDITOR_JSON_LEAK_RE = re.compile(r'(?m)^\s*\{\s*"(?:edits|note)"\s*:')
+
+
+def _v5_clean_code_body(code: str) -> str:
+    """Salvage a code body the model wrapped in an UNCLOSED markdown fence or polluted
+    with a trailing editor repair-JSON leak — the 2026-08-17 code.author failure where
+    an unclosed ```python survived as line 1 (SyntaxError) and {"edits":...} objects
+    ended up in the file. Strips a leading ```lang fence and a trailing ``` even when
+    unbalanced (an unclosed fence is exactly why extraction fell through to the plain-
+    text fallback), then drops a trailing editor-JSON block. Conservative: the JSON tail
+    is cut only when there is real content before it, so a file that IS json is untouched.
+    Idempotent + safe on already-clean code (nothing matches -> returned unchanged)."""
+    if not code:
+        return code
+    lines = code.splitlines()
+    j = 0
+    while j < len(lines) and not lines[j].strip():
+        j += 1
+    if j < len(lines) and _CODE_OPEN_FENCE_RE.match(lines[j]):
+        del lines[j]
+    k = len(lines) - 1
+    while k >= 0 and not lines[k].strip():
+        k -= 1
+    if k >= 0 and _CODE_CLOSE_FENCE_RE.match(lines[k]):
+        del lines[k]
+    body = "\n".join(lines)
+    m = _CODE_EDITOR_JSON_LEAK_RE.search(body)
+    if m and body[:m.start()].strip():
+        body = body[:m.start()]
+    # Preserve the trailing-newline convention (extract uses code.rstrip("\n")+"\n")
+    # so already-clean code round-trips unchanged.
+    return (body.rstrip("\n") + "\n") if body.strip() else body
 
 
 def _v5_gen_text(result: Any) -> str:
