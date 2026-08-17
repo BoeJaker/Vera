@@ -17599,6 +17599,26 @@ async def _v6_check_paths_exist(session_id: str, paths: List[str]) -> Dict[str, 
     return result
 
 
+# A code author/edit call returns ok=True ONLY after a REAL parser confirmed the
+# file (code.author sets ok = not syntax_bad; code.edit saves nothing that does not
+# parse). So an ok terminal author IS the deterministic verdict that the code was
+# produced and parses — a second LLM opinion on it is pure latency. Kept narrow to
+# the authoring caps so a run/fetch/transform still goes through the output judge.
+_V6_CODE_AUTHOR_TOOLS = ("code.author", "code.edit")
+
+
+def _v6_authored_path(last_call: Optional[Dict[str, Any]]) -> str:
+    """If the step's terminal action is a SUCCESSFUL code author/edit, return the
+    file it wrote; else "". Empty for a failed author, or for a run/fetch/anything
+    else — those keep the normal, output-grounded judge. Pure (no I/O) so the
+    fast-path decision is unit-tested."""
+    if not isinstance(last_call, dict) or not last_call.get("ok"):
+        return ""
+    if str(last_call.get("tool") or "") not in _V6_CODE_AUTHOR_TOOLS:
+        return ""
+    return str((last_call.get("args") or {}).get("path") or "").strip()
+
+
 async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
                           session_id: str = "",
                           model: str, instance_id: str, prefer_gpu: bool) -> Dict[str, Any]:
@@ -17667,6 +17687,24 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
     # Calling out the most recent action, separately from the history, is what
     # stops the criterion being met by evidence that is no longer true.
     _last = _calls[-1] if _calls else None
+    # ── Deterministic fast-path: a just-authored, syntax-verified code file ────
+    # When the step's terminal action is a SUCCESSFUL code.author/code.edit, its
+    # syntax was already proven by a real parser — there is nothing an LLM judge
+    # can add by re-reading the code, and asking it to is a slow second opinion on
+    # a settled fact (the single biggest source of "code.author is slow"). The
+    # code's RUNTIME behaviour is judged by RUNNING it: once a run follows, `_last`
+    # is that exec call and the normal output-grounded judge below grades its
+    # OUTPUT, never the code. We still ground on the filesystem — if the authored
+    # file is somehow absent, fall through to the judge (which hard-fails on a
+    # missing deliverable) rather than pass on a claim.
+    _authored = _v6_authored_path(_last)
+    if _authored:
+        _ex = await _v6_check_paths_exist(session_id, [_authored]) if session_id else {_authored: True}
+        if _ex.get(_authored, True):
+            return {"met": True,
+                    "reason": (f"{_last.get('tool')} produced {_authored} and a real parser "
+                               "verified its syntax deterministically — no LLM re-check; "
+                               "run it to judge its output.")}
     last_block = ""
     if _last:
         _lsf = _soft_failed(_last) if _last.get("ok") else ""
