@@ -15,7 +15,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 import time
 from typing import Any, Dict, List
 
@@ -283,3 +285,141 @@ if True:  # capability registration
                 except Exception as e:
                     return {"ok": False, "error": f"policy save failed: {e}", "policy": pol}
         return {"ok": True, "policy": pol, "changed": changed}
+
+
+# ── Phase C auto-resume drive loop ───────────────────────────────────────────
+# The periodic loop the module header calls "the next increment". It watches,
+# then for each session the pure gate (session_watch_core.autoresume_candidates)
+# selects, resolves a target instance and calls the guarded ide.claude_sessions.resume.
+# Safe-by-default in the same three layers as the Phase B drive loop:
+#   1. the loop only RUNS when started (control cap) or VERA_SESSION_AUTORESUME_ENABLED=1
+#   2. it only ACTS when policy.auto is on — off by default, so it OBSERVES + emits
+#   3. resume itself is guarded (never human / declared-block / finished-unreported /
+#      past-max-attempts), and an unresolved target is SKIPPED, never guessed.
+_AUTO_TASK: "asyncio.Task | None" = None
+
+
+def _auto_flag(name: str) -> bool:
+    return str(os.environ.get(name, "")).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _auto_interval_s() -> int:
+    try:
+        return max(30, int(os.environ.get("VERA_SESSION_AUTORESUME_INTERVAL_S", "300")))
+    except Exception:
+        return 300
+
+
+async def _target_for_session(sess_row: Dict[str, Any]) -> str:
+    """Resolve the resume target: the registered remote instance whose workdir
+    matches the session's project_dir. Returns the instance id ONLY when exactly
+    one instance matches; '' otherwise (0 or >1). An unresolved target means SKIP —
+    never resume on a guessed seat (that could re-run work on the wrong machine)."""
+    pdir = (sess_row.get("project_dir") or "").rstrip("/")
+    if not pdir:
+        return ""
+    inst = await _call("ide.remote.instances") or {}
+    cands = [i for i in (inst.get("instances") or [])
+             if (i.get("workdir") or "").rstrip("/") == pdir]
+    return cands[0].get("id", "") if len(cands) == 1 else ""
+
+
+async def _autoresume_tick() -> Dict[str, Any]:
+    """One auto-resume pass: watch → gate → resolve target → resume. Acts only when
+    policy.auto is on; otherwise returns the candidates it WOULD resume (observe)."""
+    pol = await _get_policy()
+    w = await _call("ide.claude_sessions.watch") or {}
+    sessions = w.get("sessions") or []
+    cands = sw.autoresume_candidates(sessions, pol)
+    acted: List[Dict[str, Any]] = []
+    skipped: List[Dict[str, Any]] = []
+    for s in cands:
+        sid = s.get("claude_session_id", "")
+        target = await _target_for_session(s)
+        if not target:
+            skipped.append({"sid": sid, "why": "no unambiguous target instance for project_dir"})
+            continue
+        res = await _call("ide.claude_sessions.resume", claude_session_id=sid, instance_id=target)
+        acted.append({"sid": sid, "instance_id": target, "ok": bool(res and res.get("ok"))})
+    await emit_event({"type": "ide.claude_sessions.autoresume.tick",
+                      "auto": bool(pol.get("auto")), "candidates": len(cands),
+                      "acted": acted, "skipped": skipped})
+    return {"auto": bool(pol.get("auto")), "candidates": len(cands),
+            "acted": acted, "skipped": skipped}
+
+
+async def _autoresume_loop() -> None:
+    log.info("session auto-resume loop started (interval=%ss)", _auto_interval_s())
+    while True:
+        try:
+            await _autoresume_tick()
+        except asyncio.CancelledError:
+            log.info("session auto-resume loop cancelled")
+            raise
+        except Exception as e:                          # a bad tick must never kill the loop
+            log.warning("auto-resume tick failed: %s", e)
+        try:
+            await asyncio.sleep(_auto_interval_s())
+        except asyncio.CancelledError:
+            raise
+
+
+def _auto_running() -> bool:
+    return _AUTO_TASK is not None and not _AUTO_TASK.done()
+
+
+if True:  # control-cap registration
+
+    @capability(
+        "ide.claude_sessions.autoresume", http_method="POST",
+        http_path="/ide/claude_sessions/autoresume", http_tags=["ide", "claude_sessions"],
+        memory="on",
+        description="Control the Phase C AUTO-RESUME LOOP: the scheduled ticker that watches "
+                    "stalled sessions and resumes the resumable ones. action=start|stop|status|tick "
+                    "(default status). SAFE: starting it only OBSERVES (emits a tick event with the "
+                    "candidates it WOULD resume) unless the auto-resume policy is on "
+                    "(ide.claude_sessions.policy auto=on); even then every resume is guarded and an "
+                    "unresolved target is skipped. action=tick runs one pass now (respecting auto). "
+                    "Output: {ok, running, auto, interval_s, last_tick?}.",
+    )
+    async def cap_claude_sessions_autoresume(action: str = "status", trace_id=None) -> dict:
+        global _AUTO_TASK
+        action = (action or "status").strip().lower()
+        last = None
+        if action == "start":
+            if not _auto_running():
+                _AUTO_TASK = asyncio.ensure_future(_autoresume_loop())
+            await emit_event({"type": "ide.claude_sessions.autoresume.start"})
+        elif action == "stop":
+            if _auto_running():
+                _AUTO_TASK.cancel()
+            _AUTO_TASK = None
+            await emit_event({"type": "ide.claude_sessions.autoresume.stop"})
+        elif action == "tick":
+            last = await _autoresume_tick()
+        pol = await _get_policy()
+        out = {"ok": True, "running": _auto_running(), "auto": bool(pol.get("auto")),
+               "interval_s": _auto_interval_s()}
+        if last is not None:
+            out["last_tick"] = last
+        return out
+
+
+def _maybe_autostart_autoresume() -> None:
+    """Auto-start the loop at import ONLY if VERA_SESSION_AUTORESUME_ENABLED=1 (off by
+    default). Never raises — an import-time scheduling failure must not break module load."""
+    if not _auto_flag("VERA_SESSION_AUTORESUME_ENABLED"):
+        return
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return                              # loaded before the loop; start via the cap
+    try:
+        global _AUTO_TASK
+        _AUTO_TASK = asyncio.ensure_future(_autoresume_loop())
+        log.info("session auto-resume loop auto-started (VERA_SESSION_AUTORESUME_ENABLED=1)")
+    except Exception as e:
+        log.warning("auto-resume autostart skipped: %s", e)
+
+
+_maybe_autostart_autoresume()
