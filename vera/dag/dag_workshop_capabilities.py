@@ -10095,29 +10095,28 @@ async def _package_hint(session_id: str, language: str = "python") -> str:
     "code.author", memory="on",
     http_method="POST", http_path="/code/author", http_tags=["code", "fabric"],
     # rich_cap_signature() (the loop's per-step tool catalog) truncates this
-    # description to 300 chars — live-confirmed the OLD text cut off mid-
-    # sentence at "against the REAL " and NEVER reached "task (str! — what
-    # the file must do)" or the "USE THIS INSTEAD OF ... exec.*" warning, so
-    # a specialist saw a required `task` param with zero explanation of what
-    # it should contain and, by cycle 15+ of a long run, guessed wrong
-    # hundreds of times in a row (2026-08-12 live traces: 733-1081 code.
-    # author calls in single runs, most missing `task` entirely). The load-
-    # bearing sentence is now FIRST, so it survives the truncation.
-    description="task = WHAT the file must do, described in WORDS — never the code itself. "
-                "The CODING SPECIALIST writes it from your description (grounded, syntax-"
-                "checked, versioned). Already wrote the code? Pass it as content — verified "
-                "& saved, not discarded. NEVER hand-write code via exec.bash.run/"
-                "exec.python.run/ide.fs.write — use this instead; those skip versioning "
-                "and grounding. "
-                "Input: task (str — description; required unless content given), path (str! — "
-                "target filename, e.g. 'build_pokedex.py'), content (str — an already-drafted "
-                "file to verify/clean up instead of authoring from scratch), context_files "
-                "(str|list — files whose REAL content the code must work against, e.g. "
-                "['./http_get__x__c1.json']), language (str — inferred from `path` when "
-                "omitted), requirements (str — constraints, libraries, I/O contract), "
-                "session_id (str). "
-                "Output: {ok, path, fs_path, version, bytes, lang, chars}. Then RUN it with "
-                "exec.python.run(path=<path>).",
+    # description to 300 chars AND the auto-schema marks NO param required (every
+    # kwarg has a default), so a specialist is shown `task/path (default: "")`
+    # — i.e. everything looks OPTIONAL — with the real contract chopped off the
+    # end. That is why calls fumble (`code.author(language="html")`, path-only)
+    # and it looks like the cap "won't fire". FIX: the CALL CONTRACT is now the
+    # FIRST thing in the description — the exact shape + which args are required
+    # + a concrete NON-python example — so it survives the 300-char cut. The
+    # `_v5_heal_author_args` loop guard is the belt-and-braces backstop that
+    # fills task/path from the step when the model still omits them.
+    description="CREATE a source file — call code.author(path='<file.ext>', task='<plain-English "
+                "of WHAT to build; NOT code>'). path AND task are REQUIRED (or give "
+                "content='<code you already wrote>' instead of task). e.g. code.author("
+                "path='index.html', task='Pomodoro timer page: 25/5-min modes, Start/Pause/Reset "
+                "buttons, big MM:SS display, HTML+CSS+JS all inline'). A coding model writes the "
+                "file from your task, grounds it on context_files, syntax-checks + versions it. "
+                "Works for ANY source file (.py/.js/.ts/.html/.css/.sql/.sh/…) — ALWAYS use this "
+                "instead of writing code into ide.fs.write / exec.* (those skip grounding + "
+                "versioning). `task` is a DESCRIPTION/spec in words, never the code itself. "
+                "Optional: context_files (str|list — real files the code must read/match, e.g. "
+                "['./data.json']), language (inferred from path), requirements (libraries, I/O "
+                "contract). Output: {ok, path, fs_path, version, bytes, lang, chars}. To CHANGE "
+                "an existing file use code.edit instead; to RUN a script use exec.python.run(path=…).",
 )
 async def cap_code_author(task: str = "", path: str = "", context_files=None,
                           language: str = "", requirements: str = "",
