@@ -9433,6 +9433,40 @@ def _v5_navigate_goal_fallback(step: Dict[str, Any]) -> str:
     return goal[:300]
 
 
+_V5_AUTHOR_TOOLS = ("code.author", "prose.author", "code.edit")
+
+
+def _v5_heal_author_args(tool: str, args: Any,
+                         step: Dict[str, Any]) -> List[Tuple[str, Any, str]]:
+    """Fill an authoring cap's missing `task`/`path` from the STEP itself, so a
+    BUILD step doesn't burn 3-4 cycles on the specialist fumbling the contract
+    (observed EVERY run: code.author(language='html') / code.author() → "task is
+    required" before the model finally lands task/content+path).
+
+    The step already describes the file: its GOAL says what to do, its
+    SUCCESS/TITLE names the file. So:
+      • `task` empty AND no drafted `content` given → task = the step goal.
+      • `path` empty (code.author/prose.author) → the filename named in the
+        step's success criterion / title / goal.
+    Returns a list of (field, value, human-note) to apply; never overrides a
+    value the model actually provided. Pure — the caller applies + emits."""
+    out: List[Tuple[str, Any, str]] = []
+    if tool not in _V5_AUTHOR_TOOLS or not isinstance(args, dict):
+        return out
+    has_content = bool(str(args.get("content") or args.get("text") or "").strip())
+    if not str(args.get("task") or "").strip() and not has_content:
+        sg = str(step.get("goal") or step.get("title") or "").strip()
+        if sg:
+            out.append(("task", sg[:600], f"task (missing) → step goal: {sg[:80]}"))
+    if tool in ("code.author", "prose.author") and not str(args.get("path") or "").strip():
+        hay = " ".join(str(step.get(k) or "") for k in ("success", "title", "goal"))
+        m = _V5_FNAME_RE.search(hay)
+        if m:
+            p = m.group(0).lstrip("./")
+            out.append(("path", p, f"path (missing) → {p}"))
+    return out
+
+
 def _v5_arg_error_hint(tool: str, args: Any, err: str) -> str:
     """If `err` is a recoverable malformed-call error, return a precise correction
     telling the specialist to RETRY the same cap with fixed arguments (naming the
@@ -14637,6 +14671,24 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                                       "cycle": cur_cycle, "step_id": step_id, "tool": tool,
                                       "session_id": sid,
                                       "note": f"goal (missing) → step goal: {_step_goal[:100]}"})
+        # ── code.author / prose.author / code.edit missing `task`/`path` self-heal ──
+        # A BUILD step ("Create index.html") reliably burns 3-4 cycles because the
+        # specialist fumbles the authoring contract — observed live, EVERY run:
+        # code.author(language='html') → "task is required"; code.author(path=
+        # '/sandbox/index.html') → invented-path guard; code.author() empty →
+        # "task is required"; only the 4th call (content+path) lands. Each miss
+        # is a wasted GPU cycle and can trip a false step-retry (the step "ended"
+        # with no file → verify fails). The step ITSELF already says what the file
+        # is: its goal describes the work and its success criterion / title names
+        # the file. So when the model leaves `task` empty (and gave no drafted
+        # `content` to save instead), fill `task` from the step goal; when it
+        # leaves `path` empty, recover the target filename from the step's
+        # success/title/goal. Never overrides a real value the model DID provide.
+        for _fld, _val, _note in _v5_heal_author_args(tool, args, step):
+            args[_fld] = _val
+            await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
+                              "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                              "session_id": sid, "note": _note})
         # ── RUN-BEFORE-AUTHOR guard ─────────────────────────────────────────
         # The self-heal above only rescues a path whose basename WAS saved this
         # run. The other half of the failure is running a script that does not
