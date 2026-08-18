@@ -36,6 +36,11 @@ _HOST = socket.gethostname()
 # and was re-acquired by another process in the meantime.
 _RELEASE_LUA = ("if redis.call('get', KEYS[1]) == ARGV[1] "
                 "then return redis.call('del', KEYS[1]) else return 0 end")
+# Refresh the TTL only if we still own the slot — the heartbeat's owner-fenced
+# renew, so a lease that already expired and was re-taken by someone else is
+# never resurrected under them.
+_RENEW_LUA = ("if redis.call('get', KEYS[1]) == ARGV[1] "
+              "then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end")
 
 
 # ── pure policy/helpers (no I/O) ─────────────────────────────────────────────
@@ -60,9 +65,33 @@ def capacity_for(has_gpu: bool, env: Optional[Dict[str, str]] = None) -> int:
 
 def ttl_ms(env: Optional[Dict[str, str]] = None) -> int:
     """Slot-lease lifetime. Must comfortably outlast a full generation so a
-    long (but healthy) stream never loses its slot mid-flight. Default 30 min."""
+    long (but healthy) stream never loses its slot mid-flight. Default 30 min.
+
+    NOTE: this is the NON-renewed fallback TTL. The gate now holds a lease with
+    a SHORT renewable TTL (`lease_ttl_ms`) refreshed by a heartbeat while the
+    generation runs, so an ORPHANED slot (holder cancelled/crashed, heartbeat
+    stopped) self-heals within `lease_ttl_ms` instead of wedging the node for
+    the full 30 min. Kept for callers that acquire without a heartbeat."""
     env = os.environ if env is None else env
     return int(float(env.get("VERA_GATE_TTL_S", "1800") or 1800) * 1000)
+
+
+def lease_ttl_ms(env: Optional[Dict[str, str]] = None) -> int:
+    """SHORT, RENEWABLE lease TTL used with a heartbeat. An orphaned slot (the
+    holder was cancelled/crashed and its heartbeat stopped) expires within this
+    window — so a wedged GPU self-heals in ~a minute instead of the 30-min hard
+    TTL that repeatedly blocked the node (2026-08-18). A LIVE generation keeps
+    its slot indefinitely because the heartbeat renews it well before expiry."""
+    env = os.environ if env is None else env
+    return int(float(env.get("VERA_GATE_LEASE_TTL_S", "90") or 90) * 1000)
+
+
+def renew_interval_s(env: Optional[Dict[str, str]] = None) -> float:
+    """How often the heartbeat refreshes a held lease. Comfortably shorter than
+    `lease_ttl_ms` (default 30s vs 90s) so two missed beats still don't expire a
+    live slot, while an orphan is gone within one lease TTL."""
+    env = os.environ if env is None else env
+    return float(env.get("VERA_GATE_RENEW_S", "30") or 30)
 
 
 def wait_s(env: Optional[Dict[str, str]] = None) -> float:
@@ -114,6 +143,20 @@ async def release(r, lease: Optional[Dict[str, Any]]) -> bool:
         return False
     try:
         res = await r.eval(_RELEASE_LUA, 1, lease["key"], lease["owner"])
+        return bool(res)
+    except Exception:
+        return False
+
+
+async def renew(r, lease: Optional[Dict[str, Any]], ttl: int) -> bool:
+    """Refresh a held slot's TTL to `ttl` ms, owner-fenced (only if we still own
+    it). The heartbeat's primitive: a live generation calls this on an interval
+    so its short lease never expires; when the holder is gone the calls stop and
+    the slot expires on its own. Never raises."""
+    if not lease or r is None:
+        return False
+    try:
+        res = await r.eval(_RENEW_LUA, 1, lease["key"], lease["owner"], int(ttl))
         return bool(res)
     except Exception:
         return False
