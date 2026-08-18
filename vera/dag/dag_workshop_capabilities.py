@@ -10118,19 +10118,19 @@ async def _package_hint(session_id: str, language: str = "python") -> str:
     # contract off the end and caused the fumbling, is fixed.) The
     # `_v5_heal_author_args` loop guard is the belt-and-braces backstop that
     # fills task/path from the step when the model still omits them.
-    description="CREATE a source file — call code.author(path='<file.ext>', task='<plain-English "
-                "of WHAT to build; NOT code>'). path AND task are REQUIRED (or give "
-                "content='<code you already wrote>' instead of task). e.g. code.author("
-                "path='index.html', task='Pomodoro timer page: 25/5-min modes, Start/Pause/Reset "
-                "buttons, big MM:SS display, HTML+CSS+JS all inline'). A coding model writes the "
-                "file from your task, grounds it on context_files, syntax-checks + versions it. "
-                "Works for ANY source file (.py/.js/.ts/.html/.css/.sql/.sh/…) — ALWAYS use this "
-                "instead of writing code into ide.fs.write / exec.* (those skip grounding + "
-                "versioning). `task` is a DESCRIPTION/spec in words, never the code itself. "
-                "Optional: context_files (str|list — real files the code must read/match, e.g. "
-                "['./data.json']), language (inferred from path), requirements (libraries, I/O "
-                "contract). Output: {ok, path, fs_path, version, bytes, lang, chars}. To CHANGE "
-                "an existing file use code.edit instead; to RUN a script use exec.python.run(path=…).",
+    description="GENERATE a source file — call code.author(path='<file.ext>', task='<plain-English "
+                "description of WHAT to build>'). path AND task are BOTH REQUIRED. code.author "
+                "WRITES THE CODE FOR YOU from your task (a coding model generates it, grounded + "
+                "syntax-checked + versioned) — you DESCRIBE the file in words; you do NOT write, "
+                "paste, or hand over code, EVER. e.g. code.author(path='index.html', task='Pomodoro "
+                "timer page: 25/5-min modes, Start/Pause/Reset buttons, big MM:SS display, all "
+                "HTML+CSS+JS inline'). Works for ANY source file (.py/.js/.ts/.html/.css/.sql/.sh/…) "
+                "— ALWAYS use this to produce code; NEVER write code yourself into ide.fs.write / "
+                "exec.* / a fenced block. `task` is a SPEC in words, never code. Optional: "
+                "context_files (str|list — real files the code must read/match, e.g. ['./data.json']), "
+                "language (inferred from path), requirements (libraries, I/O contract). Output: "
+                "{ok, path, fs_path, version, bytes, lang, chars}. To CHANGE an existing file use "
+                "code.edit; to RUN a script use exec.python.run(path=…).",
 )
 async def cap_code_author(task: str = "", path: str = "", context_files=None,
                           language: str = "", requirements: str = "",
@@ -10146,24 +10146,22 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
     that always routes to the coder, always grounds on the named files, always
     lands a real file on disk, versioned."""
     task = str(task or "").strip()
-    if not task and str(content or "").strip():
-        # Mirrors prose.author's established recovery for the exact same
-        # mistake (see its own docstring note): a specialist that had
-        # already hand-authored the code itself called this the ide.fs.write
-        # way — path= + content=. Previously `content` wasn't an accepted
-        # param at all, so it was silently dropped by the caller's arg-
-        # coercion layer, the call then failed on missing `task`, and the
-        # code the specialist had just written was lost outright — not even
-        # salvaged. Recover instead: the draft becomes material for the
-        # SAME coder role to verify/clean up and version, rather than
-        # discarded and re-attempted from scratch (live-observed: this
-        # exact failure recurring hundreds of times in one run).
-        task = ("The following code was already drafted — verify it is correct and "
-                "complete, fix anything wrong, and write the final version:\n\n"
-                + str(content).strip()[:12000])
+    # code.author GENERATES code from a DESCRIPTION — its whole purpose is to hand
+    # the writing to the coding specialist. It must NEVER be given code to merely
+    # save: a caller that wrote the code itself and passed it as `content` (or
+    # pasted code into `task`) has bypassed the coder entirely, which is the exact
+    # anti-pattern this cap exists to prevent. REFUSE it and redirect to the right
+    # usage rather than silently saving the caller's code.
+    if str(content or "").strip() and not task:
+        return {"ok": False, "error": (
+            "code.author GENERATES the code for you — do NOT write or paste code into it. "
+            "Describe WHAT to build in plain English via task='...' and the coding model "
+            "writes the file. e.g. code.author(path='index.html', task='Pomodoro timer page: "
+            "25/5-min modes, Start/Pause/Reset buttons, big MM:SS display, all HTML+CSS+JS "
+            "inline'). Never author the code yourself and hand it over.")}
     if not task:
-        return {"ok": False, "error": "task is required — describe what the file must do "
-                                       "(or pass content with an existing draft to verify and save)"}
+        return {"ok": False, "error": "task is required — describe WHAT to build, in words, "
+                                       "not code (code.author writes the code for you)."}
     path = _code_norm_path(str(path or "").strip()) or "generated.py"
     # Redirect a PROSE/DOCUMENT file to prose.author — .md/.txt/.rst are documents,
     # not code, and must be authored by the WRITER role (grounded on the real file
@@ -12998,8 +12996,14 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             "it must read>]). It hands the job to the CODING specialist, shows it the ACTUAL "
             "content of those files so the code is written against the real structure, and saves "
             "+ versions the file for you. Then run it: exec.python.run(path='<file>').\n"
-            "  • Do NOT type code into ide.fs.write, exec.* or a heredoc — that skips the coding "
-            "model, the grounding and the versioning, and is refused.\n"
+            "  • `task` is a DESCRIPTION IN PLAIN ENGLISH of the file — its purpose, features, "
+            "structure — NEVER the code. code.author's coding model WRITES the code from it. If "
+            "you catch yourself typing HTML/JS/CSS/Python, STOP: describe it in a sentence or two "
+            "and let code.author write it.\n"
+            "  • Do NOT write the code yourself and hand it over — not into ide.fs.write / exec.* / "
+            "a heredoc / a fenced block, and NOT into code.author's `content` (dumping your own "
+            "code for it to merely save bypasses the coding model — it is REFUSED). You DESCRIBE; "
+            "code.author GENERATES.\n"
             "  • Do NOT use llm.generate for code.\n"
             "  • ALWAYS pass context_files when the code reads a file this run produced — a "
             "script written without seeing the real data guesses the schema and returns nothing.\n"
