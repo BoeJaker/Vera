@@ -11736,6 +11736,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
                                want_success: bool = False,
                                phase_policy: str = "sparingly",
                                allowed_phases: Optional[List[str]] = None,
+                               intent: str = "mixed",
                                sid: str = "", stream_id: str = "") -> Dict[str, Any]:
     """ONE LLM call: decompose the goal into an ordered step plan. Each step names
     only the few caps and skills it needs. Folds triage+step-select+plan into a
@@ -11782,18 +11783,18 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
         for s in skills) or "  (none)"
     # Stripped-down schema used as a RETRY when the full prompt yields no parseable
     # steps — small models handle this minimal instruction far more reliably.
+    _intent_directive = _v7_intent_plan_directive(intent, max_steps=max_steps)
     if minimal:
         sys = (
-            "Break the GOAL into an ordered list of steps — ONE step per distinct unit of work, "
-            "research/lookup steps BEFORE the steps that use them (up to " + str(max_steps) + "). "
+            (_intent_directive + "\n" if _intent_directive else "")
+            + "Break the GOAL into an ordered list of steps — ONE step per distinct unit of work, "
+            "information-gathering steps (only when the goal needs EXTERNAL facts) BEFORE the steps "
+            "that use them (up to " + str(max_steps) + "). "
             "For each step give a short PLAIN-LANGUAGE title describing the work (NOT a "
             "capability name), a one-line goal, and the EXACT capability names it "
-            "needs from the catalog. Use web.search / web.fetch to look things up (NEVER "
-            "llm.generate for research); llm.generate to write code or PROSE; exec.python.run / "
-            "exec.bash.run to run it. For real-world DATA / a dataset / populating or editing a "
-            "data file, FETCH or COMPUTE it with a script (exec.python.run / web.*), NEVER "
-            "llm.generate — it fabricates data.\n"
-            "Return ONLY this JSON object — no prose, no markdown, and NOT a bare array:\n"
+            "needs from the catalog.\n"
+            + _V7_CAP_ROUTING
+            + "Return ONLY this JSON object — no prose, no markdown, and NOT a bare array:\n"
             '{"steps":[{"id":1,"title":"<plain-language description, not a cap name>",'
             '"goal":"<what to achieve>",'
             '"caps":["cap.name"],"needs":[]'
@@ -11878,7 +11879,8 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
         "You are an ORCHESTRATOR. Turn the GOAL into a COMPLETE, ordered plan of steps. "
         "Each step is handed to a focused specialist sub-agent that can ONLY use the "
         "capabilities and skills you assign it.\n"
-        "RIGHT-SIZE THE PLAN: use as many steps as the task genuinely needs — and no more. "
+        + (_intent_directive + "\n" if _intent_directive else "")
+        + "RIGHT-SIZE THE PLAN: use as many steps as the task genuinely needs — and no more. "
         "A trivial goal may be ONE step; a substantial goal (e.g. research + design + build + "
         "test + document) deserves a thorough multi-step plan with a SEPARATE step for each "
         "distinct unit of work. Do NOT under-plan: cramming unrelated work into one step is the "
@@ -17261,17 +17263,11 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
         "For inserted/replanned steps use the SAME shape as the original plan: a plain-"
         "language title, a goal, the exact `caps` names from the catalog, and a checkable "
         "`success` criterion. NEVER put planning/DAG capabilities in a step.\n"
-        "PICK CAPS FOR WHAT THE STEP ACTUALLY DOES, not the caps nearby steps happened to "
-        "use. A step whose job is WRITING — synthesising a report/summary/article/document "
-        "from data already gathered — needs `llm.generate` in its caps. Do NOT give it only "
-        "exec.*/code.author: those write and run SCRIPTS; asked to 'synthesize a report' with "
-        "no llm.generate, the only thing a script CAN do is fake it with keyword-matching "
-        "heuristics standing in for actually understanding the source material — which is "
-        "worse than no report. Conversely, a step whose job is FETCHING/COMPUTING real data "
-        "needs exec.*/http.*/web.* — llm.generate must not be its only cap there, it "
-        "fabricates facts it wasn't given. Most steps need BOTH capability families when "
-        "they read real data (exec.python.run to parse the file) AND then write prose "
-        "from it (llm.generate to compose the actual document).\n"
+        "PICK CAPS FOR WHAT THE STEP ACTUALLY DOES, not the caps nearby steps happened to use. "
+        "Match the deliverable to the right cap:\n"
+        + _V7_CAP_ROUTING
+        + "A step that reads real data AND writes a document from it needs BOTH families (e.g. "
+        "exec.python.run to parse the file, then prose.author to compose the document grounded on it).\n"
         "VERIFICATION STEPS: when a claimed result needs PROOF (code that 'works', an API "
         "that 'responds', an edit that 'applied', a system state), insert a verification "
         "step with exec caps (exec.python.run / exec.bash.run + code.read/ide.fs.read) and "
@@ -18324,11 +18320,9 @@ async def _v6_adjust_step(failed_step: Dict[str, Any], failed_res: Dict[str, Any
         "has). Keep the SAME success criterion UNLESS the user answered a question mid-step that "
         "changes it — see USER STEERED below; in that case adjust the criterion to match what "
         "they actually asked for instead of re-proposing the thing they said to skip. Use ONLY "
-        "the available capabilities (by exact name). If the step's job is WRITING — "
-        "synthesising a report/summary/document from data already gathered — its caps must "
-        "include `llm.generate`; exec.*/code.author write and run scripts, and a script asked "
-        "to 'synthesize' prose can only fake it with keyword-matching instead of actually "
-        "understanding the material. " + _phase_hint + "\n"
+        "the available capabilities (by exact name), matching the deliverable to the right cap:\n"
+        + _V7_CAP_ROUTING
+        + _phase_hint + "\n"
         'Respond ONLY with JSON: {"title":"<plain-language>","goal":"<the adjusted approach, '
         'naming what went wrong and how this navigates it>","caps":["cap.name"],"phases":[],'
         '"success":"<same checkable criterion>"}')
@@ -18877,6 +18871,191 @@ async def _v7_decide_tier(goal: str, catalog_brief: str, *, plan_tier: str,
         suppressed = True
     return {"tier": tier, "suggested": suggested, "heuristic": heur, "llm": llm,
             "reason": reason, "escalation_suppressed": suppressed}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  GOAL INTENT — the KIND of work, orthogonal to the tier (which is SIZE).
+#
+#  The tier decides how big the plan is; the INTENT decides its SHAPE and which
+#  capability families it should reach for. A goal that is producible directly
+#  from the model's own knowledge (a small app/script/component, a document from
+#  a given spec) must NOT be planned as a research pipeline — the planner's
+#  standing "information first, look it up on the web" bias was turning
+#  "create a pomodoro app" into "search GitHub for an example, fetch it, replicate
+#  it", which then thrashed and produced empty files. Intent fixes that at the
+#  source: a BUILD goal plans DIRECT authoring; only RESEARCH/MIXED goals plan
+#  lookups.
+#    build     → produce a self-contained deliverable from knowledge (author it)
+#    research  → gather EXTERNAL facts/data the model does not have (look it up)
+#    action    → run / operate / inspect a system (exec / http / infra)
+#    mixed     → needs external info AND then builds/writes from it
+# ═════════════════════════════════════════════════════════════════════════════
+_V7_INTENTS = ("build", "research", "action", "mixed")
+
+# Deliverables a model can author directly from its own knowledge.
+_V7_BUILD_NOUNS = (
+    "app", "application", "website", "web page", "webpage", "page", "site",
+    "script", "program", "programme", "component", "widget", "game", "tool",
+    "cli", "api", "server", "bot", "form", "dashboard", "landing page", "ui",
+    "function", "class", "module", "library", "algorithm", "snippet", "prototype",
+    "readme", "document", "doc", "report", "essay", "story", "poem", "article",
+    "letter", "email", "spec", "plan", "outline", "template", "config",
+    "timer", "calculator", "converter", "clock", "todo", "to-do", "quiz")
+_V7_BUILD_VERBS = (
+    "create", "build", "make", "write", "implement", "code", "develop",
+    "generate", "author", "draft", "design", "compose", "produce")
+# External-information signals — the model does NOT have this in its weights.
+_V7_RESEARCH_WORDS = (
+    "research", "look up", "lookup", "find out", "investigate", "search for",
+    "latest", "current", "today", "news", "recent", "up to date", "up-to-date",
+    "compare", "gather", "collect data", "dataset of", "real data", "statistics",
+    "prices", "who is", "what is the latest", "trends", "reviews", "osint",
+    "scrape", "crawl", "fetch the", "download the", "from the web", "online")
+_V7_ACTION_WORDS = (
+    "run ", "execute", "deploy", "install", "configure", "provision", "restart",
+    "scan ", "monitor", "check the", "fix the", "debug", "restart", "kill",
+    "start the", "stop the", "ssh", "operate", "inspect", "audit the system",
+    "set up the", "spin up", "migrate the")
+
+
+def _v7_intent_heuristic(goal: str) -> str:
+    """Cheap, deterministic intent floor from the goal text — no LLM call. Leans
+    conservative: a clear self-contained build/write with no external-info words
+    is 'build'; anything naming external lookup is 'research' (or 'mixed' when it
+    ALSO builds); system operations are 'action'. Ambiguous → 'mixed' so the
+    planner keeps its normal latitude rather than being wrongly narrowed."""
+    g = (goal or "").lower().strip()
+    if not g:
+        return "mixed"
+    has_research = any(w in g for w in _V7_RESEARCH_WORDS)
+    has_action = any(w in g for w in _V7_ACTION_WORDS)
+    has_build = (any(v in g for v in _V7_BUILD_VERBS)
+                 and any(n in g for n in _V7_BUILD_NOUNS))
+    if has_build and has_research:
+        return "mixed"
+    if has_build and not has_action:
+        return "build"
+    if has_action and not has_build:
+        return "action"
+    if has_research:
+        return "research"
+    return "mixed"
+
+
+async def _v7_classify_intent(goal: str, heuristic_intent: str, *, model: str,
+                              instance_id: str, prefer_gpu: bool) -> Dict[str, Any]:
+    """Less-prescriptive LLM intent pre-pass. Returns {intent, reason}. Best-effort:
+    on any failure it falls back to the heuristic so planning never stalls."""
+    sys = (
+        "You classify the KIND of an agentic goal, so the planner picks the right shape. "
+        "Choose EXACTLY one:\n"
+        "  • build    — the deliverable can be produced DIRECTLY from your own knowledge and skill: "
+        "a small/medium app, website, script, program, component, game, or a document written from a "
+        "given spec (README, report, essay, story). NO external facts are required to make it.\n"
+        "  • research — the goal needs EXTERNAL, CURRENT, or FACTUAL information you do NOT already "
+        "have: looking things up, news/prices/latest data, comparing real options, collecting a real "
+        "dataset, OSINT.\n"
+        "  • action   — the goal is to RUN or OPERATE a system: execute commands, deploy, install, "
+        "configure, scan, monitor, fix/debug a live system.\n"
+        "  • mixed    — it genuinely needs external information AND then builds/writes something from "
+        "it (e.g. 'look up X, then build Y from it').\n"
+        "KEY TEST for build vs research: could a skilled person WRITE THE DELIVERABLE right now from "
+        "knowledge alone, with no internet? If yes → build. 'Create a pomodoro app', 'write a snake "
+        "game', 'draft a README for this repo' are BUILD — do not call them research just because an "
+        "example exists online; you don't need it. Prefer the SIMPLEST intent that fits.\n"
+        'Respond ONLY with JSON: {"intent":"build|research|action|mixed","reason":"<one sentence>"}')
+    prompt = (f"GOAL: {goal[:1000]}\n\nA cheap heuristic suggests: {heuristic_intent}.\n"
+              "Which intent best fits?")
+    try:
+        raw = await _safe_ollama_generate_dw(
+            prompt, system=sys, model=model, instance_id=instance_id,
+            prefer_gpu=prefer_gpu, json_mode=True, timeout=_V5_UTILITY_TIMEOUT,
+            profile=LOOP_ROUTING_PROFILE, role="tier")
+        obj = _extract_json(_strip_think(raw or "")[0]) or {}
+        intent = str(obj.get("intent") or "").strip().lower()
+        if intent in _V7_INTENTS:
+            return {"intent": intent, "reason": str(obj.get("reason") or "")[:300]}
+    except Exception as e:
+        log.debug("v7 intent classify failed: %s", e)
+    return {"intent": heuristic_intent, "reason": ""}
+
+
+async def _v7_decide_intent(goal: str, *, use_llm: bool, model: str,
+                            instance_id: str, prefer_gpu: bool) -> Dict[str, Any]:
+    """Effective goal intent (heuristic floor + optional LLM pre-pass). The LLM may
+    OVERRIDE the heuristic (unlike the tier, which only escalates) because intent
+    is a category, not a magnitude — the heuristic's 'mixed' default in particular
+    should yield to a confident LLM 'build'/'research'. Returns {intent, heuristic,
+    llm, reason}."""
+    heur = _v7_intent_heuristic(goal)
+    llm = ""
+    reason = ""
+    if use_llm:
+        c = await _v7_classify_intent(goal, heur, model=model,
+                                      instance_id=instance_id, prefer_gpu=prefer_gpu)
+        llm = c["intent"]; reason = c["reason"]
+    intent = llm if llm in _V7_INTENTS else heur
+    return {"intent": intent, "heuristic": heur, "llm": llm, "reason": reason}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  CANONICAL CAPABILITY ROUTING — ONE source of truth cited by the planner, the
+#  step specialist, and the controller/replan pass, so all three agree on which
+#  cap does what (they used to disagree: the planner said "llm.generate for
+#  prose" while the specialist notes said "prose.author, NEVER llm.generate" and
+#  the controller said "writing a report needs llm.generate" — mixed signals that
+#  made the specialist pick the wrong tool).
+# ═════════════════════════════════════════════════════════════════════════════
+_V7_CAP_ROUTING = (
+    "CAPABILITY ROUTING — match the deliverable to the RIGHT cap (one source of truth):\n"
+    "  • SOURCE CODE (.py/.js/.ts/.html/.css/.sh/.go/…) → code.author (creates) / code.edit "
+    "(surgical change). The coding specialist writes it, grounded on any context_files, "
+    "syntax-checked and versioned. NEVER llm.generate, ide.fs.write, or a heredoc for code.\n"
+    "  • A DOCUMENT (README, report, article, essay, spec, notes — .md/.txt/.rst) → prose.author, "
+    "grounded on the real files it describes. NEVER hand-write it via llm.generate + ide.fs.write.\n"
+    "  • REAL-WORLD DATA (a dataset, factual records, API results, a populated JSON/CSV) → FETCH it "
+    "(web.* / http.get / a script hitting the source API) and PARSE it with a script (exec.python.run). "
+    "NEVER llm.generate as the data source — it fabricates plausible-but-wrong values.\n"
+    "  • EXTERNAL / CURRENT FACTS (a person, company, price, news, docs, anything online) → web.search "
+    "then web.fetch / http.get (browser.navigate for JS-heavy sites). memory.seek / fabric.query search "
+    "ONLY Vera's already-stored data, never the live web.\n"
+    "  • RUN / OPERATE something (a command, a build, a deploy, a check) → exec.bash.run / exec.python.run "
+    "/ http.*. llm.* CANNOT run, fetch, or read anything — it only writes/transforms text you give it.\n"
+    "  • llm.generate is ONLY for authoring/transforming text FROM what you already provide (summarise, "
+    "rewrite, explain) — never to look something up, run something, produce code, or invent data.\n")
+
+
+def _v7_intent_plan_directive(intent: str, *, max_steps: int = 8) -> str:
+    """The intent-specific plan-SHAPE directive injected into the planner prompt.
+    This is what stops a self-contained BUILD goal being planned as a research
+    pipeline. Empty for 'mixed' (the planner keeps its normal, unnarrowed latitude)."""
+    it = (intent or "").strip().lower()
+    if it == "build":
+        return (
+            "GOAL INTENT = BUILD. This deliverable is producible DIRECTLY from your own knowledge — "
+            "you do NOT need to look anything up. Plan DIRECT AUTHORING and NOTHING ELSE:\n"
+            "  • ONE authoring step PER file — code.author for each source file (index.html, style.css, "
+            "script.js, main.py, …), prose.author for each document. Give each a concrete `success` "
+            "naming that exact file.\n"
+            "  • Do NOT plan research/search/'find an example'/'fetch a repo' steps, and do NOT add "
+            "web.search / web.fetch / http.get / exec curl to any step — there is nothing external to "
+            "get. Do NOT plan a step to 'analyse an existing example'.\n"
+            "  • You MAY add ONE final step to assemble/verify (e.g. open the page / run the script and "
+            "confirm it works) using exec.* or a read — but only the ONE, at the end.\n"
+            "  • Prefer the FEWEST steps that produce every required file. A 3-file web app is ~3 author "
+            "steps + maybe 1 verify — not a research project.\n")
+    if it == "research":
+        return (
+            "GOAL INTENT = RESEARCH. The goal needs EXTERNAL/CURRENT information you do not have. Plan "
+            "information-gathering FIRST (web.search → web.fetch/http.get), each step ending in concrete "
+            "notes, THEN the step(s) that use those findings, wired with `needs`. Never use llm.generate "
+            "to 'look up' or invent facts.\n")
+    if it == "action":
+        return (
+            "GOAL INTENT = ACTION. The goal is to run/operate/inspect a system. Plan concrete exec.* / "
+            "http.* / infra steps that actually perform and then VERIFY the operation (a read-only check "
+            "of the resulting state). Do not pad with research or authoring the task did not ask for.\n")
+    return ""   # mixed → no narrowing; the planner's general guidance applies
 
 
 _V7_GOAL_STOPWORDS = {
@@ -20272,6 +20451,7 @@ async def cap_dag_agent_loop_v6(
     # 'extreme', which it almost never did). `single` also skips recon.
     tier = "simple"
     tier_info: Dict[str, Any] = {}
+    intent = "mixed"          # goal KIND (build/research/action/mixed) — see below
     if enable_tiering:
         _tier_catalog_brief = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names[:24])
         tier_info = await _v7_decide_tier(
@@ -20286,6 +20466,18 @@ async def cap_dag_agent_loop_v6(
                           "llm": tier_info.get("llm", ""),
                           "reason": tier_info.get("reason", ""),
                           "escalation_suppressed": tier_info.get("escalation_suppressed", False)})
+        # GOAL INTENT (build/research/action/mixed) — the KIND of work, which
+        # drives the plan SHAPE (direct-authoring vs research-first) and the
+        # phase/HITL tuning below. Same cheap LLM budget as the tier pass.
+        _intent_info = await _v7_decide_intent(
+            goal, use_llm=(plan_tier or "auto").strip().lower() == "auto",
+            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu)
+        intent = _intent_info.get("intent", "mixed")
+        await emit_event({"type": "agent_loop_v6.intent", "session_id": sid,
+                          "stream_id": stream_id, "intent": intent,
+                          "heuristic": _intent_info.get("heuristic", ""),
+                          "llm": _intent_info.get("llm", ""),
+                          "reason": _intent_info.get("reason", "")})
     # The strategic MASTER PLANNER (long-form specialist plan) fires ONLY for a
     # 'strategic' (open-ended / multi-day) goal now. 'complex' is the middle layer:
     # a thorough MULTI-STEP normal plan from the orchestrator, NO master planner —
@@ -20391,6 +20583,22 @@ async def cap_dag_agent_loop_v6(
     else:  # auto
         phase_policy = ("encouraged" if _v7_tier_rank(tier) >= _v7_tier_rank("complex")
                         else "sparingly")
+        # A BUILD goal is direct authoring: a step is code.author/prose.author,
+        # and each authoring cap already grounds + (for code) syntax-checks its
+        # output. Forcing explore/act/verify sub-agents on every file just
+        # triples the cost and was where the phase-boundary bugs lived. Keep
+        # BUILD light even when its size tiers 'complex' (a big app is still
+        # authoring, not research); strategic still escalates.
+        if intent == "build" and tier != "strategic":
+            phase_policy = "sparingly"
+    # AUTONOMOUS-RUN HITL: a BUILD goal is self-contained — it should choose
+    # sensible defaults and state them, never block ~180s on a question no
+    # attached human is going to answer (observed live: a pomodoro build stalled
+    # asking whether to fetch a GitHub repo). Turn step-questions OFF for a build;
+    # the step runner already instructs the specialist to pick a sensible default
+    # and state it when it would otherwise ask.
+    if intent == "build":
+        enable_step_questions = False
     # STRUCTURED JOURNAL: a rolling structured record (key outputs, files/paths,
     # tools used, entities) distilled from each step, persisted to the data fabric
     # (+ a JSON mirror in the artifact dir) and folded back into later steps so the
@@ -20411,13 +20619,13 @@ async def cap_dag_agent_loop_v6(
         plan_goal, catalog_names, skills, cap_skill_map,
         model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
         max_steps=max_steps, want_success=True, phase_policy=phase_policy,
-        allowed_phases=allowed_phases, sid=sid, stream_id=stream_id)
+        allowed_phases=allowed_phases, intent=intent, sid=sid, stream_id=stream_id)
     if not plan.get("steps"):
         retry = await _v5_orchestrate_plan(
             plan_goal, catalog_names, skills, cap_skill_map,
             model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
             max_steps=max_steps, minimal=True, want_success=True,
-            phase_policy=phase_policy)
+            phase_policy=phase_policy, intent=intent)
         if retry.get("steps"):
             plan = retry
     # Fall-through "complex planning mode": both plan passes yielded no usable
@@ -20564,7 +20772,7 @@ async def cap_dag_agent_loop_v6(
                     model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
                     max_steps=max_steps, recon_findings="\n\n".join(accumulated),
                     recon_rounds_left=rounds_left_after, want_success=True,
-                    phase_policy=phase_policy, allowed_phases=allowed_phases)
+                    phase_policy=phase_policy, allowed_phases=allowed_phases, intent=intent)
             except Exception as e:
                 log.debug("v6 recon re-plan round %d failed: %s", rnd, e)
                 break
