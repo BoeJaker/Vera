@@ -59,6 +59,15 @@ def test_build_directive_forbids_research_steps():
     assert "web.search" in d  # named as something NOT to add
 
 
+def test_build_directive_prefers_self_contained_and_links_on_split():
+    d = W._v7_intent_plan_directive("build")
+    # Default a small app to ONE self-contained file...
+    assert "self-contained" in d.lower()
+    assert "single code.author" in d.lower() or "one self-contained" in d.lower()
+    # ...but when split, files must LINK siblings, not inline them.
+    assert "link" in d.lower() and ("sibling" in d.lower() or "src" in d.lower())
+
+
 def test_research_and_action_directives_present_mixed_empty():
     assert "RESEARCH" in W._v7_intent_plan_directive("research")
     assert "ACTION" in W._v7_intent_plan_directive("action")
