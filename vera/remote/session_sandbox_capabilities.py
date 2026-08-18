@@ -344,6 +344,144 @@ def _dk():
     return None
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  LOCAL (IN-CONTAINER) BACKEND
+#
+#  A session sandbox normally IS a dedicated docker container. But this same
+#  code runs INSIDE a Loop-Lab dev sandbox — itself a container with NO docker
+#  socket and no docker CLI — where `docker run` is impossible, so the loop's
+#  file-authoring / exec steps had nowhere to go and the run couldn't produce
+#  anything. Rather than nest containers (docker-in-docker), the dev container
+#  USES ITSELF as the sandbox: exec runs as a local subprocess and files live on
+#  its own filesystem under a workspace dir. Everything already funnels through
+#  `_exec_in`, so a single local branch there (plus recognising a local record
+#  in the routing gates) makes the whole surface work.
+#
+#  SAFETY — this path is INERT wherever real docker exists. The trigger is a
+#  STRUCTURAL absence of docker (no socket, no DOCKER_HOST, no `docker` on PATH),
+#  a deterministic fact that a transient daemon hiccup can NOT flip — so prod
+#  (which has the socket) never takes the local path and its behaviour is
+#  completely unchanged.
+# ─────────────────────────────────────────────────────────────────────────────
+_LOCAL_BACKEND = "local"
+# One shared local workspace for the whole process (this container IS the one
+# "container"), resolved once to the first writable of: an explicit override,
+# the canonical /workspace (so absolute /workspace/... references still resolve),
+# then a temp dir. Cached so every session in this process agrees on it.
+_LOCAL_WS_CACHE: Optional[str] = None
+_DOCKER_ABSENT_CACHE: Optional[bool] = None
+
+
+def _docker_structurally_absent() -> bool:
+    """True only when docker is STRUCTURALLY unavailable to THIS process: no
+    DOCKER_HOST, no /var/run/docker.sock, and no `docker` binary on PATH. This is
+    a fact about the environment, not a live daemon probe, so it can never be
+    flipped by a transient error — prod (socket present) is always False here."""
+    global _DOCKER_ABSENT_CACHE
+    if _DOCKER_ABSENT_CACHE is not None:
+        return _DOCKER_ABSENT_CACHE
+    absent = True
+    try:
+        if os.environ.get("DOCKER_HOST"):
+            absent = False
+        elif os.path.exists("/var/run/docker.sock"):
+            absent = False
+        elif shutil.which("docker"):
+            absent = False
+    except Exception:
+        absent = False   # unsure → assume docker present (never divert prod)
+    _DOCKER_ABSENT_CACHE = absent
+    return absent
+
+
+def _local_backend_ok(docker_host_id: str = "") -> bool:
+    """Should this session use the local in-container backend? Only when docker is
+    structurally absent AND the target host is the (missing) LOCAL one — a session
+    explicitly pinned to a reachable REMOTE docker host must still use docker."""
+    hid = (docker_host_id or "local").strip().lower()
+    if hid not in ("", "local"):
+        return False
+    return _docker_structurally_absent()
+
+
+def _local_ws_dir() -> str:
+    """The one local workspace dir for this process, created on first use."""
+    global _LOCAL_WS_CACHE
+    if _LOCAL_WS_CACHE:
+        return _LOCAL_WS_CACHE
+    candidates = [
+        os.environ.get("VERA_LOCAL_SANDBOX_ROOT", "").strip(),
+        _WORKDIR,   # "/workspace" — matches the absolute paths caps emit
+        os.path.join(tempfile.gettempdir(), "vera-local-workspace"),
+    ]
+    for cand in candidates:
+        if not cand:
+            continue
+        try:
+            os.makedirs(cand, exist_ok=True)
+            probe = os.path.join(cand, ".vera_wtest")
+            with open(probe, "w") as f:
+                f.write("x")
+            os.remove(probe)
+            _LOCAL_WS_CACHE = cand
+            return cand
+        except Exception:
+            continue
+    # Last resort — a unique temp dir that must be creatable.
+    _LOCAL_WS_CACHE = tempfile.mkdtemp(prefix="vera-local-ws-")
+    return _LOCAL_WS_CACHE
+
+
+def _local_rec(session_id: str, *, active: bool = True, kind: str = "session",
+               label: str = "") -> Dict:
+    """A sandbox record for the local backend — shaped like a docker one so the
+    rest of the module (list/status/routing) reads it uniformly."""
+    return {"session_id": session_id, "container": f"local:{_cname(session_id)}",
+            "backend": _LOCAL_BACKEND, "workdir": _local_ws_dir(),
+            "image": _LOCAL_BACKEND, "active": bool(active),
+            "kind": kind or "session", "label": label or "",
+            "created_at": now_iso(), "sessions": [session_id]}
+
+
+def _is_local_rec(rec: Optional[Dict]) -> bool:
+    return bool(rec) and rec.get("backend") == _LOCAL_BACKEND
+
+
+async def _exec_local(command: str, *, workdir: str = "", timeout: int = 120,
+                      shell: str = "sh") -> Dict:
+    """Run `command` as a LOCAL subprocess in this container (the local backend's
+    equivalent of `docker exec`). Returns the same exec-shaped dict `_exec_in`
+    does for the docker path."""
+    wd = workdir or _local_ws_dir()
+    try:
+        os.makedirs(wd, exist_ok=True)
+    except Exception:
+        pass
+    argv = _shell_argv(shell, command)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *argv, cwd=wd,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            stdin=asyncio.subprocess.DEVNULL)
+    except FileNotFoundError as e:
+        return {"ok": False, "rc": 127, "stdout": "", "stderr": str(e),
+                "sandboxed": True, "backend": _LOCAL_BACKEND}
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=max(1, int(timeout)))
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        return {"ok": False, "rc": -1, "stdout": "",
+                "stderr": f"timed out after {int(timeout)}s", "sandboxed": True,
+                "backend": _LOCAL_BACKEND}
+    return {"ok": proc.returncode == 0, "rc": proc.returncode,
+            "stdout": (out or b"").decode("utf-8", "replace"),
+            "stderr": (err or b"").decode("utf-8", "replace"),
+            "sandboxed": True, "backend": _LOCAL_BACKEND}
+
+
 async def _get_rec(session_id: str) -> Optional[Dict]:
     r = _redis()
     if not r or not session_id:
@@ -522,6 +660,11 @@ async def _ensure_routable(session_id: str, *, create: bool = True) -> Optional[
         return None
     sid = await _resolve_sid(session_id)
     rec = await _get_rec(sid)
+    # Local backend: no docker container to wake/health-check — the workspace is
+    # this process's own filesystem, so an active local record is always routable.
+    if _is_local_rec(rec) and rec.get("active"):
+        await _touch(rec)
+        return rec
     if rec and rec.get("container") and rec.get("active"):
         dk = _dk()
         if dk is not None:
@@ -622,6 +765,26 @@ async def cap_sbx_start(session_id: str = "", base_image: str = "",
     if resolved != session_id:
         await _note_session(resolved, session_id)
         session_id = resolved
+    # ── LOCAL BACKEND ───────────────────────────────────────────────────────
+    # No docker anywhere reachable (a Loop-Lab dev sandbox with no socket): use
+    # THIS container as the sandbox instead of failing. Preserve an existing
+    # record's kind/label; the workspace is a real dir on this filesystem.
+    if _local_backend_ok(docker_host_id):
+        prev = await _get_rec(session_id) or {}
+        rec = _local_rec(session_id, active=bool(enable),
+                         kind=kind or prev.get("kind", "session"),
+                         label=label or prev.get("label", ""))
+        if prev.get("sessions"):
+            rec["sessions"] = sorted(set(prev["sessions"]) | {session_id})
+        await _save_rec(rec)
+        ws = rec["workdir"]
+        try:
+            os.makedirs(ws, exist_ok=True)
+        except Exception:
+            pass
+        return {"ok": True, "container_id": rec["container"], "image": _LOCAL_BACKEND,
+                "restored": False, "backend": _LOCAL_BACKEND, "workdir": ws,
+                "active": bool(enable)}
     dk = _dk()
     if dk is None:
         return {"ok": False, "error": "docker module not loaded"}
@@ -761,6 +924,14 @@ async def cap_sbx_status(session_id: str = "", trace_id=None) -> Dict:
     if not rec:
         return {"exists": False,
                 "linked_to": resolved if resolved != session_id else ""}
+    # Local backend: the "container" is this process — always running, no docker.
+    if _is_local_rec(rec):
+        return {"exists": True, "active": bool(rec.get("active")), "running": True,
+                "container": rec.get("container"), "image": _LOCAL_BACKEND,
+                "committed": False, "backend": _LOCAL_BACKEND,
+                "linked_to": resolved if resolved != session_id else "",
+                "kind": rec.get("kind", "session"), "label": rec.get("label", ""),
+                "sessions": len(rec.get("sessions") or [])}
     dk = _dk()
     running = False
     if dk:
@@ -806,6 +977,10 @@ async def _exec_in(session_id: str, command: str, *, workdir: str = "",
     rec = await _get_rec(session_id)
     if not rec or not rec.get("container"):
         return None
+    # Local backend: run in THIS container as a subprocess, no docker.
+    if _is_local_rec(rec):
+        return await _exec_local(command, workdir=workdir or rec.get("workdir", ""),
+                                 timeout=timeout, shell=shell)
     dk = _dk()
     if dk is None:
         return None
@@ -990,6 +1165,15 @@ async def cap_sbx_stop(session_id: str = "", sync: Optional[bool] = None,
     rec = await _get_rec(session_id)
     if not rec or not rec.get("container"):
         return {"ok": False, "error": "no sandbox for this session"}
+    # Local backend: no container to stop/commit — just mark it inactive. The
+    # workspace is a plain dir on this filesystem; leave its files in place.
+    if _is_local_rec(rec):
+        rec["active"] = False
+        rec["updated"] = now_iso()
+        await _save_rec(rec)
+        await emit_event({"type": "remote.sandbox.stopped", "session_id": session_id,
+                          "backend": _LOCAL_BACKEND})
+        return {"ok": True, "backend": _LOCAL_BACKEND, "committed_image": "", "synced": None}
     # Archiving default: the global archive_on_stop config governs both the
     # blob-store snapshot and the image commit unless the caller overrides.
     if sync is None or commit is None:
@@ -1070,7 +1254,7 @@ async def cap_sbx_list(trace_id=None) -> Dict:
     state_maps: Dict[str, Dict[str, str]] = {}
     if dk:
         for hid in {rec.get("docker_host_id", "local")
-                    for rec in recs if rec.get("container")}:
+                    for rec in recs if rec.get("container") and not _is_local_rec(rec)}:
             try:
                 host = await _docker_host(dk, hid)
                 state_maps[hid] = await _containers_state_map(dk, host, hid) if host else {}
@@ -1079,7 +1263,9 @@ async def cap_sbx_list(trace_id=None) -> Dict:
     out = []
     for rec in recs:
         state = ""
-        if dk and rec.get("container"):
+        if _is_local_rec(rec):
+            state = "running" if rec.get("active") else "stopped"
+        elif dk and rec.get("container"):
             hid = rec.get("docker_host_id", "local")
             state = state_maps.get(hid, {}).get(rec["container"], "absent")
         out.append({"session_id": rec.get("session_id"), "container": rec.get("container"),
@@ -2669,6 +2855,26 @@ async def route_code(session_id: str, language: str, code: str, path: str = "",
 # ═════════════════════════════════════════════════════════════════════════════
 #  STREAMING ROUTING  (called by exec_capabilities' SSE stream endpoints)
 # ═════════════════════════════════════════════════════════════════════════════
+async def _route_gate(session_id: str, *, create: bool = False) -> Optional[Dict]:
+    """Return the routable record for a session's filesystem/exec routing, or None
+    → the caller runs on the host. A LOCAL-backend record is always routable (its
+    "container" is this process). A DOCKER record is routable only when docker is
+    actually reachable — mirroring the old `_sbx_host` gate exactly, so a
+    docker-backed session still FALLS BACK TO THE HOST (returns None) when the
+    docker module/host is unavailable, rather than surfacing an error."""
+    rec = await _ensure_routable(session_id, create=create)
+    if not rec:
+        return None
+    if _is_local_rec(rec):
+        return rec
+    dk = _dk()
+    if dk is None:
+        return None
+    if not await _docker_host(dk, rec.get("docker_host_id", "local")):
+        return None
+    return rec
+
+
 async def _sbx_host(session_id: str, *, create: bool = False):
     """Return (dk, host, rec) when the session has an ACTIVE sandbox, else
     (None, None, None). The caller runs on the host only when dk is None.
@@ -2798,8 +3004,10 @@ def _join(target: str, name: str) -> str:
 
 async def route_fs_read(session_id: str, path: str, *,
                         max_bytes: int = 1_048_576) -> Optional[Dict]:
-    dk, _host, _rec = await _sbx_host(session_id)
-    if dk is None:
+    # Gate on a ROUTABLE record (docker OR local backend), not on docker
+    # specifically — a local-backend session reads via _exec_in just the same.
+    # _route_gate preserves the docker path's host-fallback (None) exactly.
+    if not await _route_gate(session_id, create=False):
         return None
     if not path:
         return {"error": "path required"}
@@ -2878,8 +3086,7 @@ async def route_fs_write(session_id: str, path: str, content: str) -> Optional[D
     # host while exec looks in a freshly-made container. Without this, ide.fs.write
     # fell through to a host write of an absolute '/workspace/x' path and died with
     # EACCES, and the loop regenerated the file forever.
-    dk, _host, _rec = await _sbx_host(session_id, create=True)
-    if dk is None:
+    if not await _route_gate(session_id, create=True):
         return None
     if not path:
         return {"error": "path required"}
@@ -2900,8 +3107,7 @@ async def route_fs_write(session_id: str, path: str, content: str) -> Optional[D
 
 
 async def route_fs_delete(session_id: str, path: str) -> Optional[Dict]:
-    dk, _host, _rec = await _sbx_host(session_id)
-    if dk is None:
+    if not await _route_gate(session_id, create=False):
         return None
     if not path:
         return {"error": "path required", "deleted": False}
@@ -2925,13 +3131,27 @@ async def route_copy_in(session_id: str, host_path: str, dest_name: str = "",
     path). Auto-creates the sandbox (a session receiving a deliverable is doing
     real work). Returns {path} (absolute container path) or None when there's no
     active sandbox → the caller writes to the host artifact dir instead."""
-    dk, host, rec = await _sbx_host(session_id, create=True)
-    if dk is None:
+    rec = await _ensure_routable(session_id, create=True)
+    if not rec:
         return None
     if not host_path or not os.path.isfile(host_path):
         return {"error": f"source not found: {host_path}"}
     name = re.sub(r"[^\w.\-]", "_", dest_name or os.path.basename(host_path)) or "artifact.bin"
     rel = (subdir.strip("/") + "/" + name) if subdir else name
+    # Local backend: a plain filesystem copy into the workspace (no docker cp).
+    if _is_local_rec(rec):
+        ws = rec.get("workdir") or _local_ws_dir()
+        dest = os.path.join(ws, rel)
+        try:
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            shutil.copyfile(host_path, dest)
+            return {"path": dest, "sandboxed": True, "backend": _LOCAL_BACKEND}
+        except Exception as e:
+            log.debug("route_copy_in (local) failed for %s: %s", session_id, e)
+            return {"error": str(e)}
+    dk, host, _ = await _sbx_host(session_id, create=True)
+    if dk is None:
+        return None
     dest = _WORKDIR.rstrip("/") + "/" + rel
     try:
         await _exec_in(session_id, f"mkdir -p {shlex.quote(os.path.dirname(dest))}", timeout=20)
@@ -2948,8 +3168,7 @@ async def route_copy_in(session_id: str, host_path: str, dest_name: str = "",
 
 
 async def route_fs_list(session_id: str, path: str = "") -> Optional[Dict]:
-    dk, _host, _rec = await _sbx_host(session_id)
-    if dk is None:
+    if not await _route_gate(session_id, create=False):
         return None
     target, entries, err = await _ls_in(session_id, path)
     if err == "enoent":
@@ -2963,8 +3182,7 @@ async def route_fs_list(session_id: str, path: str = "") -> Optional[Dict]:
 
 
 async def route_fs_browse(session_id: str, path: str = "") -> Optional[Dict]:
-    dk, _host, _rec = await _sbx_host(session_id)
-    if dk is None:
+    if not await _route_gate(session_id, create=False):
         return None
     target, entries, err = await _ls_in(session_id, path)
     if err == "enoent":
@@ -3165,9 +3383,17 @@ async def route_artifact_dir(session_id: str, *, create: bool = True
     agent is handed a path that its routed exec/code runs actually resolve.
     Auto-creates the container (auto_create default) — a session about to write
     artifacts is a session doing real work."""
-    dk, _host, _rec = await _sbx_host(session_id, create=True)
-    if dk is None:
+    rec = await _route_gate(session_id, create=True)
+    if not rec:
         return None
+    # Local backend: the artifact dir is this container's own workspace dir.
+    if _is_local_rec(rec):
+        ws = rec.get("workdir") or _local_ws_dir()
+        try:
+            os.makedirs(ws, exist_ok=True)
+        except Exception:
+            pass
+        return ws
     if create:
         # Also ensure the write-confinement dirs so a container created before
         # this feature (or a woken one) has real TMPDIR/cache targets.
