@@ -2855,6 +2855,26 @@ async def route_code(session_id: str, language: str, code: str, path: str = "",
 # ═════════════════════════════════════════════════════════════════════════════
 #  STREAMING ROUTING  (called by exec_capabilities' SSE stream endpoints)
 # ═════════════════════════════════════════════════════════════════════════════
+async def _route_gate(session_id: str, *, create: bool = False) -> Optional[Dict]:
+    """Return the routable record for a session's filesystem/exec routing, or None
+    → the caller runs on the host. A LOCAL-backend record is always routable (its
+    "container" is this process). A DOCKER record is routable only when docker is
+    actually reachable — mirroring the old `_sbx_host` gate exactly, so a
+    docker-backed session still FALLS BACK TO THE HOST (returns None) when the
+    docker module/host is unavailable, rather than surfacing an error."""
+    rec = await _ensure_routable(session_id, create=create)
+    if not rec:
+        return None
+    if _is_local_rec(rec):
+        return rec
+    dk = _dk()
+    if dk is None:
+        return None
+    if not await _docker_host(dk, rec.get("docker_host_id", "local")):
+        return None
+    return rec
+
+
 async def _sbx_host(session_id: str, *, create: bool = False):
     """Return (dk, host, rec) when the session has an ACTIVE sandbox, else
     (None, None, None). The caller runs on the host only when dk is None.
@@ -2986,7 +3006,8 @@ async def route_fs_read(session_id: str, path: str, *,
                         max_bytes: int = 1_048_576) -> Optional[Dict]:
     # Gate on a ROUTABLE record (docker OR local backend), not on docker
     # specifically — a local-backend session reads via _exec_in just the same.
-    if not await _ensure_routable(session_id, create=False):
+    # _route_gate preserves the docker path's host-fallback (None) exactly.
+    if not await _route_gate(session_id, create=False):
         return None
     if not path:
         return {"error": "path required"}
@@ -3065,7 +3086,7 @@ async def route_fs_write(session_id: str, path: str, content: str) -> Optional[D
     # host while exec looks in a freshly-made container. Without this, ide.fs.write
     # fell through to a host write of an absolute '/workspace/x' path and died with
     # EACCES, and the loop regenerated the file forever.
-    if not await _ensure_routable(session_id, create=True):
+    if not await _route_gate(session_id, create=True):
         return None
     if not path:
         return {"error": "path required"}
@@ -3086,7 +3107,7 @@ async def route_fs_write(session_id: str, path: str, content: str) -> Optional[D
 
 
 async def route_fs_delete(session_id: str, path: str) -> Optional[Dict]:
-    if not await _ensure_routable(session_id, create=False):
+    if not await _route_gate(session_id, create=False):
         return None
     if not path:
         return {"error": "path required", "deleted": False}
@@ -3147,7 +3168,7 @@ async def route_copy_in(session_id: str, host_path: str, dest_name: str = "",
 
 
 async def route_fs_list(session_id: str, path: str = "") -> Optional[Dict]:
-    if not await _ensure_routable(session_id, create=False):
+    if not await _route_gate(session_id, create=False):
         return None
     target, entries, err = await _ls_in(session_id, path)
     if err == "enoent":
@@ -3161,7 +3182,7 @@ async def route_fs_list(session_id: str, path: str = "") -> Optional[Dict]:
 
 
 async def route_fs_browse(session_id: str, path: str = "") -> Optional[Dict]:
-    if not await _ensure_routable(session_id, create=False):
+    if not await _route_gate(session_id, create=False):
         return None
     target, entries, err = await _ls_in(session_id, path)
     if err == "enoent":
@@ -3362,7 +3383,7 @@ async def route_artifact_dir(session_id: str, *, create: bool = True
     agent is handed a path that its routed exec/code runs actually resolve.
     Auto-creates the container (auto_create default) — a session about to write
     artifacts is a session doing real work."""
-    rec = await _ensure_routable(session_id, create=True)
+    rec = await _route_gate(session_id, create=True)
     if not rec:
         return None
     # Local backend: the artifact dir is this container's own workspace dir.
