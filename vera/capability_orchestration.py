@@ -1127,22 +1127,68 @@ async def _ollama_liveness_heartbeat(req_id: str, iid: str, mdl: str,
             except Exception:
                 pass
 
-async def _gate_heartbeat(lease: dict) -> None:
-    """Keep a held GPU-gate slot alive while its generation runs by renewing the
-    short lease TTL on an interval. A LIVE generation renews well before expiry,
-    so it never loses its slot; when the holder is cancelled/gone this task is
-    cancelled too, renewals stop, and the slot self-expires within one lease TTL
-    — so an orphaned slot can never wedge the node for the full 30-min hard TTL.
-    Never raises; ends on cancellation."""
-    interval = _gate.renew_interval_s()
+_LOOP_CANCEL_STATUSES = {"cancelled", "canceled", "stopped"}
+
+
+def _current_run_session() -> str:
+    """Session id of the agentic run driving the current generation (from the
+    syslog trigger chain), or '' outside a tracked run. Used to free the gate
+    the moment that run is cancelled."""
+    try:
+        _sys = sys.modules.get("syslog")
+        if _sys is not None and hasattr(_sys, "get_trigger_chain"):
+            return str((_sys.get_trigger_chain() or {}).get("session_id") or "")
+    except Exception:
+        pass
+    return ""
+
+
+async def _run_is_cancelled(session_id: str) -> bool:
+    """True if the agentic run `session_id` has been cancelled/stopped. Lets the
+    gate heartbeat free the slot AT ONCE instead of holding it while a cancelled
+    (or runaway) loop keeps generating — the failure the short-TTL self-heal did
+    NOT cover, because a still-alive loop keeps its heartbeat renewing forever."""
+    if not session_id or REDIS is None:
+        return False
+    try:
+        st = await REDIS.hget(f"vera:loop:run:{session_id}", "status")
+        st = (st.decode() if isinstance(st, (bytes, bytearray)) else str(st or "")).strip().lower()
+        return st in _LOOP_CANCEL_STATUSES
+    except Exception:
+        return False
+
+
+async def _gate_heartbeat(lease: dict, session_id: str = "") -> None:
+    """Hold a live generation's GPU-gate slot by renewing its short lease, but
+    RELEASE it immediately when the run is cancelled — the two ways a slot should
+    stop being held:
+      • the generation finishes / crashes → this task is cancelled by the finally
+        (or dies), renewals stop, and the slot self-expires within one lease TTL;
+      • the RUN is cancelled while still generating → we detect it here and free
+        the slot at once, so a cancelled/runaway loop can't keep the GPU busy
+        generation after generation (the deadlock a fixed heartbeat left behind).
+    Cancel is polled more often (~5s) than the lease is renewed (~30s) so a
+    cancelled run frees the GPU within seconds. Never raises; ends on cancel."""
+    renew_every = _gate.renew_interval_s()
     ttl = _gate.lease_ttl_ms()
+    poll = min(5.0, renew_every)
+    since_renew = 0.0
     try:
         while True:
-            await asyncio.sleep(interval)
-            try:
-                await _gate.renew(COORD_REDIS, lease, ttl)
-            except Exception:
-                pass
+            await asyncio.sleep(poll)
+            since_renew += poll
+            if session_id and await _run_is_cancelled(session_id):
+                try:
+                    await _gate.release(COORD_REDIS, lease)
+                except Exception:
+                    pass
+                return
+            if since_renew >= renew_every:
+                since_renew = 0.0
+                try:
+                    await _gate.renew(COORD_REDIS, lease, ttl)
+                except Exception:
+                    pass
     except asyncio.CancelledError:
         pass
 
@@ -1185,7 +1231,11 @@ async def _ollama_slot(iid: str, timeout: Optional[float] = None):
                 _lease = await _gate.acquire(
                     COORD_REDIS, iid, _cap, _gate.lease_ttl_ms(), _gate.wait_s())
                 if _lease is not None:
-                    _hb_task = asyncio.ensure_future(_gate_heartbeat(_lease))
+                    # Capture the driving run's session so the heartbeat can free
+                    # the slot the instant that run is cancelled (not just when
+                    # the coroutine dies).
+                    _hb_task = asyncio.ensure_future(
+                        _gate_heartbeat(_lease, _current_run_session()))
         except Exception as _ge:
             log.debug("ollama gate acquire skipped for %s: %s", iid, _ge)
     try:
