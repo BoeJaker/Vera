@@ -110,3 +110,37 @@ def test_mixed_plan_prompt_has_routing_but_no_build_narrowing(monkeypatch):
     s = cap.get("system", "")
     assert "GOAL INTENT = BUILD" not in s
     assert "CAPABILITY ROUTING" in s   # routing is always present
+
+
+# ── decide_intent skips the LLM call when the heuristic is confident ──────────
+def _decide(monkeypatch, goal):
+    called = {"n": 0}
+
+    async def _fake_classify(*a, **k):
+        called["n"] += 1
+        return {"intent": "research", "reason": "llm said so"}  # distinct from heuristic
+
+    monkeypatch.setattr(W, "_v7_classify_intent", _fake_classify)
+    r = asyncio.run(W._v7_decide_intent(goal, use_llm=True, model="m",
+                                        instance_id="i", prefer_gpu=False))
+    return r, called["n"]
+
+
+def test_confident_build_skips_llm_call(monkeypatch):
+    r, n = _decide(monkeypatch, "create a pomodoro app")
+    assert r["intent"] == "build"
+    assert n == 0, "LLM classifier must NOT run when the heuristic is confident"
+    assert r["reason"].startswith("heuristic")
+
+
+def test_confident_research_skips_llm_call(monkeypatch):
+    r, n = _decide(monkeypatch, "look up the latest AI news")
+    assert r["intent"] == "research"
+    assert n == 0
+
+
+def test_ambiguous_mixed_uses_llm_call(monkeypatch):
+    # heuristic → mixed (build verb + research word) → the LLM disambiguates
+    r, n = _decide(monkeypatch, "look up the latest React API then build a demo")
+    assert n == 1, "LLM classifier SHOULD run for an ambiguous 'mixed' heuristic"
+    assert r["intent"] == "research"   # what the (faked) LLM returned
