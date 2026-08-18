@@ -19086,16 +19086,25 @@ def _v7_intent_plan_directive(intent: str, *, max_steps: int = 8) -> str:
         return (
             "GOAL INTENT = BUILD. This deliverable is producible DIRECTLY from your own knowledge — "
             "you do NOT need to look anything up. Plan DIRECT AUTHORING and NOTHING ELSE:\n"
-            "  • ONE authoring step PER file — code.author for each source file (index.html, style.css, "
-            "script.js, main.py, …), prose.author for each document. Give each a concrete `success` "
-            "naming that exact file.\n"
+            "  • CHOOSE THE FILE STRUCTURE deliberately, and keep it MINIMAL. A small self-contained "
+            "web app (a timer, a calculator, a single-page widget) is best as ONE self-contained "
+            "index.html with its CSS in a <style> and its JS in a <script> — plan a SINGLE code.author "
+            "step for it, not one-file-per-asset. Only split into separate files (index.html + "
+            "style.css + script.js, or multiple modules) when the app is genuinely large enough to "
+            "warrant it.\n"
+            "  • If you DO split: ONE code.author step PER file, and each file must reference its "
+            "siblings (index.html LINKS style.css via <link> and script.js via <script src>), NOT "
+            "inline them — otherwise the later files are redundant and the step producing them has "
+            "nothing to do. Give each step a concrete `success` naming that exact file.\n"
+            "  • A DOCUMENT deliverable (README, report, essay, spec) is ONE prose.author step per "
+            "document — same principle: author it directly, no research.\n"
             "  • Do NOT plan research/search/'find an example'/'fetch a repo' steps, and do NOT add "
             "web.search / web.fetch / http.get / exec curl to any step — there is nothing external to "
             "get. Do NOT plan a step to 'analyse an existing example'.\n"
-            "  • You MAY add ONE final step to assemble/verify (e.g. open the page / run the script and "
-            "confirm it works) using exec.* or a read — but only the ONE, at the end.\n"
-            "  • Prefer the FEWEST steps that produce every required file. A 3-file web app is ~3 author "
-            "steps + maybe 1 verify — not a research project.\n")
+            "  • You MAY add ONE final step to verify (open/run it and confirm it works) using exec.* — "
+            "but only the ONE, at the end.\n"
+            "  • Prefer the FEWEST steps that produce the deliverable — a self-contained app is ~1 "
+            "author step + maybe 1 verify, not a research project.\n")
     if it == "research":
         return (
             "GOAL INTENT = RESEARCH. The goal needs EXTERNAL/CURRENT information you do not have. Plan "
