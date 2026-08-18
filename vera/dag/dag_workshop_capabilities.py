@@ -19042,11 +19042,21 @@ async def _v7_decide_intent(goal: str, *, use_llm: bool, model: str,
     heur = _v7_intent_heuristic(goal)
     llm = ""
     reason = ""
-    if use_llm:
+    # Only spend an LLM classification call when the heuristic is genuinely
+    # UNSURE ('mixed'). A confident heuristic — build/research/action — is the
+    # common case ('create a pomodoro app' → build) and is used directly, which
+    # removes a slow planner-model (gpt-oss:20b, CPU-only) hop from the critical
+    # path before every plan. The heuristic is deliberately conservative (it only
+    # commits to build/research/action on a clear signal and defaults to 'mixed'
+    # otherwise), so trusting a confident verdict is safe; 'mixed' still gets the
+    # LLM to disambiguate 'look up X then build Y'-shaped goals.
+    if use_llm and heur == "mixed":
         c = await _v7_classify_intent(goal, heur, model=model,
                                       instance_id=instance_id, prefer_gpu=prefer_gpu)
         llm = c["intent"]; reason = c["reason"]
     intent = llm if llm in _V7_INTENTS else heur
+    if not reason:
+        reason = f"heuristic: {heur}"
     return {"intent": intent, "heuristic": heur, "llm": llm, "reason": reason}
 
 
@@ -21383,7 +21393,16 @@ async def cap_dag_agent_loop_v6(
         #    that earlier steps did NOT already collect, and fold both the gaps and
         #    a digest of what's already known into the step goal — so the step
         #    gathers only the missing pieces (never re-collects). ────────────────
-        if enable_prestep_info and not step.get("_prereq_done"):
+        # Skip the "gather first" pass for BUILD/ACTION goals: there is nothing
+        # EXTERNAL to gather. A BUILD step authors its deliverable directly, and
+        # the gap-finder — not knowing the intent — misreads the deliverable's
+        # own parts as missing info (observed live: a "Create index.html" step
+        # got gaps ["HTML template", "CSS styles", "JavaScript logic"], which
+        # both wastes an LLM call before the step and sends the executor off
+        # 'gathering' things it is supposed to WRITE, contradicting the plan).
+        # Only RESEARCH/MIXED steps genuinely have external gaps to collect.
+        if enable_prestep_info and intent not in ("build", "action") \
+                and not step.get("_prereq_done"):
             try:
                 pinfo = await _v7_prestep_info(
                     step, results, goal, model=model,
