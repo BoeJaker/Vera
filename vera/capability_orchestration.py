@@ -1127,6 +1127,26 @@ async def _ollama_liveness_heartbeat(req_id: str, iid: str, mdl: str,
             except Exception:
                 pass
 
+async def _gate_heartbeat(lease: dict) -> None:
+    """Keep a held GPU-gate slot alive while its generation runs by renewing the
+    short lease TTL on an interval. A LIVE generation renews well before expiry,
+    so it never loses its slot; when the holder is cancelled/gone this task is
+    cancelled too, renewals stop, and the slot self-expires within one lease TTL
+    — so an orphaned slot can never wedge the node for the full 30-min hard TTL.
+    Never raises; ends on cancellation."""
+    interval = _gate.renew_interval_s()
+    ttl = _gate.lease_ttl_ms()
+    try:
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await _gate.renew(COORD_REDIS, lease, ttl)
+            except Exception:
+                pass
+    except asyncio.CancelledError:
+        pass
+
+
 @asynccontextmanager
 async def _ollama_slot(iid: str, timeout: Optional[float] = None):
     """`async with _ollama_sem(iid)` with a bounded acquisition wait. Raises a
@@ -1150,22 +1170,37 @@ async def _ollama_slot(iid: str, timeout: Optional[float] = None):
     # ungated / coord Redis down / queued past the wait budget) just means the
     # caller proceeds unslotted — generation is never blocked by the gate.
     _lease = None
+    _hb_task = None
     if _GATE_ON:
         try:
             if COORD_REDIS is None:
                 await _ensure_coord_redis()
             _cap = _gate.capacity_for(bool(OLLAMA_INSTANCES.get(iid, {}).get("has_gpu")))
             if _cap > 0 and COORD_REDIS is not None:
+                # SHORT lease + heartbeat (not the 30-min hard TTL). If this
+                # generation is cancelled/crashed and its heartbeat stops, the
+                # slot expires within lease_ttl_ms and the node self-heals —
+                # instead of a wedged slot blocking every later loop-planner call
+                # for the full TTL (the recurring GPU hang, 2026-08-18).
                 _lease = await _gate.acquire(
-                    COORD_REDIS, iid, _cap, _gate.ttl_ms(), _gate.wait_s())
+                    COORD_REDIS, iid, _cap, _gate.lease_ttl_ms(), _gate.wait_s())
+                if _lease is not None:
+                    _hb_task = asyncio.ensure_future(_gate_heartbeat(_lease))
         except Exception as _ge:
             log.debug("ollama gate acquire skipped for %s: %s", iid, _ge)
     try:
         yield
     finally:
-        if _lease is not None:
+        if _hb_task is not None:
+            _hb_task.cancel()   # stop renewing; the slot may now expire on its own
+        if _lease is not None and COORD_REDIS is not None:
+            # Fire the release as an INDEPENDENT task, not `await`ed here: if THIS
+            # coroutine is being cancelled, an awaited release in the finally gets
+            # interrupted mid-flight and the slot is orphaned (exactly how the
+            # gate kept wedging). A detached task completes regardless; the short
+            # lease TTL above is the backstop if even it can't run.
             try:
-                await _gate.release(COORD_REDIS, _lease)
+                asyncio.ensure_future(_gate.release(COORD_REDIS, _lease))
             except Exception:
                 pass
         sem.release()
