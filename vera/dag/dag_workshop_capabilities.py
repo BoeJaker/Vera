@@ -264,10 +264,21 @@ def _format_param_detail(pname: str, pschema: Dict[str, Any], required: bool,
     return "\n".join(parts)
 
 
-def rich_cap_signature(name: str, *, max_param_detail: int = 12) -> str:
+def rich_cap_signature(name: str, *, max_param_detail: int = 12,
+                       desc_max: int = 1200) -> str:
     """
     Multi-line signature for a capability with full parameter detail.
     The agent loops use this so the LLM can supply correct args.
+
+    The description is a capability's USAGE CONTRACT (which args are required,
+    what they mean, an example) — the loops scope this to a step's FEW caps, so
+    showing it in full is cheap and correct. It used to be hard-cut to 300 chars
+    MID-SENTENCE, which chopped the contract off the end (e.g. code.author's
+    'path AND task required' landed past the cut, so every param looked optional
+    and calls fumbled). Now the full text is shown up to a GENEROUS safety
+    ceiling (`desc_max`, well above any real description) and, only if a
+    pathologically long one must be trimmed, it's trimmed at a WORD boundary —
+    never mid-sentence.
     """
     cap = CAPABILITY_REGISTRY.get(name)
     if not cap:
@@ -276,7 +287,11 @@ def rich_cap_signature(name: str, *, max_param_detail: int = 12) -> str:
     schema = cap.get("schema", {}) or {}
     props  = schema.get("properties", {}) or {}
     req    = set(schema.get("required", []) or [])
-    desc   = (cap.get("description") or "")[:300]
+    desc   = cap.get("description") or ""
+    if len(desc) > desc_max:
+        _cut = desc[:desc_max]
+        _sp = _cut.rfind(" ")
+        desc = (_cut[:_sp] if _sp > desc_max * 0.6 else _cut).rstrip() + " …"
 
     # Params the CALLER never supplies. trace_id is plumbing; session_id is the
     # run's own sandbox identity, injected by _agent_loop_call_tool — advertising
@@ -10094,14 +10109,13 @@ async def _package_hint(session_id: str, language: str = "python") -> str:
 @capability(
     "code.author", memory="on",
     http_method="POST", http_path="/code/author", http_tags=["code", "fabric"],
-    # rich_cap_signature() (the loop's per-step tool catalog) truncates this
-    # description to 300 chars AND the auto-schema marks NO param required (every
-    # kwarg has a default), so a specialist is shown `task/path (default: "")`
-    # — i.e. everything looks OPTIONAL — with the real contract chopped off the
-    # end. That is why calls fumble (`code.author(language="html")`, path-only)
-    # and it looks like the cap "won't fire". FIX: the CALL CONTRACT is now the
-    # FIRST thing in the description — the exact shape + which args are required
-    # + a concrete NON-python example — so it survives the 300-char cut. The
+    # The auto-schema marks NO param required (every kwarg has a default), so the
+    # loop's signature shows `task/path (default: "")` — everything looks
+    # OPTIONAL. So the description carries the real contract: it LEADS with the
+    # exact call shape + which args are required + a concrete NON-python example,
+    # so a specialist can't miss it. (rich_cap_signature() now shows the full
+    # description — the old 300-char mid-sentence cut, which chopped this
+    # contract off the end and caused the fumbling, is fixed.) The
     # `_v5_heal_author_args` loop guard is the belt-and-braces backstop that
     # fills task/path from the step when the model still omits them.
     description="CREATE a source file — call code.author(path='<file.ext>', task='<plain-English "
