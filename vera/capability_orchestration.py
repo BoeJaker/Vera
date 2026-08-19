@@ -1878,6 +1878,24 @@ def est_ctx_tokens(prompt: str = "", system: str = "", num_predict: int = 0) -> 
     return int(chars / max(_CHARS_PER_TOKEN, 1.0)) + max(int(num_predict or 0), _CTX_RESERVE_OUT)
 
 
+# Auto-fit the context window to the prompt when no num_ctx is pinned. Ollama's
+# DEFAULT num_ctx is ~2048 no matter the model's real max, so a big prompt with
+# no num_ctx is silently truncated to its last ~2048 tokens — the model never
+# sees its system prompt / instructions / tool catalog and returns empty/garbage
+# JSON. Off via VERA_AUTO_CTX_FIT=0.
+_AUTO_CTX_FIT = os.environ.get("VERA_AUTO_CTX_FIT", "1").strip().lower() in (
+    "1", "true", "yes", "on")
+
+
+def _round_ctx(n: int) -> int:
+    """Round a needed-token count UP to a stable window so num_ctx doesn't jitter
+    per call (a changing num_ctx forces ollama to re-init the KV cache)."""
+    for step in (4096, 8192, 16384, 24576, 32768, 49152, 65536, 98304, 131072):
+        if n <= step:
+            return step
+    return int(n)
+
+
 async def note_ctx_residency(iid: str, model: str, requested_ctx: int) -> Optional[dict]:
     """Read /api/ps and report whether `model` is FULLY resident on `iid`.
 
@@ -2309,6 +2327,21 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     # num_ctx); the caller's explicit options always win key-by-key.
     _rule_opts = (eff_rule or {}).get("options") or {}
     _merged_opts = {**_rule_opts, **(dict(options) if options else {})}
+    # AUTO-FIT num_ctx to the prompt when nobody pinned one. Without this a big
+    # prompt is silently truncated to ollama's ~2048 default (qwen3.5:9b actually
+    # declares 262144), so the model loses its system prompt / instructions — the
+    # intermittent loop "the model returned no output this turn", and why the
+    # executor kept missing its own how-to-call-code.author guidance. Size to the
+    # PROMPT (never the model max), capped to the node-safe ceiling (which the
+    # residency probe shrinks on any CPU spill). num_predict is bounded too so a
+    # huge fitted window doesn't let a run-on generation balloon.
+    if _AUTO_CTX_FIT and "num_ctx" not in _merged_opts:
+        try:
+            _cap = await effective_num_ctx(mdl, chosen, prefer_gpu)
+        except Exception:
+            _cap = 0
+        _fit = _round_ctx(_ctx_need)
+        _merged_opts["num_ctx"] = max(_CTX_FLOOR, min(_fit, _cap) if _cap else _fit)
     if _merged_opts:
         body["options"] = _merged_opts
     gen_timeout = float(timeout) if timeout else OLLAMA_GEN_TIMEOUT
