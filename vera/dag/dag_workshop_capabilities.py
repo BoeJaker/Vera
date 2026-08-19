@@ -13511,6 +13511,14 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
     saved_run_files: Dict[str, str] = {}   # basename -> known-good runnable path of a file WE auto-saved this run
     dup_call_hits = 0                       # redundant repeats of an already-successful call
     _MAX_DUP_HITS = 2                       # after this many redundant repeats, end the step cleanly
+    # When a repeat (identical dup/failed/registry call) is detected, the executor
+    # is fixating on the same action under deterministic sampling (low temp + fixed
+    # seed) — the anti-repeat NOTES it's fed get ignored because the same input
+    # re-derives the same output. Set this flag so the NEXT turn is generated with
+    # a perturbed sample (higher temp + a fresh seed) to actually break the loop
+    # out of the identical call; under json_mode the output is still valid JSON,
+    # just a DIFFERENT action. Reset once consumed.
+    _perturb_next = False
     step_questions_asked = 0               # ask_user calls made this step (bounded)
     _MAX_STEP_QUESTIONS = 2
     # Every ask_user Q&A this step got a REAL answer to. Carried into the step's
@@ -14113,9 +14121,20 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             except Exception:
                 pass
 
+        # If a repeat was just detected, perturb THIS turn's sampling (higher temp
+        # + a FRESH seed, overriding the loop's deterministic defaults) so the model
+        # produces a DIFFERENT action instead of re-deriving the identical call it
+        # keeps getting stuck on. json_mode still guarantees valid JSON. A fresh
+        # seed is essential — a higher temp alone with the pinned seed is still
+        # deterministic and re-derives the same action.
+        _exec_opts = None
+        if _perturb_next:
+            _exec_opts = {"temperature": 0.7, "top_p": 0.95,
+                          "seed": (int(time.time() * 1000) + turns) & 0x7fffffff}
+            _perturb_next = False
         raw = await _safe_ollama_generate_dw(
             user_msg, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=True,
+            prefer_gpu=prefer_gpu, json_mode=True, options=_exec_opts,
             profile=LOOP_ROUTING_PROFILE, role="executor",
             stream_cb=(_cycle_stream_cb if stream_id else None))
         if stream_id:
@@ -14886,6 +14905,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         _cached_preview = success_sigs.get(_call_sig)
         if _cached_preview is not None:
             dup_call_hits += 1
+            _perturb_next = True                                    # break the fixation next turn
             tool_calls[tool] = max(0, tool_calls.get(tool, 1) - 1)  # a repeat isn't a new attempt
             outputs[tool] = _cached_preview
             had_useful = True
@@ -14931,6 +14951,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             _rec = artifacts.get(_rp) if _rp else None
             if _rec and _rec.get("content") and fileread_served < _MAX_FILEREAD_SERVED:
                 fileread_served += 1
+                _perturb_next = True            # re-reading an unchanged file — break the fixation
                 if fileread_served >= _MAX_FILEREAD_SERVED:
                     _fileread_bypass = True     # next read goes to disk for real
                 preview = (f"{_rec['rel']} — served from this run's file registry "
@@ -14970,6 +14991,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         _failed_before = failed_sigs.get(_call_sig)
         if _failed_before is not None:
             repeat_fail_calls += 1
+            _perturb_next = True                # re-issuing a failed call — break the fixation next turn
             # Third instance of the same trap (see the empty-exec and
             # run-before-author guards): the decrement below means _MAX_SAME_TOOL
             # can never fire on this path, so without its own ceiling the step
