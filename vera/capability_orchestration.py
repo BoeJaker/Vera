@@ -1129,6 +1129,20 @@ async def _ollama_liveness_heartbeat(req_id: str, iid: str, mdl: str,
 
 _LOOP_CANCEL_STATUSES = {"cancelled", "canceled", "stopped"}
 
+# ── Gate-heartbeat liveness bounds — make a wedged GPU slot IMPOSSIBLE ─────────
+# The heartbeat renews a held lease so a LIVE generation keeps its slot. The
+# failure that used to wedge the node: a generation whose coroutine is orphaned
+# (its `finally` never runs) or hung leaves the heartbeat renewing FOREVER with
+# nothing actually on the GPU. These bounds give the heartbeat its OWN liveness
+# check so it can free the slot no matter why the generation's own cleanup never
+# ran. They can only ever RELEASE a slot that isn't producing tokens — a healthy
+# streaming generation refreshes its activity marker continuously and is never
+# touched. All GPU generations here stream, and the GPU gate only wraps GPU
+# nodes (fast first-token), so these windows never clip a legitimate call.
+_GATE_STALL_HOT_S  = float(os.environ.get("VERA_GATE_STALL_HOT_S", "60"))    # went silent AFTER streaming started → dead
+_GATE_STALL_COLD_S = float(os.environ.get("VERA_GATE_STALL_COLD_S", "150"))  # produced NO token at all → dead/hung (safe above GPU cold-load)
+_GATE_MAX_HOLD_S   = float(os.environ.get("VERA_GATE_MAX_HOLD_S", "1020"))   # absolute backstop; > OLLAMA_GEN_TIMEOUT so a legit long gen (bounded by its own HTTP timeout) is never clipped
+
 
 def _current_run_session() -> str:
     """Session id of the agentic run driving the current generation (from the
@@ -1158,30 +1172,64 @@ async def _run_is_cancelled(session_id: str) -> bool:
         return False
 
 
-async def _gate_heartbeat(lease: dict, session_id: str = "") -> None:
-    """Hold a live generation's GPU-gate slot by renewing its short lease, but
-    RELEASE it immediately when the run is cancelled — the two ways a slot should
-    stop being held:
+async def _gate_heartbeat(lease: dict, session_id: str = "",
+                          activity: Optional[dict] = None) -> None:
+    """Hold a live generation's GPU-gate slot by renewing its short lease — and
+    make a WEDGED slot impossible by giving the heartbeat its OWN way to let go.
+    A slot stops being held the instant ANY of these is true:
       • the generation finishes / crashes → this task is cancelled by the finally
         (or dies), renewals stop, and the slot self-expires within one lease TTL;
-      • the RUN is cancelled while still generating → we detect it here and free
-        the slot at once, so a cancelled/runaway loop can't keep the GPU busy
-        generation after generation (the deadlock a fixed heartbeat left behind).
-    Cancel is polled more often (~5s) than the lease is renewed (~30s) so a
-    cancelled run frees the GPU within seconds. Never raises; ends on cancel."""
+      • the RUN is cancelled while still generating → we detect it and free the
+        slot at once, so a cancelled/runaway loop can't keep the GPU busy;
+      • TOKEN-LIVENESS: the generation stops producing tokens (orphaned coroutine
+        whose `finally` never runs, a hung/dead stream) → the heartbeat frees the
+        slot itself. This is the fix for the recurring wedge: a heartbeat that
+        renewed forever with nothing actually on the GPU. `activity` is a marker
+        the stream loop refreshes on every token; a HEALTHY streaming generation
+        keeps it fresh and is never touched;
+      • ABSOLUTE hard cap → a final backstop above the generation's own HTTP
+        timeout, so nothing can hold a slot indefinitely under any failure.
+    Polled more often (~5s) than the lease is renewed (~30s) so a stuck slot frees
+    within seconds of going quiet. Never raises."""
     renew_every = _gate.renew_interval_s()
     ttl = _gate.lease_ttl_ms()
     poll = min(5.0, renew_every)
     since_renew = 0.0
+    started = time.monotonic()
+
+    async def _free():
+        try:
+            await _gate.release(COORD_REDIS, lease)
+        except Exception:
+            pass
+
     try:
         while True:
             await asyncio.sleep(poll)
             since_renew += poll
+            now = time.monotonic()
+            # (1) ABSOLUTE hard cap — a single generation cannot outlive its own
+            # HTTP timeout; a hold past this is provably a leak.
+            if now - started >= _GATE_MAX_HOLD_S:
+                await _free()
+                log.warning("gate heartbeat force-freed slot after %.0fs hard cap "
+                            "(orphaned/hung generation)", now - started)
+                return
+            # (2) TOKEN-LIVENESS — the precise "wedged vs busy" signal. Only ever
+            # frees a slot that is NOT producing tokens; a live stream refreshes
+            # `activity` continuously and never trips this.
+            if activity is not None:
+                beats = activity.get("beats", 0)
+                if beats > 0:
+                    if now - activity.get("t", started) >= _GATE_STALL_HOT_S:
+                        await _free()   # streamed, then went silent → dead
+                        return
+                elif now - started >= _GATE_STALL_COLD_S:
+                    await _free()       # never produced a single token → dead/hung
+                    return
+            # (3) run cancelled → free at once
             if session_id and await _run_is_cancelled(session_id):
-                try:
-                    await _gate.release(COORD_REDIS, lease)
-                except Exception:
-                    pass
+                await _free()
                 return
             if since_renew >= renew_every:
                 since_renew = 0.0
@@ -1217,6 +1265,12 @@ async def _ollama_slot(iid: str, timeout: Optional[float] = None):
     # caller proceeds unslotted — generation is never blocked by the gate.
     _lease = None
     _hb_task = None
+    # Token-liveness marker shared with the heartbeat: the generation body
+    # (`async with _ollama_slot(...) as act:`) refreshes it on every streamed
+    # token, so the heartbeat can tell a LIVE generation (marker moving) from an
+    # orphaned/hung one (marker frozen) and free a wedged slot itself. Callers
+    # that ignore the yielded marker fall back to the heartbeat's hard cap.
+    _activity = {"t": time.monotonic(), "beats": 0}
     if _GATE_ON:
         try:
             if COORD_REDIS is None:
@@ -1232,14 +1286,14 @@ async def _ollama_slot(iid: str, timeout: Optional[float] = None):
                     COORD_REDIS, iid, _cap, _gate.lease_ttl_ms(), _gate.wait_s())
                 if _lease is not None:
                     # Capture the driving run's session so the heartbeat can free
-                    # the slot the instant that run is cancelled (not just when
-                    # the coroutine dies).
+                    # the slot the instant that run is cancelled, and the activity
+                    # marker so it can free a slot whose generation went silent.
                     _hb_task = asyncio.ensure_future(
-                        _gate_heartbeat(_lease, _current_run_session()))
+                        _gate_heartbeat(_lease, _current_run_session(), _activity))
         except Exception as _ge:
             log.debug("ollama gate acquire skipped for %s: %s", iid, _ge)
     try:
-        yield
+        yield _activity
     finally:
         if _hb_task is not None:
             _hb_task.cancel()   # stop renewing; the slot may now expire on its own
@@ -1824,6 +1878,24 @@ def est_ctx_tokens(prompt: str = "", system: str = "", num_predict: int = 0) -> 
     return int(chars / max(_CHARS_PER_TOKEN, 1.0)) + max(int(num_predict or 0), _CTX_RESERVE_OUT)
 
 
+# Auto-fit the context window to the prompt when no num_ctx is pinned. Ollama's
+# DEFAULT num_ctx is ~2048 no matter the model's real max, so a big prompt with
+# no num_ctx is silently truncated to its last ~2048 tokens — the model never
+# sees its system prompt / instructions / tool catalog and returns empty/garbage
+# JSON. Off via VERA_AUTO_CTX_FIT=0.
+_AUTO_CTX_FIT = os.environ.get("VERA_AUTO_CTX_FIT", "1").strip().lower() in (
+    "1", "true", "yes", "on")
+
+
+def _round_ctx(n: int) -> int:
+    """Round a needed-token count UP to a stable window so num_ctx doesn't jitter
+    per call (a changing num_ctx forces ollama to re-init the KV cache)."""
+    for step in (4096, 8192, 16384, 24576, 32768, 49152, 65536, 98304, 131072):
+        if n <= step:
+            return step
+    return int(n)
+
+
 async def note_ctx_residency(iid: str, model: str, requested_ctx: int) -> Optional[dict]:
     """Read /api/ps and report whether `model` is FULLY resident on `iid`.
 
@@ -2255,6 +2327,38 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     # num_ctx); the caller's explicit options always win key-by-key.
     _rule_opts = (eff_rule or {}).get("options") or {}
     _merged_opts = {**_rule_opts, **(dict(options) if options else {})}
+    # AUTO-FIT num_ctx to the prompt when nobody pinned one. Without this a big
+    # prompt is silently truncated to ollama's ~2048 default (qwen3.5:9b actually
+    # declares 262144), so the model loses its system prompt / instructions — the
+    # intermittent loop "the model returned no output this turn", and why the
+    # executor kept missing its own how-to-call-code.author guidance. Size to the
+    # PROMPT (never the model max), capped to the node-safe ceiling (which the
+    # residency probe shrinks on any CPU spill). num_predict is bounded too so a
+    # huge fitted window doesn't let a run-on generation balloon.
+    if _AUTO_CTX_FIT:
+        try:
+            # Bounded: this runs BEFORE the gate is acquired, so it must never be
+            # able to stall a generation even if the node ctx probe is slow/hangs.
+            _cap = await asyncio.wait_for(
+                effective_num_ctx(mdl, chosen, prefer_gpu), timeout=4.0)
+        except Exception:
+            _cap = 0
+        # What the PROMPT needs, rounded to a stable window, capped to what this
+        # node can safely hold.
+        _fit = _round_ctx(_ctx_need)
+        if _cap:
+            _fit = min(_fit, _cap)
+        # Apply to EVERY call, pinned or not. A pinned num_ctx (a role/agent that
+        # deliberately wants a big window, e.g. planner/controller=16384) is a
+        # FLOOR the fit can raise but must NEVER lower below the prompt's need —
+        # otherwise a pin that is smaller than the prompt still silently truncates
+        # (a long-run controller ledger or planner prompt can exceed 16384). Take
+        # the larger of the pin and the fit, then cap to the node-safe max.
+        _pinned = int(_merged_opts.get("num_ctx") or 0)
+        _want = max(_fit, _pinned)
+        if _cap:
+            _want = min(_want, _cap)
+        _merged_opts["num_ctx"] = max(_CTX_FLOOR, _want)
     if _merged_opts:
         body["options"] = _merged_opts
     gen_timeout = float(timeout) if timeout else OLLAMA_GEN_TIMEOUT
@@ -2354,7 +2458,7 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
             # caller asked for. Callers that don't pass timeout (the vast
             # majority) are unaffected — same unbounded-queue-wait default as
             # always, since `timeout` is None there too.
-            async with _ollama_slot(chosen, timeout=timeout):
+            async with _ollama_slot(chosen, timeout=timeout) as _gate_act:
                 _hb_stop.set()   # slot acquired — the queue heartbeat can stop
                 # Phase transition: queued → generating (panel moves the job
                 # from the Queued tab to Running the moment the node starts).
@@ -2407,12 +2511,14 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                                 if tok:
                                     buf.append(tok)
                                     _last_progress = time.time()
+                                    _gate_act["t"] = time.monotonic(); _gate_act["beats"] += 1
                                     if stream_cb: await stream_cb(tok)
                                 # Reasoning models may emit only `thinking` tokens;
                                 # collect them (without streaming) as a fallback.
                                 elif d.get("thinking"):
                                     tbuf.append(d["thinking"])
                                     _last_progress = time.time()
+                                    _gate_act["t"] = time.monotonic(); _gate_act["beats"] += 1
                                 if d.get("done"): meta = d
                             except Exception: pass
                             # A long but actively-progressing generation emits no
@@ -2570,7 +2676,7 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                     # timeout (see the primary path's _ollama_slot call above),
                     # streamed response so the read timeout is a stall detector
                     # rather than a total cap.
-                    async with _ollama_slot(fb_id, timeout=timeout):
+                    async with _ollama_slot(fb_id, timeout=timeout) as _gate_act:
                         async with httpx.AsyncClient(verify=_SSL_CTX, timeout=httpx.Timeout(gen_timeout, connect=15.0)) as c:
                             async with c.stream("POST", f"{fb_inst['url']}/api/generate",
                                                 json={**body, "stream": True}) as r:
@@ -2602,8 +2708,10 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                                         d=json.loads(line)
                                         if d.get("response"):
                                             fbuf.append(d["response"]); _fb_last_progress = time.time()
+                                            _gate_act["t"] = time.monotonic(); _gate_act["beats"] += 1
                                         elif d.get("thinking"):
                                             ftbuf.append(d["thinking"]); _fb_last_progress = time.time()
+                                            _gate_act["t"] = time.monotonic(); _gate_act["beats"] += 1
                                     except Exception: pass
                         fb_elapsed = round(time.time() - t_start, 2)
                         log.info("ollama_fallback [%s] OK on %s after %.2fs",
