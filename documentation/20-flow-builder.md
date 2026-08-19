@@ -92,6 +92,24 @@ The bare inject is mostly a discovery/registration hook — the element needs a 
 
 ## Screenshots
 
+## Graph contract and execution handoff
+
+Flow Builder is an authoring surface, not a second workflow runtime. Nodes hold
+capability references and input bindings; edges express data/control flow; the
+saved graph is compiled or handed to the DAG subsystem for execution. This
+keeps retry, tracing, supervision, and worker dispatch semantics consistent
+with programmatically authored DAGs.
+
+Before saving, validate that every capability exists, required inputs are bound,
+and no illegal cycle has been introduced. Before running, inspect the compiled
+preview rather than assuming the canvas layout equals execution order. When a
+flow fails, use the DAG run record and failing node output; UI coordinates and
+edge rendering are not execution evidence.
+
+The reusable visual elements live in `vera/elements/`; DAG persistence and
+execution live in `vera/dag/`. Exported flows should be reviewed as data because
+they can reference mutating capabilities.
+
 <!-- VERA:AUTO:screenshots START -->
 _No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
 <!-- VERA:AUTO:screenshots END -->

@@ -90,6 +90,25 @@ Mirrors the Ollama cluster layer so the router treats both uniformly:
 
 ## Screenshots
 
+## Serving lifecycle and capacity
+
+Vera treats each vLLM endpoint as a model-serving instance with health,
+available models, routing metadata, and optional managed-process state. Chat,
+completion, and embedding capabilities use the OpenAI-compatible API; server
+start/stop capabilities additionally manage a local subprocess and its launch
+arguments.
+
+Capacity is dominated by model weights, KV cache, maximum model length,
+batching, tensor parallelism, and LoRA allocation. A server that binds but
+cannot complete a warm-up request is not healthy. Verify `/v1/models`, run a
+small generation, then inspect Prometheus metrics before enabling production
+routing. Reduce context/batch pressure before raising GPU memory utilization.
+
+Managed launch settings such as quantization, dtype, speculative model, prefix
+caching, and chunked prefill are workload decisions, not universal optimizations.
+Record them with benchmarks. See [Performance and sizing](00-performance-and-sizing.md)
+for a repeatable measurement procedure.
+
 <!-- VERA:AUTO:screenshots START -->
 _No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
 <!-- VERA:AUTO:screenshots END -->

@@ -117,6 +117,25 @@ The bot token is sealed via the shared secrets helper; config persists in `vera:
 
 ## Screenshots
 
+## Connection and trust model
+
+Integrations separate a service definition from credentials, granted access,
+and a live connection. Accounts hold sealed provider-specific configuration;
+integration records describe how Vera may use it; capability families expose
+mail, calendar, messaging, or generic API/MCP operations. Disconnecting an app
+should revoke Vera's active use without silently deleting unrelated local data.
+
+Test in layers: credential presence, provider authentication, account/service
+discovery, a read-only operation, then an explicitly authorized write. OAuth
+redirect mismatches, expired refresh tokens, provider scopes, clock skew, and
+container DNS are more common than application logic failures. Never paste
+secrets into board items, traces, screenshots, or capability arguments that are
+persisted as ordinary history.
+
+`integration.access.set` is the policy boundary for general integrations.
+Operator-driven web access adds Operator's allowlist/destructive-action policy;
+API access remains governed by the integration and account capabilities.
+
 <!-- VERA:AUTO:screenshots START -->
 _No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
 <!-- VERA:AUTO:screenshots END -->

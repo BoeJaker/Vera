@@ -41,6 +41,25 @@ The key is **never** stored in Redis next to the ciphertext. Resolution order:
 
 ## Screenshots
 
+## Security boundaries
+
+Vera's sealed-secret support protects stored credentials at rest; it does not
+make arbitrary capability arguments, logs, screenshots, prompts, or generated
+files secret. Keep plaintext values within the account/provider configuration
+path and pass references elsewhere. Redaction is defense in depth, not a reason
+to put secrets into observable channels.
+
+Authorization is enforced at multiple layers: capability policy, agent/tool
+allowlists, integration access, Operator host/destructive-action policy, and
+explicit confirmation for high-impact operations. UI visibility alone is never
+an authorization boundary. External content—including recalled memory and web
+pages—must remain data and cannot grant itself additional tools.
+
+Operational checks include secret-key availability, decryptability after
+restart, file ownership/permissions, token scope and expiry, audit-event
+coverage, and absence of credentials in logs. Rotate a credential if exposure
+is suspected; deleting a log entry is not remediation.
+
 <!-- VERA:AUTO:screenshots START -->
 _No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
 <!-- VERA:AUTO:screenshots END -->
