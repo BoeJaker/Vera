@@ -1885,6 +1885,13 @@ def est_ctx_tokens(prompt: str = "", system: str = "", num_predict: int = 0) -> 
 # JSON. Off via VERA_AUTO_CTX_FIT=0.
 _AUTO_CTX_FIT = os.environ.get("VERA_AUTO_CTX_FIT", "1").strip().lower() in (
     "1", "true", "yes", "on")
+# Cap OUTPUT length when a caller hasn't pinned a positive num_predict. num_ctx
+# now sizes the whole WINDOW, and an unbounded num_predict (ollama default -1)
+# lets a run-on / repetitive generation decode all the way to that window — a
+# 16k-token fill pins the GPU for many minutes (observed: a 6+ min code.author).
+# Generous enough for a large single file; a caller that needs more sets
+# num_predict explicitly. 0 disables the cap.
+_OUTPUT_CAP_TOKENS = int(os.environ.get("VERA_OUTPUT_CAP_TOKENS", "8192") or 0)
 
 
 def _round_ctx(n: int) -> int:
@@ -2359,6 +2366,13 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         if _cap:
             _want = min(_want, _cap)
         _merged_opts["num_ctx"] = max(_CTX_FLOOR, _want)
+        # Bound OUTPUT so a run-on generation can't decode the whole (now large)
+        # window and pin the GPU. Only when the caller left num_predict unset/-1.
+        if _OUTPUT_CAP_TOKENS > 0:
+            _np = int(_merged_opts.get("num_predict") or 0)
+            if _np <= 0:
+                _merged_opts["num_predict"] = min(_OUTPUT_CAP_TOKENS,
+                                                  _merged_opts["num_ctx"])
     if _merged_opts:
         body["options"] = _merged_opts
     gen_timeout = float(timeout) if timeout else OLLAMA_GEN_TIMEOUT
