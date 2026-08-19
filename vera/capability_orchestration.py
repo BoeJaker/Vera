@@ -2335,7 +2335,7 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     # PROMPT (never the model max), capped to the node-safe ceiling (which the
     # residency probe shrinks on any CPU spill). num_predict is bounded too so a
     # huge fitted window doesn't let a run-on generation balloon.
-    if _AUTO_CTX_FIT and "num_ctx" not in _merged_opts:
+    if _AUTO_CTX_FIT:
         try:
             # Bounded: this runs BEFORE the gate is acquired, so it must never be
             # able to stall a generation even if the node ctx probe is slow/hangs.
@@ -2343,8 +2343,22 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                 effective_num_ctx(mdl, chosen, prefer_gpu), timeout=4.0)
         except Exception:
             _cap = 0
+        # What the PROMPT needs, rounded to a stable window, capped to what this
+        # node can safely hold.
         _fit = _round_ctx(_ctx_need)
-        _merged_opts["num_ctx"] = max(_CTX_FLOOR, min(_fit, _cap) if _cap else _fit)
+        if _cap:
+            _fit = min(_fit, _cap)
+        # Apply to EVERY call, pinned or not. A pinned num_ctx (a role/agent that
+        # deliberately wants a big window, e.g. planner/controller=16384) is a
+        # FLOOR the fit can raise but must NEVER lower below the prompt's need —
+        # otherwise a pin that is smaller than the prompt still silently truncates
+        # (a long-run controller ledger or planner prompt can exceed 16384). Take
+        # the larger of the pin and the fit, then cap to the node-safe max.
+        _pinned = int(_merged_opts.get("num_ctx") or 0)
+        _want = max(_fit, _pinned)
+        if _cap:
+            _want = min(_want, _cap)
+        _merged_opts["num_ctx"] = max(_CTX_FLOOR, _want)
     if _merged_opts:
         body["options"] = _merged_opts
     gen_timeout = float(timeout) if timeout else OLLAMA_GEN_TIMEOUT
