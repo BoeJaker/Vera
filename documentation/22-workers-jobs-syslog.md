@@ -80,6 +80,25 @@ Any panel can embed these to get a live event/log view without re-implementing t
 
 ## Screenshots
 
+## Dispatch, ownership, and recovery
+
+Distributed calls are published to Redis Streams with a task identity and are
+claimed by workers that advertise compatible capabilities. The orchestrator
+tracks the pending result; the worker emits completion or failure; job history
+provides the durable operator view. Model requests add a second routing layer
+to the selected Ollama/vLLM instance.
+
+Distinguish **queued**, **claimed**, **running**, and **terminal** states. A
+growing queue with idle workers suggests capability/route mismatch. Claimed
+work without heartbeats suggests a dead worker. A terminal model request with a
+pending parent job suggests result-correlation or restart recovery. Use
+`obs.workers`, `obs.pending`, `jobs.stats`, Redis group information, and syslog
+in that order.
+
+Recovery operations can fail-mark stale work or prune dead consumers; they do
+not recreate lost side effects. Capabilities with external mutations must be
+idempotent or carry their own operation key before automatic retry is safe.
+
 <!-- VERA:AUTO:screenshots START -->
 _No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
 <!-- VERA:AUTO:screenshots END -->

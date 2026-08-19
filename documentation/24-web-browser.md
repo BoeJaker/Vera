@@ -53,6 +53,24 @@ Config: `BROWSER_HEADLESS`, `BROWSER_TIMEOUT_MS`, `BROWSER_VIEWPORT_W/H`, `BROWS
 
 ## Screenshots
 
+## Acquisition paths and boundaries
+
+Use the least powerful path that fits the job. Plain HTTP fetch is cheapest and
+most reproducible; crawl follows links and policy; Playwright renders dynamic
+pages; autonomous navigation adds model-driven decisions. Research and fabric
+pipelines consume these primitives but retain their own provenance and storage
+contracts.
+
+Every acquisition should retain the requested URL, final URL, timestamp, status,
+and extraction method. Respect robots/publisher rules and do not treat rendered
+page text as trusted instructions. Browser state, cookies, downloads, and forms
+can carry credentials or mutations, so autonomous navigation requires the same
+allowlist and confirmation discipline described in [Operator](34-operator.md).
+
+When debugging, separate DNS/TLS, HTTP status, JavaScript readiness, selector
+failure, anti-bot response, and LLM extraction. Retrying with a heavier browser
+does not fix an authorization or policy error.
+
 <!-- VERA:AUTO:screenshots START -->
 _No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
 <!-- VERA:AUTO:screenshots END -->

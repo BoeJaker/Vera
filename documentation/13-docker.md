@@ -181,6 +181,25 @@ The Docker pane lives inside the **Workers** tab (`workers_ollama_panel.html` / 
 
 ## Screenshots
 
+## Host, container, and persistence model
+
+Docker hosts are registered endpoints; containers and images are discovered
+from a selected host. A container ID is only meaningful with its host identity.
+Published ports describe reachability from that host, while volumes define
+which state survives replacement. Operator connections may use a published web
+port, but lifecycle remains owned by Docker capabilities.
+
+Before restart/recreate/remove, inspect mounts, environment references, health,
+dependent services, and whether the container belongs to Loop Lab. Never infer
+disposability from a generated-looking name. Stopping a process is reversible;
+removing a container may not be; removing volumes is destructive data loss.
+
+For failures, separate daemon reachability, authentication/context, image pull,
+container start, healthcheck, and application health. Logs explain the process;
+`docker ps` explains only container state. Disk pressure frequently comes from
+images, layers, build cache, logs, and volumes, so measure each category before
+pruning.
+
 <!-- VERA:AUTO:screenshots START -->
 _No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
 <!-- VERA:AUTO:screenshots END -->

@@ -106,6 +106,26 @@ Relations can be inferred by the LLM from each cap's name, description, and JSON
 
 ## Screenshots
 
+## Resolution, composition, and safety
+
+Skills provide reusable procedural context; ontologies provide explicit domain
+structure. At invocation time Vera resolves the requested records, applies
+their active versions, and supplies the resulting context to the caller. A
+skill may reference capabilities, while an ontology may constrain vocabulary,
+classes, properties, and inference. Neither grants permission to call a tool:
+capability allowlists and runtime policy remain authoritative.
+
+Treat edits as versioned behavior changes. Validate a skill against the actual
+capability schemas it names, and validate an ontology before export or use in
+inference. Common failures are stale capability names, overly broad instructions,
+OWL imports that introduce unexpected classes, and circular composition that
+inflates context. Inspect `skills.active_context`, `ontologies.validate`, and
+the capability-ontology neighbourhood before blaming the model.
+
+Source map: `vera/skills/` owns skill and ontology CRUD/application;
+`vera/ontologies/` owns capability-to-capability relationships and the matrix
+used for discovery and context selection.
+
 <!-- VERA:AUTO:screenshots START -->
 _No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
 <!-- VERA:AUTO:screenshots END -->

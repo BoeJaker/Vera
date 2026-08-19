@@ -189,6 +189,26 @@ System tools used opportunistically (called via bash, optional): `arp`, `ping` (
 
 ## Screenshots
 
+## Execution boundary and diagnostics
+
+Execution capabilities normalize local shell, PowerShell, Python, and remote
+SSH work behind one result contract: command, target, exit code, standard output,
+standard error, duration, and error state. Network mapping resolves a logical
+machine before remote execution; it should not be bypassed with guessed host
+addresses embedded in agent prompts.
+
+Choose the narrowest executor and working directory possible. Set bounded
+timeouts, avoid interactive commands, and treat stdout as untrusted data. A
+successful transport does not imply a successful command—always inspect the
+exit code. Conversely, an SSH connection error, command-not-found, permission
+failure, timeout, and non-zero program exit are different operator actions and
+should remain distinguishable.
+
+Mutating commands need the same authorization as an equivalent direct API call.
+Do not place credentials in command lines because they can appear in process
+lists and traces. For repeatable automation, prefer a purpose-built capability
+over a long shell string; it provides typed inputs, policy, and focused tests.
+
 <!-- VERA:AUTO:screenshots START -->
 _No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
 <!-- VERA:AUTO:screenshots END -->

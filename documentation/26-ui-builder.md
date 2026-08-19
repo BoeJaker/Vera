@@ -47,6 +47,24 @@ These scopes are the same allowlist mechanism agents use via `domain_caps` ([Age
 
 ## Screenshots
 
+## Panel lifecycle and access
+
+UI Builder persists presentation metadata—panel identity, title, layout,
+theme, and capability access—not a fork of the capability registry. At runtime
+the harness loads registered panels and custom elements, then panel calls cross
+the same backend bridge as the rest of Vera.
+
+Keep panel IDs stable because layouts and links refer to them. Treat capability
+ACL changes as security changes: hiding a button is not authorization, so the
+server must still enforce policy. A panel should render useful empty, loading,
+degraded, and error states; an unavailable optional backend must not leave an
+indefinite spinner.
+
+Debug in layers: confirm `ui.panels` registration, open the standalone panel
+window, inspect browser console/network errors, then call the backing capability
+directly. Shared UI primitives live in `vera/vera-ui.js`, panel bridging in
+`vera/vera_panel_bridge.js`, and builder-specific code under `vera/ui builder/`.
+
 <!-- VERA:AUTO:screenshots START -->
 _No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
 <!-- VERA:AUTO:screenshots END -->

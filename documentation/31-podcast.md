@@ -63,6 +63,24 @@ systems (dream, research) can discover them.
 
 ## Screenshots
 
+## Generation stages
+
+Podcast generation is a staged media job: resolve topic and supplied context,
+author a speaker-structured script, synthesize segments, assemble audio, persist
+the artifact, and expose it through list/get. Context may come from files or
+capability output; a separate topic is optional when that material already
+defines the subject.
+
+Keep script generation and speech synthesis separately inspectable. A good
+script can fail at voice lookup or audio assembly, while successful TTS can
+faithfully render a poorly attributed script. Record voice/settings and segment
+ordering with the job so regeneration is deterministic enough to diagnose.
+
+Large inputs should be summarized or sectioned before scripting. Never embed
+credentials or private source material unless the resulting persistent audio is
+authorized to contain it. `podcast.status` is the operational surface for
+long-running work; list/get/delete operate on completed persisted episodes.
+
 <!-- VERA:AUTO:screenshots START -->
 _No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
 <!-- VERA:AUTO:screenshots END -->
