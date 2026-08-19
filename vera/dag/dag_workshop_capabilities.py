@@ -14890,6 +14890,13 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             outputs[tool] = _cached_preview
             had_useful = True
             ok = True
+            # Tag the cap on the UI (the short-circuit `continue`s before the
+            # normal tool_call emit below, so without this a deduped repeat shows
+            # only as "planning…" with no cap name — it IS this cap being re-issued).
+            await emit_event({"type": "agent_loop_v5.tool_call", "stream_id": stream_id,
+                              "cycle": cur_cycle, "step_id": step_id, "tool": tool, "args": args,
+                              "thought": "(repeat of an earlier successful call — served from cache)",
+                              "repeat": True, "session_id": sid})
             await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
                               "cycle": cur_cycle, "step_id": step_id, "tool": tool, "ok": True,
                               "elapsed_ms": 0, "preview": _cached_preview,
@@ -14939,6 +14946,12 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                                 "args": args, "ms": 0})
                 had_useful = True
                 ok = True
+                # Tag the cap on the UI (see the duplicate-call path above — a
+                # registry-served re-read otherwise renders only as "planning…").
+                await emit_event({"type": "agent_loop_v5.tool_call", "stream_id": stream_id,
+                                  "cycle": cur_cycle, "step_id": step_id, "tool": tool, "args": args,
+                                  "thought": "(repeat read — served from the run's file registry, unchanged)",
+                                  "repeat": True, "session_id": sid})
                 await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
                                   "cycle": cur_cycle, "step_id": step_id, "tool": tool,
                                   "ok": True, "elapsed_ms": 0,
@@ -14970,6 +14983,12 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 "Repeating it produces the same error. Change something real — a different file "
                 "(by RELATIVE name, from the ones that exist), a different capability, or a "
                 "different approach entirely — or emit `done` with what you have.")
+            # Tag the cap on the UI (see the duplicate-call path above — a repeated
+            # already-failed call otherwise renders only as "planning…").
+            await emit_event({"type": "agent_loop_v5.tool_call", "stream_id": stream_id,
+                              "cycle": cur_cycle, "step_id": step_id, "tool": tool, "args": args,
+                              "thought": "(repeat of an earlier FAILED call — not re-run)",
+                              "repeat": True, "session_id": sid})
             await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
                               "cycle": cur_cycle, "step_id": step_id, "tool": tool, "ok": False,
                               "elapsed_ms": 0, "preview": pending_note,
