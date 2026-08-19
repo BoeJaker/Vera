@@ -230,7 +230,7 @@ grouped, searchable dropdown of everything you can reach (with `[web]`/`[api]`/
 
 1. **Ensure the target** — boot/attach a sandbox, or use `--base-url`.
 2. **Discover** live panels (`/ui/panels`) and capabilities (`/mcp/tools`).
-3. For each of the 34 **domains** ([`docs/domain_map.py`](../vera/operator/docs/domain_map.py)):
+3. For each registered **documentation domain** ([`docs/domain_map.py`](../vera/operator/docs/domain_map.py)):
    - **seed** representative data (best-effort fixtures, [`missions/seeds.py`](../vera/operator/missions/seeds.py)) so panels render populated;
    - **screenshot** every matching panel (rendered standalone at
      `/ui/panel/window?id=…`) → `documentation/assets/<domain>/<panel>.png`;
