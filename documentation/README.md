@@ -57,13 +57,18 @@ offline documentation.
 ### Build agents and interfaces
 
 - [Agents and chat](19-agents-chat.md)
+- [Agent runtimes and providers](36-agent-runtimes-providers.md)
 - [Flow Builder](20-flow-builder.md)
 - [UI Builder](26-ui-builder.md)
+- [Media and characters](38-media-characters.md)
 - [Operator](34-operator.md)
 
 ### Operate and extend Vera
 
 - [IDE and remote development](08-ide.md)
+- [Infrastructure and provisioning](35-infrastructure-provisioning.md)
+- [Activity and boards](39-activity-boards.md)
+- [Business and commerce](37-business-commerce.md)
 - [Integrations](23-integrations.md)
 - [Web browser](24-web-browser.md)
 - [Security](29-security.md)
@@ -109,6 +114,11 @@ offline documentation.
 | 32 | [Cluster encryption](32-cluster-encryption.md) | Encrypted cluster communication |
 | 33 | [Loop Lab](33-evolve.md) | Isolated changes, tests, review, and promotion |
 | 34 | [Operator](34-operator.md) | Browser observation, action, missions, and captures |
+| 35 | [Infrastructure and provisioning](35-infrastructure-provisioning.md) | Foundry builds, hosts, networking, Proxmox, and fleet provisioning |
+| 36 | [Agent runtimes and providers](36-agent-runtimes-providers.md) | Runtime bridges, provider adapters, catalogs, and agent frameworks |
+| 37 | [Business and commerce](37-business-commerce.md) | Products, inventory, listings, orders, and external side effects |
+| 38 | [Media and characters](38-media-characters.md) | Images, characters, sprites, speech, and media assets |
+| 39 | [Activity and boards](39-activity-boards.md) | Activity history, work boards, claims, and coordination |
 
 ## Operations and engineering history
 
