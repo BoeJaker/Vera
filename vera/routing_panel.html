@@ -544,6 +544,9 @@ function renderRoleProfiles(){
         <td>${gpuSel('f-gpu', gpuVal(rule))}</td>
         <td>${pinSel('f-pin', rule.pin||'')}</td>
         <td>${modelSel('f-model', rule.model||'', '', '(node default)')}</td>
+        <td><input type="number" step="0.05" min="0" max="2" class="f-temp" style="width:52px"
+             value="${rule.options&&rule.options.temperature!=null?rule.options.temperature:''}"
+             placeholder="dflt" title="sampling temperature (blank = model/node default)"></td>
         <td><input type="number" class="f-esc" value="${rule.escalate_chars||0}" title="escalate_chars">
             ${gpuSel('f-escgpu', gpuVal(escd))}</td>
         <td><span class="badge ${isUser?'user':'declared'}">${isUser?'user':'declared'}</span></td>
@@ -552,7 +555,7 @@ function renderRoleProfiles(){
           ${isUser?`<button class="danger" title="revert to declared" onclick="resetRole('${esc(name)}','${esc(role)}')">↩</button>`:''}
         </td>
       </tr>
-      <tr data-resolve="${esc(name)}/${esc(role)}" style="display:none"><td colspan="8" class="resolvebox"></td></tr>`;
+      <tr data-resolve="${esc(name)}/${esc(role)}" style="display:none"><td colspan="9" class="resolvebox"></td></tr>`;
     }).join('');
     return `<div class="profcard" data-profcard="${esc(name)}">
       <div class="profhead">
@@ -566,7 +569,7 @@ function renderRoleProfiles(){
         ${(ROLES.user||{})[name]?`<button class="danger" onclick="resetRoleProfile('${esc(name)}')">↩ Reset all</button>`:''}
       </div>
       <div class="scroll-x"><table>
-        <thead><tr><th>Role</th><th>Job type</th><th>GPU</th><th>Pin node</th><th>Model</th><th>Escalate ≥ chars → GPU</th><th>Layer</th><th></th></tr></thead>
+        <thead><tr><th>Role</th><th>Job type</th><th>GPU</th><th>Pin node</th><th>Model</th><th>Temp</th><th>Escalate ≥ chars → GPU</th><th>Layer</th><th></th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>
     </div>`;
@@ -589,6 +592,13 @@ function _collectProfileRoles(name){
       model: tr.querySelector('.f-model').value.trim(),
       escalate_chars: escChars,
     };
+    // Preserve the role's existing sampling options (top_p, num_ctx, …) and apply
+    // the edited temperature — otherwise a save would WIPE the role's options.
+    const effRule=(((ROLES.effective||{})[name]||{}).roles||{})[role]||{};
+    const opts=Object.assign({}, effRule.options||{});
+    const tv=(tr.querySelector('.f-temp').value||'').trim();
+    if(tv==='') delete opts.temperature; else opts.temperature=parseFloat(tv);
+    if(Object.keys(opts).length) rule.options=opts;
     if(escChars>0&&eg) rule.escalate=Object.assign({}, gpuFields(eg));
     roles[role]=rule;
   });
