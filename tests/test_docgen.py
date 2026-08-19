@@ -90,6 +90,25 @@ def test_normalise_panels_keeps_html_and_mode():
     assert n[0]["mode"] == "tab" and n[0]["html"]
 
 
+def test_capture_states_default_and_named_files():
+    from vera.operator.missions import documentation as M
+    assert M._capture_states({}, "plain-panel") == [{}]
+    domain = {"capture_states": {"fabric-panel": [
+        {"name": "graph", "click": "#fnav-graph"},
+        {"name": "stats", "click": "#fnav-stats"}]}}
+    states = M._capture_states(domain, "fabric-panel")
+    assert [M._state_name("fabric-panel", s) for s in states] == [
+        "fabric-panel-graph", "fabric-panel-stats"]
+    assert states[0]["click"] == "#fnav-graph"
+
+
+def test_data_fabric_capture_recipe_is_representative():
+    fabric = DM.by_slug("data-fabric")
+    states = fabric["capture_states"]["fabric-panel"]
+    assert states[0]["name"] == "graph"
+    assert states[0]["ready_selector"] and states[0]["ready_text"]
+
+
 def test_gallery_build():
     md = G.build_gallery([{"slug": "markets", "title": "Markets", "doc": "15-markets.md",
                            "cover_rel": "assets/markets/s.png", "shot_count": 3, "cap_count": 12}],
