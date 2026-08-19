@@ -150,7 +150,12 @@ register_routing_profile(
         "executor":   {"job_type": "loop_executor", "prefer_gpu": True,
                        # temp/top_p only — leave num_ctx to the model default so we
                        # never shrink a large step prompt's window (a regression).
-                       "options": {"temperature": 0.15, "top_p": 0.9}},
+                       # 0.3 (was 0.15, and EFFECTIVELY 0.0 before the determinism
+                       # precedence fix): enough sampling diversity to not fixate on
+                       # the same tool call turn after turn, still low enough for
+                       # reliable structured JSON. Tunable live on the Model Routing
+                       # page (loop/executor) now that the role temp actually wins.
+                       "options": {"temperature": 0.3, "top_p": 0.9}},
         "planner":    {"job_type": "loop_planner", "deny_gpu": True,
                        "model": _LOOP_PLANNER_MODEL,
                        "options": {"temperature": 0.2, "num_ctx": 16384}},
@@ -2538,9 +2543,19 @@ async def _safe_ollama_generate_dw(prompt, *, system="", json_mode=True,
     # VERA_LOOP_DETERMINISTIC=0 restores model defaults.
     _opts = dict(options) if options else {}
     if _LOOP_DETERMINISTIC:
-        _opts.setdefault("temperature", _LOOP_TEMP)
-        _opts.setdefault("top_p", 1.0)
+        # The seed is always pinned — cheap reproducibility that does not conflict
+        # with a role's chosen temperature. Temperature/top_p are pinned ONLY for
+        # role-LESS calls: when a role profile is in play its sampling (editable
+        # live on the Model Routing page) must WIN. Previously these were pinned
+        # unconditionally and, because they are threaded through as `options` that
+        # override the role downstream, EVERY loop role's temperature was silently
+        # forced to _LOOP_TEMP (0.0 = fully greedy) — dead config, and the direct
+        # cause of the identical-repeat fixation (and the repetition run-ons). The
+        # pinned seed still makes a given (prompt, temp) reproducible.
         _opts.setdefault("seed", _LOOP_SEED)
+        if not (profile or role):
+            _opts.setdefault("temperature", _LOOP_TEMP)
+            _opts.setdefault("top_p", 1.0)
     _gen_kwargs = dict(system=system, json_mode=use_json,
                        model=model or None, instance_id=instance_id or None,
                        prefer_gpu=bool(prefer_gpu), think=think)
