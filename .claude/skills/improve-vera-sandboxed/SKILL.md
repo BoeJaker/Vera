@@ -338,7 +338,7 @@ reflects reality**. Two standing obligations, every unit:
 
 - **Update the plan.** When a milestone/tech-debt item lands, changes status, or
   a new issue is found, reflect it in the route-forward plan
-  (`documentation/specs/consolidated-route-forward.md`) and keep the source plans'
+  (`documentation/README.md` and the shared board) and keep the source plans'
   glyphs in sync (§2 — docs route through `bleeding-edge` like everything else).
   A plan that lags the code is worse than no plan: other agents act on it. Mark
   items ✓/◐/○ with the landing commit; record the *reason* for tech debt, not just

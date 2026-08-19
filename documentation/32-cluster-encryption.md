@@ -117,6 +117,25 @@ third-party coordinator.
 
 ## Screenshots
 
+## Trust establishment and rotation
+
+Cluster encryption protects traffic between Vera components; it does not decide
+which component is authorized to perform an action. Establish node identity,
+distribute trust material through a secure out-of-band path, verify the peer,
+and only then enable encrypted transport for production traffic.
+
+Plan rotation before expiry. During a staged rotation, nodes need a deliberate
+overlap in accepted trust roots or a coordinated cutover; otherwise healthy
+services appear offline simultaneously. Record certificate/key identity—not
+private key material—in diagnostics. Clock skew, hostname/SAN mismatch,
+incorrect file permissions, and containers missing the updated mount are the
+most common failures.
+
+Encryption errors should fail closed and surface the exact peer/verification
+stage. Do not silently downgrade to plaintext. After rotation, test health,
+worker dispatch, Redis/database connectivity where TLS applies, and one real
+capability round trip before retiring the old trust material.
+
 <!-- VERA:AUTO:screenshots START -->
 _No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
 <!-- VERA:AUTO:screenshots END -->
