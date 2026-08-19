@@ -38,6 +38,23 @@ The bridge runs both directions:
 
 ## Screenshots
 
+## Session and gateway lifecycle
+
+OpenClaw is an external agent-gateway integration. Configuration establishes
+the endpoint and credentials; connect negotiates a usable session; prompt sends
+work through that session; session listing/reset provides recovery. Vera still
+owns capability policy and records the bridge call like any other integration.
+
+Check status before prompting and distinguish gateway reachability from model
+availability. A connected gateway can still fail because its selected model is
+missing, its upstream provider rejected authentication, or a prior session is
+stale. Reset only the affected session rather than deleting global integration
+configuration.
+
+Treat all gateway-returned tool requests as untrusted external proposals. They
+must pass Vera's normal allowlists and confirmation rules; connection trust does
+not imply permission to mutate local files, services, or third-party accounts.
+
 <!-- VERA:AUTO:screenshots START -->
 _No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
 <!-- VERA:AUTO:screenshots END -->

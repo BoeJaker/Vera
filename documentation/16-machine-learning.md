@@ -103,6 +103,26 @@ This is where ML meets [Markets](./15-markets.md): the `mkt.*` datasets that Mar
 
 ## Screenshots
 
+## Runtime and operating model
+
+The ML subsystem separates **experiment definition** from **execution**. The
+workshop capabilities validate a model/training configuration, persist it, and
+hand execution to the training engine. Long-running work should be treated as a
+job: capture its identifier, poll status, and read artifacts only after a
+terminal state. Training data remains a fabric concern; the ML layer consumes a
+resolved dataset rather than creating a second data store.
+
+Operationally, check four boundaries in order: dataset availability, Python
+framework/import health, accelerator visibility, and artifact writeability. A
+run that never leaves `queued` normally indicates dispatch or worker capacity;
+a run that starts and fails immediately is usually configuration, shapes, or a
+missing framework; a run that completes without an artifact points to the
+output path or persistence stage.
+
+Key implementation surfaces are `vera/machine learning/ml_workshop.py`,
+`ml_training.py`, and their panel HTML files. ONNX export is documented
+separately in [ONNX](30-onnx.md).
+
 <!-- VERA:AUTO:screenshots START -->
 _No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
 <!-- VERA:AUTO:screenshots END -->

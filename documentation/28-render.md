@@ -24,6 +24,24 @@ Generated files are written under `_out/` next to the module and served read-onl
 
 ## Screenshots
 
+## Render pipeline and artifacts
+
+Rendering converts structured Vera output into a presentation artifact. Format
+discovery selects a supported renderer; export resolves content and options;
+the renderer writes an artifact; gallery registration makes it discoverable.
+HTML, Mermaid, charts, reports, and document exports share this lifecycle even
+though their engines differ.
+
+Inputs are content, not trusted code. Sanitize HTML, constrain file paths, and
+review Mermaid/templating features before rendering model-produced text. A
+successful render should return the artifact identity, media type, and size;
+do not infer success from a zero exit code if the expected file is absent.
+
+Failures usually fall into missing external binaries/fonts, malformed source,
+unsupported format/options, unwritable artifact storage, or browser/PDF engine
+startup. Preserve source plus render settings alongside important artifacts so
+they can be reproduced.
+
 <!-- VERA:AUTO:screenshots START -->
 _No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
 <!-- VERA:AUTO:screenshots END -->

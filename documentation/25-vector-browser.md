@@ -29,6 +29,25 @@ The **dimension-alignment audit** is the practical payoff: embedding-model chang
 
 ## Screenshots
 
+## Reading the vector stores
+
+The browser is an inspection and audit surface over Chroma collections and
+FAISS shards; it is not a separate source of truth. Dataset identity and record
+metadata come from the fabric. Chroma supports collection-level browsing and
+filtered retrieval, while FAISS exposes shard statistics and samples needed to
+diagnose index coverage.
+
+An apparently empty semantic result can mean no vectors were written, the wrong
+collection/shard was selected, embedding dimensions changed, metadata filters
+excluded the records, or query and corpus used different embedding providers.
+Use the audit/compare capabilities before rebuilding. Reindexing is an explicit
+data operation and should record provider/model/version so mixed embeddings do
+not silently coexist.
+
+For deletion or reset, start from the owning dataset in
+[Data Fabric](06-data-fabric.md); avoid deleting raw vector rows without also
+repairing the fabric's record and index state.
+
 <!-- VERA:AUTO:screenshots START -->
 _No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
 <!-- VERA:AUTO:screenshots END -->

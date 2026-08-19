@@ -107,6 +107,25 @@ Chat can also **drive other panels**. `chat/chat_panels_capabilities.py` registe
 
 ## Screenshots
 
+## Request lifecycle
+
+An agent request resolves the agent definition, model route, allowed tools,
+skills, ontology context, conversation history, and optional fabric recall. The
+chat layer streams the resulting turn to the browser while the agent layer
+records durable history and usage. Tool calls re-enter the shared capability
+registry, so they inherit normal tracing, policy, and error reporting.
+
+Latency should be split by stage: client context fetch, memory/fabric recall,
+model queue, generation, capability execution, and persistence. Re-running the
+whole turn hides the cause. Use request/job history and capability traces to
+identify the slow boundary. If remembered text contains tool-like markers, it
+must remain quoted context rather than becoming executable instructions.
+
+Operators should verify the agent's model still exists, its capability names
+resolve, and its selected datasets are healthy. Restore/version operations alter
+agent configuration, not historical turns. Source surfaces live primarily in
+`vera/agents/`, `vera/chat/`, and the shared memory/context capabilities.
+
 <!-- VERA:AUTO:screenshots START -->
 _No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
 <!-- VERA:AUTO:screenshots END -->

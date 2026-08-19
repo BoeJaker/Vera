@@ -110,16 +110,13 @@ offline documentation.
 | 33 | [Loop Lab](33-evolve.md) | Isolated changes, tests, review, and promotion |
 | 34 | [Operator](34-operator.md) | Browser observation, action, missions, and captures |
 
-## Specifications and operations
+## Operations and engineering history
 
-- [Consolidated route forward](specs/consolidated-route-forward.md)
-- [Development lifecycle and repository hygiene](specs/dev-lifecycle-and-repo-hygiene.md)
-- [External agentic-loop integration](specs/external-agentic-loop-integration.md)
 - [Planner drift postmortem](postmortems/2026-08-06-agentic-loop-planner-drift.md)
 
-Specifications describe intended direction as well as shipped behavior. The
-numbered guides and runtime capability schemas are the better source for current
-operator-facing behavior.
+Local planning specifications under `documentation/specs/` are intentionally
+excluded from Git. The numbered guides and runtime capability schemas are the
+published source for current operator-facing behavior.
 
 ## Screenshot maintenance
 
