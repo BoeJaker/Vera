@@ -2337,7 +2337,10 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     # huge fitted window doesn't let a run-on generation balloon.
     if _AUTO_CTX_FIT and "num_ctx" not in _merged_opts:
         try:
-            _cap = await effective_num_ctx(mdl, chosen, prefer_gpu)
+            # Bounded: this runs BEFORE the gate is acquired, so it must never be
+            # able to stall a generation even if the node ctx probe is slow/hangs.
+            _cap = await asyncio.wait_for(
+                effective_num_ctx(mdl, chosen, prefer_gpu), timeout=4.0)
         except Exception:
             _cap = 0
         _fit = _round_ctx(_ctx_need)
