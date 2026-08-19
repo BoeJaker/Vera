@@ -74,8 +74,28 @@ async def seed_memory(call_target: CallTarget) -> Dict[str, Any]:
 
 async def seed_fabric(call_target: CallTarget) -> Dict[str, Any]:
     notes: List[str] = []
+    import json
+    fixtures = {
+        "vera.docs": [
+            {"title": "Capability framework", "kind": "documentation", "status": "published"},
+            {"title": "Operator missions", "kind": "documentation", "status": "published"}],
+        "vera.runtime": [
+            {"service": "operator", "role": "browser automation", "health": "ready"},
+            {"service": "fabric", "role": "knowledge substrate", "health": "ready"}],
+        "vera.agents": [
+            {"agent": "author", "role": "implementation"},
+            {"agent": "reviewer", "role": "quality gate"}],
+    }
+    for dataset_id, records in fixtures.items():
+        await _try(call_target, notes, "fabric.ingest", dataset_id=dataset_id,
+                   records=json.dumps(records), source="documentation-fixture",
+                   tags="vera,documentation")
+    await _try(call_target, notes, "fabric.link_datasets",
+               from_id="vera.docs", to_id="vera.runtime", rel_type="DESCRIBES")
+    await _try(call_target, notes, "fabric.link_datasets",
+               from_id="vera.agents", to_id="vera.runtime", rel_type="OPERATES")
     await _try(call_target, notes, "fabric.datasets")
-    await _try(call_target, notes, "fabric.query", query="vera", limit=5)
+    await _try(call_target, notes, "fabric.query", text="vera", top_k=5)
     return {"ok": True, "notes": notes}
 
 
