@@ -1885,6 +1885,15 @@ def est_ctx_tokens(prompt: str = "", system: str = "", num_predict: int = 0) -> 
 # JSON. Off via VERA_AUTO_CTX_FIT=0.
 _AUTO_CTX_FIT = os.environ.get("VERA_AUTO_CTX_FIT", "1").strip().lower() in (
     "1", "true", "yes", "on")
+# Maximum OUTPUT budget (tokens) for a call that hasn't pinned num_predict. The
+# window (num_ctx) is sized to hold prompt + THIS, so a long file/report can
+# generate in FULL rather than being cut off by a prompt-tight window, and
+# num_predict is then set to the room available — big enough for any sensible
+# single output, while the window still bounds a true run-on. 16384 ≈ a very
+# large single file (~60KB); VRAM-safe on the GPU nodes (a 9B holds 65536 ctx at
+# ~8GB). Tune with VERA_OUTPUT_MAX_TOKENS; a caller that needs more sets
+# num_predict explicitly. 0 = don't reserve output room / don't set num_predict.
+_OUTPUT_MAX_TOKENS = int(os.environ.get("VERA_OUTPUT_MAX_TOKENS", "16384") or 0)
 
 
 def _round_ctx(n: int) -> int:
@@ -2343,22 +2352,33 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                 effective_num_ctx(mdl, chosen, prefer_gpu), timeout=4.0)
         except Exception:
             _cap = 0
-        # What the PROMPT needs, rounded to a stable window, capped to what this
+        # Size the window to hold the PROMPT plus real room for a (possibly LONG)
+        # OUTPUT — reserving _OUTPUT_MAX_TOKENS so a big file/report isn't cut off
+        # by a prompt-tight window — rounded to a stable step, capped to what this
         # node can safely hold.
-        _fit = _round_ctx(_ctx_need)
+        _prompt_tok = int((len(prompt) + len(system)) / max(_CHARS_PER_TOKEN, 1.0))
+        _out_room = _OUTPUT_MAX_TOKENS if _OUTPUT_MAX_TOKENS > 0 else _CTX_RESERVE_OUT
+        _fit = _round_ctx(_prompt_tok + _out_room)
         if _cap:
             _fit = min(_fit, _cap)
         # Apply to EVERY call, pinned or not. A pinned num_ctx (a role/agent that
         # deliberately wants a big window, e.g. planner/controller=16384) is a
-        # FLOOR the fit can raise but must NEVER lower below the prompt's need —
-        # otherwise a pin that is smaller than the prompt still silently truncates
-        # (a long-run controller ledger or planner prompt can exceed 16384). Take
-        # the larger of the pin and the fit, then cap to the node-safe max.
+        # FLOOR the fit can raise but must NEVER lower below what prompt+output
+        # need — otherwise a pin smaller than the prompt still silently truncates.
+        # Take the larger of the pin and the fit, then cap to the node-safe max.
         _pinned = int(_merged_opts.get("num_ctx") or 0)
         _want = max(_fit, _pinned)
         if _cap:
             _want = min(_want, _cap)
         _merged_opts["num_ctx"] = max(_CTX_FLOOR, _want)
+        # num_predict = the output room actually available in the window (bounded
+        # by the sensible max), so a long generation can use it ALL but nothing
+        # decodes PAST the window. Only when the caller pinned no positive value.
+        if _OUTPUT_MAX_TOKENS > 0:
+            _np = int(_merged_opts.get("num_predict") or 0)
+            if _np <= 0:
+                _room = _merged_opts["num_ctx"] - _prompt_tok
+                _merged_opts["num_predict"] = max(512, min(_OUTPUT_MAX_TOKENS, _room))
     if _merged_opts:
         body["options"] = _merged_opts
     gen_timeout = float(timeout) if timeout else OLLAMA_GEN_TIMEOUT
