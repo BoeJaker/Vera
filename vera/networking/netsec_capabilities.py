@@ -54,7 +54,10 @@ from fastapi.responses import HTMLResponse
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import APP, capability, emit_event, now_iso
 # app-free shell-script builder (unit-tested; waits for cloud-init/apt lock)
-from Vera.vera.networking.netsec_core import wireguard_install_script as _wireguard_install_script
+from Vera.vera.networking.netsec_core import (
+    wireguard_install_script as _wireguard_install_script,
+    wg_peer_allowed_ips, wg_gateway_postup, wg_gateway_postdown,
+)
 
 log = logging.getLogger("vera.netsec")
 _HERE = Path(__file__).parent
@@ -307,7 +310,8 @@ class WireGuardProvider(MeshProvider):
             lines = [
                 "[Peer]",
                 f"PublicKey = {p['pubkey']}",
-                f"AllowedIPs = {p['ip']}/32",
+                # a gateway member also advertises its routes (e.g. 192.168.0.0/24)
+                f"AllowedIPs = {wg_peer_allowed_ips(p['ip'], p.get('routes'))}",
             ]
             if p.get("endpoint"):
                 lines.append(f"Endpoint = {p['endpoint']}")
@@ -320,6 +324,12 @@ class WireGuardProvider(MeshProvider):
         ifc = self._iface(cfg)
         port = int(cfg.get("listen_port", 51820))
         peer_block = self._peer_block(cfg, member, peers)
+        # a GATEWAY member (has advertised routes) forwards + masquerades mesh traffic
+        # to those subnets; PostUp/PostDown make it persist across wg-quick up/down.
+        gw = ""
+        if member.get("routes"):
+            gw = (f"PostUp = {wg_gateway_postup(cfg.get('subnet', ''), ifc)}\n"
+                  f"PostDown = {wg_gateway_postdown(cfg.get('subnet', ''), ifc)}\n")
         # Unquoted heredoc so $(cat key) is evaluated ON the host — the private
         # key is inlined locally and never sent over the wire.
         script = (
@@ -329,6 +339,7 @@ class WireGuardProvider(MeshProvider):
             f"PrivateKey = $(cat /etc/wireguard/{ifc}.key)\n"
             f"Address = {member['ip']}/32\n"
             f"ListenPort = {port}\n"
+            f"{gw}"
             f"{peer_block}\n"
             "EOF\n"
             f"if ip link show {ifc} >/dev/null 2>&1; then "
@@ -791,6 +802,46 @@ async def cap_mesh_leave(host_id: str = "", trace_id=None) -> Dict:
     sync = await _sync_all(cfg)
     await emit_event({"type": "netsec.mesh.left", "host_id": host_id})
     return {"ok": True, "torn_down": td.get("ok"), "sync": sync}
+
+
+@capability(
+    "netsec.mesh.gateway",
+    http_method="POST", http_path="/netsec/mesh/gateway", http_tags=["netsec"],
+    memory="off",
+    description="Designate a mesh MEMBER as a GATEWAY that advertises one or more LAN "
+                "subnets (routes) to the rest of the mesh: other members route those "
+                "subnets through it, and the gateway host enables ip_forward + masquerade. "
+                "This lets mesh nodes reach a whole LAN (e.g. the Vera stack's "
+                "192.168.0.0/24) via ONE on-LAN member, without putting every service host "
+                "on the mesh. Pass routes=[] to clear the gateway role. Inputs: host_id "
+                "(str! — an existing mesh member), routes (list[str] CIDRs). Output: {ok, "
+                "member, applied, sync}.",
+)
+async def cap_mesh_gateway(host_id: str = "", routes=None, trace_id=None) -> Dict:
+    cfg = await _cfg()
+    m = cfg.get("members", {}).get(host_id)
+    if not m:
+        return {"error": f"not a mesh member: {host_id} — join it first (netsec.mesh.join)"}
+    routes = [str(r).strip() for r in (routes or []) if str(r).strip()]
+    m["routes"] = routes
+    cfg["members"][host_id] = m
+    await _cfg_put(cfg)
+    # apply ip_forward + masquerade ON the gateway host now (PostUp also persists it on
+    # the next wg-quick up); clearing routes removes the masquerade rule.
+    ifc = cfg.get("iface", "vera0")
+    sub = cfg.get("subnet", "")
+    script = wg_gateway_postup(sub, ifc) if routes else wg_gateway_postdown(sub, ifc)
+    applied = ""
+    try:
+        r = await _ssh(host_id, _root_wrap(script), timeout=30)
+        applied = ((r.get("stdout") or "") + (r.get("stderr") or "")).strip()[-200:]
+    except Exception as e:
+        applied = f"{type(e).__name__}: {e}"
+    cfg = await _cfg()
+    sync = await _sync_all(cfg)   # re-render peers so they learn (or drop) the advertised route
+    await emit_event({"type": "netsec.mesh.gateway", "host_id": host_id, "routes": routes})
+    return {"ok": True, "member": (await _cfg())["members"].get(host_id),
+            "routes": routes, "applied": applied, "sync": sync}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
