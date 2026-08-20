@@ -64,3 +64,31 @@ else
   tail -n 15 /tmp/vera_wg_install.log 2>/dev/null
 fi
 """.strip().replace("__PKG_WAIT__", _PKG_WAIT)
+
+
+def wg_peer_allowed_ips(peer_ip: str, routes=None) -> str:
+    """AllowedIPs value for a mesh peer: its own /32, PLUS any subnets it advertises
+    as a gateway — so other members route those subnets through it. Pure →
+    unit-testable. (Without this, peers only ever learn each other's /32 host IPs and
+    a whole-LAN gateway is impossible.)"""
+    parts = [f"{peer_ip}/32"]
+    for r in (routes or []):
+        r = (str(r) or "").strip()
+        if r and r not in parts:
+            parts.append(r)
+    return ", ".join(parts)
+
+
+def wg_gateway_postup(mesh_subnet: str, iface: str) -> str:
+    """PostUp for a GATEWAY member: enable IPv4 forwarding and masquerade mesh-sourced
+    traffic leaving any non-mesh interface, so peers can reach the advertised LAN
+    subnet through this host and replies return. Idempotent (-C guard). Pure."""
+    return (f"sysctl -w net.ipv4.ip_forward=1; "
+            f"iptables -t nat -C POSTROUTING -s {mesh_subnet} ! -o {iface} -j MASQUERADE 2>/dev/null "
+            f"|| iptables -t nat -A POSTROUTING -s {mesh_subnet} ! -o {iface} -j MASQUERADE")
+
+
+def wg_gateway_postdown(mesh_subnet: str, iface: str) -> str:
+    """PostDown for a GATEWAY member: remove the masquerade rule PostUp added."""
+    return (f"iptables -t nat -D POSTROUTING -s {mesh_subnet} ! -o {iface} -j MASQUERADE "
+            f"2>/dev/null || true")
