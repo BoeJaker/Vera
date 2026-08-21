@@ -124,14 +124,6 @@ gallery without overwriting this authored guide.
 | 38 | [Media and characters](38-media-characters.md) | Images, characters, sprites, speech, and media assets |
 | 39 | [Activity and boards](39-activity-boards.md) | Activity history, work boards, claims, and coordination |
 
-## Operations and engineering history
-
-- [Planner drift postmortem](postmortems/2026-08-06-agentic-loop-planner-drift.md)
-
-Local planning specifications under `documentation/specs/` are intentionally
-excluded from Git. The numbered guides and runtime capability schemas are the
-published source for current operator-facing behavior.
-
 ## Screenshot maintenance
 
 Screenshots are produced by Vera's Operator, not hand-composited:
