@@ -110,9 +110,10 @@ def test_data_fabric_capture_recipe_is_representative():
 
 
 def test_gallery_build():
+    assert G.OUTPUT_FILE == "GALLERY.md"
     md = G.build_gallery([{"slug": "markets", "title": "Markets", "doc": "15-markets.md",
                            "cover_rel": "assets/markets/s.png", "shot_count": 3, "cap_count": 12}],
                          generated_at="now", total_caps=12)
-    assert "Vera — Documentation" in md
+    assert "Vera — Visual gallery" in md
     assert "15-markets.md" in md
     assert "assets/markets/s.png" in md
