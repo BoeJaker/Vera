@@ -5024,7 +5024,37 @@ async def agent_purge_fabric_duplicates(dry_run: bool = True, trace_id=None):
     return {"dry_run": False, "deleted": deleted, "summary": keep_summary}
 
 
+async def _wait_for_backing_store(timeout: float = 60.0) -> bool:
+    """Block until the shared Redis client is connected, or ``timeout`` elapses.
+
+    ``_startup`` can fire from the import-time ``create_task`` (below) BEFORE
+    capability_orchestration has finished connecting ``REDIS``/``PG_POOL`` — both
+    start as ``None`` and are only assigned late in boot. If the seed runs then,
+    ``AgentRegistry.save()`` no-ops its Redis write (its ``if r:`` guard is
+    False), so the freshly-seeded agents live only in the in-memory ``_CACHE``:
+    every later ``_startup`` finds them cached and skips re-saving, so Redis —
+    which ``list_all`` reads — stays empty forever and ``agent.list`` returns 0.
+    Invisible on prod (its Redis is warm from prior boots) but it bit every FRESH
+    instance: a dev sandbox came up with 0 agents even though the seed logged
+    success. Waiting here makes the seed's writes actually land.
+
+    Returns True once Redis is available, False on timeout (the caller then still
+    proceeds best-effort, exactly as before this guard existed).
+    """
+    deadline = time.monotonic() + max(0.0, timeout)
+    while _redis() is None:
+        if time.monotonic() >= deadline:
+            log.warning("agents: backing Redis not connected after %.0fs — "
+                        "seed may not persist to Redis", timeout)
+            return False
+        await asyncio.sleep(0.5)
+    return True
+
+
 async def _startup():
+    # Seed/hydrate ONLY once Redis is actually connected — otherwise save()
+    # silently drops its Redis write and the whole seed is lost (see helper).
+    await _wait_for_backing_store()
     await AGENT_REGISTRY.pg_init()
     # Load agents from fabric (durable source of truth). Fabric → cache.
     # NO destructive operations on startup — the user reported agents were
