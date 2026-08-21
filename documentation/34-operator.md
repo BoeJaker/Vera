@@ -316,6 +316,108 @@ GIF with `gif="true"`).
 
 ---
 
+### Representative screenshot states
+
+A useful screenshot is evidence of a working feature, not merely proof that its
+route returned HTML. Many Vera panels are workbenches whose landing view is a
+menu, empty shell, or loading state. The documentation mission therefore
+supports declarative per-panel capture states in
+vera/operator/docs/domain_map.py.
+
+| Field | Purpose |
+|---|---|
+| name | Stable filename suffix, allowing several views of one panel |
+| label / caption | Human-readable heading and explanation in the guide |
+| click | Trusted CSS selector for the subview to open |
+| ready_selector | Element that must be visible before capture |
+| ready_text | Element whose non-placeholder text proves data arrived |
+| settle_ms | Extra time for charts, graph layout, and streamed state |
+| full_page | Override the mission-wide viewport policy |
+
+Data Fabric is captured in Graph, Sources, and Statistics states. The Graph
+recipe opens #fnav-graph, waits for the rendered graph canvas and its node/edge
+summary, then allows the force layout to settle. Recipes are structured rather
+than arbitrary JavaScript, so they remain reviewable and deterministic.
+
+### Readiness contract
+
+Before writing a PNG, Operator waits for DOM content, best-effort network idle,
+meaningful body content, the recipe's visible selector, non-placeholder result
+text when configured, fonts and images, and a final layout-settling interval.
+WebSocket-backed pages may never become network-idle, so explicit per-panel
+evidence is authoritative.
+
+### Capture output and preservation
+
+- Screenshots live under documentation/assets/<domain>/.
+- manifest.json records panel state, source panel, route, and capture mode.
+- Authored prose is preserved; only managed image/capability blocks refresh.
+- documentation/README.md is never generated over.
+- The replaceable card index is documentation/GALLERY.md.
+- Selective runs merge manifest entries rather than dropping unrelated captures.
+
+### Screenshot troubleshooting
+
+| Symptom | Check |
+|---|---|
+| Blank shell | Add a capture state that opens the actual subview |
+| Spinner or placeholder | Add ready_selector, ready_text, or a larger settle_ms |
+| Panel looks degraded | Ensure panel_capture_url found the real iframe route |
+| No screenshots | Install Operator requirements, Chromium, and its OS dependencies |
+| Graph has no nodes | Add an isolated seed; never seed production for documentation |
+| Partial run changes navigation | Regression: gallery belongs in GALLERY.md, not README.md |
+
+### Representative screenshot states
+
+A useful screenshot is evidence of a working feature, not merely proof that its
+route returned HTML. Many Vera panels are workbenches whose landing view is a
+menu, empty shell, or loading state. The documentation mission therefore
+supports declarative per-panel capture states in
+vera/operator/docs/domain_map.py.
+
+| Field | Purpose |
+|---|---|
+| name | Stable filename suffix, allowing several views of one panel |
+| label / caption | Human-readable heading and explanation in the guide |
+| click | Trusted CSS selector for the subview to open |
+| ready_selector | Element that must be visible before capture |
+| ready_text | Element whose non-placeholder text proves data arrived |
+| settle_ms | Extra time for charts, graph layout, and streamed state |
+| full_page | Override the mission-wide viewport policy |
+
+Data Fabric is captured in Graph, Sources, and Statistics states. The Graph
+recipe opens #fnav-graph, waits for the rendered graph canvas and its node/edge
+summary, then allows the force layout to settle. Recipes are structured rather
+than arbitrary JavaScript, so they remain reviewable and deterministic.
+
+### Readiness contract
+
+Before writing a PNG, Operator waits for DOM content, best-effort network idle,
+meaningful body content, the recipe's visible selector, non-placeholder result
+text when configured, fonts and images, and a final layout-settling interval.
+WebSocket-backed pages may never become network-idle, so explicit per-panel
+evidence is authoritative.
+
+### Capture output and preservation
+
+- Screenshots live under documentation/assets/<domain>/.
+- manifest.json records panel state, source panel, route, and capture mode.
+- Authored prose is preserved; only managed image/capability blocks refresh.
+- documentation/README.md is never generated over.
+- The replaceable card index is documentation/GALLERY.md.
+- Selective runs merge manifest entries rather than dropping unrelated captures.
+
+### Screenshot troubleshooting
+
+| Symptom | Check |
+|---|---|
+| Blank shell | Add a capture state that opens the actual subview |
+| Spinner or placeholder | Add ready_selector, ready_text, or a larger settle_ms |
+| Panel looks degraded | Ensure panel_capture_url found the real iframe route |
+| No screenshots | Install Operator requirements, Chromium, and its OS dependencies |
+| Graph has no nodes | Add an isolated seed; never seed production for documentation |
+| Partial run changes navigation | Regression: gallery belongs in GALLERY.md, not README.md |
+
 ## 9. Operator Studio panel
 
 A dedicated tab (🕹 **Operator**) drives all of the above: pick a target, set a

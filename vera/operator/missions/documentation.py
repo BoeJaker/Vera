@@ -297,7 +297,9 @@ async def run_documentation_mission(params: Dict[str, Any],
     if write_docs:
         gal = _gallery.build_gallery(gallery_entries, generated_at=_iso(),
                                      total_caps=len(all_caps))
-        with open(os.path.join(docs_dir, "README.md"), "w", encoding="utf-8") as f:
+        # README.md is authored navigation and must never be replaced by a
+        # partial capture run. The replaceable visual index has its own file.
+        with open(os.path.join(docs_dir, _gallery.OUTPUT_FILE), "w", encoding="utf-8") as f:
             f.write(gal)
     with open(os.path.join(assets_dir, "manifest.json"), "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)

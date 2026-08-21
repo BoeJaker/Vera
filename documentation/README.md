@@ -14,6 +14,10 @@ These screenshots were captured from the running Vera UI with Operator on
 2026-08-16. They are stored in the repository, so they render on GitHub and in
 offline documentation.
 
+For every currently captured subsystem view, open the
+[generated visual gallery](GALLERY.md). Operator refreshes that replaceable
+gallery without overwriting this authored guide.
+
 | Main dashboard | Capability Hub |
 |---|---|
 | [![Main dashboard](assets/overview/dashboard.png)](assets/overview/dashboard.png) | [![Capability Hub](assets/overview/cap-hub.png)](assets/overview/cap-hub.png) |
