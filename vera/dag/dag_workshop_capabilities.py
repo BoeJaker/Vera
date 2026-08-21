@@ -10008,6 +10008,37 @@ async def cap_code_save(path: str, content: str, session_id: str = "", repo: str
 # NOTE: keep plain helpers ABOVE the next @capability decorator. A decorator
 # binds to whatever function follows it, so a helper slipped in between
 # registers itself AS that capability — which is exactly what happened here:
+def _html_structural_error(code: str) -> str:
+    """Deterministic structural problems in an HTML PAGE that html.parser accepts
+    but a browser renders wrong — the failure mode of a coder that 'restarts' the
+    file partway (a second <head>/<body>) or leaves a <script> block open. Returns
+    a one-line error for the repair loop, or "" if the page structure is sound.
+
+    Conservative on purpose so it never rejects valid markup: script/style balance
+    is checked on the raw text; the single-section check runs only AFTER that
+    passes and on a copy with comments and (now-known-balanced) script/style
+    bodies stripped, so a '<body>' written inside JS or a comment is never
+    miscounted as a duplicate document section.
+    """
+    low = code.lower()
+    for tag in ("script", "style"):
+        opens = len(re.findall(r"<" + tag + r"(?:\s|>)", low))
+        closes = len(re.findall(r"</" + tag + r"\s*>", low))
+        if opens != closes:
+            return (f"unbalanced <{tag}> tags — {opens} opening vs {closes} closing "
+                    f"</{tag}>. Every <{tag}> must be closed exactly once.")
+    stripped = re.sub(r"<!--.*?-->", "", low, flags=re.S)
+    stripped = re.sub(r"<script\b.*?</script\s*>", "", stripped, flags=re.S)
+    stripped = re.sub(r"<style\b.*?</style\s*>", "", stripped, flags=re.S)
+    for tag in ("html", "head", "body"):
+        n = len(re.findall(r"<" + tag + r"(?:\s|>)", stripped))
+        if n > 1:
+            return (f"duplicate <{tag}> — {n} found; a document has exactly one. The file "
+                    f"appears to restart partway through. Emit a single {tag} section and "
+                    f"delete the duplicate.")
+    return ""
+
+
 # code.author was bound to _v5_check_syntax and every call raised
 # "_v5_check_syntax() missing 2 required positional arguments".
 def _v5_check_syntax(code: str, lang: str, path: str = "") -> Dict[str, Any]:
@@ -10034,11 +10065,21 @@ def _v5_check_syntax(code: str, lang: str, path: str = "") -> Dict[str, Any]:
             _y.safe_load(code)
             return {"ok": True, "checker": "yaml-parse"}
         if kind in ("html", "htm", "xml"):
-            # Not a validator — just catches grossly malformed markup.
+            # First catch grossly malformed markup with the stdlib parser...
             from html.parser import HTMLParser as _HP
             class _P(_HP):
                 pass
             _P().feed(code)
+            # ...then the structural breakage html.parser waves through but a
+            # browser renders wrong: a coder that "restarts" the document
+            # mid-file (a second <head>/<body>) or leaves a <script> unbalanced.
+            # Each tag is well-formed on its own, so only a structural check
+            # catches it — this was the broken-app failure mode. html/htm only
+            # (XML has no single page-structure rule).
+            if kind in ("html", "htm"):
+                _herr = _html_structural_error(code)
+                if _herr:
+                    return {"ok": False, "checker": "html-structure", "error": _herr}
             return {"ok": True, "checker": "html-parse"}
     except SyntaxError as e:
         return {"ok": False, "checker": "python-compile",
@@ -10209,6 +10250,21 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
         "logic here'.\n"
         "Rules:\n"
         "  • Output the COMPLETE file, and nothing else. No commentary before or after.\n"
+        "  • NEVER narrate your thinking inside the file. No reasoning/deliberation comments "
+        "('Actually…', 'Wait…', 'Let's simplify…', 'Conceptual, see below', 'thought flow', "
+        "'Hacky…'), no notes-to-self, no rejected alternatives — emit ONLY the final code a "
+        "user would ship.\n"
+        "  • Author the document ONCE, top to bottom. Never restart it or repeat a structural "
+        "section: for HTML emit a SINGLE <!DOCTYPE>, <html>, <head> and <body>, each closed "
+        "exactly once — do not open a second <head>/<body> partway down the file.\n"
+        "  • Put runnable code where it RUNS. JavaScript goes in a <script> that executes; NEVER "
+        "place program logic inside a string passed to insertAdjacentHTML/innerHTML/"
+        "document.write — that ships the logic as inert text and nothing runs.\n"
+        "  • This call authors ONE file. If it is a web page, make it FULLY SELF-CONTAINED — "
+        "inline the CSS in <style> and the JS in <script>. Do NOT reference sibling files you "
+        "are not creating (no <script src='app.js'> / <link href='style.css'> pointing at local "
+        "files that will not exist); reference a separate file only if the task explicitly names "
+        "it as its own deliverable.\n"
         f"  • ONE fenced block, opened EXACTLY like this: ```{lang} file={path}\n"
         f"    `file={path}` belongs on the OPENING FENCE LINE ONLY. The first line INSIDE "
         "the block must be real code (an import/statement) — never a repeat of the "
