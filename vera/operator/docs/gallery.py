@@ -1,4 +1,4 @@
-"""gallery.py — the top-level documentation index (documentation/README.md).
+"""gallery.py — the generated visual index (documentation/GALLERY.md).
 
 Renders a cover-image grid: one card per domain linking to its doc, plus a
 capability-count summary. Pure string builder over the manifest the
@@ -9,9 +9,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-_HEADER = """# Vera — Documentation
+OUTPUT_FILE = "GALLERY.md"
 
-Auto-generated gallery. Each card links to the full write-up for that domain;
+_HEADER = """# Vera — Visual gallery
+
+Auto-generated gallery. Each card links to the authored write-up for that domain;
 screenshots are captured by the **operator** (`operator.mission.run
 documentation`) against a loop-lab sandbox and refreshed in place.
 

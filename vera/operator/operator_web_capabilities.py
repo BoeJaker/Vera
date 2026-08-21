@@ -791,7 +791,7 @@ async def cap_docs_capture(doc: str = "", target: str = "sandbox", base_url: str
 
 @capability("docs.gallery", memory="on",
             http_method="POST", http_path="/docs/gallery", http_tags=["docs", "operator"],
-            description="Rebuild documentation/README.md gallery from the last "
+            description="Rebuild documentation/GALLERY.md from the last "
                         "capture manifest (no screenshots taken). Output: {ok, domains}.")
 async def cap_docs_gallery(trace_id=None) -> Dict[str, Any]:
     docs = _repo_root() / "documentation"
@@ -811,8 +811,9 @@ async def cap_docs_gallery(trace_id=None) -> Dict[str, Any]:
                         "shot_count": len(panels), "cap_count": info.get("cap_count", 0)})
     gal = _gallery.build_gallery(entries, generated_at=data.get("generated_at", ""),
                                  total_caps=sum(e["cap_count"] for e in entries))
-    (docs / "README.md").write_text(gal, encoding="utf-8")
-    return {"ok": True, "domains": len(entries)}
+    (docs / _gallery.OUTPUT_FILE).write_text(gal, encoding="utf-8")
+    return {"ok": True, "domains": len(entries),
+            "path": f"documentation/{_gallery.OUTPUT_FILE}"}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
