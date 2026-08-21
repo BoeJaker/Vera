@@ -764,6 +764,95 @@ async def _sqlite_query(dataset_id: str = "", limit: int = 50, offset: int = 0) 
         return []
 
 
+def _record_matches_filter(row: Dict[str, Any], data: Any,
+                           filt: Dict[str, Any]) -> bool:
+    """True when every key in ``filt`` equals either the row's top-level column
+    or its decoded ``data`` payload. Helper for :func:`query_dataset`."""
+    data_dict = data if isinstance(data, dict) else {}
+    for key, want in filt.items():
+        if row.get(key) == want:
+            continue
+        if data_dict.get(key) == want:
+            continue
+        return False
+    return True
+
+
+async def query_dataset(dataset_id: str = "",
+                        query: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """Read records from a dataset — the read counterpart to the ingest/insert
+    path, and the function the agents / skills / images / spritegen / character
+    subsystems call to hydrate themselves from the durable fabric.
+
+    Records live in the ``fabric_records`` table; SQLite is the always-available
+    primary backend (every write lands there via ``_sqlite_insert_record``), so
+    this reads from it. Each returned row mirrors the stored columns
+    (``id, dataset_id, text, data, source_id, tags, created_at``), newest first.
+
+    Args:
+        dataset_id: dataset to read; ``""`` reads across all datasets.
+        query: optional shaping dict —
+            * ``limit``        (int, default 200) max rows returned.
+            * ``offset``       (int, default 0)   rows to skip.
+            * ``include_data`` (bool, default True) JSON-decode the ``data``
+              column into a dict. Callers tolerate a raw string too, but
+              decoding here saves them the step.
+            * ``filter``       (dict, optional) keep only rows whose top-level
+              column OR decoded-``data`` field equals the given value. Applied
+              in-memory after the fetch (the SQL ``LIMIT`` can't express it), so
+              a filtered read widens its scan then trims to ``limit``.
+
+    Returns:
+        list[dict] — possibly empty. Never raises: on any backend error it logs
+        at debug and returns what it has, matching the degrade-gracefully
+        contract the rest of the fabric relies on.
+    """
+    q = query or {}
+
+    def _as_int(val, default):
+        try:
+            return int(val)
+        except (TypeError, ValueError):
+            return default
+
+    limit = max(0, _as_int(q.get("limit", 200), 200))
+    offset = max(0, _as_int(q.get("offset", 0), 0))
+    include_data = q.get("include_data", True)
+    filt = q.get("filter") or {}
+
+    # A filter can't be pushed into the SQL LIMIT (a match could sit past the
+    # cut-off), so widen the fetch when filtering and trim after matching.
+    fetch_limit = max(limit, 5000) if filt else limit
+
+    try:
+        rows = await _sqlite_query(dataset_id=dataset_id or "",
+                                   limit=fetch_limit, offset=offset)
+    except Exception as e:
+        log.debug("query_dataset(%s) read failed: %s", dataset_id, e)
+        rows = []
+
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        row = dict(r)
+        # Decode `data` once — used for both the filter test and the payload.
+        data = row.get("data")
+        if isinstance(data, str) and data:
+            try:
+                data = json.loads(data)
+            except Exception:
+                pass  # leave it as the raw string; callers handle both shapes
+        if filt and not _record_matches_filter(row, data, filt):
+            continue
+        if include_data:
+            row["data"] = data
+        else:
+            row.pop("data", None)
+        out.append(row)
+        if filt and len(out) >= limit:
+            break
+    return out
+
+
 async def _sqlite_upsert_source(src: dict):
     """Source upsert via the single-writer queue."""
     await _enqueue_write({"kind": "upsert_source", "src": src}, wait=True)
