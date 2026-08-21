@@ -39,11 +39,31 @@ python tools/vera-docgen/docgen.py test
 
 ## Output
 
+The generated visual index is documentation/GALLERY.md. It is replaceable and
+is built from the capture manifest. The authored documentation/README.md is
+never overwritten, including during selective domain or panel runs.
+
 - `documentation/assets/<domain>/*.png` — panel screenshots (GitHub-relative).
 - `documentation/assets/manifest.json` — what was captured.
 - `documentation/NN-*.md` — managed auto-blocks (`<!-- VERA:AUTO:… -->`) refreshed
   in place; **authored prose is preserved**.
-- `documentation/README.md` — the gallery index.
+- `documentation/GALLERY.md` — the generated gallery index.
+
+## Authoring representative captures
+
+Default capture is appropriate when a panel's landing view is already useful.
+Workbench panels should declare one or more capture_states in
+vera/operator/docs/domain_map.py. A state identifies the subview selector to
+click, a visible result selector, optional non-placeholder result text, and any
+additional graph/chart settling time.
+
+Prefer evidence that reflects user value. A button, empty canvas, iframe, or
+loading shell is not readiness. Keep fixture seeds small, deterministic,
+namespaced, and sandbox-only.
+
+After capture, inspect every new image. Confirm the named feature is visible,
+text is legible, loading indicators are gone, sensitive data is absent, and the
+Markdown link resolves from the guide containing it.
 
 ## How it maps to capabilities
 

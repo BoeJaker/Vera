@@ -91,6 +91,17 @@ def _assign_panels(panels: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any
     return by_domain
 
 
+def _capture_states(domain: Dict[str, Any], panel_id: str) -> List[Dict[str, Any]]:
+    """Return trusted, declarative capture states for a panel."""
+    configured = (domain.get("capture_states") or {}).get(panel_id) or []
+    return list(configured) if configured else [{}]
+
+
+def _state_name(panel_id: str, state: Dict[str, Any]) -> str:
+    suffix = _safe_name(state.get("name") or "")
+    return f"{_safe_name(panel_id)}-{suffix}" if state.get("name") else _safe_name(panel_id)
+
+
 async def run_documentation_mission(params: Dict[str, Any],
                                     ctx: Dict[str, Any]) -> Dict[str, Any]:
     call_cap = ctx.get("call_cap")
@@ -208,27 +219,32 @@ async def run_documentation_mission(params: Dict[str, Any],
                     continue
                 if panel_filter and pid not in panel_filter:
                     continue  # selective re-capture skips everything else
-                rel = f"assets/{slug}/{_safe_name(pid)}.png"
-                abspath = os.path.join(docs_dir, rel)
                 mode = "seeded" if seed_name else "default"
-                if do_capture and session is not None:
-                    cap_url = panel_capture_url(base_url, p)
-                    ok = await _shoot_panel(session, cap_url["url"], abspath,
-                                            settle_ms=settle_ms, full_page=full_page)
-                    if not ok:
+                for state in _capture_states(domain, pid):
+                    shot_id = _state_name(pid, state)
+                    rel = f"assets/{slug}/{shot_id}.png"
+                    abspath = os.path.join(docs_dir, rel)
+                    label = state.get("label") or p.get("label") or pid
+                    if do_capture and session is not None:
+                        cap_url = panel_capture_url(base_url, p)
+                        ok = await _shoot_panel(
+                            session, cap_url["url"], abspath,
+                            settle_ms=max(settle_ms, int(state.get("settle_ms", 0) or 0)),
+                            full_page=bool(state.get("full_page", full_page)), state=state)
+                        if not ok:
+                            continue
+                        total_shots += 1
+                        await _emit("shot", f"[{slug}] {label}",
+                                    domain=slug, panel_id=pid, shot_id=shot_id,
+                                    label=label, rel=rel,
+                                    url=f"/docs/asset?path={rel}", via=cap_url["via"])
+                    elif not os.path.exists(abspath):
                         continue
-                    total_shots += 1
-                    await _emit("shot", f"[{slug}] {p.get('label') or pid}",
-                                domain=slug, panel_id=pid, label=p.get("label") or pid,
-                                rel=rel, url=f"/docs/asset?path={rel}",
-                                via=cap_url["via"])
-                elif not os.path.exists(abspath):
-                    # nothing to embed for this panel yet
-                    continue
-                os.makedirs(dom_asset_dir, exist_ok=True)
-                shots.append({"panel_id": pid, "label": p.get("label") or pid,
-                              "rel_path": rel, "caption": p.get("label") or pid,
-                              "mode": mode, "via": (cap_url["via"] if do_capture else "")})
+                    os.makedirs(dom_asset_dir, exist_ok=True)
+                    shots.append({"panel_id": shot_id, "source_panel_id": pid,
+                                  "label": label, "rel_path": rel,
+                                  "caption": state.get("caption") or label,
+                                  "mode": mode, "via": (cap_url["via"] if do_capture else "")})
 
             # write doc auto-blocks
             number = domain["doc"].split("-")[0]
@@ -281,7 +297,9 @@ async def run_documentation_mission(params: Dict[str, Any],
     if write_docs:
         gal = _gallery.build_gallery(gallery_entries, generated_at=_iso(),
                                      total_caps=len(all_caps))
-        with open(os.path.join(docs_dir, "README.md"), "w", encoding="utf-8") as f:
+        # README.md is authored navigation and must never be replaced by a
+        # partial capture run. The replaceable visual index has its own file.
+        with open(os.path.join(docs_dir, _gallery.OUTPUT_FILE), "w", encoding="utf-8") as f:
             f.write(gal)
     with open(os.path.join(assets_dir, "manifest.json"), "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
@@ -339,9 +357,10 @@ def panel_capture_url(base_url: str, panel: Dict[str, Any]) -> Dict[str, str]:
     return {"url": f"{base}/ui/panel/window?id={panel.get('id')}", "via": "window"}
 
 
-async def _wait_ready(page, settle_ms: int) -> None:
+async def _wait_ready(page, settle_ms: int, state: Optional[Dict[str, Any]] = None) -> None:
     """Give a panel time to actually render: best-effort network-idle, then wait
     for real content, then a settle delay for charts / async fetches / WS data."""
+    state = state or {}
     try:
         await page.wait_for_load_state("networkidle", timeout=4000)
     except Exception:
@@ -350,9 +369,37 @@ async def _wait_ready(page, settle_ms: int) -> None:
         # Wait until the body has meaningful rendered content (not a blank shell).
         await page.wait_for_function(
             "() => { const b=document.body; if(!b) return false; "
-            "return b.scrollHeight > 60 && (b.innerText||'').trim().length > 2 "
-            "|| b.querySelector('canvas,svg,img,table,iframe,input,button'); }",
-            timeout=5000)
+            "const text=(b.innerText||'').replace(/loading[….]*/ig,'').trim(); "
+            "return b.scrollHeight > 120 && (text.length > 40 "
+            "|| b.querySelector('canvas,svg,img[src],table tbody tr')); }",
+            timeout=10000)
+    except Exception:
+        pass
+    ready_selector = str(state.get("ready_selector") or "")
+    if ready_selector:
+        try:
+            await page.wait_for_selector(ready_selector, state="visible", timeout=15000)
+        except Exception:
+            pass
+    ready_text = str(state.get("ready_text") or "")
+    if ready_text:
+        try:
+            await page.wait_for_function(
+                """sel => { const e=document.querySelector(sel);
+                if(!e) return false; const t=(e.innerText||e.textContent||'').trim();
+                return t.length > 2 && !/^(loading|starting|—|[.]{3})/i.test(t); }""",
+                ready_text, timeout=20000)
+        except Exception:
+            pass
+    try:
+        await page.evaluate("""async () => {
+          if (document.fonts && document.fonts.ready) await document.fonts.ready;
+          const imgs=[...document.images].filter(i => !i.complete);
+          await Promise.all(imgs.map(i => new Promise(r => {
+            i.addEventListener('load',r,{once:true}); i.addEventListener('error',r,{once:true});
+            setTimeout(r,3000);
+          })));
+        }""")
     except Exception:
         pass
     try:
@@ -362,12 +409,17 @@ async def _wait_ready(page, settle_ms: int) -> None:
 
 
 async def _shoot_panel(session, url: str, abspath: str, *, settle_ms: int = 1400,
-                       full_page: bool = False) -> bool:
+                       full_page: bool = False,
+                       state: Optional[Dict[str, Any]] = None) -> bool:
     """Navigate to a panel's real URL and save a screenshot. Returns success."""
     page = session.page
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        await _wait_ready(page, settle_ms)
+        state = state or {}
+        click = str(state.get("click") or "")
+        if click:
+            await page.locator(click).first.click(timeout=10000)
+        await _wait_ready(page, settle_ms, state)
         os.makedirs(os.path.dirname(abspath), exist_ok=True)
         await page.screenshot(path=abspath, full_page=bool(full_page), type="png")
         return True

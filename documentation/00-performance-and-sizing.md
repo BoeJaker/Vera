@@ -180,3 +180,39 @@ guarantee for another installation.
 - [Workers, jobs, and syslog](22-workers-jobs-syslog.md)
 - [Loop Lab](33-evolve.md)
 - [Configuration](10-configuration.md)
+### Operator and documentation capture objectives
+
+Browser automation has different latency characteristics from API calls. A
+capture is complete only when the relevant UI state is visible and stable.
+
+| Measure | Target | Investigate when |
+|---|---:|---:|
+| Browser session start | under 5 s warm | over 10 s |
+| Simple panel capture | under 8 s | over 15 s |
+| Graph/chart capture | under 15 s | over 30 s |
+| Failed-panel isolation | one panel only | a failure aborts or erases other output |
+| Screenshot usefulness | selected feature visible | landing shell, spinner, or empty canvas |
+| Selective-run preservation | 100% unrelated entries retained | unrelated output disappears |
+
+These are operational objectives, not fixed sleeps. Faster hardware must not
+capture before readiness evidence appears, while WebSocket traffic must not
+make a ready page wait forever for network-idle. Run captures serially per
+browser session; use selective runs while authoring and a full run for release.
+### Operator and documentation capture objectives
+
+Browser automation has different latency characteristics from API calls. A
+capture is complete only when the relevant UI state is visible and stable.
+
+| Measure | Target | Investigate when |
+|---|---:|---:|
+| Browser session start | under 5 s warm | over 10 s |
+| Simple panel capture | under 8 s | over 15 s |
+| Graph/chart capture | under 15 s | over 30 s |
+| Failed-panel isolation | one panel only | a failure aborts or erases other output |
+| Screenshot usefulness | selected feature visible | landing shell, spinner, or empty canvas |
+| Selective-run preservation | 100% unrelated entries retained | unrelated output disappears |
+
+These are operational objectives, not fixed sleeps. Faster hardware must not
+capture before readiness evidence appears, while WebSocket traffic must not
+make a ready page wait forever for network-idle. Run captures serially per
+browser session; use selective runs while authoring and a full run for release.
