@@ -556,3 +556,363 @@ Next review date:
 
 “Adopt” means Vera maintains an adapter and conformance suite. It does not mean the
 library becomes Vera's internal architecture or dozens of default capabilities.
+
+## Round 2 — durable execution, newer agent SDKs, and AI data infrastructure
+
+This follow-on scan broadens the portfolio without changing the queued-test rule.
+It reviewed official documentation for DBOS, Temporal, Prefect, Dagster, Google
+ADK, OpenAI Agents SDK, Strands, Agno, Hugging Face Datasets and Accelerate, DVC,
+SGLang, llama.cpp, Lance, and DuckDB vector search. Repository search found no
+meaningful Vera integration for these candidates. DuckDB appears in a sandbox
+component catalog, which means it can be installed; that is not a Data/Query
+provider integration.
+
+No package, image, workflow service, dataset, or model was executed.
+
+### Round 2 portfolio additions
+
+| Candidate | Category | Priority | Vera integration shape | Decision |
+| --- | --- | --- | --- | --- |
+| DBOS | Durable execution | P1 experimental | Workflow IR runtime adapter over Postgres | First durability spike |
+| Temporal | Durable execution | P2/reference | Workflow IR runtime adapter via service and Python SDK | Cross-service reference; do not deploy with DBOS initially |
+| Prefect | General/data workflows | Watch | Workflow IR import/export adapter | Overlaps DAG/scheduling; no dedicated pilot yet |
+| Dagster | Data orchestration | P2 conditional | Asset/lineage adapter for Fabric datasets and artifacts | Consider only for data-asset product requirements |
+| Google ADK | Agent SDK | P2 comparison | RuntimeAdapter plus A2A | Add to common agent conformance matrix |
+| OpenAI Agents SDK | Agent SDK | P2 comparison | RuntimeAdapter plus trace/guardrail projection | Useful Responses/handoff ecosystem; not a kernel |
+| Strands Agents | Agent SDK | Watch/P2 | RuntimeAdapter | Pilot only with an AWS/Bedrock requirement |
+| Agno | Agent platform | Watch | Prefer A2A or generic RuntimeAdapter | Decline deep integration due broad overlap |
+| Hugging Face Datasets | Dataset access | P1 | DatasetProvider and SourcePackage adapter | Arrow/streaming ecosystem access with pinned revisions |
+| Hugging Face Accelerate | Distributed training | P2 | TrainingRuntime adapter | Use when a TrainingRun needs distributed execution |
+| DVC | Data versioning | P2 | External Dataset/Artifact registry adapter | Import/export pointers; do not adopt DVC pipelines as another engine |
+| llama.cpp server | Inference | P1 | InferenceProvider for GGUF and CPU/edge placement | Clear local/edge gap alongside Ollama/vLLM |
+| SGLang | Inference | P2 conditional | InferenceProvider | Pilot only against a measured vLLM feature/performance gap |
+| Lance format | Multimodal data | P2 experimental | Dataset/Artifact format adapter | Open format experiment for multimodal snapshots |
+| DuckDB | Analytical query | P1 | QueryProvider over artifacts/dataset snapshots | Strong local analytical seam; vector extension remains experimental |
+
+## Durable execution decision
+
+Durability is more valuable to Vera than another agent framework. Current native
+systems independently implement persistence, queues, retry, schedule, resume, and
+recovery. A durable runtime could replace those mechanics while preserving Dream,
+Evolve, DAG, Calendar, and Agents as product policies.
+
+### DBOS first
+
+DBOS documents workflows that resume from the last completed step, durable queues
+and sleeps, workflow IDs used as idempotency keys, cancellation/timeouts, and
+Postgres-backed execution. It distinguishes workflow errors from retriable step
+failures and documents version-aware recovery.
+
+Sources: [DBOS overview](https://docs.dbos.dev/),
+[workflow semantics](https://docs.dbos.dev/python/tutorials/workflow-tutorial),
+and [architecture](https://docs.dbos.dev/architecture).
+
+DBOS is the first spike because its application-library and Postgres shape matches
+Vera's present deployment better than introducing a separate cluster service. It
+is still an external runtime, not the Workflow IR definition or Run authority.
+
+The adapter must map:
+
+- Workflow IR workflow/run/step IDs to DBOS workflow/function IDs;
+- Run states to DBOS status without inventing exactly-once guarantees for external
+  side effects;
+- idempotency key, retry owner, timeout, cancel, durable sleep, queues, and signals;
+- code/application version to Workflow IR definition and implementation revisions;
+- step result/artifact references without persisting large or sensitive values in
+  workflow state;
+- DBOS recovery observations back into Run events.
+
+The first task is a non-LLM, non-mutating workflow interrupted between deterministic
+steps. A later fixture performs one idempotent external effect with a receipt. Do
+not start with agent model calls, Dream, or Evolve promotion.
+
+### Temporal as reference, not a simultaneous deployment
+
+Temporal documents durable Workflows, Activities, Workers, service-based recovery,
+messages, schedules, versioning, observability, and a Python test framework.
+
+Sources: [Temporal documentation](https://docs.temporal.io/),
+[Python developer guide](https://github.com/temporalio/documentation/blob/main/docs/develop/python/index.mdx),
+and [Python SDK reference](https://python.temporal.io/).
+
+Temporal is the comparison target when Vera needs cross-service, long-lived,
+multi-worker durability beyond the DBOS deployment shape. Build a semantic mapping
+on paper now; do not operate both systems until DBOS conformance exposes a concrete
+gap. A replacement decision must compare determinism constraints, versioning,
+signals/updates, child workflows, scheduling, retention, operations, recovery,
+and migration of in-flight runs.
+
+### Prefect and Dagster boundaries
+
+Prefect supplies flow/task retry and general workflow operations. Dagster is a
+data orchestrator centered on assets, lineage, observability, and testability.
+
+Sources: [Prefect retries](https://docs.prefect.io/v3/how-to-guides/workflows/retries)
+and [Dagster overview](https://docs.dagster.io/).
+
+Neither should become a third native Vera engine. Prefect remains a Workflow IR
+adapter candidate for external definitions. Dagster becomes interesting only if
+Fabric users need asset-centric materialization, lineage, and data quality that
+Vera cannot economically provide. In that case, map Dagster assets to immutable
+record/dataset/artifact revisions and Runs; do not duplicate their state in Fabric.
+
+## Newer agent SDK decision
+
+### Common rule
+
+Agent frameworks are interchangeable runtimes, not Vera subsystems. They enter via
+A2A when remote, or RuntimeAdapter when embedded/containerized. All receive the
+same task corpus, Capability v2 tools, model resolver, policy boundary, Run events,
+cancellation, artifact handling, and teardown tests.
+
+### Google ADK
+
+Google ADK documents agent/tool development, multi-agent orchestration, graph
+workflows, evaluation, and deployment across multiple languages and cloud targets.
+
+Source: [Google ADK](https://adk.dev/).
+
+Add it to the agent conformance matrix after A2A. Prefer its A2A surface for remote
+interoperation. A direct RuntimeAdapter is justified only for features unavailable
+through A2A, and those features must be declared as native extensions rather than
+silently added to Workflow IR.
+
+### OpenAI Agents SDK
+
+The OpenAI Agents SDK documents an Agent/Runner loop with tools, handoffs, sessions,
+guardrails, structured outputs, lifecycle hooks, and tracing. Its run configuration
+can override models/providers and session behavior.
+
+Sources: [Agents](https://openai.github.io/openai-agents-python/agents/),
+[running agents](https://openai.github.io/openai-agents-python/running_agents/),
+and [tracing](https://openai.github.io/openai-agents-js/guides/tracing/).
+
+Implement it as a provider-aware RuntimeAdapter. Map its trace hierarchy to Run and
+portable telemetry; never emit sensitive traces by default. Map handoffs to child
+runs/messages and guardrails to policy/validator evidence, but retain Vera as final
+side-effect authority. Test a non-OpenAI model provider where supported so the
+adapter does not accidentally hard-code vendor identity into Workflow IR.
+
+### Strands and Agno
+
+AWS documentation describes Strands as an open-source agent SDK with model APIs,
+tools, and multi-agent patterns. Agno presents agents, teams, workflows, memory,
+knowledge, evaluation, and an AgentOS runtime that can wrap other frameworks.
+
+Sources: [Strands guidance](https://docs.aws.amazon.com/prescriptive-guidance/latest/agentic-ai-frameworks/strands-agents.html)
+and [Agno documentation](https://docs.agno.com/).
+
+Strands is conditional on a real Bedrock/AWS task. Agno overlaps almost every Vera
+layer, so prefer its external protocol/runtime boundary and decline a deep native
+integration. Neither gets a bespoke panel or default capability family.
+
+## AI data and training infrastructure
+
+### Hugging Face Datasets
+
+Hugging Face Datasets supports local and remote formats, Arrow-backed data,
+streaming, memory mapping, Parquet, and newer Lance access paths.
+
+Sources: [loading datasets](https://github.com/huggingface/datasets/blob/main/docs/source/loading.mdx)
+and [streaming](https://huggingface.co/docs/datasets/en/stream).
+
+Add `DatasetProvider`, not a second Fabric. An imported dataset becomes a pinned
+SourcePackage plus a Fabric dataset snapshot. Record upstream repository/revision,
+config, split, file hashes, schema/features, license/card, streaming cursor, cache,
+and transformations. Remote loading is data egress/ingress subject to policy;
+unreviewed dataset code must not execute in Vera's core process.
+
+### Accelerate
+
+Hugging Face Accelerate offers a unified interface and launcher for distributed
+PyTorch training and inference, including mixed precision, FSDP, DeepSpeed, large
+model loading, and multiple hardware platforms.
+
+Source: [Accelerate documentation](https://huggingface.co/docs/accelerate/index).
+
+Use it as a TrainingRuntime selected by a TrainingRun, not as a new training
+schema. Its resolved configuration, launcher command, environment, topology,
+precision, checkpoints, profiler output, and failures belong in Run/Artifact
+records. A container or isolated environment owns the dependency stack.
+
+### DVC
+
+DVC uses Git-adjacent metadata and external caches/remotes to version data and
+models, and also provides pipeline and experiment features.
+
+Sources: [DVC home](https://www.dvc.org/) and
+[command/workflow reference](https://dvc.org/doc/command-reference/).
+
+Vera should import/export DVC-tracked artifacts and dataset revisions through its
+repository intake. Preserve DVC hash, remote, path, Git commit, and stage metadata.
+Do not adopt `dvc.yaml` execution as another native pipeline: optionally compile a
+supported subset to Workflow IR, or invoke DVC as an isolated CLI adapter with
+declared filesystem/network effects.
+
+### Lance and DuckDB
+
+Lance is an open lakehouse format and catalog direction for multimodal AI data on
+object storage, with vector/full-text search, random access, transactions, time
+travel, and integrations. DuckDB provides local analytical SQL; its VSS extension
+adds experimental HNSW vector indexing.
+
+Sources: [Lance format](https://lance.org/),
+[DuckDB VSS](https://duckdb.org/docs/lts/core_extensions/vss), and
+[DuckDB extension tiers](https://duckdb.org/docs/current/core_extensions/overview).
+
+Treat Lance format separately from LanceDB as a service/library product. A format
+spike should store a frozen multimodal dataset artifact and prove schema, identity,
+time-travel revision, portability, and cleanup. Do not make it canonical until
+transaction, evolution, repair, and ecosystem behavior are tested.
+
+DuckDB is a strong `QueryProvider` for local snapshots and artifacts. It may query
+Parquet/Arrow or other approved formats without importing all data into a long-lived
+service. The VSS extension is explicitly experimental/secondary in official docs;
+keep vector indexing experimental and rebuildable, never the only copy.
+
+## Inference engine additions
+
+### llama.cpp
+
+llama.cpp provides local GGUF inference and an OpenAI-compatible server with chat,
+responses, embeddings, quantized CPU/GPU execution, grammar constraints, and other
+serving features.
+
+Sources: [llama.cpp project](https://github.com/ggml-org/llama.cpp/blob/master/README.md)
+and [server documentation](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md).
+
+This is a P1 InferenceProvider because it covers CPU-heavy, small-node, edge, and
+GGUF deployment scenarios not cleanly represented by vLLM. Ollama may already use
+related formats internally, but provider conformance matters: Vera should be able
+to operate llama.cpp directly when it reduces overhead or exposes needed controls.
+
+Import GGUF files as ModelPackages with checksum, quantization, architecture,
+tokenizer/template, license, source revision, context/resource estimates, and
+supported tasks. Start the server through DeploymentProvider with explicit argv,
+ports, resources, health, and teardown; never interpolate shell commands or accept
+an unverified arbitrary model path.
+
+### SGLang
+
+SGLang documents high-performance serving for language and vision-language models,
+structured outputs, prefix caching, batching, speculative decoding, quantization,
+multi-LoRA, parallelism, metrics, tracing, and multi-node deployment.
+
+Source: [SGLang documentation](https://docs.sglang.io/).
+
+Keep it P2 until a frozen workload identifies a vLLM gap in model support,
+structured generation, multimodal behavior, prefix reuse, LoRA batching, or
+throughput/latency. Use the identical InferenceProvider conformance suite. A win on
+one benchmark does not justify replacing vLLM globally; routing may retain both for
+different eligible deployments.
+
+## Round 2 bounded work units
+
+### LIB-15 — durable runtime semantic fixture
+
+Implement a runtime-neutral durability fixture before adding DBOS: deterministic
+steps, durable wait, retry, timeout, cancel, idempotent external effect, crash at
+every boundary, version change, resume, and complete Run events.
+
+Gate: the fixture describes expected behavior without referencing a vendor and
+fails current adapters that claim unsupported guarantees.
+
+### LIB-16 — DBOS Workflow IR adapter
+
+Compile the LIB-15 workflow to DBOS and map native state/events to Run. Use an
+isolated database schema and no model calls.
+
+Gate: restart/recovery at every boundary; idempotency; retry ownership; cancellation;
+version mismatch; state/artifact limits; database loss behavior; full teardown.
+
+### LIB-17 — Temporal paper adapter and decision gate
+
+Map LIB-15 semantics to Temporal Workflows/Activities/messages/versioning without
+deploying it. List every mismatch with DBOS and Vera.
+
+Gate: approve a live Temporal pilot only if a named distributed/longevity/versioning
+requirement cannot be satisfied safely by DBOS.
+
+### LIB-18 — agent SDK conformance expansion
+
+Add Google ADK and OpenAI Agents SDK to the existing RuntimeAdapter/A2A test matrix.
+Keep Strands optional and Agno protocol-only initially.
+
+Gate: task/tool correctness, model-provider substitution, handoff/child identity,
+policy enforcement, structured output, sessions, cancel/recovery, portable traces,
+dependency isolation, and teardown.
+
+### LIB-19 — Hugging Face DatasetProvider
+
+Import one small pinned dataset and stream one larger public fixture through an
+isolated adapter into record/snapshot manifests. No training occurs.
+
+Gate: revision/hash/license/card, split/schema, streaming resume, cache limits,
+offline replay, malicious builder prevention, export, and removal.
+
+### LIB-20 — distributed TrainingRuntime contract
+
+Define launcher/topology/precision/checkpoint/progress semantics and map Accelerate
+configuration without running a distributed job.
+
+Gate: static config validation, hardware eligibility, secrets/environment allowlist,
+cancellation, checkpoint ArtifactRefs, and unsupported topology disclosure.
+
+### LIB-21 — DVC repository adapter
+
+Inspect and import one DVC-tracked artifact from a local fixture repository, then
+export a Vera ArtifactRef mapping. Do not execute its pipeline.
+
+Gate: Git/DVC identity, remote and credential boundary, missing cache, hash mismatch,
+path traversal, offline behavior, export round trip, and no worktree mutation.
+
+### LIB-22 — DuckDB QueryProvider
+
+Run read-only SQL over frozen Parquet/Arrow artifact fixtures through an isolated
+DuckDB adapter. Keep extension installation disabled initially.
+
+Gate: read-only enforcement, SQL/schema types, memory/time/output limits,
+cancellation, artifact provenance, malicious files, concurrency, and teardown.
+
+### LIB-23 — Lance format experiment
+
+Write and read one frozen multimodal dataset revision through object storage and
+compare with Parquet plus ArtifactRefs.
+
+Gate: schema evolution, random access, media fidelity, checksums, transaction/time
+travel behavior, reader portability, storage/latency, corruption, and removal.
+
+### LIB-24 — llama.cpp InferenceProvider
+
+Register one small pinned GGUF ModelPackage and server deployment in an isolated
+container. This work unit remains queued with all other live model tests.
+
+Gate: model metadata, CPU/GPU placement, chat/responses/embedding/structured output,
+stream/cancel, concurrency, cold/warm latency, memory, health, crash/restart, and
+complete server/model teardown.
+
+### LIB-25 — SGLang admission benchmark
+
+Define, but do not run, a benchmark that isolates candidate advantages over vLLM:
+structured output, shared-prefix workload, multimodal input, LoRA mix, and one
+multi-node scenario only if hardware exists.
+
+Gate: no SGLang deployment unless at least one important workload improves enough
+to cover added operational cost while maintaining quality, policy, and provenance.
+
+## Revised sequencing after Round 2
+
+1. Complete portable Run telemetry and EvalProvider foundations (LIB-01, LIB-03).
+2. Define the runtime-neutral durability fixture (LIB-15).
+3. Run the DBOS adapter spike (LIB-16) before migrating a Vera product workflow.
+4. Keep Temporal at the paper-decision gate (LIB-17) until a specific gap appears.
+5. Build A2A before adding Google ADK/OpenAI SDK comparisons (LIB-02, LIB-18).
+6. Run data adapters in the order DatasetProvider, read-only DuckDB, DVC, then
+   Lance format (LIB-19, LIB-22, LIB-21, LIB-23).
+7. Define TrainingRuntime before Accelerate/PEFT execution (LIB-20, then LIB-10).
+8. Test llama.cpp only after ModelPackage and InferenceProvider contracts exist;
+   SGLang remains an admission benchmark (LIB-24, LIB-25).
+
+Every executable item in this sequence remains queued until live testing is
+explicitly authorized. Static contract/schema work can proceed independently in
+future Loop Lab work units.
