@@ -10312,6 +10312,12 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
         "  • Put runnable code where it RUNS. JavaScript goes in a <script> that executes; NEVER "
         "place program logic inside a string passed to insertAdjacentHTML/innerHTML/"
         "document.write — that ships the logic as inert text and nothing runs.\n"
+        "  • FINISH the behaviour — do not just scaffold it. EVERY interactive element you put in "
+        "the markup must be fully wired: a button/input/form you create MUST have its handler "
+        "ATTACHED (addEventListener('click', …) or onclick=) with a real, working function body "
+        "behind it. Grabbing an element with getElementById and then never binding a handler "
+        "ships a DEAD control and is a failed file. Before you stop, walk every button/control and "
+        "every feature the task names, and make sure each one actually does something end-to-end.\n"
         "  • This call authors EXACTLY ONE file — the one named on the fence. If it is a "
         "self-contained web page, the ENTIRE app goes in THIS single file: ALL markup, ALL CSS "
         "inside a <style> block, and ALL JavaScript inside a <script> block — there are no other "
@@ -10419,8 +10425,13 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
                        # the declared role options don't reach ollama then). Without
                        # repeat_penalty a long code gen can loop the same lines out to
                        # num_predict, holding the GPU for many minutes.
-                       options={"temperature": 0.45, "top_p": 0.9,
-                                "repeat_penalty": 1.15, "repeat_last_n": 256},
+                       # Lower temp = more reliable code (fewer invented bugs);
+                       # repeat_penalty breaks the degenerate line-loop, but a
+                       # SMALLER repeat_last_n (128) only penalises TIGHT repetition
+                       # so legitimately-repeated patterns spread across the file
+                       # (e.g. one addEventListener per button) aren't discouraged.
+                       options={"temperature": 0.3, "top_p": 0.9,
+                                "repeat_penalty": 1.15, "repeat_last_n": 128},
                        files=files or None, session_id=session_id,
                        caller="code.author", trace_id=trace_id, stream_cb=stream_cb)
     except Exception as e:
@@ -10457,6 +10468,8 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
     if not code.strip():
         return {"ok": False, "error": "no code in the generation"}
     _lang_used = _blk["lang"] if _blk else lang
+    # An HTML doc ends at </html>; strip a leaked JS/editor tail after it.
+    code = _v5_strip_html_tail(code, _lang_used)
     check = _v5_check_syntax(code, _lang_used, path)
 
     _edit_sys = (
@@ -11178,6 +11191,27 @@ def _v5_clean_code_body(code: str) -> str:
     # Preserve the trailing-newline convention (extract uses code.rstrip("\n")+"\n")
     # so already-clean code round-trips unchanged.
     return (body.rstrip("\n") + "\n") if body.strip() else body
+
+
+_HTML_CLOSE_TAG_RE = re.compile(r"</html\s*>", re.IGNORECASE)
+
+
+def _v5_strip_html_tail(code: str, lang: str) -> str:
+    """Drop stray content the model appended AFTER the final </html> — the 2026-08-22
+    code.author defect where a JS template-literal close leaked out as a trailing
+    `` `; `` line once the document was already finished. An HTML document ends at
+    </html>; nothing may legitimately follow it, so truncate at the end of the LAST
+    one (a </html> written inside a <script> string is earlier, so the real closing
+    tag stays the last match). No-op for non-HTML, for HTML with no closing tag, and
+    for HTML with only whitespace after it, so clean output round-trips unchanged."""
+    if not code or (lang or "").strip().lower() not in ("html", "htm", "xhtml"):
+        return code
+    last = None
+    for m in _HTML_CLOSE_TAG_RE.finditer(code):
+        last = m
+    if last is None or not code[last.end():].strip():
+        return code
+    return code[:last.end()] + "\n"
 
 
 def _v5_gen_text(result: Any) -> str:
