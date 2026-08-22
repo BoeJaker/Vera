@@ -10304,11 +10304,12 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
         "  • Put runnable code where it RUNS. JavaScript goes in a <script> that executes; NEVER "
         "place program logic inside a string passed to insertAdjacentHTML/innerHTML/"
         "document.write — that ships the logic as inert text and nothing runs.\n"
-        "  • This call authors ONE file. If it is a web page, make it FULLY SELF-CONTAINED — "
-        "inline the CSS in <style> and the JS in <script>. Do NOT reference sibling files you "
-        "are not creating (no <script src='app.js'> / <link href='style.css'> pointing at local "
-        "files that will not exist); reference a separate file only if the task explicitly names "
-        "it as its own deliverable.\n"
+        "  • This call authors EXACTLY ONE file — the one named on the fence. If it is a "
+        "self-contained web page, the ENTIRE app goes in THIS single file: ALL markup, ALL CSS "
+        "inside a <style> block, and ALL JavaScript inside a <script> block — there are no other "
+        "files, so inline everything. ONLY split across files (<script src=…>/<link href=…> to a "
+        "sibling) when the task EXPLICITLY names those other files as separate deliverables you "
+        "are also creating; otherwise a reference to any local file is a bug (it won't exist).\n"
         f"  • ONE fenced block, opened EXACTLY like this: ```{lang} file={path}\n"
         f"    `file={path}` belongs on the OPENING FENCE LINE ONLY. The first line INSIDE "
         "the block must be real code (an import/statement) — never a repeat of the "
@@ -10367,7 +10368,17 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
     # hand-rolling a regex parser because it assumes bs4 is not — and both
     # guesses cost a whole failed run to discover.
     pkg_block = await _package_hint(session_id, lang)
+    # Tell the coder what ALREADY exists so it doesn't guess or recreate files,
+    # and can correctly reference real siblings in a genuine multi-file build. It
+    # also anchors the self-contained rule: never <script src>/<link href> a local
+    # file that isn't in this list (it won't exist at runtime).
+    _wfiles = await _v5_workdir_files(session_id)
+    _files_block = (("\nFILES ALREADY IN THE WORKSPACE (real): " + ", ".join(_wfiles[:40])
+                     + ". Do not recreate these; reference one by its exact name only if THIS "
+                     "file genuinely needs it, and never reference any OTHER local file that is "
+                     "not in this list (it will not exist).\n") if _wfiles else "")
     prompt = (f"TASK — write `{path}`:\n{task}\n"
+              + _files_block
               + (f"\nREQUIREMENTS / CONSTRAINTS:\n{requirements}\n" if requirements else "")
               + (f"\nThe code must read these files (their real content is included above as "
                  f"CONTEXT FILES): {', '.join(files)}\n" if files else "")
