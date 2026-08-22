@@ -10287,6 +10287,13 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
         "logic here'.\n"
         "Rules:\n"
         "  • Output the COMPLETE file, and nothing else. No commentary before or after.\n"
+        "  • COMMIT to ONE implementation. Emit EXACTLY ONE fenced block, then STOP — do NOT "
+        "close the fence and open another, and do NOT write a draft followed by a 'better' one "
+        "('Here's a better implementation', 'Actually, let me redo this', a second/cleaner "
+        "version). There is NO second attempt in this response: decide the approach up front "
+        "and write the single final file start-to-finish. If you notice a mistake mid-file you "
+        "cannot go back and restart — get it right the first time, in one pass. A second fenced "
+        "block or a rewrite mid-stream is a FAILED response.\n"
         "  • NEVER narrate your thinking inside the file. No reasoning/deliberation comments "
         "('Actually…', 'Wait…', 'Let's simplify…', 'Conceptual, see below', 'thought flow', "
         "'Hacky…'), no notes-to-self, no rejected alternatives — emit ONLY the final code a "
@@ -10396,16 +10403,33 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
     if not text.strip():
         return {"ok": False, "error": "the coder returned nothing"}
     blocks = _v5_extract_code_blocks(text, name_hint=(path or task))
+    # code.author must COMMIT to one file (the system prompt forbids a second
+    # version). But a model sometimes closes the fence and opens a "better
+    # implementation" anyway — in which case the INTENDED file is the LAST block,
+    # not blocks[0] (which would save the abandoned first draft). Prefer the last
+    # block of the target language, else the last block.
+    _blk = None
+    if blocks:
+        _lb = (lang or "").strip().lower()
+        _same = [b for b in blocks if (b.get("lang") or "").strip().lower() == _lb] if _lb else []
+        _blk = _same[-1] if _same else blocks[-1]
+        if len(blocks) > 1:
+            try:
+                await emit_event({"type": "code.author.multiblock", "path": path,
+                                  "blocks": len(blocks), "chose": "last",
+                                  "session_id": session_id})
+            except Exception:
+                pass
     # The unfenced fallback needs the same marker strip — a coder that emits a
     # bare `file=x.py` first line and NO fence would otherwise save it as line 1.
-    code = (blocks[0]["code"] if blocks
+    code = (_blk["code"] if _blk
             else _v5_strip_marker_line(_unescape_collapsed_code(text.strip())))
     # Salvage an unclosed fence (survives as line 1 -> SyntaxError) and a trailing
     # editor-JSON leak the coder appended — both fall through extraction untouched.
     code = _v5_clean_code_body(code)
     if not code.strip():
         return {"ok": False, "error": "no code in the generation"}
-    _lang_used = blocks[0]["lang"] if blocks else lang
+    _lang_used = _blk["lang"] if _blk else lang
     check = _v5_check_syntax(code, _lang_used, path)
 
     _edit_sys = (
