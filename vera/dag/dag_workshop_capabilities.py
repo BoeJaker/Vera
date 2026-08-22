@@ -10725,6 +10725,13 @@ async def cap_prose_author(task: str = "", path: str = "", context_files=None,
         "  • Write it literally — never wrap it in JSON, never escape newlines as \\n.\n"
         "  • Any CONTEXT FILES given to you show REAL content to describe/summarize — quote "
         "and reference what's actually there, not a plausible guess.\n"
+        "  • GROUND every factual claim in the source material. For a summary, report or "
+        "synthesis: if the CONTEXT FILES are empty, unreadable, or do not contain the "
+        "information the task asks about, SAY SO plainly (e.g. 'the provided sources contain "
+        "no usable data on this') and write only what the sources actually support. Do NOT "
+        "invent specific companies, products, people, statistics, dates, standards or events "
+        "to fill the gap — a short honest write-up of what little the sources hold is correct; "
+        "a detailed, plausible-sounding one built on invented facts is a FAILED document.\n"
         "  • Never document a component, service, or dependency that isn't in the real file "
         "listing below. A project with one static HTML file is a project with one static HTML "
         "file — do not add a backend, a build step, or a package manager it doesn't have."
@@ -15357,7 +15364,17 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 # `<step-title>.py`, which the step's file-exists criterion
                 # (/index.html) could never satisfy — the step looped forever.
                 _named = _v5_gen_output_filename(tool, args, step, "", cur_cycle)
-                if _named and _named.rsplit(".", 1)[-1].lower() != "txt":
+                # An exec.python.run/exec.code.run redirect authors a SCRIPT the
+                # executor meant to RUN. A DATA extension (json/csv/…) means the
+                # filename heuristic guessed the step's data OUTPUT, not a named
+                # deliverable — authoring code into it yields a mislabeled artifact
+                # (Python saved as `…__c14.json`) that later masquerades as fetched
+                # data and gets "synthesized" into a fabricated report. Only accept a
+                # named deliverable with a code/markup extension; else author a .py.
+                _named_ext = (_named.rsplit(".", 1)[-1].lower() if _named and "." in _named else "")
+                if _named and _named_ext not in (
+                        "txt", "json", "csv", "tsv", "ndjson", "xml",
+                        "parquet", "xlsx", "yaml", "yml"):
                     _target = _named
                 else:
                     _slug = _V5_SLUG_STRIP.sub("_", str(step.get("title") or "generated").lower()
