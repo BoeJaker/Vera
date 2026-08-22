@@ -10413,6 +10413,14 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
     try:
         res = await fn(prompt=prompt, system=sys_prompt, output_format="code",
                        profile=LOOP_ROUTING_PROFILE, role="coder",
+                       # Anti-repetition + controlled sampling passed at the CALL so
+                       # they apply even when the coder role's options are overridden
+                       # empty on the Model Routing page (which they are in prod —
+                       # the declared role options don't reach ollama then). Without
+                       # repeat_penalty a long code gen can loop the same lines out to
+                       # num_predict, holding the GPU for many minutes.
+                       options={"temperature": 0.45, "top_p": 0.9,
+                                "repeat_penalty": 1.15, "repeat_last_n": 256},
                        files=files or None, session_id=session_id,
                        caller="code.author", trace_id=trace_id, stream_cb=stream_cb)
     except Exception as e:
@@ -10486,6 +10494,8 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
         try:
             raw = await fn(prompt=fix_prompt, system=_edit_sys, output_format="json",
                            profile=LOOP_ROUTING_PROFILE, role="coder",
+                           options={"temperature": 0.2, "top_p": 0.9,
+                                    "repeat_penalty": 1.15, "repeat_last_n": 256},
                            session_id=session_id, caller="code.author.repair",
                            trace_id=trace_id, stream_cb=stream_cb)
         except Exception as e:
