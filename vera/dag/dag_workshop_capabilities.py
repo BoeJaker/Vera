@@ -15487,6 +15487,37 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                     invoke["ok"] = False
                     invoke["error"] = _v5_result_failure_reason(_rres, _rc)
 
+        # ── Arg-error recovery ───────────────────────────────────────────────
+        # If the cap failed because the model OMITTED or malformed a required
+        # arg (e.g. http.get called with no `url`), RETRY THE SAME CAP with
+        # corrected args — a bounded re-prompt that heals the arguments — instead
+        # of surfacing the raw failure to the executor, which then picks a
+        # nonsensical "fix" (observed live: authoring a file to "repair"
+        # http.get). The v3/v4 executors already wrap failures this way; the v5
+        # single-tool path did not, so arg errors leaked to the model. Off via
+        # VERA_V5_RECOVERY_ATTEMPTS=0.
+        _v5_rec_max = int(os.getenv("VERA_V5_RECOVERY_ATTEMPTS", "2") or 2)
+        if (not invoke.get("ok") and _v5_rec_max > 0
+                and _is_arg_error(invoke.get("error", ""))):
+            _rec = await _attempt_arg_recovery(
+                cap_name=tool,
+                failed_args=args if isinstance(args, dict) else {},
+                error_text=invoke.get("error", ""),
+                model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+                max_attempts=_v5_rec_max, call_tool=call_tool,
+                session_id=sid, trace_id=trace_id or "", emit_fn=emit_event,
+                cycle=cur_cycle, stream_id=stream_id, goal=goal, thought=thought)
+            if _rec.get("recovered"):
+                invoke = _rec["final_invoke"]
+                _ra = _rec.get("attempts") or []
+                if _ra and isinstance(_ra[-1].get("args"), dict):
+                    args = _ra[-1]["args"]
+                # Promote an inner error the same way the initial call does.
+                if (invoke.get("ok") and isinstance(invoke.get("result"), dict)
+                        and invoke["result"].get("error")):
+                    invoke["ok"] = False
+                    invoke["error"] = str(invoke["result"]["error"])
+
         # ── Long-running jobs: a cap like research.*/ml.*/exec.* returns a job_id
         #    immediately and streams the REAL output over seconds–minutes. Await
         #    it (WS-stream for research.*, else poll the status cap) so the step
