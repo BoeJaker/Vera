@@ -140,9 +140,12 @@ _LOOP_SESSION_CV: "contextvars.ContextVar[str]" = contextvars.ContextVar(
 #   coder       code generation inside coding steps — a coding model, warmer temp.
 #   writer      long-form prose/report generation — warmest temp.
 LOOP_ROUTING_PROFILE = "loop"
-# CPU reasoning model for planning/orchestration (matches Loop Lab). Change here
-# or override the loop/planner|controller|tier roles on the Model Routing page.
-_LOOP_PLANNER_MODEL = "gpt-oss:20b"
+# Planning/orchestration model. Default is the GPU-resident 9B so every dev
+# sandbox mirrors prod's loop routing out of the box, instead of falling back to a
+# CPU model prod then has to override away on the Model Routing page. The 20B CPU
+# reasoner (gpt-oss:20b) is a heavier/slower alternative — set it here, or
+# per-instance on the Model Routing page.
+_LOOP_PLANNER_MODEL = "jaahas/qwen3.5-uncensored"
 
 register_routing_profile(
     LOOP_ROUTING_PROFILE, label="Agentic Loop", owner="dag_workshop",
@@ -156,13 +159,13 @@ register_routing_profile(
                        # reliable structured JSON. Tunable live on the Model Routing
                        # page (loop/executor) now that the role temp actually wins.
                        "options": {"temperature": 0.3, "top_p": 0.9}},
-        "planner":    {"job_type": "loop_planner", "deny_gpu": True,
+        "planner":    {"job_type": "loop_planner", "prefer_gpu": True,
                        "model": _LOOP_PLANNER_MODEL,
                        "options": {"temperature": 0.2, "num_ctx": 16384}},
-        "controller": {"job_type": "loop_planner", "deny_gpu": True,
+        "controller": {"job_type": "loop_planner", "prefer_gpu": True,
                        "model": _LOOP_PLANNER_MODEL,
                        "options": {"temperature": 0.2, "num_ctx": 16384}},
-        "tier":       {"job_type": "loop_planner", "deny_gpu": True,
+        "tier":       {"job_type": "loop_planner", "prefer_gpu": True,
                        "model": _LOOP_PLANNER_MODEL,
                        "options": {"temperature": 0.1, "num_ctx": 8192}},
         "coder":      {"job_type": "loop_coder", "prefer_gpu": True,
