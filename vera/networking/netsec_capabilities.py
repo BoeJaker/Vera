@@ -56,7 +56,7 @@ from Vera.vera.capability_orchestration import APP, capability, emit_event, now_
 # app-free shell-script builder (unit-tested; waits for cloud-init/apt lock)
 from Vera.vera.networking.netsec_core import (
     wireguard_install_script as _wireguard_install_script,
-    wg_peer_allowed_ips, wg_gateway_postup, wg_gateway_postdown,
+    wg_peer_allowed_ips, wg_gateway_postup, wg_gateway_postdown, wg_routes_for_member,
 )
 
 log = logging.getLogger("vera.netsec")
@@ -311,7 +311,7 @@ class WireGuardProvider(MeshProvider):
                 "[Peer]",
                 f"PublicKey = {p['pubkey']}",
                 # a gateway member also advertises its routes (e.g. 192.168.0.0/24)
-                f"AllowedIPs = {wg_peer_allowed_ips(p['ip'], p.get('routes'))}",
+                f"AllowedIPs = {wg_peer_allowed_ips(p['ip'], wg_routes_for_member(p.get('routes'), me.get('host')))}",
             ]
             if p.get("endpoint"):
                 lines.append(f"Endpoint = {p['endpoint']}")
