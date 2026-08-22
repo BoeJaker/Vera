@@ -412,7 +412,102 @@ def pxe_ipxe_menu(server_ip: str, install_images: List[Dict] = None,
     return "\n".join(out)
 
 
-def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21") -> Dict:
+def parse_ops_secrets(text):
+    """Parse decrypted ops-secrets .env text into a dict (KEY=VALUE; '#'/blank lines
+    skipped; value keeps everything after the FIRST '='). Pure -> unit-testable."""
+    out = {}
+    for line in (text or "").splitlines():
+        s = line.strip()
+        if not s or s.startswith("#") or "=" not in s:
+            continue
+        k, v = s.split("=", 1)
+        out[k.strip()] = v.strip()
+    return out
+
+
+def wpa_supplicant_conf(networks):
+    """Build a wpa_supplicant.conf from [(ssid, psk), ...]. Blank ssid entries are
+    skipped; a blank psk yields an OPEN network (key_mgmt=NONE). Pure."""
+    lines = ["ctrl_interface=/var/run/wpa_supplicant", "update_config=1", ""]
+    for ssid, psk in (networks or []):
+        ssid = (str(ssid) if ssid is not None else "").strip()
+        if not ssid:
+            continue
+        psk = (str(psk) if psk is not None else "").strip()
+        lines.append("network={")
+        lines.append('\tssid="%s"' % ssid)
+        if psk:
+            lines.append('\tpsk="%s"' % psk)
+        else:
+            lines.append("\tkey_mgmt=NONE")
+        lines.append("}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def ops_network_overlay(secrets, server_ip=""):
+    """From the decrypted ops-secrets dict, build the overlay bits that let a provisioned
+    node LEAVE the wired provisioning net and reach Vera / the mesh over its own network:
+      * WiFi     - wpa_supplicant.conf + boot bring-up (AUTO: the node associates + DHCPs
+                   on wlan so it joins its home/remote network once provisioned).
+      * Twingate - the base64-sealed headless service key written to disk + a
+                   `foundry-twingate` helper that connects a REMOTE node back to Vera via a
+                   containerised client (musl-safe). ON-DEMAND, not at boot, since only
+                   nodes with no LAN path to Vera need it. Confirm the client image
+                   (FOUNDRY_TG_IMAGE) for your Twingate tenant.
+    Returns (files, start_tail): files = {relpath: content} to add to the overlay,
+    start_tail = shell appended to the node's boot script. ({}, "") when no secrets.
+    Pure -> unit-testable."""
+    import base64 as _b64
+    secrets = secrets or {}
+    files = {}
+    tail = []
+    nets = [(secrets.get("WIFI_SSID", ""), secrets.get("WIFI_PASSWORD", "")),
+            (secrets.get("WIFI_SSID_2", ""), secrets.get("WIFI_PASSWORD_2", ""))]
+    nets = [(s, p) for (s, p) in nets if str(s or "").strip()]
+    if nets:
+        files["etc/wpa_supplicant/wpa_supplicant.conf"] = wpa_supplicant_conf(nets)
+        tail.append(
+            "# --- foundry: join WiFi so the node can leave the provisioning net ---\n"
+            "apk add wpa_supplicant wireless-tools linux-firmware-iwlwifi 2>/dev/null "
+            "|| apk add wpa_supplicant wireless-tools 2>/dev/null\n"
+            "WIF=$(ip -o link 2>/dev/null | awk -F\': \' \'/wl/{print $2; exit}\')\n"
+            'if [ -n "$WIF" ]; then\n'
+            '  wpa_supplicant -B -i "$WIF" -c /etc/wpa_supplicant/wpa_supplicant.conf 2>/dev/null\n'
+            '  udhcpc -b -i "$WIF" 2>/dev/null\n'
+            '  echo "[foundry] WiFi bring-up on $WIF"\n'
+            'else echo "[foundry] no wlan interface present"; fi\n')
+    tg_net = str(secrets.get("TWINGATE_NETWORK", "") or "").strip()
+    tg_b64 = str(secrets.get("TWINGATE_SERVICE_KEY_B64", "") or "").strip()
+    if tg_net and tg_b64:
+        try:
+            key_json = _b64.b64decode(tg_b64).decode("utf-8")
+        except Exception:
+            key_json = ""
+        if key_json:
+            files["etc/foundry/twingate/service_key.json"] = key_json
+            files["usr/local/bin/foundry-twingate"] = (
+                "#!/bin/sh\n"
+                "# Connect a REMOTE ops node back to Vera via Twingate (headless service\n"
+                "# account). Runs the client in a container so it works on musl Alpine.\n"
+                "# Set FOUNDRY_TG_IMAGE to your tenant\'s headless client image if the\n"
+                "# default is not right for your Twingate setup.\n"
+                "set -e\n"
+                'NET="%s"\n' % tg_net +
+                "KEY=/etc/foundry/twingate/service_key.json\n"
+                'IMG="${FOUNDRY_TG_IMAGE:-twingate/client:1}"\n'
+                '[ -s "$KEY" ] || { echo "no twingate service key baked"; exit 1; }\n'
+                'command -v docker >/dev/null 2>&1 || { echo "docker required"; exit 1; }\n'
+                "docker rm -f twingate 2>/dev/null || true\n"
+                'docker run -d --name twingate --restart unless-stopped --network host \\\n'
+                '  --cap-add NET_ADMIN --device /dev/net/tun -e TWINGATE_NETWORK="$NET" \\\n'
+                '  -v "$KEY":/etc/twingate/service_key.json:ro "$IMG" \\\n'
+                '  && echo "twingate client started ($IMG); check: docker logs twingate" \\\n'
+                '  || echo "twingate start failed - set FOUNDRY_TG_IMAGE to your client image"\n')
+    return files, "".join(tail)
+
+
+def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=None) -> Dict:
     """Files for the ops-node Alpine diskless overlay (apkovl), as {relpath: content}.
     The node boots to RAM, installs Docker + SSH + tools, joins the swarm as a WORKER
     only (never self-promotes to manager — managers are persistent VMs/CTs), and
@@ -553,7 +648,11 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21") -> Dict:
         'sync\n'
         'whiptail --msgbox "Done -> $DEV. Safe to remove.\\n(A Pi OS image expands its filesystem on first boot.)" 9 66\n'
     )
+    _netfiles, _nettail = ops_network_overlay(secrets, server_ip)
+    if _nettail:
+        start = start + _nettail
     return {
+        **_netfiles,
         "etc/apk/repositories": repos,
         "etc/local.d/foundry.start": start,
         "usr/local/bin/foundry-tui": tui,
@@ -564,7 +663,7 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21") -> Dict:
     }
 
 
-def pxe_desktop_apkovl_files(server_ip: str, alpine_ver: str = "3.21") -> Dict:
+def pxe_desktop_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=None) -> Dict:
     """Files for the desktop-node Alpine diskless overlay (apkovl): a full XFCE desktop
     with Remmina/TigerVNC, the Foundry ops menu (Proxmox consoles + SD-card writer)
     launchable from the desktop, and Docker so it also joins the swarm as a worker.
@@ -649,7 +748,11 @@ def pxe_desktop_apkovl_files(server_ip: str, alpine_ver: str = "3.21") -> Dict:
                 "Icon=utilities-terminal-symbolic\n"
                 "Terminal=false\n"
                 "Categories=System;\n")
+    _netfiles, _nettail = ops_network_overlay(secrets, server_ip)
+    if _nettail:
+        start = start + _nettail
     return {
+        **_netfiles,
         "etc/apk/repositories": repos,
         "etc/local.d/desktop.start": start,
         "etc/inittab": inittab,

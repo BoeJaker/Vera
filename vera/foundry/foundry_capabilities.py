@@ -59,7 +59,7 @@ from Vera.vera.foundry.foundry_core import (
     pick_node, cluster_join_script, CLUSTER_KINDS,
     cluster_init_script, parse_init_token,
     pxe_dnsmasq_conf, pxe_ipxe_menu, swarm_service_cmd,
-    pxe_ops_apkovl_files, pxe_desktop_apkovl_files,
+    pxe_ops_apkovl_files, pxe_desktop_apkovl_files, parse_ops_secrets,
 )
 from Vera.vera.security import secrets as vsecrets
 
@@ -1497,6 +1497,30 @@ async def cap_pxe_render(profile_id: str = "", trace_id=None) -> Dict:
     return {"ok": True, **_render_boot(prof, cfg, img, cscripts)}
 
 
+def _load_ops_secrets() -> Dict:
+    """Decrypt the off-repo sealed ops-node secrets (~/.vera-ops-secrets/
+    ops-secrets.env.enc with ops.key, Fernet) into a dict, so the ops image can bake
+    WiFi + Twingate. Returns {} if the sealed file/key are absent or unreadable, so a
+    Foundry deploy without secrets still works. Key + ciphertext live OUTSIDE the repo
+    and are never committed. Override the folder with VERA_OPS_SECRETS_DIR."""
+    try:
+        from cryptography.fernet import Fernet
+    except Exception:
+        return {}
+    import os as _os
+    from pathlib import Path as _Path
+    base = _Path(_os.environ.get("VERA_OPS_SECRETS_DIR")
+                 or _os.path.expanduser("~/.vera-ops-secrets"))
+    keyf, encf = base / "ops.key", base / "ops-secrets.env.enc"
+    if not (keyf.exists() and encf.exists()):
+        return {}
+    try:
+        text = Fernet(keyf.read_bytes().strip()).decrypt(encf.read_bytes()).decode("utf-8")
+        return parse_ops_secrets(text)
+    except Exception:
+        return {}
+
+
 def _apkovl_tar_b64(files: Dict) -> str:
     """Build an Alpine apkovl (a gzip tar of an overlay rooted at /) from {relpath:
     content} in memory and base64-encode it — no fragile shell tar-building."""
@@ -1620,9 +1644,10 @@ async def cap_pxe_server_deploy(cluster_id: str = "", node: str = "", iface: str
     install_images = [{"id": "debian12", "os": "Debian", "version": "12"}]
     conf = pxe_dnsmasq_conf(server_ip, iface, range_lo, range_hi, except_ifaces=[uplink])
     menu = pxe_ipxe_menu(server_ip, install_images=install_images)
-    ops_files = pxe_ops_apkovl_files(server_ip)
+    _secrets = _load_ops_secrets()
+    ops_files = pxe_ops_apkovl_files(server_ip, secrets=_secrets)
     apk_b64 = _apkovl_tar_b64(ops_files)
-    desk_apk_b64 = _apkovl_tar_b64(pxe_desktop_apkovl_files(server_ip))
+    desk_apk_b64 = _apkovl_tar_b64(pxe_desktop_apkovl_files(server_ip, secrets=_secrets))
     _b = lambda s: base64.b64encode(s.encode()).decode()
     tui_b64 = _b(ops_files["usr/local/bin/foundry-tui"])
     sdwrite_b64 = _b(ops_files["usr/local/bin/foundry-sdwrite"])
