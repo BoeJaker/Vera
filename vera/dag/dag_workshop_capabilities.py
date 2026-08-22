@@ -10530,9 +10530,86 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
                                   message=f"code.author: {task[:80]}", lang=lang)
     if not saved.get("ok"):
         return {"ok": False, "error": str(saved.get("error") or "save failed"), "path": path}
+
+    # ── RUNTIME SMOKE-RUN GATE (Python scripts) ──────────────────────────────
+    # Syntax-valid code still crashes at runtime (NameError, ImportError, an
+    # unguarded call) — a parser can't see it, so a broken script used to pass as
+    # a completed deliverable and only failed when the loop ran it. For a RUNNABLE
+    # .py we execute it ONCE, bounded, and feed any traceback into the same
+    # edit-repair loop so the file we return actually RUNS, not merely parses. A
+    # TIMEOUT is inconclusive (a slow script is not a defect). Off for non-.py,
+    # when disabled, or when the file couldn't be mirrored to disk.
+    runtime_err = ""
+    smoke_ran = False
+    _fs = saved.get("fs_path", "")
+    _rt_max = max(0, int(os.getenv("VERA_CODE_AUTHOR_SMOKE_ATTEMPTS", "2") or 0))
+    if (os.getenv("VERA_CODE_AUTHOR_SMOKE_RUN", "1").strip().lower() in ("1", "true", "yes", "on")
+            and check.get("ok") and _fs and _rt_max
+            and (_lang_used or "").lower() in ("python", "py")
+            and str(path).lower().endswith(".py")):
+        import subprocess as _sp
+        _to = int(os.getenv("VERA_CODE_AUTHOR_SMOKE_TIMEOUT", "25") or 25)
+
+        def _smoke_once(fp: str) -> str:
+            if not fp or not os.path.isfile(fp):
+                return ""
+            try:
+                pr = _sp.run(["python3", fp], cwd=(os.path.dirname(fp) or None),
+                             capture_output=True, text=True, timeout=max(3, _to))
+            except _sp.TimeoutExpired:
+                return ""           # inconclusive — long-running, not a crash
+            except Exception:
+                return ""           # can't run it here — don't block the author on that
+            if pr.returncode == 0:
+                return ""
+            _e = (pr.stderr or pr.stdout or "").strip()
+            return _e[-1500:] if _e else f"exited with code {pr.returncode}"
+
+        for _rt in range(_rt_max + 1):
+            smoke_ran = True
+            runtime_err = await asyncio.to_thread(_smoke_once, _fs)
+            if not runtime_err or _rt >= _rt_max:
+                break
+            await emit_event({"type": "code.author.runtime_repair", "path": path,
+                              "attempt": _rt + 1, "error": runtime_err[-300:]})
+            if stream_cb is not None:
+                try:
+                    await stream_cb(f"\n\n[✗ runtime error on smoke-run — applying a fix]\n"
+                                    f"{runtime_err[-400:]}\n\n")
+                except Exception:
+                    pass
+            _rp = (f"FILE: {path} ({_lang_used}, {len(code.splitlines())} lines)\n"
+                   f"CURRENT CONTENT (patch THIS, do not regenerate):\n{_v5_numbered(code)}\n\n"
+                   f"RUNNING it produced this RUNTIME error:\n{runtime_err[-1200:]}\n\n"
+                   f"Return the JSON edit(s) that fix the runtime error.")
+            try:
+                _rr = await fn(prompt=_rp, system=_edit_sys, output_format="json",
+                               profile=LOOP_ROUTING_PROFILE, role="coder",
+                               options={"temperature": 0.2, "top_p": 0.9,
+                                        "repeat_penalty": 1.15, "repeat_last_n": 256},
+                               session_id=session_id, caller="code.author.runtime_repair",
+                               trace_id=trace_id, stream_cb=stream_cb)
+            except Exception:
+                break
+            _ro = _extract_json(_strip_think(_v5_gen_text(_rr) or "")[0]) or {}
+            _re = _ro.get("edits") if isinstance(_ro, dict) else None
+            if not isinstance(_re, list) or not _re:
+                break
+            _ra = _v5_apply_edits(code, _re)
+            if not _ra.get("ok"):
+                break
+            code = _ra["content"]
+            check = _v5_check_syntax(code, _lang_used, path)
+            if not check.get("ok"):
+                break               # the fix broke syntax — the syntax path reports it
+            saved = await code_store_save(path, code, session_id=session_id,
+                                          message=f"code.author (runtime fix): {task[:60]}", lang=lang)
+            _fs = saved.get("fs_path", _fs)
+
     truncated = bool(res.get("truncated")) if isinstance(res, dict) else False
     _verified = bool(check.get("ok")) and bool(check.get("checker"))
     _syntax_bad = not check.get("ok")
+    _runtime_bad = bool(runtime_err)
     return {
             # A file that does not parse is NOT a completed deliverable — it is a
             # FAILED call, same as any other cap whose result is unusable. This
@@ -10540,8 +10617,9 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
             # code back saw a normal-looking success and moved on (to running it,
             # or declaring the step done); the break was only discovered several
             # cycles later. ok=False here routes it through the loop's ordinary
-            # failure handling (verify/retry) instead.
-            "ok": not _syntax_bad,
+            # failure handling (verify/retry) instead. A file that PARSES but
+            # CRASHES on the runtime smoke-run is a failed deliverable the same way.
+            "ok": not _syntax_bad and not _runtime_bad,
             "path": saved.get("path", path), "fs_path": saved.get("fs_path", ""),
             "version": saved.get("version"), "bytes": saved.get("bytes"),
             "lang": saved.get("lang", lang), "chars": len(code),
@@ -10552,16 +10630,25 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
             "syntax_ok": bool(check.get("ok")),
             "checked_with": check.get("checker") or "",
             "syntax_error": check.get("error", "") if _syntax_bad else "",
+            "runtime_ok": (not _runtime_bad) if smoke_ran else None,
+            "runtime_error": (runtime_err[-600:] if _runtime_bad else ""),
             "error": (f"code.author could not produce a file that parses after {attempts} "
                       f"attempt(s) — {check.get('checker','parser')}: {check.get('error','')}. "
                       f"The (broken) file WAS written and versioned at '{path}' so it can still "
                       f"be inspected or repaired with code.edit, but it will not run as-is."
-                     ) if _syntax_bad else "",
+                     ) if _syntax_bad else
+                     (f"code.author wrote a file that PARSES but CRASHES when run (after "
+                      f"{_rt_max} runtime-repair attempt(s)): {runtime_err[-400:]} — repair it "
+                      f"with code.edit before relying on its output."
+                     ) if _runtime_bad else "",
             "note": (("⚠ the generation hit its length limit — the file is INCOMPLETE; "
                       "re-author it in smaller pieces. ") if truncated else "")
                     + (f"⚠ STILL HAS A SYNTAX ERROR after {attempts} attempts "
                        f"({check.get('error','')}) — fix it before running. " if _syntax_bad
                        else (f"Syntax verified by {check.get('checker')}. " if _verified else ""))
+                    + (f"⚠ it PARSES but CRASHED on a smoke-run ({runtime_err[-160:]}) — repair "
+                       f"with code.edit before use. " if _runtime_bad
+                       else ("✓ ran clean on a smoke-run. " if smoke_ran else ""))
                     + f"Written and versioned. Run it with exec.python.run(path='{path}')."}
 
 
@@ -10937,6 +11024,17 @@ async def cap_code_edit(path: str, task: str = "", session_id: str = "", repo: s
     """Targeted edit of an existing file, with the same verify-and-repair contract
     as code.author: nothing is saved that does not parse."""
     path = _code_norm_path(str(path or "").strip())
+    # A caller (often the loop's own model, echoing a prior fs_path) may hand back
+    # the artifact-absolute `/workspace/x` or a redundant relative `workspace/x`. In
+    # the session workspace context (no repo) that base is IMPLICIT, so the leading
+    # `workspace/` _code_norm_path leaves behind must collapse to `x` — otherwise the
+    # edit re-joins to /workspace/workspace/x, a shadow file every later run chases
+    # (observed: an author→run→edit→run loop stuck on the doubled path). Repo edits,
+    # where `workspace/` can be a real top-level dir, are left untouched.
+    if not repo:
+        _pp = path.split("/")
+        if len(_pp) > 1 and _pp[0] == "workspace":
+            path = "/".join(_pp[1:])
     task = str(task or "").strip()
     if not path:
         return {"ok": False, "error": "path required"}
