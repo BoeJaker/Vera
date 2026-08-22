@@ -12876,6 +12876,38 @@ def _v5_actual_caps_used(history: List[Dict[str, Any]]) -> List[str]:
     return seen
 
 
+# Framework-injected params — never supplied by the model's tool_use input, so
+# they don't count as "missing" when validating a call's required args.
+_V5_INJECTED_PARAMS = {"self", "session_id", "trace_id", "stream_cb", "trace",
+                       "caller", "caller_kind", "content", "instance_id"}
+
+
+def _v5_missing_required_args(cap_name: str, args: Any) -> List[str]:
+    """Required params of `cap_name` (no default, excluding framework-injected
+    ones) that are ABSENT from `args`. Lets the executor skip a call guaranteed
+    to fail for a missing required arg (e.g. http.get with no `url`) and route it
+    straight to arg-recovery instead of wasting the call. Best-effort — returns
+    [] on any introspection failure, so it never blocks a call it can't reason
+    about."""
+    try:
+        cap = CAPABILITY_REGISTRY.get(cap_name)
+        fn = (cap or {}).get("func") if isinstance(cap, dict) else None
+        if not callable(fn):
+            return []
+        provided = set(args.keys()) if isinstance(args, dict) else set()
+        missing: List[str] = []
+        for name, p in inspect.signature(fn).parameters.items():
+            if name in _V5_INJECTED_PARAMS:
+                continue
+            if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                continue
+            if p.default is inspect.Parameter.empty and name not in provided:
+                missing.append(name)
+        return missing
+    except Exception:
+        return []
+
+
 async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                        blackboard: Dict[int, Dict[str, Any]],
                        artifacts: Optional[Dict[str, Dict[str, Any]]] = None,
@@ -13996,7 +14028,11 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                               "cycle": cur, "step_id": step_id, "tool": hop_tool, "args": h_args,
                               "thought": "(chained)", "session_id": sid})
             t0 = time.monotonic()
-            if _h_url_cached and "_url_cache_value" in _h_url_cached:
+            _h_missing_req = _v5_missing_required_args(hop_tool, h_args)
+            if _h_missing_req:
+                invoke = {"ok": False,
+                          "error": "missing required argument: " + ", ".join(_h_missing_req)}
+            elif _h_url_cached and "_url_cache_value" in _h_url_cached:
                 invoke = {"ok": True, "result": _h_url_cached["_url_cache_value"]}
             else:
                 _hstream = _v5_make_tool_stream_cb(stream_id, step_id, cur, hop_tool, sid)
@@ -14023,6 +14059,28 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                     if _hrc != 0 or _hres.get("ok") is False:
                         invoke["ok"] = False
                         invoke["error"] = _v5_result_failure_reason(_hres, _hrc)
+            # Arg-error recovery for a chain hop — same as the single-tool path:
+            # retry the SAME hop with healed args rather than breaking the chain.
+            _hrec_max = int(os.getenv("VERA_V5_RECOVERY_ATTEMPTS", "2") or 2)
+            if (not invoke.get("ok") and _hrec_max > 0
+                    and _is_arg_error(invoke.get("error", ""))):
+                _hrec = await _attempt_arg_recovery(
+                    cap_name=hop_tool,
+                    failed_args=h_args if isinstance(h_args, dict) else {},
+                    error_text=invoke.get("error", ""),
+                    model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+                    max_attempts=_hrec_max, call_tool=call_tool,
+                    session_id=sid, trace_id=trace_id or "", emit_fn=emit_event,
+                    cycle=cur, stream_id=stream_id, goal=goal, thought="(chain hop)")
+                if _hrec.get("recovered"):
+                    invoke = _hrec["final_invoke"]
+                    _hra = _hrec.get("attempts") or []
+                    if _hra and isinstance(_hra[-1].get("args"), dict):
+                        h_args = _hra[-1]["args"]
+                    if (invoke.get("ok") and isinstance(invoke.get("result"), dict)
+                            and invoke["result"].get("error")):
+                        invoke["ok"] = False
+                        invoke["error"] = str(invoke["result"]["error"])
             if (invoke.get("ok") and await_long_running and isinstance(invoke.get("result"), dict)
                     and _detect_job_id(invoke["result"])):
                 try:
@@ -14636,6 +14694,40 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 # retry the same wrong shape with a different tool name (once
                 # even `ide.fs.chain`) instead of fixing the shape. Observed
                 # live, repeatedly, across independent steps in one run.
+                # LENIENT auto-convert: the model meant to chain but nested the
+                # hops inside tool_use.input instead of using the top-level
+                # `chain` field. If a real hop list is in there, RUN it (mirrors
+                # the legitimate chain path above) rather than burning the cycle
+                # on a refusal. Fall back to the correction only when there are
+                # no usable hops.
+                _auto_hops = None
+                if isinstance(args, dict):
+                    for _ck in ("chain", "steps", "hops", "calls", "tools", "input"):
+                        if isinstance(args.get(_ck), list) and args.get(_ck):
+                            _auto_hops = args[_ck]
+                            break
+                _norm_hops = []
+                for _h in (_auto_hops or []):
+                    if not isinstance(_h, dict):
+                        continue
+                    _hn = str(_h.get("name") or _h.get("tool") or _h.get("cap") or "").strip()
+                    if not _hn or _hn == "chain" or _hn.endswith(".chain"):
+                        continue
+                    _hh = {"name": _hn,
+                           "input": _h.get("input") or _h.get("args") or _h.get("arguments") or {}}
+                    if isinstance(_h.get("from"), dict):
+                        _hh["from"] = _h["from"]
+                    _norm_hops.append(_hh)
+                if _norm_hops and enable_chaining:
+                    productive += 1
+                    think_only_streak = 0
+                    dup_thought_hits = 0
+                    if thought:
+                        await emit_event({"type": "agent_loop_v5.think", "stream_id": stream_id,
+                                          "cycle": (gc + 1), "step_id": step_id,
+                                          "thought": thought[:1500], "session_id": sid})
+                    await _run_chain(_norm_hops)
+                    continue
                 _msg = (f"`{tool}` is not a capability — 'chain' is never a tool_use name, real or "
                         "otherwise. `chain` is its own TOP-LEVEL field in your JSON response, a "
                         'sibling of `tool_use`: {"thought":"...","chain":[{"name":"<real cap>",'
@@ -15453,7 +15545,14 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                           "cycle": cur_cycle, "step_id": step_id, "tool": tool, "args": args,
                           "thought": thought, "session_id": sid})
         t0 = time.monotonic()
-        if _url_cached and "_url_cache_value" in _url_cached:
+        _missing_req = _v5_missing_required_args(tool, args)
+        if _missing_req:
+            # Never call a cap missing a required arg (e.g. http.get with no
+            # `url`). Synthesise the arg error so the recovery block below
+            # re-prompts for the value and retries the SAME cap — no wasted call,
+            # no failure leaking to the model.
+            invoke = {"ok": False, "error": "missing required argument: " + ", ".join(_missing_req)}
+        elif _url_cached and "_url_cache_value" in _url_cached:
             invoke = {"ok": True, "result": _url_cached["_url_cache_value"]}
         else:
             _tstream = _v5_make_tool_stream_cb(stream_id, step_id, cur_cycle, tool, sid)
