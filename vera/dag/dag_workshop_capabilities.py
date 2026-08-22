@@ -14107,8 +14107,12 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             # Arg-error recovery for a chain hop — same as the single-tool path:
             # retry the SAME hop with healed args rather than breaking the chain.
             _hrec_max = int(os.getenv("VERA_V5_RECOVERY_ATTEMPTS", "2") or 2)
+            # Skip generative/authoring caps — see the single-tool path: re-calling
+            # code.author/prose.author/code.edit stacks multi-minute generations.
             if (not invoke.get("ok") and _hrec_max > 0
-                    and _is_arg_error(invoke.get("error", ""))):
+                    and _is_arg_error(invoke.get("error", ""))
+                    and not _v5_is_generative(hop_tool)
+                    and hop_tool not in ("code.author", "prose.author", "code.edit")):
                 _hrec = await _attempt_arg_recovery(
                     cap_name=hop_tool,
                     failed_args=h_args if isinstance(h_args, dict) else {},
@@ -15641,8 +15645,15 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         # single-tool path did not, so arg errors leaked to the model. Off via
         # VERA_V5_RECOVERY_ATTEMPTS=0.
         _v5_rec_max = int(os.getenv("VERA_V5_RECOVERY_ATTEMPTS", "2") or 2)
+        # Recovery is for CHEAP caps with a fixable arg error (re-call http.get
+        # with a url). NEVER re-call a generative/authoring cap: code.author /
+        # prose.author / code.edit each run a full multi-minute generation and
+        # already have their OWN internal repair loop, so re-calling them on a
+        # (validation) failure stacks 3-attempt generations and stalls the run.
         if (not invoke.get("ok") and _v5_rec_max > 0
-                and _is_arg_error(invoke.get("error", ""))):
+                and _is_arg_error(invoke.get("error", ""))
+                and not _v5_is_generative(tool)
+                and tool not in ("code.author", "prose.author", "code.edit")):
             _rec = await _attempt_arg_recovery(
                 cap_name=tool,
                 failed_args=args if isinstance(args, dict) else {},
