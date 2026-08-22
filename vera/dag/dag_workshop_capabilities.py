@@ -3990,6 +3990,27 @@ def _research_block_caps() -> set:
     return set(_RESEARCH_JOB_CAPS)
 
 
+def _loop_llm_caps_blocked() -> set:
+    """Every registered ``llm.*`` cap — kept OUT of agent-loop toolkits so the
+    loop generates ONLY through the grounded authoring caps: ``code.author``
+    (code) and ``prose.author`` (prose/docs). Empty set when
+    VERA_LOOP_ALLOW_LLM_CAPS is truthy.
+
+    Why the whole family, not case-by-case: the raw ``llm.*`` caps
+    (llm.summarize/llm.analyze/llm.classify/llm.generate/…) each need their full
+    input inline, so a loop pastes an entire fetched file into a ``text=`` arg
+    and cycles on it (observed: repeated llm.summarize calls, ~60s each, on huge
+    page dumps). The family is sprawling; blocking it wholesale here is cleaner
+    and more robust than grounding every variant. code.author/prose.author take
+    files BY REFERENCE (``context_files=[…]``) and read them themselves, exactly
+    the handover this avoids. Read per call so the env flag flips without a code
+    edit. This shapes only the TOOLKIT the executor may call — code.author /
+    prose.author still call llm.generate INTERNALLY; that path is untouched."""
+    if str(os.getenv("VERA_LOOP_ALLOW_LLM_CAPS", "0")).strip().lower() in ("1", "true", "yes"):
+        return set()
+    return {c for c in CAPABILITY_REGISTRY if c == "llm" or c.startswith("llm.")}
+
+
 def _research_hint(cap: str = "research.quick_search", *, suffix: str = "") -> str:
     """Name `cap` in prompt guidance, or return '' when it is blocked for loops.
     Steering a specialist toward a cap that is not in any toolkit only produces
@@ -4051,7 +4072,8 @@ async def _workshop_build_toolkit(*, allowed_caps: str, category: str,
 
     Order:
       1. Universal discovery caps (caps.search etc.)
-      2. Universal essentials (llm.generate, llm.summarize)
+      2. Universal essentials (code.author, prose.author — the grounded
+         authoring caps; the raw llm.* family is blocked from loop toolkits)
       3. Category-specific essentials for ALL categories
       4. Prefix-expanded caps for ALL categories
       5. Keyword-driven semantic search (top_k)
@@ -4059,7 +4081,8 @@ async def _workshop_build_toolkit(*, allowed_caps: str, category: str,
 
     Truncates keyword-discovered caps to keep total ≤ top_k * 2.
     """
-    blacklist: set = set(_DEFAULT_CAP_BLACKLIST) | _gated_read_caps() | _research_block_caps()
+    blacklist: set = (set(_DEFAULT_CAP_BLACKLIST) | _gated_read_caps()
+                      | _research_block_caps() | _loop_llm_caps_blocked())
     try:
         ctx = _ctx()
         bl = getattr(ctx, "_AGENT_LOOP_BLACKLIST", None)
@@ -4106,8 +4129,12 @@ async def _workshop_build_toolkit(*, allowed_caps: str, category: str,
     for c in WORKSHOP_DISCOVERY_CAPS:
         add(c)
 
-    # 1b. Universal essentials — always present (bypass pool)
-    _UNIVERSAL_ESSENTIALS = ["llm.generate", "llm.summarize"]
+    # 1b. Universal essentials — always present (bypass pool). The loop's
+    #     generation goes through the GROUNDED authoring caps, never the raw
+    #     llm.* family (blocked above): code.author for code, prose.author for
+    #     prose/docs/synthesis — both read files by reference (context_files=[…])
+    #     instead of needing their whole content pasted into an argument.
+    _UNIVERSAL_ESSENTIALS = ["code.author", "prose.author"]
     for c in _UNIVERSAL_ESSENTIALS:
         add(c)
 
