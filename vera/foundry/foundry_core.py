@@ -507,6 +507,93 @@ def ops_network_overlay(secrets, server_ip=""):
     return files, "".join(tail)
 
 
+def foundry_mode_script(server_ip: str) -> str:
+    """The node-side foundry-mode helper: enable/disable + live status for the three
+    ops-node participation modes (Vera worker / mesh / docker-swarm), each persisted
+    under /etc/foundry/modes and re-applied at boot by an etc/local.d hook. The Vera
+    worker runs as a CONTAINER (native pip-install is impractical on musl Alpine) using
+    the server-served backend env. Pure -> unit-testable; baked into both overlays."""
+    script = r"""#!/bin/sh
+# Vera Foundry - ops-node MODE control. Three independent, persisted modes:
+#   vera  : run a Vera WORKER container joined to the stack (Redis task stream) so jobs
+#           dispatched across Vera nodes run here (needs FOUNDRY_VERA_IMAGE reachable +
+#           the server-served /ops/vera-worker-env backend config).
+#   mesh  : bring this node onto the encrypted WireGuard mesh/VPN (vera0). Enrolment is
+#           done FROM Vera (netsec.mesh.join <this host>); this toggles the iface up/down.
+#   swarm : join a registered Docker Swarm as a WORKER (never a manager). DEFAULT ON.
+# State persists in /etc/foundry/modes/<mode> and is re-applied at boot.
+SRV=__SRV__
+MD=/etc/foundry/modes; mkdir -p "$MD"
+VERA_IMAGE="${FOUNDRY_VERA_IMAGE:-vera:latest}"
+
+want(){ if [ -f "$MD/$1" ]; then cat "$MD/$1"; elif [ "$1" = swarm ]; then echo on; else echo off; fi; }
+st_vera(){ docker ps --format '{{.Names}}' 2>/dev/null | grep -qx vera-worker && echo running || echo stopped; }
+st_mesh(){ wg show vera0 >/dev/null 2>&1 && echo up || echo down; }
+st_swarm(){ docker info 2>/dev/null | grep -q 'Swarm: active' && echo joined || echo out; }
+set_mode(){ printf '%s' "$2" > "$MD/$1"; }
+
+apply_vera(){
+  if [ "$1" = on ]; then
+    command -v docker >/dev/null 2>&1 || { echo "docker required"; return 1; }
+    wget -qO /etc/foundry/vera-worker.env "http://$SRV/ops/vera-worker-env" 2>/dev/null
+    [ -s /etc/foundry/vera-worker.env ] || { echo "no backend env served by $SRV"; return 1; }
+    docker rm -f vera-worker 2>/dev/null
+    docker run -d --name vera-worker --restart unless-stopped --network host --env-file /etc/foundry/vera-worker.env "$VERA_IMAGE" python -m Vera.vera.capability_orchestration && echo "vera-worker started ($VERA_IMAGE)" || echo "vera-worker FAILED - set FOUNDRY_VERA_IMAGE to a reachable Vera image"
+  else
+    docker rm -f vera-worker 2>/dev/null && echo "vera-worker stopped" || echo "not running"
+  fi
+}
+apply_mesh(){
+  if [ "$1" = on ]; then
+    if [ -f /etc/wireguard/vera0.conf ]; then
+      command -v wg-quick >/dev/null 2>&1 || apk add wireguard-tools 2>/dev/null
+      wg-quick up vera0 2>/dev/null && echo "mesh up" || echo "mesh up failed (already up?)"
+    else
+      echo "not enrolled yet - from Vera run: netsec.mesh.join <this host>"
+    fi
+  else
+    wg-quick down vera0 2>/dev/null && echo "mesh down" || echo "mesh already down"
+  fi
+}
+apply_swarm(){
+  if [ "$1" = on ]; then
+    TK=$(wget -qO- "http://$SRV/swarm/worker-token" 2>/dev/null | tr -d '\r\n')
+    M=$(wget -qO- "http://$SRV/swarm/manager" 2>/dev/null | tr -d '\r\n')
+    if [ -n "$TK" ] && [ -n "$M" ]; then docker swarm join --token "$TK" "${M}:2377" 2>/dev/null && echo joined || echo "join failed (already joined?)"; else echo "no manager published by $SRV"; fi
+  else
+    docker swarm leave --force 2>/dev/null && echo "left swarm" || echo "not in a swarm"
+  fi
+}
+
+case "$1" in
+  status)
+    printf 'vera : %s (want %s)\n' "$(st_vera)" "$(want vera)"
+    printf 'mesh : %s (want %s)\n' "$(st_mesh)" "$(want mesh)"
+    printf 'swarm: %s (want %s)\n' "$(st_swarm)" "$(want swarm)"
+    ;;
+  vera|mesh|swarm)
+    { [ "$2" = on ] || [ "$2" = off ]; } || { echo "usage: foundry-mode $1 on|off"; exit 1; }
+    set_mode "$1" "$2"; apply_"$1" "$2"
+    ;;
+  boot)
+    [ "$(want vera)" = on ] && apply_vera on
+    [ "$(want mesh)" = on ] && apply_mesh on
+    true
+    ;;
+  menu)
+    while true; do
+      CH=$(whiptail --title "Node modes ($(hostname))" --menu "How this node joins Vera. Live: vera=$(st_vera) mesh=$(st_mesh) swarm=$(st_swarm)" 18 76 8 vera "Vera worker  [want $(want vera)]" mesh "Mesh / VPN   [want $(want mesh)]" swarm "Docker swarm [want $(want swarm)]" back "Back to main menu" 3>&1 1>&2 2>&3) || break
+      [ "$CH" = back ] && break
+      cur=$(want "$CH"); nw=on; [ "$cur" = on ] && nw=off
+      clear; echo "Setting $CH -> $nw ..."; set_mode "$CH" "$nw"; apply_"$CH" "$nw"; echo; echo "Press Enter..."; read _x
+    done
+    ;;
+  *) echo "usage: foundry-mode {status | vera on|off | mesh on|off | swarm on|off | menu | boot}" ;;
+esac
+"""
+    return script.replace("__SRV__", server_ip)
+
+
 def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=None) -> Dict:
     """Files for the ops-node Alpine diskless overlay (apkovl), as {relpath: content}.
     The node boots to RAM, installs Docker + SSH + tools, joins the swarm as a WORKER
@@ -557,7 +644,7 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=None)
         "sleep 3\n"
         f"TOKEN=$(wget -qO- http://{server_ip}/swarm/worker-token 2>/dev/null | tr -d '\\r\\n')\n"
         f"MGR=$(wget -qO- http://{server_ip}/swarm/manager 2>/dev/null | tr -d '\\r\\n')\n"
-        'if [ -n "$TOKEN" ] && [ -n "$MGR" ]; then '
+        'if [ "$(cat /etc/foundry/modes/swarm 2>/dev/null)" != off ] && [ -n "$TOKEN" ] && [ -n "$MGR" ]; then '
         'docker swarm join --token "$TOKEN" "${MGR}:2377"; '
         'else echo "[foundry] no manager published -> standalone (worker-only, never a manager)"; fi\n'
     )
@@ -585,7 +672,7 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=None)
         'status "Node + Docker + swarm status" host "Pick Proxmox host (now: $PVE)" '
         'vms "Proxmox VMs / CTs -- list + console in" dps "Running containers" '
         'nodes "Swarm nodes" ssh "SSH into an estate host" join "Re-run swarm join" '
-        'sdcard "Write a Raspberry Pi image to an SD card" '
+        'sdcard "Write a Raspberry Pi image to an SD card" modes "Node modes: Vera-worker / mesh / swarm" '
         'log "Boot / join log" shell "Shell" reboot "Reboot" 3>&1 1>&2 2>&3) || { clear; exec sh; }\n'
         "  K=$(sshkey)\n"
         "  case \"$CH\" in\n"
@@ -600,6 +687,7 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=None)
         '    ssh) H=$(whiptail --inputbox "SSH target (user@host):" 8 60 "root@$PVE" 3>&1 1>&2 2>&3) && { clear; ssh $K -o StrictHostKeyChecking=accept-new $H; };;\n'
         '    join) { TK=$(wget -qO- http://$SRV/swarm/worker-token|tr -d "\\r\\n"); M=$(wget -qO- http://$SRV/swarm/manager|tr -d "\\r\\n"); docker swarm join --token "$TK" "${M}:2377"; } >$T 2>&1; whiptail --scrolltext --textbox $T 20 90;;\n'
         "    sdcard) clear; /usr/local/bin/foundry-sdwrite;;\n"
+        "    modes) clear; /usr/local/bin/foundry-mode menu;;\n"
         '    log) F=/var/log/foundry-node.log; [ -f $F ] || F=/var/log/foundry-desktop.log; whiptail --scrolltext --textbox $F 24 100;;\n'
         '    shell) clear; echo "type exit to return to the menu"; sh;;\n'
         "    reboot) reboot;;\n"
@@ -657,6 +745,8 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=None)
         "etc/local.d/foundry.start": start,
         "usr/local/bin/foundry-tui": tui,
         "usr/local/bin/foundry-sdwrite": sdwrite,
+        "usr/local/bin/foundry-mode": foundry_mode_script(server_ip),
+        "etc/local.d/zz-foundry-modes.start": "#!/bin/sh\n/usr/local/bin/foundry-mode boot 2>/dev/null || true\n",
         "etc/inittab": inittab,
         "root/.profile": profile,
         "etc/foundry/pve": f"{server_ip}\n",   # default Proxmox target (reachable from the ops net)
@@ -722,7 +812,7 @@ def pxe_desktop_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=N
         "for i in 1 2 3 4 5; do docker info >/dev/null 2>&1 && break; sleep 2; done\n"
         "TOKEN=$(wget -qO- http://@@SRV@@/swarm/worker-token 2>/dev/null|tr -d '\\r\\n')\n"
         "MGR=$(wget -qO- http://@@SRV@@/swarm/manager 2>/dev/null|tr -d '\\r\\n')\n"
-        '[ -n "$TOKEN" ] && [ -n "$MGR" ] && docker swarm join --token "$TOKEN" "${MGR}:2377"\n'
+        '[ "$(cat /etc/foundry/modes/swarm 2>/dev/null)" != off ] && [ -n "$TOKEN" ] && [ -n "$MGR" ] && docker swarm join --token "$TOKEN" "${MGR}:2377"\n'
         "echo \"[foundry] libinput sees:\"; libinput list-devices 2>&1|grep -E 'Device:'|head\n"
     ).replace("@@SRV@@", S)
     inittab = ("::sysinit:/sbin/openrc sysinit\n::sysinit:/sbin/openrc boot\n::wait:/sbin/openrc default\n"
@@ -760,6 +850,8 @@ def pxe_desktop_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=N
         "root/.xinitrc": "exec startxfce4\n",
         "etc/X11/xorg.conf.d/10-foundry-fallback.conf": xflags,
         "etc/X11/xorg.conf.d/40-libinput-touchpad.conf": xtouch,
+        "usr/local/bin/foundry-mode": foundry_mode_script(server_ip),
+        "etc/local.d/zz-foundry-modes.start": "#!/bin/sh\n/usr/local/bin/foundry-mode boot 2>/dev/null || true\n",
         "usr/share/applications/foundry-ops.desktop": launcher,
         "root/Desktop/foundry-ops.desktop": launcher,
         "root/.config/autostart/foundry-ops.desktop": launcher,
