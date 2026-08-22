@@ -10065,26 +10065,14 @@ def _html_structural_error(code: str) -> str:
                     f"delete the duplicate.")
     # A document that opens <html> must CLOSE it — an unclosed page means the coder
     # stopped early / the file was cut off (observed: a build that ended on a stray
-    # <script src> with no </body></html>).
+    # <script src> with no </body></html>). NOTE: referencing sibling files
+    # (<script src=app.js>, a JSON dataset, a multi-file app) is legitimate and is
+    # NOT flagged here — that consistency (are the referenced files actually
+    # produced?) is a loop-level concern, not something a single-file check can
+    # judge.
     if re.search(r"<html(?:\s|>)", low) and "</html>" not in low:
         return ("missing </html> — the document never closes. End the file with "
                 "</body></html>, and make sure nothing was cut off before it.")
-    # Self-contained page pointing at a LOCAL sibling file it isn't creating: a
-    # <script src=…>/<link href=…> with a relative .js/.css/.mjs path resolves to
-    # a file that won't exist next to this single authored file. (Comments are
-    # stripped first so a commented-out tag doesn't trip it; real CDN/https/data
-    # URLs are allowed.)
-    _nocomment = re.sub(r"<!--.*?-->", "", low, flags=re.S)
-    for _m in re.finditer(r"<(?:script[^>]*\bsrc|link[^>]*\bhref)\s*=\s*[\"']?([^\"'>\s]+)",
-                          _nocomment):
-        _ref = _m.group(1).strip().strip("\"'")
-        if not _ref or re.match(r"^(?:https?://|//|data:|blob:|mailto:|#)", _ref):
-            continue
-        if re.search(r"\.(?:js|mjs|css)(?:[?#].*)?$", _ref):
-            return (f"references local file '{_ref}' that is not being created — a "
-                    f"self-contained page must INLINE its script/style (put the code directly "
-                    f"in a <script>/<style> block), not <script src>/<link href> a sibling file "
-                    f"that won't exist. Remove that tag and inline the code.")
     return ""
 
 
