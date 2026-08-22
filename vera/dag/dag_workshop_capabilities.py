@@ -166,9 +166,17 @@ register_routing_profile(
                        "model": _LOOP_PLANNER_MODEL,
                        "options": {"temperature": 0.1, "num_ctx": 8192}},
         "coder":      {"job_type": "loop_coder", "prefer_gpu": True,
-                       "options": {"temperature": 0.45, "top_p": 0.9}},
+                       # repeat_penalty/repeat_last_n damp the line-level repetition
+                       # loops long code generations degenerate into — observed live:
+                       # a pomodoro build repeated the same lines for ~13 min out to
+                       # num_predict, holding the GPU. Kept MODERATE (1.15) so
+                       # legitimate code repetition (brackets, indentation, keywords)
+                       # isn't over-penalised. Tunable live on the Model Routing page.
+                       "options": {"temperature": 0.45, "top_p": 0.9,
+                                   "repeat_penalty": 1.15, "repeat_last_n": 256}},
         "writer":     {"job_type": "loop_writer", "prefer_gpu": True,
-                       "options": {"temperature": 0.7, "top_p": 0.9}},
+                       "options": {"temperature": 0.7, "top_p": 0.9,
+                                   "repeat_penalty": 1.15, "repeat_last_n": 256}},
     })
 
 
