@@ -7,6 +7,7 @@ lowercase `vera.networking.netsec_core`; see `worktree-testable-cores-pattern`)
 and keeps ONE source for the exact command run over SSH.
 """
 from __future__ import annotations
+import ipaddress
 
 # Preamble run before ANY package install on a freshly-provisioned host: a cloud
 # image is usually still running cloud-init (which holds the apt/dpkg lock) when we
@@ -92,3 +93,31 @@ def wg_gateway_postdown(mesh_subnet: str, iface: str) -> str:
     """PostDown for a GATEWAY member: remove the masquerade rule PostUp added."""
     return (f"iptables -t nat -D POSTROUTING -s {mesh_subnet} ! -o {iface} -j MASQUERADE "
             f"2>/dev/null || true")
+
+
+def wg_routes_for_member(routes, member_host: str):
+    """Filter a GATEWAY's advertised routes for the MEMBER whose config is being built.
+    A member already INSIDE an advertised subnet must not receive that route: installing
+    it would push the member's own LAN traffic into the mesh tunnel, and on the next
+    `wg-quick up` the added `ip route <subnet> dev <iface>` collides with the member's
+    existing link route and aborts the interface bring-up. So drop any route the member's
+    host IP sits inside. A non-IP host (hostname) or an unparseable route is KEPT
+    (fail-open — never silently drop a genuine gateway route). Pure -> unit-testable
+    (see tests/test_netsec_gateway_core.py)."""
+    host = (member_host or "").strip()
+    try:
+        h = ipaddress.ip_address(host)
+    except Exception:
+        return [str(r).strip() for r in (routes or []) if str(r).strip()]
+    kept = []
+    for r in (routes or []):
+        r = str(r).strip()
+        if not r:
+            continue
+        try:
+            if h in ipaddress.ip_network(r, strict=False):
+                continue  # member already on this subnet -> do not advertise it to itself
+        except Exception:
+            pass          # unparseable route -> keep (fail-open)
+        kept.append(r)
+    return kept
