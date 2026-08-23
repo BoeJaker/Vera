@@ -7917,6 +7917,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "fabric/data_fabric.py"),
         os.path.join(_here, "fabric/curation_capabilities.py"),
         os.path.join(_here, "fabric/embed_provider_capabilities.py"),
+        os.path.join(_here, "canvas/canvas_capabilities.py"),
         os.path.join(_here, "fabric/fabric_web_acquisition.py"),
         os.path.join(_here, "fabric/memory_second_order.py"),
         os.path.join(_here, "fabric/session_notes.py"),
