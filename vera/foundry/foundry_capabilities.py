@@ -1522,7 +1522,14 @@ async def cap_pxe_render(profile_id: str = "", trace_id=None) -> Dict:
             except Exception:
                 img = {}
     cscripts = await _resolve_cluster_scripts(prof.get("features") or [])
-    return {"ok": True, **_render_boot(prof, cfg, img, cscripts)}
+    # render the SAME OS-agnostic feature bundles CT/VM use, so a PXE/physical
+    # node self-enrols (mesh), becomes a Vera worker, hardens + mounts shares.
+    _pf = prof.get("features") or []
+    _pfctx = await _features_ctx()
+    _fscripts = [_feature_script(_x, {} if _x == "hardening" else _pfctx)
+                 for _x in ("hardening", "mesh", "file-client", "vera-worker") if _x in _pf]
+    _fscripts = [x for x in _fscripts if x]
+    return {"ok": True, **_render_boot(prof, cfg, img, cscripts, _fscripts)}
 
 
 def _vera_host_ip() -> str:
