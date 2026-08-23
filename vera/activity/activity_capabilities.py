@@ -533,6 +533,101 @@ async def _narrator_events(limit: int = 30) -> List[Dict[str, Any]]:
     return out
 
 
+async def _session_activity(window_min: float = 120.0, per_session: int = 14,
+                            max_sessions: int = 10) -> List[Dict[str, Any]]:
+    """Recent activity GROUPED BY SESSION, from the cap.ok event stream.
+
+    This is a deliberately different signal from the raw `vera:cap:recent` ring.
+    The ring caches EVERY cap "even silent", so it is dominated by dashboard
+    auto-refresh: one `dash.health.summary` poll alone fans out to
+    evolve.sandbox.status + obs.node_temps + obs.redis + docker.stats.top, and
+    obs.redis / topology.snapshot / dash.health.summary are all silent=True.
+    Reading that ring, the narrator concluded the user had "been checking Redis"
+    when an open panel had merely refreshed itself.
+
+    cap.ok events are only emitted for NON-silent caps, and every event is
+    stamped with its session and caller kind — so grouping them by session gives
+    a real per-session view of deliberate work rather than UI noise.
+    """
+    r = _redis()
+    if not r:
+        return []
+    try:
+        rows = await r.xrevrange("vera:events", count=1200)
+    except Exception:
+        return []
+
+    cutoff = time.time() - max(1.0, float(window_min)) * 60.0
+    sessions: Dict[str, Dict[str, Any]] = {}
+    for _id, fields in rows or []:
+        try:
+            data = json.loads(_rd(fields.get(b"data") or fields.get("data") or "{}"))
+        except Exception:
+            continue
+        if data.get("type") != "cap.ok":
+            continue
+        ts = str(data.get("ts") or "")
+        try:
+            when = _parse_ts(ts)
+            if when and when < cutoff:
+                continue
+        except Exception:
+            pass
+        sid = str(data.get("session_id") or data.get("sid") or "")
+        key = sid or "(no session)"
+        s = sessions.setdefault(key, {
+            "session_id": sid, "actor": _orch.activity_actor(data),
+            "count": 0, "caps": [], "first_ts": ts, "last_ts": ts,
+        })
+        s["count"] += 1
+        s["first_ts"] = ts or s["first_ts"]          # rows are newest-first
+        if len(s["caps"]) < per_session:
+            capn = str(data.get("name") or "")
+            s["caps"].append({"name": capn, "ts": ts,
+                              "ui": _ui_for_cap(capn),
+                              "preview": str(data.get("preview") or "")[:160]})
+    out = sorted(sessions.values(), key=lambda s: str(s.get("last_ts") or ""),
+                 reverse=True)
+    return out[:max_sessions]
+
+
+def _parse_ts(ts: str) -> float:
+    """ISO timestamp → epoch seconds; 0.0 when unparseable (never raises)."""
+    if not ts:
+        return 0.0
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(str(ts).replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return 0.0
+
+
+@capability(
+    "activity.sessions", memory="off", silent=True,
+    http_method="GET", http_path="/activity/sessions", http_tags=["activity"],
+    description="Recent activity GROUPED BY SESSION, from the cap.ok event stream — "
+                "a per-session view of what was actually DONE, with each session "
+                "attributed to who drove it (you / agent:* / system:*). Unlike the raw "
+                "recent-caps ring this excludes silent monitoring caps, so open "
+                "dashboards auto-refreshing do not read as user activity. Inputs: "
+                "window_min (float=120), per_session (int=14), max_sessions (int=10), "
+                "actor (str — filter, e.g. 'you'). Output: {sessions:[{session_id, "
+                "actor, count, first_ts, last_ts, caps:[{name, ts, ui, preview}]}], "
+                "count}.",
+)
+async def cap_activity_sessions(window_min: float = 120.0, per_session: int = 14,
+                                max_sessions: int = 10, actor: str = "",
+                                trace_id=None) -> Dict:
+    rows = await _session_activity(window_min=window_min, per_session=per_session,
+                                   max_sessions=max_sessions)
+    if actor:
+        want = actor.strip().lower()
+        rows = [s for s in rows
+                if str(s.get("actor", "")).lower() == want
+                or str(s.get("actor", "")).lower().startswith(want + ":")]
+    return {"sessions": rows, "count": len(rows)}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  THE CAPABILITY
 # ─────────────────────────────────────────────────────────────────────────────

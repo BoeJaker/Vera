@@ -232,6 +232,40 @@ OLLAMA_STALL_TIMEOUT = float(os.environ.get("OLLAMA_STALL_TIMEOUT", "240"))
 _AVOID_EMBED_RELAX_AT = int(os.environ.get("VERA_AVOID_EMBED_RELAX_AT", "1"))
 
 
+def activity_actor(rec: Dict[str, Any]) -> str:
+    """WHO caused an activity record — 'you', 'agent:<kind>' or 'system:<what>'.
+
+    THE canonical attribution rule, shared by every reader of cap activity (the
+    recent-caps ring, the cap.ok event stream, the activity timeline) so they
+    can never disagree about whether the user did something.
+
+    Resolution is most-specific first: an explicit background driver (`bg`),
+    then a machine session id, then the caller kind (`via`). An empty `via`
+    means the browser UI, which IS a person. A record carrying NEITHER key
+    predates attribution and resolves to 'unknown' — never to 'you', because
+    guessing "the user did this" is the failure this exists to prevent.
+
+    Accepts both shapes: ring records use `sid`, events use `sid` or
+    `session_id`.
+    """
+    bg = str(rec.get("bg") or "").strip()
+    if bg:
+        return f"system:{bg}"
+    sid = str(rec.get("sid") or rec.get("session_id") or "")
+    for pfx, what in (("dream", "dream"), ("v8", "loop"), ("loop", "loop"),
+                      ("goal-", "goal"), ("proj-", "project"), ("sched", "schedule")):
+        if sid.startswith(pfx):
+            return f"system:{what}"
+    if "via" not in rec and "bg" not in rec:
+        return "unknown"
+    via = str(rec.get("via") or "").strip().lower()
+    if via in ("claude", "mcp"):
+        return "agent:claude-code"
+    if via:
+        return f"agent:{via}"
+    return "you"
+
+
 def _avoid_embed_share(emb_busy: int, rest_min: int,
                        relax_at: Optional[int] = None) -> bool:
     """Should avoid_embed SHARE work back onto the embedding node?
