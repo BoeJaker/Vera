@@ -27,10 +27,12 @@ import json
 import time
 import uuid
 
+from fastapi import Response
 from fastapi.responses import HTMLResponse
 
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import (
+    APP,
     CAPABILITY_REGISTRY,
     capability,
     emit_event,
@@ -357,6 +359,26 @@ async def cap_canvas_panel_html(trace_id=None):
                 "font-family:monospace;padding:40px'><h2>canvas_panel.html not found</h2>"
                 f"<p>Expected at {_PANEL_HTML}</p></body></html>")
     return HTMLResponse(html)
+
+
+_ELEMENT_JS = Path(__file__).parent / "canvas_element.js"
+
+
+@APP.get("/ui/elements/canvas_element.js", include_in_schema=False)
+async def _canvas_element_js():
+    """Serve <vera-canvas> — the embeddable live canvas view.
+
+    Loaded globally by the harness AND by the chat panel (its own document), so
+    a canvas can be dropped straight into a conversation with
+    `<vera-canvas canvas-id="cv_…">`. Cached briefly: this is fetched on every
+    page load but changes only on deploy.
+    """
+    try:
+        js = _ELEMENT_JS.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        js = "/* canvas_element.js missing */"
+    return Response(content=js, media_type="application/javascript",
+                    headers={"Cache-Control": "public, max-age=60"})
 
 
 register_ui(

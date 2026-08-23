@@ -13389,6 +13389,7 @@ Your task: decide what to do next to advance toward the goal.
     {name:'toggle', alias:['set'], arg:'toggle', desc:'Flip a setting on/off', run:_slashToggle},
     {name:'cap', alias:['run','exec'], arg:'cap', desc:'Execute a capability directly', run:_slashRunCap},
     {name:'vera', alias:['director'], arg:'message', desc:'Talk to Vera\'s director (conversational; can orchestrate dreams, loops, projects)', run:_slashVera},
+    {name:'canvas', alias:['board','whiteboard'], arg:'title|id|list', desc:'Embed a LIVE canvas in the conversation (blank arg = most recent, a title creates one)', run:_slashCanvas},
     {name:'help', desc:'List slash commands', run:_slashHelp},
   ];
   /* /vera <message> — talk/write back to the dream director. Opens its
@@ -13511,6 +13512,56 @@ Your task: decide what to do next to advance toward the goal.
     _loopStepCount=0;   // user-initiated — fresh interaction, not a runaway cap chain
     HISTORY.push({role:'user',content:`[user ran capability via /cap] ${capName} ${JSON.stringify(capArgs)}`});
     await executeCapInline(el,capName,capArgs,{silent:true});
+  }
+  /* /canvas — put a LIVE canvas in the conversation.
+       /canvas                → embed the most recent canvas
+       /canvas <title>        → create one with that title and embed it
+       /canvas cv_abc123      → embed that specific canvas
+       /canvas list           → list the canvases you have
+     The embedded <vera-canvas> follows the document, so anything an agent
+     appends to it appears in the chat message in place. */
+  async function _slashCanvas(arg){
+    const a=(arg||'').trim();
+    const jget=async(u)=>{ const r=await fetch(u,{headers:{Accept:'application/json'}});
+                           const j=await r.json(); return (j&&j.content!==undefined)?j.content:j; };
+    const embed=(id,note)=>{
+      const wrap=document.createElement('div');wrap.className='mwrap a';
+      wrap.innerHTML=(note?`<div style="font-size:10px;color:var(--dim2);margin-bottom:3px">${esc(note)}</div>`:'')
+        +`<vera-canvas canvas-id="${esc(id)}"></vera-canvas>`;
+      BOX().appendChild(wrap);scroll();
+      // Let the model refer to it later without re-pasting the whole document.
+      HISTORY.push({role:'user',content:`[canvas embedded in chat] id=${id} — `
+        +`append to it with canvas.append({id:"${id}", type:…, content:…}); `
+        +`it updates live in the conversation.`});
+    };
+    try{
+      if(a==='list'){
+        const l=await jget('/canvas/list?limit=20');
+        const rows=(l.canvases||[]);
+        if(!rows.length){ appendSys('No canvases yet — <code>/canvas &lt;title&gt;</code> creates one.'); return; }
+        appendSys('<b>Canvases</b><div style="margin-top:3px;display:flex;flex-direction:column;gap:2px">'
+          +rows.map(c=>`<div><code>${esc(c.id)}</code> — ${esc(c.title||'Untitled')}</div>`).join('')
+          +'</div><div style="font-size:9px;color:var(--dim2);margin-top:4px">'
+          +'<code>/canvas &lt;id&gt;</code> to embed one.</div>');
+        return;
+      }
+      if(/^cv_[A-Za-z0-9]+$/.test(a)){ embed(a,'canvas '+a); return; }
+      if(a){
+        const r=await fetch('/canvas/create',{method:'POST',
+          headers:{'Content-Type':'application/json'},body:JSON.stringify({title:a})});
+        const j=await r.json(); const c=(j&&j.content!==undefined)?j.content:j;
+        const id=c.id||(c.canvas&&c.canvas.id);
+        if(!id){ appendSys('<span style="color:var(--err)">Could not create that canvas.</span>'); return; }
+        embed(id,'created “'+a+'”');
+        return;
+      }
+      const l=await jget('/canvas/list?limit=1');
+      const first=(l.canvases||[])[0];
+      if(!first){ appendSys('No canvases yet — <code>/canvas &lt;title&gt;</code> creates one.'); return; }
+      embed(first.id,first.title||'');
+    }catch(e){
+      appendSys(`<span style="color:var(--err)">Canvas failed: ${esc(String(e.message||e))}</span>`);
+    }
   }
   function _slashHelp(){
     const lines=SLASH_COMMANDS.map(c=>`<div><code>/${c.name}${c.arg?' &lt;'+c.arg+'&gt;':''}</code> — ${esc(c.desc)}</div>`).join('');
@@ -15356,5 +15407,10 @@ window.addEventListener('DOMContentLoaded',()=>{
   catch(e){ window.CH = Object.assign(window.CH||{}, {toggleBuddy}); }
 })();
 </script>
+
+<!-- <vera-canvas> — the chat panel is its OWN document, so it needs its own
+     copy of the element; the harness tag doesn't reach in here. This is what
+     lets /canvas embed a live canvas inside the conversation. -->
+<script src="/ui/elements/canvas_element.js"></script>
 </body>
 </html>
