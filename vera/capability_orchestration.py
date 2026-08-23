@@ -244,13 +244,21 @@ def _avoid_embed_share(emb_busy: int, rest_min: int,
     defeating the deny_gpu this rule exists to protect.
 
     So share only when BOTH hold: every alternative is already busy, and the
-    embed node is completely idle — i.e. the work would otherwise queue
-    against an idle machine. relax_at=0 disables sharing entirely.
+    embed node is no busier than they are — i.e. the work would otherwise
+    queue behind another GENERATION when a node with equal-or-less load is
+    sitting there. Requiring the embed node to be perfectly idle was too
+    strict to ever fire in practice: embed traffic is near-continuous, so
+    in_use dips to 0 only between bursts. Depth is the right comparison
+    because the two queues hold different work — an embed clears in seconds
+    (measured 14-29s), a CPU generation takes minutes, so waiting behind an
+    embed beats waiting behind a generation.
+
+    relax_at=0 disables sharing entirely.
     """
     at = _AVOID_EMBED_RELAX_AT if relax_at is None else relax_at
     if at <= 0:
         return False
-    return rest_min >= at and emb_busy == 0
+    return rest_min >= at and emb_busy <= rest_min
 
 
 class _StreamLines:

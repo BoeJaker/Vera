@@ -46,8 +46,11 @@ def _load(src_rel, *names):
 
 @pytest.mark.critical
 @pytest.mark.parametrize("rec,expected", [
-    ({},                                          "you"),      # browser UI = the user
-    ({"via": ""},                                 "you"),
+    # No attribution keys at all = a record written before attribution existed.
+    # It must read as unknown, NOT as the user.
+    ({},                                          "unknown"),
+    ({"via": ""},                                 "you"),      # browser UI = the user
+    ({"bg": ""},                                  "you"),
     ({"via": "claude"},                           "agent:claude-code"),
     ({"via": "mcp"},                              "agent:claude-code"),
     ({"via": "codex"},                            "agent:codex"),
@@ -82,23 +85,28 @@ def _share():
 
 
 @pytest.mark.critical
-def test_shares_only_when_alternatives_busy_and_embed_idle():
-    """THE regression: alternatives queueing while the embed node sits idle."""
+def test_shares_when_alternatives_busy_and_embed_no_busier():
+    """THE regression: alternatives queueing while the embed node has room."""
     assert _share()(emb_busy=0, rest_min=1, relax_at=1) is True
     assert _share()(emb_busy=0, rest_min=4, relax_at=1) is True
+    # Equal depth still shares: an embed clears in seconds, a generation takes
+    # minutes, so queueing behind the embed node is the better wait. Requiring
+    # emb_busy==0 never fired live, because embed traffic is near-continuous.
+    assert _share()(emb_busy=1, rest_min=1, relax_at=1) is True
 
 
 @pytest.mark.critical
 def test_keeps_embed_node_free_when_an_alternative_is_idle():
     """Normal case — never push generation onto the embed node needlessly."""
     assert _share()(emb_busy=0, rest_min=0, relax_at=1) is False
+    assert _share()(emb_busy=2, rest_min=0, relax_at=1) is False
 
 
 @pytest.mark.critical
-def test_never_piles_onto_an_already_busy_embed_node():
-    """If the embed node is working, it is not the relief valve."""
-    assert _share()(emb_busy=1, rest_min=3, relax_at=1) is False
-    assert _share()(emb_busy=5, rest_min=5, relax_at=1) is False
+def test_never_piles_onto_an_embed_node_that_is_busier():
+    """If the embed node is the MORE loaded one, it is not the relief valve."""
+    assert _share()(emb_busy=4, rest_min=3, relax_at=1) is False
+    assert _share()(emb_busy=6, rest_min=5, relax_at=1) is False
 
 
 @pytest.mark.critical

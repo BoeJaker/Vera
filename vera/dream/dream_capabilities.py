@@ -10503,6 +10503,14 @@ def _activity_actor(rec: Dict[str, Any]) -> str:
                       ("goal-", "goal"), ("proj-", "project"), ("sched", "schedule")):
         if sid.startswith(pfx):
             return f"system:{what}"
+    # Records written before attribution existed carry neither key. Once the
+    # session id has been given its chance above (old records DO have one, and a
+    # machine session is still identifiable), an unattributed record must NOT
+    # fall through to "you" — that is exactly the misattribution this function
+    # exists to stop, and it would persist for as long as the ring holds old
+    # entries. Only an explicitly-empty `via` means the browser UI, i.e. the user.
+    if "via" not in rec and "bg" not in rec:
+        return "unknown"
     via = str(rec.get("via") or "").strip().lower()
     if via in ("claude", "mcp"):
         return "agent:claude-code"
@@ -11776,7 +11784,7 @@ async def _narrator_initial_state(cfg: Dict[str, Any]) -> str:
         + _sect("Business snapshot", briefing.get("business", ""))
         + _sect("Live agentic loop (being watched now)", loop_live.get("summary", ""))
         + _sect("Recent activity (newest first) — [you]=the user, [agent:*]=an AI "
-                "agent, [system:*]=your own background work",
+                "agent, [system:*]=your own background work, [unknown]=unrecorded",
                 "\n".join(activity_lines[:10]) if activity_lines else "")
         + _sect("Watched world (news/press/sites/socials — gatherer sources)", watched)
     )
@@ -11906,9 +11914,9 @@ async def _narrator_narrate(cfg: Dict[str, Any], initial: str, digest: str) -> D
         "thought: build on your recent narrative, never repeat it.\n"
         "\n"
         "WHO DID WHAT — activity lines are marked with an actor: [you] = the user, "
-        "[agent:*] = an AI agent, [system:*] = your OWN background work. Never "
-        "describe your own background work as something the user did; own it "
-        "instead ('I've been…').\n"
+        "[agent:*] = an AI agent, [system:*] = your OWN background work, [unknown] = "
+        "not recorded. Never describe agent, system or unknown activity as something "
+        "the user did; own your own work instead ('I've been…').\n"
         "\n"
         "THIS IS NOT A STATUS REPORT. A rewritten log is worthless — they can read "
         "the logs. Give them something a colleague would: what you make of it, what "
@@ -12051,7 +12059,8 @@ async def _narrator_quick_take(cfg: Dict[str, Any], force: bool = False) -> Dict
                (("CALENDAR & TODOS (raise only if genuinely pertinent or imminent):\n"
                  + _cal + "\n\n") if _cal else "") +
                "RECENT ACTIVITY (newest first) — [you]=the user, [agent:*]=an AI agent, "
-               "[system:*]=your own background work:\n" + "\n".join(act_lines[:8]) +
+               "[system:*]=your own background work, [unknown]=unrecorded:\n"
+               + "\n".join(act_lines[:8]) +
                (("\n\nLAST DEEP NARRATIVE (continuity):\n" + _lastn) if _lastn else ""))
     recent, r = [], _redis()
     if r:
@@ -12068,11 +12077,13 @@ async def _narrator_quick_take(cfg: Dict[str, Any], force: bool = False) -> Dict
         "monitoring bot. Say ONE short thing that is actually worth saying.\n"
         "\n"
         "WHO DID WHAT — the activity list marks every line with an actor:\n"
-        "  [you] = the user did it. [agent:*] = an AI agent. [system:*] = VERA's own\n"
-        "  background work (dreams, loops, schedules).\n"
-        "NEVER describe [system:*] or [agent:*] activity as something the user did. "
-        "If it's your own background work, own it ('I've been…'), don't hand it back "
-        "to them as news.\n"
+        "  [you] = the user did it. [agent:*] = an AI agent working on their behalf.\n"
+        "  [system:*] = VERA's own background work (dreams, loops, schedules).\n"
+        "  [unknown] = not recorded — do NOT assume it was the user.\n"
+        "NEVER describe [system:*], [agent:*] or [unknown] activity as something the "
+        "user did. If it's your own background work, own it ('I've been…'), don't "
+        "hand it back to them as news. Saying 'you've been…' about work they did not "
+        "do is the single worst thing you can do here.\n"
         "\n"
         "BE USEFUL, NOT A NOTIFICATION. Do not restate telemetry — they can already "
         "see it. Earn the interruption by picking ONE of these:\n"
