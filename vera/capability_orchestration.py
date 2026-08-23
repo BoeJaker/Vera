@@ -7474,9 +7474,18 @@ async def cap_ollama_embed_config_set(
             http_method="POST", http_path="/dag/run", http_tags=["dag"],
             description="Execute a DAG against an initial state. Set supervised=true for LLM checkpoints.")
 async def cap_dag_run(dag: list = None, state: dict = None, supervised: bool = False, trace_id=None):
-    fn=supervised_run_graph if supervised else run_graph
-    result=await fn(dag or [],state or {})
-    return {"trace_id":trace_id or new_id(),"result":result}
+    from Vera.vera.execution.run_shadow import execute_dag_with_run_shadow
+    tid = trace_id or new_id()
+    if supervised:
+        async def native_executor(graph, initial_state, _trace_id):
+            return await supervised_run_graph(graph, initial_state)
+    else:
+        native_executor = run_graph
+    result = await execute_dag_with_run_shadow(
+        executor=native_executor, graph=dag or [], state=state or {},
+        trace_id=tid, emit=emit_event,
+    )
+    return {"trace_id":tid,"result":result}
 
 @capability("dag.plan", memory="on",
             http_method="POST", http_path="/dag/plan", http_tags=["dag"],
