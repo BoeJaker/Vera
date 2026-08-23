@@ -495,7 +495,7 @@ def ops_network_overlay(secrets, server_ip=""):
                 "set -e\n"
                 'NET="%s"\n' % tg_net +
                 "KEY=/etc/foundry/twingate/service_key.json\n"
-                'IMG="${FOUNDRY_TG_IMAGE:-twingate/client:1}"\n'
+                'IMG="${FOUNDRY_TG_IMAGE:-twingate/client:latest}"\n'
                 '[ -s "$KEY" ] || { echo "no twingate service key baked"; exit 1; }\n'
                 'command -v docker >/dev/null 2>&1 || { echo "docker required"; exit 1; }\n'
                 "docker rm -f twingate 2>/dev/null || true\n"
@@ -537,6 +537,7 @@ apply_vera(){
     command -v docker >/dev/null 2>&1 || { echo "docker required"; return 1; }
     wget -qO /etc/foundry/vera-worker.env "http://$SRV/ops/vera-worker-env" 2>/dev/null
     [ -s /etc/foundry/vera-worker.env ] || { echo "no backend env served by $SRV"; return 1; }
+    _img=$(grep '^FOUNDRY_VERA_IMAGE=' /etc/foundry/vera-worker.env 2>/dev/null | cut -d= -f2-); [ -n "$_img" ] && [ -z "$FOUNDRY_VERA_IMAGE" ] && VERA_IMAGE="$_img"
     docker rm -f vera-worker 2>/dev/null
     docker run -d --name vera-worker --restart unless-stopped --network host --env-file /etc/foundry/vera-worker.env "$VERA_IMAGE" python -m Vera.vera.capability_orchestration && echo "vera-worker started ($VERA_IMAGE)" || echo "vera-worker FAILED - set FOUNDRY_VERA_IMAGE to a reachable Vera image"
   else
@@ -594,7 +595,7 @@ esac
     return script.replace("__SRV__", server_ip)
 
 
-def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=None) -> Dict:
+def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=None, registry="") -> Dict:
     """Files for the ops-node Alpine diskless overlay (apkovl), as {relpath: content}.
     The node boots to RAM, installs Docker + SSH + tools, joins the swarm as a WORKER
     only (never self-promotes to manager — managers are persistent VMs/CTs), and
@@ -739,8 +740,10 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=None)
     _netfiles, _nettail = ops_network_overlay(secrets, server_ip)
     if _nettail:
         start = start + _nettail
+    _regfiles = {"etc/docker/daemon.json": '{"insecure-registries": ["%s"]}\n' % registry} if registry else {}
     return {
         **_netfiles,
+        **_regfiles,
         "etc/apk/repositories": repos,
         "etc/local.d/foundry.start": start,
         "usr/local/bin/foundry-tui": tui,
@@ -753,7 +756,7 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=None)
     }
 
 
-def pxe_desktop_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=None) -> Dict:
+def pxe_desktop_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=None, registry="") -> Dict:
     """Files for the desktop-node Alpine diskless overlay (apkovl): a full XFCE desktop
     with Remmina/TigerVNC, the Foundry ops menu (Proxmox consoles + SD-card writer)
     launchable from the desktop, and Docker so it also joins the swarm as a worker.
@@ -841,8 +844,10 @@ def pxe_desktop_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=N
     _netfiles, _nettail = ops_network_overlay(secrets, server_ip)
     if _nettail:
         start = start + _nettail
+    _regfiles = {"etc/docker/daemon.json": '{"insecure-registries": ["%s"]}\n' % registry} if registry else {}
     return {
         **_netfiles,
+        **_regfiles,
         "etc/apk/repositories": repos,
         "etc/local.d/desktop.start": start,
         "etc/inittab": inittab,
