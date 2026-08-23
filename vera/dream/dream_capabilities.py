@@ -11508,6 +11508,22 @@ _INTENT_AREAS: Dict[str, str] = {
 }
 
 
+def _narrator_summarise_unattributed(count: int, names: List[str]) -> str:
+    """Describe activity we CANNOT attribute, without naming the capabilities.
+
+    Structural guard, added because the prompt-level one was not enough. Given
+    "docker.ps, exec.ssh.run, ollama.instances [unknown] — not the user", the
+    quick model still produced "You're checking infrastructure—Docker, SSH, and
+    Ollama instances": it ignored the label and used the verbs. Summarising by
+    AREA keeps the narrator aware that background work is happening while
+    denying it a list of actions it can pin on the person.
+    """
+    areas = sorted({str(n).split(".")[0] for n in (names or []) if n})
+    where = f" (areas: {', '.join(areas[:6])})" if areas else ""
+    return (f"- {int(count or 0)} unattributed background actions{where} — origin "
+            f"not recorded, NOT the user's doing")
+
+
 async def _narrator_activity_view(cfg: Dict[str, Any], user_lines: int = 14,
                                   sys_lines: int = 6) -> Dict[str, Any]:
     """Activity split by WHO drove it, weighted toward the user.
@@ -11541,7 +11557,11 @@ async def _narrator_activity_view(cfg: Dict[str, Any], user_lines: int = 14,
         if not names:
             continue
         sid = str(s.get("session_id") or "")
-        line = (f"- session {sid[:12] or '(none)'} [{actor}] {s.get('count', 0)} actions: "
+        count = s.get("count", 0)
+        if actor == "unknown":
+            system.append(_narrator_summarise_unattributed(count, names))
+            continue
+        line = (f"- session {sid[:12] or '(none)'} [{actor}] {count} actions: "
                 + ", ".join(names[:8]))
         (user if actor == "you" else system).append(line)
 
@@ -11569,8 +11589,10 @@ def _narrator_activity_block(view: Dict[str, Any]) -> str:
                 + "\n".join(user) + "\n\n")
     else:
         out += ("## WHAT THE USER HAS ACTUALLY BEEN DOING\n"
-                "(nothing recorded — do NOT invent user activity, and do not "
-                "describe background work as theirs)\n\n")
+                "NOTHING RECORDED. The user has not done anything you can see. Do "
+                "NOT say 'you're doing X' or 'you've been X' about ANY item below — "
+                "none of it is theirs. Talk about your own work, ask them something, "
+                "or say there's nothing new.\n\n")
     if system:
         out += ("## BACKGROUND — your own work and agents (context only, LOWER "
                 "priority; never call this the user's doing)\n"
