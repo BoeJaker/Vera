@@ -34,7 +34,8 @@ from Vera.vera.capability_orchestration import (
     now_iso,
 )
 
-_redis = _orch._redis
+def _redis():
+    return _orch.REDIS
 
 KEY_CANVAS = "vera:canvas:"            # + <id>  → the canvas doc (JSON)
 KEY_CANVAS_INDEX = "vera:canvas:index"  # ZSET id → updated-at epoch (recent first)
