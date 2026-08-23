@@ -952,7 +952,8 @@ async def cap_provision(target: str = "", image_id: str = "", name: str = "",
                           ostemplate=tmpl, hostname=name or "",
                           storage=storage, cores=cores, memory=memory, disk=disk,
                           net0=net0,
-                          features="nesting=1,keyctl=1" if "docker-swarm" in feats else "",
+                          unprivileged=("mesh" not in feats),
+                          features=("nesting=1,keyctl=1" if ("docker-swarm" in feats or "distributed-compute" in feats or "mesh" in feats) else ""),
                           auto_enroll=False)   # enrol AFTER it's running (avoid create-task race)
         step("create", res)
         vmid = res.get("vmid")
