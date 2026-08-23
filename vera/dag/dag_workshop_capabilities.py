@@ -166,17 +166,16 @@ register_routing_profile(
                        "model": _LOOP_PLANNER_MODEL,
                        "options": {"temperature": 0.1, "num_ctx": 8192}},
         "coder":      {"job_type": "loop_coder", "prefer_gpu": True,
-                       # repeat_penalty/repeat_last_n damp the line-level repetition
-                       # loops long code generations degenerate into — observed live:
-                       # a pomodoro build repeated the same lines for ~13 min out to
-                       # num_predict, holding the GPU. Kept MODERATE (1.15) so
-                       # legitimate code repetition (brackets, indentation, keywords)
-                       # isn't over-penalised. Tunable live on the Model Routing page.
-                       "options": {"temperature": 0.45, "top_p": 0.9,
-                                   "repeat_penalty": 1.15, "repeat_last_n": 256}},
+                       # Aligned to the chat/aide sampling — the SAME 9B writes
+                       # functional code in chat. NO repeat_penalty: > 1.0 is a
+                       # foot-gun for CODE, penalising the legitimate token repetition
+                       # code is full of (indentation, keywords, identifiers) and
+                       # nudging the model off the correct token. The earlier 1.15
+                       # (added to break a degenerate line-loop) hurt coherence; the
+                       # warmer 0.7 temp avoids the greedy loop without the penalty.
+                       "options": {"temperature": 0.7, "top_p": 0.9}},
         "writer":     {"job_type": "loop_writer", "prefer_gpu": True,
-                       "options": {"temperature": 0.7, "top_p": 0.9,
-                                   "repeat_penalty": 1.15, "repeat_last_n": 256}},
+                       "options": {"temperature": 0.7, "top_p": 0.9}},
     })
 
 
@@ -10419,19 +10418,14 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
     try:
         res = await fn(prompt=prompt, system=sys_prompt, output_format="code",
                        profile=LOOP_ROUTING_PROFILE, role="coder",
-                       # Anti-repetition + controlled sampling passed at the CALL so
-                       # they apply even when the coder role's options are overridden
-                       # empty on the Model Routing page (which they are in prod —
-                       # the declared role options don't reach ollama then). Without
-                       # repeat_penalty a long code gen can loop the same lines out to
-                       # num_predict, holding the GPU for many minutes.
-                       # Lower temp = more reliable code (fewer invented bugs);
-                       # repeat_penalty breaks the degenerate line-loop, but a
-                       # SMALLER repeat_last_n (128) only penalises TIGHT repetition
-                       # so legitimately-repeated patterns spread across the file
-                       # (e.g. one addEventListener per button) aren't discouraged.
-                       options={"temperature": 0.3, "top_p": 0.9,
-                                "repeat_penalty": 1.15, "repeat_last_n": 128},
+                       # Sampling passed at the CALL so it applies even when the coder
+                       # role options are overridden empty on the Model Routing page
+                       # (which they are in prod). Aligned to the chat/aide config —
+                       # the SAME 9B writes functional code there: temp 0.7 and NO
+                       # repeat_penalty. A repeat_penalty > 1.0 is a foot-gun for CODE
+                       # (it penalises the legitimate token repetition code is full of);
+                       # the earlier 0.3 + 1.15 tuning degraded coherence vs plain chat.
+                       options={"temperature": 0.7, "top_p": 0.9},
                        files=files or None, session_id=session_id,
                        caller="code.author", trace_id=trace_id, stream_cb=stream_cb)
     except Exception as e:
@@ -10507,8 +10501,7 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
         try:
             raw = await fn(prompt=fix_prompt, system=_edit_sys, output_format="json",
                            profile=LOOP_ROUTING_PROFILE, role="coder",
-                           options={"temperature": 0.2, "top_p": 0.9,
-                                    "repeat_penalty": 1.15, "repeat_last_n": 256},
+                           options={"temperature": 0.2, "top_p": 0.9},
                            session_id=session_id, caller="code.author.repair",
                            trace_id=trace_id, stream_cb=stream_cb)
         except Exception as e:
@@ -10585,8 +10578,7 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
             try:
                 _rr = await fn(prompt=_rp, system=_edit_sys, output_format="json",
                                profile=LOOP_ROUTING_PROFILE, role="coder",
-                               options={"temperature": 0.2, "top_p": 0.9,
-                                        "repeat_penalty": 1.15, "repeat_last_n": 256},
+                               options={"temperature": 0.2, "top_p": 0.9},
                                session_id=session_id, caller="code.author.runtime_repair",
                                trace_id=trace_id, stream_cb=stream_cb)
             except Exception:
