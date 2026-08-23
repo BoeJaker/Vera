@@ -809,7 +809,7 @@ async def _post_provision(cluster_id, node, vmid, kind, feats, fqdn, job_id="", 
                               "identity": (res.get("steps") or {}).get("identity", {}).get("ok"),
                               "mesh": (res.get("steps") or {}).get("mesh")}})
             if "hardening" in feats:
-                h = await _apply_ct_feature(cluster_id, vmid, "lxc", _HARDEN, node)
+                h = await _apply_ct_feature(cluster_id, vmid, "lxc", _feature_script("hardening", {}), node)
                 steps.append({"hardening": {"ok": bool(h.get("ok"))}})
             # OS-agnostic feature bundles (features_core) -- portable across distros.
             # enrol/mesh/hardening are handled above for CTs; apply the additional

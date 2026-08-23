@@ -90,7 +90,7 @@ def _hardening_feature(ctx) -> str:
         "  sed -i 's/^#\\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config\n"
         "  (command -v systemctl >/dev/null 2>&1 && systemctl reload sshd 2>/dev/null) || rc-service sshd reload 2>/dev/null || true\n"
         "fi\n"
-        "if command -v ufw >/dev/null 2>&1 || pkg_install ufw 2>/dev/null; then ufw --force default deny incoming 2>/dev/null; ufw allow OpenSSH 2>/dev/null || ufw allow 22/tcp 2>/dev/null; ufw --force enable 2>/dev/null; fi\n"
+        "if command -v ufw >/dev/null 2>&1 || pkg_install ufw 2>/dev/null; then ufw --force default deny incoming 2>/dev/null; ufw default allow outgoing 2>/dev/null; ufw allow 22/tcp 2>/dev/null; ufw allow 51820/udp 2>/dev/null; ufw --force enable 2>/dev/null; elif command -v firewall-cmd >/dev/null 2>&1; then firewall-cmd --permanent --add-service=ssh 2>/dev/null; firewall-cmd --permanent --add-port=51820/udp 2>/dev/null; firewall-cmd --reload 2>/dev/null; fi\n"
         "case \"$_PKG\" in\n"
         "  apt) pkg_install unattended-upgrades 2>/dev/null; dpkg-reconfigure -f noninteractive unattended-upgrades 2>/dev/null || true ;;\n"
         "  dnf) pkg_install dnf-automatic 2>/dev/null; svc_enable dnf-automatic.timer 2>/dev/null || true ;;\n"
