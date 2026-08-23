@@ -8,6 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from .run_protocol import PROTOCOL_VERSION, Run, RunStatus
+from .run_projection import DagRunObserver, SHADOW_RUNS
 
 
 Emitter = Callable[[dict[str, Any]], Awaitable[None]]
@@ -23,6 +24,7 @@ async def execute_dag_with_run_shadow(*, executor, graph: list, state: dict,
                      payload: dict[str, Any] | None = None) -> None:
         event = run.transition(status, event_type=event_type, payload=payload)
         try:
+            SHADOW_RUNS.record(run, event)
             await emit({"type": "run.event", "protocol": PROTOCOL_VERSION,
                         "run": run.to_dict(include_events=False),
                         "event": event.to_dict()})
@@ -32,7 +34,8 @@ async def execute_dag_with_run_shadow(*, executor, graph: list, state: dict,
 
     await shadow(RunStatus.RUNNING, "run.started", {"node_count": len(graph)})
     try:
-        result = await executor(graph, state, trace_id)
+        observer = DagRunObserver(parent=run, graph=graph, emit=emit)
+        result = await executor(graph, state, trace_id, observer)
     except asyncio.CancelledError:
         await shadow(RunStatus.CANCELLED, "run.cancelled")
         raise

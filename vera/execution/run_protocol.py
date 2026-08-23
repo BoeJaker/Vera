@@ -27,14 +27,17 @@ class RunStatus(str, Enum):
     FAILED = "failed"
     CANCELLED = "cancelled"
     TIMED_OUT = "timed_out"
+    SKIPPED = "skipped"
 
 
 TERMINAL_STATUSES = {
     RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED, RunStatus.TIMED_OUT,
+    RunStatus.SKIPPED,
 }
 
 ALLOWED_TRANSITIONS = {
-    RunStatus.CREATED: {RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.CANCELLED},
+    RunStatus.CREATED: {RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.CANCELLED,
+                        RunStatus.SKIPPED},
     RunStatus.QUEUED: {RunStatus.RUNNING, RunStatus.CANCELLED, RunStatus.TIMED_OUT},
     RunStatus.RUNNING: {RunStatus.WAITING, RunStatus.APPROVAL_PENDING,
                         RunStatus.RETRYING, *TERMINAL_STATUSES},
@@ -160,6 +163,17 @@ class Run:
         event = RunEvent(
             id=str(uuid4()), run_id=self.id, sequence=len(self.events) + 1,
             type=event_type or target.value, status=target, occurred_at=when,
+            payload=dict(payload or {}), causation_id=causation_id,
+        )
+        self.events.append(event)
+        return event
+
+    def record_event(self, event_type: str, *, payload: Mapping[str, Any] | None = None,
+                     causation_id: str = "", occurred_at: str = "") -> RunEvent:
+        """Append observational progress without manufacturing a state transition."""
+        event = RunEvent(
+            id=str(uuid4()), run_id=self.id, sequence=len(self.events) + 1,
+            type=event_type, status=self.status, occurred_at=occurred_at or utc_now(),
             payload=dict(payload or {}), causation_id=causation_id,
         )
         self.events.append(event)

@@ -5276,22 +5276,47 @@ async def register_mcp_server(base_url: str, server_name: str) -> List[str]:
 # ─────────────────────────────────────────────────────────────────────────────
 # DAG ENGINE
 # ─────────────────────────────────────────────────────────────────────────────
-async def run_graph(graph: list, state: dict, trace_id: str = "") -> dict:
+async def _dag_observe(observer, method: str, *args) -> None:
+    if observer is None:
+        return
+    try:
+        await getattr(observer, method)(*args)
+    except Exception:
+        # The Run protocol is shadow-only: observation cannot alter native DAG behavior.
+        log.debug("dag run observer failed", exc_info=True)
+
+
+async def run_graph(graph: list, state: dict, trace_id: str = "", run_observer=None,
+                    _path: tuple = ()) -> dict:
     """Execute a DAG graph. trace_id flows through all cap calls for traceability."""
     _dag_trace = trace_id or new_id()
-    for node in graph:
+    for index, node in enumerate(graph):
+        path = _path + (index,)
         if isinstance(node,list) and isinstance(node[0],list):
-            results=await asyncio.gather(*[run_graph([n],dict(state),_dag_trace) for n in node],return_exceptions=True)
+            results=await asyncio.gather(*[
+                run_graph([n], dict(state), _dag_trace, run_observer, path + (branch_index,))
+                for branch_index, n in enumerate(node)
+            ],return_exceptions=True)
             for r in results:
                 if isinstance(r,dict): state.update(r)
             continue
         cap_name,out_key,*rest=node; cond=rest[0] if rest else None
         if cond:
-            if callable(cond) and not cond(state): continue
-            if isinstance(cond,str) and cond.startswith("CONDITION:") and not state.get(cond.split(":",1)[1]): continue
+            if callable(cond) and not cond(state):
+                await _dag_observe(run_observer, "node_skipped", path, cap_name,
+                                   "callable_condition_false")
+                continue
+            if isinstance(cond,str) and cond.startswith("CONDITION:") and not state.get(cond.split(":",1)[1]):
+                await _dag_observe(run_observer, "node_skipped", path, cap_name,
+                                   "condition_false")
+                continue
+        await _dag_observe(run_observer, "node_started", path, cap_name)
         cap=CAPABILITY_REGISTRY.get(cap_name)
         if not cap:
             if out_key: state[out_key]={"error":f"unknown_cap:{cap_name}"}
+            await _dag_observe(run_observer, "node_finished", path, cap_name,
+                               state.get(out_key) if out_key else None,
+                               f"unknown_cap:{cap_name}")
             continue
         try:
             accepted=set(cap["schema"].get("properties",{}).keys())
@@ -5303,10 +5328,14 @@ async def run_graph(graph: list, state: dict, trace_id: str = "") -> dict:
                 ctx = await _get_syslog_context(cap_name, str(result["error"]))
                 if ctx and out_key:
                     state[f"_err_ctx_{out_key}"] = ctx
+            await _dag_observe(run_observer, "node_finished", path, cap_name, result,
+                               str(result.get("error")) if isinstance(result, dict) and "error" in result else "")
         except Exception as e:
             err_msg = str(e)
             ctx = await _get_syslog_context(cap_name, err_msg)
             state[out_key or f"_err_{cap_name}"] = {"error": err_msg, "syslog_context": ctx}
+            await _dag_observe(run_observer, "node_finished", path, cap_name,
+                               state[out_key or f"_err_{cap_name}"], err_msg)
     return state
 
 
@@ -7477,15 +7506,42 @@ async def cap_dag_run(dag: list = None, state: dict = None, supervised: bool = F
     from Vera.vera.execution.run_shadow import execute_dag_with_run_shadow
     tid = trace_id or new_id()
     if supervised:
-        async def native_executor(graph, initial_state, _trace_id):
+        async def native_executor(graph, initial_state, _trace_id, _observer):
             return await supervised_run_graph(graph, initial_state)
     else:
-        native_executor = run_graph
+        async def native_executor(graph, initial_state, native_trace_id, observer):
+            return await run_graph(graph, initial_state, native_trace_id,
+                                   run_observer=observer)
     result = await execute_dag_with_run_shadow(
         executor=native_executor, graph=dag or [], state=state or {},
         trace_id=tid, emit=emit_event,
     )
     return {"trace_id":tid,"result":result}
+
+@capability("run.shadow.list", memory="off",
+            description="List recent non-authoritative Run shadow projections held in this process.")
+async def cap_run_shadow_list(limit: int = 50, trace_id=None):
+    from Vera.vera.execution.run_projection import SHADOW_RUNS
+    return {"authoritative": False, "storage": "process_local_memory",
+            "runs": SHADOW_RUNS.list(limit)}
+
+@capability("run.shadow.get", memory="off",
+            description="Inspect one recent non-authoritative Run shadow projection and its children.")
+async def cap_run_shadow_get(run_id: str, trace_id=None):
+    from Vera.vera.execution.run_projection import SHADOW_RUNS
+    projection = SHADOW_RUNS.get(run_id)
+    return projection or {"error": "run_not_found", "run_id": run_id,
+                          "authoritative": False, "storage": "process_local_memory"}
+
+@capability("run.shadow.export", memory="off",
+            description="Export the checksummed in-memory event journal for a recent shadow Run.")
+async def cap_run_shadow_export(run_id: str, trace_id=None):
+    from Vera.vera.execution.run_projection import SHADOW_RUNS
+    if SHADOW_RUNS.get(run_id) is None:
+        return {"error": "run_not_found", "run_id": run_id,
+                "authoritative": False, "storage": "process_local_memory"}
+    return {"authoritative": False, "storage": "process_local_memory",
+            "export": SHADOW_RUNS.journal.export(run_id)}
 
 @capability("dag.plan", memory="on",
             http_method="POST", http_path="/dag/plan", http_tags=["dag"],

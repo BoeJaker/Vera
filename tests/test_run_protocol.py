@@ -94,10 +94,11 @@ def test_shadow_adapter_preserves_native_result_and_emits_standard_events():
     native_result = {"answer": 42}
     state = {"input": "unchanged"}
 
-    async def executor(graph, received_state, trace_id):
+    async def executor(graph, received_state, trace_id, observer):
         assert graph == [["example.cap", "answer"]]
         assert received_state is state
         assert trace_id == "trace-1"
+        assert observer is not None
         return native_result
 
     async def emit(event):
@@ -115,7 +116,7 @@ def test_shadow_adapter_preserves_native_result_and_emits_standard_events():
 
 
 def test_shadow_emit_failure_does_not_change_dag_result():
-    async def executor(graph, state, trace_id):
+    async def executor(graph, state, trace_id, observer):
         return {"same": True}
 
     async def broken_emit(event):
@@ -133,7 +134,7 @@ def test_shadow_emit_failure_does_not_change_dag_result():
 def test_shadow_adapter_reraises_native_errors_after_terminal_event(error, terminal):
     events = []
 
-    async def executor(graph, state, trace_id):
+    async def executor(graph, state, trace_id, observer):
         raise error
 
     async def emit(event):
@@ -148,7 +149,7 @@ def test_shadow_adapter_reraises_native_errors_after_terminal_event(error, termi
 def test_shadow_adapter_preserves_native_cancellation():
     events = []
 
-    async def executor(graph, state, trace_id):
+    async def executor(graph, state, trace_id, observer):
         raise asyncio.CancelledError()
 
     async def emit(event):
@@ -166,9 +167,10 @@ def test_dag_run_capability_keeps_existing_response_shape(monkeypatch):
     events = []
     native_result = {"input": "same", "answer": 42}
 
-    async def native(graph, state, trace_id=""):
+    async def native(graph, state, trace_id="", run_observer=None):
         assert graph == [["test.cap", "answer"]]
         assert trace_id == "trace-1"
+        assert run_observer is not None
         return native_result
 
     async def emit(event):
