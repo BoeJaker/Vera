@@ -813,6 +813,8 @@ def pxe_desktop_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=N
         "apk add mesa-dri-gallium xf86-video-fbdev xf86-video-vesa xf86-video-intel xf86-video-amdgpu xf86-video-nouveau xf86-video-qxl\n"
         "apk add xfce4 xfce4-terminal dbus dbus-x11 elogind polkit-elogind font-dejavu xterm\n"
         "apk add remmina remmina-plugins tigervnc\n"
+        "apk add fprintd libfprint 2>/dev/null || true  # fingerprint: T450 (Validity) + T470/X1 Yoga2 (Synaptics 06cb) via libfprint 1.94+\n"
+        "# fingerprint readers are dbus-activated (fprintd); enroll with: fprintd-enroll ; login-gating needs a PAM login (busybox login on this image does not use PAM)\n"
         "apk add docker docker-cli openssh openssh-client curl firefox-esr bash\n"
         "# --nodeps bypasses the broken fsck/sysfs dependency chain (same root cause as udev-trigger)\n"
         "rc-update add dbus; rc-update add elogind; rc-update add docker\n"
