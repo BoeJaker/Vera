@@ -41,6 +41,7 @@ and the dream sensor/stage caps themselves).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import contextvars
 import json
 import logging
@@ -10393,6 +10394,12 @@ DIRECTOR_DEFAULTS: Dict[str, Any] = {
     "narrator_quick_model":     "",                     # "" → system default model
     "narrator_quick_gap_min":   3.0,                    # quick-take cadence (< narrator_gap_min)
     "narrator_quick_history":   30,
+    # Output budget for a quick take. The original 80 tokens / 280 chars was sized
+    # for a one-line status voice and cut the assistant voice off mid-word; rich
+    # output is wanted, so give it real room (and keep it tunable).
+    "narrator_quick_tokens":    700,                    # num_predict for a quick take
+    "narrator_quick_chars":     2000,                   # stored/delivered length cap
+    "narrator_quick_timeout_s": 300,                    # a longer reply needs longer
     # ── Idle → GPU: when the user's been idle a while the GPU is free, so let the
     #    MoE narrate there (faster/deeper); stay CPU-only while the user is active
     #    so it never contends with foreground work. ────────────────────────────
@@ -11534,7 +11541,8 @@ async def _narrator_detect_intent(cfg: Dict[str, Any], force: bool = False) -> D
         except Exception:
             pass
 
-    sig = await _narrator_intent_signals(cfg)
+    with _narrator_bg("narrator"):                    # tag our own probing
+        sig = await _narrator_intent_signals(cfg)
     intent = _narrator_intent_heuristic(sig)          # the floor, always computed
 
     gen = getattr(_orch, "ollama_generate", None)
@@ -11927,7 +11935,9 @@ async def _narrator_narrate(cfg: Dict[str, Any], initial: str, digest: str) -> D
         "\n"
         "VOICE: warm, thoughtful, specific, human. Talk TO them. Never open with "
         "'System'/'Status'/'Update'. Prefer one concrete observation over five vague "
-        "ones. " + _director_addressing(cfg))
+        "ones — but develop it properly. Several paragraphs are welcome when you "
+        "have something real to say; this is the deep pass, not a ticker. "
+        + _director_addressing(cfg))
     prompt = (
         initial +
         "\n\n# TAILORED SYSTEM STATE (gathered for you)\n" + (digest or "(none)") +
@@ -11961,6 +11971,31 @@ async def _narrator_recent(limit: int = 8) -> List[Dict[str, Any]]:
         return []
 
 
+@contextlib.contextmanager
+def _narrator_bg(label: str):
+    """Tag everything this pass does as the NARRATOR's own background work.
+
+    Without this the narrator's probe-kit calls land in the recent-caps ring
+    with no attribution and read back as the USER's actions — so it told the
+    user "you've been diving deep into your Proxmox cluster" about capability
+    calls its own gather had just made. Tagging at the source is what makes
+    _activity_actor able to say [system:*].
+    """
+    tok = None
+    try:
+        tok = _orch.BACKGROUND_LLM.set(label)
+    except Exception:
+        tok = None
+    try:
+        yield
+    finally:
+        try:
+            if tok is not None:
+                _orch.BACKGROUND_LLM.reset(tok)
+        except Exception:
+            pass
+
+
 async def _narrator_think_once(cfg: Optional[Dict[str, Any]] = None,
                                force: bool = False) -> Dict[str, Any]:
     """One full narrator pass: gather (probe kit) → narrate (MoE) → store + emit +
@@ -11970,9 +12005,10 @@ async def _narrator_think_once(cfg: Optional[Dict[str, Any]] = None,
         await emit_event({"type": "dream.narrator.backoff",
                           "reason": "CPU pool busy — yielding to foreground work"})
         return {"ok": False, "backoff": True}
-    initial = await _narrator_initial_state(cfg)
-    digest = await _narrator_gather(cfg, initial)
-    narr = await _narrator_narrate(cfg, initial, digest)
+    with _narrator_bg("narrator"):
+        initial = await _narrator_initial_state(cfg)
+        digest = await _narrator_gather(cfg, initial)
+        narr = await _narrator_narrate(cfg, initial, digest)
     text = str(narr.get("narrative") or "").strip()
     if not text:
         return {"ok": False, "error": "empty narrative"}
@@ -12033,14 +12069,24 @@ async def _narrator_deliver(cfg: Dict[str, Any], text: str, title: str = "📖 V
 
 
 async def _narrator_quick_take(cfg: Dict[str, Any], force: bool = False) -> Dict[str, Any]:
-    """Fast tier: a small model emits ONE brief real-time observation about what's
-    happening now — cheaper + far more frequent than the MoE deep narrative, and it
-    SKIPS the gather. Grounds on the initial state + the last few takes."""
+    """Fast tier: a small model reacts to what's happening now — cheaper + far more
+    frequent than the MoE deep narrative, and it SKIPS the gather. Grounds on a lean
+    state view + the last few takes. Runs under _narrator_bg so its own probing is
+    attributed to the system, not to the user."""
     if not force and _director_cpu_pressure():
         return {"ok": False, "backoff": True}
     gen = getattr(_orch, "ollama_generate", None)
     if not gen:
         return {"ok": False}
+    _bg = _narrator_bg("narrator")
+    _bg.__enter__()
+    try:
+        return await _narrator_quick_take_inner(cfg, gen)
+    finally:
+        _bg.__exit__(None, None, None)
+
+
+async def _narrator_quick_take_inner(cfg: Dict[str, Any], gen) -> Dict[str, Any]:
     # LEAN context — the quick tier is meant to be FAST, so it uses a compact view
     # (recent activity + the last deep narrative), NOT the full initial-state probe.
     try:
@@ -12074,7 +12120,9 @@ async def _narrator_quick_take(cfg: Dict[str, Any], force: bool = False) -> Dict
     model = cfg.get("narrator_quick_model") or _rm    # config, else routed default
     sys_p = (
         "You are VERA — the user's assistant, thinking out loud beside them. Not a "
-        "monitoring bot. Say ONE short thing that is actually worth saying.\n"
+        "monitoring bot. Say what is actually worth saying: usually a couple of "
+        "sentences, more when you genuinely have something substantial. Depth is "
+        "welcome — an unfinished thought is not.\n"
         "\n"
         "WHO DID WHAT — the activity list marks every line with an actor:\n"
         "  [you] = the user did it. [agent:*] = an AI agent working on their behalf.\n"
@@ -12100,9 +12148,9 @@ async def _narrator_quick_take(cfg: Dict[str, Any], force: bool = False) -> Dict
         "are good. Never open with 'System' / 'Status' / 'Update' / 'Detected'. Do not "
         "narrate log lines back. If you have nothing genuinely worth saying, say so.\n"
         "\n"
-        "Reply with the sentence only — NO preamble, NO JSON, no quotes. If nothing is "
-        "genuinely new or worth raising since your recent takes, reply exactly: "
-        "(nothing new). " + _director_addressing(cfg))
+        "Reply with what you want to say only — NO preamble, NO JSON, no quotes, no "
+        "headings. If nothing is genuinely new or worth raising since your recent "
+        "takes, reply exactly: (nothing new). " + _director_addressing(cfg))
     prompt = (initial + (("\n\nYOUR RECENT TAKES (don't repeat these):\n" + recent_txt)
                          if recent_txt else "")
               + "\n\nWhat's the one thing worth saying to them right now?")
@@ -12115,13 +12163,22 @@ async def _narrator_quick_take(cfg: Dict[str, Any], force: bool = False) -> Dict
         # destructive stream poll in ollama_generate (see _StreamLines in
         # capability_orchestration.py), which truncated EVERY slow CPU generation
         # to its first token. Fixed 2026-08-23.
+        # num_predict 80 was sized for the old one-line status voice and cut the
+        # assistant voice off mid-word ("…or do you want me to simulate a spe").
+        # Room to actually say something is the point — the user asked for rich
+        # output, so the budget is generous and configurable, not a one-liner cap.
         raw = await gen(prompt, system=sys_p, prefer_gpu=_pgpu, think=False,
-                        job_type=_job, model=model, timeout=180,
-                        options={"num_predict": 80})
+                        job_type=_job, model=model,
+                        timeout=float(cfg.get("narrator_quick_timeout_s", 300) or 300),
+                        options={"num_predict":
+                                 int(cfg.get("narrator_quick_tokens", 700) or 700)})
     except Exception as e:
         log.debug("narrator quick gen: %s", e)
         return {"ok": False}
-    take = str(raw or "").strip().strip('"').split("\n")[0][:280]
+    # Keep the whole reply — multi-sentence takes are wanted now. Newlines are
+    # preserved (they may be real structure); only the outer whitespace goes.
+    take = str(raw or "").strip().strip('"')[
+        :int(cfg.get("narrator_quick_chars", 2000) or 2000)]
     if not take or take.lower().startswith("(nothing"):
         return {"ok": True, "take": ""}
     if r:
@@ -12435,7 +12492,9 @@ async def system_narrator_status(trace_id=None):
     http_method="POST", http_path="/system/narrator/config", http_tags=["dream", "narrator"],
     description="Configure the narrator. Fields (all optional): model (MoE narrator), "
                 "gatherer_model, gap_min, max_probes, think_timeout_s; two-speed: "
-                "quick_enabled (bool), quick_model, quick_gap_min; idle_gpu (bool) + "
+                "quick_enabled (bool), quick_model, quick_gap_min, quick_tokens "
+                "(num_predict for a quick take), quick_chars (stored length cap), "
+                "quick_timeout_s; idle_gpu (bool) + "
                 "idle_gpu_after_min (MoE narrate on the GPU once idle that long); "
                 "deliver (list/csv of chat|telegram|speak); deliver_to_chat (legacy); "
                 "user-intent: intent_enabled (bool), intent_model, intent_gap_min, "
@@ -12462,6 +12521,9 @@ async def system_narrator_config(model: Optional[str] = None,
                                  intent_context: Optional[bool] = None,
                                  intent_steer: Optional[bool] = None,
                                  intent_ttl_min: Optional[float] = None,
+                                 quick_tokens: Optional[int] = None,
+                                 quick_chars: Optional[int] = None,
+                                 quick_timeout_s: Optional[int] = None,
                                  trace_id=None):
     patch: Dict[str, Any] = {}
     if model is not None:            patch["narrator_model"] = model
@@ -12486,6 +12548,9 @@ async def system_narrator_config(model: Optional[str] = None,
     if intent_context is not None:   patch["narrator_intent_context"] = bool(intent_context)
     if intent_steer is not None:     patch["narrator_intent_steer"] = bool(intent_steer)
     if intent_ttl_min is not None:   patch["narrator_intent_ttl_min"] = float(intent_ttl_min)
+    if quick_tokens is not None:     patch["narrator_quick_tokens"] = int(quick_tokens)
+    if quick_chars is not None:      patch["narrator_quick_chars"] = int(quick_chars)
+    if quick_timeout_s is not None:  patch["narrator_quick_timeout_s"] = int(quick_timeout_s)
     cfg = await _director_cfg_patch(patch)
     return {"ok": True, "config": {k: cfg.get(k) for k in (
         "narrator_enabled", "narrator_model", "narrator_gatherer_model",
@@ -12494,7 +12559,8 @@ async def system_narrator_config(model: Optional[str] = None,
         "narrator_quick_gap_min", "narrator_idle_gpu", "narrator_idle_gpu_after_min",
         "narrator_gpu_model", "narrator_deliver",
         "narrator_intent_enabled", "narrator_intent_model", "narrator_intent_gap_min",
-        "narrator_intent_context", "narrator_intent_steer", "narrator_intent_ttl_min")}}
+        "narrator_intent_context", "narrator_intent_steer", "narrator_intent_ttl_min",
+        "narrator_quick_tokens", "narrator_quick_chars", "narrator_quick_timeout_s")}}
 
 
 @capability(
