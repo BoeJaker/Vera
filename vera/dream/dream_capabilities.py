@@ -10394,12 +10394,16 @@ DIRECTOR_DEFAULTS: Dict[str, Any] = {
     "narrator_quick_model":     "",                     # "" → system default model
     "narrator_quick_gap_min":   3.0,                    # quick-take cadence (< narrator_gap_min)
     "narrator_quick_history":   30,
-    # Output budget for a quick take. The original 80 tokens / 280 chars was sized
-    # for a one-line status voice and cut the assistant voice off mid-word; rich
-    # output is wanted, so give it real room (and keep it tunable).
-    "narrator_quick_tokens":    700,                    # num_predict for a quick take
-    "narrator_quick_chars":     2000,                   # stored/delivered length cap
+    # Output LENGTH TIERS (see NARRATOR_TIERS): brief | standard | long. One fixed
+    # budget truncated anything substantial and padded anything thin, so length is
+    # tiered. "auto" picks from how much the USER has actually been doing (a busy
+    # background is not a reason to talk more). Per-tier budgets are overridable
+    # with narrator_tier_<tier>_tokens / _chars.
+    "narrator_quick_tier":      "auto",                 # auto|brief|standard|long
+    "narrator_deep_tier":       "long",                 # the reflective pass
     "narrator_quick_timeout_s": 300,                    # a longer reply needs longer
+    # How far back the narrator looks for session activity.
+    "narrator_activity_window_min": 180,
     # ── Idle → GPU: when the user's been idle a while the GPU is free, so let the
     #    MoE narrate there (faster/deeper); stay CPU-only while the user is active
     #    so it never contends with foreground work. ────────────────────────────
@@ -10495,35 +10499,9 @@ def _director_cpu_pressure() -> bool:
 
 
 def _activity_actor(rec: Dict[str, Any]) -> str:
-    """WHO caused this cap call — 'you', 'agent:<kind>' or 'system:<what>'.
-
-    The narrator must not report the system's own ambient probing back to the
-    user as though the user did it. Resolution order is most-specific first:
-    an explicit background driver, then a machine session id, then the caller
-    kind. An empty caller kind means the browser UI, which IS the user.
-    """
-    bg = str(rec.get("bg") or "").strip()
-    if bg:
-        return f"system:{bg}"
-    sid = str(rec.get("sid") or "")
-    for pfx, what in (("dream", "dream"), ("v8", "loop"), ("loop", "loop"),
-                      ("goal-", "goal"), ("proj-", "project"), ("sched", "schedule")):
-        if sid.startswith(pfx):
-            return f"system:{what}"
-    # Records written before attribution existed carry neither key. Once the
-    # session id has been given its chance above (old records DO have one, and a
-    # machine session is still identifiable), an unattributed record must NOT
-    # fall through to "you" — that is exactly the misattribution this function
-    # exists to stop, and it would persist for as long as the ring holds old
-    # entries. Only an explicitly-empty `via` means the browser UI, i.e. the user.
-    if "via" not in rec and "bg" not in rec:
-        return "unknown"
-    via = str(rec.get("via") or "").strip().lower()
-    if via in ("claude", "mcp"):
-        return "agent:claude-code"
-    if via:
-        return f"agent:{via}"
-    return "you"                      # browser/chat UI sets no caller kind
+    """WHO caused this cap call. Delegates to the canonical rule in the
+    orchestrator so every reader of activity agrees on what counts as the user."""
+    return _orch.activity_actor(rec)
 
 
 async def _director_recent_activity(limit: int = 14, include_system: bool = True) -> tuple:
@@ -11092,8 +11070,10 @@ async def _director_think_once(cfg: Optional[Dict[str, Any]] = None,
         # What the user is doing RIGHT NOW — recent capability activity and the
         # live agentic-loop run — so the director's thought interleaves with the
         # foreground work instead of running on a separate track.
-        + _sect("RECENT ACTIVITY (newest first)",
-                "\n".join(activity_lines[:10]) if activity_lines else "")
+        # The PA director has the same problem the narrator had: it must not read
+        # its own background work (or an agent's) as the user's doing. Same
+        # weighted view — user activity first, background secondary.
+        + _narrator_activity_block(await _narrator_activity_view(cfg))
         + _sect("LIVE AGENTIC LOOP (the run the user is watching now)",
                 loop_live.get("summary", ""))
         + (("YOUR RECENT THOUGHTS (newest first — treat as one running train of thought; do NOT "
@@ -11436,6 +11416,72 @@ async def _narrator_run_probe(name: str, args: Dict[str, Any]) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  OUTPUT LENGTH TIERS
+#
+#  One fixed budget was wrong in both directions: it truncated anything with
+#  something to say, and padded a pass with nothing to report. Three tiers give
+#  the narrator room to be brief when there is little, and genuinely expansive
+#  when there is a lot.
+# ─────────────────────────────────────────────────────────────────────────────
+NARRATOR_TIERS: Dict[str, Dict[str, Any]] = {
+    "brief": {
+        "tokens": 200, "chars": 700,
+        "guide": "Keep it to one or two sentences — there isn't much new, so "
+                 "don't pad it out.",
+    },
+    "standard": {
+        "tokens": 800, "chars": 2500,
+        "guide": "A short paragraph or two: the observation and why it matters.",
+    },
+    "long": {
+        "tokens": 2600, "chars": 12000,
+        "guide": "Take real space — several paragraphs. Develop the thought "
+                 "properly: what you notice, what it connects to, what you'd do "
+                 "next and why. Only go this long if the material genuinely "
+                 "supports it.",
+    },
+}
+
+
+def _narrator_tier(cfg: Dict[str, Any], name: str) -> Dict[str, Any]:
+    """Resolve a tier to {tokens, chars, guide}, honouring per-tier config
+    overrides (narrator_tier_<name>_tokens / _chars). Unknown → standard."""
+    # Resolve the name FIRST, so an unknown tier reports the name it actually
+    # used. Returning {"name": "nonsense"} with standard's budget would make the
+    # resolved tier lie about itself wherever it is logged or displayed.
+    key = str(name or "").strip().lower()
+    if key not in NARRATOR_TIERS:
+        key = "standard"
+    base = dict(NARRATOR_TIERS[key])
+    for field in ("tokens", "chars"):
+        override = cfg.get(f"narrator_tier_{key}_{field}")
+        try:
+            if override:
+                base[field] = int(override)
+        except Exception:
+            pass
+    base["name"] = key
+    return base
+
+
+def _narrator_auto_tier(view: Dict[str, Any], recent_takes: int) -> str:
+    """Pick a tier from how much the USER has actually been doing.
+
+    Deliberately keyed on user activity, not total activity: a busy background
+    is not a reason to talk more. With nothing from the user there is little to
+    say, so stay brief rather than narrating the system at them.
+    """
+    user_actions = len(view.get("user") or [])
+    if user_actions == 0:
+        return "brief"
+    if user_actions >= 4 and recent_takes == 0:
+        return "long"          # plenty happening and nothing said yet
+    if user_actions >= 6:
+        return "long"
+    return "standard"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  USER INTENT — what the human is actually working on right now
 #
 #  Ambient narration is only useful if it is ABOUT something the user cares
@@ -11460,6 +11506,76 @@ _INTENT_AREAS: Dict[str, str] = {
     "agent.": "agent configuration", "dream.": "the dream system",
     "system.narrator": "the narrator itself",
 }
+
+
+async def _narrator_activity_view(cfg: Dict[str, Any], user_lines: int = 14,
+                                  sys_lines: int = 6) -> Dict[str, Any]:
+    """Activity split by WHO drove it, weighted toward the user.
+
+    The narrator should SEE the system's own work — it is real context, and the
+    narrator should be able to own it ("I've been…") — but it must not carry the
+    same weight as the person's deliberate actions. So the two are rendered as
+    separate sections, the user's first and fuller, the background condensed.
+
+    Prefers `activity.sessions` (cap.ok events: non-silent caps only, grouped by
+    session) over the raw recent-caps ring, because the ring is dominated by
+    dashboard auto-refresh — see the note on _session_activity. Falls back to the
+    ring if the activity module is unavailable.
+    """
+    user: List[str] = []
+    system: List[str] = []
+    sessions: List[Dict[str, Any]] = []
+
+    if "activity.sessions" in CAPABILITY_REGISTRY:
+        try:
+            res = await _call_cap("activity.sessions",
+                                  window_min=float(cfg.get("narrator_activity_window_min", 180)),
+                                  per_session=10, max_sessions=10)
+            sessions = (res or {}).get("sessions") or []
+        except Exception:
+            sessions = []
+
+    for s in sessions:
+        actor = str(s.get("actor") or "unknown")
+        names = [c.get("name", "") for c in (s.get("caps") or []) if c.get("name")]
+        if not names:
+            continue
+        sid = str(s.get("session_id") or "")
+        line = (f"- session {sid[:12] or '(none)'} [{actor}] {s.get('count', 0)} actions: "
+                + ", ".join(names[:8]))
+        (user if actor == "you" else system).append(line)
+
+    # Fallback / supplement: the flat ring, still actor-tagged.
+    if not user and not system:
+        try:
+            lines, _sid = await _director_recent_activity(limit=user_lines + sys_lines)
+        except Exception:
+            lines = []
+        for ln in lines:
+            (user if ln.rstrip().endswith("[you]") else system).append(ln)
+
+    return {"user": user[:user_lines], "system": system[:sys_lines],
+            "sessions": sessions}
+
+
+def _narrator_activity_block(view: Dict[str, Any]) -> str:
+    """The weighted activity sections for a prompt — user first, system after and
+    explicitly marked as lower priority."""
+    user = view.get("user") or []
+    system = view.get("system") or []
+    out = ""
+    if user:
+        out += ("## WHAT THE USER HAS ACTUALLY BEEN DOING (this is what matters)\n"
+                + "\n".join(user) + "\n\n")
+    else:
+        out += ("## WHAT THE USER HAS ACTUALLY BEEN DOING\n"
+                "(nothing recorded — do NOT invent user activity, and do not "
+                "describe background work as theirs)\n\n")
+    if system:
+        out += ("## BACKGROUND — your own work and agents (context only, LOWER "
+                "priority; never call this the user's doing)\n"
+                + "\n".join(system) + "\n\n")
+    return out
 
 
 async def _narrator_intent_signals(cfg: Dict[str, Any]) -> Dict[str, Any]:
@@ -11745,7 +11861,7 @@ async def _narrator_initial_state(cfg: Dict[str, Any]) -> str:
     perf, live loop, recent activity, goals/projects, dreams."""
     idle = await _idle_minutes()
     briefing = await _director_briefing()
-    activity_lines, latest_sid = await _director_recent_activity()
+    _, latest_sid = await _director_recent_activity()   # only for the live-loop link
     loop_live = await _director_loop_snapshot(latest_sid)
 
     def _sect(label: str, body: str) -> str:
@@ -11791,9 +11907,9 @@ async def _narrator_initial_state(cfg: Dict[str, Any]) -> str:
         + _sect("Loop programs in flight", briefing.get("loop_programs", ""))
         + _sect("Business snapshot", briefing.get("business", ""))
         + _sect("Live agentic loop (being watched now)", loop_live.get("summary", ""))
-        + _sect("Recent activity (newest first) — [you]=the user, [agent:*]=an AI "
-                "agent, [system:*]=your own background work, [unknown]=unrecorded",
-                "\n".join(activity_lines[:10]) if activity_lines else "")
+        # Weighted: the user's own work first, background second and marked as
+        # secondary (see _narrator_activity_block).
+        + _narrator_activity_block(await _narrator_activity_view(cfg))
         + _sect("Watched world (news/press/sites/socials — gatherer sources)", watched)
     )
 
@@ -11915,6 +12031,9 @@ async def _narrator_narrate(cfg: Dict[str, Any], initial: str, digest: str) -> D
     # the deliberate personality voice and the MoE (~24GB) doesn't fit the GPU. The
     # GPU-when-idle speedup applies to the FAST tiers (quick + gather), not here.
     model = cfg.get("narrator_model") or "qwen3.6:35b-a3b"
+    # The deep pass defaults to the long tier — it is the reflective one — but is
+    # configurable like the quick tier.
+    _deep_tier = _narrator_tier(cfg, str(cfg.get("narrator_deep_tier", "long") or "long"))
     sys_p = (
         "You are VERA — the user's assistant, reflecting on where things are and "
         "where they're going. You've been handed a digest of the live system state "
@@ -11935,9 +12054,8 @@ async def _narrator_narrate(cfg: Dict[str, Any], initial: str, digest: str) -> D
         "\n"
         "VOICE: warm, thoughtful, specific, human. Talk TO them. Never open with "
         "'System'/'Status'/'Update'. Prefer one concrete observation over five vague "
-        "ones — but develop it properly. Several paragraphs are welcome when you "
-        "have something real to say; this is the deep pass, not a ticker. "
-        + _director_addressing(cfg))
+        "ones — but develop it properly.\n"
+        f"LENGTH: {_deep_tier['guide']}\n" + _director_addressing(cfg))
     prompt = (
         initial +
         "\n\n# TAILORED SYSTEM STATE (gathered for you)\n" + (digest or "(none)") +
@@ -12068,7 +12186,8 @@ async def _narrator_deliver(cfg: Dict[str, Any], text: str, title: str = "📖 V
             log.debug("narrator deliver[%s]: %s", ch, e)
 
 
-async def _narrator_quick_take(cfg: Dict[str, Any], force: bool = False) -> Dict[str, Any]:
+async def _narrator_quick_take(cfg: Dict[str, Any], force: bool = False,
+                               tier: str = "") -> Dict[str, Any]:
     """Fast tier: a small model reacts to what's happening now — cheaper + far more
     frequent than the MoE deep narrative, and it SKIPS the gather. Grounds on a lean
     state view + the last few takes. Runs under _narrator_bg so its own probing is
@@ -12081,18 +12200,16 @@ async def _narrator_quick_take(cfg: Dict[str, Any], force: bool = False) -> Dict
     _bg = _narrator_bg("narrator")
     _bg.__enter__()
     try:
-        return await _narrator_quick_take_inner(cfg, gen)
+        return await _narrator_quick_take_inner(cfg, gen, tier=tier)
     finally:
         _bg.__exit__(None, None, None)
 
 
-async def _narrator_quick_take_inner(cfg: Dict[str, Any], gen) -> Dict[str, Any]:
+async def _narrator_quick_take_inner(cfg: Dict[str, Any], gen,
+                                     tier: str = "") -> Dict[str, Any]:
     # LEAN context — the quick tier is meant to be FAST, so it uses a compact view
     # (recent activity + the last deep narrative), NOT the full initial-state probe.
-    try:
-        act_lines, _sid = await _director_recent_activity(limit=6)
-    except Exception:
-        act_lines = []
+    _view = await _narrator_activity_view(cfg, user_lines=8, sys_lines=4)
     _last = await _narrator_recent(1)
     _lastn = (_last[0].get("narrative") or "")[:300] if _last else ""
     # The quick tier skips the gather, so intent is injected straight in — without
@@ -12104,10 +12221,8 @@ async def _narrator_quick_take_inner(cfg: Dict[str, Any], gen) -> Dict[str, Any]
     initial = (_narrator_intent_block(_intent) +
                (("CALENDAR & TODOS (raise only if genuinely pertinent or imminent):\n"
                  + _cal + "\n\n") if _cal else "") +
-               "RECENT ACTIVITY (newest first) — [you]=the user, [agent:*]=an AI agent, "
-               "[system:*]=your own background work, [unknown]=unrecorded:\n"
-               + "\n".join(act_lines[:8]) +
-               (("\n\nLAST DEEP NARRATIVE (continuity):\n" + _lastn) if _lastn else ""))
+               _narrator_activity_block(_view) +
+               (("LAST DEEP NARRATIVE (continuity):\n" + _lastn) if _lastn else ""))
     recent, r = [], _redis()
     if r:
         try:
@@ -12116,22 +12231,29 @@ async def _narrator_quick_take_inner(cfg: Dict[str, Any], gen) -> Dict[str, Any]
         except Exception:
             recent = []
     recent_txt = "\n".join("- " + t[:160] for t in recent if t)
+    # LENGTH TIER — explicit argument wins, else config, else auto from how much
+    # the USER has actually been doing.
+    _tier_name = (tier or str(cfg.get("narrator_quick_tier", "auto") or "auto")).lower()
+    if _tier_name == "auto":
+        _tier_name = _narrator_auto_tier(_view, len([t for t in recent if t]))
+    _tier = _narrator_tier(cfg, _tier_name)
     _job, _pgpu, _rm = await _narrator_fast_routing(cfg)
     model = cfg.get("narrator_quick_model") or _rm    # config, else routed default
     sys_p = (
         "You are VERA — the user's assistant, thinking out loud beside them. Not a "
-        "monitoring bot. Say what is actually worth saying: usually a couple of "
-        "sentences, more when you genuinely have something substantial. Depth is "
-        "welcome — an unfinished thought is not.\n"
+        "monitoring bot. Say what is actually worth saying.\n"
+        f"LENGTH FOR THIS ONE: {_tier['guide']}\n"
         "\n"
-        "WHO DID WHAT — the activity list marks every line with an actor:\n"
-        "  [you] = the user did it. [agent:*] = an AI agent working on their behalf.\n"
-        "  [system:*] = VERA's own background work (dreams, loops, schedules).\n"
-        "  [unknown] = not recorded — do NOT assume it was the user.\n"
-        "NEVER describe [system:*], [agent:*] or [unknown] activity as something the "
-        "user did. If it's your own background work, own it ('I've been…'), don't "
-        "hand it back to them as news. Saying 'you've been…' about work they did not "
-        "do is the single worst thing you can do here.\n"
+        "WHO DID WHAT — activity comes in two sections, and they do NOT carry equal "
+        "weight:\n"
+        "  · what the USER did — this is the signal. Anchor what you say to it.\n"
+        "  · BACKGROUND (your own work, agents) — real context you may use and may "
+        "own ('I've been…'), but it is secondary. Never lead with it, and never "
+        "let a busy background become a reason to talk more.\n"
+        "Actors are marked: [you] / [agent:*] / [system:*] / [unknown] (unrecorded). "
+        "NEVER describe agent, system or unknown activity as something the user did. "
+        "Saying 'you've been…' about work they did not do is the single worst thing "
+        "you can do here.\n"
         "\n"
         "BE USEFUL, NOT A NOTIFICATION. Do not restate telemetry — they can already "
         "see it. Earn the interruption by picking ONE of these:\n"
@@ -12170,15 +12292,13 @@ async def _narrator_quick_take_inner(cfg: Dict[str, Any], gen) -> Dict[str, Any]
         raw = await gen(prompt, system=sys_p, prefer_gpu=_pgpu, think=False,
                         job_type=_job, model=model,
                         timeout=float(cfg.get("narrator_quick_timeout_s", 300) or 300),
-                        options={"num_predict":
-                                 int(cfg.get("narrator_quick_tokens", 700) or 700)})
+                        options={"num_predict": int(_tier["tokens"])})
     except Exception as e:
         log.debug("narrator quick gen: %s", e)
         return {"ok": False}
     # Keep the whole reply — multi-sentence takes are wanted now. Newlines are
     # preserved (they may be real structure); only the outer whitespace goes.
-    take = str(raw or "").strip().strip('"')[
-        :int(cfg.get("narrator_quick_chars", 2000) or 2000)]
+    take = str(raw or "").strip().strip('"')[:int(_tier["chars"])]
     if not take or take.lower().startswith("(nothing"):
         return {"ok": True, "take": ""}
     if r:
@@ -12492,9 +12612,10 @@ async def system_narrator_status(trace_id=None):
     http_method="POST", http_path="/system/narrator/config", http_tags=["dream", "narrator"],
     description="Configure the narrator. Fields (all optional): model (MoE narrator), "
                 "gatherer_model, gap_min, max_probes, think_timeout_s; two-speed: "
-                "quick_enabled (bool), quick_model, quick_gap_min, quick_tokens "
-                "(num_predict for a quick take), quick_chars (stored length cap), "
-                "quick_timeout_s; idle_gpu (bool) + "
+                "quick_enabled (bool), quick_model, quick_gap_min, quick_timeout_s; "
+                "LENGTH TIERS: quick_tier + deep_tier (auto|brief|standard|long), "
+                "tier_tokens/tier_chars (dicts of per-tier overrides, e.g. "
+                "{\"long\":4000}), activity_window_min; idle_gpu (bool) + "
                 "idle_gpu_after_min (MoE narrate on the GPU once idle that long); "
                 "deliver (list/csv of chat|telegram|speak); deliver_to_chat (legacy); "
                 "user-intent: intent_enabled (bool), intent_model, intent_gap_min, "
@@ -12521,9 +12642,12 @@ async def system_narrator_config(model: Optional[str] = None,
                                  intent_context: Optional[bool] = None,
                                  intent_steer: Optional[bool] = None,
                                  intent_ttl_min: Optional[float] = None,
-                                 quick_tokens: Optional[int] = None,
-                                 quick_chars: Optional[int] = None,
                                  quick_timeout_s: Optional[int] = None,
+                                 quick_tier: Optional[str] = None,
+                                 deep_tier: Optional[str] = None,
+                                 tier_tokens: Optional[Any] = None,
+                                 tier_chars: Optional[Any] = None,
+                                 activity_window_min: Optional[float] = None,
                                  trace_id=None):
     patch: Dict[str, Any] = {}
     if model is not None:            patch["narrator_model"] = model
@@ -12548,9 +12672,19 @@ async def system_narrator_config(model: Optional[str] = None,
     if intent_context is not None:   patch["narrator_intent_context"] = bool(intent_context)
     if intent_steer is not None:     patch["narrator_intent_steer"] = bool(intent_steer)
     if intent_ttl_min is not None:   patch["narrator_intent_ttl_min"] = float(intent_ttl_min)
-    if quick_tokens is not None:     patch["narrator_quick_tokens"] = int(quick_tokens)
-    if quick_chars is not None:      patch["narrator_quick_chars"] = int(quick_chars)
     if quick_timeout_s is not None:  patch["narrator_quick_timeout_s"] = int(quick_timeout_s)
+    if quick_tier is not None:       patch["narrator_quick_tier"] = str(quick_tier)
+    if deep_tier is not None:        patch["narrator_deep_tier"] = str(deep_tier)
+    if activity_window_min is not None:
+        patch["narrator_activity_window_min"] = float(activity_window_min)
+    # Per-tier budget overrides, e.g. tier_tokens={"long": 4000}.
+    for _fld, _val in (("tokens", tier_tokens), ("chars", tier_chars)):
+        if isinstance(_val, dict):
+            for _t, _n in _val.items():
+                try:
+                    patch[f"narrator_tier_{str(_t).lower()}_{_fld}"] = int(_n)
+                except Exception:
+                    continue
     cfg = await _director_cfg_patch(patch)
     return {"ok": True, "config": {k: cfg.get(k) for k in (
         "narrator_enabled", "narrator_model", "narrator_gatherer_model",
@@ -12560,7 +12694,8 @@ async def system_narrator_config(model: Optional[str] = None,
         "narrator_gpu_model", "narrator_deliver",
         "narrator_intent_enabled", "narrator_intent_model", "narrator_intent_gap_min",
         "narrator_intent_context", "narrator_intent_steer", "narrator_intent_ttl_min",
-        "narrator_quick_tokens", "narrator_quick_chars", "narrator_quick_timeout_s")}}
+        "narrator_quick_timeout_s", "narrator_quick_tier", "narrator_deep_tier",
+        "narrator_activity_window_min")}}
 
 
 @capability(
@@ -12603,8 +12738,8 @@ async def system_narrator_intent(detect: bool = False, context: bool = False,
     description="Run ONE fast quick-take NOW (the two-speed fast tier — a brief "
                 "real-time observation, no gather). Output: {ok, take}.",
 )
-async def system_narrator_quick(trace_id=None):
-    return await _narrator_quick_take(await _director_cfg(), force=True)
+async def system_narrator_quick(tier: str = "", trace_id=None):
+    return await _narrator_quick_take(await _director_cfg(), force=True, tier=tier)
 
 
 @capability(

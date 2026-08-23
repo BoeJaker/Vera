@@ -42,6 +42,13 @@ def _load(src_rel, *names):
     return ns
 
 
+def _actor():
+    """The CANONICAL rule lives in the orchestrator; dream_capabilities delegates
+    to it so every reader of activity agrees on what counts as the user."""
+    return _load("vera/capability_orchestration.py",
+                 "activity_actor")["activity_actor"]
+
+
 # ── who caused a cap call ────────────────────────────────────────────────────
 
 @pytest.mark.critical
@@ -64,14 +71,13 @@ def _load(src_rel, *names):
     ({"sid": "dream:x", "via": ""},               "system:dream"),
 ])
 def test_actor_attribution(rec, expected):
-    fn = _load("vera/dream/dream_capabilities.py", "_activity_actor")["_activity_actor"]
-    assert fn(rec) == expected
+    assert _actor()(rec) == expected
 
 
 @pytest.mark.critical
 def test_system_work_is_never_attributed_to_the_user():
     """The exact regression: the narrator's own probing must not read as 'you'."""
-    fn = _load("vera/dream/dream_capabilities.py", "_activity_actor")["_activity_actor"]
+    fn = _actor()
     narrator_probe = {"name": "docker.ps", "bg": "dream_director", "sid": "dream:narrator"}
     assert fn(narrator_probe) != "you"
     assert fn(narrator_probe).startswith("system:")
