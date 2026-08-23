@@ -4143,6 +4143,19 @@ async def _seed_defaults():
             existing.temperature        = agent.temperature
             await AGENT_REGISTRY.save(existing)
             log.info("Upgraded default 'assistant' agent to the Jarvis-grade prompt")
+        else:
+            # ADDITIVELY keep a default agent's toolkit current: union in any
+            # domain_caps the code now grants that the stored record lacks (e.g. a
+            # newly-added cap like canvas.*). Never REMOVES a cap, so user additions
+            # (and any deliberately-kept caps) are preserved — safe to run every
+            # boot. Saves only when something actually changed.
+            have = set(existing.domain_caps or [])
+            missing = [c for c in (agent.domain_caps or []) if c not in have]
+            if missing:
+                existing.domain_caps = list(existing.domain_caps or []) + missing
+                await AGENT_REGISTRY.save(existing)
+                log.info("Default agent '%s': added %d new default cap(s): %s",
+                         agent.name, len(missing), ", ".join(missing[:6]))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
