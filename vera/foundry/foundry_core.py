@@ -495,7 +495,7 @@ def ops_network_overlay(secrets, server_ip=""):
                 "set -e\n"
                 'NET="%s"\n' % tg_net +
                 "KEY=/etc/foundry/twingate/service_key.json\n"
-                'IMG="${FOUNDRY_TG_IMAGE:-twingate/client:1}"\n'
+                'IMG="${FOUNDRY_TG_IMAGE:-twingate/client:latest}"\n'
                 '[ -s "$KEY" ] || { echo "no twingate service key baked"; exit 1; }\n'
                 'command -v docker >/dev/null 2>&1 || { echo "docker required"; exit 1; }\n'
                 "docker rm -f twingate 2>/dev/null || true\n"
