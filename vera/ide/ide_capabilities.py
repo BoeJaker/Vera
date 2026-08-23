@@ -1303,6 +1303,28 @@ async def ide_fs_read(path: str, max_bytes: int = 1_048_576,
     try:
         p = Path(path)
         if not p.exists():
+            # Not on the host FS as given. Loop/agent files are authored into the
+            # session's ARTIFACT dir (where ide.fs.write's own redirect and
+            # code.author/prose.author land them), NOT the process CWD — so a bare
+            # relative name like "schema_specs.md" from a loop step won't resolve
+            # here, and the step wedges re-reading a file it just wrote. Retry
+            # against the session artifact dir so a file authored in one step is
+            # readable in the next — the read sibling of ide.fs.write's
+            # _host_artifact_write redirect.
+            sid = session_id or _ide_get_session_id()
+            if sid:
+                art = None
+                try:
+                    import importlib as _il
+                    _exec = _il.import_module("Vera.vera.execution.exec_capabilities")
+                    art = await _exec.read_artifact_file(
+                        session_id=sid, relpath=path, max_bytes=max_bytes)
+                except Exception as _e:
+                    log.debug("ide_fs_read artifact fallback failed for %s: %s", path, _e)
+                if art is not None:
+                    return {"path": path, "content": art, "size": len(art),
+                            "truncated": len(art) >= max_bytes,
+                            "from_artifact_dir": True}
             return {"error": f"File not found: {path}"}
         size = p.stat().st_size
         content = p.read_text(errors="replace")[:max_bytes]
