@@ -515,6 +515,9 @@ _FOUNDRY_BOOT = (
 )
 
 
+_FOUNDRY_MESH_ENROLL = '#!/bin/sh\n# Self-enrol this node onto the Vera mesh (auto-join). The node generates its OWN\n# WireGuard key; only the PUBLIC key leaves it. Token-gated (baked mesh-enroll-token).\nIFC=vera0\nVERA=$(cat /etc/foundry/vera-url 2>/dev/null); [ -n "$VERA" ] || VERA="https://192.168.0.138:8999"\nTOKEN=$(cat /etc/foundry/mesh-enroll-token 2>/dev/null)\n[ -n "$TOKEN" ] || { echo "no mesh-enroll token baked (redeploy Foundry once prod has netsec.mesh.enroll)"; exit 1; }\ncommand -v wg >/dev/null 2>&1 || apk add wireguard-tools 2>/dev/null\ncommand -v jq >/dev/null 2>&1 || apk add jq 2>/dev/null\nmkdir -p /etc/wireguard\n[ -s /etc/wireguard/$IFC.key ] || { umask 077; wg genkey > /etc/wireguard/$IFC.key; }\nPUB=$(wg pubkey < /etc/wireguard/$IFC.key)\nHOST=$(ip -4 route get 1.1.1.1 2>/dev/null | awk \'{print $7; exit}\')\nBODY=$(printf \'{"pubkey":"%s","token":"%s","host":"%s","label":"%s"}\' "$PUB" "$TOKEN" "$HOST" "$(hostname)")\nRESP=$(wget -qO- --no-check-certificate --header=\'Content-Type: application/json\' --post-data="$BODY" "$VERA/netsec/mesh/enroll" 2>/dev/null)\nprintf \'%s\' "$RESP" | grep -q \'"ok": true\' || { echo "enrol failed: $RESP"; exit 1; }\nprintf \'%s\' "$RESP" | jq -r .conf | sed "s|__PRIVKEY__|$(cat /etc/wireguard/$IFC.key)|" > /etc/wireguard/$IFC.conf\nchmod 600 /etc/wireguard/$IFC.conf\nwg-quick down $IFC 2>/dev/null\nwg-quick up $IFC && echo "mesh up: $(printf \'%s\' "$RESP" | jq -r .ip)" || echo "wg-quick up failed"\n'
+
+
 def foundry_mode_script(server_ip: str) -> str:
     """The node-side foundry-mode helper: enable/disable + live status for the three
     ops-node participation modes (Vera worker / mesh / docker-swarm), each persisted
@@ -558,7 +561,7 @@ apply_mesh(){
       command -v wg-quick >/dev/null 2>&1 || apk add wireguard-tools 2>/dev/null
       wg-quick up vera0 2>/dev/null && echo "mesh up" || echo "mesh up failed (already up?)"
     else
-      echo "not enrolled yet - from Vera run: netsec.mesh.join <this host>"
+      echo "self-enrolling onto the mesh..."; /usr/local/bin/foundry-mesh-enroll
     fi
   else
     wg-quick down vera0 2>/dev/null && echo "mesh down" || echo "mesh already down"
@@ -603,7 +606,7 @@ esac
     return script.replace("__SRV__", server_ip)
 
 
-def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=None, registry="") -> Dict:
+def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=None, registry="", mesh_token="", vera_url="") -> Dict:
     """Files for the ops-node Alpine diskless overlay (apkovl), as {relpath: content}.
     The node boots to RAM, installs Docker + SSH + tools, joins the swarm as a WORKER
     only (never self-promotes to manager — managers are persistent VMs/CTs), and
@@ -758,6 +761,9 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=None,
         "usr/local/bin/foundry-sdwrite": sdwrite,
         "usr/local/bin/foundry-mode": foundry_mode_script(server_ip),
         "usr/local/bin/foundry-boot": _FOUNDRY_BOOT,
+        "usr/local/bin/foundry-mesh-enroll": _FOUNDRY_MESH_ENROLL,
+        **({"etc/foundry/mesh-enroll-token": mesh_token + "\n"} if mesh_token else {}),
+        **({"etc/foundry/vera-url": vera_url + "\n"} if vera_url else {}),
         "etc/local.d/zz-foundry-modes.start": "#!/bin/sh\n/usr/local/bin/foundry-mode boot 2>/dev/null || true\n",
         "etc/inittab": inittab,
         "root/.profile": profile,
@@ -765,7 +771,7 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=None,
     }
 
 
-def pxe_desktop_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=None, registry="") -> Dict:
+def pxe_desktop_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=None, registry="", mesh_token="", vera_url="") -> Dict:
     """Files for the desktop-node Alpine diskless overlay (apkovl): a full XFCE desktop
     with Remmina/TigerVNC, the Foundry ops menu (Proxmox consoles + SD-card writer)
     launchable from the desktop, and Docker so it also joins the swarm as a worker.
@@ -871,6 +877,9 @@ def pxe_desktop_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=N
         "etc/X11/xorg.conf.d/40-libinput-touchpad.conf": xtouch,
         "usr/local/bin/foundry-mode": foundry_mode_script(server_ip),
         "usr/local/bin/foundry-boot": _FOUNDRY_BOOT,
+        "usr/local/bin/foundry-mesh-enroll": _FOUNDRY_MESH_ENROLL,
+        **({"etc/foundry/mesh-enroll-token": mesh_token + "\n"} if mesh_token else {}),
+        **({"etc/foundry/vera-url": vera_url + "\n"} if vera_url else {}),
         "etc/local.d/zz-foundry-modes.start": "#!/bin/sh\n/usr/local/bin/foundry-mode boot 2>/dev/null || true\n",
         "usr/share/applications/foundry-ops.desktop": launcher,
         "root/Desktop/foundry-ops.desktop": launcher,

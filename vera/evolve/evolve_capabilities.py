@@ -6619,6 +6619,7 @@ from Vera.vera.evolve.sandbox_pool import (          # noqa: E402
     container_name as _pool_cname,
     alloc_port as _pool_alloc_port,
     alloc_db as _pool_alloc_db,
+    capacity_snapshot as _pool_capacity_snapshot,
 )
 from Vera.vera.evolve.sandbox_reap import (          # noqa: E402
     plan_reap as _plan_reap,
@@ -6627,6 +6628,7 @@ from Vera.vera.evolve.sandbox_reap import (          # noqa: E402
 )
 from Vera.vera.evolve.sandbox_lifecycle import (     # noqa: E402
     classify_sandbox as _classify_sandbox,
+    git_worktree_diagnosis as _git_worktree_diagnosis,
     lifecycle_preflight as _lifecycle_preflight,
     primary_replacement_conflict as _primary_replacement_conflict,
     resolve_restart_target as _resolve_restart_target,
@@ -8269,8 +8271,10 @@ async def _sandbox_observation(descriptor: Dict[str, Any]) -> Dict[str, Any]:
     dirty: Optional[bool] = None
     merged: Optional[bool] = None
     bleeding_edge_commit = ""
+    git_probe: Dict[str, Any] = {"ok": False, "err": "worktree missing"}
     if worktree_exists:
         head_probe = await _git("rev-parse", "HEAD", repo_root=Path(worktree))
+        git_probe = head_probe
         if head_probe.get("ok"):
             head = head_probe.get("out", "")
         status_probe = await _git("status", "--porcelain", repo_root=Path(worktree))
@@ -8283,6 +8287,11 @@ async def _sandbox_observation(descriptor: Dict[str, Any]) -> Dict[str, Any]:
         be_probe = await _git("rev-parse", "bleeding-edge", repo_root=Path(worktree))
         if be_probe.get("ok"):
             bleeding_edge_commit = be_probe.get("out", "")
+    git_link = _git_worktree_diagnosis(
+        worktree_exists=worktree_exists,
+        git_ok=bool(git_probe.get("ok")),
+        git_error=git_probe.get("err") or git_probe.get("out") or "",
+    )
     return {
         "docker_observable": docker_observable,
         "container_status": container_status,
@@ -8291,6 +8300,7 @@ async def _sandbox_observation(descriptor: Dict[str, Any]) -> Dict[str, Any]:
         "bleeding_edge_commit": bleeding_edge_commit,
         "merged_to_bleeding_edge": merged,
         "dirty": dirty,
+        "git_worktree": git_link,
         "state": _classify_sandbox(
             docker_observable=docker_observable,
             container_status=container_status,
@@ -8363,7 +8373,18 @@ async def evolve_sandbox_list(detail: bool = False, trace_id=None):
     if detail:
         for item in out:
             item.update(await _sandbox_observation(item))
-    return {"sandboxes": out, "count": len(out)}
+    used_ports = [item.get("port") for item in out if item.get("port") is not None]
+    used_dbs = [item.get("redis_db") for item in out if item.get("redis_db") is not None]
+    capacity = _pool_capacity_snapshot(used_ports, used_dbs)
+    sandbox_local = os.getenv("VERA_IS_DEV_SANDBOX", "0") == "1"
+    capacity.update({
+        "scope": "sandbox_local_registry" if sandbox_local else "controller_registry",
+        "authoritative": not sandbox_local,
+    })
+    if sandbox_local:
+        capacity["warning"] = ("isolated sandbox Redis cannot see controller pool occupancy; "
+                               "query production evolve.sandbox.list before allocation")
+    return {"sandboxes": out, "count": len(out), "capacity": capacity}
 
 
 @capability("evolve.sandbox.preflight", memory="off", silent=True,
@@ -8391,6 +8412,7 @@ async def evolve_sandbox_preflight(name: str = "", branch: str = "",
         worktree_exists=observation["worktree_exists"],
         dirty=observation["dirty"],
         merged_to_bleeding_edge=observation["merged_to_bleeding_edge"],
+        git_worktree_valid=observation["git_worktree"]["valid"],
     )
     return {"ok": True, **decision, "sandbox": {**target, **observation},
             "plan": ([] if not decision["allowed"] else [{"action": action,

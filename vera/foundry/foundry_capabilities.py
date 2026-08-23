@@ -61,6 +61,7 @@ from Vera.vera.foundry.foundry_core import (
     pxe_dnsmasq_conf, pxe_ipxe_menu, swarm_service_cmd,
     pxe_ops_apkovl_files, pxe_desktop_apkovl_files, parse_ops_secrets,
 )
+from Vera.vera.foundry.features_core import feature_script as _feature_script
 from Vera.vera.security import secrets as vsecrets
 
 _HERE = Path(__file__).parent
@@ -810,6 +811,16 @@ async def _post_provision(cluster_id, node, vmid, kind, feats, fqdn, job_id="", 
             if "hardening" in feats:
                 h = await _apply_ct_feature(cluster_id, vmid, "lxc", _HARDEN, node)
                 steps.append({"hardening": {"ok": bool(h.get("ok"))}})
+            # OS-agnostic feature bundles (features_core) -- portable across distros.
+            # enrol/mesh/hardening are handled above for CTs; apply the additional
+            # portable features here (file-client now; more migrate here as we fan out).
+            _fctx = await _features_ctx()
+            for _f in ("file-client",):
+                if _f in feats:
+                    _sc = _feature_script(_f, _fctx)
+                    if _sc:
+                        _fr = await _apply_ct_feature(cluster_id, vmid, "lxc", _sc, node)
+                        steps.append({_f: {"ok": bool(_fr.get("ok"))}})
         elif running and kind == "qemu":
             if want_enrol and ip:
                 ready = await _wait_ssh(cluster_id, ip)
@@ -941,7 +952,8 @@ async def cap_provision(target: str = "", image_id: str = "", name: str = "",
                           ostemplate=tmpl, hostname=name or "",
                           storage=storage, cores=cores, memory=memory, disk=disk,
                           net0=net0,
-                          features="nesting=1,keyctl=1" if "docker-swarm" in feats else "",
+                          unprivileged=("mesh" not in feats),
+                          features=("nesting=1,keyctl=1" if ("docker-swarm" in feats or "distributed-compute" in feats or "mesh" in feats) else ""),
                           auto_enroll=False)   # enrol AFTER it's running (avoid create-task race)
         step("create", res)
         vmid = res.get("vmid")
@@ -1539,6 +1551,20 @@ def _ops_worker_env() -> str:
     return "".join("%s=%s\n" % (k, v) for k, v in out.items())
 
 
+async def _features_ctx() -> Dict:
+    """Context for features_core.feature_script: LAN-reachable Vera URL, registry, worker
+    image + backend env, and the mesh enrol token (minted just-in-time)."""
+    ip = _vera_host_ip()
+    ctx = {"vera_url": "https://%s:8999" % ip, "registry": "%s:5000" % ip,
+           "vera_image": "%s:5000/vera:latest" % ip,
+           "vera_worker_env": _ops_worker_env(), "shares": []}
+    try:
+        ctx["mesh_token"] = ((await _call("netsec.mesh.enroll_token")) or {}).get("enroll_token", "")
+    except Exception:
+        ctx["mesh_token"] = ""
+    return ctx
+
+
 def _load_ops_secrets() -> Dict:
     """Decrypt the off-repo sealed ops-node secrets (~/.vera-ops-secrets/
     ops-secrets.env.enc with ops.key, Fernet) into a dict, so the ops image can bake
@@ -1689,9 +1715,14 @@ async def cap_pxe_server_deploy(cluster_id: str = "", node: str = "", iface: str
     menu = pxe_ipxe_menu(server_ip, install_images=install_images)
     _secrets = _load_ops_secrets()
     _reg = _vera_host_ip() + ":5000"
-    ops_files = pxe_ops_apkovl_files(server_ip, secrets=_secrets, registry=_reg)
+    try:
+        _mtok = ((await _call("netsec.mesh.enroll_token")) or {}).get("enroll_token", "")
+    except Exception:
+        _mtok = ""
+    _vurl = "https://" + _vera_host_ip() + ":8999"
+    ops_files = pxe_ops_apkovl_files(server_ip, secrets=_secrets, registry=_reg, mesh_token=_mtok, vera_url=_vurl)
     apk_b64 = _apkovl_tar_b64(ops_files)
-    desk_apk_b64 = _apkovl_tar_b64(pxe_desktop_apkovl_files(server_ip, secrets=_secrets, registry=_reg))
+    desk_apk_b64 = _apkovl_tar_b64(pxe_desktop_apkovl_files(server_ip, secrets=_secrets, registry=_reg, mesh_token=_mtok, vera_url=_vurl))
     _b = lambda s: base64.b64encode(s.encode()).decode()
     tui_b64 = _b(ops_files["usr/local/bin/foundry-tui"])
     sdwrite_b64 = _b(ops_files["usr/local/bin/foundry-sdwrite"])

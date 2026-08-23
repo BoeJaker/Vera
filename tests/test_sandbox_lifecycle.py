@@ -2,6 +2,7 @@ import pytest
 
 from vera.evolve.sandbox_lifecycle import (
     classify_sandbox,
+    git_worktree_diagnosis,
     lifecycle_preflight,
     primary_replacement_conflict,
     resolve_restart_target,
@@ -126,3 +127,32 @@ def test_reconcile_is_only_planned_for_clean_merged_stale_descriptor():
     assert decision["allowed"] is True
     assert decision["state"] == "stale_descriptor"
     assert decision["mutated"] is False
+    assert decision["audit"]["decision"] == "allow"
+    assert decision["audit"]["action"] == "reconcile"
+
+
+def test_git_worktree_diagnosis_never_auto_repairs_or_removes_work():
+    healthy = git_worktree_diagnosis(worktree_exists=True, git_ok=True)
+    assert healthy == {"valid": True, "state": "healthy", "repair_plan": [],
+                       "automatic": False}
+
+    severed = git_worktree_diagnosis(
+        worktree_exists=True, git_ok=False,
+        git_error="fatal: not a git repository: /repo/.git/worktrees/branch")
+    assert severed["state"] == "severed"
+    assert severed["automatic"] is False
+    assert severed["repair_plan"] == [{
+        "action": "recreate_preserving_branch", "dry_run": True, "mutated": False,
+    }]
+
+
+def test_invalid_git_link_blocks_restart_reuse_removal_and_reconciliation():
+    for action in ("restart", "reuse", "remove", "reconcile"):
+        result = lifecycle_preflight(
+            {"branch": "feat/landed", "name": "vera-dev-landed"},
+            action=action, docker_observable=True, container_status="",
+            worktree_exists=True, dirty=False, merged_to_bleeding_edge=True,
+            git_worktree_valid=False)
+        assert result["allowed"] is False
+        assert "git_worktree_link_invalid" in result["reasons"]
+        assert result["audit"]["decision"] == "refuse"
