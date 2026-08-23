@@ -10088,6 +10088,37 @@ def _html_structural_error(code: str) -> str:
 
 # code.author was bound to _v5_check_syntax and every call raised
 # "_v5_check_syntax() missing 2 required positional arguments".
+def _v5_js_syntax_error(html: str) -> str:
+    """Parse the INLINE <script> JavaScript of an HTML doc with esprima and return
+    the first syntax error (or ""). html.parser + _html_structural_error validate
+    the MARKUP but never the embedded JS, so a script with a real JS error (a stray
+    `});`, `await` outside an async fn, a dropped bracket) ships as 'valid HTML' and
+    silently doesn't run in the browser — the exact broken-app mode seen on the
+    pomodoro and pokedex builds. This catches it so it routes into the repair loop.
+    Skips <script src=…> (external) and non-JS <script type> (JSON/templates).
+    Degrades to "" when esprima isn't installed — no false failure."""
+    try:
+        import esprima                                  # optional dep
+    except Exception:
+        return ""
+    for m in re.finditer(r"<script\b([^>]*)>(.*?)</script\s*>", html, re.I | re.S):
+        attrs, body = m.group(1) or "", m.group(2) or ""
+        if re.search(r"\bsrc\s*=", attrs, re.I):
+            continue                                    # external script — not our code
+        _tm = re.search(r"""\btype\s*=\s*["']?([^"'\s>]+)""", attrs, re.I)
+        _typ = (_tm.group(1).lower() if _tm else "")
+        if _typ and _typ not in ("text/javascript", "application/javascript",
+                                 "module", "text/babel", "text/jsx"):
+            continue                                    # e.g. application/json — not JS
+        if not body.strip():
+            continue
+        try:
+            (esprima.parseModule if _typ == "module" else esprima.parseScript)(body)
+        except Exception as e:
+            return f"<script> JS: {getattr(e, 'message', None) or str(e)}"
+    return ""
+
+
 def _v5_check_syntax(code: str, lang: str, path: str = "") -> Dict[str, Any]:
     """DETERMINISTIC syntax/parse check for authored content. {ok, error, checker}.
 
@@ -10127,6 +10158,13 @@ def _v5_check_syntax(code: str, lang: str, path: str = "") -> Dict[str, Any]:
                 _herr = _html_structural_error(code)
                 if _herr:
                     return {"ok": False, "checker": "html-structure", "error": _herr}
+                # Validate the embedded <script> JS too — markup can be perfect
+                # while the JavaScript has a real syntax error that silently kills
+                # the whole script in the browser (loadPokemon "is not defined",
+                # a stray `});`). Routes into the same repair loop as any error.
+                _jerr = _v5_js_syntax_error(code)
+                if _jerr:
+                    return {"ok": False, "checker": "js-parse", "error": _jerr}
             return {"ok": True, "checker": "html-parse"}
     except SyntaxError as e:
         return {"ok": False, "checker": "python-compile",
