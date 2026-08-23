@@ -1029,12 +1029,17 @@
       if(t === 'ollama.request'){
         const node = ev.instance_id || '';
         if(!node) return;
-        // Attach to the most recent cycle card, else the Starting card.
+        // Attach to the most recent cycle card; else the most-recent card of ANY
+        // kind (v5/v6/v7 stage/executor cards don't register a numbered _cycleRefs
+        // entry — without this fallback v7 shows no routing badge at all); else the
+        // Starting card.
         let lastCycle = 0;
         this._cycleRefs.forEach((_v, k) => { if(k > lastCycle) lastCycle = k; });
         const ref = this._cycleRefs.get(lastCycle);
-        const host = (ref && ref.el) ? ref.el
-                   : (this._startCardEl && this._startCardEl.isConnected ? this._startCardEl : null);
+        const host = (ref && ref.el && ref.el.isConnected) ? ref.el
+                   : (this._lastCardEl && this._lastCardEl.isConnected) ? this._lastCardEl
+                   : (this._startCardEl && this._startCardEl.isConnected) ? this._startCardEl
+                   : null;
         if(!host) return;
         let badge = host.querySelector(':scope > .alo-node-badge');
         if(!badge){
@@ -1045,10 +1050,19 @@
           host.appendChild(badge);
         }
         const rt = ev.routing || {};
+        const o = rt.options || {};
         const jt = rt.job_type ? ` · ${rt.job_type}` : '';
         const esc2 = rt.escalated ? ' · ⇧len-escalated' : '';
         const est = (rt.est_seconds !== undefined && rt.est_seconds !== null) ? ` · ~${rt.est_seconds}s` : '';
-        badge.textContent = `⚙ node: ${node}${ev.model ? ' · ' + ev.model : ''}${jt}${esc2}${est}`;
+        // The actual sampling + window the model was called with (temp/top_p/
+        // repeat_penalty/num_ctx), so each card shows how its output was shaped.
+        const _knobs = [];
+        if(o.temperature != null) _knobs.push('temp ' + o.temperature);
+        if(o.top_p != null) _knobs.push('top_p ' + o.top_p);
+        if(o.repeat_penalty != null) _knobs.push('rp ' + o.repeat_penalty);
+        if(o.num_ctx) _knobs.push('ctx ' + o.num_ctx);
+        const knobStr = _knobs.length ? ' · ' + _knobs.join(' · ') : '';
+        badge.textContent = `⚙ node: ${node}${ev.model ? ' · ' + ev.model : ''}${jt}${knobStr}${esc2}${est}`;
         badge.title = 'Ollama routing — instance that served this request'
           + (ev.instance_url ? ' — ' + ev.instance_url : '')
           + (rt.rule_source ? '\nrule: ' + rt.rule_source : '')
@@ -2549,6 +2563,10 @@
         const n = host.querySelectorAll('.alo-cycle').length;
         countEl.textContent = n + (n===1?' card':' cards');
       }
+      // Track the most-recently-created card so per-call badges (the routed
+      // ollama node/model/sampling) can attach even in variants (v5/v6/v7) whose
+      // stage cards don't register a numbered _cycleRefs entry.
+      this._lastCardEl = d;
       return d;
     }
 

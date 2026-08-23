@@ -2525,6 +2525,17 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                 _merged_opts["num_predict"] = max(512, min(_OUTPUT_MAX_TOKENS, _room))
     if _merged_opts:
         body["options"] = _merged_opts
+    # Surface the ACTUAL sampling + window the model is called with, so the loop
+    # UI can show it per-card (model/node already ride routing_info; add the knobs
+    # that actually shape the output). Display-only subset; omit unset keys.
+    try:
+        routing_info["options"] = {
+            k: _merged_opts.get(k)
+            for k in ("temperature", "top_p", "repeat_penalty", "num_ctx", "num_predict")
+            if _merged_opts.get(k) is not None
+        }
+    except Exception:
+        pass
     gen_timeout = float(timeout) if timeout else OLLAMA_GEN_TIMEOUT
     # Reasoning models (e.g. Qwen3) route their <think> output into a separate
     # `thinking` field under native-thinking Ollama, leaving `response` empty if
