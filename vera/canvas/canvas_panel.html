@@ -191,6 +191,12 @@ async function openCanvas(id){
 
 if(window.mermaid) mermaid.initialize({startOnLoad:false, theme:'dark', securityLevel:'loose'});
 loadList();
+// Deep-link: /canvas/panel?canvas=<id> opens a specific canvas (so an agent can
+// hand the user a link straight to the whiteboard it just built).
+const _q = new URLSearchParams(location.search).get('canvas');
+if(_q) openCanvas(_q);
+// Allow the host harness to focus a canvas via postMessage {canvas:'<id>'}.
+window.addEventListener('message', e=>{ if(e.data && e.data.canvas) openCanvas(e.data.canvas); });
 </script>
 </body>
 </html>

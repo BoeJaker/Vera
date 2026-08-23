@@ -2789,6 +2789,12 @@ DEFAULT_AGENTS = [
             "context.assemble", "context.recall",
             # LLM helpers
             "llm.summarize", "llm.generate",
+            # Live canvas / whiteboard — build a live-updating whiteboard for the
+            # user (a DYNAMIC tracked topic, e.g. "latest AI/ML news", or a STATIC
+            # working area). Fill it with predefined blocks (canvas.block_types),
+            # then hand the user the link /canvas/panel?canvas=<id>.
+            "canvas.create", "canvas.append", "canvas.update", "canvas.move",
+            "canvas.get", "canvas.list", "canvas.block_types",
         ],
         domain_description="All-round personal assistant: diary, email, Telegram, web research, "
                            "markets, business ops, podcast, code execution, IDE and protocol work",
