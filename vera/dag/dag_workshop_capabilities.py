@@ -10249,6 +10249,34 @@ async def _package_hint(session_id: str, language: str = "python") -> str:
         return ""
 
 
+def _code_author_timing(started: float, generation_started: float,
+                        generation_finished: float, finished: float,
+                        *, last_stream_at: Optional[float] = None,
+                        last_result_stream_at: Optional[float] = None,
+                        phases: Optional[Dict[str, float]] = None,
+                        counters: Optional[Dict[str, int]] = None) -> Dict[str, Any]:
+    """Stable, compact latency envelope for one successful authoring cycle."""
+    def _ms(begin: Optional[float], end: Optional[float]) -> Optional[int]:
+        if begin is None or end is None:
+            return None
+        return max(0, round((end - begin) * 1000))
+
+    return {
+        "schema": "vera.code-author-timing/v1",
+        "total_ms": _ms(started, finished),
+        "generation_ms": _ms(generation_started, generation_finished),
+        "post_generation_ms": _ms(generation_finished, finished),
+        "last_stream_to_generation_return_ms": _ms(last_stream_at, generation_finished),
+        "last_stream_to_result_ready_ms": _ms(
+            last_result_stream_at if last_result_stream_at is not None else last_stream_at,
+            finished),
+        "phases_ms": {key: max(0, round(value * 1000))
+                      for key, value in sorted((phases or {}).items())},
+        "counters": {key: max(0, int(value))
+                     for key, value in sorted((counters or {}).items())},
+    }
+
+
 @capability(
     "code.author", memory="on",
     http_method="POST", http_path="/code/author", http_tags=["code", "fabric"],
@@ -10288,6 +10316,12 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
     back. Making it a CAPABILITY moves the contract out of the prompt — one call
     that always routes to the coder, always grounds on the named files, always
     lands a real file on disk, versioned."""
+    _author_started = time.perf_counter()
+    _phase_started = _author_started
+    _phase_seconds: Dict[str, float] = {}
+    _timing_counts = {"syntax_repairs": 0, "smoke_runs": 0, "runtime_repairs": 0}
+    _last_generation_stream_at: Optional[float] = None
+    _last_result_stream_at: Optional[float] = None
     task = str(task or "").strip()
     # code.author GENERATES code from a DESCRIPTION — its whole purpose is to hand
     # the writing to the coding specialist. It must NEVER be given code to merely
@@ -10458,6 +10492,24 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
     # place — a targeted patch can't "forget" the 90% of the file it wasn't
     # asked to touch, because it never has to reproduce it.
     attempts = max(1, int(os.getenv("V5_AUTHOR_MAX_ATTEMPTS", "3") or 3))
+    _generation_started = time.perf_counter()
+    _phase_seconds["preparation"] = _generation_started - _phase_started
+
+    async def _timed_generation_stream(chunk):
+        nonlocal _last_generation_stream_at, _last_result_stream_at
+        if stream_cb is not None:
+            await stream_cb(chunk)
+        # Record successful delivery, not the instant before a potentially slow
+        # callback. This makes the following delay match what the caller saw.
+        _last_generation_stream_at = time.perf_counter()
+        _last_result_stream_at = _last_generation_stream_at
+
+    async def _timed_post_generation_stream(chunk):
+        nonlocal _last_result_stream_at
+        if stream_cb is not None:
+            await stream_cb(chunk)
+        _last_result_stream_at = time.perf_counter()
+
     try:
         res = await fn(prompt=prompt, system=sys_prompt, output_format="code",
                        profile=LOOP_ROUTING_PROFILE, role="coder",
@@ -10470,9 +10522,13 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
                        # the earlier 0.3 + 1.15 tuning degraded coherence vs plain chat.
                        options={"temperature": 0.7, "top_p": 0.9},
                        files=files or None, session_id=session_id,
-                       caller="code.author", trace_id=trace_id, stream_cb=stream_cb)
+                       caller="code.author", trace_id=trace_id,
+                       stream_cb=_timed_generation_stream if stream_cb is not None else None)
     except Exception as e:
         return {"ok": False, "error": f"generation failed: {e}"}
+    _generation_finished = time.perf_counter()
+    _phase_seconds["generation"] = _generation_finished - _generation_started
+    _phase_started = _generation_finished
     text = _strip_think(_v5_gen_text(res) or "")[0]
     text = _v5_unwrap_json_code(text)      # JSON-wrapped code → the code itself
     if not text.strip():
@@ -10525,13 +10581,15 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
     for attempt in range(2, attempts + 1):
         if check.get("ok"):
             break
+        _timing_counts["syntax_repairs"] += 1
         await emit_event({"type": "code.author.repair", "path": path,
                           "attempt": attempt - 1, "checker": check.get("checker", ""),
                           "error": check.get("error", "")})
         if stream_cb is not None:
             try:
-                await stream_cb(f"\n\n[✗ {check.get('checker','parser')}: {check.get('error','')} "
-                                 f"— applying a targeted fix]\n\n")
+                await _timed_post_generation_stream(
+                    f"\n\n[✗ {check.get('checker','parser')}: {check.get('error','')} "
+                    f"— applying a targeted fix]\n\n")
             except Exception:
                 pass
         fix_prompt = (
@@ -10544,9 +10602,10 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
         try:
             raw = await fn(prompt=fix_prompt, system=_edit_sys, output_format="json",
                            profile=LOOP_ROUTING_PROFILE, role="coder",
-                           options={"temperature": 0.2, "top_p": 0.9},
-                           session_id=session_id, caller="code.author.repair",
-                           trace_id=trace_id, stream_cb=stream_cb)
+                            options={"temperature": 0.2, "top_p": 0.9},
+                            session_id=session_id, caller="code.author.repair",
+                            trace_id=trace_id,
+                            stream_cb=_timed_post_generation_stream if stream_cb is not None else None)
         except Exception as e:
             last_edit_err = f"generation failed: {e}"
             continue
@@ -10562,10 +10621,16 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
         code = applied["content"]
         check = _v5_check_syntax(code, _lang_used, path)
         last_edit_err = "" if check.get("ok") else check.get("error", "")
+    _syntax_finished = time.perf_counter()
+    _phase_seconds["parse_and_syntax_repair"] = _syntax_finished - _phase_started
+    _phase_started = _syntax_finished
     saved = await code_store_save(path, code, session_id=session_id,
                                   message=f"code.author: {task[:80]}", lang=lang)
     if not saved.get("ok"):
         return {"ok": False, "error": str(saved.get("error") or "save failed"), "path": path}
+    _saved_at = time.perf_counter()
+    _phase_seconds["persistence"] = _saved_at - _phase_started
+    _phase_started = _saved_at
 
     # ── RUNTIME SMOKE-RUN GATE (Python scripts) ──────────────────────────────
     # Syntax-valid code still crashes at runtime (NameError, ImportError, an
@@ -10603,15 +10668,18 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
 
         for _rt in range(_rt_max + 1):
             smoke_ran = True
+            _timing_counts["smoke_runs"] += 1
             runtime_err = await asyncio.to_thread(_smoke_once, _fs)
             if not runtime_err or _rt >= _rt_max:
                 break
+            _timing_counts["runtime_repairs"] += 1
             await emit_event({"type": "code.author.runtime_repair", "path": path,
                               "attempt": _rt + 1, "error": runtime_err[-300:]})
             if stream_cb is not None:
                 try:
-                    await stream_cb(f"\n\n[✗ runtime error on smoke-run — applying a fix]\n"
-                                    f"{runtime_err[-400:]}\n\n")
+                    await _timed_post_generation_stream(
+                        f"\n\n[✗ runtime error on smoke-run — applying a fix]\n"
+                        f"{runtime_err[-400:]}\n\n")
                 except Exception:
                     pass
             _rp = (f"FILE: {path} ({_lang_used}, {len(code.splitlines())} lines)\n"
@@ -10623,7 +10691,8 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
                                profile=LOOP_ROUTING_PROFILE, role="coder",
                                options={"temperature": 0.2, "top_p": 0.9},
                                session_id=session_id, caller="code.author.runtime_repair",
-                               trace_id=trace_id, stream_cb=stream_cb)
+                               trace_id=trace_id,
+                               stream_cb=_timed_post_generation_stream if stream_cb is not None else None)
             except Exception:
                 break
             _ro = _extract_json(_strip_think(_v5_gen_text(_rr) or "")[0]) or {}
@@ -10640,6 +10709,25 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
             saved = await code_store_save(path, code, session_id=session_id,
                                           message=f"code.author (runtime fix): {task[:60]}", lang=lang)
             _fs = saved.get("fs_path", _fs)
+
+    _result_ready_at = time.perf_counter()
+    _phase_seconds["smoke_and_runtime_repair"] = _result_ready_at - _phase_started
+    _timing = _code_author_timing(
+        _author_started, _generation_started, _generation_finished, _result_ready_at,
+        last_stream_at=_last_generation_stream_at,
+        last_result_stream_at=_last_result_stream_at,
+        phases=_phase_seconds,
+        counters=_timing_counts,
+    )
+    _emit_started = time.perf_counter()
+    try:
+        await emit_event({"type": "code.author.timing", "path": path,
+                          "session_id": session_id, "trace_id": trace_id,
+                          "timing": _timing})
+    except Exception:
+        pass
+    _timing["telemetry_emit_ms"] = max(0, round((time.perf_counter() - _emit_started) * 1000))
+    _timing["total_ms"] = max(0, round((time.perf_counter() - _author_started) * 1000))
 
     truncated = bool(res.get("truncated")) if isinstance(res, dict) else False
     _verified = bool(check.get("ok")) and bool(check.get("checker"))
@@ -10667,6 +10755,7 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
             "syntax_error": check.get("error", "") if _syntax_bad else "",
             "runtime_ok": (not _runtime_bad) if smoke_ran else None,
             "runtime_error": (runtime_err[-600:] if _runtime_bad else ""),
+            "timing": _timing,
             "error": (f"code.author could not produce a file that parses after {attempts} "
                       f"attempt(s) — {check.get('checker','parser')}: {check.get('error','')}. "
                       f"The (broken) file WAS written and versioned at '{path}' so it can still "

@@ -1497,6 +1497,19 @@ async def cap_pxe_render(profile_id: str = "", trace_id=None) -> Dict:
     return {"ok": True, **_render_boot(prof, cfg, img, cscripts)}
 
 
+def _vera_host_ip() -> str:
+    """This Vera host\'s LAN IP (for the ops-node registry ref + worker backend URLs)."""
+    import os as _os, socket as _sock
+    h = _os.getenv("VERA_ADVERTISE_HOST", "")
+    if h:
+        return h
+    try:
+        s = _sock.socket(_sock.AF_INET, _sock.SOCK_DGRAM); s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]; s.close(); return ip
+    except Exception:
+        return "127.0.0.1"
+
+
 def _ops_worker_env() -> str:
     """Backend env served at /ops/vera-worker-env for an ops-node Vera WORKER container.
     Points every store URL at this Vera host\'s LAN IP (a remote worker cannot reach our
@@ -1521,6 +1534,7 @@ def _ops_worker_env() -> str:
         if v:
             out[k] = _rw(v)
     out["ORCHESTRATOR_HOST"] = "0.0.0.0"
+    out["FOUNDRY_VERA_IMAGE"] = bh + ":5000/vera:latest"
     out["EMBED_CAPS_ON_START"] = "0"
     return "".join("%s=%s\n" % (k, v) for k, v in out.items())
 
@@ -1674,9 +1688,10 @@ async def cap_pxe_server_deploy(cluster_id: str = "", node: str = "", iface: str
     conf = pxe_dnsmasq_conf(server_ip, iface, range_lo, range_hi, except_ifaces=[uplink])
     menu = pxe_ipxe_menu(server_ip, install_images=install_images)
     _secrets = _load_ops_secrets()
-    ops_files = pxe_ops_apkovl_files(server_ip, secrets=_secrets)
+    _reg = _vera_host_ip() + ":5000"
+    ops_files = pxe_ops_apkovl_files(server_ip, secrets=_secrets, registry=_reg)
     apk_b64 = _apkovl_tar_b64(ops_files)
-    desk_apk_b64 = _apkovl_tar_b64(pxe_desktop_apkovl_files(server_ip, secrets=_secrets))
+    desk_apk_b64 = _apkovl_tar_b64(pxe_desktop_apkovl_files(server_ip, secrets=_secrets, registry=_reg))
     _b = lambda s: base64.b64encode(s.encode()).decode()
     tui_b64 = _b(ops_files["usr/local/bin/foundry-tui"])
     sdwrite_b64 = _b(ops_files["usr/local/bin/foundry-sdwrite"])

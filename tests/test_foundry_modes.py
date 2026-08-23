@@ -33,3 +33,33 @@ def test_desktop_overlay_wires_modes():
     assert "usr/local/bin/foundry-mode" in d
     assert "etc/local.d/zz-foundry-modes.start" in d
     assert "/etc/foundry/modes/swarm" in d["etc/local.d/desktop.start"]
+
+
+def test_registry_wiring():
+    from vera.foundry.foundry_core import pxe_ops_apkovl_files, pxe_desktop_apkovl_files, foundry_mode_script
+    f = pxe_ops_apkovl_files("10.22.22.25", registry="192.168.0.138:5000")
+    assert "etc/docker/daemon.json" in f
+    assert "insecure-registries" in f["etc/docker/daemon.json"]
+    assert "192.168.0.138:5000" in f["etc/docker/daemon.json"]
+    import json as _j
+    _j.loads(f["etc/docker/daemon.json"])                         # valid JSON
+    # no registry -> no daemon.json (behaviour unchanged)
+    assert "etc/docker/daemon.json" not in pxe_ops_apkovl_files("10.22.22.25")
+    # desktop overlay gets it too
+    assert "etc/docker/daemon.json" in pxe_desktop_apkovl_files("10.22.22.25", registry="192.168.0.138:5000")
+    # foundry-mode prefers the served FOUNDRY_VERA_IMAGE over the vera:latest default
+    s = foundry_mode_script("10.22.22.25")
+    assert "'^FOUNDRY_VERA_IMAGE='" in s and "cut -d= -f2-" in s
+
+
+def test_diskless_autostart_wiring():
+    from vera.foundry.foundry_core import (pxe_ops_apkovl_files, pxe_desktop_apkovl_files,
+                                           _FOUNDRY_BOOT)
+    for build, startfile in ((pxe_ops_apkovl_files, "etc/local.d/foundry.start"),
+                             (pxe_desktop_apkovl_files, "etc/local.d/desktop.start")):
+        ov = build("10.22.22.25")
+        assert "usr/local/bin/foundry-boot" in ov                      # launcher baked
+        assert "::once:/usr/local/bin/foundry-boot" in ov["etc/inittab"]  # fired from inittab
+        assert "/tmp/foundry-start.lock" in ov[startfile]              # run-once guard
+    assert "apk add newt" in pxe_desktop_apkovl_files("10.22.22.25")["etc/local.d/desktop.start"]
+    assert "/etc/local.d/*.start" in _FOUNDRY_BOOT                     # launcher runs local.d
