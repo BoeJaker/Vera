@@ -1814,6 +1814,12 @@ _CTX_FLOOR = 4096
 # compute buffers and fragmentation. Measured: a 12 GB card seated 9.22 GB.
 _VRAM_USABLE = float(os.environ.get("OLLAMA_VRAM_USABLE_FRAC", "0.78"))
 
+# Cold-start GPU VRAM (GB) assumed when a node's card is NOT in the catalog and no
+# spill has measured it yet. Without this, proactive_vram_ctx can't size the FIRST
+# request and it races to the global ceiling and spills. The V100s here are 12 GB;
+# the 0.86 margin in proactive_vram_ctx keeps the first window safely inside that.
+_DEFAULT_GPU_VRAM_GB = float(os.environ.get("OLLAMA_DEFAULT_GPU_VRAM_GB", "12.0"))
+
 # Residency sampling. Checking /api/ps after every generation would add a round
 # trip per call; instead sample a slice, and ALWAYS check when throughput looks
 # like a spill (a partly-offloaded 9B drops from ~105 tok/s to ~33 here, so
@@ -1912,7 +1918,7 @@ def _round_ctx(n: int) -> int:
 def _round_ctx_down(n: int) -> int:
     """Round a fitted window DOWN to a stable step — used when sizing num_ctx to
     the VRAM headroom, where overshooting spills to CPU, so we must not round up."""
-    for step in (131072, 98304, 65536, 49152, 32768, 24576, 16384, 8192, 4096):
+    for step in (131072, 98304, 65536, 49152, 32768, 24576, 16384, 12288, 8192, 6144, 4096):
         if n >= step:
             return step
     return _CTX_FLOOR
@@ -1999,6 +2005,11 @@ async def proactive_vram_ctx(iid: str, model: str) -> int:
     margin = 0.95
     if not usable:
         vram_gb = float((_node_hw(iid) or {}).get("vram_gb") or 0.0)
+        if vram_gb <= 0:
+            # Catalog doesn't know this node's card and no spill has measured it —
+            # fall back to the configured GPU-VRAM default so the FIRST request is
+            # still capped to a seating window instead of racing to the ceiling.
+            vram_gb = _DEFAULT_GPU_VRAM_GB
         if vram_gb <= 0:
             return 0
         usable = int(vram_gb * (2 ** 30))
