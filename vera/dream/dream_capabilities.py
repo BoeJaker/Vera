@@ -10323,6 +10323,10 @@ KEY_DIRECTOR_THOUGHTS = "vera:dream:director:thoughts" # LIST of recent thought 
 KEY_DIRECTOR_CONV    = "vera:dream:director:conv"     # {"session_id","until"} conversation window
 KEY_DIRECTOR_CONVLOG = "vera:dream:director:convlog"  # LIST of recent user↔vera exchanges
 DIRECTOR_JOURNAL_ID  = "director"                     # dream journal its thoughts log to
+# ── System Narrator (a decoupled MODE of the same loop) ──────────────────────
+KEY_NARRATOR_LAST     = "vera:system:narrator:last"      # last narrative JSON
+KEY_NARRATOR_THOUGHTS = "vera:system:narrator:thoughts"  # LIST of recent narrative JSON (rolling)
+NARRATOR_JOURNAL_ID   = "narrator"                        # dream journal the narrative logs to
 
 DIRECTOR_DEFAULTS: Dict[str, Any] = {
     "enabled":               True,
@@ -10357,6 +10361,26 @@ DIRECTOR_DEFAULTS: Dict[str, Any] = {
     # new lines of work with no home. This keeps ambient thinking productive
     # instead of proliferating unrelated goals.
     "project_linked_only":   True,
+    # ── System Narrator (decoupled mode of this same loop) ────────────────────
+    # A two-tier ambient narrator, independent of the dream cycle system:
+    #   • GATHERER (small model) OPERATES THE READ-ONLY PROBE KIT — traverses the
+    #     live system (health, perf, goals, loops, memory, dreams, nodes…) and
+    #     assembles a TAILORED state digest. Cheap; not the MoE's job.
+    #   • NARRATOR (qwen MoE) is SERVED that tailored digest + a rich initial
+    #     state and produces the evolving narrative + personality + steer.
+    # Both route via job_type="dream_director" → deny_gpu + avoid_embed, i.e. a
+    # non-embedding CPU node. Long generations are fine (ambient, low priority).
+    "narrator_enabled":         False,
+    "narrator_model":           "qwen3.6:35b-a3b",   # MoE — the narrative voice
+    "narrator_gatherer_model":  "qwen3.5:9b",         # small — operates the probe kit
+    "narrator_gatherer_agent":  "gatherer",           # AGENT whose knowledge_sources
+    #   (news/press/sites/socials/forums, pre-indexed RAG) the gather phase pulls the
+    #   WATCHED WORLD from, via agent.rag.query. "" = internal probes only.
+    "narrator_max_probes":      6,                     # probe-kit traversal budget/pass
+    "narrator_gap_min":         12.0,                  # min minutes between narrative passes
+    "narrator_deliver_to_chat": False,                 # push the narrative into the active chat
+    "narrator_think_timeout_s": 600,                   # MoE narration timeout (CPU, long OK)
+    "narrator_history":         40,                    # rolling narrative entries kept
 }
 
 _DIRECTOR_TASK: Optional[asyncio.Task] = None
@@ -11237,6 +11261,299 @@ async def _director_auto_drain(cfg: Dict[str, Any]) -> None:
         log.info("director auto-drain fired: %s", tag)
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# SYSTEM NARRATOR  — two-tier ambient narrative + personality + steer
+# ─────────────────────────────────────────────────────────────────────────────
+# Runs as a MODE of the director loop, fully independent of the dream cycle
+# system. GATHERER (small model) operates the read-only probe kit to traverse
+# the live system → tailored digest; NARRATOR (MoE) is served that digest → the
+# evolving narrative. Both CPU-routed (job_type="dream_director": deny_gpu +
+# avoid_embed = a non-embedding CPU node).
+_LAST_NARRATOR_THINK: List[float] = [0.0]
+
+# The read-only probe kit the gatherer may operate. name → {desc, args-hint}.
+# Only entries actually registered as caps are offered (filtered at runtime), so
+# this list can be generous without breaking when a cap isn't present.
+_NARRATOR_PROBES: Dict[str, Dict[str, str]] = {
+    "obs.health":             {"desc": "backends + ollama node health/latency", "args": "{}"},
+    "obs.workers":            {"desc": "worker pool + queue backlog", "args": "{}"},
+    "obs.redis":              {"desc": "redis / stream state", "args": "{}"},
+    "perf.scan":              {"desc": "event-loop stalls, host resources, zombie jobs", "args": "{}"},
+    "perf.stalls":            {"desc": "recent event-loop stalls", "args": "{limit:int}"},
+    "sysmon.status":          {"desc": "proxmox + docker + ollama system metrics", "args": "{}"},
+    "goals.list":             {"desc": "long-term goals / strategic projects", "args": "{}"},
+    "goals.detail":           {"desc": "one goal's detail + progress", "args": "{id:str}"},
+    "dream.director.status":  {"desc": "director state + last thought", "args": "{}"},
+    "dream.scheduler.status": {"desc": "dream cycle scheduler state", "args": "{}"},
+    "dream.history":          {"desc": "recent dream cycles", "args": "{limit:int}"},
+    "dream.journal.list":     {"desc": "recent dream/director journal entries", "args": "{limit:int}"},
+    "memory.recall":          {"desc": "recall memories about a topic (semantic)", "args": "{query:str,limit:int}"},
+    "memory.search":          {"desc": "search stored memory", "args": "{query:str,limit:int}"},
+    "loops.list":             {"desc": "specialist/long-horizon loops", "args": "{}"},
+    "fabric.dataset_stats":   {"desc": "fabric dataset sizes/growth", "args": "{}"},
+    "obs.events":             {"desc": "recent system events (optionally by level)", "args": "{limit:int,level:str}"},
+    # ── External world — the gatherer watches beyond the system too. FRESH feeds
+    #    (news/press/websites/companies/socials/forums) are pre-indexed into the
+    #    gatherer AGENT's knowledge_sources RAG; these probes surface what's
+    #    already indexed/discovered, plus a live pull when it matters.
+    "agent.rag.query":        {"desc": "query the gatherer agent's WATCHED sources (news/press/sites/socials/forums)", "args": "{agent:str,query:str,limit:int}"},
+    "research.db.search":     {"desc": "search indexed research/news findings (fast)", "args": "{query:str,limit:int}"},
+    "fabric.discover.query":  {"desc": "query discovered/crawled external sources", "args": "{query:str}"},
+    "fabric.discover.history": {"desc": "recent external discovery/crawl runs", "args": "{}"},
+    "web.research":           {"desc": "LIVE web research pull for a topic (SLOW — sparingly)", "args": "{query:str}"},
+    "web.fetch":              {"desc": "fetch one URL's content (a known feed/page)", "args": "{url:str}"},
+}
+
+
+def _narrator_available_probes() -> Dict[str, Dict[str, str]]:
+    """Probe-kit entries whose cap is actually registered right now."""
+    return {n: v for n, v in _NARRATOR_PROBES.items() if n in CAPABILITY_REGISTRY}
+
+
+def _narrator_parse_json(raw: Any) -> Dict[str, Any]:
+    """Tolerant JSON extraction from a model reply (handles ```json fences / stray
+    prose around the object). {} when nothing parses."""
+    if isinstance(raw, dict):
+        return raw
+    s = str(raw or "").strip()
+    if not s:
+        return {}
+    if s.startswith("```"):
+        nl = s.find("\n")
+        s = s[nl + 1:] if nl != -1 else s
+        if s.rstrip().endswith("```"):
+            s = s.rstrip()[:-3]
+    try:
+        return json.loads(s)
+    except Exception:
+        pass
+    i, j = s.find("{"), s.rfind("}")
+    if 0 <= i < j:
+        try:
+            return json.loads(s[i:j + 1])
+        except Exception:
+            return {}
+    return {}
+
+
+async def _narrator_run_probe(name: str, args: Dict[str, Any]) -> str:
+    """Execute one read-only probe cap and return a compact text result (trimmed).
+    Never raises — a failed probe just yields a short error string."""
+    if name not in _narrator_available_probes():
+        return f"(probe '{name}' not available)"
+    try:
+        res = await _call_cap(name, **(args or {}))
+    except Exception as e:
+        return f"(probe error: {str(e)[:160]})"
+    try:
+        txt = json.dumps(res, default=str) if not isinstance(res, str) else res
+    except Exception:
+        txt = str(res)
+    return txt[:1200]
+
+
+async def _narrator_initial_state(cfg: Dict[str, Any]) -> str:
+    """A GOOD, detailed initial system state — the grounding the gatherer starts
+    from before probing deeper. Deliberately richer than the PA briefing: health,
+    perf, live loop, recent activity, goals/projects, dreams."""
+    idle = await _idle_minutes()
+    briefing = await _director_briefing()
+    activity_lines, latest_sid = await _director_recent_activity()
+    loop_live = await _director_loop_snapshot(latest_sid)
+
+    def _sect(label: str, body: str) -> str:
+        return f"## {label}\n{body}\n\n" if (body or "").strip() else ""
+
+    # Watched world — the gatherer AGENT's sourced RAG (news/press/sites/socials/
+    # forums), pre-indexed + auto-refreshed. Always in the initial state so the
+    # narrator sees the outside world even before the gatherer probes deeper.
+    watched = ""
+    _ga = cfg.get("narrator_gatherer_agent") or ""
+    if _ga and "agent.rag.query" in CAPABILITY_REGISTRY:
+        try:
+            _r = await _call_cap("agent.rag.query", agent=_ga,
+                                 query="latest notable developments and news", limit=6)
+            _snips = (_r or {}).get("snippets") or []
+            watched = "\n".join(f"- {(s.get('text') or '')[:200]}"
+                                for s in _snips if (s.get("text") or "").strip())
+        except Exception:
+            watched = ""
+
+    return (
+        f"# VERA — SYSTEM STATE (initial grounding)\n"
+        f"User: {'active' if idle < float(cfg.get('active_idle_below_min', 6.0)) else 'idle'} "
+        f"(idle {round(idle,1)}m)\n\n"
+        + _sect("Node & backend health", await _director_cap_json("obs.health", 700))
+        + _sect("Performance / event loop", await _director_cap_json("perf.scan", 700))
+        + _sect("Long-term goals", briefing.get("goals", ""))
+        + _sect("Active projects", briefing.get("projects", ""))
+        + _sect("Dream schedule / queue", briefing.get("dream_schedule", ""))
+        + _sect("Loop programs in flight", briefing.get("loop_programs", ""))
+        + _sect("Business snapshot", briefing.get("business", ""))
+        + _sect("Live agentic loop (being watched now)", loop_live.get("summary", ""))
+        + _sect("Recent activity (newest first)",
+                "\n".join(activity_lines[:10]) if activity_lines else "")
+        + _sect("Watched world (news/press/sites/socials — gatherer sources)", watched)
+    )
+
+
+async def _narrator_gather(cfg: Dict[str, Any], initial: str) -> str:
+    """TIER 1 — the small gatherer OPERATES THE PROBE KIT to traverse the system
+    and assemble a tailored state digest for the narrator. Bounded to
+    narrator_max_probes tool calls; returns the digest text."""
+    gen = getattr(_orch, "ollama_generate", None)
+    if not gen:
+        return initial
+    probes = _narrator_available_probes()
+    tool_list = "\n".join(f"- {n}({v['args']}) — {v['desc']}" for n, v in probes.items())
+    budget = max(1, int(cfg.get("narrator_max_probes", 6)))
+    model = cfg.get("narrator_gatherer_model") or "qwen3.5:9b"
+    sys_p = (
+        "You are the GATHERER for VERA's system narrator. Your job is to OPERATE "
+        "THE READ-ONLY PROBE KIT to traverse the live system and assemble a "
+        "TAILORED STATE DIGEST the narrator can turn into a narrative. Follow "
+        "threads that look interesting or changed; skip what's quiet. Do NOT "
+        "narrate or editorialise — just gather facts. Read-only tools only.")
+    collected: List[str] = []
+    for _ in range(budget):
+        ran = ("\n\nPROBES RUN SO FAR:\n" + "\n".join(collected)) if collected else ""
+        prompt = (
+            initial + ran +
+            "\n\nPROBE KIT (read-only):\n" + tool_list +
+            '\n\nRespond ONLY JSON. To look deeper: '
+            '{"probe":"<cap.name>","args":{...},"why":"<short>"}. '
+            'When you have enough for a rich digest: '
+            '{"done":true,"digest":"<the tailored state digest — the facts that '
+            'matter right now, organised, concise>"}')
+        try:
+            raw = await gen(prompt, system=sys_p, json_mode=True, prefer_gpu=False,
+                            job_type="dream_director", model=model,
+                            timeout=float(cfg.get("think_timeout_s", 480) or 480))
+        except Exception as e:
+            log.debug("narrator gather gen: %s", e)
+            break
+        obj = _narrator_parse_json(raw)
+        if obj.get("done") or not obj.get("probe"):
+            dig = str(obj.get("digest") or "").strip()
+            if dig:
+                return dig
+            break
+        name = str(obj.get("probe") or "")
+        res = await _narrator_run_probe(name, obj.get("args") or {})
+        collected.append(f"• {name} {json.dumps(obj.get('args') or {}, default=str)} → {res}")
+    # Robustness: a small model may under-drive the kit (empty JSON, eval_count~1).
+    # If it gathered little, run a DEFAULT essential probe set (fast read-caps, no
+    # LLM) so the narrator ALWAYS gets real system data regardless of gatherer
+    # quality — the model-driven probes are a bonus on top, not a prerequisite.
+    if len(collected) < 2:
+        for _dp, _args in (("perf.scan", {}), ("goals.list", {}),
+                           ("dream.director.status", {}), ("obs.workers", {}),
+                           ("dream.history", {"limit": 3}),
+                           ("research.db.search", {"query": "latest news", "limit": 5})):
+            if _dp in _narrator_available_probes():
+                collected.append(f"• {_dp} → {await _narrator_run_probe(_dp, _args)}")
+    return ("TAILORED STATE (assembled from probes):\n" + "\n".join(collected)) if collected \
+        else initial
+
+
+async def _narrator_narrate(cfg: Dict[str, Any], initial: str, digest: str) -> Dict[str, Any]:
+    """TIER 2 — the MoE is SERVED the tailored digest and produces the evolving
+    narrative + mood + steer. CPU-routed (non-embedding node)."""
+    gen = getattr(_orch, "ollama_generate", None)
+    if not gen:
+        return {}
+    recent = await _narrator_recent(int(cfg.get("thought_memory", 8)))
+    recent_txt = "\n".join("- " + (t.get("narrative") or "")[:240] for t in recent
+                           if (t.get("narrative") or "").strip())
+    model = cfg.get("narrator_model") or "qwen3.6:35b-a3b"
+    sys_p = (
+        "You are VERA's inner NARRATOR — the reflective voice that gives the whole "
+        "system a personality and a sense of where it's going. You are SERVED a "
+        "tailored digest of the live system state (someone else gathered it). "
+        "Produce a short, evolving NARRATIVE: what the system is, what it's doing, "
+        "how it 'feels', and a gentle STEER (what deserves attention next). One "
+        "running train of thought across passes — build on your recent narrative, "
+        "never repeat it. Grounded, specific, a little characterful; not a status "
+        "dump. " + _director_addressing(cfg))
+    prompt = (
+        initial +
+        "\n\n# TAILORED SYSTEM STATE (gathered for you)\n" + (digest or "(none)") +
+        (("\n\n# YOUR RECENT NARRATIVE (build on, do not repeat)\n" + recent_txt) if recent_txt else "") +
+        '\n\nRespond ONLY JSON: {"narrative":"<the evolving narrative>",'
+        '"mood":"<one or two words>","steer":"<what deserves attention next, one line>"}')
+    try:
+        raw = await gen(prompt, system=sys_p, json_mode=True, prefer_gpu=False,
+                        job_type="dream_director", model=model,
+                        timeout=float(cfg.get("narrator_think_timeout_s", 600) or 600))
+    except Exception as e:
+        log.debug("narrator narrate gen: %s", e)
+        return {}
+    return _narrator_parse_json(raw)
+
+
+async def _narrator_recent(limit: int = 8) -> List[Dict[str, Any]]:
+    r = _redis()
+    if not r:
+        return []
+    try:
+        raw = await r.lrange(KEY_NARRATOR_THOUGHTS, 0, max(0, limit - 1))
+        out = []
+        for x in raw or []:
+            try:
+                out.append(json.loads(_rd(x)))
+            except Exception:
+                pass
+        return out
+    except Exception:
+        return []
+
+
+async def _narrator_think_once(cfg: Optional[Dict[str, Any]] = None,
+                               force: bool = False) -> Dict[str, Any]:
+    """One full narrator pass: gather (probe kit) → narrate (MoE) → store + emit +
+    optional chat delivery. Backs off under CPU pressure unless forced."""
+    cfg = cfg or await _director_cfg()
+    if not force and _director_cpu_pressure():
+        await emit_event({"type": "dream.narrator.backoff",
+                          "reason": "CPU pool busy — yielding to foreground work"})
+        return {"ok": False, "backoff": True}
+    initial = await _narrator_initial_state(cfg)
+    digest = await _narrator_gather(cfg, initial)
+    narr = await _narrator_narrate(cfg, initial, digest)
+    text = str(narr.get("narrative") or "").strip()
+    if not text:
+        return {"ok": False, "error": "empty narrative"}
+    entry = {"narrative": text, "mood": str(narr.get("mood") or ""),
+             "steer": str(narr.get("steer") or ""), "ts": now_iso()}
+    r = _redis()
+    if r:
+        try:
+            await r.set(KEY_NARRATOR_LAST, json.dumps(entry))
+            await r.lpush(KEY_NARRATOR_THOUGHTS, json.dumps(entry))
+            await r.ltrim(KEY_NARRATOR_THOUGHTS, 0, int(cfg.get("narrator_history", 40)) - 1)
+        except Exception as e:
+            log.debug("narrator store: %s", e)
+    try:
+        await emit_event({"type": "dream.narrator.thought", "narrative": text,
+                          "mood": entry["mood"], "steer": entry["steer"]})
+    except Exception:
+        pass
+    try:
+        await _journal_append(NARRATOR_JOURNAL_ID, text, kind="narrative",
+                              title="Narrator",
+                              data={"mood": entry["mood"], "steer": entry["steer"]})
+    except Exception:
+        pass
+    if cfg.get("narrator_deliver_to_chat"):
+        try:
+            _act, sid = await _director_recent_activity()
+            if sid:
+                await _director_deliver(text, sid, cfg, title="📖 Vera")
+        except Exception:
+            pass
+    return {"ok": True, "narrative": text, "mood": entry["mood"], "steer": entry["steer"]}
+
+
 async def _director_loop():
     global _DIRECTOR_RUN
     log.info("dream director started")
@@ -11245,7 +11562,11 @@ async def _director_loop():
         try:
             cfg = await _director_cfg()
             tick = max(60, int(cfg.get("tick_seconds", 240)))
-            if not cfg.get("enabled", True):
+            d_enabled = bool(cfg.get("enabled", True))            # PA / dream director
+            n_enabled = bool(cfg.get("narrator_enabled", False))  # system narrator
+            # The loop is shared: it runs while EITHER the PA director OR the system
+            # narrator is enabled, so the narrator can run with the dream system off.
+            if not d_enabled and not n_enabled:
                 await asyncio.sleep(tick)
                 continue
             # Space ambient thinking out to think_gap_min (richer, less frequent)
@@ -11254,14 +11575,26 @@ async def _director_loop():
             gap_min = float(cfg.get("think_gap_min", 20.0) or 0)
             conv = await _director_conv_state()
             due = (time.time() - _LAST_DIRECTOR_THINK[0]) >= gap_min * 60.0
-            if conv or gap_min <= 0 or due:
+            # ── System narrator pass — own cadence, independent of the PA director
+            #    AND the dream cycle system. A live conversation defers to the PA.
+            if n_enabled and not conv:
+                n_gap = float(cfg.get("narrator_gap_min", 12.0) or 0)
+                if n_gap <= 0 or (time.time() - _LAST_NARRATOR_THINK[0]) >= n_gap * 60.0:
+                    try:
+                        await _narrator_think_once(cfg)
+                    except Exception as e:
+                        log.warning("system narrator: %s", e)
+                    _LAST_NARRATOR_THINK[0] = time.time()
+            # ── PA director pass (dream-feeding) ─────────────────────────────────
+            if d_enabled and (conv or gap_min <= 0 or due):
                 res = await _director_think_once(cfg)
                 if not (isinstance(res, dict) and res.get("backoff")):
                     _LAST_DIRECTOR_THINK[0] = time.time()
-            try:
-                await _director_auto_drain(cfg)
-            except Exception as e:
-                log.debug("director auto-drain: %s", e)
+            if d_enabled:
+                try:
+                    await _director_auto_drain(cfg)
+                except Exception as e:
+                    log.debug("director auto-drain: %s", e)
             await asyncio.sleep(tick)
         except asyncio.CancelledError:
             break
@@ -11385,6 +11718,153 @@ async def dream_director_stop(trace_id=None):
             pass
     _DIRECTOR_TASK = None
     return {"running": False}
+
+
+# ── System Narrator control (independent of the dream cycle system) ──────────
+async def _director_cfg_patch(patch: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge a patch into the director/narrator config (KEY_DIRECTOR_CFG) and
+    return the fully-resolved cfg. None-valued keys are ignored."""
+    r = _redis()
+    cur: Dict[str, Any] = {}
+    if r:
+        try:
+            raw = await r.get(KEY_DIRECTOR_CFG)
+            if raw:
+                cur = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+        except Exception:
+            cur = {}
+    cur.update({k: v for k, v in patch.items() if v is not None})
+    if r:
+        try:
+            await r.set(KEY_DIRECTOR_CFG, json.dumps(cur))
+        except Exception:
+            pass
+    return await _director_cfg()
+
+
+def _director_task_running() -> bool:
+    return bool(_DIRECTOR_RUN and _DIRECTOR_TASK and not _DIRECTOR_TASK.done())
+
+
+def _ensure_director_task() -> None:
+    global _DIRECTOR_TASK, _DIRECTOR_RUN
+    if not _director_task_running():
+        _DIRECTOR_RUN = True
+        _DIRECTOR_TASK = asyncio.create_task(_director_loop())
+
+
+@capability(
+    "system.narrator.start", memory="off",
+    http_method="POST", http_path="/system/narrator/start", http_tags=["dream", "narrator"],
+    description="Turn ON the system narrator — an ambient two-tier loop (small gatherer "
+                "operates the read-only probe kit → tailored digest; qwen MoE narrates) "
+                "that gives Vera a personality + overall steer. Runs on a non-embedding "
+                "CPU node, INDEPENDENT of the dream cycle system.",
+)
+async def system_narrator_start(trace_id=None):
+    cfg = await _director_cfg_patch({"narrator_enabled": True})
+    _ensure_director_task()
+    return {"running": True, "narrator_enabled": True,
+            "model": cfg.get("narrator_model"),
+            "gatherer_model": cfg.get("narrator_gatherer_model"),
+            "note": "narrator runs on the shared director loop; dream cycle system is separate"}
+
+
+@capability(
+    "system.narrator.stop", memory="off",
+    http_method="POST", http_path="/system/narrator/stop", http_tags=["dream", "narrator"],
+    description="Turn OFF the system narrator. Does not touch the PA director or the dream "
+                "cycle system; stops the shared loop only if nothing else needs it.",
+)
+async def system_narrator_stop(trace_id=None):
+    global _DIRECTOR_TASK, _DIRECTOR_RUN
+    cfg = await _director_cfg_patch({"narrator_enabled": False})
+    if not cfg.get("enabled", True) and _director_task_running():
+        _DIRECTOR_RUN = False
+        if _DIRECTOR_TASK and not _DIRECTOR_TASK.done():
+            _DIRECTOR_TASK.cancel()
+            try:
+                await asyncio.wait_for(_DIRECTOR_TASK, timeout=3)
+            except Exception:
+                pass
+        _DIRECTOR_TASK = None
+    return {"narrator_enabled": False, "loop_running": _director_task_running()}
+
+
+@capability(
+    "system.narrator.status", memory="off", silent=True,
+    http_method="GET", http_path="/system/narrator/status", http_tags=["dream", "narrator"],
+    description="System narrator status: enabled, loop running, models, cadence, the "
+                "probe kit it can traverse, and the last narrative (+mood/steer).",
+)
+async def system_narrator_status(trace_id=None):
+    r = _redis()
+    last = None
+    if r:
+        try:
+            raw = await r.get(KEY_NARRATOR_LAST)
+            if raw:
+                last = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+        except Exception:
+            pass
+    cfg = await _director_cfg()
+    return {"enabled": bool(cfg.get("narrator_enabled")),
+            "loop_running": _director_task_running(),
+            "cpu_pressure": _director_cpu_pressure(),
+            "model": cfg.get("narrator_model"),
+            "gatherer_model": cfg.get("narrator_gatherer_model"),
+            "gap_min": cfg.get("narrator_gap_min"),
+            "max_probes": cfg.get("narrator_max_probes"),
+            "deliver_to_chat": cfg.get("narrator_deliver_to_chat"),
+            "probe_kit": sorted(_narrator_available_probes().keys()),
+            "last": last}
+
+
+@capability(
+    "system.narrator.config", memory="off",
+    http_method="POST", http_path="/system/narrator/config", http_tags=["dream", "narrator"],
+    description="Configure the narrator. Fields (all optional): model (MoE narrator), "
+                "gatherer_model (small probe-kit operator), gap_min, max_probes, "
+                "deliver_to_chat (bool), think_timeout_s.",
+)
+async def system_narrator_config(model: Optional[str] = None,
+                                 gatherer_model: Optional[str] = None,
+                                 gap_min: Optional[float] = None,
+                                 max_probes: Optional[int] = None,
+                                 deliver_to_chat: Optional[bool] = None,
+                                 think_timeout_s: Optional[int] = None,
+                                 trace_id=None):
+    patch: Dict[str, Any] = {}
+    if model is not None:            patch["narrator_model"] = model
+    if gatherer_model is not None:   patch["narrator_gatherer_model"] = gatherer_model
+    if gap_min is not None:          patch["narrator_gap_min"] = float(gap_min)
+    if max_probes is not None:       patch["narrator_max_probes"] = int(max_probes)
+    if deliver_to_chat is not None:  patch["narrator_deliver_to_chat"] = bool(deliver_to_chat)
+    if think_timeout_s is not None:  patch["narrator_think_timeout_s"] = int(think_timeout_s)
+    cfg = await _director_cfg_patch(patch)
+    return {"ok": True, "config": {k: cfg.get(k) for k in (
+        "narrator_enabled", "narrator_model", "narrator_gatherer_model",
+        "narrator_gap_min", "narrator_max_probes", "narrator_deliver_to_chat",
+        "narrator_think_timeout_s")}}
+
+
+@capability(
+    "system.narrator.think", memory="off",
+    http_method="POST", http_path="/system/narrator/think", http_tags=["dream", "narrator"],
+    description="Run ONE full narrator pass NOW (gather via probe kit → MoE narrate), "
+                "ignoring CPU backoff. Output: {ok, narrative, mood, steer}.",
+)
+async def system_narrator_think(trace_id=None):
+    return await _narrator_think_once(force=True)
+
+
+@capability(
+    "system.narrator.stream", memory="off", silent=True,
+    http_method="GET", http_path="/system/narrator/stream", http_tags=["dream", "narrator"],
+    description="Recent narrative entries (newest first), each {narrative, mood, steer, ts}.",
+)
+async def system_narrator_stream(limit: int = 20, trace_id=None):
+    return {"narratives": await _narrator_recent(int(limit or 20))}
 
 
 @capability(

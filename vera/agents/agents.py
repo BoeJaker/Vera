@@ -1056,7 +1056,11 @@ async def agent_rag_retrieve(rec: AgentRecord, query: str,
         r = await _call_registered_cap("fabric.query", text=query[:400],
                                        dataset_id=ds, top_k=limit)
         for row in (r.get("results") or [])[:limit]:
-            summ = (row.get("summary") or "").strip()
+            # Web-fetched sources ingest their content into `text`, not `summary`
+            # (only some pipelines set a summary) — fall back to `text` so retrieval
+            # actually surfaces them. Without this, EVERY web-source agent RAG query
+            # silently returned nothing despite the records being present + indexed.
+            summ = (row.get("summary") or "").strip() or (row.get("text") or "").strip()
             if summ:
                 out.append({"dataset": ds, "text": summ[:600],
                             "score": row.get("score")})
@@ -4055,6 +4059,41 @@ DEFAULT_AGENTS = [
                      "telegram.send", "system.timestamp"],
         domain_description="Long-horizon calendar + dream-aware action & trigger scheduling",
         tool_mode="call", voice="bm_george",
+    ),
+    # The system narrator's GATHERER (see dream_capabilities system.narrator.*).
+    # Watches the OUTSIDE world through knowledge_sources (news/press/sites/socials/
+    # forums, pre-indexed into agent_rag.gatherer + auto-refreshed) AND operates the
+    # read-only probe kit over Vera's own state, assembling a tailored digest the
+    # MoE narrator turns into a narrative. Small + CPU-only, never GPU. Seed sources
+    # are AI/ML starters — replace with your own via agent.knowledge.set.
+    AgentRecord(
+        name="gatherer", label="Gatherer", avatar="🛰",
+        description="System-narrator gatherer: watches the world (news/press/companies/"
+                    "sites/socials/forums) + probes Vera's own state into a tailored digest.",
+        model="qwen3.5:9b", prefer_gpu=False, temperature=0.3, num_ctx=16384,
+        system_prompt=(
+            "You are the GATHERER for Vera's system narrator. You watch the outside "
+            "world through your knowledge sources AND operate a read-only probe kit "
+            "over Vera's own state. Gather the facts that MATTER right now — what "
+            "changed, what's notable — and skip the quiet. Do NOT narrate or "
+            "editorialise; assemble a concise, organised, tailored digest."),
+        greeting="Gatherer online — watching the world and the system.",
+        domain_caps=[
+            "agent.rag.query", "research.db.search", "research.quick_search",
+            "web.research", "web.search", "web.fetch",
+            "fabric.discover.query", "memory.recall",
+            "obs.health", "perf.scan", "goals.list", "system.timestamp"],
+        domain_description="Watches external sources + probes system state for the narrator",
+        knowledge_sources=[
+            {"type": "web", "target": "https://hnrss.org/frontpage",
+             "note": "Hacker News front page — tech/AI news + forum discussion"},
+            {"type": "web", "target": "https://www.reddit.com/r/MachineLearning/.rss",
+             "note": "r/MachineLearning — ML forum/social"},
+            {"type": "web", "target": "https://arxiv.org/rss/cs.AI",
+             "note": "arXiv cs.AI — new AI research papers"},
+        ],
+        rag_enabled=True, rag_refresh_hours=6.0,
+        tool_mode="call",
     ),
 ]
 
