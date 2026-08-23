@@ -1902,7 +1902,13 @@ if _CAP_AVAILABLE and HAS_NUMPY:
                 res = await asyncio.get_running_loop().run_in_executor(
                     None, _run_backtrader_sync, arr, entry, exit_, spec)
             else:
-                res = run_backtest(arr, entry, exit_, spec, s_entry, s_exit)
+                # run_backtest is a CPU-bound numpy simulation (the bar loop +
+                # signal ops) — running it inline blocks the event loop for up to
+                # ~1s on a real strategy, which flaps WebSockets (dropped chat/
+                # context-panel pushes) and trips the stall detector. Offload it to
+                # a thread, exactly as the backtrader branch above already does.
+                res = await asyncio.get_running_loop().run_in_executor(
+                    None, run_backtest, arr, entry, exit_, spec, s_entry, s_exit)
             elapsed = int((time.time() - t0) * 1000)
         except Exception as e:
             await emit_event({"type": "markets.backtest", "stage": "error", "id": bid,
