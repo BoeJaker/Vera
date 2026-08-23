@@ -55,6 +55,12 @@ class ArtifactRef:
     media_type: str = ""
     size_bytes: int | None = None
 
+    def __post_init__(self) -> None:
+        if not self.id.strip() or not self.kind.strip() or not self.uri.strip():
+            raise ValueError("artifact id, kind, and uri are required")
+        if self.size_bytes is not None and self.size_bytes < 0:
+            raise ValueError("artifact size cannot be negative")
+
 
 @dataclass(frozen=True)
 class RunError:
@@ -62,6 +68,10 @@ class RunError:
     message: str
     retryable: bool = False
     details: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.code.strip() or not self.message.strip():
+            raise ValueError("error code and message are required")
 
 
 @dataclass(frozen=True)
@@ -73,7 +83,14 @@ class RunControl:
     requested_by: str = ""
     status: str = "requested"
     acknowledged_at: str = ""
+    acknowledged_by: str = ""
     reason: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.id.strip() or not self.run_id.strip() or not self.action.strip():
+            raise ValueError("control id, run id, and action are required")
+        if self.status not in {"requested", "acknowledged", "rejected"}:
+            raise ValueError("invalid run control status")
 
 
 @dataclass(frozen=True)
@@ -86,6 +103,13 @@ class RunEvent:
     occurred_at: str
     payload: Mapping[str, Any] = field(default_factory=dict)
     causation_id: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.id.strip() or not self.run_id.strip() or not self.type.strip():
+            raise ValueError("event id, run id, and type are required")
+        if self.sequence < 1:
+            raise ValueError("event sequence must be at least 1")
+        object.__setattr__(self, "status", RunStatus(self.status))
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
