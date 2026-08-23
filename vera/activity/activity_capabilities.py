@@ -577,12 +577,22 @@ async def _session_activity(window_min: float = 120.0, per_session: int = 14,
         key = sid or "(no session)"
         s = sessions.setdefault(key, {
             "session_id": sid, "actor": _orch.activity_actor(data),
-            "count": 0, "caps": [], "first_ts": ts, "last_ts": ts,
+            "count": 0, "caps": [], "areas": [], "first_ts": ts, "last_ts": ts,
+            # A real session id is what marks work a PERSON drove: the chat UI
+            # mints one per conversation, while internal/background calls carry
+            # none. This is the positive test for user activity — everything
+            # else is inference.
+            "has_session": bool(sid),
         })
         s["count"] += 1
         s["first_ts"] = ts or s["first_ts"]          # rows are newest-first
+        capn = str(data.get("name") or "")
+        # WHERE the work happened, from the cap→panel map. Far more useful to a
+        # reader than a list of cap names ("in Markets" beats "markets.backtest.run").
+        label = (_ui_for_cap(capn) or {}).get("label") or ""
+        if label and label not in s["areas"]:
+            s["areas"].append(label)
         if len(s["caps"]) < per_session:
-            capn = str(data.get("name") or "")
             s["caps"].append({"name": capn, "ts": ts,
                               "ui": _ui_for_cap(capn),
                               "preview": str(data.get("preview") or "")[:160]})

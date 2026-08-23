@@ -11558,12 +11558,20 @@ async def _narrator_activity_view(cfg: Dict[str, Any], user_lines: int = 14,
             continue
         sid = str(s.get("session_id") or "")
         count = s.get("count", 0)
+        areas = [a for a in (s.get("areas") or []) if a]
         if actor == "unknown":
             system.append(_narrator_summarise_unattributed(count, names))
             continue
-        line = (f"- session {sid[:12] or '(none)'} [{actor}] {count} actions: "
+        # USER activity is a POSITIVE test, not a leftover: the cap-activity
+        # system is session-scoped, and a real session id is what says a person
+        # was driving (the chat UI mints one per conversation; internal and
+        # background calls carry none). Anything without one is background,
+        # whatever else it looks like.
+        is_user = (actor == "you") and bool(s.get("has_session", bool(sid)))
+        where = f" in {', '.join(areas[:4])}" if areas else ""
+        line = (f"- session {sid[:12] or '(none)'} [{actor}] {count} actions{where}: "
                 + ", ".join(names[:8]))
-        (user if actor == "you" else system).append(line)
+        (user if is_user else system).append(line)
 
     # Fallback / supplement: the flat ring, still actor-tagged.
     if not user and not system:

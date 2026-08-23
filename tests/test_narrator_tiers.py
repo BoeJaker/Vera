@@ -147,6 +147,26 @@ def test_unattributed_activity_is_summarised_without_cap_names():
 
 
 @pytest.mark.critical
+def test_user_activity_requires_a_real_session():
+    """User activity is a POSITIVE test, not a leftover.
+
+    The cap-activity system is session-scoped: the chat UI mints a session per
+    conversation, while internal and background calls carry none. So a record
+    with no session must not reach the USER section however benign it looks —
+    that is what let panel auto-refresh read as "you're checking Redis".
+    """
+    src = open(_SRC, encoding="utf-8").read()
+    fn_src = src[src.index("async def _narrator_activity_view"):]
+    fn_src = fn_src[:fn_src.index("\ndef _narrator_activity_block")]
+    # The classification must consult has_session, not actor alone.
+    assert "has_session" in fn_src
+    assert "is_user" in fn_src
+    i_user = fn_src.index("is_user =")
+    line = fn_src[i_user:fn_src.index("\n", i_user)]
+    assert "has_session" in line, "user classification must require a session id"
+
+
+@pytest.mark.critical
 def test_unattributed_summary_handles_empty_and_junk():
     fn = _load("_narrator_summarise_unattributed")["_narrator_summarise_unattributed"]
     assert "0" in fn(0, [])

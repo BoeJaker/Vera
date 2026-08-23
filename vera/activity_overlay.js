@@ -27,6 +27,7 @@
                 artifact: '#e0af68' };
 
   let events = [], filter = null, open = false, expanded = null;
+  let narrOn = null, narrBusy = false;       // null = status not known yet
 
   const style = document.createElement('style');
   style.textContent = `
@@ -65,6 +66,18 @@
   .vao-chip:focus-visible,#vao-pill:focus-visible{outline:2px solid var(--acc,#5a9e8f);outline-offset:2px}
   .vao-spacer{flex:1 1 auto}
   .vao-hint{font-size:10px;color:var(--dim,#6b7480)}
+  /* Narrator on/off — the overlay already shows the narrator's output, so its
+     switch belongs here rather than buried in the dream panel. */
+  .vao-narr{display:inline-flex;align-items:center;gap:6px;font-size:11px;
+    padding:2px 9px;border-radius:11px;cursor:pointer;white-space:nowrap;
+    background:var(--bg2,#1c2026);border:1px solid var(--border2,#39414c);
+    color:var(--text2,#9aa4b2)}
+  .vao-narr:hover{color:var(--text,#dce1e8);border-color:var(--acc,#5a9e8f)}
+  .vao-narr[disabled]{opacity:.55;cursor:progress}
+  .vao-narr .led{width:7px;height:7px;border-radius:50%;flex:0 0 auto;
+    background:var(--dim,#6b7480)}
+  .vao-narr.on{border-color:var(--acc,#5a9e8f);color:var(--text,#dce1e8)}
+  .vao-narr.on .led{background:var(--acc,#5a9e8f);animation:vaoP 2.2s infinite}
 
   /* ── the horizontal timeline ── */
   .vao-track{overflow-x:auto;overflow-y:hidden;flex:1 1 auto;
@@ -184,6 +197,41 @@
     if (t) t.scrollLeft = t.scrollWidth;      // newest is on the right
   }
 
+  async function narratorStatus() {
+    try {
+      const r = await fetch(location.origin + '/system/narrator/status',
+        { headers: { Accept: 'application/json' } });
+      const j = await r.json();
+      const c = (j && j.content !== undefined) ? j.content : j;
+      narrOn = !!(c && c.enabled);
+    } catch (e) { /* leave as-is; the switch shows the last known state */ }
+  }
+
+  async function toggleNarrator() {
+    if (narrBusy) return;
+    narrBusy = true;
+    const want = !narrOn;
+    if (open) render();                       // show the pending state at once
+    try {
+      const r = await fetch(location.origin + '/system/narrator/'
+                            + (want ? 'start' : 'stop'),
+        { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: '{}' });
+      const j = await r.json();
+      const c = (j && j.content !== undefined) ? j.content : j;
+      // Trust the server's own answer over our optimistic guess. start/stop
+      // report `narrator_enabled`; only status uses the bare `enabled`.
+      narrOn = (c && c.narrator_enabled !== undefined) ? !!c.narrator_enabled
+             : (c && c.enabled !== undefined) ? !!c.enabled
+             : want;
+    } catch (e) {
+      await narratorStatus();                 // failed — resync rather than lie
+    } finally {
+      narrBusy = false;
+      if (open) render();
+    }
+  }
+
   async function poll() {
     try {
       const r = await fetch(location.origin + '/activity/timeline?scope=all&limit=60',
@@ -192,6 +240,7 @@
       const c = (j && j.content !== undefined) ? j.content : j;
       events = (c && c.events) || [];
     } catch (e) { /* keep the last good feed */ }
+    if (narrOn === null || open) await narratorStatus();
     updatePill();
     if (open) {
       const t = $('.vao-track');
@@ -215,7 +264,20 @@
       kinds().map(k =>
         `<span class="vao-chip${filter === k ? ' on' : ''}" data-k="${esc(k)}" tabindex="0">` +
         `${ICON[k] || ''} ${esc(LABEL[k] || k)}</span>`).join('') +
-      `<span class="vao-spacer"></span><span class="vao-hint">oldest → newest · scroll sideways</span>`;
+      `<span class="vao-spacer"></span>` +
+      `<span class="vao-narr${narrOn ? ' on' : ''}" id="vao-narr" tabindex="0" role="switch" ` +
+      `aria-checked="${narrOn === true}" title="Turn Vera's system narrator on or off">` +
+      `<span class="led"></span>Narrator ${narrOn === null ? '…' : (narrOn ? 'on' : 'off')}</span>` +
+      `<span class="vao-hint">oldest → newest · scroll sideways</span>`;
+    const nb = head.querySelector('#vao-narr');
+    if (nb) {
+      if (narrBusy) nb.setAttribute('disabled', '');
+      const hit = e => { e.stopPropagation(); toggleNarrator(); };
+      nb.addEventListener('click', hit);
+      nb.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); hit(e); }
+      });
+    }
     head.querySelectorAll('.vao-chip').forEach(ch => {
       const pick = () => { filter = ch.dataset.k || null; render(); scrollToNow(); };
       ch.addEventListener('click', pick);
