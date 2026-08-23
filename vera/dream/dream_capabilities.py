@@ -11289,6 +11289,15 @@ _NARRATOR_PROBES: Dict[str, Dict[str, str]] = {
     "loops.list":             {"desc": "specialist/long-horizon loops", "args": "{}"},
     "fabric.dataset_stats":   {"desc": "fabric dataset sizes/growth", "args": "{}"},
     "obs.events":             {"desc": "recent system events (optionally by level)", "args": "{limit:int,level:str}"},
+    # ── External world — the gatherer watches beyond the system too. FRESH feeds
+    #    (news/press/websites/companies/socials/forums) are pre-indexed into the
+    #    gatherer AGENT's knowledge_sources RAG; these probes surface what's
+    #    already indexed/discovered, plus a live pull when it matters.
+    "research.db.search":     {"desc": "search indexed research/news findings (fast)", "args": "{query:str,limit:int}"},
+    "fabric.discover.query":  {"desc": "query discovered/crawled external sources", "args": "{query:str}"},
+    "fabric.discover.history": {"desc": "recent external discovery/crawl runs", "args": "{}"},
+    "web.research":           {"desc": "LIVE web research pull for a topic (SLOW — sparingly)", "args": "{query:str}"},
+    "web.fetch":              {"desc": "fetch one URL's content (a known feed/page)", "args": "{url:str}"},
 }
 
 
@@ -11412,7 +11421,17 @@ async def _narrator_gather(cfg: Dict[str, Any], initial: str) -> str:
         name = str(obj.get("probe") or "")
         res = await _narrator_run_probe(name, obj.get("args") or {})
         collected.append(f"• {name} {json.dumps(obj.get('args') or {}, default=str)} → {res}")
-    # Ran out of budget (or no digest): hand the narrator what we gathered raw.
+    # Robustness: a small model may under-drive the kit (empty JSON, eval_count~1).
+    # If it gathered little, run a DEFAULT essential probe set (fast read-caps, no
+    # LLM) so the narrator ALWAYS gets real system data regardless of gatherer
+    # quality — the model-driven probes are a bonus on top, not a prerequisite.
+    if len(collected) < 2:
+        for _dp, _args in (("perf.scan", {}), ("goals.list", {}),
+                           ("dream.director.status", {}), ("obs.workers", {}),
+                           ("dream.history", {"limit": 3}),
+                           ("research.db.search", {"query": "latest news", "limit": 5})):
+            if _dp in _narrator_available_probes():
+                collected.append(f"• {_dp} → {await _narrator_run_probe(_dp, _args)}")
     return ("TAILORED STATE (assembled from probes):\n" + "\n".join(collected)) if collected \
         else initial
 
