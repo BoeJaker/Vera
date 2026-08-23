@@ -56,3 +56,24 @@ def alloc_db(in_use, pool=DB_POOL):
         if d not in used:
             return d
     return None
+
+
+def capacity_snapshot(used_ports, used_dbs, *, port_pool=PORT_POOL, db_pool=DB_POOL):
+    """Describe bounded pool capacity without reserving or changing anything."""
+    used_port_set = {int(value) for value in (used_ports or [])}
+    used_db_set = {int(value) for value in (used_dbs or [])}
+    free_ports = [value for value in port_pool
+                  if value not in used_port_set and value not in RESERVED_PORTS]
+    free_dbs = [value for value in db_pool if value not in used_db_set]
+    # A sandbox needs both resources, so the smaller free set is authoritative.
+    available = min(len(free_ports), len(free_dbs))
+    return {
+        "available_slots": available,
+        "exhausted": available == 0,
+        "next_port": free_ports[0] if free_ports else None,
+        "next_redis_db": free_dbs[0] if free_dbs else None,
+        "port_capacity": len(port_pool),
+        "redis_db_capacity": len(db_pool),
+        "used_ports": sorted(used_port_set.intersection(port_pool)),
+        "used_redis_dbs": sorted(used_db_set.intersection(db_pool)),
+    }

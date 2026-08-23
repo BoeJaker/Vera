@@ -9,6 +9,26 @@ from typing import Any
 PROTECTED_BRANCHES = {"bleeding-edge", "loop-lab/bleeding-edge-mirror"}
 
 
+def git_worktree_diagnosis(*, worktree_exists: bool, git_ok: bool,
+                           git_error: str = "") -> dict[str, Any]:
+    """Classify a worktree link and return a non-mutating recovery plan."""
+    error = str(git_error or "").strip()
+    if not worktree_exists:
+        return {"valid": False, "state": "missing_worktree", "repair_plan": [],
+                "automatic": False}
+    if git_ok:
+        return {"valid": True, "state": "healthy", "repair_plan": [],
+                "automatic": False}
+    severed = "not a git repository" in error.lower()
+    action = "recreate_preserving_branch" if severed else "manual_git_review"
+    return {
+        "valid": False,
+        "state": "severed" if severed else "git_unreadable",
+        "repair_plan": [{"action": action, "dry_run": True, "mutated": False}],
+        "automatic": False,
+    }
+
+
 def classify_sandbox(*, docker_observable: bool, container_status: str,
                      worktree_exists: bool) -> str:
     """Return one unambiguous lifecycle state from read-only observations."""
@@ -29,7 +49,8 @@ def classify_sandbox(*, docker_observable: bool, container_status: str,
 def lifecycle_preflight(descriptor: Mapping[str, Any], *, action: str,
                         docker_observable: bool, container_status: str,
                         worktree_exists: bool, dirty: bool | None,
-                        merged_to_bleeding_edge: bool | None) -> dict[str, Any]:
+                        merged_to_bleeding_edge: bool | None,
+                        git_worktree_valid: bool | None = None) -> dict[str, Any]:
     """Fail-closed decision for a lifecycle action; never performs mutation."""
     action = str(action or "").strip().lower()
     branch = str(descriptor.get("branch") or "")
@@ -45,6 +66,8 @@ def lifecycle_preflight(descriptor: Mapping[str, Any], *, action: str,
         reasons.append("unknown_action")
     if not docker_observable:
         reasons.append("docker_state_unknown")
+    if git_worktree_valid is False and action != "stop":
+        reasons.append("git_worktree_link_invalid")
     if protected and action in {"stop", "reuse", "remove", "reconcile"}:
         reasons.append("protected_sandbox")
     if action == "restart":
@@ -75,6 +98,14 @@ def lifecycle_preflight(descriptor: Mapping[str, Any], *, action: str,
         "protected": protected,
         "dry_run": True,
         "mutated": False,
+        "audit": {
+            "decision": "allow" if not reasons else "refuse",
+            "action": action,
+            "target": str(descriptor.get("name") or ""),
+            "branch": branch,
+            "state": state,
+            "reasons": list(reasons),
+        },
     }
 
 

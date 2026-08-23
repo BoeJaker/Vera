@@ -276,7 +276,9 @@ def test_preflight_returns_plan_without_mutation(monkeypatch):
         return {"docker_observable": True, "container_status": "",
                 "worktree_exists": True, "head_commit": "abc",
                 "bleeding_edge_commit": "def", "merged_to_bleeding_edge": True,
-                "dirty": False, "state": "stale_descriptor"}
+                "dirty": False, "state": "stale_descriptor",
+                "git_worktree": {"valid": True, "state": "healthy",
+                                 "repair_plan": [], "automatic": False}}
 
     monkeypatch.setattr(evolve, "_primary_ownership", primary)
     monkeypatch.setattr(evolve, "_sandbox_pool", pool)
