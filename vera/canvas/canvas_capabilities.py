@@ -361,6 +361,47 @@ async def cap_canvas_panel_html(trace_id=None):
     return HTMLResponse(html)
 
 
+@capability(
+    "canvas.show", memory="off",
+    http_method="POST", http_path="/canvas/show", http_tags=["canvas", "ui"],
+    description="DISPLAY a canvas to the user IN THEIR CHAT — the agent-facing way "
+                "to put a canvas in front of someone instead of handing them a link. "
+                "It renders as a live artifact card that follows the document, so "
+                "anything you append afterwards appears in place. Inputs: id (str! — "
+                "canvas id), session_id (str — target chat session; falls back to the "
+                "calling turn), title (str — card header), pinned (bool — open it as a "
+                "FLOATING window that stays put while the conversation scrolls, "
+                "instead of sitting inline in the transcript). Output: {ok, shown}.",
+)
+async def cap_canvas_show(id: str = "", session_id: str = "", title: str = "",
+                          pinned: bool = False, trace_id=None) -> Dict[str, Any]:
+    cid = (id or "").strip()
+    if not cid:
+        return {"ok": False, "error": "id is required"}
+    doc = await _load(cid)
+    if not doc:
+        return {"ok": False, "error": f"no such canvas: {cid}"}
+    disp = (CAPABILITY_REGISTRY.get("panel.dispatch") or {}).get("func")
+    if not disp:
+        return {"ok": False, "error": "panel.dispatch unavailable"}
+    try:
+        reply = await disp(
+            session_id=session_id,
+            action="__chat_render__",
+            payload={"kind": "canvas", "canvas_id": cid,
+                     "title": title or doc.get("title") or "Canvas",
+                     "popout": bool(pinned)},
+            timeout_secs=8.0,
+        )
+    except Exception as e:
+        return {"ok": False, "error": f"dispatch failed: {e}"}
+    ok = bool(reply.get("ok")) if isinstance(reply, dict) else False
+    out: Dict[str, Any] = {"ok": ok, "shown": ok, "id": cid, "pinned": bool(pinned)}
+    if not ok and isinstance(reply, dict) and reply.get("error"):
+        out["error"] = reply["error"]
+    return out
+
+
 _ELEMENT_JS = Path(__file__).parent / "canvas_element.js"
 
 

@@ -430,6 +430,11 @@ details.lp-sub:not([open])>summary{opacity:.8}
    render as a standalone <vera-mermaid> with its own natural height. */
 .art-card .art-body>.mm-slot{height:340px}
 .art-pop .art-body>.mm-slot{height:100%}
+/* A canvas is bounded inside the transcript, but FILLS a floating pop-out —
+   the pop-out is position:fixed, so a canvas that keeps updating stays put
+   instead of scrolling away with the conversation. */
+.art-card .art-body>vera-canvas{display:block;--vc-max:340px}
+.art-pop .art-body>vera-canvas{display:block;height:100%;--vc-max:none}
 .art-pop .art-body{display:flex;flex-direction:column}
 
 /* Floating artifact pop-out — draggable window over the whole UI. */
@@ -4598,6 +4603,10 @@ IMPORTANT:
       const h=Math.max(120,Math.min(1600,p.height||380));
       return '<iframe sandbox="allow-scripts allow-forms allow-popups" style="height:'+h+'px" data-art-srcdoc="'+aid+'"></iframe>';
     }
+    // A live canvas — the element follows the document by revision, so an agent
+    // still filling it updates this card (or its pop-out) in place.
+    if(kind==='canvas')
+      return '<vera-canvas fill canvas-id="'+esc(p.canvas_id||p.id||'')+'"></vera-canvas>';
     if(kind==='chart')return '<div style="padding:8px">'+_chartSvg(p.spec||{})+'</div>';
     if(kind==='images')return '<div style="padding:8px">'+_artImgGallery(p.images)+'</div>';
     if(kind==='panel')return '<iframe sandbox="allow-scripts allow-forms allow-same-origin allow-popups" style="height:100%;min-height:320px" data-art-panel="'+esc(p.panel_id||'')+'" data-art-srcdoc="'+aid+'"></iframe>';
@@ -4623,7 +4632,7 @@ IMPORTANT:
       }
     }
   }
-  const _ART_ICONS={mermaid:'⧉',html:'▤',chart:'📊',images:'🖼',panel:'⊞',markdown:'≡'};
+  const _ART_ICONS={mermaid:'⧉',html:'▤',chart:'📊',images:'🖼',panel:'⊞',markdown:'≡',canvas:'🎨'};
   function _artInlineCard(p){
     const aid='a'+(++_artSeq); _ART_STORE[aid]=p;
     const card=document.createElement('div'); card.className='art-card';
@@ -4705,6 +4714,7 @@ IMPORTANT:
       L.push('- Diagrams (ONLY for flows, architectures, processes, sequences, state machines or proportions — never for depicting a scene/place/object, that is an image): emit a ```mermaid fenced block (graph TD/LR, sequenceDiagram, stateDiagram, pie). It renders as an interactive diagram inline — no cap call, and do NOT also narrate the raw code.');
       L.push('- Quick charts: [[cap:render.chart {'+sidArg+'"spec":{"type":"bar","labels":["a","b"],"series":[{"name":"x","values":[1,2]}]}}]].');
       L.push('- Live HTML: a self-contained widget/mini-UI/animation: [[cap:render.html {'+sidArg+'"title":"…","html":"<!doctype html>…","popout":false}]] (popout:true floats it over the UI). After building a panel with ui.panel.create, show it with [[cap:render.screen {'+sidArg+'"panel_id":"…"}]].');
+      L.push('- CANVAS — for work that BUILDS UP over the conversation (a research board, a plan, a running summary) rather than a one-off visual: create with [[cap:canvas.create {"title":"…"}]], add structured blocks with [[cap:canvas.append {"id":"cv_…","type":"markdown|code|diagram|image|note|table","content":{…}}]], then SHOW it to the user with [[cap:canvas.show {'+sidArg+'"id":"cv_…","pinned":true}]] — pinned:true floats it in a fixed window that stays visible while you both keep talking. It updates LIVE, so keep appending to the same canvas instead of re-posting the whole thing.');
     }
     if(run){
       L.push('- Run your own code: after writing a snippet you may execute it IN THIS TURN with [[cap:exec.code.run {"language":"python","code":"…"}]] — the output returns to you automatically next turn; interpret it for the user. For write→test→fix loops use [[cap:exec.code.iterate {"language":"python","code":"…","goal":"…","expect":"substring of correct stdout","max_iterations":3}]].');
@@ -13521,14 +13531,26 @@ Your task: decide what to do next to advance toward the goal.
      The embedded <vera-canvas> follows the document, so anything an agent
      appends to it appears in the chat message in place. */
   async function _slashCanvas(arg){
-    const a=(arg||'').trim();
+    let a=(arg||'').trim();
+    // A trailing pin|float|pop is a MODIFIER, not part of the title/id.
+    const _pin=/(^|\s)(pin|float|pop)$/i.test(a);
+    if(_pin) a=a.replace(/(^|\s)(pin|float|pop)$/i,'').trim();
     const jget=async(u)=>{ const r=await fetch(u,{headers:{Accept:'application/json'}});
                            const j=await r.json(); return (j&&j.content!==undefined)?j.content:j; };
+    // Rendered as an ARTIFACT card, so a canvas gets the same affordances as
+    // every other artifact: "⧉ pop out" floats it into a fixed, draggable
+    // window that stays put while the conversation scrolls, and "⇤ to chat"
+    // puts it back. `pin` skips straight to the floating window.
+    const pin=_pin;
     const embed=(id,note)=>{
-      const wrap=document.createElement('div');wrap.className='mwrap a';
-      wrap.innerHTML=(note?`<div style="font-size:10px;color:var(--dim2);margin-bottom:3px">${esc(note)}</div>`:'')
-        +`<vera-canvas canvas-id="${esc(id)}"></vera-canvas>`;
-      BOX().appendChild(wrap);scroll();
+      const p={kind:'canvas',canvas_id:id,title:note||('canvas '+id)};
+      if(pin){
+        const aid='a'+(++_artSeq); _ART_STORE[aid]=p; _artPop(aid);
+      }else{
+        const m=_mkMsg('agent',note||'canvas','');
+        m.body.appendChild(_artInlineCard(p));
+        BOX().appendChild(m.wrap);scroll();
+      }
       // Let the model refer to it later without re-pasting the whole document.
       HISTORY.push({role:'user',content:`[canvas embedded in chat] id=${id} — `
         +`append to it with canvas.append({id:"${id}", type:…, content:…}); `
