@@ -121,3 +121,33 @@ def test_empty_user_activity_forbids_inventing_it():
     low = out.lower()
     assert "nothing recorded" in low
     assert "do not" in low or "never" in low
+
+
+@pytest.mark.critical
+def test_unattributed_activity_is_summarised_without_cap_names():
+    """Structural guard, because the prompt-level one was not enough.
+
+    Told "docker.ps, exec.ssh.run, ollama.instances [unknown] (not the user)",
+    the quick model still produced "You're checking infrastructure—Docker, SSH,
+    and Ollama instances". It ignored the label and used the verbs. So
+    unattributed activity is summarised by AREA and must carry no cap names.
+    """
+    fn = _load("_narrator_summarise_unattributed")["_narrator_summarise_unattributed"]
+    out = fn(378, ["docker.ps", "exec.ssh.run", "ollama.instances", "ide.git.log"])
+
+    # The count and the areas survive — the narrator still SEES that background
+    # work is happening, and roughly where.
+    assert "378" in out
+    for area in ("docker", "exec", "ollama", "ide"):
+        assert area in out
+    # ...but no capability name it could narrate as an action the user took.
+    for name in ("docker.ps", "exec.ssh.run", "ollama.instances", "ide.git.log"):
+        assert name not in out
+    assert "not the user" in out.lower()
+
+
+@pytest.mark.critical
+def test_unattributed_summary_handles_empty_and_junk():
+    fn = _load("_narrator_summarise_unattributed")["_narrator_summarise_unattributed"]
+    assert "0" in fn(0, [])
+    assert fn(3, [None, "", "bare"])          # must not raise on junk names
