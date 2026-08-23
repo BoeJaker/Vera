@@ -1909,6 +1909,44 @@ def _round_ctx(n: int) -> int:
     return int(n)
 
 
+def _round_ctx_down(n: int) -> int:
+    """Round a fitted window DOWN to a stable step — used when sizing num_ctx to
+    the VRAM headroom, where overshooting spills to CPU, so we must not round up."""
+    for step in (131072, 98304, 65536, 49152, 32768, 24576, 16384, 8192, 4096):
+        if n >= step:
+            return step
+    return _CTX_FLOOR
+
+
+_MODEL_SIZE_CACHE: Dict[str, int] = {}           # "iid::model" -> on-disk (weight) bytes
+
+
+async def ollama_model_disk_size(iid: str, model: str) -> int:
+    """The model's on-disk size (~= resident weight bytes) from /api/tags, cached.
+    Used to size the KV window that fits VRAM: usable_vram - weights = KV budget."""
+    key = f"{iid}::{model}"
+    if key in _MODEL_SIZE_CACHE:
+        return _MODEL_SIZE_CACHE[key]
+    inst = OLLAMA_INSTANCES.get(iid) or {}
+    if not inst.get("url"):
+        return 0
+    try:
+        async with httpx.AsyncClient(verify=_SSL_CTX, timeout=8) as c:
+            r = await c.get(f"{inst['url']}/api/tags")
+            rows = (r.json() or {}).get("models") or []
+        base = (model or "").split(":")[0]
+        for m in rows:
+            nm = str(m.get("name") or "")
+            if nm == model or nm.startswith(model + ":") or nm.split(":")[0] == base:
+                sz = int(m.get("size") or 0)
+                if sz:
+                    _MODEL_SIZE_CACHE[key] = sz
+                return sz
+    except Exception:
+        pass
+    return 0
+
+
 async def note_ctx_residency(iid: str, model: str, requested_ctx: int) -> Optional[dict]:
     """Read /api/ps and report whether `model` is FULLY resident on `iid`.
 
@@ -1944,13 +1982,29 @@ async def note_ctx_residency(iid: str, model: str, requested_ctx: int) -> Option
         if out["spilled"]:
             key = f"{iid}::{model}"
             cur = _NODE_MODEL_CTX.get(key) or requested_ctx or _CTX_STEP * 2
-            new = max(_CTX_FLOOR, (cur - _CTX_STEP))
+            new = max(_CTX_FLOOR, (cur - _CTX_STEP))       # fallback: creep one step
+            # Fit the window to the VRAM HEADROOM in ONE shot instead of creeping
+            # down a step per (slow, wasted) call: ollama fills the GPU then spills
+            # the rest, so `vram` (bytes actually on-GPU) ≈ this card's usable VRAM.
+            # Weights are fixed; the KV cache scales linearly with ctx. From this
+            # one observation — total `size` at `obs_ctx`, of which (size-weights)
+            # is KV — we get the per-token KV cost and solve for the largest window
+            # whose weights+KV seat FULLY, so the next call runs on the GPU, not RAM.
+            obs_ctx = int(out.get("ctx") or requested_ctx or cur) or cur
+            weights = await ollama_model_disk_size(iid, model)
+            if weights and obs_ctx > 0 and size > weights and vram > weights:
+                kv_per_tok = (size - weights) / obs_ctx
+                if kv_per_tok > 0:
+                    fitted = _round_ctx_down(max(_CTX_FLOOR,
+                                                 int((vram * 0.96 - weights) / kv_per_tok)))
+                    if _CTX_FLOOR <= fitted < cur:
+                        new = fitted
             if new < cur:
                 _NODE_MODEL_CTX[key] = new
             log.warning(
                 "OLLAMA CPU SPILL on %s: %s is only %d%% resident (%.2f/%.2f GB) at "
                 "num_ctx=%s — generation runs partly on CPU (~3x slower). "
-                "Reducing this node+model's context to %d.",
+                "Fitting this node+model's context to %d (VRAM headroom).",
                 iid, model, pct, vram / 2**30, size / 2**30, out["ctx"], new)
             try:
                 await emit_event({"type": "ollama.cpu_spill", "instance_id": iid,
