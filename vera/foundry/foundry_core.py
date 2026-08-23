@@ -859,6 +859,11 @@ def pxe_desktop_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=N
         **_regfiles,
         "etc/apk/repositories": repos,
         "etc/local.d/desktop.start": start,
+        # bake the ops menu + SD-writer so they exist from FIRST boot: the XFCE autostart
+        # launches foundry-tui before desktop.start's fetch would finish (execve race ->
+        # blank terminal). Reuse the ops builders' versions.
+        "usr/local/bin/foundry-tui": pxe_ops_apkovl_files(server_ip)["usr/local/bin/foundry-tui"],
+        "usr/local/bin/foundry-sdwrite": pxe_ops_apkovl_files(server_ip)["usr/local/bin/foundry-sdwrite"],
         "etc/inittab": inittab,
         "root/.profile": profile,
         "root/.xinitrc": "exec startxfce4\n",
