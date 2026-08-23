@@ -63,3 +63,12 @@ def test_diskless_autostart_wiring():
         assert "/tmp/foundry-start.lock" in ov[startfile]              # run-once guard
     assert "apk add newt" in pxe_desktop_apkovl_files("10.22.22.25")["etc/local.d/desktop.start"]
     assert "/etc/local.d/*.start" in _FOUNDRY_BOOT                     # launcher runs local.d
+
+
+def test_desktop_bakes_ops_menu():
+    from vera.foundry.foundry_core import pxe_desktop_apkovl_files
+    d = pxe_desktop_apkovl_files("10.22.22.25")
+    # foundry-tui + sd-writer are baked so they exist from first boot (no autostart race)
+    assert "usr/local/bin/foundry-tui" in d
+    assert "usr/local/bin/foundry-sdwrite" in d
+    assert d["usr/local/bin/foundry-tui"].startswith("#!/bin/sh")
