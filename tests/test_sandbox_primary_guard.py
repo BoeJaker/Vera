@@ -259,3 +259,36 @@ def test_primary_down_dry_run_refuses_missing_descriptor(monkeypatch):
     assert result == {"error": "no primary sandbox descriptor",
                       "code": "sandbox_not_found", "dry_run": True,
                       "mutated": False}
+
+
+def test_preflight_returns_plan_without_mutation(monkeypatch):
+    async def primary():
+        return {"branch": "feat/landed", "worktree": "/wt/landed",
+                "port": 8998, "owner": "codex", "session_id": "session-1"}, "exited"
+
+    async def pool():
+        return {}
+
+    async def pinned():
+        return set()
+
+    async def observation(_target):
+        return {"docker_observable": True, "container_status": "",
+                "worktree_exists": True, "head_commit": "abc",
+                "bleeding_edge_commit": "def", "merged_to_bleeding_edge": True,
+                "dirty": False, "state": "stale_descriptor"}
+
+    monkeypatch.setattr(evolve, "_primary_ownership", primary)
+    monkeypatch.setattr(evolve, "_sandbox_pool", pool)
+    monkeypatch.setattr(evolve, "_sandbox_pinned", pinned)
+    monkeypatch.setattr(evolve, "_sandbox_observation", observation)
+
+    result = asyncio.run(evolve.evolve_sandbox_preflight.__wrapped__(
+        action="reconcile"))
+
+    assert result["allowed"] is True
+    assert result["dry_run"] is True
+    assert result["mutated"] is False
+    assert result["sandbox"]["owner"] == "codex"
+    assert result["plan"] == [{"action": "reconcile", "target": "vera-dev",
+                               "branch": "feat/landed"}]
