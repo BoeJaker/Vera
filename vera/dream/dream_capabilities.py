@@ -11501,11 +11501,27 @@ async def _narrator_detect_intent(cfg: Dict[str, Any], force: bool = False) -> D
     if gen:
         _job, _pgpu, _rm = await _narrator_fast_routing(cfg)
         model = cfg.get("narrator_intent_model") or _rm
+        # Grounding rules, learned from a live run: given free rein the model
+        # confidently invented a "Kubernetes-based ML pipeline" and probes like
+        # `kubernetes.pods.describe` for a system that runs neither. So it is told
+        # explicitly to use ONLY vocabulary from the signals, and `probes` is
+        # constrained to the real kit (and filtered again below).
+        _kit = sorted(_narrator_available_probes().keys())
         sys_p = (
             "You infer what a developer is CURRENTLY working on from real system "
             "signals. Be concrete and specific — name the actual subsystem/feature, "
-            "not a category. If the signals genuinely don't say, return low "
-            "confidence rather than guessing. Read-only inference; invent nothing.")
+            "not a category.\n"
+            "GROUNDING RULES (these matter more than sounding confident):\n"
+            "- Use ONLY names, tools and technologies that literally appear in the "
+            "signals below. Never introduce one that does not.\n"
+            "- If the signals genuinely don't say what they're doing, say so and "
+            "return confidence 'low'. A vague honest answer beats a specific "
+            "invented one.\n"
+            "- 'evidence' must quote or name the actual signal that decided it.\n"
+            "- 'probes' must be chosen from the PROBE KIT listed below; if none fit, "
+            "return an empty list.")
+        prompt_kit = ("\n## PROBE KIT (the only valid values for \"probes\")\n"
+                      + ", ".join(_kit) + "\n\n") if _kit else ""
         prompt = (
             "SIGNALS\n\n"
             f"User idle: {sig.get('idle')} minutes\n\n"
@@ -11516,13 +11532,15 @@ async def _narrator_detect_intent(cfg: Dict[str, Any], force: bool = False) -> D
                + "\n".join(sig.get("caps") or []) + "\n\n" if sig.get("caps") else "")
             + ("## Live agentic loop\n" + sig["loops"] + "\n\n" if sig.get("loops") else "")
             + ("## Active goals\n" + sig["goals"] + "\n\n" if sig.get("goals") else "")
+            + prompt_kit
             + 'Respond ONLY JSON: {"focus":"<what they are working on, one specific '
-              'phrase>","topics":["<up to 4 concrete topics/subsystems>"],'
+              'phrase, using only vocabulary from the signals>","topics":["<up to 4 '
+              'concrete topics/subsystems named in the signals>"],'
               '"mode":"<building|debugging|researching|operating|planning|idle>",'
               '"confidence":"<high|medium|low>","evidence":"<the signal that decided '
-              'it, one line>","probes":["<up to 4 cap names from the signals worth '
-              'probing for this intent>"],"queries":["<up to 3 search queries that '
-              'would surface genuinely relevant outside material>"]}')
+              'it, one line>","probes":["<up to 4 names from the PROBE KIT above>"],'
+              '"queries":["<up to 3 search queries that would surface genuinely '
+              'relevant outside material>"]}')
         try:
             raw = await gen(prompt, system=sys_p, json_mode=True, prefer_gpu=_pgpu,
                             job_type=_job, model=model, timeout=240)
@@ -11535,6 +11553,13 @@ async def _narrator_detect_intent(cfg: Dict[str, Any], force: bool = False) -> D
 
     if not intent:
         return {}
+    # Never STORE a probe that doesn't exist. The gather already filters at use
+    # time, but an intent carrying invented cap names is misleading wherever it
+    # is displayed (status, the intent cap, the UI) — so drop them at the source.
+    if intent.get("probes"):
+        _kit_now = _narrator_available_probes()
+        intent["probes"] = [p for p in (intent.get("probes") or [])
+                            if str(p).strip() in _kit_now]
     intent["ts"] = now_iso()
     intent.setdefault("mode", "")
     intent.setdefault("confidence", "low")
