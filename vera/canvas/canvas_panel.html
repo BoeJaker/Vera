@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Vera Canvas</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css"/>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root{
+    --bg0:#0d0f12; --bg1:#15181d; --bg2:#1c2026; --bd:#2a2f37; --bd2:#39414c;
+    --tx:#dce1e8; --tx2:#9aa4b2; --dim:#6b7480; --acc:#5a9e8f; --acc2:#a8c87a;
+    --acc3:#c79a5a; --acc4:#a07ec1; --err:#c96a5a; --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg0);color:var(--tx);font:13px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;height:100vh;overflow:hidden}
+  #wrap{display:flex;height:100vh}
+  /* ── Sidebar ── */
+  #side{flex:0 0 230px;background:var(--bg1);border-right:1px solid var(--bd);display:flex;flex-direction:column;min-height:0}
+  #side h1{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--acc2);margin:0;padding:12px 14px 8px}
+  #new{margin:0 12px 8px;padding:7px;background:var(--acc);color:#06120f;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px}
+  #new:hover{filter:brightness(1.08)}
+  #list{flex:1 1 auto;overflow-y:auto;padding:0 8px 12px}
+  .citem{padding:8px 10px;border-radius:6px;cursor:pointer;margin-bottom:3px;border:1px solid transparent}
+  .citem:hover{background:var(--bg2)}
+  .citem.on{background:var(--bg2);border-color:var(--bd2)}
+  .citem .t{font-weight:600;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .citem .m{font-size:10.5px;color:var(--dim);margin-top:2px;display:flex;gap:6px}
+  .mode-dynamic{color:var(--acc3)} .mode-static{color:var(--acc4)}
+  /* ── Main ── */
+  #main{flex:1 1 auto;display:flex;flex-direction:column;min-width:0;min-height:0}
+  #hdr{flex:0 0 auto;padding:12px 18px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:12px}
+  #hdr .title{font-size:16px;font-weight:650}
+  #hdr .badge{font-size:10px;text-transform:uppercase;letter-spacing:.05em;padding:2px 8px;border-radius:10px;border:1px solid var(--bd2)}
+  #hdr .topic{color:var(--tx2);font-size:12px}
+  #hdr .live{margin-left:auto;font-size:11px;color:var(--dim);display:flex;align-items:center;gap:6px}
+  #hdr .dot{width:7px;height:7px;border-radius:50%;background:var(--acc);animation:pulse 2s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  #board{flex:1 1 auto;overflow-y:auto;padding:16px 18px 60px;max-width:1000px;width:100%}
+  #empty{color:var(--dim);text-align:center;margin-top:80px;font-size:14px}
+  /* ── Blocks ── */
+  .blk{background:var(--bg1);border:1px solid var(--bd);border-radius:8px;margin-bottom:12px;overflow:hidden;position:relative}
+  .blk-h{display:flex;align-items:center;gap:8px;padding:5px 10px;border-bottom:1px solid var(--bd);font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
+  .blk-type{color:var(--acc2)} .blk-ts{margin-left:auto;text-transform:none;letter-spacing:0}
+  .blk-body{padding:12px 14px}
+  .blk-body.tight{padding:0}
+  .md h1,.md h2,.md h3{margin:.4em 0 .3em;line-height:1.25} .md h1{font-size:1.5em} .md h2{font-size:1.28em} .md h3{font-size:1.12em}
+  .md p{margin:.5em 0} .md code{background:var(--bg2);padding:1px 5px;border-radius:4px;font-family:var(--mono);font-size:.92em}
+  .md pre{background:var(--bg2);padding:10px;border-radius:6px;overflow-x:auto} .md a{color:var(--acc)}
+  .md ul,.md ol{margin:.4em 0;padding-left:1.4em} .md blockquote{border-left:3px solid var(--bd2);margin:.5em 0;padding-left:12px;color:var(--tx2)}
+  pre.code{margin:0;padding:12px 14px;overflow-x:auto;font-family:var(--mono);font-size:12px;line-height:1.5}
+  .code-lang{font-family:var(--mono);color:var(--acc3)}
+  .lint-ok{color:var(--acc)} .lint-err{color:var(--err)}
+  .mermaid{background:var(--bg2);border-radius:6px;padding:12px;text-align:center}
+  .blk img{max-width:100%;border-radius:6px;display:block}
+  .cap{color:var(--tx2);font-size:11px;margin-top:6px;text-align:center}
+  .note{background:rgba(199,154,90,.08);border-left:3px solid var(--acc3);padding:10px 12px;border-radius:0 6px 6px 0;color:var(--tx2)}
+  table.data{border-collapse:collapse;width:100%;font-size:12px} table.data th,table.data td{border:1px solid var(--bd);padding:5px 9px;text-align:left} table.data th{background:var(--bg2);color:var(--acc2)}
+  pre.session{margin:0;padding:12px 14px;background:#0a0c0f;color:#9fe0c0;font-family:var(--mono);font-size:12px;overflow-x:auto;white-space:pre-wrap}
+  .session-cmd{color:var(--acc);font-family:var(--mono);font-size:11.5px;padding:6px 14px;border-bottom:1px solid var(--bd)}
+  .sched{display:flex;align-items:center;gap:12px;padding:12px 14px}
+  .sched .when{font-family:var(--mono);color:var(--acc3);font-weight:600;white-space:nowrap}
+  .sched .what{flex:1}
+  .widget-ph{padding:16px;color:var(--dim);font-style:italic;text-align:center}
+  .err{color:var(--err);padding:10px 14px;font-family:var(--mono);font-size:12px}
+  /* ── Editing ── */
+  .blk-ctl{display:none;gap:2px;margin-left:6px}
+  .blk:hover .blk-ctl{display:inline-flex}
+  .blk-ctl button{background:var(--bg2);border:1px solid var(--bd2);color:var(--tx2);border-radius:4px;cursor:pointer;font-size:11px;padding:0 6px;line-height:1.6}
+  .blk-ctl button:hover{color:var(--tx);border-color:var(--acc)}
+  .blk-editor{padding:10px 12px}
+  .blk-editor textarea{width:100%;min-height:96px;background:var(--bg0);color:var(--tx);border:1px solid var(--bd2);border-radius:6px;padding:8px;font-family:var(--mono);font-size:12px;resize:vertical;display:block}
+  .blk-editor input.k{background:var(--bg0);color:var(--tx);border:1px solid var(--bd2);border-radius:5px;padding:4px 8px;font-family:var(--mono);font-size:12px;margin-bottom:6px;width:180px}
+  .ed-row{display:flex;gap:6px;margin-top:8px}
+  .ed-row button{padding:5px 12px;border-radius:6px;border:none;cursor:pointer;font-weight:600;font-size:12px}
+  .ed-save{background:var(--acc);color:#06120f} .ed-cancel{background:var(--bg2);color:var(--tx2);border:1px solid var(--bd2)}
+  .add-bar{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 40px;align-items:center}
+  .add-bar>span{color:var(--dim);font-size:11px;margin-right:4px}
+  .add-bar button{background:var(--bg1);border:1px dashed var(--bd2);color:var(--tx2);border-radius:6px;cursor:pointer;font-size:12px;padding:5px 11px}
+  .add-bar button:hover{color:var(--tx);border-color:var(--acc);border-style:solid}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="side">
+    <h1>🎨 Canvases</h1>
+    <button id="new">+ New canvas</button>
+    <div id="list"></div>
+  </div>
+  <div id="main">
+    <div id="hdr"><span class="title" id="ct">—</span><span class="badge" id="cb"></span><span class="topic" id="cp"></span>
+      <span class="live" id="clive" style="display:none"><span class="dot"></span>live</span></div>
+    <div id="board"><div id="empty">Select or create a canvas.</div></div>
+  </div>
+</div>
+<script>
+const BASE = location.origin;
+let CURRENT = null, POLL = null, LAST_SIG = "", EDITING = null, LAST_DOC = null;
+const PRIMARY = {markdown:'md', note:'text', code:'code', diagram:'mermaid', html:'html', image:'url'};
+const ADD_TYPES = ['note','markdown','code','diagram','image','table','html'];
+
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+async function call(name, args){
+  try{
+    const r = await fetch(BASE+'/mcp/call',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name,arguments:args||{},caller_kind:'user'})});
+    const j = await r.json();
+    return j.content!==undefined ? j.content : j;
+  }catch(e){ return {error:String(e)}; }
+}
+
+/* ── Sidebar ── */
+async function loadList(){
+  const r = await call('canvas.list',{limit:40});
+  const list = document.getElementById('list'); list.innerHTML='';
+  (r.canvases||[]).forEach(c=>{
+    const d = document.createElement('div');
+    d.className = 'citem'+(c.id===CURRENT?' on':'');
+    d.innerHTML = `<div class="t">${esc(c.title||'Untitled')}</div>
+      <div class="m"><span class="mode-${c.mode}">${c.mode}</span><span>${c.blocks} blk</span></div>`;
+    d.onclick = ()=>openCanvas(c.id);
+    list.appendChild(d);
+  });
+}
+document.getElementById('new').onclick = async ()=>{
+  const title = prompt('Canvas title:','Untitled canvas'); if(title===null) return;
+  const mode = confirm('OK = DYNAMIC (tracks a live topic)\\nCancel = STATIC (working area)') ? 'dynamic':'static';
+  const topic = mode==='dynamic' ? (prompt('Topic to track:','')||'') : '';
+  const r = await call('canvas.create',{title,mode,topic});
+  if(r.id){ await loadList(); openCanvas(r.id); }
+};
+
+/* ── Render ── */
+function fmtTs(ts){ try{ return new Date(ts).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}); }catch(e){ return ''; } }
+
+function renderBlock(b){
+  const c = b.content||{}; let body='', tight=false;
+  switch(b.type){
+    case 'markdown':
+      body = `<div class="md">${window.marked?marked.parse(c.md||''):esc(c.md||'')}</div>`; break;
+    case 'code':{
+      const code = esc(c.code||''); tight=true;
+      body = `<pre class="code"><code>${code}</code></pre>`; break; }
+    case 'diagram':
+      tight=true; body = `<div class="mermaid">${esc(c.mermaid||'')}</div>`; break;
+    case 'image':
+      tight=true; body = `<img src="${esc(c.url||'')}" alt="${esc(c.alt||'')}"/>${c.caption?`<div class="cap">${esc(c.caption)}</div>`:''}`; break;
+    case 'note':
+      tight=true; body = `<div class="note">${esc(c.text||'')}${c.author?` — <em>${esc(c.author)}</em>`:''}</div>`; break;
+    case 'table':{
+      tight=true; const cols=c.columns||[], rows=c.rows||[];
+      body = `<div style="overflow-x:auto"><table class="data"><thead><tr>${cols.map(x=>`<th>${esc(x)}</th>`).join('')}</tr></thead>
+        <tbody>${rows.map(r=>`<tr>${(r||[]).map(x=>`<td>${esc(x)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>${c.caption?`<div class="cap">${esc(c.caption)}</div>`:''}`; break; }
+    case 'session':
+      tight=true; body = `${c.command?`<div class="session-cmd">$ ${esc(c.command)}${c.host?`  <span style="color:var(--dim)">@${esc(c.host)}</span>`:''}</div>`:''}<pre class="session">${esc(c.output||'(waiting…)')}</pre>`; break;
+    case 'schedule':
+      tight=true; body = `<div class="sched"><span class="when">🕑 ${esc(c.when||'')}</span><span class="what">${esc(c.what||'')}</span></div>`; break;
+    case 'widget':
+      tight=true; body = `<div class="widget-ph" data-widget="${esc(c.widget||'')}">⊞ widget: ${esc(c.widget||'?')}${c.title?` — ${esc(c.title)}`:''}<br/><span style="font-size:11px">(panel-bridge embed — wiring in progress)</span></div>`; break;
+    case 'html':
+      body = c.html||''; break;
+    default:
+      body = `<div class="err">unknown block type: ${esc(b.type)}</div>`;
+  }
+  const div = document.createElement('div');
+  div.className='blk'; div.dataset.id=b.id;
+  div.innerHTML = `<div class="blk-h"><span class="blk-type">${esc(b.type)}</span>
+    ${b.type==='code'&&c.lang?`<span class="code-lang">${esc(c.lang)}</span>`:''}
+    <span class="blk-ts">${fmtTs(b.ts)}</span>
+    <span class="blk-ctl">
+      <button data-act="edit" data-id="${b.id}" title="Edit">✎</button>
+      <button data-act="up" data-id="${b.id}" title="Move up">↑</button>
+      <button data-act="down" data-id="${b.id}" title="Move down">↓</button>
+      <button data-act="del" data-id="${b.id}" title="Delete">✕</button>
+    </span></div>
+    <div class="blk-body${tight?' tight':''}">${body}</div>`;
+  return div;
+}
+
+async function renderCanvas(doc, changed){
+  document.getElementById('ct').textContent = doc.title||'Untitled';
+  const bd = document.getElementById('cb'); bd.textContent = doc.mode; bd.className='badge mode-'+doc.mode;
+  document.getElementById('cp').textContent = doc.topic||'';
+  document.getElementById('clive').style.display = doc.mode==='dynamic' ? 'flex':'none';
+  const board = document.getElementById('board');
+  const blocks = (doc.blocks||[]).slice().sort((a,b)=>(a.layout?.order??0)-(b.layout?.order??0));
+  board.innerHTML = blocks.length ? '' : '<div id="empty" style="margin-top:20px">Empty canvas — add a block below, or let an agent fill it.</div>';
+  blocks.forEach(b=>board.appendChild(renderBlock(b)));
+  const addBar = document.createElement('div');
+  addBar.className = 'add-bar';
+  addBar.innerHTML = '<span>+ add block:</span>' +
+    ADD_TYPES.map(t=>`<button data-act="add" data-type="${t}">${t}</button>`).join('');
+  board.appendChild(addBar);
+  // Highlight code + render mermaid after DOM insert.
+  if(window.hljs) board.querySelectorAll('pre.code code').forEach(el=>{try{hljs.highlightElement(el);}catch(e){}});
+  if(window.mermaid){ try{ await mermaid.run({nodes:board.querySelectorAll('.mermaid')}); }catch(e){} }
+}
+
+function sig(doc){ return (doc.updated||'')+':'+((doc.blocks||[]).length); }
+
+async function refresh(){
+  if(!CURRENT || EDITING) return;   // don't clobber an open editor
+  const doc = await call('canvas.get',{id:CURRENT});
+  if(doc.error){ document.getElementById('board').innerHTML=`<div class="err">${esc(doc.error)}</div>`; return; }
+  LAST_DOC = doc;
+  const s = sig(doc);
+  if(s!==LAST_SIG){ LAST_SIG=s; await renderCanvas(doc); loadList(); }
+}
+
+async function openCanvas(id){
+  CURRENT = id; LAST_SIG='';
+  document.querySelectorAll('.citem').forEach(e=>e.classList.remove('on'));
+  await refresh();
+  if(POLL) clearInterval(POLL);
+  POLL = setInterval(refresh, 2500);   // live update via light polling
+  loadList();
+}
+
+/* ── Editing (add / edit / move / delete) — the user can co-edit the canvas ── */
+function editorHtml(type, content){
+  content = content||{};
+  const isJson = !(type in PRIMARY);
+  const val = isJson ? JSON.stringify(content, null, 2) : (content[PRIMARY[type]]||'');
+  const langRow = type==='code'
+    ? `<input class="k" id="ed-lang" placeholder="lang (e.g. python)" value="${esc(content.lang||'')}"/><br/>` : '';
+  const ph = isJson ? 'JSON content for this block…' : (PRIMARY[type]+' …');
+  return `<div class="blk-editor">${langRow}<textarea id="ed-ta" placeholder="${esc(ph)}">${esc(val)}</textarea>
+    <div class="ed-row"><button class="ed-save" data-act="save">Save</button>
+      <button class="ed-cancel" data-act="cancel">Cancel</button></div></div>`;
+}
+function collectEditor(type){
+  const ta = document.getElementById('ed-ta'); if(!ta) return undefined;
+  const raw = ta.value;
+  if(!(type in PRIMARY)){
+    try{ return JSON.parse(raw||'{}'); }catch(e){ alert('Invalid JSON: '+e.message); return undefined; }
+  }
+  const c = {}; c[PRIMARY[type]] = raw;
+  if(type==='code'){ const l=document.getElementById('ed-lang'); if(l&&l.value) c.lang=l.value; }
+  return c;
+}
+function startEdit(id){
+  const b = (LAST_DOC&&LAST_DOC.blocks||[]).find(x=>x.id===id); if(!b) return;
+  EDITING = {id, type:b.type};
+  const body = document.querySelector('.blk[data-id="'+id+'"] .blk-body');
+  if(body) body.outerHTML = editorHtml(b.type, b.content);
+  const ta = document.getElementById('ed-ta'); if(ta) ta.focus();
+}
+function startAdd(type){
+  EDITING = {id:'new', type};
+  const board = document.getElementById('board');
+  const bar = board.querySelector('.add-bar');
+  const holder = document.createElement('div');
+  holder.className='blk'; holder.dataset.id='new';
+  holder.innerHTML = '<div class="blk-h"><span class="blk-type">'+esc(type)+' · new</span></div>'+editorHtml(type,{});
+  board.insertBefore(holder, bar);
+  const ta = document.getElementById('ed-ta'); if(ta){ ta.focus(); ta.scrollIntoView({behavior:'smooth',block:'center'}); }
+}
+async function saveEdit(){
+  if(!EDITING) return;
+  const content = collectEditor(EDITING.type);
+  if(content===undefined) return;
+  const ed = EDITING; EDITING = null;
+  if(ed.id==='new') await call('canvas.append',{id:CURRENT, type:ed.type, content});
+  else await call('canvas.update',{id:CURRENT, block_id:ed.id, content});
+  LAST_SIG=''; await refresh();
+}
+function cancelEdit(){ EDITING=null; LAST_SIG=''; refresh(); }
+async function moveBlk(id, dir){
+  const blocks = (LAST_DOC&&LAST_DOC.blocks||[]).slice().sort((a,b)=>((a.layout&&a.layout.order)||0)-((b.layout&&b.layout.order)||0));
+  const i = blocks.findIndex(b=>b.id===id); if(i<0) return;
+  const j = dir==='up'? i-1 : i+1; if(j<0||j>=blocks.length) return;
+  await call('canvas.move',{id:CURRENT, block_id:id, order:j});
+  LAST_SIG=''; await refresh();
+}
+async function delBlk(id){
+  if(!confirm('Delete this block?')) return;
+  await call('canvas.remove',{id:CURRENT, block_id:id});
+  LAST_SIG=''; await refresh();
+}
+document.getElementById('board').addEventListener('click', e=>{
+  const btn = e.target.closest('button[data-act]'); if(!btn) return;
+  const a = btn.dataset.act, id = btn.dataset.id;
+  if(a==='edit') startEdit(id);
+  else if(a==='up') moveBlk(id,'up');
+  else if(a==='down') moveBlk(id,'down');
+  else if(a==='del') delBlk(id);
+  else if(a==='save') saveEdit();
+  else if(a==='cancel') cancelEdit();
+  else if(a==='add') startAdd(btn.dataset.type);
+});
+
+if(window.mermaid) mermaid.initialize({startOnLoad:false, theme:'dark', securityLevel:'loose'});
+loadList();
+// Deep-link: /canvas/panel?canvas=<id> opens a specific canvas (so an agent can
+// hand the user a link straight to the whiteboard it just built).
+const _q = new URLSearchParams(location.search).get('canvas');
+if(_q) openCanvas(_q);
+// Allow the host harness to focus a canvas via postMessage {canvas:'<id>'}.
+window.addEventListener('message', e=>{ if(e.data && e.data.canvas) openCanvas(e.data.canvas); });
+</script>
+</body>
+</html>
