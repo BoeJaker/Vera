@@ -10326,6 +10326,7 @@ DIRECTOR_JOURNAL_ID  = "director"                     # dream journal its though
 # ── System Narrator (a decoupled MODE of the same loop) ──────────────────────
 KEY_NARRATOR_LAST     = "vera:system:narrator:last"      # last narrative JSON
 KEY_NARRATOR_THOUGHTS = "vera:system:narrator:thoughts"  # LIST of recent narrative JSON (rolling)
+KEY_NARRATOR_INTENT   = "vera:system:narrator:intent"    # last detected USER INTENT JSON
 NARRATOR_JOURNAL_ID   = "narrator"                        # dream journal the narrative logs to
 
 DIRECTOR_DEFAULTS: Dict[str, Any] = {
@@ -10403,6 +10404,18 @@ DIRECTOR_DEFAULTS: Dict[str, Any] = {
     "narrator_gpu_model":       "",
     # ── Delivery channels for narratives + quick takes: any of chat|telegram|speak
     "narrator_deliver":         [],
+    # ── USER INTENT: what the human is actually working on right now ───────────
+    # Detected from real signals (recent caps, chat, goals/projects, open loops),
+    # then used two ways: it PULLS relevant context in (memory, agent RAG, goals)
+    # and it STEERS the gather (which probes run, what the sources are queried
+    # for). Without it the narrator narrates whatever is loudest rather than what
+    # the user cares about.
+    "narrator_intent_enabled":  True,
+    "narrator_intent_model":    "",      # "" → the fast-tier default (resident) model
+    "narrator_intent_gap_min":  8.0,     # re-detect at most this often
+    "narrator_intent_context":  True,    # pull intent-relevant context into the state
+    "narrator_intent_steer":    True,    # let intent bias the probe kit + source queries
+    "narrator_intent_ttl_min":  45.0,    # intent older than this is treated as stale
 }
 
 _DIRECTOR_TASK: Optional[asyncio.Task] = None
@@ -11375,6 +11388,284 @@ async def _narrator_run_probe(name: str, args: Dict[str, Any]) -> str:
     return txt[:1200]
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  USER INTENT — what the human is actually working on right now
+#
+#  Ambient narration is only useful if it is ABOUT something the user cares
+#  about. Intent is the axis that makes that possible: detect it from real
+#  signals, then (a) PULL relevant context in and (b) STEER the gather.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Cap-name prefix → the working area it implies. Used by the heuristic fallback
+# (and to summarise the signal set for the model) so intent detection still
+# produces something real when no LLM is reachable.
+_INTENT_AREAS: Dict[str, str] = {
+    "code.": "writing code", "ide.": "writing code", "evolve.": "developing Vera itself",
+    "dag.": "running agentic loops", "loops.": "running agentic loops",
+    "canvas.": "working on a canvas", "notebook.": "working in a notebook",
+    "markets.": "markets / trading research", "biz.": "business operations",
+    "docker.": "infrastructure", "proxmox.": "infrastructure", "nodes.": "infrastructure",
+    "sysmon.": "infrastructure", "exec.": "infrastructure", "perf.": "diagnosing performance",
+    "obs.": "diagnosing the system", "mesh.": "mesh / hardware",
+    "web.": "research", "research.": "research", "memory.": "recall / memory",
+    "fabric.": "data work", "goals.": "planning", "sched.": "planning",
+    "image.": "image generation", "podcast.": "media production",
+    "agent.": "agent configuration", "dream.": "the dream system",
+    "system.narrator": "the narrator itself",
+}
+
+
+async def _narrator_intent_signals(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """The REAL evidence intent is inferred from — never invented. Recent cap
+    calls, the user's recent chat turns, active goals/projects, live loops."""
+    sig: Dict[str, Any] = {"caps": [], "chat": [], "goals": "", "loops": "", "idle": 0.0}
+    try:
+        sig["idle"] = round(await _idle_minutes(), 1)
+    except Exception:
+        pass
+    try:
+        lines, latest_sid = await _director_recent_activity(limit=25)
+        sig["caps"] = lines[:25]
+        if latest_sid:
+            snap = await _director_loop_snapshot(latest_sid)
+            sig["loops"] = (snap or {}).get("summary", "")[:600]
+    except Exception:
+        pass
+    # What the user actually SAID is the strongest intent signal. The director's
+    # conversation log is the one store of the user's own words that is always
+    # present (there is no chat-history capability to read).
+    try:
+        for m in await _director_convlog(8):
+            if not isinstance(m, dict):
+                continue
+            if str(m.get("role") or "").lower() not in ("user", "human"):
+                continue
+            txt = str(m.get("text") or m.get("content") or "").strip()
+            if txt:
+                sig["chat"].append(txt[:300])
+    except Exception:
+        pass
+    try:
+        briefing = await _director_briefing()
+        sig["goals"] = (briefing.get("goals") or "")[:600]
+    except Exception:
+        pass
+    return sig
+
+
+def _narrator_intent_heuristic(sig: Dict[str, Any]) -> Dict[str, Any]:
+    """Intent WITHOUT an LLM — cap-prefix frequency over the recent activity.
+    Deliberately coarse, but it is grounded in what actually ran, so the narrator
+    is never left with nothing when a node is slow or the model returns junk."""
+    counts: Dict[str, int] = {}
+    for line in sig.get("caps") or []:
+        name = str(line).lstrip("- ").split(" ")[0]
+        for pfx, area in _INTENT_AREAS.items():
+            if name.startswith(pfx):
+                counts[area] = counts.get(area, 0) + 1
+                break
+    if not counts:
+        return {}
+    ranked = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
+    focus = ranked[0][0]
+    return {
+        "focus": focus,
+        "topics": [a for a, _ in ranked[:3]],
+        "confidence": "low",
+        "evidence": f"{ranked[0][1]} of the last {len(sig.get('caps') or [])} cap calls",
+        "source": "heuristic",
+    }
+
+
+async def _narrator_detect_intent(cfg: Dict[str, Any], force: bool = False) -> Dict[str, Any]:
+    """Detect what the user is working on. Fast tier + strict JSON, with the
+    heuristic above as the floor. Stored so every narrator tier can read it."""
+    r = _redis()
+    if not force:
+        try:
+            gap = float(cfg.get("narrator_intent_gap_min", 8.0) or 0) * 60.0
+            cur = await _narrator_intent(cfg)
+            if cur and gap > 0:
+                age = (datetime.now(timezone.utc)
+                       - datetime.fromisoformat(str(cur.get("ts")).replace("Z", "+00:00"))
+                       ).total_seconds()
+                if age < gap:
+                    return cur
+        except Exception:
+            pass
+
+    sig = await _narrator_intent_signals(cfg)
+    intent = _narrator_intent_heuristic(sig)          # the floor, always computed
+
+    gen = getattr(_orch, "ollama_generate", None)
+    if gen:
+        _job, _pgpu, _rm = await _narrator_fast_routing(cfg)
+        model = cfg.get("narrator_intent_model") or _rm
+        sys_p = (
+            "You infer what a developer is CURRENTLY working on from real system "
+            "signals. Be concrete and specific — name the actual subsystem/feature, "
+            "not a category. If the signals genuinely don't say, return low "
+            "confidence rather than guessing. Read-only inference; invent nothing.")
+        prompt = (
+            "SIGNALS\n\n"
+            f"User idle: {sig.get('idle')} minutes\n\n"
+            + ("## Their recent messages (strongest signal)\n"
+               + "\n".join("- " + c for c in sig.get("chat") or []) + "\n\n"
+               if sig.get("chat") else "")
+            + ("## Recent capability calls (newest first)\n"
+               + "\n".join(sig.get("caps") or []) + "\n\n" if sig.get("caps") else "")
+            + ("## Live agentic loop\n" + sig["loops"] + "\n\n" if sig.get("loops") else "")
+            + ("## Active goals\n" + sig["goals"] + "\n\n" if sig.get("goals") else "")
+            + 'Respond ONLY JSON: {"focus":"<what they are working on, one specific '
+              'phrase>","topics":["<up to 4 concrete topics/subsystems>"],'
+              '"mode":"<building|debugging|researching|operating|planning|idle>",'
+              '"confidence":"<high|medium|low>","evidence":"<the signal that decided '
+              'it, one line>","probes":["<up to 4 cap names from the signals worth '
+              'probing for this intent>"],"queries":["<up to 3 search queries that '
+              'would surface genuinely relevant outside material>"]}')
+        try:
+            raw = await gen(prompt, system=sys_p, json_mode=True, prefer_gpu=_pgpu,
+                            job_type=_job, model=model, timeout=240)
+            obj = _narrator_parse_json(raw)
+            if obj.get("focus"):
+                obj["source"] = "model"
+                intent = {**intent, **obj}
+        except Exception as e:
+            log.debug("narrator intent gen: %s", e)
+
+    if not intent:
+        return {}
+    intent["ts"] = now_iso()
+    intent.setdefault("mode", "")
+    intent.setdefault("confidence", "low")
+    if r:
+        try:
+            await r.set(KEY_NARRATOR_INTENT, json.dumps(intent))
+        except Exception:
+            pass
+    try:
+        await emit_event({"type": "dream.narrator.intent",
+                          "focus": intent.get("focus", ""),
+                          "mode": intent.get("mode", ""),
+                          "confidence": intent.get("confidence", "")})
+    except Exception:
+        pass
+    return intent
+
+
+async def _narrator_intent(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """The stored intent, or {} when absent or older than narrator_intent_ttl_min.
+    Stale intent is worse than none — it steers the narrator at yesterday's work."""
+    r = _redis()
+    if not r:
+        return {}
+    try:
+        raw = await r.get(KEY_NARRATOR_INTENT)
+        if not raw:
+            return {}
+        obj = json.loads(_rd(raw))
+    except Exception:
+        return {}
+    try:
+        ttl = float(cfg.get("narrator_intent_ttl_min", 45.0) or 0) * 60.0
+        if ttl > 0:
+            age = (datetime.now(timezone.utc)
+                   - datetime.fromisoformat(str(obj.get("ts")).replace("Z", "+00:00"))
+                   ).total_seconds()
+            if age > ttl:
+                return {}
+    except Exception:
+        pass
+    return obj if isinstance(obj, dict) else {}
+
+
+def _narrator_intent_block(intent: Dict[str, Any]) -> str:
+    """The intent rendered for a prompt. Empty string when there is no intent, so
+    callers can concatenate it unconditionally."""
+    if not intent or not intent.get("focus"):
+        return ""
+    topics = ", ".join(str(t) for t in (intent.get("topics") or [])[:4])
+    return (
+        "## What the user is working on RIGHT NOW (detected intent)\n"
+        f"Focus: {intent.get('focus')}\n"
+        + (f"Topics: {topics}\n" if topics else "")
+        + (f"Mode: {intent.get('mode')}\n" if intent.get("mode") else "")
+        + f"Confidence: {intent.get('confidence', 'low')}"
+        + (f" — {intent.get('evidence')}" if intent.get("evidence") else "") + "\n"
+        "Make what you say RELEVANT to this. If the system state has nothing to do "
+        "with it, say so briefly rather than padding.\n\n")
+
+
+async def _narrator_intent_context(cfg: Dict[str, Any], intent: Dict[str, Any]) -> str:
+    """PULL IN context the intent makes relevant — the user's own memory, the
+    gatherer agent's sourced world, and matching goals. Bounded and read-only."""
+    if not intent or not cfg.get("narrator_intent_context"):
+        return ""
+    terms = [str(intent.get("focus") or "")] + \
+            [str(t) for t in (intent.get("topics") or [])[:3]]
+    terms = [t.strip() for t in terms if t and t.strip()]
+    if not terms:
+        return ""
+    queries = [str(q) for q in (intent.get("queries") or []) if str(q).strip()][:3] \
+        or terms[:2]
+    out: List[str] = []
+
+    if "memory.search" in CAPABILITY_REGISTRY:
+        try:
+            res = await _call_cap("memory.search", query=terms[0], limit=4)
+            # memory.search returns {results:[{record:{text,...}, score}]} — the
+            # text lives under `record`, not on the row itself.
+            hits = []
+            for m in ((res or {}).get("results") or []):
+                if not isinstance(m, dict):
+                    continue
+                rec = m.get("record") if isinstance(m.get("record"), dict) else m
+                txt = str(rec.get("text") or rec.get("content") or "").strip()
+                if txt:
+                    hits.append(txt[:200])
+            if hits:
+                out.append("### From your memory\n" + "\n".join("- " + h for h in hits))
+        except Exception:
+            pass
+
+    _ga = cfg.get("narrator_gatherer_agent") or ""
+    if _ga and "agent.rag.query" in CAPABILITY_REGISTRY:
+        for q in queries[:2]:
+            try:
+                res = await _call_cap("agent.rag.query", agent=_ga, query=q, limit=4)
+                snips = [str((s or {}).get("text") or "")[:200]
+                         for s in ((res or {}).get("snippets") or [])]
+                snips = [s for s in snips if s.strip()]
+                if snips:
+                    out.append(f"### Watched world — '{q}'\n"
+                               + "\n".join("- " + s for s in snips))
+            except Exception:
+                continue
+
+    if "goals.list" in CAPABILITY_REGISTRY:
+        try:
+            res = await _call_cap("goals.list")
+            goals = (res or {}).get("goals") or []
+            low = [t.lower() for t in terms]
+            # goals.list names a goal with `name` (see _director_briefing); accept
+            # the other spellings other callers use rather than matching nothing.
+            rel = []
+            for g in goals:
+                if not isinstance(g, dict):
+                    continue
+                nm = str(g.get("name") or g.get("title") or g.get("goal") or "")
+                if nm and any(t in nm.lower() for t in low):
+                    rel.append(nm)
+            if rel:
+                out.append("### Goals that match this focus\n"
+                           + "\n".join("- " + g for g in rel[:5]))
+        except Exception:
+            pass
+
+    return ("## Context pulled in for that focus\n" + "\n\n".join(out) + "\n\n") \
+        if out else ""
+
+
 async def _narrator_initial_state(cfg: Dict[str, Any]) -> str:
     """A GOOD, detailed initial system state — the grounding the gatherer starts
     from before probing deeper. Deliberately richer than the PA briefing: health,
@@ -11390,12 +11681,19 @@ async def _narrator_initial_state(cfg: Dict[str, Any]) -> str:
     # Watched world — the gatherer AGENT's sourced RAG (news/press/sites/socials/
     # forums), pre-indexed + auto-refreshed. Always in the initial state so the
     # narrator sees the outside world even before the gatherer probes deeper.
+    # INTENT first — it decides what the rest of this state should be ABOUT.
+    intent = await _narrator_intent(cfg) if cfg.get("narrator_intent_enabled") else {}
+
     watched = ""
     _ga = cfg.get("narrator_gatherer_agent") or ""
     if _ga and "agent.rag.query" in CAPABILITY_REGISTRY:
+        # Steer the sources at what the user is actually working on; fall back to
+        # the generic sweep when there's no intent to steer with.
+        _q = "latest notable developments and news"
+        if cfg.get("narrator_intent_steer") and intent.get("focus"):
+            _q = str((intent.get("queries") or [None])[0] or intent["focus"])
         try:
-            _r = await _call_cap("agent.rag.query", agent=_ga,
-                                 query="latest notable developments and news", limit=6)
+            _r = await _call_cap("agent.rag.query", agent=_ga, query=_q, limit=6)
             _snips = (_r or {}).get("snippets") or []
             watched = "\n".join(f"- {(s.get('text') or '')[:200]}"
                                 for s in _snips if (s.get("text") or "").strip())
@@ -11406,6 +11704,8 @@ async def _narrator_initial_state(cfg: Dict[str, Any]) -> str:
         f"# VERA — SYSTEM STATE (initial grounding)\n"
         f"User: {'active' if idle < float(cfg.get('active_idle_below_min', 6.0)) else 'idle'} "
         f"(idle {round(idle,1)}m)\n\n"
+        + _narrator_intent_block(intent)
+        + await _narrator_intent_context(cfg, intent)
         + _sect("Node & backend health", await _director_cap_json("obs.health", 700))
         + _sect("Performance / event loop", await _director_cap_json("perf.scan", 700))
         + _sect("Long-term goals", briefing.get("goals", ""))
@@ -11453,6 +11753,17 @@ async def _narrator_gather(cfg: Dict[str, Any], initial: str) -> str:
         "TAILORED STATE DIGEST the narrator can turn into a narrative. Follow "
         "threads that look interesting or changed; skip what's quiet. Do NOT "
         "narrate or editorialise — just gather facts. Read-only tools only.")
+    # INTENT-STEERED GATHERING: the user's current focus decides what "interesting"
+    # means, so it goes in the system prompt (bias) AND names the probes the
+    # fallback runs first (so steering survives a weak/absent model reply).
+    intent = await _narrator_intent(cfg) if cfg.get("narrator_intent_enabled") else {}
+    steer_on = bool(cfg.get("narrator_intent_steer")) and bool(intent.get("focus"))
+    if steer_on:
+        _topics = ", ".join(str(t) for t in (intent.get("topics") or [])[:4])
+        sys_p += (f" The user is currently working on: {intent['focus']}"
+                  + (f" (topics: {_topics})" if _topics else "")
+                  + ". PRIORITISE probes that bear on that; gather the rest only "
+                    "if something is genuinely wrong.")
     collected: List[str] = []
     for _ in range(budget):
         ran = ("\n\nPROBES RUN SO FAR:\n" + "\n".join(collected)) if collected else ""
@@ -11485,10 +11796,28 @@ async def _narrator_gather(cfg: Dict[str, Any], initial: str) -> str:
     # LLM) so the narrator ALWAYS gets real system data regardless of gatherer
     # quality — the model-driven probes are a bonus on top, not a prerequisite.
     if len(collected) < 2:
-        for _dp, _args in (("perf.scan", {}), ("goals.list", {}),
-                           ("dream.director.status", {}), ("obs.workers", {}),
-                           ("dream.history", {"limit": 3}),
-                           ("research.db.search", {"query": "latest news", "limit": 5})):
+        _essential: List[tuple] = []
+        # Intent-named probes go FIRST, so even the no-LLM path gathers the things
+        # the user's current focus makes relevant.
+        if steer_on:
+            _seen = {c.split(" ")[1] if " " in c else "" for c in collected}
+            for _p in (intent.get("probes") or [])[:4]:
+                _p = str(_p).strip()
+                if _p and _p not in _seen and _p in _narrator_available_probes():
+                    _essential.append((_p, {}))
+            _q = str((intent.get("queries") or [None])[0] or intent.get("focus") or "")
+            if _q:
+                _essential.append(("research.db.search", {"query": _q, "limit": 5}))
+        _essential += [("perf.scan", {}), ("goals.list", {}),
+                       ("dream.director.status", {}), ("obs.workers", {}),
+                       ("dream.history", {"limit": 3}),
+                       ("research.db.search", {"query": "latest news", "limit": 5})]
+        _done = set()
+        for _dp, _args in _essential:
+            _key = (_dp, json.dumps(_args, sort_keys=True, default=str))
+            if _key in _done:
+                continue
+            _done.add(_key)
             if _dp in _narrator_available_probes():
                 collected.append(f"• {_dp} → {await _narrator_run_probe(_dp, _args)}")
     return ("TAILORED STATE (assembled from probes):\n" + "\n".join(collected)) if collected \
@@ -11638,7 +11967,11 @@ async def _narrator_quick_take(cfg: Dict[str, Any], force: bool = False) -> Dict
         act_lines = []
     _last = await _narrator_recent(1)
     _lastn = (_last[0].get("narrative") or "")[:300] if _last else ""
-    initial = ("RECENT ACTIVITY (newest first):\n" + "\n".join(act_lines[:6]) +
+    # The quick tier skips the gather, so intent is injected straight in — without
+    # it the takes drift onto whatever infra chatter happens to be loudest.
+    _intent = await _narrator_intent(cfg) if cfg.get("narrator_intent_enabled") else {}
+    initial = (_narrator_intent_block(_intent) +
+               "RECENT ACTIVITY (newest first):\n" + "\n".join(act_lines[:6]) +
                (("\n\nLAST DEEP NARRATIVE (continuity):\n" + _lastn) if _lastn else ""))
     recent, r = [], _redis()
     if r:
@@ -11658,10 +11991,14 @@ async def _narrator_quick_take(cfg: Dict[str, Any], force: bool = False) -> Dict
     prompt = (initial + (("\n\nYOUR RECENT TAKES:\n" + recent_txt) if recent_txt else "")
               + "\n\nYour one-sentence take now:")
     try:
-        # Plain text (NOT json_mode) + think=False: the quick model (qwen3.5:9b) is a
-        # REASONING model — under json_mode's grammar it returns empty (eval_count=1),
-        # and without think=False its output goes to the `thinking` field leaving the
-        # response empty ("Thinking"). A one-liner needs neither JSON nor reasoning.
+        # Plain text (NOT json_mode) + think=False: the quick model is a REASONING
+        # model, and without think=False its output goes to the `thinking` field,
+        # leaving `response` empty. A one-liner needs neither JSON nor reasoning.
+        # NOTE: the one-token takes ("I", "You", "Just") that this comment once
+        # blamed on json_mode were NOT a model or node fault — they were the
+        # destructive stream poll in ollama_generate (see _StreamLines in
+        # capability_orchestration.py), which truncated EVERY slow CPU generation
+        # to its first token. Fixed 2026-08-23.
         raw = await gen(prompt, system=sys_p, prefer_gpu=_pgpu, think=False,
                         job_type=_job, model=model, timeout=180,
                         options={"num_predict": 80})
@@ -11715,6 +12052,14 @@ async def _director_loop():
             # ── System narrator pass — own cadence, independent of the PA director
             #    AND the dream cycle system. A live conversation defers to the PA.
             if n_enabled and not conv:
+                # Intent FIRST — both tiers below read it, and it decides what the
+                # gather goes looking for. Rate-limited internally to
+                # narrator_intent_gap_min, so calling it every tick is cheap.
+                if cfg.get("narrator_intent_enabled"):
+                    try:
+                        await _narrator_detect_intent(cfg)
+                    except Exception as e:
+                        log.debug("narrator intent: %s", e)
                 # Fast tier: quick real-time takes on a short cadence.
                 if cfg.get("narrator_quick_enabled"):
                     q_gap = float(cfg.get("narrator_quick_gap_min", 3.0) or 0)
@@ -11964,6 +12309,8 @@ async def system_narrator_status(trace_id=None):
             "max_probes": cfg.get("narrator_max_probes"),
             "deliver_to_chat": cfg.get("narrator_deliver_to_chat"),
             "probe_kit": sorted(_narrator_available_probes().keys()),
+            "intent_enabled": cfg.get("narrator_intent_enabled"),
+            "intent": await _narrator_intent(cfg),
             "last": last}
 
 
@@ -11974,7 +12321,11 @@ async def system_narrator_status(trace_id=None):
                 "gatherer_model, gap_min, max_probes, think_timeout_s; two-speed: "
                 "quick_enabled (bool), quick_model, quick_gap_min; idle_gpu (bool) + "
                 "idle_gpu_after_min (MoE narrate on the GPU once idle that long); "
-                "deliver (list/csv of chat|telegram|speak); deliver_to_chat (legacy).",
+                "deliver (list/csv of chat|telegram|speak); deliver_to_chat (legacy); "
+                "user-intent: intent_enabled (bool), intent_model, intent_gap_min, "
+                "intent_context (bool — pull memory/RAG/goals for the focus), "
+                "intent_steer (bool — bias the probe kit + source queries), "
+                "intent_ttl_min (age at which intent is treated as stale).",
 )
 async def system_narrator_config(model: Optional[str] = None,
                                  gatherer_model: Optional[str] = None,
@@ -11989,6 +12340,12 @@ async def system_narrator_config(model: Optional[str] = None,
                                  idle_gpu_after_min: Optional[float] = None,
                                  gpu_model: Optional[str] = None,
                                  deliver: Optional[Any] = None,
+                                 intent_enabled: Optional[bool] = None,
+                                 intent_model: Optional[str] = None,
+                                 intent_gap_min: Optional[float] = None,
+                                 intent_context: Optional[bool] = None,
+                                 intent_steer: Optional[bool] = None,
+                                 intent_ttl_min: Optional[float] = None,
                                  trace_id=None):
     patch: Dict[str, Any] = {}
     if model is not None:            patch["narrator_model"] = model
@@ -12007,13 +12364,21 @@ async def system_narrator_config(model: Optional[str] = None,
         if isinstance(deliver, str):
             deliver = [c.strip() for c in deliver.split(",") if c.strip()]
         patch["narrator_deliver"] = [str(c) for c in (deliver or [])]
+    if intent_enabled is not None:   patch["narrator_intent_enabled"] = bool(intent_enabled)
+    if intent_model is not None:     patch["narrator_intent_model"] = intent_model
+    if intent_gap_min is not None:   patch["narrator_intent_gap_min"] = float(intent_gap_min)
+    if intent_context is not None:   patch["narrator_intent_context"] = bool(intent_context)
+    if intent_steer is not None:     patch["narrator_intent_steer"] = bool(intent_steer)
+    if intent_ttl_min is not None:   patch["narrator_intent_ttl_min"] = float(intent_ttl_min)
     cfg = await _director_cfg_patch(patch)
     return {"ok": True, "config": {k: cfg.get(k) for k in (
         "narrator_enabled", "narrator_model", "narrator_gatherer_model",
         "narrator_gap_min", "narrator_max_probes", "narrator_deliver_to_chat",
         "narrator_think_timeout_s", "narrator_quick_enabled", "narrator_quick_model",
         "narrator_quick_gap_min", "narrator_idle_gpu", "narrator_idle_gpu_after_min",
-        "narrator_gpu_model", "narrator_deliver")}}
+        "narrator_gpu_model", "narrator_deliver",
+        "narrator_intent_enabled", "narrator_intent_model", "narrator_intent_gap_min",
+        "narrator_intent_context", "narrator_intent_steer", "narrator_intent_ttl_min")}}
 
 
 @capability(
@@ -12024,6 +12389,30 @@ async def system_narrator_config(model: Optional[str] = None,
 )
 async def system_narrator_think(trace_id=None):
     return await _narrator_think_once(force=True)
+
+
+@capability(
+    "system.narrator.intent", memory="off",
+    http_method="POST", http_path="/system/narrator/intent", http_tags=["dream", "narrator"],
+    description="The narrator's USER-INTENT detector — what the human is working on "
+                "right now, inferred from real signals (their recent messages, recent "
+                "cap calls, live loops, active goals). The narrator uses it to PULL IN "
+                "relevant context (memory, the gatherer agent's sources, matching goals) "
+                "and to STEER gathering (which probes run, what the sources are asked). "
+                "Inputs: detect (bool — re-detect now instead of reading the stored "
+                "intent), context (bool — also return the context that focus pulls in). "
+                "Output: {ok, intent:{focus, topics, mode, confidence, evidence, probes, "
+                "queries, source, ts}, context}.",
+)
+async def system_narrator_intent(detect: bool = False, context: bool = False,
+                                 trace_id=None) -> Dict[str, Any]:
+    cfg = await _director_cfg()
+    intent = (await _narrator_detect_intent(cfg, force=True) if detect
+              else await _narrator_intent(cfg))
+    out: Dict[str, Any] = {"ok": bool(intent), "intent": intent or {}}
+    if context and intent:
+        out["context"] = await _narrator_intent_context(cfg, intent)
+    return out
 
 
 @capability(

@@ -226,6 +226,63 @@ OLLAMA_GEN_TIMEOUT = float(os.environ.get("OLLAMA_GEN_TIMEOUT", "900"))
 # slowly, is never killed by this; only a real stall is.
 OLLAMA_STALL_TIMEOUT = float(os.environ.get("OLLAMA_STALL_TIMEOUT", "240"))
 
+
+class _StreamLines:
+    """Poll an async line-iterator with a timeout WITHOUT destroying it.
+
+    The obvious spelling — `await asyncio.wait_for(it.__anext__(), timeout=5)` —
+    is silently destructive: on timeout `wait_for` CANCELS the pending
+    `__anext__()`, which throws CancelledError into the underlying async
+    generator and CLOSES it. Every later `__anext__()` then raises
+    StopAsyncIteration, so the read loop exits normally, `meta` (the `done`
+    frame) is never seen, and the caller keeps whatever partial text had
+    arrived — believing the generation finished.
+
+    Live impact (found 2026-08-23): on a GPU node tokens arrive well inside the
+    5s poll, so it never tripped. On a SLOW CPU node the FIRST token can take
+    minutes, so the very first poll timed out and killed the stream — EVERY
+    CPU-node generation returned exactly ONE token with eval_count=1. That is
+    what made the system narrator emit one-word "narratives" ("I", "You",
+    "Just") and why the deep MoE narrative never completed. It looked exactly
+    like a degraded ollama node; it was this.
+
+    The fix keeps ONE pending task alive across polls and only ever consumes it
+    when it actually completes, so a slow-but-progressing stream is never
+    interrupted while the caller still gets to run its stall check on a timer.
+    """
+
+    __slots__ = ("_it", "_pending")
+
+    def __init__(self, aiter):
+        self._it = aiter
+        self._pending: Optional[asyncio.Future] = None
+
+    async def next(self, timeout: float = 5.0):
+        """Next line, or raise asyncio.TimeoutError if none arrived in `timeout`.
+        A TimeoutError leaves the stream INTACT — poll again to keep reading."""
+        if self._pending is None:
+            self._pending = asyncio.ensure_future(self._it.__anext__())
+        done, _ = await asyncio.wait({self._pending}, timeout=timeout)
+        if not done:
+            raise asyncio.TimeoutError            # task deliberately left running
+        fut, self._pending = self._pending, None
+        return fut.result()                       # re-raises StopAsyncIteration
+
+    async def aclose(self) -> None:
+        """Abandon an in-flight read (used when giving up on a stalled stream).
+
+        Waits via asyncio.wait rather than `await task` on purpose: wait() does
+        not re-raise the TASK's own exception (which we are deliberately
+        discarding) but DOES still propagate cancellation of the caller — so
+        this can never swallow an outer cancel and strand the calling task.
+        """
+        pending, self._pending = self._pending, None
+        if pending is None:
+            return
+        pending.cancel()
+        await asyncio.wait({pending})
+
+
 # ── Background vs foreground work ────────────────────────────────────────────
 # BACKGROUND jobs are self-scheduled thinking that nobody is waiting on: they
 # recur on a timer, so skipping one costs nothing. FOREGROUND work (a chat turn,
@@ -2666,12 +2723,13 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                         # progress even while genuinely waiting on the socket, not
                         # just between chunks that do arrive.
                         _last_progress = time.time()
-                        _lines = resp.aiter_lines()
+                        _lines = _StreamLines(resp.aiter_lines())
                         while True:
                             try:
-                                line = await asyncio.wait_for(_lines.__anext__(), timeout=5.0)
+                                line = await _lines.next(timeout=5.0)
                             except asyncio.TimeoutError:
                                 if time.time() - _last_progress > OLLAMA_STALL_TIMEOUT:
+                                    await _lines.aclose()
                                     raise Exception(
                                         f"ollama stream stalled: no new token for "
                                         f"{OLLAMA_STALL_TIMEOUT:.0f}s (model={mdl}, "
@@ -2864,12 +2922,13 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                                 # (see OLLAMA_STALL_TIMEOUT) — a fallback attempt
                                 # is just as vulnerable to a silently-dead stream.
                                 _fb_last_progress = time.time()
-                                _fb_lines = r.aiter_lines()
+                                _fb_lines = _StreamLines(r.aiter_lines())
                                 while True:
                                     try:
-                                        line = await asyncio.wait_for(_fb_lines.__anext__(), timeout=5.0)
+                                        line = await _fb_lines.next(timeout=5.0)
                                     except asyncio.TimeoutError:
                                         if time.time() - _fb_last_progress > OLLAMA_STALL_TIMEOUT:
+                                            await _fb_lines.aclose()
                                             raise Exception(
                                                 f"ollama fallback stream stalled: no new "
                                                 f"token for {OLLAMA_STALL_TIMEOUT:.0f}s "
