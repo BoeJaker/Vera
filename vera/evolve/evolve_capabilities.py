@@ -6623,6 +6623,10 @@ from Vera.vera.evolve.sandbox_reap import (          # noqa: E402
     orphan_composes as _orphan_composes,
     is_trunk_protected as _is_trunk_protected,
 )
+from Vera.vera.evolve.sandbox_lifecycle import (     # noqa: E402
+    primary_replacement_conflict as _primary_replacement_conflict,
+    resolve_restart_target as _resolve_restart_target,
+)
 
 KEY_SANDBOX_POOL = "vera:evolve:sandbox:pool"         # hash: slug -> per-branch descriptor
 
@@ -7856,6 +7860,8 @@ async def evolve_sandbox_snapshot(prefixes: str = "", sqlite: bool = True, trace
                         "a specific improvement or test — and it is then left "
                         "exactly where it is, never auto-moved), "
                         "snapshot (bool default True), "
+                        "replace_primary (bool default False — required when a "
+                        "different branch already owns the primary slot), "
                         "rebuild_image (bool default False — force-rebuild "
                         "vera:latest from source first; use when the sandbox is "
                         "running a STALE image missing newer caps like loops.run), "
@@ -7865,6 +7871,7 @@ async def evolve_sandbox_snapshot(prefixes: str = "", sqlite: bool = True, trace
                         "bleeding-edge branch.).")
 async def evolve_sandbox_up(branch: str = "", snapshot: bool = True,
                             rebuild_image: bool = False, target: str = "bleeding-edge",
+                            replace_primary: bool = False,
                             trace_id=None):
     # ── Default to the LATEST trunk, not "whatever was last activated" ───────
     # Requiring an explicit branch meant Loop Lab always tested some branch's
@@ -7910,6 +7917,19 @@ async def evolve_sandbox_up(branch: str = "", snapshot: bool = True,
                                  f"{_mirror_refresh['error']}"}
             _mirror_branch_used = MAINLINE_MIRROR_BRANCH
         branch = _mirror_branch_used
+    # W0-04: `sandbox.up(branch=...)` controls the singleton PRIMARY container.
+    # A caller intending to refresh its spawned branch must use sandbox.restart;
+    # silently remounting vera-dev displaces another agent even though their
+    # worktree survives. Refuse before worktree, compose, Docker, or Redis writes.
+    conflict = _primary_replacement_conflict(
+        await _get_sandbox(), branch, await _sandbox_container_status(),
+        replace_primary=bool(replace_primary),
+    )
+    if conflict:
+        await _audit("sandbox.up.refused", f"{conflict['current_branch']} -> {branch}",
+                     branch=branch, reason="primary_occupied")
+        await emit_event({"type": "evolve.sandbox.up.refused", **conflict})
+        return conflict
     # Resolve the configured host port up front. Refuse the prod port outright —
     # binding it is the "port 8999 already in use" failure — and point at the fix.
     port = await _dev_port()
@@ -8030,7 +8050,9 @@ async def evolve_sandbox_up(branch: str = "", snapshot: bool = True,
                          f"{branch}: image stale (missing {_SANDBOX_READY_CAP}) — "
                          f"auto-rebuilding {DEV_IMAGE}")
             return await evolve_sandbox_up(branch=branch, snapshot=snapshot,
-                                           rebuild_image=True, trace_id=trace_id)
+                                           rebuild_image=True,
+                                           replace_primary=replace_primary,
+                                           trace_id=trace_id)
 
     # 6. snapshot Loop Lab state into the dev DB
     snap = None
@@ -8054,6 +8076,55 @@ async def evolve_sandbox_up(branch: str = "", snapshot: bool = True,
     return {"ok": True, "sandbox": sb, "healthy": healthy,
             "stale": bool(probe.get("stale")), "cause": probe.get("cause", ""),
             "url": _dev_base_url(), "snapshot": snap, "probe": probe, "note": note}
+
+
+@capability("evolve.sandbox.restart", memory="on",
+            http_method="POST", http_path="/evolve/sandbox/restart", http_tags=["evolve"],
+            description="Restart one existing sandbox in place without changing its role, "
+                        "branch, worktree, port, Redis DB, or pool descriptor. With no target, "
+                        "restarts the primary. Pass name or branch for an exact primary or "
+                        "spawned sandbox. This never calls sandbox.up and never replaces the "
+                        "primary. Output: {ok, role, name, branch, port, reachable}.")
+async def evolve_sandbox_restart(name: str = "", branch: str = "", trace_id=None):
+    target = _resolve_restart_target(
+        await _get_sandbox(), await _sandbox_pool(), primary_name=_SANDBOX_CONTAINER,
+        name=name, branch=branch,
+    )
+    if target.get("error"):
+        return target
+    container = target.get("name")
+    restarted = await _sh(["docker", "restart", container], timeout=120)
+    if not restarted.get("ok"):
+        return {"error": f"container restart failed: {restarted.get('err') or restarted.get('out')}",
+                "code": "restart_failed", "role": target.get("role"), "name": container,
+                "branch": target.get("branch")}
+    port = target.get("port")
+    reachable = False
+    scheme = "http"
+    if port:
+        for _ in range(30):
+            await asyncio.sleep(2)
+            for candidate in ("https", "http"):
+                probe = await _sh(["curl", "-sk" if candidate == "https" else "-s",
+                                   "-o", "/dev/null", "-w", "%{http_code}",
+                                   f"{candidate}://localhost:{port}/health"], timeout=8)
+                if (probe.get("out") or "").strip() in ("200", "401", "403"):
+                    reachable, scheme = True, candidate
+                    break
+            if reachable:
+                break
+    if reachable and port:
+        _DEV_SCHEME_CACHE[int(port)] = scheme
+    await _audit("sandbox.restart", f"{target.get('role')} {container} for "
+                 f"{target.get('branch')} (reachable={reachable})",
+                 branch=target.get("branch"), name=container)
+    await emit_event({"type": "evolve.sandbox.restarted", "role": target.get("role"),
+                      "name": container, "branch": target.get("branch"),
+                      "port": port, "reachable": reachable})
+    return {"ok": True, "role": target.get("role"), "name": container,
+            "branch": target.get("branch"), "port": port,
+            "redis_db": target.get("redis_db"), "worktree": target.get("worktree"),
+            "reachable": reachable, "url": f"{scheme}://localhost:{port}" if port else ""}
 
 
 @capability("evolve.sandbox.ensure", memory="on",
