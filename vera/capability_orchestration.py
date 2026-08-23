@@ -8041,6 +8041,8 @@ async def lifespan(app: FastAPI):
         # W0-01: canonical, read-only system inventory. Loaded late so its live
         # snapshot sees the complete registries while remaining order-stable.
         os.path.join(_here, "inventory/system_inventory.py"),
+        # W0-03: deterministic summaries over the existing observability stream.
+        os.path.join(_here, "performance/timing_capabilities.py"),
         os.path.join(_here, "mcp/mcp_catalog_capabilities.py"),
         os.path.join(_here, "evolve/evolve_capabilities.py"),
         # Closed-loop orchestrator (M7 Phase B) — part of Loop Lab; dedicated module.
