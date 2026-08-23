@@ -36,8 +36,8 @@ def _inputs(tmp_path):
         "panels": {"z": {"label": "Z"}, "a": {"label": "A"}},
         "app": App(),
         "schedules": [{"name": "tick", "interval": 10}],
-        "workers": {"worker-b": {"caps": ["z", "a"]}},
-        "mcp_servers": {"z": "http://z", "a": "http://a"},
+        "workers": {"worker-b": {"caps": ["z", "a"], "api_token": "do-not-leak"}},
+        "mcp_servers": {"z": "http://user:pass@z/path?token=secret", "a": "http://a"},
         "repo_root": tmp_path,
     }
 
@@ -96,3 +96,12 @@ def test_inventory_summary_keeps_evidence_without_large_records(tmp_path):
     assert summary["role_counts_inferred"] == {"internal": 1, "public_task": 1}
     assert "capabilities" not in summary
     assert summary["detail"] is False
+
+
+def test_inventory_redacts_runtime_secrets_and_endpoint_credentials(tmp_path):
+    snapshot = build_system_inventory(**_inputs(tmp_path), captured_at="fixed")
+
+    assert snapshot["workers"][0]["metadata"]["api_token"] == "[redacted]"
+    assert snapshot["mcp_servers"][1]["url"] == "http://z/path"
+    assert "do-not-leak" not in str(snapshot)
+    assert "user:pass" not in str(snapshot)

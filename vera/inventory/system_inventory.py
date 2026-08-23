@@ -5,10 +5,10 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+from urllib.parse import urlsplit, urlunsplit
 
 from Vera.vera.capability_orchestration import (
     APP,
@@ -27,6 +27,7 @@ _DUPLICATION_TERMS = (
     "loop", "pipeline", "workflow", "run", "job", "task", "scheduler",
     "generate", "query", "store",
 )
+_SECRET_HINTS = ("password", "passwd", "token", "secret", "credential", "api_key", "auth")
 
 
 def _json_safe(value: Any) -> Any:
@@ -34,13 +35,33 @@ def _json_safe(value: Any) -> Any:
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
     if isinstance(value, Mapping):
-        return {str(key): _json_safe(value[key]) for key in sorted(value, key=str)}
+        result = {}
+        for key in sorted(value, key=str):
+            label = str(key)
+            result[label] = ("[redacted]" if any(hint in label.lower() for hint in _SECRET_HINTS)
+                             else _json_safe(value[key]))
+        return result
     if isinstance(value, (list, tuple, set, frozenset)):
         items = [_json_safe(item) for item in value]
         return sorted(items, key=lambda item: json.dumps(item, sort_keys=True))
     if callable(value):
         return getattr(value, "__qualname__", getattr(value, "__name__", "callable"))
     return type(value).__name__
+
+
+def _safe_endpoint(value: Any) -> str:
+    """Keep endpoint identity without credentials or query-string secrets."""
+    text = str(value)
+    try:
+        parsed = urlsplit(text)
+        if not parsed.scheme or not parsed.netloc:
+            return text.split("?", 1)[0].split("#", 1)[0]
+        host = parsed.hostname or ""
+        if parsed.port:
+            host = f"{host}:{parsed.port}"
+        return urlunsplit((parsed.scheme, host, parsed.path, "", ""))
+    except (TypeError, ValueError):
+        return "[invalid endpoint]"
 
 
 def _relative_path(path: Any, repo_root: Path) -> str:
@@ -176,7 +197,7 @@ def build_system_inventory(
         "http_routes": _routes(app),
         "schedules": _schedule_records(schedules),
         "workers": _named_records(workers),
-        "mcp_servers": [{"name": name, "url": str(mcp_servers[name])}
+        "mcp_servers": [{"name": name, "url": _safe_endpoint(mcp_servers[name])}
                         for name in sorted(mcp_servers)],
         "duplication_signals": {
             term: [cap["name"] for cap in cap_items
