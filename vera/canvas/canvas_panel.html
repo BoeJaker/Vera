@@ -65,6 +65,21 @@
   .sched .what{flex:1}
   .widget-ph{padding:16px;color:var(--dim);font-style:italic;text-align:center}
   .err{color:var(--err);padding:10px 14px;font-family:var(--mono);font-size:12px}
+  /* ── Editing ── */
+  .blk-ctl{display:none;gap:2px;margin-left:6px}
+  .blk:hover .blk-ctl{display:inline-flex}
+  .blk-ctl button{background:var(--bg2);border:1px solid var(--bd2);color:var(--tx2);border-radius:4px;cursor:pointer;font-size:11px;padding:0 6px;line-height:1.6}
+  .blk-ctl button:hover{color:var(--tx);border-color:var(--acc)}
+  .blk-editor{padding:10px 12px}
+  .blk-editor textarea{width:100%;min-height:96px;background:var(--bg0);color:var(--tx);border:1px solid var(--bd2);border-radius:6px;padding:8px;font-family:var(--mono);font-size:12px;resize:vertical;display:block}
+  .blk-editor input.k{background:var(--bg0);color:var(--tx);border:1px solid var(--bd2);border-radius:5px;padding:4px 8px;font-family:var(--mono);font-size:12px;margin-bottom:6px;width:180px}
+  .ed-row{display:flex;gap:6px;margin-top:8px}
+  .ed-row button{padding:5px 12px;border-radius:6px;border:none;cursor:pointer;font-weight:600;font-size:12px}
+  .ed-save{background:var(--acc);color:#06120f} .ed-cancel{background:var(--bg2);color:var(--tx2);border:1px solid var(--bd2)}
+  .add-bar{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 40px;align-items:center}
+  .add-bar>span{color:var(--dim);font-size:11px;margin-right:4px}
+  .add-bar button{background:var(--bg1);border:1px dashed var(--bd2);color:var(--tx2);border-radius:6px;cursor:pointer;font-size:12px;padding:5px 11px}
+  .add-bar button:hover{color:var(--tx);border-color:var(--acc);border-style:solid}
 </style>
 </head>
 <body>
@@ -82,7 +97,9 @@
 </div>
 <script>
 const BASE = location.origin;
-let CURRENT = null, POLL = null, LAST_SIG = "";
+let CURRENT = null, POLL = null, LAST_SIG = "", EDITING = null, LAST_DOC = null;
+const PRIMARY = {markdown:'md', note:'text', code:'code', diagram:'mermaid', html:'html', image:'url'};
+const ADD_TYPES = ['note','markdown','code','diagram','image','table','html'];
 
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 async function call(name, args){
@@ -151,7 +168,13 @@ function renderBlock(b){
   div.className='blk'; div.dataset.id=b.id;
   div.innerHTML = `<div class="blk-h"><span class="blk-type">${esc(b.type)}</span>
     ${b.type==='code'&&c.lang?`<span class="code-lang">${esc(c.lang)}</span>`:''}
-    <span class="blk-ts">${fmtTs(b.ts)}</span></div>
+    <span class="blk-ts">${fmtTs(b.ts)}</span>
+    <span class="blk-ctl">
+      <button data-act="edit" data-id="${b.id}" title="Edit">✎</button>
+      <button data-act="up" data-id="${b.id}" title="Move up">↑</button>
+      <button data-act="down" data-id="${b.id}" title="Move down">↓</button>
+      <button data-act="del" data-id="${b.id}" title="Delete">✕</button>
+    </span></div>
     <div class="blk-body${tight?' tight':''}">${body}</div>`;
   return div;
 }
@@ -163,8 +186,13 @@ async function renderCanvas(doc, changed){
   document.getElementById('clive').style.display = doc.mode==='dynamic' ? 'flex':'none';
   const board = document.getElementById('board');
   const blocks = (doc.blocks||[]).slice().sort((a,b)=>(a.layout?.order??0)-(b.layout?.order??0));
-  board.innerHTML = blocks.length ? '' : '<div id="empty">Empty canvas — an agent (or you) can add blocks.</div>';
+  board.innerHTML = blocks.length ? '' : '<div id="empty" style="margin-top:20px">Empty canvas — add a block below, or let an agent fill it.</div>';
   blocks.forEach(b=>board.appendChild(renderBlock(b)));
+  const addBar = document.createElement('div');
+  addBar.className = 'add-bar';
+  addBar.innerHTML = '<span>+ add block:</span>' +
+    ADD_TYPES.map(t=>`<button data-act="add" data-type="${t}">${t}</button>`).join('');
+  board.appendChild(addBar);
   // Highlight code + render mermaid after DOM insert.
   if(window.hljs) board.querySelectorAll('pre.code code').forEach(el=>{try{hljs.highlightElement(el);}catch(e){}});
   if(window.mermaid){ try{ await mermaid.run({nodes:board.querySelectorAll('.mermaid')}); }catch(e){} }
@@ -173,9 +201,10 @@ async function renderCanvas(doc, changed){
 function sig(doc){ return (doc.updated||'')+':'+((doc.blocks||[]).length); }
 
 async function refresh(){
-  if(!CURRENT) return;
+  if(!CURRENT || EDITING) return;   // don't clobber an open editor
   const doc = await call('canvas.get',{id:CURRENT});
   if(doc.error){ document.getElementById('board').innerHTML=`<div class="err">${esc(doc.error)}</div>`; return; }
+  LAST_DOC = doc;
   const s = sig(doc);
   if(s!==LAST_SIG){ LAST_SIG=s; await renderCanvas(doc); loadList(); }
 }
@@ -188,6 +217,79 @@ async function openCanvas(id){
   POLL = setInterval(refresh, 2500);   // live update via light polling
   loadList();
 }
+
+/* ── Editing (add / edit / move / delete) — the user can co-edit the canvas ── */
+function editorHtml(type, content){
+  content = content||{};
+  const isJson = !(type in PRIMARY);
+  const val = isJson ? JSON.stringify(content, null, 2) : (content[PRIMARY[type]]||'');
+  const langRow = type==='code'
+    ? `<input class="k" id="ed-lang" placeholder="lang (e.g. python)" value="${esc(content.lang||'')}"/><br/>` : '';
+  const ph = isJson ? 'JSON content for this block…' : (PRIMARY[type]+' …');
+  return `<div class="blk-editor">${langRow}<textarea id="ed-ta" placeholder="${esc(ph)}">${esc(val)}</textarea>
+    <div class="ed-row"><button class="ed-save" data-act="save">Save</button>
+      <button class="ed-cancel" data-act="cancel">Cancel</button></div></div>`;
+}
+function collectEditor(type){
+  const ta = document.getElementById('ed-ta'); if(!ta) return undefined;
+  const raw = ta.value;
+  if(!(type in PRIMARY)){
+    try{ return JSON.parse(raw||'{}'); }catch(e){ alert('Invalid JSON: '+e.message); return undefined; }
+  }
+  const c = {}; c[PRIMARY[type]] = raw;
+  if(type==='code'){ const l=document.getElementById('ed-lang'); if(l&&l.value) c.lang=l.value; }
+  return c;
+}
+function startEdit(id){
+  const b = (LAST_DOC&&LAST_DOC.blocks||[]).find(x=>x.id===id); if(!b) return;
+  EDITING = {id, type:b.type};
+  const body = document.querySelector('.blk[data-id="'+id+'"] .blk-body');
+  if(body) body.outerHTML = editorHtml(b.type, b.content);
+  const ta = document.getElementById('ed-ta'); if(ta) ta.focus();
+}
+function startAdd(type){
+  EDITING = {id:'new', type};
+  const board = document.getElementById('board');
+  const bar = board.querySelector('.add-bar');
+  const holder = document.createElement('div');
+  holder.className='blk'; holder.dataset.id='new';
+  holder.innerHTML = '<div class="blk-h"><span class="blk-type">'+esc(type)+' · new</span></div>'+editorHtml(type,{});
+  board.insertBefore(holder, bar);
+  const ta = document.getElementById('ed-ta'); if(ta){ ta.focus(); ta.scrollIntoView({behavior:'smooth',block:'center'}); }
+}
+async function saveEdit(){
+  if(!EDITING) return;
+  const content = collectEditor(EDITING.type);
+  if(content===undefined) return;
+  const ed = EDITING; EDITING = null;
+  if(ed.id==='new') await call('canvas.append',{id:CURRENT, type:ed.type, content});
+  else await call('canvas.update',{id:CURRENT, block_id:ed.id, content});
+  LAST_SIG=''; await refresh();
+}
+function cancelEdit(){ EDITING=null; LAST_SIG=''; refresh(); }
+async function moveBlk(id, dir){
+  const blocks = (LAST_DOC&&LAST_DOC.blocks||[]).slice().sort((a,b)=>((a.layout&&a.layout.order)||0)-((b.layout&&b.layout.order)||0));
+  const i = blocks.findIndex(b=>b.id===id); if(i<0) return;
+  const j = dir==='up'? i-1 : i+1; if(j<0||j>=blocks.length) return;
+  await call('canvas.move',{id:CURRENT, block_id:id, order:j});
+  LAST_SIG=''; await refresh();
+}
+async function delBlk(id){
+  if(!confirm('Delete this block?')) return;
+  await call('canvas.remove',{id:CURRENT, block_id:id});
+  LAST_SIG=''; await refresh();
+}
+document.getElementById('board').addEventListener('click', e=>{
+  const btn = e.target.closest('button[data-act]'); if(!btn) return;
+  const a = btn.dataset.act, id = btn.dataset.id;
+  if(a==='edit') startEdit(id);
+  else if(a==='up') moveBlk(id,'up');
+  else if(a==='down') moveBlk(id,'down');
+  else if(a==='del') delBlk(id);
+  else if(a==='save') saveEdit();
+  else if(a==='cancel') cancelEdit();
+  else if(a==='add') startAdd(btn.dataset.type);
+});
 
 if(window.mermaid) mermaid.initialize({startOnLoad:false, theme:'dark', securityLevel:'loose'});
 loadList();
