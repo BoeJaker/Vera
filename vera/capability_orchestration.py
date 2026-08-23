@@ -1947,6 +1947,72 @@ async def ollama_model_disk_size(iid: str, model: str) -> int:
     return 0
 
 
+_NODE_USABLE_VRAM: Dict[str, int] = {}           # iid -> usable VRAM bytes MEASURED from a spill
+_MODEL_KV_CACHE: Dict[str, float] = {}           # "iid::model" -> KV bytes/token (fp16)
+
+
+async def ollama_model_kv_per_token(iid: str, model: str) -> float:
+    """KV-cache bytes per token (fp16) for a model, from /api/show's model_info —
+    lets us size num_ctx to VRAM up front. KV/token = block_count * 2(K+V) *
+    head_count_kv * head_dim * 2 bytes. Cached; 0.0 when the arch can't be read."""
+    key = f"{iid}::{model}"
+    if key in _MODEL_KV_CACHE:
+        return _MODEL_KV_CACHE[key]
+    inst = OLLAMA_INSTANCES.get(iid) or {}
+    if not inst.get("url"):
+        return 0.0
+    try:
+        async with httpx.AsyncClient(verify=_SSL_CTX, timeout=8) as c:
+            r = await c.post(f"{inst['url']}/api/show", json={"name": model})
+            mi = (r.json() or {}).get("model_info") or {}
+        arch = str(mi.get("general.architecture") or "")
+
+        def _g(suffix):
+            return mi.get(f"{arch}.{suffix}")
+
+        n_layers = int(_g("block_count") or 0)
+        n_kv = int(_g("attention.head_count_kv") or _g("attention.head_count") or 0)
+        head_dim = int(_g("attention.key_length") or 0)
+        if not head_dim:
+            emb = int(_g("embedding_length") or 0)
+            n_head = int(_g("attention.head_count") or 0)
+            head_dim = (emb // n_head) if (emb and n_head) else 0
+        if n_layers and n_kv and head_dim:
+            kv = float(n_layers * 2 * n_kv * head_dim * 2)
+            _MODEL_KV_CACHE[key] = kv
+            return kv
+    except Exception:
+        pass
+    return 0.0
+
+
+async def proactive_vram_ctx(iid: str, model: str) -> int:
+    """Largest num_ctx whose weights+KV fit a GPU node's VRAM, computed BEFORE the
+    first load — so even the FIRST request seats fully (the residency probe stays as
+    the reactive backstop). Prefers a VRAM figure MEASURED from a prior spill over
+    the nominal hw spec (compute buffers make truly-usable VRAM a bit under sticker).
+    0 = can't tell / don't cap."""
+    inst = OLLAMA_INSTANCES.get(iid) or {}
+    if not inst.get("has_gpu"):
+        return 0
+    usable = _NODE_USABLE_VRAM.get(iid)
+    margin = 0.95
+    if not usable:
+        vram_gb = float((_node_hw(iid) or {}).get("vram_gb") or 0.0)
+        if vram_gb <= 0:
+            return 0
+        usable = int(vram_gb * (2 ** 30))
+        margin = 0.86                       # nominal spec > truly-usable; be conservative
+    weights = await ollama_model_disk_size(iid, model)
+    kv_per_tok = await ollama_model_kv_per_token(iid, model)
+    if weights <= 0 or kv_per_tok <= 0:
+        return 0
+    free = usable * margin - weights
+    if free <= 0:
+        return _CTX_FLOOR                   # weights ~fill the card — smallest window
+    return _round_ctx_down(int(free / kv_per_tok))
+
+
 async def note_ctx_residency(iid: str, model: str, requested_ctx: int) -> Optional[dict]:
     """Read /api/ps and report whether `model` is FULLY resident on `iid`.
 
@@ -1980,6 +2046,7 @@ async def note_ctx_residency(iid: str, model: str, requested_ctx: int) -> Option
         out = {"resident_pct": pct, "size": size, "size_vram": vram,
                "spilled": pct < 99, "ctx": m.get("context_length")}
         if out["spilled"]:
+            _NODE_USABLE_VRAM[iid] = vram          # measured usable VRAM (bytes that seated)
             key = f"{iid}::{model}"
             cur = _NODE_MODEL_CTX.get(key) or requested_ctx or _CTX_STEP * 2
             new = max(_CTX_FLOOR, (cur - _CTX_STEP))       # fallback: creep one step
@@ -2040,6 +2107,14 @@ async def effective_num_ctx(model: str, instance_id: Optional[str] = None,
     iid = pick_instance(prefer_gpu=prefer_gpu, instance_id=instance_id, model=model)
     if iid:
         ctx = min(ctx, _auto_ctx_for(model, iid, detected or ctx))
+        # PROACTIVE VRAM-headroom fit: when we have NOT yet learned a safe window for
+        # this (node, model) from a spill, size it to the node's free VRAM up front
+        # (weights + per-token KV) so even the FIRST request seats fully — no warm-up
+        # spill. The residency probe (note_ctx_residency) refines it after the fact.
+        if f"{iid}::{model}" not in _NODE_MODEL_CTX:
+            _fit = await proactive_vram_ctx(iid, model)
+            if _fit and _fit < ctx:
+                ctx = _fit
     elif OLLAMA_MAX_AUTO_CTX > 0:
         ctx = min(ctx, OLLAMA_MAX_AUTO_CTX)
     return max(_CTX_FLOOR, ctx)

@@ -169,13 +169,15 @@ register_routing_profile(
                        "model": _LOOP_PLANNER_MODEL,
                        "options": {"temperature": 0.1, "num_ctx": 8192}},
         "coder":      {"job_type": "loop_coder", "prefer_gpu": True,
-                       # Aligned to the chat/aide sampling — the SAME 9B writes
-                       # functional code in chat. NO repeat_penalty: > 1.0 is a
-                       # foot-gun for CODE, penalising the legitimate token repetition
-                       # code is full of (indentation, keywords, identifiers) and
-                       # nudging the model off the correct token. The earlier 1.15
-                       # (added to break a degenerate line-loop) hurt coherence; the
-                       # warmer 0.7 temp avoids the greedy loop without the penalty.
+                       # DEDICATED code model — it writes valid, functional code where
+                       # the general 9B gave bloated / JS-broken output (validated:
+                       # a functional pokedex in 24s vs a broken/stub 9B run). Its 14B
+                       # weights fit the 12GB GPU because the VRAM-headroom num_ctx
+                       # auto-fit sizes the window so weights+KV stay resident — no CPU
+                       # spill. NO repeat_penalty: > 1.0 is a foot-gun for CODE (it
+                       # penalises the legitimate token repetition code is full of);
+                       # temp 0.7 matches the chat that writes clean code.
+                       "model": "qwen2.5-coder:14b",
                        "options": {"temperature": 0.7, "top_p": 0.9}},
         "writer":     {"job_type": "loop_writer", "prefer_gpu": True,
                        "options": {"temperature": 0.7, "top_p": 0.9}},
