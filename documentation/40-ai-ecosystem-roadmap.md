@@ -6,9 +6,12 @@ another round of capability and runtime sprawl. It is an adoption portfolio, not
 a dependency shopping list.
 
 Research was refreshed on 2026-08-22 from primary project documentation. The
-repository comparison was static. No package was installed, no service was
-started, no model was called, and no live benchmark was run. The validation plan
-at the end is queued until explicitly authorized.
+repository comparison was static and no candidate package was installed. On
+2026-08-23 an explicitly authorized, isolated round exercised Vera's existing
+model benchmark surfaces; see
+[Evaluation results — 2026-08-23](EVALUATION-RESULTS-2026-08-23.md). Candidate
+framework and integration validation remains queued until its adapters and
+frozen fixtures exist and execution is explicitly authorized.
 
 ## Executive recommendation
 
@@ -60,7 +63,7 @@ the kernel.
   security, observability, and rollback requirements.
 - [x] Add a queued live-test matrix without executing it.
 
-### Iteration 4 — queued live validation
+### Iteration 4 — partially started live validation
 
 - [ ] Freeze representative tasks, datasets, model packages, and baselines.
 - [ ] Install candidates only in isolated, pinned environments or containers.
@@ -69,7 +72,9 @@ the kernel.
 - [ ] Compare candidates and update the portfolio from measured evidence.
 - [ ] Activate only adapters that meet their decision gate.
 
-Iteration 4 must remain queued until the user explicitly says to begin live tests.
+The existing-model baseline subset was authorized and run on 2026-08-23. The
+external candidate matrix remains queued: this authorization did not include
+package installation, production data, destructive migration, or activation.
 
 ## What Vera already has
 

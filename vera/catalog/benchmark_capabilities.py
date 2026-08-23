@@ -422,6 +422,13 @@ async def _generate(url: str, model: str, prompt: str, num_predict: int = 128,
     g = gopts or {}
     body = {
         "model": model, "prompt": prompt, "stream": False,
+        # Accuracy packs grade the final answer, not a model's private reasoning.
+        # Newer Ollama thinking models can spend the entire num_predict budget in
+        # the top-level `thinking` field and return an empty `response`, producing
+        # a false 0% score and much longer runs.  Disable native thinking for these
+        # short deterministic probes; agentic/reasoning benchmarks belong in
+        # bench.loop where the reasoning lifecycle is part of the evaluation.
+        "think": False,
         "options": {"temperature": float(g.get("temperature", 0.0)),
                     "seed": int(g.get("seed", 42)),
                     "top_p": float(g.get("top_p", 1.0)),
@@ -516,7 +523,11 @@ async def _run_vision_pack(url: str, model: str, pack: dict, perf: dict, gopts: 
         img = _solid_png_b64(*it["color"])
         t0 = time.time()
         try:
-            resp = await _generate(url, model, it["prompt"], num_predict=32,
+            # Some VLM templates still perform internal reasoning even when the
+            # Ollama `think` flag is false.  A 32-token cap can therefore end
+            # before the final one-word response.  Match the bounded text-pack
+            # budget and retain diagnostics when a node still returns no answer.
+            resp = await _generate(url, model, it["prompt"], num_predict=128,
                                    images=[img], gopts=gopts)
             out = resp.get("response", "") or ""
             m = _metrics(resp)
@@ -528,6 +539,8 @@ async def _run_vision_pack(url: str, model: str, pack: dict, perf: dict, gopts: 
             continue
         passed += 1 if ok else 0
         items_out.append({"prompt": it["prompt"], "ok": ok, "got": _norm(out)[:120],
+                          "thinking_chars": len(resp.get("thinking", "") or ""),
+                          "done_reason": resp.get("done_reason", ""),
                           "wall_s": round(time.time() - t0, 2)})
     total = len(pack.get("items", []))
     return {"role": "vision", "label": pack["label"], "kind": "vision",
@@ -659,11 +672,19 @@ async def _benchmark(instance_id: str, model: str, role: str = "all",
         await _unload(url, model)
         await asyncio.sleep(0.5)
     try:
-        warm = await _generate(url, model, "Reply with the single word: ok",
-                               num_predict=8, gopts=gopts)
-        perf["load_ms"] = _metrics(warm).get("load_ms")
+        if roles == ["embed"]:
+            # Embedding-only models reject /api/generate with HTTP 400.  Probe
+            # the same endpoint the scored pack uses instead.  The legacy
+            # /api/embeddings response has no load-duration fields, so load_ms
+            # remains unknown rather than fabricating a generation measurement.
+            await _embed_one(url, model, "benchmark warm-up")
+        else:
+            warm = await _generate(url, model, "Reply with the single word: ok",
+                                   num_predict=8, gopts=gopts)
+            perf["load_ms"] = _metrics(warm).get("load_ms")
     except Exception as e:
-        return {"error": f"node unreachable or model not installed: {str(e)[:160]}",
+        detail = f"{type(e).__name__}: {str(e)}".rstrip()
+        return {"error": f"node/model warm-up failed: {detail[:180]}",
                 "instance_id": instance_id, "model": model}
 
     packs = []
