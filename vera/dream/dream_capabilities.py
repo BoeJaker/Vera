@@ -10385,7 +10385,9 @@ DIRECTOR_DEFAULTS: Dict[str, Any] = {
     # A small model emits brief real-time observations often; the MoE does the
     # deeper narrative on its own (slower) cadence. Quick takes skip the gather.
     "narrator_quick_enabled":   True,
-    "narrator_quick_model":     "qwen3.5:9b",          # fast one-liner model (CPU)
+    # A SMALL, NON-reasoning model that actually generates on a CPU node — qwen3.5:9b
+    # (reasoning) returns ~1 token there. mistral:7b is fast + clean; tune via config.
+    "narrator_quick_model":     "mistral:7b",          # fast one-liner model (CPU)
     "narrator_quick_gap_min":   3.0,                    # quick-take cadence (< narrator_gap_min)
     "narrator_quick_history":   30,
     # ── Idle → GPU: when the user's been idle a while the GPU is free, so let the
@@ -11633,19 +11635,25 @@ async def _narrator_quick_take(cfg: Dict[str, Any], force: bool = False) -> Dict
     recent_txt = "\n".join("- " + t[:160] for t in recent if t)
     model = cfg.get("narrator_quick_model") or "qwen3.5:9b"
     sys_p = ("You are VERA's quick inner voice — a brief, real-time observation of what's "
-             "happening in the system / the watched world RIGHT NOW. ONE sentence, "
-             "characterful, specific. Build on your recent takes; if nothing genuinely new, "
-             "return an empty take. " + _director_addressing(cfg))
+             "happening in the system / the watched world RIGHT NOW. Reply with ONE short "
+             "sentence, characterful and specific — NO preamble, NO JSON, just the sentence. "
+             "If nothing is genuinely new since your recent takes, reply exactly: (nothing new). "
+             + _director_addressing(cfg))
     prompt = (initial + (("\n\nYOUR RECENT TAKES:\n" + recent_txt) if recent_txt else "")
-              + '\n\nRespond ONLY JSON: {"take":"<one sentence, or empty if nothing new>"}')
+              + "\n\nYour one-sentence take now:")
     try:
-        raw = await gen(prompt, system=sys_p, json_mode=True, prefer_gpu=False,
-                        job_type="dream_director", model=model, timeout=180)
+        # Plain text (NOT json_mode) + think=False: the quick model (qwen3.5:9b) is a
+        # REASONING model — under json_mode's grammar it returns empty (eval_count=1),
+        # and without think=False its output goes to the `thinking` field leaving the
+        # response empty ("Thinking"). A one-liner needs neither JSON nor reasoning.
+        raw = await gen(prompt, system=sys_p, prefer_gpu=False, think=False,
+                        job_type="dream_director", model=model, timeout=180,
+                        options={"num_predict": 80})
     except Exception as e:
         log.debug("narrator quick gen: %s", e)
         return {"ok": False}
-    take = str(_narrator_parse_json(raw).get("take") or "").strip()
-    if not take:
+    take = str(raw or "").strip().strip('"').split("\n")[0][:280]
+    if not take or take.lower().startswith("(nothing"):
         return {"ok": True, "take": ""}
     if r:
         try:
