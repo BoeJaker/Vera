@@ -57,3 +57,16 @@ def test_end_to_end_allowedips_excludes_onlan_member():
     offlan = wg_peer_allowed_ips("10.88.0.1", wg_routes_for_member(routes, "10.9.9.9"))
     assert onlan == "10.88.0.1/32"
     assert offlan == "10.88.0.1/32, 192.168.0.0/24"
+
+
+def test_wg_client_config():
+    from vera.networking.netsec_core import wg_client_config
+    peers = [{"pubkey": "PK1", "ip": "10.88.0.1", "endpoint": "1.2.3.4:51820", "routes": ["192.168.0.0/24"]},
+             {"pubkey": "PK2", "ip": "10.88.0.2"}]
+    conf = wg_client_config("10.88.0.9", 51820, peers, client_host="10.5.5.5")
+    assert "PrivateKey = __PRIVKEY__" in conf and "Address = 10.88.0.9/32" in conf
+    assert "PublicKey = PK1" in conf and "Endpoint = 1.2.3.4:51820" in conf
+    assert "10.88.0.1/32, 192.168.0.0/24" in conf   # off-LAN client gets the gateway route
+    assert "PublicKey = PK2" in conf
+    conf2 = wg_client_config("10.88.0.9", 51820, peers, client_host="192.168.0.50")
+    assert "192.168.0.0/24" not in conf2            # on-LAN client: no self-tunnel route

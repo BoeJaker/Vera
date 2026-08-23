@@ -56,7 +56,7 @@ from Vera.vera.capability_orchestration import APP, capability, emit_event, now_
 # app-free shell-script builder (unit-tested; waits for cloud-init/apt lock)
 from Vera.vera.networking.netsec_core import (
     wireguard_install_script as _wireguard_install_script,
-    wg_peer_allowed_ips, wg_gateway_postup, wg_gateway_postdown, wg_routes_for_member,
+    wg_peer_allowed_ips, wg_gateway_postup, wg_gateway_postdown, wg_routes_for_member, wg_client_config,
 )
 
 log = logging.getLogger("vera.netsec")
@@ -855,3 +855,76 @@ async def _netsec_panel():
 
 
 log.info("netsec_capabilities ready — mesh providers: %s", ", ".join(_PROVIDERS))
+
+
+@capability(
+    "netsec.mesh.enroll_token",
+    http_method="POST", http_path="/netsec/mesh/enroll_token", http_tags=["netsec"],
+    memory="off",
+    description="Get or set the shared mesh SELF-ENROL token that gates netsec.mesh.enroll. "
+                "generate=true mints a fresh one; token=<str> sets it; no args returns the "
+                "current token (minting one if absent). Output: {ok, enroll_token}.",
+)
+async def cap_mesh_enroll_token(token: str = "", generate: bool = False, trace_id=None) -> Dict:
+    cfg = await _cfg()
+    cur = cfg.get("enroll_token", "")
+    if generate or (not token and not cur):
+        import secrets as _secrets
+        token = _secrets.token_urlsafe(24)
+    if token:
+        cfg["enroll_token"] = token
+        await _cfg_put(cfg)
+    return {"ok": True, "enroll_token": cfg.get("enroll_token", "")}
+
+
+@capability(
+    "netsec.mesh.enroll",
+    http_method="POST", http_path="/netsec/mesh/enroll", http_tags=["netsec"],
+    memory="off",
+    description="SELF-ENROL a node onto the mesh (node-initiated AUTO-JOIN). The node "
+                "generates its own WireGuard key and POSTs its PUBLIC key + the shared enrol "
+                "token; Vera allocates an overlay IP, registers the peer, resyncs the mesh and "
+                "returns the node's wg config to bring up (the node's private key never leaves "
+                "it). Token-gated (netsec.mesh.enroll_token). Inputs: pubkey (str!), token "
+                "(str!), host (str -- node LAN IP, used to filter gateway routes), label (str), "
+                "endpoint (str). Output: {ok, ip, iface, subnet, listen_port, host_id, conf}.",
+)
+async def cap_mesh_enroll(pubkey: str = "", token: str = "", host: str = "",
+                          label: str = "", endpoint: str = "", trace_id=None) -> Dict:
+    pubkey = (pubkey or "").strip()
+    if not pubkey:
+        return {"error": "pubkey required (node runs `wg genkey | wg pubkey`)"}
+    cfg = await _cfg()
+    want = cfg.get("enroll_token", "")
+    if not want:
+        return {"error": "self-enrol is disabled -- mint a token first (netsec.mesh.enroll_token)"}
+    if (token or "").strip() != want:
+        return {"error": "invalid enrol token"}
+    hid = None
+    for k, m in cfg["members"].items():
+        if m.get("pubkey") == pubkey:
+            hid = k
+            break
+    if not hid:
+        hid = "self-" + pubkey.replace("/", "").replace("+", "")[:16]
+    member = cfg["members"].get(hid) or {
+        "host_id": hid, "label": label or host or hid, "host": host or "",
+        "ip": _alloc_ip(cfg), "endpoint": endpoint or "", "joined": now_iso(),
+    }
+    member["pubkey"] = pubkey
+    member["state"] = "self-enrolled"
+    member["enrolled"] = False
+    if host:
+        member["host"] = host
+    if endpoint:
+        member["endpoint"] = endpoint
+    cfg["members"][hid] = member
+    await _cfg_put(cfg)
+    sync = await _sync_all(cfg)
+    cfg = await _cfg()
+    peers = [m for k, m in cfg["members"].items() if k != hid]
+    conf = wg_client_config(member["ip"], cfg.get("listen_port", 51820), peers, client_host=host)
+    await emit_event({"type": "netsec.mesh.enrolled", "host_id": hid, "ip": member["ip"]})
+    return {"ok": True, "ip": member["ip"], "iface": cfg.get("iface", "vera0"),
+            "subnet": cfg["subnet"], "listen_port": cfg.get("listen_port", 51820),
+            "host_id": hid, "conf": conf}
