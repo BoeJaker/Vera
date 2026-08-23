@@ -44,3 +44,26 @@ def test_two_branches_get_distinct_slots():
     assert p not in in_use_ports and p != 8999
     assert d not in in_use_dbs
     assert sp.container_name("agentic-loop-improvements-2") != "vera-dev"
+
+
+def test_capacity_snapshot_reports_last_slot_without_reserving_it():
+    got = sp.capacity_snapshot(
+        used_ports=list(range(8981, 8999)),
+        used_dbs=list(range(3, 15)),
+    )
+    assert got["available_slots"] == 1
+    assert got["exhausted"] is False
+    assert got["next_port"] == 8980
+    assert got["next_redis_db"] == 15
+
+
+def test_capacity_snapshot_fails_closed_when_either_resource_is_full():
+    db_full = sp.capacity_snapshot([], list(range(3, 16)))
+    assert db_full["available_slots"] == 0
+    assert db_full["exhausted"] is True
+    assert db_full["next_port"] == 8998
+    assert db_full["next_redis_db"] is None
+
+    port_full = sp.capacity_snapshot(list(range(8980, 8999)), [])
+    assert port_full["available_slots"] == 0
+    assert port_full["exhausted"] is True
