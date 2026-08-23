@@ -106,3 +106,4 @@ vera/mesh/firmware/bin/*.bin
 # but do not publish or re-add them to the repository.
 documentation/specs/
 documentation/postmortems/
+.vera-work/

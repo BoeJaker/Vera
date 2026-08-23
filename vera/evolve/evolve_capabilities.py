@@ -8373,6 +8373,11 @@ async def evolve_sandbox_list(detail: bool = False, trace_id=None):
     if detail:
         for item in out:
             item.update(await _sandbox_observation(item))
+    from Vera.vera.evolve.sandbox_workplan import load_plan, plan_summary
+    for item in out:
+        worktree = item.get("worktree")
+        if worktree:
+            item["workplan"] = plan_summary(load_plan(worktree, item.get("branch") or ""))
     used_ports = [item.get("port") for item in out if item.get("port") is not None]
     used_dbs = [item.get("redis_db") for item in out if item.get("redis_db") is not None]
     capacity = _pool_capacity_snapshot(used_ports, used_dbs)
@@ -8385,6 +8390,74 @@ async def evolve_sandbox_list(detail: bool = False, trace_id=None):
         capacity["warning"] = ("isolated sandbox Redis cannot see controller pool occupancy; "
                                "query production evolve.sandbox.list before allocation")
     return {"sandboxes": out, "count": len(out), "capacity": capacity}
+
+
+def _sandbox_workplan_target(primary: dict, pool: dict, *, name: str, branch: str) -> dict:
+    if not name and not branch:
+        return {"error": "sandbox_name_or_branch_required"}
+    target = _resolve_restart_target(primary, pool, primary_name=_SANDBOX_CONTAINER,
+                                     name=name, branch=branch)
+    if target.get("error"):
+        return target
+    if not target.get("worktree") or not Path(target["worktree"]).is_dir():
+        return {"error": "sandbox_worktree_missing", "branch": target.get("branch"),
+                "name": target.get("name")}
+    return target
+
+
+@capability("evolve.sandbox.workplan.get", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/sandbox/workplan", http_tags=["evolve"],
+            description="Read one sandbox's gitignored worktree-local work plan, including "
+                        "description, steps, board item links and notes references. Inputs: "
+                        "exact sandbox name or branch. This never mutates the sandbox.")
+async def evolve_sandbox_workplan_get(name: str = "", branch: str = "", trace_id=None):
+    primary, _ = await _primary_ownership()
+    target = _sandbox_workplan_target(primary, await _sandbox_pool(), name=name, branch=branch)
+    if target.get("error"):
+        return target
+    from Vera.vera.evolve.sandbox_workplan import load_plan
+    return {"ok": True, "sandbox": {"name": target.get("name"),
+                                      "branch": target.get("branch")},
+            "workplan": load_plan(target["worktree"], target.get("branch") or "")}
+
+
+@capability("evolve.sandbox.workplan.update", memory="on",
+            http_method="POST", http_path="/evolve/sandbox/workplan", http_tags=["evolve"],
+            description="Create or revise one sandbox's gitignored worktree-local plan. "
+                        "Writes are optimistic: expected_revision must match the current "
+                        "revision, preventing agents from silently overwriting newer work. "
+                        "Board item IDs and notes refs are links; their systems remain durable "
+                        "sources of coordination. Inputs: exact name or branch, expected_revision, "
+                        "optional title, description, status, current_step, owner, session_id, "
+                        "board_item_ids, notes_refs, steps and update_note.")
+async def evolve_sandbox_workplan_update(
+        name: str = "", branch: str = "", expected_revision: int = 0,
+        title: Optional[str] = None, description: Optional[str] = None,
+        status: Optional[str] = None, current_step: Optional[str] = None,
+        owner: Optional[str] = None, session_id: Optional[str] = None,
+        board_item_ids: Optional[list] = None, notes_refs: Optional[list] = None,
+        steps: Optional[list] = None, update_note: str = "", trace_id=None):
+    primary, _ = await _primary_ownership()
+    target = _sandbox_workplan_target(primary, await _sandbox_pool(), name=name, branch=branch)
+    if target.get("error"):
+        return target
+    from Vera.vera.evolve.sandbox_workplan import update_plan
+    try:
+        plan = update_plan(target["worktree"], branch=target.get("branch") or "",
+                           expected_revision=expected_revision, title=title,
+                           description=description, status=status,
+                           current_step=current_step, owner=owner, session_id=session_id,
+                           board_item_ids=board_item_ids, notes_refs=notes_refs,
+                           steps=steps, update_note=update_note)
+    except ValueError as exc:
+        return {"error": str(exc), "branch": target.get("branch"),
+                "name": target.get("name")}
+    await emit_event({"type": "evolve.sandbox.workplan.updated",
+                      "name": target.get("name"), "branch": target.get("branch"),
+                      "revision": plan["revision"], "status": plan["status"]})
+    return {"ok": True, "sandbox": {"name": target.get("name"),
+                                      "branch": target.get("branch")},
+            "workplan": plan}
 
 
 @capability("evolve.sandbox.preflight", memory="off", silent=True,

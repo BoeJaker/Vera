@@ -513,6 +513,24 @@ sidecar, a **Terminal** card (container or worktree shell), and a **Files**
 card (worktree browser + editor with save-to-branch) — full access to the
 sandboxed copy, zero access to the real source.
 
+### Worktree-local sandbox plans
+
+Each sandbox can carry a gitignored `.vera-work/work-plan.json`. It records a
+concise purpose, owner/session, current step, actionable steps, blockers, and
+links to durable board items and session/workspace notes. It is deliberately not
+a second backlog: board items remain the coordination plane and notes remain the
+cross-session handoff plane.
+
+Plans are revision-guarded to prevent stale agents overwriting newer progress.
+Validation rejects duplicate step IDs, a `current_step` that does not exist, and
+a plan marked complete while actionable steps remain unfinished. The Loop Lab
+Sandbox tab summarizes plan progress and opens a plan editor with direct board
+links and visible notes references.
+
+Lifecycle safety still outranks the plan. A plan cannot make a dirty, unknown,
+protected, or Git-severed sandbox safe to restart or reap; preflight remains the
+authority for lifecycle mutations.
+
 **Reviewer trace fidelity.** The engines' `loops.run` result often carries no
 usable steps list, which once left the adversarial reviewer judging
 "(no tool calls)" after a 25-step run. `_run_task` now rebuilds the tool trace
