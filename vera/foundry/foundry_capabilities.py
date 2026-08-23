@@ -61,6 +61,7 @@ from Vera.vera.foundry.foundry_core import (
     pxe_dnsmasq_conf, pxe_ipxe_menu, swarm_service_cmd,
     pxe_ops_apkovl_files, pxe_desktop_apkovl_files, parse_ops_secrets,
 )
+from Vera.vera.foundry.features_core import feature_script as _feature_script
 from Vera.vera.security import secrets as vsecrets
 
 _HERE = Path(__file__).parent
@@ -810,6 +811,16 @@ async def _post_provision(cluster_id, node, vmid, kind, feats, fqdn, job_id="", 
             if "hardening" in feats:
                 h = await _apply_ct_feature(cluster_id, vmid, "lxc", _HARDEN, node)
                 steps.append({"hardening": {"ok": bool(h.get("ok"))}})
+            # OS-agnostic feature bundles (features_core) -- portable across distros.
+            # enrol/mesh/hardening are handled above for CTs; apply the additional
+            # portable features here (file-client now; more migrate here as we fan out).
+            _fctx = await _features_ctx()
+            for _f in ("file-client",):
+                if _f in feats:
+                    _sc = _feature_script(_f, _fctx)
+                    if _sc:
+                        _fr = await _apply_ct_feature(cluster_id, vmid, "lxc", _sc, node)
+                        steps.append({_f: {"ok": bool(_fr.get("ok"))}})
         elif running and kind == "qemu":
             if want_enrol and ip:
                 ready = await _wait_ssh(cluster_id, ip)
@@ -1537,6 +1548,20 @@ def _ops_worker_env() -> str:
     out["FOUNDRY_VERA_IMAGE"] = bh + ":5000/vera:latest"
     out["EMBED_CAPS_ON_START"] = "0"
     return "".join("%s=%s\n" % (k, v) for k, v in out.items())
+
+
+async def _features_ctx() -> Dict:
+    """Context for features_core.feature_script: LAN-reachable Vera URL, registry, worker
+    image + backend env, and the mesh enrol token (minted just-in-time)."""
+    ip = _vera_host_ip()
+    ctx = {"vera_url": "https://%s:8999" % ip, "registry": "%s:5000" % ip,
+           "vera_image": "%s:5000/vera:latest" % ip,
+           "vera_worker_env": _ops_worker_env(), "shares": []}
+    try:
+        ctx["mesh_token"] = ((await _call("netsec.mesh.enroll_token")) or {}).get("enroll_token", "")
+    except Exception:
+        ctx["mesh_token"] = ""
+    return ctx
 
 
 def _load_ops_secrets() -> Dict:
