@@ -6,6 +6,7 @@ from vera.execution.run_journal import (
     JournalCorruption,
     MemoryRunJournal,
     RunControlLedger,
+    SqliteRunJournal,
 )
 from vera.execution.run_protocol import Run, RunEvent, RunStatus
 
@@ -96,6 +97,42 @@ def test_export_is_portable_and_delete_requires_verified_tip():
     assert journal.delete(run.id, expected_checksum=exported["last_checksum"]) is True
     assert journal.entries(run.id) == []
     assert journal.delete(run.id, expected_checksum=exported["last_checksum"]) is False
+
+
+def test_sqlite_journal_survives_reopen_and_rebuilds_projection(tmp_path):
+    path = tmp_path / "runs.sqlite3"
+    run = _completed_run()
+    first = SqliteRunJournal(path)
+    for event in run.events:
+        first.append(event)
+    checksum = first.export(run.id)["last_checksum"]
+    first.close()
+
+    reopened = SqliteRunJournal(path)
+    assert reopened.run_ids() == [run.id]
+    assert reopened.verify(run.id) == {
+        "ok": True, "run_id": run.id, "event_count": 2,
+        "last_checksum": checksum}
+    rebuilt = reopened.rebuild(run_id=run.id, kind=run.kind,
+                               trace_id=run.trace_id)
+    assert rebuilt.status == RunStatus.COMPLETED
+    assert [event.id for event in rebuilt.events] == [event.id for event in run.events]
+    reopened.close()
+
+
+def test_sqlite_journal_preserves_idempotency_and_guarded_delete(tmp_path):
+    journal = SqliteRunJournal(tmp_path / "runs.sqlite3")
+    run = _completed_run()
+    first = journal.append(run.events[0])
+    assert journal.append(run.events[0]) == first
+    with pytest.raises(JournalCorruption, match="reused"):
+        journal.append(replace(run.events[0], run_id="other"))
+    journal.append(run.events[1])
+    with pytest.raises(ValueError, match="does not match"):
+        journal.delete(run.id, expected_checksum="wrong")
+    checksum = journal.export(run.id)["last_checksum"]
+    assert journal.delete(run.id, expected_checksum=checksum) is True
+    journal.close()
 
 
 def test_controls_record_intent_and_native_acknowledgement_without_execution():

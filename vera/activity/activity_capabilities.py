@@ -21,6 +21,7 @@ subsystem already writes:
           "goal:<slug>"             — alias of project scope
           "dream" | "dream:<trig>"  — dream pipelines (all, or one trigger)
           "program:<pid>"           — one V8 program
+          "run:<run_id>"            — one Run protocol projection
           "chat:<session_id>"       — one chat session's activity
 
 Each event carries a `ui` block { panel, url, element, session_id } so the
@@ -638,6 +639,48 @@ async def cap_activity_sessions(window_min: float = 120.0, per_session: int = 14
     return {"sessions": rows, "count": len(rows)}
 
 
+async def _run_events(run_id: str = "", session_id: str = "",
+                      limit: int = 60) -> List[Dict[str, Any]]:
+    """Project recent Run protocol records into Activity without owning them."""
+    try:
+        from Vera.vera.execution.run_projection import SHADOW_RUNS
+    except Exception:
+        return []
+    out = []
+    for summary in SHADOW_RUNS.list(limit=max(limit * 4, 60)):
+        if summary.get("parent_run_id"):
+            continue
+        rid = str(summary.get("id") or "")
+        if run_id and rid != run_id:
+            continue
+        projection = SHADOW_RUNS.get(rid)
+        if not projection:
+            continue
+        run = projection["run"]
+        if session_id and session_id not in {
+                str(run.get("session_id") or ""), str(run.get("trace_id") or "")}:
+            continue
+        children = projection.get("children") or []
+        terminal = sum(1 for child in children if child.get("status") in {
+            "completed", "failed", "cancelled", "timed_out", "skipped"})
+        out.append(_ev(
+            "run", run.get("ended_at") or run.get("started_at") or run.get("created_at") or "",
+            "Run · " + str(run.get("kind") or "execution"),
+            summary=(f"{terminal}/{len(children)} child nodes finished" if children
+                     else "No child nodes recorded"),
+            status=str(run.get("status") or ""),
+            session_id=str(run.get("session_id") or ""), cap="dag.run",
+            ref=rid, source="run_protocol",
+            ui={"label": "Run activity", "run_id": rid},
+            extra={"run_id": rid, "trace_id": run.get("trace_id"),
+                   "progress": run.get("progress"), "children": children,
+                   "authoritative": False,
+                   "storage": projection.get("storage", "process_local_memory")}))
+        if len(out) >= limit:
+            break
+    return out
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  THE CAPABILITY
 # ─────────────────────────────────────────────────────────────────────────────
@@ -647,9 +690,9 @@ async def cap_activity_sessions(window_min: float = 120.0, per_session: int = 14
     description="The UNIFIED activity timeline: a time-ordered event list for a "
                 "SCOPE, composed from dream cycles, agentic loop runs, V8 loop "
                 "programs, live background loop sessions, cap activity (each mapped "
-                "to the panel/element that renders it) and artifacts. Inputs: scope "
+                "to the panel/element that renders it), Run projections and artifacts. Inputs: scope "
                 "(str — 'all' | 'project:<slug>' | 'goal:<slug>' | 'dream[:<trig>]' "
-                "| 'program:<pid>' | 'chat:<session_id>'; default 'all'), limit "
+                "| 'program:<pid>' | 'run:<run_id>' | 'chat:<session_id>'; default 'all'), limit "
                 "(int=120), kinds (str — comma-filter of event kinds). Output: "
                 "{scope, events:[{kind, ts, title, summary, status, session_id, "
                 "cap, ui:{...}, extra}], count}.",
@@ -686,9 +729,12 @@ async def cap_activity_timeline(scope: str = "all", limit: int = 120,
         elif kind == "program" and ref:
             events += await _program_events(pid=ref, limit=lim)
             events += await _live_loop_events(prefixes=[f"v8:{ref}", f"v8-{ref}"], limit=lim)
+        elif kind == "run" and ref:
+            events += await _run_events(run_id=ref, limit=lim)
         elif kind == "chat" and ref:
             events += await _cap_activity_events(session_id=ref, limit=lim)
             events += await _live_loop_events(prefixes=[ref], limit=lim)
+            events += await _run_events(session_id=ref, limit=lim)
         elif kind == "narrator":
             events += await _narrator_events(limit=lim)
         else:  # all — the master timeline (agentic work only, no cap chatter)
@@ -696,6 +742,7 @@ async def cap_activity_timeline(scope: str = "all", limit: int = 120,
             events += await _program_events(limit=min(lim, 30))
             events += await _live_loop_events(limit=min(lim, 40))
             events += await _narrator_events(limit=min(lim, 25))
+            events += await _run_events(limit=min(lim, 40))
     except Exception as e:
         log.warning("activity.timeline compose (%s): %s", scope, e)
 

@@ -59,6 +59,7 @@
     program:     { i: '❖', c: '--acc3,#c9955a', l: 'V8 program' },
     artifact:    { i: '▤', c: '--acc2,#8fb87a', l: 'Artifact' },
     cap:         { i: '▸', c: '--dim2,#8a7e70', l: 'Activity' },
+    run:         { i: '◇', c: '--acc,#5a9e8f',  l: 'Run' },
   };
   const kindMeta = k => KINDS[k] || { i: '•', c: '--dim2,#8a7e70', l: k || 'event' };
 
@@ -110,7 +111,7 @@
       overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
     .pill { font-size:8.5px; padding:1px 6px; border-radius:9px; text-transform:uppercase;
       letter-spacing:.4px; border:1px solid var(--tl-bd); color:var(--dim2,#8a7e70); white-space:nowrap; }
-    .pill.ok,.pill.done { color:var(--ok,#6db87a); border-color:var(--ok,#6db87a); }
+    .pill.ok,.pill.done,.pill.completed { color:var(--ok,#6db87a); border-color:var(--ok,#6db87a); }
     .pill.running,.pill.live { color:var(--ok,#6db87a); border-color:var(--ok,#6db87a); background:rgba(109,184,122,.12); }
     .pill.failed,.pill.error,.pill.interrupted { color:var(--err,#c96b6b); border-color:var(--err,#c96b6b); }
     .pill.waiting,.pill.pending { color:var(--acc3,#c9955a); border-color:var(--acc3,#c9955a); }
@@ -338,6 +339,9 @@
         acts.push('<button class="a" data-scope="project:' + esc(ui.slug) + '">↳ Timeline</button>');
         acts.push('<button class="a" data-files="project:' + esc(ui.slug) + '">📂 Files</button>');
       }
+      if (ui.run_id) {
+        acts.push('<button class="a" data-scope="run:' + esc(ui.run_id) + '">↳ Run details</button>');
+      }
       // External associated UI (fabric graph, netmap, …) opens the real panel.
       if (ui.url) acts.push('<button class="a" data-open="' + esc(ui.url) + '">⇗ ' + esc(ui.label || 'Open') + '</button>');
       (x.tool_uis || []).slice(0, 3).forEach(t => {
@@ -350,6 +354,8 @@
       if (x.elapsed_s != null) meta.push(x.elapsed_s + 's');
       if (x.engine) meta.push(esc(x.engine));
       if (x.artifacts) meta.push(x.artifacts + ' artifacts');
+      if (x.progress != null) meta.push(Math.round(Number(x.progress) * 100) + '%');
+      if (x.storage) meta.push(x.authoritative === false ? 'ephemeral view' : esc(x.storage));
       if (e.session_id) meta.push('<span title="' + esc(e.session_id) + '">' + esc(String(e.session_id).slice(0, 26)) + '</span>');
       // V8 program: show the WHOLE loop plan (every loop + its state), so a
       // program that declares N loops reads as N loops even before most run.
@@ -365,6 +371,20 @@
               '<span class="lp-nm" title="' + esc(l.name || '') + '">' + esc(l.name || '') + '</span>' +
               '<span class="lp-goal" title="' + esc(l.goal || '') + '">' + esc(l.goal || '') + '</span>' +
               (l.runs ? '<span style="color:var(--dim);flex-shrink:0">×' + l.runs + '</span>' : '') +
+              '</div>';
+          }).join('') + '</div>';
+      }
+      if (e.kind === 'run' && Array.isArray(x.children) && x.children.length) {
+        planHtml = '<div class="loopplan"><span class="lp-hd">' +
+          x.children.length + ' child node' + (x.children.length === 1 ? '' : 's') +
+          ' · non-authoritative</span>' + x.children.map((child, ci) => {
+            const cs = String(child.status || 'created').toLowerCase();
+            const capability = (((child.events || [])[0] || {}).payload || {}).capability || child.kind || '';
+            return '<div class="lp-row" title="' + esc(child.id || '') + '">' +
+              '<span class="lp-seq">' + esc(child.task_id || String(ci + 1)) + '</span>' +
+              '<span class="pill ' + esc(cs) + '">' + esc(cs) + '</span>' +
+              '<span class="lp-nm" title="' + esc(capability) + '">' + esc(capability) + '</span>' +
+              (child.attempt ? '<span style="color:var(--dim);flex-shrink:0">try ' + esc(child.attempt) + '</span>' : '') +
               '</div>';
           }).join('') + '</div>';
       }

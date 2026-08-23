@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
+import threading
 from dataclasses import asdict, dataclass, replace
+from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
@@ -65,6 +68,9 @@ class MemoryRunJournal:
     def entries(self, run_id: str) -> list[JournalEntry]:
         return list(self._entries.get(run_id, []))
 
+    def run_ids(self) -> list[str]:
+        return list(self._entries)
+
     def verify(self, run_id: str) -> dict[str, Any]:
         previous = ""
         for expected, entry in enumerate(self._entries.get(run_id, []), start=1):
@@ -108,6 +114,113 @@ class MemoryRunJournal:
         for entry in removed:
             self._event_ids.pop(entry.event.id, None)
         return True
+
+
+class SqliteRunJournal:
+    """Durable checksummed journal using only Python's SQLite runtime."""
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = str(path)
+        Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.RLock()
+        self._db = sqlite3.connect(self.path, check_same_thread=False)
+        self._db.execute("PRAGMA journal_mode=WAL")
+        self._db.execute("PRAGMA synchronous=FULL")
+        self._db.execute(
+            "CREATE TABLE IF NOT EXISTS run_events ("
+            "run_id TEXT NOT NULL, sequence INTEGER NOT NULL, event_id TEXT NOT NULL UNIQUE, "
+            "event_json TEXT NOT NULL, previous_checksum TEXT NOT NULL, checksum TEXT NOT NULL, "
+            "PRIMARY KEY(run_id, sequence))")
+        self._db.commit()
+
+    @staticmethod
+    def _event(raw: str) -> RunEvent:
+        value = json.loads(raw)
+        value.pop("protocol", None)
+        return RunEvent(**value)
+
+    def append(self, event: RunEvent) -> JournalEntry:
+        body = json.dumps(event.to_dict(), sort_keys=True, separators=(",", ":"),
+                          ensure_ascii=False, default=str)
+        with self._lock:
+            existing = self._db.execute(
+                "SELECT event_json, previous_checksum, checksum FROM run_events WHERE event_id=?",
+                (event.id,)).fetchone()
+            if existing:
+                stored = self._event(existing[0])
+                if stored != event:
+                    raise JournalCorruption("event id was reused with different content")
+                return JournalEntry(stored, existing[1], existing[2])
+            tip = self._db.execute(
+                "SELECT sequence, checksum FROM run_events WHERE run_id=? ORDER BY sequence DESC LIMIT 1",
+                (event.run_id,)).fetchone()
+            expected = (tip[0] if tip else 0) + 1
+            if event.sequence != expected:
+                raise JournalCorruption(
+                    f"event sequence must be gap-free: expected {expected}, got {event.sequence}")
+            previous = tip[1] if tip else ""
+            checksum = _checksum(event, previous)
+            self._db.execute(
+                "INSERT INTO run_events VALUES (?, ?, ?, ?, ?, ?)",
+                (event.run_id, event.sequence, event.id, body, previous, checksum))
+            self._db.commit()
+            return JournalEntry(event, previous, checksum)
+
+    def entries(self, run_id: str) -> list[JournalEntry]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT event_json, previous_checksum, checksum FROM run_events "
+                "WHERE run_id=? ORDER BY sequence", (run_id,)).fetchall()
+        return [JournalEntry(self._event(row[0]), row[1], row[2]) for row in rows]
+
+    def run_ids(self) -> list[str]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT run_id FROM run_events GROUP BY run_id ORDER BY MAX(rowid) DESC"
+            ).fetchall()
+        return [row[0] for row in rows]
+
+    def verify(self, run_id: str) -> dict[str, Any]:
+        rows = self.entries(run_id)
+        previous = ""
+        for expected, entry in enumerate(rows, start=1):
+            if entry.event.run_id != run_id or entry.event.sequence != expected:
+                raise JournalCorruption("journal identity or sequence mismatch")
+            if entry.previous_checksum != previous or entry.checksum != _checksum(entry.event, previous):
+                raise JournalCorruption("journal checksum chain is broken")
+            previous = entry.checksum
+        return {"ok": True, "run_id": run_id, "event_count": len(rows),
+                "last_checksum": previous}
+
+    def rebuild(self, *, run_id: str, kind: str, **identity: Any) -> Run:
+        self.verify(run_id)
+        return replay_run(Run(id=run_id, kind=kind, **identity),
+                          [entry.event for entry in self.entries(run_id)])
+
+    def export(self, run_id: str) -> dict[str, Any]:
+        verified = self.verify(run_id)
+        return {"protocol": PROTOCOL_VERSION, "run_id": run_id,
+                "event_count": verified["event_count"],
+                "last_checksum": verified["last_checksum"],
+                "entries": [{"event": row.event.to_dict(),
+                             "previous_checksum": row.previous_checksum,
+                             "checksum": row.checksum} for row in self.entries(run_id)]}
+
+    def delete(self, run_id: str, *, expected_checksum: str) -> bool:
+        with self._lock:
+            rows = self.entries(run_id)
+            if not rows:
+                return False
+            actual = self.verify(run_id)["last_checksum"]
+            if not expected_checksum or expected_checksum != actual:
+                raise ValueError("delete checksum does not match the verified journal tip")
+            self._db.execute("DELETE FROM run_events WHERE run_id=?", (run_id,))
+            self._db.commit()
+            return True
+
+    def close(self) -> None:
+        with self._lock:
+            self._db.close()
 
 
 class RunControlLedger:

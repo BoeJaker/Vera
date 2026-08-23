@@ -3,6 +3,7 @@ import time
 
 import pytest
 
+from vera.execution.run_journal import SqliteRunJournal
 from vera.execution.run_projection import DagRunObserver, ShadowRunRegistry
 from vera.execution.run_protocol import Run, RunStatus
 
@@ -55,7 +56,40 @@ def test_observer_projects_skipped_and_failed_children():
     assert children["0"]["status"] == "skipped"
     assert children["1"]["status"] == "failed"
     assert children["1"]["error"]["code"] == "dag_node_error"
+    assert children["1"]["artifacts"][0]["kind"] == "capability.partial_output"
     assert parent.progress == 1.0
+
+
+def test_supervised_dag_projects_retry_attempt_without_changing_result(monkeypatch):
+    from vera import capability_orchestration as orchestration
+
+    calls = 0
+    async def flaky(trace_id=None):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("transient")
+        return {"ok": True}
+
+    monkeypatch.setitem(orchestration.CAPABILITY_REGISTRY, "test.flaky", {
+        "schema": {"properties": {}}, "func": flaky})
+    registry = ShadowRunRegistry()
+    parent = Run(id="parent", kind="vera.dag", trace_id="trace")
+    registry.record(parent, parent.transition(RunStatus.RUNNING,
+                                              event_type="run.started"))
+    observer = DagRunObserver(parent=parent, graph=[["test.flaky", "answer"]],
+                              emit=_ignore, registry=registry)
+
+    result = asyncio.run(orchestration.supervised_run_graph(
+        [["test.flaky", "answer"]], {}, trace_id="trace", run_observer=observer))
+
+    child = registry.get("parent")["children"][0]
+    assert result == {"answer": {"ok": True}}
+    assert child["status"] == "completed"
+    assert child["attempt"] == 2
+    assert child["error"] is None
+    assert [event["type"] for event in child["events"]] == [
+        "run.started", "run.retrying", "run.retry.started", "run.completed"]
 
 
 def test_registry_is_bounded_and_exports_checksummed_events():
@@ -69,6 +103,19 @@ def test_registry_is_bounded_and_exports_checksummed_events():
     exported = registry.journal.export("second")
     assert exported["event_count"] == 1
     assert exported["last_checksum"]
+
+
+def test_projection_eviction_never_deletes_durable_journal(tmp_path):
+    journal = SqliteRunJournal(tmp_path / "runs.sqlite3")
+    registry = ShadowRunRegistry(max_runs=1, journal=journal)
+    first = Run(id="first", kind="test")
+    second = Run(id="second", kind="test")
+    registry.record(first, first.transition(RunStatus.RUNNING))
+    registry.record(second, second.transition(RunStatus.RUNNING))
+
+    assert registry.get("first") is None
+    assert journal.export("first")["event_count"] == 1
+    journal.close()
 
 
 def test_run_graph_observes_sequential_parallel_conditional_and_error(monkeypatch):

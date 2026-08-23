@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from collections import OrderedDict
 from typing import Any
 from uuid import uuid4
 
-from .run_journal import MemoryRunJournal
+from .run_journal import MemoryRunJournal, SqliteRunJournal
 from .run_protocol import ArtifactRef, PROTOCOL_VERSION, Run, RunError, RunEvent, RunStatus
 
 
@@ -19,10 +20,11 @@ def _leaf_count(graph: list) -> int:
     return count
 
 
-def _result_artifact(run_id: str, result: Any) -> ArtifactRef:
+def _result_artifact(run_id: str, result: Any, *, partial: bool = False) -> ArtifactRef:
     encoded = json.dumps(result, sort_keys=True, separators=(",", ":"),
                          ensure_ascii=False, default=str).encode("utf-8")
-    return ArtifactRef(id=str(uuid4()), kind="capability.output",
+    return ArtifactRef(id=str(uuid4()), kind=("capability.partial_output" if partial
+                                               else "capability.output"),
                        uri=f"run://{run_id}/result",
                        checksum=f"sha256:{hashlib.sha256(encoded).hexdigest()}",
                        media_type="application/json", size_bytes=len(encoded))
@@ -31,10 +33,16 @@ def _result_artifact(run_id: str, result: Any) -> ArtifactRef:
 class ShadowRunRegistry:
     """Bounded process-local projection registry; explicitly non-authoritative."""
 
-    def __init__(self, max_runs: int = 200) -> None:
+    def __init__(self, max_runs: int = 200, journal=None) -> None:
         self.max_runs = max(1, int(max_runs))
         self.runs: OrderedDict[str, Run] = OrderedDict()
-        self.journal = MemoryRunJournal()
+        self.journal = journal or MemoryRunJournal()
+
+    @property
+    def storage(self) -> str:
+        return ("sqlite_journal_process_local_projection"
+                if isinstance(self.journal, SqliteRunJournal)
+                else "process_local_memory")
 
     def record(self, run: Run, event: RunEvent) -> None:
         self.runs[run.id] = run
@@ -42,9 +50,12 @@ class ShadowRunRegistry:
         self.journal.append(event)
         while len(self.runs) > self.max_runs:
             old_id, _ = self.runs.popitem(last=False)
-            exported = self.journal.export(old_id)
-            if exported["last_checksum"]:
-                self.journal.delete(old_id, expected_checksum=exported["last_checksum"])
+            # Memory rows follow their bounded projection. A durable journal has
+            # its own retention policy and must never be erased by cache eviction.
+            if isinstance(self.journal, MemoryRunJournal):
+                exported = self.journal.export(old_id)
+                if exported["last_checksum"]:
+                    self.journal.delete(old_id, expected_checksum=exported["last_checksum"])
 
     def get(self, run_id: str) -> dict[str, Any] | None:
         run = self.runs.get(run_id)
@@ -53,7 +64,7 @@ class ShadowRunRegistry:
         verification = self.journal.verify(run_id)
         children = [child.to_dict() for child in self.runs.values()
                     if child.parent_run_id == run_id]
-        return {"authoritative": False, "storage": "process_local_memory",
+        return {"authoritative": False, "storage": self.storage,
                 "run": run.to_dict(), "children": children,
                 "journal": verification}
 
@@ -64,7 +75,9 @@ class ShadowRunRegistry:
                 for run in reversed(values)]
 
 
-SHADOW_RUNS = ShadowRunRegistry()
+_journal_path = os.getenv("VERA_RUN_JOURNAL_PATH", "").strip()
+SHADOW_RUNS = ShadowRunRegistry(
+    journal=SqliteRunJournal(_journal_path) if _journal_path else MemoryRunJournal())
 
 
 class DagRunObserver:
@@ -115,10 +128,13 @@ class DagRunObserver:
         child = self.children[path]
         if error:
             child.error = RunError(code="dag_node_error", message=error)
+            if result is not None:
+                child.artifacts.append(_result_artifact(child.id, result, partial=True))
             event = child.transition(RunStatus.FAILED, event_type="run.failed",
                                      payload={"capability": cap_name, "path": list(path)},
                                      causation_id=child.events[-1].id)
         else:
+            child.error = None
             child.artifacts.append(_result_artifact(child.id, result))
             event = child.transition(RunStatus.COMPLETED, event_type="run.completed",
                                      payload={"capability": cap_name, "path": list(path),
@@ -126,6 +142,23 @@ class DagRunObserver:
                                      causation_id=child.events[-1].id)
         await self._publish(child, event)
         await self._progress(event.id)
+
+    async def node_retry(self, path: tuple[int, ...], cap_name: str,
+                         attempt: int, error: str) -> None:
+        child = self.children[path]
+        child.error = RunError(code="dag_node_retry", message=error, retryable=True)
+        retry = child.transition(
+            RunStatus.RETRYING, event_type="run.retrying",
+            payload={"capability": cap_name, "path": list(path),
+                     "next_attempt": attempt, "error": error},
+            causation_id=child.events[-1].id)
+        await self._publish(child, retry)
+        child.attempt = attempt
+        resumed = child.transition(
+            RunStatus.RUNNING, event_type="run.retry.started",
+            payload={"capability": cap_name, "path": list(path),
+                     "attempt": attempt}, causation_id=retry.id)
+        await self._publish(child, resumed)
 
     async def _progress(self, causation_id: str) -> None:
         self.finished += 1
