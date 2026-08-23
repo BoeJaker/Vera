@@ -480,6 +480,11 @@ FEATURES: List[Dict[str, Any]] = [
      "desc": "cluster:<name> — join the named cluster from the Foundry registry "
              "(docker-swarm|k3s|nomad|ray|generic). Register clusters with "
              "foundry.cluster.register."},
+    {"id": "vera-worker", "label": "Vera worker (native compute)", "default": False,
+     "targets": ["ct", "vm", "physical"], "status": "ready",
+     "desc": "Run a Vera WORKER container joined to the stack (Redis task stream) so "
+             "dispatched jobs run here - the distribute-load-across-nodes feature. "
+             "Needs the vera image reachable (registry) + docker."},
 ]
 
 
@@ -815,7 +820,7 @@ async def _post_provision(cluster_id, node, vmid, kind, feats, fqdn, job_id="", 
             # enrol/mesh/hardening are handled above for CTs; apply the additional
             # portable features here (file-client now; more migrate here as we fan out).
             _fctx = await _features_ctx()
-            for _f in ("file-client",):
+            for _f in ("file-client", "vera-worker"):
                 if _f in feats:
                     _sc = _feature_script(_f, _fctx)
                     if _sc:
@@ -953,7 +958,7 @@ async def cap_provision(target: str = "", image_id: str = "", name: str = "",
                           storage=storage, cores=cores, memory=memory, disk=disk,
                           net0=net0,
                           unprivileged=("mesh" not in feats),
-                          features=("nesting=1,keyctl=1" if ("docker-swarm" in feats or "distributed-compute" in feats or "mesh" in feats) else ""),
+                          features=("nesting=1,keyctl=1" if ("docker-swarm" in feats or "distributed-compute" in feats or "vera-worker" in feats or "mesh" in feats) else ""),
                           auto_enroll=False)   # enrol AFTER it's running (avoid create-task race)
         step("create", res)
         vmid = res.get("vmid")
