@@ -10373,6 +10373,9 @@ DIRECTOR_DEFAULTS: Dict[str, Any] = {
     "narrator_enabled":         False,
     "narrator_model":           "qwen3.6:35b-a3b",   # MoE — the narrative voice
     "narrator_gatherer_model":  "qwen3.5:9b",         # small — operates the probe kit
+    "narrator_gatherer_agent":  "gatherer",           # AGENT whose knowledge_sources
+    #   (news/press/sites/socials/forums, pre-indexed RAG) the gather phase pulls the
+    #   WATCHED WORLD from, via agent.rag.query. "" = internal probes only.
     "narrator_max_probes":      6,                     # probe-kit traversal budget/pass
     "narrator_gap_min":         12.0,                  # min minutes between narrative passes
     "narrator_deliver_to_chat": False,                 # push the narrative into the active chat
@@ -11293,6 +11296,7 @@ _NARRATOR_PROBES: Dict[str, Dict[str, str]] = {
     #    (news/press/websites/companies/socials/forums) are pre-indexed into the
     #    gatherer AGENT's knowledge_sources RAG; these probes surface what's
     #    already indexed/discovered, plus a live pull when it matters.
+    "agent.rag.query":        {"desc": "query the gatherer agent's WATCHED sources (news/press/sites/socials/forums)", "args": "{agent:str,query:str,limit:int}"},
     "research.db.search":     {"desc": "search indexed research/news findings (fast)", "args": "{query:str,limit:int}"},
     "fabric.discover.query":  {"desc": "query discovered/crawled external sources", "args": "{query:str}"},
     "fabric.discover.history": {"desc": "recent external discovery/crawl runs", "args": "{}"},
@@ -11360,6 +11364,21 @@ async def _narrator_initial_state(cfg: Dict[str, Any]) -> str:
     def _sect(label: str, body: str) -> str:
         return f"## {label}\n{body}\n\n" if (body or "").strip() else ""
 
+    # Watched world — the gatherer AGENT's sourced RAG (news/press/sites/socials/
+    # forums), pre-indexed + auto-refreshed. Always in the initial state so the
+    # narrator sees the outside world even before the gatherer probes deeper.
+    watched = ""
+    _ga = cfg.get("narrator_gatherer_agent") or ""
+    if _ga and "agent.rag.query" in CAPABILITY_REGISTRY:
+        try:
+            _r = await _call_cap("agent.rag.query", agent=_ga,
+                                 query="latest notable developments and news", limit=6)
+            _snips = (_r or {}).get("snippets") or []
+            watched = "\n".join(f"- {(s.get('text') or '')[:200]}"
+                                for s in _snips if (s.get("text") or "").strip())
+        except Exception:
+            watched = ""
+
     return (
         f"# VERA — SYSTEM STATE (initial grounding)\n"
         f"User: {'active' if idle < float(cfg.get('active_idle_below_min', 6.0)) else 'idle'} "
@@ -11374,6 +11393,7 @@ async def _narrator_initial_state(cfg: Dict[str, Any]) -> str:
         + _sect("Live agentic loop (being watched now)", loop_live.get("summary", ""))
         + _sect("Recent activity (newest first)",
                 "\n".join(activity_lines[:10]) if activity_lines else "")
+        + _sect("Watched world (news/press/sites/socials — gatherer sources)", watched)
     )
 
 
