@@ -294,3 +294,26 @@ def test_preflight_returns_plan_without_mutation(monkeypatch):
     assert result["sandbox"]["owner"] == "codex"
     assert result["plan"] == [{"action": "reconcile", "target": "vera-dev",
                                "branch": "feat/landed"}]
+
+
+def test_sandbox_list_labels_isolated_capacity_non_authoritative(monkeypatch):
+    async def shell(argv, timeout=0):
+        return {"ok": True, "out": "", "err": "", "code": 0}
+
+    async def empty_set():
+        return set()
+
+    async def empty_pool():
+        return {}
+
+    monkeypatch.setattr(evolve, "_sh", shell)
+    monkeypatch.setattr(evolve, "_sandbox_pinned", empty_set)
+    monkeypatch.setattr(evolve, "_sandbox_pool", empty_pool)
+    monkeypatch.setattr(evolve, "_redis", lambda: None)
+    monkeypatch.setenv("VERA_IS_DEV_SANDBOX", "1")
+
+    result = asyncio.run(evolve.evolve_sandbox_list.__wrapped__())
+
+    assert result["capacity"]["scope"] == "sandbox_local_registry"
+    assert result["capacity"]["authoritative"] is False
+    assert "query production" in result["capacity"]["warning"]
