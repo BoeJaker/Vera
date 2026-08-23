@@ -953,6 +953,14 @@ class AgentRegistry:
 AGENT_REGISTRY = AgentRegistry()
 
 
+# Upper bound on an agent's knowledge sources. It exists to bound indexing cost
+# (every source is fetched + embedded on each refresh), not to shape what an
+# agent may watch: a gatherer covering several domains — AI, infrastructure,
+# security, markets — legitimately needs more than a handful. Anything over the
+# limit is REPORTED by agent.knowledge.set, never silently dropped.
+AGENT_MAX_KNOWLEDGE_SOURCES = 40
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # AGENT KNOWLEDGE SOURCES + PER-AGENT RAG
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1164,7 +1172,10 @@ async def cap_agent_rag_query(agent: str, query: str, limit: int = 4, trace_id=N
                 "sources (JSON list [{type:'web'|'fabric', target:'<url|dataset>', note}] "
                 "— replaces the list; omit to keep), rag_enabled (bool), "
                 "rag_inject_limit (int), rag_refresh_hours (float), "
-                "index_now (bool default True). Output: {ok, agent, sources, indexed?}.",
+                f"index_now (bool default True). At most {AGENT_MAX_KNOWLEDGE_SOURCES} "
+                "sources are kept; any beyond that are reported in `dropped` rather "
+                "than silently discarded. Output: {ok, agent, sources, dropped?, "
+                "warning?, indexed?}.",
 )
 async def cap_agent_knowledge_set(agent: str, sources: str = "", rag_enabled: Optional[bool] = None,
                                   rag_inject_limit: Optional[int] = None,
@@ -1173,11 +1184,22 @@ async def cap_agent_knowledge_set(agent: str, sources: str = "", rag_enabled: Op
     rec = await AGENT_REGISTRY.get_by_name(agent) or await AGENT_REGISTRY.get(agent)
     if not rec:
         return {"error": f"unknown agent: {agent}"}
+    dropped: List[str] = []
     if sources:
         try:
             parsed = json.loads(sources) if isinstance(sources, str) else sources
             if isinstance(parsed, list):
-                rec.knowledge_sources = [s for s in parsed if isinstance(s, dict)][:16]
+                clean = [s for s in parsed if isinstance(s, dict)]
+                # The cap bounds indexing cost, but it used to truncate SILENTLY
+                # and still report ok:true — set 20 sources, get 16, no mention of
+                # the missing 4. A gatherer watching several domains legitimately
+                # needs more than 16, so the bound is higher AND anything dropped
+                # is now named in the result.
+                if len(clean) > AGENT_MAX_KNOWLEDGE_SOURCES:
+                    dropped = [str(s.get("target") or "?")
+                               for s in clean[AGENT_MAX_KNOWLEDGE_SOURCES:]]
+                    clean = clean[:AGENT_MAX_KNOWLEDGE_SOURCES]
+                rec.knowledge_sources = clean
         except Exception:
             return {"error": "sources must be a JSON list"}
     if rag_enabled is not None:
@@ -1190,6 +1212,12 @@ async def cap_agent_knowledge_set(agent: str, sources: str = "", rag_enabled: Op
     await AGENT_REGISTRY.save(rec)
     out: Dict[str, Any] = {"ok": True, "agent": rec.name, "sources": rec.knowledge_sources,
                            "rag_enabled": rec.rag_enabled}
+    if dropped:
+        out["dropped"] = dropped
+        out["warning"] = (f"kept the first {AGENT_MAX_KNOWLEDGE_SOURCES} sources; "
+                          f"dropped {len(dropped)} over the limit")
+        log.warning("agent.knowledge.set[%s]: dropped %d source(s) over the limit: %s",
+                    rec.name, len(dropped), ", ".join(dropped))
     if index_now and rec.knowledge_sources:
         out["indexed"] = await agent_rag_index(rec)
     return out
