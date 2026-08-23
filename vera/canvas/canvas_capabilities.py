@@ -22,9 +22,12 @@ integrations (notebook, panel-bridge widgets, live SSH sessions, scheduling)
 build on top of these caps.
 """
 from typing import Any, Dict, List, Optional
+from pathlib import Path
 import json
 import time
 import uuid
+
+from fastapi.responses import HTMLResponse
 
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import (
@@ -32,7 +35,10 @@ from Vera.vera.capability_orchestration import (
     capability,
     emit_event,
     now_iso,
+    register_ui,
 )
+
+_PANEL_HTML = Path(__file__).parent / "canvas_panel.html"
 
 def _redis():
     return _orch.REDIS
@@ -335,3 +341,37 @@ async def cap_canvas_delete(id: str = "", trace_id=None):
 )
 async def cap_canvas_block_types(trace_id=None):
     return {"block_types": BLOCK_TYPES, "modes": list(CANVAS_MODES)}
+
+
+# ── UI: the <canvas panel> — a live whiteboard renderer (its own page + a tab) ──
+@capability(
+    "canvas.panel.html", memory="off", silent=True,
+    http_method="GET", http_path="/canvas/panel", http_tags=["canvas", "ui"],
+    description="Serve the Canvas whiteboard panel HTML.",
+)
+async def cap_canvas_panel_html(trace_id=None):
+    try:
+        html = _PANEL_HTML.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        html = ("<!DOCTYPE html><html><body style='background:#0d0f12;color:#c96a5a;"
+                "font-family:monospace;padding:40px'><h2>canvas_panel.html not found</h2>"
+                f"<p>Expected at {_PANEL_HTML}</p></body></html>")
+    return HTMLResponse(html)
+
+
+register_ui(
+    "canvas",
+    "Canvas",
+    "🎨",
+    """<div style="height:100%;display:flex;flex-direction:column;">
+  <iframe src="/canvas/panel"
+          style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"
+          allow="clipboard-read; clipboard-write"></iframe>
+</div>""",
+    "",
+    ui_caps=["canvas.create", "canvas.get", "canvas.list", "canvas.append",
+             "canvas.update", "canvas.move", "canvas.remove", "canvas.delete",
+             "canvas.block_types"],
+    mode="tab",
+    tab_order=60,
+)
