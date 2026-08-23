@@ -72,3 +72,15 @@ def test_desktop_bakes_ops_menu():
     assert "usr/local/bin/foundry-tui" in d
     assert "usr/local/bin/foundry-sdwrite" in d
     assert d["usr/local/bin/foundry-tui"].startswith("#!/bin/sh")
+
+
+def test_mesh_enroll_bake():
+    from vera.foundry.foundry_core import (pxe_ops_apkovl_files, pxe_desktop_apkovl_files,
+                                           _FOUNDRY_MESH_ENROLL)
+    assert "netsec/mesh/enroll" in _FOUNDRY_MESH_ENROLL and "wg genkey" in _FOUNDRY_MESH_ENROLL
+    for build in (pxe_ops_apkovl_files, pxe_desktop_apkovl_files):
+        f = build("10.22.22.25", mesh_token="TOK123", vera_url="https://x:8999")
+        assert "usr/local/bin/foundry-mesh-enroll" in f
+        assert f.get("etc/foundry/mesh-enroll-token") == "TOK123\n"
+        assert f.get("etc/foundry/vera-url") == "https://x:8999\n"
+    assert "etc/foundry/mesh-enroll-token" not in pxe_ops_apkovl_files("10.22.22.25")  # no token -> no file
