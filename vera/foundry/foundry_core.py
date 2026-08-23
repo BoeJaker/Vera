@@ -412,7 +412,189 @@ def pxe_ipxe_menu(server_ip: str, install_images: List[Dict] = None,
     return "\n".join(out)
 
 
-def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21") -> Dict:
+def parse_ops_secrets(text):
+    """Parse decrypted ops-secrets .env text into a dict (KEY=VALUE; '#'/blank lines
+    skipped; value keeps everything after the FIRST '='). Pure -> unit-testable."""
+    out = {}
+    for line in (text or "").splitlines():
+        s = line.strip()
+        if not s or s.startswith("#") or "=" not in s:
+            continue
+        k, v = s.split("=", 1)
+        out[k.strip()] = v.strip()
+    return out
+
+
+def wpa_supplicant_conf(networks):
+    """Build a wpa_supplicant.conf from [(ssid, psk), ...]. Blank ssid entries are
+    skipped; a blank psk yields an OPEN network (key_mgmt=NONE). Pure."""
+    lines = ["ctrl_interface=/var/run/wpa_supplicant", "update_config=1", ""]
+    for ssid, psk in (networks or []):
+        ssid = (str(ssid) if ssid is not None else "").strip()
+        if not ssid:
+            continue
+        psk = (str(psk) if psk is not None else "").strip()
+        lines.append("network={")
+        lines.append('\tssid="%s"' % ssid)
+        if psk:
+            lines.append('\tpsk="%s"' % psk)
+        else:
+            lines.append("\tkey_mgmt=NONE")
+        lines.append("}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def ops_network_overlay(secrets, server_ip=""):
+    """From the decrypted ops-secrets dict, build the overlay bits that let a provisioned
+    node LEAVE the wired provisioning net and reach Vera / the mesh over its own network:
+      * WiFi     - wpa_supplicant.conf + boot bring-up (AUTO: the node associates + DHCPs
+                   on wlan so it joins its home/remote network once provisioned).
+      * Twingate - the base64-sealed headless service key written to disk + a
+                   `foundry-twingate` helper that connects a REMOTE node back to Vera via a
+                   containerised client (musl-safe). ON-DEMAND, not at boot, since only
+                   nodes with no LAN path to Vera need it. Confirm the client image
+                   (FOUNDRY_TG_IMAGE) for your Twingate tenant.
+    Returns (files, start_tail): files = {relpath: content} to add to the overlay,
+    start_tail = shell appended to the node's boot script. ({}, "") when no secrets.
+    Pure -> unit-testable."""
+    import base64 as _b64
+    secrets = secrets or {}
+    files = {}
+    tail = []
+    nets = [(secrets.get("WIFI_SSID", ""), secrets.get("WIFI_PASSWORD", "")),
+            (secrets.get("WIFI_SSID_2", ""), secrets.get("WIFI_PASSWORD_2", ""))]
+    nets = [(s, p) for (s, p) in nets if str(s or "").strip()]
+    if nets:
+        files["etc/wpa_supplicant/wpa_supplicant.conf"] = wpa_supplicant_conf(nets)
+        tail.append(
+            "# --- foundry: join WiFi so the node can leave the provisioning net ---\n"
+            "apk add wpa_supplicant wireless-tools linux-firmware-iwlwifi 2>/dev/null "
+            "|| apk add wpa_supplicant wireless-tools 2>/dev/null\n"
+            "WIF=$(ip -o link 2>/dev/null | awk -F\': \' \'/wl/{print $2; exit}\')\n"
+            'if [ -n "$WIF" ]; then\n'
+            '  wpa_supplicant -B -i "$WIF" -c /etc/wpa_supplicant/wpa_supplicant.conf 2>/dev/null\n'
+            '  udhcpc -b -i "$WIF" 2>/dev/null\n'
+            '  echo "[foundry] WiFi bring-up on $WIF"\n'
+            'else echo "[foundry] no wlan interface present"; fi\n')
+    tg_net = str(secrets.get("TWINGATE_NETWORK", "") or "").strip()
+    tg_b64 = str(secrets.get("TWINGATE_SERVICE_KEY_B64", "") or "").strip()
+    if tg_net and tg_b64:
+        try:
+            key_json = _b64.b64decode(tg_b64).decode("utf-8")
+        except Exception:
+            key_json = ""
+        if key_json:
+            files["etc/foundry/twingate/service_key.json"] = key_json
+            files["usr/local/bin/foundry-twingate"] = (
+                "#!/bin/sh\n"
+                "# Connect a REMOTE ops node back to Vera via Twingate (headless service\n"
+                "# account). Runs the client in a container so it works on musl Alpine.\n"
+                "# Set FOUNDRY_TG_IMAGE to your tenant\'s headless client image if the\n"
+                "# default is not right for your Twingate setup.\n"
+                "set -e\n"
+                'NET="%s"\n' % tg_net +
+                "KEY=/etc/foundry/twingate/service_key.json\n"
+                'IMG="${FOUNDRY_TG_IMAGE:-twingate/client:1}"\n'
+                '[ -s "$KEY" ] || { echo "no twingate service key baked"; exit 1; }\n'
+                'command -v docker >/dev/null 2>&1 || { echo "docker required"; exit 1; }\n'
+                "docker rm -f twingate 2>/dev/null || true\n"
+                'docker run -d --name twingate --restart unless-stopped --network host \\\n'
+                '  --cap-add NET_ADMIN --device /dev/net/tun -e TWINGATE_NETWORK="$NET" \\\n'
+                '  -v "$KEY":/etc/twingate/service_key.json:ro "$IMG" \\\n'
+                '  && echo "twingate client started ($IMG); check: docker logs twingate" \\\n'
+                '  || echo "twingate start failed - set FOUNDRY_TG_IMAGE to your client image"\n')
+    return files, "".join(tail)
+
+
+def foundry_mode_script(server_ip: str) -> str:
+    """The node-side foundry-mode helper: enable/disable + live status for the three
+    ops-node participation modes (Vera worker / mesh / docker-swarm), each persisted
+    under /etc/foundry/modes and re-applied at boot by an etc/local.d hook. The Vera
+    worker runs as a CONTAINER (native pip-install is impractical on musl Alpine) using
+    the server-served backend env. Pure -> unit-testable; baked into both overlays."""
+    script = r"""#!/bin/sh
+# Vera Foundry - ops-node MODE control. Three independent, persisted modes:
+#   vera  : run a Vera WORKER container joined to the stack (Redis task stream) so jobs
+#           dispatched across Vera nodes run here (needs FOUNDRY_VERA_IMAGE reachable +
+#           the server-served /ops/vera-worker-env backend config).
+#   mesh  : bring this node onto the encrypted WireGuard mesh/VPN (vera0). Enrolment is
+#           done FROM Vera (netsec.mesh.join <this host>); this toggles the iface up/down.
+#   swarm : join a registered Docker Swarm as a WORKER (never a manager). DEFAULT ON.
+# State persists in /etc/foundry/modes/<mode> and is re-applied at boot.
+SRV=__SRV__
+MD=/etc/foundry/modes; mkdir -p "$MD"
+VERA_IMAGE="${FOUNDRY_VERA_IMAGE:-vera:latest}"
+
+want(){ if [ -f "$MD/$1" ]; then cat "$MD/$1"; elif [ "$1" = swarm ]; then echo on; else echo off; fi; }
+st_vera(){ docker ps --format '{{.Names}}' 2>/dev/null | grep -qx vera-worker && echo running || echo stopped; }
+st_mesh(){ wg show vera0 >/dev/null 2>&1 && echo up || echo down; }
+st_swarm(){ docker info 2>/dev/null | grep -q 'Swarm: active' && echo joined || echo out; }
+set_mode(){ printf '%s' "$2" > "$MD/$1"; }
+
+apply_vera(){
+  if [ "$1" = on ]; then
+    command -v docker >/dev/null 2>&1 || { echo "docker required"; return 1; }
+    wget -qO /etc/foundry/vera-worker.env "http://$SRV/ops/vera-worker-env" 2>/dev/null
+    [ -s /etc/foundry/vera-worker.env ] || { echo "no backend env served by $SRV"; return 1; }
+    docker rm -f vera-worker 2>/dev/null
+    docker run -d --name vera-worker --restart unless-stopped --network host --env-file /etc/foundry/vera-worker.env "$VERA_IMAGE" python -m Vera.vera.capability_orchestration && echo "vera-worker started ($VERA_IMAGE)" || echo "vera-worker FAILED - set FOUNDRY_VERA_IMAGE to a reachable Vera image"
+  else
+    docker rm -f vera-worker 2>/dev/null && echo "vera-worker stopped" || echo "not running"
+  fi
+}
+apply_mesh(){
+  if [ "$1" = on ]; then
+    if [ -f /etc/wireguard/vera0.conf ]; then
+      command -v wg-quick >/dev/null 2>&1 || apk add wireguard-tools 2>/dev/null
+      wg-quick up vera0 2>/dev/null && echo "mesh up" || echo "mesh up failed (already up?)"
+    else
+      echo "not enrolled yet - from Vera run: netsec.mesh.join <this host>"
+    fi
+  else
+    wg-quick down vera0 2>/dev/null && echo "mesh down" || echo "mesh already down"
+  fi
+}
+apply_swarm(){
+  if [ "$1" = on ]; then
+    TK=$(wget -qO- "http://$SRV/swarm/worker-token" 2>/dev/null | tr -d '\r\n')
+    M=$(wget -qO- "http://$SRV/swarm/manager" 2>/dev/null | tr -d '\r\n')
+    if [ -n "$TK" ] && [ -n "$M" ]; then docker swarm join --token "$TK" "${M}:2377" 2>/dev/null && echo joined || echo "join failed (already joined?)"; else echo "no manager published by $SRV"; fi
+  else
+    docker swarm leave --force 2>/dev/null && echo "left swarm" || echo "not in a swarm"
+  fi
+}
+
+case "$1" in
+  status)
+    printf 'vera : %s (want %s)\n' "$(st_vera)" "$(want vera)"
+    printf 'mesh : %s (want %s)\n' "$(st_mesh)" "$(want mesh)"
+    printf 'swarm: %s (want %s)\n' "$(st_swarm)" "$(want swarm)"
+    ;;
+  vera|mesh|swarm)
+    { [ "$2" = on ] || [ "$2" = off ]; } || { echo "usage: foundry-mode $1 on|off"; exit 1; }
+    set_mode "$1" "$2"; apply_"$1" "$2"
+    ;;
+  boot)
+    [ "$(want vera)" = on ] && apply_vera on
+    [ "$(want mesh)" = on ] && apply_mesh on
+    true
+    ;;
+  menu)
+    while true; do
+      CH=$(whiptail --title "Node modes ($(hostname))" --menu "How this node joins Vera. Live: vera=$(st_vera) mesh=$(st_mesh) swarm=$(st_swarm)" 18 76 8 vera "Vera worker  [want $(want vera)]" mesh "Mesh / VPN   [want $(want mesh)]" swarm "Docker swarm [want $(want swarm)]" back "Back to main menu" 3>&1 1>&2 2>&3) || break
+      [ "$CH" = back ] && break
+      cur=$(want "$CH"); nw=on; [ "$cur" = on ] && nw=off
+      clear; echo "Setting $CH -> $nw ..."; set_mode "$CH" "$nw"; apply_"$CH" "$nw"; echo; echo "Press Enter..."; read _x
+    done
+    ;;
+  *) echo "usage: foundry-mode {status | vera on|off | mesh on|off | swarm on|off | menu | boot}" ;;
+esac
+"""
+    return script.replace("__SRV__", server_ip)
+
+
+def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=None) -> Dict:
     """Files for the ops-node Alpine diskless overlay (apkovl), as {relpath: content}.
     The node boots to RAM, installs Docker + SSH + tools, joins the swarm as a WORKER
     only (never self-promotes to manager — managers are persistent VMs/CTs), and
@@ -462,7 +644,7 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21") -> Dict:
         "sleep 3\n"
         f"TOKEN=$(wget -qO- http://{server_ip}/swarm/worker-token 2>/dev/null | tr -d '\\r\\n')\n"
         f"MGR=$(wget -qO- http://{server_ip}/swarm/manager 2>/dev/null | tr -d '\\r\\n')\n"
-        'if [ -n "$TOKEN" ] && [ -n "$MGR" ]; then '
+        'if [ "$(cat /etc/foundry/modes/swarm 2>/dev/null)" != off ] && [ -n "$TOKEN" ] && [ -n "$MGR" ]; then '
         'docker swarm join --token "$TOKEN" "${MGR}:2377"; '
         'else echo "[foundry] no manager published -> standalone (worker-only, never a manager)"; fi\n'
     )
@@ -490,7 +672,7 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21") -> Dict:
         'status "Node + Docker + swarm status" host "Pick Proxmox host (now: $PVE)" '
         'vms "Proxmox VMs / CTs -- list + console in" dps "Running containers" '
         'nodes "Swarm nodes" ssh "SSH into an estate host" join "Re-run swarm join" '
-        'sdcard "Write a Raspberry Pi image to an SD card" '
+        'sdcard "Write a Raspberry Pi image to an SD card" modes "Node modes: Vera-worker / mesh / swarm" '
         'log "Boot / join log" shell "Shell" reboot "Reboot" 3>&1 1>&2 2>&3) || { clear; exec sh; }\n'
         "  K=$(sshkey)\n"
         "  case \"$CH\" in\n"
@@ -505,6 +687,7 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21") -> Dict:
         '    ssh) H=$(whiptail --inputbox "SSH target (user@host):" 8 60 "root@$PVE" 3>&1 1>&2 2>&3) && { clear; ssh $K -o StrictHostKeyChecking=accept-new $H; };;\n'
         '    join) { TK=$(wget -qO- http://$SRV/swarm/worker-token|tr -d "\\r\\n"); M=$(wget -qO- http://$SRV/swarm/manager|tr -d "\\r\\n"); docker swarm join --token "$TK" "${M}:2377"; } >$T 2>&1; whiptail --scrolltext --textbox $T 20 90;;\n'
         "    sdcard) clear; /usr/local/bin/foundry-sdwrite;;\n"
+        "    modes) clear; /usr/local/bin/foundry-mode menu;;\n"
         '    log) F=/var/log/foundry-node.log; [ -f $F ] || F=/var/log/foundry-desktop.log; whiptail --scrolltext --textbox $F 24 100;;\n'
         '    shell) clear; echo "type exit to return to the menu"; sh;;\n'
         "    reboot) reboot;;\n"
@@ -553,18 +736,24 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21") -> Dict:
         'sync\n'
         'whiptail --msgbox "Done -> $DEV. Safe to remove.\\n(A Pi OS image expands its filesystem on first boot.)" 9 66\n'
     )
+    _netfiles, _nettail = ops_network_overlay(secrets, server_ip)
+    if _nettail:
+        start = start + _nettail
     return {
+        **_netfiles,
         "etc/apk/repositories": repos,
         "etc/local.d/foundry.start": start,
         "usr/local/bin/foundry-tui": tui,
         "usr/local/bin/foundry-sdwrite": sdwrite,
+        "usr/local/bin/foundry-mode": foundry_mode_script(server_ip),
+        "etc/local.d/zz-foundry-modes.start": "#!/bin/sh\n/usr/local/bin/foundry-mode boot 2>/dev/null || true\n",
         "etc/inittab": inittab,
         "root/.profile": profile,
         "etc/foundry/pve": f"{server_ip}\n",   # default Proxmox target (reachable from the ops net)
     }
 
 
-def pxe_desktop_apkovl_files(server_ip: str, alpine_ver: str = "3.21") -> Dict:
+def pxe_desktop_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=None) -> Dict:
     """Files for the desktop-node Alpine diskless overlay (apkovl): a full XFCE desktop
     with Remmina/TigerVNC, the Foundry ops menu (Proxmox consoles + SD-card writer)
     launchable from the desktop, and Docker so it also joins the swarm as a worker.
@@ -623,7 +812,7 @@ def pxe_desktop_apkovl_files(server_ip: str, alpine_ver: str = "3.21") -> Dict:
         "for i in 1 2 3 4 5; do docker info >/dev/null 2>&1 && break; sleep 2; done\n"
         "TOKEN=$(wget -qO- http://@@SRV@@/swarm/worker-token 2>/dev/null|tr -d '\\r\\n')\n"
         "MGR=$(wget -qO- http://@@SRV@@/swarm/manager 2>/dev/null|tr -d '\\r\\n')\n"
-        '[ -n "$TOKEN" ] && [ -n "$MGR" ] && docker swarm join --token "$TOKEN" "${MGR}:2377"\n'
+        '[ "$(cat /etc/foundry/modes/swarm 2>/dev/null)" != off ] && [ -n "$TOKEN" ] && [ -n "$MGR" ] && docker swarm join --token "$TOKEN" "${MGR}:2377"\n'
         "echo \"[foundry] libinput sees:\"; libinput list-devices 2>&1|grep -E 'Device:'|head\n"
     ).replace("@@SRV@@", S)
     inittab = ("::sysinit:/sbin/openrc sysinit\n::sysinit:/sbin/openrc boot\n::wait:/sbin/openrc default\n"
@@ -649,7 +838,11 @@ def pxe_desktop_apkovl_files(server_ip: str, alpine_ver: str = "3.21") -> Dict:
                 "Icon=utilities-terminal-symbolic\n"
                 "Terminal=false\n"
                 "Categories=System;\n")
+    _netfiles, _nettail = ops_network_overlay(secrets, server_ip)
+    if _nettail:
+        start = start + _nettail
     return {
+        **_netfiles,
         "etc/apk/repositories": repos,
         "etc/local.d/desktop.start": start,
         "etc/inittab": inittab,
@@ -657,6 +850,8 @@ def pxe_desktop_apkovl_files(server_ip: str, alpine_ver: str = "3.21") -> Dict:
         "root/.xinitrc": "exec startxfce4\n",
         "etc/X11/xorg.conf.d/10-foundry-fallback.conf": xflags,
         "etc/X11/xorg.conf.d/40-libinput-touchpad.conf": xtouch,
+        "usr/local/bin/foundry-mode": foundry_mode_script(server_ip),
+        "etc/local.d/zz-foundry-modes.start": "#!/bin/sh\n/usr/local/bin/foundry-mode boot 2>/dev/null || true\n",
         "usr/share/applications/foundry-ops.desktop": launcher,
         "root/Desktop/foundry-ops.desktop": launcher,
         "root/.config/autostart/foundry-ops.desktop": launcher,

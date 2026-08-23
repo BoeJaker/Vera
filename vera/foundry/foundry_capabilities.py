@@ -59,7 +59,7 @@ from Vera.vera.foundry.foundry_core import (
     pick_node, cluster_join_script, CLUSTER_KINDS,
     cluster_init_script, parse_init_token,
     pxe_dnsmasq_conf, pxe_ipxe_menu, swarm_service_cmd,
-    pxe_ops_apkovl_files, pxe_desktop_apkovl_files,
+    pxe_ops_apkovl_files, pxe_desktop_apkovl_files, parse_ops_secrets,
 )
 from Vera.vera.security import secrets as vsecrets
 
@@ -1497,6 +1497,58 @@ async def cap_pxe_render(profile_id: str = "", trace_id=None) -> Dict:
     return {"ok": True, **_render_boot(prof, cfg, img, cscripts)}
 
 
+def _ops_worker_env() -> str:
+    """Backend env served at /ops/vera-worker-env for an ops-node Vera WORKER container.
+    Points every store URL at this Vera host\'s LAN IP (a remote worker cannot reach our
+    localhost), mirroring provision.worker native mode. Empty values skipped."""
+    import os as _os, socket as _sock
+    def _lan():
+        try:
+            s = _sock.socket(_sock.AF_INET, _sock.SOCK_DGRAM); s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]; s.close(); return ip
+        except Exception:
+            return "127.0.0.1"
+    bh = _os.getenv("VERA_ADVERTISE_HOST", "") or _lan()
+    def _rw(v):
+        for h in ("host.docker.internal", "localhost", "127.0.0.1", "::1"):
+            v = v.replace(h, bh)
+        return v
+    out = {"REDIS_URL": _rw(_os.getenv("REDIS_URL", "") or "redis://localhost:6379")}
+    for k in ("POSTGRES_URL", "NEO4J_URI", "NEO4J_USER", "NEO4J_PASS", "CHROMA_HOST",
+              "CHROMA_PORT", "OLLAMA_BASE_URL", "OLLAMA_GPU_URL", "OLLAMA_CPU_A_URL",
+              "OLLAMA_CPU_B_URL", "OLLAMA_EMBED_URL", "OLLAMA_MODEL", "VERA_COORD_REDIS_DB"):
+        v = _os.getenv(k)
+        if v:
+            out[k] = _rw(v)
+    out["ORCHESTRATOR_HOST"] = "0.0.0.0"
+    out["EMBED_CAPS_ON_START"] = "0"
+    return "".join("%s=%s\n" % (k, v) for k, v in out.items())
+
+
+def _load_ops_secrets() -> Dict:
+    """Decrypt the off-repo sealed ops-node secrets (~/.vera-ops-secrets/
+    ops-secrets.env.enc with ops.key, Fernet) into a dict, so the ops image can bake
+    WiFi + Twingate. Returns {} if the sealed file/key are absent or unreadable, so a
+    Foundry deploy without secrets still works. Key + ciphertext live OUTSIDE the repo
+    and are never committed. Override the folder with VERA_OPS_SECRETS_DIR."""
+    try:
+        from cryptography.fernet import Fernet
+    except Exception:
+        return {}
+    import os as _os
+    from pathlib import Path as _Path
+    base = _Path(_os.environ.get("VERA_OPS_SECRETS_DIR")
+                 or _os.path.expanduser("~/.vera-ops-secrets"))
+    keyf, encf = base / "ops.key", base / "ops-secrets.env.enc"
+    if not (keyf.exists() and encf.exists()):
+        return {}
+    try:
+        text = Fernet(keyf.read_bytes().strip()).decrypt(encf.read_bytes()).decode("utf-8")
+        return parse_ops_secrets(text)
+    except Exception:
+        return {}
+
+
 def _apkovl_tar_b64(files: Dict) -> str:
     """Build an Alpine apkovl (a gzip tar of an overlay rooted at /) from {relpath:
     content} in memory and base64-encode it — no fragile shell tar-building."""
@@ -1512,7 +1564,7 @@ def _apkovl_tar_b64(files: Dict) -> str:
     return base64.b64encode(buf.getvalue()).decode()
 
 
-def _pxe_server_setup_script(server_ip, iface, uplink, subnet, conf_b64, menu_b64, apkovl_b64, tui_b64="", sdwrite_b64="", desk_apk_b64="") -> str:
+def _pxe_server_setup_script(server_ip, iface, uplink, subnet, conf_b64, menu_b64, apkovl_b64, tui_b64="", sdwrite_b64="", desk_apk_b64="", worker_env_b64="") -> str:
     """The node-side setup shell — reproduces the hand-proven netboot server: install
     dnsmasq+iPXE, write the (core-generated) fenced dnsmasq conf + iPXE menu + ops
     apkovl, fetch iPXE/Alpine/netboot.xyz/Debian-d-i assets, enable scoped NAT, then
@@ -1529,6 +1581,7 @@ echo {apkovl_b64} | base64 -d > /srv/foundry/http/alpine/node.apkovl.tar.gz
 echo {desk_apk_b64} | base64 -d > /srv/foundry/http/alpine/desktop.apkovl.tar.gz
 echo {tui_b64} | base64 -d > /srv/foundry/http/ops/foundry-tui 2>/dev/null; chmod +x /srv/foundry/http/ops/foundry-tui 2>/dev/null
 echo {sdwrite_b64} | base64 -d > /srv/foundry/http/ops/foundry-sdwrite 2>/dev/null; chmod +x /srv/foundry/http/ops/foundry-sdwrite 2>/dev/null
+echo {worker_env_b64} | base64 -d > /srv/foundry/http/ops/vera-worker-env 2>/dev/null
 printf 'proxmox {server_ip}\\n' > /srv/foundry/http/ops/pve_hosts
 printf 'raspios-lite-arm64 https://downloads.raspberrypi.com/raspios_lite_arm64_latest\\nraspios-desktop-arm64 https://downloads.raspberrypi.com/raspios_arm64_latest\\nraspios-full-arm64 https://downloads.raspberrypi.com/raspios_full_arm64_latest\\nraspios-lite-armhf https://downloads.raspberrypi.com/raspios_lite_armhf_latest\\n' > /srv/foundry/http/ops/pi_images
 [ -f /srv/foundry/http/ops/authorized_keys ] || : > /srv/foundry/http/ops/authorized_keys
@@ -1620,13 +1673,14 @@ async def cap_pxe_server_deploy(cluster_id: str = "", node: str = "", iface: str
     install_images = [{"id": "debian12", "os": "Debian", "version": "12"}]
     conf = pxe_dnsmasq_conf(server_ip, iface, range_lo, range_hi, except_ifaces=[uplink])
     menu = pxe_ipxe_menu(server_ip, install_images=install_images)
-    ops_files = pxe_ops_apkovl_files(server_ip)
+    _secrets = _load_ops_secrets()
+    ops_files = pxe_ops_apkovl_files(server_ip, secrets=_secrets)
     apk_b64 = _apkovl_tar_b64(ops_files)
-    desk_apk_b64 = _apkovl_tar_b64(pxe_desktop_apkovl_files(server_ip))
+    desk_apk_b64 = _apkovl_tar_b64(pxe_desktop_apkovl_files(server_ip, secrets=_secrets))
     _b = lambda s: base64.b64encode(s.encode()).decode()
     tui_b64 = _b(ops_files["usr/local/bin/foundry-tui"])
     sdwrite_b64 = _b(ops_files["usr/local/bin/foundry-sdwrite"])
-    script = _pxe_server_setup_script(server_ip, iface, uplink, subnet, _b(conf), _b(menu), apk_b64, tui_b64, sdwrite_b64, desk_apk_b64)
+    script = _pxe_server_setup_script(server_ip, iface, uplink, subnet, _b(conf), _b(menu), apk_b64, tui_b64, sdwrite_b64, desk_apk_b64, worker_env_b64=_b(_ops_worker_env()))
     res = await _call("proxmox.node.exec", cluster_id=cluster_id, command=script, timeout=520)
     out = (res.get("stdout") or "") + (res.get("error") or "")
     fenced = "FENCE_OK" in out

@@ -78,6 +78,8 @@ gallery without overwriting this authored guide.
 - [Security](29-security.md)
 - [Cluster encryption](32-cluster-encryption.md)
 - [Loop Lab](33-evolve.md)
+- [Master roadmap](MASTER-ROADMAP.md)
+- [Modern AI ecosystem roadmap](40-ai-ecosystem-roadmap.md)
 
 ## Complete guide index
 
@@ -123,6 +125,17 @@ gallery without overwriting this authored guide.
 | 37 | [Business and commerce](37-business-commerce.md) | Products, inventory, listings, orders, and external side effects |
 | 38 | [Media and characters](38-media-characters.md) | Images, characters, sprites, speech, and media assets |
 | 39 | [Activity and boards](39-activity-boards.md) | Activity history, work boards, claims, and coordination |
+| 40 | [Modern AI ecosystem roadmap](40-ai-ecosystem-roadmap.md) | Missing libraries, standards, adapter priorities, and queued validation |
+
+## Planning and delivery
+
+- [Vera master roadmap](MASTER-ROADMAP.md) — the combined dependency-aware
+  programme across every subsystem, convergence work, ecosystem adapters, quality
+  gates, and queued live tests.
+- [Internal improvement notes](INTERNAL-IMPROVEMENT-NOTES.md) — source evidence,
+  architecture decisions, and system-by-system review.
+- [Modern AI ecosystem roadmap](40-ai-ecosystem-roadmap.md) — library and protocol
+  research, admission criteria, and bounded adapter experiments.
 
 ## Screenshot maintenance
 

@@ -1739,9 +1739,13 @@ def pick_instance(prefer_gpu: bool = False, instance_id: Optional[str] = None,
 # model's real context window is (POST /api/show → model_info[<arch>.context_length])
 # and use that. Cached per (url, model) since it never changes for a given model.
 _MODEL_CTX_CACHE: Dict[str, int] = {}            # "url::model" -> context_length
-# Global ceiling on the auto-detected window (0 = no cap → use the full model max).
-# Lets an operator dial big-context models (e.g. 128k) down cluster-wide.
-OLLAMA_MAX_AUTO_CTX = int(os.environ.get("OLLAMA_MAX_AUTO_CTX", "0"))
+# Global ceiling on the auto-detected window for GPU nodes (0 = no cap → full
+# model max). Default 65536: a 9B holds that at ~8.3GB and a REAL generation
+# succeeds on an ~12GB card, but 98304 fits the KV (9.3GB) yet OOMs on the
+# inference compute buffers — an empty response, not a residency spill the probe
+# can catch. So cap the auto-fitted window here, below that cliff. Operators dial
+# it up on bigger cards (or down for larger models) via OLLAMA_MAX_AUTO_CTX.
+OLLAMA_MAX_AUTO_CTX = int(os.environ.get("OLLAMA_MAX_AUTO_CTX", "65536"))
 
 
 def _extract_ctx_from_show(info: dict) -> Optional[int]:
