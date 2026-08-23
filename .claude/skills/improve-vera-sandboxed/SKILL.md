@@ -58,7 +58,10 @@ editing is the rare exception (small, urgent, explicitly sanctioned infra fix).
   because its branch looks merged: ownership can outlive a branch ref. Use
   `pipeline.begin(..., spawn=true)`/`sandbox.spawn`. If no additive slot is
   safely available, wait or report the capacity blocker.
-- **Lifecycle operations are exact-target and dry-run first.** Never use
+- **Lifecycle operations are preflighted, exact-target, and dry-run first.** Call
+  `evolve.sandbox.preflight(name=...|branch=..., action=...)` and require
+  `allowed=true` before restart, stop, reuse, removal, or descriptor reconciliation.
+  Reconciliation is planning-only; it never removes a descriptor or worktree. Never use
   `evolve.sandbox.up` to refresh a spawned branch — that controls the primary.
   Use `evolve.sandbox.restart(branch=..., dry_run=true)` and then restart the
   same exact branch in place. Before primary `up`, restart, or teardown, inspect
