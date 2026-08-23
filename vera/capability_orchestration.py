@@ -226,6 +226,32 @@ OLLAMA_GEN_TIMEOUT = float(os.environ.get("OLLAMA_GEN_TIMEOUT", "900"))
 # slowly, is never killed by this; only a real stall is.
 OLLAMA_STALL_TIMEOUT = float(os.environ.get("OLLAMA_STALL_TIMEOUT", "240"))
 
+# How busy every non-embed candidate must be before avoid_embed will share work
+# back onto an IDLE embedding node (see pick_instance). 0 disables the relaxation
+# and restores the old hard exclusion.
+_AVOID_EMBED_RELAX_AT = int(os.environ.get("VERA_AVOID_EMBED_RELAX_AT", "1"))
+
+
+def _avoid_embed_share(emb_busy: int, rest_min: int,
+                       relax_at: Optional[int] = None) -> bool:
+    """Should avoid_embed SHARE work back onto the embedding node?
+
+    avoid_embed is a preference, not a ban. Keeping long generations off the
+    embed node is right while some other node can take the work — but on a
+    2-CPU pool a hard exclusion funnels every dream_director call onto one
+    node. Observed live: cpu-247 queued while cpu-246 sat at in_use=0, so
+    narrator calls hit the 180s queue timeout and fell back onto the GPU,
+    defeating the deny_gpu this rule exists to protect.
+
+    So share only when BOTH hold: every alternative is already busy, and the
+    embed node is completely idle — i.e. the work would otherwise queue
+    against an idle machine. relax_at=0 disables sharing entirely.
+    """
+    at = _AVOID_EMBED_RELAX_AT if relax_at is None else relax_at
+    if at <= 0:
+        return False
+    return rest_min >= at and emb_busy == 0
+
 
 class _StreamLines:
     """Poll an async line-iterator with a timeout WITHOUT destroying it.
@@ -1696,8 +1722,15 @@ def pick_instance(prefer_gpu: bool = False, instance_id: Optional[str] = None,
         if rule.get("avoid_embed"):
             emb = _embed_node_id()
             if emb and emb in online and len(online) > 1:
-                online = {iid:i for iid,i in online.items() if iid != emb}
-                _note(f"avoid_embed: '{emb}' excluded (embedding node)")
+                rest = {iid: i for iid, i in online.items() if iid != emb}
+                emb_busy = int((online[emb] or {}).get("in_use") or 0)
+                rest_min = min(int((i or {}).get("in_use") or 0) for i in rest.values())
+                if _avoid_embed_share(emb_busy, rest_min):
+                    _note(f"avoid_embed relaxed: alternatives busy "
+                          f"(min in_use={rest_min}), embed node '{emb}' idle — sharing")
+                else:
+                    online = rest
+                    _note(f"avoid_embed: '{emb}' excluded (embedding node)")
         # Rule's prefer_gpu augments the caller's preference.
         if rule.get("prefer_gpu") and not prefer_gpu:
             prefer_gpu = True; _note("rule prefers GPU")
@@ -5056,10 +5089,17 @@ def capability(
                                 300,  # 5 min TTL — recent state always inspectable
                                 json.dumps(_cache)
                             )
-                            # Also keep a sorted set of recent cap calls for monitoring
+                            # Also keep a sorted set of recent cap calls for monitoring.
+                            # `via` (caller kind) and `bg` (background driver) are
+                            # recorded so readers can tell WHO caused a call. Without
+                            # them the ring is just cap names, and the system narrator
+                            # reported its own ambient probing back to the user as if
+                            # the user had done it.
                             await REDIS.zadd("vera:cap:recent",
                                 {json.dumps({"name": name, "tid": tid, "sid": _sid,
                                              "ts": now_iso(), "elapsed_ms": _elapsed_ms,
+                                             "via": CALLER_KIND.get("") or "",
+                                             "bg": BACKGROUND_LLM.get("") or "",
                                              "preview": _preview}): time.time()})
                             await REDIS.zremrangebyrank("vera:cap:recent", 0, -501)
                         except Exception:

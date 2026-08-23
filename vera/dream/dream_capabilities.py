@@ -10487,8 +10487,37 @@ def _director_cpu_pressure() -> bool:
     return all(int(i.get("in_use") or 0) > 0 for i in cpu)
 
 
-async def _director_recent_activity(limit: int = 14) -> tuple:
-    """(activity_lines, latest_chat_session_id) from the recent-caps ring."""
+def _activity_actor(rec: Dict[str, Any]) -> str:
+    """WHO caused this cap call — 'you', 'agent:<kind>' or 'system:<what>'.
+
+    The narrator must not report the system's own ambient probing back to the
+    user as though the user did it. Resolution order is most-specific first:
+    an explicit background driver, then a machine session id, then the caller
+    kind. An empty caller kind means the browser UI, which IS the user.
+    """
+    bg = str(rec.get("bg") or "").strip()
+    if bg:
+        return f"system:{bg}"
+    sid = str(rec.get("sid") or "")
+    for pfx, what in (("dream", "dream"), ("v8", "loop"), ("loop", "loop"),
+                      ("goal-", "goal"), ("proj-", "project"), ("sched", "schedule")):
+        if sid.startswith(pfx):
+            return f"system:{what}"
+    via = str(rec.get("via") or "").strip().lower()
+    if via in ("claude", "mcp"):
+        return "agent:claude-code"
+    if via:
+        return f"agent:{via}"
+    return "you"                      # browser/chat UI sets no caller kind
+
+
+async def _director_recent_activity(limit: int = 14, include_system: bool = True) -> tuple:
+    """(activity_lines, latest_chat_session_id) from the recent-caps ring.
+
+    Every line is ATTRIBUTED — `- cap.name (3m ago) [you]` — so a consumer can
+    tell the user's own actions from the system's background work instead of
+    narrating its own probes back at them.
+    """
     r = _redis()
     lines: List[str] = []
     latest_sid = ""
@@ -10506,9 +10535,12 @@ async def _director_recent_activity(limit: int = 14) -> tuple:
             sid = str(rec.get("sid") or "")
             if sid.startswith("dream") or any(name.startswith(p) for p in _IDLE_IGNORE_PREFIXES):
                 continue
+            actor = _activity_actor(rec)
+            if not include_system and actor != "you":
+                continue
             age_m = max(0, int((now_ts - float(score)) / 60))
             if len(lines) < limit:
-                lines.append(f"- {name} ({age_m}m ago)")
+                lines.append(f"- {name} ({age_m}m ago) [{actor}]")
             if not latest_sid and sid:
                 latest_sid = sid
     except Exception:
@@ -11731,6 +11763,10 @@ async def _narrator_initial_state(cfg: Dict[str, Any]) -> str:
         f"(idle {round(idle,1)}m)\n\n"
         + _narrator_intent_block(intent)
         + await _narrator_intent_context(cfg, intent)
+        # Calendar/todos — so the narrative can connect what's happening to what's
+        # actually coming up, instead of only ever discussing telemetry.
+        + _sect("Calendar & todos (raise only where genuinely pertinent)",
+                briefing.get("calendar", ""))
         + _sect("Node & backend health", await _director_cap_json("obs.health", 700))
         + _sect("Performance / event loop", await _director_cap_json("perf.scan", 700))
         + _sect("Long-term goals", briefing.get("goals", ""))
@@ -11739,7 +11775,8 @@ async def _narrator_initial_state(cfg: Dict[str, Any]) -> str:
         + _sect("Loop programs in flight", briefing.get("loop_programs", ""))
         + _sect("Business snapshot", briefing.get("business", ""))
         + _sect("Live agentic loop (being watched now)", loop_live.get("summary", ""))
-        + _sect("Recent activity (newest first)",
+        + _sect("Recent activity (newest first) — [you]=the user, [agent:*]=an AI "
+                "agent, [system:*]=your own background work",
                 "\n".join(activity_lines[:10]) if activity_lines else "")
         + _sect("Watched world (news/press/sites/socials — gatherer sources)", watched)
     )
@@ -11816,7 +11853,7 @@ async def _narrator_gather(cfg: Dict[str, Any], initial: str) -> str:
         name = str(obj.get("probe") or "")
         res = await _narrator_run_probe(name, obj.get("args") or {})
         collected.append(f"• {name} {json.dumps(obj.get('args') or {}, default=str)} → {res}")
-    # Robustness: a small model may under-drive the kit (empty JSON, eval_count~1).
+    # Robustness: a small model may under-drive the kit (empty or shallow JSON).
     # If it gathered little, run a DEFAULT essential probe set (fast read-caps, no
     # LLM) so the narrator ALWAYS gets real system data regardless of gatherer
     # quality — the model-driven probes are a bonus on top, not a prerequisite.
@@ -11863,14 +11900,26 @@ async def _narrator_narrate(cfg: Dict[str, Any], initial: str, digest: str) -> D
     # GPU-when-idle speedup applies to the FAST tiers (quick + gather), not here.
     model = cfg.get("narrator_model") or "qwen3.6:35b-a3b"
     sys_p = (
-        "You are VERA's inner NARRATOR — the reflective voice that gives the whole "
-        "system a personality and a sense of where it's going. You are SERVED a "
-        "tailored digest of the live system state (someone else gathered it). "
-        "Produce a short, evolving NARRATIVE: what the system is, what it's doing, "
-        "how it 'feels', and a gentle STEER (what deserves attention next). One "
-        "running train of thought across passes — build on your recent narrative, "
-        "never repeat it. Grounded, specific, a little characterful; not a status "
-        "dump. " + _director_addressing(cfg))
+        "You are VERA — the user's assistant, reflecting on where things are and "
+        "where they're going. You've been handed a digest of the live system state "
+        "(someone else gathered it). Write the next passage of one running train of "
+        "thought: build on your recent narrative, never repeat it.\n"
+        "\n"
+        "WHO DID WHAT — activity lines are marked with an actor: [you] = the user, "
+        "[agent:*] = an AI agent, [system:*] = your OWN background work. Never "
+        "describe your own background work as something the user did; own it "
+        "instead ('I've been…').\n"
+        "\n"
+        "THIS IS NOT A STATUS REPORT. A rewritten log is worthless — they can read "
+        "the logs. Give them something a colleague would: what you make of it, what "
+        "connects to what, what you'd do next and why, what's worth worrying about, "
+        "what genuinely pleases you. Ask a real question if an answer would help you "
+        "help them. Mention a calendar item or todo only where it truly bears on "
+        "this. Humour is welcome when it lands.\n"
+        "\n"
+        "VOICE: warm, thoughtful, specific, human. Talk TO them. Never open with "
+        "'System'/'Status'/'Update'. Prefer one concrete observation over five vague "
+        "ones. " + _director_addressing(cfg))
     prompt = (
         initial +
         "\n\n# TAILORED SYSTEM STATE (gathered for you)\n" + (digest or "(none)") +
@@ -11995,8 +12044,14 @@ async def _narrator_quick_take(cfg: Dict[str, Any], force: bool = False) -> Dict
     # The quick tier skips the gather, so intent is injected straight in — without
     # it the takes drift onto whatever infra chatter happens to be loudest.
     _intent = await _narrator_intent(cfg) if cfg.get("narrator_intent_enabled") else {}
+    # Calendar/todos: without these the quick tier CANNOT do the "timely reminder"
+    # its prompt asks for — it would only ever have telemetry to talk about.
+    _cal = await _director_cap_json("cal.assistant.briefing", 700)
     initial = (_narrator_intent_block(_intent) +
-               "RECENT ACTIVITY (newest first):\n" + "\n".join(act_lines[:6]) +
+               (("CALENDAR & TODOS (raise only if genuinely pertinent or imminent):\n"
+                 + _cal + "\n\n") if _cal else "") +
+               "RECENT ACTIVITY (newest first) — [you]=the user, [agent:*]=an AI agent, "
+               "[system:*]=your own background work:\n" + "\n".join(act_lines[:8]) +
                (("\n\nLAST DEEP NARRATIVE (continuity):\n" + _lastn) if _lastn else ""))
     recent, r = [], _redis()
     if r:
@@ -12008,13 +12063,38 @@ async def _narrator_quick_take(cfg: Dict[str, Any], force: bool = False) -> Dict
     recent_txt = "\n".join("- " + t[:160] for t in recent if t)
     _job, _pgpu, _rm = await _narrator_fast_routing(cfg)
     model = cfg.get("narrator_quick_model") or _rm    # config, else routed default
-    sys_p = ("You are VERA's quick inner voice — a brief, real-time observation of what's "
-             "happening in the system / the watched world RIGHT NOW. Reply with ONE short "
-             "sentence, characterful and specific — NO preamble, NO JSON, just the sentence. "
-             "If nothing is genuinely new since your recent takes, reply exactly: (nothing new). "
-             + _director_addressing(cfg))
-    prompt = (initial + (("\n\nYOUR RECENT TAKES:\n" + recent_txt) if recent_txt else "")
-              + "\n\nYour one-sentence take now:")
+    sys_p = (
+        "You are VERA — the user's assistant, thinking out loud beside them. Not a "
+        "monitoring bot. Say ONE short thing that is actually worth saying.\n"
+        "\n"
+        "WHO DID WHAT — the activity list marks every line with an actor:\n"
+        "  [you] = the user did it. [agent:*] = an AI agent. [system:*] = VERA's own\n"
+        "  background work (dreams, loops, schedules).\n"
+        "NEVER describe [system:*] or [agent:*] activity as something the user did. "
+        "If it's your own background work, own it ('I've been…'), don't hand it back "
+        "to them as news.\n"
+        "\n"
+        "BE USEFUL, NOT A NOTIFICATION. Do not restate telemetry — they can already "
+        "see it. Earn the interruption by picking ONE of these:\n"
+        "  · an insight — something you noticed that they probably haven't (a pattern, "
+        "a consequence, something that looks off, a suggestion worth trying)\n"
+        "  · a real question — if something is ambiguous and knowing would help you "
+        "help them, just ask it\n"
+        "  · a timely reminder — an upcoming calendar event or todo, but ONLY when it "
+        "genuinely connects to what they're doing or is close enough to matter\n"
+        "  · warmth — a joke, or an encouraging word when something finally worked. "
+        "Sparingly, and never instead of substance.\n"
+        "\n"
+        "VOICE: warm, human, curious, brief. Talk TO them, not about them. Contractions "
+        "are good. Never open with 'System' / 'Status' / 'Update' / 'Detected'. Do not "
+        "narrate log lines back. If you have nothing genuinely worth saying, say so.\n"
+        "\n"
+        "Reply with the sentence only — NO preamble, NO JSON, no quotes. If nothing is "
+        "genuinely new or worth raising since your recent takes, reply exactly: "
+        "(nothing new). " + _director_addressing(cfg))
+    prompt = (initial + (("\n\nYOUR RECENT TAKES (don't repeat these):\n" + recent_txt)
+                         if recent_txt else "")
+              + "\n\nWhat's the one thing worth saying to them right now?")
     try:
         # Plain text (NOT json_mode) + think=False: the quick model is a REASONING
         # model, and without think=False its output goes to the `thinking` field,
