@@ -501,6 +501,38 @@ async def _cap_activity_events(session_id: str = "", limit: int = 60
     return out
 
 
+async def _narrator_events(limit: int = 30) -> List[Dict[str, Any]]:
+    """System-narrator activity — the deep narratives + the fast quick-takes — as
+    timeline events (kind='narrator'), so the unified timeline shows Vera's inner
+    voice alongside loops/dreams, filterable via the narrator chip."""
+    out: List[Dict[str, Any]] = []
+    r = _redis()
+    if not r:
+        return out
+
+    async def _pull(key: str, tier: str, pfx: str) -> None:
+        try:
+            raw = await r.lrange(key, 0, limit - 1)
+        except Exception:
+            return
+        for x in raw or []:
+            try:
+                d = json.loads(_rd(x))
+            except Exception:
+                continue
+            txt = (d.get("narrative") or d.get("text") or "").strip()
+            if not txt:
+                continue
+            out.append(_ev("narrator", d.get("ts") or "", pfx + txt[:110],
+                           summary=txt, status=d.get("mood") or "", source="narrator",
+                           ui={"label": "Narrator", "cap": "system.narrator.stream"},
+                           extra={"tier": tier, "steer": d.get("steer") or ""}))
+
+    await _pull("vera:system:narrator:thoughts", "deep", "📖 ")
+    await _pull("vera:system:narrator:quick", "quick", "💬 ")
+    return out
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  THE CAPABILITY
 # ─────────────────────────────────────────────────────────────────────────────
@@ -552,10 +584,13 @@ async def cap_activity_timeline(scope: str = "all", limit: int = 120,
         elif kind == "chat" and ref:
             events += await _cap_activity_events(session_id=ref, limit=lim)
             events += await _live_loop_events(prefixes=[ref], limit=lim)
+        elif kind == "narrator":
+            events += await _narrator_events(limit=lim)
         else:  # all — the master timeline (agentic work only, no cap chatter)
             events += await _dream_events(limit=min(lim, 40))
             events += await _program_events(limit=min(lim, 30))
             events += await _live_loop_events(limit=min(lim, 40))
+            events += await _narrator_events(limit=min(lim, 25))
     except Exception as e:
         log.warning("activity.timeline compose (%s): %s", scope, e)
 
