@@ -28,11 +28,18 @@ def test_primary_guard_refuses_a_different_branch_before_replacement():
     ({"branch": "feat/same"}, "feat/same", "running", False),
     ({"branch": "feat/old"}, "feat/new", "running", True),
     ({"branch": "feat/stale"}, "feat/new", "", False),
-    ({}, "feat/new", "running", False),
+    ({}, "feat/new", "", False),
 ])
 def test_primary_guard_allows_only_non_replacement_or_explicit_replacement(
         current, requested, status, replace):
     assert primary_replacement_conflict(current, requested, status, replace) is None
+
+
+def test_primary_guard_fails_closed_when_container_owner_is_unknown():
+    conflict = primary_replacement_conflict({}, "feat/incoming", "running")
+    assert conflict["code"] == "primary_occupied"
+    assert conflict["current_branch"] == "(unknown)"
+    assert conflict["container_status"] == "running"
 
 
 def test_restart_resolution_preserves_primary_role_and_descriptor():

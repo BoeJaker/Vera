@@ -7024,6 +7024,54 @@ async def _get_sandbox() -> Dict[str, Any]:
         return {}
 
 
+async def _primary_ownership() -> tuple[Dict[str, Any], str]:
+    """Reconcile primary ownership with the shared Docker mount.
+
+    Spawned sandboxes use isolated Redis DBs, so their local KEY_SANDBOX may be
+    empty even though the host-wide ``vera-dev`` container is occupied. Docker's
+    /app bind mount is authoritative for that cross-DB safety decision.
+    """
+    descriptor = await _get_sandbox()
+    state_probe = await _sh(
+        ["docker", "inspect", "-f", "{{.State.Status}}", _SANDBOX_CONTAINER],
+        timeout=15,
+    )
+    if state_probe.get("ok"):
+        status = (state_probe.get("out") or "").strip()
+    else:
+        detail = f"{state_probe.get('err') or ''} {state_probe.get('out') or ''}".lower()
+        # Docker can authoritatively say the container is absent. Permission,
+        # socket, daemon, and transport failures are *unknown*, not free space.
+        status = "" if ("no such object" in detail or "no such container" in detail) else "unknown"
+    if not status:
+        return descriptor, status
+    inspected = await _sh([
+        "docker", "inspect", "-f",
+        "{{range .Mounts}}{{if eq .Destination \"/app\"}}{{.Source}}{{end}}{{end}}",
+        _SANDBOX_CONTAINER,
+    ], timeout=15)
+    mount = (inspected.get("out") or "").strip() if inspected.get("ok") else ""
+    if not mount:
+        return descriptor, status
+    normalized = mount.replace("\\", "/").rstrip("/")
+    observed_branch = ""
+    for worktree in await _list_worktrees():
+        path = str(worktree.get("path") or "").replace("\\", "/").rstrip("/")
+        if path == normalized:
+            observed_branch = str(worktree.get("branch") or "")
+            break
+    reconciled = dict(descriptor)
+    reconciled["worktree"] = mount
+    reconciled["ownership_source"] = "docker_mount"
+    if observed_branch:
+        reconciled["branch"] = observed_branch
+    if not reconciled.get("port"):
+        reconciled["port"] = await _dev_port()
+    if reconciled.get("redis_db") is None:
+        reconciled["redis_db"] = DEV_REDIS_DB
+    return reconciled, status
+
+
 # ── Sandbox ACCESS: terminal + file explorer (the VS Code sidecar is
 #    evolve.sandbox.code.attach) — all scoped to the WORKTREE / dev container,
 #    never the real source.
@@ -7862,6 +7910,8 @@ async def evolve_sandbox_snapshot(prefixes: str = "", sqlite: bool = True, trace
                         "snapshot (bool default True), "
                         "replace_primary (bool default False — required when a "
                         "different branch already owns the primary slot), "
+                        "dry_run (bool default False — resolve ownership and report "
+                        "the planned primary action without Git/Docker/Redis writes), "
                         "rebuild_image (bool default False — force-rebuild "
                         "vera:latest from source first; use when the sandbox is "
                         "running a STALE image missing newer caps like loops.run), "
@@ -7872,6 +7922,7 @@ async def evolve_sandbox_snapshot(prefixes: str = "", sqlite: bool = True, trace
 async def evolve_sandbox_up(branch: str = "", snapshot: bool = True,
                             rebuild_image: bool = False, target: str = "bleeding-edge",
                             replace_primary: bool = False,
+                            dry_run: bool = False,
                             trace_id=None):
     # ── Default to the LATEST trunk, not "whatever was last activated" ───────
     # Requiring an explicit branch meant Loop Lab always tested some branch's
@@ -7898,7 +7949,12 @@ async def evolve_sandbox_up(branch: str = "", snapshot: bool = True,
         target = (target or "bleeding-edge").strip().lower()
         if target not in ("main", "bleeding-edge"):
             return {"error": f"unknown target '{target}' — expected 'main' or 'bleeding-edge'"}
-        if target == "bleeding-edge":
+        # A dry run must not refresh mirror refs/worktrees. Resolve only the
+        # stable mirror name that a real invocation would prepare.
+        if dry_run:
+            _mirror_branch_used = (BLEEDING_EDGE_MIRROR_BRANCH
+                                   if target == "bleeding-edge" else MAINLINE_MIRROR_BRANCH)
+        elif target == "bleeding-edge":
             _mirror_refresh = await _refresh_bleeding_edge_mirror()
             if _mirror_refresh.get("error"):
                 # No bleeding-edge branch in this repo (yet) — degrade to the
@@ -7910,7 +7966,7 @@ async def evolve_sandbox_up(branch: str = "", snapshot: bool = True,
                 _mirror_refresh = None
             else:
                 _mirror_branch_used = BLEEDING_EDGE_MIRROR_BRANCH
-        if target == "main":
+        if target == "main" and not dry_run:
             _mirror_refresh = await _refresh_mainline_mirror()
             if _mirror_refresh.get("error"):
                 return {"error": f"could not prepare the mainline mirror: "
@@ -7921,15 +7977,36 @@ async def evolve_sandbox_up(branch: str = "", snapshot: bool = True,
     # A caller intending to refresh its spawned branch must use sandbox.restart;
     # silently remounting vera-dev displaces another agent even though their
     # worktree survives. Refuse before worktree, compose, Docker, or Redis writes.
+    current_primary, primary_status = await _primary_ownership()
     conflict = _primary_replacement_conflict(
-        await _get_sandbox(), branch, await _sandbox_container_status(),
+        current_primary, branch, primary_status,
         replace_primary=bool(replace_primary),
     )
     if conflict:
+        conflict["dry_run"] = bool(dry_run)
+        conflict["mutated"] = False
+        if dry_run:
+            return conflict
         await _audit("sandbox.up.refused", f"{conflict['current_branch']} -> {branch}",
                      branch=branch, reason="primary_occupied")
         await emit_event({"type": "evolve.sandbox.up.refused", **conflict})
         return conflict
+    if dry_run:
+        return {
+            "ok": True,
+            "dry_run": True,
+            "mutated": False,
+            "allowed": True,
+            "action": ("reuse_primary" if current_primary.get("branch") == branch
+                       else "replace_primary"),
+            "role": "primary",
+            "name": _SANDBOX_CONTAINER,
+            "current_branch": current_primary.get("branch", ""),
+            "ownership_source": current_primary.get("ownership_source", "redis"),
+            "requested_branch": branch,
+            "replace_primary": bool(replace_primary),
+            "target": target,
+        }
     # Resolve the configured host port up front. Refuse the prod port outright —
     # binding it is the "port 8999 already in use" failure — and point at the fix.
     port = await _dev_port()
@@ -8084,15 +8161,26 @@ async def evolve_sandbox_up(branch: str = "", snapshot: bool = True,
                         "branch, worktree, port, Redis DB, or pool descriptor. With no target, "
                         "restarts the primary. Pass name or branch for an exact primary or "
                         "spawned sandbox. This never calls sandbox.up and never replaces the "
-                        "primary. Output: {ok, role, name, branch, port, reachable}.")
-async def evolve_sandbox_restart(name: str = "", branch: str = "", trace_id=None):
+                        "primary. Set dry_run=true to resolve and report the exact target "
+                        "without invoking Docker. Output: {ok, role, name, branch, port, "
+                        "reachable, dry_run, mutated}.")
+async def evolve_sandbox_restart(name: str = "", branch: str = "",
+                                 dry_run: bool = False, trace_id=None):
+    primary, _primary_status = await _primary_ownership()
     target = _resolve_restart_target(
-        await _get_sandbox(), await _sandbox_pool(), primary_name=_SANDBOX_CONTAINER,
+        primary, await _sandbox_pool(), primary_name=_SANDBOX_CONTAINER,
         name=name, branch=branch,
     )
     if target.get("error"):
         return target
     container = target.get("name")
+    if dry_run:
+        return {"ok": True, "dry_run": True, "mutated": False,
+                "action": "restart", "role": target.get("role"),
+                "name": container, "branch": target.get("branch"),
+                "port": target.get("port"), "redis_db": target.get("redis_db"),
+                "worktree": target.get("worktree"), "reachable": None,
+                "url": target.get("url") or ""}
     restarted = await _sh(["docker", "restart", container], timeout=120)
     if not restarted.get("ok"):
         return {"error": f"container restart failed: {restarted.get('err') or restarted.get('out')}",
@@ -8121,7 +8209,8 @@ async def evolve_sandbox_restart(name: str = "", branch: str = "", trace_id=None
     await emit_event({"type": "evolve.sandbox.restarted", "role": target.get("role"),
                       "name": container, "branch": target.get("branch"),
                       "port": port, "reachable": reachable})
-    return {"ok": True, "role": target.get("role"), "name": container,
+    return {"ok": True, "dry_run": False, "mutated": True,
+            "role": target.get("role"), "name": container,
             "branch": target.get("branch"), "port": port,
             "redis_db": target.get("redis_db"), "worktree": target.get("worktree"),
             "reachable": reachable, "url": f"{scheme}://localhost:{port}" if port else ""}
@@ -8210,9 +8299,12 @@ async def evolve_sandbox_list(trace_id=None):
                         "the PRIMARY vera-dev (original behavior). Pass name (container "
                         "or slug) or branch to tear down a specific SPAWNED per-branch "
                         "container instead. Inputs: name (str), branch (str), "
-                        "remove_worktree (bool default True).")
-async def evolve_sandbox_down(remove_worktree: bool = True, name: str = "",
-                              branch: str = "", trace_id=None):
+                        "remove_worktree (bool default False — worktrees are preserved "
+                        "unless deletion is explicit), dry_run (bool default False — "
+                        "report exact role/container/worktree and planned actions without "
+                        "mutation).")
+async def evolve_sandbox_down(remove_worktree: bool = False, name: str = "",
+                              branch: str = "", dry_run: bool = False, trace_id=None):
     # ── a specific SPAWNED container (by container name, slug, or branch) ──
     if name or branch:
         target = None
@@ -8224,6 +8316,12 @@ async def evolve_sandbox_down(remove_worktree: bool = True, name: str = "",
             return {"error": f"no spawned sandbox matching '{name or branch}'"}
         slug, d = target
         compose = d.get("compose", f"docker-compose.dev-{slug}.yml")
+        if dry_run:
+            return {"ok": True, "dry_run": True, "mutated": False,
+                    "role": "spawned", "name": d.get("name"),
+                    "branch": d.get("branch"), "worktree": d.get("worktree"),
+                    "compose": compose, "container_action": "stop_remove",
+                    "worktree_action": ("remove" if remove_worktree else "preserve")}
         dn = await _sh(["docker", "compose", "-f", "docker-compose.yml", "-f", compose,
                         "-p", d.get("name"), "down"], timeout=180)
         removed_wt = False
@@ -8244,10 +8342,21 @@ async def evolve_sandbox_down(remove_worktree: bool = True, name: str = "",
                      f"(worktree_removed={removed_wt})", branch=d.get("branch"))
         await emit_event({"type": "evolve.sandbox.down", "name": d.get("name"),
                           "worktree_removed": removed_wt})
-        return {"ok": dn["ok"], "name": d.get("name"), "worktree_removed": removed_wt,
+        return {"ok": dn["ok"], "dry_run": False, "mutated": True,
+                "name": d.get("name"), "worktree_removed": removed_wt,
                 "detail": dn["err"] or dn["out"]}
     # ── the PRIMARY vera-dev (original behavior) ──
     sb = await _get_sandbox()
+    if dry_run:
+        if not sb:
+            return {"error": "no primary sandbox descriptor",
+                    "code": "sandbox_not_found", "dry_run": True,
+                    "mutated": False}
+        return {"ok": True, "dry_run": True, "mutated": False,
+                "role": "primary", "name": _SANDBOX_CONTAINER,
+                "branch": sb.get("branch"), "worktree": sb.get("worktree"),
+                "compose": _DEV_COMPOSE, "container_action": "stop_remove",
+                "worktree_action": ("remove" if remove_worktree else "preserve")}
     dn = await _sh(["docker", "compose", "-f", "docker-compose.yml",
                     "-f", _DEV_COMPOSE, "down"], timeout=180)
     removed_wt = False
@@ -8265,7 +8374,8 @@ async def evolve_sandbox_down(remove_worktree: bool = True, name: str = "",
         await _code_sidecar_teardown(sb)
     await _audit("sandbox.down", f"torn down (worktree_removed={removed_wt})")
     await emit_event({"type": "evolve.sandbox.down", "worktree_removed": removed_wt})
-    return {"ok": dn["ok"], "worktree_removed": removed_wt,
+    return {"ok": dn["ok"], "dry_run": False, "mutated": True,
+            "worktree_removed": removed_wt,
             "detail": dn["err"] or dn["out"]}
 
 

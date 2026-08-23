@@ -17,13 +17,12 @@ def primary_replacement_conflict(
     current_branch = str(current.get("branch") or "").strip()
     requested_branch = str(requested_branch or "").strip()
     status = str(container_status or "").strip().lower()
-    if (replace_primary or not current_branch or current_branch == requested_branch
-            or not status):
+    if replace_primary or not status or (current_branch and current_branch == requested_branch):
         return None
     return {
         "error": "primary sandbox is occupied by another branch",
         "code": "primary_occupied",
-        "current_branch": current_branch,
+        "current_branch": current_branch or "(unknown)",
         "requested_branch": requested_branch,
         "container_status": status,
         "hint": ("use evolve.sandbox.spawn for an additive sandbox; only pass "
