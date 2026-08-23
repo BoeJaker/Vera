@@ -21,10 +21,24 @@ syntax repair, another repair-model call, file/version persistence, bounded
 Python execution, and runtime-repair calls. Existing generation, syntax, save,
 and smoke behavior is unchanged.
 
+## Recent-window summary
+
+`code.author.timing.summary(limit=200)` reads the existing `obs.events` window
+and reports p50, p95, and maximum milliseconds for the overall envelope and each
+phase. It also reports total repair/smoke activity, the number and rate of runs
+with activity, and explicit accepted/ignored event counts. Percentiles use
+inclusive linear interpolation. Invalid values, unrelated events, and unknown
+schema versions are ignored rather than silently mixed into the baseline.
+
+The result contains no task text, generated code, session identifiers, trace
+identifiers, or paths. It introduces neither a new store nor a model call; its
+window is bounded to 500 recent events.
+
 ## Scope and next baseline
 
-This slice adds deterministic instrumentation and tests; it deliberately does
-not launch a model workload while other agents are active. The next authorized
+These slices add deterministic instrumentation, aggregation, and tests; they
+deliberately do not launch a model workload while other agents are active. The
+next authorized
 benchmark should freeze representative authoring tasks, run them serially through
 the shared model gate, and publish p50/p95 values by phase, language, file size,
 repair count, route, and model. The same vocabulary can then cover prose authoring,
