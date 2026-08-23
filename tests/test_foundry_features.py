@@ -35,7 +35,7 @@ def test_worker_feature():
 def test_hardening_feature():
     s = feature_script("hardening", {})
     assert "PermitRootLogin prohibit-password" in s and "PasswordAuthentication no" in s
-    assert "unattended-upgrades" in s and "ufw" in s
+    assert "unattended-upgrades" in s and "ufw" in s and "firewall-cmd" in s and "51820/udp" in s
 
 
 def test_file_client_feature():
