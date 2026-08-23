@@ -1836,6 +1836,11 @@ async def llm_generate(
                        # live tool-output stream) — internal plumbing, deliberately
                        # untyped/unannotated like trace_id so it never enters the
                        # generated JSON schema and a model can never pass it.
+    options=None,      # per-call ollama sampling overrides (temperature, top_p,
+                       # repeat_penalty, …), merged OVER the profile/role options
+                       # so a caller (e.g. code.author) can damp repetition even
+                       # when the role's options are overridden empty. Untyped like
+                       # stream_cb so it never enters the model-facing JSON schema.
 ):
     from Vera.vera.capability_orchestration import (
         CAPABILITY_REGISTRY as _REG,
@@ -1934,6 +1939,11 @@ async def llm_generate(
         _gen_opts = {"num_ctx": _ctx, "num_predict": _ctx}
     except Exception:
         _gen_opts = {"num_predict": _want_ctx}
+    # Per-call sampling overrides (e.g. code.author's repeat_penalty/temperature)
+    # merged on top so they reach ollama even when the profile/role options are
+    # empty (a live Model-Routing override can wipe the declared role options).
+    if isinstance(options, dict) and options:
+        _gen_opts.update(options)
     _meta: dict = {}
     text = await ollama_generate(
         prompt, system=system, model=model,

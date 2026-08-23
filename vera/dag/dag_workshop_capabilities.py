@@ -169,7 +169,14 @@ register_routing_profile(
                        "model": _LOOP_PLANNER_MODEL,
                        "options": {"temperature": 0.1, "num_ctx": 8192}},
         "coder":      {"job_type": "loop_coder", "prefer_gpu": True,
-                       "options": {"temperature": 0.45, "top_p": 0.9}},
+                       # Aligned to the chat/aide sampling — the SAME 9B writes
+                       # functional code in chat. NO repeat_penalty: > 1.0 is a
+                       # foot-gun for CODE, penalising the legitimate token repetition
+                       # code is full of (indentation, keywords, identifiers) and
+                       # nudging the model off the correct token. The earlier 1.15
+                       # (added to break a degenerate line-loop) hurt coherence; the
+                       # warmer 0.7 temp avoids the greedy loop without the penalty.
+                       "options": {"temperature": 0.7, "top_p": 0.9}},
         "writer":     {"job_type": "loop_writer", "prefer_gpu": True,
                        "options": {"temperature": 0.7, "top_p": 0.9}},
     })
@@ -3993,6 +4000,27 @@ def _research_block_caps() -> set:
     return set(_RESEARCH_JOB_CAPS)
 
 
+def _loop_llm_caps_blocked() -> set:
+    """Every registered ``llm.*`` cap — kept OUT of agent-loop toolkits so the
+    loop generates ONLY through the grounded authoring caps: ``code.author``
+    (code) and ``prose.author`` (prose/docs). Empty set when
+    VERA_LOOP_ALLOW_LLM_CAPS is truthy.
+
+    Why the whole family, not case-by-case: the raw ``llm.*`` caps
+    (llm.summarize/llm.analyze/llm.classify/llm.generate/…) each need their full
+    input inline, so a loop pastes an entire fetched file into a ``text=`` arg
+    and cycles on it (observed: repeated llm.summarize calls, ~60s each, on huge
+    page dumps). The family is sprawling; blocking it wholesale here is cleaner
+    and more robust than grounding every variant. code.author/prose.author take
+    files BY REFERENCE (``context_files=[…]``) and read them themselves, exactly
+    the handover this avoids. Read per call so the env flag flips without a code
+    edit. This shapes only the TOOLKIT the executor may call — code.author /
+    prose.author still call llm.generate INTERNALLY; that path is untouched."""
+    if str(os.getenv("VERA_LOOP_ALLOW_LLM_CAPS", "0")).strip().lower() in ("1", "true", "yes"):
+        return set()
+    return {c for c in CAPABILITY_REGISTRY if c == "llm" or c.startswith("llm.")}
+
+
 def _research_hint(cap: str = "research.quick_search", *, suffix: str = "") -> str:
     """Name `cap` in prompt guidance, or return '' when it is blocked for loops.
     Steering a specialist toward a cap that is not in any toolkit only produces
@@ -4054,7 +4082,8 @@ async def _workshop_build_toolkit(*, allowed_caps: str, category: str,
 
     Order:
       1. Universal discovery caps (caps.search etc.)
-      2. Universal essentials (llm.generate, llm.summarize)
+      2. Universal essentials (code.author, prose.author — the grounded
+         authoring caps; the raw llm.* family is blocked from loop toolkits)
       3. Category-specific essentials for ALL categories
       4. Prefix-expanded caps for ALL categories
       5. Keyword-driven semantic search (top_k)
@@ -4062,7 +4091,8 @@ async def _workshop_build_toolkit(*, allowed_caps: str, category: str,
 
     Truncates keyword-discovered caps to keep total ≤ top_k * 2.
     """
-    blacklist: set = set(_DEFAULT_CAP_BLACKLIST) | _gated_read_caps() | _research_block_caps()
+    blacklist: set = (set(_DEFAULT_CAP_BLACKLIST) | _gated_read_caps()
+                      | _research_block_caps() | _loop_llm_caps_blocked())
     try:
         ctx = _ctx()
         bl = getattr(ctx, "_AGENT_LOOP_BLACKLIST", None)
@@ -4109,8 +4139,12 @@ async def _workshop_build_toolkit(*, allowed_caps: str, category: str,
     for c in WORKSHOP_DISCOVERY_CAPS:
         add(c)
 
-    # 1b. Universal essentials — always present (bypass pool)
-    _UNIVERSAL_ESSENTIALS = ["llm.generate", "llm.summarize"]
+    # 1b. Universal essentials — always present (bypass pool). The loop's
+    #     generation goes through the GROUNDED authoring caps, never the raw
+    #     llm.* family (blocked above): code.author for code, prose.author for
+    #     prose/docs/synthesis — both read files by reference (context_files=[…])
+    #     instead of needing their whole content pasted into an argument.
+    _UNIVERSAL_ESSENTIALS = ["code.author", "prose.author"]
     for c in _UNIVERSAL_ESSENTIALS:
         add(c)
 
@@ -10039,6 +10073,16 @@ def _html_structural_error(code: str) -> str:
             return (f"duplicate <{tag}> — {n} found; a document has exactly one. The file "
                     f"appears to restart partway through. Emit a single {tag} section and "
                     f"delete the duplicate.")
+    # A document that opens <html> must CLOSE it — an unclosed page means the coder
+    # stopped early / the file was cut off (observed: a build that ended on a stray
+    # <script src> with no </body></html>). NOTE: referencing sibling files
+    # (<script src=app.js>, a JSON dataset, a multi-file app) is legitimate and is
+    # NOT flagged here — that consistency (are the referenced files actually
+    # produced?) is a loop-level concern, not something a single-file check can
+    # judge.
+    if re.search(r"<html(?:\s|>)", low) and "</html>" not in low:
+        return ("missing </html> — the document never closes. End the file with "
+                "</body></html>, and make sure nothing was cut off before it.")
     return ""
 
 
@@ -10253,6 +10297,13 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
         "logic here'.\n"
         "Rules:\n"
         "  • Output the COMPLETE file, and nothing else. No commentary before or after.\n"
+        "  • COMMIT to ONE implementation. Emit EXACTLY ONE fenced block, then STOP — do NOT "
+        "close the fence and open another, and do NOT write a draft followed by a 'better' one "
+        "('Here's a better implementation', 'Actually, let me redo this', a second/cleaner "
+        "version). There is NO second attempt in this response: decide the approach up front "
+        "and write the single final file start-to-finish. If you notice a mistake mid-file you "
+        "cannot go back and restart — get it right the first time, in one pass. A second fenced "
+        "block or a rewrite mid-stream is a FAILED response.\n"
         "  • NEVER narrate your thinking inside the file. No reasoning/deliberation comments "
         "('Actually…', 'Wait…', 'Let's simplify…', 'Conceptual, see below', 'thought flow', "
         "'Hacky…'), no notes-to-self, no rejected alternatives — emit ONLY the final code a "
@@ -10263,11 +10314,18 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
         "  • Put runnable code where it RUNS. JavaScript goes in a <script> that executes; NEVER "
         "place program logic inside a string passed to insertAdjacentHTML/innerHTML/"
         "document.write — that ships the logic as inert text and nothing runs.\n"
-        "  • This call authors ONE file. If it is a web page, make it FULLY SELF-CONTAINED — "
-        "inline the CSS in <style> and the JS in <script>. Do NOT reference sibling files you "
-        "are not creating (no <script src='app.js'> / <link href='style.css'> pointing at local "
-        "files that will not exist); reference a separate file only if the task explicitly names "
-        "it as its own deliverable.\n"
+        "  • FINISH the behaviour — do not just scaffold it. EVERY interactive element you put in "
+        "the markup must be fully wired: a button/input/form you create MUST have its handler "
+        "ATTACHED (addEventListener('click', …) or onclick=) with a real, working function body "
+        "behind it. Grabbing an element with getElementById and then never binding a handler "
+        "ships a DEAD control and is a failed file. Before you stop, walk every button/control and "
+        "every feature the task names, and make sure each one actually does something end-to-end.\n"
+        "  • This call authors EXACTLY ONE file — the one named on the fence. If it is a "
+        "self-contained web page, the ENTIRE app goes in THIS single file: ALL markup, ALL CSS "
+        "inside a <style> block, and ALL JavaScript inside a <script> block — there are no other "
+        "files, so inline everything. ONLY split across files (<script src=…>/<link href=…> to a "
+        "sibling) when the task EXPLICITLY names those other files as separate deliverables you "
+        "are also creating; otherwise a reference to any local file is a bug (it won't exist).\n"
         f"  • ONE fenced block, opened EXACTLY like this: ```{lang} file={path}\n"
         f"    `file={path}` belongs on the OPENING FENCE LINE ONLY. The first line INSIDE "
         "the block must be real code (an import/statement) — never a repeat of the "
@@ -10326,7 +10384,17 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
     # hand-rolling a regex parser because it assumes bs4 is not — and both
     # guesses cost a whole failed run to discover.
     pkg_block = await _package_hint(session_id, lang)
+    # Tell the coder what ALREADY exists so it doesn't guess or recreate files,
+    # and can correctly reference real siblings in a genuine multi-file build. It
+    # also anchors the self-contained rule: never <script src>/<link href> a local
+    # file that isn't in this list (it won't exist at runtime).
+    _wfiles = await _v5_workdir_files(session_id)
+    _files_block = (("\nFILES ALREADY IN THE WORKSPACE (real): " + ", ".join(_wfiles[:40])
+                     + ". Do not recreate these; reference one by its exact name only if THIS "
+                     "file genuinely needs it, and never reference any OTHER local file that is "
+                     "not in this list (it will not exist).\n") if _wfiles else "")
     prompt = (f"TASK — write `{path}`:\n{task}\n"
+              + _files_block
               + (f"\nREQUIREMENTS / CONSTRAINTS:\n{requirements}\n" if requirements else "")
               + (f"\nThe code must read these files (their real content is included above as "
                  f"CONTEXT FILES): {', '.join(files)}\n" if files else "")
@@ -10353,6 +10421,14 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
     try:
         res = await fn(prompt=prompt, system=sys_prompt, output_format="code",
                        profile=LOOP_ROUTING_PROFILE, role="coder",
+                       # Sampling passed at the CALL so it applies even when the coder
+                       # role options are overridden empty on the Model Routing page
+                       # (which they are in prod). Aligned to the chat/aide config —
+                       # the SAME 9B writes functional code there: temp 0.7 and NO
+                       # repeat_penalty. A repeat_penalty > 1.0 is a foot-gun for CODE
+                       # (it penalises the legitimate token repetition code is full of);
+                       # the earlier 0.3 + 1.15 tuning degraded coherence vs plain chat.
+                       options={"temperature": 0.7, "top_p": 0.9},
                        files=files or None, session_id=session_id,
                        caller="code.author", trace_id=trace_id, stream_cb=stream_cb)
     except Exception as e:
@@ -10362,16 +10438,35 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
     if not text.strip():
         return {"ok": False, "error": "the coder returned nothing"}
     blocks = _v5_extract_code_blocks(text, name_hint=(path or task))
+    # code.author must COMMIT to one file (the system prompt forbids a second
+    # version). But a model sometimes closes the fence and opens a "better
+    # implementation" anyway — in which case the INTENDED file is the LAST block,
+    # not blocks[0] (which would save the abandoned first draft). Prefer the last
+    # block of the target language, else the last block.
+    _blk = None
+    if blocks:
+        _lb = (lang or "").strip().lower()
+        _same = [b for b in blocks if (b.get("lang") or "").strip().lower() == _lb] if _lb else []
+        _blk = _same[-1] if _same else blocks[-1]
+        if len(blocks) > 1:
+            try:
+                await emit_event({"type": "code.author.multiblock", "path": path,
+                                  "blocks": len(blocks), "chose": "last",
+                                  "session_id": session_id})
+            except Exception:
+                pass
     # The unfenced fallback needs the same marker strip — a coder that emits a
     # bare `file=x.py` first line and NO fence would otherwise save it as line 1.
-    code = (blocks[0]["code"] if blocks
+    code = (_blk["code"] if _blk
             else _v5_strip_marker_line(_unescape_collapsed_code(text.strip())))
     # Salvage an unclosed fence (survives as line 1 -> SyntaxError) and a trailing
     # editor-JSON leak the coder appended — both fall through extraction untouched.
     code = _v5_clean_code_body(code)
     if not code.strip():
         return {"ok": False, "error": "no code in the generation"}
-    _lang_used = blocks[0]["lang"] if blocks else lang
+    _lang_used = _blk["lang"] if _blk else lang
+    # An HTML doc ends at </html>; strip a leaked JS/editor tail after it.
+    code = _v5_strip_html_tail(code, _lang_used)
     check = _v5_check_syntax(code, _lang_used, path)
 
     _edit_sys = (
@@ -10409,6 +10504,7 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
         try:
             raw = await fn(prompt=fix_prompt, system=_edit_sys, output_format="json",
                            profile=LOOP_ROUTING_PROFILE, role="coder",
+                           options={"temperature": 0.2, "top_p": 0.9},
                            session_id=session_id, caller="code.author.repair",
                            trace_id=trace_id, stream_cb=stream_cb)
         except Exception as e:
@@ -10430,9 +10526,85 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
                                   message=f"code.author: {task[:80]}", lang=lang)
     if not saved.get("ok"):
         return {"ok": False, "error": str(saved.get("error") or "save failed"), "path": path}
+
+    # ── RUNTIME SMOKE-RUN GATE (Python scripts) ──────────────────────────────
+    # Syntax-valid code still crashes at runtime (NameError, ImportError, an
+    # unguarded call) — a parser can't see it, so a broken script used to pass as
+    # a completed deliverable and only failed when the loop ran it. For a RUNNABLE
+    # .py we execute it ONCE, bounded, and feed any traceback into the same
+    # edit-repair loop so the file we return actually RUNS, not merely parses. A
+    # TIMEOUT is inconclusive (a slow script is not a defect). Off for non-.py,
+    # when disabled, or when the file couldn't be mirrored to disk.
+    runtime_err = ""
+    smoke_ran = False
+    _fs = saved.get("fs_path", "")
+    _rt_max = max(0, int(os.getenv("VERA_CODE_AUTHOR_SMOKE_ATTEMPTS", "2") or 0))
+    if (os.getenv("VERA_CODE_AUTHOR_SMOKE_RUN", "1").strip().lower() in ("1", "true", "yes", "on")
+            and check.get("ok") and _fs and _rt_max
+            and (_lang_used or "").lower() in ("python", "py")
+            and str(path).lower().endswith(".py")):
+        import subprocess as _sp
+        _to = int(os.getenv("VERA_CODE_AUTHOR_SMOKE_TIMEOUT", "25") or 25)
+
+        def _smoke_once(fp: str) -> str:
+            if not fp or not os.path.isfile(fp):
+                return ""
+            try:
+                pr = _sp.run(["python3", fp], cwd=(os.path.dirname(fp) or None),
+                             capture_output=True, text=True, timeout=max(3, _to))
+            except _sp.TimeoutExpired:
+                return ""           # inconclusive — long-running, not a crash
+            except Exception:
+                return ""           # can't run it here — don't block the author on that
+            if pr.returncode == 0:
+                return ""
+            _e = (pr.stderr or pr.stdout or "").strip()
+            return _e[-1500:] if _e else f"exited with code {pr.returncode}"
+
+        for _rt in range(_rt_max + 1):
+            smoke_ran = True
+            runtime_err = await asyncio.to_thread(_smoke_once, _fs)
+            if not runtime_err or _rt >= _rt_max:
+                break
+            await emit_event({"type": "code.author.runtime_repair", "path": path,
+                              "attempt": _rt + 1, "error": runtime_err[-300:]})
+            if stream_cb is not None:
+                try:
+                    await stream_cb(f"\n\n[✗ runtime error on smoke-run — applying a fix]\n"
+                                    f"{runtime_err[-400:]}\n\n")
+                except Exception:
+                    pass
+            _rp = (f"FILE: {path} ({_lang_used}, {len(code.splitlines())} lines)\n"
+                   f"CURRENT CONTENT (patch THIS, do not regenerate):\n{_v5_numbered(code)}\n\n"
+                   f"RUNNING it produced this RUNTIME error:\n{runtime_err[-1200:]}\n\n"
+                   f"Return the JSON edit(s) that fix the runtime error.")
+            try:
+                _rr = await fn(prompt=_rp, system=_edit_sys, output_format="json",
+                               profile=LOOP_ROUTING_PROFILE, role="coder",
+                               options={"temperature": 0.2, "top_p": 0.9},
+                               session_id=session_id, caller="code.author.runtime_repair",
+                               trace_id=trace_id, stream_cb=stream_cb)
+            except Exception:
+                break
+            _ro = _extract_json(_strip_think(_v5_gen_text(_rr) or "")[0]) or {}
+            _re = _ro.get("edits") if isinstance(_ro, dict) else None
+            if not isinstance(_re, list) or not _re:
+                break
+            _ra = _v5_apply_edits(code, _re)
+            if not _ra.get("ok"):
+                break
+            code = _ra["content"]
+            check = _v5_check_syntax(code, _lang_used, path)
+            if not check.get("ok"):
+                break               # the fix broke syntax — the syntax path reports it
+            saved = await code_store_save(path, code, session_id=session_id,
+                                          message=f"code.author (runtime fix): {task[:60]}", lang=lang)
+            _fs = saved.get("fs_path", _fs)
+
     truncated = bool(res.get("truncated")) if isinstance(res, dict) else False
     _verified = bool(check.get("ok")) and bool(check.get("checker"))
     _syntax_bad = not check.get("ok")
+    _runtime_bad = bool(runtime_err)
     return {
             # A file that does not parse is NOT a completed deliverable — it is a
             # FAILED call, same as any other cap whose result is unusable. This
@@ -10440,8 +10612,9 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
             # code back saw a normal-looking success and moved on (to running it,
             # or declaring the step done); the break was only discovered several
             # cycles later. ok=False here routes it through the loop's ordinary
-            # failure handling (verify/retry) instead.
-            "ok": not _syntax_bad,
+            # failure handling (verify/retry) instead. A file that PARSES but
+            # CRASHES on the runtime smoke-run is a failed deliverable the same way.
+            "ok": not _syntax_bad and not _runtime_bad,
             "path": saved.get("path", path), "fs_path": saved.get("fs_path", ""),
             "version": saved.get("version"), "bytes": saved.get("bytes"),
             "lang": saved.get("lang", lang), "chars": len(code),
@@ -10452,16 +10625,25 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
             "syntax_ok": bool(check.get("ok")),
             "checked_with": check.get("checker") or "",
             "syntax_error": check.get("error", "") if _syntax_bad else "",
+            "runtime_ok": (not _runtime_bad) if smoke_ran else None,
+            "runtime_error": (runtime_err[-600:] if _runtime_bad else ""),
             "error": (f"code.author could not produce a file that parses after {attempts} "
                       f"attempt(s) — {check.get('checker','parser')}: {check.get('error','')}. "
                       f"The (broken) file WAS written and versioned at '{path}' so it can still "
                       f"be inspected or repaired with code.edit, but it will not run as-is."
-                     ) if _syntax_bad else "",
+                     ) if _syntax_bad else
+                     (f"code.author wrote a file that PARSES but CRASHES when run (after "
+                      f"{_rt_max} runtime-repair attempt(s)): {runtime_err[-400:]} — repair it "
+                      f"with code.edit before relying on its output."
+                     ) if _runtime_bad else "",
             "note": (("⚠ the generation hit its length limit — the file is INCOMPLETE; "
                       "re-author it in smaller pieces. ") if truncated else "")
                     + (f"⚠ STILL HAS A SYNTAX ERROR after {attempts} attempts "
                        f"({check.get('error','')}) — fix it before running. " if _syntax_bad
                        else (f"Syntax verified by {check.get('checker')}. " if _verified else ""))
+                    + (f"⚠ it PARSES but CRASHED on a smoke-run ({runtime_err[-160:]}) — repair "
+                       f"with code.edit before use. " if _runtime_bad
+                       else ("✓ ran clean on a smoke-run. " if smoke_ran else ""))
                     + f"Written and versioned. Run it with exec.python.run(path='{path}')."}
 
 
@@ -10625,6 +10807,13 @@ async def cap_prose_author(task: str = "", path: str = "", context_files=None,
         "  • Write it literally — never wrap it in JSON, never escape newlines as \\n.\n"
         "  • Any CONTEXT FILES given to you show REAL content to describe/summarize — quote "
         "and reference what's actually there, not a plausible guess.\n"
+        "  • GROUND every factual claim in the source material. For a summary, report or "
+        "synthesis: if the CONTEXT FILES are empty, unreadable, or do not contain the "
+        "information the task asks about, SAY SO plainly (e.g. 'the provided sources contain "
+        "no usable data on this') and write only what the sources actually support. Do NOT "
+        "invent specific companies, products, people, statistics, dates, standards or events "
+        "to fill the gap — a short honest write-up of what little the sources hold is correct; "
+        "a detailed, plausible-sounding one built on invented facts is a FAILED document.\n"
         "  • Never document a component, service, or dependency that isn't in the real file "
         "listing below. A project with one static HTML file is a project with one static HTML "
         "file — do not add a backend, a build step, or a package manager it doesn't have."
@@ -10830,6 +11019,17 @@ async def cap_code_edit(path: str, task: str = "", session_id: str = "", repo: s
     """Targeted edit of an existing file, with the same verify-and-repair contract
     as code.author: nothing is saved that does not parse."""
     path = _code_norm_path(str(path or "").strip())
+    # A caller (often the loop's own model, echoing a prior fs_path) may hand back
+    # the artifact-absolute `/workspace/x` or a redundant relative `workspace/x`. In
+    # the session workspace context (no repo) that base is IMPLICIT, so the leading
+    # `workspace/` _code_norm_path leaves behind must collapse to `x` — otherwise the
+    # edit re-joins to /workspace/workspace/x, a shadow file every later run chases
+    # (observed: an author→run→edit→run loop stuck on the doubled path). Repo edits,
+    # where `workspace/` can be a real top-level dir, are left untouched.
+    if not repo:
+        _pp = path.split("/")
+        if len(_pp) > 1 and _pp[0] == "workspace":
+            path = "/".join(_pp[1:])
     task = str(task or "").strip()
     if not path:
         return {"ok": False, "error": "path required"}
@@ -11091,6 +11291,27 @@ def _v5_clean_code_body(code: str) -> str:
     # Preserve the trailing-newline convention (extract uses code.rstrip("\n")+"\n")
     # so already-clean code round-trips unchanged.
     return (body.rstrip("\n") + "\n") if body.strip() else body
+
+
+_HTML_CLOSE_TAG_RE = re.compile(r"</html\s*>", re.IGNORECASE)
+
+
+def _v5_strip_html_tail(code: str, lang: str) -> str:
+    """Drop stray content the model appended AFTER the final </html> — the 2026-08-22
+    code.author defect where a JS template-literal close leaked out as a trailing
+    `` `; `` line once the document was already finished. An HTML document ends at
+    </html>; nothing may legitimately follow it, so truncate at the end of the LAST
+    one (a </html> written inside a <script> string is earlier, so the real closing
+    tag stays the last match). No-op for non-HTML, for HTML with no closing tag, and
+    for HTML with only whitespace after it, so clean output round-trips unchanged."""
+    if not code or (lang or "").strip().lower() not in ("html", "htm", "xhtml"):
+        return code
+    last = None
+    for m in _HTML_CLOSE_TAG_RE.finditer(code):
+        last = m
+    if last is None or not code[last.end():].strip():
+        return code
+    return code[:last.end()] + "\n"
 
 
 def _v5_gen_text(result: Any) -> str:
@@ -12852,6 +13073,38 @@ def _v5_actual_caps_used(history: List[Dict[str, Any]]) -> List[str]:
     return seen
 
 
+# Framework-injected params — never supplied by the model's tool_use input, so
+# they don't count as "missing" when validating a call's required args.
+_V5_INJECTED_PARAMS = {"self", "session_id", "trace_id", "stream_cb", "trace",
+                       "caller", "caller_kind", "content", "instance_id"}
+
+
+def _v5_missing_required_args(cap_name: str, args: Any) -> List[str]:
+    """Required params of `cap_name` (no default, excluding framework-injected
+    ones) that are ABSENT from `args`. Lets the executor skip a call guaranteed
+    to fail for a missing required arg (e.g. http.get with no `url`) and route it
+    straight to arg-recovery instead of wasting the call. Best-effort — returns
+    [] on any introspection failure, so it never blocks a call it can't reason
+    about."""
+    try:
+        cap = CAPABILITY_REGISTRY.get(cap_name)
+        fn = (cap or {}).get("func") if isinstance(cap, dict) else None
+        if not callable(fn):
+            return []
+        provided = set(args.keys()) if isinstance(args, dict) else set()
+        missing: List[str] = []
+        for name, p in inspect.signature(fn).parameters.items():
+            if name in _V5_INJECTED_PARAMS:
+                continue
+            if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                continue
+            if p.default is inspect.Parameter.empty and name not in provided:
+                missing.append(name)
+        return missing
+    except Exception:
+        return []
+
+
 async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                        blackboard: Dict[int, Dict[str, Any]],
                        artifacts: Optional[Dict[str, Dict[str, Any]]] = None,
@@ -13972,7 +14225,11 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                               "cycle": cur, "step_id": step_id, "tool": hop_tool, "args": h_args,
                               "thought": "(chained)", "session_id": sid})
             t0 = time.monotonic()
-            if _h_url_cached and "_url_cache_value" in _h_url_cached:
+            _h_missing_req = _v5_missing_required_args(hop_tool, h_args)
+            if _h_missing_req:
+                invoke = {"ok": False,
+                          "error": "missing required argument: " + ", ".join(_h_missing_req)}
+            elif _h_url_cached and "_url_cache_value" in _h_url_cached:
                 invoke = {"ok": True, "result": _h_url_cached["_url_cache_value"]}
             else:
                 _hstream = _v5_make_tool_stream_cb(stream_id, step_id, cur, hop_tool, sid)
@@ -13999,6 +14256,32 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                     if _hrc != 0 or _hres.get("ok") is False:
                         invoke["ok"] = False
                         invoke["error"] = _v5_result_failure_reason(_hres, _hrc)
+            # Arg-error recovery for a chain hop — same as the single-tool path:
+            # retry the SAME hop with healed args rather than breaking the chain.
+            _hrec_max = int(os.getenv("VERA_V5_RECOVERY_ATTEMPTS", "2") or 2)
+            # Skip generative/authoring caps — see the single-tool path: re-calling
+            # code.author/prose.author/code.edit stacks multi-minute generations.
+            if (not invoke.get("ok") and _hrec_max > 0
+                    and _is_arg_error(invoke.get("error", ""))
+                    and not _v5_is_generative(hop_tool)
+                    and hop_tool not in ("code.author", "prose.author", "code.edit")):
+                _hrec = await _attempt_arg_recovery(
+                    cap_name=hop_tool,
+                    failed_args=h_args if isinstance(h_args, dict) else {},
+                    error_text=invoke.get("error", ""),
+                    model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+                    max_attempts=_hrec_max, call_tool=call_tool,
+                    session_id=sid, trace_id=trace_id or "", emit_fn=emit_event,
+                    cycle=cur, stream_id=stream_id, goal=goal, thought="(chain hop)")
+                if _hrec.get("recovered"):
+                    invoke = _hrec["final_invoke"]
+                    _hra = _hrec.get("attempts") or []
+                    if _hra and isinstance(_hra[-1].get("args"), dict):
+                        h_args = _hra[-1]["args"]
+                    if (invoke.get("ok") and isinstance(invoke.get("result"), dict)
+                            and invoke["result"].get("error")):
+                        invoke["ok"] = False
+                        invoke["error"] = str(invoke["result"]["error"])
             if (invoke.get("ok") and await_long_running and isinstance(invoke.get("result"), dict)
                     and _detect_job_id(invoke["result"])):
                 try:
@@ -14612,6 +14895,40 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 # retry the same wrong shape with a different tool name (once
                 # even `ide.fs.chain`) instead of fixing the shape. Observed
                 # live, repeatedly, across independent steps in one run.
+                # LENIENT auto-convert: the model meant to chain but nested the
+                # hops inside tool_use.input instead of using the top-level
+                # `chain` field. If a real hop list is in there, RUN it (mirrors
+                # the legitimate chain path above) rather than burning the cycle
+                # on a refusal. Fall back to the correction only when there are
+                # no usable hops.
+                _auto_hops = None
+                if isinstance(args, dict):
+                    for _ck in ("chain", "steps", "hops", "calls", "tools", "input"):
+                        if isinstance(args.get(_ck), list) and args.get(_ck):
+                            _auto_hops = args[_ck]
+                            break
+                _norm_hops = []
+                for _h in (_auto_hops or []):
+                    if not isinstance(_h, dict):
+                        continue
+                    _hn = str(_h.get("name") or _h.get("tool") or _h.get("cap") or "").strip()
+                    if not _hn or _hn == "chain" or _hn.endswith(".chain"):
+                        continue
+                    _hh = {"name": _hn,
+                           "input": _h.get("input") or _h.get("args") or _h.get("arguments") or {}}
+                    if isinstance(_h.get("from"), dict):
+                        _hh["from"] = _h["from"]
+                    _norm_hops.append(_hh)
+                if _norm_hops and enable_chaining:
+                    productive += 1
+                    think_only_streak = 0
+                    dup_thought_hits = 0
+                    if thought:
+                        await emit_event({"type": "agent_loop_v5.think", "stream_id": stream_id,
+                                          "cycle": (gc + 1), "step_id": step_id,
+                                          "thought": thought[:1500], "session_id": sid})
+                    await _run_chain(_norm_hops)
+                    continue
                 _msg = (f"`{tool}` is not a capability — 'chain' is never a tool_use name, real or "
                         "otherwise. `chain` is its own TOP-LEVEL field in your JSON response, a "
                         'sibling of `tool_use`: {"thought":"...","chain":[{"name":"<real cap>",'
@@ -15140,7 +15457,17 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 # `<step-title>.py`, which the step's file-exists criterion
                 # (/index.html) could never satisfy — the step looped forever.
                 _named = _v5_gen_output_filename(tool, args, step, "", cur_cycle)
-                if _named and _named.rsplit(".", 1)[-1].lower() != "txt":
+                # An exec.python.run/exec.code.run redirect authors a SCRIPT the
+                # executor meant to RUN. A DATA extension (json/csv/…) means the
+                # filename heuristic guessed the step's data OUTPUT, not a named
+                # deliverable — authoring code into it yields a mislabeled artifact
+                # (Python saved as `…__c14.json`) that later masquerades as fetched
+                # data and gets "synthesized" into a fabricated report. Only accept a
+                # named deliverable with a code/markup extension; else author a .py.
+                _named_ext = (_named.rsplit(".", 1)[-1].lower() if _named and "." in _named else "")
+                if _named and _named_ext not in (
+                        "txt", "json", "csv", "tsv", "ndjson", "xml",
+                        "parquet", "xlsx", "yaml", "yml"):
                     _target = _named
                 else:
                     _slug = _V5_SLUG_STRIP.sub("_", str(step.get("title") or "generated").lower()
@@ -15429,7 +15756,14 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                           "cycle": cur_cycle, "step_id": step_id, "tool": tool, "args": args,
                           "thought": thought, "session_id": sid})
         t0 = time.monotonic()
-        if _url_cached and "_url_cache_value" in _url_cached:
+        _missing_req = _v5_missing_required_args(tool, args)
+        if _missing_req:
+            # Never call a cap missing a required arg (e.g. http.get with no
+            # `url`). Synthesise the arg error so the recovery block below
+            # re-prompts for the value and retries the SAME cap — no wasted call,
+            # no failure leaking to the model.
+            invoke = {"ok": False, "error": "missing required argument: " + ", ".join(_missing_req)}
+        elif _url_cached and "_url_cache_value" in _url_cached:
             invoke = {"ok": True, "result": _url_cached["_url_cache_value"]}
         else:
             _tstream = _v5_make_tool_stream_cb(stream_id, step_id, cur_cycle, tool, sid)
@@ -15462,6 +15796,44 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 if _rc != 0 or _rres.get("ok") is False:
                     invoke["ok"] = False
                     invoke["error"] = _v5_result_failure_reason(_rres, _rc)
+
+        # ── Arg-error recovery ───────────────────────────────────────────────
+        # If the cap failed because the model OMITTED or malformed a required
+        # arg (e.g. http.get called with no `url`), RETRY THE SAME CAP with
+        # corrected args — a bounded re-prompt that heals the arguments — instead
+        # of surfacing the raw failure to the executor, which then picks a
+        # nonsensical "fix" (observed live: authoring a file to "repair"
+        # http.get). The v3/v4 executors already wrap failures this way; the v5
+        # single-tool path did not, so arg errors leaked to the model. Off via
+        # VERA_V5_RECOVERY_ATTEMPTS=0.
+        _v5_rec_max = int(os.getenv("VERA_V5_RECOVERY_ATTEMPTS", "2") or 2)
+        # Recovery is for CHEAP caps with a fixable arg error (re-call http.get
+        # with a url). NEVER re-call a generative/authoring cap: code.author /
+        # prose.author / code.edit each run a full multi-minute generation and
+        # already have their OWN internal repair loop, so re-calling them on a
+        # (validation) failure stacks 3-attempt generations and stalls the run.
+        if (not invoke.get("ok") and _v5_rec_max > 0
+                and _is_arg_error(invoke.get("error", ""))
+                and not _v5_is_generative(tool)
+                and tool not in ("code.author", "prose.author", "code.edit")):
+            _rec = await _attempt_arg_recovery(
+                cap_name=tool,
+                failed_args=args if isinstance(args, dict) else {},
+                error_text=invoke.get("error", ""),
+                model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+                max_attempts=_v5_rec_max, call_tool=call_tool,
+                session_id=sid, trace_id=trace_id or "", emit_fn=emit_event,
+                cycle=cur_cycle, stream_id=stream_id, goal=goal, thought=thought)
+            if _rec.get("recovered"):
+                invoke = _rec["final_invoke"]
+                _ra = _rec.get("attempts") or []
+                if _ra and isinstance(_ra[-1].get("args"), dict):
+                    args = _ra[-1]["args"]
+                # Promote an inner error the same way the initial call does.
+                if (invoke.get("ok") and isinstance(invoke.get("result"), dict)
+                        and invoke["result"].get("error")):
+                    invoke["ok"] = False
+                    invoke["error"] = str(invoke["result"]["error"])
 
         # ── Long-running jobs: a cap like research.*/ml.*/exec.* returns a job_id
         #    immediately and streams the REAL output over seconds–minutes. Await
