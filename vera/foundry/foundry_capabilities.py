@@ -1689,9 +1689,14 @@ async def cap_pxe_server_deploy(cluster_id: str = "", node: str = "", iface: str
     menu = pxe_ipxe_menu(server_ip, install_images=install_images)
     _secrets = _load_ops_secrets()
     _reg = _vera_host_ip() + ":5000"
-    ops_files = pxe_ops_apkovl_files(server_ip, secrets=_secrets, registry=_reg)
+    try:
+        _mtok = ((await _call("netsec.mesh.enroll_token")) or {}).get("enroll_token", "")
+    except Exception:
+        _mtok = ""
+    _vurl = "https://" + _vera_host_ip() + ":8999"
+    ops_files = pxe_ops_apkovl_files(server_ip, secrets=_secrets, registry=_reg, mesh_token=_mtok, vera_url=_vurl)
     apk_b64 = _apkovl_tar_b64(ops_files)
-    desk_apk_b64 = _apkovl_tar_b64(pxe_desktop_apkovl_files(server_ip, secrets=_secrets, registry=_reg))
+    desk_apk_b64 = _apkovl_tar_b64(pxe_desktop_apkovl_files(server_ip, secrets=_secrets, registry=_reg, mesh_token=_mtok, vera_url=_vurl))
     _b = lambda s: base64.b64encode(s.encode()).decode()
     tui_b64 = _b(ops_files["usr/local/bin/foundry-tui"])
     sdwrite_b64 = _b(ops_files["usr/local/bin/foundry-sdwrite"])
