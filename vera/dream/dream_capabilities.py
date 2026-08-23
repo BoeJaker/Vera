@@ -10371,8 +10371,10 @@ DIRECTOR_DEFAULTS: Dict[str, Any] = {
     # Both route via job_type="dream_director" → deny_gpu + avoid_embed, i.e. a
     # non-embedding CPU node. Long generations are fine (ambient, low priority).
     "narrator_enabled":         False,
-    "narrator_model":           "qwen3.6:35b-a3b",   # MoE — the narrative voice
-    "narrator_gatherer_model":  "qwen3.5:9b",         # small — operates the probe kit
+    "narrator_model":           "qwen3.6:35b-a3b",   # MoE — the narrative voice (CPU-only)
+    # "" = the DEFAULT model (already resident) operates the probe kit. Don't name a
+    # distinct model — an extra load/unload is what thrashes the node.
+    "narrator_gatherer_model":  "",
     "narrator_gatherer_agent":  "gatherer",           # AGENT whose knowledge_sources
     #   (news/press/sites/socials/forums, pre-indexed RAG) the gather phase pulls the
     #   WATCHED WORLD from, via agent.rag.query. "" = internal probes only.
@@ -10385,9 +10387,9 @@ DIRECTOR_DEFAULTS: Dict[str, Any] = {
     # A small model emits brief real-time observations often; the MoE does the
     # deeper narrative on its own (slower) cadence. Quick takes skip the gather.
     "narrator_quick_enabled":   True,
-    # A SMALL, NON-reasoning model that actually generates on a CPU node — qwen3.5:9b
-    # (reasoning) returns ~1 token there. mistral:7b is fast + clean; tune via config.
-    "narrator_quick_model":     "mistral:7b",          # fast one-liner model (CPU)
+    # "" = use the DEFAULT model (already resident) — do NOT name a distinct model
+    # here: forcing an extra model in/out of memory is what thrashes the node.
+    "narrator_quick_model":     "",                     # "" → system default model
     "narrator_quick_gap_min":   3.0,                    # quick-take cadence (< narrator_gap_min)
     "narrator_quick_history":   30,
     # ── Idle → GPU: when the user's been idle a while the GPU is free, so let the
@@ -10395,6 +10397,10 @@ DIRECTOR_DEFAULTS: Dict[str, Any] = {
     #    so it never contends with foreground work. ────────────────────────────
     "narrator_idle_gpu":        False,
     "narrator_idle_gpu_after_min": 15.0,
+    # Model for the idle-GPU narrate pass. "" = the system default GPU model (what
+    # Vera already runs on the GPU). The MoE (narrator_model, ~24GB) is CPU-ONLY —
+    # it does NOT fit the 12GB GPU — so the GPU pass must use a smaller model.
+    "narrator_gpu_model":       "",
     # ── Delivery channels for narratives + quick takes: any of chat|telegram|speak
     "narrator_deliver":         [],
 }
@@ -11414,6 +11420,21 @@ async def _narrator_initial_state(cfg: Dict[str, Any]) -> str:
     )
 
 
+async def _narrator_fast_routing(cfg: Dict[str, Any]) -> tuple:
+    """Routing for the FAST tiers (quick takes + gather). Normally the non-embed CPU
+    node (dream_director). When the user is idle past the threshold and idle_gpu is
+    on, use the GPU (free while idle) for SPEED — with the default GPU model, since
+    the fast tiers don't pin a distinct model. The deep MoE narrative always stays
+    on CPU. Returns (job_type, prefer_gpu, model_override_or_None)."""
+    if cfg.get("narrator_idle_gpu"):
+        try:
+            if (await _idle_minutes()) >= float(cfg.get("narrator_idle_gpu_after_min", 15.0) or 0):
+                return "chat", True, (cfg.get("narrator_gpu_model") or None)
+        except Exception:
+            pass
+    return "dream_director", False, None
+
+
 async def _narrator_gather(cfg: Dict[str, Any], initial: str) -> str:
     """TIER 1 — the small gatherer OPERATES THE PROBE KIT to traverse the system
     and assemble a tailored state digest for the narrator. Bounded to
@@ -11424,7 +11445,8 @@ async def _narrator_gather(cfg: Dict[str, Any], initial: str) -> str:
     probes = _narrator_available_probes()
     tool_list = "\n".join(f"- {n}({v['args']}) — {v['desc']}" for n, v in probes.items())
     budget = max(1, int(cfg.get("narrator_max_probes", 6)))
-    model = cfg.get("narrator_gatherer_model") or "qwen3.5:9b"
+    _job, _pgpu, _rm = await _narrator_fast_routing(cfg)
+    model = cfg.get("narrator_gatherer_model") or _rm    # config, else routed default
     sys_p = (
         "You are the GATHERER for VERA's system narrator. Your job is to OPERATE "
         "THE READ-ONLY PROBE KIT to traverse the live system and assemble a "
@@ -11443,8 +11465,8 @@ async def _narrator_gather(cfg: Dict[str, Any], initial: str) -> str:
             '{"done":true,"digest":"<the tailored state digest — the facts that '
             'matter right now, organised, concise>"}')
         try:
-            raw = await gen(prompt, system=sys_p, json_mode=True, prefer_gpu=False,
-                            job_type="dream_director", model=model,
+            raw = await gen(prompt, system=sys_p, json_mode=True, prefer_gpu=_pgpu,
+                            job_type=_job, model=model,
                             timeout=float(cfg.get("think_timeout_s", 480) or 480))
         except Exception as e:
             log.debug("narrator gather gen: %s", e)
@@ -11482,17 +11504,10 @@ async def _narrator_narrate(cfg: Dict[str, Any], initial: str, digest: str) -> D
     recent = await _narrator_recent(int(cfg.get("thought_memory", 8)))
     recent_txt = "\n".join("- " + (t.get("narrative") or "")[:240] for t in recent
                            if (t.get("narrative") or "").strip())
+    # The DEEP narrative always runs the MoE on the non-embedding CPU node — it's
+    # the deliberate personality voice and the MoE (~24GB) doesn't fit the GPU. The
+    # GPU-when-idle speedup applies to the FAST tiers (quick + gather), not here.
     model = cfg.get("narrator_model") or "qwen3.6:35b-a3b"
-    # Idle → GPU: when the user has been idle past the threshold the GPU is free,
-    # so run the heavy MoE narrate THERE (faster, deeper). While the user is active
-    # stay on the non-embedding CPU node (dream_director) so it never contends.
-    _job, _pgpu = "dream_director", False
-    if cfg.get("narrator_idle_gpu"):
-        try:
-            if (await _idle_minutes()) >= float(cfg.get("narrator_idle_gpu_after_min", 15.0) or 0):
-                _job, _pgpu = "chat", True
-        except Exception:
-            pass
     sys_p = (
         "You are VERA's inner NARRATOR — the reflective voice that gives the whole "
         "system a personality and a sense of where it's going. You are SERVED a "
@@ -11509,8 +11524,8 @@ async def _narrator_narrate(cfg: Dict[str, Any], initial: str, digest: str) -> D
         '\n\nRespond ONLY JSON: {"narrative":"<the evolving narrative>",'
         '"mood":"<one or two words>","steer":"<what deserves attention next, one line>"}')
     try:
-        raw = await gen(prompt, system=sys_p, json_mode=True, prefer_gpu=_pgpu,
-                        job_type=_job, model=model,
+        raw = await gen(prompt, system=sys_p, json_mode=True, prefer_gpu=False,
+                        job_type="dream_director", model=model,
                         timeout=float(cfg.get("narrator_think_timeout_s", 600) or 600))
     except Exception as e:
         log.debug("narrator narrate gen: %s", e)
@@ -11633,7 +11648,8 @@ async def _narrator_quick_take(cfg: Dict[str, Any], force: bool = False) -> Dict
         except Exception:
             recent = []
     recent_txt = "\n".join("- " + t[:160] for t in recent if t)
-    model = cfg.get("narrator_quick_model") or "qwen3.5:9b"
+    _job, _pgpu, _rm = await _narrator_fast_routing(cfg)
+    model = cfg.get("narrator_quick_model") or _rm    # config, else routed default
     sys_p = ("You are VERA's quick inner voice — a brief, real-time observation of what's "
              "happening in the system / the watched world RIGHT NOW. Reply with ONE short "
              "sentence, characterful and specific — NO preamble, NO JSON, just the sentence. "
@@ -11646,8 +11662,8 @@ async def _narrator_quick_take(cfg: Dict[str, Any], force: bool = False) -> Dict
         # REASONING model — under json_mode's grammar it returns empty (eval_count=1),
         # and without think=False its output goes to the `thinking` field leaving the
         # response empty ("Thinking"). A one-liner needs neither JSON nor reasoning.
-        raw = await gen(prompt, system=sys_p, prefer_gpu=False, think=False,
-                        job_type="dream_director", model=model, timeout=180,
+        raw = await gen(prompt, system=sys_p, prefer_gpu=_pgpu, think=False,
+                        job_type=_job, model=model, timeout=180,
                         options={"num_predict": 80})
     except Exception as e:
         log.debug("narrator quick gen: %s", e)
@@ -11971,6 +11987,7 @@ async def system_narrator_config(model: Optional[str] = None,
                                  quick_gap_min: Optional[float] = None,
                                  idle_gpu: Optional[bool] = None,
                                  idle_gpu_after_min: Optional[float] = None,
+                                 gpu_model: Optional[str] = None,
                                  deliver: Optional[Any] = None,
                                  trace_id=None):
     patch: Dict[str, Any] = {}
@@ -11985,6 +12002,7 @@ async def system_narrator_config(model: Optional[str] = None,
     if quick_gap_min is not None:    patch["narrator_quick_gap_min"] = float(quick_gap_min)
     if idle_gpu is not None:         patch["narrator_idle_gpu"] = bool(idle_gpu)
     if idle_gpu_after_min is not None: patch["narrator_idle_gpu_after_min"] = float(idle_gpu_after_min)
+    if gpu_model is not None:        patch["narrator_gpu_model"] = gpu_model
     if deliver is not None:
         if isinstance(deliver, str):
             deliver = [c.strip() for c in deliver.split(",") if c.strip()]
@@ -11995,7 +12013,7 @@ async def system_narrator_config(model: Optional[str] = None,
         "narrator_gap_min", "narrator_max_probes", "narrator_deliver_to_chat",
         "narrator_think_timeout_s", "narrator_quick_enabled", "narrator_quick_model",
         "narrator_quick_gap_min", "narrator_idle_gpu", "narrator_idle_gpu_after_min",
-        "narrator_deliver")}}
+        "narrator_gpu_model", "narrator_deliver")}}
 
 
 @capability(
