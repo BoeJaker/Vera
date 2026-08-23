@@ -7522,7 +7522,8 @@ async def cap_ollama_embed_config_set(
 @capability("dag.run", memory="on",
             http_method="POST", http_path="/dag/run", http_tags=["dag"],
             description="Execute a DAG against an initial state. Set supervised=true for LLM checkpoints.")
-async def cap_dag_run(dag: list = None, state: dict = None, supervised: bool = False, trace_id=None):
+async def cap_dag_run(dag: list = None, state: dict = None, supervised: bool = False,
+                      session_id: str = "", trace_id=None):
     from Vera.vera.execution.run_shadow import execute_dag_with_run_shadow
     tid = trace_id or new_id()
     if supervised:
@@ -7536,7 +7537,7 @@ async def cap_dag_run(dag: list = None, state: dict = None, supervised: bool = F
                                    run_observer=observer)
     result = await execute_dag_with_run_shadow(
         executor=native_executor, graph=dag or [], state=state or {},
-        trace_id=tid, emit=emit_event,
+        trace_id=tid, emit=emit_event, session_id=session_id,
     )
     return {"trace_id":tid,"result":result}
 
@@ -7546,6 +7547,16 @@ async def cap_run_shadow_list(limit: int = 50, trace_id=None):
     from Vera.vera.execution.run_projection import SHADOW_RUNS
     return {"authoritative": False, "storage": SHADOW_RUNS.storage,
             "runs": SHADOW_RUNS.list(limit)}
+
+@capability("run.shadow.graph", memory="off",
+            http_method="GET", http_path="/run/shadow/graph", http_tags=["runs"],
+            description="Read a bounded, content-free, non-authoritative Run graph for UI overlays.")
+async def cap_run_shadow_graph(run_id: str = "", session_id: str = "",
+                               run_trace_id: str = "", limit: int = 100,
+                               trace_id=None):
+    from Vera.vera.execution.run_projection import SHADOW_RUNS
+    return SHADOW_RUNS.graph(run_id=run_id, session_id=session_id,
+                             trace_id=run_trace_id, limit=limit)
 
 @capability("run.shadow.get", memory="off",
             description="Inspect one recent non-authoritative Run shadow projection and its children.")

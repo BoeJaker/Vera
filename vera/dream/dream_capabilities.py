@@ -11355,6 +11355,8 @@ _NARRATOR_PROBES: Dict[str, Dict[str, str]] = {
     "loops.list":             {"desc": "specialist/long-horizon loops", "args": "{}"},
     "fabric.dataset_stats":   {"desc": "fabric dataset sizes/growth", "args": "{}"},
     "obs.events":             {"desc": "recent system events (optionally by level)", "args": "{limit:int,level:str}"},
+    "activity.timeline":      {"desc": "recent real agentic actions and narrator activity; filter kinds to avoid noise", "args": "{scope:str,limit:int,kinds:str}"},
+    "run.shadow.graph":       {"desc": "content-free capability Run lineage, status, attempts and progress (non-authoritative)", "args": "{session_id:str,limit:int}"},
     # ── External world — the gatherer watches beyond the system too. FRESH feeds
     #    (news/press/websites/companies/socials/forums) are pre-indexed into the
     #    gatherer AGENT's knowledge_sources RAG; these probes surface what's
@@ -11404,8 +11406,17 @@ async def _narrator_run_probe(name: str, args: Dict[str, Any]) -> str:
     Never raises — a failed probe just yields a short error string."""
     if name not in _narrator_available_probes():
         return f"(probe '{name}' not available)"
+    args = dict(args or {})
+    # Prevent the narrator from grounding itself in its own prose. The activity
+    # probe is for observed work; narrator entries remain a UI concern here.
+    if name == "activity.timeline":
+        args.setdefault("scope", "all")
+        args["kinds"] = "run,dream_cycle,dream,loop_live,program,project,goal,artifact"
+        args["limit"] = min(int(args.get("limit", 30) or 30), 40)
+    elif name == "run.shadow.graph":
+        args["limit"] = min(int(args.get("limit", 30) or 30), 40)
     try:
-        res = await _call_cap(name, **(args or {}))
+        res = await _call_cap(name, **args)
     except Exception as e:
         return f"(probe error: {str(e)[:160]})"
     try:
@@ -12032,7 +12043,9 @@ async def _narrator_gather(cfg: Dict[str, Any], initial: str) -> str:
             _q = str((intent.get("queries") or [None])[0] or intent.get("focus") or "")
             if _q:
                 _essential.append(("research.db.search", {"query": _q, "limit": 5}))
-        _essential += [("perf.scan", {}), ("goals.list", {}),
+        _essential += [("activity.timeline", {"scope": "all", "limit": 24}),
+                       ("run.shadow.graph", {"limit": 24}),
+                       ("perf.scan", {}), ("goals.list", {}),
                        ("dream.director.status", {}), ("obs.workers", {}),
                        ("dream.history", {"limit": 3}),
                        ("research.db.search", {"query": "latest news", "limit": 5})]

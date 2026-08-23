@@ -637,8 +637,55 @@ async def cap_activity_sessions(window_min: float = 120.0, per_session: int = 14
                 if str(s.get("actor", "")).lower() == want
                 or str(s.get("actor", "")).lower().startswith(want + ":")]
     return {"sessions": rows, "count": len(rows)}
+_RUN_EVENT_PAYLOAD_KEYS = {
+    "capability", "path", "node_count", "completed_nodes", "total_nodes",
+    "progress", "next_attempt", "attempt", "error_type", "artifact_id",
+    "result_keys", "control_id", "action", "control_status",
+    "requested_by", "acknowledged_by", "requested_at", "acknowledged_at",
+}
 
 
+def _run_evidence(run: Dict[str, Any]) -> Dict[str, Any]:
+    """Content-free lifecycle evidence for Activity UI consumers."""
+    events = []
+    for event in run.get("events") or []:
+        payload = event.get("payload") or {}
+        events.append({
+            "id": event.get("id"), "sequence": event.get("sequence"),
+            "type": event.get("type"), "status": event.get("status"),
+            "occurred_at": event.get("occurred_at"),
+            "causation_id": event.get("causation_id"),
+            "payload": {key: payload[key] for key in _RUN_EVENT_PAYLOAD_KEYS
+                        if key in payload},
+        })
+    artifacts = []
+    for artifact in run.get("artifacts") or []:
+        ref = {key: artifact.get(key) for key in (
+            "id", "kind", "uri", "checksum", "media_type", "size_bytes")
+               if artifact.get(key) not in (None, "")}
+        checksum = str(artifact.get("checksum") or "")
+        uri = str(artifact.get("uri") or "")
+        ref.update({
+            "partial": "partial" in str(artifact.get("kind") or "").lower(),
+            "checksum_recorded": bool(checksum),
+            "checksum_algorithm": checksum.split(":", 1)[0] if ":" in checksum else "",
+            "provenance_scheme": uri.split(":", 1)[0] if ":" in uri else "",
+            # A reference is not proof that its provider can currently serve it.
+            "availability": "unchecked",
+            "content_verified": False,
+        })
+        artifacts.append(ref)
+    error = run.get("error") or {}
+    return {
+        "id": run.get("id"), "kind": run.get("kind"),
+        "status": run.get("status"), "task_id": run.get("task_id"),
+        "workflow_id": run.get("workflow_id"),
+        "attempt": run.get("attempt"), "parent_run_id": run.get("parent_run_id"),
+        "created_at": run.get("created_at"), "started_at": run.get("started_at"),
+        "ended_at": run.get("ended_at"), "events": events, "artifacts": artifacts,
+        "error": ({"code": error.get("code"), "retryable": error.get("retryable")}
+                  if error else None),
+    }
 async def _run_events(run_id: str = "", session_id: str = "",
                       limit: int = 60) -> List[Dict[str, Any]]:
     """Project recent Run protocol records into Activity without owning them."""
@@ -660,7 +707,79 @@ async def _run_events(run_id: str = "", session_id: str = "",
         if session_id and session_id not in {
                 str(run.get("session_id") or ""), str(run.get("trace_id") or "")}:
             continue
-        children = projection.get("children") or []
+        root_evidence = _run_evidence(run)
+        children = [_run_evidence(child) for child in projection.get("children") or []]
+        artifact_refs = [{**artifact, "run_id": rid, "task_id": "root"}
+                         for artifact in root_evidence["artifacts"]]
+        for child in children:
+            artifact_refs.extend({**artifact, "run_id": child.get("id"),
+                                  "task_id": child.get("task_id") or "child"}
+                                 for artifact in child.get("artifacts") or [])
+        all_events = root_evidence["events"] + [event for child in children
+                                                for event in child.get("events") or []]
+        event_ids = {str(event.get("id") or "") for event in all_events
+                     if event.get("id")}
+        linked_events = [event for event in all_events
+                         if event.get("causation_id") in event_ids]
+        orphan_events = [event for event in all_events
+                         if event.get("causation_id") and
+                         event.get("causation_id") not in event_ids]
+        causal_candidates = [event for event in all_events if event.get("causation_id")]
+        telemetry = {
+            "trace_id": run.get("trace_id") or "",
+            "event_count": len(all_events),
+            "linked_event_count": len(linked_events),
+            "orphan_event_count": len(orphan_events),
+            "correlation_coverage": (len(linked_events) / len(causal_candidates)
+                                     if causal_candidates else None),
+            "exporter": "not_configured",
+            "exported": False,
+            "offline_projection": True,
+            "content_redacted": True,
+        }
+        retry_events = [event for event in all_events
+                        if event.get("type") == "run.retrying"]
+        resumed_events = [event for event in all_events
+                          if event.get("type") in {"run.retry.started", "run.resumed"}]
+        interrupted = str(run.get("status") or "") in {
+            "interrupted", "timed_out", "cancelled"}
+        journal = projection.get("journal") or {}
+        reconciliation = {
+            "verified": journal.get("ok") is True,
+            "event_count": journal.get("event_count"),
+            "tip_checksum": journal.get("last_checksum") or "",
+            "rebuild_available": bool(journal.get("ok") is True and
+                                      journal.get("event_count")),
+            "read_only": True,
+        }
+        control_events = []
+        for event in all_events:
+            payload = event.get("payload") or {}
+            if (payload.get("control_id") or payload.get("action") or
+                    event.get("type") in {"run.approval.requested",
+                                           "run.control.requested",
+                                           "run.control.acknowledged",
+                                           "run.control.rejected"}):
+                control_events.append({
+                    "type": event.get("type"), "status": event.get("status"),
+                    "occurred_at": event.get("occurred_at"),
+                    **{key: payload.get(key) for key in (
+                        "control_id", "action", "control_status", "requested_by",
+                        "acknowledged_by", "requested_at", "acknowledged_at")
+                       if payload.get(key) not in (None, "")},
+                })
+        policy_state = {
+            "waiting_for_approval": str(run.get("status") or "") == "approval_pending",
+            "controls": control_events[:20],
+            "authoritative_control_available": False,
+            "reason_redacted": True,
+        }
+        failed_children = [child for child in children if child.get("status") in {
+            "failed", "timed_out", "cancelled"}]
+        failed_capabilities = []
+        for child in failed_children:
+            first = ((child.get("events") or [{}])[0].get("payload") or {})
+            failed_capabilities.append(first.get("capability") or child.get("kind") or "unknown")
         terminal = sum(1 for child in children if child.get("status") in {
             "completed", "failed", "cancelled", "timed_out", "skipped"})
         out.append(_ev(
@@ -671,13 +790,77 @@ async def _run_events(run_id: str = "", session_id: str = "",
             status=str(run.get("status") or ""),
             session_id=str(run.get("session_id") or ""), cap="dag.run",
             ref=rid, source="run_protocol",
-            ui={"label": "Run activity", "run_id": rid},
+            ui={"label": "Run activity", "run_id": rid,
+                "session_id": str(run.get("session_id") or ""),
+                "workflow_id": str(run.get("workflow_id") or ""),
+                "native_url": "/workshop/panel"},
             extra={"run_id": rid, "trace_id": run.get("trace_id"),
+                   "workflow_id": run.get("workflow_id"),
+                   "task_id": run.get("task_id"),
+                   "authority": "native_dag",
+                   "projection": "run_protocol_shadow",
+                   "run_status": run.get("status"),
                    "progress": run.get("progress"), "children": children,
+                   "failure_count": len(failed_children),
+                   "failed_capabilities": failed_capabilities,
+                   "lifecycle": root_evidence["events"],
+                   "artifact_refs": artifact_refs,
+                   "recovery": {"interrupted": interrupted,
+                                "retry_count": len(retry_events),
+                                "resume_count": len(resumed_events)},
+                   "reconciliation": reconciliation,
+                   "policy_state": policy_state,
+                   "telemetry": telemetry,
                    "authoritative": False,
                    "storage": projection.get("storage", "process_local_memory")}))
         if len(out) >= limit:
             break
+    return out
+
+
+async def _narrator_events(limit: int = 30) -> List[Dict[str, Any]]:
+    """Expose deep and quick narrator takes through the unified timeline."""
+    out: List[Dict[str, Any]] = []
+    r = _redis()
+    if not r:
+        return out
+
+    # Intent is current state rather than historical truth: expose it explicitly
+    # as such so UI consumers can explain what is steering the narrator without
+    # pretending that a later intent was necessarily active for every old take.
+    current_intent: Dict[str, Any] = {}
+    try:
+        raw_intent = await r.get("vera:system:narrator:intent")
+        if raw_intent:
+            parsed = json.loads(_rd(raw_intent))
+            if isinstance(parsed, dict):
+                current_intent = {key: parsed.get(key) for key in (
+                    "focus", "mode", "confidence", "evidence", "ts")
+                    if parsed.get(key) not in (None, "")}
+    except Exception:
+        current_intent = {}
+
+    async def _pull(key: str, tier: str, prefix: str) -> None:
+        try:
+            raw = await r.lrange(key, 0, limit - 1)
+        except Exception:
+            return
+        for item in raw or []:
+            try:
+                data = json.loads(_rd(item))
+            except Exception:
+                continue
+            text = (data.get("narrative") or data.get("text") or "").strip()
+            if text:
+                out.append(_ev(
+                    "narrator", data.get("ts") or "", prefix + text[:110],
+                    summary=text, status=data.get("mood") or "", source="narrator",
+                    ui={"label": "Narrator", "cap": "system.narrator.stream"},
+                    extra={"tier": tier, "steer": data.get("steer") or "",
+                           "current_intent": current_intent}))
+
+    await _pull("vera:system:narrator:thoughts", "deep", "📖 ")
+    await _pull("vera:system:narrator:quick", "quick", "💬 ")
     return out
 
 
@@ -690,9 +873,11 @@ async def _run_events(run_id: str = "", session_id: str = "",
     description="The UNIFIED activity timeline: a time-ordered event list for a "
                 "SCOPE, composed from dream cycles, agentic loop runs, V8 loop "
                 "programs, live background loop sessions, cap activity (each mapped "
-                "to the panel/element that renders it), Run projections and artifacts. Inputs: scope "
+                "to the panel/element that renders it), Run projections, narrator "
+                "takes and artifacts. Inputs: scope "
                 "(str — 'all' | 'project:<slug>' | 'goal:<slug>' | 'dream[:<trig>]' "
-                "| 'program:<pid>' | 'run:<run_id>' | 'chat:<session_id>'; default 'all'), limit "
+                "| 'program:<pid>' | 'run:<run_id>' | 'chat:<session_id>' | "
+                "'narrator'; default 'all'), limit "
                 "(int=120), kinds (str — comma-filter of event kinds). Output: "
                 "{scope, events:[{kind, ts, title, summary, status, session_id, "
                 "cap, ui:{...}, extra}], count}.",
@@ -743,6 +928,7 @@ async def cap_activity_timeline(scope: str = "all", limit: int = 120,
             events += await _live_loop_events(limit=min(lim, 40))
             events += await _narrator_events(limit=min(lim, 25))
             events += await _run_events(limit=min(lim, 40))
+            events += await _narrator_events(limit=min(lim, 25))
     except Exception as e:
         log.warning("activity.timeline compose (%s): %s", scope, e)
 
@@ -1194,7 +1380,7 @@ async def _serve_activity_timeline_js():
 
 @APP.get("/ui/elements/activity_overlay.js", include_in_schema=False)
 async def _serve_activity_overlay_js():
-    """The self-mounting floating activity overlay (top-bar ticker + dropdown)."""
+    """Serve the self-mounting harness activity ticker and timeline overlay."""
     from fastapi.responses import Response
     p = _HERE.parent / "activity_overlay.js"
     if p.exists():

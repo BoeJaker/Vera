@@ -3507,6 +3507,8 @@ function renderSbxList(items){
       btns+='<button class="btn sm err-btn" onclick="sandboxDownNamed(\''+nm+'\')">✕ down</button>';
     }
     btns+='<button class="btn sm" onclick="sbxSafety(\''+nm+'\')" title="read-only restart, stop, reuse and removal preflight">🛡 safety</button>';
+    btns+='<button class="btn sm" onclick="sbxPlan(\''+nm+'\')" title="description, assigned plan, board links and worktree handoff">☷ plan</button>';
+    const wp=s.workplan||{}, wpSteps=Number(wp.step_count||0), wpDone=Number(wp.completed_steps||0);
     const pill=paused?'<span class="pill" style="color:var(--warn)" title="idle-paused — frozen so it stops sharing the Ollama nodes; wakes on next use">⏸ paused</span>'
       :(on?'<span class="pill" style="color:var(--ok)">● running</span>':'<span class="pill" style="color:var(--dim2)">○ down</span>');
     return '<div style="padding:7px 0;border-bottom:1px solid var(--border)">'
@@ -3527,9 +3529,45 @@ function renderSbxList(items){
         +(s.head_commit?'<span class="mono hint" title="sandbox head">head '+esc(String(s.head_commit).slice(0,8))+'</span>':'')
         +(s.bleeding_edge_commit?'<span class="mono hint" title="bleeding-edge head">BE '+esc(String(s.bleeding_edge_commit).slice(0,8))+'</span>':'')
       +'</div>'
+      +(wp.title||wp.description?'<div style="margin-top:6px;padding:6px 8px;background:var(--bg2);border-left:2px solid var(--acc)">'
+        +'<div class="row" style="gap:6px"><b>'+esc(wp.title||'Work plan')+'</b><span class="pill">'+esc(wp.status||'planned')+'</span>'
+        +(wpSteps?'<span class="hint">'+wpDone+'/'+wpSteps+' steps</span>':'')+'</div>'
+        +(wp.description?'<div class="hint" style="margin-top:3px">'+esc(wp.description)+'</div>':'')
+        +(wp.current_step?'<div class="mono hint" style="margin-top:3px">current: '+esc(wp.current_step)+'</div>':'')+'</div>':'')
       +'<div class="row" style="gap:4px;flex-wrap:wrap;margin-top:5px">'+btns+'</div>'
     +'</div>';
   }).join('');
+}
+async function sbxPlan(name){
+  const r=await api('/evolve/sandbox/workplan?name='+encodeURIComponent(name));
+  if(!r||r.error){toast((r&&r.error)||'work plan unavailable');return}
+  const p=r.workplan||{};
+  const boardLinks=(p.board_item_ids||[]).map(id=>'<button class="btn sm" onclick="openBoardItem(\''+esc(id)+'\')">board '+esc(id)+'</button>').join('');
+  const noteLinks=(p.notes_refs||[]).map(ref=>'<span class="tag mono" title="durable notes reference">'+esc(ref)+'</span>').join('');
+  openModal('<div class="card-h"><span class="card-t">☷ Sandbox work plan · '+esc((r.sandbox||{}).branch||name)+'</span></div>'
+    +'<input type="hidden" id="wp-name" value="'+esc(name)+'"><input type="hidden" id="wp-rev" value="'+esc(String(p.revision||0))+'">'
+    +'<label class="fld">Title<input id="wp-title" value="'+esc(p.title||'')+'"></label>'
+    +'<label class="fld">Description<textarea id="wp-desc" rows="4">'+esc(p.description||'')+'</textarea></label>'
+    +'<div class="row" style="gap:8px"><label class="fld">Status<select id="wp-status">'+['planned','in_progress','blocked','complete','abandoned'].map(x=>'<option value="'+x+'"'+(p.status===x?' selected':'')+'>'+x+'</option>').join('')+'</select></label>'
+    +'<label class="fld" style="flex:1">Current step<input id="wp-current" value="'+esc(p.current_step||'')+'"></label></div>'
+    +'<div class="card" style="margin:8px 0;padding:8px"><div class="hint">Durable coordination links</div><div class="row" style="gap:5px;flex-wrap:wrap;margin-top:5px">'
+    +(boardLinks||'<span class="pill" style="color:var(--warn)">no board item</span>')
+    +(noteLinks||'<span class="pill" style="color:var(--warn)">no notes reference</span>')+'</div></div>'
+    +'<label class="fld">Board item IDs (comma separated)<input id="wp-board" value="'+esc((p.board_item_ids||[]).join(', '))+'"></label>'
+    +'<label class="fld">Notes references (comma separated)<input id="wp-notes" value="'+esc((p.notes_refs||[]).join(', '))+'"></label>'
+    +'<label class="fld">Steps (JSON array)<textarea id="wp-steps" rows="9" class="mono">'+esc(JSON.stringify(p.steps||[],null,2))+'</textarea></label>'
+    +'<label class="fld">Progress update<input id="wp-update" placeholder="what changed in this session"></label>'
+    +'<div class="row" style="margin-top:10px"><span class="hint">Worktree-local · gitignored · revision '+esc(String(p.revision||0))+'</span><span style="flex:1"></span><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="sbxPlanSave()">Save revision</button></div>');
+}
+async function sbxPlanSave(){
+  let steps=[];try{steps=JSON.parse(($('wp-steps')||{}).value||'[]')}catch(e){toast('steps must be valid JSON');return}
+  const split=id=>(($(id)||{}).value||'').split(',').map(x=>x.trim()).filter(Boolean);
+  const body={name:$('wp-name').value,expected_revision:Number($('wp-rev').value||0),title:$('wp-title').value,
+    description:$('wp-desc').value,status:$('wp-status').value,current_step:$('wp-current').value,
+    board_item_ids:split('wp-board'),notes_refs:split('wp-notes'),steps:steps,update_note:$('wp-update').value};
+  const r=await post('/evolve/sandbox/workplan',body);
+  if(!r||r.error){toast((r&&r.error)||'save failed');return}
+  closeModal();toast('work plan revision '+r.workplan.revision+' saved');loadSandbox();
 }
 function showSbxSafety(name,pf){
   const s=(pf&&pf.sandbox)||{}, reasons=(pf&&pf.reasons)||[];

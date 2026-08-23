@@ -552,6 +552,8 @@ function base() {
   return location.origin;
 }
 function sessionId() {
+  const linked = new URLSearchParams(window.location.search).get('session_id');
+  if (linked) return linked;
   try {
     // Prefer the canonical name; fall back to the legacy alias so panels
     // loaded before the Option-A refactor completed keep working.
@@ -856,6 +858,8 @@ function nodeCol(type) {
     observation: themeColor('--ac2', '#5ec9a0'),
     dag:         themeColor('--ac5', '#a78bfa'),
     session:     themeColor('--ac4', '#e06060'),
+    run:         '#60a5fa',
+    run_node:    '#93c5fd',
     fact:        '#5ec8f5',
     summary:     '#8df070',
     entity:      '#f0d060',
@@ -1383,6 +1387,19 @@ async function loadGraph(mode) {
     }
 
     ingest(data.nodes||[], data.edges||[], true);
+    // Run Protocol projections are a lifecycle-only overlay. They remain
+    // visibly distinct and never become memory records or memory authority.
+    try {
+      const rp = new URLSearchParams();
+      rp.set('limit', '100');
+      if (sid) rp.set('session_id', sid);
+      const runData = await api('/run/shadow/graph?' + rp.toString());
+      if (runData?.authoritative === false) {
+        ingest(runData.nodes||[], runData.edges||[], false);
+      }
+    } catch (_) {}
+    const linkedRun = new URLSearchParams(window.location.search).get('run_id');
+    if (linkedRun && nodes['run:' + linkedRun]) selectNode('run:' + linkedRun);
     rebuildFilters();   // regenerate chip bar from the actual data shape
     updateStat();
     // Run physics warmup synchronously so graph is near-settled before first paint.
@@ -1733,6 +1750,13 @@ function _nodeFromRec(rec, idx) {
       category:    rec.category || '',
       model:       rec.model || '',
       tags:        rec.tags || [],
+      status:      rec.status || '',
+      run_id:      rec.run_id || '',
+      parent_run_id: rec.parent_run_id || '',
+      task_id:     rec.task_id || '',
+      attempt:     rec.attempt ?? null,
+      progress:    rec.progress ?? null,
+      non_authoritative: !!rec.non_authoritative,
     },
   };
 }
@@ -2077,6 +2101,14 @@ function _makeToken(key, val, mono=false) {
   </div>`;
 }
 
+function openRelatedUi(path) {
+  try {
+    if (window.parent && window.parent.veraOpenPanel) return window.parent.veraOpenPanel(path);
+    if (window.parent && window.parent.panelOpen) return window.parent.panelOpen(path);
+  } catch (_) {}
+  window.open(base() + path, '_blank', 'noopener');
+}
+
 function selectNode(id) {
   selectedId = id;
   const nd = nodes[id]; if (!nd) return;
@@ -2100,6 +2132,11 @@ function selectNode(id) {
   if (r.category)    tokens.push(_makeToken('category',   r.category));
   if (r.model)       tokens.push(_makeToken('model',      r.model,      true));
   if (r.session_id)  tokens.push(_makeToken('session_id', r.session_id, true));
+  if (r.run_id)      tokens.push(_makeToken('run_id', r.run_id, true));
+  if (r.status)      tokens.push(_makeToken('status', r.status));
+  if (r.task_id)     tokens.push(_makeToken('task', r.task_id));
+  if (r.attempt != null) tokens.push(_makeToken('attempt', r.attempt));
+  if (r.progress != null) tokens.push(_makeToken('progress', Math.round(Number(r.progress) * 100) + '%'));
   if (r.created_at)  tokens.push(_makeToken('created_at', r.created_at.slice(0,19).replace('T',' ')));
   if (r.importance != null) tokens.push(_makeToken('importance', parseFloat(r.importance).toFixed(2)));
   tokens.push(_makeToken('edges', `${edgesIn} in · ${edgesOut} out`));
@@ -2110,6 +2147,11 @@ function selectNode(id) {
     ? `<div class="tags-wrap">${(r.tags||[]).slice(0,12).map(t=>`<span class="tag">${esc(t)}</span>`).join('')}</div>` : '';
 
   const isSynthetic = nd._synthetic;
+  const activityRun = r.parent_run_id || r.run_id || '';
+  const runActions = activityRun ? `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:8px">
+    <button class="load-full-btn" onclick="openRelatedUi('/activity/panel#${encodeURIComponent('run:'+activityRun)}')">Open Activity timeline</button>
+    ${r.session_id ? `<button class="load-full-btn" onclick="openRelatedUi('/chat_panel?session_id=${encodeURIComponent(r.session_id)}')">Open Chat/LHM</button>` : ''}
+  </div>` : '';
 
   document.getElementById('node-detail').style.display = 'block';
   document.getElementById('node-detail').innerHTML = `
@@ -2119,7 +2161,8 @@ function selectNode(id) {
     ${isSynthetic ? `<span class="badge" style="background:rgba(224,154,85,.15);border:1px solid rgba(224,154,85,.4);color:var(--ac3)">unresolved</span>` : ''}
     <div class="field-tokens" style="margin-top:8px">${tokens.join('')}</div>
     ${tagsHtml}
-    <button class="load-full-btn" id="load-full-btn" onclick="loadFullNode('${esc(id)}')">Load full record</button>
+    ${runActions}
+    ${r.non_authoritative ? '' : `<button class="load-full-btn" id="load-full-btn" onclick="loadFullNode('${esc(id)}')">Load full record</button>`}
     <div id="full-content-box"></div>
     <div id="node-edges-list" style="margin-top:8px;font-family:var(--mono);font-size:9px;color:var(--t3)"></div>
   `;
@@ -2527,6 +2570,29 @@ function _scheduleFilterRebuild() {
 
 function onWsEvent(ev) {
   const t = ev.type;
+  if (t === 'run.event' && ev.run?.id) {
+    const run = ev.run;
+    const sid = sessionId();
+    const accept = _mode === 'all' || _mode === 'recent' || !sid || run.session_id === sid;
+    if (accept) {
+      const payload = ev.event?.payload || {};
+      const capability = payload.capability || '';
+      const id = 'run:' + run.id;
+      ingest([{
+        id, run_id:run.id, parent_run_id:run.parent_run_id||'',
+        record_type:run.parent_run_id?'run_node':'run',
+        summary:`${capability||run.kind||'run'} · ${run.status||'created'}`,
+        capability, status:run.status||'', session_id:run.session_id||'',
+        created_at:run.created_at||ev.event?.occurred_at||'', importance:run.parent_run_id?0.65:0.8,
+        tags:['run_protocol',run.status||'created'], non_authoritative:true,
+      }], run.parent_run_id ? [{
+        from_id:'run:'+run.parent_run_id, to_id:id, relation:'RUN_CHILD', source:'run'
+      }] : [], false);
+      if (nodes[id]) { nodes[id].pulse=1; nodes[id].pulseT=Date.now(); }
+      _scheduleFilterRebuild();
+      addLog('run.event', `${capability||run.kind||'run'} → ${run.status||''}`);
+    }
+  }
   if (t === 'memory.stored' && ev.record?.id) {
     const rec = ev.record;
     const sid = sessionId();

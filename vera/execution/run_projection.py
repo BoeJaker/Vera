@@ -74,6 +74,51 @@ class ShadowRunRegistry:
                  "parent_run_id": run.parent_run_id, "trace_id": run.trace_id}
                 for run in reversed(values)]
 
+    def graph(self, *, run_id: str = "", trace_id: str = "",
+              session_id: str = "", limit: int = 100) -> dict[str, Any]:
+        """Return a content-free graph projection suitable for read-only UIs."""
+        cap = max(1, min(int(limit), 200))
+        values = list(self.runs.values())
+        if run_id:
+            values = [run for run in values
+                      if run.id == run_id or run.parent_run_id == run_id]
+        if trace_id:
+            values = [run for run in values if run.trace_id == trace_id]
+        if session_id:
+            values = [run for run in values if run.session_id == session_id]
+        values = values[-cap:]
+        ids = {run.id for run in values}
+        nodes = []
+        edges = []
+        for run in values:
+            first_payload = run.events[0].payload if run.events else {}
+            capability = str(first_payload.get("capability", ""))
+            node_type = "run_node" if run.parent_run_id else "run"
+            label = capability or run.kind
+            nodes.append({
+                "id": f"run:{run.id}", "run_id": run.id,
+                "parent_run_id": run.parent_run_id,
+                "record_type": node_type, "type": node_type, "source": "run",
+                "label": label, "capability": capability,
+                "summary": f"{label} · {run.status.value}",
+                "text": "", "status": run.status.value,
+                "session_id": run.session_id, "trace_id": run.trace_id,
+                "task_id": run.task_id, "attempt": run.attempt,
+                "progress": run.progress, "created_at": run.created_at,
+                "importance": 0.65 if run.parent_run_id else 0.8,
+                "tags": ["run_protocol", run.status.value],
+                "non_authoritative": True,
+            })
+            if run.parent_run_id and run.parent_run_id in ids:
+                edges.append({
+                    "from": f"run:{run.parent_run_id}", "to": f"run:{run.id}",
+                    "from_id": f"run:{run.parent_run_id}",
+                    "to_id": f"run:{run.id}", "type": "RUN_CHILD",
+                    "relation": "RUN_CHILD", "source": "run",
+                })
+        return {"authoritative": False, "storage": self.storage,
+                "nodes": nodes, "edges": edges, "count": len(nodes)}
+
 
 _journal_path = os.getenv("VERA_RUN_JOURNAL_PATH", "").strip()
 SHADOW_RUNS = ShadowRunRegistry(
@@ -102,7 +147,7 @@ class DagRunObserver:
         child = Run(id=str(uuid4()), kind="vera.dag.node",
                     parent_run_id=self.parent.id, workflow_id=self.parent.workflow_id,
                     task_id=".".join(str(part) for part in path),
-                    trace_id=self.parent.trace_id)
+                    session_id=self.parent.session_id, trace_id=self.parent.trace_id)
         self.children[path] = child
         return child
 

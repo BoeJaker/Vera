@@ -51,6 +51,49 @@
     return new Date(t).toLocaleDateString();
   }
 
+  function fmtDuration(ms) {
+    if (!Number.isFinite(ms) || ms < 0) return '—';
+    if (ms < 1000) return Math.round(ms) + 'ms';
+    if (ms < 60000) return (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + 's';
+    return (ms / 60000).toFixed(1) + 'm';
+  }
+
+  function runWaterfall(extra) {
+    const lifecycle = Array.isArray(extra.lifecycle) ? extra.lifecycle : [];
+    const children = Array.isArray(extra.children) ? extra.children : [];
+    const times = lifecycle.map(e => Date.parse(e.occurred_at)).filter(Number.isFinite);
+    const childTimes = children.flatMap(c => [Date.parse(c.started_at || c.created_at),
+      Date.parse(c.ended_at || '')]).filter(Number.isFinite);
+    const start = times.length ? Math.min(...times) : (childTimes.length ? Math.min(...childTimes) : NaN);
+    const terminal = ['completed','failed','cancelled','timed_out','skipped'];
+    const isTerminal = terminal.includes(String(extra.run_status || ''));
+    const knownEnds = lifecycle.concat(children.flatMap(c => c.events || []))
+      .map(e => Date.parse(e.occurred_at)).filter(Number.isFinite);
+    const end = isTerminal && knownEnds.length ? Math.max(...knownEnds) : Date.now();
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+    const total = Math.max(1, end - start);
+    const spans = children.map((child, index) => {
+      const s = Date.parse(child.started_at || child.created_at || '');
+      let finish = Date.parse(child.ended_at || '');
+      if (!Number.isFinite(finish)) {
+        const evTimes = (child.events || []).map(e => Date.parse(e.occurred_at)).filter(Number.isFinite);
+        finish = evTimes.length ? Math.max(...evTimes) : end;
+      }
+      if (!Number.isFinite(s)) return null;
+      const first = ((child.events || [])[0] || {}).payload || {};
+      return { index, child, capability:first.capability || child.kind || 'action',
+        start:Math.max(start,s), end:Math.min(end,Math.max(s,finish)) };
+    }).filter(Boolean);
+    const merged = spans.map(s => [s.start,s.end]).sort((a,b) => a[0]-b[0]).reduce((out,span) => {
+      const last = out[out.length-1];
+      if (!last || span[0] > last[1]) out.push(span.slice());
+      else last[1] = Math.max(last[1], span[1]);
+      return out;
+    }, []);
+    const covered = merged.reduce((sum,span) => sum + Math.max(0,span[1]-span[0]), 0);
+    return { start, end, total, spans, unattributed:Math.max(0,total-covered) };
+  }
+
   const KINDS = {
     dream_cycle: { i: '☾', c: '--acc4,#b98adf', l: 'Dream cycle' },
     loop_run:    { i: '↻', c: '--acc,#5a9e8f',  l: 'Loop run' },
@@ -60,6 +103,7 @@
     artifact:    { i: '▤', c: '--acc2,#8fb87a', l: 'Artifact' },
     cap:         { i: '▸', c: '--dim2,#8a7e70', l: 'Activity' },
     run:         { i: '◇', c: '--acc,#5a9e8f',  l: 'Run' },
+    narrator:    { i: '◉', c: '--acc4,#7aa2f7', l: 'Narrator' },
   };
   const kindMeta = k => KINDS[k] || { i: '•', c: '--dim2,#8a7e70', l: k || 'event' };
 
@@ -78,7 +122,8 @@
     .btn.warn:hover { border-color:var(--err,#c96b6b); color:var(--err,#c96b6b); }
     .chips { display:flex; gap:4px; flex-wrap:wrap; }
     .chip { font-size:9.5px; padding:2px 8px; border-radius:11px; cursor:pointer;
-      border:1px solid var(--tl-bd); color:var(--dim2,#8a7e70); user-select:none; }
+      border:1px solid var(--tl-bd); color:var(--dim2,#8a7e70); user-select:none;
+      background:transparent; font-family:inherit; }
     .chip.on { background:var(--acc,#5a9e8f); border-color:var(--acc,#5a9e8f);
       color:var(--on-acc,#12100e); font-weight:600; }
     .live { font-size:9.5px; color:var(--ok,#6db87a); display:none; align-items:center; gap:4px; }
@@ -86,6 +131,10 @@
     .live .dot { width:7px; height:7px; border-radius:50%; background:var(--ok,#6db87a);
       animation:vpulse 1.4s ease-in-out infinite; }
     @keyframes vpulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+    .triage { display:none;flex-shrink:0;padding:6px 10px;border-bottom:1px solid var(--tl-bd);
+      background:rgba(201,107,107,.08);font-size:9.5px;color:var(--dim2,#8a7e70); }
+    .triage.on { display:flex;gap:8px;align-items:center;flex-wrap:wrap; }
+    .triage b { color:var(--err,#c96b6b); }
     .flex { flex:1; }
     .drawer { flex-shrink:0; border-bottom:1px solid var(--tl-bd); background:var(--tl-bg1);
       max-height:0; overflow:hidden; transition:max-height .18s ease; }
@@ -126,6 +175,26 @@
     .lp-row .lp-nm { color:var(--text,#ddd); font-weight:600; flex-shrink:0; max-width:110px;
       overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .lp-row .lp-goal { color:var(--dim2,#8a7e70); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+    .evidence { flex-shrink:0; border-top:1px dotted var(--tl-bd); padding:6px 10px;
+      max-height:180px; overflow:auto; font-size:9px; color:var(--dim2,#8a7e70); }
+    .evidence summary { cursor:pointer; color:var(--acc,#5a9e8f); font-weight:600; }
+    .ev-row { display:grid; grid-template-columns:24px 62px minmax(0,1fr); gap:6px;
+      padding:3px 0; border-bottom:1px dotted var(--tl-bd); align-items:start; }
+    .ev-seq { color:var(--dim,#6a6058); text-align:right; }
+    .ev-type { color:var(--text,#ddd); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .ev-data { overflow-wrap:anywhere; font-family:var(--mono,monospace); }
+    .waterfall { flex-shrink:0; border-top:1px dotted var(--tl-bd); padding:6px 10px;
+      max-height:170px; overflow:auto; }
+    .wf-head { display:flex;justify-content:space-between;gap:8px;font-size:8.5px;
+      color:var(--dim,#6a6058);margin-bottom:4px; }
+    .wf-row { display:grid;grid-template-columns:92px minmax(90px,1fr) 44px;gap:6px;
+      align-items:center;min-height:18px;font-size:8.5px; }
+    .wf-label { overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim2,#8a7e70); }
+    .wf-track { height:8px;border-radius:4px;background:var(--tl-bg2);position:relative;overflow:hidden; }
+    .wf-bar { position:absolute;top:0;height:100%;min-width:2px;border-radius:4px;background:var(--acc,#5a9e8f); }
+    .wf-bar.fail { background:var(--err,#c96b6b); }
+    .wf-bar.retry { box-shadow:inset 0 0 0 1px var(--acc3,#c9955a); }
+    .wf-time { text-align:right;color:var(--dim,#6a6058);font-variant-numeric:tabular-nums; }
     .card-meta { font-size:9px; color:var(--dim,#6a6058); padding:4px 10px 0;
       display:flex; gap:8px; flex-wrap:wrap; flex-shrink:0; }
     .card-bd { flex:1 1 auto; padding:8px 10px; font-size:10px; line-height:1.5;
@@ -149,6 +218,17 @@
     .node { position:absolute; top:9px; width:15px; height:15px; margin-left:-7px; border-radius:50%;
       border:2px solid var(--tl-bg0); cursor:pointer; transition:transform .12s; box-sizing:border-box; }
     .node:hover, .node.focus { transform:scale(1.5); z-index:3; }
+    .btn:focus-visible,.chip:focus-visible,.a:focus-visible,.node:focus-visible,.card:focus-visible,
+    select:focus-visible,summary:focus-visible { outline:2px solid var(--acc,#5a9e8f); outline-offset:2px; }
+    .sr-only { position:absolute!important; width:1px!important; height:1px!important; padding:0!important;
+      margin:-1px!important; overflow:hidden!important; clip:rect(0,0,0,0)!important; white-space:nowrap!important; border:0!important; }
+    @media (max-width:700px) {
+      :host { min-height:360px; }.bar { gap:5px; padding:6px; }
+      .bar .title { width:100%; }.cards { padding:8px; gap:8px; }
+      .card,:host([compact]) .card,.card.watching { flex-basis:min(88vw,360px); max-width:min(88vw,360px); }
+      .rail-wrap { padding-left:8px; padding-right:8px; }.wf-row { grid-template-columns:72px minmax(70px,1fr) 38px; }
+    }
+    @media (prefers-reduced-motion:reduce) { .live .dot { animation:none; }.card,.node,.drawer { transition:none; } }
     .rail-tip { position:absolute; bottom:26px; transform:translateX(-50%); background:var(--tl-bg2);
       border:1px solid var(--tl-bd); border-radius:5px; padding:4px 8px; font-size:9px; color:var(--text,#ddd);
       white-space:nowrap; pointer-events:none; opacity:0; transition:opacity .12s; z-index:5; max-width:260px;
@@ -166,6 +246,9 @@
       this._timer = null;
       this._apiBase = '';
       this._kindFilter = new Set();
+      this._statusFilter = '';
+      this._windowMinutes = 0;
+      this._failureOnly = false;
       this._pipelines = [];
       this._openWatch = new Set();   // session_ids currently being watched (persist across refresh)
       this._drawerMode = null;       // 'files' | 'sandboxes' | null — kept in sync with the scope
@@ -233,6 +316,8 @@
     }
 
     async load(quiet) {
+      const cards = this.shadowRoot.querySelector('#cards');
+      if (cards) cards.setAttribute('aria-busy', 'true');
       if (!quiet) {
         const c = this.shadowRoot.querySelector('#cards');
         if (c && !this._events.length) c.innerHTML = '<div class="empty">Loading…</div>';
@@ -240,23 +325,49 @@
       const r = await this._fetch('/activity/timeline?scope=' + encodeURIComponent(this._scope) + '&limit=150');
       this._events = (r && r.events) || [];
       this._paint();
+      if (cards) cards.setAttribute('aria-busy', 'false');
+      const status = this.shadowRoot.querySelector('#activityStatus');
+      if (status && !quiet) status.textContent = this._events.length +
+        ' activity event' + (this._events.length === 1 ? '' : 's') + ' loaded';
       this.dispatchEvent(new CustomEvent('activity:loaded',
         { bubbles: true, detail: { scope: this._scope, count: this._events.length } }));
     }
 
     _visibleEvents() {
-      if (!this._kindFilter.size) return this._events;
-      return this._events.filter(e => this._kindFilter.has(e.kind));
+      const now = Date.now();
+      const groups = {
+        active: new Set(['created','queued','running','waiting','approval_pending','retrying','live']),
+        failed: new Set(['failed','error','timed_out','cancelled','interrupted']),
+        complete: new Set(['completed','done','ok','skipped']),
+      };
+      return this._events.filter(e => {
+        if (this._kindFilter.size && !this._kindFilter.has(e.kind)) return false;
+        if (this._statusFilter && !groups[this._statusFilter].has(String(e.status || '').toLowerCase())) return false;
+        if (this._windowMinutes) {
+          const ts = Date.parse(e.ts);
+          if (!Number.isFinite(ts) || now - ts > this._windowMinutes * 60000) return false;
+        }
+        if (this._failureOnly) {
+          const failed = ['failed','error','timed_out','cancelled','interrupted']
+            .includes(String(e.status || '').toLowerCase());
+          if (!failed && Number((e.extra || {}).failure_count || 0) < 1) return false;
+        }
+        return true;
+      });
     }
 
     _sig(evs) {
       // Signature that ignores relative-time drift: repaint only on real change.
+      const liveBucket = evs.some(e => ['created','queued','running','waiting','approval_pending','retrying']
+        .includes(String(e.status || '').toLowerCase())) ? Math.floor(Date.now() / 15000) : '';
       return evs.map(e => e.kind + '|' + (e.session_id || '') + '|' + (e.ts || '') +
-        '|' + (e.status || '')).join(';') + '#' + [...this._kindFilter].sort().join(',');
+        '|' + (e.status || '')).join(';') + '#' + [...this._kindFilter].sort().join(',') +
+        '#' + this._statusFilter + '#' + this._windowMinutes + '#' + this._failureOnly + '#' + liveBucket;
     }
 
     _paint() {
       this._paintChips();
+      this._paintTriage();
       const evs = this._visibleEvents();
       const sig = this._sig(evs);
       const box = this.shadowRoot.querySelector('#cards');
@@ -283,6 +394,19 @@
       this._paintRail(evs);
     }
 
+    _paintTriage() {
+      const box=this.shadowRoot.querySelector('#triage'), btn=this.shadowRoot.querySelector('#triageBtn');
+      const failures=this._events.filter(e => Number((e.extra||{}).failure_count||0)>0 ||
+        ['failed','error','timed_out','cancelled','interrupted'].includes(String(e.status||'').toLowerCase()));
+      if(btn){btn.textContent='⚠ Failures '+failures.length;btn.classList.toggle('warn',this._failureOnly);}
+      if(!box)return;box.classList.toggle('on',this._failureOnly);if(!this._failureOnly)return;
+      const counts={};failures.forEach(e=>((e.extra||{}).failed_capabilities||[]).forEach(cap=>counts[cap]=(counts[cap]||0)+1));
+      const ranked=Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,6);
+      box.innerHTML='<b>'+failures.length+' affected Run'+(failures.length===1?'':'s')+'</b>'+
+        (ranked.length?ranked.map(([cap,n])=>'<span class="pill failed">'+esc(cap)+' ×'+n+'</span>').join(''):'<span>No failed child capability metadata available.</span>')+
+        '<span title="Observation only; this UI never executes retries">read-only triage · no automatic retry</span>';
+    }
+
     _refreshTimes() {
       const box = this.shadowRoot.querySelector('#cards');
       if (!box) return;
@@ -301,8 +425,9 @@
       const kinds = Object.keys(counts).sort();
       box.innerHTML = kinds.map(k => {
         const m = kindMeta(k);
-        return '<span class="chip' + (this._kindFilter.has(k) ? ' on' : '') + '" data-k="' + esc(k) + '">' +
-          m.i + ' ' + esc(m.l) + ' ' + counts[k] + '</span>';
+        return '<button type="button" class="chip' + (this._kindFilter.has(k) ? ' on' : '') +
+          '" data-k="' + esc(k) + '" aria-pressed="' + this._kindFilter.has(k) + '">' +
+          m.i + ' ' + esc(m.l) + ' ' + counts[k] + '</button>';
       }).join('');
       box.querySelectorAll('.chip').forEach(ch => ch.addEventListener('click', () => {
         const k = ch.getAttribute('data-k');
@@ -341,6 +466,18 @@
       }
       if (ui.run_id) {
         acts.push('<button class="a" data-scope="run:' + esc(ui.run_id) + '">↳ Run details</button>');
+        const runQ = encodeURIComponent(ui.run_id);
+        const sessionQ = encodeURIComponent(ui.session_id || e.session_id || '');
+        if (sessionQ) acts.push('<button class="a" data-open="/chat_panel?session_id=' + sessionQ + '">🗨 Chat context</button>');
+        acts.push('<button class="a" data-open="/memgraph/panel?run_id=' + runQ +
+          (sessionQ ? '&amp;session_id=' + sessionQ : '') + '">⌘ Memory graph</button>');
+      }
+      if (e.kind === 'run' && ui.native_url) {
+        const nativeQ = [];
+        if (x.workflow_id) nativeQ.push('workflow_id=' + encodeURIComponent(x.workflow_id));
+        if (x.trace_id) nativeQ.push('trace_id=' + encodeURIComponent(x.trace_id));
+        acts.push('<button class="a" data-open="' + esc(ui.native_url) +
+          (nativeQ.length ? '?' + nativeQ.join('&amp;') : '') + '">⇗ Native DAG workshop</button>');
       }
       // External associated UI (fabric graph, netmap, …) opens the real panel.
       if (ui.url) acts.push('<button class="a" data-open="' + esc(ui.url) + '">⇗ ' + esc(ui.label || 'Open') + '</button>');
@@ -356,10 +493,33 @@
       if (x.artifacts) meta.push(x.artifacts + ' artifacts');
       if (x.progress != null) meta.push(Math.round(Number(x.progress) * 100) + '%');
       if (x.storage) meta.push(x.authoritative === false ? 'ephemeral view' : esc(x.storage));
+      if (e.kind === 'run') meta.push(esc(x.projection || 'projection'));
+      const intent = x.current_intent || {};
+      if (e.kind === 'narrator' && x.tier) meta.push(esc(x.tier) + ' take');
+      if (e.kind === 'narrator' && intent.focus) meta.push('focus: ' + esc(String(intent.focus).slice(0, 60)));
+      if (e.kind === 'narrator' && intent.confidence) meta.push(esc(intent.confidence) + ' confidence');
       if (e.session_id) meta.push('<span title="' + esc(e.session_id) + '">' + esc(String(e.session_id).slice(0, 26)) + '</span>');
       // V8 program: show the WHOLE loop plan (every loop + its state), so a
       // program that declares N loops reads as N loops even before most run.
       let planHtml = '';
+      if (e.kind === 'run') {
+        planHtml = '<div class="loopplan"><span class="lp-hd">Workflow identity</span>' +
+          '<div class="lp-row"><span class="lp-seq">authority</span><span class="pill completed">' +
+          esc(x.authority || 'native runtime') + '</span><span class="lp-goal">Execution and control remain authoritative there.</span></div>' +
+          '<div class="lp-row"><span class="lp-seq">workflow</span><span class="lp-goal" title="' +
+          esc(x.workflow_id || '') + '">' + esc(x.workflow_id || 'not recorded') + '</span></div>' +
+          '<div class="lp-row"><span class="lp-seq">trace</span><span class="lp-goal" title="' +
+          esc(x.trace_id || '') + '">' + esc(x.trace_id || 'not recorded') + '</span></div>' +
+          '<div class="lp-row"><span class="lp-seq">view</span><span class="lp-goal">' +
+          esc(x.projection || 'run protocol projection') + ' · observed, non-authoritative</span></div></div>';
+      }
+      if (e.kind === 'narrator' && (x.steer || intent.evidence || intent.ts)) {
+        planHtml = '<div class="loopplan"><span class="lp-hd">Narrator context · current intent is not historical</span>' +
+          (x.steer ? '<div class="lp-row"><span class="lp-seq">steer</span><span class="lp-goal">' + esc(x.steer) + '</span></div>' : '') +
+          (intent.evidence ? '<div class="lp-row"><span class="lp-seq">basis</span><span class="lp-goal">' + esc(intent.evidence) + '</span></div>' : '') +
+          (intent.ts ? '<div class="lp-row"><span class="lp-seq">as of</span><span class="lp-goal">' + esc(relTime(intent.ts)) + '</span></div>' : '') +
+          '</div>';
+      }
       if (e.kind === 'program' && Array.isArray(x.loop_plan) && x.loop_plan.length) {
         planHtml = '<div class="loopplan"><span class="lp-hd">' +
           x.loop_plan.length + ' loop' + (x.loop_plan.length === 1 ? '' : 's') + '</span>' +
@@ -375,20 +535,120 @@
           }).join('') + '</div>';
       }
       if (e.kind === 'run' && Array.isArray(x.children) && x.children.length) {
-        planHtml = '<div class="loopplan"><span class="lp-hd">' +
+        planHtml += '<div class="loopplan"><span class="lp-hd">' +
           x.children.length + ' child node' + (x.children.length === 1 ? '' : 's') +
           ' · non-authoritative</span>' + x.children.map((child, ci) => {
             const cs = String(child.status || 'created').toLowerCase();
             const capability = (((child.events || [])[0] || {}).payload || {}).capability || child.kind || '';
+            const failed = ['failed','timed_out','cancelled'].includes(cs);
+            const childLink = '/memgraph/panel?run_id=' + encodeURIComponent(child.id || '') +
+              (e.session_id ? '&amp;session_id=' + encodeURIComponent(e.session_id) : '');
             return '<div class="lp-row" title="' + esc(child.id || '') + '">' +
               '<span class="lp-seq">' + esc(child.task_id || String(ci + 1)) + '</span>' +
               '<span class="pill ' + esc(cs) + '">' + esc(cs) + '</span>' +
               '<span class="lp-nm" title="' + esc(capability) + '">' + esc(capability) + '</span>' +
               (child.attempt ? '<span style="color:var(--dim);flex-shrink:0">try ' + esc(child.attempt) + '</span>' : '') +
+              (child.error && child.error.code ? '<span class="pill failed">' + esc(child.error.code) + '</span>' : '') +
+              (failed ? '<button class="a" data-open="' + childLink + '">inspect</button>' : '') +
               '</div>';
           }).join('') + '</div>';
       }
-      return '<div class="card' + (watching ? ' watching' : '') + '" data-card="' + i + '" style="border-top:2px solid ' + col + '">' +
+      if (e.kind === 'run' && (x.reconciliation || x.recovery)) {
+        const rec = x.reconciliation || {}, recovery = x.recovery || {};
+        const state = rec.verified ? 'verified' : 'unverified';
+        const checksum = rec.tip_checksum ? String(rec.tip_checksum).slice(0, 16) + '…' : 'none';
+        planHtml += '<div class="loopplan"><span class="lp-hd">Recovery &amp; reconciliation · observation only</span>' +
+          '<div class="lp-row"><span class="lp-seq">journal</span><span class="pill ' + (rec.verified ? 'completed' : 'waiting') + '">' + state + '</span>' +
+          '<span class="lp-goal">' + esc(rec.event_count == null ? 'event count unavailable' : rec.event_count + ' gap-free events') + '</span></div>' +
+          '<div class="lp-row"><span class="lp-seq">tip</span><span class="lp-goal" title="' + esc(rec.tip_checksum || '') + '">' + esc(checksum) + '</span></div>' +
+          '<div class="lp-row"><span class="lp-seq">history</span><span class="lp-goal">' +
+          esc((recovery.retry_count || 0) + ' retries · ' + (recovery.resume_count || 0) + ' resumes' + (recovery.interrupted ? ' · interrupted' : '')) + '</span></div>' +
+          '<div class="lp-row"><span class="lp-seq">rebuild</span><span class="lp-goal">' +
+          (rec.rebuild_available ? 'verified evidence can rebuild this shadow projection' : 'verified rebuild evidence unavailable') +
+          '; this UI cannot execute or resume the native run</span></div></div>';
+      }
+      if (e.kind === 'run' && x.policy_state) {
+        const policy = x.policy_state || {}, controls = Array.isArray(policy.controls) ? policy.controls : [];
+        if (policy.waiting_for_approval || controls.length) {
+          planHtml += '<div class="loopplan"><span class="lp-hd">Policy &amp; control evidence · read only</span>' +
+            (policy.waiting_for_approval ? '<div class="lp-row"><span class="lp-seq">state</span><span class="pill waiting">approval pending</span><span class="lp-goal">Reason and requested effects are not present in this safe projection.</span></div>' : '') +
+            controls.map(c => '<div class="lp-row"><span class="lp-seq">' + esc(c.action || 'control') + '</span>' +
+              '<span class="pill ' + esc(c.control_status || c.status || 'waiting') + '">' + esc(c.control_status || c.status || 'recorded') + '</span>' +
+              '<span class="lp-goal">' + esc(c.type || '') +
+              (c.requested_by ? ' · requested by ' + esc(c.requested_by) : '') +
+              (c.acknowledged_by ? ' · acknowledged by ' + esc(c.acknowledged_by) : '') + '</span></div>').join('') +
+            '<div class="lp-row"><span class="lp-seq">actions</span><span class="lp-goal">No authoritative approve, reject, cancel or retry action is exposed here.</span></div></div>';
+        }
+      }
+      if (e.kind === 'run' && x.telemetry) {
+        const tel = x.telemetry || {};
+        const coverage = tel.correlation_coverage == null ? 'n/a' :
+          Math.round(Number(tel.correlation_coverage) * 100) + '%';
+        planHtml += '<div class="loopplan"><span class="lp-hd">Portable telemetry readiness</span>' +
+          '<div class="lp-row"><span class="lp-seq">trace</span><span class="lp-goal" title="' +
+          esc(tel.trace_id || '') + '">' + esc(tel.trace_id || 'not recorded') + '</span></div>' +
+          '<div class="lp-row"><span class="lp-seq">links</span><span class="lp-goal">' +
+          esc((tel.linked_event_count || 0) + '/' + (tel.event_count || 0) + ' events linked · ' + coverage + ' causal coverage') +
+          (tel.orphan_event_count ? ' · <span class="pill failed">' + esc(tel.orphan_event_count) + ' orphan links</span>' : '') + '</span></div>' +
+          '<div class="lp-row"><span class="lp-seq">export</span><span class="pill waiting">not exported</span>' +
+          '<span class="lp-goal">Local, offline, content-redacted projection. OpenTelemetry/OpenInference exporter is ' +
+          esc(tel.exporter || 'not configured') + '.</span></div></div>';
+      }
+      let evidenceHtml = '';
+      let waterfallHtml = '';
+      if (e.kind === 'run') {
+        const lifecycle = Array.isArray(x.lifecycle) ? x.lifecycle : [];
+        const childEvents = (Array.isArray(x.children) ? x.children : []).flatMap(child =>
+          (child.events || []).map(event => ({ ...event, task_id: child.task_id })));
+        const evidence = lifecycle.concat(childEvents).slice(0, 60);
+        const artifacts = Array.isArray(x.artifact_refs) ? x.artifact_refs : [];
+        if (evidence.length || artifacts.length) {
+          const rows = evidence.map(event => {
+            const payload = Object.entries(event.payload || {}).map(([k,v]) =>
+              k + '=' + (typeof v === 'object' ? JSON.stringify(v) : String(v))).join(' · ');
+            return '<div class="ev-row" title="' + esc(event.id || '') + '">' +
+              '<span class="ev-seq">' + esc(event.task_id || event.sequence || '') + '</span>' +
+              '<span class="ev-type">' + esc(event.type || event.status || '') + '</span>' +
+              '<span class="ev-data">' + esc(payload || event.occurred_at || '') + '</span></div>';
+          }).join('');
+          const refs = artifacts.map(a => {
+            const flags = [a.partial ? 'partial' : 'complete ref',
+              a.checksum_recorded ? (a.checksum_algorithm || 'checksum') + ' recorded' : 'no checksum',
+              'availability ' + (a.availability || 'unchecked'),
+              'content not verified'];
+            return '<div class="ev-row"><span class="ev-seq">' + esc(a.task_id || 'ref') + '</span>' +
+              '<span class="ev-type">' + esc(a.kind || 'artifact') + '</span><span class="ev-data" title="' +
+              esc(a.checksum || '') + '">' + esc(a.uri || a.id || '') + '<br>' +
+              esc(flags.join(' · ')) + (a.provenance_scheme ? ' · provenance ' + esc(a.provenance_scheme) : '') +
+              (a.media_type ? ' · ' + esc(a.media_type) : '') +
+              (a.size_bytes != null ? ' · ' + esc(a.size_bytes) + ' bytes' : '') + '</span></div>';
+          }).join('');
+          evidenceHtml = '<details class="evidence"><summary>Execution evidence · ' + evidence.length +
+            ' lifecycle event' + (evidence.length === 1 ? '' : 's') + ' · ' + artifacts.length +
+            ' artifact ref' + (artifacts.length === 1 ? '' : 's') + '</summary>' + rows + refs + '</details>';
+        }
+        const wf = runWaterfall(x);
+        if (wf && wf.spans.length) {
+          const rows = wf.spans.map(span => {
+            const left = ((span.start - wf.start) / wf.total) * 100;
+            const width = Math.max(.5, ((span.end - span.start) / wf.total) * 100);
+            const status = String(span.child.status || 'running');
+            const cls = ['failed','timed_out','cancelled'].includes(status) ? ' fail' :
+              (Number(span.child.attempt || 1) > 1 ? ' retry' : '');
+            return '<div class="wf-row"><span class="wf-label" title="' + esc(span.capability) + '">' +
+              esc(span.capability) + (span.child.attempt > 1 ? ' · try ' + esc(span.child.attempt) : '') +
+              '</span><span class="wf-track"><span class="wf-bar' + cls + '" style="left:' +
+              left.toFixed(2) + '%;width:' + width.toFixed(2) + '%"></span></span><span class="wf-time">' +
+              fmtDuration(span.end - span.start) + '</span></div>';
+          }).join('');
+          waterfallHtml = '<details class="waterfall" open><summary class="wf-head"><span>Observed performance waterfall</span>' +
+            '<span>' + fmtDuration(wf.total) + ' total · ' + fmtDuration(wf.unattributed) +
+            ' unattributed</span></summary>' + rows +
+            '<div class="wf-head" title="Time outside observed child capability spans; requires deeper boundaries before attribution">' +
+            '<span>Unattributed orchestration gap</span><span>' + fmtDuration(wf.unattributed) + '</span></div></details>';
+        }
+      }
+      return '<article class="card' + (watching ? ' watching' : '') + '" data-card="' + i + '" tabindex="0" aria-label="' + esc(m.l + ': ' + (e.title || 'activity')) + '" style="border-top:2px solid ' + col + '">' +
         '<div class="card-hd"><span class="card-ic" style="color:' + col + '">' + m.i + '</span>' +
         '<span class="card-tt">' + esc(e.title) + '</span>' +
         (e.status ? '<span class="pill ' + esc(st) + '">' + esc(e.status) + '</span>' : '') + '</div>' +
@@ -396,9 +656,11 @@
         meta.map(v => '<span>' + v + '</span>').join('') + '</div>' +
         (e.summary ? '<div class="card-bd">' + mdRender(e.summary) + '</div>' : '<div class="card-bd" style="color:var(--dim)">—</div>') +
         planHtml +
+        waterfallHtml +
+        evidenceHtml +
         (acts.length ? '<div class="card-ft">' + acts.join('') + '</div>' : '') +
         '<div class="watchbox" data-watchbox="' + i + '"></div>' +
-        '</div>';
+        '</article>';
     }
 
     _paintCards(evs) {
@@ -451,8 +713,9 @@
       let html = '<div class="rail-line"></div><div class="rail-tip" id="railTip"></div>';
       evs.forEach((e, i) => {
         const pct = (((Date.parse(e.ts) || max) - min) / span) * 100;
-        html += '<div class="node" data-node="' + i + '" style="left:' + pct.toFixed(2) +
-          '%;background:var(' + kindMeta(e.kind).c + ')" title="' + esc(e.title) + '"></div>';
+        html += '<button class="node" data-node="' + i + '" style="left:' + pct.toFixed(2) +
+          '%;background:var(' + kindMeta(e.kind).c + ')" title="' + esc(e.title) +
+          '" aria-label="Focus ' + esc(kindMeta(e.kind).l + ': ' + (e.title || 'activity')) + '"></button>';
       });
       rail.innerHTML = html;
       const tip = rail.querySelector('#railTip');
@@ -680,6 +943,9 @@
         '<span class="title">Activity</span>' +
         (showPicker ? '<select id="scopeSel"></select>' : '<span id="scopeLbl" style="font-size:10px;color:var(--dim2,#8a7e70);font-family:var(--mono,monospace)"></span>') +
         '<div id="chips" class="chips"></div>' +
+        '<select id="statusFilter" title="Filter lifecycle status"><option value="">all status</option><option value="active">active</option><option value="failed">failed</option><option value="complete">complete</option></select>' +
+        '<select id="windowFilter" title="Filter event age"><option value="0">all time</option><option value="15">15m</option><option value="60">1h</option><option value="1440">24h</option><option value="10080">7d</option></select>' +
+        '<button class="btn" id="triageBtn" aria-pressed="false" title="Show failed parents and failed child actions, including completed parents">⚠ Failures 0</button>' +
         '<span class="flex"></span>' +
         '<button class="btn" id="filesBtn" title="Browse the files + artifacts this scope\'s sandbox produced" style="display:none">📂 Files</button>' +
         '<button class="btn" id="sbxBtn" title="Sandbox containers + terminals for this scope">📦 Sandboxes</button>' +
@@ -689,13 +955,27 @@
         '<span class="live"><span class="dot"></span>live</span>' +
         '<button class="btn" id="refresh" title="Refresh">↻</button>' +
         '</div>' +
+        '<div class="triage" id="triage"></div>' +
         '<div class="drawer" id="drawer"><div class="drawer-in" id="drawerIn"></div></div>' +
-        '<div class="cards" id="cards"></div>' +
-        '<div class="rail-wrap"><div class="rail-hd" id="railHd"></div><div class="rail" id="rail"><div class="rail-line"></div></div></div>';
+        '<div class="sr-only" id="activityStatus" role="status" aria-live="polite"></div>' +
+        '<div class="cards" id="cards" role="feed" aria-label="Activity events"></div>' +
+        '<div class="rail-wrap"><div class="rail-hd" id="railHd"></div><div class="rail" id="rail" aria-label="Activity time navigation"><div class="rail-line"></div></div></div>';
       const sel = this.shadowRoot.querySelector('#scopeSel');
       if (sel) sel.addEventListener('change', () => this.setScope(sel.value));
+      const statusFilter = this.shadowRoot.querySelector('#statusFilter');
+      if (statusFilter) statusFilter.addEventListener('change', () => {
+        this._statusFilter = statusFilter.value; this._lastSig = ''; this._paint();
+      });
+      const windowFilter = this.shadowRoot.querySelector('#windowFilter');
+      if (windowFilter) windowFilter.addEventListener('change', () => {
+        this._windowMinutes = parseInt(windowFilter.value, 10) || 0;
+        this._lastSig = ''; this._paint();
+      });
       const bind = (id, fn) => { const el = this.shadowRoot.querySelector(id); if (el) el.addEventListener('click', fn); };
       bind('#refresh', () => { this._ping(); this._lastSig = ''; this.load(); });
+      bind('#triageBtn', () => { this._failureOnly = !this._failureOnly;
+        const b = this.shadowRoot.querySelector('#triageBtn'); if (b) b.setAttribute('aria-pressed', String(this._failureOnly));
+        this._lastSig = ''; this._paint(); });
       bind('#filesBtn', () => { if (this._drawerMode === 'files' && this._drawerOpen()) this._closeDrawer(); else this._openFiles(); });
       bind('#sbxBtn', () => { if (this._drawerMode === 'sandboxes' && this._drawerOpen()) this._closeDrawer(); else this._openSandboxes(); });
       bind('#flatBtn', () => this._flatten());

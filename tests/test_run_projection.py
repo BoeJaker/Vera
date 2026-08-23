@@ -17,7 +17,8 @@ async def _ignore(_event):
 
 def test_observer_projects_child_lineage_progress_artifact_and_journal():
     registry = ShadowRunRegistry()
-    parent = Run(id="parent", kind="vera.dag", trace_id="trace", workflow_id="trace")
+    parent = Run(id="parent", kind="vera.dag", trace_id="trace", workflow_id="trace",
+                 session_id="chat-1")
     registry.record(parent, parent.transition(RunStatus.RUNNING, event_type="run.started"))
     observer = DagRunObserver(parent=parent, graph=[["example.cap", "answer"]],
                               emit=_ignore, registry=registry)
@@ -32,6 +33,7 @@ def test_observer_projects_child_lineage_progress_artifact_and_journal():
     assert parent.progress == 1.0
     assert child["parent_run_id"] == "parent"
     assert child["workflow_id"] == "trace"
+    assert child["session_id"] == "chat-1"
     assert child["task_id"] == "0"
     assert child["attempt"] == 1
     assert child["status"] == "completed"
@@ -40,6 +42,35 @@ def test_observer_projects_child_lineage_progress_artifact_and_journal():
     assert parent.events[-1].causation_id == child["events"][1]["id"]
     assert child["artifacts"][0]["uri"].endswith("/result")
     assert child["artifacts"][0]["checksum"].startswith("sha256:")
+
+
+def test_registry_graph_is_session_scoped_content_free_and_non_authoritative():
+    registry = ShadowRunRegistry()
+    parent = Run(id="parent", kind="vera.dag", trace_id="trace",
+                 session_id="chat-1")
+    registry.record(parent, parent.transition(RunStatus.RUNNING,
+                                              event_type="run.started"))
+    observer = DagRunObserver(parent=parent, graph=[["example.cap", "answer"]],
+                              emit=_ignore, registry=registry)
+    asyncio.run(observer.node_started((0,), "example.cap"))
+    other = Run(id="other", kind="vera.dag", session_id="chat-2")
+    registry.record(other, other.transition(RunStatus.RUNNING,
+                                            event_type="run.started"))
+
+    graph = registry.graph(session_id="chat-1")
+
+    assert graph["authoritative"] is False
+    assert {node["id"] for node in graph["nodes"]} == {"run:parent", *[
+        "run:" + child["id"] for child in registry.get("parent")["children"]]}
+    assert graph["edges"] == [{
+        "from": "run:parent", "to": graph["nodes"][1]["id"],
+        "from_id": "run:parent", "to_id": graph["nodes"][1]["id"],
+        "type": "RUN_CHILD", "relation": "RUN_CHILD", "source": "run",
+    }]
+    assert all(node["non_authoritative"] for node in graph["nodes"])
+    assert all("artifacts" not in node and "events" not in node
+               for node in graph["nodes"])
+    assert "run:other" not in {node["id"] for node in graph["nodes"]}
 
 
 def test_observer_projects_skipped_and_failed_children():
