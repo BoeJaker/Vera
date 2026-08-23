@@ -1040,6 +1040,19 @@ async def _serve_activity_timeline_js():
                     media_type="application/javascript")
 
 
+@APP.get("/ui/elements/activity_overlay.js", include_in_schema=False)
+async def _serve_activity_overlay_js():
+    """The self-mounting floating activity overlay (top-bar ticker + dropdown)."""
+    from fastapi.responses import Response
+    p = _HERE.parent / "activity_overlay.js"
+    if p.exists():
+        return Response(content=p.read_text(encoding="utf-8"),
+                        media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache"})
+    return Response(content="console.warn('activity_overlay JS not found');",
+                    media_type="application/javascript")
+
+
 @APP.get("/activity/panel", include_in_schema=False)
 async def _activity_panel():
     from fastapi.responses import HTMLResponse
