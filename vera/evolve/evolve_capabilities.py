@@ -8375,8 +8375,16 @@ async def evolve_sandbox_list(detail: bool = False, trace_id=None):
             item.update(await _sandbox_observation(item))
     used_ports = [item.get("port") for item in out if item.get("port") is not None]
     used_dbs = [item.get("redis_db") for item in out if item.get("redis_db") is not None]
-    return {"sandboxes": out, "count": len(out),
-            "capacity": _pool_capacity_snapshot(used_ports, used_dbs)}
+    capacity = _pool_capacity_snapshot(used_ports, used_dbs)
+    sandbox_local = os.getenv("VERA_IS_DEV_SANDBOX", "0") == "1"
+    capacity.update({
+        "scope": "sandbox_local_registry" if sandbox_local else "controller_registry",
+        "authoritative": not sandbox_local,
+    })
+    if sandbox_local:
+        capacity["warning"] = ("isolated sandbox Redis cannot see controller pool occupancy; "
+                               "query production evolve.sandbox.list before allocation")
+    return {"sandboxes": out, "count": len(out), "capacity": capacity}
 
 
 @capability("evolve.sandbox.preflight", memory="off", silent=True,
