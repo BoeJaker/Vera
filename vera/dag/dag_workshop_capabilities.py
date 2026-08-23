@@ -169,13 +169,15 @@ register_routing_profile(
                        "model": _LOOP_PLANNER_MODEL,
                        "options": {"temperature": 0.1, "num_ctx": 8192}},
         "coder":      {"job_type": "loop_coder", "prefer_gpu": True,
-                       # Aligned to the chat/aide sampling — the SAME 9B writes
-                       # functional code in chat. NO repeat_penalty: > 1.0 is a
-                       # foot-gun for CODE, penalising the legitimate token repetition
-                       # code is full of (indentation, keywords, identifiers) and
-                       # nudging the model off the correct token. The earlier 1.15
-                       # (added to break a degenerate line-loop) hurt coherence; the
-                       # warmer 0.7 temp avoids the greedy loop without the penalty.
+                       # DEDICATED code model — it writes valid, functional code where
+                       # the general 9B gave bloated / JS-broken output (validated:
+                       # a functional pokedex in 24s vs a broken/stub 9B run). Its 14B
+                       # weights fit the 12GB GPU because the VRAM-headroom num_ctx
+                       # auto-fit sizes the window so weights+KV stay resident — no CPU
+                       # spill. NO repeat_penalty: > 1.0 is a foot-gun for CODE (it
+                       # penalises the legitimate token repetition code is full of);
+                       # temp 0.7 matches the chat that writes clean code.
+                       "model": "qwen2.5-coder:14b",
                        "options": {"temperature": 0.7, "top_p": 0.9}},
         "writer":     {"job_type": "loop_writer", "prefer_gpu": True,
                        "options": {"temperature": 0.7, "top_p": 0.9}},
@@ -10088,6 +10090,37 @@ def _html_structural_error(code: str) -> str:
 
 # code.author was bound to _v5_check_syntax and every call raised
 # "_v5_check_syntax() missing 2 required positional arguments".
+def _v5_js_syntax_error(html: str) -> str:
+    """Parse the INLINE <script> JavaScript of an HTML doc with esprima and return
+    the first syntax error (or ""). html.parser + _html_structural_error validate
+    the MARKUP but never the embedded JS, so a script with a real JS error (a stray
+    `});`, `await` outside an async fn, a dropped bracket) ships as 'valid HTML' and
+    silently doesn't run in the browser — the exact broken-app mode seen on the
+    pomodoro and pokedex builds. This catches it so it routes into the repair loop.
+    Skips <script src=…> (external) and non-JS <script type> (JSON/templates).
+    Degrades to "" when esprima isn't installed — no false failure."""
+    try:
+        import esprima                                  # optional dep
+    except Exception:
+        return ""
+    for m in re.finditer(r"<script\b([^>]*)>(.*?)</script\s*>", html, re.I | re.S):
+        attrs, body = m.group(1) or "", m.group(2) or ""
+        if re.search(r"\bsrc\s*=", attrs, re.I):
+            continue                                    # external script — not our code
+        _tm = re.search(r"""\btype\s*=\s*["']?([^"'\s>]+)""", attrs, re.I)
+        _typ = (_tm.group(1).lower() if _tm else "")
+        if _typ and _typ not in ("text/javascript", "application/javascript",
+                                 "module", "text/babel", "text/jsx"):
+            continue                                    # e.g. application/json — not JS
+        if not body.strip():
+            continue
+        try:
+            (esprima.parseModule if _typ == "module" else esprima.parseScript)(body)
+        except Exception as e:
+            return f"<script> JS: {getattr(e, 'message', None) or str(e)}"
+    return ""
+
+
 def _v5_check_syntax(code: str, lang: str, path: str = "") -> Dict[str, Any]:
     """DETERMINISTIC syntax/parse check for authored content. {ok, error, checker}.
 
@@ -10127,6 +10160,13 @@ def _v5_check_syntax(code: str, lang: str, path: str = "") -> Dict[str, Any]:
                 _herr = _html_structural_error(code)
                 if _herr:
                     return {"ok": False, "checker": "html-structure", "error": _herr}
+                # Validate the embedded <script> JS too — markup can be perfect
+                # while the JavaScript has a real syntax error that silently kills
+                # the whole script in the browser (loadPokemon "is not defined",
+                # a stray `});`). Routes into the same repair loop as any error.
+                _jerr = _v5_js_syntax_error(code)
+                if _jerr:
+                    return {"ok": False, "checker": "js-parse", "error": _jerr}
             return {"ok": True, "checker": "html-parse"}
     except SyntaxError as e:
         return {"ok": False, "checker": "python-compile",
