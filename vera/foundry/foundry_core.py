@@ -507,6 +507,14 @@ def ops_network_overlay(secrets, server_ip=""):
     return files, "".join(tail)
 
 
+_FOUNDRY_BOOT = (
+    "#!/bin/sh\n"
+    "# Diskless RAM netboot fallback: run /etc/local.d/*.start from inittab (::once)\n"
+    "# because OpenRC local does not reliably fire them. Scripts self-guard double-runs.\n"
+    "for f in /etc/local.d/*.start; do [ -f \"$f\" ] && sh \"$f\"; done\n"
+)
+
+
 def foundry_mode_script(server_ip: str) -> str:
     """The node-side foundry-mode helper: enable/disable + live status for the three
     ops-node participation modes (Vera worker / mesh / docker-swarm), each persisted
@@ -604,7 +612,7 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=None,
              f"http://dl-cdn.alpinelinux.org/alpine/v{alpine_ver}/community\n")
     start = (
         "#!/bin/sh\n"
-        "exec >/var/log/foundry-node.log 2>&1\n"
+        "[ -e /tmp/foundry-start.lock ] && exit 0\n: > /tmp/foundry-start.lock 2>/dev/null || true\nexec >/var/log/foundry-node.log 2>&1\n"
         'echo "[foundry] ops node boot $(date); kernel=$(uname -r)"\n'
         # modloop (the kernel-module squashfs) must be mounted before Docker's
         # overlay/bridge/netfilter drivers can load, or dockerd cannot start.
@@ -696,7 +704,7 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=None,
     )
     # busybox `login -f root` (present in the Alpine base) autologins tty1 — agetty is
     # NOT in the base and isn't installed until local.d runs, which panicked init.
-    inittab = ("::sysinit:/sbin/openrc sysinit\n::sysinit:/sbin/openrc boot\n::wait:/sbin/openrc default\n"
+    inittab = ("::sysinit:/sbin/openrc sysinit\n::sysinit:/sbin/openrc boot\n::wait:/sbin/openrc default\n::once:/usr/local/bin/foundry-boot\n"
                "tty1::respawn:/bin/login -f root\n"
                "tty2::respawn:/sbin/getty 38400 tty2\n"
                "::ctrlaltdel:/sbin/reboot\n::shutdown:/sbin/openrc shutdown\n")
@@ -749,6 +757,7 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=None,
         "usr/local/bin/foundry-tui": tui,
         "usr/local/bin/foundry-sdwrite": sdwrite,
         "usr/local/bin/foundry-mode": foundry_mode_script(server_ip),
+        "usr/local/bin/foundry-boot": _FOUNDRY_BOOT,
         "etc/local.d/zz-foundry-modes.start": "#!/bin/sh\n/usr/local/bin/foundry-mode boot 2>/dev/null || true\n",
         "etc/inittab": inittab,
         "root/.profile": profile,
@@ -771,7 +780,7 @@ def pxe_desktop_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=N
              f"http://dl-cdn.alpinelinux.org/alpine/v{alpine_ver}/community\n")
     start = (
         "#!/bin/sh\n"
-        "exec >/var/log/foundry-desktop.log 2>&1\n"
+        "[ -e /tmp/foundry-start.lock ] && exit 0\n: > /tmp/foundry-start.lock 2>/dev/null || true\nexec >/var/log/foundry-desktop.log 2>&1\n"
         'echo "[foundry] desktop boot $(date); kernel=$(uname -r)"\n'
         "rc-service modloop start 2>/dev/null\n"
         "KREL=$(uname -r)\n"
@@ -782,7 +791,7 @@ def pxe_desktop_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=N
         "modprobe -a i915 amdgpu radeon nouveau qxl bochs_drm 2>/dev/null\n"
         "modprobe -a overlay br_netfilter bridge veth nf_nat ip_tables iptable_nat tun 2>/dev/null\n"
         "apk update\n"
-        "apk add eudev xinput util-linux xz pv unzip\n"
+        "apk add newt eudev xinput util-linux xz pv unzip\n"
         "# OpenRC boot runlevel is broken on diskless (fsck/sysfs 'would not start') -> udev-trigger\n"
         "# never runs. Start udevd DIRECTLY, then coldplug by hand so input devices get ID_INPUT\n"
         "# udev tags (X/libinput discover devices by those tags).\n"
@@ -818,7 +827,7 @@ def pxe_desktop_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=N
         '[ "$(cat /etc/foundry/modes/swarm 2>/dev/null)" != off ] && [ -n "$TOKEN" ] && [ -n "$MGR" ] && docker swarm join --token "$TOKEN" "${MGR}:2377"\n'
         "echo \"[foundry] libinput sees:\"; libinput list-devices 2>&1|grep -E 'Device:'|head\n"
     ).replace("@@SRV@@", S)
-    inittab = ("::sysinit:/sbin/openrc sysinit\n::sysinit:/sbin/openrc boot\n::wait:/sbin/openrc default\n"
+    inittab = ("::sysinit:/sbin/openrc sysinit\n::sysinit:/sbin/openrc boot\n::wait:/sbin/openrc default\n::once:/usr/local/bin/foundry-boot\n"
                "tty1::respawn:/bin/login -f root\n"
                "tty2::respawn:/sbin/getty 38400 tty2\n"
                "::ctrlaltdel:/sbin/reboot\n::shutdown:/sbin/openrc shutdown\n")
@@ -856,6 +865,7 @@ def pxe_desktop_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=N
         "etc/X11/xorg.conf.d/10-foundry-fallback.conf": xflags,
         "etc/X11/xorg.conf.d/40-libinput-touchpad.conf": xtouch,
         "usr/local/bin/foundry-mode": foundry_mode_script(server_ip),
+        "usr/local/bin/foundry-boot": _FOUNDRY_BOOT,
         "etc/local.d/zz-foundry-modes.start": "#!/bin/sh\n/usr/local/bin/foundry-mode boot 2>/dev/null || true\n",
         "usr/share/applications/foundry-ops.desktop": launcher,
         "root/Desktop/foundry-ops.desktop": launcher,
