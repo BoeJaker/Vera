@@ -843,9 +843,20 @@ async def _post_provision(cluster_id, node, vmid, kind, feats, fqdn, job_id="", 
                               "note": "VM enrol needs a static ip (none set)"}})
             # hardening for VMs also rides SSH+sudo — enrol registers the host in the
             # exec store; a follow-up applies _HARDEN over that. Noted for now.
-            if "hardening" in feats:
-                steps.append({"hardening": {"status": "pending",
-                              "note": "VM hardening over SSH is the next increment"}})
+            # OS-agnostic feature bundles over SSH (features_core): hardening + portable features.
+            if ip:
+                _fctx = await _features_ctx()
+                for _f in ("hardening", "file-client", "vera-worker"):
+                    if _f in feats:
+                        _sc = _feature_script(_f, {} if _f == "hardening" else _fctx)
+                        if _sc:
+                            _b = base64.b64encode(_sc.encode()).decode()
+                            _fr = await _call("exec.ssh.run", host=ip, user="vera",
+                                              key_path=_vera_key_path(),
+                                              command="echo %s | base64 -d | sudo -n sh" % _b, timeout=600)
+                            steps.append({_f: {"ok": bool(_fr.get("ok")), "rc": _fr.get("rc")}})
+            else:
+                steps.append({"features": {"status": "skipped", "note": "VM features need a static ip"}})
         # apply cluster / distributed-compute joins (registry-resolved; token unsealed
         # just-in-time) — CT via pct exec (root), VM over SSH as 'vera' with sudo.
         if running:
