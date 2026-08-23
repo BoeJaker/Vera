@@ -1,9 +1,13 @@
 /* ── Vera Activity Overlay ─────────────────────────────────────────────────────
- * A self-mounting, floating activity feed that lives across the TOP of the app,
- * over whatever else is open. A compact pill shows the latest activity (a live
- * ticker); clicking it drops down the full, FILTERABLE timeline — narrator takes,
- * dreams, loops, v8 programs — driven by the same /activity/timeline feed the
- * Activity panel uses. Loads once (guarded), positions itself, and polls.
+ * A filterable activity feed for the top bar — narrator takes, dreams, loops, v8
+ * programs — driven by the same /activity/timeline feed the Activity panel uses.
+ *
+ * Two deliberate layout rules:
+ *  1. The PILL IS IN FLOW. It mounts INSIDE the app <header> as a real child, so
+ *     it takes part in the header's layout and can never cover anything. Only
+ *     the drop-down panel floats, and only while it is open.
+ *  2. The feed is a HORIZONTAL TIMELINE — a scrolling lane with a time axis,
+ *     oldest → newest left to right, opening scrolled to "now" on the right.
  * ────────────────────────────────────────────────────────────────────────────*/
 (function () {
   if (window.__veraActivityOverlay) return;
@@ -15,75 +19,170 @@
   const LABEL = { narrator: 'Narrator', dream_cycle: 'Dream', dream: 'Dream',
                   loop_live: 'Loop', program: 'Program', project: 'Project',
                   goal: 'Goal', chat: 'Chat', cap: 'Cap', artifact: 'Artifact' };
+  // Per-kind accent so a lane of mixed activity is readable at a glance. Falls
+  // back to the theme accent for any kind added server-side later.
+  const HUE = { narrator: '#7aa2f7', dream_cycle: '#bb9af7', dream: '#bb9af7',
+                loop_live: '#7dcfff', program: '#9ece6a', project: '#e0af68',
+                goal: '#f7768e', chat: '#7aa2f7', cap: '#6b7480',
+                artifact: '#e0af68' };
 
-  let events = [], filter = null, open = false, lastSig = '';
+  let events = [], filter = null, open = false, expanded = null;
 
-  const root = document.createElement('div');
-  root.id = 'vera-activity-overlay';
-  root.innerHTML = `
-<style>
-  #vera-activity-overlay{position:fixed;top:6px;left:50%;transform:translateX(-50%);
-    z-index:2147483000;font:12px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
-    color:var(--text,#dce1e8);pointer-events:none}
-  #vera-activity-overlay *{pointer-events:auto;box-sizing:border-box}
-  .vao-pill{display:inline-flex;align-items:center;gap:8px;max-width:min(560px,80vw);
-    padding:5px 12px;border-radius:16px;cursor:pointer;
+  const style = document.createElement('style');
+  style.textContent = `
+  #vao-pill{display:inline-flex;align-items:center;gap:7px;max-width:min(420px,32vw);
+    padding:3px 10px;border-radius:14px;cursor:pointer;flex:0 1 auto;min-width:0;
+    font:12px/1.35 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    background:var(--bg2,#1c2026);border:1px solid var(--border,#2a2f37);
+    color:var(--text,#dce1e8)}
+  #vao-pill:hover{border-color:var(--acc,#5a9e8f)}
+  #vao-pill.on{border-color:var(--acc,#5a9e8f)}
+  #vao-pill .vao-dot{width:6px;height:6px;border-radius:50%;background:var(--acc,#5a9e8f);
+    flex:0 0 auto;animation:vaoP 2.2s infinite}
+  @keyframes vaoP{0%,100%{opacity:1}50%{opacity:.3}}
+  @media (prefers-reduced-motion:reduce){#vao-pill .vao-dot{animation:none}}
+  #vao-pill .vao-latest{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    color:var(--text2,#9aa4b2);min-width:0}
+  #vao-pill .vao-count{flex:0 0 auto;font-size:10px;color:var(--dim,#6b7480);
+    background:var(--bg1,#15181d);border-radius:8px;padding:0 6px;
+    font-variant-numeric:tabular-nums}
+  #vao-pill .vao-caret{flex:0 0 auto;color:var(--dim,#6b7480);font-size:9px}
+
+  /* Only this part floats — and only while open. */
+  #vao-panel{position:fixed;z-index:2147483000;display:none;flex-direction:column;
+    font:12px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    color:var(--text,#dce1e8);
     background:var(--bg1,#15181d);border:1px solid var(--border,#2a2f37);
-    box-shadow:0 4px 18px rgba(0,0,0,.35)}
-  .vao-pill:hover{border-color:var(--acc,#5a9e8f)}
-  .vao-dot{width:7px;height:7px;border-radius:50%;background:var(--acc,#5a9e8f);flex:0 0 auto;animation:vaoP 2.2s infinite}
-  @keyframes vaoP{0%,100%{opacity:1}50%{opacity:.35}}
-  .vao-latest{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text2,#9aa4b2)}
-  .vao-count{flex:0 0 auto;font-size:10px;color:var(--dim,#6b7480);background:var(--bg2,#1c2026);
-    border-radius:9px;padding:1px 7px}
-  .vao-caret{flex:0 0 auto;color:var(--dim,#6b7480);font-size:10px}
-  .vao-panel{margin-top:6px;width:min(560px,88vw);max-height:min(60vh,520px);display:flex;flex-direction:column;
-    background:var(--bg1,#15181d);border:1px solid var(--border,#2a2f37);border-radius:12px;
-    box-shadow:0 10px 34px rgba(0,0,0,.45);overflow:hidden}
-  .vao-chips{display:flex;flex-wrap:wrap;gap:5px;padding:9px 11px;border-bottom:1px solid var(--border,#2a2f37);flex:0 0 auto}
+    border-radius:12px;box-shadow:0 12px 38px rgba(0,0,0,.45);overflow:hidden}
+  #vao-panel.open{display:flex}
+  .vao-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+    padding:8px 11px;border-bottom:1px solid var(--border,#2a2f37);flex:0 0 auto}
   .vao-chip{font-size:11px;padding:2px 9px;border-radius:11px;cursor:pointer;
-    background:var(--bg2,#1c2026);border:1px solid var(--border2,#39414c);color:var(--text2,#9aa4b2)}
+    background:var(--bg2,#1c2026);border:1px solid var(--border2,#39414c);
+    color:var(--text2,#9aa4b2);white-space:nowrap}
   .vao-chip:hover{color:var(--text,#dce1e8)}
   .vao-chip.on{background:var(--acc,#5a9e8f);color:#06120f;border-color:var(--acc,#5a9e8f)}
-  .vao-list{overflow-y:auto;padding:4px 0}
-  .vao-ev{display:flex;gap:9px;padding:7px 12px;align-items:flex-start;border-bottom:1px solid rgba(255,255,255,.03)}
-  .vao-ev:hover{background:var(--bg2,#1c2026)}
-  .vao-ev-k{flex:0 0 auto;font-size:13px;line-height:1.3}
-  .vao-ev-b{flex:1 1 auto;min-width:0}
-  .vao-ev-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text,#dce1e8)}
-  .vao-ev-s{color:var(--dim,#6b7480);font-size:11px;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .vao-ev-ts{flex:0 0 auto;color:var(--dim,#6b7480);font-size:10px;font-variant-numeric:tabular-nums}
-  .vao-empty{color:var(--dim,#6b7480);text-align:center;padding:22px}
-</style>
-<div class="vao-pill" id="vao-pill">
-  <span class="vao-dot"></span>
-  <span class="vao-latest" id="vao-latest">Activity</span>
-  <span class="vao-count" id="vao-count"></span>
-  <span class="vao-caret" id="vao-caret">▾</span>
-</div>
-<div class="vao-panel" id="vao-panel" style="display:none">
-  <div class="vao-chips" id="vao-chips"></div>
-  <div class="vao-list" id="vao-list"></div>
-</div>`;
+  .vao-chip:focus-visible,#vao-pill:focus-visible{outline:2px solid var(--acc,#5a9e8f);outline-offset:2px}
+  .vao-spacer{flex:1 1 auto}
+  .vao-hint{font-size:10px;color:var(--dim,#6b7480)}
+
+  /* ── the horizontal timeline ── */
+  .vao-track{overflow-x:auto;overflow-y:hidden;flex:1 1 auto;
+    scrollbar-width:thin;scrollbar-color:var(--border2,#39414c) transparent}
+  .vao-track::-webkit-scrollbar{height:8px}
+  .vao-track::-webkit-scrollbar-thumb{background:var(--border2,#39414c);border-radius:4px}
+  .vao-lane{position:relative;display:flex;gap:10px;min-width:100%;
+    width:max-content;padding:8px 12px 12px;box-sizing:border-box}
+  /* the axis the ticks sit on: 8 (pad) + 16 (time) + 7.5 (half tick row) */
+  .vao-lane::before{content:"";position:absolute;left:0;right:0;top:31px;height:1px;
+    background:var(--border,#2a2f37)}
+  .vao-node{position:relative;flex:0 0 208px;display:flex;flex-direction:column;min-width:0}
+  .vao-time{height:16px;font-size:10px;color:var(--dim,#6b7480);
+    font-variant-numeric:tabular-nums;letter-spacing:.03em}
+  .vao-tickrow{height:15px;display:flex;align-items:center}
+  .vao-tick{width:9px;height:9px;border-radius:50%;background:var(--acc,#5a9e8f);
+    box-shadow:0 0 0 2px var(--bg1,#15181d);position:relative;z-index:1}
+  .vao-card{margin-top:8px;background:var(--bg2,#1c2026);border:1px solid var(--border,#2a2f37);
+    border-left-width:2px;border-radius:8px;padding:6px 8px;cursor:pointer;min-width:0}
+  .vao-card:hover{border-color:var(--border2,#39414c)}
+  .vao-kind{display:flex;align-items:center;gap:5px;font-size:10px;
+    text-transform:uppercase;letter-spacing:.06em;color:var(--dim,#6b7480);margin-bottom:3px}
+  .vao-title{color:var(--text,#dce1e8);overflow:hidden;display:-webkit-box;
+    -webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word}
+  .vao-sum{color:var(--text2,#9aa4b2);font-size:11px;margin-top:3px;overflow:hidden;
+    display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;word-break:break-word}
+  .vao-node.exp{flex-basis:340px}
+  .vao-node.exp .vao-title,.vao-node.exp .vao-sum{-webkit-line-clamp:unset;display:block}
+  .vao-now{position:relative;flex:0 0 auto;display:flex;flex-direction:column;
+    justify-content:flex-start;padding-top:16px}
+  .vao-now-tick{height:15px;display:flex;align-items:center;color:var(--acc,#5a9e8f);font-size:10px}
+  .vao-empty{padding:26px 14px;color:var(--dim,#6b7480);text-align:center;width:100%}`;
+
+  const pill = document.createElement('div');
+  pill.id = 'vao-pill';
+  pill.tabIndex = 0;
+  pill.setAttribute('role', 'button');
+  pill.setAttribute('aria-expanded', 'false');
+  pill.innerHTML = `<span class="vao-dot"></span>
+    <span class="vao-latest">Activity</span>
+    <span class="vao-count"></span><span class="vao-caret">▾</span>`;
+
+  const panel = document.createElement('div');
+  panel.id = 'vao-panel';
+  panel.innerHTML = `<div class="vao-head"></div><div class="vao-track"></div>`;
+
+  const $ = (sel, r) => (r || panel).querySelector(sel);
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g,
+    c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const fmtTs = ts => { try {
+    return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  } catch (e) { return ''; } };
+  const kinds = () => [...new Set(events.map(e => e.kind))];
+  const filtered = () => (filter ? events.filter(e => e.kind === filter) : events);
+  const hue = k => HUE[k] || 'var(--acc,#5a9e8f)';
 
   function mount() {
     if (!document.body) return void setTimeout(mount, 200);
-    document.body.appendChild(root);
-    root.querySelector('#vao-pill').addEventListener('click', () => {
-      open = !open;
-      root.querySelector('#vao-panel').style.display = open ? 'flex' : 'none';
-      root.querySelector('#vao-caret').textContent = open ? '▴' : '▾';
-      if (open) render();
+    document.head.appendChild(style);
+    document.body.appendChild(panel);
+
+    // IN FLOW inside the header — never overlapping anything. Placed before the
+    // right-hand controls so it uses the header's own flexible middle space.
+    const header = document.querySelector('header');
+    if (header) {
+      const right = header.querySelector('.hdr-right');
+      header.insertBefore(pill, right || null);
+    } else {
+      // No app header (a standalone page): still in flow, at the top of body.
+      const bar = document.createElement('div');
+      bar.style.cssText = 'display:flex;justify-content:center;padding:6px 8px';
+      bar.appendChild(pill);
+      document.body.insertBefore(bar, document.body.firstChild);
+    }
+
+    pill.addEventListener('click', toggle);
+    pill.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
     });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && open) toggle(); });
+    document.addEventListener('click', e => {
+      if (open && !panel.contains(e.target) && !pill.contains(e.target)) toggle();
+    });
+    window.addEventListener('resize', () => { if (open) place(); });
+    // A horizontal lane is unusable with a vertical wheel — translate it.
+    $('.vao-track').addEventListener('wheel', e => {
+      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+        e.preventDefault();
+        e.currentTarget.scrollLeft += e.deltaY;
+      }
+    }, { passive: false });
+
     poll();
     setInterval(poll, 4000);
   }
 
-  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g,
-    c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const fmtTs = ts => { try { return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } };
-  const kinds = () => [...new Set(events.map(e => e.kind))];
-  const filtered = () => filter ? events.filter(e => e.kind === filter) : events;
+  function place() {
+    const r = pill.getBoundingClientRect();
+    const gap = 6;
+    panel.style.top = Math.round(r.bottom + gap) + 'px';
+    panel.style.left = '12px';
+    panel.style.right = '12px';
+    panel.style.maxHeight = Math.max(180, window.innerHeight - r.bottom - gap - 16) + 'px';
+  }
+
+  function toggle() {
+    open = !open;
+    panel.classList.toggle('open', open);
+    pill.classList.toggle('on', open);
+    pill.setAttribute('aria-expanded', String(open));
+    $('.vao-caret', pill).textContent = open ? '▴' : '▾';
+    if (open) { place(); render(); scrollToNow(); }
+  }
+
+  function scrollToNow() {
+    const t = $('.vao-track');
+    if (t) t.scrollLeft = t.scrollWidth;      // newest is on the right
+  }
 
   async function poll() {
     try {
@@ -92,36 +191,69 @@
       const j = await r.json();
       const c = (j && j.content !== undefined) ? j.content : j;
       events = (c && c.events) || [];
-    } catch (e) { /* keep last */ }
+    } catch (e) { /* keep the last good feed */ }
     updatePill();
-    if (open) render();
+    if (open) {
+      const t = $('.vao-track');
+      const atEnd = t ? (t.scrollWidth - t.scrollLeft - t.clientWidth < 40) : true;
+      render();
+      if (atEnd) scrollToNow();               // only auto-follow if already at "now"
+    }
   }
 
   function updatePill() {
     const e = events[0];
-    root.querySelector('#vao-latest').textContent =
-      e ? ((ICON[e.kind] || '•') + ' ' + (e.title || '').slice(0, 52)) : 'Activity';
-    root.querySelector('#vao-count').textContent = events.length ? String(events.length) : '';
+    $('.vao-latest', pill).textContent =
+      e ? ((ICON[e.kind] || '•') + ' ' + String(e.title || '').slice(0, 60)) : 'Activity';
+    $('.vao-count', pill).textContent = events.length ? String(events.length) : '';
   }
 
   function render() {
-    const chips = root.querySelector('#vao-chips');
-    chips.innerHTML = `<span class="vao-chip${!filter ? ' on' : ''}" data-k="">all</span>` +
-      kinds().map(k => `<span class="vao-chip${filter === k ? ' on' : ''}" data-k="${esc(k)}">${ICON[k] || ''} ${esc(LABEL[k] || k)}</span>`).join('');
-    chips.querySelectorAll('.vao-chip').forEach(ch => ch.addEventListener('click', () => {
-      filter = ch.dataset.k || null; render();
-    }));
-    const list = root.querySelector('#vao-list');
-    const evs = filtered().slice(0, 40);
-    list.innerHTML = evs.length ? evs.map(e => `
-      <div class="vao-ev">
-        <span class="vao-ev-k">${ICON[e.kind] || '•'}</span>
-        <div class="vao-ev-b">
-          <div class="vao-ev-t">${esc(e.title || '')}</div>
-          ${(e.summary && e.summary !== e.title) ? `<div class="vao-ev-s">${esc(String(e.summary).slice(0, 160))}</div>` : ''}
-        </div>
-        <span class="vao-ev-ts">${fmtTs(e.ts)}</span>
-      </div>`).join('') : '<div class="vao-empty">No recent activity.</div>';
+    const head = $('.vao-head');
+    head.innerHTML =
+      `<span class="vao-chip${!filter ? ' on' : ''}" data-k="" tabindex="0">all</span>` +
+      kinds().map(k =>
+        `<span class="vao-chip${filter === k ? ' on' : ''}" data-k="${esc(k)}" tabindex="0">` +
+        `${ICON[k] || ''} ${esc(LABEL[k] || k)}</span>`).join('') +
+      `<span class="vao-spacer"></span><span class="vao-hint">oldest → newest · scroll sideways</span>`;
+    head.querySelectorAll('.vao-chip').forEach(ch => {
+      const pick = () => { filter = ch.dataset.k || null; render(); scrollToNow(); };
+      ch.addEventListener('click', pick);
+      ch.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); }
+      });
+    });
+
+    const track = $('.vao-track');
+    // Feed arrives newest-first; a timeline reads oldest → newest.
+    const evs = filtered().slice(0, 60).reverse();
+    if (!evs.length) {
+      track.innerHTML = '<div class="vao-empty">No recent activity.</div>';
+      return;
+    }
+    track.innerHTML = `<div class="vao-lane">` + evs.map(e => {
+      // Identity, not position — a refresh must not move the expanded card.
+      const k = e.kind, key = (e.ts || '') + '|' + k + '|' + String(e.title || '').slice(0, 40);
+      const sum = (e.summary && e.summary !== e.title) ? String(e.summary) : '';
+      return `<div class="vao-node${expanded === key ? ' exp' : ''}" data-key="${esc(key)}">
+        <div class="vao-time">${esc(fmtTs(e.ts))}</div>
+        <div class="vao-tickrow"><span class="vao-tick" style="background:${hue(k)}"></span></div>
+        <div class="vao-card" style="border-left-color:${hue(k)}">
+          <div class="vao-kind"><span>${ICON[k] || '•'}</span>${esc(LABEL[k] || k)}</div>
+          <div class="vao-title">${esc(e.title || '')}</div>
+          ${sum ? `<div class="vao-sum">${esc(sum)}</div>` : ''}
+        </div></div>`;
+    }).join('') +
+      `<div class="vao-now"><div class="vao-time">now</div>
+        <div class="vao-now-tick">▸</div></div></div>`;
+
+    track.querySelectorAll('.vao-node').forEach(n => {
+      n.querySelector('.vao-card').addEventListener('click', ev => {
+        ev.stopPropagation();
+        expanded = (expanded === n.dataset.key) ? null : n.dataset.key;
+        render();
+      });
+    });
   }
 
   mount();
