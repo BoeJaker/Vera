@@ -856,6 +856,7 @@ html.vpb-nav-hosted body{padding-left:0}
       <button class="btn sm" onclick="savePort()">save port</button>
     </div>
     <div class="hint" id="sb-status-line" style="margin-top:6px">—</div>
+    <div id="sbx-capacity" class="row" style="gap:6px;flex-wrap:wrap;margin-top:6px"></div>
     <div class="hint" style="margin-top:2px">Default posture is <b>sandbox-first</b>: agent-loop tests run in an isolated Vera (isolated Redis DB) so they can't act on real Vera; write/exec/comms/deploy caps are stripped from test loops. Requires docker on the host; prod's tree stays on main (branches run in worktrees).</div>
   </div>
 
@@ -3362,7 +3363,7 @@ async function loadAudit(){
 /* ═══ Per-branch sandbox pool (C2 selector — evolve.sandbox.list/spawn/down) ═══ */
 async function loadSandboxPool(){
   const el=$('sandbox-pool'); if(!el)return;
-  const r=await api('/evolve/sandbox/list');
+  const r=await api('/evolve/sandbox/list?detail=true');
   const list=(r&&r.sandboxes)||[];
   if(!list.length){el.innerHTML='';return}
   el.innerHTML='<label class="fld">All dev sandboxes ('+list.length+')</label>'+list.map(function(s){
@@ -3418,8 +3419,13 @@ async function sandboxSpawn(){
   loadSandbox();
 }
 async function sandboxDownNamed(name){
-  if(!confirm('Tear down '+name+' (its container + worktree)?'))return;
-  const r=await post('/evolve/sandbox/down',{name:name});
+  const pf=await api('/evolve/sandbox/preflight?name='+encodeURIComponent(name)+'&action=stop');
+  if(!pf||!pf.ok){toast((pf&&pf.error)||'preflight unavailable — refusing');return}
+  if(!pf.allowed){showSbxSafety(name,pf);return}
+  const dry=await post('/evolve/sandbox/down',{name:name,dry_run:true,remove_worktree:false});
+  if(!dry||!dry.ok||dry.mutated!==false){toast((dry&&dry.error)||'dry run failed — refusing');return}
+  if(!confirm('Stop '+name+'?\n\nContainer: '+(dry.container_action||'stop')+'\nWorktree: PRESERVE\nBranch: '+(dry.branch||'')+'\n\nNo files or commits will be deleted.'))return;
+  const r=await post('/evolve/sandbox/down',{name:name,remove_worktree:false});
   toast(r&&r.ok?('torn down '+name):(r&&r.error)||'failed');
   loadSandbox();
 }
@@ -3430,7 +3436,7 @@ function _sbxQ(){return (_sbxTarget&&_sbxTarget.name)?('&name='+encodeURICompone
 async function loadSandbox(){
   if($('sb-mode')&&_cfg.sandbox_mode)$('sb-mode').value=_cfg.sandbox_mode;
   loadGit();
-  const [r,ls]=await Promise.all([api('/evolve/sandbox/status'),api('/evolve/sandbox/list')]);
+  const [r,ls]=await Promise.all([api('/evolve/sandbox/status'),api('/evolve/sandbox/list?detail=true')]);
   // ── primary-runner status line (where sandbox-first runs execute) ──
   if(r){
     const sb=r.sandbox||{},up=r.up,stale=!!(r.probe&&r.probe.stale);
@@ -3452,7 +3458,18 @@ async function loadSandbox(){
     }
     if($('sb-status-line'))$('sb-status-line').innerHTML=sl;
   }
+  renderSbxCapacity(ls&&ls.capacity);
   renderSbxList((ls&&ls.sandboxes)||[]);
+}
+function renderSbxCapacity(c){
+  const el=$('sbx-capacity');if(!el)return;
+  if(!c){el.innerHTML='<span class="hint">capacity unavailable</span>';return}
+  const auth=c.authoritative!==false;
+  const total=Number(c.redis_db_capacity||0), free=Number(c.available_slots||0), used=Math.max(0,total-free);
+  el.innerHTML='<span class="tag" style="color:'+(free>0?'var(--ok)':'var(--warn)')+'">capacity '+esc(String(used))+'/'+esc(String(total))+'</span>'
+    +'<span class="tag">free '+esc(String(free))+'</span>'
+    +'<span class="hint">'+esc(c.scope||'')+'</span>'
+    +(auth?'':'<span class="pill" style="color:var(--warn)" title="'+esc(c.warning||'This sandbox cannot see controller-wide occupancy')+'">non-authoritative</span>');
 }
 function renderSbxList(items){
   const el=$('sbx-list');if(!el)return;
@@ -3489,6 +3506,7 @@ function renderSbxList(items){
       btns+='<button class="btn sm'+(pinned?' ok-btn':'')+'" onclick="sbxPin(\''+nm+'\','+(pinned?'false':'true')+')" title="'+(pinned?'unpin — allow idle auto-pause':'pin — keep up, exempt from idle auto-pause')+'">'+(pinned?'📌 pinned':'pin')+'</button>';
       btns+='<button class="btn sm err-btn" onclick="sandboxDownNamed(\''+nm+'\')">✕ down</button>';
     }
+    btns+='<button class="btn sm" onclick="sbxSafety(\''+nm+'\')" title="read-only restart, stop, reuse and removal preflight">🛡 safety</button>';
     const pill=paused?'<span class="pill" style="color:var(--warn)" title="idle-paused — frozen so it stops sharing the Ollama nodes; wakes on next use">⏸ paused</span>'
       :(on?'<span class="pill" style="color:var(--ok)">● running</span>':'<span class="pill" style="color:var(--dim2)">○ down</span>');
     return '<div style="padding:7px 0;border-bottom:1px solid var(--border)">'
@@ -3499,9 +3517,42 @@ function renderSbxList(items){
         +'<span class="mono" style="font-size:10px;color:var(--dim2)">'+nm+'</span>'
         +'<span class="hint">:'+esc(String(s.port||''))+' · db '+esc(String(s.redis_db||''))+'</span>'
       +'</div>'
+      +'<div class="row" style="gap:5px;flex-wrap:wrap;margin-top:4px">'
+        +'<span class="hint">owner</span><span class="tag">'+esc(s.owner||'unknown')+'</span>'
+        +(s.session_id?'<span class="mono hint" title="'+esc(s.session_id)+'">'+esc(String(s.session_id).slice(0,24))+'</span>':'')
+        +(s.state?'<span class="pill" style="color:'+(s.state==='healthy'?'var(--ok)':'var(--warn)')+'">'+esc(s.state)+'</span>':'')
+        +(s.dirty===true?'<span class="pill" style="color:var(--warn)">dirty</span>':(s.dirty===false?'<span class="tag">clean</span>':'<span class="tag">cleanliness unknown</span>'))
+        +(s.merged_to_bleeding_edge===true?'<span class="tag" style="color:var(--ok)">merged</span>':(s.merged_to_bleeding_edge===false?'<span class="tag" style="color:var(--warn)">unmerged</span>':''))
+        +(s.git_worktree&&s.git_worktree.valid===false?'<span class="pill" style="color:var(--err)">git '+esc(s.git_worktree.state||'invalid')+'</span>':'')
+        +(s.head_commit?'<span class="mono hint" title="sandbox head">head '+esc(String(s.head_commit).slice(0,8))+'</span>':'')
+        +(s.bleeding_edge_commit?'<span class="mono hint" title="bleeding-edge head">BE '+esc(String(s.bleeding_edge_commit).slice(0,8))+'</span>':'')
+      +'</div>'
       +'<div class="row" style="gap:4px;flex-wrap:wrap;margin-top:5px">'+btns+'</div>'
     +'</div>';
   }).join('');
+}
+function showSbxSafety(name,pf){
+  const s=(pf&&pf.sandbox)||{}, reasons=(pf&&pf.reasons)||[];
+  const decision=pf&&pf.allowed;
+  openModal('<div class="card-h"><span class="card-t">🛡 Lifecycle safety · '+esc(name)+'</span>'
+    +'<span style="flex:1"></span><span class="pill" style="color:'+(decision?'var(--ok)':'var(--err)')+'">'+(decision?'allowed':'refused')+'</span></div>'
+    +'<div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:8px"><span class="tag">'+esc((pf&&pf.action)||'')+'</span><span class="tag">'+esc((pf&&pf.state)||'')+'</span>'
+    +(pf&&pf.protected?'<span class="pill" style="color:var(--warn)">protected</span>':'')
+    +(s.dirty===true?'<span class="pill" style="color:var(--warn)">dirty worktree</span>':'')
+    +(s.merged_to_bleeding_edge===false?'<span class="pill" style="color:var(--warn)">not merged to bleeding-edge</span>':'')+'</div>'
+    +(reasons.length?'<div class="hint">Refusal reasons</div><ul style="margin:6px 0 10px 20px">'+reasons.map(x=>'<li class="mono">'+esc(x)+'</li>').join('')+'</ul>':'<div class="hint">Read-only preflight found no blocker for this action.</div>')
+    +'<div class="hint" style="margin-top:8px">This is a dry-run decision. No container, worktree, branch, descriptor, or commit was changed.</div>');
+}
+async function sbxSafety(name){
+  const actions=['restart','stop','reuse','remove'];
+  const rows=await Promise.all(actions.map(a=>api('/evolve/sandbox/preflight?name='+encodeURIComponent(name)+'&action='+a)));
+  const valid=rows.filter(Boolean);
+  if(!valid.length){toast('preflight unavailable');return}
+  const s=valid[0].sandbox||{};
+  openModal('<div class="card-h"><span class="card-t">🛡 Lifecycle safety · '+esc(name)+'</span></div>'
+    +'<div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:8px"><span class="tag">owner '+esc(s.owner||'unknown')+'</span><span class="tag">'+esc(s.branch||'')+'</span><span class="tag">'+esc(s.state||'')+'</span></div>'
+    +valid.map(p=>'<div class="row" style="gap:8px;padding:7px 0;border-bottom:1px solid var(--border)"><span class="pill" style="min-width:58px;color:'+(p.allowed?'var(--ok)':'var(--err)')+'">'+(p.allowed?'ALLOW':'REFUSE')+'</span><b style="min-width:55px">'+esc(p.action)+'</b><span class="hint">'+esc((p.reasons||[]).join(' · ')||(p.plan&&p.plan.length?'exact target verified':'no mutation planned'))+'</span></div>').join('')
+    +'<div class="hint" style="margin-top:9px">All decisions are read-only dry runs. Refusal is fail-closed when Docker, Git, cleanliness, ancestry, or ownership cannot be proven.</div>');
 }
 // Pin/unpin a spawned container so the idle-reaper never auto-pauses it.
 async function sbxPin(name,on){
