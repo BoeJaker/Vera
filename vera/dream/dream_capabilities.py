@@ -10378,9 +10378,23 @@ DIRECTOR_DEFAULTS: Dict[str, Any] = {
     #   WATCHED WORLD from, via agent.rag.query. "" = internal probes only.
     "narrator_max_probes":      6,                     # probe-kit traversal budget/pass
     "narrator_gap_min":         12.0,                  # min minutes between narrative passes
-    "narrator_deliver_to_chat": False,                 # push the narrative into the active chat
+    "narrator_deliver_to_chat": False,                 # (legacy) push the narrative into chat
     "narrator_think_timeout_s": 600,                   # MoE narration timeout (CPU, long OK)
     "narrator_history":         40,                    # rolling narrative entries kept
+    # ── Two-speed: a FAST quick-take between the MoE's slower deep narratives ──
+    # A small model emits brief real-time observations often; the MoE does the
+    # deeper narrative on its own (slower) cadence. Quick takes skip the gather.
+    "narrator_quick_enabled":   True,
+    "narrator_quick_model":     "qwen3.5:9b",          # fast one-liner model (CPU)
+    "narrator_quick_gap_min":   3.0,                    # quick-take cadence (< narrator_gap_min)
+    "narrator_quick_history":   30,
+    # ── Idle → GPU: when the user's been idle a while the GPU is free, so let the
+    #    MoE narrate there (faster/deeper); stay CPU-only while the user is active
+    #    so it never contends with foreground work. ────────────────────────────
+    "narrator_idle_gpu":        False,
+    "narrator_idle_gpu_after_min": 15.0,
+    # ── Delivery channels for narratives + quick takes: any of chat|telegram|speak
+    "narrator_deliver":         [],
 }
 
 _DIRECTOR_TASK: Optional[asyncio.Task] = None
@@ -11270,6 +11284,7 @@ async def _director_auto_drain(cfg: Dict[str, Any]) -> None:
 # evolving narrative. Both CPU-routed (job_type="dream_director": deny_gpu +
 # avoid_embed = a non-embedding CPU node).
 _LAST_NARRATOR_THINK: List[float] = [0.0]
+_LAST_NARRATOR_QUICK: List[float] = [0.0]
 
 # The read-only probe kit the gatherer may operate. name → {desc, args-hint}.
 # Only entries actually registered as caps are offered (filtered at runtime), so
@@ -11466,6 +11481,16 @@ async def _narrator_narrate(cfg: Dict[str, Any], initial: str, digest: str) -> D
     recent_txt = "\n".join("- " + (t.get("narrative") or "")[:240] for t in recent
                            if (t.get("narrative") or "").strip())
     model = cfg.get("narrator_model") or "qwen3.6:35b-a3b"
+    # Idle → GPU: when the user has been idle past the threshold the GPU is free,
+    # so run the heavy MoE narrate THERE (faster, deeper). While the user is active
+    # stay on the non-embedding CPU node (dream_director) so it never contends.
+    _job, _pgpu = "dream_director", False
+    if cfg.get("narrator_idle_gpu"):
+        try:
+            if (await _idle_minutes()) >= float(cfg.get("narrator_idle_gpu_after_min", 15.0) or 0):
+                _job, _pgpu = "chat", True
+        except Exception:
+            pass
     sys_p = (
         "You are VERA's inner NARRATOR — the reflective voice that gives the whole "
         "system a personality and a sense of where it's going. You are SERVED a "
@@ -11482,8 +11507,8 @@ async def _narrator_narrate(cfg: Dict[str, Any], initial: str, digest: str) -> D
         '\n\nRespond ONLY JSON: {"narrative":"<the evolving narrative>",'
         '"mood":"<one or two words>","steer":"<what deserves attention next, one line>"}')
     try:
-        raw = await gen(prompt, system=sys_p, json_mode=True, prefer_gpu=False,
-                        job_type="dream_director", model=model,
+        raw = await gen(prompt, system=sys_p, json_mode=True, prefer_gpu=_pgpu,
+                        job_type=_job, model=model,
                         timeout=float(cfg.get("narrator_think_timeout_s", 600) or 600))
     except Exception as e:
         log.debug("narrator narrate gen: %s", e)
@@ -11544,14 +11569,96 @@ async def _narrator_think_once(cfg: Optional[Dict[str, Any]] = None,
                               data={"mood": entry["mood"], "steer": entry["steer"]})
     except Exception:
         pass
-    if cfg.get("narrator_deliver_to_chat"):
+    await _narrator_deliver(cfg, text, title="📖 Vera")
+    return {"ok": True, "narrative": text, "mood": entry["mood"], "steer": entry["steer"]}
+
+
+KEY_NARRATOR_QUICK = "vera:system:narrator:quick"   # rolling quick-take JSON list
+
+
+async def _narrator_deliver(cfg: Dict[str, Any], text: str, title: str = "📖 Vera") -> None:
+    """Deliver a narrative / quick-take to the configured channels: chat, telegram,
+    speak (TTS). Best-effort — a failing channel never blocks the others."""
+    channels = list(cfg.get("narrator_deliver") or [])
+    if cfg.get("narrator_deliver_to_chat") and "chat" not in channels:
+        channels.append("chat")                       # legacy flag → chat channel
+    if not channels:
+        return
+    sid = ""
+    try:
+        _act, sid = await _director_recent_activity()
+    except Exception:
+        sid = ""
+    for ch in channels:
         try:
-            _act, sid = await _director_recent_activity()
-            if sid:
-                await _director_deliver(text, sid, cfg, title="📖 Vera")
+            if ch in ("chat", "speak"):
+                if sid:
+                    _c = dict(cfg)
+                    _c["speak"] = True if ch == "speak" else bool(cfg.get("speak"))
+                    await _director_deliver(text, sid, _c, title=title)
+            elif ch in ("telegram", "tg"):
+                tg = CAPABILITY_REGISTRY.get("tg.notify") or CAPABILITY_REGISTRY.get("tg.send")
+                if tg and tg.get("func"):
+                    await tg["func"](text=f"{title}\n{text}"[:3500])
+        except Exception as e:
+            log.debug("narrator deliver[%s]: %s", ch, e)
+
+
+async def _narrator_quick_take(cfg: Dict[str, Any], force: bool = False) -> Dict[str, Any]:
+    """Fast tier: a small model emits ONE brief real-time observation about what's
+    happening now — cheaper + far more frequent than the MoE deep narrative, and it
+    SKIPS the gather. Grounds on the initial state + the last few takes."""
+    if not force and _director_cpu_pressure():
+        return {"ok": False, "backoff": True}
+    gen = getattr(_orch, "ollama_generate", None)
+    if not gen:
+        return {"ok": False}
+    # LEAN context — the quick tier is meant to be FAST, so it uses a compact view
+    # (recent activity + the last deep narrative), NOT the full initial-state probe.
+    try:
+        act_lines, _sid = await _director_recent_activity(limit=6)
+    except Exception:
+        act_lines = []
+    _last = await _narrator_recent(1)
+    _lastn = (_last[0].get("narrative") or "")[:300] if _last else ""
+    initial = ("RECENT ACTIVITY (newest first):\n" + "\n".join(act_lines[:6]) +
+               (("\n\nLAST DEEP NARRATIVE (continuity):\n" + _lastn) if _lastn else ""))
+    recent, r = [], _redis()
+    if r:
+        try:
+            raw = await r.lrange(KEY_NARRATOR_QUICK, 0, 4)
+            recent = [json.loads(_rd(x)).get("text", "") for x in (raw or [])]
+        except Exception:
+            recent = []
+    recent_txt = "\n".join("- " + t[:160] for t in recent if t)
+    model = cfg.get("narrator_quick_model") or "qwen3.5:9b"
+    sys_p = ("You are VERA's quick inner voice — a brief, real-time observation of what's "
+             "happening in the system / the watched world RIGHT NOW. ONE sentence, "
+             "characterful, specific. Build on your recent takes; if nothing genuinely new, "
+             "return an empty take. " + _director_addressing(cfg))
+    prompt = (initial + (("\n\nYOUR RECENT TAKES:\n" + recent_txt) if recent_txt else "")
+              + '\n\nRespond ONLY JSON: {"take":"<one sentence, or empty if nothing new>"}')
+    try:
+        raw = await gen(prompt, system=sys_p, json_mode=True, prefer_gpu=False,
+                        job_type="dream_director", model=model, timeout=180)
+    except Exception as e:
+        log.debug("narrator quick gen: %s", e)
+        return {"ok": False}
+    take = str(_narrator_parse_json(raw).get("take") or "").strip()
+    if not take:
+        return {"ok": True, "take": ""}
+    if r:
+        try:
+            await r.lpush(KEY_NARRATOR_QUICK, json.dumps({"text": take, "ts": now_iso()}))
+            await r.ltrim(KEY_NARRATOR_QUICK, 0, int(cfg.get("narrator_quick_history", 30)) - 1)
         except Exception:
             pass
-    return {"ok": True, "narrative": text, "mood": entry["mood"], "steer": entry["steer"]}
+    try:
+        await emit_event({"type": "dream.narrator.quick", "take": take})
+    except Exception:
+        pass
+    await _narrator_deliver(cfg, take, title="💬 Vera")
+    return {"ok": True, "take": take}
 
 
 async def _director_loop():
@@ -11564,6 +11671,12 @@ async def _director_loop():
             tick = max(60, int(cfg.get("tick_seconds", 240)))
             d_enabled = bool(cfg.get("enabled", True))            # PA / dream director
             n_enabled = bool(cfg.get("narrator_enabled", False))  # system narrator
+            # Tick at least as often as the narrator's fast-tier cadence so quick
+            # takes actually feel real-time (floored at 60s).
+            if n_enabled and cfg.get("narrator_quick_enabled"):
+                _q = float(cfg.get("narrator_quick_gap_min", 3.0) or 0) * 60.0
+                if _q > 0:
+                    tick = min(tick, max(60, int(_q)))
             # The loop is shared: it runs while EITHER the PA director OR the system
             # narrator is enabled, so the narrator can run with the dream system off.
             if not d_enabled and not n_enabled:
@@ -11578,6 +11691,16 @@ async def _director_loop():
             # ── System narrator pass — own cadence, independent of the PA director
             #    AND the dream cycle system. A live conversation defers to the PA.
             if n_enabled and not conv:
+                # Fast tier: quick real-time takes on a short cadence.
+                if cfg.get("narrator_quick_enabled"):
+                    q_gap = float(cfg.get("narrator_quick_gap_min", 3.0) or 0)
+                    if q_gap <= 0 or (time.time() - _LAST_NARRATOR_QUICK[0]) >= q_gap * 60.0:
+                        try:
+                            await _narrator_quick_take(cfg)
+                        except Exception as e:
+                            log.warning("narrator quick: %s", e)
+                        _LAST_NARRATOR_QUICK[0] = time.time()
+                # Slow tier: the MoE deep narrative on its own (longer) cadence.
                 n_gap = float(cfg.get("narrator_gap_min", 12.0) or 0)
                 if n_gap <= 0 or (time.time() - _LAST_NARRATOR_THINK[0]) >= n_gap * 60.0:
                     try:
@@ -11824,8 +11947,10 @@ async def system_narrator_status(trace_id=None):
     "system.narrator.config", memory="off",
     http_method="POST", http_path="/system/narrator/config", http_tags=["dream", "narrator"],
     description="Configure the narrator. Fields (all optional): model (MoE narrator), "
-                "gatherer_model (small probe-kit operator), gap_min, max_probes, "
-                "deliver_to_chat (bool), think_timeout_s.",
+                "gatherer_model, gap_min, max_probes, think_timeout_s; two-speed: "
+                "quick_enabled (bool), quick_model, quick_gap_min; idle_gpu (bool) + "
+                "idle_gpu_after_min (MoE narrate on the GPU once idle that long); "
+                "deliver (list/csv of chat|telegram|speak); deliver_to_chat (legacy).",
 )
 async def system_narrator_config(model: Optional[str] = None,
                                  gatherer_model: Optional[str] = None,
@@ -11833,6 +11958,12 @@ async def system_narrator_config(model: Optional[str] = None,
                                  max_probes: Optional[int] = None,
                                  deliver_to_chat: Optional[bool] = None,
                                  think_timeout_s: Optional[int] = None,
+                                 quick_enabled: Optional[bool] = None,
+                                 quick_model: Optional[str] = None,
+                                 quick_gap_min: Optional[float] = None,
+                                 idle_gpu: Optional[bool] = None,
+                                 idle_gpu_after_min: Optional[float] = None,
+                                 deliver: Optional[Any] = None,
                                  trace_id=None):
     patch: Dict[str, Any] = {}
     if model is not None:            patch["narrator_model"] = model
@@ -11841,11 +11972,22 @@ async def system_narrator_config(model: Optional[str] = None,
     if max_probes is not None:       patch["narrator_max_probes"] = int(max_probes)
     if deliver_to_chat is not None:  patch["narrator_deliver_to_chat"] = bool(deliver_to_chat)
     if think_timeout_s is not None:  patch["narrator_think_timeout_s"] = int(think_timeout_s)
+    if quick_enabled is not None:    patch["narrator_quick_enabled"] = bool(quick_enabled)
+    if quick_model is not None:      patch["narrator_quick_model"] = quick_model
+    if quick_gap_min is not None:    patch["narrator_quick_gap_min"] = float(quick_gap_min)
+    if idle_gpu is not None:         patch["narrator_idle_gpu"] = bool(idle_gpu)
+    if idle_gpu_after_min is not None: patch["narrator_idle_gpu_after_min"] = float(idle_gpu_after_min)
+    if deliver is not None:
+        if isinstance(deliver, str):
+            deliver = [c.strip() for c in deliver.split(",") if c.strip()]
+        patch["narrator_deliver"] = [str(c) for c in (deliver or [])]
     cfg = await _director_cfg_patch(patch)
     return {"ok": True, "config": {k: cfg.get(k) for k in (
         "narrator_enabled", "narrator_model", "narrator_gatherer_model",
         "narrator_gap_min", "narrator_max_probes", "narrator_deliver_to_chat",
-        "narrator_think_timeout_s")}}
+        "narrator_think_timeout_s", "narrator_quick_enabled", "narrator_quick_model",
+        "narrator_quick_gap_min", "narrator_idle_gpu", "narrator_idle_gpu_after_min",
+        "narrator_deliver")}}
 
 
 @capability(
@@ -11856,6 +11998,16 @@ async def system_narrator_config(model: Optional[str] = None,
 )
 async def system_narrator_think(trace_id=None):
     return await _narrator_think_once(force=True)
+
+
+@capability(
+    "system.narrator.quick", memory="off",
+    http_method="POST", http_path="/system/narrator/quick", http_tags=["dream", "narrator"],
+    description="Run ONE fast quick-take NOW (the two-speed fast tier — a brief "
+                "real-time observation, no gather). Output: {ok, take}.",
+)
+async def system_narrator_quick(trace_id=None):
+    return await _narrator_quick_take(await _director_cfg(), force=True)
 
 
 @capability(
