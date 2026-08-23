@@ -192,18 +192,18 @@ def _pxe_slug(s: str) -> str:
     return ("".join(c if (c.isalnum() or c == "-") else "-" for c in s).strip("-")) or "node"
 
 
-def _render_features_script(feats: List[str], cluster_scripts: List[str] = None) -> str:
+def _render_features_script(feats: List[str], cluster_scripts: List[str] = None,
+                            feature_scripts: List[str] = None) -> str:
     """First-boot script applying the SAME feature bundles as CT/VM (target-agnostic).
     `cluster_scripts` are pre-rendered cluster-join snippets (from cluster_join_script,
     resolved against the Foundry cluster registry in the app layer and passed in so
     this stays pure) — e.g. join a Docker Swarm / k3s / Nomad / Ray cluster."""
-    out = ["#!/bin/sh", "set -e", "# Foundry feature bundles — applied on first boot"]
-    if "hardening" in feats:
-        out += ["# --- hardening ---", _HARDEN]
-    if "file-client" in feats:
-        out += ["# --- file-client ---",
-                "command -v apt-get >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive "
-                "apt-get install -y cifs-utils nfs-common autofs >/dev/null 2>&1 || true"]
+    out = ["#!/bin/sh", "# Foundry feature bundles — applied on first boot"]
+    # OS-agnostic feature bundles (features_core) rendered by the app layer and
+    # passed in — same portable scripts CT/VM provisioning applies.
+    for _fs in (feature_scripts or []):
+        if _fs and _fs.strip():
+            out += ["", _fs]
     # real cluster / distributed-compute joins resolved from the registry
     for cs in (cluster_scripts or []):
         if cs and cs.strip():
@@ -273,7 +273,8 @@ def _render_ipxe(profile: Dict, cfg: Dict, image: Dict, http: str) -> str:
 
 
 def _render_autoinstall(profile: Dict, cfg: Dict, feats: List[str],
-                        cluster_scripts: List[str] = None) -> str:
+                        cluster_scripts: List[str] = None,
+                        feature_scripts: List[str] = None) -> str:
     """cloud-init NoCloud user-data: static net + run the feature bundle on first boot."""
     ip = profile.get("ip", "")
     gw = cfg.get("gateway", "")
@@ -283,7 +284,7 @@ def _render_autoinstall(profile: Dict, cfg: Dict, feats: List[str],
                f"      addresses: [{ip}/24]\n      routes: [{{to: default, via: {gw}}}]\n")
     # embed the feature script base64 (encoding: b64) so arbitrary shell content
     # can never break the YAML block-scalar indentation.
-    fb64 = base64.b64encode(_render_features_script(feats, cluster_scripts).encode()).decode()
+    fb64 = base64.b64encode(_render_features_script(feats, cluster_scripts, feature_scripts).encode()).decode()
     return ("#cloud-config\n"
             f"hostname: {_pxe_slug(profile.get('name','node'))}\n"
             "ssh_pwauth: false\n"
@@ -295,7 +296,8 @@ def _render_autoinstall(profile: Dict, cfg: Dict, feats: List[str],
 
 
 def _render_boot(profile: Dict, cfg: Dict, image: Dict,
-                 cluster_scripts: List[str] = None) -> Dict:
+                 cluster_scripts: List[str] = None,
+                 feature_scripts: List[str] = None) -> Dict:
     """Turn a PXE profile into its netboot artifacts — unified across x86 + RPi.
     `cluster_scripts` (from the app, resolved against the cluster registry) bake
     Docker Swarm / k3s / Nomad / Ray joins into the first-boot feature script."""
@@ -305,7 +307,7 @@ def _render_boot(profile: Dict, cfg: Dict, image: Dict,
     display = (profile.get("display") or "hdmi").lower()
     feats = profile.get("features") or []
     http = cfg.get("http_base") or f"http://{cfg.get('gateway','10.42.0.1')}/foundry"
-    artifacts: Dict[str, str] = {"features.sh": _render_features_script(feats, cluster_scripts)}
+    artifacts: Dict[str, str] = {"features.sh": _render_features_script(feats, cluster_scripts, feature_scripts)}
     if boot_type in ("rpi-netboot", "rpi-flash"):
         artifacts["config.txt"] = _render_rpi_config(display, profile.get("display_opts"))
         artifacts["cmdline.txt"] = _render_rpi_cmdline(profile, cfg)
@@ -318,7 +320,7 @@ def _render_boot(profile: Dict, cfg: Dict, image: Dict,
                 "# 3) copy features.sh + a firstrun hook into the rootfs\n")
     else:
         artifacts["boot.ipxe"] = _render_ipxe(profile, cfg, image, http)
-        artifacts["autoinstall/user-data"] = _render_autoinstall(profile, cfg, feats, cluster_scripts)
+        artifacts["autoinstall/user-data"] = _render_autoinstall(profile, cfg, feats, cluster_scripts, feature_scripts)
         artifacts["autoinstall/meta-data"] = \
             f"instance-id: {_pxe_slug(profile.get('name','node'))}\n"
     return {"boot_type": boot_type, "arch": arch, "display": display,
