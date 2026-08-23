@@ -50,3 +50,16 @@ def test_registry_wiring():
     # foundry-mode prefers the served FOUNDRY_VERA_IMAGE over the vera:latest default
     s = foundry_mode_script("10.22.22.25")
     assert "'^FOUNDRY_VERA_IMAGE='" in s and "cut -d= -f2-" in s
+
+
+def test_diskless_autostart_wiring():
+    from vera.foundry.foundry_core import (pxe_ops_apkovl_files, pxe_desktop_apkovl_files,
+                                           _FOUNDRY_BOOT)
+    for build, startfile in ((pxe_ops_apkovl_files, "etc/local.d/foundry.start"),
+                             (pxe_desktop_apkovl_files, "etc/local.d/desktop.start")):
+        ov = build("10.22.22.25")
+        assert "usr/local/bin/foundry-boot" in ov                      # launcher baked
+        assert "::once:/usr/local/bin/foundry-boot" in ov["etc/inittab"]  # fired from inittab
+        assert "/tmp/foundry-start.lock" in ov[startfile]              # run-once guard
+    assert "apk add newt" in pxe_desktop_apkovl_files("10.22.22.25")["etc/local.d/desktop.start"]
+    assert "/etc/local.d/*.start" in _FOUNDRY_BOOT                     # launcher runs local.d
