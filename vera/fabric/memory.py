@@ -146,6 +146,19 @@ NEO4J_PASSWORD = cfg.NEO4J_PASS
 OLLAMA_EMBED_URL = cfg.OLLAMA_EMBED_URL
 OLLAMA_EMBED_MODEL = cfg.OLLAMA_EMBED_MODEL
 MEMORY_AUTO_EMBED   = os.getenv("MEMORY_AUTO_EMBED",   "1") == "1"
+# Match data_fabric._embed's normalize flag EXACTLY. ollama_embed's de-dup cache
+# is keyed by (model | normalize | provider | text-hash); memory and the fabric
+# embed the SAME chat text, so a MISMATCHED normalize flag yields different keys
+# and the shared cache never collapses them — the text is embedded TWICE (2x load
+# on the serialised CPU embed nodes, which then slows the query-embed that recall
+# blocks on). data_fabric uses normalize=HAS_NUMPY; mirror it so the keys match
+# and the second store's embed is a cache hit. Memory's Chroma cosine space is
+# normalise-agnostic, so this does not change retrieval results.
+try:
+    import numpy as _np_probe     # noqa: F401  (presence probe only)
+    _EMBED_NORMALIZE = True
+except Exception:
+    _EMBED_NORMALIZE = False
 MEMORY_PROMO_STREAM = "vera:events"
 MEMORY_EVENT_TYPES  = {"memory.store", "memory.promote", "llm.generate", "cap.ok"}
 
@@ -1353,7 +1366,8 @@ async def embed_text(text: str) -> Optional[List[float]]:
         return None
     try:
         from Vera.vera.capability_orchestration import ollama_embed
-        vec = await ollama_embed(text, model=OLLAMA_EMBED_MODEL)
+        vec = await ollama_embed(text, model=OLLAMA_EMBED_MODEL,
+                                 normalize=_EMBED_NORMALIZE)
         if vec is None:
             first = not _EMBED_FAILED_AT
             _EMBED_FAILED_AT = time.monotonic()
