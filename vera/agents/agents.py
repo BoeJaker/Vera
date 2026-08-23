@@ -1056,7 +1056,11 @@ async def agent_rag_retrieve(rec: AgentRecord, query: str,
         r = await _call_registered_cap("fabric.query", text=query[:400],
                                        dataset_id=ds, top_k=limit)
         for row in (r.get("results") or [])[:limit]:
-            summ = (row.get("summary") or "").strip()
+            # Web-fetched sources ingest their content into `text`, not `summary`
+            # (only some pipelines set a summary) — fall back to `text` so retrieval
+            # actually surfaces them. Without this, EVERY web-source agent RAG query
+            # silently returned nothing despite the records being present + indexed.
+            summ = (row.get("summary") or "").strip() or (row.get("text") or "").strip()
             if summ:
                 out.append({"dataset": ds, "text": summ[:600],
                             "score": row.get("score")})
