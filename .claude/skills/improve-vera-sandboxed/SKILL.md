@@ -50,14 +50,23 @@ editing is the rare exception (small, urgent, explicitly sanctioned infra fix).
   `ollama.gate` (is someone mid-generation?) and warn — a restart interrupts
   every agent's prod-side cap calls.
 - **Sandbox pool is finite (Redis DBs 3–15, 13 slots) and fills up fast** — the
-  swarm routinely runs 10+ concurrent branches. `evolve.sandbox.up(branch=…)`
-  can fail with `no free Redis DB in the pool`. Check `evolve.sandbox.list`
+  swarm routinely runs 10+ concurrent branches. `evolve.sandbox.spawn` can
+  fail with `no free Redis DB in the pool`. Check `evolve.sandbox.list`
   first; `evolve.sandbox.prune(dry_run=true)` shows what's reapable (usually
-  nothing — other agents' unmerged WIP is protected on purpose). If the
-  **primary** is idle (its branch's own pipeline already promoted/merged), it's
-  fine to reuse it for your own unrelated work — `evolve.sandbox.up` on a new
-  branch just switches it; this is the normal way most work in this skill
-  actually gets a sandbox, not `spawn=true`, which needs its own free slot.
+  nothing — other agents' unmerged WIP is protected on purpose). The
+  primary is an owned singleton, not spare capacity. Do not switch it merely
+  because its branch looks merged: ownership can outlive a branch ref. Use
+  `pipeline.begin(..., spawn=true)`/`sandbox.spawn`. If no additive slot is
+  safely available, wait or report the capacity blocker.
+- **Lifecycle operations are exact-target and dry-run first.** Never use
+  `evolve.sandbox.up` to refresh a spawned branch — that controls the primary.
+  Use `evolve.sandbox.restart(branch=..., dry_run=true)` and then restart the
+  same exact branch in place. Before primary `up`, restart, or teardown, inspect
+  the dry run; unknown/unobservable ownership fails closed as occupied. Primary
+  replacement requires the owner's explicit release plus
+  `replace_primary=true`. `sandbox.down` now preserves worktrees by default;
+  pass `remove_worktree=true` only after its dry run names the intended clean
+  worktree. Never use teardown as a restart.
 - **Prod is flaky mid-restart** — another agent restarting it (or you, later in
   the same session) causes transient `EOF`/`SSL` errors on any call, including
   plain `GET /health`, for up to ~30s. Retry with a short poll loop before
@@ -168,10 +177,11 @@ records the CI/CD pipeline **with its worktree** (so diff/test work). It
 returns `{id, branch, worktree, url, next[]}` — the exact next caps. No more
 guessing the setup steps.
 
-Lower-level alternative (if you need control, or the pool is full — see §0):
-`evolve.sandbox.up(branch=…)` (your primary sandbox, reused/switched) or
-`evolve.sandbox.spawn(branch=…)` (own container, needs a free pool slot); create
-the branch first with `git branch feat/<name> origin/bleeding-edge` (§2).
+Lower-level alternative (if you need control):
+`evolve.sandbox.spawn(branch=…)` creates an additive container; create the
+branch first with `git branch feat/<name> origin/bleeding-edge` (§2).
+`evolve.sandbox.up` is reserved for the primary and refuses a different owner
+unless `replace_primary=true`; it is not a pool-capacity workaround.
 Poll `evolve.sandbox.status` for `reachable`.
 
 **Edit only inside the returned worktree.** Never the main checkout.
@@ -260,7 +270,9 @@ commit, same as code, then land via §7 like any other change.
     insert above; `Vera.vera.X` there still hits main.
 - **Loop Lab task** (`evolve.task.upsert`) for behavioural/loop changes, with
   `checks` that would actually fail if the bug returned.
-- Verify the module **boots** — `evolve.sandbox.up` on the branch; a reachable
+- Verify the module **boots** — restart your exact spawned branch with
+  `evolve.sandbox.restart` (dry-run first), or recreate only your container with
+  `evolve.sandbox.spawn`; a reachable
   probe (tool_count went up for a new cap) means every `_module_files` import,
   including yours, loaded (import-time errors py_compile misses).
 
@@ -288,8 +300,9 @@ description on the cap itself is the source of truth if this drifts):
    runs when `.py` changed; fast, dependency-free.
 2. **Critical-tier gate** — `pytest -m critical` (§6) via `evolve.unittest.run`,
    in an isolated ephemeral container. Runs when `.py` changed AND the branch
-   has a live worktree (bring one up first — `evolve.sandbox.up`/`begin`
-   already gives you one). Skipped (falls back to the compile gate alone,
+   has a live worktree (materialise one with `evolve.sandbox.spawn` or
+   `pipeline.begin(..., spawn=true)`; both
+   give you one). Skipped (falls back to the compile gate alone,
    same as before) if there's no live worktree yet.
 
 `gate_passed` is `true` only when both applicable checks pass; `null` when
