@@ -5165,7 +5165,9 @@ async def evolve_pipeline_begin(title: str = "", branch: str = "", spawn: bool =
         cr = await _git("branch", br, base, repo_root=root)
         if not cr["ok"]:
             return {"error": f"branch create failed: {cr['err'] or cr['out']}"}
-    up = await (evolve_sandbox_spawn(branch=br) if spawn else evolve_sandbox_up(branch=br))
+    up = await (evolve_sandbox_spawn(
+        branch=br, owner=_triggered_by(), session_id=session_id,
+    ) if spawn else evolve_sandbox_up(branch=br))
     if up.get("error"):
         return {"error": f"sandbox up failed: {up['error']}", "branch": br}
     wt = (up.get("sandbox") or {}).get("worktree") or up.get("worktree", "")
@@ -6624,6 +6626,8 @@ from Vera.vera.evolve.sandbox_reap import (          # noqa: E402
     is_trunk_protected as _is_trunk_protected,
 )
 from Vera.vera.evolve.sandbox_lifecycle import (     # noqa: E402
+    classify_sandbox as _classify_sandbox,
+    lifecycle_preflight as _lifecycle_preflight,
     primary_replacement_conflict as _primary_replacement_conflict,
     resolve_restart_target as _resolve_restart_target,
 )
@@ -6661,7 +6665,8 @@ async def _sandbox_pool() -> Dict[str, Dict[str, Any]]:
                         "the pool. Additive: never disturbs existing sandboxes. Inputs: "
                         "branch (str!), rebuild_image (bool). Output: {ok, name, port, "
                         "redis_db, branch, url, reachable}.")
-async def evolve_sandbox_spawn(branch: str = "", rebuild_image: bool = False, trace_id=None):
+async def evolve_sandbox_spawn(branch: str = "", rebuild_image: bool = False,
+                               owner: str = "", session_id: str = "", trace_id=None):
     branch = (branch or "").strip()
     if not branch:
         return {"error": "branch required"}
@@ -6696,8 +6701,12 @@ async def evolve_sandbox_spawn(branch: str = "", rebuild_image: bool = False, tr
     if not up["ok"]:
         return {"error": f"docker compose up failed: {up['err'] or up['out']}",
                 "hint": "requires docker + the vera:latest image on this host"}
+    created = now_iso()
     desc = {"branch": branch, "slug": safe, "name": name, "port": port, "redis_db": db,
-            "compose": compose_file, "worktree": str(wt_abs), "started_at": now_iso()}
+            "compose": compose_file, "worktree": str(wt_abs), "started_at": created,
+            "created_at": created, "last_activity": created,
+            "owner": (owner or _triggered_by()).strip(),
+            "session_id": (session_id or "").strip()}
     r = _redis()
     if r:
         try:
@@ -8090,9 +8099,11 @@ async def evolve_sandbox_up(branch: str = "", snapshot: bool = True,
         return {"error": f"docker compose up failed: {up['err'] or up['out']}",
                 "hint": "requires docker + the vera:latest image on this host"}
 
+    created = now_iso()
     sb = {"branch": branch, "worktree": str(wt_abs), "port": port,
           "redis_db": DEV_REDIS_DB, "compose": _DEV_COMPOSE,
-          "started_at": now_iso()}
+          "started_at": created, "created_at": created,
+          "last_activity": created, "owner": _triggered_by(), "session_id": ""}
     r = _redis()
     if r:
         await r.set(KEY_SANDBOX, json.dumps(sb, default=str))
@@ -8244,6 +8255,50 @@ async def evolve_sandbox_ensure(branch: str = "", rebuild_image: bool = False,
             "healthy": up.get("healthy"), "stale": up.get("stale"), "error": up.get("error")}
 
 
+async def _sandbox_observation(descriptor: Dict[str, Any]) -> Dict[str, Any]:
+    """Collect read-only Docker, filesystem and Git facts for one descriptor."""
+    name = str(descriptor.get("name") or "")
+    worktree = str(descriptor.get("worktree") or "")
+    probe = await _sh(["docker", "inspect", "-f", "{{.State.Status}}", name], timeout=15)
+    detail = f"{probe.get('err') or ''} {probe.get('out') or ''}".lower()
+    missing = "no such object" in detail or "no such container" in detail
+    docker_observable = bool(probe.get("ok") or missing)
+    container_status = (probe.get("out") or "").strip().lower() if probe.get("ok") else ""
+    worktree_exists = bool(worktree and Path(worktree).is_dir())
+    head = ""
+    dirty: Optional[bool] = None
+    merged: Optional[bool] = None
+    bleeding_edge_commit = ""
+    if worktree_exists:
+        head_probe = await _git("rev-parse", "HEAD", repo_root=Path(worktree))
+        if head_probe.get("ok"):
+            head = head_probe.get("out", "")
+        status_probe = await _git("status", "--porcelain", repo_root=Path(worktree))
+        if status_probe.get("ok"):
+            dirty = bool(status_probe.get("out"))
+        merge_probe = await _git("merge-base", "--is-ancestor", "HEAD", "bleeding-edge",
+                                 repo_root=Path(worktree))
+        if merge_probe.get("code") in (0, 1):
+            merged = merge_probe.get("code") == 0
+        be_probe = await _git("rev-parse", "bleeding-edge", repo_root=Path(worktree))
+        if be_probe.get("ok"):
+            bleeding_edge_commit = be_probe.get("out", "")
+    return {
+        "docker_observable": docker_observable,
+        "container_status": container_status,
+        "worktree_exists": worktree_exists,
+        "head_commit": head,
+        "bleeding_edge_commit": bleeding_edge_commit,
+        "merged_to_bleeding_edge": merged,
+        "dirty": dirty,
+        "state": _classify_sandbox(
+            docker_observable=docker_observable,
+            container_status=container_status,
+            worktree_exists=worktree_exists,
+        ),
+    }
+
+
 @capability("evolve.sandbox.list", memory="off", silent=True,
             http_method="GET", http_path="/evolve/sandbox/list", http_tags=["evolve"],
             description="List ALL dev sandboxes — the primary vera-dev plus every "
@@ -8251,7 +8306,7 @@ async def evolve_sandbox_ensure(branch: str = "", rebuild_image: bool = False,
                         "name, host port, Redis DB, whether it is running, and its URL. "
                         "The unified view for the Loop Lab sandbox selector. Output: "
                         "{sandboxes:[{role,branch,name,port,redis_db,running,url}], count}.")
-async def evolve_sandbox_list(trace_id=None):
+async def evolve_sandbox_list(detail: bool = False, trace_id=None):
     ps = await _sh(["docker", "ps", "--format", "{{.Names}}"])
     running = {n.strip() for n in (ps.get("out", "") or "").splitlines() if n.strip()}
     # docker ps lists PAUSED containers too — separate them so 'running' is honest
@@ -8259,10 +8314,17 @@ async def evolve_sandbox_list(trace_id=None):
     psp = await _sh(["docker", "ps", "--filter", "status=paused", "--format", "{{.Names}}"])
     paused = {n.strip() for n in (psp.get("out", "") or "").splitlines() if n.strip()}
     pinned = await _sandbox_pinned()
+    activity: Dict[str, Any] = {}
     out: List[Dict[str, Any]] = []
     r = _redis()
     if r:
         try:
+            activity = await r.hgetall(KEY_SANDBOX_ACTIVITY) or {}
+            activity = {
+                (k.decode() if isinstance(k, bytes) else k):
+                (v.decode() if isinstance(v, bytes) else v)
+                for k, v in activity.items()
+            }
             raw = await r.get(KEY_SANDBOX)
             if raw:
                 pri = json.loads(raw.decode() if isinstance(raw, (bytes, bytearray)) else raw)
@@ -8276,7 +8338,12 @@ async def evolve_sandbox_list(trace_id=None):
                             "pinned": _SANDBOX_CONTAINER in pinned,
                             "url": f"{_psc or 'http'}://localhost:{_pp}",
                             "scheme": _psc or "http",
-                            "worktree": pri.get("worktree")})
+                            "worktree": pri.get("worktree"),
+                            "owner": pri.get("owner") or "unknown",
+                            "session_id": pri.get("session_id") or "",
+                            "created_at": pri.get("created_at") or pri.get("started_at") or "",
+                            "last_activity": activity.get(_SANDBOX_CONTAINER)
+                                             or pri.get("last_activity") or ""})
         except Exception:
             pass
     for slug, d in (await _sandbox_pool()).items():
@@ -8288,8 +8355,46 @@ async def evolve_sandbox_list(trace_id=None):
                     "paused": _nm in paused,
                     "pinned": _nm in pinned,
                     "url": d.get("url") or f"http://localhost:{d.get('port')}",
-                    "worktree": d.get("worktree")})
+                    "worktree": d.get("worktree"),
+                    "owner": d.get("owner") or "unknown",
+                    "session_id": d.get("session_id") or "",
+                    "created_at": d.get("created_at") or d.get("started_at") or "",
+                    "last_activity": activity.get(_nm) or d.get("last_activity") or ""})
+    if detail:
+        for item in out:
+            item.update(await _sandbox_observation(item))
     return {"sandboxes": out, "count": len(out)}
+
+
+@capability("evolve.sandbox.preflight", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/sandbox/preflight", http_tags=["evolve"],
+            description="Read-only lifecycle safety decision for exactly one sandbox. "
+                        "Reports ownership, runtime/Git state and whether restart, stop, "
+                        "reuse, removal or descriptor reconciliation is safe. Reconcile "
+                        "is planning-only in this slice and never mutates. Inputs: name or "
+                        "branch, action (restart|stop|reuse|remove|reconcile).")
+async def evolve_sandbox_preflight(name: str = "", branch: str = "",
+                                   action: str = "restart", trace_id=None):
+    primary, _ = await _primary_ownership()
+    target = _resolve_restart_target(
+        primary, await _sandbox_pool(), primary_name=_SANDBOX_CONTAINER,
+        name=name, branch=branch,
+    )
+    if target.get("error"):
+        return target
+    target["pinned"] = target.get("name") in await _sandbox_pinned()
+    observation = await _sandbox_observation(target)
+    decision = _lifecycle_preflight(
+        target, action=action,
+        docker_observable=observation["docker_observable"],
+        container_status=observation["container_status"],
+        worktree_exists=observation["worktree_exists"],
+        dirty=observation["dirty"],
+        merged_to_bleeding_edge=observation["merged_to_bleeding_edge"],
+    )
+    return {"ok": True, **decision, "sandbox": {**target, **observation},
+            "plan": ([] if not decision["allowed"] else [{"action": action,
+                     "target": target.get("name"), "branch": target.get("branch")}])}
 
 
 @capability("evolve.sandbox.down", memory="on",
