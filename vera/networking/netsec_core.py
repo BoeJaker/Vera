@@ -121,3 +121,23 @@ def wg_routes_for_member(routes, member_host: str):
             pass          # unparseable route -> keep (fail-open)
         kept.append(r)
     return kept
+
+
+def wg_client_config(ip, listen_port, peers, client_host=""):
+    """Render a self-enrolling mesh CLIENT's WireGuard config. `peers` is the existing
+    member list ({pubkey, ip, endpoint, routes}); the node substitutes __PRIVKEY__ with the
+    key it generated LOCALLY (its private key never leaves the node). Gateway routes the
+    client already sits inside are filtered (wg_routes_for_member). Pure -> unit-testable."""
+    lines = ["[Interface]", "PrivateKey = __PRIVKEY__", "Address = %s/32" % ip,
+             "ListenPort = %d" % int(listen_port or 51820), ""]
+    for p in (peers or []):
+        pk = p.get("pubkey"); pip = p.get("ip")
+        if not (pk and pip):
+            continue
+        routes = wg_routes_for_member(p.get("routes"), client_host)
+        lines += ["[Peer]", "PublicKey = %s" % pk,
+                  "AllowedIPs = %s" % wg_peer_allowed_ips(pip, routes)]
+        if p.get("endpoint"):
+            lines.append("Endpoint = %s" % p["endpoint"])
+        lines += ["PersistentKeepalive = 25", ""]
+    return "\n".join(lines)
