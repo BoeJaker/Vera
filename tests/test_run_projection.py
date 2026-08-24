@@ -201,6 +201,13 @@ def test_sqlite_registry_isolates_corrupt_run_during_recovery(tmp_path):
     assert recovered.recovery["failed"] == 1
     assert recovered.recovery["failures"] == [{
         "run_id": "broken", "error_type": "JournalCorruption"}]
+    public = recovered.recovery_status()
+    assert public["quarantined"] == 1
+    assert public["read_only"] is True
+    assert public["quarantined_refs"][0]["error_type"] == "JournalCorruption"
+    assert len(public["quarantined_refs"][0]["run_ref"]) == 12
+    assert "broken" not in str(public)
+    assert recovered.graph()["recovery"] == public
     reopened.close()
 
 

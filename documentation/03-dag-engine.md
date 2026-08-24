@@ -30,6 +30,12 @@ artifact references. One corrupt Run is omitted and reported without preventing
 healthy Runs from loading. Recovery rebuilds observation only: it never invokes
 the DAG, a capability, or a control request.
 
+`run.shadow.list`, `run.shadow.get`, and `run.shadow.graph` expose the same
+content-free recovery summary: whether startup recovery ran, recovered and
+quarantined counts, the configured catalog bound, and hashed quarantine
+references. Raw IDs from other quarantined Runs and error messages are not
+returned.
+
 Journals created before identity/checkpoint metadata was introduced can still be
 verified and exported, but older event rows may recover only the fields encoded
 in those events. The implementation does not invent missing lineage.

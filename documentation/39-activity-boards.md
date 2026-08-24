@@ -60,7 +60,9 @@ These distinctions are deliberate:
   available or verified.
 - With the opt-in SQLite journal, recovery verifies each checksum chain and
   rebuilds the newest bounded searchable projection catalog. Corrupt Runs are
-  isolated and reported; the UI still cannot replay or resume a native run.
+  isolated and reported. Activity shows aggregate recovered/quarantined counts
+  and the catalog bound, while the compact harness overlay adds status badges.
+  The UI still cannot replay or resume a native run.
 - Telemetry coverage is local and content-redacted. No OpenTelemetry or
   OpenInference export is claimed until an exporter actually runs.
 - Free-text failure/control reasons and result bodies are excluded from Activity

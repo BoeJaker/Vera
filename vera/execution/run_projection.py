@@ -48,6 +48,22 @@ class ShadowRunRegistry:
                 if isinstance(self.journal, SqliteRunJournal)
                 else "process_local_memory")
 
+    def recovery_status(self) -> dict[str, Any]:
+        """Public, content-free catalog recovery outcome with opaque failure refs."""
+        failures = self.recovery.get("failures") or []
+        return {
+            "attempted": bool(self.recovery.get("attempted")),
+            "recovered": int(self.recovery.get("recovered") or 0),
+            "quarantined": int(self.recovery.get("failed") or 0),
+            "quarantined_refs": [{
+                "run_ref": hashlib.sha256(str(item.get("run_id") or "").encode("utf-8"))
+                .hexdigest()[:12],
+                "error_type": str(item.get("error_type") or "recovery_error"),
+            } for item in failures[:20]],
+            "bounded_limit": self.max_runs,
+            "read_only": True,
+        }
+
     def record(self, run: Run, event: RunEvent) -> None:
         self.journal.register(run)
         self.runs[run.id] = run
@@ -87,7 +103,7 @@ class ShadowRunRegistry:
                     if child.parent_run_id == run_id]
         return {"authoritative": False, "storage": self.storage,
                 "run": run.to_dict(), "children": children,
-                "journal": verification, "recovery": dict(self.recovery)}
+                "journal": verification, "recovery": self.recovery_status()}
 
     def list(self, limit: int = 50) -> list[dict[str, Any]]:
         values = list(self.runs.values())[-max(1, min(int(limit), 200)):]
@@ -138,7 +154,8 @@ class ShadowRunRegistry:
                     "relation": "RUN_CHILD", "source": "run",
                 })
         return {"authoritative": False, "storage": self.storage,
-                "nodes": nodes, "edges": edges, "count": len(nodes)}
+                "nodes": nodes, "edges": edges, "count": len(nodes),
+                "recovery": self.recovery_status()}
 
 
 _journal_path = os.getenv("VERA_RUN_JOURNAL_PATH", "").strip()
