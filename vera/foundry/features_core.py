@@ -33,7 +33,8 @@ svc_enable(){
 }
 '''
 
-FEATURES = ("mesh", "distributed-compute", "hardening", "file-client")
+FEATURES = ("mesh", "distributed-compute", "hardening", "file-client",
+            "file-server", "security-monitoring")
 
 
 def _wrap(body: str) -> str:
@@ -122,6 +123,66 @@ def _file_client_feature(ctx) -> str:
     return _wrap("".join(lines))
 
 
+def _file_server_feature(ctx) -> str:
+    """Host SMB (Samba) + NFS exports. ctx.exports = [{path,name}]; default /srv/foundry."""
+    exports = ctx.get("exports") or [{"path": "/srv/foundry", "name": "foundry"}]
+    lines = [
+        "# feature: file-server -- host SMB (Samba) + NFS exports\n",
+        "pkg_install samba samba-common-bin nfs-kernel-server 2>/dev/null || "
+        "pkg_install samba nfs-utils 2>/dev/null || pkg_install samba nfs-server 2>/dev/null || true\n",
+        "mkdir -p /etc/samba 2>/dev/null; touch /etc/samba/smb.conf 2>/dev/null\n",
+        "grep -q '^\\[global\\]' /etc/samba/smb.conf 2>/dev/null || "
+        "printf '[global]\\n  workgroup = WORKGROUP\\n  server min protocol = SMB2\\n  map to guest = Bad User\\n' >> /etc/samba/smb.conf\n",
+    ]
+    for e in exports:
+        path = str(e.get("path", "")).strip()
+        name = str(e.get("name", "")).strip()
+        if not (path and name):
+            continue
+        lines.append("mkdir -p '" + path + "'; chmod 0777 '" + path + "' 2>/dev/null || true\n")
+        lines.append("grep -q '^\\[" + name + "\\]' /etc/samba/smb.conf 2>/dev/null || "
+                     "printf '[" + name + "]\\n  path = " + path + "\\n  browseable = yes\\n  read only = no\\n  guest ok = yes\\n' >> /etc/samba/smb.conf\n")
+        lines.append("grep -q ' " + path + " ' /etc/exports 2>/dev/null || "
+                     "echo '" + path + " *(rw,sync,no_subtree_check)' >> /etc/exports\n")
+    lines += [
+        "svc_enable smbd 2>/dev/null || svc_enable smb 2>/dev/null || svc_enable samba 2>/dev/null || true\n",
+        "svc_enable nmbd 2>/dev/null || svc_enable nmb 2>/dev/null || true\n",
+        "exportfs -ra 2>/dev/null || true\n",
+        "svc_enable nfs-kernel-server 2>/dev/null || svc_enable nfs-server 2>/dev/null || svc_enable nfs 2>/dev/null || true\n",
+        "echo '[foundry] file-server configured'\n",
+    ]
+    return _wrap("".join(lines))
+
+
+def _security_monitoring_feature(ctx) -> str:
+    """auditd baseline rules + optional remote log shipping (ctx.log_collector = rsyslog host)."""
+    collector = str(ctx.get("log_collector", "") or "").strip()
+    lines = [
+        "# feature: security-monitoring -- auditd baseline rules + optional remote log shipping\n",
+        "pkg_install auditd 2>/dev/null || pkg_install audit 2>/dev/null || true\n",
+        "mkdir -p /etc/audit/rules.d 2>/dev/null\n",
+        "cat > /etc/audit/rules.d/foundry.rules <<'ARULES'\n"
+        "-w /etc/passwd -p wa -k identity\n"
+        "-w /etc/shadow -p wa -k identity\n"
+        "-w /etc/ssh/sshd_config -p wa -k sshd\n"
+        "-w /etc/sudoers -p wa -k sudoers\n"
+        "-a always,exit -F arch=b64 -S execve -k exec\n"
+        "ARULES\n",
+        "augenrules --load 2>/dev/null || true\n",
+        "svc_enable auditd 2>/dev/null || svc_enable auditd.service 2>/dev/null || true\n",
+    ]
+    if collector:
+        lines += [
+            "pkg_install rsyslog 2>/dev/null || true\n",
+            "mkdir -p /etc/rsyslog.d 2>/dev/null\n",
+            "echo '*.* @@" + collector + ":514' > /etc/rsyslog.d/99-foundry-ship.conf\n",
+            "svc_enable rsyslog 2>/dev/null || true\n",
+            "(command -v systemctl >/dev/null 2>&1 && systemctl restart rsyslog 2>/dev/null) || rc-service rsyslog restart 2>/dev/null || true\n",
+        ]
+    lines.append("echo '[foundry] security-monitoring configured'\n")
+    return _wrap("".join(lines))
+
+
 def feature_script(feature: str, ctx=None) -> str:
     """Return the idempotent shell script for `feature`, or '' if unknown. `ctx` carries
     per-job values (vera_url, mesh_token, vera_image, vera_worker_env, registry, shares).
@@ -136,4 +197,8 @@ def feature_script(feature: str, ctx=None) -> str:
         return _hardening_feature(ctx)
     if feature == "file-client":
         return _file_client_feature(ctx)
+    if feature == "file-server":
+        return _file_server_feature(ctx)
+    if feature == "security-monitoring":
+        return _security_monitoring_feature(ctx)
     return ""
