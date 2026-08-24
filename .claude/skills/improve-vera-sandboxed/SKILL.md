@@ -193,6 +193,28 @@ Poll `evolve.sandbox.status` for `reachable`.
 or `evolve.sandbox.fs.write`). Never the main checkout. The bind mount makes a
 saved edit visible to the container immediately.
 
+### ⚠ CLAIM a hand-made worktree, or the sweep will delete it under you
+```
+evolve.worktree.claim(path="<worktree|branch>", owner="claude",
+                      session_id="<yours>", note="<what you're doing>")
+```
+The cleanup sweep protects the primary's worktree and every **registered
+sandbox's** worktree. A worktree you created yourself with `git worktree add`
+— which is what you end up doing whenever the sandbox pool is out of slots — has
+**no protection at all**, and it becomes reapable the moment its branch is merged.
+So *promoting your own work* marks the worktree you are still sitting in as
+disposable, and the next sweep removes it mid-session. Because a container or SMB
+usually holds the directory open, you get the SEVERED state (directory + `.git`
+file present, admin entry gone) rather than a clean deletion — which looks like
+repo corruption. This happened four times in one session before claims existed.
+
+- Claim it as soon as you create it; **re-claim to refresh** on a long session.
+- `evolve.worktree.release(path=…)` when you are genuinely finished.
+- A claim that lapses is NOT deleted — it moves to `review` for a human.
+- `evolve.worktree.claims` shows who holds what.
+
+A pipeline-managed sandbox worktree does not need this; it is already protected.
+
 Before changing a reused sandbox, read its revisioned handoff with
 `evolve.sandbox.workplan.get(name=…|branch=…)`. Create or update it through
 `evolve.sandbox.workplan.update` with the exact current revision, a concise work

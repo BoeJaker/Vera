@@ -52,6 +52,8 @@ def plan_reap(
     merged_branches: Iterable[str] = (),
     protected_branches: Iterable[str] = (),
     dirty_paths: Iterable[str] = (),
+    claimed_paths: Optional[Dict[str, str]] = None,
+    expired_claim_paths: Optional[Dict[str, str]] = None,
     base_branch: str = "main",
 ) -> Dict[str, List[Dict[str, Any]]]:
     """Classify git worktrees into keep / reap / review.
@@ -65,14 +67,32 @@ def plan_reap(
                         the guard that stops a "merged" verdict (which only sees
                         COMMITTED history) from clobbering work-in-progress a user
                         left uncommitted in a worktree.
+    claimed_paths:      {path: owner} — worktrees an agent has explicitly DECLARED
+                        it is still working in. Kept regardless of merge status.
+    expired_claim_paths:{path: owner} — claims whose holder stopped refreshing.
+                        Routed to review, never reaped: a lapsed claim means
+                        "nobody is saying they own this", not "this is disposable".
 
     Returns {"keep": [...], "reap": [...], "review": [...]} where each entry is
     {path, branch, reason}. Only `reap` entries are safe to auto-remove.
+
+    WHY CLAIMS EXIST: protection used to be available only to worktrees registered
+    as sandboxes (the primary, or a pool entry). A worktree an agent made by hand —
+    increasingly the norm, because the sandbox pool runs out of slots — could not
+    say it was in use. The moment its branch was promoted it became "0 unique
+    commits", so the very act of landing work marked the worktree you were still
+    working in as disposable, and the next sweep removed it mid-use. Because the
+    directory is usually held open by a bind-mount, the removal left it SEVERED
+    (dir + .git file present, admin entry gone) rather than cleanly gone, which
+    reads as repo corruption. A claim is the owner stating the fact, rather than
+    the sweep inferring it from file mtimes.
     """
     protected = {_norm(p) for p in protected_paths}
     merged = {(b or "").strip() for b in merged_branches}
     prot_branches = {(b or "").strip() for b in protected_branches}
     dirty = {_norm(p) for p in dirty_paths}
+    claimed = {_norm(p): (o or "?") for p, o in (claimed_paths or {}).items()}
+    expired = {_norm(p): (o or "?") for p, o in (expired_claim_paths or {}).items()}
     keep: List[Dict[str, Any]] = []
     reap: List[Dict[str, Any]] = []
     review: List[Dict[str, Any]] = []
@@ -90,6 +110,18 @@ def plan_reap(
             continue
         if branch and (branch in prot_branches or is_trunk_protected(branch)):
             keep.append({**entry, "reason": "protected branch"})
+            continue
+        # An explicit claim outranks a merged verdict: landing work does not mean
+        # you have stopped working in the worktree you landed it from.
+        if path in claimed:
+            keep.append({**entry,
+                         "reason": f"claimed by {claimed[path]} — in use"})
+            continue
+        # A LAPSED claim is not consent to delete — surface it, never auto-remove.
+        if path in expired:
+            review.append({**entry,
+                           "reason": f"claim by {expired[path]} expired — "
+                                     "confirm it is finished before removing"})
             continue
         # uncommitted changes trump a merged verdict — never silently discard WIP
         if path in dirty:
