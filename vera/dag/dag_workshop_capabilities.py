@@ -10829,7 +10829,19 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
                     + (f"⚠ it PARSES but CRASHED on a smoke-run ({runtime_err[-160:]}) — repair "
                        f"with code.edit before use. " if _runtime_bad
                        else ("✓ ran clean on a smoke-run. " if smoke_ran else ""))
-                    + f"Written and versioned. Run it with exec.python.run(path='{path}')."}
+                    + "Written and versioned. "
+                    # Say plainly that the checking is DONE. Without this the loop
+                    # spends whole cycles re-proving it — reading the file back with
+                    # ide.fs.read, `cat`-ing it, or improvising a shell syntax check —
+                    # and the old note made it worse by telling EVERY caller to run the
+                    # file with exec.python.run (2026-08-24 runs). EVERY language is
+                    # treated identically here: a .py is no more in need of a read-back
+                    # or a re-run than a .html is.
+                    + ("This file is ALREADY VERIFIED by a real parser above — do NOT read it "
+                       "back, `cat` it, re-parse it, or run it to check it; that is done. "
+                       "Touch it again ONLY if you need its CONTENT for a further change, or "
+                       "its OUTPUT as actual input to a later step."
+                       if not (_syntax_bad or _runtime_bad) else "")}
 
 
 # ── Grounded prose authoring ─────────────────────────────────────────────────
@@ -15556,7 +15568,12 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                                   "cached": "artifact-registry"})
                 pending_note = ("(that file was already in the run's registry and has not "
                                 "changed — served without re-reading. Its shape is above; "
-                                "act on it rather than reading it again.)")
+                                "act on it rather than reading it again.)"
+                                + (" It was written AND syntax-verified by the code author "
+                                   f"({_rec.get('checked_with')} clean), so reading it back, "
+                                   "`cat`-ing it or re-parsing it proves nothing new — that "
+                                   "check is already done. Move on to the next real action."
+                                   if _rec.get("parse_ok") and _rec.get("checked_with") else ""))
                 continue
 
         # ── Repeat of a call that already FAILED ─────────────────────────────
@@ -16509,6 +16526,31 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             _cres = invoke["result"]
             _cpath = _v5_art_key(str(_cres.get("path") or args.get("path") or ""))
             if _cpath:
+                # Register the CONTENT, not just the metadata. The read short-circuit
+                # above only serves a record that HAS content, so a metadata-only
+                # record left the very FIRST read-back of a freshly authored file
+                # going to disk — the loop spending a whole cycle re-confirming what
+                # code.author had already parser-verified (2026-08-24 runs, every
+                # language). code.author's result carries no content, so read it back
+                # from the file it just wrote — once, locally, off the event loop.
+                _cfs = str(_cres.get("fs_path") or "")
+                if _cfs:
+                    def _slurp(p: str) -> str:
+                        try:
+                            if os.path.getsize(p) > _V5_ART_CACHE_MAX * 4:
+                                return ""          # too big to be worth caching
+                            with open(p, "r", encoding="utf-8", errors="replace") as _fh:
+                                return _fh.read()
+                        except Exception:
+                            return ""
+                    try:
+                        _cbody = await asyncio.to_thread(_slurp, _cfs)
+                    except Exception:
+                        _cbody = ""
+                    if _cbody:
+                        _v5_register_artifact(artifacts, _cpath, _cbody,
+                                              produced_by=f"{tool} (step {step_id})",
+                                              fs_path=_cfs, lang=str(_cres.get("lang") or ""))
                 _crec = artifacts.setdefault(_cpath, {"rel": _cpath})
                 _crec["size"] = int(_cres.get("bytes") or _cres.get("chars") or _crec.get("size") or 0)
                 _crec["parse_ok"] = bool(_cres.get("syntax_ok", _crec.get("parse_ok", False)))
@@ -18041,6 +18083,11 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
         "phase it [\"verify\"]; its goal must say: write the SMALLEST test script that "
         "decides the claim and print a PASS/FAIL verdict plus at most ~10 lines of "
         "decision-relevant evidence — never dump whole files/logs/responses.\n"
+        "  EXCEPTION — a file written by code.author/code.edit is ALREADY parser-verified "
+        "(and smoke-run when it is a runnable .py); its result carries syntax_ok/runtime_ok. "
+        "NEVER insert a step to read it back, re-parse it, or 'verify syntax/completeness' — "
+        "that proves nothing new and wastes cycles. Verify only BEHAVIOUR the parser cannot "
+        "see (does the app do what was asked), and only when the goal actually demands it.\n"
         "INFO-GATHERING STEPS: when the run is missing a FACT it needs to proceed, insert a "
         "step that gathers it DETERMINISTICALLY — read-only caps / queries / scripts, phase "
         "[\"explore\"] — not guesswork. Its goal must say to print a CONCISE, COMPLETE summary "
@@ -18887,8 +18934,15 @@ async def _v6_finalize_step(step: Dict[str, Any], res: Dict[str, Any], goal: str
     _authored = _v6_authored_path(_hist[-1] if _hist else None)
     if _authored:
         res["raw_summary"] = raw
-        res["summary"] = (f"Authored `{_authored}`; its syntax was verified by the code "
-                          f"author. Run it with exec.python.run(path='{_authored}').")
+        # This summary is what the NEXT step reads, so it must not imply the file
+        # still needs checking — that is what sent later steps off reading it back
+        # and improvising shell syntax checks (2026-08-24 runs). The old wording
+        # additionally told the caller to run the file with exec.python.run,
+        # whatever its language. Every language is treated the same here.
+        res["summary"] = (f"Authored `{_authored}`; its syntax was VERIFIED by the code "
+                          f"author, so it needs no reading back, `cat`-ing, re-parsing or "
+                          f"running to check it. Touch it again only if you need its CONTENT "
+                          f"for a further change, or its OUTPUT as input to a later step.")
         res["finalized"] = True
         return
     crit = str(step.get("success") or "").strip()
@@ -19788,6 +19842,18 @@ _V7_CAP_ROUTING = (
     "  • SOURCE CODE (.py/.js/.ts/.html/.css/.sh/.go/…) → code.author (creates) / code.edit "
     "(surgical change). The coding specialist writes it, grounded on any context_files, "
     "syntax-checked and versioned. NEVER llm.generate, ide.fs.write, or a heredoc for code.\n"
+    "    ALREADY VERIFIED — DO NOT RE-CHECK IT, WHATEVER THE LANGUAGE. code.author/code.edit "
+    "run a REAL parser on what they wrote (Python compile, JSON/YAML parse, HTML structure "
+    "PLUS its embedded-JS syntax) and additionally SMOKE-RUN a runnable .py, repairing what "
+    "they find. The result already tells you the verdict: `syntax_ok`, `checked_with`, "
+    "`runtime_ok`, `bytes`. A call that returns ok=true IS the proof. So do NOT read the file "
+    "back with ide.fs.read/code.read, do NOT `cat` it or re-parse it with exec.bash.run/"
+    "exec.python.run, do NOT run it merely to see whether it works, and do NOT plan a step to "
+    "'verify'/'validate' it — that is redundant work the cap has already done, and it burns "
+    "whole cycles. .py, .js, .html, .css, .sh, .go are all treated the SAME here; none of "
+    "them needs a read-back. Touch the file again ONLY when you need its CONTENT to do "
+    "something else with it (e.g. as context_files for a further edit), or its OUTPUT as real "
+    "input to a later step — never merely to confirm it exists, is complete, or parses.\n"
     "  • A DOCUMENT (README, report, article, essay, spec, notes — .md/.txt/.rst) → prose.author, "
     "grounded on the real files it describes. NEVER hand-write it via llm.generate + ide.fs.write.\n"
     "  • REAL-WORLD DATA (a dataset, factual records, API results, a populated JSON/CSV) → FETCH it "
