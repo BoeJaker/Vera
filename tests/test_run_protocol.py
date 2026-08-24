@@ -89,6 +89,51 @@ def test_artifact_and_control_contracts_are_runtime_neutral():
     assert control.status == "requested"
 
 
+def test_portable_observations_round_trip_through_events_and_replay():
+    run = Run(id="observed", kind="external.workflow")
+    run.transition(RunStatus.RUNNING, payload={
+        "progress": 0.25,
+        "usage": {"input_tokens": 12},
+        "cost": {"amount": "0.01", "currency": "USD"},
+        "policy": {"decision": "allowed", "policy_id": "safe-tools-v2"},
+        "attempt": 2,
+        "retry_owner": "native_engine",
+    })
+    run.record_event("run.progress", payload={
+        "progress": 0.75,
+        "usage": {"output_tokens": 4},
+    })
+
+    value = run.to_dict()
+    assert value["progress"] == 0.75
+    assert value["usage"] == {"input_tokens": 12, "output_tokens": 4}
+    assert value["cost"] == {"amount": "0.01", "currency": "USD"}
+    assert value["policy"]["decision"] == "allowed"
+    assert value["attempt"] == 2
+    assert value["retry_owner"] == "native_engine"
+
+    replayed = replay_run(Run(id="observed", kind="external.workflow",
+                              created_at=run.created_at), run.events)
+    assert replayed.to_dict(include_events=False) == run.to_dict(include_events=False)
+
+
+@pytest.mark.parametrize("progress", [-0.01, 1.01, float("nan"), float("inf")])
+def test_progress_observations_reject_out_of_range_or_non_finite_values(progress):
+    run = Run(id="observed", kind="test")
+    with pytest.raises(ValueError, match="finite number from 0 to 1"):
+        run.transition(RunStatus.RUNNING, payload={"progress": progress})
+    assert run.status == RunStatus.CREATED
+    assert run.events == []
+
+
+def test_usage_cost_and_policy_observations_require_mappings():
+    run = Run(id="observed", kind="test", status=RunStatus.RUNNING)
+    for field in ("usage", "cost", "policy"):
+        with pytest.raises(ValueError, match=f"{field} observation must be a mapping"):
+            run.record_event("run.observed", payload={field: "opaque"})
+    assert run.events == []
+
+
 def test_shadow_adapter_preserves_native_result_and_emits_standard_events():
     events = []
     native_result = {"answer": 42}
