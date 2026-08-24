@@ -2105,6 +2105,7 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
       <button class="lbtn on" data-ctx-layer="fabric"    onclick="CH._ctxLayerToggle('fabric')"    style="font-size:7px;padding:1px 4px;color:#38bdf8;border-color:#38bdf8" title="Fabric datasets">Fab</button>
       <button class="lbtn on" data-ctx-layer="web"       onclick="CH._ctxLayerToggle('web')"       style="font-size:7px;padding:1px 4px;color:#f59e0b;border-color:#f59e0b" title="Web search">Web</button>
       <button class="lbtn on" data-ctx-layer="cap"       onclick="CH._ctxLayerToggle('cap')"       style="font-size:7px;padding:1px 4px;color:#ec4899;border-color:#ec4899" title="Capabilities">Caps</button>
+      <button class="lbtn on" data-ctx-layer="run"       onclick="CH._ctxLayerToggle('run')"       style="font-size:7px;padding:1px 4px;color:#60a5fa;border-color:#60a5fa" title="Observed capability runs (non-authoritative)">Runs</button>
       <button class="lbtn on" data-ctx-layer="skill"     onclick="CH._ctxLayerToggle('skill')"     style="font-size:7px;padding:1px 4px;color:#5a9e8f;border-color:#5a9e8f" title="Skills">Skills</button>
       <button class="lbtn on" data-ctx-layer="ontology"  onclick="CH._ctxLayerToggle('ontology')"  style="font-size:7px;padding:1px 4px;color:#c9955a;border-color:#c9955a" title="Ontologies (full graph)">Ont</button>
       <button class="lbtn on" data-ctx-layer="related_qa" onclick="CH._ctxLayerToggle('related_qa')" style="font-size:7px;padding:1px 4px;color:#e8a44c;border-color:#e8a44c" title="Related Q&A (2nd-order)">Q&amp;A</button>
@@ -6508,7 +6509,7 @@ IMPORTANT:
     }
     const logIdx=_buildDagViz(dagSpec.dag,dagSpec.name||'Suggested DAG');
     // Correct format: {dag: array, state: dict, supervised: bool}
-    const res=await api('/dag/run','POST',{dag:dagSpec.dag,state:dagSpec.initial_state||{},supervised:false});
+    const res=await api('/dag/run','POST',{dag:dagSpec.dag,state:dagSpec.initial_state||{},supervised:false,session_id:SID||''});
     if(!res){
       el.innerHTML='<div class="cap-inline error"><div class="cap-inline-header">&#215; No response from server</div></div>';
       _dagLogUpdate(logIdx,'err');scroll();return;
@@ -9269,6 +9270,11 @@ Your task: decide what to do next to advance toward the goal.
     // text-only on this instance's shared embed nodes (same investigation
     // as the memory leg above).
     let _fabricPromise=null;
+    // Content-free Run activity is a read-only overlay. Start it alongside
+    // context retrieval so observability does not extend the critical path.
+    const _runPromise=SID
+      ? fetchA('/run/shadow/graph?session_id='+encodeURIComponent(SID)+'&limit=40','GET')
+      : null;
     if(CTX_SRCS.has('fabric')){
       const fq=fast?{text:query,top_k:Math.max(fabK*2,8),include_data:true}
                    :{vector:query,top_k:Math.max(fabK*2,8),include_data:true};
@@ -9529,7 +9535,17 @@ Your task: decide what to do next to advance toward the goal.
       _flush();   // paint news results
     }
 
-    /* 6. Similarity edges */
+    /* 6. RUN ACTIVITY — lifecycle-only shadow projection for this chat. */
+    if(_runPromise&&!stale()){
+      const rg=await _runPromise;
+      if(!stale()&&rg?.authoritative===false){
+        (rg.nodes||[]).forEach(n=>nodes.push({...n,source:'run',score:0.72,ts:Date.parse(n.created_at)||nowTs}));
+        (rg.edges||[]).forEach(e=>edges.push({...e,source:'run'}));
+        _flush();
+      }
+    }
+
+    /* 7. Similarity edges */
     const vn=nodes.filter(n=>n.source==='vector'||n.source==='both');
     for(let i=0;i<vn.length-1;i++)if(vn[i].score>0.7&&vn[i+1].score>0.7)edges.push({from:vn[i].id,to:vn[i+1].id,type:'SIMILAR',source:'vector'});
 
@@ -9887,10 +9903,10 @@ Your task: decide what to do next to advance toward the goal.
   function dagGraphFit(){_dagAutoFit();}
 
   /* ═══ CONTEXT GRAPH ═══ */
-  const srcCol=s=>s==='vector'?'#a78bfa':s==='graph'?'#fb923c':s==='both'?'#8fb87a':s==='fabric'?'#38bdf8':s==='memory'?'#5a9e8f':s==='web'?'#f59e0b':s==='news'?'#e879f9':s==='cap'?'#ec4899':s==='skill'?'#5a9e8f':s==='ontology'?'#c9955a':s==='related_qa'?'#e8a44c':s==='worldview'?'#2dd4bf':s==='agent'?'#888':'#8a7e70';
+  const srcCol=s=>s==='vector'?'#a78bfa':s==='graph'?'#fb923c':s==='both'?'#8fb87a':s==='fabric'?'#38bdf8':s==='memory'?'#5a9e8f':s==='web'?'#f59e0b':s==='news'?'#e879f9':s==='cap'?'#ec4899':s==='run'?'#60a5fa':s==='skill'?'#5a9e8f':s==='ontology'?'#c9955a':s==='related_qa'?'#e8a44c':s==='worldview'?'#2dd4bf':s==='agent'?'#888':'#8a7e70';
 
   // Per-source layer state (all on by default)
-  let _ctxLayers=new Set(['vector','graph','memory','fabric','web','cap','skill','ontology','related_qa','worldview','agent','news','both']);
+  let _ctxLayers=new Set(['vector','graph','memory','fabric','web','cap','run','skill','ontology','related_qa','worldview','agent','news','both']);
   // Persistent node-position cache (keyed by node id) so progressive/incremental
   // renders and resize reflows keep a stable layout instead of re-randomising.
   let _ctxPos=new Map();
@@ -10177,8 +10193,16 @@ Your task: decide what to do next to advance toward the goal.
 
   function nodeClick(id){
     const n=CTX_NODES.find(x=>x.id===id);if(!n)return;
+    const runRoot=n.parent_run_id||n.run_id||'';
+    const runMeta=n.source==='run'?`<div style="margin-top:5px;display:flex;gap:5px;align-items:center;flex-wrap:wrap">
+      <span><b>Status:</b> ${esc(n.status||'created')}</span>
+      ${n.attempt?`<span><b>Attempt:</b> ${esc(n.attempt)}</span>`:''}
+      ${n.progress!=null?`<span><b>Progress:</b> ${Math.round(Number(n.progress)*100)}%</span>`:''}
+      <a href="/activity/panel#${encodeURIComponent('run:'+runRoot)}" target="_blank" rel="noopener" style="color:var(--acc)">Activity evidence ↗</a>
+      <a href="/memgraph/panel?run_id=${encodeURIComponent(runRoot)}&amp;session_id=${encodeURIComponent(n.session_id||SID||'')}" target="_blank" rel="noopener" style="color:var(--acc)">Memory graph ↗</a>
+    </div>`:'';
     document.getElementById('detTitle').textContent=(n.label||n.id).slice(0,50);
-    document.getElementById('detBody').innerHTML=`<div><b>Source:</b> ${esc(n.source)} &nbsp;<b>Score:</b> ${(n.score||0).toFixed(3)}</div><div><b>Type:</b> ${esc(n.type||'—')}${n.dataset?` &nbsp;<b>DS:</b> ${esc(n.dataset)}`:''}</div>${n.url?`<div><b>URL:</b> <a href="${esc(n.url)}" target="_blank" style="color:var(--acc)">${esc(n.url.slice(0,60))}</a></div>`:''}<div><b>Tags:</b> ${esc((n.tags||[]).join(', '))}</div>${n.text?`<div style="margin-top:4px;border-top:1px solid var(--border);padding-top:4px;white-space:pre-wrap;word-break:break-word;max-height:140px;overflow-y:auto">${esc(n.text.slice(0,400))}</div>`:''}`;
+    document.getElementById('detBody').innerHTML=`<div><b>Source:</b> ${esc(n.source)} &nbsp;<b>Score:</b> ${(n.score||0).toFixed(3)}</div><div><b>Type:</b> ${esc(n.type||'—')}${n.dataset?` &nbsp;<b>DS:</b> ${esc(n.dataset)}`:''}</div>${n.url?`<div><b>URL:</b> <a href="${esc(n.url)}" target="_blank" style="color:var(--acc)">${esc(n.url.slice(0,60))}</a></div>`:''}<div><b>Tags:</b> ${esc((n.tags||[]).join(', '))}</div>${runMeta}${n.text?`<div style="margin-top:4px;border-top:1px solid var(--border);padding-top:4px;white-space:pre-wrap;word-break:break-word;max-height:140px;overflow-y:auto">${esc(n.text.slice(0,400))}</div>`:''}`;
     document.getElementById('ctxDetail').style.display='block';
   }
 
@@ -14199,7 +14223,7 @@ Your task: decide what to do next to advance toward the goal.
     if(!dag || !dag.length){ msg('add & wire some capability nodes first'); return; }
     msg('running…');
     cmdClose(); document.body.classList.add('has-msgs');
-    let r=null; try{ r=await api('/dag/run','POST',{dag:dag,state:{},supervised:false}); }catch(e){ r=null; }
+    let r=null; try{ r=await api('/dag/run','POST',{dag:dag,state:{},supervised:false,session_id:SID||''}); }catch(e){ r=null; }
     appendSys(r && !r.error
       ? `<span style="color:var(--acc)">DAG started from the flow builder — ${dag.length} step${dag.length===1?'':'s'}.</span>`
       : `<span style="color:var(--err)">DAG run failed: ${esc((r&&r.error)||'no response')}</span> <span style="font-size:9px;color:var(--dim2)">— try the DAG workshop for streaming output.</span>`);
@@ -14776,7 +14800,8 @@ Your task: decide what to do next to advance toward the goal.
 })();
 
 window.addEventListener('DOMContentLoaded',()=>{
-  CH.init({baseUrl:(()=>{const o=(window.location.origin&&window.location.origin!=='null')?window.location.origin:'http://localhost:8000';try{return window.parent?._veraBase||window._veraBase||localStorage.getItem('vera_base')||o;}catch(e){return o;}})()});
+  const linkedSession=new URLSearchParams(window.location.search).get('session_id')||'';
+  CH.init({baseUrl:(()=>{const o=(window.location.origin&&window.location.origin!=='null')?window.location.origin:'http://localhost:8000';try{return window.parent?._veraBase||window._veraBase||localStorage.getItem('vera_base')||o;}catch(e){return o;}})(),sessionId:linkedSession});
 });
 </script>
 <script src="/ui/vera-ui.js"></script>

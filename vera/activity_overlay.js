@@ -15,16 +15,16 @@
 
   const ICON = { narrator: '💬', dream_cycle: '☾', dream: '☾', loop_live: '🔄',
                  program: '⚙', project: '📁', goal: '🎯', chat: '🗨', cap: '▷',
-                 artifact: '📦' };
+                 run: '◇', artifact: '📦' };
   const LABEL = { narrator: 'Narrator', dream_cycle: 'Dream', dream: 'Dream',
                   loop_live: 'Loop', program: 'Program', project: 'Project',
-                  goal: 'Goal', chat: 'Chat', cap: 'Cap', artifact: 'Artifact' };
+                  goal: 'Goal', chat: 'Chat', cap: 'Cap', run: 'Run', artifact: 'Artifact' };
   // Per-kind accent so a lane of mixed activity is readable at a glance. Falls
   // back to the theme accent for any kind added server-side later.
   const HUE = { narrator: '#7aa2f7', dream_cycle: '#bb9af7', dream: '#bb9af7',
                 loop_live: '#7dcfff', program: '#9ece6a', project: '#e0af68',
                 goal: '#f7768e', chat: '#7aa2f7', cap: '#6b7480',
-                artifact: '#e0af68' };
+                run: '#5a9e8f', artifact: '#e0af68' };
 
   let events = [], filter = null, open = false, expanded = null;
   let narrOn = null, narrBusy = false;       // null = status not known yet
@@ -106,22 +106,44 @@
     display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;word-break:break-word}
   .vao-node.exp{flex-basis:340px}
   .vao-node.exp .vao-title,.vao-node.exp .vao-sum{-webkit-line-clamp:unset;display:block}
+  .vao-meta{display:flex;gap:4px;flex-wrap:wrap;margin-top:5px}
+  .vao-tag{font:9px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--dim,#6b7480);
+    border:1px solid var(--border,#2a2f37);border-radius:8px;padding:0 5px;max-width:100%;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .vao-detail{display:none;margin-top:6px;padding-top:6px;border-top:1px solid var(--border,#2a2f37)}
+  .vao-node.exp .vao-detail{display:block}
+  .vao-card:focus-visible{outline:2px solid var(--acc,#5a9e8f);outline-offset:2px}
+  .vao-action{display:grid;grid-template-columns:32px 72px minmax(0,1fr);gap:5px;
+    align-items:center;font-size:10px;padding:2px 0;color:var(--text2,#9aa4b2)}
+  .vao-action .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text,#dce1e8)}
+  .vao-open{display:inline-block;margin-top:6px;color:var(--acc,#5a9e8f);text-decoration:none;font-size:10px}
   .vao-now{position:relative;flex:0 0 auto;display:flex;flex-direction:column;
     justify-content:flex-start;padding-top:16px}
   .vao-now-tick{height:15px;display:flex;align-items:center;color:var(--acc,#5a9e8f);font-size:10px}
-  .vao-empty{padding:26px 14px;color:var(--dim,#6b7480);text-align:center;width:100%}`;
+  .vao-empty{padding:26px 14px;color:var(--dim,#6b7480);text-align:center;width:100%}
+  @media (max-width:640px){
+    #vao-pill{max-width:46vw;padding:3px 7px}.vao-hint{display:none}
+    #vao-panel{left:4px!important;right:4px!important;border-radius:8px}
+    .vao-node{flex-basis:min(82vw,280px)}.vao-node.exp{flex-basis:min(92vw,340px)}
+    .vao-action{grid-template-columns:38px minmax(0,1fr)}.vao-action>span:nth-child(2):not(.nm){display:none}
+  }`;
 
   const pill = document.createElement('div');
   pill.id = 'vao-pill';
   pill.tabIndex = 0;
   pill.setAttribute('role', 'button');
   pill.setAttribute('aria-expanded', 'false');
+  pill.setAttribute('aria-controls', 'vao-panel');
+  pill.setAttribute('aria-label', 'Open recent Vera activity');
   pill.innerHTML = `<span class="vao-dot"></span>
     <span class="vao-latest">Activity</span>
     <span class="vao-count"></span><span class="vao-caret">▾</span>`;
 
   const panel = document.createElement('div');
   panel.id = 'vao-panel';
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-label', 'Recent Vera activity');
+  panel.setAttribute('aria-hidden', 'true');
   panel.innerHTML = `<div class="vao-head"></div><div class="vao-track"></div>`;
 
   const $ = (sel, r) => (r || panel).querySelector(sel);
@@ -186,10 +208,12 @@
   function toggle() {
     open = !open;
     panel.classList.toggle('open', open);
+    panel.setAttribute('aria-hidden', String(!open));
     pill.classList.toggle('on', open);
     pill.setAttribute('aria-expanded', String(open));
+    pill.setAttribute('aria-label', open ? 'Close recent Vera activity' : 'Open recent Vera activity');
     $('.vao-caret', pill).textContent = open ? '▴' : '▾';
-    if (open) { place(); render(); scrollToNow(); }
+    if (open) { place(); render(); scrollToNow(); $('.vao-chip')?.focus(); }
   }
 
   function scrollToNow() {
@@ -260,9 +284,9 @@
   function render() {
     const head = $('.vao-head');
     head.innerHTML =
-      `<span class="vao-chip${!filter ? ' on' : ''}" data-k="" tabindex="0">all</span>` +
+      `<span class="vao-chip${!filter ? ' on' : ''}" data-k="" tabindex="0" role="button" aria-pressed="${!filter}">all</span>` +
       kinds().map(k =>
-        `<span class="vao-chip${filter === k ? ' on' : ''}" data-k="${esc(k)}" tabindex="0">` +
+        `<span class="vao-chip${filter === k ? ' on' : ''}" data-k="${esc(k)}" tabindex="0" role="button" aria-pressed="${filter === k}">` +
         `${ICON[k] || ''} ${esc(LABEL[k] || k)}</span>`).join('') +
       `<span class="vao-spacer"></span>` +
       `<span class="vao-narr${narrOn ? ' on' : ''}" id="vao-narr" tabindex="0" role="switch" ` +
@@ -297,13 +321,62 @@
       // Identity, not position — a refresh must not move the expanded card.
       const k = e.kind, key = (e.ts || '') + '|' + k + '|' + String(e.title || '').slice(0, 40);
       const sum = (e.summary && e.summary !== e.title) ? String(e.summary) : '';
+      const x = e.extra || {}, ui = e.ui || {};
+      const meta = [];
+      if (e.status) meta.push(e.status);
+      if (e.cap) meta.push(e.cap);
+      if (x.progress != null) meta.push(Math.round(Number(x.progress) * 100) + '%');
+      if (x.trace_id) meta.push('trace ' + String(x.trace_id).slice(0, 12));
+      if (e.session_id) meta.push('session ' + String(e.session_id).slice(0, 12));
+      if (x.authoritative === false) meta.push('observed');
+      const reconciliation = x.reconciliation || {}, recovery = x.recovery || {};
+      if (k === 'run' && reconciliation.verified) meta.push('journal verified');
+      if (k === 'run' && recovery.retry_count) meta.push(recovery.retry_count + ' retries');
+      if (k === 'run' && recovery.interrupted) meta.push('interrupted');
+      const artifacts = Array.isArray(x.artifact_refs) ? x.artifact_refs : [];
+      if (k === 'run' && artifacts.length) meta.push(artifacts.length + ' artifact refs');
+      if (k === 'run' && artifacts.some(a => a.partial)) meta.push('partial output');
+      const policy = x.policy_state || {};
+      if (k === 'run' && policy.waiting_for_approval) meta.push('approval pending');
+      if (k === 'run' && Array.isArray(policy.controls) && policy.controls.length) {
+        meta.push(policy.controls.length + ' control records');
+      }
+      if (k === 'run' && x.workflow_id) meta.push('workflow ' + String(x.workflow_id).slice(0, 12));
+      if (k === 'run' && x.projection) meta.push(String(x.projection));
+      const telemetry = x.telemetry || {};
+      if (k === 'run' && telemetry.event_count != null) meta.push(telemetry.event_count + ' trace events');
+      if (k === 'run' && telemetry.orphan_event_count) meta.push(telemetry.orphan_event_count + ' orphan links');
+      if (k === 'run' && telemetry.exported === false) meta.push('not exported');
+      const intent = x.current_intent || {};
+      if (k === 'narrator' && x.tier) meta.push(String(x.tier) + ' take');
+      if (k === 'narrator' && intent.focus) meta.push('focus: ' + String(intent.focus).slice(0, 60));
+      if (k === 'narrator' && intent.confidence) meta.push(String(intent.confidence) + ' confidence');
+      const children = Array.isArray(x.children) ? x.children : [];
+      const narratorDetail = k === 'narrator' ? [
+        x.steer ? `<div class="vao-action"><span>steer</span><span class="nm">${esc(x.steer)}</span></div>` : '',
+        intent.evidence ? `<div class="vao-action"><span>basis</span><span class="nm">${esc(intent.evidence)}</span></div>` : '',
+        intent.ts ? `<div class="vao-action"><span>intent</span><span class="nm">current as of ${esc(fmtTs(intent.ts))}</span></div>` : ''
+      ].filter(Boolean).join('') : '';
+      const detail = narratorDetail || (children.length ? children.map((child, ci) => {
+        const ev0 = ((child.events || [])[0] || {}), payload = ev0.payload || {};
+        const name = payload.capability || child.kind || 'action';
+        return `<div class="vao-action" title="${esc(child.id || '')}">
+          <span>${esc(child.task_id || String(ci + 1))}</span>
+          <span>${esc(child.status || 'created')}</span>
+          <span class="nm">${esc(name)}${child.attempt > 1 ? ' · try ' + esc(child.attempt) : ''}</span></div>`;
+      }).join('') : '<span class="vao-hint">No child actions recorded.</span>');
+      const openUrl = ui.run_id ? '/activity/panel#' + encodeURIComponent('run:' + ui.run_id) : '';
+      const nativeUrl = k === 'run' && ui.native_url ? ui.native_url +
+        (x.workflow_id ? '?workflow_id=' + encodeURIComponent(x.workflow_id) : '') : '';
       return `<div class="vao-node${expanded === key ? ' exp' : ''}" data-key="${esc(key)}">
         <div class="vao-time">${esc(fmtTs(e.ts))}</div>
         <div class="vao-tickrow"><span class="vao-tick" style="background:${hue(k)}"></span></div>
-        <div class="vao-card" style="border-left-color:${hue(k)}">
+        <div class="vao-card" role="button" tabindex="0" aria-expanded="${expanded === key}" aria-label="${esc((LABEL[k] || k) + ': ' + (e.title || ''))}" style="border-left-color:${hue(k)}">
           <div class="vao-kind"><span>${ICON[k] || '•'}</span>${esc(LABEL[k] || k)}</div>
           <div class="vao-title">${esc(e.title || '')}</div>
           ${sum ? `<div class="vao-sum">${esc(sum)}</div>` : ''}
+          ${meta.length ? `<div class="vao-meta">${meta.map(v => `<span class="vao-tag">${esc(v)}</span>`).join('')}</div>` : ''}
+          <div class="vao-detail">${detail}${openUrl ? `<br><a class="vao-open" href="${esc(openUrl)}">Open full Run timeline ↗</a>` : ''}${nativeUrl ? `<br><a class="vao-open" href="${esc(nativeUrl)}">Open native DAG workshop ↗</a>` : ''}</div>
         </div></div>`;
     }).join('') +
       `<div class="vao-now"><div class="vao-time">now</div>
@@ -314,6 +387,9 @@
         ev.stopPropagation();
         expanded = (expanded === n.dataset.key) ? null : n.dataset.key;
         render();
+      });
+      n.querySelector('.vao-card').addEventListener('keydown', ev => {
+        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); ev.currentTarget.click(); }
       });
     });
   }

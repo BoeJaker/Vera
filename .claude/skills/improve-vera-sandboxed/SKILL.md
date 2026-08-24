@@ -193,6 +193,20 @@ Poll `evolve.sandbox.status` for `reachable`.
 or `evolve.sandbox.fs.write`). Never the main checkout. The bind mount makes a
 saved edit visible to the container immediately.
 
+Before changing a reused sandbox, read its revisioned handoff with
+`evolve.sandbox.workplan.get(name=…|branch=…)`. Create or update it through
+`evolve.sandbox.workplan.update` with the exact current revision, a concise work
+description, owner/session, current step, actionable steps, and links to relevant
+board item IDs or notes references. On revision conflict, re-read and merge;
+never force over another agent's update.
+
+The plan lives at gitignored `.vera-work/work-plan.json` inside the worktree so
+all agents using that sandbox can discover it. It is operational handoff context,
+not a replacement for the durable board or notes stores. Link those sources;
+do not duplicate their full content, and never store secrets, prompts, or result
+bodies in the work plan. Refresh it after milestones, scope changes, blockers,
+handoffs, and immediately before review.
+
 ## 4. Commit via the HOST — git-over-SMB does NOT work
 A worktree's `.git` points at a Linux host path (`…/.git/worktrees/…`) that
 Windows/SMB can't resolve, so running `git` in the worktree from your machine

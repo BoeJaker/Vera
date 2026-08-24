@@ -6,6 +6,25 @@ Vera's DAG engine lets you compose capabilities into multi-step workflows. A DAG
 
 The DAG Workshop tab in the harness is the interactive surface; the capabilities are also callable from MCP, REST, and as nodes inside other DAGs.
 
+## Run protocol shadow
+
+The held W1-01 integration wraps the existing `dag.run` path with a
+runtime-neutral Run projection. It does not replace the DAG engine: native
+inputs, scheduling, HITL, cancellation, results, and failures remain
+authoritative. Observation failure is isolated so it cannot change the native
+result.
+
+The projection records versioned Run events, child task lineage, causation,
+attempts, progress, content-free artifact references, and a checksummed journal.
+Activity UI cards link the projected workflow and trace identity back to the DAG
+Workshop and clearly label the view `run_protocol_shadow` versus authority
+`native_dag`. Control records describe request/acknowledgement intent only; they
+never execute a native approve, reject, retry, resume, or cancel operation.
+
+This slice is intentionally a compatibility facade. Later Workflow IR and
+runtime-adapter work can emit the same contract without requiring Vera to replace
+LangGraph, external runtimes, or its own established DAG execution paths.
+
 ---
 
 ## 1. DAG syntax
