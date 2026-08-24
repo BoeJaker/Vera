@@ -6424,6 +6424,147 @@ def _git_wt_argv(wt: str, *args: str) -> List[str]:
     return ["git", "-c", f"safe.directory={wt}", "-c", "safe.directory=*", *args]
 
 
+async def _claim_key(path_or_branch: str) -> str:
+    """Claims are keyed by ABSOLUTE worktree path; a branch name is resolved by
+    ASKING GIT where that branch is actually checked out.
+
+    It must not assume the conventional `<worktree-dir>/<safe-branch>` layout: a
+    worktree created by hand can sit at any path (this very branch lived at
+    `…/worktree-claims`, not `…/feat-worktree-claims`), and a claim recorded
+    against a guessed path silently protects nothing — precisely for the
+    hand-made worktrees claims exist to protect. Falls back to the convention
+    only when git knows of no worktree for the branch.
+    """
+    v = str(path_or_branch or "").replace("\\", "/").rstrip("/")
+    if not v:
+        return ""
+    if "/" in v and _WORKTREE_DIR in v:
+        return v                                   # already an explicit path
+    for w in await _list_worktrees():
+        if (w.get("branch") or "").strip() == v:
+            return str(w.get("path") or "").replace("\\", "/").rstrip("/")
+    return str(_repo_root() / _WORKTREE_DIR / _safe_branch(v)).replace("\\", "/")
+
+
+async def _worktree_claims() -> Dict[str, Dict[str, Any]]:
+    """All live claims, {path: claim}. Never raises — the sweep must still run
+    if Redis is unavailable, just without claim protection."""
+    r = _redis()
+    if not r:
+        return {}
+    try:
+        raw = await r.hgetall(KEY_WORKTREE_CLAIMS)
+    except Exception:
+        return {}
+    out: Dict[str, Dict[str, Any]] = {}
+    for k, v in (raw or {}).items():
+        key = k.decode() if isinstance(k, (bytes, bytearray)) else str(k)
+        try:
+            out[key] = json.loads(v.decode() if isinstance(v, (bytes, bytearray)) else v)
+        except Exception:
+            continue
+    return out
+
+
+def _split_claims(claims: Dict[str, Dict[str, Any]]) -> tuple:
+    """Partition claims into (live, expired) by their refresh age."""
+    # This module imports datetime LOCALLY per function (see _sh callers above);
+    # there is no module-level import, so relying on one raises NameError at
+    # runtime — which is exactly what shipped and broke evolve.sandbox.prune.
+    from datetime import datetime, timezone
+    live: Dict[str, str] = {}
+    expired: Dict[str, str] = {}
+    now = datetime.now(timezone.utc)
+    for path, c in (claims or {}).items():
+        owner = str(c.get("owner") or c.get("session_id") or "?")
+        try:
+            seen = datetime.fromisoformat(
+                str(c.get("updated_at") or c.get("claimed_at") or "").replace("Z", "+00:00"))
+            age_h = (now - seen).total_seconds() / 3600.0
+        except Exception:
+            age_h = 0.0                      # unparseable → treat as fresh, never reap
+        (expired if age_h > _WORKTREE_CLAIM_TTL_H else live)[path] = owner
+    return live, expired
+
+
+@capability("evolve.worktree.claim", memory="off",
+            http_method="POST", http_path="/evolve/worktree/claim", http_tags=["evolve"],
+            description="DECLARE that you are working in a loop-lab worktree, so the "
+                        "cleanup sweep leaves it alone. Without a claim, a worktree "
+                        "becomes reapable the moment its branch is merged — so "
+                        "promoting your own work marks the worktree you are still "
+                        "using as disposable. Claim it when you create it, and "
+                        "release it when you are done. Re-claiming refreshes the "
+                        "claim; a claim that stops being refreshed does not get "
+                        "deleted, it gets surfaced for a human. Inputs: path (str — "
+                        "worktree path OR branch name), owner (str — who you are), "
+                        "session_id (str), note (str — what you are doing). "
+                        "Output: {ok, path, claim}.")
+async def cap_worktree_claim(path: str = "", owner: str = "", session_id: str = "",
+                             note: str = "", trace_id=None) -> Dict[str, Any]:
+    key = await _claim_key(path)
+    if not key:
+        return {"error": "path is required (worktree path or branch name)"}
+    r = _redis()
+    if not r:
+        return {"error": "redis unavailable — cannot record a claim"}
+    now = now_iso()
+    existing = (await _worktree_claims()).get(key) or {}
+    claim = {"path": key,
+             "owner": owner or existing.get("owner") or CALLER_KIND.get("") or "unknown",
+             "session_id": session_id or existing.get("session_id") or "",
+             "note": note or existing.get("note") or "",
+             "claimed_at": existing.get("claimed_at") or now,
+             "updated_at": now}
+    try:
+        await r.hset(KEY_WORKTREE_CLAIMS, key, json.dumps(claim))
+    except Exception as e:
+        return {"error": f"could not record claim: {e}"}
+    out: Dict[str, Any] = {"ok": True, "path": key, "claim": claim,
+                           "exists": Path(key).exists()}
+    if not out["exists"]:
+        # A claim on a path that isn't there protects nothing. Say so loudly —
+        # this is silent otherwise, and a silently-misdirected claim is worse
+        # than no claim, because the caller believes they are covered.
+        out["warning"] = (f"no worktree at {key} — the claim is recorded but "
+                          "protects nothing; pass the exact worktree path")
+    return out
+
+
+@capability("evolve.worktree.release", memory="off",
+            http_method="POST", http_path="/evolve/worktree/release", http_tags=["evolve"],
+            description="Release a worktree claim — you are done, the sweep may "
+                        "reclaim it once its branch is merged. Input: path (str — "
+                        "worktree path or branch name). Output: {ok, released}.")
+async def cap_worktree_release(path: str = "", trace_id=None) -> Dict[str, Any]:
+    key = await _claim_key(path)
+    r = _redis()
+    if not key or not r:
+        return {"error": "path is required" if not key else "redis unavailable"}
+    try:
+        n = await r.hdel(KEY_WORKTREE_CLAIMS, key)
+    except Exception as e:
+        return {"error": str(e)}
+    return {"ok": True, "released": bool(n), "path": key}
+
+
+@capability("evolve.worktree.claims", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/worktree/claims", http_tags=["evolve"],
+            description="List worktree claims — who has declared they are working "
+                        "where, and which claims have gone stale. Output: "
+                        "{claims:[...], live, expired, ttl_hours}.")
+async def cap_worktree_claims(trace_id=None) -> Dict[str, Any]:
+    claims = await _worktree_claims()
+    live, expired = _split_claims(claims)
+    rows = []
+    for path, c in claims.items():
+        rows.append({**c, "state": "expired" if path in expired else "live",
+                     "exists": Path(path).exists()})
+    rows.sort(key=lambda x: str(x.get("updated_at") or ""), reverse=True)
+    return {"claims": rows, "live": len(live), "expired": len(expired),
+            "ttl_hours": _WORKTREE_CLAIM_TTL_H}
+
+
 async def _remove_worktree_robust(wt_abs: str) -> Dict[str, Any]:
     """Remove a git worktree, resilient to ROOT-OWNED files a container left
     behind. The dev containers run as root and bind-mount the worktree, so a
@@ -6852,6 +6993,12 @@ _SANDBOX_CONTAINER = "vera-dev"
 # added later, etc.) — without losing container state, so resume is a plain
 # unpause + a few seconds' wait, not a full evolve.sandbox.up rebuild.
 _SANDBOX_IDLE_PAUSE_S = int(os.getenv("VERA_SANDBOX_IDLE_PAUSE_S", "1800"))
+KEY_WORKTREE_CLAIMS = "vera:evolve:worktree:claims"    # hash: worktree path -> claim JSON
+# How long a claim stands without being refreshed. Generous on purpose: the cost
+# of an over-long claim is a worktree that lingers, the cost of a short one is
+# deleting work someone is mid-way through. An EXPIRED claim is never reaped
+# anyway — it goes to `review` — so this only decides when a human gets asked.
+_WORKTREE_CLAIM_TTL_H = float(os.getenv("VERA_WORKTREE_CLAIM_TTL_H", "12"))
 KEY_SANDBOX_PINNED = "vera:evolve:sandbox:pinned"      # set: pinned container names (never auto-paused)
 KEY_SANDBOX_ACTIVITY = "vera:evolve:sandbox:activity"  # hash: container name -> last-activity iso
 _SANDBOX_KEEP_ALWAYS = {"vera-dev-code"}               # the VS Code sidecar is not an Ollama consumer
@@ -8675,7 +8822,15 @@ async def evolve_sandbox_prune(dry_run: bool = True, delete_branches: bool = Fal
             cnt = await _git("rev-list", "--count", f"{base}..{br}")
             if cnt.get("ok") and (cnt.get("out", "").strip() == "0"):
                 merged.append(br)
+    # Claims: an agent explicitly saying "I am working here". This is the only
+    # protection available to a worktree that is NOT a registered sandbox — and
+    # hand-made worktrees are common precisely because the sandbox pool runs out
+    # of slots. See plan_reap's docstring for why inferring use from mtime was
+    # rejected in favour of the owner declaring it.
+    _claims = await _worktree_claims()
+    _claim_live, _claim_expired = _split_claims(_claims)
     plan = _plan_reap(worktrees=wts, protected_paths=protected_paths,
+                      claimed_paths=_claim_live, expired_claim_paths=_claim_expired,
                       merged_branches=merged, protected_branches=protect,
                       dirty_paths=dirty_paths, base_branch=base)
     # STANDALONE fully-merged typed branches — dead refs with NO worktree and no
@@ -8685,12 +8840,19 @@ async def evolve_sandbox_prune(dry_run: bool = True, delete_branches: bool = Fal
     _live_branches = {prim.get("branch")} | {d.get("branch") for d in pool.values()}
     _typed = ("feat/", "fix/", "refactor/", "perf/", "docs/", "test/",
               "chore/", "spike/", "hotfix/", "loop-lab/")
+    # Branches whose worktree is claimed: deleting the ref out from under a
+    # claimed worktree is as disruptive as deleting the worktree itself.
+    _claimed_branches = {
+        w.get("branch") for w in wts
+        if w.get("branch")
+        and str(w.get("path") or "").replace("\\", "/").rstrip("/") in _claim_live}
     merged_branches: List[str] = []
     _mb = await _git("branch", "--merged", base, "--format=%(refname:short)", timeout=60)
     for _b in (_mb.get("out", "") or "").splitlines():
         _b = _b.strip()
         if (not _b or _b == base or _b in protect or _b in _wt_branches
-                or _b in _live_branches or _is_trunk_protected(_b)
+                or _b in _live_branches or _b in _claimed_branches
+                or _is_trunk_protected(_b)
                 or not _b.startswith(_typed)):
             continue
         merged_branches.append(_b)
@@ -8704,6 +8866,8 @@ async def evolve_sandbox_prune(dry_run: bool = True, delete_branches: bool = Fal
     result = {"dry_run": dry_run, "base": base, "keep": plan["keep"],
               "reap": plan["reap"], "review": plan["review"],
               "merged_branches": merged_branches,
+              "claims": {"live": _claim_live, "expired": _claim_expired,
+                         "ttl_hours": _WORKTREE_CLAIM_TTL_H},
               "orphan_composes": orphan_yml, "stale_pool_entries": stale_pool,
               "heal_pool_entries": heal_pool,
               "removed": [], "errors": [], "removed_branches": [], "reconciled_pool": []}

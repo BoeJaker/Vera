@@ -80,6 +80,7 @@ gallery without overwriting this authored guide.
 - [Loop Lab](33-evolve.md)
 - [Master roadmap](MASTER-ROADMAP.md)
 - [Modern AI ecosystem roadmap](40-ai-ecosystem-roadmap.md)
+- [Capability contracts](43-capability-contracts.md)
 
 ## Complete guide index
 
@@ -126,6 +127,9 @@ gallery without overwriting this authored guide.
 | 38 | [Media and characters](38-media-characters.md) | Images, characters, sprites, speech, and media assets |
 | 39 | [Activity and boards](39-activity-boards.md) | Activity history, work boards, claims, and coordination |
 | 40 | [Modern AI ecosystem roadmap](40-ai-ecosystem-roadmap.md) | Missing libraries, standards, adapter priorities, and queued validation |
+| 41 | [System inventory](41-system-inventory.md) | Runtime inventory, overlap evidence, and consolidation inputs |
+| 42 | [Performance baseline](42-performance-baseline.md) | Code-author timing envelope, aggregation, and queued benchmarks |
+| 43 | [Capability contracts](43-capability-contracts.md) | Contract v2 manifests, declarations, linting, and rollout |
 
 ## Planning and delivery
 

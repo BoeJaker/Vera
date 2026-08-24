@@ -745,6 +745,16 @@ ROLE_PROFILES_DECLARED: Dict[str, dict] = {}
 ROLE_PROFILES_USER: Dict[str, dict] = {}
 
 
+try:
+    from Vera.vera.role_profile_merge import inherit_declared_fields as _inherit_declared_fields
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.role_profile_merge import inherit_declared_fields as _inherit_declared_fields
+    except Exception:
+        def _inherit_declared_fields(declared: dict, supplied: dict) -> dict:
+            return dict(supplied or {})               # degrade to previous behaviour
+
+
 def _role_rule(profile: str, role: str, r: Optional[dict] = None) -> dict:
     """Normalise a role's routing rule (same shape as a per-cap rule; the
     pattern slot carries 'profile/role' so shared merge/logging code works)."""
@@ -3972,6 +3982,19 @@ async def emit_event(event: dict):
         try:
             # Stream — persistent, replayable history
             await REDIS.xadd(EVENT_STREAM, {"data": ev_json}, maxlen=5000)
+            # Sparse performance samples need a type-specific retention window.
+            # The generic event stream is deliberately busy, so consumers which
+            # filter its newest entries can otherwise see zero code-author samples
+            # even though authoring is healthy.  Keep the original event envelope
+            # (rather than a second schema) so obs.stream_history can feed the same
+            # summariser and old generic-stream readers remain compatible.
+            if event.get("type") == "code.author.timing":
+                try:
+                    await REDIS.xadd("vera:stream:code.author.timing",
+                                     {"data": ev_json}, maxlen=500)
+                except Exception as _te:
+                    if "MISCONF" not in str(_te):
+                        log.debug("emit_event timing stream: %s", _te)
             # Pub/sub — zero-latency fan-out for any live subscribers
             await REDIS.publish("vera:events:live", ev_json)
         except Exception as _re:
@@ -5032,6 +5055,10 @@ def capability(
     http_tags:   List[str]      = None,   # OpenAPI tags  (defaults to [group])
     # ── MCP config ─────────────────────────────────────────────────────────
     mcp_expose:  bool           = True,   # include in /mcp/tools listing
+    # Optional Capability Contract v2 declarations.  Registration and dispatch
+    # do not consume this metadata; the contract projector exposes it for
+    # inspection/linting while legacy capabilities migrate incrementally.
+    contract:    Optional[dict] = None,
 ):
     """
     Unified registration decorator.
@@ -5233,6 +5260,7 @@ def capability(
             "mcp_expose":  mcp_expose,
             "memory":      memory,
             "silent":      silent,
+            "contract":    copy.deepcopy(contract) if isinstance(contract, dict) else {},
             # HTTP route metadata — used at lifespan mount time
             "http_method": http_method,
             "http_path":   http_path,
@@ -5662,6 +5690,250 @@ async def mcp_tools(trace_id=None):
         for k,v in CAPABILITY_REGISTRY.items()
         if v.get("mcp_expose",True)
     ]
+
+
+@capability(
+    "cap.contract.manifest", memory="off", silent=True,
+    http_method="GET", http_path="/cap/contracts", http_tags=["cap", "obs"],
+    description="Project the live registry into deterministic Capability Contract v2 "
+                "manifests without changing execution. Inputs: name (exact optional), "
+                "prefix (optional), limit (1..500), include_internal. Output includes "
+                "stable fingerprint, bounded manifests, total matches, and truncation.",
+    contract={
+        "canonical_task": "capability.contract.inspect",
+        "aliases": ["capabilities.manifest"],
+        "effects": ["read"],
+        "output_schema": {"type": "object"},
+        "approval": {"status": "not_required"},
+        "resources": {"status": "declared", "classes": ["cpu"]},
+    },
+)
+async def cap_contract_manifest(name: str = "", prefix: str = "", limit: int = 100,
+                                include_internal: bool = False, trace_id=None):
+    from Vera.vera.capability_contract_core import (
+        MANIFEST_SET_SCHEMA, manifest_fingerprint, project_registry,
+    )
+    manifests = project_registry(CAPABILITY_REGISTRY, include_internal=include_internal)
+    exact = (name or "").strip()
+    prefix = (prefix or "").strip()
+    if exact:
+        manifests = [item for item in manifests if item["name"] == exact]
+    elif prefix:
+        manifests = [item for item in manifests if item["name"].startswith(prefix)]
+    total = len(manifests)
+    bounded = max(1, min(int(limit or 100), 500))
+    returned = manifests[:bounded]
+    return {"schema": MANIFEST_SET_SCHEMA, "count": total, "returned": len(returned),
+            "truncated": total > len(returned),
+            "fingerprint": manifest_fingerprint(manifests), "manifests": returned}
+
+
+@capability(
+    "cap.contract.lint", memory="off", silent=True,
+    http_method="GET", http_path="/cap/contracts/lint", http_tags=["cap", "obs"],
+    description="Lint projected Capability Contract v2 manifests. Reports schema "
+                "requiredness drift, secret-like plaintext inputs, invalid effects or "
+                "lifecycle, ambiguous aliases, undeclared mutating effects, and provider "
+                "tasks lacking canonical mapping. Inputs include a bounded issue limit "
+                "(1..500). Inspection only; execution is unchanged.",
+    contract={
+        "canonical_task": "capability.contract.lint",
+        "aliases": ["capabilities.lint"],
+        "effects": ["read"],
+        "output_schema": {"type": "object"},
+        "approval": {"status": "not_required"},
+        "resources": {"status": "declared", "classes": ["cpu"]},
+    },
+)
+async def cap_contract_lint(name: str = "", prefix: str = "",
+                            include_internal: bool = False, limit: int = 200,
+                            trace_id=None):
+    from Vera.vera.capability_contract_core import LINT_SCHEMA, lint_contracts, project_registry
+    manifests = project_registry(CAPABILITY_REGISTRY, include_internal=include_internal)
+    exact = (name or "").strip()
+    prefix = (prefix or "").strip()
+    if exact:
+        manifests = [item for item in manifests if item["name"] == exact]
+    elif prefix:
+        manifests = [item for item in manifests if item["name"].startswith(prefix)]
+    issues = lint_contracts(manifests)
+    counts = {severity: sum(issue["severity"] == severity for issue in issues)
+              for severity in ("error", "warning")}
+    bounded = max(1, min(int(limit or 200), 500))
+    returned = issues[:bounded]
+    return {"schema": LINT_SCHEMA, "manifests": len(manifests),
+            "issue_count": len(issues), "returned": len(returned),
+            "truncated": len(issues) > len(returned), "issues": returned,
+            "counts": counts, "ok": counts["error"] == 0}
+
+
+@capability(
+    "cap.contract.coverage", memory="off", silent=True,
+    http_method="GET", http_path="/cap/contracts/coverage", http_tags=["cap", "obs"],
+    description="Measure Capability Contract v2 migration coverage by metadata dimension "
+                "and capability group. Returns bounded highest-missing hotspots without "
+                "treating projected legacy defaults as declarations. Inputs: prefix, "
+                "include_internal, limit (1..500). Inspection only.",
+    contract={
+        "canonical_task": "capability.contract.coverage",
+        "aliases": ["capabilities.contract_coverage"],
+        "effects": ["read"],
+        "output_schema": {"type": "object"},
+        "approval": {"status": "not_required"},
+        "trust": {"status": "internal_registry"},
+        "secrets": {"status": "not_required"},
+        "filesystem": {"status": "not_required"},
+        "network": {"status": "not_required"},
+        "tenant": {"status": "global_read_only"},
+        "idempotency": {"status": "idempotent"},
+        "cancellation": {"status": "not_required"},
+        "pagination": {"status": "bounded"},
+        "resources": {"status": "declared", "classes": ["cpu"]},
+        "owner": "vera",
+    },
+)
+async def cap_contract_coverage(prefix: str = "", include_internal: bool = False,
+                                limit: int = 50, trace_id=None):
+    from Vera.vera.capability_contract_core import contract_coverage, project_registry
+    manifests = project_registry(CAPABILITY_REGISTRY, include_internal=include_internal)
+    prefix = (prefix or "").strip()
+    if prefix:
+        manifests = [item for item in manifests if item["name"].startswith(prefix)]
+    result = contract_coverage(manifests)
+    bounded = max(1, min(int(limit or 50), 500))
+    hotspots = result["hotspots"]
+    result["hotspot_count"] = len(hotspots)
+    result["hotspots"] = hotspots[:bounded]
+    result["returned"] = len(result["hotspots"])
+    result["truncated"] = len(hotspots) > result["returned"]
+    return result
+
+
+@capability(
+    "cap.contract.gate", memory="off", silent=True,
+    http_method="POST", http_path="/cap/contracts/gate", http_tags=["cap", "obs"],
+    description="Strictly validate an explicitly selected set of migrated Capability "
+                "Contract v2 manifests without gating the untouched legacy registry. "
+                "Inputs: names (CSV string or list, required), fail_on_warnings. Unknown "
+                "names and missing required declarations fail. Inspection only.",
+    schema={"properties": {
+        "names": {"oneOf": [
+            {"type": "string", "description": "Comma-separated capability names"},
+            {"type": "array", "items": {"type": "string"}},
+        ]},
+        "fail_on_warnings": {"type": "boolean"},
+    }, "required": ["names"]},
+    contract={
+        "canonical_task": "capability.contract.gate",
+        "aliases": ["capabilities.contract_gate"],
+        "effects": ["read"],
+        "output_schema": {"type": "object"},
+        "approval": {"status": "not_required"},
+        "trust": {"status": "internal_registry"},
+        "secrets": {"status": "not_required"},
+        "filesystem": {"status": "not_required"},
+        "network": {"status": "not_required"},
+        "tenant": {"status": "global_read_only"},
+        "idempotency": {"status": "idempotent"},
+        "cancellation": {"status": "not_required"},
+        "pagination": {"status": "not_applicable"},
+        "resources": {"status": "declared", "classes": ["cpu"]},
+        "owner": "vera",
+    },
+)
+async def cap_contract_gate(names=None, fail_on_warnings: bool = False, trace_id=None):
+    import ast
+    from Vera.vera.capability_contract_core import gate_contracts, project_contract
+    if isinstance(names, str):
+        raw_names = names.strip()
+        parsed_names = None
+        if raw_names.startswith("[") and raw_names.endswith("]"):
+            try:
+                candidate = ast.literal_eval(raw_names)
+                if isinstance(candidate, list):
+                    parsed_names = candidate
+            except (SyntaxError, ValueError):
+                pass
+        selected = ([str(item).strip() for item in parsed_names if str(item).strip()]
+                    if parsed_names is not None else
+                    [item.strip() for item in raw_names.split(",") if item.strip()])
+    elif isinstance(names, list):
+        selected = [str(item).strip() for item in names if str(item).strip()]
+    else:
+        selected = []
+    selected = sorted(set(selected))
+    if not selected:
+        return {"schema": "vera.capability-contract-gate/v2", "ok": False,
+                "error": "names_required", "manifests": 0, "issues": []}
+    unknown = [name for name in selected if name not in CAPABILITY_REGISTRY]
+    manifests = [project_contract(name, CAPABILITY_REGISTRY[name])
+                 for name in selected if name in CAPABILITY_REGISTRY]
+    result = gate_contracts(manifests, fail_on_warnings=fail_on_warnings)
+    if unknown:
+        result["issues"] = ([{"name": name, "code": "gate.capability_unknown",
+                              "severity": "error", "path": "name",
+                              "message": "selected capability is not registered"}
+                             for name in unknown] + result["issues"])
+        result["counts"]["error"] += len(unknown)
+        result["ok"] = False
+    result["selected"] = selected
+    return result
+
+
+@capability(
+    "cap.contract.observations", memory="off", silent=True,
+    http_method="GET", http_path="/cap/contracts/observations", http_tags=["cap", "obs"],
+    description="Aggregate bounded recent cap.ok/cap.error envelopes into privacy-safe "
+                "health, reliability, and latency evidence for Capability Contract v2. "
+                "Never returns arguments, previews, prompts, results, or error text. "
+                "Inputs: prefix, event_limit (1..500), cap_limit (1..500), "
+                "include_internal. Observation only; stable declared manifests are unchanged.",
+    contract={
+        "canonical_task": "capability.contract.observe",
+        "aliases": ["capabilities.contract_observations"],
+        "effects": ["read"],
+        "output_schema": {"type": "object"},
+        "approval": {"status": "not_required"},
+        "trust": {"status": "redacted_event_envelopes"},
+        "secrets": {"status": "not_required"},
+        "filesystem": {"status": "not_required"},
+        "network": {"status": "not_required"},
+        "tenant": {"status": "global_aggregate"},
+        "idempotency": {"status": "idempotent_for_event_window"},
+        "cancellation": {"status": "not_required"},
+        "pagination": {"status": "bounded"},
+        "resources": {"status": "declared", "classes": ["cpu", "redis"]},
+        "owner": "vera",
+    },
+)
+async def cap_contract_observations(prefix: str = "", event_limit: int = 500,
+                                    cap_limit: int = 200,
+                                    include_internal: bool = False, trace_id=None):
+    from Vera.vera.capability_contract_core import (
+        project_registry, summarize_contract_observations,
+    )
+    observer = CAPABILITY_REGISTRY.get("obs.events", {}).get("raw")
+    if observer is None:
+        return {"schema": "vera.capability-contract-observations/v2", "ok": False,
+                "error": "obs.events_unavailable", "observations": []}
+    bounded_events = max(1, min(int(event_limit or 500), 500))
+    bounded_caps = max(1, min(int(cap_limit or 200), 500))
+    prefix = (prefix or "").strip()
+    manifests = project_registry(CAPABILITY_REGISTRY, include_internal=include_internal)
+    allowed = {item["name"] for item in manifests
+               if not prefix or item["name"].startswith(prefix)}
+    events = await observer(limit=bounded_events, trace_id=trace_id)
+    result = summarize_contract_observations(
+        events if isinstance(events, list) else [], allowed_names=allowed)
+    observations = result["observations"]
+    result.update({"ok": True, "registered": len(allowed),
+                   "window": {"requested": bounded_events,
+                              "returned": len(events) if isinstance(events, list) else 0},
+                   "observation_count": len(observations),
+                   "observations": observations[:bounded_caps],
+                   "returned": min(len(observations), bounded_caps),
+                   "truncated": len(observations) > bounded_caps})
+    return result
 
 @capability("mcp.call", memory="auto",
             http_method="POST", http_path="/mcp/call", http_tags=["mcp"],
@@ -7232,7 +7504,13 @@ async def cap_ollama_role_profiles_save(profile: str, label: str = "",
             return {"error": "roles must be a JSON object"}
     existing = ROLE_PROFILES_USER.get(name) or {}
     declared = ROLE_PROFILES_DECLARED.get(name) or {}
-    clean = {r: _role_rule(name, r, v)
+    _declared_roles = declared.get("roles") or {}
+
+    # A partial override REPLACES the declared rule wholesale, so anything the
+    # caller didn't send would be silently DISCARDED — that is how prod lost the
+    # coder's declared sampling and the planner's num_ctx (see the module
+    # docstring of role_profile_merge). Inherit the absent fields instead.
+    clean = {r: _role_rule(name, r, _inherit_declared_fields(_declared_roles.get(r) or {}, v))
              for r, v in (roles or {}).items() if isinstance(v, dict)}
     ROLE_PROFILES_USER[name] = {
         "label": label or existing.get("label") or declared.get("label", name),

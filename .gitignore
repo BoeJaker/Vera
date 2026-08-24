@@ -77,6 +77,10 @@ vera/dream/outputs/
 
 # Loop Lab CI/CD dev sandbox
 .loop-lab-worktrees/
+# Backups the sandbox tooling makes when a worktree's git link is severed.
+# Each one is a full copy of the tree, so leaving it untracked buried the
+# working tree under thousands of phantom 'new file' entries in the IDE.
+.loop-lab-recovery/
 docker-compose.dev.yml
 # auto-generated per-branch sandbox composes (evolve.sandbox.spawn)
 docker-compose.dev-*.yml

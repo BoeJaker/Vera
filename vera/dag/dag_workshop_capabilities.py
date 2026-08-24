@@ -2981,6 +2981,159 @@ async def _loop_run_is_stale(r, sid: str, run: dict) -> bool:
         return False
 
 
+@capability(
+    "workshop.agent_loop.trace", memory="off",
+    http_method="POST", http_path="/workshop/agent_loop/trace",
+    http_tags=["workshop", "agents"], silent=True,
+    description=(
+        "READ-ONLY diagnostic digest of ONE agent-loop run — the shape of what "
+        "happened, not the raw feed. Answers the questions the event list makes "
+        "you hand-roll a script for: what was PLANNED (steps, caps, phases, "
+        "success, done_when), what each step actually CALLED (tool, ms, whether "
+        "it was served from the artifact registry rather than really run), and "
+        "what the adaptive CONTROLLER decided after each step — its action, its "
+        "stated reason, and any steps it INSERTED. Counters flag the known waste "
+        "patterns: cycles per step, think:act ratio, repeated identical tools, "
+        "registry-served re-reads, and failures. Use this to diagnose a run "
+        "instead of reading session_state by eye. Inputs: session_id (str!), "
+        "include_text (bool — full assessment/direction text, default false). "
+        "Output: {run, plan, steps[], control[], counters, warnings[]}."),
+)
+async def cap_workshop_agent_loop_trace(session_id: str = "",
+                                        include_text: bool = False,
+                                        trace_id=None) -> Dict[str, Any]:
+    sid = (session_id or "").strip()
+    r = _redis()
+    if not r or not sid:
+        return {"error": "session_id required (and Redis must be reachable)"}
+    try:
+        run_raw = await r.hgetall(f"vera:loop:run:{sid}")
+        run = {_rd(k): _rd(v) for k, v in (run_raw or {}).items()}
+        raw = await r.lrange(f"vera:loop:events:{sid}", 0, -1)
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}", "session_id": sid}
+    events = []
+    for x in raw or []:
+        try:
+            events.append(json.loads(_rd(x)))
+        except Exception:
+            pass
+    if not events:
+        return {"session_id": sid, "run": run, "plan": {}, "steps": [],
+                "control": [], "counters": {}, "warnings": ["no events for this session"]}
+
+    def _clip(v, n=220):
+        s = str(v or "").strip()
+        return s if include_text or len(s) <= n else s[:n] + "…"
+
+    plan: Dict[str, Any] = {}
+    by_step: Dict[Any, Dict[str, Any]] = {}
+    control: List[Dict[str, Any]] = []
+    order: List[Any] = []
+    n_think = n_act = 0
+    ver = set()
+
+    for e in events:
+        t = str(e.get("type") or "")
+        if e.get("ver"):
+            ver.add(f"{e.get('ver')}@{e.get('br')}")
+        if t.endswith(".tier"):
+            plan["tier"] = e.get("tier")
+        elif t.endswith(".intent"):
+            plan["intent"] = e.get("intent")
+        elif t.endswith(".plan"):
+            plan["done_when"] = _clip(e.get("done_when"), 300)
+            plan["steps"] = [{"id": s.get("id"), "title": s.get("title"),
+                              "caps": s.get("caps"), "phases": s.get("phases") or [],
+                              "success": _clip(s.get("success"), 200)}
+                             for s in (e.get("steps") or [])]
+        elif t.endswith("think_delta"):
+            n_think += 1
+        elif t.endswith(".tool_call"):
+            sid_k = e.get("step_id")
+            if sid_k not in by_step:
+                by_step[sid_k] = {"step_id": sid_k, "calls": [], "title": ""}
+                order.append(sid_k)
+            by_step[sid_k]["calls"].append({"cycle": e.get("cycle"),
+                                            "tool": e.get("tool"),
+                                            "repeat": bool(e.get("repeat"))})
+            n_act += 1
+        elif t.endswith(".tool_done"):
+            sid_k = e.get("step_id")
+            calls = (by_step.get(sid_k) or {}).get("calls") or []
+            for c in reversed(calls):
+                if c.get("tool") == e.get("tool") and "ok" not in c:
+                    c["ok"] = bool(e.get("ok"))
+                    c["ms"] = e.get("elapsed_ms")
+                    if e.get("cached"):
+                        c["served_from"] = e.get("cached")
+                    if not e.get("ok"):
+                        c["error"] = _clip(e.get("error") or e.get("preview"), 160)
+                    break
+        elif t.endswith(".step_start"):
+            sid_k = e.get("step_id")
+            by_step.setdefault(sid_k, {"step_id": sid_k, "calls": []})
+            if sid_k not in order:
+                order.append(sid_k)
+            by_step[sid_k]["title"] = e.get("title") or by_step[sid_k].get("title", "")
+        elif t.endswith(".step_done"):
+            sid_k = e.get("step_id")
+            by_step.setdefault(sid_k, {"step_id": sid_k, "calls": []})["ok"] = bool(e.get("ok"))
+        elif t.endswith(".assess"):
+            control.append({"after_step": e.get("after_step"),
+                            "action": e.get("action"),
+                            "goal_met": bool(e.get("goal_met")),
+                            "assessment": _clip(e.get("assessment")),
+                            "direction": _clip(e.get("direction")),
+                            "inserted": [{"id": s.get("id"), "title": s.get("title"),
+                                          "caps": s.get("caps")}
+                                         for s in (e.get("steps") or [])]})
+        elif t.endswith(".gate"):
+            plan["gate"] = {k: _clip(e.get(k)) for k in ("verdict", "reason", "met")
+                            if e.get(k) is not None}
+
+    steps = [by_step[k] for k in order if k in by_step]
+    planned_ids = {s.get("id") for s in (plan.get("steps") or [])}
+    inserted_ids = {i.get("id") for c in control for i in c.get("inserted") or []}
+
+    warnings: List[str] = []
+    for c in control:
+        for i in c.get("inserted") or []:
+            warnings.append(
+                f"controller INSERTED step {i.get('id')} '{i.get('title')}' "
+                f"after step {c.get('after_step')} (caps={i.get('caps')})")
+    for s in steps:
+        calls = s.get("calls") or []
+        served = [c for c in calls if c.get("served_from")]
+        if served:
+            warnings.append(f"step {s.get('step_id')}: {len(served)} read(s) served from "
+                            f"the artifact registry (re-read of an unchanged file)")
+        seen: Dict[str, int] = {}
+        for c in calls:
+            seen[str(c.get("tool"))] = seen.get(str(c.get("tool")), 0) + 1
+        for tool, n in seen.items():
+            if n >= 3:
+                warnings.append(f"step {s.get('step_id')}: {tool} called {n}x")
+        for c in calls:
+            if c.get("ok") is False:
+                warnings.append(f"step {s.get('step_id')}: {c.get('tool')} FAILED — "
+                                f"{c.get('error') or ''}")
+
+    counters = {
+        "events": len(events),
+        "planned_steps": len(plan.get("steps") or []),
+        "executed_steps": len(steps),
+        "inserted_steps": len(inserted_ids - planned_ids),
+        "tool_calls": n_act,
+        "think_deltas": n_think,
+        "think_ratio": (round(n_think / max(1, n_think + n_act), 3)),
+        "cycles_per_step": {str(s.get("step_id")): len(s.get("calls") or []) for s in steps},
+        "code_version": sorted(ver),
+    }
+    return {"session_id": sid, "run": run, "plan": plan, "steps": steps,
+            "control": control, "counters": counters, "warnings": warnings}
+
+
 @APP.get("/workshop/agent_loop/session_state")
 async def workshop_loop_session_state(request: Request):
     """The persisted run-state + event log for a session (for reload replay).
@@ -10044,6 +10197,23 @@ async def cap_code_save(path: str, content: str, session_id: str = "", repo: str
                                  mirror_fs=mirror_fs)
 
 
+# Collapse guard for code.author's automatic repair loops — see the module
+# docstring of code_author_guards for the incident it pins. This module is in
+# _module_files, so a hard ImportError here would take the whole app down; fall
+# back to the previous (unguarded) behaviour rather than failing to boot.
+try:
+    from Vera.vera.dag.code_author_guards import repair_collapsed as _repair_collapsed
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag.code_author_guards import repair_collapsed as _repair_collapsed
+    except Exception:
+        log.warning("code_author_guards unavailable — repair collapse guard disabled")
+
+        def _repair_collapsed(before: str, after: str, **_kw) -> bool:
+            return False
+
+
+
 # NOTE: keep plain helpers ABOVE the next @capability decorator. A decorator
 # binds to whatever function follows it, so a helper slipped in between
 # registers itself AS that capability — which is exactly what happened here:
@@ -10280,6 +10450,23 @@ def _code_author_timing(started: float, generation_started: float,
 @capability(
     "code.author", memory="on",
     http_method="POST", http_path="/code/author", http_tags=["code", "fabric"],
+    contract={
+        "canonical_task": "source_file.author",
+        "aliases": ["source.author"],
+        "effects": ["execute", "filesystem", "model"],
+        "output_schema": {"type": "object"},
+        "approval": {"status": "not_required"},
+        "trust": {"status": "task_and_workspace_context"},
+        "secrets": {"status": "not_required"},
+        "filesystem": {"status": "workspace_read_write"},
+        "network": {"status": "internal_model_cluster"},
+        "tenant": {"status": "session_scoped"},
+        "idempotency": {"status": "versioned_write"},
+        "cancellation": {"status": "stream_best_effort"},
+        "pagination": {"status": "not_applicable"},
+        "resources": {"status": "declared", "classes": ["gpu", "cpu", "filesystem"]},
+        "owner": "vera",
+    },
     # The auto-schema marks NO param required (every kwarg has a default), so the
     # loop's signature shows `task/path (default: "")` — everything looks
     # OPTIONAL. So the description carries the real contract: it LEADS with the
@@ -10618,7 +10805,33 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
         if not applied.get("ok"):
             last_edit_err = "; ".join(applied.get("errors", [])[:3]) or "edit(s) did not apply"
             continue
-        code = applied["content"]
+        # A syntax repair is BY CONTRACT the smallest possible fix (see _edit_sys).
+        # An "edit" that deletes most of the file satisfies the parser by MUTILATION
+        # rather than by fixing anything — and the result parses perfectly, so every
+        # downstream check passes and the caller gets ok=True on an empty shell. That
+        # is exactly how a truncated habit-tracker generation became a 97-byte
+        # `<html><head></head><body></body></html>` reported as a success. Reject the
+        # collapse and tell the editor why, reusing the existing rejection feedback
+        # path; keeping the still-broken file is the honest outcome, because a file
+        # that does not parse already returns ok=False and routes into the loop's
+        # ordinary retry handling.
+        _cand = applied["content"]
+        _before = len(code.strip())
+        _after = len(_cand.strip())
+        if _repair_collapsed(code, _cand):
+            last_edit_err = (
+                f"that edit DELETED most of the file ({_before} -> {_after} chars). "
+                f"A syntax fix must PRESERVE the existing content and change only what "
+                f"the error names — never remove code to make the file parse.")
+            try:
+                await emit_event({"type": "code.author.repair_rejected", "path": path,
+                                  "attempt": attempt - 1, "reason": "collapse",
+                                  "before_chars": _before, "after_chars": _after,
+                                  "session_id": session_id})
+            except Exception:
+                pass
+            continue
+        code = _cand
         check = _v5_check_syntax(code, _lang_used, path)
         last_edit_err = "" if check.get("ok") else check.get("error", "")
     _syntax_finished = time.perf_counter()
@@ -10702,7 +10915,21 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
             _ra = _v5_apply_edits(code, _re)
             if not _ra.get("ok"):
                 break
-            code = _ra["content"]
+            # Same collapse guard as the syntax-repair loop above: "fixing" a crash
+            # by deleting the code that crashes leaves a file that parses AND runs
+            # (it does nothing), which every check downstream reports as a success.
+            _rc = _ra["content"]
+            if _repair_collapsed(code, _rc):
+                try:
+                    await emit_event({"type": "code.author.repair_rejected", "path": path,
+                                      "attempt": _rt + 1, "reason": "collapse_runtime",
+                                      "before_chars": len(code.strip()),
+                                      "after_chars": len(_rc.strip()),
+                                      "session_id": session_id})
+                except Exception:
+                    pass
+                break               # keep the honest runtime error rather than an empty file
+            code = _rc
             check = _v5_check_syntax(code, _lang_used, path)
             if not check.get("ok"):
                 break               # the fix broke syntax — the syntax path reports it
@@ -10719,6 +10946,11 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
         phases=_phase_seconds,
         counters=_timing_counts,
     )
+    # Finalise the authoring duration before serialising the telemetry event.
+    # Previously this assignment happened after emit_event returned, so Redis
+    # retained the earlier result-ready total while only the returned object saw
+    # the final value.
+    _timing["total_ms"] = max(0, round((time.perf_counter() - _author_started) * 1000))
     _emit_started = time.perf_counter()
     try:
         await emit_event({"type": "code.author.timing", "path": path,
@@ -10727,7 +10959,6 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
     except Exception:
         pass
     _timing["telemetry_emit_ms"] = max(0, round((time.perf_counter() - _emit_started) * 1000))
-    _timing["total_ms"] = max(0, round((time.perf_counter() - _author_started) * 1000))
 
     truncated = bool(res.get("truncated")) if isinstance(res, dict) else False
     _verified = bool(check.get("ok")) and bool(check.get("checker"))
@@ -10773,7 +11004,19 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
                     + (f"⚠ it PARSES but CRASHED on a smoke-run ({runtime_err[-160:]}) — repair "
                        f"with code.edit before use. " if _runtime_bad
                        else ("✓ ran clean on a smoke-run. " if smoke_ran else ""))
-                    + f"Written and versioned. Run it with exec.python.run(path='{path}')."}
+                    + "Written and versioned. "
+                    # Say plainly that the checking is DONE. Without this the loop
+                    # spends whole cycles re-proving it — reading the file back with
+                    # ide.fs.read, `cat`-ing it, or improvising a shell syntax check —
+                    # and the old note made it worse by telling EVERY caller to run the
+                    # file with exec.python.run (2026-08-24 runs). EVERY language is
+                    # treated identically here: a .py is no more in need of a read-back
+                    # or a re-run than a .html is.
+                    + ("This file is ALREADY VERIFIED by a real parser above — do NOT read it "
+                       "back, `cat` it, re-parse it, or run it to check it; that is done. "
+                       "Touch it again ONLY if you need its CONTENT for a further change, or "
+                       "its OUTPUT as actual input to a later step."
+                       if not (_syntax_bad or _runtime_bad) else "")}
 
 
 # ── Grounded prose authoring ─────────────────────────────────────────────────
@@ -10823,6 +11066,23 @@ def _v5_prose_ungrounded_refs(text: str, real_files: Optional[List[str]]) -> Lis
 @capability(
     "prose.author", memory="on",
     http_method="POST", http_path="/prose/author", http_tags=["fabric", "docs"],
+    contract={
+        "canonical_task": "document.author",
+        "aliases": ["document.write"],
+        "effects": ["filesystem", "model"],
+        "output_schema": {"type": "object"},
+        "approval": {"status": "not_required"},
+        "trust": {"status": "task_and_workspace_context"},
+        "secrets": {"status": "not_required"},
+        "filesystem": {"status": "workspace_read_write"},
+        "network": {"status": "internal_model_cluster"},
+        "tenant": {"status": "session_scoped"},
+        "idempotency": {"status": "versioned_write"},
+        "cancellation": {"status": "stream_best_effort"},
+        "pagination": {"status": "not_applicable"},
+        "resources": {"status": "declared", "classes": ["gpu", "cpu", "filesystem"]},
+        "owner": "vera",
+    },
     # Same 300-char rich_cap_signature() truncation issue as code.author (see
     # its comment above) — the OLD text cut off mid-sentence before ever
     # reaching "if you already drafted the document yourself, pass it as
@@ -12263,6 +12523,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
             "capability name), a one-line goal, and the EXACT capability names it "
             "needs from the catalog.\n"
             + _V7_CAP_ROUTING
+            + (_V7_CRITERIA_RULE if want_success else "")
             + "Return ONLY this JSON object — no prose, no markdown, and NOT a bare array:\n"
             '{"steps":[{"id":1,"title":"<plain-language description, not a cap name>",'
             '"goal":"<what to achieve>",'
@@ -12324,10 +12585,12 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
             "minimum [\"act\",\"verify\"], and [\"explore\",\"act\",\"verify\"] (add \"think\" for "
             "hard design/decision work) whenever the step must first inspect the environment or the "
             "prior findings before acting. Phasing makes a step self-verify and self-correct, which "
-            "matters on a big plan where a silent bad step derails everything after it. The ONLY "
-            "steps that should have NO phases are pure read-only lookups (all caps are "
-            "search/read/query) — they are already exploration, so phasing just repeats the same "
-            "query. When in doubt on a substantial step, PHASE it.\n")
+            "matters on a big plan where a silent bad step derails everything after it. Give NO "
+            "phases to: pure read-only lookups (all caps are search/read/query — they are already "
+            "exploration, so phasing just repeats the same query), and steps whose work is "
+            "code.author/code.edit — those caps parse what they write and report the verdict, so a "
+            "`verify` phase there just re-reads a file whose result is already known. Otherwise, "
+            "when in doubt on a substantial step, PHASE it.\n")
     else:  # "sparingly" (default)
         _phase_block = (
             "STEP PHASES (optional, use SPARINGLY): a step may carry a `phases` list — any of "
@@ -12338,7 +12601,9 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
             "— it is already exploration; adding explore→act just repeats the same search and wastes "
             "cycles. Use `explore` only before a step that will then ACT on what it finds (e.g. read "
             "config → modify it); use `verify` ONLY for steps that CREATE or CHANGE something (write "
-            "files, run a build, deploy, configure). Most steps need NO `phases` at all — leave it "
+            "files, run a build, deploy, configure) — but NOT for a code.author/code.edit step, which "
+            "already parses what it writes and reports the verdict, so verifying it re-reads a "
+            "settled result. Most steps need NO `phases` at all — leave it "
             "empty and they run as one fast specialist.\n")
     # Restrict the phase vocabulary when the caller allowed only a subset.
     if _pp_mode != "off" and allowed_phases and set(allowed_phases) != set(_V5_PHASES):
@@ -12485,6 +12750,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
            "checkable criterion for that step (e.g. \"the script runs without errors and "
            "prints the open ports\", NOT \"do the step well\"). Also give a top-level "
            "`done_when` — one line stating when the WHOLE goal counts as achieved.\n"
+           + _V7_CRITERIA_RULE
            if want_success else "")
         + 'Respond ONLY with JSON:\n'
         '{"complexity":"simple|complex|extreme","recon":[{"cap":"cap.name","args":{},"why":"<short>"}],'
@@ -12585,6 +12851,9 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
                 steps.append(cs)
     except Exception as e:
         log.debug("v5 orchestrate_plan failed: %s", e)
+    # (The redundant-verify prune runs at the v6 plan choke point, which every
+    # planner return path — including this one and the minimal-schema path above
+    # — funnels through, so it is not repeated here.)
     return {"steps": steps[:max_steps], "reason": reason,
             "complexity": complexity, "recon": recon_actions,
             "done_when": done_when}
@@ -13451,7 +13720,14 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             "description of exactly what the file must do>', context_files=[<the real data files "
             "it must read>]). It hands the job to the CODING specialist, shows it the ACTUAL "
             "content of those files so the code is written against the real structure, and saves "
-            "+ versions the file for you. Then run it: exec.python.run(path='<file>').\n"
+            "+ versions the file for you.\n"
+            "  • IT IS ALREADY CHECKED. code.author parses what it writes before returning and "
+            "reports the verdict (syntax_ok, checked_with, bytes); ok=true means it parsed. "
+            "Whether the file exists, is complete or is valid is therefore ALREADY ANSWERED — do "
+            "not read it back, `cat` it, re-parse it or run it to find out, and never hold a step "
+            "open until you have. This is the same for every language: a .html needs checking no "
+            "more than a .py does. Read the file back only to USE its content in another call; "
+            "run it only to obtain a RESULT the step actually needs.\n"
             "  • `task` is a DESCRIPTION IN PLAIN ENGLISH of the file — its purpose, features, "
             "structure — NEVER the code. code.author's coding model WRITES the code from it. If "
             "you catch yourself typing HTML/JS/CSS/Python, STOP: describe it in a sentence or two "
@@ -15469,11 +15745,23 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 and not _fileread_bypass):
             _rp = _v5_art_key(str(args.get("path") or args.get("relpath") or ""))
             _rec = artifacts.get(_rp) if _rp else None
-            if _rec and _rec.get("content") and fileread_served < _MAX_FILEREAD_SERVED:
-                fileread_served += 1
+            # A file THIS run authored and a real parser verified is exempt from the
+            # serve budget. The budget exists so a genuinely stale record eventually
+            # gets re-read for real — but re-reading an unchanged, parser-verified
+            # authored file can never tell us anything new, so letting the budget
+            # run out just converts free registry hits back into disk reads. Seen
+            # live: three 0ms registry serves, then an 89ms real read of the very
+            # same unchanged file (2026-08-24).
+            _proven_authored = bool(
+                _rec and _rec.get("parse_ok")
+                and str(_rec.get("produced_by") or "").startswith(("code.author", "code.edit")))
+            if _rec and _rec.get("content") and (_proven_authored
+                                                 or fileread_served < _MAX_FILEREAD_SERVED):
+                if not _proven_authored:
+                    fileread_served += 1
+                    if fileread_served >= _MAX_FILEREAD_SERVED:
+                        _fileread_bypass = True   # next read goes to disk for real
                 _perturb_next = True            # re-reading an unchanged file — break the fixation
-                if fileread_served >= _MAX_FILEREAD_SERVED:
-                    _fileread_bypass = True     # next read goes to disk for real
                 preview = (f"{_rec['rel']} — served from this run's file registry "
                            f"(unchanged since it was last read/written; "
                            f"{_rec.get('size', 0):,} bytes"
@@ -15500,7 +15788,12 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                                   "cached": "artifact-registry"})
                 pending_note = ("(that file was already in the run's registry and has not "
                                 "changed — served without re-reading. Its shape is above; "
-                                "act on it rather than reading it again.)")
+                                "act on it rather than reading it again.)"
+                                + (" It was written AND syntax-verified by the code author "
+                                   f"({_rec.get('checked_with')} clean), so reading it back, "
+                                   "`cat`-ing it or re-parsing it proves nothing new — that "
+                                   "check is already done. Move on to the next real action."
+                                   if _rec.get("parse_ok") and _rec.get("checked_with") else ""))
                 continue
 
         # ── Repeat of a call that already FAILED ─────────────────────────────
@@ -16453,6 +16746,31 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             _cres = invoke["result"]
             _cpath = _v5_art_key(str(_cres.get("path") or args.get("path") or ""))
             if _cpath:
+                # Register the CONTENT, not just the metadata. The read short-circuit
+                # above only serves a record that HAS content, so a metadata-only
+                # record left the very FIRST read-back of a freshly authored file
+                # going to disk — the loop spending a whole cycle re-confirming what
+                # code.author had already parser-verified (2026-08-24 runs, every
+                # language). code.author's result carries no content, so read it back
+                # from the file it just wrote — once, locally, off the event loop.
+                _cfs = str(_cres.get("fs_path") or "")
+                if _cfs:
+                    def _slurp(p: str) -> str:
+                        try:
+                            if os.path.getsize(p) > _V5_ART_CACHE_MAX * 4:
+                                return ""          # too big to be worth caching
+                            with open(p, "r", encoding="utf-8", errors="replace") as _fh:
+                                return _fh.read()
+                        except Exception:
+                            return ""
+                    try:
+                        _cbody = await asyncio.to_thread(_slurp, _cfs)
+                    except Exception:
+                        _cbody = ""
+                    if _cbody:
+                        _v5_register_artifact(artifacts, _cpath, _cbody,
+                                              produced_by=f"{tool} (step {step_id})",
+                                              fs_path=_cfs, lang=str(_cres.get("lang") or ""))
                 _crec = artifacts.setdefault(_cpath, {"rel": _cpath})
                 _crec["size"] = int(_cres.get("bytes") or _cres.get("chars") or _crec.get("size") or 0)
                 _crec["parse_ok"] = bool(_cres.get("syntax_ok", _crec.get("parse_ok", False)))
@@ -17958,6 +18276,22 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
         "Be decisive but conservative: prefer \"continue\" when the plan is on track; only "
         "replan/insert when the evidence genuinely warrants it; only \"stop\" when the goal "
         "is DEMONSTRABLY met. Do NOT invent artifacts the goal did not ask for.\n"
+        "A SUCCESSFUL code.author/code.edit IS THE PROOF — ACCEPT IT AND MOVE ON. Those caps "
+        "put the file through a real parser and return `syntax_ok`, `checked_with` and "
+        "`bytes`. Treat that report as the verification of the file: for a DONE WHEN that "
+        "asks for a created, valid, working file, an ok author call MEETS it. Do not hold the "
+        "goal open waiting for the file to be demonstrated, and never insert a step to check "
+        "an artifact that was just authored — it can only re-read what is already known. "
+        "Observed: after a one-step Pomodoro plan authored index.html successfully, an insert "
+        "was made for 'Test browser compatibility/runtime behavior', which spent five cycles "
+        "re-reading the file and running bash; on another run the same impulse started "
+        "`python3 -m http.server` and the run hung there.\n"
+        "AND NEVER INSERT A CHECK YOUR CAPS CANNOT ACTUALLY PERFORM. Before inserting a "
+        "verification, name the cap that would settle it. exec.bash.run and exec.python.run "
+        "cannot open a page in a browser, click anything, or observe a timer running — so a "
+        "step to 'confirm browser behaviour' with those caps proves nothing, and reporting "
+        "that it did is a false claim. If nothing in the catalog can settle it, DO NOT insert "
+        "the step: say so in `assessment` and \"continue\".\n"
         "NEVER INSERT A STEP THAT A PENDING STEP ALREADY DOES. Read PENDING STEPS before you "
         "choose: if the work you have in mind is what the next pending step is for, the "
         "correct action is \"continue\" — inserting it duplicates the step and the run does "
@@ -17985,6 +18319,10 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
         "phase it [\"verify\"]; its goal must say: write the SMALLEST test script that "
         "decides the claim and print a PASS/FAIL verdict plus at most ~10 lines of "
         "decision-relevant evidence — never dump whole files/logs/responses.\n"
+        "  NOT for authored code: code.author/code.edit already parsed what they wrote and "
+        "reported the verdict, so a step that re-reads or re-parses their output decides "
+        "nothing. Insert a verification step only for BEHAVIOUR a parser cannot see — that the "
+        "thing DOES what was asked.\n"
         "INFO-GATHERING STEPS: when the run is missing a FACT it needs to proceed, insert a "
         "step that gathers it DETERMINISTICALLY — read-only caps / queries / scripts, phase "
         "[\"explore\"] — not guesswork. Its goal must say to print a CONCISE, COMPLETE summary "
@@ -18131,6 +18469,14 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
         "request MEANS THE GOAL IS MET. Do NOT rule it incomplete for lacking external "
         "validation, publishing, delivery, or extra polish the goal did not explicitly ask for. "
         "Judge the artifact that WAS produced, not an idealised one.\n"
+        "A CODE FILE IS PROVEN BY ITS AUTHOR'S REPORT, NOT BY A DEMONSTRATION. code.author/"
+        "code.edit put the file through a real parser and return `syntax_ok`/`checked_with`; "
+        "that report is the verification. So when DONE WHEN asks for a created, valid or "
+        "working file and the ledger shows an ok author call plus the file in the listing, the "
+        "goal is MET — complete it. Do NOT rule it incomplete, and do NOT add follow-up steps, "
+        "because nobody opened it in a browser, served it, clicked it or watched it run: this "
+        "run has no capability that could do any of that, so such a follow-up cannot succeed "
+        "and only burns the remaining budget.\n"
         + ("GROUND TRUTH BEATS NARRATIVE: when the ACTUAL FILES listing is shown, believe it "
            "over the ledger. A goal that asked for a FILE deliverable is NOT complete unless "
            "that file appears in the listing — a step summary saying it was 'saved' or "
@@ -18831,8 +19177,15 @@ async def _v6_finalize_step(step: Dict[str, Any], res: Dict[str, Any], goal: str
     _authored = _v6_authored_path(_hist[-1] if _hist else None)
     if _authored:
         res["raw_summary"] = raw
-        res["summary"] = (f"Authored `{_authored}`; its syntax was verified by the code "
-                          f"author. Run it with exec.python.run(path='{_authored}').")
+        # This summary is what the NEXT step reads, so it must not imply the file
+        # still needs checking — that is what sent later steps off reading it back
+        # and improvising shell syntax checks (2026-08-24 runs). The old wording
+        # additionally told the caller to run the file with exec.python.run,
+        # whatever its language. Every language is treated the same here.
+        res["summary"] = (f"Authored `{_authored}`; its syntax was VERIFIED by the code "
+                          f"author, so it needs no reading back, `cat`-ing, re-parsing or "
+                          f"running to check it. Touch it again only if you need its CONTENT "
+                          f"for a further change, or its OUTPUT as input to a later step.")
         res["finalized"] = True
         return
     crit = str(step.get("success") or "").strip()
@@ -19727,11 +20080,41 @@ async def _v7_decide_intent(goal: str, *, use_llm: bool, model: str,
 #  the controller said "writing a report needs llm.generate" — mixed signals that
 #  made the specialist pick the wrong tool).
 # ═════════════════════════════════════════════════════════════════════════════
+# How `success` / `done_when` must be phrased. ONE definition, used by BOTH planner
+# prompts (the full schema and the minimal-schema retry) — they drifted apart before,
+# and a rule that reaches only one of them holds only on the runs that happen to take
+# that path, which reads as the model ignoring it.
+_V7_CRITERIA_RULE = (
+    "FOR A FILE THIS RUN AUTHORS, THE PROOF IS THE AUTHOR'S OWN VERDICT — NOT A TRIAL "
+    "RUN OF THE FILE. code.author/code.edit put the file through a real parser and "
+    "return `syntax_ok`/`checked_with`/`bytes`; that report IS the verification, and it "
+    "is the only one this run needs or can get. Phrase every criterion so that verdict "
+    "settles it: the file EXISTS, the author reported it verified, and it CONTAINS the "
+    "required features — e.g. \"index.html is created and verified by code.author, with "
+    "start/pause/reset controls, a 25-minute work interval and a 5-minute break\".\n"
+    "NEVER write a criterion that can only be settled by WATCHING THE FILE WORK: \"opened "
+    "in a browser\", \"renders\", \"the timer runs\", \"functions correctly in a browser\", "
+    "\"no console errors\", \"UI interaction works\", \"works end to end\". Nothing here "
+    "opens a browser, serves a page, clicks anything or watches a timer, so such a clause "
+    "can never be met — it only drags the run into standing up servers and inventing "
+    "checks, or into claiming it saw something it never saw. (Observed: that wording sent "
+    "one run to `python3 -m http.server`, where it hung.) Leave it out; do not soften it, "
+    "do not add \"if possible\".\n")
+
+
 _V7_CAP_ROUTING = (
     "CAPABILITY ROUTING — match the deliverable to the RIGHT cap (one source of truth):\n"
     "  • SOURCE CODE (.py/.js/.ts/.html/.css/.sh/.go/…) → code.author (creates) / code.edit "
     "(surgical change). The coding specialist writes it, grounded on any context_files, "
     "syntax-checked and versioned. NEVER llm.generate, ide.fs.write, or a heredoc for code.\n"
+    "    ALREADY CHECKED, EVERY LANGUAGE. Before returning, code.author/code.edit run a real "
+    "parser on what they wrote and repair what it finds; ok=true means it parsed. The verdict "
+    "is in the result (`syntax_ok`, `checked_with`, `runtime_ok`, `bytes`). Whether the file "
+    "exists, is complete, or is valid is therefore ALREADY ANSWERED — never spend a call "
+    "finding out. Do not read it, `cat` it, re-parse it, or run it to answer those questions, "
+    "and do not plan a step that does. Read an authored file only to USE its content in "
+    "another call (e.g. context_files for an edit); run one only to obtain a RESULT you need. "
+    "A .py is no different from a .html here.\n"
     "  • A DOCUMENT (README, report, article, essay, spec, notes — .md/.txt/.rst) → prose.author, "
     "grounded on the real files it describes. NEVER hand-write it via llm.generate + ide.fs.write.\n"
     "  • REAL-WORLD DATA (a dataset, factual records, API results, a populated JSON/CSV) → FETCH it "
@@ -19770,10 +20153,19 @@ def _v7_intent_plan_directive(intent: str, *, max_steps: int = 8) -> str:
             "  • Do NOT plan research/search/'find an example'/'fetch a repo' steps, and do NOT add "
             "web.search / web.fetch / http.get / exec curl to any step — there is nothing external to "
             "get. Do NOT plan a step to 'analyse an existing example'.\n"
-            "  • You MAY add ONE final step to verify (open/run it and confirm it works) using exec.* — "
-            "but only the ONE, at the end.\n"
-            "  • Prefer the FEWEST steps that produce the deliverable — a self-contained app is ~1 "
-            "author step + maybe 1 verify, not a research project.\n")
+            "  • Write each authoring step's `success` so that the AUTHORING CALL ITSELF settles it: "
+            "name the file and the FEATURES it must contain (e.g. \"habit.html exists with add-habit, "
+            "a 7-day grid and localStorage persistence\"). A criterion about syntax, validity, "
+            "completeness or parsing (\"contains valid HTML5\", \"0 syntax errors\", \"the JS is "
+            "complete\") is WRONG here: code.author already guarantees it, and writing one forces a "
+            "pointless step that re-checks settled facts.\n"
+            "  • NEVER plan a step to check that the code is valid, complete, present or parses. "
+            "code.author already ran a real parser on it and reports the verdict; a step for that "
+            "proves nothing and cannot fail usefully. Add a final step ONLY to exercise BEHAVIOUR a "
+            "parser cannot see — that the app DOES what was asked — and only when the goal asks for "
+            "it. At most one, at the end.\n"
+            "  • Prefer the FEWEST steps that produce the deliverable — a self-contained app is ONE "
+            "author step, not a research project.\n")
     if it == "research":
         return (
             "GOAL INTENT = RESEARCH. The goal needs EXTERNAL/CURRENT information you do not have. Plan "

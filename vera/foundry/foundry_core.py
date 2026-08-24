@@ -187,6 +187,27 @@ echo VERA_HARDEN_DONE
 
 
 # ── netboot artifact rendering (pure) — a PXE profile → its boot files ──────────
+def pct_create_cmd(vmid, ostemplate, hostname, storage, cores, memory, disk,
+                   net0="", unprivileged=True, features="", swap=512):
+    """Render a root `pct create` command. Proxmox forbids API TOKENS from creating
+    PRIVILEGED containers or setting the `features` flag (nesting/keyctl/mount/fuse) --
+    those are root@pam-only -- so Foundry falls back to this over SSH (proxmox.node.exec)
+    for mesh / vera-worker / docker-swarm CTs. Pure -> unit-testable."""
+    import shlex as _sh
+    p = ["pct", "create", str(int(vmid)), _sh.quote(str(ostemplate)),
+         "--hostname", _sh.quote(hostname or ("ct-%s" % vmid)),
+         "--cores", str(int(cores)), "--memory", str(int(memory)),
+         "--swap", str(int(swap)),
+         "--rootfs", _sh.quote("%s:%s" % (storage, int(disk))),
+         "--unprivileged", ("1" if unprivileged else "0")]
+    if net0:
+        p += ["--net0", _sh.quote(str(net0))]
+    if features:
+        p += ["--features", _sh.quote(str(features))]
+    p += ["--start", "0"]
+    return " ".join(p)
+
+
 def _pxe_slug(s: str) -> str:
     s = (s or "node").lower()
     return ("".join(c if (c.isalnum() or c == "-") else "-" for c in s).strip("-")) or "node"
@@ -682,9 +703,9 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=None,
         '  [ -n "$SEL" ] && { echo "$SEL" > /etc/foundry/pve; PVE="$SEL"; }\n'
         "}\n"
         "while true; do\n"
-        '  CH=$(whiptail --title "Vera Foundry - Ops Node ($(hostname))" --menu "Compute worker | Proxmox: $PVE" 21 78 12 '
+        '  CH=$(whiptail --title "Vera Foundry - Ops Node ($(hostname))" --menu "Compute worker | Proxmox: $PVE" 22 78 13 '
         'status "Node + Docker + swarm status" host "Pick Proxmox host (now: $PVE)" '
-        'vms "Proxmox VMs / CTs -- list + console in" dps "Running containers" '
+        'vms "Proxmox VMs / CTs -- list + text console" gconsole "Graphical VM console -- noVNC in browser (desktop)" dps "Running containers" '
         'nodes "Swarm nodes" ssh "SSH into an estate host" join "Re-run swarm join" '
         'sdcard "Write a Raspberry Pi image to an SD card" modes "Node modes: Vera-worker / mesh / swarm" '
         'log "Boot / join log" shell "Shell" reboot "Reboot" 3>&1 1>&2 2>&3) || { clear; exec sh; }\n'
@@ -696,6 +717,14 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=None,
         'whiptail --title "Proxmox $PVE" --scrolltext --textbox $T 26 100; '
         'ID=$(whiptail --inputbox "Console INTO which CT/VM id? (CT=pct enter, VM=serial console; blank cancels)" 9 68 "" 3>&1 1>&2 2>&3); '
         '[ -n "$ID" ] && { clear; ssh $K -t root@$PVE "if pct status $ID >/dev/null 2>&1; then pct enter $ID; else qm terminal $ID; fi"; };;\n'
+        '    gconsole) if [ -z "$DISPLAY" ]; then whiptail --msgbox "Graphical console needs the Desktop ops node (X + browser). This node is headless -- use vms for a serial/text console." 10 72; '
+        'else ssh $K -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 root@$PVE "echo == VMs ==; qm list 2>/dev/null" >$T 2>&1; '
+        'whiptail --title "VMs on $PVE (graphical console)" --scrolltext --textbox $T 24 90; '
+        'ID=$(whiptail --inputbox "Open the graphical noVNC console for which VM id? (blank cancels)" 9 70 "" 3>&1 1>&2 2>&3); '
+        'if [ -n "$ID" ]; then NODE=$(ssh $K -o ConnectTimeout=8 root@$PVE hostname 2>/dev/null | tr -d "\\r\\n"); '
+        'URL="https://$PVE:8006/?console=kvm&novnc=1&vmid=$ID&node=$NODE&resize=scale"; '
+        '(firefox "$URL" >/dev/null 2>&1 &); '
+        'whiptail --msgbox "Opening VM $ID console in Firefox (Proxmox noVNC).\\nLog in to Proxmox on first use.\\n\\n$URL" 11 78; fi; fi;;\n'
         "    dps) docker ps >$T 2>&1; whiptail --scrolltext --textbox $T 24 100;;\n"
         "    nodes) docker node ls >$T 2>&1; whiptail --scrolltext --textbox $T 24 100;;\n"
         '    ssh) H=$(whiptail --inputbox "SSH target (user@host):" 8 60 "root@$PVE" 3>&1 1>&2 2>&3) && { clear; ssh $K -o StrictHostKeyChecking=accept-new $H; };;\n'
