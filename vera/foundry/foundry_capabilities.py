@@ -56,6 +56,7 @@ from Vera.vera.capability_orchestration import (
 from Vera.vera.foundry.foundry_core import (
     _HARDEN, _pxe_slug, _render_features_script, _render_rpi_config,
     _render_rpi_cmdline, _render_ipxe, _render_autoinstall, _render_boot,
+    pct_create_cmd,
     pick_node, cluster_join_script, CLUSTER_KINDS,
     cluster_init_script, parse_init_token,
     pxe_dnsmasq_conf, pxe_ipxe_menu, swarm_service_cmd,
@@ -87,12 +88,12 @@ async def _call(_cap_name: str, **kw) -> Dict:
         return {"error": f"{_cap_name}: {type(e).__name__}: {e}"}
 
 
-async def _resolve_storage(cluster_id: str) -> str:
+async def _resolve_storage(cluster_id: str, content: str = "images") -> str:
     """Pick an active storage on the node that can hold guest disks — so Foundry
     isn't hardcoded to a storage name that may not exist (e.g. local-lvm vs
     local-zfs). Prefers block pools (zfspool/lvmthin/lvm), else dir/nfs/cifs."""
     res = await _call("proxmox.node.exec", cluster_id=cluster_id,
-                      command="pvesm status -content images 2>/dev/null")
+                      command="pvesm status -content %s 2>/dev/null" % content)
     if res.get("error"):
         return ""
     best = ""
@@ -133,6 +134,25 @@ def _netcfg(ip: str, gateway: str):
     cidr = ip if "/" in ip else ip + "/24"
     gw = gateway or "192.168.0.1"
     return f"name=eth0,bridge=vmbr0,ip={cidr},gw={gw}", f"ip={cidr},gw={gw}"
+
+
+async def _ct_create_ssh(cluster_id, node, ostemplate, hostname, storage, cores,
+                         memory, disk, net0, unprivileged, features):
+    """Create a CT the API token can't (privileged, or nesting/keyctl features -- both
+    root@pam-only) by running `pct create` as root over SSH (proxmox.node.exec)."""
+    nid = await _call("proxmox.nextid", cluster_id=cluster_id)
+    vmid = nid.get("vmid")
+    if not vmid:
+        return {"error": "proxmox.nextid failed: %s" % nid.get("error", ""), "vmid": None}
+    cmd = pct_create_cmd(vmid, ostemplate, hostname, storage, cores, memory, disk,
+                         net0=net0, unprivileged=unprivileged, features=features)
+    res = await _call("proxmox.node.exec", cluster_id=cluster_id, command=cmd, timeout=360)
+    if not (bool(res.get("ok")) or res.get("exit_code") == 0):
+        return {"error": "pct create (root/ssh) failed: %s"
+                % ((res.get("stderr") or res.get("stdout") or res.get("error") or "")[:200]),
+                "vmid": None}
+    return {"ok": True, "vmid": int(vmid), "via": "ssh-root",
+            "features": features, "unprivileged": bool(unprivileged)}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -795,7 +815,7 @@ async def _wait_ssh(cluster_id, ip, port: int = 22, timeout: int = 180) -> bool:
     return "SSH_UP" in (res.get("stdout", "") or "")
 
 
-async def _post_provision(cluster_id, node, vmid, kind, feats, fqdn, job_id="", ip=""):
+async def _post_provision(cluster_id, node, vmid, kind, feats, fqdn, job_id="", ip="", shares=None):
     """Background: wait for the guest, then enrol + apply features; patches the stored
     job so the sync provision call returns fast.
     LXC → enrol via Proxmox (pct exec, root). QEMU/VM → enrol over SSH to the static
@@ -808,18 +828,24 @@ async def _post_provision(cluster_id, node, vmid, kind, feats, fqdn, job_id="", 
         steps.append({"boot": {"running": running}})
         if running and kind == "lxc":
             if want_enrol:
-                res = await _call("enroll.guest", cluster_id=cluster_id, vmid=vmid,
-                                  guest_type="lxc", node=node, fqdn=fqdn or "", via_proxmox=True)
+                try:
+                    res = await asyncio.wait_for(
+                        _call("enroll.guest", cluster_id=cluster_id, vmid=vmid,
+                              guest_type="lxc", node=node, fqdn=fqdn or "", via_proxmox=True),
+                        timeout=90)
+                except asyncio.TimeoutError:
+                    res = {"error": "enrol timed out (90s) -- continuing to features"}
                 steps.append({"enrol": {"ok": not res.get("error"),
                               "identity": (res.get("steps") or {}).get("identity", {}).get("ok"),
-                              "mesh": (res.get("steps") or {}).get("mesh")}})
+                              "mesh": (res.get("steps") or {}).get("mesh"),
+                              "error": res.get("error")}})
             if "hardening" in feats:
                 h = await _apply_ct_feature(cluster_id, vmid, "lxc", _feature_script("hardening", {}), node)
                 steps.append({"hardening": {"ok": bool(h.get("ok"))}})
             # OS-agnostic feature bundles (features_core) -- portable across distros.
             # enrol/mesh/hardening are handled above for CTs; apply the additional
             # portable features here (file-client now; more migrate here as we fan out).
-            _fctx = await _features_ctx()
+            _fctx = await _features_ctx(shares)
             for _f in ("file-client", "vera-worker"):
                 if _f in feats:
                     _sc = _feature_script(_f, _fctx)
@@ -831,9 +857,14 @@ async def _post_provision(cluster_id, node, vmid, kind, feats, fqdn, job_id="", 
                 ready = await _wait_ssh(cluster_id, ip)
                 steps.append({"ssh_wait": {"ip": ip, "reachable": ready}})
                 if ready:
-                    res = await _call("enroll.guest", cluster_id=cluster_id, vmid=vmid,
-                                      guest_type="qemu", node=node, fqdn=fqdn or "", ip=ip,
-                                      ssh_user="vera", ssh_key_path=_vera_key_path())
+                    try:
+                        res = await asyncio.wait_for(
+                            _call("enroll.guest", cluster_id=cluster_id, vmid=vmid,
+                                  guest_type="qemu", node=node, fqdn=fqdn or "", ip=ip,
+                                  ssh_user="vera", ssh_key_path=_vera_key_path()),
+                            timeout=90)
+                    except asyncio.TimeoutError:
+                        res = {"error": "enrol timed out (90s) -- continuing to features"}
                     steps.append({"enrol": {"ok": not res.get("error"),
                                   "identity": (res.get("steps") or {}).get("identity", {}).get("ok"),
                                   "mesh": (res.get("steps") or {}).get("mesh"),
@@ -845,7 +876,7 @@ async def _post_provision(cluster_id, node, vmid, kind, feats, fqdn, job_id="", 
             # exec store; a follow-up applies _HARDEN over that. Noted for now.
             # OS-agnostic feature bundles over SSH (features_core): hardening + portable features.
             if ip:
-                _fctx = await _features_ctx()
+                _fctx = await _features_ctx(shares)
                 for _f in ("hardening", "file-client", "vera-worker"):
                     if _f in feats:
                         _sc = _feature_script(_f, {} if _f == "hardening" else _fctx)
@@ -923,12 +954,19 @@ async def cap_provision(target: str = "", image_id: str = "", name: str = "",
                         features="", cluster_id: str = "", node: str = "",
                         cores: int = 1, memory: int = 1024, disk: int = 8,
                         storage: str = "", fqdn: str = "", ip: str = "",
-                        gateway: str = "", trace_id=None) -> Dict:
+                        gateway: str = "", shares="", trace_id=None) -> Dict:
     r = _redis()
     if isinstance(features, str):
         feats = [f.strip() for f in features.replace(",", " ").split() if f.strip()]
     else:
         feats = [str(f) for f in (features or [])]
+    if isinstance(shares, str):
+        try:
+            shares_list = json.loads(shares) if shares.strip() else []
+        except Exception:
+            shares_list = []
+    else:
+        shares_list = list(shares or [])
     if "enrol" not in feats:
         feats.insert(0, "enrol")            # baseline
     img = None
@@ -953,7 +991,8 @@ async def cap_provision(target: str = "", image_id: str = "", name: str = "",
         node = await _resolve_node(cluster_id) or node
     # resolve a real node storage if none/invalid given (local-lvm may not exist)
     if target in ("ct", "vm") and (not storage or storage == "local-lvm"):
-        storage = await _resolve_storage(cluster_id) or storage
+        storage = await _resolve_storage(cluster_id,
+                        "rootdir" if target == "ct" else "images") or storage
     net0, ipconfig = _netcfg(ip, gateway)   # static IP (no DHCP on this LAN) or dhcp
 
     want_enrol = "enrol" in feats or "mesh" in feats
@@ -964,13 +1003,19 @@ async def cap_provision(target: str = "", image_id: str = "", name: str = "",
         if ":" not in tmpl or "vztmpl" not in tmpl:
             return {"error": f"LXC template not downloaded yet for '{image_id}' — build it "
                              "first (foundry.image.import) so there's a real volid"}
-        res = await _call("proxmox.lxc.create", cluster_id=cluster_id, node=node,
-                          ostemplate=tmpl, hostname=name or "",
-                          storage=storage, cores=cores, memory=memory, disk=disk,
-                          net0=net0,
-                          unprivileged=("mesh" not in feats),
-                          features=("nesting=1,keyctl=1" if ("docker-swarm" in feats or "distributed-compute" in feats or "vera-worker" in feats or "mesh" in feats) else ""),
-                          auto_enroll=False)   # enrol AFTER it's running (avoid create-task race)
+        _unpriv = ("mesh" not in feats)
+        _nesting = ("nesting=1,keyctl=1" if ("docker-swarm" in feats or "distributed-compute" in feats or "vera-worker" in feats or "mesh" in feats) else "")
+        if (not _unpriv) or _nesting:
+            # Proxmox forbids API tokens from creating PRIVILEGED CTs or setting the
+            # `features` flag (nesting/keyctl) -- root@pam-only. Create as root over SSH.
+            res = await _ct_create_ssh(cluster_id, node, tmpl, name or "", storage,
+                                       cores, memory, disk, net0, _unpriv, _nesting)
+        else:
+            res = await _call("proxmox.lxc.create", cluster_id=cluster_id, node=node,
+                              ostemplate=tmpl, hostname=name or "",
+                              storage=storage, cores=cores, memory=memory, disk=disk,
+                              net0=net0, unprivileged=True, features="",
+                              auto_enroll=False)   # enrol AFTER it's running (avoid create-task race)
         step("create", res)
         vmid = res.get("vmid")
         if res.get("error") or not vmid:
@@ -984,7 +1029,7 @@ async def cap_provision(target: str = "", image_id: str = "", name: str = "",
                     step(f, {"status": "pending", "note": "bundle script lands next"})
             step("post", {"status": "applying",
                           "note": "start + enrol + hardening running in background — watch events / jobs"})
-            asyncio.create_task(_post_provision(cluster_id, node, vmid, "lxc", feats, fqdn, job_id))
+            asyncio.create_task(_post_provision(cluster_id, node, vmid, "lxc", feats, fqdn, job_id, shares=shares_list))
     elif target == "docker":
         if img.get("type") != "docker":
             return {"error": f"Docker target needs a docker image; '{image_id}' is {img.get('type')}"}
@@ -1017,7 +1062,7 @@ async def cap_provision(target: str = "", image_id: str = "", name: str = "",
                 step("post", {"status": "applying",
                               "note": "VM boot + SSH enrol running in background — watch events / jobs"})
                 asyncio.create_task(_post_provision(cluster_id, node, vmid, "qemu",
-                                                    feats, fqdn, job_id, ip))
+                                                    feats, fqdn, job_id, ip, shares=shares_list))
         else:
             step("create", {"status": "pending",
                             "note": "no cloud-init template linked to this cloudimg yet — "
@@ -1574,13 +1619,13 @@ def _ops_worker_env() -> str:
     return "".join("%s=%s\n" % (k, v) for k, v in out.items())
 
 
-async def _features_ctx() -> Dict:
+async def _features_ctx(shares=None) -> Dict:
     """Context for features_core.feature_script: LAN-reachable Vera URL, registry, worker
     image + backend env, and the mesh enrol token (minted just-in-time)."""
     ip = _vera_host_ip()
     ctx = {"vera_url": "https://%s:8999" % ip, "registry": "%s:5000" % ip,
            "vera_image": "%s:5000/vera:latest" % ip,
-           "vera_worker_env": _ops_worker_env(), "shares": []}
+           "vera_worker_env": _ops_worker_env(), "shares": list(shares or [])}
     try:
         ctx["mesh_token"] = ((await _call("netsec.mesh.enroll_token")) or {}).get("enroll_token", "")
     except Exception:

@@ -187,6 +187,27 @@ echo VERA_HARDEN_DONE
 
 
 # ── netboot artifact rendering (pure) — a PXE profile → its boot files ──────────
+def pct_create_cmd(vmid, ostemplate, hostname, storage, cores, memory, disk,
+                   net0="", unprivileged=True, features="", swap=512):
+    """Render a root `pct create` command. Proxmox forbids API TOKENS from creating
+    PRIVILEGED containers or setting the `features` flag (nesting/keyctl/mount/fuse) --
+    those are root@pam-only -- so Foundry falls back to this over SSH (proxmox.node.exec)
+    for mesh / vera-worker / docker-swarm CTs. Pure -> unit-testable."""
+    import shlex as _sh
+    p = ["pct", "create", str(int(vmid)), _sh.quote(str(ostemplate)),
+         "--hostname", _sh.quote(hostname or ("ct-%s" % vmid)),
+         "--cores", str(int(cores)), "--memory", str(int(memory)),
+         "--swap", str(int(swap)),
+         "--rootfs", _sh.quote("%s:%s" % (storage, int(disk))),
+         "--unprivileged", ("1" if unprivileged else "0")]
+    if net0:
+        p += ["--net0", _sh.quote(str(net0))]
+    if features:
+        p += ["--features", _sh.quote(str(features))]
+    p += ["--start", "0"]
+    return " ".join(p)
+
+
 def _pxe_slug(s: str) -> str:
     s = (s or "node").lower()
     return ("".join(c if (c.isalnum() or c == "-") else "-" for c in s).strip("-")) or "node"
