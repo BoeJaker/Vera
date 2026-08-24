@@ -5808,6 +5808,58 @@ async def cap_contract_coverage(prefix: str = "", include_internal: bool = False
     result["truncated"] = len(hotspots) > result["returned"]
     return result
 
+
+@capability(
+    "cap.contract.gate", memory="off", silent=True,
+    http_method="POST", http_path="/cap/contracts/gate", http_tags=["cap", "obs"],
+    description="Strictly validate an explicitly selected set of migrated Capability "
+                "Contract v2 manifests without gating the untouched legacy registry. "
+                "Inputs: names (CSV string or list, required), fail_on_warnings. Unknown "
+                "names and missing required declarations fail. Inspection only.",
+    contract={
+        "canonical_task": "capability.contract.gate",
+        "aliases": ["capabilities.contract_gate"],
+        "effects": ["read"],
+        "output_schema": {"type": "object"},
+        "approval": {"status": "not_required"},
+        "trust": {"status": "internal_registry"},
+        "secrets": {"status": "not_required"},
+        "filesystem": {"status": "not_required"},
+        "network": {"status": "not_required"},
+        "tenant": {"status": "global_read_only"},
+        "idempotency": {"status": "idempotent"},
+        "cancellation": {"status": "not_required"},
+        "pagination": {"status": "not_applicable"},
+        "resources": {"status": "declared", "classes": ["cpu"]},
+        "owner": "vera",
+    },
+)
+async def cap_contract_gate(names=None, fail_on_warnings: bool = False, trace_id=None):
+    from Vera.vera.capability_contract_core import gate_contracts, project_contract
+    if isinstance(names, str):
+        selected = [item.strip() for item in names.split(",") if item.strip()]
+    elif isinstance(names, list):
+        selected = [str(item).strip() for item in names if str(item).strip()]
+    else:
+        selected = []
+    selected = sorted(set(selected))
+    if not selected:
+        return {"schema": "vera.capability-contract-gate/v2", "ok": False,
+                "error": "names_required", "manifests": 0, "issues": []}
+    unknown = [name for name in selected if name not in CAPABILITY_REGISTRY]
+    manifests = [project_contract(name, CAPABILITY_REGISTRY[name])
+                 for name in selected if name in CAPABILITY_REGISTRY]
+    result = gate_contracts(manifests, fail_on_warnings=fail_on_warnings)
+    if unknown:
+        result["issues"] = ([{"name": name, "code": "gate.capability_unknown",
+                              "severity": "error", "path": "name",
+                              "message": "selected capability is not registered"}
+                             for name in unknown] + result["issues"])
+        result["counts"]["error"] += len(unknown)
+        result["ok"] = False
+    result["selected"] = selected
+    return result
+
 @capability("mcp.call", memory="auto",
             http_method="POST", http_path="/mcp/call", http_tags=["mcp"],
             mcp_expose=False,

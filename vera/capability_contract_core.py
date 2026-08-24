@@ -19,12 +19,18 @@ CONTRACT_SCHEMA = "vera.capability-contract/v2"
 MANIFEST_SET_SCHEMA = "vera.capability-contract-set/v2"
 LINT_SCHEMA = "vera.capability-contract-lint/v2"
 COVERAGE_SCHEMA = "vera.capability-contract-coverage/v2"
+GATE_SCHEMA = "vera.capability-contract-gate/v2"
 LIFECYCLES = {"active", "deprecated", "experimental", "internal", "removed"}
 EFFECTS = {
     "none", "read", "write", "delete", "execute", "network", "filesystem",
     "secrets", "approval", "model", "accelerator", "external_side_effect",
 }
 _SECRET_NAME = re.compile(r"(?:^|_)(?:password|passwd|secret|token|api_key|private_key)(?:$|_)", re.I)
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+GATE_REQUIRED_DIMENSIONS = (
+    "contract", "output_schema", "effects", "owner", "approval", "secrets",
+    "filesystem", "network", "tenant", "idempotency", "resources",
+)
 
 
 def _json_copy(value: Any, fallback: Any) -> Any:
@@ -90,6 +96,11 @@ def project_contract(name: str, entry: Mapping[str, Any]) -> dict[str, Any]:
         },
         "aliases": aliases,
         "lifecycle": lifecycle,
+        "deprecation": {
+            "replacement": _text(declared.get("replacement")),
+            "sunset": _text(declared.get("sunset")),
+            "reason": _text(declared.get("deprecation_reason")),
+        },
         "declaration": {
             "status": "declared" if declared else "legacy_projected",
             "fields": sorted(str(key) for key in declared),
@@ -157,6 +168,38 @@ def manifest_fingerprint(manifests: list[Mapping[str, Any]]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _coverage_presence(manifest: Mapping[str, Any]) -> dict[str, bool]:
+    declared_fields = set(_mapping(manifest.get("declaration")).get("fields") or [])
+    schemas = _mapping(manifest.get("schemas"))
+    effects = _mapping(manifest.get("effects"))
+    policy = _mapping(manifest.get("policy"))
+    execution = _mapping(manifest.get("execution"))
+    quality = _mapping(manifest.get("quality"))
+    provenance = _mapping(manifest.get("provenance"))
+    checks = {
+        "contract": (_mapping(manifest.get("declaration")).get("status") == "declared"
+                     and bool(declared_fields)),
+        "output_schema": schemas.get("output_status") == "declared",
+        "effects": effects.get("status") == "declared",
+        "owner": bool(_text(provenance.get("owner"))),
+        "approval": _mapping(policy.get("approval")).get("status") != "unknown",
+        "trust": _mapping(policy.get("trust")).get("status") != "unknown",
+        "secrets": _mapping(policy.get("secrets")).get("status") != "unknown",
+        "filesystem": _mapping(policy.get("filesystem")).get("status") != "unknown",
+        "network": _mapping(policy.get("network")).get("status") != "unknown",
+        "tenant": _mapping(policy.get("tenant")).get("status") != "unknown",
+        "idempotency": _mapping(execution.get("idempotency")).get("status") != "unknown",
+        "cancellation": _mapping(execution.get("cancellation")).get("status") != "unknown",
+        "pagination": _mapping(execution.get("pagination")).get("status") != "unknown",
+        "health": _mapping(quality.get("health")).get("status") != "unknown",
+        "cost": _mapping(quality.get("cost")).get("status") != "unknown",
+        "latency": _mapping(quality.get("latency")).get("status") != "unknown",
+        "quality": _mapping(quality.get("quality")).get("status") != "unknown",
+        "resources": _mapping(manifest.get("resources")).get("status") != "unknown",
+    }
+    return checks
+
+
 def contract_coverage(manifests: list[Mapping[str, Any]]) -> dict[str, Any]:
     """Measure migration completeness without treating inferred defaults as declarations."""
     dimensions = (
@@ -172,34 +215,7 @@ def contract_coverage(manifests: list[Mapping[str, Any]]) -> dict[str, Any]:
     for manifest in ordered:
         name = _text(manifest.get("name"))
         declared_fields = set(_mapping(manifest.get("declaration")).get("fields") or [])
-        schemas = _mapping(manifest.get("schemas"))
-        effects = _mapping(manifest.get("effects"))
-        policy = _mapping(manifest.get("policy"))
-        execution = _mapping(manifest.get("execution"))
-        quality = _mapping(manifest.get("quality"))
-        provenance = _mapping(manifest.get("provenance"))
-        checks = {
-            "contract": _mapping(manifest.get("declaration")).get("status") == "declared",
-            "output_schema": schemas.get("output_status") == "declared",
-            "effects": effects.get("status") == "declared",
-            "owner": bool(_text(provenance.get("owner"))),
-            "approval": _mapping(policy.get("approval")).get("status") != "unknown",
-            "trust": _mapping(policy.get("trust")).get("status") != "unknown",
-            "secrets": _mapping(policy.get("secrets")).get("status") != "unknown",
-            "filesystem": _mapping(policy.get("filesystem")).get("status") != "unknown",
-            "network": _mapping(policy.get("network")).get("status") != "unknown",
-            "tenant": _mapping(policy.get("tenant")).get("status") != "unknown",
-            "idempotency": _mapping(execution.get("idempotency")).get("status") != "unknown",
-            "cancellation": _mapping(execution.get("cancellation")).get("status") != "unknown",
-            "pagination": _mapping(execution.get("pagination")).get("status") != "unknown",
-            "health": _mapping(quality.get("health")).get("status") != "unknown",
-            "cost": _mapping(quality.get("cost")).get("status") != "unknown",
-            "latency": _mapping(quality.get("latency")).get("status") != "unknown",
-            "quality": _mapping(quality.get("quality")).get("status") != "unknown",
-            "resources": _mapping(manifest.get("resources")).get("status") != "unknown",
-        }
-        # A malformed declaration must not gain coverage merely by naming a field.
-        checks["contract"] = checks["contract"] and bool(declared_fields)
+        checks = _coverage_presence(manifest)
         missing = [dimension for dimension in dimensions if not checks[dimension]]
         for dimension, present in checks.items():
             totals[dimension] += int(present)
@@ -233,6 +249,32 @@ def contract_coverage(manifests: list[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
+def gate_contracts(manifests: list[Mapping[str, Any]], *,
+                   required_dimensions: tuple[str, ...] = GATE_REQUIRED_DIMENSIONS,
+                   fail_on_warnings: bool = False) -> dict[str, Any]:
+    """Strictly gate only an explicitly selected migration set."""
+    issues = lint_contracts(manifests)
+    for manifest in sorted(manifests, key=lambda item: _text(item.get("name"))):
+        name = _text(manifest.get("name")) or "<unnamed>"
+        presence = _coverage_presence(manifest)
+        for dimension in required_dimensions:
+            if dimension not in presence:
+                issues.append(_issue(name, "gate.dimension_unknown", "error", dimension,
+                                     f"unknown required gate dimension '{dimension}'"))
+            elif not presence[dimension]:
+                issues.append(_issue(name, "gate.declaration_missing", "error", dimension,
+                                     f"required contract dimension '{dimension}' is undeclared"))
+    issues = sorted(issues, key=lambda issue: (issue["severity"], issue["code"],
+                                                issue["name"], issue["path"]))
+    errors = sum(issue["severity"] == "error" for issue in issues)
+    warnings = sum(issue["severity"] == "warning" for issue in issues)
+    return {"schema": GATE_SCHEMA, "manifests": len(manifests),
+            "required_dimensions": list(required_dimensions), "issues": issues,
+            "counts": {"error": errors, "warning": warnings},
+            "fail_on_warnings": bool(fail_on_warnings),
+            "ok": errors == 0 and (warnings == 0 or not fail_on_warnings)}
+
+
 def _issue(name: str, code: str, severity: str, path: str, message: str) -> dict[str, str]:
     return {"name": name, "code": code, "severity": severity,
             "path": path, "message": message}
@@ -249,6 +291,31 @@ def lint_contracts(manifests: list[Mapping[str, Any]]) -> list[dict[str, str]]:
         if lifecycle not in LIFECYCLES:
             issues.append(_issue(name, "lifecycle.invalid", "error", "lifecycle",
                                  f"unknown lifecycle '{lifecycle}'"))
+        deprecation = _mapping(manifest.get("deprecation"))
+        replacement = _text(deprecation.get("replacement"))
+        sunset = _text(deprecation.get("sunset"))
+        reason = _text(deprecation.get("reason"))
+        if lifecycle == "deprecated":
+            if not replacement or replacement == name:
+                issues.append(_issue(name, "lifecycle.replacement_missing", "error",
+                                     "deprecation.replacement",
+                                     "deprecated capability requires a different replacement"))
+            if not sunset or not _ISO_DATE.match(sunset):
+                issues.append(_issue(name, "lifecycle.sunset_invalid", "error",
+                                     "deprecation.sunset",
+                                     "deprecated capability requires an ISO YYYY-MM-DD sunset"))
+            if not reason:
+                issues.append(_issue(name, "lifecycle.reason_missing", "error",
+                                     "deprecation.reason",
+                                     "deprecated capability requires a reason"))
+        elif any((replacement, sunset, reason)):
+            issues.append(_issue(name, "lifecycle.deprecation_inactive", "warning",
+                                 "deprecation",
+                                 "deprecation metadata is set but lifecycle is not deprecated"))
+        if lifecycle == "removed" and bool(_mapping(manifest.get("provenance")).get("mcp_exposed")):
+            issues.append(_issue(name, "lifecycle.removed_exposed", "error",
+                                 "provenance.mcp_exposed",
+                                 "removed capability must not remain MCP-exposed"))
 
         schemas = manifest.get("schemas") if isinstance(manifest.get("schemas"), Mapping) else {}
         input_schema = schemas.get("input") if isinstance(schemas.get("input"), Mapping) else {}

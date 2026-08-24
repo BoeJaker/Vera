@@ -62,6 +62,28 @@ capability group; and returns a bounded, deterministic hotspot list. Projected
 legacy defaults do not count as declarations, so the figures cannot improve
 unless metadata was actually supplied.
 
+`cap.contract.gate` is the incremental strict gate. Callers must supply an exact
+CSV/list of capability names. Only that selected migration set is required to
+have output schema, effects, owner, approval, secret, filesystem, network,
+tenant, idempotency, and resource declarations; the untouched legacy registry
+does not create a flag day. Unknown capability names fail closed. Deterministic
+contract errors always fail, and callers can additionally make warnings fatal
+with `fail_on_warnings=true`.
+
+## Lifecycle and deprecation
+
+Lifecycle is one of `active`, `experimental`, `internal`, `deprecated`,
+`removed`. A deprecated contract must declare:
+
+- a different replacement capability;
+- an ISO `YYYY-MM-DD` sunset;
+- a concise `deprecation_reason`.
+
+A removed capability cannot remain MCP-exposed. Deprecation fields on any other
+lifecycle produce a warning, preventing half-applied migrations from looking
+complete. These checks are inspectable and gateable but do not remove or reroute
+capabilities automatically.
+
 ## First migrated family
 
 The first explicit family covers the overlapping generation and authoring tools:
@@ -103,16 +125,17 @@ work resolves it only inside the authorized execution boundary.
 
 ## Rollout path
 
-The foundation and first migration slice provide projection, stable fingerprints,
-bounded inspection, coverage measurement, deterministic lint fixtures, and
-explicit generation/authoring contracts. Subsequent W1-03 slices should:
+The first three slices provide projection, stable fingerprints, bounded
+inspection, coverage measurement, lifecycle validation, an incremental strict
+gate, deterministic lint fixtures, and explicit generation/authoring contracts.
+Subsequent W1-03 slices should:
 
 1. inventory and classify the remaining high-use capability families;
 2. declare effects and output schemas for those families;
 3. add ownership, health, latency, cost, and quality feeds;
-4. model deprecation and aliases without hiding the canonical task;
-5. make strict lint gates incremental, starting with changed contracts;
-6. hand complete manifests to W1-04 resolver shadow mode.
+4. apply lifecycle/deprecation declarations to real retiring aliases as they are
+   identified;
+5. feed complete, gated manifests to W1-04 resolver shadow mode.
 
 Execution selection remains unchanged until shadow evaluation demonstrates that
 the richer contracts improve choices without unsafe exclusions or added side

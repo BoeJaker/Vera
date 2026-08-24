@@ -6,6 +6,7 @@ import pytest
 from vera.capability_contract_core import (
     CONTRACT_SCHEMA,
     contract_coverage,
+    gate_contracts,
     lint_contracts,
     manifest_fingerprint,
     project_contract,
@@ -176,3 +177,43 @@ def test_generation_and_authoring_family_has_explicit_canonical_tasks():
         assert manifest["canonical_task"] == canonical_task
         assert manifest["declaration"]["status"] == "declared"
         assert manifest["effects"]["status"] == "declared"
+
+
+def test_deprecated_contract_requires_replacement_sunset_and_reason():
+    bad = project_contract("old.cap", _entry(contract={
+        "lifecycle": "deprecated", "effects": ["read"]}))
+    codes = {issue["code"] for issue in lint_contracts([bad])}
+    assert {"lifecycle.replacement_missing", "lifecycle.sunset_invalid",
+            "lifecycle.reason_missing"} <= codes
+
+    good = project_contract("old.cap", _entry(contract={
+        "lifecycle": "deprecated", "replacement": "new.cap", "sunset": "2027-01-31",
+        "deprecation_reason": "superseded", "effects": ["read"]}))
+    assert not [issue for issue in lint_contracts([good])
+                if issue["code"].startswith("lifecycle.")]
+
+
+def test_removed_contract_cannot_remain_mcp_exposed():
+    removed = project_contract("gone.cap", _entry(contract={
+        "lifecycle": "removed", "effects": ["none"]}))
+    assert any(issue["code"] == "lifecycle.removed_exposed"
+               for issue in lint_contracts([removed]))
+
+
+def test_incremental_gate_passes_migrated_family_and_fails_legacy_projection():
+    migrated = [project_contract(name, runtime_orchestration.CAPABILITY_REGISTRY[name])
+                for name in ("llm.generate", "code.author", "prose.author")]
+    assert gate_contracts(migrated)["ok"] is True
+
+    legacy = project_contract("legacy.cap", _entry())
+    result = gate_contracts([legacy])
+    assert result["ok"] is False
+    assert any(issue["code"] == "gate.declaration_missing" for issue in result["issues"])
+
+
+def test_gate_capability_rejects_unknown_names_without_invocation():
+    result = asyncio.run(orchestration.cap_contract_gate.__wrapped__(
+        names=["cap.contract.manifest", "does.not.exist"]))
+    assert result["ok"] is False
+    assert result["selected"] == ["cap.contract.manifest", "does.not.exist"]
+    assert any(issue["code"] == "gate.capability_unknown" for issue in result["issues"])
