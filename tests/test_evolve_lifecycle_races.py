@@ -75,6 +75,56 @@ def test_mirror_refresh_race_fails_without_forcing_ref_or_removing_worktree(
     assert len(shell_calls) == 2
 
 
+def test_mirror_refresh_from_inside_mirror_uses_registered_checkout(
+        monkeypatch, tmp_path):
+    mirror_path = tmp_path / "actual-mirror"
+    mirror_path.mkdir()
+    (mirror_path / ".git").write_text("gitdir: valid", encoding="utf-8")
+    git_calls = []
+    shell_calls = []
+
+    async def git(*args, **_kwargs):
+        git_calls.append(args)
+        if args[:2] == ("rev-parse", "--verify"):
+            return {"ok": True, "out": "old", "err": "", "code": 0}
+        if args[:3] == ("worktree", "list", "--porcelain"):
+            return {
+                "ok": True,
+                "out": (f"worktree {mirror_path}\n"
+                        "branch refs/heads/loop-lab/bleeding-edge-mirror\n\n"),
+                "err": "",
+                "code": 0,
+            }
+        raise AssertionError(f"unexpected repository mutation: {args}")
+
+    async def shell(argv, cwd=None, timeout=60):
+        shell_calls.append((argv, cwd))
+        joined = " ".join(argv)
+        assert cwd == str(mirror_path)
+        if "status --porcelain" in joined:
+            return {"ok": True, "out": "", "err": "", "code": 0}
+        if "merge --ff-only bleeding-edge" in joined:
+            return {"ok": True, "out": "updated", "err": "", "code": 0}
+        if "rev-parse --short HEAD" in joined:
+            return {"ok": True, "out": "abc1234", "err": "", "code": 0}
+        raise AssertionError(f"unexpected worktree command: {argv}")
+
+    monkeypatch.setattr(evolve, "_git", git)
+    monkeypatch.setattr(evolve, "_sh", shell)
+
+    result = asyncio.run(evolve._refresh_loop_lab_mirror(
+        "loop-lab/bleeding-edge-mirror", "bleeding-edge",
+        repo_root=mirror_path))
+
+    assert result == {
+        "ok": True,
+        "action": "fast-forwarded worktree",
+        "head": "abc1234",
+    }
+    assert not any(call[:2] == ("branch", "-f") for call in git_calls)
+    assert len(shell_calls) == 3
+
+
 def test_promotion_preflight_needs_refs_not_a_feature_worktree(monkeypatch):
     git_calls = []
 

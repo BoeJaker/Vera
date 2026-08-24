@@ -4337,7 +4337,17 @@ async def _refresh_loop_lab_mirror(mirror_branch: str, base: str,
         if not cr["ok"]:
             return {"error": f"mirror branch create failed: {cr['err'] or cr['out']}"}
         return {"ok": True, "action": "created", "base": base}
-    wt_abs = root / _WORKTREE_DIR / _safe_branch(mirror_branch)
+    # Resolve the checkout from Git's common worktree registry.  ``root`` may
+    # itself be the standing mirror when this capability is served by the
+    # bleeding-edge container; deriving ``root/.loop-lab-worktrees/...`` in
+    # that case points at a fictional nested worktree and the fallback
+    # ``branch -f`` is correctly rejected because the real mirror branch is
+    # checked out.  The derived path remains a fallback for old/severed entries
+    # that Git can no longer enumerate and that the T10 repair path handles.
+    wl = await _git("worktree", "list", "--porcelain", repo_root=root)
+    registered = _worktree_paths_by_branch(wl.get("out", "")) if wl.get("ok") else {}
+    wt_abs = Path(registered.get(mirror_branch) or
+                  (root / _WORKTREE_DIR / _safe_branch(mirror_branch)))
     if wt_abs.exists() and (wt_abs / ".git").exists():
         st = await _sh(_git_wt_argv(str(wt_abs), "status", "--porcelain"), cwd=str(wt_abs))
         # T10 self-heal: the standing container bind-mounts this worktree, so an

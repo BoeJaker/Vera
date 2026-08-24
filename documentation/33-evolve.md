@@ -620,6 +620,12 @@ _No capabilities resolved for this domain._
 <!-- VERA:AUTO:capabilities END -->
 # Promotion and moving bleeding-edge
 
+The standing bleeding-edge controller may itself initiate a promotion. Mirror
+refresh therefore resolves the mirror checkout through Git's common worktree
+registry, not by appending `.loop-lab-worktrees` to the controller's current
+checkout. This keeps self-refresh on the guarded in-worktree fast-forward path
+and avoids an invalid force-update of a checked-out mirror branch.
+
 Pipeline promotion performs a non-mutating `git merge-tree` preflight between
 the current target tip and the committed feature branch, then merges from the
 target side. It does not merge bleeding-edge back into the feature branch first.
