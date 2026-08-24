@@ -11,6 +11,7 @@ from vera.capability_contract_core import (
     manifest_fingerprint,
     project_contract,
     project_registry,
+    summarize_contract_observations,
 )
 from vera import capability_orchestration as orchestration
 from Vera.vera import capability_orchestration as runtime_orchestration
@@ -225,3 +226,54 @@ def test_gate_capability_accepts_mcp_coerced_python_list_string():
     assert result["selected"] == ["cap.contract.coverage", "cap.contract.gate"]
     assert not [issue for issue in result["issues"]
                 if issue["code"] == "gate.capability_unknown"]
+
+
+def test_observations_aggregate_outcomes_and_latency_without_payloads():
+    events = [
+        {"type": "cap.ok", "name": "a.cap", "elapsed_ms": 100,
+         "ts": "2026-08-24T10:00:00Z", "preview": "must not leak"},
+        {"type": "cap.error", "name": "a.cap", "elapsed_ms": 300,
+         "ts": "2026-08-24T10:01:00Z", "error": "must not leak"},
+        {"type": "cap.ok", "name": "b.cap", "elapsed_ms": 50,
+         "ts": "2026-08-24T10:02:00Z", "args_preview": "must not leak"},
+        {"type": "other", "name": "a.cap"},
+    ]
+    result = summarize_contract_observations(events)
+    assert result["events"] == {"supplied": 4, "accepted": 3, "ignored": 1}
+    assert result["observations"][0] == {
+        "name": "a.cap", "calls": 2, "ok": 1, "errors": 1,
+        "last_seen": "2026-08-24T10:01:00Z", "success_rate": 0.5,
+        "health": {"status": "observed", "samples": 2, "healthy": False},
+        "latency_ms": {"status": "observed", "samples": 2,
+                       "p50": 200, "p95": 290, "max": 300},
+    }
+    rendered = repr(result)
+    assert "must not leak" not in rendered
+    assert "preview" not in rendered
+
+
+def test_observations_filter_names_and_ignore_invalid_latency():
+    result = summarize_contract_observations([
+        {"type": "cap.ok", "name": "keep", "elapsed_ms": float("nan")},
+        {"type": "cap.ok", "name": "drop", "elapsed_ms": 10},
+    ], allowed_names={"keep"})
+    assert result["observed_capabilities"] == 1
+    assert result["observations"][0]["latency_ms"] == {
+        "status": "unknown", "samples": 0, "p50": None, "p95": None, "max": None}
+
+
+def test_observation_capability_bounds_windows_and_registered_caps(monkeypatch):
+    calls = []
+
+    async def observe(limit, trace_id=None):
+        calls.append((limit, trace_id))
+        return [{"type": "cap.ok", "name": "cap.contract.gate", "elapsed_ms": 7},
+                {"type": "cap.ok", "name": "not.registered", "elapsed_ms": 1}]
+
+    monkeypatch.setitem(orchestration.CAPABILITY_REGISTRY, "obs.events", {"raw": observe})
+    result = asyncio.run(orchestration.cap_contract_observations.__wrapped__(
+        prefix="cap.contract.", event_limit=9999, cap_limit=1, trace_id="obs-test"))
+    assert calls == [(500, "obs-test")]
+    assert result["registered"] >= 1
+    assert result["observation_count"] == 1
+    assert result["observations"][0]["name"] == "cap.contract.gate"

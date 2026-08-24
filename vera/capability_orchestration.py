@@ -5879,6 +5879,62 @@ async def cap_contract_gate(names=None, fail_on_warnings: bool = False, trace_id
     result["selected"] = selected
     return result
 
+
+@capability(
+    "cap.contract.observations", memory="off", silent=True,
+    http_method="GET", http_path="/cap/contracts/observations", http_tags=["cap", "obs"],
+    description="Aggregate bounded recent cap.ok/cap.error envelopes into privacy-safe "
+                "health, reliability, and latency evidence for Capability Contract v2. "
+                "Never returns arguments, previews, prompts, results, or error text. "
+                "Inputs: prefix, event_limit (1..500), cap_limit (1..500), "
+                "include_internal. Observation only; stable declared manifests are unchanged.",
+    contract={
+        "canonical_task": "capability.contract.observe",
+        "aliases": ["capabilities.contract_observations"],
+        "effects": ["read"],
+        "output_schema": {"type": "object"},
+        "approval": {"status": "not_required"},
+        "trust": {"status": "redacted_event_envelopes"},
+        "secrets": {"status": "not_required"},
+        "filesystem": {"status": "not_required"},
+        "network": {"status": "not_required"},
+        "tenant": {"status": "global_aggregate"},
+        "idempotency": {"status": "idempotent_for_event_window"},
+        "cancellation": {"status": "not_required"},
+        "pagination": {"status": "bounded"},
+        "resources": {"status": "declared", "classes": ["cpu", "redis"]},
+        "owner": "vera",
+    },
+)
+async def cap_contract_observations(prefix: str = "", event_limit: int = 500,
+                                    cap_limit: int = 200,
+                                    include_internal: bool = False, trace_id=None):
+    from Vera.vera.capability_contract_core import (
+        project_registry, summarize_contract_observations,
+    )
+    observer = CAPABILITY_REGISTRY.get("obs.events", {}).get("raw")
+    if observer is None:
+        return {"schema": "vera.capability-contract-observations/v2", "ok": False,
+                "error": "obs.events_unavailable", "observations": []}
+    bounded_events = max(1, min(int(event_limit or 500), 500))
+    bounded_caps = max(1, min(int(cap_limit or 200), 500))
+    prefix = (prefix or "").strip()
+    manifests = project_registry(CAPABILITY_REGISTRY, include_internal=include_internal)
+    allowed = {item["name"] for item in manifests
+               if not prefix or item["name"].startswith(prefix)}
+    events = await observer(limit=bounded_events, trace_id=trace_id)
+    result = summarize_contract_observations(
+        events if isinstance(events, list) else [], allowed_names=allowed)
+    observations = result["observations"]
+    result.update({"ok": True, "registered": len(allowed),
+                   "window": {"requested": bounded_events,
+                              "returned": len(events) if isinstance(events, list) else 0},
+                   "observation_count": len(observations),
+                   "observations": observations[:bounded_caps],
+                   "returned": min(len(observations), bounded_caps),
+                   "truncated": len(observations) > bounded_caps})
+    return result
+
 @capability("mcp.call", memory="auto",
             http_method="POST", http_path="/mcp/call", http_tags=["mcp"],
             mcp_expose=False,

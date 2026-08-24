@@ -70,6 +70,18 @@ does not create a flag day. Unknown capability names fail closed. Deterministic
 contract errors always fail, and callers can additionally make warnings fatal
 with `fail_on_warnings=true`.
 
+`cap.contract.observations` supplies the measured half of the contract. It
+aggregates a bounded recent `cap.ok`/`cap.error` event window into call counts,
+success rate, observed health, and p50/p95/maximum latency. Stable declared
+manifests and their fingerprints remain unchanged: runtime evidence is a
+separate, expiring view rather than silently rewritten contract metadata.
+
+The observation output is deliberately sparse. It never includes arguments,
+argument previews, prompts, result previews, returned values, exception text,
+session IDs, or trace IDs. A capability with no recent samples is unknown, not
+healthy. Cost and task-quality remain unknown until Vera has trustworthy usage
+and evaluation sources for them.
+
 ## Lifecycle and deprecation
 
 Lifecycle is one of `active`, `experimental`, `internal`, `deprecated`,
@@ -125,14 +137,15 @@ work resolves it only inside the authorized execution boundary.
 
 ## Rollout path
 
-The first three slices provide projection, stable fingerprints, bounded
+The first four slices provide projection, stable fingerprints, bounded
 inspection, coverage measurement, lifecycle validation, an incremental strict
-gate, deterministic lint fixtures, and explicit generation/authoring contracts.
-Subsequent W1-03 slices should:
+gate, privacy-safe operational observations, deterministic lint fixtures, and
+explicit generation/authoring contracts. Subsequent W1-03 slices should:
 
 1. inventory and classify the remaining high-use capability families;
 2. declare effects and output schemas for those families;
-3. add ownership, health, latency, cost, and quality feeds;
+3. add trustworthy cost/usage and task-quality feeds; recent health, reliability,
+   and latency evidence is already available;
 4. apply lifecycle/deprecation declarations to real retiring aliases as they are
    identified;
 5. feed complete, gated manifests to W1-04 resolver shadow mode.

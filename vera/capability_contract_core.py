@@ -20,6 +20,7 @@ MANIFEST_SET_SCHEMA = "vera.capability-contract-set/v2"
 LINT_SCHEMA = "vera.capability-contract-lint/v2"
 COVERAGE_SCHEMA = "vera.capability-contract-coverage/v2"
 GATE_SCHEMA = "vera.capability-contract-gate/v2"
+OBSERVATION_SCHEMA = "vera.capability-contract-observations/v2"
 LIFECYCLES = {"active", "deprecated", "experimental", "internal", "removed"}
 EFFECTS = {
     "none", "read", "write", "delete", "execute", "network", "filesystem",
@@ -65,6 +66,27 @@ def _nonnegative_int(value: Any) -> int:
         return max(0, int(value or 0))
     except (TypeError, ValueError):
         return 0
+
+
+def _nonnegative_float(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    value = float(value)
+    if value < 0 or value != value or value in (float("inf"), float("-inf")):
+        return None
+    return value
+
+
+def _percentile(values: list[float], quantile: float) -> int | float | None:
+    ordered = sorted(values)
+    if not ordered:
+        return None
+    position = (len(ordered) - 1) * quantile
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    value = ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower)
+    rounded = round(value, 2)
+    return int(rounded) if rounded.is_integer() else rounded
 
 
 def project_contract(name: str, entry: Mapping[str, Any]) -> dict[str, Any]:
@@ -273,6 +295,54 @@ def gate_contracts(manifests: list[Mapping[str, Any]], *,
             "counts": {"error": errors, "warning": warnings},
             "fail_on_warnings": bool(fail_on_warnings),
             "ok": errors == 0 and (warnings == 0 or not fail_on_warnings)}
+
+
+def summarize_contract_observations(events: list[Any], *,
+                                    allowed_names: set[str] | None = None) -> dict[str, Any]:
+    """Aggregate recent cap.ok/error envelopes without copying args, previews, or results."""
+    supplied = len(events)
+    accepted = 0
+    rows: dict[str, dict[str, Any]] = {}
+    for event in events:
+        if not isinstance(event, Mapping) or event.get("type") not in {"cap.ok", "cap.error"}:
+            continue
+        name = _text(event.get("name"))
+        if not name or (allowed_names is not None and name not in allowed_names):
+            continue
+        accepted += 1
+        row = rows.setdefault(name, {"name": name, "calls": 0, "ok": 0, "errors": 0,
+                                     "latencies_ms": [], "last_seen": ""})
+        row["calls"] += 1
+        outcome = "ok" if event.get("type") == "cap.ok" else "errors"
+        row[outcome] += 1
+        latency = _nonnegative_float(event.get("elapsed_ms"))
+        if latency is not None:
+            row["latencies_ms"].append(latency)
+        timestamp = _text(event.get("ts"))
+        if timestamp > row["last_seen"]:
+            row["last_seen"] = timestamp
+
+    observations = []
+    for row in rows.values():
+        latencies = row.pop("latencies_ms")
+        calls = row["calls"]
+        observations.append({
+            **row,
+            "success_rate": round(row["ok"] / calls, 4) if calls else None,
+            "health": {"status": "observed", "samples": calls,
+                       "healthy": row["errors"] == 0},
+            "latency_ms": {"status": "observed" if latencies else "unknown",
+                           "samples": len(latencies),
+                           "p50": _percentile(latencies, 0.50),
+                           "p95": _percentile(latencies, 0.95),
+                           "max": (round(max(latencies), 2) if latencies else None)},
+        })
+    observations.sort(key=lambda row: (-row["errors"], -row["calls"], row["name"]))
+    return {"schema": OBSERVATION_SCHEMA,
+            "events": {"supplied": supplied, "accepted": accepted,
+                       "ignored": supplied - accepted},
+            "observed_capabilities": len(observations),
+            "observations": observations}
 
 
 def _issue(name: str, code: str, severity: str, path: str, message: str) -> dict[str, str]:
