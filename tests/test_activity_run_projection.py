@@ -45,6 +45,7 @@ def test_activity_projects_root_run_with_inline_child_feedback(monkeypatch):
     assert event["extra"]["storage"] == "process_local_memory"
     assert event["extra"]["children"][0]["status"] == "completed"
     assert event["ui"]["session_id"] == "chat-1"
+    assert event["extra"]["catalog_recovery"]["attempted"] is False
     assert [item["type"] for item in event["extra"]["lifecycle"]] == [
         "run.started", "run.progress", "run.completed"]
     assert event["extra"]["lifecycle"][1]["payload"]["progress"] == 1.0
@@ -154,7 +155,12 @@ def test_run_recovery_ui_is_verified_and_observational_only():
     assert '"retry_count": len(retry_events)' in activity
     assert "Recovery &amp; reconciliation · observation only" in timeline
     assert "this UI cannot execute or resume the native run" in timeline
+    assert "projections recovered" in timeline
+    assert "quarantined" in timeline
+    assert "durable catalog recovery not enabled for this process" in timeline
     assert "journal verified" in overlay
+    assert "catalogRecovery.recovered" in overlay
+    assert "catalogRecovery.quarantined" in overlay
 
 
 def test_artifact_ui_distinguishes_reference_metadata_from_verification():

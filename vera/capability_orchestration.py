@@ -7820,15 +7820,18 @@ async def cap_dag_run(dag: list = None, state: dict = None, supervised: bool = F
     return {"trace_id":tid,"result":result}
 
 @capability("run.shadow.list", memory="off",
-            description="List recent non-authoritative Run shadow projections held in this process.")
+            description="List recent non-authoritative Run shadow projections and the "
+                        "redacted startup catalog-recovery outcome for this process.")
 async def cap_run_shadow_list(limit: int = 50, trace_id=None):
     from Vera.vera.execution.run_projection import SHADOW_RUNS
     return {"authoritative": False, "storage": SHADOW_RUNS.storage,
-            "runs": SHADOW_RUNS.list(limit)}
+            "runs": SHADOW_RUNS.list(limit),
+            "recovery": SHADOW_RUNS.recovery_status()}
 
 @capability("run.shadow.graph", memory="off",
             http_method="GET", http_path="/run/shadow/graph", http_tags=["runs"],
-            description="Read a bounded, content-free, non-authoritative Run graph for UI overlays.")
+            description="Read a bounded, content-free, non-authoritative Run graph plus "
+                        "redacted startup catalog-recovery status for UI overlays.")
 async def cap_run_shadow_graph(run_id: str = "", session_id: str = "",
                                run_trace_id: str = "", limit: int = 100,
                                trace_id=None):
@@ -7842,7 +7845,8 @@ async def cap_run_shadow_get(run_id: str, trace_id=None):
     from Vera.vera.execution.run_projection import SHADOW_RUNS
     projection = SHADOW_RUNS.get(run_id)
     return projection or {"error": "run_not_found", "run_id": run_id,
-                          "authoritative": False, "storage": SHADOW_RUNS.storage}
+                          "authoritative": False, "storage": SHADOW_RUNS.storage,
+                          "recovery": SHADOW_RUNS.recovery_status()}
 
 @capability("run.shadow.export", memory="off",
             description="Export the checksummed in-memory event journal for a recent shadow Run.")
