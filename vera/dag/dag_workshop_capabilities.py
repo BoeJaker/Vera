@@ -10450,6 +10450,23 @@ def _code_author_timing(started: float, generation_started: float,
 @capability(
     "code.author", memory="on",
     http_method="POST", http_path="/code/author", http_tags=["code", "fabric"],
+    contract={
+        "canonical_task": "source_file.author",
+        "aliases": ["source.author"],
+        "effects": ["execute", "filesystem", "model"],
+        "output_schema": {"type": "object"},
+        "approval": {"status": "not_required"},
+        "trust": {"status": "task_and_workspace_context"},
+        "secrets": {"status": "not_required"},
+        "filesystem": {"status": "workspace_read_write"},
+        "network": {"status": "internal_model_cluster"},
+        "tenant": {"status": "session_scoped"},
+        "idempotency": {"status": "versioned_write"},
+        "cancellation": {"status": "stream_best_effort"},
+        "pagination": {"status": "not_applicable"},
+        "resources": {"status": "declared", "classes": ["gpu", "cpu", "filesystem"]},
+        "owner": "vera",
+    },
     # The auto-schema marks NO param required (every kwarg has a default), so the
     # loop's signature shows `task/path (default: "")` — everything looks
     # OPTIONAL. So the description carries the real contract: it LEADS with the
@@ -11049,6 +11066,23 @@ def _v5_prose_ungrounded_refs(text: str, real_files: Optional[List[str]]) -> Lis
 @capability(
     "prose.author", memory="on",
     http_method="POST", http_path="/prose/author", http_tags=["fabric", "docs"],
+    contract={
+        "canonical_task": "document.author",
+        "aliases": ["document.write"],
+        "effects": ["filesystem", "model"],
+        "output_schema": {"type": "object"},
+        "approval": {"status": "not_required"},
+        "trust": {"status": "task_and_workspace_context"},
+        "secrets": {"status": "not_required"},
+        "filesystem": {"status": "workspace_read_write"},
+        "network": {"status": "internal_model_cluster"},
+        "tenant": {"status": "session_scoped"},
+        "idempotency": {"status": "versioned_write"},
+        "cancellation": {"status": "stream_best_effort"},
+        "pagination": {"status": "not_applicable"},
+        "resources": {"status": "declared", "classes": ["gpu", "cpu", "filesystem"]},
+        "owner": "vera",
+    },
     # Same 300-char rich_cap_signature() truncation issue as code.author (see
     # its comment above) — the OLD text cut off mid-sentence before ever
     # reaching "if you already drafted the document yourself, pass it as
