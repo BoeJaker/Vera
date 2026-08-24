@@ -7871,15 +7871,18 @@ async def cap_dag_run(dag: list = None, state: dict = None, supervised: bool = F
     return {"trace_id":tid,"result":result}
 
 @capability("run.shadow.list", memory="off",
-            description="List recent non-authoritative Run shadow projections held in this process.")
+            description="List recent non-authoritative Run shadow projections and the "
+                        "redacted startup catalog-recovery outcome for this process.")
 async def cap_run_shadow_list(limit: int = 50, trace_id=None):
     from Vera.vera.execution.run_projection import SHADOW_RUNS
     return {"authoritative": False, "storage": SHADOW_RUNS.storage,
-            "runs": SHADOW_RUNS.list(limit)}
+            "runs": SHADOW_RUNS.list(limit),
+            "recovery": SHADOW_RUNS.recovery_status()}
 
 @capability("run.shadow.graph", memory="off",
             http_method="GET", http_path="/run/shadow/graph", http_tags=["runs"],
-            description="Read a bounded, content-free, non-authoritative Run graph for UI overlays.")
+            description="Read a bounded, content-free, non-authoritative Run graph plus "
+                        "redacted startup catalog-recovery status for UI overlays.")
 async def cap_run_shadow_graph(run_id: str = "", session_id: str = "",
                                run_trace_id: str = "", limit: int = 100,
                                trace_id=None):
@@ -7893,7 +7896,8 @@ async def cap_run_shadow_get(run_id: str, trace_id=None):
     from Vera.vera.execution.run_projection import SHADOW_RUNS
     projection = SHADOW_RUNS.get(run_id)
     return projection or {"error": "run_not_found", "run_id": run_id,
-                          "authoritative": False, "storage": SHADOW_RUNS.storage}
+                          "authoritative": False, "storage": SHADOW_RUNS.storage,
+                          "recovery": SHADOW_RUNS.recovery_status()}
 
 @capability("run.shadow.export", memory="off",
             description="Export the checksummed in-memory event journal for a recent shadow Run.")
@@ -7905,6 +7909,64 @@ async def cap_run_shadow_export(run_id: str, trace_id=None):
                 "authoritative": False, "storage": SHADOW_RUNS.storage}
     return {"authoritative": False, "storage": SHADOW_RUNS.storage,
             "export": exported}
+
+
+@capability("workflow.ir.import_dag", memory="off",
+            description="Describe a native Vera DAG as versioned Workflow IR and report all "
+                        "semantic gaps. This inspection capability never executes the DAG. "
+                        "Lossy conversion is refused unless allow_lossy is explicitly true.")
+async def cap_workflow_ir_import_dag(dag: list = None, name: str = "",
+                                     allow_lossy: bool = False, trace_id=None):
+    from Vera.vera.execution.workflow_ir import import_native_dag
+    return import_native_dag(dag, name=name, allow_lossy=allow_lossy)
+
+
+@capability("workflow.ir.export_dag", memory="off",
+            description="Convert supported Workflow IR to Vera's native DAG array with an "
+                        "explicit loss/gap report. This inspection capability never runs it.")
+async def cap_workflow_ir_export_dag(workflow: dict, allow_lossy: bool = False,
+                                     trace_id=None):
+    from Vera.vera.execution.workflow_ir import export_native_dag
+    return export_native_dag(workflow, allow_lossy=allow_lossy)
+
+
+@capability("workflow.ir.validate", memory="off",
+            description="Validate and normalize Workflow IR and return its stable SHA-256 "
+                        "content hash. This capability has no execution side effects.")
+async def cap_workflow_ir_validate(workflow: dict, trace_id=None):
+    from Vera.vera.execution.workflow_ir import (
+        WorkflowIRValidationError, normalize_workflow)
+    try:
+        return {"ok": True, "workflow": normalize_workflow(workflow), "executes": False}
+    except WorkflowIRValidationError as exc:
+        return {"ok": False, "error": "invalid_workflow", "detail": str(exc),
+                "executes": False}
+
+
+@capability("workflow.ir.migrate", memory="off",
+            description="Normalize a known Workflow IR version or explicitly refuse an "
+                        "unsupported source/target version. Never executes a workflow.")
+async def cap_workflow_ir_migrate(workflow: dict, target_version: str = "1.0",
+                                  trace_id=None):
+    from Vera.vera.execution.workflow_ir import migrate_workflow
+    return migrate_workflow(workflow, target_version=target_version)
+
+
+@capability("workflow.ir.adapters", memory="off",
+            description="List declarative Workflow IR adapter profiles, including whether an "
+                        "adapter is actually available and executable. Does not load runtimes.")
+async def cap_workflow_ir_adapters(trace_id=None):
+    from Vera.vera.execution.workflow_ir import adapter_profiles
+    return adapter_profiles()
+
+
+@capability("workflow.ir.gaps", memory="off",
+            description="Analyze Workflow IR compatibility with a named adapter profile without "
+                        "importing or invoking that runtime.")
+async def cap_workflow_ir_gaps(workflow: dict, adapter: str = "vera.native_dag",
+                               trace_id=None):
+    from Vera.vera.execution.workflow_ir import analyze_adapter
+    return analyze_adapter(workflow, adapter=adapter)
 
 @capability("dag.plan", memory="on",
             http_method="POST", http_path="/dag/plan", http_tags=["dag"],

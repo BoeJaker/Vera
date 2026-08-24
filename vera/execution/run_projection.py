@@ -9,7 +9,7 @@ from collections import OrderedDict
 from typing import Any
 from uuid import uuid4
 
-from .run_journal import MemoryRunJournal, SqliteRunJournal
+from .run_journal import JournalCorruption, MemoryRunJournal, SqliteRunJournal
 from .run_protocol import ArtifactRef, PROTOCOL_VERSION, Run, RunError, RunEvent, RunStatus
 
 
@@ -37,6 +37,10 @@ class ShadowRunRegistry:
         self.max_runs = max(1, int(max_runs))
         self.runs: OrderedDict[str, Run] = OrderedDict()
         self.journal = journal or MemoryRunJournal()
+        self.recovery = {"attempted": False, "recovered": 0, "failed": 0,
+                         "failures": []}
+        if isinstance(self.journal, SqliteRunJournal):
+            self.recover()
 
     @property
     def storage(self) -> str:
@@ -44,10 +48,28 @@ class ShadowRunRegistry:
                 if isinstance(self.journal, SqliteRunJournal)
                 else "process_local_memory")
 
+    def recovery_status(self) -> dict[str, Any]:
+        """Public, content-free catalog recovery outcome with opaque failure refs."""
+        failures = self.recovery.get("failures") or []
+        return {
+            "attempted": bool(self.recovery.get("attempted")),
+            "recovered": int(self.recovery.get("recovered") or 0),
+            "quarantined": int(self.recovery.get("failed") or 0),
+            "quarantined_refs": [{
+                "run_ref": hashlib.sha256(str(item.get("run_id") or "").encode("utf-8"))
+                .hexdigest()[:12],
+                "error_type": str(item.get("error_type") or "recovery_error"),
+            } for item in failures[:20]],
+            "bounded_limit": self.max_runs,
+            "read_only": True,
+        }
+
     def record(self, run: Run, event: RunEvent) -> None:
+        self.journal.register(run)
         self.runs[run.id] = run
         self.runs.move_to_end(run.id)
         self.journal.append(event)
+        self.journal.checkpoint(run)
         while len(self.runs) > self.max_runs:
             old_id, _ = self.runs.popitem(last=False)
             # Memory rows follow their bounded projection. A durable journal has
@@ -56,6 +78,21 @@ class ShadowRunRegistry:
                 exported = self.journal.export(old_id)
                 if exported["last_checksum"]:
                     self.journal.delete(old_id, expected_checksum=exported["last_checksum"])
+
+    def recover(self) -> dict[str, Any]:
+        """Rebuild a bounded read-only catalog; isolate corrupt Runs individually."""
+        recovered: OrderedDict[str, Run] = OrderedDict()
+        failures = []
+        selected = list(self.journal.run_ids())[:self.max_runs]
+        for run_id in reversed(selected):
+            try:
+                recovered[run_id] = self.journal.rebuild(run_id=run_id)
+            except (JournalCorruption, ValueError, TypeError, KeyError) as exc:
+                failures.append({"run_id": run_id, "error_type": type(exc).__name__})
+        self.runs = recovered
+        self.recovery = {"attempted": True, "recovered": len(recovered),
+                         "failed": len(failures), "failures": failures}
+        return dict(self.recovery)
 
     def get(self, run_id: str) -> dict[str, Any] | None:
         run = self.runs.get(run_id)
@@ -66,7 +103,7 @@ class ShadowRunRegistry:
                     if child.parent_run_id == run_id]
         return {"authoritative": False, "storage": self.storage,
                 "run": run.to_dict(), "children": children,
-                "journal": verification}
+                "journal": verification, "recovery": self.recovery_status()}
 
     def list(self, limit: int = 50) -> list[dict[str, Any]]:
         values = list(self.runs.values())[-max(1, min(int(limit), 200)):]
@@ -117,7 +154,8 @@ class ShadowRunRegistry:
                     "relation": "RUN_CHILD", "source": "run",
                 })
         return {"authoritative": False, "storage": self.storage,
-                "nodes": nodes, "edges": edges, "count": len(nodes)}
+                "nodes": nodes, "edges": edges, "count": len(nodes),
+                "recovery": self.recovery_status()}
 
 
 _journal_path = os.getenv("VERA_RUN_JOURNAL_PATH", "").strip()

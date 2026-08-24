@@ -11,7 +11,10 @@ from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
-from .run_protocol import PROTOCOL_VERSION, Run, RunControl, RunEvent, replay_run, utc_now
+from .run_protocol import (
+    ArtifactRef, PROTOCOL_VERSION, Run, RunControl, RunError, RunEvent,
+    replay_run, utc_now,
+)
 
 
 class JournalCorruption(ValueError):
@@ -29,6 +32,9 @@ class RunJournalBackend(Protocol):
     """Minimal portable boundary for Redis, SQL, file, or external backends."""
 
     def append(self, event: RunEvent) -> JournalEntry: ...
+    def register(self, run: Run) -> None: ...
+    def checkpoint(self, run: Run) -> None: ...
+    def run_ids(self) -> list[str]: ...
     def entries(self, run_id: str) -> list[JournalEntry]: ...
     def export(self, run_id: str) -> dict[str, Any]: ...
     def delete(self, run_id: str, *, expected_checksum: str) -> bool: ...
@@ -40,12 +46,55 @@ def _checksum(event: RunEvent, previous: str) -> str:
     return hashlib.sha256(f"{previous}\n{body}".encode("utf-8")).hexdigest()
 
 
+_IDENTITY_FIELDS = (
+    "id", "kind", "parent_run_id", "workflow_id", "task_id", "session_id",
+    "trace_id", "created_at",
+)
+
+
+def _identity(run: Run) -> dict[str, Any]:
+    return {name: getattr(run, name) for name in _IDENTITY_FIELDS}
+
+
+def _run_from_dict(value: dict[str, Any]) -> Run:
+    raw = dict(value)
+    raw.pop("protocol", None)
+    raw.pop("events", None)
+    error = raw.get("error")
+    raw["error"] = RunError(**error) if error else None
+    raw["artifacts"] = [ArtifactRef(**item) for item in raw.get("artifacts") or []]
+    return Run(**raw)
+
+
 class MemoryRunJournal:
     """Deterministic reference journal; production persistence remains unselected."""
 
     def __init__(self) -> None:
         self._entries: dict[str, list[JournalEntry]] = {}
         self._event_ids: dict[str, JournalEntry] = {}
+        self._identities: dict[str, dict[str, Any]] = {}
+        self._snapshots: dict[str, tuple[int, dict[str, Any]]] = {}
+
+    def register(self, run: Run) -> None:
+        identity = _identity(run)
+        existing = self._identities.get(run.id)
+        if existing is not None and existing != identity:
+            raise JournalCorruption("run id was reused with different identity")
+        self._identities[run.id] = identity
+
+    def checkpoint(self, run: Run) -> None:
+        sequence = len(run.events)
+        if sequence < 1:
+            raise ValueError("cannot checkpoint a run without events")
+        if sequence != len(self._entries.get(run.id, [])):
+            raise JournalCorruption("checkpoint sequence does not match journal tip")
+        value = run.to_dict(include_events=False)
+        existing = self._snapshots.get(run.id)
+        if existing and existing[0] > sequence:
+            raise JournalCorruption("checkpoint sequence moved backwards")
+        if existing and existing[0] == sequence and existing[1] != value:
+            raise JournalCorruption("checkpoint content changed at the same sequence")
+        self._snapshots[run.id] = (sequence, value)
 
     def append(self, event: RunEvent) -> JournalEntry:
         existing = self._event_ids.get(event.id)
@@ -69,7 +118,7 @@ class MemoryRunJournal:
         return list(self._entries.get(run_id, []))
 
     def run_ids(self) -> list[str]:
-        return list(self._entries)
+        return list(reversed(self._entries))
 
     def verify(self, run_id: str) -> dict[str, Any]:
         previous = ""
@@ -85,10 +134,22 @@ class MemoryRunJournal:
                 "event_count": len(self._entries.get(run_id, [])),
                 "last_checksum": previous}
 
-    def rebuild(self, *, run_id: str, kind: str, **identity: Any) -> Run:
+    def rebuild(self, *, run_id: str, kind: str = "", **identity: Any) -> Run:
         self.verify(run_id)
         events = [entry.event for entry in self._entries.get(run_id, [])]
-        return replay_run(Run(id=run_id, kind=kind, **identity), events)
+        snapshot = self._snapshots.get(run_id)
+        if snapshot:
+            sequence, value = snapshot
+            if sequence > len(events):
+                raise JournalCorruption("checkpoint is ahead of the journal tip")
+            run = _run_from_dict(value)
+            run.events = list(events[:sequence])
+            return replay_run(run, events[sequence:])
+        stored = dict(self._identities.get(run_id) or {})
+        stored.update(identity)
+        stored["id"] = run_id
+        stored["kind"] = kind or stored.get("kind") or "unknown"
+        return replay_run(Run(**stored), events)
 
     def export(self, run_id: str) -> dict[str, Any]:
         verified = self.verify(run_id)
@@ -113,6 +174,8 @@ class MemoryRunJournal:
         removed = self._entries.pop(run_id)
         for entry in removed:
             self._event_ids.pop(entry.event.id, None)
+        self._identities.pop(run_id, None)
+        self._snapshots.pop(run_id, None)
         return True
 
 
@@ -131,6 +194,12 @@ class SqliteRunJournal:
             "run_id TEXT NOT NULL, sequence INTEGER NOT NULL, event_id TEXT NOT NULL UNIQUE, "
             "event_json TEXT NOT NULL, previous_checksum TEXT NOT NULL, checksum TEXT NOT NULL, "
             "PRIMARY KEY(run_id, sequence))")
+        self._db.execute(
+            "CREATE TABLE IF NOT EXISTS run_identity ("
+            "run_id TEXT PRIMARY KEY, identity_json TEXT NOT NULL)")
+        self._db.execute(
+            "CREATE TABLE IF NOT EXISTS run_snapshots ("
+            "run_id TEXT PRIMARY KEY, sequence INTEGER NOT NULL, run_json TEXT NOT NULL)")
         self._db.commit()
 
     @staticmethod
@@ -166,6 +235,46 @@ class SqliteRunJournal:
             self._db.commit()
             return JournalEntry(event, previous, checksum)
 
+    def register(self, run: Run) -> None:
+        identity = json.dumps(_identity(run), sort_keys=True, separators=(",", ":"),
+                              ensure_ascii=False, default=str)
+        with self._lock:
+            existing = self._db.execute(
+                "SELECT identity_json FROM run_identity WHERE run_id=?", (run.id,)
+            ).fetchone()
+            if existing and existing[0] != identity:
+                raise JournalCorruption("run id was reused with different identity")
+            if not existing:
+                self._db.execute("INSERT INTO run_identity VALUES (?, ?)",
+                                 (run.id, identity))
+                self._db.commit()
+
+    def checkpoint(self, run: Run) -> None:
+        sequence = len(run.events)
+        if sequence < 1:
+            raise ValueError("cannot checkpoint a run without events")
+        value = json.dumps(run.to_dict(include_events=False), sort_keys=True,
+                           separators=(",", ":"), ensure_ascii=False, default=str)
+        with self._lock:
+            tip = self._db.execute(
+                "SELECT COALESCE(MAX(sequence), 0) FROM run_events WHERE run_id=?",
+                (run.id,)).fetchone()[0]
+            if sequence != tip:
+                raise JournalCorruption("checkpoint sequence does not match journal tip")
+            existing = self._db.execute(
+                "SELECT sequence, run_json FROM run_snapshots WHERE run_id=?", (run.id,)
+            ).fetchone()
+            if existing and existing[0] > sequence:
+                raise JournalCorruption("checkpoint sequence moved backwards")
+            if existing and existing[0] == sequence and existing[1] != value:
+                raise JournalCorruption("checkpoint content changed at the same sequence")
+            self._db.execute(
+                "INSERT INTO run_snapshots VALUES (?, ?, ?) "
+                "ON CONFLICT(run_id) DO UPDATE SET sequence=excluded.sequence, "
+                "run_json=excluded.run_json",
+                (run.id, sequence, value))
+            self._db.commit()
+
     def entries(self, run_id: str) -> list[JournalEntry]:
         with self._lock:
             rows = self._db.execute(
@@ -192,10 +301,28 @@ class SqliteRunJournal:
         return {"ok": True, "run_id": run_id, "event_count": len(rows),
                 "last_checksum": previous}
 
-    def rebuild(self, *, run_id: str, kind: str, **identity: Any) -> Run:
+    def rebuild(self, *, run_id: str, kind: str = "", **identity: Any) -> Run:
         self.verify(run_id)
-        return replay_run(Run(id=run_id, kind=kind, **identity),
-                          [entry.event for entry in self.entries(run_id)])
+        events = [entry.event for entry in self.entries(run_id)]
+        with self._lock:
+            snapshot = self._db.execute(
+                "SELECT sequence, run_json FROM run_snapshots WHERE run_id=?", (run_id,)
+            ).fetchone()
+            stored = self._db.execute(
+                "SELECT identity_json FROM run_identity WHERE run_id=?", (run_id,)
+            ).fetchone()
+        if snapshot:
+            sequence = int(snapshot[0])
+            if sequence > len(events):
+                raise JournalCorruption("checkpoint is ahead of the journal tip")
+            run = _run_from_dict(json.loads(snapshot[1]))
+            run.events = list(events[:sequence])
+            return replay_run(run, events[sequence:])
+        base = json.loads(stored[0]) if stored else {}
+        base.update(identity)
+        base["id"] = run_id
+        base["kind"] = kind or base.get("kind") or "unknown"
+        return replay_run(Run(**base), events)
 
     def export(self, run_id: str) -> dict[str, Any]:
         verified = self.verify(run_id)
@@ -215,6 +342,8 @@ class SqliteRunJournal:
             if not expected_checksum or expected_checksum != actual:
                 raise ValueError("delete checksum does not match the verified journal tip")
             self._db.execute("DELETE FROM run_events WHERE run_id=?", (run_id,))
+            self._db.execute("DELETE FROM run_identity WHERE run_id=?", (run_id,))
+            self._db.execute("DELETE FROM run_snapshots WHERE run_id=?", (run_id,))
             self._db.commit()
             return True
 

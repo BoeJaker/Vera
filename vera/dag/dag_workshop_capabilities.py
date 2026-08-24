@@ -12523,6 +12523,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
             "capability name), a one-line goal, and the EXACT capability names it "
             "needs from the catalog.\n"
             + _V7_CAP_ROUTING
+            + (_V7_CRITERIA_RULE if want_success else "")
             + "Return ONLY this JSON object — no prose, no markdown, and NOT a bare array:\n"
             '{"steps":[{"id":1,"title":"<plain-language description, not a cap name>",'
             '"goal":"<what to achieve>",'
@@ -12749,15 +12750,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
            "checkable criterion for that step (e.g. \"the script runs without errors and "
            "prints the open ports\", NOT \"do the step well\"). Also give a top-level "
            "`done_when` — one line stating when the WHOLE goal counts as achieved.\n"
-           "BOTH MUST BE SETTLEABLE BY THIS RUN, USING THE CAPS IT HAS. State what must "
-           "EXIST and what it must CONTAIN — never how a person would experience it. "
-           "\"index.html exists with a start/pause/reset timer, a 25-minute work interval "
-           "and a break interval\" is settleable. \"can be opened in a browser and the "
-           "timer runs\" is NOT: nothing here opens a browser, so that clause can only be "
-           "guessed at — and a criterion the run cannot settle drags it into inventing "
-           "checks (a bash script cannot tell you a page works in a browser) or into "
-           "claiming it verified something it did not. Leave such wording OUT entirely; "
-           "do not soften it, do not add 'if possible'.\n"
+           + _V7_CRITERIA_RULE
            if want_success else "")
         + 'Respond ONLY with JSON:\n'
         '{"complexity":"simple|complex|extreme","recon":[{"cap":"cap.name","args":{},"why":"<short>"}],'
@@ -18283,12 +18276,16 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
         "Be decisive but conservative: prefer \"continue\" when the plan is on track; only "
         "replan/insert when the evidence genuinely warrants it; only \"stop\" when the goal "
         "is DEMONSTRABLY met. Do NOT invent artifacts the goal did not ask for.\n"
-        "NEVER INSERT A STEP TO CHECK AN ARTIFACT THAT WAS JUST AUTHORED. code.author/"
-        "code.edit run a real parser on what they write and report the verdict, so the file "
-        "existing, being complete and parsing are ALREADY SETTLED — an inserted step can only "
-        "re-read what is already known. Observed: after a one-step Pomodoro plan authored "
-        "index.html successfully, an insert was made for 'Test browser compatibility/runtime "
-        "behavior', which spent five cycles re-reading the file and running bash.\n"
+        "A SUCCESSFUL code.author/code.edit IS THE PROOF — ACCEPT IT AND MOVE ON. Those caps "
+        "put the file through a real parser and return `syntax_ok`, `checked_with` and "
+        "`bytes`. Treat that report as the verification of the file: for a DONE WHEN that "
+        "asks for a created, valid, working file, an ok author call MEETS it. Do not hold the "
+        "goal open waiting for the file to be demonstrated, and never insert a step to check "
+        "an artifact that was just authored — it can only re-read what is already known. "
+        "Observed: after a one-step Pomodoro plan authored index.html successfully, an insert "
+        "was made for 'Test browser compatibility/runtime behavior', which spent five cycles "
+        "re-reading the file and running bash; on another run the same impulse started "
+        "`python3 -m http.server` and the run hung there.\n"
         "AND NEVER INSERT A CHECK YOUR CAPS CANNOT ACTUALLY PERFORM. Before inserting a "
         "verification, name the cap that would settle it. exec.bash.run and exec.python.run "
         "cannot open a page in a browser, click anything, or observe a timer running — so a "
@@ -18472,6 +18469,14 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
         "request MEANS THE GOAL IS MET. Do NOT rule it incomplete for lacking external "
         "validation, publishing, delivery, or extra polish the goal did not explicitly ask for. "
         "Judge the artifact that WAS produced, not an idealised one.\n"
+        "A CODE FILE IS PROVEN BY ITS AUTHOR'S REPORT, NOT BY A DEMONSTRATION. code.author/"
+        "code.edit put the file through a real parser and return `syntax_ok`/`checked_with`; "
+        "that report is the verification. So when DONE WHEN asks for a created, valid or "
+        "working file and the ledger shows an ok author call plus the file in the listing, the "
+        "goal is MET — complete it. Do NOT rule it incomplete, and do NOT add follow-up steps, "
+        "because nobody opened it in a browser, served it, clicked it or watched it run: this "
+        "run has no capability that could do any of that, so such a follow-up cannot succeed "
+        "and only burns the remaining budget.\n"
         + ("GROUND TRUTH BEATS NARRATIVE: when the ACTUAL FILES listing is shown, believe it "
            "over the ledger. A goal that asked for a FILE deliverable is NOT complete unless "
            "that file appears in the listing — a step summary saying it was 'saved' or "
@@ -20075,6 +20080,28 @@ async def _v7_decide_intent(goal: str, *, use_llm: bool, model: str,
 #  the controller said "writing a report needs llm.generate" — mixed signals that
 #  made the specialist pick the wrong tool).
 # ═════════════════════════════════════════════════════════════════════════════
+# How `success` / `done_when` must be phrased. ONE definition, used by BOTH planner
+# prompts (the full schema and the minimal-schema retry) — they drifted apart before,
+# and a rule that reaches only one of them holds only on the runs that happen to take
+# that path, which reads as the model ignoring it.
+_V7_CRITERIA_RULE = (
+    "FOR A FILE THIS RUN AUTHORS, THE PROOF IS THE AUTHOR'S OWN VERDICT — NOT A TRIAL "
+    "RUN OF THE FILE. code.author/code.edit put the file through a real parser and "
+    "return `syntax_ok`/`checked_with`/`bytes`; that report IS the verification, and it "
+    "is the only one this run needs or can get. Phrase every criterion so that verdict "
+    "settles it: the file EXISTS, the author reported it verified, and it CONTAINS the "
+    "required features — e.g. \"index.html is created and verified by code.author, with "
+    "start/pause/reset controls, a 25-minute work interval and a 5-minute break\".\n"
+    "NEVER write a criterion that can only be settled by WATCHING THE FILE WORK: \"opened "
+    "in a browser\", \"renders\", \"the timer runs\", \"functions correctly in a browser\", "
+    "\"no console errors\", \"UI interaction works\", \"works end to end\". Nothing here "
+    "opens a browser, serves a page, clicks anything or watches a timer, so such a clause "
+    "can never be met — it only drags the run into standing up servers and inventing "
+    "checks, or into claiming it saw something it never saw. (Observed: that wording sent "
+    "one run to `python3 -m http.server`, where it hung.) Leave it out; do not soften it, "
+    "do not add \"if possible\".\n")
+
+
 _V7_CAP_ROUTING = (
     "CAPABILITY ROUTING — match the deliverable to the RIGHT cap (one source of truth):\n"
     "  • SOURCE CODE (.py/.js/.ts/.html/.css/.sh/.go/…) → code.author (creates) / code.edit "

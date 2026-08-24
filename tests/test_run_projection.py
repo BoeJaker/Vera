@@ -1,4 +1,5 @@
 import asyncio
+import sqlite3
 import time
 
 import pytest
@@ -147,6 +148,84 @@ def test_projection_eviction_never_deletes_durable_journal(tmp_path):
     assert registry.get("first") is None
     assert journal.export("first")["event_count"] == 1
     journal.close()
+
+
+def test_sqlite_registry_recovers_searchable_parent_child_catalog(tmp_path):
+    path = tmp_path / "runs.sqlite3"
+    journal = SqliteRunJournal(path)
+    registry = ShadowRunRegistry(max_runs=20, journal=journal)
+    parent = Run(id="parent", kind="vera.dag", trace_id="trace",
+                 workflow_id="workflow", session_id="chat-1")
+    registry.record(parent, parent.transition(RunStatus.RUNNING,
+                                              event_type="run.started"))
+    observer = DagRunObserver(parent=parent, graph=[["example.cap", "answer"]],
+                              emit=_ignore, registry=registry)
+    asyncio.run(observer.node_started((0,), "example.cap"))
+    asyncio.run(observer.node_finished((0,), "example.cap", {"answer": 42}))
+    journal.close()
+
+    reopened = SqliteRunJournal(path)
+    recovered = ShadowRunRegistry(max_runs=20, journal=reopened)
+    projection = recovered.get("parent")
+
+    assert recovered.recovery == {
+        "attempted": True, "recovered": 2, "failed": 0, "failures": []}
+    assert projection["run"]["progress"] == 1.0
+    assert projection["run"]["workflow_id"] == "workflow"
+    assert projection["run"]["session_id"] == "chat-1"
+    assert projection["children"][0]["status"] == "completed"
+    assert projection["children"][0]["artifacts"][0]["checksum"].startswith("sha256:")
+    assert recovered.graph(session_id="chat-1")["count"] == 2
+    reopened.close()
+
+
+def test_sqlite_registry_isolates_corrupt_run_during_recovery(tmp_path):
+    path = tmp_path / "runs.sqlite3"
+    journal = SqliteRunJournal(path)
+    registry = ShadowRunRegistry(max_runs=20, journal=journal)
+    for run_id in ("healthy", "broken"):
+        run = Run(id=run_id, kind="test", session_id="session")
+        registry.record(run, run.transition(RunStatus.RUNNING,
+                                            event_type="run.started"))
+    journal.close()
+    with sqlite3.connect(path) as db:
+        db.execute("UPDATE run_events SET checksum='damaged' WHERE run_id='broken'")
+        db.commit()
+
+    reopened = SqliteRunJournal(path)
+    recovered = ShadowRunRegistry(max_runs=20, journal=reopened)
+
+    assert recovered.get("healthy") is not None
+    assert recovered.get("broken") is None
+    assert recovered.recovery["recovered"] == 1
+    assert recovered.recovery["failed"] == 1
+    assert recovered.recovery["failures"] == [{
+        "run_id": "broken", "error_type": "JournalCorruption"}]
+    public = recovered.recovery_status()
+    assert public["quarantined"] == 1
+    assert public["read_only"] is True
+    assert public["quarantined_refs"][0]["error_type"] == "JournalCorruption"
+    assert len(public["quarantined_refs"][0]["run_ref"]) == 12
+    assert "broken" not in str(public)
+    assert recovered.graph()["recovery"] == public
+    reopened.close()
+
+
+def test_sqlite_registry_recovery_keeps_newest_bounded_catalog(tmp_path):
+    path = tmp_path / "runs.sqlite3"
+    journal = SqliteRunJournal(path)
+    registry = ShadowRunRegistry(max_runs=20, journal=journal)
+    for run_id in ("first", "second", "third"):
+        run = Run(id=run_id, kind="test")
+        registry.record(run, run.transition(RunStatus.RUNNING))
+    journal.close()
+
+    reopened = SqliteRunJournal(path)
+    recovered = ShadowRunRegistry(max_runs=2, journal=reopened)
+
+    assert [item["id"] for item in recovered.list()] == ["third", "second"]
+    assert recovered.get("first") is None
+    reopened.close()
 
 
 def test_run_graph_observes_sequential_parallel_conditional_and_error(monkeypatch):
