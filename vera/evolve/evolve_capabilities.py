@@ -6468,6 +6468,10 @@ async def _worktree_claims() -> Dict[str, Dict[str, Any]]:
 
 def _split_claims(claims: Dict[str, Dict[str, Any]]) -> tuple:
     """Partition claims into (live, expired) by their refresh age."""
+    # This module imports datetime LOCALLY per function (see _sh callers above);
+    # there is no module-level import, so relying on one raises NameError at
+    # runtime — which is exactly what shipped and broke evolve.sandbox.prune.
+    from datetime import datetime, timezone
     live: Dict[str, str] = {}
     expired: Dict[str, str] = {}
     now = datetime.now(timezone.utc)
