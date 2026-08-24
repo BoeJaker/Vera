@@ -245,3 +245,48 @@ def test_non_json_literal_fails_as_ir_validation_not_encoder_error():
     }]}
     with pytest.raises(WorkflowIRValidationError, match="not canonical JSON"):
         normalize_workflow(workflow)
+
+
+def test_operational_contracts_are_validated_and_block_native_export():
+    workflow = {"ir_version": "1.0",
+                "schedule": {"kind": "cron", "expression": "0 2 * * *",
+                             "timezone": "Europe/London", "owner": "external"},
+                "resources": {"cpu": 2, "memory_mb": 1024, "accelerator": "cuda",
+                              "max_concurrency": 3},
+                "providers": ["ollama:local", "langgraph:remote"],
+                "steps": [{"id": "publish", "type": "task", "task": "publish.run",
+                           "approval": {"required": True, "policy": "release",
+                                        "timeout_seconds": 3600},
+                           "compensation": {"task": "publish.rollback",
+                                            "on": ["failure", "cancel"]}}]}
+    normalized = normalize_workflow(workflow)
+    result = export_native_dag(normalized)
+    assert result["ok"] is False
+    assert result["dag"] is None
+    assert [gap["path"] for gap in result["gaps"]] == [
+        "schedule", "resources", "providers",
+        "steps[0].approval", "steps[0].compensation"]
+    assert result["executes"] is False
+
+
+@pytest.mark.parametrize("schedule", [
+    {"kind": "cron"},
+    {"kind": "interval", "seconds": 0},
+    {"kind": "event", "event": "topic", "owner": "vera-guessed"},
+])
+def test_invalid_schedule_contracts_are_rejected(schedule):
+    with pytest.raises(WorkflowIRValidationError):
+        normalize_workflow({"ir_version": "1.0", "schedule": schedule, "steps": []})
+
+
+def test_duplicate_provider_requirements_are_rejected():
+    with pytest.raises(WorkflowIRValidationError, match="duplicates"):
+        normalize_workflow({"ir_version": "1.0", "providers": ["onnx", "onnx"], "steps": []})
+
+
+def test_approval_cannot_be_present_but_optional():
+    workflow = {"ir_version": "1.0", "steps": [{
+        "id": "write", "type": "task", "task": "external.write",
+        "approval": {"required": False}}]}
+    with pytest.raises(WorkflowIRValidationError, match="required must be true"):
+        normalize_workflow(workflow)

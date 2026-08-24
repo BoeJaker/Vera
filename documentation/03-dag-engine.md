@@ -67,6 +67,15 @@ flattens a branch, guesses collection semantics, resolves a child workflow, or
 executes a reducer. With explicit lossy export, unsupported nodes are omitted and
 the returned gap report remains attached.
 
+The fourth held slice adds workflow-level schedules, resource envelopes, and
+opaque provider requirements, plus task-level HITL approval and compensation
+contracts. Schedule ownership is explicit (`runtime` or `external`), resource
+numbers must be finite and positive, approval declarations cannot masquerade as
+optional, and compensation triggers are limited to failure, cancellation, and
+timeout. These records are descriptive only: Vera does not schedule work,
+consume an approval, reserve a provider, or invoke rollback through Workflow IR.
+Native DAG export reports every operational contract as a blocking gap.
+
 ---
 
 ## 1. DAG syntax

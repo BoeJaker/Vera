@@ -49,7 +49,8 @@ def normalize_workflow(workflow: dict[str, Any]) -> dict[str, Any]:
     if workflow.get("ir_version") != IR_VERSION:
         raise WorkflowIRValidationError(f"unsupported ir_version: {workflow.get('ir_version')!r}")
     allowed_workflow = {"ir_version", "name", "description", "inputs", "outputs",
-                        "steps", "extensions", "content_hash"}
+                        "steps", "extensions", "schedule", "resources", "providers",
+                        "content_hash"}
     unknown_workflow = sorted(set(workflow) - allowed_workflow)
     if unknown_workflow:
         raise WorkflowIRValidationError(
@@ -73,6 +74,47 @@ def normalize_workflow(workflow: dict[str, Any]) -> dict[str, Any]:
                 raise WorkflowIRValidationError(f"{path}.required must be boolean")
             if "description" in port and not isinstance(port["description"], str):
                 raise WorkflowIRValidationError(f"{path}.description must be a string")
+    schedule = workflow.get("schedule")
+    if schedule is not None:
+        if not isinstance(schedule, dict) or set(schedule) - {
+                "kind", "expression", "seconds", "event", "timezone", "owner"}:
+            raise WorkflowIRValidationError("schedule has unsupported fields")
+        kind = schedule.get("kind")
+        if kind not in {"cron", "interval", "event"}:
+            raise WorkflowIRValidationError("schedule.kind is unsupported")
+        required = {"cron": "expression", "interval": "seconds", "event": "event"}[kind]
+        if required not in schedule:
+            raise WorkflowIRValidationError(f"schedule.{required} is required for {kind}")
+        if kind == "interval" and (not isinstance(schedule["seconds"], (int, float))
+                                   or isinstance(schedule["seconds"], bool)
+                                   or not math.isfinite(schedule["seconds"])
+                                   or schedule["seconds"] <= 0):
+            raise WorkflowIRValidationError("schedule.seconds must be positive")
+        for key in ("expression", "event", "timezone", "owner"):
+            if key in schedule and not isinstance(schedule[key], str):
+                raise WorkflowIRValidationError(f"schedule.{key} must be a string")
+        if schedule.get("owner", "runtime") not in {"runtime", "external"}:
+            raise WorkflowIRValidationError("schedule.owner is unsupported")
+    resources = workflow.get("resources")
+    if resources is not None:
+        if not isinstance(resources, dict) or set(resources) - {
+                "cpu", "memory_mb", "accelerator", "max_concurrency"}:
+            raise WorkflowIRValidationError("resources has unsupported fields")
+        for key in ("cpu", "memory_mb", "max_concurrency"):
+            if key in resources and (not isinstance(resources[key], (int, float))
+                                     or isinstance(resources[key], bool)
+                                     or not math.isfinite(resources[key])
+                                     or resources[key] <= 0):
+                raise WorkflowIRValidationError(f"resources.{key} must be positive")
+        if "accelerator" in resources and not isinstance(resources["accelerator"], str):
+            raise WorkflowIRValidationError("resources.accelerator must be a string")
+    providers = workflow.get("providers")
+    if providers is not None:
+        if not isinstance(providers, list) or any(
+                not isinstance(provider, str) or not provider for provider in providers):
+            raise WorkflowIRValidationError("providers must be non-empty opaque strings")
+        if len(set(providers)) != len(providers):
+            raise WorkflowIRValidationError("providers must not contain duplicates")
     steps = workflow.get("steps")
     if not isinstance(steps, list):
         raise WorkflowIRValidationError("steps must be an array")
@@ -165,7 +207,8 @@ def normalize_workflow(workflow: dict[str, Any]) -> dict[str, Any]:
         kind = step.get("type")
         if kind == "task":
             unknown = sorted(set(step) - {"id", "type", "task", "output", "when", "extensions",
-                                               "bindings", "retry", "timeout", "idempotency", "effects"})
+                                               "bindings", "retry", "timeout", "idempotency", "effects",
+                                               "approval", "compensation"})
             if unknown:
                 raise WorkflowIRValidationError(
                     f"{path} has unknown fields: {', '.join(unknown)}")
@@ -176,6 +219,32 @@ def normalize_workflow(workflow: dict[str, Any]) -> dict[str, Any]:
             if "extensions" in step and not isinstance(step["extensions"], dict):
                 raise WorkflowIRValidationError(f"{path}.extensions must be an object")
             check_contracts(step, path)
+            approval = step.get("approval")
+            if approval is not None:
+                if not isinstance(approval, dict) or set(approval) - {
+                        "required", "policy", "timeout_seconds"}:
+                    raise WorkflowIRValidationError(f"{path}.approval has unsupported fields")
+                if approval.get("required") is not True:
+                    raise WorkflowIRValidationError(f"{path}.approval.required must be true")
+                if "policy" in approval and not isinstance(approval["policy"], str):
+                    raise WorkflowIRValidationError(f"{path}.approval.policy must be a string")
+                if "timeout_seconds" in approval and (
+                        not isinstance(approval["timeout_seconds"], (int, float))
+                        or isinstance(approval["timeout_seconds"], bool)
+                        or not math.isfinite(approval["timeout_seconds"])
+                        or approval["timeout_seconds"] <= 0):
+                    raise WorkflowIRValidationError(
+                        f"{path}.approval.timeout_seconds must be positive")
+            compensation = step.get("compensation")
+            if compensation is not None:
+                if not isinstance(compensation, dict) or set(compensation) - {"task", "on"}:
+                    raise WorkflowIRValidationError(f"{path}.compensation has unsupported fields")
+                if not isinstance(compensation.get("task"), str) or not compensation["task"]:
+                    raise WorkflowIRValidationError(f"{path}.compensation.task is required")
+                triggers = compensation.get("on", ["failure"])
+                if (not isinstance(triggers, list) or not triggers
+                        or any(trigger not in {"failure", "cancel", "timeout"} for trigger in triggers)):
+                    raise WorkflowIRValidationError(f"{path}.compensation.on is unsupported")
             when = step.get("when")
             if when is not None and (not isinstance(when, dict)
                                      or when.get("kind") != "state_truthy"
@@ -352,7 +421,7 @@ def export_native_dag(workflow: Any, *, allow_lossy: bool = False) -> dict[str, 
         return {"ok": False, "dag": None,
                 "gaps": [_gap("workflow", "invalid_workflow", str(exc))], "executes": False}
     gaps: list[dict[str, Any]] = []
-    for field in ("inputs", "outputs"):
+    for field in ("inputs", "outputs", "schedule", "resources", "providers"):
         if normalized.get(field):
             gaps.append(_gap(field, "unsupported_contract",
                              f"typed workflow {field} are not represented by a native DAG array"))
@@ -384,6 +453,8 @@ def export_native_dag(workflow: Any, *, allow_lossy: bool = False) -> dict[str, 
             ("timeout", "timeout ownership is not represented by a native DAG node"),
             ("idempotency", "idempotency ownership is not represented by a native DAG node"),
             ("effects", "declared effects are not represented or authorized by a native DAG node"),
+            ("approval", "HITL approval is not represented or consumed by a native DAG node"),
+            ("compensation", "compensation is not represented or invoked by a native DAG node"),
         ):
             if field in step:
                 gaps.append(_gap(path + "." + field, "unsupported_contract", detail))
