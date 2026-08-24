@@ -76,6 +76,15 @@ timeout. These records are descriptive only: Vera does not schedule work,
 consume an approval, reserve a provider, or invoke rollback through Workflow IR.
 Native DAG export reports every operational contract as a blocking gap.
 
+The fifth held slice adds explicit current-version migration and declarative
+adapter profiles. `workflow.ir.migrate` normalizes IR 1.0 without changing its
+hash semantics and refuses unknown source or target versions. It never invents a
+migration. `workflow.ir.adapters` distinguishes schema availability from
+execution availability, while `workflow.ir.gaps` analyzes compatibility without
+loading a runtime. The LangGraph and Temporal names are reserved profiles marked
+unavailable with no claimed feature support; only a separately implemented and
+tested adapter may change those declarations.
+
 ---
 
 ## 1. DAG syntax

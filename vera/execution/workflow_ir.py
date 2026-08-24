@@ -20,6 +20,22 @@ _STEP_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _REF_KINDS = {"state", "secret", "artifact", "record", "literal"}
 _EFFECT_KINDS = {"filesystem", "network", "database", "process", "model",
                  "device", "notification", "external_service"}
+_IR_FEATURES = ("tasks", "parallel", "conditions", "typed_ports", "references",
+                "retry", "timeout", "idempotency", "effects", "subworkflow",
+                "choice", "map", "reduce", "schedule", "resources", "providers",
+                "approval", "compensation")
+_ADAPTER_PROFILES = {
+    "portable.core": {"available": True, "executable": False,
+                      "supports": list(_IR_FEATURES),
+                      "detail": "Validation and serialization only; cannot execute workflows."},
+    "vera.native_dag": {"available": True, "executable": False,
+                        "supports": ["tasks", "parallel", "conditions"],
+                        "detail": "Loss-aware conversion only; native DAG remains authoritative."},
+    "langgraph": {"available": False, "executable": False, "supports": [],
+                  "detail": "Reserved profile; no LangGraph adapter is installed or invoked."},
+    "temporal": {"available": False, "executable": False, "supports": [],
+                 "detail": "Reserved profile; no Temporal adapter is installed or invoked."},
+}
 
 
 class WorkflowIRValidationError(ValueError):
@@ -484,3 +500,60 @@ def export_native_dag(workflow: Any, *, allow_lossy: bool = False) -> dict[str, 
             "dag": dag if not blocking or allow_lossy else None,
             "gaps": gaps, "lossy": bool(blocking), "executes": False,
             "content_hash": normalized["content_hash"]}
+
+
+def migrate_workflow(workflow: Any, *, target_version: str = IR_VERSION) -> dict[str, Any]:
+    """Normalize a known IR version; refuse invented or lossy migrations."""
+    if not isinstance(workflow, dict):
+        return {"ok": False, "error": "invalid_workflow",
+                "detail": "workflow must be an object", "executes": False}
+    source_version = workflow.get("ir_version")
+    if source_version != IR_VERSION:
+        return {"ok": False, "error": "unsupported_source_version",
+                "from_version": source_version, "to_version": target_version,
+                "supported_versions": [IR_VERSION], "executes": False}
+    if target_version != IR_VERSION:
+        return {"ok": False, "error": "unsupported_target_version",
+                "from_version": source_version, "to_version": target_version,
+                "supported_versions": [IR_VERSION], "executes": False}
+    try:
+        normalized = normalize_workflow(workflow)
+    except WorkflowIRValidationError as exc:
+        return {"ok": False, "error": "invalid_workflow", "detail": str(exc),
+                "from_version": source_version, "to_version": target_version,
+                "executes": False}
+    return {"ok": True, "workflow": normalized, "from_version": source_version,
+            "to_version": target_version, "migrations": [], "version_changed": False,
+            "executes": False}
+
+
+def adapter_profiles() -> dict[str, Any]:
+    """Return detached, non-executing adapter capability declarations."""
+    return {"profiles": copy.deepcopy(_ADAPTER_PROFILES), "executes": False}
+
+
+def analyze_adapter(workflow: Any, *, adapter: str = "vera.native_dag") -> dict[str, Any]:
+    """Validate compatibility without importing or invoking an external runtime."""
+    profile = _ADAPTER_PROFILES.get(adapter)
+    if profile is None:
+        return {"ok": False, "adapter": adapter, "available": False,
+                "gaps": [_gap("adapter", "unknown_adapter", "adapter profile is not registered")],
+                "executes": False}
+    try:
+        normalized = normalize_workflow(workflow)
+    except WorkflowIRValidationError as exc:
+        return {"ok": False, "adapter": adapter, "available": profile["available"],
+                "gaps": [_gap("workflow", "invalid_workflow", str(exc))],
+                "executes": False}
+    if not profile["available"]:
+        return {"ok": False, "adapter": adapter, "available": False,
+                "content_hash": normalized["content_hash"],
+                "gaps": [_gap("adapter", "adapter_unavailable", profile["detail"])],
+                "executes": False}
+    if adapter == "vera.native_dag":
+        result = export_native_dag(normalized)
+        return {"ok": result["ok"], "adapter": adapter, "available": True,
+                "content_hash": result["content_hash"], "gaps": result["gaps"],
+                "executes": False}
+    return {"ok": True, "adapter": adapter, "available": True,
+            "content_hash": normalized["content_hash"], "gaps": [], "executes": False}

@@ -4,8 +4,11 @@ import pytest
 
 from vera.execution.workflow_ir import (
     WorkflowIRValidationError,
+    adapter_profiles,
+    analyze_adapter,
     export_native_dag,
     import_native_dag,
+    migrate_workflow,
     normalize_workflow,
     workflow_hash,
 )
@@ -290,3 +293,56 @@ def test_approval_cannot_be_present_but_optional():
         "approval": {"required": False}}]}
     with pytest.raises(WorkflowIRValidationError, match="required must be true"):
         normalize_workflow(workflow)
+
+
+def test_current_version_migration_is_hash_stable_and_non_executing():
+    workflow = {"steps": [{"task": "alpha", "type": "task", "id": "s0"}],
+                "ir_version": "1.0"}
+    result = migrate_workflow(workflow)
+    assert result["ok"] is True
+    assert result["version_changed"] is False
+    assert result["migrations"] == []
+    assert result["workflow"]["content_hash"] == normalize_workflow(workflow)["content_hash"]
+    assert result["executes"] is False
+
+
+def test_migration_refuses_unknown_source_and_target_versions():
+    source = migrate_workflow({"ir_version": "0.9", "steps": []})
+    target = migrate_workflow({"ir_version": "1.0", "steps": []}, target_version="2.0")
+    assert source["error"] == "unsupported_source_version"
+    assert target["error"] == "unsupported_target_version"
+    assert source["supported_versions"] == target["supported_versions"] == ["1.0"]
+
+
+def test_adapter_profiles_do_not_claim_uninstalled_external_runtimes():
+    profiles = adapter_profiles()
+    assert profiles["executes"] is False
+    assert profiles["profiles"]["portable.core"]["available"] is True
+    assert profiles["profiles"]["portable.core"]["executable"] is False
+    assert profiles["profiles"]["langgraph"]["available"] is False
+    assert profiles["profiles"]["temporal"]["supports"] == []
+
+
+def test_external_adapter_analysis_fails_closed_without_importing_runtime():
+    workflow = {"ir_version": "1.0", "steps": [{
+        "id": "s0", "type": "task", "task": "alpha"}]}
+    result = analyze_adapter(workflow, adapter="langgraph")
+    assert result["ok"] is False
+    assert result["available"] is False
+    assert result["gaps"][0]["code"] == "adapter_unavailable"
+    assert result["executes"] is False
+
+
+def test_native_adapter_analysis_reuses_loss_aware_gap_contract():
+    workflow = {"ir_version": "1.0", "schedule": {
+        "kind": "interval", "seconds": 60}, "steps": []}
+    result = analyze_adapter(workflow, adapter="vera.native_dag")
+    assert result["ok"] is False
+    assert result["available"] is True
+    assert result["gaps"][0]["path"] == "schedule"
+
+
+def test_unknown_adapter_profile_is_explicit():
+    result = analyze_adapter({"ir_version": "1.0", "steps": []}, adapter="openclaw")
+    assert result["ok"] is False
+    assert result["gaps"][0]["code"] == "unknown_adapter"

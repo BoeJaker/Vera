@@ -7609,6 +7609,32 @@ async def cap_workflow_ir_validate(workflow: dict, trace_id=None):
         return {"ok": False, "error": "invalid_workflow", "detail": str(exc),
                 "executes": False}
 
+
+@capability("workflow.ir.migrate", memory="off",
+            description="Normalize a known Workflow IR version or explicitly refuse an "
+                        "unsupported source/target version. Never executes a workflow.")
+async def cap_workflow_ir_migrate(workflow: dict, target_version: str = "1.0",
+                                  trace_id=None):
+    from Vera.vera.execution.workflow_ir import migrate_workflow
+    return migrate_workflow(workflow, target_version=target_version)
+
+
+@capability("workflow.ir.adapters", memory="off",
+            description="List declarative Workflow IR adapter profiles, including whether an "
+                        "adapter is actually available and executable. Does not load runtimes.")
+async def cap_workflow_ir_adapters(trace_id=None):
+    from Vera.vera.execution.workflow_ir import adapter_profiles
+    return adapter_profiles()
+
+
+@capability("workflow.ir.gaps", memory="off",
+            description="Analyze Workflow IR compatibility with a named adapter profile without "
+                        "importing or invoking that runtime.")
+async def cap_workflow_ir_gaps(workflow: dict, adapter: str = "vera.native_dag",
+                               trace_id=None):
+    from Vera.vera.execution.workflow_ir import analyze_adapter
+    return analyze_adapter(workflow, adapter=adapter)
+
 @capability("dag.plan", memory="on",
             http_method="POST", http_path="/dag/plan", http_tags=["dag"],
             description="Ask the LLM to produce a DAG execution plan for a natural-language goal.")
