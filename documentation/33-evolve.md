@@ -618,3 +618,12 @@ _No screenshots captured yet — run `docs.build` (or `operator.mission.run docu
 <!-- VERA:AUTO:capabilities START -->
 _No capabilities resolved for this domain._
 <!-- VERA:AUTO:capabilities END -->
+# Promotion and moving bleeding-edge
+
+Pipeline promotion performs a non-mutating `git merge-tree` preflight between
+the current target tip and the committed feature branch, then merges from the
+target side. It does not merge bleeding-edge back into the feature branch first.
+Git therefore preserves intervening target commits (or reports a conflict)
+without creating sync commits or requiring the feature branch to remain checked
+out. A stopped sandbox or severed, preserved checkout cannot by itself block a
+valid committed branch from promotion.

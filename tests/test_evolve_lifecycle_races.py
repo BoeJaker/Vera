@@ -73,3 +73,37 @@ def test_mirror_refresh_race_fails_without_forcing_ref_or_removing_worktree(
     assert mirror_path.exists()
     assert not any(call and call[0] == "branch" for call in git_calls)
     assert len(shell_calls) == 2
+
+
+def test_promotion_preflight_needs_refs_not_a_feature_worktree(monkeypatch):
+    git_calls = []
+
+    async def git(*args, **kwargs):
+        git_calls.append((args, kwargs))
+        assert args == ("merge-tree", "--write-tree", "bleeding-edge", "feat/ready")
+        return {"ok": True, "out": "tree-sha", "err": "", "code": 0}
+
+    async def must_not_shell(*_args, **_kwargs):
+        raise AssertionError("preflight attempted checkout/worktree mutation")
+
+    monkeypatch.setattr(evolve, "_git", git)
+    monkeypatch.setattr(evolve, "_sh", must_not_shell)
+
+    result = asyncio.run(evolve._preflight_branch_merge(
+        "/repo", "feat/ready", "bleeding-edge"))
+
+    assert result == {"ok": True, "action": "target-side merge preflight"}
+    assert git_calls[0][1]["repo_root"] == "/repo"
+
+
+def test_promotion_preflight_reports_conflict_without_mutation(monkeypatch):
+    async def git(*_args, **_kwargs):
+        return {"ok": False, "out": "", "err": "CONFLICT", "code": 1}
+
+    monkeypatch.setattr(evolve, "_git", git)
+    result = asyncio.run(evolve._preflight_branch_merge(
+        "/repo", "feat/conflict", "bleeding-edge"))
+
+    assert result["ok"] is False
+    assert result["conflicts"] == ["(merge-tree reported conflicts)"]
+    assert "committed branch" in result["error"]
