@@ -57,6 +57,23 @@ COPY requirements-dev.txt .
 RUN pip install --no-cache-dir -r requirements-dev.txt \
     || echo "dev tools not installed at build — evolve.unittest.run will pip-install at run"
 
+# Operator browser extra (Playwright + Chromium). PARITY: prod runs natively from a
+# host venv that already has playwright + browsers, so operator.run works there — but
+# this image did not, so every browser-verification step inside a dev sandbox died with
+# "Playwright is not installed in this environment". The loop would correctly plan
+# operator.run (the only cap that can prove a page BEHAVES) and then be unable to run it,
+# which also made that path untestable in a sandbox. `--with-deps` pulls the system libs
+# headless chromium needs (libnss3, libatk, …); without them the browser cannot launch
+# even when the wheel is present. Chromium only — firefox/webkit are not used here and
+# would add several hundred MB more.
+# Best-effort, exactly like the dev tooling above: a PyPI/CDN hiccup at build time must
+# not kill the image, and operator.run already reports the missing extra clearly.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+COPY requirements-operator.txt .
+RUN (pip install --no-cache-dir -r requirements-operator.txt \
+     && playwright install --with-deps chromium) \
+    || echo "operator browser extra not installed at build — operator.run will say so"
+
 # Copy application code. The build context is the REPO ROOT, whose `vera/`
 # package directory must land at /app/Vera/vera so that
 # `python -m Vera.vera.capability_orchestration` (with PYTHONPATH=/app)
