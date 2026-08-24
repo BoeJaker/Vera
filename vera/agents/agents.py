@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import hashlib
 import json
 import logging
 import os
@@ -1000,6 +1001,109 @@ def _rag_recipe_from_surfaces(surfaces: List[dict], domain: str) -> str:
     return " | ".join(best[:3])
 
 
+# How many items to take from one feed per refresh. Feeds are re-read on a
+# timer and merged by id, so this bounds a single pass, not total coverage.
+_FEED_ITEMS_MAX = 40
+
+_TAG_RE = re.compile(r"<[^>]+>")
+_WS_RE = re.compile(r"\s+")
+
+
+def _rag_clean(s: str, limit: int = 1200) -> str:
+    """Feed summaries are HTML fragments; reduce to readable text."""
+    txt = _TAG_RE.sub(" ", str(s or ""))
+    txt = (txt.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<")
+              .replace("&gt;", ">").replace("&quot;", '"').replace("&#39;", "'"))
+    return _WS_RE.sub(" ", txt).strip()[:limit]
+
+
+def _rag_parse_feed(xml_text: str, source_url: str,
+                    source_title: str = "") -> List[Dict[str, Any]]:
+    """RSS/Atom XML → ONE ROW PER STORY. [] when it isn't a parseable feed.
+
+    Why this exists: the indexer used to hand each feed to web.fetch as a single
+    document, so a whole feed became ONE record full of channel boilerplate
+    ("cs.AI updates on arXiv.org … rss-specification"). Retrieval then matched
+    FEEDS rather than stories — a "proxmox homelab storage" query came back with
+    the Hugging Face blog, because it was scoring feed headers. One row per item
+    is what makes the watched world actually retrievable.
+    """
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.fromstring((xml_text or "").strip())
+    except Exception:
+        return []
+
+    ATOM = "{http://www.w3.org/2005/Atom}"
+    entries = root.findall(".//item") or root.findall(f".//{ATOM}entry")
+    if not entries:
+        return []
+
+    def _txt(el, *names) -> str:
+        for n in names:
+            found = el.find(n)
+            if found is not None and (found.text or "").strip():
+                return found.text.strip()
+        return ""
+
+    def _link(el) -> str:
+        raw = _txt(el, "link", f"{ATOM}link")
+        if raw:
+            return raw
+        a = el.find(f"{ATOM}link")           # Atom puts it on href=
+        if a is not None:
+            return (a.get("href") or "").strip()
+        return ""
+
+    rows: List[Dict[str, Any]] = []
+    for el in entries[:_FEED_ITEMS_MAX]:
+        title = _rag_clean(_txt(el, "title", f"{ATOM}title"), 300)
+        link = _link(el)
+        body = _rag_clean(_txt(el, "description", "summary", "content",
+                               f"{ATOM}summary", f"{ATOM}content"))
+        published = _txt(el, "pubDate", "published", "updated",
+                         f"{ATOM}published", f"{ATOM}updated")
+        if not (title or body):
+            continue
+        # Stable identity so a re-read MERGES instead of duplicating.
+        ident = hashlib.sha1((link or title).encode("utf-8", "replace")).hexdigest()[:20]
+        # `text` is what gets embedded — lead with the story, and name its source
+        # so a retrieved snippet is self-describing.
+        text = title + (("\n\n" + body) if body else "")
+        if source_title:
+            text += f"\n\n(via {source_title})"
+        rows.append({
+            "id": f"feed:{ident}",
+            "title": title,
+            "url": link,
+            "text": text,
+            "summary": body[:600],
+            "published": published,
+            "source_url": source_url,
+            "source_title": source_title,
+            "kind": "feed_item",
+        })
+    return rows
+
+
+async def _rag_index_feed(target: str, ds: str, src: Dict[str, Any]) -> int:
+    """Try to index `target` as a FEED (one record per story).
+    Returns the number of stories indexed, or -1 when it isn't a feed."""
+    h = await _call_registered_cap("http.get", url=target)
+    body = str((h or {}).get("body") or "")
+    if not body or (h or {}).get("error"):
+        return -1
+    rows = _rag_parse_feed(body, target, str(src.get("title") or ""))
+    if not rows:
+        return -1
+    up = await _call_registered_cap(
+        "fabric.upsert", dataset_id=ds, rows=json.dumps(rows), key="id",
+        mode="merge", source=f"feed:{target}", tags="agent_rag,feed_item")
+    if (up or {}).get("error"):
+        return -1
+    return len(rows)
+
+
 async def agent_rag_index(rec: AgentRecord, force: bool = False) -> Dict[str, Any]:
     """Index the agent's web knowledge sources into its dataset and refresh
     each source's search recipe. Fabric sources need no indexing (they are
@@ -1016,6 +1120,21 @@ async def agent_rag_index(rec: AgentRecord, force: bool = False) -> Dict[str, An
         if not target:
             continue
         if stype == "web":
+            # FEEDS FIRST: an RSS/Atom source becomes one record per STORY, not
+            # one record for the whole feed (see _rag_parse_feed). Anything that
+            # isn't a feed falls through to the page-level fetch below.
+            n_items = -1
+            try:
+                n_items = await _rag_index_feed(target, ds, src)
+            except Exception as e:
+                log.debug("feed index %s: %s", target, e)
+            if n_items >= 0:
+                indexed += 1
+                src["last_indexed"] = now_iso()
+                src["items_indexed"] = n_items
+                src["ingest"] = "feed_items"
+                src.pop("last_error", None)
+                continue
             f = await _call_registered_cap("web.fetch", url=target, max_chars=48000,
                                            ingest_to_fabric=True, dataset_id=ds)
             if f.get("error"):
@@ -1024,6 +1143,7 @@ async def agent_rag_index(rec: AgentRecord, force: bool = False) -> Dict[str, An
             else:
                 indexed += 1
                 src["last_indexed"] = now_iso()
+                src["ingest"] = "page"
                 src.pop("last_error", None)
                 src["title"] = (f.get("title") or src.get("title") or "")[:160]
             # Discovery probe → search recipe (best-effort, only when missing

@@ -10381,6 +10381,11 @@ DIRECTOR_DEFAULTS: Dict[str, Any] = {
     #   (news/press/sites/socials/forums, pre-indexed RAG) the gather phase pulls the
     #   WATCHED WORLD from, via agent.rag.query. "" = internal probes only.
     "narrator_max_probes":      6,                     # probe-kit traversal budget/pass
+    # The probe COUNT alone did not bound cost: each iteration could take
+    # think_timeout_s (480s), so a pass could run ~48 min and measured 25+ min.
+    # These bound the gather in TIME as well as in probes.
+    "narrator_gather_budget_s":       420,   # whole gather phase, wall clock
+    "narrator_gather_call_timeout_s": 150,   # any ONE gatherer generation
     "narrator_gap_min":         12.0,                  # min minutes between narrative passes
     "narrator_deliver_to_chat": False,                 # (legacy) push the narrative into chat
     "narrator_think_timeout_s": 600,                   # MoE narration timeout (CPU, long OK)
@@ -11989,7 +11994,21 @@ async def _narrator_gather(cfg: Dict[str, Any], initial: str) -> str:
                   + ". PRIORITISE probes that bear on that; gather the rest only "
                     "if something is genuinely wrong.")
     collected: List[str] = []
+    # WALL-CLOCK BUDGET. The loop used to be bounded only by a probe COUNT, each
+    # iteration allowed think_timeout_s (480s) — so a deep pass could legitimately
+    # run 6 x 480s ≈ 48 minutes, and measured 25+ min in practice. On a CPU node
+    # that is most of the narrator's cost. The count still bounds the probes; this
+    # bounds the TIME, and a shorter per-call timeout keeps one slow generation
+    # from eating the whole budget.
+    _t0 = time.time()
+    _gather_budget = float(cfg.get("narrator_gather_budget_s", 420) or 0)
+    _call_timeout = float(cfg.get("narrator_gather_call_timeout_s", 150) or 150)
+    _unproductive = 0
     for _ in range(budget):
+        if _gather_budget > 0 and (time.time() - _t0) >= _gather_budget:
+            log.debug("narrator gather: wall-clock budget %.0fs reached after %d probe(s)",
+                      _gather_budget, len(collected))
+            break
         ran = ("\n\nPROBES RUN SO FAR:\n" + "\n".join(collected)) if collected else ""
         prompt = (
             initial + ran +
@@ -12001,8 +12020,7 @@ async def _narrator_gather(cfg: Dict[str, Any], initial: str) -> str:
             'matter right now, organised, concise>"}')
         try:
             raw = await gen(prompt, system=sys_p, json_mode=True, prefer_gpu=_pgpu,
-                            job_type=_job, model=model,
-                            timeout=float(cfg.get("think_timeout_s", 480) or 480))
+                            job_type=_job, model=model, timeout=_call_timeout)
         except Exception as e:
             log.debug("narrator gather gen: %s", e)
             break
@@ -12011,7 +12029,17 @@ async def _narrator_gather(cfg: Dict[str, Any], initial: str) -> str:
             dig = str(obj.get("digest") or "").strip()
             if dig:
                 return dig
-            break
+            # No probe AND no digest = the model isn't driving the kit. One such
+            # reply is noise; two in a row means we're paying full generation
+            # cost per turn for nothing, so stop and let the fallback below do
+            # the gathering deterministically.
+            _unproductive += 1
+            if _unproductive >= 2:
+                log.debug("narrator gather: model not driving the probe kit — "
+                          "falling back to the essential probe set")
+                break
+            continue
+        _unproductive = 0
         name = str(obj.get("probe") or "")
         res = await _narrator_run_probe(name, obj.get("args") or {})
         collected.append(f"• {name} {json.dumps(obj.get('args') or {}, default=str)} → {res}")
@@ -12645,7 +12673,10 @@ async def system_narrator_status(trace_id=None):
                 "quick_enabled (bool), quick_model, quick_gap_min, quick_timeout_s; "
                 "LENGTH TIERS: quick_tier + deep_tier (auto|brief|standard|long), "
                 "tier_tokens/tier_chars (dicts of per-tier overrides, e.g. "
-                "{\"long\":4000}), activity_window_min; idle_gpu (bool) + "
+                "{\"long\":4000}), activity_window_min; COST BOUNDS: "
+                "gather_budget_s (wall clock for the whole gather phase), "
+                "gather_call_timeout_s (any one gatherer generation); "
+                "idle_gpu (bool) + "
                 "idle_gpu_after_min (MoE narrate on the GPU once idle that long); "
                 "deliver (list/csv of chat|telegram|speak); deliver_to_chat (legacy); "
                 "user-intent: intent_enabled (bool), intent_model, intent_gap_min, "
@@ -12678,6 +12709,8 @@ async def system_narrator_config(model: Optional[str] = None,
                                  tier_tokens: Optional[Any] = None,
                                  tier_chars: Optional[Any] = None,
                                  activity_window_min: Optional[float] = None,
+                                 gather_budget_s: Optional[float] = None,
+                                 gather_call_timeout_s: Optional[float] = None,
                                  trace_id=None):
     patch: Dict[str, Any] = {}
     if model is not None:            patch["narrator_model"] = model
@@ -12707,6 +12740,10 @@ async def system_narrator_config(model: Optional[str] = None,
     if deep_tier is not None:        patch["narrator_deep_tier"] = str(deep_tier)
     if activity_window_min is not None:
         patch["narrator_activity_window_min"] = float(activity_window_min)
+    if gather_budget_s is not None:
+        patch["narrator_gather_budget_s"] = float(gather_budget_s)
+    if gather_call_timeout_s is not None:
+        patch["narrator_gather_call_timeout_s"] = float(gather_call_timeout_s)
     # Per-tier budget overrides, e.g. tier_tokens={"long": 4000}.
     for _fld, _val in (("tokens", tier_tokens), ("chars", tier_chars)):
         if isinstance(_val, dict):
@@ -12725,7 +12762,8 @@ async def system_narrator_config(model: Optional[str] = None,
         "narrator_intent_enabled", "narrator_intent_model", "narrator_intent_gap_min",
         "narrator_intent_context", "narrator_intent_steer", "narrator_intent_ttl_min",
         "narrator_quick_timeout_s", "narrator_quick_tier", "narrator_deep_tier",
-        "narrator_activity_window_min")}}
+        "narrator_activity_window_min", "narrator_gather_budget_s",
+        "narrator_gather_call_timeout_s")}}
 
 
 @capability(
