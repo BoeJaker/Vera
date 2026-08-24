@@ -20,7 +20,7 @@ elif command -v dnf >/dev/null 2>&1; then _PKG=dnf
 else _PKG=unknown; fi
 pkg_install(){
   case "$_PKG" in
-    apt) DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>/dev/null; DEBIAN_FRONTEND=noninteractive apt-get install -y "$@" ;;
+    apt) mkdir -p /etc/apt/apt.conf.d 2>/dev/null; echo 'DPkg::Lock::Timeout "120";' > /etc/apt/apt.conf.d/99foundry-lock 2>/dev/null; dpkg --configure -a >/dev/null 2>&1 || true; DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>/dev/null; DEBIAN_FRONTEND=noninteractive apt-get install -y "$@" ;;
     apk) apk add "$@" ;;
     pacman) pacman -Sy --noconfirm "$@" ;;
     dnf) dnf install -y "$@" ;;
