@@ -2981,6 +2981,159 @@ async def _loop_run_is_stale(r, sid: str, run: dict) -> bool:
         return False
 
 
+@capability(
+    "workshop.agent_loop.trace", memory="off",
+    http_method="POST", http_path="/workshop/agent_loop/trace",
+    http_tags=["workshop", "agents"], silent=True,
+    description=(
+        "READ-ONLY diagnostic digest of ONE agent-loop run — the shape of what "
+        "happened, not the raw feed. Answers the questions the event list makes "
+        "you hand-roll a script for: what was PLANNED (steps, caps, phases, "
+        "success, done_when), what each step actually CALLED (tool, ms, whether "
+        "it was served from the artifact registry rather than really run), and "
+        "what the adaptive CONTROLLER decided after each step — its action, its "
+        "stated reason, and any steps it INSERTED. Counters flag the known waste "
+        "patterns: cycles per step, think:act ratio, repeated identical tools, "
+        "registry-served re-reads, and failures. Use this to diagnose a run "
+        "instead of reading session_state by eye. Inputs: session_id (str!), "
+        "include_text (bool — full assessment/direction text, default false). "
+        "Output: {run, plan, steps[], control[], counters, warnings[]}."),
+)
+async def cap_workshop_agent_loop_trace(session_id: str = "",
+                                        include_text: bool = False,
+                                        trace_id=None) -> Dict[str, Any]:
+    sid = (session_id or "").strip()
+    r = _redis()
+    if not r or not sid:
+        return {"error": "session_id required (and Redis must be reachable)"}
+    try:
+        run_raw = await r.hgetall(f"vera:loop:run:{sid}")
+        run = {_rd(k): _rd(v) for k, v in (run_raw or {}).items()}
+        raw = await r.lrange(f"vera:loop:events:{sid}", 0, -1)
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}", "session_id": sid}
+    events = []
+    for x in raw or []:
+        try:
+            events.append(json.loads(_rd(x)))
+        except Exception:
+            pass
+    if not events:
+        return {"session_id": sid, "run": run, "plan": {}, "steps": [],
+                "control": [], "counters": {}, "warnings": ["no events for this session"]}
+
+    def _clip(v, n=220):
+        s = str(v or "").strip()
+        return s if include_text or len(s) <= n else s[:n] + "…"
+
+    plan: Dict[str, Any] = {}
+    by_step: Dict[Any, Dict[str, Any]] = {}
+    control: List[Dict[str, Any]] = []
+    order: List[Any] = []
+    n_think = n_act = 0
+    ver = set()
+
+    for e in events:
+        t = str(e.get("type") or "")
+        if e.get("ver"):
+            ver.add(f"{e.get('ver')}@{e.get('br')}")
+        if t.endswith(".tier"):
+            plan["tier"] = e.get("tier")
+        elif t.endswith(".intent"):
+            plan["intent"] = e.get("intent")
+        elif t.endswith(".plan"):
+            plan["done_when"] = _clip(e.get("done_when"), 300)
+            plan["steps"] = [{"id": s.get("id"), "title": s.get("title"),
+                              "caps": s.get("caps"), "phases": s.get("phases") or [],
+                              "success": _clip(s.get("success"), 200)}
+                             for s in (e.get("steps") or [])]
+        elif t.endswith("think_delta"):
+            n_think += 1
+        elif t.endswith(".tool_call"):
+            sid_k = e.get("step_id")
+            if sid_k not in by_step:
+                by_step[sid_k] = {"step_id": sid_k, "calls": [], "title": ""}
+                order.append(sid_k)
+            by_step[sid_k]["calls"].append({"cycle": e.get("cycle"),
+                                            "tool": e.get("tool"),
+                                            "repeat": bool(e.get("repeat"))})
+            n_act += 1
+        elif t.endswith(".tool_done"):
+            sid_k = e.get("step_id")
+            calls = (by_step.get(sid_k) or {}).get("calls") or []
+            for c in reversed(calls):
+                if c.get("tool") == e.get("tool") and "ok" not in c:
+                    c["ok"] = bool(e.get("ok"))
+                    c["ms"] = e.get("elapsed_ms")
+                    if e.get("cached"):
+                        c["served_from"] = e.get("cached")
+                    if not e.get("ok"):
+                        c["error"] = _clip(e.get("error") or e.get("preview"), 160)
+                    break
+        elif t.endswith(".step_start"):
+            sid_k = e.get("step_id")
+            by_step.setdefault(sid_k, {"step_id": sid_k, "calls": []})
+            if sid_k not in order:
+                order.append(sid_k)
+            by_step[sid_k]["title"] = e.get("title") or by_step[sid_k].get("title", "")
+        elif t.endswith(".step_done"):
+            sid_k = e.get("step_id")
+            by_step.setdefault(sid_k, {"step_id": sid_k, "calls": []})["ok"] = bool(e.get("ok"))
+        elif t.endswith(".assess"):
+            control.append({"after_step": e.get("after_step"),
+                            "action": e.get("action"),
+                            "goal_met": bool(e.get("goal_met")),
+                            "assessment": _clip(e.get("assessment")),
+                            "direction": _clip(e.get("direction")),
+                            "inserted": [{"id": s.get("id"), "title": s.get("title"),
+                                          "caps": s.get("caps")}
+                                         for s in (e.get("steps") or [])]})
+        elif t.endswith(".gate"):
+            plan["gate"] = {k: _clip(e.get(k)) for k in ("verdict", "reason", "met")
+                            if e.get(k) is not None}
+
+    steps = [by_step[k] for k in order if k in by_step]
+    planned_ids = {s.get("id") for s in (plan.get("steps") or [])}
+    inserted_ids = {i.get("id") for c in control for i in c.get("inserted") or []}
+
+    warnings: List[str] = []
+    for c in control:
+        for i in c.get("inserted") or []:
+            warnings.append(
+                f"controller INSERTED step {i.get('id')} '{i.get('title')}' "
+                f"after step {c.get('after_step')} (caps={i.get('caps')})")
+    for s in steps:
+        calls = s.get("calls") or []
+        served = [c for c in calls if c.get("served_from")]
+        if served:
+            warnings.append(f"step {s.get('step_id')}: {len(served)} read(s) served from "
+                            f"the artifact registry (re-read of an unchanged file)")
+        seen: Dict[str, int] = {}
+        for c in calls:
+            seen[str(c.get("tool"))] = seen.get(str(c.get("tool")), 0) + 1
+        for tool, n in seen.items():
+            if n >= 3:
+                warnings.append(f"step {s.get('step_id')}: {tool} called {n}x")
+        for c in calls:
+            if c.get("ok") is False:
+                warnings.append(f"step {s.get('step_id')}: {c.get('tool')} FAILED — "
+                                f"{c.get('error') or ''}")
+
+    counters = {
+        "events": len(events),
+        "planned_steps": len(plan.get("steps") or []),
+        "executed_steps": len(steps),
+        "inserted_steps": len(inserted_ids - planned_ids),
+        "tool_calls": n_act,
+        "think_deltas": n_think,
+        "think_ratio": (round(n_think / max(1, n_think + n_act), 3)),
+        "cycles_per_step": {str(s.get("step_id")): len(s.get("calls") or []) for s in steps},
+        "code_version": sorted(ver),
+    }
+    return {"session_id": sid, "run": run, "plan": plan, "steps": steps,
+            "control": control, "counters": counters, "warnings": warnings}
+
+
 @APP.get("/workshop/agent_loop/session_state")
 async def workshop_loop_session_state(request: Request):
     """The persisted run-state + event log for a session (for reload replay).
@@ -10059,17 +10212,6 @@ except Exception:                                     # pragma: no cover
         def _repair_collapsed(before: str, after: str, **_kw) -> bool:
             return False
 
-# Redundant-verify plan prune — same import-safety reasoning as above.
-try:
-    from Vera.vera.dag.plan_guards import prune_redundant_verify_steps as _prune_redundant_verify_steps
-except Exception:                                     # pragma: no cover
-    try:
-        from vera.dag.plan_guards import prune_redundant_verify_steps as _prune_redundant_verify_steps
-    except Exception:
-        log.warning("plan_guards unavailable — redundant-verify prune disabled")
-
-        def _prune_redundant_verify_steps(steps):
-            return {"steps": steps, "dropped": []}
 
 
 # NOTE: keep plain helpers ABOVE the next @capability decorator. A decorator
@@ -12573,6 +12715,15 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
            "checkable criterion for that step (e.g. \"the script runs without errors and "
            "prints the open ports\", NOT \"do the step well\"). Also give a top-level "
            "`done_when` — one line stating when the WHOLE goal counts as achieved.\n"
+           "BOTH MUST BE SETTLEABLE BY THIS RUN, USING THE CAPS IT HAS. State what must "
+           "EXIST and what it must CONTAIN — never how a person would experience it. "
+           "\"index.html exists with a start/pause/reset timer, a 25-minute work interval "
+           "and a break interval\" is settleable. \"can be opened in a browser and the "
+           "timer runs\" is NOT: nothing here opens a browser, so that clause can only be "
+           "guessed at — and a criterion the run cannot settle drags it into inventing "
+           "checks (a bash script cannot tell you a page works in a browser) or into "
+           "claiming it verified something it did not. Leave such wording OUT entirely; "
+           "do not soften it, do not add 'if possible'.\n"
            if want_success else "")
         + 'Respond ONLY with JSON:\n'
         '{"complexity":"simple|complex|extreme","recon":[{"cap":"cap.name","args":{},"why":"<short>"}],'
@@ -18098,6 +18249,18 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
         "Be decisive but conservative: prefer \"continue\" when the plan is on track; only "
         "replan/insert when the evidence genuinely warrants it; only \"stop\" when the goal "
         "is DEMONSTRABLY met. Do NOT invent artifacts the goal did not ask for.\n"
+        "NEVER INSERT A STEP TO CHECK AN ARTIFACT THAT WAS JUST AUTHORED. code.author/"
+        "code.edit run a real parser on what they write and report the verdict, so the file "
+        "existing, being complete and parsing are ALREADY SETTLED — an inserted step can only "
+        "re-read what is already known. Observed: after a one-step Pomodoro plan authored "
+        "index.html successfully, an insert was made for 'Test browser compatibility/runtime "
+        "behavior', which spent five cycles re-reading the file and running bash.\n"
+        "AND NEVER INSERT A CHECK YOUR CAPS CANNOT ACTUALLY PERFORM. Before inserting a "
+        "verification, name the cap that would settle it. exec.bash.run and exec.python.run "
+        "cannot open a page in a browser, click anything, or observe a timer running — so a "
+        "step to 'confirm browser behaviour' with those caps proves nothing, and reporting "
+        "that it did is a false claim. If nothing in the catalog can settle it, DO NOT insert "
+        "the step: say so in `assessment` and \"continue\".\n"
         "NEVER INSERT A STEP THAT A PENDING STEP ALREADY DOES. Read PENDING STEPS before you "
         "choose: if the work you have in mind is what the next pending step is for, the "
         "correct action is \"continue\" — inserting it duplicates the step and the run does "
@@ -21766,24 +21929,6 @@ async def cap_dag_agent_loop_v6(
             s["phases"] = []
         else:
             s["phases"] = [p for p in allowed_phases if p in set(s.get("phases") or [])]
-    # Drop steps that only re-check a file an earlier step authored. Done HERE,
-    # at the single choke point every planner path converges on (the orchestrator
-    # has two return paths and there is a drift-replan above), so no planner
-    # variant can route around it — and so the emitted plan below is the pruned
-    # one the run will actually execute. The prompt rules stopped most of these,
-    # but sampled plans at temperature 0.2 AND 0.6 still produced the occasional
-    # "Verify JavaScript syntax and completeness"; conservative by construction
-    # (see plan_guards — anything that could observe BEHAVIOUR is kept).
-    try:
-        _pruned = _prune_redundant_verify_steps(steps)
-        if _pruned.get("dropped"):
-            steps = _pruned["steps"]
-            await emit_event({"type": "agent_loop_v6.plan_pruned",
-                              "session_id": sid, "stream_id": stream_id,
-                              "reason": "redundant verify of an authored file",
-                              "dropped": _pruned["dropped"]})
-    except Exception as _pe:
-        log.debug("plan prune skipped: %s", _pe)
     _v5_apply_skill_suggestions(steps, cap_skill_map, eligible_skill_ids, auto_suggest_skills)
     await emit_event({"type": "agent_loop_v6.plan", "session_id": sid, "stream_id": stream_id,
                       "steps": [{"id": s["id"], "title": s["title"], "caps": s["caps"],
