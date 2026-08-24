@@ -5986,6 +5986,43 @@ async def cap_resolve_shadow(canonical_task: str, allowed_effects=None,
         "candidate_limit": candidate_limit,
     }, observations=evidence)
 
+
+@capability(
+    "eval.corpus.inspect", memory="off", silent=True,
+    http_method="GET", http_path="/eval/corpus", http_tags=["eval", "obs"],
+    description="Inspect Vera's versioned frozen evaluation corpus without running "
+                "fixtures or models. Returns validation, stable fingerprint, lane/domain "
+                "coverage, and optionally bounded case metadata.",
+    contract={
+        "canonical_task": "evaluation.corpus.inspect", "effects": ["read"],
+        "output_schema": {"type": "object"}, "approval": {"status": "not_required"},
+        "trust": {"status": "repository_fixture"}, "secrets": {"status": "not_required"},
+        "filesystem": {"status": "read_repository_fixture"},
+        "network": {"status": "not_required"}, "tenant": {"status": "global_read_only"},
+        "idempotency": {"status": "idempotent"}, "cancellation": {"status": "not_required"},
+        "pagination": {"status": "bounded"},
+        "resources": {"status": "declared", "classes": ["cpu"]}, "owner": "vera",
+    },
+)
+async def eval_corpus_inspect(detail: bool = False, lane: str = "", domain: str = "",
+                              limit: int = 50, trace_id=None):
+    from pathlib import Path
+    from Vera.vera.evaluation_corpus_core import load_corpus, validate_corpus
+    path = Path(__file__).resolve().parent.parent / "evaluations" / "frozen-corpus-v1.json"
+    corpus = load_corpus(path)
+    report = validate_corpus(corpus)
+    result = {**report, "revision": corpus.get("revision"), "policy": corpus.get("policy", {})}
+    if detail:
+        cases = corpus.get("cases", [])
+        if lane:
+            cases = [case for case in cases if case.get("lane") == lane]
+        if domain:
+            cases = [case for case in cases if case.get("domain") == domain]
+        bounded = max(1, min(int(limit or 50), 200))
+        result.update({"matched": len(cases), "returned": min(len(cases), bounded),
+                       "truncated": len(cases) > bounded, "cases": cases[:bounded]})
+    return result
+
 @capability("mcp.call", memory="auto",
             http_method="POST", http_path="/mcp/call", http_tags=["mcp"],
             mcp_expose=False,
