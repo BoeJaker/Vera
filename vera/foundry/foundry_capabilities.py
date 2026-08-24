@@ -381,6 +381,8 @@ async def cap_image_import(image_id: str = "", cluster_id: str = "", node: str =
     url = img.get("source_url", "")
     if not url.startswith("http"):
         return {"error": "image has no downloadable http source_url"}
+    if not storage or storage == "local-lvm":
+        storage = await _resolve_storage(cluster_id, "images") or storage
     if not template_vmid:
         nid = await _call("proxmox.nextid", cluster_id=cluster_id)
         template_vmid = int(nid.get("vmid") or 0)
@@ -494,11 +496,11 @@ FEATURES: List[Dict[str, Any]] = [
      "targets": ["ct", "vm", "physical"], "status": "ready",
      "desc": "Mount the shared SMB/NFS drives."},
     {"id": "file-server", "label": "File server", "default": False,
-     "targets": ["ct", "vm", "physical"], "status": "planned",
-     "desc": "Host Samba + NFS shares (bundle script next)."},
+     "targets": ["ct", "vm", "physical"], "status": "ready",
+     "desc": "Host Samba (SMB) + NFS exports (default /srv/foundry)."},
     {"id": "security-monitoring", "label": "Security monitoring", "default": False,
-     "targets": ["ct", "vm", "physical"], "status": "planned",
-     "desc": "auditd + log shipping to a collector (bundle script next)."},
+     "targets": ["ct", "vm", "physical"], "status": "ready",
+     "desc": "auditd baseline rules + optional rsyslog shipping (feature ctx log_collector)."},
     {"id": "docker-swarm", "label": "Docker Swarm member", "default": False,
      "targets": ["ct", "vm", "physical"], "status": "ready",
      "desc": "Install Docker + join a registered Swarm. Use cluster:<name> to pick a "
@@ -844,7 +846,8 @@ async def _post_provision(cluster_id, node, vmid, kind, feats, fqdn, job_id="", 
                 try:
                     res = await asyncio.wait_for(
                         _call("enroll.guest", cluster_id=cluster_id, vmid=vmid,
-                              guest_type="lxc", node=node, fqdn=fqdn or "", via_proxmox=True),
+                              guest_type="lxc", node=node, fqdn=fqdn or "", via_proxmox=True,
+                              skip_mesh=("mesh" in feats)),
                         timeout=90)
                 except asyncio.TimeoutError:
                     res = {"error": "enrol timed out (90s) -- continuing to features"}
@@ -859,7 +862,7 @@ async def _post_provision(cluster_id, node, vmid, kind, feats, fqdn, job_id="", 
             # enrol/mesh/hardening are handled above for CTs; apply the additional
             # portable features here (file-client now; more migrate here as we fan out).
             _fctx = await _features_ctx(shares)
-            for _f in ("file-client", "vera-worker"):
+            for _f in ("mesh", "file-client", "file-server", "security-monitoring", "vera-worker"):
                 if _f in feats:
                     _sc = _feature_script(_f, _fctx)
                     if _sc:
@@ -874,7 +877,8 @@ async def _post_provision(cluster_id, node, vmid, kind, feats, fqdn, job_id="", 
                         res = await asyncio.wait_for(
                             _call("enroll.guest", cluster_id=cluster_id, vmid=vmid,
                                   guest_type="qemu", node=node, fqdn=fqdn or "", ip=ip,
-                                  ssh_user="vera", ssh_key_path=_vera_key_path()),
+                                  ssh_user="vera", ssh_key_path=_vera_key_path(),
+                                  skip_mesh=("mesh" in feats)),
                             timeout=90)
                     except asyncio.TimeoutError:
                         res = {"error": "enrol timed out (90s) -- continuing to features"}
@@ -890,7 +894,7 @@ async def _post_provision(cluster_id, node, vmid, kind, feats, fqdn, job_id="", 
             # OS-agnostic feature bundles over SSH (features_core): hardening + portable features.
             if ip:
                 _fctx = await _features_ctx(shares)
-                for _f in ("hardening", "file-client", "vera-worker"):
+                for _f in ("hardening", "mesh", "file-client", "file-server", "security-monitoring", "vera-worker"):
                     if _f in feats:
                         _sc = _feature_script(_f, {} if _f == "hardening" else _fctx)
                         if _sc:
@@ -1077,10 +1081,20 @@ async def cap_provision(target: str = "", image_id: str = "", name: str = "",
                 asyncio.create_task(_post_provision(cluster_id, node, vmid, "qemu",
                                                     feats, fqdn, job_id, ip, shares=shares_list))
         else:
-            step("create", {"status": "pending",
-                            "note": "no cloud-init template linked to this cloudimg yet — "
-                                    "build one from the image, or set template_vmid via "
-                                    "foundry.image.add (image-import pipeline lands next)"})
+            # no cloud-init template yet -> auto-build it from the cloudimg (background);
+            # the caller re-runs provision once foundry.image.import.status reports ready.
+            _imp = await _call("foundry.image.import", image_id=image_id,
+                               cluster_id=cluster_id, node=node, storage=storage)
+            if _imp.get("ok"):
+                step("create", {"status": "building_template",
+                                "template_vmid": _imp.get("template_vmid"),
+                                "note": ("building the cloud-init template for %s (vmid %s) now -- "
+                                         "downloads + converts the image; re-run foundry.provision once "
+                                         "foundry.image.import.status reports ready"
+                                         % (image_id, _imp.get("template_vmid")))})
+            else:
+                step("create", {"status": "error",
+                                "note": "could not start template build: %s" % _imp.get("error")})
             job["status"] = "pending"
     else:
         return {"error": "target must be one of: ct | vm | docker"}
