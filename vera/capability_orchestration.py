@@ -7577,6 +7577,38 @@ async def cap_run_shadow_export(run_id: str, trace_id=None):
     return {"authoritative": False, "storage": SHADOW_RUNS.storage,
             "export": exported}
 
+
+@capability("workflow.ir.import_dag", memory="off",
+            description="Describe a native Vera DAG as versioned Workflow IR and report all "
+                        "semantic gaps. This inspection capability never executes the DAG. "
+                        "Lossy conversion is refused unless allow_lossy is explicitly true.")
+async def cap_workflow_ir_import_dag(dag: list = None, name: str = "",
+                                     allow_lossy: bool = False, trace_id=None):
+    from Vera.vera.execution.workflow_ir import import_native_dag
+    return import_native_dag(dag, name=name, allow_lossy=allow_lossy)
+
+
+@capability("workflow.ir.export_dag", memory="off",
+            description="Convert supported Workflow IR to Vera's native DAG array with an "
+                        "explicit loss/gap report. This inspection capability never runs it.")
+async def cap_workflow_ir_export_dag(workflow: dict, allow_lossy: bool = False,
+                                     trace_id=None):
+    from Vera.vera.execution.workflow_ir import export_native_dag
+    return export_native_dag(workflow, allow_lossy=allow_lossy)
+
+
+@capability("workflow.ir.validate", memory="off",
+            description="Validate and normalize Workflow IR and return its stable SHA-256 "
+                        "content hash. This capability has no execution side effects.")
+async def cap_workflow_ir_validate(workflow: dict, trace_id=None):
+    from Vera.vera.execution.workflow_ir import (
+        WorkflowIRValidationError, normalize_workflow)
+    try:
+        return {"ok": True, "workflow": normalize_workflow(workflow), "executes": False}
+    except WorkflowIRValidationError as exc:
+        return {"ok": False, "error": "invalid_workflow", "detail": str(exc),
+                "executes": False}
+
 @capability("dag.plan", memory="on",
             http_method="POST", http_path="/dag/plan", http_tags=["dag"],
             description="Ask the LLM to produce a DAG execution plan for a natural-language goal.")

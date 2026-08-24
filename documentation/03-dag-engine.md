@@ -25,6 +25,29 @@ This slice is intentionally a compatibility facade. Later Workflow IR and
 runtime-adapter work can emit the same contract without requiring Vera to replace
 LangGraph, external runtimes, or its own established DAG execution paths.
 
+## Workflow IR inspection facade
+
+The held W1-02 foundation introduces a versioned, runtime-neutral description
+layer without changing execution. `workflow.ir.import_dag` converts supported
+native DAG structure into Workflow IR; `workflow.ir.export_dag` performs the
+reverse conversion; and `workflow.ir.validate` returns the normalized document
+and stable SHA-256 content hash. All three report `executes: false`.
+
+The initial portable core covers sequential capability tasks, flat parallel
+groups, output state keys, and `CONDITION:<state-key>` guards. Native input/output
+maps round-trip under namespaced extensions but are reported as non-blocking gaps
+because the core runner stores rather than interprets them. Callable conditions,
+unknown fields, unknown extensions, malformed nodes, and nested non-task parallel
+branches are rejected or returned as blocking gaps. A caller must explicitly set
+`allow_lossy=true` to receive a partial conversion; doing so still cannot execute
+the result.
+
+This strict boundary is what makes later LangGraph, Temporal, ONNX workflow, and
+other runtime adapters honest: unsupported semantics are visible before any
+engine is selected. Retry, timeout, effects, schedules, loops/maps/reducers,
+compensation, HITL, typed references, and subworkflows remain subsequent W1-02
+slices rather than being inferred from Vera's compact DAG arrays.
+
 ---
 
 ## 1. DAG syntax
