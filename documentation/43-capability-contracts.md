@@ -140,7 +140,9 @@ work resolves it only inside the authorized execution boundary.
 `cap.resolve.shadow` is the first consumer of v2 manifests. It accepts a
 canonical task plus optional allowed effects, required resource classes, and
 preferred implementation names. It returns eligible candidates in deterministic
-rank order and structured reasons for every exclusion.
+rank order and structured reasons for every exclusion within that task family.
+The candidate window is bounded (1–500) and reports truncation; unrelated task
+families are not copied into the response.
 
 The preview may use redacted health, reliability, and latency observations. An
 observed unhealthy implementation is excluded; absent evidence stays unknown.

@@ -282,7 +282,10 @@ def test_observation_capability_bounds_windows_and_registered_caps(monkeypatch):
 
 def test_shadow_resolver_explains_exclusions_and_never_executes():
     manifests = [project_contract(name, runtime_orchestration.CAPABILITY_REGISTRY[name])
-                 for name in ("llm.generate", "ollama.generate_raw", "code.author")]
+                 for name in ("llm.generate", "ollama.generate_raw")]
+    manifests.append(project_contract("unsafe.generate", _entry(contract={
+        "canonical_task": "text.generate", "effects": ["delete"],
+        "resources": {"status": "declared", "classes": ["cpu"]}})))
     result = resolve_shadow(manifests, {
         "canonical_task": "text.generate",
         "allowed_effects": ["filesystem", "model", "network"],
@@ -293,9 +296,23 @@ def test_shadow_resolver_explains_exclusions_and_never_executes():
     assert result["executed"] is False
     assert [row["name"] for row in result["eligible"]] == [
         "ollama.generate_raw", "llm.generate"]
-    assert result["excluded"][0]["name"] == "code.author"
-    assert {reason["code"] for reason in result["excluded"][0]["exclusions"]} >= {
-        "task_mismatch", "effects_not_allowed"}
+    assert result["excluded"][0]["name"] == "unsafe.generate"
+    assert result["excluded"][0]["exclusions"] == [
+        {"code": "effects_not_allowed", "actual": ["delete"]}]
+    assert result["counts"]["matched"] == 3
+
+
+def test_shadow_resolver_bounds_only_the_requested_task_family():
+    manifests = [project_contract(f"impl.{index}", _entry(contract={
+        "canonical_task": "same.task", "effects": ["read"]})) for index in range(4)]
+    manifests.append(project_contract("unrelated", _entry(contract={
+        "canonical_task": "other.task", "effects": ["read"]})))
+    result = resolve_shadow(manifests, {"canonical_task": "same.task",
+                                       "allowed_effects": ["read"],
+                                       "candidate_limit": 2})
+    assert result["counts"] == {"matched": 4, "considered": 2,
+                                "eligible": 2, "excluded": 0}
+    assert result["truncated"] is True
 
 
 def test_shadow_resolver_excludes_unhealthy_and_ranks_observed_evidence():

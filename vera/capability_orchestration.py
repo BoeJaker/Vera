@@ -5948,6 +5948,7 @@ async def cap_contract_observations(prefix: str = "", event_limit: int = 500,
         "allowed_effects": {"type": "array", "items": {"type": "string"}},
         "required_resources": {"type": "array", "items": {"type": "string"}},
         "preferred": {"type": "array", "items": {"type": "string"}},
+        "candidate_limit": {"type": "integer", "minimum": 1, "maximum": 500},
         "event_limit": {"type": "integer", "minimum": 1, "maximum": 500},
     }, "required": ["canonical_task"]},
     contract={
@@ -5962,7 +5963,8 @@ async def cap_contract_observations(prefix: str = "", event_limit: int = 500,
 )
 async def cap_resolve_shadow(canonical_task: str, allowed_effects=None,
                              required_resources=None, preferred=None,
-                             event_limit: int = 200, trace_id=None):
+                             event_limit: int = 200, candidate_limit: int = 100,
+                             trace_id=None):
     from Vera.vera.capability_contract_core import (
         project_registry, summarize_contract_observations,
     )
@@ -5981,6 +5983,7 @@ async def cap_resolve_shadow(canonical_task: str, allowed_effects=None,
         "allowed_effects": allowed_effects if isinstance(allowed_effects, list) else [],
         "required_resources": required_resources if isinstance(required_resources, list) else [],
         "preferred": preferred if isinstance(preferred, list) else [],
+        "candidate_limit": candidate_limit,
     }, observations=evidence)
 
 @capability("mcp.call", memory="auto",

@@ -43,16 +43,20 @@ def resolve_shadow(manifests: list[Mapping[str, Any]], request: Mapping[str, Any
     observed = _observation_index(observations)
     candidates = []
 
-    for manifest in sorted(manifests, key=lambda item: _text(item.get("name"))):
+    try:
+        candidate_limit = max(1, min(int(request.get("candidate_limit") or 100), 500))
+    except (TypeError, ValueError):
+        candidate_limit = 100
+    family = [manifest for manifest in manifests
+              if _text(manifest.get("canonical_task")) == task]
+    family.sort(key=lambda item: _text(item.get("name")))
+
+    for manifest in family[:candidate_limit]:
         name = _text(manifest.get("name"))
         reasons = []
         lifecycle = _text(manifest.get("lifecycle"))
         if lifecycle not in {"active", "experimental"}:
             reasons.append({"code": "lifecycle_ineligible", "actual": lifecycle or "unknown"})
-        if not task or _text(manifest.get("canonical_task")) != task:
-            reasons.append({"code": "task_mismatch",
-                            "actual": _text(manifest.get("canonical_task"))})
-
         effects = _mapping(manifest.get("effects"))
         declared_effects = _string_set(effects.get("declared"))
         if effects.get("status") != "declared":
@@ -101,10 +105,12 @@ def resolve_shadow(manifests: list[Mapping[str, Any]], request: Mapping[str, Any
         "authorized": False,
         "executed": False,
         "request": {"canonical_task": task, "allowed_effects": sorted(allowed_effects),
-                    "required_resources": sorted(required_resources), "preferred": preferred},
+                    "required_resources": sorted(required_resources), "preferred": preferred,
+                    "candidate_limit": candidate_limit},
         "selected": eligible[0]["name"] if eligible else None,
         "eligible": eligible,
         "excluded": excluded,
-        "counts": {"considered": len(candidates), "eligible": len(eligible),
-                   "excluded": len(excluded)},
+        "counts": {"matched": len(family), "considered": len(candidates),
+                   "eligible": len(eligible), "excluded": len(excluded)},
+        "truncated": len(family) > len(candidates),
     }
