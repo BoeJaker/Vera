@@ -35,6 +35,29 @@ def test_journal_appends_gap_free_events_and_rebuilds_same_projection():
     assert [event.id for event in rebuilt.events] == [event.id for event in original.events]
 
 
+def test_journal_rebuild_preserves_portable_observation_contract():
+    run = Run(id="observed", kind="external.workflow")
+    event = run.transition(RunStatus.RUNNING, payload={
+        "progress": 0.5,
+        "usage": {"tokens": 8},
+        "cost": {"amount": "0.02", "currency": "USD"},
+        "policy": {"decision": "allowed"},
+        "attempt": 2,
+        "retry_owner": "external_runtime",
+    })
+    journal = MemoryRunJournal()
+    journal.append(event)
+
+    rebuilt = journal.rebuild(run_id=run.id, kind=run.kind)
+
+    assert rebuilt.progress == 0.5
+    assert rebuilt.usage == {"tokens": 8}
+    assert rebuilt.cost["currency"] == "USD"
+    assert rebuilt.policy == {"decision": "allowed"}
+    assert rebuilt.attempt == 2
+    assert rebuilt.retry_owner == "external_runtime"
+
+
 def test_append_is_idempotent_for_same_event_and_rejects_conflicting_id():
     event = _completed_run().events[0]
     journal = MemoryRunJournal()
