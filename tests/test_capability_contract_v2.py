@@ -1,0 +1,137 @@
+import asyncio
+import copy
+
+import pytest
+
+from vera.capability_contract_core import (
+    CONTRACT_SCHEMA,
+    lint_contracts,
+    manifest_fingerprint,
+    project_contract,
+    project_registry,
+)
+from vera import capability_orchestration as orchestration
+
+
+pytestmark = pytest.mark.critical
+
+
+def _entry(**overrides):
+    value = {
+        "schema": {"type": "object", "properties": {"query": {"type": "string"}},
+                   "required": ["query"]},
+        "description": "Search records.",
+        "streams": ["results"],
+        "mode": "local",
+        "source": "local",
+        "retries": 1,
+        "tags": ["search"],
+        "mcp_expose": True,
+        "http_method": "GET",
+        "http_path": "/search",
+    }
+    value.update(overrides)
+    return value
+
+
+def test_projection_is_explicit_without_inventing_missing_contract_facts():
+    manifest = project_contract("records.search", _entry())
+    assert manifest["schema"] == CONTRACT_SCHEMA
+    assert manifest["canonical_task"] == "records.search"
+    assert manifest["schemas"]["input"]["required"] == ["query"]
+    assert manifest["schemas"]["output_status"] == "unknown"
+    assert manifest["effects"] == {"status": "unknown", "declared": []}
+    assert manifest["policy"]["approval"] == {"status": "unknown"}
+    assert manifest["execution"]["retries"] == 1
+
+
+def test_declared_metadata_projects_without_affecting_registry_entry():
+    entry = _entry(contract={
+        "canonical_task": "records.query",
+        "aliases": ["search.records"],
+        "effects": ["read"],
+        "lifecycle": "active",
+        "output_schema": {"type": "object"},
+        "secrets": {"status": "not_required"},
+    })
+    before = copy.deepcopy(entry)
+    manifest = project_contract("provider.records.search", entry)
+    assert entry == before
+    assert manifest["canonical_task"] == "records.query"
+    assert manifest["aliases"] == ["search.records"]
+    assert manifest["effects"] == {"status": "declared", "declared": ["read"]}
+    assert manifest["schemas"]["output_status"] == "declared"
+
+
+def test_registry_projection_and_fingerprint_are_load_order_stable():
+    left = {"z.cap": _entry(), "a.cap": _entry()}
+    right = {"a.cap": _entry(), "z.cap": _entry()}
+    left_manifests = project_registry(left)
+    right_manifests = project_registry(right)
+    assert [item["name"] for item in left_manifests] == ["a.cap", "z.cap"]
+    assert left_manifests == right_manifests
+    assert manifest_fingerprint(left_manifests) == manifest_fingerprint(right_manifests)
+
+
+def test_projection_excludes_internal_caps_unless_requested():
+    registry = {"public.cap": _entry(), "internal.cap": _entry(mcp_expose=False)}
+    assert [item["name"] for item in project_registry(registry)] == ["public.cap"]
+    assert [item["name"] for item in project_registry(
+        registry, include_internal=True)] == ["internal.cap", "public.cap"]
+
+
+def test_linter_rejects_known_bad_contract_fixtures():
+    bad_schema = _entry(
+        schema={"type": "object", "properties": {
+            "api_token": {"type": "string"}}, "required": ["missing"]},
+        http_method="POST",
+        source="mcp_proxy",
+        contract={"aliases": ["shared.alias"], "lifecycle": "mystery",
+                  "effects": ["telepathy"]},
+    )
+    other = _entry(contract={"aliases": ["shared.alias"], "effects": ["read"]})
+    issues = lint_contracts(project_registry({"provider.bad": bad_schema, "other": other}))
+    codes = {issue["code"] for issue in issues}
+    assert {"schema.required_unknown", "schema.secret_plaintext", "effects.invalid",
+            "lifecycle.invalid", "provider.unmapped_task", "alias.ambiguous"} <= codes
+
+
+def test_alias_cannot_shadow_an_existing_canonical_capability_name():
+    owner = _entry(contract={"aliases": ["records.read"], "effects": ["read"]})
+    target = _entry(contract={"effects": ["read"]})
+    issues = lint_contracts(project_registry({"records.impl": owner, "records.read": target}))
+    assert any(issue["code"] == "alias.ambiguous" and issue["name"] == "records.impl"
+               for issue in issues)
+
+
+def test_opaque_secret_reference_and_declared_write_effect_are_clean():
+    entry = _entry(
+        schema={"type": "object", "properties": {
+            "api_token": {"type": "string", "format": "secret-ref"}}},
+        http_method="POST",
+        contract={"effects": ["write"], "canonical_task": "records.update"},
+    )
+    issues = lint_contracts(project_registry({"records.update.impl": entry}))
+    assert not [issue for issue in issues if issue["severity"] == "error"]
+
+
+def test_manifest_capability_is_bounded_and_exposes_declared_self_contract():
+    result = asyncio.run(orchestration.cap_contract_manifest.__wrapped__(
+        name="cap.contract.manifest", limit=500))
+    assert result["count"] == result["returned"] == 1
+    assert result["truncated"] is False
+    manifest = result["manifests"][0]
+    assert manifest["canonical_task"] == "capability.contract.inspect"
+    assert manifest["effects"] == {"status": "declared", "declared": ["read"]}
+    assert len(result["fingerprint"]) == 64
+
+
+def test_lint_capability_bounds_returned_issues_but_keeps_total_counts(monkeypatch):
+    bad = _entry(http_method="POST")
+    monkeypatch.setattr(orchestration, "CAPABILITY_REGISTRY", {
+        "bad.one": bad, "bad.two": copy.deepcopy(bad)})
+    result = asyncio.run(orchestration.cap_contract_lint.__wrapped__(limit=1))
+    assert result["issue_count"] == 2
+    assert result["returned"] == 1
+    assert result["truncated"] is True
+    assert result["counts"] == {"error": 0, "warning": 2}

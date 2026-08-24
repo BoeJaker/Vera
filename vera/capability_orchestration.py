@@ -5042,6 +5042,10 @@ def capability(
     http_tags:   List[str]      = None,   # OpenAPI tags  (defaults to [group])
     # ── MCP config ─────────────────────────────────────────────────────────
     mcp_expose:  bool           = True,   # include in /mcp/tools listing
+    # Optional Capability Contract v2 declarations.  Registration and dispatch
+    # do not consume this metadata; the contract projector exposes it for
+    # inspection/linting while legacy capabilities migrate incrementally.
+    contract:    Optional[dict] = None,
 ):
     """
     Unified registration decorator.
@@ -5243,6 +5247,7 @@ def capability(
             "mcp_expose":  mcp_expose,
             "memory":      memory,
             "silent":      silent,
+            "contract":    copy.deepcopy(contract) if isinstance(contract, dict) else {},
             # HTTP route metadata — used at lifespan mount time
             "http_method": http_method,
             "http_path":   http_path,
@@ -5672,6 +5677,81 @@ async def mcp_tools(trace_id=None):
         for k,v in CAPABILITY_REGISTRY.items()
         if v.get("mcp_expose",True)
     ]
+
+
+@capability(
+    "cap.contract.manifest", memory="off", silent=True,
+    http_method="GET", http_path="/cap/contracts", http_tags=["cap", "obs"],
+    description="Project the live registry into deterministic Capability Contract v2 "
+                "manifests without changing execution. Inputs: name (exact optional), "
+                "prefix (optional), limit (1..500), include_internal. Output includes "
+                "stable fingerprint, bounded manifests, total matches, and truncation.",
+    contract={
+        "canonical_task": "capability.contract.inspect",
+        "aliases": ["capabilities.manifest"],
+        "effects": ["read"],
+        "output_schema": {"type": "object"},
+        "approval": {"status": "not_required"},
+        "resources": {"status": "declared", "classes": ["cpu"]},
+    },
+)
+async def cap_contract_manifest(name: str = "", prefix: str = "", limit: int = 100,
+                                include_internal: bool = False, trace_id=None):
+    from Vera.vera.capability_contract_core import (
+        MANIFEST_SET_SCHEMA, manifest_fingerprint, project_registry,
+    )
+    manifests = project_registry(CAPABILITY_REGISTRY, include_internal=include_internal)
+    exact = (name or "").strip()
+    prefix = (prefix or "").strip()
+    if exact:
+        manifests = [item for item in manifests if item["name"] == exact]
+    elif prefix:
+        manifests = [item for item in manifests if item["name"].startswith(prefix)]
+    total = len(manifests)
+    bounded = max(1, min(int(limit or 100), 500))
+    returned = manifests[:bounded]
+    return {"schema": MANIFEST_SET_SCHEMA, "count": total, "returned": len(returned),
+            "truncated": total > len(returned),
+            "fingerprint": manifest_fingerprint(manifests), "manifests": returned}
+
+
+@capability(
+    "cap.contract.lint", memory="off", silent=True,
+    http_method="GET", http_path="/cap/contracts/lint", http_tags=["cap", "obs"],
+    description="Lint projected Capability Contract v2 manifests. Reports schema "
+                "requiredness drift, secret-like plaintext inputs, invalid effects or "
+                "lifecycle, ambiguous aliases, undeclared mutating effects, and provider "
+                "tasks lacking canonical mapping. Inputs include a bounded issue limit "
+                "(1..500). Inspection only; execution is unchanged.",
+    contract={
+        "canonical_task": "capability.contract.lint",
+        "aliases": ["capabilities.lint"],
+        "effects": ["read"],
+        "output_schema": {"type": "object"},
+        "approval": {"status": "not_required"},
+        "resources": {"status": "declared", "classes": ["cpu"]},
+    },
+)
+async def cap_contract_lint(name: str = "", prefix: str = "",
+                            include_internal: bool = False, limit: int = 200,
+                            trace_id=None):
+    from Vera.vera.capability_contract_core import LINT_SCHEMA, lint_contracts, project_registry
+    manifests = project_registry(CAPABILITY_REGISTRY, include_internal=include_internal)
+    exact = (name or "").strip()
+    prefix = (prefix or "").strip()
+    if exact:
+        manifests = [item for item in manifests if item["name"] == exact]
+    elif prefix:
+        manifests = [item for item in manifests if item["name"].startswith(prefix)]
+    issues = lint_contracts(manifests)
+    counts = {severity: sum(issue["severity"] == severity for issue in issues)
+              for severity in ("error", "warning")}
+    bounded = max(1, min(int(limit or 200), 500))
+    returned = issues[:bounded]
+    return {"schema": LINT_SCHEMA, "manifests": len(manifests),
+            "issue_count": len(issues), "returned": len(returned),
+            "truncated": len(issues) > len(returned), "issues": returned,
+            "counts": counts, "ok": counts["error"] == 0}
 
 @capability("mcp.call", memory="auto",
             http_method="POST", http_path="/mcp/call", http_tags=["mcp"],
