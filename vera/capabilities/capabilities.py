@@ -1791,6 +1791,23 @@ async def _llm_save_output(save_as: str, text: str, session_id: str = "") -> dic
     # own concurrency queuing via per-instance semaphores.
     streams=["tokens"],
     memory="on",
+    contract={
+        "canonical_task": "text.generate",
+        "aliases": ["generate.text"],
+        "effects": ["filesystem", "model"],
+        "output_schema": {"type": "object"},
+        "approval": {"status": "not_required"},
+        "trust": {"status": "prompt_and_context"},
+        "secrets": {"status": "not_required"},
+        "filesystem": {"status": "conditional", "when": "files or save_as is supplied"},
+        "network": {"status": "internal_model_cluster"},
+        "tenant": {"status": "session_scoped"},
+        "idempotency": {"status": "non_idempotent"},
+        "cancellation": {"status": "stream_best_effort"},
+        "pagination": {"status": "not_applicable"},
+        "resources": {"status": "declared", "classes": ["gpu", "cpu"]},
+        "owner": "vera",
+    },
     description="Generate free-form text using the local LLM cluster (Ollama or vLLM). "
                 "WHEN TO USE: writing prose, answering questions, reasoning, drafting content, summarising/"
                 "synthesising results you PROVIDE, writing code/scripts, or structuring YOUR OWN reasoning "
@@ -2423,6 +2440,22 @@ async def ollama_instances_status(trace_id=None):
 @capability("ollama.generate_raw",
     http_method="POST", http_path="/ollama/generate_raw", http_tags=["ollama", "llm"],
     memory="auto",
+    contract={
+        "canonical_task": "text.generate",
+        "effects": ["model", "network"],
+        "output_schema": {"type": "object"},
+        "approval": {"status": "not_required"},
+        "trust": {"status": "prompt"},
+        "secrets": {"status": "not_required"},
+        "filesystem": {"status": "not_required"},
+        "network": {"status": "internal_model_cluster"},
+        "tenant": {"status": "request_scoped"},
+        "idempotency": {"status": "non_idempotent"},
+        "cancellation": {"status": "not_supported"},
+        "pagination": {"status": "not_applicable"},
+        "resources": {"status": "declared", "classes": ["gpu", "cpu"]},
+        "owner": "vera",
+    },
     description="Direct Ollama generation with full parameter control. "
                 "Input: prompt (str!), model (str), system (str), instance_id (str), prefer_gpu (bool), "
                 "temperature (float), top_p (float), top_k (int), repeat_penalty (float). "
