@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -20,6 +21,7 @@ from Vera.vera.capability_orchestration import (
     WORKER_REGISTRY,
     capability,
 )
+from Vera.vera.config import cfg
 
 
 INVENTORY_SCHEMA_VERSION = "vera.system-inventory/v1"
@@ -175,6 +177,12 @@ def _schedule_records(records: Any) -> list[dict[str, Any]]:
     return sorted(result, key=lambda item: item["id"])
 
 
+def _configuration_records(records: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """Expose declared key presence only; values never cross this boundary."""
+    return [{"key": str(key), "explicit": bool(records[key])}
+            for key in sorted(records or {}, key=str)]
+
+
 def build_system_inventory(
     *,
     capabilities: Mapping[str, Mapping[str, Any]],
@@ -186,6 +194,7 @@ def build_system_inventory(
     mcp_servers: Mapping[str, str],
     repo_root: Path,
     captured_at: str | None = None,
+    configuration_keys: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a canonical snapshot whose fingerprint ignores capture time/load order."""
     cap_items = _capabilities(capabilities)
@@ -199,6 +208,7 @@ def build_system_inventory(
         "workers": _named_records(workers),
         "mcp_servers": [{"name": name, "url": _safe_endpoint(mcp_servers[name])}
                         for name in sorted(mcp_servers)],
+        "configuration_keys": _configuration_records(configuration_keys),
         "duplication_signals": {
             term: [cap["name"] for cap in cap_items
                    if term in cap["name"].lower().replace("-", ".").split(".")]
@@ -206,9 +216,9 @@ def build_system_inventory(
         },
         "coverage": {
             "included": ["capabilities", "loaded_modules", "panels", "http_routes",
-                         "schedules", "workers", "mcp_servers"],
+                         "schedules", "workers", "mcp_servers", "configuration_keys"],
             "not_yet_included": ["stored_workflows", "database_schema", "artifacts",
-                                 "connections", "configuration_keys", "caller_graph"],
+                                 "connections", "caller_graph"],
         },
     }
     # Workers contain heartbeat state, counters, PIDs, and random process IDs.
@@ -223,6 +233,7 @@ def build_system_inventory(
         key: len(body[key]) for key in (
             "capabilities", "modules", "panels", "http_routes", "schedules",
             "workers", "mcp_servers",
+            "configuration_keys",
         )
     }
     body["counts"]["module_errors"] = sum(
@@ -279,5 +290,7 @@ async def system_inventory(detail: bool = False, trace_id=None):
         workers=WORKER_REGISTRY,
         mcp_servers=MCP_SERVERS,
         repo_root=repo_root,
+        configuration_keys={name: name in os.environ for name in vars(type(cfg))
+                            if name.isupper() and not name.startswith("_")},
     )
     return snapshot if detail else summarize_system_inventory(snapshot)
