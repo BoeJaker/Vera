@@ -5,12 +5,16 @@ import pytest
 
 from vera.capability_contract_core import (
     CONTRACT_SCHEMA,
+    contract_coverage,
     lint_contracts,
     manifest_fingerprint,
     project_contract,
     project_registry,
 )
 from vera import capability_orchestration as orchestration
+from Vera.vera import capability_orchestration as runtime_orchestration
+from Vera.vera.capabilities import capabilities as _runtime_capabilities  # noqa: F401
+from Vera.vera.dag import dag_workshop_capabilities as _runtime_workshop  # noqa: F401
 
 
 pytestmark = pytest.mark.critical
@@ -43,6 +47,7 @@ def test_projection_is_explicit_without_inventing_missing_contract_facts():
     assert manifest["effects"] == {"status": "unknown", "declared": []}
     assert manifest["policy"]["approval"] == {"status": "unknown"}
     assert manifest["execution"]["retries"] == 1
+    assert manifest["declaration"] == {"status": "legacy_projected", "fields": []}
 
 
 def test_declared_metadata_projects_without_affecting_registry_entry():
@@ -135,3 +140,39 @@ def test_lint_capability_bounds_returned_issues_but_keeps_total_counts(monkeypat
     assert result["returned"] == 1
     assert result["truncated"] is True
     assert result["counts"] == {"error": 0, "warning": 2}
+
+
+def test_coverage_counts_only_explicit_declarations_and_orders_hotspots():
+    legacy = project_contract("z.legacy", _entry())
+    partial = project_contract("a.partial", _entry(contract={
+        "effects": ["read"], "owner": "team-a"}))
+    covered = project_contract("a.covered", _entry(contract={
+        "effects": ["read"], "owner": "team-a", "output_schema": {"type": "object"},
+        "approval": {"status": "not_required"}, "trust": {"status": "internal"},
+        "secrets": {"status": "not_required"}, "filesystem": {"status": "not_required"},
+        "network": {"status": "not_required"}, "tenant": {"status": "request_scoped"},
+        "idempotency": {"status": "idempotent"}, "cancellation": {"status": "not_required"},
+        "pagination": {"status": "not_applicable"}, "health": {"status": "observed"},
+        "cost": {"status": "observed"}, "latency": {"status": "observed"},
+        "quality": {"status": "observed"}, "resources": {"status": "declared"},
+    }))
+    result = contract_coverage([covered, legacy, partial])
+    assert result["manifests"] == 3
+    assert result["coverage"]["contract"] == {"declared": 2, "total": 3, "rate": 0.6667}
+    assert result["coverage"]["effects"]["declared"] == 2
+    assert result["hotspots"][0]["name"] == "z.legacy"
+    assert result["hotspots"][-1]["name"] == "a.covered"
+
+
+def test_generation_and_authoring_family_has_explicit_canonical_tasks():
+    expected = {
+        "llm.generate": "text.generate",
+        "ollama.generate_raw": "text.generate",
+        "code.author": "source_file.author",
+        "prose.author": "document.author",
+    }
+    for name, canonical_task in expected.items():
+        manifest = project_contract(name, runtime_orchestration.CAPABILITY_REGISTRY[name])
+        assert manifest["canonical_task"] == canonical_task
+        assert manifest["declaration"]["status"] == "declared"
+        assert manifest["effects"]["status"] == "declared"

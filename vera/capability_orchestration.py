@@ -5766,6 +5766,48 @@ async def cap_contract_lint(name: str = "", prefix: str = "",
             "truncated": len(issues) > len(returned), "issues": returned,
             "counts": counts, "ok": counts["error"] == 0}
 
+
+@capability(
+    "cap.contract.coverage", memory="off", silent=True,
+    http_method="GET", http_path="/cap/contracts/coverage", http_tags=["cap", "obs"],
+    description="Measure Capability Contract v2 migration coverage by metadata dimension "
+                "and capability group. Returns bounded highest-missing hotspots without "
+                "treating projected legacy defaults as declarations. Inputs: prefix, "
+                "include_internal, limit (1..500). Inspection only.",
+    contract={
+        "canonical_task": "capability.contract.coverage",
+        "aliases": ["capabilities.contract_coverage"],
+        "effects": ["read"],
+        "output_schema": {"type": "object"},
+        "approval": {"status": "not_required"},
+        "trust": {"status": "internal_registry"},
+        "secrets": {"status": "not_required"},
+        "filesystem": {"status": "not_required"},
+        "network": {"status": "not_required"},
+        "tenant": {"status": "global_read_only"},
+        "idempotency": {"status": "idempotent"},
+        "cancellation": {"status": "not_required"},
+        "pagination": {"status": "bounded"},
+        "resources": {"status": "declared", "classes": ["cpu"]},
+        "owner": "vera",
+    },
+)
+async def cap_contract_coverage(prefix: str = "", include_internal: bool = False,
+                                limit: int = 50, trace_id=None):
+    from Vera.vera.capability_contract_core import contract_coverage, project_registry
+    manifests = project_registry(CAPABILITY_REGISTRY, include_internal=include_internal)
+    prefix = (prefix or "").strip()
+    if prefix:
+        manifests = [item for item in manifests if item["name"].startswith(prefix)]
+    result = contract_coverage(manifests)
+    bounded = max(1, min(int(limit or 50), 500))
+    hotspots = result["hotspots"]
+    result["hotspot_count"] = len(hotspots)
+    result["hotspots"] = hotspots[:bounded]
+    result["returned"] = len(result["hotspots"])
+    result["truncated"] = len(hotspots) > result["returned"]
+    return result
+
 @capability("mcp.call", memory="auto",
             http_method="POST", http_path="/mcp/call", http_tags=["mcp"],
             mcp_expose=False,

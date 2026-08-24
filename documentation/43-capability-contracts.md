@@ -55,6 +55,28 @@ Errors identify internally contradictory or unsafe contracts. Warnings identify
 migration gaps which need an explicit declaration; they do not automatically
 disable existing tools in this slice.
 
+`cap.contract.coverage` measures migration rather than merely listing gaps. It
+reports declaration rates for output schemas, effects, ownership, policy,
+execution, operational quality, and resources; aggregates missing fields by
+capability group; and returns a bounded, deterministic hotspot list. Projected
+legacy defaults do not count as declarations, so the figures cannot improve
+unless metadata was actually supplied.
+
+## First migrated family
+
+The first explicit family covers the overlapping generation and authoring tools:
+
+| Implementation | Canonical task | Distinguishing contract |
+|---|---|---|
+| `llm.generate` | `text.generate` | General routed generation; optional workspace read/write |
+| `ollama.generate_raw` | `text.generate` | Direct low-level model-cluster implementation |
+| `code.author` | `source_file.author` | Versioned source write, syntax/smoke execution, model use |
+| `prose.author` | `document.author` | Grounded, versioned document write and model use |
+
+This grouping does not alias the specialist file authors into generic text
+generation. It makes the shared implementation family visible while preserving
+the materially different task and effect contracts a resolver needs.
+
 ## Declaring a contract
 
 ```python
@@ -81,10 +103,11 @@ work resolves it only inside the authorized execution boundary.
 
 ## Rollout path
 
-The foundation provides projection, stable fingerprints, bounded inspection,
-and deterministic lint fixtures. Subsequent W1-03 slices should:
+The foundation and first migration slice provide projection, stable fingerprints,
+bounded inspection, coverage measurement, deterministic lint fixtures, and
+explicit generation/authoring contracts. Subsequent W1-03 slices should:
 
-1. inventory and classify high-use capability families;
+1. inventory and classify the remaining high-use capability families;
 2. declare effects and output schemas for those families;
 3. add ownership, health, latency, cost, and quality feeds;
 4. model deprecation and aliases without hiding the canonical task;

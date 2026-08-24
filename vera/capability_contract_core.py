@@ -18,6 +18,7 @@ from typing import Any
 CONTRACT_SCHEMA = "vera.capability-contract/v2"
 MANIFEST_SET_SCHEMA = "vera.capability-contract-set/v2"
 LINT_SCHEMA = "vera.capability-contract-lint/v2"
+COVERAGE_SCHEMA = "vera.capability-contract-coverage/v2"
 LIFECYCLES = {"active", "deprecated", "experimental", "internal", "removed"}
 EFFECTS = {
     "none", "read", "write", "delete", "execute", "network", "filesystem",
@@ -89,6 +90,10 @@ def project_contract(name: str, entry: Mapping[str, Any]) -> dict[str, Any]:
         },
         "aliases": aliases,
         "lifecycle": lifecycle,
+        "declaration": {
+            "status": "declared" if declared else "legacy_projected",
+            "fields": sorted(str(key) for key in declared),
+        },
         "schemas": {
             "input": input_schema,
             "output": output_schema,
@@ -150,6 +155,82 @@ def manifest_fingerprint(manifests: list[Mapping[str, Any]]) -> str:
                      key=lambda item: _text(item.get("name")))
     payload = json.dumps(ordered, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def contract_coverage(manifests: list[Mapping[str, Any]]) -> dict[str, Any]:
+    """Measure migration completeness without treating inferred defaults as declarations."""
+    dimensions = (
+        "contract", "output_schema", "effects", "owner", "approval", "trust",
+        "secrets", "filesystem", "network", "tenant", "idempotency",
+        "cancellation", "pagination", "health", "cost", "latency", "quality",
+        "resources",
+    )
+    groups: dict[str, dict[str, Any]] = {}
+    hotspots = []
+    totals = {dimension: 0 for dimension in dimensions}
+    ordered = sorted(manifests, key=lambda item: _text(item.get("name")))
+    for manifest in ordered:
+        name = _text(manifest.get("name"))
+        declared_fields = set(_mapping(manifest.get("declaration")).get("fields") or [])
+        schemas = _mapping(manifest.get("schemas"))
+        effects = _mapping(manifest.get("effects"))
+        policy = _mapping(manifest.get("policy"))
+        execution = _mapping(manifest.get("execution"))
+        quality = _mapping(manifest.get("quality"))
+        provenance = _mapping(manifest.get("provenance"))
+        checks = {
+            "contract": _mapping(manifest.get("declaration")).get("status") == "declared",
+            "output_schema": schemas.get("output_status") == "declared",
+            "effects": effects.get("status") == "declared",
+            "owner": bool(_text(provenance.get("owner"))),
+            "approval": _mapping(policy.get("approval")).get("status") != "unknown",
+            "trust": _mapping(policy.get("trust")).get("status") != "unknown",
+            "secrets": _mapping(policy.get("secrets")).get("status") != "unknown",
+            "filesystem": _mapping(policy.get("filesystem")).get("status") != "unknown",
+            "network": _mapping(policy.get("network")).get("status") != "unknown",
+            "tenant": _mapping(policy.get("tenant")).get("status") != "unknown",
+            "idempotency": _mapping(execution.get("idempotency")).get("status") != "unknown",
+            "cancellation": _mapping(execution.get("cancellation")).get("status") != "unknown",
+            "pagination": _mapping(execution.get("pagination")).get("status") != "unknown",
+            "health": _mapping(quality.get("health")).get("status") != "unknown",
+            "cost": _mapping(quality.get("cost")).get("status") != "unknown",
+            "latency": _mapping(quality.get("latency")).get("status") != "unknown",
+            "quality": _mapping(quality.get("quality")).get("status") != "unknown",
+            "resources": _mapping(manifest.get("resources")).get("status") != "unknown",
+        }
+        # A malformed declaration must not gain coverage merely by naming a field.
+        checks["contract"] = checks["contract"] and bool(declared_fields)
+        missing = [dimension for dimension in dimensions if not checks[dimension]]
+        for dimension, present in checks.items():
+            totals[dimension] += int(present)
+        group = name.split(".", 1)[0] if name else "unknown"
+        bucket = groups.setdefault(group, {"group": group, "total": 0,
+                                           "declared": 0, "missing_fields": 0})
+        bucket["total"] += 1
+        bucket["declared"] += int(checks["contract"])
+        bucket["missing_fields"] += len(missing)
+        hotspots.append({"name": name, "group": group, "missing": missing,
+                         "missing_count": len(missing),
+                         "declared_fields": sorted(declared_fields)})
+
+    count = len(ordered)
+    coverage = {
+        dimension: {"declared": totals[dimension], "total": count,
+                    "rate": round(totals[dimension] / count, 4) if count else 0.0}
+        for dimension in dimensions
+    }
+    group_rows = []
+    for bucket in groups.values():
+        bucket["declaration_rate"] = round(
+            bucket["declared"] / bucket["total"], 4) if bucket["total"] else 0.0
+        group_rows.append(bucket)
+    return {
+        "schema": COVERAGE_SCHEMA,
+        "manifests": count,
+        "coverage": coverage,
+        "groups": sorted(group_rows, key=lambda row: (-row["missing_fields"], row["group"])),
+        "hotspots": sorted(hotspots, key=lambda row: (-row["missing_count"], row["name"])),
+    }
 
 
 def _issue(name: str, code: str, severity: str, path: str, message: str) -> dict[str, str]:
