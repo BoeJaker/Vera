@@ -519,6 +519,7 @@ async def cap_enroll_guest(
     cluster_id: str = "", vmid: int = 0, guest_type: str = "", node: str = "",
     fqdn: str = "", ip: str = "", ssh_user: str = "root", ssh_password: str = "",
     ssh_key_path: str = "", ssh_port: int = 22, via_proxmox: bool = False,
+    skip_mesh: bool = False,
     trace_id=None,
 ) -> Dict:
     # Auto-resolve the guest IP when not supplied (LXC config / QEMU agent).
@@ -644,15 +645,20 @@ async def cap_enroll_guest(
 
     # 4. Pull the host onto the encrypted WireGuard mesh (best-effort) — so every
     #    enrolled host (Proxmox guest OR an off-cluster laptop) joins the overlay.
-    join = _cap("netsec.mesh.join")
-    mesh_hid = exec_host_id or host_id
-    if join and mesh_hid:
-        try:
-            steps["mesh"] = await join(host_id=mesh_hid)
-        except Exception as e:
-            steps["mesh"] = {"error": str(e)}
+    if skip_mesh:
+        # mesh handled by the Foundry 'mesh' feature (node self-enrol via
+        # netsec.mesh.enroll), so it doesn't depend on this slower enrolment.
+        steps["mesh"] = {"skipped": "handled by mesh feature (self-enrol)"}
     else:
-        steps["mesh"] = {"skipped": "mesh unavailable or host not saved"}
+        join = _cap("netsec.mesh.join")
+        mesh_hid = exec_host_id or host_id
+        if join and mesh_hid:
+            try:
+                steps["mesh"] = await join(host_id=mesh_hid)
+            except Exception as e:
+                steps["mesh"] = {"error": str(e)}
+        else:
+            steps["mesh"] = {"skipped": "mesh unavailable or host not saved"}
 
     await emit_event({"type": "enroll.guest.done", "fqdn": fqdn, "ip": ip,
                       "ok": steps["ssh"]["ok"]})
