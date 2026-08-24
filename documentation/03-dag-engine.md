@@ -58,6 +58,15 @@ services. Native DAG export reports all of these as blocking gaps because the
 compact array cannot preserve or enforce them. Explicit `allow_lossy` is the only
 way to obtain an array with those contracts removed.
 
+The third held slice represents subworkflow references, conditional choices,
+bounded maps, and reducers as strictly validated structural nodes. Nested step
+IDs remain globally unique within the document, subworkflows use opaque artifact
+or record references, and all values must be canonical JSON. The native DAG
+adapter reports each structural node as `unsupported_structure`; it never
+flattens a branch, guesses collection semantics, resolves a child workflow, or
+executes a reducer. With explicit lossy export, unsupported nodes are omitted and
+the returned gap report remains attached.
+
 ---
 
 ## 1. DAG syntax

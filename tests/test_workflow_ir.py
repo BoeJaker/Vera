@@ -189,3 +189,59 @@ def test_retry_rejects_non_finite_numbers(field, value):
         "retry": {"max_attempts": 2, field: value}}]}
     with pytest.raises(WorkflowIRValidationError, match="must be non-negative"):
         normalize_workflow(workflow)
+
+
+def test_structural_ir_validates_nested_ids_and_stays_descriptive():
+    workflow = {"ir_version": "1.0", "steps": [
+        {"id": "sub", "type": "subworkflow",
+         "workflow": {"kind": "artifact", "value": "sha256:child"},
+         "bindings": {"query": {"kind": "state", "value": "query"}}, "output": "child"},
+        {"id": "choose", "type": "choice", "cases": [{
+            "when": {"kind": "state", "value": "approved"},
+            "steps": [{"id": "approved_task", "type": "task", "task": "publish"}],
+        }], "default": [{"id": "fallback", "type": "task", "task": "draft"}]},
+        {"id": "map", "type": "map", "items": {"kind": "state", "value": "records"},
+         "max_concurrency": 4, "body": [{"id": "map_task", "type": "task", "task": "enrich"}]},
+        {"id": "reduce", "type": "reduce", "items": {"kind": "state", "value": "enriched"},
+         "initial": {"kind": "literal", "value": {}},
+         "reducer": {"id": "reduce_task", "type": "task", "task": "merge"}, "output": "report"},
+    ]}
+    normalized = normalize_workflow(workflow)
+    assert normalized["content_hash"].startswith("sha256:")
+    exported = export_native_dag(normalized)
+    assert exported["ok"] is False
+    assert exported["dag"] is None
+    assert [gap["code"] for gap in exported["gaps"]] == ["unsupported_structure"] * 4
+    lossy = export_native_dag(normalized, allow_lossy=True)
+    assert lossy["ok"] is True
+    assert lossy["dag"] == []
+    assert lossy["executes"] is False
+
+
+def test_structural_ir_rejects_duplicate_nested_ids():
+    workflow = {"ir_version": "1.0", "steps": [{
+        "id": "choice", "type": "choice", "cases": [{
+            "when": {"kind": "literal", "value": True},
+            "steps": [{"id": "duplicate", "type": "task", "task": "alpha"}],
+        }], "default": [{"id": "duplicate", "type": "task", "task": "beta"}],
+    }]}
+    with pytest.raises(WorkflowIRValidationError, match="duplicate step id"):
+        normalize_workflow(workflow)
+
+
+def test_subworkflow_requires_an_opaque_workflow_reference():
+    workflow = {"ir_version": "1.0", "steps": [{
+        "id": "sub", "type": "subworkflow",
+        "workflow": {"kind": "literal", "value": {"steps": []}},
+    }]}
+    with pytest.raises(WorkflowIRValidationError, match="artifact or record"):
+        normalize_workflow(workflow)
+
+
+def test_non_json_literal_fails_as_ir_validation_not_encoder_error():
+    workflow = {"ir_version": "1.0", "steps": [{
+        "id": "map", "type": "map", "items": {"kind": "literal", "value": object()},
+        "body": [{"id": "task", "type": "task", "task": "alpha"}],
+    }]}
+    with pytest.raises(WorkflowIRValidationError, match="not canonical JSON"):
+        normalize_workflow(workflow)

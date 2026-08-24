@@ -35,7 +35,11 @@ def workflow_hash(workflow: dict[str, Any]) -> str:
     """Return a stable content hash, excluding any previously attached hash."""
     material = copy.deepcopy(workflow)
     material.pop("content_hash", None)
-    return "sha256:" + hashlib.sha256(_canonical(material).encode("utf-8")).hexdigest()
+    try:
+        encoded = _canonical(material).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise WorkflowIRValidationError(f"workflow is not canonical JSON: {exc}") from exc
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
 
 def normalize_workflow(workflow: dict[str, Any]) -> dict[str, Any]:
@@ -156,6 +160,8 @@ def normalize_workflow(workflow: dict[str, Any]) -> dict[str, Any]:
         if step_id in seen:
             raise WorkflowIRValidationError(f"duplicate step id: {step_id}")
         seen.add(step_id)
+        if "extensions" in step and not isinstance(step["extensions"], dict):
+            raise WorkflowIRValidationError(f"{path}.extensions must be an object")
         kind = step.get("type")
         if kind == "task":
             unknown = sorted(set(step) - {"id", "type", "task", "output", "when", "extensions",
@@ -191,6 +197,82 @@ def normalize_workflow(workflow: dict[str, Any]) -> dict[str, Any]:
                 if branch.get("type") != "task":
                     raise WorkflowIRValidationError(
                         f"{path}.branches[{index}] must be a task in IR {IR_VERSION}")
+        elif kind == "subworkflow":
+            unknown = sorted(set(step) - {"id", "type", "workflow", "bindings", "output",
+                                               "extensions"})
+            if unknown:
+                raise WorkflowIRValidationError(
+                    f"{path} has unknown fields: {', '.join(unknown)}")
+            check_ref(step.get("workflow"), f"{path}.workflow")
+            if step["workflow"]["kind"] not in {"artifact", "record"}:
+                raise WorkflowIRValidationError(
+                    f"{path}.workflow must be an artifact or record reference")
+            bindings = step.get("bindings", {})
+            if not isinstance(bindings, dict):
+                raise WorkflowIRValidationError(f"{path}.bindings must be an object")
+            for name, ref in bindings.items():
+                if not isinstance(name, str) or not name:
+                    raise WorkflowIRValidationError(
+                        f"{path}.bindings keys must be non-empty strings")
+                check_ref(ref, f"{path}.bindings.{name}")
+            if "output" in step and not isinstance(step["output"], str):
+                raise WorkflowIRValidationError(f"{path}.output must be a string")
+            if "extensions" in step and not isinstance(step["extensions"], dict):
+                raise WorkflowIRValidationError(f"{path}.extensions must be an object")
+        elif kind == "choice":
+            unknown = sorted(set(step) - {"id", "type", "cases", "default", "extensions"})
+            if unknown:
+                raise WorkflowIRValidationError(
+                    f"{path} has unknown fields: {', '.join(unknown)}")
+            cases = step.get("cases")
+            if not isinstance(cases, list) or not cases:
+                raise WorkflowIRValidationError(f"{path}.cases must be non-empty")
+            for case_index, case in enumerate(cases):
+                case_path = f"{path}.cases[{case_index}]"
+                if not isinstance(case, dict) or set(case) != {"when", "steps"}:
+                    raise WorkflowIRValidationError(f"{case_path} requires when and steps")
+                check_ref(case["when"], case_path + ".when")
+                if not isinstance(case["steps"], list) or not case["steps"]:
+                    raise WorkflowIRValidationError(f"{case_path}.steps must be non-empty")
+                for index, child in enumerate(case["steps"]):
+                    check_step(child, f"{case_path}.steps[{index}]")
+            default = step.get("default", [])
+            if not isinstance(default, list):
+                raise WorkflowIRValidationError(f"{path}.default must be an array")
+            for index, child in enumerate(default):
+                check_step(child, f"{path}.default[{index}]")
+        elif kind == "map":
+            unknown = sorted(set(step) - {"id", "type", "items", "body", "output",
+                                               "max_concurrency", "extensions"})
+            if unknown:
+                raise WorkflowIRValidationError(
+                    f"{path} has unknown fields: {', '.join(unknown)}")
+            check_ref(step.get("items"), f"{path}.items")
+            body = step.get("body")
+            if not isinstance(body, list) or not body:
+                raise WorkflowIRValidationError(f"{path}.body must be non-empty")
+            for index, child in enumerate(body):
+                check_step(child, f"{path}.body[{index}]")
+            if "output" in step and not isinstance(step["output"], str):
+                raise WorkflowIRValidationError(f"{path}.output must be a string")
+            concurrency = step.get("max_concurrency")
+            if concurrency is not None and (not isinstance(concurrency, int)
+                                            or isinstance(concurrency, bool) or concurrency < 1):
+                raise WorkflowIRValidationError(f"{path}.max_concurrency must be positive")
+        elif kind == "reduce":
+            unknown = sorted(set(step) - {"id", "type", "items", "initial", "reducer",
+                                               "output", "extensions"})
+            if unknown:
+                raise WorkflowIRValidationError(
+                    f"{path} has unknown fields: {', '.join(unknown)}")
+            check_ref(step.get("items"), f"{path}.items")
+            if "initial" in step:
+                check_ref(step["initial"], f"{path}.initial")
+            check_step(step.get("reducer"), f"{path}.reducer")
+            if step["reducer"].get("type") != "task":
+                raise WorkflowIRValidationError(f"{path}.reducer must be a task")
+            if "output" in step and not isinstance(step["output"], str):
+                raise WorkflowIRValidationError(f"{path}.output must be a string")
         else:
             raise WorkflowIRValidationError(f"{path}.type is unsupported: {kind!r}")
 
@@ -321,8 +403,11 @@ def export_native_dag(workflow: Any, *, allow_lossy: bool = False) -> dict[str, 
         if step["type"] == "parallel":
             dag.append([task(branch, f"{path}.branches[{branch_index}]")
                         for branch_index, branch in enumerate(step["branches"])])
-        else:
+        elif step["type"] == "task":
             dag.append(task(step, path))
+        else:
+            gaps.append(_gap(path, "unsupported_structure",
+                             f"{step['type']} has no native DAG representation"))
     blocking = [gap for gap in gaps if gap["blocking"]]
     return {"ok": not blocking or allow_lossy,
             "dag": dag if not blocking or allow_lossy else None,
