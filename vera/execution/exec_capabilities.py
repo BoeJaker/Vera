@@ -1651,15 +1651,32 @@ async def _run_code(language: str, code: str, *, stdin: str = "",
     # `path`, or recover from the common mistake of passing the invocation
     # (e.g. "python /art/app.py") or a bare file path as `code`.
     run_path = str(path or "").strip().strip('"\'')
+    _explicit_path = bool(run_path)          # given as `path`, not inferred from `code`
     if not run_path and code:
         run_path = _invocation_path(code)
+    _path_fellback = ""
     if run_path:
         try:
             with open(run_path, "r", encoding="utf-8", errors="replace") as fh:
                 code = fh.read()
         except Exception as e:
-            return {"ok": False, "rc": -1, "stdout": "", "stderr": str(e),
-                    "language": lang, "error": f"cannot read file '{run_path}': {e}"}
+            # A caller that supplied BOTH a `path` and real inline `code` used to
+            # get a hard failure here, with its perfectly good code DISCARDED
+            # because the path did not exist yet — and since nothing about the
+            # call changed, the retry failed identically. Observed live burning
+            # three consecutive cycles on
+            # "can't open file '/workspace/check_syntax.py'" while the script to
+            # run was sitting in `code` the whole time (2026-08-24). Run what we
+            # were actually given instead; only a path we INFERRED from `code`
+            # (an invocation string like "python app.py") still hard-fails, since
+            # there is no real code to fall back to in that case.
+            if _explicit_path and (code or "").strip() and not _invocation_path(code):
+                _path_fellback = run_path
+                run_path = ""
+            else:
+                return {"ok": False, "rc": -1, "stdout": "", "stderr": str(e),
+                        "language": lang, "error": f"cannot read file '{run_path}': {e}"}
+    if run_path:
         if not lang:
             lang = _canon_lang(_lang_from_ext(run_path))
         if not cwd:
@@ -1715,6 +1732,13 @@ async def _run_code(language: str, code: str, *, stdin: str = "",
                                   cwd=cwd or None)
         result["language"] = lang
         result["bin"] = bin_path
+        if _path_fellback:
+            # Say what happened, or the caller keeps sending the same dead path.
+            result["ran_inline_code"] = True
+            result["note"] = (f"`path` ('{_path_fellback}') does not exist, so the inline "
+                              f"`code` you supplied was run instead. Nothing was written to "
+                              f"that path — drop `path` to run a snippet, or create the file "
+                              f"with code.author first if you want it to persist.")
         return result
     except Exception as e:
         return {"ok": False, "rc": -1, "stdout": "", "stderr": str(e),
