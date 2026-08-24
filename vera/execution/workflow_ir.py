@@ -20,9 +20,9 @@ _STEP_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _REF_KINDS = {"state", "secret", "artifact", "record", "literal"}
 _EFFECT_KINDS = {"filesystem", "network", "database", "process", "model",
                  "device", "notification", "external_service"}
-_IR_FEATURES = ("tasks", "parallel", "conditions", "typed_ports", "references",
+_IR_FEATURES = ("tasks", "parallel", "conditions", "typed_ports", "variables", "references",
                 "retry", "timeout", "idempotency", "effects", "subworkflow",
-                "choice", "map", "reduce", "schedule", "resources", "providers",
+                "choice", "map", "reduce", "loop", "join", "schedule", "resources", "providers",
                 "approval", "compensation")
 _ADAPTER_PROFILES = {
     "portable.core": {"available": True, "executable": False,
@@ -65,7 +65,7 @@ def normalize_workflow(workflow: dict[str, Any]) -> dict[str, Any]:
     if workflow.get("ir_version") != IR_VERSION:
         raise WorkflowIRValidationError(f"unsupported ir_version: {workflow.get('ir_version')!r}")
     allowed_workflow = {"ir_version", "name", "description", "inputs", "outputs",
-                        "steps", "extensions", "schedule", "resources", "providers",
+                        "variables", "steps", "extensions", "schedule", "resources", "providers",
                         "content_hash"}
     unknown_workflow = sorted(set(workflow) - allowed_workflow)
     if unknown_workflow:
@@ -89,6 +89,23 @@ def normalize_workflow(workflow: dict[str, Any]) -> dict[str, Any]:
             if "required" in port and not isinstance(port["required"], bool):
                 raise WorkflowIRValidationError(f"{path}.required must be boolean")
             if "description" in port and not isinstance(port["description"], str):
+                raise WorkflowIRValidationError(f"{path}.description must be a string")
+    variables = workflow.get("variables")
+    if variables is not None:
+        if not isinstance(variables, dict):
+            raise WorkflowIRValidationError("variables must be an object")
+        for variable_name, variable in variables.items():
+            path = f"variables.{variable_name}"
+            if not isinstance(variable_name, str) or not variable_name:
+                raise WorkflowIRValidationError("variable keys must be non-empty strings")
+            if not isinstance(variable, dict) or set(variable) - {
+                    "schema", "initial", "mutable", "description"}:
+                raise WorkflowIRValidationError(f"{path} has unsupported fields")
+            if not isinstance(variable.get("schema"), dict):
+                raise WorkflowIRValidationError(f"{path}.schema must be an object")
+            if "mutable" in variable and not isinstance(variable["mutable"], bool):
+                raise WorkflowIRValidationError(f"{path}.mutable must be boolean")
+            if "description" in variable and not isinstance(variable["description"], str):
                 raise WorkflowIRValidationError(f"{path}.description must be a string")
     schedule = workflow.get("schedule")
     if schedule is not None:
@@ -155,6 +172,10 @@ def normalize_workflow(workflow: dict[str, Any]) -> dict[str, Any]:
         for key in ("provider", "revision"):
             if key in ref and not isinstance(ref[key], str):
                 raise WorkflowIRValidationError(f"{path}.{key} must be a string")
+
+    for variable_name, variable in (variables or {}).items():
+        if "initial" in variable:
+            check_ref(variable["initial"], f"variables.{variable_name}.initial")
 
     def check_contracts(step: dict[str, Any], path: str) -> None:
         bindings = step.get("bindings")
@@ -358,6 +379,53 @@ def normalize_workflow(workflow: dict[str, Any]) -> dict[str, Any]:
                 raise WorkflowIRValidationError(f"{path}.reducer must be a task")
             if "output" in step and not isinstance(step["output"], str):
                 raise WorkflowIRValidationError(f"{path}.output must be a string")
+        elif kind == "loop":
+            unknown = sorted(set(step) - {"id", "type", "condition", "body",
+                                               "max_iterations", "output", "extensions"})
+            if unknown:
+                raise WorkflowIRValidationError(
+                    f"{path} has unknown fields: {', '.join(unknown)}")
+            check_ref(step.get("condition"), f"{path}.condition")
+            body = step.get("body")
+            if not isinstance(body, list) or not body:
+                raise WorkflowIRValidationError(f"{path}.body must be non-empty")
+            for index, child in enumerate(body):
+                check_step(child, f"{path}.body[{index}]")
+            maximum = step.get("max_iterations")
+            if (not isinstance(maximum, int) or isinstance(maximum, bool)
+                    or maximum < 1):
+                raise WorkflowIRValidationError(
+                    f"{path}.max_iterations must be a positive integer")
+            if "output" in step and not isinstance(step["output"], str):
+                raise WorkflowIRValidationError(f"{path}.output must be a string")
+        elif kind == "join":
+            unknown = sorted(set(step) - {"id", "type", "inputs", "strategy",
+                                               "quorum", "output", "extensions"})
+            if unknown:
+                raise WorkflowIRValidationError(
+                    f"{path} has unknown fields: {', '.join(unknown)}")
+            inputs = step.get("inputs")
+            if not isinstance(inputs, list) or not inputs:
+                raise WorkflowIRValidationError(f"{path}.inputs must be non-empty")
+            for index, ref in enumerate(inputs):
+                check_ref(ref, f"{path}.inputs[{index}]")
+            canonical_inputs = [_canonical(ref) for ref in inputs]
+            if len(set(canonical_inputs)) != len(canonical_inputs):
+                raise WorkflowIRValidationError(f"{path}.inputs must not contain duplicates")
+            strategy = step.get("strategy", "all")
+            if strategy not in {"all", "any", "quorum"}:
+                raise WorkflowIRValidationError(f"{path}.strategy is unsupported")
+            quorum = step.get("quorum")
+            if strategy == "quorum":
+                if (not isinstance(quorum, int) or isinstance(quorum, bool)
+                        or quorum < 1 or quorum > len(inputs)):
+                    raise WorkflowIRValidationError(
+                        f"{path}.quorum must be between 1 and the input count")
+            elif quorum is not None:
+                raise WorkflowIRValidationError(
+                    f"{path}.quorum is only valid for quorum strategy")
+            if "output" in step and not isinstance(step["output"], str):
+                raise WorkflowIRValidationError(f"{path}.output must be a string")
         else:
             raise WorkflowIRValidationError(f"{path}.type is unsupported: {kind!r}")
 
@@ -437,7 +505,7 @@ def export_native_dag(workflow: Any, *, allow_lossy: bool = False) -> dict[str, 
         return {"ok": False, "dag": None,
                 "gaps": [_gap("workflow", "invalid_workflow", str(exc))], "executes": False}
     gaps: list[dict[str, Any]] = []
-    for field in ("inputs", "outputs", "schedule", "resources", "providers"):
+    for field in ("inputs", "outputs", "variables", "schedule", "resources", "providers"):
         if normalized.get(field):
             gaps.append(_gap(field, "unsupported_contract",
                              f"typed workflow {field} are not represented by a native DAG array"))
