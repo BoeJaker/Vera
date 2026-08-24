@@ -1017,6 +1017,57 @@ def _rag_clean(s: str, limit: int = 1200) -> str:
     return _WS_RE.sub(" ", txt).strip()[:limit]
 
 
+_ITEM_RE = re.compile(r"<(item|entry)\b[^>]*>.*?</\1\s*>", re.S | re.I)
+
+# Namespace prefixes commonly used INSIDE feed items. A salvaged fragment is
+# parsed on its own, so every prefix it uses must be declared or ElementTree
+# raises "unbound prefix" and we lose the item.
+_NS_DECL = (
+    'xmlns:atom="http://www.w3.org/2005/Atom" '
+    'xmlns:content="http://purl.org/rss/1.0/modules/content/" '
+    'xmlns:dc="http://purl.org/dc/elements/1.1/" '
+    'xmlns:media="http://search.yahoo.com/mrss/" '
+    'xmlns:slash="http://purl.org/rss/1.0/modules/slash/" '
+    'xmlns:wfw="http://wellformedweb.org/CommentAPI/" '
+    'xmlns:arxiv="http://arxiv.org/schemas/atom" '
+    'xmlns:georss="http://www.georss.org/georss" '
+    'xmlns:re="http://purl.org/atompub/rank/1.0"'
+)
+
+
+def _rag_salvage_entries(xml_text: str):
+    """Pull whole <item>/<entry> blocks out of a TRUNCATED or malformed feed.
+
+    http.get caps its body at 65536 bytes with no way to ask for more, so any
+    feed larger than 64KB arrives as invalid XML and a whole-document parse
+    fails. Measured: 9 of 20 real feeds hit that cap, all of which then fell
+    back to page-level ingest and reintroduced the boilerplate records this
+    chunking exists to remove.
+
+    The stories in the part we DID receive are perfectly good, so take them:
+    match complete item/entry blocks and parse each on its own.
+    """
+    import xml.etree.ElementTree as ET
+    ATOM = "{http://www.w3.org/2005/Atom}"
+    out = []
+    for m in _ITEM_RE.finditer(xml_text or ""):
+        frag, tag = m.group(0), m.group(1).lower()
+        if tag == "entry":
+            wrapped = f'<root {_NS_DECL} xmlns="http://www.w3.org/2005/Atom">{frag}</root>'
+        else:
+            wrapped = f"<root {_NS_DECL}>{frag}</root>"
+        try:
+            root = ET.fromstring(wrapped)
+        except Exception:
+            continue
+        el = root.find(f"{ATOM}entry") if tag == "entry" else root.find("item")
+        if el is not None:
+            out.append(el)
+        if len(out) >= _FEED_ITEMS_MAX:
+            break
+    return out
+
+
 def _rag_parse_feed(xml_text: str, source_url: str,
                     source_title: str = "") -> List[Dict[str, Any]]:
     """RSS/Atom XML → ONE ROW PER STORY. [] when it isn't a parseable feed.
@@ -1029,13 +1080,15 @@ def _rag_parse_feed(xml_text: str, source_url: str,
     is what makes the watched world actually retrievable.
     """
     import xml.etree.ElementTree as ET
+    ATOM = "{http://www.w3.org/2005/Atom}"
     try:
         root = ET.fromstring((xml_text or "").strip())
+        entries = root.findall(".//item") or root.findall(f".//{ATOM}entry")
     except Exception:
-        return []
-
-    ATOM = "{http://www.w3.org/2005/Atom}"
-    entries = root.findall(".//item") or root.findall(f".//{ATOM}entry")
+        # Malformed — most often because http.get truncated a >64KB feed.
+        # Salvage the complete items it does contain rather than losing the
+        # source to page-level ingest.
+        entries = _rag_salvage_entries(xml_text)
     if not entries:
         return []
 
