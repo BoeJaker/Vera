@@ -10059,6 +10059,18 @@ except Exception:                                     # pragma: no cover
         def _repair_collapsed(before: str, after: str, **_kw) -> bool:
             return False
 
+# Redundant-verify plan prune — same import-safety reasoning as above.
+try:
+    from Vera.vera.dag.plan_guards import prune_redundant_verify_steps as _prune_redundant_verify_steps
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag.plan_guards import prune_redundant_verify_steps as _prune_redundant_verify_steps
+    except Exception:
+        log.warning("plan_guards unavailable — redundant-verify prune disabled")
+
+        def _prune_redundant_verify_steps(steps):
+            return {"steps": steps, "dropped": []}
+
 
 # NOTE: keep plain helpers ABOVE the next @capability decorator. A decorator
 # binds to whatever function follows it, so a helper slipped in between
@@ -12396,10 +12408,12 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
             "minimum [\"act\",\"verify\"], and [\"explore\",\"act\",\"verify\"] (add \"think\" for "
             "hard design/decision work) whenever the step must first inspect the environment or the "
             "prior findings before acting. Phasing makes a step self-verify and self-correct, which "
-            "matters on a big plan where a silent bad step derails everything after it. The ONLY "
-            "steps that should have NO phases are pure read-only lookups (all caps are "
-            "search/read/query) — they are already exploration, so phasing just repeats the same "
-            "query. When in doubt on a substantial step, PHASE it.\n")
+            "matters on a big plan where a silent bad step derails everything after it. Give NO "
+            "phases to: pure read-only lookups (all caps are search/read/query — they are already "
+            "exploration, so phasing just repeats the same query), and steps whose work is "
+            "code.author/code.edit — those caps parse what they write and report the verdict, so a "
+            "`verify` phase there just re-reads a file whose result is already known. Otherwise, "
+            "when in doubt on a substantial step, PHASE it.\n")
     else:  # "sparingly" (default)
         _phase_block = (
             "STEP PHASES (optional, use SPARINGLY): a step may carry a `phases` list — any of "
@@ -12410,7 +12424,9 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
             "— it is already exploration; adding explore→act just repeats the same search and wastes "
             "cycles. Use `explore` only before a step that will then ACT on what it finds (e.g. read "
             "config → modify it); use `verify` ONLY for steps that CREATE or CHANGE something (write "
-            "files, run a build, deploy, configure). Most steps need NO `phases` at all — leave it "
+            "files, run a build, deploy, configure) — but NOT for a code.author/code.edit step, which "
+            "already parses what it writes and reports the verdict, so verifying it re-reads a "
+            "settled result. Most steps need NO `phases` at all — leave it "
             "empty and they run as one fast specialist.\n")
     # Restrict the phase vocabulary when the caller allowed only a subset.
     if _pp_mode != "off" and allowed_phases and set(allowed_phases) != set(_V5_PHASES):
@@ -12657,6 +12673,9 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
                 steps.append(cs)
     except Exception as e:
         log.debug("v5 orchestrate_plan failed: %s", e)
+    # (The redundant-verify prune runs at the v6 plan choke point, which every
+    # planner return path — including this one and the minimal-schema path above
+    # — funnels through, so it is not repeated here.)
     return {"steps": steps[:max_steps], "reason": reason,
             "complexity": complexity, "recon": recon_actions,
             "done_when": done_when}
@@ -13523,7 +13542,14 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             "description of exactly what the file must do>', context_files=[<the real data files "
             "it must read>]). It hands the job to the CODING specialist, shows it the ACTUAL "
             "content of those files so the code is written against the real structure, and saves "
-            "+ versions the file for you. Then run it: exec.python.run(path='<file>').\n"
+            "+ versions the file for you.\n"
+            "  • IT IS ALREADY CHECKED. code.author parses what it writes before returning and "
+            "reports the verdict (syntax_ok, checked_with, bytes); ok=true means it parsed. "
+            "Whether the file exists, is complete or is valid is therefore ALREADY ANSWERED — do "
+            "not read it back, `cat` it, re-parse it or run it to find out, and never hold a step "
+            "open until you have. This is the same for every language: a .html needs checking no "
+            "more than a .py does. Read the file back only to USE its content in another call; "
+            "run it only to obtain a RESULT the step actually needs.\n"
             "  • `task` is a DESCRIPTION IN PLAIN ENGLISH of the file — its purpose, features, "
             "structure — NEVER the code. code.author's coding model WRITES the code from it. If "
             "you catch yourself typing HTML/JS/CSS/Python, STOP: describe it in a sentence or two "
@@ -18099,11 +18125,10 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
         "phase it [\"verify\"]; its goal must say: write the SMALLEST test script that "
         "decides the claim and print a PASS/FAIL verdict plus at most ~10 lines of "
         "decision-relevant evidence — never dump whole files/logs/responses.\n"
-        "  EXCEPTION — a file written by code.author/code.edit is ALREADY parser-verified "
-        "(and smoke-run when it is a runnable .py); its result carries syntax_ok/runtime_ok. "
-        "NEVER insert a step to read it back, re-parse it, or 'verify syntax/completeness' — "
-        "that proves nothing new and wastes cycles. Verify only BEHAVIOUR the parser cannot "
-        "see (does the app do what was asked), and only when the goal actually demands it.\n"
+        "  NOT for authored code: code.author/code.edit already parsed what they wrote and "
+        "reported the verdict, so a step that re-reads or re-parses their output decides "
+        "nothing. Insert a verification step only for BEHAVIOUR a parser cannot see — that the "
+        "thing DOES what was asked.\n"
         "INFO-GATHERING STEPS: when the run is missing a FACT it needs to proceed, insert a "
         "step that gathers it DETERMINISTICALLY — read-only caps / queries / scripts, phase "
         "[\"explore\"] — not guesswork. Its goal must say to print a CONCISE, COMPLETE summary "
@@ -19858,18 +19883,14 @@ _V7_CAP_ROUTING = (
     "  • SOURCE CODE (.py/.js/.ts/.html/.css/.sh/.go/…) → code.author (creates) / code.edit "
     "(surgical change). The coding specialist writes it, grounded on any context_files, "
     "syntax-checked and versioned. NEVER llm.generate, ide.fs.write, or a heredoc for code.\n"
-    "    ALREADY VERIFIED — DO NOT RE-CHECK IT, WHATEVER THE LANGUAGE. code.author/code.edit "
-    "run a REAL parser on what they wrote (Python compile, JSON/YAML parse, HTML structure "
-    "PLUS its embedded-JS syntax) and additionally SMOKE-RUN a runnable .py, repairing what "
-    "they find. The result already tells you the verdict: `syntax_ok`, `checked_with`, "
-    "`runtime_ok`, `bytes`. A call that returns ok=true IS the proof. So do NOT read the file "
-    "back with ide.fs.read/code.read, do NOT `cat` it or re-parse it with exec.bash.run/"
-    "exec.python.run, do NOT run it merely to see whether it works, and do NOT plan a step to "
-    "'verify'/'validate' it — that is redundant work the cap has already done, and it burns "
-    "whole cycles. .py, .js, .html, .css, .sh, .go are all treated the SAME here; none of "
-    "them needs a read-back. Touch the file again ONLY when you need its CONTENT to do "
-    "something else with it (e.g. as context_files for a further edit), or its OUTPUT as real "
-    "input to a later step — never merely to confirm it exists, is complete, or parses.\n"
+    "    ALREADY CHECKED, EVERY LANGUAGE. Before returning, code.author/code.edit run a real "
+    "parser on what they wrote and repair what it finds; ok=true means it parsed. The verdict "
+    "is in the result (`syntax_ok`, `checked_with`, `runtime_ok`, `bytes`). Whether the file "
+    "exists, is complete, or is valid is therefore ALREADY ANSWERED — never spend a call "
+    "finding out. Do not read it, `cat` it, re-parse it, or run it to answer those questions, "
+    "and do not plan a step that does. Read an authored file only to USE its content in "
+    "another call (e.g. context_files for an edit); run one only to obtain a RESULT you need. "
+    "A .py is no different from a .html here.\n"
     "  • A DOCUMENT (README, report, article, essay, spec, notes — .md/.txt/.rst) → prose.author, "
     "grounded on the real files it describes. NEVER hand-write it via llm.generate + ide.fs.write.\n"
     "  • REAL-WORLD DATA (a dataset, factual records, API results, a populated JSON/CSV) → FETCH it "
@@ -19908,10 +19929,19 @@ def _v7_intent_plan_directive(intent: str, *, max_steps: int = 8) -> str:
             "  • Do NOT plan research/search/'find an example'/'fetch a repo' steps, and do NOT add "
             "web.search / web.fetch / http.get / exec curl to any step — there is nothing external to "
             "get. Do NOT plan a step to 'analyse an existing example'.\n"
-            "  • You MAY add ONE final step to verify (open/run it and confirm it works) using exec.* — "
-            "but only the ONE, at the end.\n"
-            "  • Prefer the FEWEST steps that produce the deliverable — a self-contained app is ~1 "
-            "author step + maybe 1 verify, not a research project.\n")
+            "  • Write each authoring step's `success` so that the AUTHORING CALL ITSELF settles it: "
+            "name the file and the FEATURES it must contain (e.g. \"habit.html exists with add-habit, "
+            "a 7-day grid and localStorage persistence\"). A criterion about syntax, validity, "
+            "completeness or parsing (\"contains valid HTML5\", \"0 syntax errors\", \"the JS is "
+            "complete\") is WRONG here: code.author already guarantees it, and writing one forces a "
+            "pointless step that re-checks settled facts.\n"
+            "  • NEVER plan a step to check that the code is valid, complete, present or parses. "
+            "code.author already ran a real parser on it and reports the verdict; a step for that "
+            "proves nothing and cannot fail usefully. Add a final step ONLY to exercise BEHAVIOUR a "
+            "parser cannot see — that the app DOES what was asked — and only when the goal asks for "
+            "it. At most one, at the end.\n"
+            "  • Prefer the FEWEST steps that produce the deliverable — a self-contained app is ONE "
+            "author step, not a research project.\n")
     if it == "research":
         return (
             "GOAL INTENT = RESEARCH. The goal needs EXTERNAL/CURRENT information you do not have. Plan "
@@ -21736,6 +21766,24 @@ async def cap_dag_agent_loop_v6(
             s["phases"] = []
         else:
             s["phases"] = [p for p in allowed_phases if p in set(s.get("phases") or [])]
+    # Drop steps that only re-check a file an earlier step authored. Done HERE,
+    # at the single choke point every planner path converges on (the orchestrator
+    # has two return paths and there is a drift-replan above), so no planner
+    # variant can route around it — and so the emitted plan below is the pruned
+    # one the run will actually execute. The prompt rules stopped most of these,
+    # but sampled plans at temperature 0.2 AND 0.6 still produced the occasional
+    # "Verify JavaScript syntax and completeness"; conservative by construction
+    # (see plan_guards — anything that could observe BEHAVIOUR is kept).
+    try:
+        _pruned = _prune_redundant_verify_steps(steps)
+        if _pruned.get("dropped"):
+            steps = _pruned["steps"]
+            await emit_event({"type": "agent_loop_v6.plan_pruned",
+                              "session_id": sid, "stream_id": stream_id,
+                              "reason": "redundant verify of an authored file",
+                              "dropped": _pruned["dropped"]})
+    except Exception as _pe:
+        log.debug("plan prune skipped: %s", _pe)
     _v5_apply_skill_suggestions(steps, cap_skill_map, eligible_skill_ids, auto_suggest_skills)
     await emit_event({"type": "agent_loop_v6.plan", "session_id": sid, "stream_id": stream_id,
                       "steps": [{"id": s["id"], "title": s["title"], "caps": s["caps"],

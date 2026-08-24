@@ -6424,14 +6424,25 @@ def _git_wt_argv(wt: str, *args: str) -> List[str]:
     return ["git", "-c", f"safe.directory={wt}", "-c", "safe.directory=*", *args]
 
 
-def _claim_key(path_or_branch: str) -> str:
-    """Claims are keyed by ABSOLUTE worktree path; a branch name is resolved to
-    its conventional loop-lab worktree so callers can use either."""
+async def _claim_key(path_or_branch: str) -> str:
+    """Claims are keyed by ABSOLUTE worktree path; a branch name is resolved by
+    ASKING GIT where that branch is actually checked out.
+
+    It must not assume the conventional `<worktree-dir>/<safe-branch>` layout: a
+    worktree created by hand can sit at any path (this very branch lived at
+    `…/worktree-claims`, not `…/feat-worktree-claims`), and a claim recorded
+    against a guessed path silently protects nothing — precisely for the
+    hand-made worktrees claims exist to protect. Falls back to the convention
+    only when git knows of no worktree for the branch.
+    """
     v = str(path_or_branch or "").replace("\\", "/").rstrip("/")
     if not v:
         return ""
     if "/" in v and _WORKTREE_DIR in v:
-        return v
+        return v                                   # already an explicit path
+    for w in await _list_worktrees():
+        if (w.get("branch") or "").strip() == v:
+            return str(w.get("path") or "").replace("\\", "/").rstrip("/")
     return str(_repo_root() / _WORKTREE_DIR / _safe_branch(v)).replace("\\", "/")
 
 
@@ -6457,6 +6468,10 @@ async def _worktree_claims() -> Dict[str, Dict[str, Any]]:
 
 def _split_claims(claims: Dict[str, Dict[str, Any]]) -> tuple:
     """Partition claims into (live, expired) by their refresh age."""
+    # This module imports datetime LOCALLY per function (see _sh callers above);
+    # there is no module-level import, so relying on one raises NameError at
+    # runtime — which is exactly what shipped and broke evolve.sandbox.prune.
+    from datetime import datetime, timezone
     live: Dict[str, str] = {}
     expired: Dict[str, str] = {}
     now = datetime.now(timezone.utc)
@@ -6487,7 +6502,7 @@ def _split_claims(claims: Dict[str, Dict[str, Any]]) -> tuple:
                         "Output: {ok, path, claim}.")
 async def cap_worktree_claim(path: str = "", owner: str = "", session_id: str = "",
                              note: str = "", trace_id=None) -> Dict[str, Any]:
-    key = _claim_key(path)
+    key = await _claim_key(path)
     if not key:
         return {"error": "path is required (worktree path or branch name)"}
     r = _redis()
@@ -6505,7 +6520,15 @@ async def cap_worktree_claim(path: str = "", owner: str = "", session_id: str = 
         await r.hset(KEY_WORKTREE_CLAIMS, key, json.dumps(claim))
     except Exception as e:
         return {"error": f"could not record claim: {e}"}
-    return {"ok": True, "path": key, "claim": claim}
+    out: Dict[str, Any] = {"ok": True, "path": key, "claim": claim,
+                           "exists": Path(key).exists()}
+    if not out["exists"]:
+        # A claim on a path that isn't there protects nothing. Say so loudly —
+        # this is silent otherwise, and a silently-misdirected claim is worse
+        # than no claim, because the caller believes they are covered.
+        out["warning"] = (f"no worktree at {key} — the claim is recorded but "
+                          "protects nothing; pass the exact worktree path")
+    return out
 
 
 @capability("evolve.worktree.release", memory="off",
@@ -6514,7 +6537,7 @@ async def cap_worktree_claim(path: str = "", owner: str = "", session_id: str = 
                         "reclaim it once its branch is merged. Input: path (str — "
                         "worktree path or branch name). Output: {ok, released}.")
 async def cap_worktree_release(path: str = "", trace_id=None) -> Dict[str, Any]:
-    key = _claim_key(path)
+    key = await _claim_key(path)
     r = _redis()
     if not key or not r:
         return {"error": "path is required" if not key else "redis unavailable"}

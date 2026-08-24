@@ -128,6 +128,39 @@ def test_claim_paths_are_matched_regardless_of_trailing_slash_or_separator():
 
 
 @pytest.mark.critical
+def test_split_claims_imports_everything_it_uses():
+    """Guards a bug that shipped: _split_claims used datetime/timezone, but
+    evolve_capabilities imports datetime only LOCALLY inside functions — there is
+    no module-level import — so it raised NameError at runtime and broke
+    evolve.sandbox.prune outright. ast.parse and the other tests both missed it,
+    the latter because they supply names in a synthetic namespace.
+
+    Executed here with ONLY builtins available, so the function must be
+    self-sufficient or this fails exactly as production did.
+    """
+    src_path = os.path.join(_ROOT, "vera", "evolve", "evolve_capabilities.py")
+    with open(src_path, encoding="utf-8") as fh:
+        tree = ast.parse(fh.read())
+    fn = next((n for n in tree.body
+               if isinstance(n, ast.FunctionDef) and n.name == "_split_claims"), None)
+    assert fn is not None, "_split_claims not found"
+
+    ns = {"Dict": dict, "Any": object, "_WORKTREE_CLAIM_TTL_H": 12.0}
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), src_path, "exec"), ns)
+
+    live, expired = ns["_split_claims"]({
+        "/w/fresh": {"owner": "claude", "updated_at": "2999-01-01T00:00:00Z"},
+        "/w/old": {"owner": "codex", "updated_at": "2000-01-01T00:00:00Z"},
+        "/w/junk": {"owner": "x", "updated_at": "not-a-date"},
+    })
+    assert "/w/fresh" in live
+    assert "/w/old" in expired
+    # an unparseable timestamp must NOT be treated as expired — never let a bad
+    # field become a reason to stop protecting someone's worktree
+    assert "/w/junk" in live
+
+
+@pytest.mark.critical
 def test_no_claims_argument_behaves_exactly_as_before():
     """Callers that never pass claims must be unaffected."""
     w = _wt("plain", "feat/p")
