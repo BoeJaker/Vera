@@ -186,12 +186,25 @@ SEED: List[Dict[str, Any]] = [
     {"os": "arch", "version": "latest", "type": "cloudimg", "arch": "amd64",
      "source_url": "https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2"},
     {"os": "arch", "version": "latest", "type": "docker", "arch": "amd64", "source_url": "archlinux:latest"},
+    {"os": "arch", "version": "latest", "type": "lxc-template", "arch": "amd64",
+     "source_url": "archlinux-base"},   # pveam appliance name (rolling)
+    # Fedora 43
+    {"os": "fedora", "version": "43", "type": "cloudimg", "arch": "amd64",
+     "source_url": "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-43-1.6.x86_64.qcow2",
+     "notes": "verify current build suffix at import time"},
+    {"os": "fedora", "version": "43", "type": "lxc-template", "arch": "amd64",
+     "source_url": "fedora-43-default"},
+    {"os": "fedora", "version": "43", "type": "docker", "arch": "amd64", "source_url": "fedora:43"},
     # Kali (security testing)
     {"os": "kali", "version": "rolling", "type": "docker", "arch": "amd64",
      "source_url": "kalilinux/kali-rolling"},
     {"os": "kali", "version": "rolling", "type": "cloudimg", "arch": "amd64",
      "source_url": "https://kali.download/cloud-images/current/kali-linux-current-cloud-genericcloud-amd64.tar.xz",
      "notes": "Kali cloud image (verify current path at import time)"},
+    {"os": "kali", "version": "last-release", "type": "docker", "arch": "amd64",
+     "source_url": "kalilinux/kali-last-release"},
+    {"os": "kali", "version": "dev", "type": "docker", "arch": "amd64",
+     "source_url": "kalilinux/kali-dev"},
     # Windows — stub (bring-your-own ISO)
     {"os": "windows", "version": "server-2022", "type": "iso", "arch": "amd64",
      "source_url": "", "notes": "STUB — supply a Windows Server 2022 ISO volid; autounattend.xml support is a later phase"},
@@ -207,7 +220,7 @@ def _img_id(e: Dict) -> str:
     http_method="POST", http_path="/foundry/catalog/seed", http_tags=["foundry"],
     memory="on",
     description="Seed the image catalogue with the default OS set (Debian 12, "
-                "Ubuntu 24.04, AlmaLinux 9, Alpine, Arch, Kali, Windows-stub) "
+                "Ubuntu 24.04, AlmaLinux 9, Alpine, Arch, Fedora 43, Kali, Windows-stub) "
                 "across cloudimg / lxc-template / docker / iso types. Idempotent — "
                 "only adds entries that are missing. Output: {ok, added, total}.",
 )
