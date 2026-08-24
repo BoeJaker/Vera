@@ -1,0 +1,23 @@
+{
+  "schema": "vera.evaluation-corpus/v1",
+  "revision": 1,
+  "policy": {
+    "synthetic_only": true,
+    "live_default": "queued",
+    "model_calls_by_default": false,
+    "secrets_allowed": false
+  },
+  "cases": [
+    {"id":"run.recovery.catalog","domain":"run","lane":"deterministic","fixture_ref":"tests/test_run_projection.py","expected":{"recovered":true,"executed":false}},
+    {"id":"run.control.no-second-authority","domain":"run","lane":"deterministic","fixture_ref":"tests/test_run_journal.py","expected":{"authorized":false,"executed":false}},
+    {"id":"workflow.roundtrip.portable","domain":"workflow","lane":"deterministic","fixture_ref":"tests/test_workflow_ir.py","expected":{"roundtrip":true,"stable_hash":true}},
+    {"id":"workflow.unsupported.fail-closed","domain":"workflow","lane":"deterministic","fixture_ref":"tests/test_workflow_ir.py","expected":{"accepted":false,"executed":false}},
+    {"id":"resolver.disallowed-effect","domain":"tool-selection","lane":"deterministic","fixture_ref":"tests/test_capability_contract_v2.py","expected":{"selected":null,"authorized":false,"executed":false}},
+    {"id":"memory.citation-delete","domain":"memory","lane":"deterministic","fixture_ref":"planned:memory-provider-adapter","expected":{"citation_preserved":true,"delete_propagated":true}},
+    {"id":"fabric.projection-failure","domain":"fabric","lane":"deterministic","fixture_ref":"planned:fabric-projection-receipts","expected":{"source_preserved":true,"projection_status":"failed"}},
+    {"id":"generation.structured-stream","domain":"generation","lane":"queued_live","fixture_ref":"bench deterministic JSON pack","budget":{"max_calls":6,"timeout_ms":180000,"gpu_gate":true},"expected":{"schema_valid":true,"stream_complete":true}},
+    {"id":"operator.delayed-ui-readiness","domain":"operator","lane":"queued_live","fixture_ref":"planned:operator-representative-screenshot","budget":{"max_calls":1,"timeout_ms":90000,"gpu_gate":false},"expected":{"ready_state":"interesting","blank_capture":false}},
+    {"id":"research.bounded-cancel","domain":"research","lane":"queued_live","fixture_ref":"planned:research-adapter","budget":{"max_calls":1,"timeout_ms":600000,"gpu_gate":true},"expected":{"deadline_enforced":true,"lease_released":true}},
+    {"id":"mixed.interactive-background","domain":"load","lane":"queued_live","fixture_ref":"planned:portable-load-harness","budget":{"max_calls":20,"timeout_ms":300000,"gpu_gate":true},"expected":{"interactive_starved":false,"cancel_released":true}}
+  ]
+}
