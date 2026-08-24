@@ -15537,11 +15537,23 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 and not _fileread_bypass):
             _rp = _v5_art_key(str(args.get("path") or args.get("relpath") or ""))
             _rec = artifacts.get(_rp) if _rp else None
-            if _rec and _rec.get("content") and fileread_served < _MAX_FILEREAD_SERVED:
-                fileread_served += 1
+            # A file THIS run authored and a real parser verified is exempt from the
+            # serve budget. The budget exists so a genuinely stale record eventually
+            # gets re-read for real — but re-reading an unchanged, parser-verified
+            # authored file can never tell us anything new, so letting the budget
+            # run out just converts free registry hits back into disk reads. Seen
+            # live: three 0ms registry serves, then an 89ms real read of the very
+            # same unchanged file (2026-08-24).
+            _proven_authored = bool(
+                _rec and _rec.get("parse_ok")
+                and str(_rec.get("produced_by") or "").startswith(("code.author", "code.edit")))
+            if _rec and _rec.get("content") and (_proven_authored
+                                                 or fileread_served < _MAX_FILEREAD_SERVED):
+                if not _proven_authored:
+                    fileread_served += 1
+                    if fileread_served >= _MAX_FILEREAD_SERVED:
+                        _fileread_bypass = True   # next read goes to disk for real
                 _perturb_next = True            # re-reading an unchanged file — break the fixation
-                if fileread_served >= _MAX_FILEREAD_SERVED:
-                    _fileread_bypass = True     # next read goes to disk for real
                 preview = (f"{_rec['rel']} — served from this run's file registry "
                            f"(unchanged since it was last read/written; "
                            f"{_rec.get('size', 0):,} bytes"
