@@ -3,6 +3,7 @@ import copy
 import pytest
 
 from vera.execution.workflow_ir import (
+    IR_VERSION,
     WorkflowIRValidationError,
     adapter_profiles,
     analyze_adapter,
@@ -346,3 +347,96 @@ def test_unknown_adapter_profile_is_explicit():
     result = analyze_adapter({"ir_version": "1.0", "steps": []}, adapter="openclaw")
     assert result["ok"] is False
     assert result["gaps"][0]["code"] == "unknown_adapter"
+
+
+def test_variables_bounded_loop_and_join_are_hash_stable_and_non_executing():
+    workflow = {
+        "ir_version": IR_VERSION,
+        "name": "bounded convergence",
+        "variables": {
+            "cursor": {
+                "schema": {"type": "integer"},
+                "initial": {"kind": "literal", "value": 0},
+                "mutable": True,
+            },
+        },
+        "steps": [
+            {
+                "id": "iterate",
+                "type": "loop",
+                "condition": {"kind": "state", "value": "continue"},
+                "max_iterations": 10,
+                "body": [{"id": "advance", "type": "task", "task": "cursor.advance"}],
+                "output": "iterations",
+            },
+            {
+                "id": "gather",
+                "type": "join",
+                "inputs": [
+                    {"kind": "state", "value": "left"},
+                    {"kind": "state", "value": "right"},
+                ],
+                "strategy": "quorum",
+                "quorum": 2,
+                "output": "joined",
+            },
+        ],
+    }
+
+    normalized = normalize_workflow(workflow)
+    reordered = {"steps": workflow["steps"], "variables": workflow["variables"],
+                 "name": workflow["name"], "ir_version": IR_VERSION}
+    assert normalize_workflow(reordered)["content_hash"] == normalized["content_hash"]
+    portable = analyze_adapter(workflow, adapter="portable.core")
+    assert portable == {
+        "ok": True, "adapter": "portable.core", "available": True,
+        "content_hash": normalized["content_hash"], "gaps": [], "executes": False,
+    }
+    features = adapter_profiles()["profiles"]["portable.core"]["supports"]
+    assert {"variables", "loop", "join"}.issubset(features)
+
+    native = export_native_dag(workflow)
+    assert native["ok"] is False and native["dag"] is None
+    assert {(gap["path"], gap["code"]) for gap in native["gaps"]} >= {
+        ("variables", "unsupported_contract"),
+        ("steps[0]", "unsupported_structure"),
+        ("steps[1]", "unsupported_structure"),
+    }
+
+
+@pytest.mark.parametrize("step,error", [
+    ({"id": "loop", "type": "loop",
+      "condition": {"kind": "state", "value": "again"},
+      "body": [{"id": "body", "type": "task", "task": "x"}]},
+     "max_iterations must be a positive integer"),
+    ({"id": "join", "type": "join",
+      "inputs": [{"kind": "state", "value": "one"}],
+      "strategy": "quorum", "quorum": 2},
+     "quorum must be between 1 and the input count"),
+    ({"id": "join", "type": "join",
+      "inputs": [{"kind": "state", "value": "one"}],
+      "strategy": "all", "quorum": 1},
+     "quorum is only valid for quorum strategy"),
+    ({"id": "join", "type": "join",
+      "inputs": [{"kind": "state", "value": "same"},
+                 {"kind": "state", "value": "same"}]},
+     "inputs must not contain duplicates"),
+])
+def test_loop_and_join_fail_closed_before_adapter_output(step, error):
+    with pytest.raises(WorkflowIRValidationError, match=error):
+        normalize_workflow({"ir_version": IR_VERSION, "steps": [step]})
+
+
+def test_workflow_variables_are_typed_references_not_resolved_values():
+    workflow = {
+        "ir_version": IR_VERSION,
+        "variables": {
+            "credential": {
+                "schema": {"type": "string"},
+                "initial": {"kind": "secret", "value": "plain-text"},
+            },
+        },
+        "steps": [],
+    }
+    with pytest.raises(WorkflowIRValidationError, match="opaque secret:// reference"):
+        normalize_workflow(workflow)
