@@ -135,6 +135,23 @@ Secret-bearing inputs should use `format: secret-ref` or
 `x-vera-secret-ref: true` in their schema. The reference is opaque; later policy
 work resolves it only inside the authorized execution boundary.
 
+## Resolver shadow mode
+
+`cap.resolve.shadow` is the first consumer of v2 manifests. It accepts a
+canonical task plus optional allowed effects, required resource classes, and
+preferred implementation names. It returns eligible candidates in deterministic
+rank order and structured reasons for every exclusion within that task family.
+The candidate window is bounded (1–500) and reports truncation; unrelated task
+families are not copied into the response.
+
+The preview may use redacted health, reliability, and latency observations. An
+observed unhealthy implementation is excluded; absent evidence stays unknown.
+Preferences precede reliability, p95 latency, locality, and a stable name
+tie-breaker.
+
+This is deliberately observational: every response reports `authorized: false`
+and `executed: false`. It never invokes a candidate or grants permission.
+
 ## Rollout path
 
 The first four slices provide projection, stable fingerprints, bounded

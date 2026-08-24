@@ -5935,6 +5935,57 @@ async def cap_contract_observations(prefix: str = "", event_limit: int = 500,
                    "truncated": len(observations) > bounded_caps})
     return result
 
+
+@capability(
+    "cap.resolve.shadow", memory="off", silent=True,
+    http_method="POST", http_path="/cap/resolve/shadow", http_tags=["cap", "obs"],
+    description="Preview Capability Contract v2 eligibility, exclusions, and ranking "
+                "without authorizing or invoking any candidate. Requires canonical_task; "
+                "optional allowed_effects, required_resources, preferred names, and bounded "
+                "recent operational evidence.",
+    schema={"properties": {
+        "canonical_task": {"type": "string"},
+        "allowed_effects": {"type": "array", "items": {"type": "string"}},
+        "required_resources": {"type": "array", "items": {"type": "string"}},
+        "preferred": {"type": "array", "items": {"type": "string"}},
+        "candidate_limit": {"type": "integer", "minimum": 1, "maximum": 500},
+        "event_limit": {"type": "integer", "minimum": 1, "maximum": 500},
+    }, "required": ["canonical_task"]},
+    contract={
+        "canonical_task": "capability.resolve.preview", "effects": ["read"],
+        "output_schema": {"type": "object"}, "approval": {"status": "not_required"},
+        "trust": {"status": "internal_registry"}, "secrets": {"status": "not_required"},
+        "filesystem": {"status": "not_required"}, "network": {"status": "not_required"},
+        "tenant": {"status": "global_read_only"}, "idempotency": {"status": "idempotent"},
+        "cancellation": {"status": "not_required"}, "pagination": {"status": "bounded"},
+        "resources": {"status": "declared", "classes": ["cpu"]}, "owner": "vera",
+    },
+)
+async def cap_resolve_shadow(canonical_task: str, allowed_effects=None,
+                             required_resources=None, preferred=None,
+                             event_limit: int = 200, candidate_limit: int = 100,
+                             trace_id=None):
+    from Vera.vera.capability_contract_core import (
+        project_registry, summarize_contract_observations,
+    )
+    from Vera.vera.capability_resolver_core import resolve_shadow
+    manifests = project_registry(CAPABILITY_REGISTRY)
+    observer = CAPABILITY_REGISTRY.get("obs.events", {}).get("raw")
+    events = []
+    if observer is not None:
+        bounded = max(1, min(int(event_limit or 200), 500))
+        value = await observer(limit=bounded, trace_id=trace_id)
+        events = value if isinstance(value, list) else []
+    evidence = summarize_contract_observations(
+        events, allowed_names={item["name"] for item in manifests})["observations"]
+    return resolve_shadow(manifests, {
+        "canonical_task": canonical_task,
+        "allowed_effects": allowed_effects if isinstance(allowed_effects, list) else [],
+        "required_resources": required_resources if isinstance(required_resources, list) else [],
+        "preferred": preferred if isinstance(preferred, list) else [],
+        "candidate_limit": candidate_limit,
+    }, observations=evidence)
+
 @capability("mcp.call", memory="auto",
             http_method="POST", http_path="/mcp/call", http_tags=["mcp"],
             mcp_expose=False,
