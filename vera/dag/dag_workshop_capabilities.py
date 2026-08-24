@@ -10059,6 +10059,18 @@ except Exception:                                     # pragma: no cover
         def _repair_collapsed(before: str, after: str, **_kw) -> bool:
             return False
 
+# Redundant-verify plan prune — same import-safety reasoning as above.
+try:
+    from Vera.vera.dag.plan_guards import prune_redundant_verify_steps as _prune_redundant_verify_steps
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag.plan_guards import prune_redundant_verify_steps as _prune_redundant_verify_steps
+    except Exception:
+        log.warning("plan_guards unavailable — redundant-verify prune disabled")
+
+        def _prune_redundant_verify_steps(steps):
+            return {"steps": steps, "dropped": []}
+
 
 # NOTE: keep plain helpers ABOVE the next @capability decorator. A decorator
 # binds to whatever function follows it, so a helper slipped in between
@@ -12657,6 +12669,9 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
                 steps.append(cs)
     except Exception as e:
         log.debug("v5 orchestrate_plan failed: %s", e)
+    # (The redundant-verify prune runs at the v6 plan choke point, which every
+    # planner return path — including this one and the minimal-schema path above
+    # — funnels through, so it is not repeated here.)
     return {"steps": steps[:max_steps], "reason": reason,
             "complexity": complexity, "recon": recon_actions,
             "done_when": done_when}
@@ -21747,6 +21762,24 @@ async def cap_dag_agent_loop_v6(
             s["phases"] = []
         else:
             s["phases"] = [p for p in allowed_phases if p in set(s.get("phases") or [])]
+    # Drop steps that only re-check a file an earlier step authored. Done HERE,
+    # at the single choke point every planner path converges on (the orchestrator
+    # has two return paths and there is a drift-replan above), so no planner
+    # variant can route around it — and so the emitted plan below is the pruned
+    # one the run will actually execute. The prompt rules stopped most of these,
+    # but sampled plans at temperature 0.2 AND 0.6 still produced the occasional
+    # "Verify JavaScript syntax and completeness"; conservative by construction
+    # (see plan_guards — anything that could observe BEHAVIOUR is kept).
+    try:
+        _pruned = _prune_redundant_verify_steps(steps)
+        if _pruned.get("dropped"):
+            steps = _pruned["steps"]
+            await emit_event({"type": "agent_loop_v6.plan_pruned",
+                              "session_id": sid, "stream_id": stream_id,
+                              "reason": "redundant verify of an authored file",
+                              "dropped": _pruned["dropped"]})
+    except Exception as _pe:
+        log.debug("plan prune skipped: %s", _pe)
     _v5_apply_skill_suggestions(steps, cap_skill_map, eligible_skill_ids, auto_suggest_skills)
     await emit_event({"type": "agent_loop_v6.plan", "session_id": sid, "stream_id": stream_id,
                       "steps": [{"id": s["id"], "title": s["title"], "caps": s["caps"],
