@@ -96,9 +96,9 @@ def test_validation_rejects_duplicate_ids_and_does_not_mutate_input():
 
 def test_validation_rejects_unknown_fields_instead_of_silently_dropping_them():
     workflow = {"ir_version": "1.0", "steps": [{
-        "id": "s0", "type": "task", "task": "alpha", "retry": {"max": 3},
+        "id": "s0", "type": "task", "task": "alpha", "mystery": {"max": 3},
     }]}
-    with pytest.raises(WorkflowIRValidationError, match="unknown fields: retry"):
+    with pytest.raises(WorkflowIRValidationError, match="unknown fields: mystery"):
         normalize_workflow(workflow)
 
 
@@ -112,3 +112,80 @@ def test_export_reports_workflow_and_parallel_extensions_as_blocking_gaps():
     assert result["dag"] is None
     assert [gap["path"] for gap in result["gaps"]] == [
         "extensions.temporal.schedule", "steps[0].extensions.langgraph.join"]
+
+
+def test_typed_references_are_validated_but_never_resolved():
+    workflow = {"ir_version": "1.0", "steps": [{
+        "id": "s0", "type": "task", "task": "storage.write",
+        "bindings": {
+            "payload": {"kind": "artifact", "value": "sha256:opaque", "provider": "s3"},
+            "credential": {"kind": "secret", "value": "secret://storage/key"},
+            "count": {"kind": "literal", "value": 3},
+        },
+    }]}
+    normalized = normalize_workflow(workflow)
+    assert normalized["steps"][0]["bindings"] == workflow["steps"][0]["bindings"]
+    exported = export_native_dag(normalized)
+    assert exported["ok"] is False
+    assert exported["dag"] is None
+    assert exported["gaps"][0]["path"] == "steps[0].bindings"
+
+
+@pytest.mark.parametrize("reference", [
+    {"kind": "secret", "value": ""},
+    {"kind": "secret", "value": "plaintext-not-a-reference"},
+    {"kind": "unknown", "value": "x"},
+    {"kind": "record"},
+    {"kind": "state", "value": 4},
+])
+def test_invalid_references_fail_before_adapter_output(reference):
+    workflow = {"ir_version": "1.0", "steps": [{
+        "id": "s0", "type": "task", "task": "alpha", "bindings": {"x": reference}}]}
+    with pytest.raises(WorkflowIRValidationError):
+        normalize_workflow(workflow)
+
+
+def test_execution_contracts_are_typed_and_block_native_export():
+    workflow = {"ir_version": "1.0", "steps": [{
+        "id": "s0", "type": "task", "task": "external.call",
+        "retry": {"max_attempts": 3, "backoff_seconds": 0.5, "owner": "runtime"},
+        "timeout": {"seconds": 10, "owner": "task"},
+        "idempotency": {"key": {"kind": "state", "value": "request_id"}, "owner": "runtime"},
+        "effects": [{"kind": "network", "target": "api.example", "mode": "write"}],
+    }]}
+    normalized = normalize_workflow(workflow)
+    result = export_native_dag(normalized)
+    assert result["ok"] is False
+    assert result["dag"] is None
+    assert [gap["path"] for gap in result["gaps"]] == [
+        "steps[0].retry", "steps[0].timeout", "steps[0].idempotency", "steps[0].effects"]
+
+
+def test_workflow_ports_hold_explicit_schemas_and_affect_hash():
+    workflow = {"ir_version": "1.0",
+                "inputs": {"query": {"schema": {"type": "string"}, "required": True}},
+                "outputs": {"report": {"schema": {"type": "object"}}},
+                "steps": [{"id": "s0", "type": "task", "task": "report.create"}]}
+    normalized = normalize_workflow(workflow)
+    changed = copy.deepcopy(workflow)
+    changed["inputs"]["query"]["required"] = False
+    assert normalized["content_hash"] != normalize_workflow(changed)["content_hash"]
+    exported = export_native_dag(normalized)
+    assert exported["ok"] is False
+    assert [gap["path"] for gap in exported["gaps"]] == ["inputs", "outputs"]
+
+
+def test_invalid_port_descriptor_is_rejected():
+    workflow = {"ir_version": "1.0", "inputs": {"query": {"type": "string"}}, "steps": []}
+    with pytest.raises(WorkflowIRValidationError, match="inputs.query has unsupported fields"):
+        normalize_workflow(workflow)
+
+
+@pytest.mark.parametrize("field,value", [("backoff_seconds", float("nan")),
+                                          ("backoff_seconds", float("inf"))])
+def test_retry_rejects_non_finite_numbers(field, value):
+    workflow = {"ir_version": "1.0", "steps": [{
+        "id": "s0", "type": "task", "task": "alpha",
+        "retry": {"max_attempts": 2, field: value}}]}
+    with pytest.raises(WorkflowIRValidationError, match="must be non-negative"):
+        normalize_workflow(workflow)

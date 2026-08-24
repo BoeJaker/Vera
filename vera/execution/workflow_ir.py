@@ -10,12 +10,16 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 import re
 from typing import Any
 
 
 IR_VERSION = "1.0"
 _STEP_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+_REF_KINDS = {"state", "secret", "artifact", "record", "literal"}
+_EFFECT_KINDS = {"filesystem", "network", "database", "process", "model",
+                 "device", "notification", "external_service"}
 
 
 class WorkflowIRValidationError(ValueError):
@@ -52,11 +56,96 @@ def normalize_workflow(workflow: dict[str, Any]) -> dict[str, Any]:
     for key in ("inputs", "outputs", "extensions"):
         if key in workflow and not isinstance(workflow[key], dict):
             raise WorkflowIRValidationError(f"{key} must be an object")
+    for collection in ("inputs", "outputs"):
+        for port_name, port in (workflow.get(collection) or {}).items():
+            path = f"{collection}.{port_name}"
+            if not isinstance(port_name, str) or not port_name:
+                raise WorkflowIRValidationError(f"{collection} keys must be non-empty strings")
+            if not isinstance(port, dict) or set(port) - {"schema", "required", "description"}:
+                raise WorkflowIRValidationError(f"{path} has unsupported fields")
+            if not isinstance(port.get("schema"), dict):
+                raise WorkflowIRValidationError(f"{path}.schema must be an object")
+            if "required" in port and not isinstance(port["required"], bool):
+                raise WorkflowIRValidationError(f"{path}.required must be boolean")
+            if "description" in port and not isinstance(port["description"], str):
+                raise WorkflowIRValidationError(f"{path}.description must be a string")
     steps = workflow.get("steps")
     if not isinstance(steps, list):
         raise WorkflowIRValidationError("steps must be an array")
     result = copy.deepcopy(workflow)
     seen: set[str] = set()
+
+    def check_ref(ref: Any, path: str) -> None:
+        if not isinstance(ref, dict):
+            raise WorkflowIRValidationError(f"{path} must be a reference object")
+        unknown = sorted(set(ref) - {"kind", "value", "provider", "revision"})
+        if unknown:
+            raise WorkflowIRValidationError(f"{path} has unknown fields: {', '.join(unknown)}")
+        kind = ref.get("kind")
+        if kind not in _REF_KINDS:
+            raise WorkflowIRValidationError(f"{path}.kind is unsupported: {kind!r}")
+        if "value" not in ref:
+            raise WorkflowIRValidationError(f"{path}.value is required")
+        if kind != "literal" and (not isinstance(ref["value"], str) or not ref["value"]):
+            raise WorkflowIRValidationError(f"{path}.value must be a non-empty opaque string")
+        if kind == "secret" and not ref["value"].startswith("secret://"):
+            raise WorkflowIRValidationError(f"{path}.value must use an opaque secret:// reference")
+        for key in ("provider", "revision"):
+            if key in ref and not isinstance(ref[key], str):
+                raise WorkflowIRValidationError(f"{path}.{key} must be a string")
+
+    def check_contracts(step: dict[str, Any], path: str) -> None:
+        bindings = step.get("bindings")
+        if bindings is not None:
+            if not isinstance(bindings, dict):
+                raise WorkflowIRValidationError(f"{path}.bindings must be an object")
+            for name, ref in bindings.items():
+                if not isinstance(name, str) or not name:
+                    raise WorkflowIRValidationError(f"{path}.bindings keys must be non-empty strings")
+                check_ref(ref, f"{path}.bindings.{name}")
+        retry = step.get("retry")
+        if retry is not None:
+            if not isinstance(retry, dict) or set(retry) - {"max_attempts", "backoff_seconds", "owner"}:
+                raise WorkflowIRValidationError(f"{path}.retry has unsupported fields")
+            if not isinstance(retry.get("max_attempts"), int) or isinstance(retry.get("max_attempts"), bool) or retry["max_attempts"] < 1:
+                raise WorkflowIRValidationError(f"{path}.retry.max_attempts must be a positive integer")
+            if "backoff_seconds" in retry and (not isinstance(retry["backoff_seconds"], (int, float))
+                                                or isinstance(retry["backoff_seconds"], bool)
+                                                or not math.isfinite(retry["backoff_seconds"])
+                                                or retry["backoff_seconds"] < 0):
+                raise WorkflowIRValidationError(f"{path}.retry.backoff_seconds must be non-negative")
+            if retry.get("owner", "runtime") not in {"runtime", "task"}:
+                raise WorkflowIRValidationError(f"{path}.retry.owner is unsupported")
+        timeout = step.get("timeout")
+        if timeout is not None:
+            if not isinstance(timeout, dict) or set(timeout) - {"seconds", "owner"}:
+                raise WorkflowIRValidationError(f"{path}.timeout has unsupported fields")
+            if (not isinstance(timeout.get("seconds"), (int, float))
+                    or isinstance(timeout.get("seconds"), bool)
+                    or not math.isfinite(timeout["seconds"]) or timeout["seconds"] <= 0):
+                raise WorkflowIRValidationError(f"{path}.timeout.seconds must be positive")
+            if timeout.get("owner", "runtime") not in {"runtime", "task"}:
+                raise WorkflowIRValidationError(f"{path}.timeout.owner is unsupported")
+        idempotency = step.get("idempotency")
+        if idempotency is not None:
+            if not isinstance(idempotency, dict) or set(idempotency) - {"key", "owner"}:
+                raise WorkflowIRValidationError(f"{path}.idempotency has unsupported fields")
+            check_ref(idempotency.get("key"), f"{path}.idempotency.key")
+            if idempotency.get("owner", "runtime") not in {"runtime", "task"}:
+                raise WorkflowIRValidationError(f"{path}.idempotency.owner is unsupported")
+        effects = step.get("effects")
+        if effects is not None:
+            if not isinstance(effects, list):
+                raise WorkflowIRValidationError(f"{path}.effects must be an array")
+            for index, effect in enumerate(effects):
+                effect_path = f"{path}.effects[{index}]"
+                if not isinstance(effect, dict) or set(effect) - {"kind", "target", "mode"}:
+                    raise WorkflowIRValidationError(f"{effect_path} has unsupported fields")
+                if effect.get("kind") not in _EFFECT_KINDS:
+                    raise WorkflowIRValidationError(f"{effect_path}.kind is unsupported")
+                for key in ("target", "mode"):
+                    if key in effect and not isinstance(effect[key], str):
+                        raise WorkflowIRValidationError(f"{effect_path}.{key} must be a string")
 
     def check_step(step: Any, path: str) -> None:
         if not isinstance(step, dict):
@@ -69,7 +158,8 @@ def normalize_workflow(workflow: dict[str, Any]) -> dict[str, Any]:
         seen.add(step_id)
         kind = step.get("type")
         if kind == "task":
-            unknown = sorted(set(step) - {"id", "type", "task", "output", "when", "extensions"})
+            unknown = sorted(set(step) - {"id", "type", "task", "output", "when", "extensions",
+                                               "bindings", "retry", "timeout", "idempotency", "effects"})
             if unknown:
                 raise WorkflowIRValidationError(
                     f"{path} has unknown fields: {', '.join(unknown)}")
@@ -79,6 +169,7 @@ def normalize_workflow(workflow: dict[str, Any]) -> dict[str, Any]:
                 raise WorkflowIRValidationError(f"{path}.output must be a string")
             if "extensions" in step and not isinstance(step["extensions"], dict):
                 raise WorkflowIRValidationError(f"{path}.extensions must be an object")
+            check_contracts(step, path)
             when = step.get("when")
             if when is not None and (not isinstance(when, dict)
                                      or when.get("kind") != "state_truthy"
@@ -179,6 +270,10 @@ def export_native_dag(workflow: Any, *, allow_lossy: bool = False) -> dict[str, 
         return {"ok": False, "dag": None,
                 "gaps": [_gap("workflow", "invalid_workflow", str(exc))], "executes": False}
     gaps: list[dict[str, Any]] = []
+    for field in ("inputs", "outputs"):
+        if normalized.get(field):
+            gaps.append(_gap(field, "unsupported_contract",
+                             f"typed workflow {field} are not represented by a native DAG array"))
     for key in sorted((normalized.get("extensions") or {})):
         gaps.append(_gap("extensions." + key, "unsupported_extension",
                          "workflow extension has no native DAG representation"))
@@ -201,6 +296,15 @@ def export_native_dag(workflow: Any, *, allow_lossy: bool = False) -> dict[str, 
             gaps.append(_gap(path + ".extensions.vera.native.output_map", "native_extension",
                              "output_map is preserved but not interpreted by the core runner",
                              blocking=False))
+        for field, detail in (
+            ("bindings", "explicit typed bindings are not enforced by the native state injector"),
+            ("retry", "retry ownership is not represented by a native DAG node"),
+            ("timeout", "timeout ownership is not represented by a native DAG node"),
+            ("idempotency", "idempotency ownership is not represented by a native DAG node"),
+            ("effects", "declared effects are not represented or authorized by a native DAG node"),
+        ):
+            if field in step:
+                gaps.append(_gap(path + "." + field, "unsupported_contract", detail))
         unknown = sorted(key for key in extensions if key not in {
             "vera.native.input_map", "vera.native.output_map"})
         for key in unknown:

@@ -45,8 +45,18 @@ the result.
 This strict boundary is what makes later LangGraph, Temporal, ONNX workflow, and
 other runtime adapters honest: unsupported semantics are visible before any
 engine is selected. Retry, timeout, effects, schedules, loops/maps/reducers,
-compensation, HITL, typed references, and subworkflows remain subsequent W1-02
-slices rather than being inferred from Vera's compact DAG arrays.
+compensation, HITL, and subworkflows remain subsequent W1-02 slices rather than
+being inferred from Vera's compact DAG arrays.
+
+The second held slice adds explicit JSON-schema port descriptors and typed value
+references for state, secrets, artifacts, records, and literals. References are
+validated and hashed as opaque descriptions; the adapter never resolves a
+secret, fetches an artifact, or reads a record. Task contracts can also declare
+retry/backoff ownership, timeout ownership, idempotency keys, and effects across
+filesystem, network, database, process, model, device, notification, and external
+services. Native DAG export reports all of these as blocking gaps because the
+compact array cannot preserve or enforce them. Explicit `allow_lossy` is the only
+way to obtain an array with those contracts removed.
 
 ---
 
