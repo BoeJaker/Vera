@@ -44,7 +44,7 @@ state, sandbox state, and recent capability events before reassignment.
 
 ## Run evidence in the Activity UI
 
-The held W1-01 UI projects the native DAG lifecycle without taking authority from
+The W1-01 UI projects the native DAG lifecycle without taking authority from
 it. Run cards expose parent/child task lineage, progress, failures, retries,
 performance spans, checksummed journal reconciliation, partial artifact
 references, structured approval/control evidence, and workflow/trace identity.
@@ -58,8 +58,9 @@ These distinctions are deliberate:
   the native DAG runtime.
 - Artifact checksums are recorded metadata, not proof that content is currently
   available or verified.
-- Recovery means a verified journal can rebuild the shadow projection; the UI
-  cannot replay or resume the native run.
+- With the opt-in SQLite journal, recovery verifies each checksum chain and
+  rebuilds the newest bounded searchable projection catalog. Corrupt Runs are
+  isolated and reported; the UI still cannot replay or resume a native run.
 - Telemetry coverage is local and content-redacted. No OpenTelemetry or
   OpenInference export is claimed until an exporter actually runs.
 - Free-text failure/control reasons and result bodies are excluded from Activity

@@ -9,7 +9,7 @@ from collections import OrderedDict
 from typing import Any
 from uuid import uuid4
 
-from .run_journal import MemoryRunJournal, SqliteRunJournal
+from .run_journal import JournalCorruption, MemoryRunJournal, SqliteRunJournal
 from .run_protocol import ArtifactRef, PROTOCOL_VERSION, Run, RunError, RunEvent, RunStatus
 
 
@@ -37,6 +37,10 @@ class ShadowRunRegistry:
         self.max_runs = max(1, int(max_runs))
         self.runs: OrderedDict[str, Run] = OrderedDict()
         self.journal = journal or MemoryRunJournal()
+        self.recovery = {"attempted": False, "recovered": 0, "failed": 0,
+                         "failures": []}
+        if isinstance(self.journal, SqliteRunJournal):
+            self.recover()
 
     @property
     def storage(self) -> str:
@@ -45,9 +49,11 @@ class ShadowRunRegistry:
                 else "process_local_memory")
 
     def record(self, run: Run, event: RunEvent) -> None:
+        self.journal.register(run)
         self.runs[run.id] = run
         self.runs.move_to_end(run.id)
         self.journal.append(event)
+        self.journal.checkpoint(run)
         while len(self.runs) > self.max_runs:
             old_id, _ = self.runs.popitem(last=False)
             # Memory rows follow their bounded projection. A durable journal has
@@ -56,6 +62,21 @@ class ShadowRunRegistry:
                 exported = self.journal.export(old_id)
                 if exported["last_checksum"]:
                     self.journal.delete(old_id, expected_checksum=exported["last_checksum"])
+
+    def recover(self) -> dict[str, Any]:
+        """Rebuild a bounded read-only catalog; isolate corrupt Runs individually."""
+        recovered: OrderedDict[str, Run] = OrderedDict()
+        failures = []
+        selected = list(self.journal.run_ids())[:self.max_runs]
+        for run_id in reversed(selected):
+            try:
+                recovered[run_id] = self.journal.rebuild(run_id=run_id)
+            except (JournalCorruption, ValueError, TypeError, KeyError) as exc:
+                failures.append({"run_id": run_id, "error_type": type(exc).__name__})
+        self.runs = recovered
+        self.recovery = {"attempted": True, "recovered": len(recovered),
+                         "failed": len(failures), "failures": failures}
+        return dict(self.recovery)
 
     def get(self, run_id: str) -> dict[str, Any] | None:
         run = self.runs.get(run_id)
@@ -66,7 +87,7 @@ class ShadowRunRegistry:
                     if child.parent_run_id == run_id]
         return {"authoritative": False, "storage": self.storage,
                 "run": run.to_dict(), "children": children,
-                "journal": verification}
+                "journal": verification, "recovery": dict(self.recovery)}
 
     def list(self, limit: int = 50) -> list[dict[str, Any]]:
         values = list(self.runs.values())[-max(1, min(int(limit), 200)):]

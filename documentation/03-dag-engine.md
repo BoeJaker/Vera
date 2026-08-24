@@ -8,7 +8,7 @@ The DAG Workshop tab in the harness is the interactive surface; the capabilities
 
 ## Run protocol shadow
 
-The held W1-01 integration wraps the existing `dag.run` path with a
+The W1-01 integration wraps the existing `dag.run` path with a
 runtime-neutral Run projection. It does not replace the DAG engine: native
 inputs, scheduling, HITL, cancellation, results, and failures remain
 authoritative. Observation failure is isolated so it cannot change the native
@@ -20,6 +20,19 @@ Activity UI cards link the projected workflow and trace identity back to the DAG
 Workshop and clearly label the view `run_protocol_shadow` versus authority
 `native_dag`. Control records describe request/acknowledgement intent only; they
 never execute a native approve, reject, retry, resume, or cancel operation.
+
+When `VERA_RUN_JOURNAL_PATH` enables the SQLite journal, new Runs also persist
+immutable identity metadata and a sequence-bound, content-free projection
+checkpoint. On process start, the shadow registry verifies each Run's checksum
+chain and reconstructs the newest bounded catalog, including parent/child,
+workflow, task, session and trace identity, progress, attempts, errors and
+artifact references. One corrupt Run is omitted and reported without preventing
+healthy Runs from loading. Recovery rebuilds observation only: it never invokes
+the DAG, a capability, or a control request.
+
+Journals created before identity/checkpoint metadata was introduced can still be
+verified and exported, but older event rows may recover only the fields encoded
+in those events. The implementation does not invent missing lineage.
 
 This slice is intentionally a compatibility facade. Later Workflow IR and
 runtime-adapter work can emit the same contract without requiring Vera to replace

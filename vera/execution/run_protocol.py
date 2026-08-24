@@ -191,12 +191,13 @@ class Run:
 
 def replay_run(run: Run, events: list[RunEvent]) -> Run:
     """Replay validated, gap-free events into a fresh run projection."""
-    for expected, event in enumerate(events, start=1):
+    for expected, event in enumerate(events, start=len(run.events) + 1):
         if event.run_id != run.id:
             raise ValueError("event belongs to another run")
         if event.sequence != expected:
             raise ValueError("event sequence is not monotonic and gap-free")
-        if event.status not in ALLOWED_TRANSITIONS.get(run.status, set()):
+        observational = event.status == run.status
+        if not observational and event.status not in ALLOWED_TRANSITIONS.get(run.status, set()):
             raise ValueError(
                 f"invalid run transition: {run.status.value} -> {event.status.value}")
         run.status = event.status
@@ -204,5 +205,11 @@ def replay_run(run: Run, events: list[RunEvent]) -> Run:
             run.started_at = event.occurred_at
         if event.status in TERMINAL_STATUSES:
             run.ended_at = event.occurred_at
+        if "progress" in event.payload:
+            run.progress = float(event.payload["progress"])
+        if "attempt" in event.payload:
+            run.attempt = max(run.attempt, int(event.payload["attempt"]))
+        if "next_attempt" in event.payload:
+            run.attempt = max(run.attempt, int(event.payload["next_attempt"]))
         run.events.append(event)
     return run
