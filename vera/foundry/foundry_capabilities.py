@@ -940,6 +940,47 @@ async def _post_provision(cluster_id, node, vmid, kind, feats, fqdn, job_id="", 
                       "vmid": vmid, "steps": steps})
 
 
+async def _post_provision_docker(container, feats, job_id="", shares=None):
+    """Apply the CONTAINER-APPLICABLE feature bundles inside a provisioned container via
+    docker.exec. Host-level features (hardening / mesh / security-monitoring) do not map to
+    a plain container -- they need a CT/VM/physical target -- so they are recorded as
+    skipped rather than silently dropped."""
+    steps = []
+    HOST_ONLY = ("hardening", "mesh", "security-monitoring")
+    try:
+        _fctx = await _features_ctx(shares)
+        for _f in ("file-client", "file-server", "vera-worker", "distributed-compute"):
+            if _f in feats:
+                _sc = _feature_script(_f, _fctx)
+                if _sc:
+                    _r = await _call("docker.exec", host_id="", container=container,
+                                     command=_sc, timeout=600)
+                    steps.append({_f: {"ok": bool(_r.get("ok")) or _r.get("rc") == 0,
+                                       "rc": _r.get("rc"), "error": _r.get("error")}})
+        for _f in feats:
+            if _f in HOST_ONLY:
+                steps.append({_f: {"skipped": "host-level feature -- provision a CT/VM/physical target"}})
+        for cs in await _resolve_cluster_scripts(feats):
+            _r = await _call("docker.exec", host_id="", container=container,
+                             command="#!/bin/sh\n" + cs, timeout=600)
+            steps.append({"cluster_join": {"ok": bool(_r.get("ok")) or _r.get("rc") == 0}})
+    except Exception as e:
+        steps.append({"post_error": str(e)})
+    r = _redis()
+    if r and job_id:
+        try:
+            rows = await r.lrange(K_JOBS, 0, 199) or []
+            for i, raw in enumerate(rows):
+                jd = json.loads(raw)
+                if jd.get("id") == job_id:
+                    jd["steps"].extend(steps); jd["status"] = "ok"
+                    await r.lset(K_JOBS, i, json.dumps(jd)); break
+        except Exception:
+            pass
+    await emit_event({"type": "foundry.provision.finished", "job": job_id,
+                      "container": container, "steps": steps})
+
+
 async def _wait_guest_running(cluster_id, vmid, kind="lxc", timeout=90) -> bool:
     # For CTs, `pct create --start 1` often races the config lock and leaves the
     # container stopped — retry `pct start` each poll until it's running.
@@ -1050,14 +1091,24 @@ async def cap_provision(target: str = "", image_id: str = "", name: str = "",
     elif target == "docker":
         if img.get("type") != "docker":
             return {"error": f"Docker target needs a docker image; '{image_id}' is {img.get('type')}"}
-        res = await _call("docker.run", image=img.get("source_url", ""),
-                          name=name or f"foundry-{job_id}", detach=True)
+        # file-* features mount inside the container -> need SYS_ADMIN; host network
+        # so the container can reach Vera + the stack. host_id="" = default engine.
+        _extra = []
+        if any(_x in feats for _x in ("file-client", "file-server")):
+            _extra += ["--cap-add", "SYS_ADMIN"]
+        res = await _call("docker.run", host_id="", image=img.get("source_url", ""),
+                          name=name or f"foundry-{job_id}", network="host",
+                          extra_args=" ".join(_extra))
         step("run", res)
-        job["status"] = "error" if res.get("error") else "ok"
-        for f in feats:
-            if f not in ("enrol",):
-                step(f, {"status": "pending",
-                         "note": "container features (mesh/compute) land next"})
+        cname = res.get("name") or name or f"foundry-{job_id}"
+        if res.get("error") or not res.get("ok"):
+            job["status"] = "error"
+        else:
+            job["status"] = "ok"
+            job["container"] = cname
+            step("post", {"status": "applying",
+                          "note": "container-applicable features applying via docker exec -- watch events / jobs"})
+            asyncio.create_task(_post_provision_docker(cname, feats, job_id, shares_list))
     elif target == "vm":
         if img.get("type") not in ("cloudimg", "iso"):
             return {"error": f"VM target needs a cloudimg/iso image; '{image_id}' is {img.get('type')}"}
