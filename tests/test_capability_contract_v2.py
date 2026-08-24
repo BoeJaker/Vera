@@ -13,6 +13,7 @@ from vera.capability_contract_core import (
     project_registry,
     summarize_contract_observations,
 )
+from vera.capability_resolver_core import resolve_shadow
 from vera import capability_orchestration as orchestration
 from Vera.vera import capability_orchestration as runtime_orchestration
 from Vera.vera.capabilities import capabilities as _runtime_capabilities  # noqa: F401
@@ -277,3 +278,57 @@ def test_observation_capability_bounds_windows_and_registered_caps(monkeypatch):
     assert result["registered"] >= 1
     assert result["observation_count"] == 1
     assert result["observations"][0]["name"] == "cap.contract.gate"
+
+
+def test_shadow_resolver_explains_exclusions_and_never_executes():
+    manifests = [project_contract(name, runtime_orchestration.CAPABILITY_REGISTRY[name])
+                 for name in ("llm.generate", "ollama.generate_raw", "code.author")]
+    result = resolve_shadow(manifests, {
+        "canonical_task": "text.generate",
+        "allowed_effects": ["filesystem", "model", "network"],
+        "preferred": ["ollama.generate_raw"],
+    })
+    assert result["selected"] == "ollama.generate_raw"
+    assert result["authorized"] is False
+    assert result["executed"] is False
+    assert [row["name"] for row in result["eligible"]] == [
+        "ollama.generate_raw", "llm.generate"]
+    assert result["excluded"][0]["name"] == "code.author"
+    assert {reason["code"] for reason in result["excluded"][0]["exclusions"]} >= {
+        "task_mismatch", "effects_not_allowed"}
+
+
+def test_shadow_resolver_excludes_unhealthy_and_ranks_observed_evidence():
+    manifests = [project_contract(name, runtime_orchestration.CAPABILITY_REGISTRY[name])
+                 for name in ("llm.generate", "ollama.generate_raw")]
+    observations = [
+        {"name": "llm.generate", "success_rate": 1.0,
+         "health": {"status": "observed", "healthy": True},
+         "latency_ms": {"status": "observed", "p95": 50}},
+        {"name": "ollama.generate_raw", "success_rate": 0.5,
+         "health": {"status": "observed", "healthy": False},
+         "latency_ms": {"status": "observed", "p95": 10}},
+    ]
+    result = resolve_shadow(manifests, {
+        "canonical_task": "text.generate",
+        "allowed_effects": ["filesystem", "model", "network"],
+    }, observations=observations)
+    assert result["selected"] == "llm.generate"
+    assert result["excluded"][0]["exclusions"] == [
+        {"code": "observed_unhealthy"}]
+
+
+def test_shadow_capability_does_not_call_candidates(monkeypatch):
+    calls = []
+    async def observe(limit, trace_id=None):
+        calls.append((limit, trace_id))
+        return []
+    monkeypatch.setitem(runtime_orchestration.CAPABILITY_REGISTRY,
+                        "obs.events", {"raw": observe})
+    result = asyncio.run(runtime_orchestration.cap_resolve_shadow.__wrapped__(
+        canonical_task="text.generate",
+        allowed_effects=["filesystem", "model", "network"],
+        trace_id="shadow-test"))
+    assert calls == [(200, "shadow-test")]
+    assert result["executed"] is False and result["authorized"] is False
+    assert result["selected"] in {"llm.generate", "ollama.generate_raw"}
