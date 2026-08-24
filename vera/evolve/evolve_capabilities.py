@@ -5353,38 +5353,27 @@ from Vera.vera.evolve.evolve_git_core import tracked_dirty_lines as _tracked_dir
 from Vera.vera.evolve.evolve_git_core import worktree_is_severed as _worktree_is_severed  # noqa: E402
 
 
-async def _sync_branch_with_target(root: str, branch: str, to: str) -> Dict[str, Any]:
-    """Merge `to`'s current tip into `branch`'s own worktree, BEFORE `branch`
-    gets merged into `to` — so commits that landed on `to` after `branch` was
-    created or last synced (e.g. another pipeline promoted into the same
-    trunk in the interim) aren't silently overwritten by this branch's now-
-    stale state. Uses the same merge-tree conflict-preflight as
-    _merge_isolated/_merge_in_checkout; a conflict halts and is reported here
-    — never auto-resolved. No-ops cleanly if `branch` already contains `to`."""
-    wl = await _git("worktree", "list", "--porcelain", repo_root=root)
-    wt_of = _worktree_paths_by_branch(wl.get("out", ""))
-    branch_wt = wt_of.get(branch)
-    if not branch_wt:
-        return {"ok": False, "error": f"no worktree found for {branch} — cannot sync"}
-    anc = await _sh(_git_wt_argv(branch_wt, "merge-base", "--is-ancestor", to, branch), cwd=branch_wt)
-    if anc.get("ok"):
-        return {"ok": True, "action": "already up to date"}
-    st = await _sh(_git_wt_argv(branch_wt, "status", "--porcelain"), cwd=branch_wt)
-    if (st.get("out") or "").strip():
-        return {"ok": False, "error": f"{branch}'s worktree has uncommitted changes — cannot sync"}
-    mt = await _sh(_git_wt_argv(branch_wt, "merge-tree", "--write-tree", branch, to), cwd=branch_wt)
+async def _preflight_branch_merge(root: str, branch: str, to: str) -> Dict[str, Any]:
+    """Check the current target/feature merge without mutating either branch.
+
+    Promotion is a target-side merge, so Git already preserves commits that
+    landed on ``to`` after ``branch`` forked (or reports a conflict).  The old
+    implementation first merged ``to`` back into the feature checkout.  That
+    redundant mutation required a persistent healthy feature worktree, created
+    noisy sync commits, and blocked otherwise valid branches whose checkout had
+    been safely stopped or whose worktree metadata was severed.
+
+    ``git merge-tree --write-tree to branch`` operates on repository refs only.
+    It is therefore valid for a committed branch with no checkout and leaves the
+    actual guarded, hook-validated merge to the target-side path below.
+    """
+    mt = await _git("merge-tree", "--write-tree", to, branch, repo_root=root)
     if not mt.get("ok"):
         return {"ok": False,
-                "error": f"{to} conflicts with {branch} — resolve manually on the branch, "
-                         f"then re-promote",
+                "error": f"{to} conflicts with {branch} — resolve the committed "
+                         "branch, then re-promote",
                 "conflicts": ["(merge-tree reported conflicts)"]}
-    mg = await _sh(_git_wt_argv(branch_wt, "merge", "--no-ff", "-m",
-                                f"sync: merge {to} into {branch} before promote", to),
-                   cwd=branch_wt)
-    if not mg.get("ok"):
-        await _sh(_git_wt_argv(branch_wt, "merge", "--abort"), cwd=branch_wt)
-        return {"ok": False, "error": f"sync merge failed: {mg.get('err') or mg.get('out')}"}
-    return {"ok": True, "action": "synced"}
+    return {"ok": True, "action": "target-side merge preflight"}
 
 
 async def _merge_isolated(root: str, branch: str, into: str, msg: str) -> Dict[str, Any]:
@@ -5625,24 +5614,21 @@ async def evolve_pipeline_promote(id: str = "", to: str = "bleeding-edge", force
                                      + "; wait for the system to recover, or force=true to override."}
         except Exception as e:                          # a perf-check failure never blocks a merge
             log.debug("perf gate check failed (non-fatal): %s", e)
-    # ── Anti-clobber sync (2026-08-16 bleeding-edge-trunk-workflow): bring
-    # `branch` up to date with `to` BEFORE merging back. Without this, a
-    # branch that forked from `to` a while ago can silently overwrite commits
-    # that landed on `to` in the interim (another branch promoted first) —
-    # exactly the scenario multiple branches sharing bleeding-edge as a
-    # trunk makes routine. Conflicts halt here and are reported; never
-    # auto-resolved.
-    sync_res = await _sync_branch_with_target(str(root), branch, to)
-    if not sync_res.get("ok"):
+    # Non-mutating conflict preflight against the CURRENT target tip. The actual
+    # merge below is target-side, so intervening committed target changes are
+    # preserved by Git rather than copied into/mutating the feature branch.
+    preflight_res = await _preflight_branch_merge(str(root), branch, to)
+    if not preflight_res.get("ok"):
         rec["decision"] = "held"
-        _pstep(rec, "sync", False, sync_res.get("error") or "sync conflict")
+        _pstep(rec, "preflight", False,
+               preflight_res.get("error") or "merge conflict")
         await _save_pipeline(rec)
-        await _audit("pipeline.promote", f"BLOCKED {branch} → {to}: sync conflict",
+        await _audit("pipeline.promote", f"BLOCKED {branch} → {to}: merge preflight conflict",
                      id=id, kind="code", branch=branch, ok=False, repo=rec.get("repo"))
-        return {"ok": False, "held": True, "error": sync_res.get("error"),
-                "conflicts": sync_res.get("conflicts", []),
-                "hint": f"resolve the conflict between {branch} and {to} on the branch's "
-                        f"own worktree, then re-promote"}
+        return {"ok": False, "held": True, "error": preflight_res.get("error"),
+                "conflicts": preflight_res.get("conflicts", []),
+                "hint": f"resolve the conflict between {branch} and {to} in any "
+                        "valid checkout of the committed branch, then re-promote"}
     msg = f"Loop Lab: merge {branch} (pipeline {id})"
     wl = await _git("worktree", "list", "--porcelain", repo_root=root)
     wt_of = _worktree_paths_by_branch(wl.get("out", ""))
