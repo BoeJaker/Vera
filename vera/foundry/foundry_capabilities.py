@@ -381,6 +381,8 @@ async def cap_image_import(image_id: str = "", cluster_id: str = "", node: str =
     url = img.get("source_url", "")
     if not url.startswith("http"):
         return {"error": "image has no downloadable http source_url"}
+    if not storage or storage == "local-lvm":
+        storage = await _resolve_storage(cluster_id, "images") or storage
     if not template_vmid:
         nid = await _call("proxmox.nextid", cluster_id=cluster_id)
         template_vmid = int(nid.get("vmid") or 0)
@@ -1079,10 +1081,20 @@ async def cap_provision(target: str = "", image_id: str = "", name: str = "",
                 asyncio.create_task(_post_provision(cluster_id, node, vmid, "qemu",
                                                     feats, fqdn, job_id, ip, shares=shares_list))
         else:
-            step("create", {"status": "pending",
-                            "note": "no cloud-init template linked to this cloudimg yet — "
-                                    "build one from the image, or set template_vmid via "
-                                    "foundry.image.add (image-import pipeline lands next)"})
+            # no cloud-init template yet -> auto-build it from the cloudimg (background);
+            # the caller re-runs provision once foundry.image.import.status reports ready.
+            _imp = await _call("foundry.image.import", image_id=image_id,
+                               cluster_id=cluster_id, node=node, storage=storage)
+            if _imp.get("ok"):
+                step("create", {"status": "building_template",
+                                "template_vmid": _imp.get("template_vmid"),
+                                "note": ("building the cloud-init template for %s (vmid %s) now -- "
+                                         "downloads + converts the image; re-run foundry.provision once "
+                                         "foundry.image.import.status reports ready"
+                                         % (image_id, _imp.get("template_vmid")))})
+            else:
+                step("create", {"status": "error",
+                                "note": "could not start template build: %s" % _imp.get("error")})
             job["status"] = "pending"
     else:
         return {"error": "target must be one of: ct | vm | docker"}
