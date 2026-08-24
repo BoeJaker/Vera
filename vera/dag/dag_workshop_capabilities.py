@@ -10787,6 +10787,11 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
         phases=_phase_seconds,
         counters=_timing_counts,
     )
+    # Finalise the authoring duration before serialising the telemetry event.
+    # Previously this assignment happened after emit_event returned, so Redis
+    # retained the earlier result-ready total while only the returned object saw
+    # the final value.
+    _timing["total_ms"] = max(0, round((time.perf_counter() - _author_started) * 1000))
     _emit_started = time.perf_counter()
     try:
         await emit_event({"type": "code.author.timing", "path": path,
@@ -10795,7 +10800,6 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
     except Exception:
         pass
     _timing["telemetry_emit_ms"] = max(0, round((time.perf_counter() - _emit_started) * 1000))
-    _timing["total_ms"] = max(0, round((time.perf_counter() - _author_started) * 1000))
 
     truncated = bool(res.get("truncated")) if isinstance(res, dict) else False
     _verified = bool(check.get("ok")) and bool(check.get("checker"))
