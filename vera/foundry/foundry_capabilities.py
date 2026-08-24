@@ -844,7 +844,8 @@ async def _post_provision(cluster_id, node, vmid, kind, feats, fqdn, job_id="", 
                 try:
                     res = await asyncio.wait_for(
                         _call("enroll.guest", cluster_id=cluster_id, vmid=vmid,
-                              guest_type="lxc", node=node, fqdn=fqdn or "", via_proxmox=True),
+                              guest_type="lxc", node=node, fqdn=fqdn or "", via_proxmox=True,
+                              skip_mesh=("mesh" in feats)),
                         timeout=90)
                 except asyncio.TimeoutError:
                     res = {"error": "enrol timed out (90s) -- continuing to features"}
@@ -859,7 +860,7 @@ async def _post_provision(cluster_id, node, vmid, kind, feats, fqdn, job_id="", 
             # enrol/mesh/hardening are handled above for CTs; apply the additional
             # portable features here (file-client now; more migrate here as we fan out).
             _fctx = await _features_ctx(shares)
-            for _f in ("file-client", "vera-worker"):
+            for _f in ("mesh", "file-client", "vera-worker"):
                 if _f in feats:
                     _sc = _feature_script(_f, _fctx)
                     if _sc:
@@ -874,7 +875,8 @@ async def _post_provision(cluster_id, node, vmid, kind, feats, fqdn, job_id="", 
                         res = await asyncio.wait_for(
                             _call("enroll.guest", cluster_id=cluster_id, vmid=vmid,
                                   guest_type="qemu", node=node, fqdn=fqdn or "", ip=ip,
-                                  ssh_user="vera", ssh_key_path=_vera_key_path()),
+                                  ssh_user="vera", ssh_key_path=_vera_key_path(),
+                                  skip_mesh=("mesh" in feats)),
                             timeout=90)
                     except asyncio.TimeoutError:
                         res = {"error": "enrol timed out (90s) -- continuing to features"}
@@ -890,7 +892,7 @@ async def _post_provision(cluster_id, node, vmid, kind, feats, fqdn, job_id="", 
             # OS-agnostic feature bundles over SSH (features_core): hardening + portable features.
             if ip:
                 _fctx = await _features_ctx(shares)
-                for _f in ("hardening", "file-client", "vera-worker"):
+                for _f in ("hardening", "mesh", "file-client", "vera-worker"):
                     if _f in feats:
                         _sc = _feature_script(_f, {} if _f == "hardening" else _fctx)
                         if _sc:
