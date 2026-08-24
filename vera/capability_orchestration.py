@@ -745,6 +745,16 @@ ROLE_PROFILES_DECLARED: Dict[str, dict] = {}
 ROLE_PROFILES_USER: Dict[str, dict] = {}
 
 
+try:
+    from Vera.vera.role_profile_merge import inherit_declared_fields as _inherit_declared_fields
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.role_profile_merge import inherit_declared_fields as _inherit_declared_fields
+    except Exception:
+        def _inherit_declared_fields(declared: dict, supplied: dict) -> dict:
+            return dict(supplied or {})               # degrade to previous behaviour
+
+
 def _role_rule(profile: str, role: str, r: Optional[dict] = None) -> dict:
     """Normalise a role's routing rule (same shape as a per-cap rule; the
     pattern slot carries 'profile/role' so shared merge/logging code works)."""
@@ -7232,7 +7242,13 @@ async def cap_ollama_role_profiles_save(profile: str, label: str = "",
             return {"error": "roles must be a JSON object"}
     existing = ROLE_PROFILES_USER.get(name) or {}
     declared = ROLE_PROFILES_DECLARED.get(name) or {}
-    clean = {r: _role_rule(name, r, v)
+    _declared_roles = declared.get("roles") or {}
+
+    # A partial override REPLACES the declared rule wholesale, so anything the
+    # caller didn't send would be silently DISCARDED — that is how prod lost the
+    # coder's declared sampling and the planner's num_ctx (see the module
+    # docstring of role_profile_merge). Inherit the absent fields instead.
+    clean = {r: _role_rule(name, r, _inherit_declared_fields(_declared_roles.get(r) or {}, v))
              for r, v in (roles or {}).items() if isinstance(v, dict)}
     ROLE_PROFILES_USER[name] = {
         "label": label or existing.get("label") or declared.get("label", name),
