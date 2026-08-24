@@ -1,4 +1,5 @@
 import asyncio
+import copy
 
 import pytest
 
@@ -53,7 +54,9 @@ def test_code_author_returns_and_emits_timing_without_a_live_model(monkeypatch):
     async def no_lines(*args, **kwargs): return []
     async def no_hint(*args, **kwargs): return ""
     async def no_files(*args, **kwargs): return []
-    async def emit(event): events.append(event)
+    # Real emit_event serialises immediately; copy here so the assertion catches
+    # fields which are incorrectly added only after persistence returns.
+    async def emit(event): events.append(copy.deepcopy(event))
     async def stream(chunk): streamed.append(chunk)
 
     monkeypatch.setitem(workshop.CAPABILITY_REGISTRY, "llm.generate", {"raw": generate})
@@ -77,3 +80,4 @@ def test_code_author_returns_and_emits_timing_without_a_live_model(monkeypatch):
     assert len(timing_events) == 1
     assert timing_events[0]["session_id"] == "timing-test"
     assert timing_events[0]["trace_id"] == "trace-test"
+    assert timing_events[0]["timing"]["total_ms"] == result["timing"]["total_ms"]

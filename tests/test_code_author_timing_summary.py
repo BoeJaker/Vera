@@ -54,16 +54,40 @@ def test_summary_ignores_other_schemas_and_invalid_numeric_fields():
     assert result["metrics_ms"]["total_ms"]["p95"] is None
 
 
-def test_capability_bounds_window_and_uses_existing_observer(monkeypatch):
+def test_capability_bounds_window_and_prefers_dedicated_stream(monkeypatch):
     calls = []
 
-    async def observe(limit, trace_id=None):
-        calls.append((limit, trace_id))
+    async def observe(name, limit, trace_id=None):
+        calls.append((name, limit, trace_id))
         return [_event(100, 60)]
 
-    monkeypatch.setitem(timing.CAPABILITY_REGISTRY, "obs.events", {"raw": observe})
+    monkeypatch.setitem(timing.CAPABILITY_REGISTRY, "obs.stream_history", {"raw": observe})
     result = asyncio.run(timing.code_author_timing_summary.__wrapped__(
         limit=9999, trace_id="summary-test"))
-    assert calls == [(500, "summary-test")]
-    assert result["window"] == {"requested": 500, "returned": 1}
+    assert calls == [("code.author.timing", 500, "summary-test")]
+    assert result["window"] == {
+        "requested": 500, "returned": 1, "source": "code.author.timing"}
     assert result["events"]["accepted"] == 1
+
+
+def test_capability_falls_back_to_generic_events_during_migration(monkeypatch):
+    calls = []
+
+    async def stream(name, limit, trace_id=None):
+        calls.append(("stream", name, limit, trace_id))
+        return []
+
+    async def events(limit, trace_id=None):
+        calls.append(("events", limit, trace_id))
+        return [_event(120, 70)]
+
+    monkeypatch.setitem(timing.CAPABILITY_REGISTRY, "obs.stream_history", {"raw": stream})
+    monkeypatch.setitem(timing.CAPABILITY_REGISTRY, "obs.events", {"raw": events})
+    result = asyncio.run(timing.code_author_timing_summary.__wrapped__(
+        limit=10, trace_id="migration-test"))
+    assert calls == [
+        ("stream", "code.author.timing", 10, "migration-test"),
+        ("events", 10, "migration-test"),
+    ]
+    assert result["events"]["accepted"] == 1
+    assert result["window"] == {"requested": 10, "returned": 1, "source": "events"}
