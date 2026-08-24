@@ -1,4 +1,4 @@
-"""Aggregate compact performance events without introducing another data store."""
+"""Aggregate compact performance events using Redis' existing stream store."""
 
 from __future__ import annotations
 
@@ -127,12 +127,28 @@ def summarize_code_author_timings(events: Iterable[Any]) -> dict[str, Any]:
 )
 async def code_author_timing_summary(limit: int = 200, trace_id=None) -> dict[str, Any]:
     bounded_limit = max(1, min(int(limit or 200), 500))
-    observer = CAPABILITY_REGISTRY.get("obs.events", {}).get("raw")
-    if observer is None:
+    stream_observer = CAPABILITY_REGISTRY.get("obs.stream_history", {}).get("raw")
+    event_observer = CAPABILITY_REGISTRY.get("obs.events", {}).get("raw")
+    if stream_observer is None and event_observer is None:
         result = summarize_code_author_timings([])
-        result["error"] = "obs.events is unavailable"
+        result["error"] = "timing event observers are unavailable"
         return result
-    events = await observer(limit=bounded_limit, trace_id=trace_id)
+
+    source = "code.author.timing"
+    events: Any = []
+    if stream_observer is not None:
+        events = await stream_observer(name=source, limit=bounded_limit, trace_id=trace_id)
+    # Deployments created before the dedicated stream may still have samples in
+    # the generic history.  Preserve that window as a migration fallback, but do
+    # not mix it with the dedicated stream and double-count recent calls.
+    if not isinstance(events, list) or not events:
+        source = "events"
+        events = (await event_observer(limit=bounded_limit, trace_id=trace_id)
+                  if event_observer is not None else [])
     result = summarize_code_author_timings(events if isinstance(events, list) else [])
-    result["window"] = {"requested": bounded_limit, "returned": len(events) if isinstance(events, list) else 0}
+    result["window"] = {
+        "requested": bounded_limit,
+        "returned": len(events) if isinstance(events, list) else 0,
+        "source": source,
+    }
     return result

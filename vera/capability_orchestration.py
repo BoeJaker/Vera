@@ -3982,6 +3982,19 @@ async def emit_event(event: dict):
         try:
             # Stream — persistent, replayable history
             await REDIS.xadd(EVENT_STREAM, {"data": ev_json}, maxlen=5000)
+            # Sparse performance samples need a type-specific retention window.
+            # The generic event stream is deliberately busy, so consumers which
+            # filter its newest entries can otherwise see zero code-author samples
+            # even though authoring is healthy.  Keep the original event envelope
+            # (rather than a second schema) so obs.stream_history can feed the same
+            # summariser and old generic-stream readers remain compatible.
+            if event.get("type") == "code.author.timing":
+                try:
+                    await REDIS.xadd("vera:stream:code.author.timing",
+                                     {"data": ev_json}, maxlen=500)
+                except Exception as _te:
+                    if "MISCONF" not in str(_te):
+                        log.debug("emit_event timing stream: %s", _te)
             # Pub/sub — zero-latency fan-out for any live subscribers
             await REDIS.publish("vera:events:live", ev_json)
         except Exception as _re:
