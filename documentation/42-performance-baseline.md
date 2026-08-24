@@ -23,16 +23,19 @@ and smoke behavior is unchanged.
 
 ## Recent-window summary
 
-`code.author.timing.summary(limit=200)` reads the existing `obs.events` window
-and reports p50, p95, and maximum milliseconds for the overall envelope and each
-phase. It also reports total repair/smoke activity, the number and rate of runs
-with activity, and explicit accepted/ignored event counts. Percentiles use
-inclusive linear interpolation. Invalid values, unrelated events, and unknown
-schema versions are ignored rather than silently mixed into the baseline.
+`code.author.timing.summary(limit=200)` reads a dedicated, bounded
+`code.author.timing` Redis stream and reports p50, p95, and maximum milliseconds
+for the overall envelope and each phase. The generic `obs.events` window remains
+a migration fallback for deployments which predate the dedicated history. The
+summary also reports which source it used, total repair/smoke activity, the number
+and rate of runs with activity, and explicit accepted/ignored event counts.
+Percentiles use inclusive linear interpolation. Invalid values, unrelated events,
+and unknown schema versions are ignored rather than silently mixed into the
+baseline.
 
 The result contains no task text, generated code, session identifiers, trace
-identifiers, or paths. It introduces neither a new store nor a model call; its
-window is bounded to 500 recent events.
+identifiers, or paths. It reuses Redis rather than introducing another storage
+system or model call; its timing-specific window is bounded to 500 samples.
 
 ## Scope and next baseline
 
