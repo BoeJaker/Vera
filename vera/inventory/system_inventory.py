@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import inspect
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -30,6 +32,10 @@ _DUPLICATION_TERMS = (
     "generate", "query", "store",
 )
 _SECRET_HINTS = ("password", "passwd", "token", "secret", "credential", "api_key", "auth")
+_CREATE_TABLE_RE = re.compile(
+    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[\"'`\[]?([A-Za-z_][A-Za-z0-9_]*)",
+    re.IGNORECASE,
+)
 
 
 def _json_safe(value: Any) -> Any:
@@ -183,6 +189,137 @@ def _configuration_records(records: Mapping[str, Any] | None) -> list[dict[str, 
             for key in sorted(records or {}, key=str)]
 
 
+def _stored_workflow_records(records: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """Keep workflow identity/shape, never definitions, prompts, or state."""
+    result = []
+    for source, values in sorted((records or {}).items()):
+        for index, value in enumerate(values or []):
+            item = value if isinstance(value, Mapping) else {}
+            definition = item.get("dag") or item.get("definition") or []
+            tags = item.get("tags") or []
+            if isinstance(tags, str):
+                tags = [tag.strip() for tag in tags.split(",") if tag.strip()]
+            result.append({
+                "source": str(source),
+                "id": str(item.get("id") or index),
+                "name": str(item.get("name") or ""),
+                "category": str(item.get("category") or ""),
+                "tags": sorted(str(tag) for tag in tags),
+                "node_count": len(definition) if isinstance(definition, list)
+                              else int(item.get("node_count") or 0),
+                "capabilities": sorted({
+                    str(node[0]) for node in definition
+                    if isinstance(node, list) and node and isinstance(node[0], str)
+                }) if isinstance(definition, list) else [],
+            })
+    return sorted(result, key=lambda item: (item["source"], item["id"], item["name"]))
+
+
+def _database_schema_records(records: Sequence[Mapping[str, Any]] | None) -> list[dict[str, str]]:
+    return sorted(({"table": str(item.get("table", "")),
+                    "source": str(item.get("source", ""))}
+                   for item in (records or []) if item.get("table")),
+                  key=lambda item: (item["table"], item["source"]))
+
+
+def _artifact_provider_records(capabilities: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Inventory artifact interfaces, not sensitive project artifact instances."""
+    records = []
+    for cap in capabilities:
+        name = str(cap.get("name", ""))
+        if not any(part.startswith("artifact")
+                   for part in name.lower().replace("-", ".").split(".")):
+            continue
+        records.append({
+            "capability": name,
+            "module": str(cap.get("module", "")),
+            "http": _json_safe(cap.get("http", {})),
+            "mcp_expose": bool(cap.get("mcp_expose", True)),
+            "scope": "provider_surface_not_stored_content",
+        })
+    return records
+
+
+def _connection_records(records: Sequence[Mapping[str, Any]] | None) -> list[dict[str, Any]]:
+    """Expose saved connection identity/type while excluding endpoints and credentials."""
+    result = []
+    for index, item in enumerate(records or []):
+        if not isinstance(item, Mapping):
+            continue
+        tags = item.get("tags") or []
+        if isinstance(tags, str):
+            tags = [tag.strip() for tag in tags.split(",") if tag.strip()]
+        result.append({
+            "id": str(item.get("id") or index),
+            "label": str(item.get("label") or ""),
+            "kind": str(item.get("kind") or ""),
+            "tags": sorted(str(tag) for tag in tags),
+            "has_credential_reference": bool(item.get("ssh_host_id") or
+                                             item.get("docker_host_id")),
+        })
+    return sorted(result, key=lambda item: (item["kind"], item["id"]))
+
+
+def _caller_graph(capabilities: Sequence[Mapping[str, Any]], schedules: Any,
+                  workflows: Sequence[Mapping[str, Any]]) -> list[dict[str, str]]:
+    """Describe known interface callers; never claim a speculative runtime call graph."""
+    edges = set()
+    for cap in capabilities:
+        target = str(cap.get("name", ""))
+        module = str(cap.get("module", ""))
+        if module:
+            edges.add((f"python:{module}", target, "registration"))
+        http = cap.get("http") or {}
+        if http.get("path"):
+            edges.add((f"http:{http.get('method') or '*'} {http['path']}", target, "route"))
+        if cap.get("mcp_expose", True):
+            edges.add(("mcp:capability", target, "exposure"))
+    for index, schedule in enumerate(schedules or []):
+        if not isinstance(schedule, Mapping):
+            continue
+        target = schedule.get("capability") or schedule.get("cap")
+        if target:
+            edges.add((f"schedule:{schedule.get('name') or index}", str(target), "schedule"))
+    for workflow in workflows:
+        caller = f"stored-definition:{workflow['source']}:{workflow['id']}"
+        for target in workflow.get("capabilities", []):
+            edges.add((caller, str(target), "workflow_node"))
+    return [{"caller": caller, "capability": target, "basis": basis}
+            for caller, target, basis in sorted(edges)]
+
+
+def _declared_database_schema(loaded_modules: Sequence[Mapping[str, Any]],
+                              repo_root: Path) -> list[dict[str, str]]:
+    """Scan loaded local source for declared tables without opening a database."""
+    found = set()
+    for module in loaded_modules:
+        path = Path(str(module.get("path") or ""))
+        if not path.is_absolute():
+            path = repo_root / path
+        try:
+            source = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        rel = _relative_path(path, repo_root)
+        for table in _CREATE_TABLE_RE.findall(source):
+            found.add((table, rel))
+    return [{"table": table, "source": source} for table, source in sorted(found)]
+
+
+async def _inventory_capability_records(name: str, key: str) -> list[dict[str, Any]]:
+    """Call a read-only raw capability and normalize unavailable stores to empty."""
+    entry = CAPABILITY_REGISTRY.get(name) or {}
+    raw = entry.get("raw")
+    if not callable(raw):
+        return []
+    try:
+        result = await raw()
+    except Exception:
+        return []
+    values = result.get(key, []) if isinstance(result, Mapping) else []
+    return list(values) if isinstance(values, list) else []
+
+
 def build_system_inventory(
     *,
     capabilities: Mapping[str, Mapping[str, Any]],
@@ -195,9 +332,13 @@ def build_system_inventory(
     repo_root: Path,
     captured_at: str | None = None,
     configuration_keys: Mapping[str, Any] | None = None,
+    stored_workflows: Mapping[str, Any] | None = None,
+    database_schema: Sequence[Mapping[str, Any]] | None = None,
+    connections: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build a canonical snapshot whose fingerprint ignores capture time/load order."""
     cap_items = _capabilities(capabilities)
+    workflow_items = _stored_workflow_records(stored_workflows)
     body = {
         "schema_version": INVENTORY_SCHEMA_VERSION,
         "capabilities": cap_items,
@@ -209,6 +350,11 @@ def build_system_inventory(
         "mcp_servers": [{"name": name, "url": _safe_endpoint(mcp_servers[name])}
                         for name in sorted(mcp_servers)],
         "configuration_keys": _configuration_records(configuration_keys),
+        "stored_workflows": workflow_items,
+        "database_schema": _database_schema_records(database_schema),
+        "artifacts": _artifact_provider_records(cap_items),
+        "connections": _connection_records(connections),
+        "caller_graph": _caller_graph(cap_items, schedules, workflow_items),
         "duplication_signals": {
             term: [cap["name"] for cap in cap_items
                    if term in cap["name"].lower().replace("-", ".").split(".")]
@@ -216,9 +362,10 @@ def build_system_inventory(
         },
         "coverage": {
             "included": ["capabilities", "loaded_modules", "panels", "http_routes",
-                         "schedules", "workers", "mcp_servers", "configuration_keys"],
-            "not_yet_included": ["stored_workflows", "database_schema", "artifacts",
-                                 "connections", "caller_graph"],
+                         "schedules", "workers", "mcp_servers", "configuration_keys",
+                         "stored_workflows", "database_schema", "artifacts",
+                         "connections", "caller_graph"],
+            "not_yet_included": [],
         },
     }
     # Workers contain heartbeat state, counters, PIDs, and random process IDs.
@@ -233,7 +380,8 @@ def build_system_inventory(
         key: len(body[key]) for key in (
             "capabilities", "modules", "panels", "http_routes", "schedules",
             "workers", "mcp_servers",
-            "configuration_keys",
+            "configuration_keys", "stored_workflows", "database_schema",
+            "artifacts", "connections", "caller_graph",
         )
     }
     body["counts"]["module_errors"] = sum(
@@ -281,6 +429,11 @@ def summarize_system_inventory(snapshot: Mapping[str, Any]) -> dict[str, Any]:
 async def system_inventory(detail: bool = False, trace_id=None):
     raw_file = inspect.getsourcefile(build_system_inventory) or __file__
     repo_root = Path(raw_file).resolve().parents[2]
+    dag_store, fabric_dags, connections = await asyncio.gather(
+        _inventory_capability_records("dag.store_list", "dags"),
+        _inventory_capability_records("fabric.dags.list", "dags"),
+        _inventory_capability_records("conn.list", "connections"),
+    )
     snapshot = build_system_inventory(
         capabilities=CAPABILITY_REGISTRY,
         loaded_modules=LOADED_MODULES,
@@ -292,5 +445,8 @@ async def system_inventory(detail: bool = False, trace_id=None):
         repo_root=repo_root,
         configuration_keys={name: name in os.environ for name in vars(type(cfg))
                             if name.isupper() and not name.startswith("_")},
+        stored_workflows={"dag_store": dag_store, "fabric": fabric_dags},
+        database_schema=_declared_database_schema(LOADED_MODULES, repo_root),
+        connections=connections,
     )
     return snapshot if detail else summarize_system_inventory(snapshot)

@@ -13,6 +13,15 @@ The snapshot currently includes:
 - schedule definitions without volatile run counters or timestamps;
 - worker runtime records and MCP server registrations;
 - declared configuration-key presence, never configuration values;
+- stored DAG identities, shape, tags, and referenced capability names from both
+  the DAG store and Fabric DAG store, without definitions, prompts, or state;
+- table names declared by loaded local modules, without opening a database or
+  returning SQL definitions or row data;
+- artifact provider surfaces, explicitly excluding project artifact content;
+- saved connection identity/type and whether a credential reference exists,
+  without endpoints, credential IDs, metadata, or secrets;
+- evidence-based caller edges for Python registration, HTTP routes, MCP
+  exposure, schedules, and stored workflow nodes;
 - name-family signals for `loop`, `pipeline`, `workflow`, `run`, `job`, `task`,
   `scheduler`, `generate`, `query`, and `store` duplication investigations.
 
@@ -62,9 +71,16 @@ registration metadata cannot yet support the role taxonomy reliably; inferred
 roles must not be used as policy. Capability Contract v2 should replace these
 hints with explicit ownership/lifecycle metadata.
 
-W0-01 remains active. The inventory still needs stored workflow definitions,
-database schemas, artifacts, connections, and a static/dynamic caller graph.
-Configuration coverage now reports only whether each centrally declared key was
+W0-01 now covers every named surface in the baseline. Coverage does not mean
+unbounded data extraction: workflow definitions and artifact contents are
+deliberately excluded, database evidence is declared schema rather than live row
+inspection, and connections are aggressively redacted. The caller graph records
+interfaces and stored-workflow nodes supported by concrete metadata; it does not
+pretend to be a complete dynamic Python trace. UI and agent-specific caller
+identity should be enriched later from Run/Activity telemetry once those shared
+contracts are stable.
+
+Configuration coverage reports only whether each centrally declared key was
 explicitly supplied by the environment; defaults and all values remain private.
 Subsequent snapshots should be retained only
 at meaningful branch or release boundaries, and comparisons should report added,

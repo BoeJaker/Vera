@@ -2,7 +2,11 @@ from pathlib import Path
 
 import pytest
 
-from vera.inventory.system_inventory import build_system_inventory, summarize_system_inventory
+from vera.inventory.system_inventory import (
+    _declared_database_schema,
+    build_system_inventory,
+    summarize_system_inventory,
+)
 
 
 pytestmark = pytest.mark.critical
@@ -62,7 +66,7 @@ def test_inventory_fingerprint_is_order_and_time_stable(tmp_path):
     assert "runs" not in first["schedules"][0]["metadata"]
 
 
-def test_inventory_keeps_optional_module_errors_and_coverage_gaps(tmp_path):
+def test_inventory_keeps_optional_module_errors_and_closes_declared_coverage(tmp_path):
     result = build_system_inventory(**_inputs(tmp_path), captured_at="fixed")
 
     failed = result["modules"][0]
@@ -74,7 +78,8 @@ def test_inventory_keeps_optional_module_errors_and_coverage_gaps(tmp_path):
         "error": "optional dep missing",
     }
     assert result["counts"]["module_errors"] == 1
-    assert "stored_workflows" in result["coverage"]["not_yet_included"]
+    assert result["coverage"]["not_yet_included"] == []
+    assert "stored_workflows" in result["coverage"]["included"]
     assert result["capabilities"][0]["role_inferred"] == "internal"
 
 
@@ -125,3 +130,70 @@ def test_inventory_reports_configuration_presence_without_values(tmp_path):
     assert "secret-host" not in str(snapshot)
     assert "configuration_keys" in snapshot["coverage"]["included"]
     assert "configuration_keys" not in snapshot["coverage"]["not_yet_included"]
+
+
+def test_inventory_adds_bounded_workflow_schema_artifact_connection_and_caller_evidence(tmp_path):
+    inputs = _inputs(tmp_path)
+    inputs["capabilities"]["project.artifacts.list"] = {
+        "raw": alpha,
+        "http_method": "GET",
+        "http_path": "/artifacts",
+    }
+    inputs["stored_workflows"] = {
+        "dag_store": [{
+            "id": "wf-1", "name": "example", "category": "ops",
+            "tags": ["safe"],
+            "dag": [["task.run", "result", {"prompt": "must not leak"}]],
+            "initial_state": {"api_token": "must not leak"},
+        }],
+    }
+    inputs["database_schema"] = [
+        {"table": "jobs", "source": "vera/jobs.py"},
+    ]
+    inputs["connections"] = [{
+        "id": "remote-1", "label": "Builder", "kind": "ssh",
+        "ssh_host_id": "credential-record-9", "password": "must not leak",
+        "tags": ["build"], "hostname": "private.example",
+    }]
+
+    snapshot = build_system_inventory(**inputs, captured_at="fixed")
+
+    assert snapshot["stored_workflows"] == [{
+        "source": "dag_store", "id": "wf-1", "name": "example",
+        "category": "ops", "tags": ["safe"], "node_count": 1,
+        "capabilities": ["task.run"],
+    }]
+    assert snapshot["database_schema"] == [
+        {"table": "jobs", "source": "vera/jobs.py"},
+    ]
+    assert snapshot["artifacts"][0]["scope"] == "provider_surface_not_stored_content"
+    assert snapshot["connections"] == [{
+        "id": "remote-1", "label": "Builder", "kind": "ssh",
+        "tags": ["build"], "has_credential_reference": True,
+    }]
+    assert {
+        "caller": "stored-definition:dag_store:wf-1",
+        "capability": "task.run",
+        "basis": "workflow_node",
+    } in snapshot["caller_graph"]
+    assert "must not leak" not in str(snapshot)
+    assert "private.example" not in str(snapshot)
+
+
+def test_declared_database_schema_reads_names_not_sql_or_rows(tmp_path):
+    module = tmp_path / "vera" / "storage.py"
+    module.parent.mkdir()
+    module.write_text(
+        'SQL = "CREATE TABLE IF NOT EXISTS jobs (secret TEXT)"\n'
+        'OTHER = "create table [events] (payload TEXT)"\n',
+        encoding="utf-8",
+    )
+
+    records = _declared_database_schema(
+        [{"path": module, "status": "ok"}], tmp_path)
+
+    assert records == [
+        {"table": "events", "source": "vera/storage.py"},
+        {"table": "jobs", "source": "vera/storage.py"},
+    ]
+    assert "secret" not in str(records)
