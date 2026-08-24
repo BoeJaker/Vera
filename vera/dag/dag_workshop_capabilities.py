@@ -13007,6 +13007,63 @@ def _v5_register_artifact(artifacts: Dict[str, Dict[str, Any]], rel: str, conten
     return rec
 
 
+def _v6_file_register_block(artifacts: Dict[str, Dict[str, Any]],
+                            on_disk: Optional[List[str]] = None) -> str:
+    """The run's FILE REGISTER, rendered for the controller and completion gate.
+
+    Both of them judge "was the deliverable produced and is it sound?" — and until
+    now they had to INFER that from the ledger's prose, or at best from a bare
+    filename listing. The registry already holds the facts deterministically: every
+    file the run wrote, its size, the parser verdict, and which cap produced it. So
+    hand them the register and let them read it, instead of reasoning about whether
+    a file is real and valid.
+
+    This is why it matters: a run whose done_when asked for a "working" file kept
+    trying to DEMONSTRATE it — inserting browser-check steps, and once starting
+    `python3 -m http.server`, which hung. The register answers that question
+    outright: the file is there, and a real parser passed it.
+    """
+    if not artifacts:
+        return ""
+    # The register records what the CAPS reported. That is not automatically what is
+    # on disk: a run was observed where code.author returned ok and the file was
+    # readable, yet nothing existed in the working directory at all — the content had
+    # gone only to the code-version store. So cross-check against the real listing and
+    # SAY when an entry is not there, rather than letting the register assert existence
+    # and quietly undercut the gate's "actual files override any 'created' claim" rule.
+    _disk = {str(p).strip().lstrip("./") for p in (on_disk or [])}
+    lines, missing = [], 0
+    for rec in artifacts.values():
+        if not isinstance(rec, dict) or not rec.get("rel"):
+            continue
+        if rec.get("_url_cache_value") is not None:
+            continue                       # http cache entry, not a real file
+        rel = str(rec["rel"])
+        bits = [f"{rel} ({int(rec.get('size') or 0):,} bytes)"]
+        if rec.get("parse_error"):
+            bits.append(f"⚠ does NOT parse: {str(rec['parse_error'])[:120]}")
+        elif rec.get("checked_with"):
+            bits.append(f"VERIFIED — parses cleanly ({rec['checked_with']})")
+        if rec.get("produced_by"):
+            bits.append(f"written by {rec['produced_by']}")
+        if rec.get("ran_ok"):
+            bits.append("ran successfully")
+        if on_disk is not None and rel.lstrip("./") not in _disk:
+            bits.append("⚠ NOT present in the working directory listing")
+            missing += 1
+        lines.append("  • " + " — ".join(bits))
+    if not lines:
+        return ""
+    return ("\nFILE REGISTER (what this run's capabilities reported producing, with the "
+            "verdict of a REAL parser):\n" + "\n".join(lines[:40]) + "\n"
+            "An entry marked VERIFIED was put through a real parser by the cap that wrote "
+            "it — that settles \"is it valid / complete / does it parse\", and no better "
+            "proof exists: re-reading it or trying to run it cannot add anything.\n"
+            + ("An entry marked NOT present did not show up in the working-directory "
+               "listing, so do NOT treat it as a delivered file — the listing wins.\n"
+               if missing else ""))
+
+
 def _v5_artifact_brief(rec: Dict[str, Any]) -> str:
     """One-line trustworthy summary of a registered file."""
     if not rec:
@@ -18208,7 +18265,8 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
                       queue: List[Dict[str, Any]], last: Dict[str, Any],
                       *, catalog_names: List[str], valid_skill_ids: set,
                       base_id: int, steps_left: int, model: str, instance_id: str,
-                      prefer_gpu: bool, session_id: str = "") -> Dict[str, Any]:
+                      prefer_gpu: bool, session_id: str = "",
+                      file_register: Any = "") -> Dict[str, Any]:
     """ONE cheap controller call after a step: read the ledger, weigh what the
     step actually FOUND against the goal, and decide the next move. Returns
     {assessment, findings, goal_alignment, direction, goal_met, action, steps}.
@@ -18235,19 +18293,22 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
     # What is REALLY on disk. The ledger describes what steps SAID they did; this
     # is what they actually left behind, and it is the difference between planning
     # "parse the data we already have" and planning "fetch the data again".
-    _files_block = ""
+    _wf = None
     if session_id:
         try:
             _wf = await _v5_workdir_files(session_id, limit=60)
         except Exception:
             _wf = None
+    _files_block = (file_register(_wf) if callable(file_register)
+                    else str(file_register or ""))
+    if session_id:
         if _wf:
-            _files_block = ("\nFILES THAT ALREADY EXIST in the working directory: "
-                            + ", ".join(_wf[:60])
-                            + "\nDo NOT plan a step that re-fetches, re-downloads or re-derives "
-                              "data one of these already holds — plan to READ/PARSE it instead.\n")
+            _files_block += ("\nFILES THAT ALREADY EXIST in the working directory: "
+                             + ", ".join(_wf[:60])
+                             + "\nDo NOT plan a step that re-fetches, re-downloads or re-derives "
+                               "data one of these already holds — plan to READ/PARSE it instead.\n")
         elif _wf == []:
-            _files_block = "\nFILES IN THE WORKING DIRECTORY: none yet.\n"
+            _files_block += "\nFILES IN THE WORKING DIRECTORY: none yet.\n"
     cap_lines = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names) or "  (none)"
     sys = (
         "You are the ADAPTIVE CONTROLLER of an agentic loop. A plan is being executed "
@@ -18420,7 +18481,8 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
                          *, catalog_names: List[str], valid_skill_ids: set,
                          base_id: int, steps_left: int, model: str,
                          instance_id: str, prefer_gpu: bool,
-                         session_id: str = "", raw_goal: str = "") -> Dict[str, Any]:
+                         session_id: str = "", raw_goal: str = "",
+                         file_register: Any = "") -> Dict[str, Any]:
     """Final completion gate: verify the whole GOAL is met (against `done_when`)
     before synthesising the answer. If it is not — and there is step budget left —
     return follow-up steps to close the gap. Returns {complete, missing,
@@ -18444,20 +18506,23 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
     was produced."""
     ledger = _v6_build_ledger(goal, done_when, results, [], per_step=_V6_GATE_PER_STEP,
                               include_outputs=True, total=_V6_GATE_LEDGER_TOTAL)
-    files_block = ""
+    _wf = None
     if session_id:
         try:
             _wf = await _v5_workdir_files(session_id, limit=60)
         except Exception:
             _wf = None
+    files_block = (file_register(_wf) if callable(file_register)
+                   else str(file_register or ""))
+    if session_id:
         if _wf:
-            files_block = ("\nACTUAL FILES IN THE WORKING DIRECTORY (sandbox ground truth — this "
-                           "OVERRIDES any 'saved'/'created' claim in the ledger):\n  "
-                           + ", ".join(_wf[:60]) + "\n")
+            files_block += ("\nACTUAL FILES IN THE WORKING DIRECTORY (sandbox ground truth — this "
+                            "OVERRIDES any 'saved'/'created' claim in the ledger):\n  "
+                            + ", ".join(_wf[:60]) + "\n")
         elif _wf == []:
-            files_block = ("\nACTUAL FILES IN THE WORKING DIRECTORY: NONE — the run wrote no files "
-                           "at all. If the goal asked for a file/artifact deliverable, it is NOT "
-                           "complete no matter what the ledger says.\n")
+            files_block += ("\nACTUAL FILES IN THE WORKING DIRECTORY: NONE — the run wrote no files "
+                            "at all. If the goal asked for a file/artifact deliverable, it is NOT "
+                            "complete no matter what the ledger says.\n")
     cap_lines = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names) or "  (none)"
     sys = (
         "You are the COMPLETION GATE for an agentic run. Judge whether the GOAL "
@@ -18469,14 +18534,13 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
         "request MEANS THE GOAL IS MET. Do NOT rule it incomplete for lacking external "
         "validation, publishing, delivery, or extra polish the goal did not explicitly ask for. "
         "Judge the artifact that WAS produced, not an idealised one.\n"
-        "A CODE FILE IS PROVEN BY ITS AUTHOR'S REPORT, NOT BY A DEMONSTRATION. code.author/"
-        "code.edit put the file through a real parser and return `syntax_ok`/`checked_with`; "
-        "that report is the verification. So when DONE WHEN asks for a created, valid or "
-        "working file and the ledger shows an ok author call plus the file in the listing, the "
-        "goal is MET — complete it. Do NOT rule it incomplete, and do NOT add follow-up steps, "
-        "because nobody opened it in a browser, served it, clicked it or watched it run: this "
-        "run has no capability that could do any of that, so such a follow-up cannot succeed "
-        "and only burns the remaining budget.\n"
+        "A FILE DELIVERABLE IS SETTLED BY THE FILE REGISTER, NOT BY A DEMONSTRATION. Read the "
+        "FILE REGISTER below: if the file is listed, it EXISTS, and if it is marked VERIFIED a "
+        "real parser passed it. That is the whole check — when DONE WHEN asks for a created, "
+        "valid or working file and the register shows it, the goal is MET, so complete it. Do "
+        "NOT rule it incomplete, and do NOT add follow-up steps, because nobody opened it in a "
+        "browser, served it, clicked it or watched it run: this run has no capability that "
+        "could do any of that, so such a follow-up cannot succeed and only burns budget.\n"
         + ("GROUND TRUTH BEATS NARRATIVE: when the ACTUAL FILES listing is shown, believe it "
            "over the ledger. A goal that asked for a FILE deliverable is NOT complete unless "
            "that file appears in the listing — a step summary saying it was 'saved' or "
@@ -22554,7 +22618,8 @@ async def cap_dag_agent_loop_v6(
                 _ctrl_goal, done_when, results, queue, res,
                 catalog_names=catalog_names, valid_skill_ids=valid_skill_ids,
                 base_id=max_id, steps_left=steps_left, model=model,
-                instance_id=instance_id, prefer_gpu=prefer_gpu, session_id=sid)
+                instance_id=instance_id, prefer_gpu=prefer_gpu, session_id=sid,
+                file_register=lambda _d: _v6_file_register_block(artifacts, _d))
             await emit_event({"type": "agent_loop_v6.assess", "session_id": sid,
                               "stream_id": stream_id, "after_step": step["id"],
                               "assessment": ctrl.get("assessment", ""),
@@ -22618,7 +22683,8 @@ async def cap_dag_agent_loop_v6(
             valid_skill_ids=valid_skill_ids, base_id=max_id,
             steps_left=hard_cap - executed, model=model,
             instance_id=instance_id, prefer_gpu=prefer_gpu, session_id=sid,
-            raw_goal=_orig_goal)
+            raw_goal=_orig_goal,
+            file_register=lambda _d: _v6_file_register_block(artifacts, _d))
         await emit_event({"type": "agent_loop_v6.gate", "session_id": sid,
                           "stream_id": stream_id, "complete": bool(gate.get("complete")),
                           "missing": gate.get("missing", []),
