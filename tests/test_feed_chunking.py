@@ -18,23 +18,26 @@ sys.path.insert(0, _ROOT)
 _SRC = os.path.join(_ROOT, "vera", "agents", "agents.py")
 
 
+_NEEDED = ("_rag_parse_feed", "_rag_salvage_entries", "_rag_clean",
+           "_ITEM_RE", "_NS_DECL", "_TAG_RE", "_WS_RE", "_FEED_ITEMS_MAX")
+
+
 def _load(*names):
+    """Load the feed helpers (and the module constants they close over)."""
+    want = set(names) | set(_NEEDED)
     with open(_SRC, encoding="utf-8") as fh:
         tree = ast.parse(fh.read())
     wanted = [n for n in tree.body
-              if (isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in names)
+              if (isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in want)
               or (isinstance(n, ast.Assign)
-                  and any(getattr(t, "id", None) in names for t in n.targets))]
-    missing = set(names) - {getattr(n, "name", None) or
-                            getattr(n.targets[0], "id", None) for n in wanted}
-    assert not missing, f"not found in agents.py: {sorted(missing)}"
+                  and any(getattr(t, "id", None) in want for t in n.targets))]
     import hashlib
     import re as _re
     from typing import Any, Dict, List
-    ns = {"hashlib": hashlib, "re": _re, "Any": Any, "Dict": Dict, "List": List,
-          "_FEED_ITEMS_MAX": 40,
-          "_TAG_RE": _re.compile(r"<[^>]+>"), "_WS_RE": _re.compile(r"\s+")}
+    ns = {"hashlib": hashlib, "re": _re, "Any": Any, "Dict": Dict, "List": List}
     exec(compile(ast.Module(body=wanted, type_ignores=[]), _SRC, "exec"), ns)
+    missing = [n for n in names if n not in ns]
+    assert not missing, f"not found in agents.py: {missing}"
     return ns
 
 
@@ -128,6 +131,68 @@ def test_feed_with_no_usable_items_yields_nothing():
     empty = ('<?xml version="1.0"?><rss version="2.0"><channel>'
              '<title>Quiet</title><item><guid>x</guid></item></channel></rss>')
     assert _parse(empty) == []
+
+
+# ── truncated feeds ──────────────────────────────────────────────────────────
+# http.get caps its body at 65536 bytes with no way to ask for more, so any feed
+# over 64KB arrives as INVALID XML. Measured live: 9 of 20 real feeds hit that
+# cap and every one fell back to page-level ingest, reintroducing exactly the
+# boilerplate records this chunking exists to remove.
+
+def _truncated(n_ok: int) -> str:
+    """A feed with `n_ok` complete items, then cut off mid-item."""
+    items = "".join(
+        f"<item><title>Story {i}</title><link>https://x/{i}</link>"
+        f"<dc:creator>someone</dc:creator>"
+        f"<content:encoded>body {i}</content:encoded>"
+        f"<description>summary {i}</description></item>"
+        for i in range(n_ok))
+    return ('<?xml version="1.0"?><rss version="2.0" '
+            'xmlns:dc="http://purl.org/dc/elements/1.1/" '
+            'xmlns:content="http://purl.org/rss/1.0/modules/content/">'
+            "<channel><title>Feed</title>" + items
+            + "<item><title>Cut off here")     # deliberately unterminated
+
+
+@pytest.mark.critical
+def test_truncated_feed_still_yields_its_complete_items():
+    """THE regression: a >64KB feed is malformed, and used to yield nothing."""
+    rows = _parse(_truncated(5))
+    assert len(rows) == 5, "complete items before the cut must survive"
+    assert rows[0]["title"] == "Story 0"
+    assert "Cut off here" not in " ".join(r["title"] for r in rows)
+
+
+@pytest.mark.critical
+def test_salvage_handles_namespaced_children():
+    """A salvaged item is parsed alone, so prefixes used inside it (dc:,
+    content:, media:) must be declared or ElementTree drops the item."""
+    ns = _load("_rag_salvage_entries")
+    els = ns["_rag_salvage_entries"](_truncated(3))
+    assert len(els) == 3, "namespaced items must not be lost to unbound prefixes"
+
+
+@pytest.mark.critical
+def test_truncated_atom_feed_salvages_entries():
+    entries = "".join(
+        f'<entry><title>Paper {i}</title>'
+        f'<link href="http://arxiv.org/abs/{i}"/>'
+        f'<media:thumbnail url="http://x/{i}.png"/>'
+        f'<summary>abstract {i}</summary></entry>' for i in range(4))
+    xml = ('<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom" '
+           'xmlns:media="http://search.yahoo.com/mrss/">' + entries
+           + "<entry><title>truncated")
+    rows = _parse(xml)
+    assert len(rows) == 4
+    assert rows[0]["url"] == "http://arxiv.org/abs/0"
+
+
+@pytest.mark.critical
+def test_salvage_is_still_bounded():
+    many = ('<?xml version="1.0"?><rss version="2.0"><channel>'
+            + "".join(f"<item><title>S{i}</title></item>" for i in range(300))
+            + "<item><title>cut")
+    assert len(_parse(many)) <= 40
 
 
 @pytest.mark.critical
