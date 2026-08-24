@@ -331,6 +331,11 @@
       if (x.authoritative === false) meta.push('observed');
       const reconciliation = x.reconciliation || {}, recovery = x.recovery || {};
       if (k === 'run' && reconciliation.verified) meta.push('journal verified');
+      const catalogRecovery = x.catalog_recovery || {};
+      if (k === 'run' && catalogRecovery.attempted) {
+        meta.push((catalogRecovery.recovered || 0) + ' recovered');
+        if (catalogRecovery.quarantined) meta.push(catalogRecovery.quarantined + ' quarantined');
+      }
       if (k === 'run' && recovery.retry_count) meta.push(recovery.retry_count + ' retries');
       if (k === 'run' && recovery.interrupted) meta.push('interrupted');
       const artifacts = Array.isArray(x.artifact_refs) ? x.artifact_refs : [];

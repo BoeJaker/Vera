@@ -555,6 +555,7 @@
       }
       if (e.kind === 'run' && (x.reconciliation || x.recovery)) {
         const rec = x.reconciliation || {}, recovery = x.recovery || {};
+        const catalog = x.catalog_recovery || {};
         const state = rec.verified ? 'verified' : 'unverified';
         const checksum = rec.tip_checksum ? String(rec.tip_checksum).slice(0, 16) + '…' : 'none';
         planHtml += '<div class="loopplan"><span class="lp-hd">Recovery &amp; reconciliation · observation only</span>' +
@@ -565,7 +566,13 @@
           esc((recovery.retry_count || 0) + ' retries · ' + (recovery.resume_count || 0) + ' resumes' + (recovery.interrupted ? ' · interrupted' : '')) + '</span></div>' +
           '<div class="lp-row"><span class="lp-seq">rebuild</span><span class="lp-goal">' +
           (rec.rebuild_available ? 'verified evidence can rebuild this shadow projection' : 'verified rebuild evidence unavailable') +
-          '; this UI cannot execute or resume the native run</span></div></div>';
+          '; this UI cannot execute or resume the native run</span></div>' +
+          (catalog.attempted ? '<div class="lp-row"><span class="lp-seq">startup</span><span class="lp-goal">' +
+            esc((catalog.recovered || 0) + ' projections recovered · ' +
+                (catalog.quarantined || 0) + ' quarantined · bounded to ' +
+                (catalog.bounded_limit || 'configured limit')) +
+            '</span></div>' : '<div class="lp-row"><span class="lp-seq">startup</span><span class="lp-goal">' +
+            'durable catalog recovery not enabled for this process</span></div>') + '</div>';
       }
       if (e.kind === 'run' && x.policy_state) {
         const policy = x.policy_state || {}, controls = Array.isArray(policy.controls) ? policy.controls : [];

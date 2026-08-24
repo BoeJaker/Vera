@@ -5935,6 +5935,94 @@ async def cap_contract_observations(prefix: str = "", event_limit: int = 500,
                    "truncated": len(observations) > bounded_caps})
     return result
 
+
+@capability(
+    "cap.resolve.shadow", memory="off", silent=True,
+    http_method="POST", http_path="/cap/resolve/shadow", http_tags=["cap", "obs"],
+    description="Preview Capability Contract v2 eligibility, exclusions, and ranking "
+                "without authorizing or invoking any candidate. Requires canonical_task; "
+                "optional allowed_effects, required_resources, preferred names, and bounded "
+                "recent operational evidence.",
+    schema={"properties": {
+        "canonical_task": {"type": "string"},
+        "allowed_effects": {"type": "array", "items": {"type": "string"}},
+        "required_resources": {"type": "array", "items": {"type": "string"}},
+        "preferred": {"type": "array", "items": {"type": "string"}},
+        "candidate_limit": {"type": "integer", "minimum": 1, "maximum": 500},
+        "event_limit": {"type": "integer", "minimum": 1, "maximum": 500},
+    }, "required": ["canonical_task"]},
+    contract={
+        "canonical_task": "capability.resolve.preview", "effects": ["read"],
+        "output_schema": {"type": "object"}, "approval": {"status": "not_required"},
+        "trust": {"status": "internal_registry"}, "secrets": {"status": "not_required"},
+        "filesystem": {"status": "not_required"}, "network": {"status": "not_required"},
+        "tenant": {"status": "global_read_only"}, "idempotency": {"status": "idempotent"},
+        "cancellation": {"status": "not_required"}, "pagination": {"status": "bounded"},
+        "resources": {"status": "declared", "classes": ["cpu"]}, "owner": "vera",
+    },
+)
+async def cap_resolve_shadow(canonical_task: str, allowed_effects=None,
+                             required_resources=None, preferred=None,
+                             event_limit: int = 200, candidate_limit: int = 100,
+                             trace_id=None):
+    from Vera.vera.capability_contract_core import (
+        project_registry, summarize_contract_observations,
+    )
+    from Vera.vera.capability_resolver_core import resolve_shadow
+    manifests = project_registry(CAPABILITY_REGISTRY)
+    observer = CAPABILITY_REGISTRY.get("obs.events", {}).get("raw")
+    events = []
+    if observer is not None:
+        bounded = max(1, min(int(event_limit or 200), 500))
+        value = await observer(limit=bounded, trace_id=trace_id)
+        events = value if isinstance(value, list) else []
+    evidence = summarize_contract_observations(
+        events, allowed_names={item["name"] for item in manifests})["observations"]
+    return resolve_shadow(manifests, {
+        "canonical_task": canonical_task,
+        "allowed_effects": allowed_effects if isinstance(allowed_effects, list) else [],
+        "required_resources": required_resources if isinstance(required_resources, list) else [],
+        "preferred": preferred if isinstance(preferred, list) else [],
+        "candidate_limit": candidate_limit,
+    }, observations=evidence)
+
+
+@capability(
+    "eval.corpus.inspect", memory="off", silent=True,
+    http_method="GET", http_path="/eval/corpus", http_tags=["eval", "obs"],
+    description="Inspect Vera's versioned frozen evaluation corpus without running "
+                "fixtures or models. Returns validation, stable fingerprint, lane/domain "
+                "coverage, and optionally bounded case metadata.",
+    contract={
+        "canonical_task": "evaluation.corpus.inspect", "effects": ["read"],
+        "output_schema": {"type": "object"}, "approval": {"status": "not_required"},
+        "trust": {"status": "repository_fixture"}, "secrets": {"status": "not_required"},
+        "filesystem": {"status": "read_repository_fixture"},
+        "network": {"status": "not_required"}, "tenant": {"status": "global_read_only"},
+        "idempotency": {"status": "idempotent"}, "cancellation": {"status": "not_required"},
+        "pagination": {"status": "bounded"},
+        "resources": {"status": "declared", "classes": ["cpu"]}, "owner": "vera",
+    },
+)
+async def eval_corpus_inspect(detail: bool = False, lane: str = "", domain: str = "",
+                              limit: int = 50, trace_id=None):
+    from pathlib import Path
+    from Vera.vera.evaluation_corpus_core import load_corpus, validate_corpus
+    path = Path(__file__).resolve().parent.parent / "evaluations" / "frozen-corpus-v1.json"
+    corpus = load_corpus(path)
+    report = validate_corpus(corpus)
+    result = {**report, "revision": corpus.get("revision"), "policy": corpus.get("policy", {})}
+    if detail:
+        cases = corpus.get("cases", [])
+        if lane:
+            cases = [case for case in cases if case.get("lane") == lane]
+        if domain:
+            cases = [case for case in cases if case.get("domain") == domain]
+        bounded = max(1, min(int(limit or 50), 200))
+        result.update({"matched": len(cases), "returned": min(len(cases), bounded),
+                       "truncated": len(cases) > bounded, "cases": cases[:bounded]})
+    return result
+
 @capability("mcp.call", memory="auto",
             http_method="POST", http_path="/mcp/call", http_tags=["mcp"],
             mcp_expose=False,
@@ -7820,15 +7908,18 @@ async def cap_dag_run(dag: list = None, state: dict = None, supervised: bool = F
     return {"trace_id":tid,"result":result}
 
 @capability("run.shadow.list", memory="off",
-            description="List recent non-authoritative Run shadow projections held in this process.")
+            description="List recent non-authoritative Run shadow projections and the "
+                        "redacted startup catalog-recovery outcome for this process.")
 async def cap_run_shadow_list(limit: int = 50, trace_id=None):
     from Vera.vera.execution.run_projection import SHADOW_RUNS
     return {"authoritative": False, "storage": SHADOW_RUNS.storage,
-            "runs": SHADOW_RUNS.list(limit)}
+            "runs": SHADOW_RUNS.list(limit),
+            "recovery": SHADOW_RUNS.recovery_status()}
 
 @capability("run.shadow.graph", memory="off",
             http_method="GET", http_path="/run/shadow/graph", http_tags=["runs"],
-            description="Read a bounded, content-free, non-authoritative Run graph for UI overlays.")
+            description="Read a bounded, content-free, non-authoritative Run graph plus "
+                        "redacted startup catalog-recovery status for UI overlays.")
 async def cap_run_shadow_graph(run_id: str = "", session_id: str = "",
                                run_trace_id: str = "", limit: int = 100,
                                trace_id=None):
@@ -7842,7 +7933,8 @@ async def cap_run_shadow_get(run_id: str, trace_id=None):
     from Vera.vera.execution.run_projection import SHADOW_RUNS
     projection = SHADOW_RUNS.get(run_id)
     return projection or {"error": "run_not_found", "run_id": run_id,
-                          "authoritative": False, "storage": SHADOW_RUNS.storage}
+                          "authoritative": False, "storage": SHADOW_RUNS.storage,
+                          "recovery": SHADOW_RUNS.recovery_status()}
 
 @capability("run.shadow.export", memory="off",
             description="Export the checksummed in-memory event journal for a recent shadow Run.")
@@ -7854,6 +7946,64 @@ async def cap_run_shadow_export(run_id: str, trace_id=None):
                 "authoritative": False, "storage": SHADOW_RUNS.storage}
     return {"authoritative": False, "storage": SHADOW_RUNS.storage,
             "export": exported}
+
+
+@capability("workflow.ir.import_dag", memory="off",
+            description="Describe a native Vera DAG as versioned Workflow IR and report all "
+                        "semantic gaps. This inspection capability never executes the DAG. "
+                        "Lossy conversion is refused unless allow_lossy is explicitly true.")
+async def cap_workflow_ir_import_dag(dag: list = None, name: str = "",
+                                     allow_lossy: bool = False, trace_id=None):
+    from Vera.vera.execution.workflow_ir import import_native_dag
+    return import_native_dag(dag, name=name, allow_lossy=allow_lossy)
+
+
+@capability("workflow.ir.export_dag", memory="off",
+            description="Convert supported Workflow IR to Vera's native DAG array with an "
+                        "explicit loss/gap report. This inspection capability never runs it.")
+async def cap_workflow_ir_export_dag(workflow: dict, allow_lossy: bool = False,
+                                     trace_id=None):
+    from Vera.vera.execution.workflow_ir import export_native_dag
+    return export_native_dag(workflow, allow_lossy=allow_lossy)
+
+
+@capability("workflow.ir.validate", memory="off",
+            description="Validate and normalize Workflow IR and return its stable SHA-256 "
+                        "content hash. This capability has no execution side effects.")
+async def cap_workflow_ir_validate(workflow: dict, trace_id=None):
+    from Vera.vera.execution.workflow_ir import (
+        WorkflowIRValidationError, normalize_workflow)
+    try:
+        return {"ok": True, "workflow": normalize_workflow(workflow), "executes": False}
+    except WorkflowIRValidationError as exc:
+        return {"ok": False, "error": "invalid_workflow", "detail": str(exc),
+                "executes": False}
+
+
+@capability("workflow.ir.migrate", memory="off",
+            description="Normalize a known Workflow IR version or explicitly refuse an "
+                        "unsupported source/target version. Never executes a workflow.")
+async def cap_workflow_ir_migrate(workflow: dict, target_version: str = "1.0",
+                                  trace_id=None):
+    from Vera.vera.execution.workflow_ir import migrate_workflow
+    return migrate_workflow(workflow, target_version=target_version)
+
+
+@capability("workflow.ir.adapters", memory="off",
+            description="List declarative Workflow IR adapter profiles, including whether an "
+                        "adapter is actually available and executable. Does not load runtimes.")
+async def cap_workflow_ir_adapters(trace_id=None):
+    from Vera.vera.execution.workflow_ir import adapter_profiles
+    return adapter_profiles()
+
+
+@capability("workflow.ir.gaps", memory="off",
+            description="Analyze Workflow IR compatibility with a named adapter profile without "
+                        "importing or invoking that runtime.")
+async def cap_workflow_ir_gaps(workflow: dict, adapter: str = "vera.native_dag",
+                               trace_id=None):
+    from Vera.vera.execution.workflow_ir import analyze_adapter
+    return analyze_adapter(workflow, adapter=adapter)
 
 @capability("dag.plan", memory="on",
             http_method="POST", http_path="/dag/plan", http_tags=["dag"],

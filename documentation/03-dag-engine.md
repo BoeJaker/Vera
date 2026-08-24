@@ -8,7 +8,7 @@ The DAG Workshop tab in the harness is the interactive surface; the capabilities
 
 ## Run protocol shadow
 
-The held W1-01 integration wraps the existing `dag.run` path with a
+The W1-01 integration wraps the existing `dag.run` path with a
 runtime-neutral Run projection. It does not replace the DAG engine: native
 inputs, scheduling, HITL, cancellation, results, and failures remain
 authoritative. Observation failure is isolated so it cannot change the native
@@ -21,9 +21,88 @@ Workshop and clearly label the view `run_protocol_shadow` versus authority
 `native_dag`. Control records describe request/acknowledgement intent only; they
 never execute a native approve, reject, retry, resume, or cancel operation.
 
+When `VERA_RUN_JOURNAL_PATH` enables the SQLite journal, new Runs also persist
+immutable identity metadata and a sequence-bound, content-free projection
+checkpoint. On process start, the shadow registry verifies each Run's checksum
+chain and reconstructs the newest bounded catalog, including parent/child,
+workflow, task, session and trace identity, progress, attempts, errors and
+artifact references. One corrupt Run is omitted and reported without preventing
+healthy Runs from loading. Recovery rebuilds observation only: it never invokes
+the DAG, a capability, or a control request.
+
+`run.shadow.list`, `run.shadow.get`, and `run.shadow.graph` expose the same
+content-free recovery summary: whether startup recovery ran, recovered and
+quarantined counts, the configured catalog bound, and hashed quarantine
+references. Raw IDs from other quarantined Runs and error messages are not
+returned.
+
+Journals created before identity/checkpoint metadata was introduced can still be
+verified and exported, but older event rows may recover only the fields encoded
+in those events. The implementation does not invent missing lineage.
+
 This slice is intentionally a compatibility facade. Later Workflow IR and
 runtime-adapter work can emit the same contract without requiring Vera to replace
 LangGraph, external runtimes, or its own established DAG execution paths.
+
+## Workflow IR inspection facade
+
+The held W1-02 foundation introduces a versioned, runtime-neutral description
+layer without changing execution. `workflow.ir.import_dag` converts supported
+native DAG structure into Workflow IR; `workflow.ir.export_dag` performs the
+reverse conversion; and `workflow.ir.validate` returns the normalized document
+and stable SHA-256 content hash. All three report `executes: false`.
+
+The initial portable core covers sequential capability tasks, flat parallel
+groups, output state keys, and `CONDITION:<state-key>` guards. Native input/output
+maps round-trip under namespaced extensions but are reported as non-blocking gaps
+because the core runner stores rather than interprets them. Callable conditions,
+unknown fields, unknown extensions, malformed nodes, and nested non-task parallel
+branches are rejected or returned as blocking gaps. A caller must explicitly set
+`allow_lossy=true` to receive a partial conversion; doing so still cannot execute
+the result.
+
+This strict boundary is what makes later LangGraph, Temporal, ONNX workflow, and
+other runtime adapters honest: unsupported semantics are visible before any
+engine is selected. Retry, timeout, effects, schedules, loops/maps/reducers,
+compensation, HITL, and subworkflows remain subsequent W1-02 slices rather than
+being inferred from Vera's compact DAG arrays.
+
+The second held slice adds explicit JSON-schema port descriptors and typed value
+references for state, secrets, artifacts, records, and literals. References are
+validated and hashed as opaque descriptions; the adapter never resolves a
+secret, fetches an artifact, or reads a record. Task contracts can also declare
+retry/backoff ownership, timeout ownership, idempotency keys, and effects across
+filesystem, network, database, process, model, device, notification, and external
+services. Native DAG export reports all of these as blocking gaps because the
+compact array cannot preserve or enforce them. Explicit `allow_lossy` is the only
+way to obtain an array with those contracts removed.
+
+The third held slice represents subworkflow references, conditional choices,
+bounded maps, and reducers as strictly validated structural nodes. Nested step
+IDs remain globally unique within the document, subworkflows use opaque artifact
+or record references, and all values must be canonical JSON. The native DAG
+adapter reports each structural node as `unsupported_structure`; it never
+flattens a branch, guesses collection semantics, resolves a child workflow, or
+executes a reducer. With explicit lossy export, unsupported nodes are omitted and
+the returned gap report remains attached.
+
+The fourth held slice adds workflow-level schedules, resource envelopes, and
+opaque provider requirements, plus task-level HITL approval and compensation
+contracts. Schedule ownership is explicit (`runtime` or `external`), resource
+numbers must be finite and positive, approval declarations cannot masquerade as
+optional, and compensation triggers are limited to failure, cancellation, and
+timeout. These records are descriptive only: Vera does not schedule work,
+consume an approval, reserve a provider, or invoke rollback through Workflow IR.
+Native DAG export reports every operational contract as a blocking gap.
+
+The fifth held slice adds explicit current-version migration and declarative
+adapter profiles. `workflow.ir.migrate` normalizes IR 1.0 without changing its
+hash semantics and refuses unknown source or target versions. It never invents a
+migration. `workflow.ir.adapters` distinguishes schema availability from
+execution availability, while `workflow.ir.gaps` analyzes compatibility without
+loading a runtime. The LangGraph and Temporal names are reserved profiles marked
+unavailable with no claimed feature support; only a separately implemented and
+tested adapter may change those declarations.
 
 ---
 

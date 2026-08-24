@@ -12,6 +12,7 @@ The snapshot currently includes:
 - UI panels and HTTP routes;
 - schedule definitions without volatile run counters or timestamps;
 - worker runtime records and MCP server registrations;
+- declared configuration-key presence, never configuration values;
 - name-family signals for `loop`, `pipeline`, `workflow`, `run`, `job`, `task`,
   `scheduler`, `generate`, `query`, and `store` duplication investigations.
 
@@ -62,8 +63,10 @@ roles must not be used as policy. Capability Contract v2 should replace these
 hints with explicit ownership/lifecycle metadata.
 
 W0-01 remains active. The inventory still needs stored workflow definitions,
-database schemas, artifacts, connections, redacted configuration-key presence,
-and a static/dynamic caller graph. Subsequent snapshots should be retained only
+database schemas, artifacts, connections, and a static/dynamic caller graph.
+Configuration coverage now reports only whether each centrally declared key was
+explicitly supplied by the environment; defaults and all values remain private.
+Subsequent snapshots should be retained only
 at meaningful branch or release boundaries, and comparisons should report added,
 removed, and changed identities rather than committing a multi-megabyte dump on
 every startup.

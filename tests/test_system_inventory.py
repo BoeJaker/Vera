@@ -39,6 +39,7 @@ def _inputs(tmp_path):
         "workers": {"worker-b": {"caps": ["z", "a"], "api_token": "do-not-leak"}},
         "mcp_servers": {"z": "http://user:pass@z/path?token=secret", "a": "http://a"},
         "repo_root": tmp_path,
+        "configuration_keys": {"REDIS_URL": True, "GITEA_TOKEN": False},
     }
 
 
@@ -105,3 +106,22 @@ def test_inventory_redacts_runtime_secrets_and_endpoint_credentials(tmp_path):
     assert snapshot["mcp_servers"][1]["url"] == "http://z/path"
     assert "do-not-leak" not in str(snapshot)
     assert "user:pass" not in str(snapshot)
+
+
+def test_inventory_reports_configuration_presence_without_values(tmp_path):
+    inputs = _inputs(tmp_path)
+    inputs["configuration_keys"] = {
+        "REDIS_URL": "redis://user:password@secret-host/0",
+        "GITEA_TOKEN": "must-not-leak",
+        "OPTIONAL_EMPTY": "",
+    }
+    snapshot = build_system_inventory(**inputs, captured_at="fixed")
+    assert snapshot["configuration_keys"] == [
+        {"key": "GITEA_TOKEN", "explicit": True},
+        {"key": "OPTIONAL_EMPTY", "explicit": False},
+        {"key": "REDIS_URL", "explicit": True},
+    ]
+    assert "must-not-leak" not in str(snapshot)
+    assert "secret-host" not in str(snapshot)
+    assert "configuration_keys" in snapshot["coverage"]["included"]
+    assert "configuration_keys" not in snapshot["coverage"]["not_yet_included"]

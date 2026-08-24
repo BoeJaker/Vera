@@ -135,6 +135,26 @@ def test_sqlite_journal_preserves_idempotency_and_guarded_delete(tmp_path):
     journal.close()
 
 
+def test_sqlite_rebuild_replays_event_appended_after_last_checkpoint(tmp_path):
+    path = tmp_path / "runs.sqlite3"
+    run = Run(id="run-crash", kind="test", trace_id="trace")
+    journal = SqliteRunJournal(path)
+    started = run.transition(RunStatus.RUNNING, event_type="run.started")
+    journal.register(run)
+    journal.append(started)
+    journal.checkpoint(run)
+    completed = run.transition(RunStatus.COMPLETED, event_type="run.completed")
+    journal.append(completed)  # simulate process loss before checkpoint update
+    journal.close()
+
+    reopened = SqliteRunJournal(path)
+    rebuilt = reopened.rebuild(run_id=run.id)
+
+    assert rebuilt.status == RunStatus.COMPLETED
+    assert [event.type for event in rebuilt.events] == ["run.started", "run.completed"]
+    reopened.close()
+
+
 def test_controls_record_intent_and_native_acknowledgement_without_execution():
     ledger = RunControlLedger()
     requested = ledger.request(run_id="run-1", action="retry",
