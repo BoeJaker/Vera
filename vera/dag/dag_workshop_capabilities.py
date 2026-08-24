@@ -10044,6 +10044,22 @@ async def cap_code_save(path: str, content: str, session_id: str = "", repo: str
                                  mirror_fs=mirror_fs)
 
 
+# Collapse guard for code.author's automatic repair loops — see the module
+# docstring of code_author_guards for the incident it pins. This module is in
+# _module_files, so a hard ImportError here would take the whole app down; fall
+# back to the previous (unguarded) behaviour rather than failing to boot.
+try:
+    from Vera.vera.dag.code_author_guards import repair_collapsed as _repair_collapsed
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag.code_author_guards import repair_collapsed as _repair_collapsed
+    except Exception:
+        log.warning("code_author_guards unavailable — repair collapse guard disabled")
+
+        def _repair_collapsed(before: str, after: str, **_kw) -> bool:
+            return False
+
+
 # NOTE: keep plain helpers ABOVE the next @capability decorator. A decorator
 # binds to whatever function follows it, so a helper slipped in between
 # registers itself AS that capability — which is exactly what happened here:
@@ -10618,7 +10634,33 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
         if not applied.get("ok"):
             last_edit_err = "; ".join(applied.get("errors", [])[:3]) or "edit(s) did not apply"
             continue
-        code = applied["content"]
+        # A syntax repair is BY CONTRACT the smallest possible fix (see _edit_sys).
+        # An "edit" that deletes most of the file satisfies the parser by MUTILATION
+        # rather than by fixing anything — and the result parses perfectly, so every
+        # downstream check passes and the caller gets ok=True on an empty shell. That
+        # is exactly how a truncated habit-tracker generation became a 97-byte
+        # `<html><head></head><body></body></html>` reported as a success. Reject the
+        # collapse and tell the editor why, reusing the existing rejection feedback
+        # path; keeping the still-broken file is the honest outcome, because a file
+        # that does not parse already returns ok=False and routes into the loop's
+        # ordinary retry handling.
+        _cand = applied["content"]
+        _before = len(code.strip())
+        _after = len(_cand.strip())
+        if _repair_collapsed(code, _cand):
+            last_edit_err = (
+                f"that edit DELETED most of the file ({_before} -> {_after} chars). "
+                f"A syntax fix must PRESERVE the existing content and change only what "
+                f"the error names — never remove code to make the file parse.")
+            try:
+                await emit_event({"type": "code.author.repair_rejected", "path": path,
+                                  "attempt": attempt - 1, "reason": "collapse",
+                                  "before_chars": _before, "after_chars": _after,
+                                  "session_id": session_id})
+            except Exception:
+                pass
+            continue
+        code = _cand
         check = _v5_check_syntax(code, _lang_used, path)
         last_edit_err = "" if check.get("ok") else check.get("error", "")
     _syntax_finished = time.perf_counter()
@@ -10702,7 +10744,21 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
             _ra = _v5_apply_edits(code, _re)
             if not _ra.get("ok"):
                 break
-            code = _ra["content"]
+            # Same collapse guard as the syntax-repair loop above: "fixing" a crash
+            # by deleting the code that crashes leaves a file that parses AND runs
+            # (it does nothing), which every check downstream reports as a success.
+            _rc = _ra["content"]
+            if _repair_collapsed(code, _rc):
+                try:
+                    await emit_event({"type": "code.author.repair_rejected", "path": path,
+                                      "attempt": _rt + 1, "reason": "collapse_runtime",
+                                      "before_chars": len(code.strip()),
+                                      "after_chars": len(_rc.strip()),
+                                      "session_id": session_id})
+                except Exception:
+                    pass
+                break               # keep the honest runtime error rather than an empty file
+            code = _rc
             check = _v5_check_syntax(code, _lang_used, path)
             if not check.get("ok"):
                 break               # the fix broke syntax — the syntax path reports it

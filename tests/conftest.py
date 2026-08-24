@@ -34,6 +34,7 @@ _CRITICAL_MODULES = {
     "test_gate_sweep",          # Ollama-gate leaked-lease sweep — MUST never clear a peer host's live slot (double-books GPU)
     "test_gate_renew",          # Ollama-gate renewable-lease heartbeat — orphaned slot self-heals fast; renew is owner-fenced
     "test_gate_cancel_release",  # Ollama-gate heartbeat frees the slot the moment its run is cancelled (no runaway GPU hold)
+    "test_code_author_repair_guard",  # code.author repair must never "fix" a file by gutting it (2026-08-24 empty-stub incident)
 }
 
 
