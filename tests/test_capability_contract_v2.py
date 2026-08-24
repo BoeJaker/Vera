@@ -217,3 +217,11 @@ def test_gate_capability_rejects_unknown_names_without_invocation():
     assert result["ok"] is False
     assert result["selected"] == ["cap.contract.manifest", "does.not.exist"]
     assert any(issue["code"] == "gate.capability_unknown" for issue in result["issues"])
+
+
+def test_gate_capability_accepts_mcp_coerced_python_list_string():
+    result = asyncio.run(orchestration.cap_contract_gate.__wrapped__(
+        names="['cap.contract.coverage', 'cap.contract.gate']"))
+    assert result["selected"] == ["cap.contract.coverage", "cap.contract.gate"]
+    assert not [issue for issue in result["issues"]
+                if issue["code"] == "gate.capability_unknown"]

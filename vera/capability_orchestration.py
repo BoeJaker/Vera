@@ -5816,6 +5816,13 @@ async def cap_contract_coverage(prefix: str = "", include_internal: bool = False
                 "Contract v2 manifests without gating the untouched legacy registry. "
                 "Inputs: names (CSV string or list, required), fail_on_warnings. Unknown "
                 "names and missing required declarations fail. Inspection only.",
+    schema={"properties": {
+        "names": {"oneOf": [
+            {"type": "string", "description": "Comma-separated capability names"},
+            {"type": "array", "items": {"type": "string"}},
+        ]},
+        "fail_on_warnings": {"type": "boolean"},
+    }, "required": ["names"]},
     contract={
         "canonical_task": "capability.contract.gate",
         "aliases": ["capabilities.contract_gate"],
@@ -5835,9 +5842,21 @@ async def cap_contract_coverage(prefix: str = "", include_internal: bool = False
     },
 )
 async def cap_contract_gate(names=None, fail_on_warnings: bool = False, trace_id=None):
+    import ast
     from Vera.vera.capability_contract_core import gate_contracts, project_contract
     if isinstance(names, str):
-        selected = [item.strip() for item in names.split(",") if item.strip()]
+        raw_names = names.strip()
+        parsed_names = None
+        if raw_names.startswith("[") and raw_names.endswith("]"):
+            try:
+                candidate = ast.literal_eval(raw_names)
+                if isinstance(candidate, list):
+                    parsed_names = candidate
+            except (SyntaxError, ValueError):
+                pass
+        selected = ([str(item).strip() for item in parsed_names if str(item).strip()]
+                    if parsed_names is not None else
+                    [item.strip() for item in raw_names.split(",") if item.strip()])
     elif isinstance(names, list):
         selected = [str(item).strip() for item in names if str(item).strip()]
     else:
