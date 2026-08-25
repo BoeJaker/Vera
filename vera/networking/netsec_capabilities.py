@@ -70,6 +70,7 @@ _DEFAULTS: Dict[str, Any] = {
     "subnet": "10.88.0.0/16",
     "listen_port": 51820,
     "iface": "vera0",
+    "enroll_token": "",         # shared self-enrol token (netsec.mesh.enroll_token)
     "enforce": False,           # tolerant to begin — warn, don't block
     "members": {},              # host_id → member record
 }
