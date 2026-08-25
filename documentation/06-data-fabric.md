@@ -61,11 +61,22 @@ reconciliation locates failed/stale work, and authority rollback schedules the
 restored revision's projections for a new generation instead of merely moving a
 head pointer.
 
-This remains an injected-path kernel rather than a silent migration of
-`DataRecord` or the tables above. Existing ingestion behavior is unchanged. A
-subsequent slice will expose one policy-gated Fabric revision API and attach
-actual projection workers; until then these receipts do not claim that FAISS,
-Chroma or Neo4j were contacted.
+The first public path is deliberately narrow:
+`fabric.revision.put`, `fabric.revision.get`, and
+`fabric.revision.reconcile`. Deployment policy is read from
+`FABRIC_REVISION_POLICY`; by default reads are allowed and only direct human
+(`user`) writes are admitted. Namespace-specific reader/writer rules can admit
+Codex, Claude/Claude Code, or autonomous callers explicitly. Invalid policy
+fails closed.
+
+`fabric.revision.put` commits authority first, then projects the canonical
+envelope into the existing SQLite `fabric_records` read path and transitions
+its `sqlite` receipt to `applied`, `removed`, or `failed`. Dataset counts remain
+idempotent across replay and tombstone deletion. A projection failure does not
+erase the authoritative revision; bounded `fabric.revision.reconcile` retries
+failed/stale receipts through `rebuilding`. Existing `fabric.ingest` behavior
+is unchanged, and this slice makes no claim that FAISS, Chroma, PostgreSQL or
+Neo4j were contacted.
 
 ---
 

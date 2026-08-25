@@ -35,31 +35,37 @@ class RevisionPath:
         if not actor or not self.authorize(action, actor, resource):
             raise RevisionAccessDenied(f"{action} denied")
 
+    def require_envelope(self, action: str, actor: str,
+                         envelope: dict[str, Any]) -> None:
+        self._require(action, actor, {
+            "record_id": envelope["record_id"],
+            "revision_id": envelope["revision_id"],
+            "namespace": envelope["namespace"],
+            "record_type": envelope["record_type"],
+            "tombstone": bool(envelope["tombstone"]),
+            "policy": envelope.get("policy") or {},
+        })
+
     def put(self, revision: RecordRevision, *, actor: str,
             projections: Iterable[str], expected_head: str | None = None
             ) -> dict[str, Any]:
         if not isinstance(revision, RecordRevision):
             raise TypeError("revision must be a RecordRevision")
         envelope = revision.to_dict()
-        self._require("revision.write", actor, {
-            "record_id": revision.record_id,
-            "revision_id": revision.revision_id,
-            "namespace": revision.namespace,
-            "record_type": revision.record_type,
-            "tombstone": revision.tombstone,
-            "policy": envelope["policy"],
-        })
+        self.require_envelope("revision.write", actor, envelope)
         return self.store.put(revision, projections=projections,
                               expected_head=expected_head)
 
     def get(self, record_id: str, *, actor: str,
             revision_id: str = "") -> dict[str, Any] | None:
-        resource = {"record_id": str(record_id),
-                    "revision_id": str(revision_id or "")}
-        self._require("revision.read", actor, resource)
         if revision_id:
             value = self.store.revision(revision_id)
             if value["record_id"] != record_id:
                 raise KeyError("revision does not belong to record")
-            return value
-        return self.store.current(record_id)
+        else:
+            value = self.store.current(record_id)
+        resource = {"record_id": str(record_id),
+                    "revision_id": str(revision_id or ""),
+                    "namespace": value["namespace"] if value else ""}
+        self._require("revision.read", actor, resource)
+        return value

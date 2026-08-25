@@ -125,6 +125,15 @@ class RevisionStore:
             actual_head = head["revision_id"] if head else ""
             if expected_head is not None and expected_head != actual_head:
                 raise RevisionConflict("head changed")
+            if head:
+                prior = conn.execute(
+                    "SELECT envelope_json FROM fabric_record_revisions "
+                    "WHERE revision_id=?", (actual_head,)).fetchone()
+                prior_envelope = json.loads(prior["envelope_json"])
+                identity_fields = ("namespace", "record_type", "logical_key")
+                if any(prior_envelope[field] != envelope_value[field]
+                       for field in identity_fields):
+                    raise RevisionConflict("stable record identity changed")
             parents = envelope_value["provenance"]["parents"]
             if actual_head and actual_head not in parents:
                 raise RevisionConflict("current head missing from lineage")

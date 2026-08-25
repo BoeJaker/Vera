@@ -53,3 +53,16 @@ def test_read_current_or_exact_revision_and_prevent_record_confusion(tmp_path):
                  revision_id=value.revision_id)
     with pytest.raises(RevisionAccessDenied, match="read denied"):
         path.get(value.record_id, actor="agent-b")
+
+
+def test_read_authorizer_receives_stored_namespace(tmp_path):
+    seen = []
+    store = RevisionStore(tmp_path / "fabric.db")
+    value = revision()
+    RevisionPath(store, lambda *args: True).put(
+        value, actor="agent-a", projections=["vector"], expected_head="")
+    path = RevisionPath(store, lambda action, actor, resource:
+                        not seen.append(resource.copy()))
+    path.get(value.record_id, actor="agent-a")
+    assert seen == [{"record_id": value.record_id, "revision_id": "",
+                     "namespace": "test.dataset"}]

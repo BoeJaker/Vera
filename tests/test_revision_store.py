@@ -140,3 +140,15 @@ def test_store_rejects_non_contract_objects_and_noop_rollback(tmp_path):
     with pytest.raises(RevisionConflict, match="already head"):
         store.rollback(value.record_id, expected_head=value.revision_id,
                        target_revision=value.revision_id, occurred_at=T1)
+
+
+def test_head_cannot_change_stable_record_identity(tmp_path):
+    store = RevisionStore(tmp_path / "fabric.db")
+    first = rev(1)
+    store.put(first, projections=["vector"], expected_head="")
+    changed = create_record_revision(
+        namespace="other.dataset", record_type="document",
+        record_id=first.record_id, logical_key="item-1", content={"value": 2},
+        created_at=T1, parents=[first.revision_id])
+    with pytest.raises(RevisionConflict, match="stable record identity"):
+        store.put(changed, projections=["vector"], expected_head=first.revision_id)
