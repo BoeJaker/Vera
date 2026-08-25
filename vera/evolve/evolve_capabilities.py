@@ -100,6 +100,13 @@ except ImportError:
     except ImportError:
         from attribution_core import author_agent_for, controller_for, effective_controller
 
+try:
+    from Vera.vera.evolve.worktree_repair import (
+        plan_severed_worktree_repair, repair_severed_worktree)
+except ImportError:
+    from .worktree_repair import (
+        plan_severed_worktree_repair, repair_severed_worktree)
+
 
 def _triggered_by() -> str:
     """Real, honest run-trigger bucket — never guessed beyond what's actually
@@ -8633,6 +8640,67 @@ async def evolve_sandbox_preflight(name: str = "", branch: str = "",
     return {"ok": True, **decision, "sandbox": {**target, **observation},
             "plan": ([] if not decision["allowed"] else [{"action": action,
                      "target": target.get("name"), "branch": target.get("branch")}])}
+
+
+@capability("evolve.sandbox.worktree.repair", memory="on",
+            http_method="POST", http_path="/evolve/sandbox/worktree/repair",
+            http_tags=["evolve"],
+            description="Non-destructively repair one fully severed Loop Lab Git "
+                        "worktree. The exact branch directory is quarantined, Git "
+                        "linkage is recreated, preserved files and tracked deletions "
+                        "are overlaid and verified, and the quarantine is retained. "
+                        "Refuses protected branches or any worktree mounted by a "
+                        "container. Defaults to dry_run=true; pass dry_run=false only "
+                        "after reviewing the exact plan.")
+async def evolve_sandbox_worktree_repair(branch: str, dry_run: bool = True,
+                                         trace_id=None):
+    branch = str(branch or "").strip()
+    if branch in {BLEEDING_EDGE_BRANCH, BLEEDING_EDGE_MIRROR_BRANCH,
+            MAINLINE_MIRROR_BRANCH, "main"}:
+        return {"error": "protected branch cannot be repaired by this capability",
+                "refused": "protected_branch"}
+    try:
+        plan = plan_severed_worktree_repair(_repo_root(), branch)
+    except (ValueError, RuntimeError) as exc:
+        return {"error": str(exc), "branch": branch, "mutated": False}
+    # Docker must positively prove no container has this source mounted. An
+    # unavailable daemon is unknown ownership, never permission to repair.
+    listed = await _sh(["docker", "ps", "-aq"], timeout=15)
+    if not listed.get("ok"):
+        return {"error": "docker state unavailable", "branch": branch,
+                "mutated": False, "refused": "docker_unknown"}
+    target = str(Path(plan["worktree"]).resolve()).replace("\\", "/").rstrip("/")
+    ids = [item for item in (listed.get("out") or "").splitlines() if item.strip()]
+    for container_id in ids:
+        mounts = await _sh(["docker", "inspect", "-f",
+                            "{{range .Mounts}}{{println .Source}}{{end}}",
+                            container_id], timeout=15)
+        if not mounts.get("ok"):
+            return {"error": "container mount state unavailable", "branch": branch,
+                    "mutated": False, "refused": "docker_unknown"}
+        sources = {line.strip().replace("\\", "/").rstrip("/")
+                   for line in (mounts.get("out") or "").splitlines()}
+        if target in sources:
+            return {"error": "worktree is still mounted by a container",
+                    "branch": branch, "container_id": container_id[:12],
+                    "mutated": False, "refused": "container_mounted"}
+    if dry_run:
+        return {"ok": True, **plan}
+    try:
+        result = await asyncio.get_running_loop().run_in_executor(
+            None, repair_severed_worktree, _repo_root(), branch)
+    except Exception as exc:
+        await _audit("sandbox.worktree.repair.failed", str(exc)[:300], branch=branch)
+        source_present = Path(plan["worktree"]).is_dir()
+        return {"error": str(exc)[:500], "branch": branch, "mutated": False,
+                "source_present": source_present}
+    await _audit("sandbox.worktree.repaired",
+                 f"non-destructive repair; quarantine={result.get('quarantine')}",
+                 branch=branch)
+    await emit_event({"type": "evolve.sandbox.worktree.repaired", "branch": branch,
+                      "preserved_files": result.get("preserved_files", 0),
+                      "quarantine_retained": True})
+    return result
 
 
 @capability("evolve.sandbox.down", memory="on",
