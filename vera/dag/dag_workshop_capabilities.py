@@ -10226,6 +10226,14 @@ async def cap_code_save(path: str, content: str, session_id: str = "", repo: str
                                  mirror_fs=mirror_fs)
 
 
+# Loop prompt rules â€” one definition per rule (Phase 1). Import-safe like the
+# other pure cores: the loop must still start if this module is unavailable.
+try:
+    from Vera.vera.dag import loop_prompt_rules as _RULES
+except Exception:                                     # pragma: no cover
+    from vera.dag import loop_prompt_rules as _RULES
+
+
 # Collapse guard for code.author's automatic repair loops — see the module
 # docstring of code_author_guards for the incident it pins. This module is in
 # _module_files, so a hard ImportError here would take the whole app down; fall
@@ -12573,6 +12581,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
             try:
                 await _emit_stage_context(
                     "planner", variant="minimal", system=sys, prompt=prompt,
+                    rule_ids=_RULES.rule_ids_for("planner:minimal"),
                     model=plan_model, role="planner",
                     session_id=sid, stream_id=stream_id, cycle=None,
                     runtime={"goal_chars": len(goal or ""), "caps_count": len(catalog_names or [])})
@@ -12863,6 +12872,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
         try:
             await _emit_stage_context(
                 "planner", variant="full", system=sys, prompt=prompt,
+                rule_ids=_RULES.rule_ids_for("planner:full"),
                 model=plan_model, role="planner",
                 session_id=sid, stream_id=stream_id, cycle=None,
                 runtime={"goal_chars": len(goal or ""), "caps_count": len(catalog_names or [])})
@@ -13084,6 +13094,7 @@ async def _emit_stage_context(stage: str, *, system: str = "", prompt: str = "",
                               model: str = "", role: str = "", session_id: str = "",
                               stream_id: str = "", cycle: Optional[int] = None,
                               step_id: Optional[Any] = None, variant: str = "",
+                              rule_ids: Optional[List[str]] = None,
                               runtime: Optional[Dict[str, Any]] = None) -> None:
     """Emit one stage-context record. Never raises — this is instrumentation."""
     if _stage_audit is None:
@@ -13092,7 +13103,7 @@ async def _emit_stage_context(stage: str, *, system: str = "", prompt: str = "",
         rec = _stage_audit.stage_record(
             stage, system=system, prompt=prompt, model=model, role=role,
             session_id=session_id, stream_id=stream_id, cycle=cycle,
-            step_id=step_id, variant=variant, runtime=runtime)
+            step_id=step_id, variant=variant, rule_ids=rule_ids, runtime=runtime)
         rec["type"] = "agent_loop.stage_context"
         await emit_event(rec)
     except Exception as e:                             # pragma: no cover
@@ -18560,6 +18571,7 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
         try:
             await _emit_stage_context(
                 "controller", variant="", system=sys, prompt=prompt,
+            rule_ids=_RULES.rule_ids_for("controller"),
                 model=model, role="controller",
                 session_id=session_id, stream_id="", cycle=None,
                 runtime={"goal_chars": len(goal or ""), "ledger_steps": len(results or []), "pending_steps": len(queue or []), "caps_count": len(catalog_names or [])})
@@ -19643,6 +19655,7 @@ async def _v6_adjust_step(failed_step: Dict[str, Any], failed_res: Dict[str, Any
         try:
             await _emit_stage_context(
                 "adjust", system=sys, prompt=prompt, model=model, role="controller",
+            rule_ids=_RULES.rule_ids_for("adjust"),
                 session_id=session_id, step_id=(failed_step or {}).get("id"),
                 runtime={"caps_count": len(catalog_names or [])})
         except Exception as _ae:      # pragma: no cover â€” instrumentation must never alter a stage
@@ -20349,27 +20362,7 @@ async def _v7_decide_intent(goal: str, *, use_llm: bool, model: str,
 # prompts (the full schema and the minimal-schema retry) — they drifted apart before,
 # and a rule that reaches only one of them holds only on the runs that happen to take
 # that path, which reads as the model ignoring it.
-_V7_CRITERIA_RULE = (
-    "FOR A FILE THIS RUN AUTHORS, THE PROOF IS THE AUTHOR'S OWN VERDICT — NOT A TRIAL "
-    "RUN OF THE FILE. code.author/code.edit put the file through a real parser and "
-    "return `syntax_ok`/`checked_with`/`bytes`; that report IS the verification, and it "
-    "is the only one this run needs or can get. Phrase every criterion so that verdict "
-    "settles it: the file EXISTS, the author reported it verified, and it CONTAINS the "
-    "required features — e.g. \"index.html is created and verified by code.author, with "
-    "start/pause/reset controls, a 25-minute work interval and a 5-minute break\".\n"
-    "WANT THE PAGE'S BEHAVIOUR VERIFIED TOO? That is legitimate — but there is exactly ONE "
-    "way to do it here: an `operator.run` step. It drives a REAL headless browser "
-    "(observe→think→act, real clicks, real observed DOM changes, screenshots) against the "
-    "file served out of this session's sandbox. So a criterion like \"the timer counts down, "
-    "pauses and resets\" is allowed ONLY when the plan actually contains an operator.run step "
-    "to settle it — otherwise leave the clause out rather than assert something nothing will "
-    "check.\n"
-    "NEVER try to verify a page any OTHER way. exec.bash.run/exec.python.run cannot see a "
-    "rendered page: starting `python3 -m http.server`, driving Selenium, calling "
-    "webbrowser.open()/xdg-open, or grepping the file for a function name proves nothing "
-    "about behaviour. (Observed: a done_when reading \"functions correctly in a browser\" with "
-    "no operator.run step sent a run to `python3 -m http.server`, where it hung until it was "
-    "killed.) Use operator.run, or omit the claim.\n")
+_V7_CRITERIA_RULE = _RULES.RULES['criteria_settleable'].text
 
 
 # ── Shared planner rule set (Phase 3) ────────────────────────────────────────
@@ -20393,31 +20386,7 @@ _V7_PLANNER_SHARED_RULES = (
 )
 
 
-_V7_CAP_ROUTING = (
-    "CAPABILITY ROUTING — match the deliverable to the RIGHT cap (one source of truth):\n"
-    "  • SOURCE CODE (.py/.js/.ts/.html/.css/.sh/.go/…) → code.author (creates) / code.edit "
-    "(surgical change). The coding specialist writes it, grounded on any context_files, "
-    "syntax-checked and versioned. NEVER llm.generate, ide.fs.write, or a heredoc for code.\n"
-    "    ALREADY CHECKED, EVERY LANGUAGE. Before returning, code.author/code.edit run a real "
-    "parser on what they wrote and repair what it finds; ok=true means it parsed. The verdict "
-    "is in the result (`syntax_ok`, `checked_with`, `runtime_ok`, `bytes`). Whether the file "
-    "exists, is complete, or is valid is therefore ALREADY ANSWERED — never spend a call "
-    "finding out. Do not read it, `cat` it, re-parse it, or run it to answer those questions, "
-    "and do not plan a step that does. Read an authored file only to USE its content in "
-    "another call (e.g. context_files for an edit); run one only to obtain a RESULT you need. "
-    "A .py is no different from a .html here.\n"
-    "  • A DOCUMENT (README, report, article, essay, spec, notes — .md/.txt/.rst) → prose.author, "
-    "grounded on the real files it describes. NEVER hand-write it via llm.generate + ide.fs.write.\n"
-    "  • REAL-WORLD DATA (a dataset, factual records, API results, a populated JSON/CSV) → FETCH it "
-    "(web.* / http.get / a script hitting the source API) and PARSE it with a script (exec.python.run). "
-    "NEVER llm.generate as the data source — it fabricates plausible-but-wrong values.\n"
-    "  • EXTERNAL / CURRENT FACTS (a person, company, price, news, docs, anything online) → web.search "
-    "then web.fetch / http.get (browser.navigate for JS-heavy sites). memory.seek / fabric.query search "
-    "ONLY Vera's already-stored data, never the live web.\n"
-    "  • RUN / OPERATE something (a command, a build, a deploy, a check) → exec.bash.run / exec.python.run "
-    "/ http.*. llm.* CANNOT run, fetch, or read anything — it only writes/transforms text you give it.\n"
-    "  • llm.generate is ONLY for authoring/transforming text FROM what you already provide (summarise, "
-    "rewrite, explain) — never to look something up, run something, produce code, or invent data.\n")
+_V7_CAP_ROUTING = _RULES.RULES['cap_routing'].text
 
 
 def _v7_intent_plan_directive(intent: str, *, max_steps: int = 8) -> str:

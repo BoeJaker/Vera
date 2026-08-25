@@ -33,6 +33,7 @@ _CRITICAL_MODULES = {
     "test_board_core",          # Agent Boards leasing — claim resolution + Phase E handoff (only holder can hand off)
     "test_gate_sweep",          # Ollama-gate leaked-lease sweep — MUST never clear a peer host's live slot (double-books GPU)
     "test_gate_renew",          # Ollama-gate renewable-lease heartbeat — orphaned slot self-heals fast; renew is owner-fenced
+    "test_loop_prompt_rules",      # Phase 1 - rule registry: one definition, consumers named
     "test_planner_rule_parity",   # Phase 3 - a shared planner rule must reach BOTH prompt variants
     "test_loop_stage_audit",      # Phase 0 stage-context records - must never carry prompt bodies
     "test_gate_cancel_release",  # Ollama-gate heartbeat frees the slot the moment its run is cancelled (no runaway GPU hold)
