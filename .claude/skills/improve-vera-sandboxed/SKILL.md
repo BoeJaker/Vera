@@ -49,6 +49,10 @@ editing is the rare exception (small, urgent, explicitly sanctioned infra fix).
   another agent's branch/container. Before a **prod restart**, check
   `ollama.gate` (is someone mid-generation?) and warn — a restart interrupts
   every agent's prod-side cap calls.
+- **Never run repo-wide worktree/branch commands** (`git worktree prune`, or
+  `git worktree remove`/`git branch -D` on anything you didn't create). They act
+  on the ENTIRE shared repo — every agent's worktree registrations and branches,
+  not just yours. Clean up only the exact worktree and branch you created, by name.
 - **Sandbox pool is finite (Redis DBs 3–15, 13 slots) and fills up fast** — the
   swarm routinely runs 10+ concurrent branches. `evolve.sandbox.spawn` can
   fail with `no free Redis DB in the pool`. Check `evolve.sandbox.list`
