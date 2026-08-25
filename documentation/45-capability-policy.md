@@ -51,3 +51,27 @@ forge it.
 This slice still does not enforce policy. Next, one small migrated capability
 family can add a feature-flagged blocking boundary with shadow/enforce parity,
 failure isolation, and rollback.
+
+## Selective enforcement rollout
+
+The first blocking boundary is deliberately restricted to the four migrated
+`run.shadow.*` inspection capabilities. Default `VERA_POLICY_MODE=shadow`
+preserves existing behavior. Enforcement requires both:
+
+- `VERA_POLICY_MODE=enforce`
+- `VERA_POLICY_ENFORCE_FAMILIES=run.shadow`
+
+The wrapper records `selected`, `would_block`, and `blocked` beside the shadow
+verdict. A blocked call emits `cap.denied` and raises before local or distributed
+dispatch, streams, caching, or activity recording. Removing the family or
+setting mode back to `shadow` is a runtime kill switch; unknown families never
+become eligible. Trusted, exact, unexpired receipt context permits the call,
+while lookalike arguments do not.
+
+`cap.policy.enforcement.status` (also `GET /cap/policy/enforcement`) exposes the
+bounded rollout state and rollback instruction for operator/UI use. It never
+returns raw environment values, receipts, nonces, arguments, or secrets.
+
+This is still a narrow rollout, not global authorization. Promotion of another
+family requires complete contracts, frozen bypass fixtures, observed shadow
+parity, and an explicit rollback plan.

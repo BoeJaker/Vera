@@ -2,12 +2,16 @@ import asyncio
 import time
 
 import pytest
+from fastapi import HTTPException
+from starlette.requests import Request
 
 from vera import capability_orchestration as orchestration
 from vera.approval_receipts import (
     RedisNonceReplayLedger, activate_trusted_policy_context,
     consume_approval_receipt_durable, issue_approval_receipt,
 )
+from vera.capability_enforcement import (
+    PolicyEnforcementDenied, enforcement_projection, enforcement_status)
 from vera.capability_policy_core import evaluate_policy_shadow
 
 
@@ -168,3 +172,168 @@ def test_wrapper_uses_only_dispatcher_context_not_similar_arguments(monkeypatch)
         assert "raw-nonce-must-not-appear" not in repr(trusted["trusted_context"])
     finally:
         orchestration.CAPABILITY_REGISTRY.pop(name, None)
+
+
+def test_enforcement_projection_requires_both_flags_and_supported_family():
+    denied = {"verdict": "deny"}
+    assert enforcement_projection(
+        "run.shadow.get", denied, mode_value="shadow",
+        families_value="run.shadow")["blocked"] is False
+    assert enforcement_projection(
+        "run.shadow.get", denied, mode_value="enforce",
+        families_value="")["blocked"] is False
+    active = enforcement_projection(
+        "run.shadow.get", denied, mode_value="enforce",
+        families_value="run.shadow")
+    assert active["selected"] is True and active["blocked"] is True
+    unsupported = enforcement_projection(
+        "llm.generate", denied, mode_value="enforce",
+        families_value="llm")
+    assert unsupported["blocked"] is False
+    assert unsupported["config_valid"] is False
+
+    status = enforcement_status(mode_value="enforce", families_value="run.shadow")
+    assert status["enabled"] is True and status["config_valid"] is True
+    assert status["selected_capabilities"] == [
+        "run.shadow.export", "run.shadow.get", "run.shadow.graph", "run.shadow.list"]
+
+
+def test_enforcement_status_capability_is_bounded(monkeypatch):
+    monkeypatch.setenv("VERA_POLICY_MODE", "enforce")
+    monkeypatch.setenv("VERA_POLICY_ENFORCE_FAMILIES", "run.shadow,unknown")
+    result = asyncio.run(orchestration.cap_policy_enforcement_status.__wrapped__())
+    assert result["enabled"] is True
+    assert result["config_valid"] is False
+    assert result["unsupported_families"] == ["unknown"]
+    assert "VERA_POLICY_MODE=enforce" not in repr(result)
+
+
+def test_run_shadow_enforcement_denies_before_execution_and_kill_switch_restores(monkeypatch):
+    events = []
+    executed = 0
+
+    async def emit(event):
+        events.append(event)
+
+    monkeypatch.setattr(orchestration, "emit_event", emit)
+    monkeypatch.setenv("VERA_POLICY_MODE", "enforce")
+    monkeypatch.setenv("VERA_POLICY_ENFORCE_FAMILIES", "run.shadow")
+    name = "run.shadow.get"
+    existing = orchestration.CAPABILITY_REGISTRY.get(name)
+    try:
+        @orchestration.capability(name, memory="off", contract={
+            "effects": ["read", "filesystem"],
+            "approval": {"status": "not_required"},
+            "tenant": {"status": "process_local"},
+            "secrets": {"status": "not_required"},
+        })
+        async def sample(run_id: str, session_id: str = "", trace_id=None):
+            nonlocal executed
+            executed += 1
+            return {"run_id": run_id}
+
+        with pytest.raises(PolicyEnforcementDenied):
+            asyncio.run(sample(run_id="must-not-run", session_id="session-a"))
+        assert executed == 0
+        assert [event["type"] for event in events] == ["cap.call", "cap.denied"]
+        assert events[-1]["policy"]["enforcement"]["blocked"] is True
+
+        # Runtime kill switch: no redecorating or restart is required.
+        monkeypatch.setenv("VERA_POLICY_MODE", "shadow")
+        assert asyncio.run(sample(run_id="allowed", session_id="session-a")) == {
+            "run_id": "allowed"}
+        assert executed == 1
+        assert events[-2]["policy"]["enforcement"]["would_block"] is True
+        assert events[-2]["policy"]["enforcement"]["blocked"] is False
+    finally:
+        if existing is None:
+            orchestration.CAPABILITY_REGISTRY.pop(name, None)
+        else:
+            orchestration.CAPABILITY_REGISTRY[name] = existing
+
+
+def test_enforced_run_shadow_executes_with_exact_consumed_context(monkeypatch):
+    events = []
+
+    async def emit(event):
+        events.append(event)
+
+    class Redis:
+        async def set(self, key, value, *, nx, ex):
+            return True
+
+    monkeypatch.setattr(orchestration, "emit_event", emit)
+    monkeypatch.setenv("VERA_POLICY_MODE", "enforce")
+    monkeypatch.setenv("VERA_POLICY_ENFORCE_FAMILIES", "run.shadow")
+    name = "run.shadow.list"
+    existing = orchestration.CAPABILITY_REGISTRY.get(name)
+    try:
+        @orchestration.capability(name, memory="off", contract={
+            "effects": ["read", "filesystem"],
+            "approval": {"status": "not_required"},
+            "tenant": {"status": "process_local"},
+            "secrets": {"status": "not_required"},
+        })
+        async def sample(session_id: str = "", trace_id=None):
+            return {"ok": True}
+
+        key = b"e" * 32
+        issued_at = int(time.time())
+        receipt = issue_approval_receipt(
+            signing_key=key, capability=name, effects=["read", "filesystem"],
+            session_id="session-a", now=issued_at, nonce="enforcement-context")
+        consumed = asyncio.run(consume_approval_receipt_durable(
+            receipt, signing_key=key, capability=name,
+            effects=["read", "filesystem"], session_id="session-a",
+            now=issued_at + 1, replay_ledger=RedisNonceReplayLedger(Redis())))
+        with activate_trusted_policy_context(consumed["context"]):
+            assert asyncio.run(sample(session_id="session-a")) == {"ok": True}
+        policy = events[-2]["policy"]
+        assert policy["verdict"] == "allow"
+        assert policy["enforcement"]["selected"] is True
+        assert policy["enforcement"]["blocked"] is False
+        assert policy["authorized"] is False and policy["executed"] is False
+    finally:
+        if existing is None:
+            orchestration.CAPABILITY_REGISTRY.pop(name, None)
+        else:
+            orchestration.CAPABILITY_REGISTRY[name] = existing
+
+
+def test_mcp_transport_maps_policy_denial_to_403(monkeypatch):
+    monkeypatch.setenv("VERA_POLICY_MODE", "enforce")
+    monkeypatch.setenv("VERA_POLICY_ENFORCE_FAMILIES", "run.shadow")
+    name = "run.shadow.export"
+    existing = orchestration.CAPABILITY_REGISTRY.get(name)
+    try:
+        @orchestration.capability(name, memory="off", contract={
+            "effects": ["read", "filesystem"],
+            "approval": {"status": "not_required"},
+            "tenant": {"status": "process_local"},
+            "secrets": {"status": "not_required"},
+        })
+        async def sample(run_id: str, trace_id=None):
+            raise AssertionError("denied call executed")
+
+        payload = b'{"name":"run.shadow.export","arguments":{"run_id":"r"}}'
+        sent = False
+
+        async def receive():
+            nonlocal sent
+            if sent:
+                return {"type": "http.disconnect"}
+            sent = True
+            return {"type": "http.request", "body": payload, "more_body": False}
+
+        request = Request({"type": "http", "method": "POST", "path": "/mcp/call",
+                           "headers": []}, receive)
+        with pytest.raises(HTTPException) as denied:
+            asyncio.run(orchestration._make_mcp_call_handler()(request))
+        assert denied.value.status_code == 403
+        assert "run.shadow.export" in str(denied.value.detail)
+        assert "run_id" not in str(denied.value.detail)
+    finally:
+        if existing is None:
+            orchestration.CAPABILITY_REGISTRY.pop(name, None)
+        else:
+            orchestration.CAPABILITY_REGISTRY[name] = existing
