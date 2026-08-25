@@ -7907,9 +7907,36 @@ async def cap_dag_run(dag: list = None, state: dict = None, supervised: bool = F
     )
     return {"trace_id":tid,"result":result}
 
+def _inspection_contract(canonical_task: str, *, filesystem: str = "not_required",
+                         tenant: str = "request_scoped", pagination: str = "not_applicable",
+                         effects: list[str] | None = None) -> dict:
+    """Build explicit contracts for deterministic, non-executing inspection caps."""
+    return {
+        "canonical_task": canonical_task,
+        "lifecycle": "active",
+        "effects": effects or ["read"],
+        "output_schema": {"type": "object"},
+        "approval": {"status": "not_required"},
+        "trust": {"status": "untrusted_structured_input"},
+        "secrets": {"status": "not_required"},
+        "filesystem": {"status": filesystem},
+        "network": {"status": "not_required"},
+        "tenant": {"status": tenant},
+        "idempotency": {"status": "idempotent"},
+        "cancellation": {"status": "not_required"},
+        "pagination": {"status": pagination},
+        "resources": {"status": "declared", "classes": ["cpu"]},
+        "owner": "vera.execution",
+    }
+
+
 @capability("run.shadow.list", memory="off",
             description="List recent non-authoritative Run shadow projections and the "
-                        "redacted startup catalog-recovery outcome for this process.")
+                        "redacted startup catalog-recovery outcome for this process.",
+            contract=_inspection_contract(
+                "run.observe.list", filesystem="conditional_read_only",
+                tenant="process_local", pagination="bounded_limit",
+                effects=["read", "filesystem"]))
 async def cap_run_shadow_list(limit: int = 50, trace_id=None):
     from Vera.vera.execution.run_projection import SHADOW_RUNS
     return {"authoritative": False, "storage": SHADOW_RUNS.storage,
@@ -7919,7 +7946,11 @@ async def cap_run_shadow_list(limit: int = 50, trace_id=None):
 @capability("run.shadow.graph", memory="off",
             http_method="GET", http_path="/run/shadow/graph", http_tags=["runs"],
             description="Read a bounded, content-free, non-authoritative Run graph plus "
-                        "redacted startup catalog-recovery status for UI overlays.")
+                        "redacted startup catalog-recovery status for UI overlays.",
+            contract=_inspection_contract(
+                "run.observe.graph", filesystem="conditional_read_only",
+                tenant="process_local", pagination="bounded_limit",
+                effects=["read", "filesystem"]))
 async def cap_run_shadow_graph(run_id: str = "", session_id: str = "",
                                run_trace_id: str = "", limit: int = 100,
                                trace_id=None):
@@ -7928,7 +7959,10 @@ async def cap_run_shadow_graph(run_id: str = "", session_id: str = "",
                              trace_id=run_trace_id, limit=limit)
 
 @capability("run.shadow.get", memory="off",
-            description="Inspect one recent non-authoritative Run shadow projection and its children.")
+            description="Inspect one recent non-authoritative Run shadow projection and its children.",
+            contract=_inspection_contract(
+                "run.observe.get", filesystem="conditional_read_only",
+                tenant="process_local", effects=["read", "filesystem"]))
 async def cap_run_shadow_get(run_id: str, trace_id=None):
     from Vera.vera.execution.run_projection import SHADOW_RUNS
     projection = SHADOW_RUNS.get(run_id)
@@ -7937,7 +7971,10 @@ async def cap_run_shadow_get(run_id: str, trace_id=None):
                           "recovery": SHADOW_RUNS.recovery_status()}
 
 @capability("run.shadow.export", memory="off",
-            description="Export the checksummed in-memory event journal for a recent shadow Run.")
+            description="Export the checksummed in-memory event journal for a recent shadow Run.",
+            contract=_inspection_contract(
+                "run.observe.export", filesystem="conditional_read_only",
+                tenant="process_local", effects=["read", "filesystem"]))
 async def cap_run_shadow_export(run_id: str, trace_id=None):
     from Vera.vera.execution.run_projection import SHADOW_RUNS
     exported = SHADOW_RUNS.journal.export(run_id)
@@ -7951,7 +7988,8 @@ async def cap_run_shadow_export(run_id: str, trace_id=None):
 @capability("workflow.ir.import_dag", memory="off",
             description="Describe a native Vera DAG as versioned Workflow IR and report all "
                         "semantic gaps. This inspection capability never executes the DAG. "
-                        "Lossy conversion is refused unless allow_lossy is explicitly true.")
+                        "Lossy conversion is refused unless allow_lossy is explicitly true.",
+            contract=_inspection_contract("workflow.translate.import_dag", effects=["none"]))
 async def cap_workflow_ir_import_dag(dag: list = None, name: str = "",
                                      allow_lossy: bool = False, trace_id=None):
     from Vera.vera.execution.workflow_ir import import_native_dag
@@ -7960,7 +7998,8 @@ async def cap_workflow_ir_import_dag(dag: list = None, name: str = "",
 
 @capability("workflow.ir.export_dag", memory="off",
             description="Convert supported Workflow IR to Vera's native DAG array with an "
-                        "explicit loss/gap report. This inspection capability never runs it.")
+                        "explicit loss/gap report. This inspection capability never runs it.",
+            contract=_inspection_contract("workflow.translate.export_dag", effects=["none"]))
 async def cap_workflow_ir_export_dag(workflow: dict, allow_lossy: bool = False,
                                      trace_id=None):
     from Vera.vera.execution.workflow_ir import export_native_dag
@@ -7969,7 +8008,8 @@ async def cap_workflow_ir_export_dag(workflow: dict, allow_lossy: bool = False,
 
 @capability("workflow.ir.validate", memory="off",
             description="Validate and normalize Workflow IR and return its stable SHA-256 "
-                        "content hash. This capability has no execution side effects.")
+                        "content hash. This capability has no execution side effects.",
+            contract=_inspection_contract("workflow.validate", effects=["none"]))
 async def cap_workflow_ir_validate(workflow: dict, trace_id=None):
     from Vera.vera.execution.workflow_ir import (
         WorkflowIRValidationError, normalize_workflow)
@@ -7982,7 +8022,8 @@ async def cap_workflow_ir_validate(workflow: dict, trace_id=None):
 
 @capability("workflow.ir.migrate", memory="off",
             description="Normalize a known Workflow IR version or explicitly refuse an "
-                        "unsupported source/target version. Never executes a workflow.")
+                        "unsupported source/target version. Never executes a workflow.",
+            contract=_inspection_contract("workflow.migrate", effects=["none"]))
 async def cap_workflow_ir_migrate(workflow: dict, target_version: str = "1.0",
                                   trace_id=None):
     from Vera.vera.execution.workflow_ir import migrate_workflow
@@ -7991,7 +8032,8 @@ async def cap_workflow_ir_migrate(workflow: dict, target_version: str = "1.0",
 
 @capability("workflow.ir.adapters", memory="off",
             description="List declarative Workflow IR adapter profiles, including whether an "
-                        "adapter is actually available and executable. Does not load runtimes.")
+                        "adapter is actually available and executable. Does not load runtimes.",
+            contract=_inspection_contract("workflow.adapters.list", effects=["none"]))
 async def cap_workflow_ir_adapters(trace_id=None):
     from Vera.vera.execution.workflow_ir import adapter_profiles
     return adapter_profiles()
@@ -7999,7 +8041,8 @@ async def cap_workflow_ir_adapters(trace_id=None):
 
 @capability("workflow.ir.gaps", memory="off",
             description="Analyze Workflow IR compatibility with a named adapter profile without "
-                        "importing or invoking that runtime.")
+                        "importing or invoking that runtime.",
+            contract=_inspection_contract("workflow.compatibility.analyze", effects=["none"]))
 async def cap_workflow_ir_gaps(workflow: dict, adapter: str = "vera.native_dag",
                                trace_id=None):
     from Vera.vera.execution.workflow_ir import analyze_adapter

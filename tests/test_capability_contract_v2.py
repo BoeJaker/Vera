@@ -213,6 +213,40 @@ def test_incremental_gate_passes_migrated_family_and_fails_legacy_projection():
     assert any(issue["code"] == "gate.declaration_missing" for issue in result["issues"])
 
 
+def test_run_and_workflow_inspection_families_have_gated_contracts():
+    expected_tasks = {
+        "run.shadow.list": "run.observe.list",
+        "run.shadow.graph": "run.observe.graph",
+        "run.shadow.get": "run.observe.get",
+        "run.shadow.export": "run.observe.export",
+        "workflow.ir.import_dag": "workflow.translate.import_dag",
+        "workflow.ir.export_dag": "workflow.translate.export_dag",
+        "workflow.ir.validate": "workflow.validate",
+        "workflow.ir.migrate": "workflow.migrate",
+        "workflow.ir.adapters": "workflow.adapters.list",
+        "workflow.ir.gaps": "workflow.compatibility.analyze",
+    }
+    manifests = [
+        project_contract(name, runtime_orchestration.CAPABILITY_REGISTRY[name])
+        for name in reversed(tuple(expected_tasks))
+    ]
+
+    assert gate_contracts(manifests)["ok"] is True
+    assert manifest_fingerprint(manifests) == manifest_fingerprint(reversed(manifests))
+    by_name = {manifest["name"]: manifest for manifest in manifests}
+    for name, canonical_task in expected_tasks.items():
+        assert by_name[name]["canonical_task"] == canonical_task
+        assert by_name[name]["declaration"]["status"] == "declared"
+        assert "model" not in by_name[name]["effects"]["declared"]
+
+    assert by_name["workflow.ir.validate"]["effects"] == {
+        "status": "declared", "declared": ["none"]}
+    assert by_name["run.shadow.list"]["effects"] == {
+        "status": "declared", "declared": ["filesystem", "read"]}
+    assert by_name["run.shadow.list"]["policy"]["filesystem"] == {
+        "status": "conditional_read_only"}
+
+
 def test_gate_capability_rejects_unknown_names_without_invocation():
     result = asyncio.run(orchestration.cap_contract_gate.__wrapped__(
         names=["cap.contract.manifest", "does.not.exist"]))
