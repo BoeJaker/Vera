@@ -379,6 +379,7 @@ def pxe_dnsmasq_conf(server_ip: str, iface: str, range_lo: str, range_hi: str,
         "dhcp-boot=tag:!ipxe,tag:!efi,undionly.kpxe",
         "dhcp-boot=tag:!ipxe,tag:efi,ipxe.efi",
         "log-dhcp",
+        "filter-AAAA",   # strip IPv6 AAAA: this VLAN NATs IPv4-only, so IPv6 dead-ends downloads
     ]
     return "\n".join(lines) + "\n"
 
@@ -723,7 +724,7 @@ def pxe_ops_apkovl_files(server_ip: str, alpine_ver: str = "3.21", secrets=None,
         'ID=$(whiptail --inputbox "Open the graphical noVNC console for which VM id? (blank cancels)" 9 70 "" 3>&1 1>&2 2>&3); '
         'if [ -n "$ID" ]; then NODE=$(ssh $K -o ConnectTimeout=8 root@$PVE hostname 2>/dev/null | tr -d "\\r\\n"); '
         'URL="https://$PVE:8006/?console=kvm&novnc=1&vmid=$ID&node=$NODE&resize=scale"; '
-        '(firefox "$URL" >/dev/null 2>&1 &); '
+        'B=$(command -v firefox-esr 2>/dev/null || command -v firefox 2>/dev/null || command -v chromium 2>/dev/null); [ -n "$B" ] && ("$B" "$URL" >/dev/null 2>&1 &) || whiptail --msgbox "No browser found. Open manually: $URL" 10 74; '
         'whiptail --msgbox "Opening VM $ID console in Firefox (Proxmox noVNC).\\nLog in to Proxmox on first use.\\n\\n$URL" 11 78; fi; fi;;\n'
         "    dps) docker ps >$T 2>&1; whiptail --scrolltext --textbox $T 24 100;;\n"
         "    nodes) docker node ls >$T 2>&1; whiptail --scrolltext --textbox $T 24 100;;\n"

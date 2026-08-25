@@ -18,3 +18,11 @@ def test_desktop_reuses_same_tui_with_gconsole():
     # the desktop image reuses the ops-node foundry-tui, so it gets gconsole too
     tui = pxe_desktop_apkovl_files("10.0.0.1")["usr/local/bin/foundry-tui"]
     assert "gconsole" in tui and "novnc=1" in tui
+
+
+def test_gconsole_browser_and_ipv4():
+    from vera.foundry.foundry_core import pxe_dnsmasq_conf
+    tui = pxe_ops_apkovl_files("10.0.0.1")["usr/local/bin/foundry-tui"]
+    assert "firefox-esr" in tui   # Alpine ships firefox-esr, not `firefox`
+    conf = pxe_dnsmasq_conf("10.22.22.25", "vmbr2", "10.22.22.100", "10.22.22.150")
+    assert "filter-AAAA" in conf  # IPv4-only VLAN
