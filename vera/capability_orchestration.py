@@ -5099,9 +5099,21 @@ def capability(
                     _sid = (kw.get("session_id","") or chain.get("session_id","")
                             or _CURRENT_SESSION)
                     if not silent:
-                        from Vera.vera.capability_policy_core import evaluate_policy_shadow
+                        from .capability_policy_core import evaluate_policy_shadow
+                        from .approval_receipts import current_trusted_policy_context
+                        _trusted = current_trusted_policy_context(name, _sid)
+                        _policy_context = {"session_id": _sid}
+                        if _trusted is not None:
+                            _policy_context.update({
+                                "allowed_effects": list(_trusted.effects),
+                                "approval_present": True,
+                                "tenant_id": _trusted.tenant_id,
+                            })
                         _policy_shadow = evaluate_policy_shadow(
-                            name, contract, {"session_id": _sid})
+                            name, contract, _policy_context)
+                        _policy_shadow["trusted_context"] = (
+                            _trusted.projection() if _trusted is not None
+                            else {"present": False})
                         await emit_event({
                             "type":        "cap.call",
                             "name":        name,

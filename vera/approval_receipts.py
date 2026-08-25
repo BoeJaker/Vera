@@ -15,6 +15,9 @@ import secrets
 import threading
 import time
 from collections.abc import Iterable
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -29,6 +32,10 @@ _PAYLOAD_FIELDS = {
 
 class ApprovalReceiptError(ValueError):
     """Raised when a receipt cannot be safely issued."""
+
+
+class ReplayStoreUnavailable(RuntimeError):
+    """The atomic replay store could not prove a nonce was unused."""
 
 
 class NonceReplayLedger:
@@ -52,6 +59,87 @@ class NonceReplayLedger:
                 return False
             self._nonces.add(nonce)
             return True
+
+
+class RedisNonceReplayLedger:
+    """Cross-process replay claims using one atomic Redis ``SET NX EX``."""
+
+    def __init__(self, redis: Any, *, prefix: str = "vera:approval:nonce:") -> None:
+        if redis is None or not isinstance(prefix, str) or not prefix:
+            raise ApprovalReceiptError("replay_ledger_invalid")
+        self._redis = redis
+        self._prefix = prefix
+
+    async def claim(self, nonce: str, ttl_seconds: int) -> bool:
+        if not isinstance(ttl_seconds, int) or ttl_seconds < 1:
+            raise ApprovalReceiptError("replay_ttl_invalid")
+        key = self._prefix + hashlib.sha256(nonce.encode("utf-8")).hexdigest()
+        try:
+            claimed = await self._redis.set(key, "1", nx=True, ex=ttl_seconds)
+        except Exception as exc:
+            raise ReplayStoreUnavailable("replay_store_unavailable") from exc
+        return bool(claimed)
+
+
+_CONTEXT_SEAL = object()
+
+
+@dataclass(frozen=True)
+class TrustedPolicyContext:
+    """Dispatcher-owned authority facts that cannot arrive through JSON args."""
+
+    capability: str
+    effects: tuple[str, ...]
+    session_id: str
+    tenant_id: str
+    receipt_nonce_hash: str
+    receipt_expires_at: int
+    _seal: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._seal is not _CONTEXT_SEAL:
+            raise ApprovalReceiptError("trusted_context_forgery")
+
+    def projection(self) -> dict[str, Any]:
+        return {
+            "present": True,
+            "capability": self.capability,
+            "effects": list(self.effects),
+            "session_id": self.session_id,
+            "tenant_id": self.tenant_id,
+            "receipt_nonce_hash": self.receipt_nonce_hash,
+            "receipt_expires_at": self.receipt_expires_at,
+        }
+
+
+TRUSTED_POLICY_CONTEXT: ContextVar[TrustedPolicyContext | None] = ContextVar(
+    "vera_trusted_policy_context", default=None)
+
+
+def current_trusted_policy_context(capability: str,
+                                   session_id: str, *,
+                                   now: int | None = None) -> TrustedPolicyContext | None:
+    """Return context only when it exactly belongs to this dispatch."""
+    context = TRUSTED_POLICY_CONTEXT.get()
+    checked_at = int(time.time()) if now is None else now
+    if (context is None or context.capability != capability
+            or context.session_id != session_id
+            or not isinstance(checked_at, int) or isinstance(checked_at, bool)
+            or checked_at >= context.receipt_expires_at):
+        return None
+    return context
+
+
+@contextmanager
+def activate_trusted_policy_context(context: TrustedPolicyContext):
+    """Propagate dispatcher-owned context through one async call tree."""
+    if not isinstance(context, TrustedPolicyContext) or context._seal is not _CONTEXT_SEAL:
+        raise ApprovalReceiptError("trusted_context_invalid")
+    token = TRUSTED_POLICY_CONTEXT.set(context)
+    try:
+        yield context
+    finally:
+        TRUSTED_POLICY_CONTEXT.reset(token)
 
 
 def _text(value: Any, field: str, *, required: bool = True) -> str:
@@ -186,3 +274,38 @@ def consume_approval_receipt(receipt: Any, *, signing_key: bytes,
     if not replay_ledger.claim(nonce):
         return {**result, "valid": False, "reasons": ["replayed"]}
     return {**result, "consumed": True}
+
+
+async def consume_approval_receipt_durable(
+        receipt: Any, *, signing_key: bytes, capability: str,
+        effects: Iterable[str], session_id: str, tenant_id: str = "",
+        replay_ledger: RedisNonceReplayLedger,
+        now: int | None = None) -> dict[str, Any]:
+    """Verify then atomically consume across workers; fail closed on outage."""
+    if not isinstance(replay_ledger, RedisNonceReplayLedger):
+        raise ApprovalReceiptError("replay_ledger_invalid")
+    result = verify_approval_receipt(
+        receipt, signing_key=signing_key, capability=capability,
+        effects=effects, session_id=session_id, tenant_id=tenant_id, now=now)
+    if not result["valid"]:
+        return result
+    checked_at = int(time.time()) if now is None else now
+    ttl = result["expires_at"] - checked_at
+    try:
+        claimed = await replay_ledger.claim(result["nonce"], ttl)
+    except ReplayStoreUnavailable:
+        return {**result, "valid": False, "consumed": False,
+                "reasons": ["replay_store_unavailable"]}
+    if not claimed:
+        return {**result, "valid": False, "consumed": False,
+                "reasons": ["replayed"]}
+    context = TrustedPolicyContext(
+        capability=_text(capability, "capability"),
+        effects=tuple(_effects(effects)),
+        session_id=_text(session_id, "session_id"),
+        tenant_id=_text(tenant_id, "tenant_id", required=False),
+        receipt_nonce_hash=hashlib.sha256(result["nonce"].encode("utf-8")).hexdigest(),
+        receipt_expires_at=result["expires_at"],
+        _seal=_CONTEXT_SEAL,
+    )
+    return {**result, "consumed": True, "context": context}

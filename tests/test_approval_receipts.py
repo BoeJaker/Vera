@@ -6,7 +6,12 @@ import pytest
 from vera.approval_receipts import (
     ApprovalReceiptError,
     NonceReplayLedger,
+    RedisNonceReplayLedger,
+    TrustedPolicyContext,
+    activate_trusted_policy_context,
     consume_approval_receipt,
+    consume_approval_receipt_durable,
+    current_trusted_policy_context,
     issue_approval_receipt,
     verify_approval_receipt,
 )
@@ -92,3 +97,69 @@ def test_key_and_ttl_are_bounded_and_secret_is_not_serialized():
     with pytest.raises(ApprovalReceiptError, match="ttl_invalid"):
         receipt(ttl_seconds=3601)
     assert KEY.hex() not in repr(receipt())
+
+
+class FakeRedis:
+    def __init__(self, *, fail=False):
+        self.keys = set()
+        self.calls = []
+        self.fail = fail
+
+    async def set(self, key, value, *, nx, ex):
+        self.calls.append((key, value, nx, ex))
+        if self.fail:
+            raise ConnectionError("offline")
+        if key in self.keys:
+            return False
+        self.keys.add(key)
+        return True
+
+
+@pytest.mark.asyncio
+async def test_redis_ledger_claims_once_with_remaining_receipt_ttl():
+    redis = FakeRedis()
+    ledger = RedisNonceReplayLedger(redis)
+    first = await consume_approval_receipt_durable(
+        receipt(), signing_key=KEY, now=1001, replay_ledger=ledger, **SCOPE)
+    second = await consume_approval_receipt_durable(
+        receipt(), signing_key=KEY, now=1001, replay_ledger=ledger, **SCOPE)
+    assert first["valid"] is True and first["consumed"] is True
+    assert isinstance(first["context"], TrustedPolicyContext)
+    assert second["valid"] is False and second["reasons"] == ["replayed"]
+    assert redis.calls[0][2:] == (True, 59)
+    assert "nonce-a" not in redis.calls[0][0]
+
+
+@pytest.mark.asyncio
+async def test_replay_store_outage_fails_closed_without_context():
+    result = await consume_approval_receipt_durable(
+        receipt(), signing_key=KEY, now=1001,
+        replay_ledger=RedisNonceReplayLedger(FakeRedis(fail=True)), **SCOPE)
+    assert result["valid"] is False and result["consumed"] is False
+    assert result["reasons"] == ["replay_store_unavailable"]
+    assert "context" not in result
+
+
+@pytest.mark.asyncio
+async def test_trusted_context_is_exactly_scoped_and_restored():
+    result = await consume_approval_receipt_durable(
+        receipt(), signing_key=KEY, now=1001,
+        replay_ledger=RedisNonceReplayLedger(FakeRedis()), **SCOPE)
+    context = result["context"]
+    assert current_trusted_policy_context("records.write", "session-a") is None
+    with activate_trusted_policy_context(context):
+        assert current_trusted_policy_context(
+            "records.write", "session-a", now=1001) is context
+        assert current_trusted_policy_context(
+            "records.delete", "session-a", now=1001) is None
+        assert current_trusted_policy_context(
+            "records.write", "session-b", now=1001) is None
+        assert current_trusted_policy_context(
+            "records.write", "session-a", now=1300) is None
+    assert current_trusted_policy_context("records.write", "session-a") is None
+
+
+def test_trusted_context_constructor_rejects_forgery():
+    with pytest.raises(ApprovalReceiptError, match="trusted_context_forgery"):
+        TrustedPolicyContext("records.write", ("write",), "session-a", "tenant-a",
+                             "hash", 1060, object())
