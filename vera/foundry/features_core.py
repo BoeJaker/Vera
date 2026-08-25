@@ -17,6 +17,7 @@ if command -v apt-get >/dev/null 2>&1; then _PKG=apt
 elif command -v apk >/dev/null 2>&1; then _PKG=apk
 elif command -v pacman >/dev/null 2>&1; then _PKG=pacman
 elif command -v dnf >/dev/null 2>&1; then _PKG=dnf
+elif command -v zypper >/dev/null 2>&1; then _PKG=zypper
 else _PKG=unknown; fi
 pkg_install(){
   case "$_PKG" in
@@ -24,6 +25,7 @@ pkg_install(){
     apk) apk add "$@" ;;
     pacman) pacman -Sy --noconfirm "$@" ;;
     dnf) dnf install -y "$@" ;;
+    zypper) zypper --non-interactive install "$@" ;;
     *) echo "[foundry] no known package manager"; return 1 ;;
   esac
 }

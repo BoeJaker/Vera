@@ -46,3 +46,9 @@ def test_file_client_feature():
 def test_unknown_feature_empty():
     assert feature_script("nope", {}) == ""
     assert feature_script("", {}) == ""
+
+
+def test_os_adapter_supports_zypper():
+    from vera.foundry.features_core import OS_ADAPTER
+    assert "_PKG=zypper" in OS_ADAPTER               # openSUSE/SLES detection
+    assert "zypper --non-interactive install" in OS_ADAPTER
