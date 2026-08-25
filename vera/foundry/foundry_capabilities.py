@@ -151,6 +151,13 @@ async def _ct_create_ssh(cluster_id, node, ostemplate, hostname, storage, cores,
         return {"error": "pct create (root/ssh) failed: %s"
                 % ((res.get("stderr") or res.get("stdout") or res.get("error") or "")[:200]),
                 "vmid": None}
+    # WireGuard (mesh) needs /dev/net/tun, which a fresh privileged/nesting CT lacks;
+    # bind it in via the CT config so it is present when _post_provision starts the CT.
+    if features:
+        _tun = ("printf '%s\\n%s\\n' 'lxc.cgroup2.devices.allow: c 10:200 rwm' "
+                "'lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file' "
+                ">> /etc/pve/lxc/" + str(vmid) + ".conf")
+        await _call("proxmox.node.exec", cluster_id=cluster_id, command=_tun, timeout=30)
     return {"ok": True, "vmid": int(vmid), "via": "ssh-root",
             "features": features, "unprivileged": bool(unprivileged)}
 
