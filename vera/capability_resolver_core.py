@@ -6,6 +6,7 @@ observations.  It never calls a capability and never grants authorization.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from typing import Any
 
@@ -31,6 +32,35 @@ def _string_set(value: Any) -> set[str]:
 def _observation_index(observations: list[Mapping[str, Any]] | None) -> dict[str, Mapping[str, Any]]:
     return {_text(row.get("name")): row for row in (observations or [])
             if isinstance(row, Mapping) and _text(row.get("name"))}
+
+
+def _metric(value: Any, *, minimum: float = 0.0,
+            maximum: float | None = None) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if not math.isfinite(number) or number < minimum:
+        return None
+    if maximum is not None and number > maximum:
+        return None
+    return number
+
+
+def _evidence_metric(observation: Mapping[str, Any], observation_dimension: str,
+                     observation_field: str, manifest: Mapping[str, Any],
+                     contract_dimension: str, contract_field: str, *,
+                     maximum: float | None = None) -> tuple[float | None, str | None]:
+    observed = _mapping(observation.get(observation_dimension))
+    if observed.get("status") == "observed":
+        value = _metric(observed.get(observation_field), maximum=maximum)
+        if value is not None:
+            return value, "observation"
+    declared = _mapping(_mapping(manifest.get("quality")).get(contract_dimension))
+    if declared.get("status") in {"declared", "observed"}:
+        value = _metric(declared.get(contract_field), maximum=maximum)
+        if value is not None:
+            return value, "contract"
+    return None, None
 
 
 def _policy_requirements(value: Any) -> tuple[dict[str, set[str]], list[dict[str, Any]]]:
@@ -173,20 +203,46 @@ def resolve_shadow(manifests: list[Mapping[str, Any]], request: Mapping[str, Any
         if health.get("status") == "observed" and health.get("healthy") is False:
             reasons.append({"code": "observed_unhealthy"})
 
-        latency = _mapping(observation.get("latency_ms"))
-        success_rate = observation.get("success_rate")
-        reliability = float(success_rate) if isinstance(success_rate, (int, float)) else -1.0
-        p95 = latency.get("p95")
-        latency_rank = float(p95) if isinstance(p95, (int, float)) else float("inf")
+        reliability_value = _metric(observation.get("success_rate"), maximum=1.0)
+        reliability = reliability_value if reliability_value is not None else -1.0
+        quality_value, quality_source = _evidence_metric(
+            observation, "quality", "score", manifest, "quality", "score", maximum=1.0)
+        latency_value, latency_source = _evidence_metric(
+            observation, "latency_ms", "p95", manifest, "latency", "p95_ms")
+        cost_value, cost_source = _evidence_metric(
+            observation, "cost", "normalized_per_call",
+            manifest, "cost", "normalized_per_call")
+        load_observation = _mapping(observation.get("load"))
+        load_value = (_metric(load_observation.get("utilization"), maximum=1.0)
+                      if load_observation.get("status") == "observed" else None)
+        load_source = "observation" if load_value is not None else None
+        if load_value is None and resources.get("status") == "declared":
+            load_value = _metric(resources.get("utilization"), maximum=1.0)
+            load_source = "contract" if load_value is not None else None
+        quality_rank = quality_value if quality_value is not None else -1.0
+        latency_rank = latency_value if latency_value is not None else float("inf")
+        cost_rank = cost_value if cost_value is not None else float("inf")
+        load_rank = load_value if load_value is not None else float("inf")
         implementation = _mapping(manifest.get("implementation"))
         rank = {
             "preference": preference.get(name, len(preferred)),
-            "reliability": reliability if reliability >= 0 else None,
-            "latency_p95_ms": latency_rank if latency_rank != float("inf") else None,
+            "reliability": reliability_value,
+            "quality": quality_value,
+            "latency_p95_ms": latency_value,
+            "cost_normalized_per_call": cost_value,
+            "load_utilization": load_value,
             "local": implementation.get("mode") == "local",
+            "evidence_sources": {
+                "reliability": "observation" if reliability_value is not None else None,
+                "quality": quality_source,
+                "latency": latency_source,
+                "cost": cost_source,
+                "load": load_source,
+            },
         }
-        sort_key = (rank["preference"], -reliability,
-                    latency_rank, 0 if rank["local"] else 1, name)
+        sort_key = (rank["preference"], -reliability, -quality_rank,
+                    latency_rank, cost_rank, load_rank,
+                    0 if rank["local"] else 1, name)
         candidates.append({"name": name, "eligible": not reasons,
                            "exclusions": reasons, "rank": rank, "_sort": sort_key})
 
