@@ -37,7 +37,17 @@ runtime.
 
 Issuance is deliberately a Python core operation, not a public capability:
 models and MCP callers cannot ask Vera to mint their own authority, and signing
-keys never enter receipt bodies or telemetry. This slice still does not enforce
-policy. Next, Vera needs a durable cross-process replay ledger and a trusted dispatcher
-context before one small capability family can move from shadow observation to
-blocking.
+keys never enter receipt bodies or telemetry.
+
+`RedisNonceReplayLedger` now consumes nonces across workers with one atomic
+`SET NX EX`; keys contain only a nonce hash and expire with the receipt. Redis
+outage fails closed. Successful consumption creates a sealed
+`TrustedPolicyContext`, propagated through a `ContextVar` by trusted dispatcher
+code rather than capability arguments. The central wrapper uses an exactly
+capability/session-matched, still-unexpired context for its shadow verdict and
+exposes only a bounded, content-free projection. Lookalike MCP arguments cannot
+forge it.
+
+This slice still does not enforce policy. Next, one small migrated capability
+family can add a feature-flagged blocking boundary with shadow/enforce parity,
+failure isolation, and rollback.
