@@ -690,9 +690,11 @@ async def _run_events(run_id: str = "", session_id: str = "",
                       limit: int = 60) -> List[Dict[str, Any]]:
     """Project recent Run protocol records into Activity without owning them."""
     try:
+        from Vera.vera.execution.portable_telemetry import exporter_status
         from Vera.vera.execution.run_projection import SHADOW_RUNS
     except Exception:
         return []
+    export_state = exporter_status()
     out = []
     for summary in SHADOW_RUNS.list(limit=max(limit * 4, 60)):
         if summary.get("parent_run_id"):
@@ -732,8 +734,12 @@ async def _run_events(run_id: str = "", session_id: str = "",
             "orphan_event_count": len(orphan_events),
             "correlation_coverage": (len(linked_events) / len(causal_candidates)
                                      if causal_candidates else None),
-            "exporter": "not_configured",
-            "exported": False,
+            "exporter": export_state["state"],
+            "exported": export_state["last_status"] == "accepted",
+            "export_attempts": export_state["attempts"],
+            "export_accepted": export_state["accepted"],
+            "export_failed": export_state["failed"],
+            "export_last_duration_ms": export_state["last_duration_ms"],
             "offline_projection": True,
             "content_redacted": True,
         }

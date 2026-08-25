@@ -8084,6 +8084,26 @@ def _inspection_contract(canonical_task: str, *, filesystem: str = "not_required
     }
 
 
+def _telemetry_export_contract() -> dict:
+    return {
+        "canonical_task": "run.telemetry.export",
+        "lifecycle": "active",
+        "effects": ["read", "filesystem", "network", "external_side_effect"],
+        "output_schema": {"type": "object"},
+        "approval": {"status": "per_call"},
+        "trust": {"status": "content_redacted_projection_only"},
+        "secrets": {"status": "opaque_references"},
+        "filesystem": {"status": "conditional_read_only"},
+        "network": {"status": "configured_otlp_endpoint_only"},
+        "tenant": {"status": "process_local"},
+        "idempotency": {"status": "at_least_once"},
+        "cancellation": {"status": "bounded_timeout"},
+        "pagination": {"status": "bounded_limit"},
+        "resources": {"status": "declared", "classes": ["cpu", "network"]},
+        "owner": "vera.execution",
+    }
+
+
 @capability("run.shadow.list", memory="off",
             description="List recent non-authoritative Run shadow projections and the "
                         "redacted startup catalog-recovery outcome for this process.",
@@ -8155,6 +8175,34 @@ async def cap_run_telemetry_preview(run_id: str, limit: int = 200, trace_id=None
                 "authoritative": False, "storage": SHADOW_RUNS.storage}
     result = project_run_trace(projection["run"], projection["children"], limit=limit)
     result["storage"] = SHADOW_RUNS.storage
+    return result
+
+
+@capability("run.telemetry.status", memory="off",
+            description="Inspect redacted OTLP exporter configuration and bounded outcome "
+                        "counters without revealing the endpoint or header values.",
+            contract=_inspection_contract("run.observe.telemetry_exporter", effects=["read"]))
+async def cap_run_telemetry_status(trace_id=None):
+    from Vera.vera.execution.portable_telemetry import exporter_status
+    return exporter_status()
+
+
+@capability("run.telemetry.export", memory="off",
+            description="Explicitly export one bounded, content-redacted Run trace using "
+                        "the operator-configured OTLP/HTTP JSON endpoint. Disabled by default; "
+                        "transport failures are returned and never affect Run execution.",
+            contract=_telemetry_export_contract())
+async def cap_run_telemetry_export(run_id: str, limit: int = 200, trace_id=None):
+    from Vera.vera.execution.portable_telemetry import export_trace, project_run_trace
+    from Vera.vera.execution.run_projection import SHADOW_RUNS
+    projection = SHADOW_RUNS.get(run_id)
+    if not projection:
+        return {"error": "run_not_found", "run_id": run_id,
+                "authoritative": False, "storage": SHADOW_RUNS.storage,
+                "exported": False}
+    portable = project_run_trace(projection["run"], projection["children"], limit=limit)
+    result = await export_trace(portable)
+    result.update({"authoritative": False, "storage": SHADOW_RUNS.storage})
     return result
 
 
