@@ -12545,13 +12545,9 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
     if minimal:
         sys = (
             (_intent_directive + "\n" if _intent_directive else "")
-            + "Break the GOAL into an ordered list of steps — ONE step per distinct DELIVERABLE or "
-            "distinct KIND of work (up to " + str(max_steps) + "). ASPECTS OF ONE DELIVERABLE ARE "
-            "NOT SEPARATE STEPS: a single file's structure, its styling, its logic and the wiring "
-            "between them are ONE step that authors that file, not four. Split only when the "
-            "outputs are genuinely different things (separate files, or fetch-then-use). "
-            "Information-gathering steps (only when the goal needs EXTERNAL facts) come BEFORE the "
-            "steps that use them. "
+            + "Break the GOAL into an ordered list of steps — ONE step per distinct unit of work, "
+            "information-gathering steps (only when the goal needs EXTERNAL facts) BEFORE the steps "
+            "that use them (up to " + str(max_steps) + "). "
             "For each step give a short PLAIN-LANGUAGE title describing the work (NOT a "
             "capability name), a one-line goal, and the EXACT capability names it "
             "needs from the catalog.\n"
