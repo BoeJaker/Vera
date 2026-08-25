@@ -3092,6 +3092,33 @@ async def cap_workshop_agent_loop_trace(session_id: str = "",
             plan["gate"] = {k: _clip(e.get(k)) for k in ("verdict", "reason", "met")
                             if e.get(k) is not None}
 
+    # ── Stage-context records (Phase 0) ──────────────────────────────────────
+    # What each LLM stage was GIVEN, not just what it said. `repeats` is the one
+    # to read first: a stage handed a byte-identical prompt twice that answered
+    # differently is the fixation signal, and it was previously invisible.
+    stage_recs = [e for e in events if str(e.get("type") or "") == "agent_loop.stage_context"]
+    stage_summary: Dict[str, Any] = {}
+    stage_diffs: List[Dict[str, Any]] = []
+    if stage_recs and _stage_audit is not None:
+        try:
+            stage_summary = _stage_audit.summarise(stage_recs)
+            seen: Dict[str, Dict[str, Any]] = {}
+            for r in stage_recs:
+                key = f"{r.get('stage')}:{r.get('variant') or ''}"
+                if key in seen:
+                    d = _stage_audit.diff_records(seen[key], r)
+                    if d.get("identical_input") or d.get("changed") or d.get("runtime_changed"):
+                        stage_diffs.append(d)
+                seen[key] = r
+        except Exception as _se:
+            log.debug("stage summary failed: %s", _se)
+    for d in stage_diffs:
+        if d.get("identical_input"):
+            warnings.append(
+                f"stage {d.get('stage')} was given a BYTE-IDENTICAL prompt again "
+                f"(cycle {d.get('from_cycle')} -> {d.get('to_cycle')}) — if its answer "
+                f"changed, nothing in its input explains why")
+
     steps = [by_step[k] for k in order if k in by_step]
     planned_ids = {s.get("id") for s in (plan.get("steps") or [])}
     inserted_ids = {i.get("id") for c in control for i in c.get("inserted") or []}
@@ -3130,8 +3157,10 @@ async def cap_workshop_agent_loop_trace(session_id: str = "",
         "cycles_per_step": {str(s.get("step_id")): len(s.get("calls") or []) for s in steps},
         "code_version": sorted(ver),
     }
+    counters["stage_calls"] = (stage_summary or {}).get("total_calls", 0)
     return {"session_id": sid, "run": run, "plan": plan, "steps": steps,
-            "control": control, "counters": counters, "warnings": warnings}
+            "control": control, "stages": (stage_summary or {}).get("stages", []),
+            "stage_diffs": stage_diffs, "counters": counters, "warnings": warnings}
 
 
 @APP.get("/workshop/agent_loop/session_state")
@@ -12541,6 +12570,11 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
         done_when = ""
         catalog_set = set(catalog_names)
         try:
+            await _emit_stage_context(
+                "planner", variant="minimal", system=sys, prompt=prompt,
+                model=plan_model, role="planner",
+                session_id=sid, stream_id=stream_id, cycle=None,
+                runtime={"goal_chars": len(goal or ""), "caps_count": len(catalog_names or [])})
             raw = await _safe_ollama_generate_dw(
                 prompt, system=sys, model=plan_model, instance_id=instance_id,
                 prefer_gpu=prefer_gpu, json_mode=True, options=plan_opts,
@@ -12815,6 +12849,11 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
         # catches it, steps stays empty, and the loop's existing STEPWISE
         # fallback (bootstrap step + adaptive re-plan from evidence) takes
         # over gracefully instead of hanging forever.
+        await _emit_stage_context(
+            "planner", variant="full", system=sys, prompt=prompt,
+            model=plan_model, role="planner",
+            session_id=sid, stream_id=stream_id, cycle=None,
+            runtime={"goal_chars": len(goal or ""), "caps_count": len(catalog_names or [])})
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=plan_model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True, options=plan_opts,
@@ -13005,6 +13044,45 @@ def _v5_register_artifact(artifacts: Dict[str, Dict[str, Any]], rel: str, conten
     }
     artifacts[key] = rec
     return rec
+
+
+# ── Stage-context audit (Phase 0) ────────────────────────────────────────────
+# Every LLM stage reports WHAT IT WAS GIVEN. Until now only the step executor did
+# (agent_loop_v5.step_context), so for the other ten stages there was no way to
+# see which prompt variant ran, what context it inherited, or whether its input
+# actually changed between cycles. See loop_stage_audit's module docstring and
+# documentation/PLAN-agentic-loop-prompt-architecture.md §1b.
+#
+# Records carry SHAs + sizes + provenance, never prompt bodies (they are emitted
+# on every cycle, and the roadmap excludes prompts from activity records).
+# Import-safe like the other pure cores: a failure here must never stop a run.
+try:
+    from Vera.vera.dag import loop_stage_audit as _stage_audit
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import loop_stage_audit as _stage_audit
+    except Exception:
+        _stage_audit = None
+        log.warning("loop_stage_audit unavailable — stage-context audit disabled")
+
+
+async def _emit_stage_context(stage: str, *, system: str = "", prompt: str = "",
+                              model: str = "", role: str = "", session_id: str = "",
+                              stream_id: str = "", cycle: Optional[int] = None,
+                              step_id: Optional[Any] = None, variant: str = "",
+                              runtime: Optional[Dict[str, Any]] = None) -> None:
+    """Emit one stage-context record. Never raises — this is instrumentation."""
+    if _stage_audit is None:
+        return
+    try:
+        rec = _stage_audit.stage_record(
+            stage, system=system, prompt=prompt, model=model, role=role,
+            session_id=session_id, stream_id=stream_id, cycle=cycle,
+            step_id=step_id, variant=variant, runtime=runtime)
+        rec["type"] = "agent_loop.stage_context"
+        await emit_event(rec)
+    except Exception as e:                             # pragma: no cover
+        log.debug("stage-context emit failed (%s): %s", stage, e)
 
 
 def _v6_file_register_block(artifacts: Dict[str, Dict[str, Any]],
@@ -14961,6 +15039,12 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             _exec_opts = {"temperature": 0.7, "top_p": 0.95,
                           "seed": (int(time.time() * 1000) + turns) & 0x7fffffff}
             _perturb_next = False
+        await _emit_stage_context(
+            "executor", system=sys, prompt=user_msg, model=model, role="executor",
+            session_id=session_id, stream_id=stream_id, cycle=cur_cycle, step_id=step_id,
+            runtime={"caps": caps, "caps_count": len(caps or []),
+                     "context_chars": len(ctx_slice or ""),
+                     "skills": [s.get("id", "") for s in (loaded_skills or [])]})
         raw = await _safe_ollama_generate_dw(
             user_msg, system=sys, model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True, options=_exec_opts,
@@ -18425,6 +18509,11 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
               + (_last_view or "(no output captured)")
               + "\n\nDecide the next move.")
     try:
+        await _emit_stage_context(
+            "controller", variant="", system=sys, prompt=prompt,
+            model=model, role="controller",
+            session_id=session_id, stream_id="", cycle=None,
+            runtime={"goal_chars": len(goal or ""), "ledger_steps": len(results or []), "pending_steps": len(queue or []), "caps_count": len(catalog_names or [])})
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True, timeout=_V5_UTILITY_TIMEOUT,
@@ -18577,6 +18666,11 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
     prompt = (f"LEDGER:\n{ledger}\n{files_block}\n"
               "Is the GOAL fully achieved? If not, what is missing?")
     try:
+        await _emit_stage_context(
+            "gate", system=sys, prompt=prompt, model=model, role="controller",
+            session_id=session_id,
+            runtime={"goal_chars": len(goal or ""), "ledger_steps": len(results or []),
+                     "caps_count": len(catalog_names or [])})
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True)
@@ -19203,6 +19297,10 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
               + f"RESULT SUMMARY (last cycle only):\n{(res.get('summary') or '')[:2000]}\n\n"
                 "Was the criterion met?")
     try:
+        await _emit_stage_context(
+            "verifier", system=sys, prompt=prompt, model=model, role="controller",
+            session_id=session_id, step_id=step.get("id"),
+            runtime={"goal_chars": len(str(step.get("goal") or ""))})
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True, timeout=_V5_UTILITY_TIMEOUT)
@@ -19944,7 +20042,8 @@ def _v7_tier_heuristic(goal: str) -> str:
 
 
 async def _v7_classify_tier(goal: str, heuristic_tier: str, catalog_brief: str, *,
-                            model: str, instance_id: str, prefer_gpu: bool) -> Dict[str, Any]:
+                            model: str, instance_id: str, prefer_gpu: bool,
+                            session_id: str = "") -> Dict[str, Any]:
     """Less-prescriptive LLM tier pre-pass. Returns {tier, reason}. It may keep a
     goal at a low tier (quick wins run normally) OR raise it when there is a
     genuinely large / multi-day / multi-domain body of work. Best-effort: on any
@@ -19977,6 +20076,11 @@ async def _v7_classify_tier(goal: str, heuristic_tier: str, catalog_brief: str, 
               f"AVAILABLE CAPABILITIES (sample):\n{catalog_brief[:1400]}\n\n"
               "Which tier best fits this goal?")
     try:
+        await _emit_stage_context(
+            "tier", variant="", system=sys, prompt=prompt,
+            model=model, role="tier",
+            session_id=session_id, stream_id="", cycle=None,
+            runtime={"goal_chars": len(goal or "")})
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True, timeout=_V5_UTILITY_TIMEOUT,
@@ -19992,7 +20096,8 @@ async def _v7_classify_tier(goal: str, heuristic_tier: str, catalog_brief: str, 
 
 async def _v7_decide_tier(goal: str, catalog_brief: str, *, plan_tier: str,
                           auto_escalate: bool, use_llm: bool, model: str,
-                          instance_id: str, prefer_gpu: bool) -> Dict[str, Any]:
+                          instance_id: str, prefer_gpu: bool,
+                          session_id: str = "") -> Dict[str, Any]:
     """Combine the heuristic floor and the LLM pre-pass into the effective tier.
     A forced `plan_tier` (anything but 'auto') short-circuits classification.
     Without `auto_escalate`, a 'strategic' suggestion is capped at 'complex' and
@@ -20007,7 +20112,8 @@ async def _v7_decide_tier(goal: str, catalog_brief: str, *, plan_tier: str,
     reason = ""
     if use_llm:
         c = await _v7_classify_tier(goal, heur, catalog_brief, model=model,
-                                    instance_id=instance_id, prefer_gpu=prefer_gpu)
+                                    instance_id=instance_id, prefer_gpu=prefer_gpu,
+                                    session_id=session_id)
         llm = c["tier"]; reason = c["reason"]
     suggested = heur if _v7_tier_rank(heur) >= _v7_tier_rank(llm or heur) else llm
     tier = suggested
@@ -20089,7 +20195,8 @@ def _v7_intent_heuristic(goal: str) -> str:
 
 
 async def _v7_classify_intent(goal: str, heuristic_intent: str, *, model: str,
-                              instance_id: str, prefer_gpu: bool) -> Dict[str, Any]:
+                              instance_id: str, prefer_gpu: bool,
+                              session_id: str = "") -> Dict[str, Any]:
     """Less-prescriptive LLM intent pre-pass. Returns {intent, reason}. Best-effort:
     on any failure it falls back to the heuristic so planning never stalls."""
     sys = (
@@ -20113,6 +20220,9 @@ async def _v7_classify_intent(goal: str, heuristic_intent: str, *, model: str,
     prompt = (f"GOAL: {goal[:1000]}\n\nA cheap heuristic suggests: {heuristic_intent}.\n"
               "Which intent best fits?")
     try:
+        await _emit_stage_context(
+            "intent", system=sys, prompt=prompt, model=model, role="tier",
+            session_id=session_id, runtime={"goal_chars": len(goal or "")})
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True, timeout=_V5_UTILITY_TIMEOUT,
@@ -20127,7 +20237,8 @@ async def _v7_classify_intent(goal: str, heuristic_intent: str, *, model: str,
 
 
 async def _v7_decide_intent(goal: str, *, use_llm: bool, model: str,
-                            instance_id: str, prefer_gpu: bool) -> Dict[str, Any]:
+                            instance_id: str, prefer_gpu: bool,
+                            session_id: str = "") -> Dict[str, Any]:
     """Effective goal intent (heuristic floor + optional LLM pre-pass). The LLM may
     OVERRIDE the heuristic (unlike the tier, which only escalates) because intent
     is a category, not a magnitude — the heuristic's 'mixed' default in particular
@@ -20146,7 +20257,8 @@ async def _v7_decide_intent(goal: str, *, use_llm: bool, model: str,
     # LLM to disambiguate 'look up X then build Y'-shaped goals.
     if use_llm and heur == "mixed":
         c = await _v7_classify_intent(goal, heur, model=model,
-                                      instance_id=instance_id, prefer_gpu=prefer_gpu)
+                                      instance_id=instance_id, prefer_gpu=prefer_gpu,
+                                      session_id=session_id)
         llm = c["intent"]; reason = c["reason"]
     intent = llm if llm in _V7_INTENTS else heur
     if not reason:
@@ -21683,7 +21795,8 @@ async def cap_dag_agent_loop_v6(
         tier_info = await _v7_decide_tier(
             goal, _tier_catalog_brief, plan_tier=plan_tier, auto_escalate=auto_escalate,
             use_llm=(plan_tier or "auto").strip().lower() == "auto",
-            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu)
+            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+            session_id=sid)
         tier = tier_info.get("tier", "simple")
         await emit_event({"type": "agent_loop_v6.tier", "session_id": sid,
                           "stream_id": stream_id, "tier": tier,
@@ -21697,7 +21810,8 @@ async def cap_dag_agent_loop_v6(
         # phase/HITL tuning below. Same cheap LLM budget as the tier pass.
         _intent_info = await _v7_decide_intent(
             goal, use_llm=(plan_tier or "auto").strip().lower() == "auto",
-            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu)
+            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+            session_id=sid)
         intent = _intent_info.get("intent", "mixed")
         await emit_event({"type": "agent_loop_v6.intent", "session_id": sid,
                           "stream_id": stream_id, "intent": intent,
