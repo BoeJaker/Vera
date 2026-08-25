@@ -8139,6 +8139,25 @@ async def cap_run_shadow_export(run_id: str, trace_id=None):
             "export": exported}
 
 
+@capability("run.telemetry.preview", memory="off",
+            description="Preview a bounded, deterministic, content-redacted portable "
+                        "OpenTelemetry/OpenInference span projection without exporting it.",
+            contract=_inspection_contract(
+                "run.observe.telemetry", filesystem="conditional_read_only",
+                tenant="process_local", pagination="bounded_limit",
+                effects=["read", "filesystem"]))
+async def cap_run_telemetry_preview(run_id: str, limit: int = 200, trace_id=None):
+    from Vera.vera.execution.portable_telemetry import project_run_trace
+    from Vera.vera.execution.run_projection import SHADOW_RUNS
+    projection = SHADOW_RUNS.get(run_id)
+    if not projection:
+        return {"error": "run_not_found", "run_id": run_id,
+                "authoritative": False, "storage": SHADOW_RUNS.storage}
+    result = project_run_trace(projection["run"], projection["children"], limit=limit)
+    result["storage"] = SHADOW_RUNS.storage
+    return result
+
+
 @capability("workflow.ir.import_dag", memory="off",
             description="Describe a native Vera DAG as versioned Workflow IR and report all "
                         "semantic gaps. This inspection capability never executes the DAG. "
