@@ -212,6 +212,31 @@ SEED: List[Dict[str, Any]] = [
      "source_url": "kalilinux/kali-last-release"},
     {"os": "kali", "version": "dev", "type": "docker", "arch": "amd64",
      "source_url": "kalilinux/kali-dev"},
+    # Rocky Linux 9
+    {"os": "rockylinux", "version": "9", "type": "cloudimg", "arch": "amd64",
+     "source_url": "https://dl.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud.latest.x86_64.qcow2"},
+    {"os": "rockylinux", "version": "9", "type": "lxc-template", "arch": "amd64",
+     "source_url": "rockylinux-9-default"},
+    {"os": "rockylinux", "version": "9", "type": "docker", "arch": "amd64", "source_url": "rockylinux:9"},
+    # CentOS Stream 9
+    {"os": "centos", "version": "9-stream", "type": "cloudimg", "arch": "amd64",
+     "source_url": "https://cloud.centos.org/centos/9-stream/x86_64/images/CentOS-Stream-GenericCloud-9-latest.x86_64.qcow2"},
+    {"os": "centos", "version": "9-stream", "type": "lxc-template", "arch": "amd64",
+     "source_url": "centos-9-stream-default"},
+    {"os": "centos", "version": "9-stream", "type": "docker", "arch": "amd64", "source_url": "quay.io/centos/centos:stream9"},
+    # openSUSE Leap 15.6
+    {"os": "opensuse", "version": "15.6", "type": "cloudimg", "arch": "amd64",
+     "source_url": "https://download.opensuse.org/distribution/leap/15.6/appliances/openSUSE-Leap-15.6-Minimal-VM.x86_64-Cloud.qcow2",
+     "notes": "verify current filename at import time"},
+    {"os": "opensuse", "version": "15.6", "type": "lxc-template", "arch": "amd64",
+     "source_url": "opensuse-15.6-default"},
+    {"os": "opensuse", "version": "15.6", "type": "docker", "arch": "amd64", "source_url": "opensuse/leap:15.6"},
+    # Debian 13 (trixie)
+    {"os": "debian", "version": "13", "type": "cloudimg", "arch": "amd64",
+     "source_url": "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2"},
+    {"os": "debian", "version": "13", "type": "lxc-template", "arch": "amd64",
+     "source_url": "debian-13-standard"},
+    {"os": "debian", "version": "13", "type": "docker", "arch": "amd64", "source_url": "debian:13"},
     # Windows — stub (bring-your-own ISO)
     {"os": "windows", "version": "server-2022", "type": "iso", "arch": "amd64",
      "source_url": "", "notes": "STUB — supply a Windows Server 2022 ISO volid; autounattend.xml support is a later phase"},
@@ -227,7 +252,7 @@ def _img_id(e: Dict) -> str:
     http_method="POST", http_path="/foundry/catalog/seed", http_tags=["foundry"],
     memory="on",
     description="Seed the image catalogue with the default OS set (Debian 12, "
-                "Ubuntu 24.04, AlmaLinux 9, Alpine, Arch, Fedora 43, Kali, Windows-stub) "
+                "Ubuntu 24.04, AlmaLinux 9, Rocky 9, CentOS Stream 9, openSUSE 15.6, Alpine, Arch, Fedora 43, Debian 13, Kali, Windows-stub) "
                 "across cloudimg / lxc-template / docker / iso types. Idempotent — "
                 "only adds entries that are missing. Output: {ok, added, total}.",
 )
