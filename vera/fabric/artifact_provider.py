@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 import hashlib
 import os
 from pathlib import Path
@@ -47,11 +47,7 @@ def _time(value: str, field: str, optional: bool = False) -> str:
         raise ValueError(f"{field} must be an RFC3339 timestamp") from exc
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError(f"{field} must include a timezone")
-    return value
-
-
-def _instant(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 class LocalArtifactProvider:
@@ -129,11 +125,12 @@ class LocalArtifactProvider:
                 stat = self._stat(existing)
                 if stat.media_type != media_type:
                     raise ValueError("artifact replay media_type differs")
-                if retain_until and (not stat.retain_until or
-                        _instant(retain_until) > _instant(stat.retain_until)):
+                if retain_until:
                     conn.execute(
-                        "UPDATE artifacts SET retain_until=? WHERE artifact_id=?",
-                        (retain_until, artifact_id))
+                        "UPDATE artifacts SET retain_until=CASE "
+                        "WHEN retain_until='' OR retain_until<? THEN ? "
+                        "ELSE retain_until END WHERE artifact_id=?",
+                        (retain_until, retain_until, artifact_id))
                     existing = conn.execute(
                         "SELECT * FROM artifacts WHERE artifact_id=?",
                         (artifact_id,)).fetchone()
@@ -190,4 +187,6 @@ class LocalArtifactProvider:
             row = conn.execute(
                 "SELECT * FROM artifact_references WHERE reference_id=?",
                 (reference_id,)).fetchone()
+            if row["artifact_id"] != artifact_id:
+                raise ValueError("reference replay targets another artifact")
         return dict(row)

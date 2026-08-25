@@ -85,8 +85,13 @@ implementation stores bytes by SHA-256 under hash-sharded paths and keeps
 immutable metadata, retention and reference identity in SQLite. Atomic publish,
 bounded reads, verification, idempotent duplicates, non-retargetable references,
 monotonic retention and partial-file cleanup are deterministic conformance
-behavior. It is not yet wired over the existing S3-compatible `ObjectStore` or
-exposed as public capabilities; those integrations remain subsequent slices.
+behavior. It is not yet wired over the existing S3-compatible `ObjectStore` and
+does not redirect existing artifact stores. The local provider is exposed through
+`fabric.artifact.put/stat/get/verify/reference`, gated by
+`FABRIC_ARTIFACT_POLICY`. Reads and writes have separate size ceilings
+(`FABRIC_ARTIFACT_MAX_GET_BYTES` and `FABRIC_ARTIFACT_MAX_PUT_BYTES`), and
+authorization precedes decoding or storage access. S3-compatible adapters and
+legacy compatibility aliases remain subsequent slices.
 
 ---
 

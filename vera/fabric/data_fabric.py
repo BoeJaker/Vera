@@ -37,6 +37,8 @@ Capabilities
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import hashlib
 import json
 import logging
@@ -71,6 +73,8 @@ from Vera.vera.capability_orchestration import (
 from Vera.vera.sandbox_guard import write_blocked as _sbx_write_blocked, \
     is_write_cypher as _sbx_is_write_cypher
 from Vera.vera.fabric.record_revision import create_record_revision
+from Vera.vera.fabric.artifact_provider import LocalArtifactProvider
+from Vera.vera.fabric.caller_policy import CallerPolicy
 from Vera.vera.fabric.revision_path import RevisionAccessDenied, RevisionPath
 from Vera.vera.fabric.revision_policy import RevisionPolicy
 from Vera.vera.fabric.revision_projection import apply_sqlite_projection
@@ -165,6 +169,11 @@ SQLITE_PATH         = os.getenv("FABRIC_SQLITE", str(Path(__file__).parent / "ve
 REVISION_SQLITE_PATH = os.getenv(
     "FABRIC_REVISION_SQLITE", str(Path(__file__).parent / "vera_fabric_revisions.db"))
 REVISION_POLICY_JSON = os.getenv("FABRIC_REVISION_POLICY", "")
+ARTIFACT_ROOT = os.getenv(
+    "FABRIC_ARTIFACT_ROOT", str(Path(__file__).parent / "artifact_store"))
+ARTIFACT_POLICY_JSON = os.getenv("FABRIC_ARTIFACT_POLICY", "")
+ARTIFACT_MAX_PUT_BYTES = int(os.getenv("FABRIC_ARTIFACT_MAX_PUT_BYTES", str(64 * 1024 * 1024)))
+ARTIFACT_MAX_GET_BYTES = int(os.getenv("FABRIC_ARTIFACT_MAX_GET_BYTES", str(8 * 1024 * 1024)))
 # Retrieval relevance knobs (see execute_query). min_score is the cosine floor a
 # vector result must clear to be returned at all — the fix for unrelated dumps.
 # weak_below flags a whole result set as poor. RRF_K is the rank-fusion constant.
@@ -4983,6 +4992,8 @@ async def _pg_connect_loop():
 # ─────────────────────────────────────────────────────────────────────────────
 
 _REVISION_STORE: Optional[RevisionStore] = None
+_ARTIFACT_PROVIDER: Optional[LocalArtifactProvider] = None
+_ARTIFACT_WRITE_ACTIONS = frozenset({"artifact.put", "artifact.reference"})
 
 
 def _canonical_revision_path() -> RevisionPath:
@@ -4998,6 +5009,26 @@ def _canonical_revision_path() -> RevisionPath:
 def _revision_actor() -> str:
     actor = str(_orch.CALLER_KIND.get("") or "user").strip().lower()
     return {"mcp": "claude_code"}.get(actor, actor)
+
+
+def _artifact_policy() -> CallerPolicy:
+    return CallerPolicy.parse(
+        ARTIFACT_POLICY_JSON, write_actions=_ARTIFACT_WRITE_ACTIONS)
+
+
+def _artifact_provider() -> LocalArtifactProvider:
+    global _ARTIFACT_PROVIDER
+    if _ARTIFACT_PROVIDER is None:
+        _ARTIFACT_PROVIDER = LocalArtifactProvider(
+            ARTIFACT_ROOT, max_put_bytes=ARTIFACT_MAX_PUT_BYTES)
+    return _ARTIFACT_PROVIDER
+
+
+def _require_artifact(policy: CallerPolicy, action: str,
+                      artifact_id: str = "") -> None:
+    actor = _revision_actor()
+    if not policy.allows(action, actor, {"artifact_id": artifact_id}):
+        raise RevisionAccessDenied(f"{action} denied")
 
 
 def _json_object(raw: str, field: str) -> Dict[str, Any]:
@@ -5188,6 +5219,135 @@ async def cap_fabric_revision_reconcile(limit: int = 25, trace_id=None) -> Dict:
                         "generation": receipt["generation"]})
     return {"ok": True, "candidates": len(candidates), "results": results,
             "limit": limit}
+
+
+_ARTIFACT_CONTRACT_BASE = {
+    "aliases": [], "output_schema": {"type": "object"},
+    "approval": {"status": "policy_gated"},
+    "trust": {"status": "caller_context"}, "secrets": {"status": "not_required"},
+    "filesystem": {"status": "checksum_addressed_local_provider"},
+    "network": {"status": "not_required"}, "tenant": {"status": "global"},
+    "cancellation": {"status": "transaction_boundary"},
+    "pagination": {"status": "not_applicable"},
+    "resources": {"status": "declared", "classes": ["cpu", "disk"]},
+    "owner": "fabric",
+}
+
+
+@capability(
+    "fabric.artifact.put", memory="off",
+    http_method="POST", http_path="/fabric/artifacts/put", http_tags=["fabric"],
+    description="Policy-gated checksum-addressed artifact upload. Inputs: data_b64, "
+                "media_type, created_at, retain_until. Decoded size is bounded by "
+                "FABRIC_ARTIFACT_MAX_PUT_BYTES. Output contains immutable metadata.",
+    contract={**_ARTIFACT_CONTRACT_BASE, "canonical_task": "fabric.artifact.put",
+              "effects": ["write", "filesystem"],
+              "idempotency": {"status": "content_addressed"}},
+)
+async def cap_fabric_artifact_put(data_b64: str, media_type: str,
+                                  created_at: str, retain_until: str = "",
+                                  trace_id=None) -> Dict:
+    try:
+        policy = _artifact_policy()
+        _require_artifact(policy, "artifact.put")
+        provider = _artifact_provider()
+        encoded = str(data_b64 or "").strip()
+        if len(encoded) > ((ARTIFACT_MAX_PUT_BYTES + 2) // 3) * 4 + 4:
+            raise ValueError("encoded artifact exceeds configured size limit")
+        data = base64.b64decode(encoded, validate=True)
+        stat = await asyncio.to_thread(
+            provider.put, data, media_type=media_type, created_at=created_at,
+            retain_until=retain_until)
+    except (ValueError, TypeError, OSError, binascii.Error,
+            RevisionAccessDenied) as exc:
+        return {"ok": False, "error": str(exc), "mutated": False}
+    await emit_event({"type": "fabric.artifact.put", "artifact_id": stat.artifact_id,
+                      "size": stat.size, "media_type": stat.media_type})
+    return {"ok": True, "artifact": asdict(stat)}
+
+
+@capability(
+    "fabric.artifact.stat", memory="off", silent=True,
+    http_method="POST", http_path="/fabric/artifacts/stat", http_tags=["fabric"],
+    description="Policy-gated metadata lookup for one checksum-addressed artifact.",
+    contract={**_ARTIFACT_CONTRACT_BASE, "canonical_task": "fabric.artifact.stat",
+              "effects": ["read"], "idempotency": {"status": "idempotent"}},
+)
+async def cap_fabric_artifact_stat(artifact_id: str, trace_id=None) -> Dict:
+    try:
+        policy = _artifact_policy()
+        _require_artifact(policy, "artifact.stat", artifact_id)
+        provider = _artifact_provider()
+        stat = await asyncio.to_thread(provider.stat, artifact_id)
+    except (ValueError, KeyError, OSError, RevisionAccessDenied) as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "artifact": asdict(stat)}
+
+
+@capability(
+    "fabric.artifact.get", memory="off", silent=True,
+    http_method="POST", http_path="/fabric/artifacts/get", http_tags=["fabric"],
+    description="Policy-gated bounded artifact download. Inputs: artifact_id, "
+                "max_bytes (capped by FABRIC_ARTIFACT_MAX_GET_BYTES). Returns data_b64.",
+    contract={**_ARTIFACT_CONTRACT_BASE, "canonical_task": "fabric.artifact.get",
+              "effects": ["read"], "idempotency": {"status": "idempotent"}},
+)
+async def cap_fabric_artifact_get(artifact_id: str, max_bytes: int = 0,
+                                 trace_id=None) -> Dict:
+    try:
+        policy = _artifact_policy()
+        _require_artifact(policy, "artifact.get", artifact_id)
+        provider = _artifact_provider()
+        requested = ARTIFACT_MAX_GET_BYTES if int(max_bytes or 0) <= 0 else int(max_bytes)
+        bounded = min(requested, ARTIFACT_MAX_GET_BYTES)
+        data = await asyncio.to_thread(provider.get, artifact_id, max_bytes=bounded)
+        stat = await asyncio.to_thread(provider.stat, artifact_id)
+    except (ValueError, TypeError, KeyError, OSError, RevisionAccessDenied) as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "artifact": asdict(stat),
+            "data_b64": base64.b64encode(data).decode("ascii"),
+            "max_bytes": bounded}
+
+
+@capability(
+    "fabric.artifact.verify", memory="off", silent=True,
+    http_method="POST", http_path="/fabric/artifacts/verify", http_tags=["fabric"],
+    description="Policy-gated checksum and size verification for one artifact.",
+    contract={**_ARTIFACT_CONTRACT_BASE, "canonical_task": "fabric.artifact.verify",
+              "effects": ["read"], "idempotency": {"status": "idempotent"}},
+)
+async def cap_fabric_artifact_verify(artifact_id: str, trace_id=None) -> Dict:
+    try:
+        policy = _artifact_policy()
+        _require_artifact(policy, "artifact.verify", artifact_id)
+        provider = _artifact_provider()
+        verified = await asyncio.to_thread(provider.verify, artifact_id)
+    except (ValueError, KeyError, OSError, RevisionAccessDenied) as exc:
+        return {"ok": False, "error": str(exc), "verified": False}
+    return {"ok": True, "artifact_id": artifact_id, "verified": verified}
+
+
+@capability(
+    "fabric.artifact.reference", memory="off",
+    http_method="POST", http_path="/fabric/artifacts/reference", http_tags=["fabric"],
+    description="Policy-gated immutable reference to an existing artifact. "
+                "A reference_id is idempotent but cannot be retargeted.",
+    contract={**_ARTIFACT_CONTRACT_BASE,
+              "canonical_task": "fabric.artifact.reference",
+              "effects": ["write", "filesystem"],
+              "idempotency": {"status": "reference_cas"}},
+)
+async def cap_fabric_artifact_reference(artifact_id: str, reference_id: str,
+                                       created_at: str, trace_id=None) -> Dict:
+    try:
+        policy = _artifact_policy()
+        _require_artifact(policy, "artifact.reference", artifact_id)
+        provider = _artifact_provider()
+        reference = await asyncio.to_thread(
+            provider.reference, artifact_id, reference_id, created_at=created_at)
+    except (ValueError, KeyError, OSError, RevisionAccessDenied) as exc:
+        return {"ok": False, "error": str(exc), "mutated": False}
+    return {"ok": True, "reference": reference}
 
 @capability(
     "fabric.ingest", memory="off",
