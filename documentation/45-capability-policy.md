@@ -27,9 +27,17 @@ legacy contractless capabilities remain visibly indeterminate.
 
 ## Next enforcement work
 
-Enforcement requires signed, single-use, scope-bound approval receipts and a
-trusted policy context set by Vera—not raw model or MCP arguments. Receipts must
-bind capability, effects, tenant/session, expiry, and nonce; expanded effects,
-replay, alias substitution, or scope changes must fail. Only then should a
-small migrated capability family move from shadow observation to blocking.
+`vera.approval_receipts` now supplies the trusted receipt primitive needed by a
+future enforcement boundary. HMAC-SHA256 receipts bind the exact capability,
+sorted effects, tenant, session, issue/expiry times, and nonce. Verification is
+strict and content-free; tampering, expanded effects, replay, alias substitution,
+scope changes, unknown fields, and expired/future receipts fail closed. A
+thread-safe in-process nonce ledger makes consumption single-use within one
+runtime.
 
+Issuance is deliberately a Python core operation, not a public capability:
+models and MCP callers cannot ask Vera to mint their own authority, and signing
+keys never enter receipt bodies or telemetry. This slice still does not enforce
+policy. Next, Vera needs a durable cross-process replay ledger and a trusted dispatcher
+context before one small capability family can move from shadow observation to
+blocking.
