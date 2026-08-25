@@ -24,3 +24,18 @@ Deterministic scoring compares declared dotted output paths using strict value
 equality. Missing paths fail closed. Model-judge rubrics and real workload
 adapters remain later slices and must preserve the frozen case identity and
 budget rather than silently changing the benchmark.
+
+## Resolver shadow lane
+
+`evaluations/resolver-shadow-v1.json` is a separate synthetic-only corpus for
+W1-04. Its frozen registries, requests, redacted observations, expected
+selection, and explicit unsafe implementation sets exercise effect rejection,
+output compatibility, policy unknowns, observed health, and evidence ranking.
+
+`evaluate_resolver_corpus` projects each synthetic registry through Capability
+Contract v2 and calls only the pure shadow resolver. It reports exact selection
+accuracy and unsafe-choice rate, and verifies every preview remains
+`authorized: false` and `executed: false`. An invalid corpus scores zero and is
+never partially executed. The lane makes no model, network, or capability call;
+live/model comparison remains queued. `eval.resolver.shadow` exposes the
+aggregate report and returns bounded per-case details only when requested.
