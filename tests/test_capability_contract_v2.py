@@ -369,6 +369,102 @@ def test_shadow_resolver_excludes_unhealthy_and_ranks_observed_evidence():
         {"code": "observed_unhealthy"}]
 
 
+@pytest.mark.parametrize("dimension", [
+    "reliability", "quality", "latency", "cost", "load",
+])
+def test_shadow_resolver_ranks_each_validated_observed_metric(dimension):
+    manifests = [project_contract(name, _entry(contract={
+        "canonical_task": "rank.task", "effects": ["none"],
+        "output_schema": {"type": "object"},
+    })) for name in ("rank.a", "rank.b")]
+
+    def evidence(name, better=False):
+        values = {
+            "name": name,
+            "success_rate": 0.8,
+            "quality": {"status": "observed", "score": 0.5},
+            "latency_ms": {"status": "observed", "p95": 100},
+            "cost": {"status": "observed", "normalized_per_call": 1},
+            "load": {"status": "observed", "utilization": 0.5},
+        }
+        if better:
+            if dimension == "reliability":
+                values["success_rate"] = 0.9
+            elif dimension == "quality":
+                values["quality"]["score"] = 0.6
+            elif dimension == "latency":
+                values["latency_ms"]["p95"] = 90
+            elif dimension == "cost":
+                values["cost"]["normalized_per_call"] = 0.9
+            else:
+                values["load"]["utilization"] = 0.4
+        return values
+
+    # Tie all dimensions that precede the one under test so each metric's
+    # ordering contribution is exercised independently.
+    left = evidence("rank.a")
+    right = evidence("rank.b", better=True)
+    if dimension != "reliability":
+        right["success_rate"] = left["success_rate"]
+    if dimension not in {"reliability", "quality"}:
+        right["quality"] = dict(left["quality"])
+    if dimension in {"cost", "load"}:
+        right["latency_ms"] = dict(left["latency_ms"])
+    if dimension == "load":
+        right["cost"] = dict(left["cost"])
+
+    result = resolve_shadow(manifests, {"canonical_task": "rank.task"},
+                            observations=[left, right])
+    assert result["selected"] == "rank.b"
+
+
+def test_shadow_resolver_uses_declared_metrics_only_as_observation_fallback():
+    manifests = [
+        project_contract("rank.a", _entry(contract={
+            "canonical_task": "rank.task", "effects": ["none"],
+            "quality": {"status": "declared", "score": 0.2}})),
+        project_contract("rank.b", _entry(contract={
+            "canonical_task": "rank.task", "effects": ["none"],
+            "quality": {"status": "declared", "score": 0.9}})),
+    ]
+    result = resolve_shadow(manifests, {"canonical_task": "rank.task"})
+    assert result["selected"] == "rank.b"
+    assert result["eligible"][0]["rank"]["quality"] == 0.9
+    assert result["eligible"][0]["rank"]["evidence_sources"]["quality"] == "contract"
+
+
+def test_shadow_resolver_prefers_locality_after_metric_ties():
+    contract = {"canonical_task": "rank.task", "effects": ["none"]}
+    manifests = [
+        project_contract("rank.remote", _entry(mode="remote", contract=contract)),
+        project_contract("rank.local", _entry(mode="local", contract=contract)),
+    ]
+    result = resolve_shadow(manifests, {"canonical_task": "rank.task"})
+    assert result["selected"] == "rank.local"
+
+
+def test_shadow_resolver_ignores_nonfinite_or_out_of_range_rank_evidence():
+    manifests = [project_contract(name, _entry(contract={
+        "canonical_task": "rank.task", "effects": ["none"],
+    })) for name in ("rank.a", "rank.b")]
+    result = resolve_shadow(manifests, {"canonical_task": "rank.task"}, observations=[{
+        "name": "rank.b", "success_rate": float("nan"),
+        "quality": {"status": "observed", "score": float("inf")},
+        "latency_ms": {"status": "observed", "p95": -1},
+        "cost": {"status": "observed", "normalized_per_call": float("nan")},
+        "load": {"status": "observed", "utilization": 2},
+    }])
+    assert result["selected"] == "rank.a"
+    rank = next(row["rank"] for row in result["eligible"] if row["name"] == "rank.b")
+    assert {key: rank[key] for key in (
+        "reliability", "quality", "latency_p95_ms",
+        "cost_normalized_per_call", "load_utilization",
+    )} == {
+        "reliability": None, "quality": None, "latency_p95_ms": None,
+        "cost_normalized_per_call": None, "load_utilization": None,
+    }
+
+
 def test_shadow_resolver_excludes_output_contract_mismatches():
     base_contract = {"canonical_task": "answer.generate", "effects": ["none"]}
     manifests = [
