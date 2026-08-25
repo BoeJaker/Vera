@@ -22521,6 +22521,18 @@ async def cap_dag_agent_loop_v6(
             await _verify_one(adj, res2)
             gc = res2.get("cycle_end", gc)
             res = res2
+            # Carry the recovery lineage forward. _v6_adjust_step accumulates what
+            # has already been tried onto the ADJUSTED step as `_recovery_history`,
+            # and renders it as the "PRIOR RECOVERY ATTEMPTS — do NOT repeat these"
+            # block. But this loop passed the PRISTINE `step` every attempt, so that
+            # history was dropped on the floor and each retry asked the adjuster the
+            # same question with no memory of its own previous answers.
+            #
+            # Measured (session 216c7eb4): step 1 retried 3x, all three adjust calls
+            # given a BYTE-IDENTICAL prompt (sha cb06f9b68d64) and the identical
+            # failure reason — three chances spent re-deriving the same tactic.
+            # A copy, not a mutation: `step` belongs to the caller's plan.
+            step = {**step, "_recovery_history": adj.get("_recovery_history") or []}
             if res.get("met") is not False and res.get("ok") is not False:
                 break
         if res.get("met") is False or res.get("ok") is False:
