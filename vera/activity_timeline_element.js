@@ -597,9 +597,13 @@
           '<div class="lp-row"><span class="lp-seq">links</span><span class="lp-goal">' +
           esc((tel.linked_event_count || 0) + '/' + (tel.event_count || 0) + ' events linked · ' + coverage + ' causal coverage') +
           (tel.orphan_event_count ? ' · <span class="pill failed">' + esc(tel.orphan_event_count) + ' orphan links</span>' : '') + '</span></div>' +
-          '<div class="lp-row"><span class="lp-seq">export</span><span class="pill waiting">not exported</span>' +
-          '<span class="lp-goal">Local, offline, content-redacted projection. OpenTelemetry/OpenInference exporter is ' +
-          esc(tel.exporter || 'not configured') + '.</span></div></div>';
+          '<div class="lp-row"><span class="lp-seq">export</span><span class="pill ' +
+          (tel.exported ? 'ok' : 'waiting') + '">' + (tel.exported ? 'accepted' : 'not exported') + '</span>' +
+          '<span class="lp-goal">Content-redacted projection · exporter ' +
+          esc(tel.exporter || 'not configured') + ' · ' + esc(tel.export_accepted || 0) + ' accepted / ' +
+          esc(tel.export_failed || 0) + ' failed' +
+          (tel.export_last_duration_ms == null ? '' : ' · last ' + esc(tel.export_last_duration_ms) + ' ms') +
+          '.</span></div></div>';
       }
       let evidenceHtml = '';
       let waterfallHtml = '';

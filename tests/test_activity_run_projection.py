@@ -224,11 +224,12 @@ def test_telemetry_ui_reports_local_correlation_without_claiming_export():
     timeline = (root / "vera" / "activity_timeline_element.js").read_text(
         encoding="utf-8")
     overlay = (root / "vera" / "activity_overlay.js").read_text(encoding="utf-8")
-    assert '"exporter": "not_configured"' in activity
-    assert '"exported": False' in activity
+    assert '"exporter": export_state["state"]' in activity
+    assert '"exported": export_state["last_status"] == "accepted"' in activity
     assert '"content_redacted": True' in activity
     assert "Portable telemetry readiness" in timeline
-    assert "OpenTelemetry/OpenInference exporter is" in timeline
+    assert "export_accepted" in timeline
+    assert "export_failed" in timeline
     assert "not exported" in overlay
 
 

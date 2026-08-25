@@ -63,8 +63,10 @@ These distinctions are deliberate:
   isolated and reported. Activity shows aggregate recovered/quarantined counts
   and the catalog bound, while the compact harness overlay adds status badges.
   The UI still cannot replay or resume a native run.
-- Telemetry coverage is local and content-redacted. No OpenTelemetry or
-  OpenInference export is claimed until an exporter actually runs.
+- Telemetry projection is local and content-redacted. Activity reports the
+  redacted state and bounded success/failure counters of the optional OTLP/HTTP
+  JSON exporter. It claims export only after a collector accepts a request;
+  endpoint and authorization-header values are never shown.
 - Free-text failure/control reasons and result bodies are excluded from Activity
   evidence.
 
