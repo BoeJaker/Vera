@@ -78,6 +78,16 @@ failed/stale receipts through `rebuilding`. Existing `fabric.ingest` behavior
 is unchanged, and this slice makes no claim that FAISS, Chroma, PostgreSQL or
 Neo4j were contacted.
 
+### ArtifactProvider migration
+
+The W2-02 provider kernel begins in `vera.fabric.artifact_provider`. Its local
+implementation stores bytes by SHA-256 under hash-sharded paths and keeps
+immutable metadata, retention and reference identity in SQLite. Atomic publish,
+bounded reads, verification, idempotent duplicates, non-retargetable references,
+monotonic retention and partial-file cleanup are deterministic conformance
+behavior. It is not yet wired over the existing S3-compatible `ObjectStore` or
+exposed as public capabilities; those integrations remain subsequent slices.
+
 ---
 
 ## 3. The ingestion pipeline
