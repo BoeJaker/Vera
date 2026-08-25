@@ -74,6 +74,14 @@ editing is the rare exception (small, urgent, explicitly sanctioned infra fix).
   `replace_primary=true`. `sandbox.down` now preserves worktrees by default;
   pass `remove_worktree=true` only after its dry run names the intended clean
   worktree. Never use teardown as a restart.
+- **Repair a severed worktree through the guarded capability.** First stop its
+  exact container only after an allowed preflight and an exact-target dry run,
+  preserving the worktree. Then call
+  `evolve.sandbox.worktree.repair(branch=..., dry_run=true)`, review the target
+  and quarantine paths, and repeat with `dry_run=false`. It retains the
+  quarantine and preserves tracked edits/deletions plus untracked and ignored
+  files. Do not invoke `sandbox.up`, private `_ensure_worktree` helpers, or
+  repository-wide `git worktree prune` against a severed dirty checkout.
 - **Prod is flaky mid-restart** — another agent restarting it (or you, later in
   the same session) causes transient `EOF`/`SSL` errors on any call, including
   plain `GET /health`, for up to ~30s. Retry with a short poll loop before

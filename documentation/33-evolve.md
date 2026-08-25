@@ -531,6 +531,22 @@ Lifecycle safety still outranks the plan. A plan cannot make a dirty, unknown,
 protected, or Git-severed sandbox safe to restart or reap; preflight remains the
 authority for lifecycle mutations.
 
+### Recovering a severed worktree without losing changes
+
+`evolve.sandbox.worktree.repair(branch, dry_run=true)` repairs one fully
+severed `feat/`, `fix/`, `test/`, `docs/`, or `chore/` worktree. It refuses
+protected branches, healthy/registered worktrees, unknown Docker state, and a
+target mounted by any running or stopped container. Review the exact dry-run
+paths before repeating the call with `dry_run=false`.
+
+The repair moves the orphan directory atomically into a unique quarantine,
+recreates Git linkage from the existing branch, overlays tracked, untracked,
+and ignored files, replays tracked deletions, and verifies the preserved-file
+manifest. The quarantine remains available after success. If recreation fails,
+the original directory is restored and any partial replacement is retained
+separately for diagnosis. The operation never runs repository-wide worktree
+pruning and never deletes the quarantine automatically.
+
 **Reviewer trace fidelity.** The engines' `loops.run` result often carries no
 usable steps list, which once left the adversarial reviewer judging
 "(no tool calls)" after a 25-step run. `_run_task` now rebuilds the tool trace
