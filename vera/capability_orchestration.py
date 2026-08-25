@@ -8206,6 +8206,14 @@ async def cap_run_telemetry_export(run_id: str, limit: int = 200, trace_id=None)
     return result
 
 
+async def _shutdown_portable_telemetry_queue():
+    from Vera.vera.execution.portable_telemetry import TELEMETRY_QUEUE
+    await TELEMETRY_QUEUE.close(flush=True, timeout_seconds=2.0)
+
+
+register_shutdown_hook(_shutdown_portable_telemetry_queue)
+
+
 @capability("workflow.ir.import_dag", memory="off",
             description="Describe a native Vera DAG as versioned Workflow IR and report all "
                         "semantic gaps. This inspection capability never executes the DAG. "
@@ -8708,6 +8716,16 @@ async def _openbao_autounseal_boot():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global REDIS, PG_POOL, CHROMA, NEO
+
+    # Preload optional automatic telemetry during startup, never on the first
+    # completed Run. Disabled mode imports nothing on the Run-recording path.
+    if str(os.getenv("VERA_OTLP_AUTO_EXPORT") or "").strip().lower() in {
+            "1", "true", "yes", "on"}:
+        try:
+            from Vera.vera.execution.portable_telemetry import TELEMETRY_QUEUE as _otlp_queue
+            log.info("portable telemetry queue: %s", _otlp_queue.status()["reason"])
+        except Exception as _telemetry_error:
+            log.warning("portable telemetry queue preload failed: %s", _telemetry_error)
 
     # uvicorn has configured its loggers by now — detach console writes from
     # the loop thread before any traffic arrives.

@@ -13,6 +13,11 @@ from .run_journal import JournalCorruption, MemoryRunJournal, SqliteRunJournal
 from .run_protocol import ArtifactRef, PROTOCOL_VERSION, Run, RunError, RunEvent, RunStatus
 
 
+_AUTO_TELEMETRY_ENABLED = str(os.getenv("VERA_OTLP_AUTO_EXPORT") or "").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+
+
 def _leaf_count(graph: list) -> int:
     count = 0
     for node in graph:
@@ -70,6 +75,17 @@ class ShadowRunRegistry:
         self.runs.move_to_end(run.id)
         self.journal.append(event)
         self.journal.checkpoint(run)
+        if _AUTO_TELEMETRY_ENABLED and not run.parent_run_id and run.status in {
+                RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED,
+                RunStatus.TIMED_OUT, RunStatus.SKIPPED}:
+            try:
+                from .portable_telemetry import TELEMETRY_QUEUE
+                children = [child for child in self.runs.values()
+                            if child.parent_run_id == run.id]
+                TELEMETRY_QUEUE.offer_run(run, children)
+            except Exception:
+                # Observability must never alter Run recording or execution.
+                pass
         while len(self.runs) > self.max_runs:
             old_id, _ = self.runs.popitem(last=False)
             # Memory rows follow their bounded projection. A durable journal has

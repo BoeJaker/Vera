@@ -396,11 +396,12 @@ Every pilot must provide:
 
 Map Run events to OpenTelemetry/OpenInference spans and a local collector fixture.
 
-The current implementation provides deterministic redacted span projection and
-an explicit, default-off OTLP/HTTP JSON exporter with bounded requests and
-failure isolation. Automatic terminal-Run enqueueing, cross-trace batching and
-the real local-collector fixture remain queued work; no external collector has
-been contacted by the deterministic gate.
+The current implementation provides deterministic redacted span projection, an
+explicit default-off OTLP/HTTP JSON exporter, and a separately opt-in bounded
+terminal-Run queue with batching, duplicate suppression, backpressure counters,
+capped transient retry and bounded shutdown flush. The real local-collector
+fixture remains queued; no external collector has been contacted by the
+deterministic gate.
 
 Gate: golden spans, correlation, error/cancel/retry, redaction, exporter failure
 isolation, and bounded overhead.
