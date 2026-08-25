@@ -70,6 +70,11 @@ from Vera.vera.capability_orchestration import (
 # no-op in prod. See vera/sandbox_guard.py.
 from Vera.vera.sandbox_guard import write_blocked as _sbx_write_blocked, \
     is_write_cypher as _sbx_is_write_cypher
+from Vera.vera.fabric.record_revision import create_record_revision
+from Vera.vera.fabric.revision_path import RevisionAccessDenied, RevisionPath
+from Vera.vera.fabric.revision_policy import RevisionPolicy
+from Vera.vera.fabric.revision_projection import apply_sqlite_projection
+from Vera.vera.fabric.revision_store import RevisionConflict, RevisionStore
 
 log = logging.getLogger("vera.data_fabric")
 
@@ -157,6 +162,9 @@ FABRIC_FAISS_ENABLED = os.getenv("FABRIC_FAISS", "0") == "1"
 FABRIC_CACHE_TTL    = int(os.getenv("FABRIC_CACHE_TTL",  "3600"))
 FABRIC_STREAM_KEY   = os.getenv("FABRIC_STREAM_KEY",     "vera:fabric:ingest")
 SQLITE_PATH         = os.getenv("FABRIC_SQLITE", str(Path(__file__).parent / "vera_fabric.db"))
+REVISION_SQLITE_PATH = os.getenv(
+    "FABRIC_REVISION_SQLITE", str(Path(__file__).parent / "vera_fabric_revisions.db"))
+REVISION_POLICY_JSON = os.getenv("FABRIC_REVISION_POLICY", "")
 # Retrieval relevance knobs (see execute_query). min_score is the cosine floor a
 # vector result must clear to be returned at all — the fix for unrelated dumps.
 # weak_below flags a whole result set as poor. RRF_K is the rank-fusion constant.
@@ -4973,6 +4981,213 @@ async def _pg_connect_loop():
 # ─────────────────────────────────────────────────────────────────────────────
 # CAPABILITIES
 # ─────────────────────────────────────────────────────────────────────────────
+
+_REVISION_STORE: Optional[RevisionStore] = None
+
+
+def _canonical_revision_path() -> RevisionPath:
+    global _REVISION_STORE
+    if _REVISION_STORE is None:
+        _REVISION_STORE = RevisionStore(REVISION_SQLITE_PATH)
+    # Parse at call time so an invalid deployment policy fails the request
+    # closed instead of preventing the whole Fabric module from loading.
+    policy = RevisionPolicy.from_json(REVISION_POLICY_JSON)
+    return RevisionPath(_REVISION_STORE, policy.allows)
+
+
+def _revision_actor() -> str:
+    actor = str(_orch.CALLER_KIND.get("") or "user").strip().lower()
+    return {"mcp": "claude_code"}.get(actor, actor)
+
+
+def _json_object(raw: str, field: str) -> Dict[str, Any]:
+    try:
+        value = json.loads(raw or "{}")
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{field} must be valid JSON") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{field} must be a JSON object")
+    return value
+
+
+def _json_value(raw: str, field: str) -> Any:
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{field} must be valid JSON") from exc
+
+
+def _project_canonical_revision_sqlite(envelope: Dict[str, Any]) -> Dict[str, Any]:
+    """Apply one canonical revision to the existing SQLite read projection."""
+    return apply_sqlite_projection(SQLITE_PATH, envelope, now=now_iso)
+
+
+@capability(
+    "fabric.revision.put", memory="off",
+    http_method="POST", http_path="/fabric/revisions/put", http_tags=["fabric"],
+    description="Policy-gated canonical Fabric revision write. Commits immutable "
+                "authority and a SQLite projection receipt; projection failure is "
+                "reported durably without undoing authority. Inputs: namespace, "
+                "record_type, created_at, record_id or logical_key, content_json, "
+                "parents (CSV), policy_json/source_json/metadata_json, expected_head. "
+                "Tombstones require tombstone=true, null content and a parent. "
+                "Autonomous/tool writers require FABRIC_REVISION_POLICY admission.",
+    contract={
+        "canonical_task": "fabric.revision.put", "aliases": [],
+        "effects": ["write", "filesystem"], "output_schema": {"type": "object"},
+        "approval": {"status": "policy_gated"},
+        "trust": {"status": "caller_context"}, "secrets": {"status": "not_required"},
+        "filesystem": {"status": "sqlite_authority_and_projection"},
+        "network": {"status": "not_required"}, "tenant": {"status": "namespace"},
+        "idempotency": {"status": "content_addressed"},
+        "cancellation": {"status": "transaction_boundary"},
+        "pagination": {"status": "not_applicable"},
+        "resources": {"status": "declared", "classes": ["cpu", "disk"]},
+        "owner": "fabric",
+    },
+)
+async def cap_fabric_revision_put(
+        namespace: str, record_type: str, created_at: str,
+        record_id: str = "", logical_key: str = "", content_json: str = "null",
+        parents: str = "", policy_json: str = "{}", source_json: str = "{}",
+        metadata_json: str = "{}", expected_head: str = "",
+        tombstone: bool = False, media_type: str = "application/json",
+        valid_from: str = "", valid_to: str = "", trace_id=None) -> Dict:
+    try:
+        revision = create_record_revision(
+            namespace=namespace, record_type=record_type, created_at=created_at,
+            record_id=record_id, logical_key=logical_key,
+            content=_json_value(content_json, "content_json"),
+            media_type=media_type, tombstone=bool(tombstone),
+            valid_from=valid_from, valid_to=valid_to,
+            parents=[item.strip() for item in parents.split(",") if item.strip()],
+            policy=_json_object(policy_json, "policy_json"),
+            source=_json_object(source_json, "source_json"),
+            metadata=_json_object(metadata_json, "metadata_json"))
+        path = _canonical_revision_path()
+        committed = path.put(revision, actor=_revision_actor(), projections=["sqlite"],
+                             expected_head=expected_head)
+    except (ValueError, TypeError, RevisionConflict, RevisionAccessDenied) as exc:
+        return {"ok": False, "error": str(exc), "mutated": False}
+    receipt = path.store.receipt(revision.revision_id, "sqlite")
+    if receipt["state"] == "pending":
+        try:
+            projection = await asyncio.to_thread(
+                _project_canonical_revision_sqlite, revision.to_dict())
+            path.store.transition(
+                revision.revision_id, "sqlite", from_state="pending",
+                to_state=projection["state"], occurred_at=now_iso(),
+                projection_revision=(projection["projection_revision"]
+                                     if projection["state"] == "applied" else ""))
+        except Exception as exc:
+            code = re.sub(r"[^a-z0-9._-]", "_", type(exc).__name__.lower())[:128]
+            path.store.transition(
+                revision.revision_id, "sqlite", from_state="pending", to_state="failed",
+                occurred_at=now_iso(), error_code=code or "projection_failed")
+    receipt = path.store.receipt(revision.revision_id, "sqlite")
+    await emit_event({"type": "fabric.revision.committed",
+                      "record_id": revision.record_id,
+                      "revision_id": revision.revision_id,
+                      "projection_state": receipt["state"]})
+    return {"ok": True, **committed, "projection_receipt": receipt}
+
+
+@capability(
+    "fabric.revision.get", memory="off", silent=True,
+    http_method="POST", http_path="/fabric/revisions/get", http_tags=["fabric"],
+    description="Policy-gated canonical Fabric revision read. Returns the current "
+                "revision for record_id, or an exact revision_id bound to that record.",
+    contract={
+        "canonical_task": "fabric.revision.get", "aliases": [], "effects": ["read"],
+        "output_schema": {"type": "object"},
+        "approval": {"status": "policy_gated"},
+        "trust": {"status": "caller_context"}, "secrets": {"status": "not_required"},
+        "filesystem": {"status": "sqlite_read"}, "network": {"status": "not_required"},
+        "tenant": {"status": "namespace"}, "idempotency": {"status": "idempotent"},
+        "cancellation": {"status": "not_required"},
+        "pagination": {"status": "not_applicable"},
+        "resources": {"status": "declared", "classes": ["cpu", "disk"]},
+        "owner": "fabric",
+    },
+)
+async def cap_fabric_revision_get(record_id: str, revision_id: str = "",
+                                  trace_id=None) -> Dict:
+    try:
+        value = _canonical_revision_path().get(
+            record_id, actor=_revision_actor(), revision_id=revision_id)
+    except (ValueError, RevisionAccessDenied, KeyError) as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "record": value}
+
+
+@capability(
+    "fabric.revision.reconcile", memory="off",
+    http_method="POST", http_path="/fabric/revisions/reconcile", http_tags=["fabric"],
+    description="Policy-gated bounded retry of failed/stale canonical SQLite "
+                "projection receipts. Inputs: limit (1..100). Each item is "
+                "transitioned through rebuilding and ends applied/removed/failed.",
+    contract={
+        "canonical_task": "fabric.revision.reconcile", "aliases": [],
+        "effects": ["write", "filesystem"], "output_schema": {"type": "object"},
+        "approval": {"status": "policy_gated"},
+        "trust": {"status": "caller_context"}, "secrets": {"status": "not_required"},
+        "filesystem": {"status": "sqlite_authority_and_projection"},
+        "network": {"status": "not_required"}, "tenant": {"status": "namespace"},
+        "idempotency": {"status": "receipt_cas"},
+        "cancellation": {"status": "between_receipts"},
+        "pagination": {"status": "bounded"},
+        "resources": {"status": "declared", "classes": ["cpu", "disk"]},
+        "owner": "fabric",
+    },
+)
+async def cap_fabric_revision_reconcile(limit: int = 25, trace_id=None) -> Dict:
+    try:
+        limit = max(1, min(int(limit), 100))
+        path = _canonical_revision_path()
+    except (TypeError, ValueError) as exc:
+        return {"ok": False, "error": str(exc), "mutated": False}
+    actor = _revision_actor()
+    candidates = path.store.reconcile(states=("failed", "stale"), limit=limit)
+    results = []
+    for candidate in candidates:
+        revision_id = candidate["revision_id"]
+        projection = candidate["projection"]
+        if projection != "sqlite":
+            results.append({"revision_id": revision_id, "projection": projection,
+                            "state": candidate["state"],
+                            "error": "unsupported projection"})
+            continue
+        envelope = path.store.revision(revision_id)
+        try:
+            path.require_envelope("revision.write", actor, envelope)
+        except RevisionAccessDenied as exc:
+            results.append({"revision_id": revision_id, "projection": projection,
+                            "state": candidate["state"], "error": str(exc)})
+            continue
+        try:
+            path.store.transition(
+                revision_id, projection, from_state=candidate["state"],
+                to_state="rebuilding", occurred_at=now_iso())
+            outcome = await asyncio.to_thread(
+                _project_canonical_revision_sqlite, envelope)
+            receipt = path.store.transition(
+                revision_id, projection, from_state="rebuilding",
+                to_state=outcome["state"], occurred_at=now_iso(),
+                projection_revision=(outcome["projection_revision"]
+                                     if outcome["state"] == "applied" else ""))
+        except Exception as exc:
+            code = re.sub(r"[^a-z0-9._-]", "_", type(exc).__name__.lower())[:128]
+            try:
+                receipt = path.store.transition(
+                    revision_id, projection, from_state="rebuilding", to_state="failed",
+                    occurred_at=now_iso(), error_code=code or "projection_failed")
+            except Exception:
+                receipt = path.store.receipt(revision_id, projection)
+        results.append({"revision_id": revision_id, "projection": projection,
+                        "state": receipt["state"], "attempt": receipt["attempt"],
+                        "generation": receipt["generation"]})
+    return {"ok": True, "candidates": len(candidates), "results": results,
+            "limit": limit}
 
 @capability(
     "fabric.ingest", memory="off",
