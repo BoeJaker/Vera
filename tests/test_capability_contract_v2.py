@@ -369,6 +369,81 @@ def test_shadow_resolver_excludes_unhealthy_and_ranks_observed_evidence():
         {"code": "observed_unhealthy"}]
 
 
+def test_shadow_resolver_excludes_output_contract_mismatches():
+    base_contract = {"canonical_task": "answer.generate", "effects": ["none"]}
+    manifests = [
+        project_contract("answer.good", _entry(contract={**base_contract,
+            "output_schema": {"type": "object", "required": ["answer"],
+                              "properties": {"answer": {"type": "string"}}}})),
+        project_contract("answer.bad", _entry(contract={**base_contract,
+            "output_schema": {"type": "object", "required": ["answer"],
+                              "properties": {"answer": {"type": "number"}}}})),
+        project_contract("answer.unknown", _entry(contract=base_contract)),
+    ]
+    result = resolve_shadow(manifests, {
+        "canonical_task": "answer.generate",
+        "output_schema": {"type": "object", "required": ["answer"],
+                          "properties": {"answer": {"type": "string"}}},
+    })
+    assert result["selected"] == "answer.good"
+    exclusions = {row["name"]: row["exclusions"] for row in result["excluded"]}
+    assert exclusions["answer.bad"] == [{
+        "code": "output_property_type_mismatch", "property": "answer",
+        "expected": ["string"], "actual": ["number"]}]
+    assert exclusions["answer.unknown"] == [{"code": "output_schema_unknown"}]
+
+
+def test_shadow_resolver_excludes_policy_mismatch_and_unknown():
+    common = {"canonical_task": "records.read", "effects": ["read"],
+              "output_schema": {"type": "object"}}
+    manifests = [
+        project_contract("records.safe", _entry(contract={**common,
+            "network": {"status": "not_required"}})),
+        project_contract("records.remote", _entry(contract={**common,
+            "network": {"status": "internal_model_cluster"}})),
+        project_contract("records.unknown", _entry(contract=common)),
+    ]
+    result = resolve_shadow(manifests, {
+        "canonical_task": "records.read", "allowed_effects": ["read"],
+        "policy_requirements": {"network": "not_required"},
+    })
+    assert result["selected"] == "records.safe"
+    exclusions = {row["name"]: row["exclusions"] for row in result["excluded"]}
+    assert exclusions["records.remote"] == [{
+        "code": "policy_mismatch", "dimension": "network",
+        "expected": ["not_required"], "actual": "internal_model_cluster"}]
+    assert exclusions["records.unknown"] == [{
+        "code": "policy_unknown", "dimension": "network"}]
+
+
+def test_shadow_resolver_fails_closed_on_invalid_constraint_request():
+    manifest = project_contract("records.read", _entry(contract={
+        "canonical_task": "records.read", "effects": ["read"]}))
+    result = resolve_shadow([manifest], {
+        "canonical_task": "records.read",
+        "output_schema": "object",
+        "policy_requirements": {"telepathy": ["allowed"]},
+    })
+    assert result["selected"] is None
+    assert result["counts"] == {"matched": 1, "considered": 0,
+                                "eligible": 0, "excluded": 0}
+    assert result["request_issues"] == [
+        {"code": "request.policy_dimension_unknown", "dimension": "telepathy"},
+        {"code": "request.output_schema_invalid"},
+    ]
+
+
+def test_shadow_resolver_bounds_requested_output_properties():
+    result = resolve_shadow([], {
+        "canonical_task": "answer.generate",
+        "output_schema": {"type": "object", "properties": {
+            f"field_{index}": {"type": "string"} for index in range(101)}},
+    })
+    assert result["selected"] is None
+    assert result["request_issues"] == [{
+        "code": "request.output_schema_too_large", "max_properties": 100}]
+
+
 def test_shadow_capability_does_not_call_candidates(monkeypatch):
     calls = []
     async def observe(limit, trace_id=None):
@@ -379,7 +454,12 @@ def test_shadow_capability_does_not_call_candidates(monkeypatch):
     result = asyncio.run(runtime_orchestration.cap_resolve_shadow.__wrapped__(
         canonical_task="text.generate",
         allowed_effects=["filesystem", "model", "network"],
+        output_schema={"type": "object"},
+        policy_requirements={"network": ["internal_model_cluster"]},
         trace_id="shadow-test"))
     assert calls == [(200, "shadow-test")]
     assert result["executed"] is False and result["authorized"] is False
     assert result["selected"] in {"llm.generate", "ollama.generate_raw"}
+    assert result["request"]["output_schema"] == {"type": "object"}
+    assert result["request"]["policy_requirements"] == {
+        "network": ["internal_model_cluster"]}
