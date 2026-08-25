@@ -6175,6 +6175,39 @@ async def eval_policy_boundary(detail: bool = False, limit: int = 50, trace_id=N
                        "truncated": len(cases) > bounded, "cases": cases[:bounded]})
     return report
 
+
+@capability(
+    "eval.run.telemetry", memory="off", silent=True,
+    http_method="GET", http_path="/eval/run/telemetry", http_tags=["eval", "run"],
+    description="Run the frozen deterministic W1-06 portable telemetry corpus. "
+                "Covers OTLP shape, lineage, terminal/retry semantics, redaction, "
+                "failure isolation, structural bounds, and default-off behavior "
+                "using injected transports only.",
+    contract={
+        "canonical_task": "evaluation.run.telemetry", "effects": ["read"],
+        "output_schema": {"type": "object"}, "approval": {"status": "not_required"},
+        "trust": {"status": "repository_fixture"}, "secrets": {"status": "not_required"},
+        "filesystem": {"status": "read_repository_fixture"},
+        "network": {"status": "not_required"}, "tenant": {"status": "global_read_only"},
+        "idempotency": {"status": "idempotent"}, "cancellation": {"status": "not_required"},
+        "pagination": {"status": "bounded"},
+        "resources": {"status": "declared", "classes": ["cpu"]},
+        "owner": "vera.execution",
+    },
+)
+async def eval_run_telemetry(detail: bool = False, limit: int = 50, trace_id=None):
+    from pathlib import Path
+    from Vera.vera.execution.telemetry_eval_core import (
+        evaluate_telemetry_corpus, load_telemetry_corpus)
+    path = Path(__file__).resolve().parent.parent / "evaluations" / "run-telemetry-v1.json"
+    report = await evaluate_telemetry_corpus(load_telemetry_corpus(path))
+    cases = report.pop("cases", [])
+    if detail:
+        bounded = max(1, min(int(limit or 50), 100))
+        report.update({"returned": min(len(cases), bounded),
+                       "truncated": len(cases) > bounded, "cases": cases[:bounded]})
+    return report
+
 @capability("mcp.call", memory="auto",
             http_method="POST", http_path="/mcp/call", http_tags=["mcp"],
             mcp_expose=False,

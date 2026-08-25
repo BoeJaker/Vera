@@ -1,0 +1,35 @@
+{
+  "schema": "vera.run-telemetry-corpus/v1",
+  "revision": "2026-08-25.1",
+  "policy": {
+    "executes_capabilities": false,
+    "uses_network": false,
+    "uses_external_secrets": false,
+    "measures_wall_clock": false
+  },
+  "required_gates": [
+    "otlp_shape",
+    "correlation",
+    "terminal_semantics",
+    "redaction",
+    "failure_isolation",
+    "bounded_work",
+    "default_off"
+  ],
+  "cases": [
+    {"id": "golden-otlp", "gate": "otlp_shape", "operation": "golden_otlp",
+      "expected": {"trace_id": "37cf362e634e62f535f2bd517ab6d0cc", "span_id": "b422e221e6890d08", "parent_span_id": "", "name": "vera.dag", "kind": "SPAN_KIND_INTERNAL", "start_nanos": "1767225600000000000", "end_nanos": "1767225602000000000", "status": "STATUS_CODE_OK", "openinference_kind": "CHAIN", "event_names": ["run.started", "run.completed"]}},
+    {"id": "nested-lineage", "gate": "correlation", "operation": "nested_lineage",
+      "expected": {"span_count": 2, "same_trace": true, "child_parent_matches": true, "root_kind": "CHAIN", "child_kind": "TOOL", "child_status": "ERROR", "error_type": "tool_failed", "retry_attempt": 2, "artifact_scheme": "s3", "checksum_algorithm": "sha256"}},
+    {"id": "terminal-status", "gate": "terminal_semantics", "operation": "terminal_outcomes",
+      "expected": {"completed": "OK", "cancelled": "UNSET", "timed_out": "ERROR", "failed": "ERROR", "retry_event": true}},
+    {"id": "content-redaction", "gate": "redaction", "operation": "redaction",
+      "expected": {"portable_clean": true, "otlp_clean": true, "forbidden_matches": 0, "content_redacted": true}},
+    {"id": "isolated-failure", "gate": "failure_isolation", "operation": "failure_isolation",
+      "expected": {"reason": "transport_failure", "error_type": "TimeoutError", "exported": false, "sender_calls": 1, "stats_unchanged": true, "message_absent": true}},
+    {"id": "bounded-projection", "gate": "bounded_work", "operation": "bounded_work",
+      "expected": {"span_count": 200, "trace_truncated": true, "root_events": 200, "events_truncated": true, "reason": "request_too_large", "sender_calls": 0, "has_preparation_measurement": true}},
+    {"id": "offline-default", "gate": "default_off", "operation": "default_off",
+      "expected": {"reason": "not_configured", "exported": false, "sender_calls": 0, "queue_enabled": false, "queue_reason": "auto_export_disabled", "stats_unchanged": true}}
+  ]
+}

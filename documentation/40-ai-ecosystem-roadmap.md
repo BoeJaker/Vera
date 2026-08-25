@@ -399,12 +399,15 @@ Map Run events to OpenTelemetry/OpenInference spans and a local collector fixtur
 The current implementation provides deterministic redacted span projection, an
 explicit default-off OTLP/HTTP JSON exporter, and a separately opt-in bounded
 terminal-Run queue with batching, duplicate suppression, backpressure counters,
-capped transient retry and bounded shutdown flush. The real local-collector
-fixture remains queued; no external collector has been contacted by the
-deterministic gate.
+capped transient retry and bounded shutdown flush. A frozen seven-case corpus
+and `eval.run.telemetry` now make OTLP shape, correlation, terminal semantics,
+redaction, failure isolation, structural bounds, and default-off behavior a
+repeatable offline gate. It uses injected transports and leaves live exporter
+counters untouched.
 
-Gate: golden spans, correlation, error/cancel/retry, redaction, exporter failure
-isolation, and bounded overhead.
+The real local-collector fixture, external collector compatibility, and measured
+runtime overhead remain queued; no collector is contacted by the deterministic
+gate.
 
 ### LIB-02 — A2A client/server adapter
 

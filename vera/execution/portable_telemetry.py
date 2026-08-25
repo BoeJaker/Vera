@@ -412,7 +412,8 @@ def _export_validation_error(trace: Mapping[str, Any]) -> str:
 
 
 async def export_trace(trace: Mapping[str, Any], *, sender=None,
-                       environ: Mapping[str, str] | None = None) -> dict[str, Any]:
+                       environ: Mapping[str, str] | None = None,
+                       record_stats: bool = True) -> dict[str, Any]:
     """Best-effort bounded export. Transport failures are data, never exceptions."""
     config = exporter_config(environ)
     span_count = len(trace.get("spans") or [])
@@ -435,8 +436,9 @@ async def export_trace(trace: Mapping[str, Any], *, sender=None,
                 "content_redacted": True}
     transport = sender or _http_json_sender
     headers = {**dict(config.headers), "content-type": "application/json"}
-    with _EXPORT_STATS_LOCK:
-        _EXPORT_STATS["attempts"] += 1
+    if record_stats:
+        with _EXPORT_STATS_LOCK:
+            _EXPORT_STATS["attempts"] += 1
     started = time.perf_counter()
     try:
         response = await transport(config.endpoint, body, headers,
@@ -445,14 +447,15 @@ async def export_trace(trace: Mapping[str, Any], *, sender=None,
         accepted = status_code == 200 and rejected_spans == 0
         partial = status_code == 200 and rejected_spans > 0
         exported = accepted or (partial and rejected_spans < span_count)
-        with _EXPORT_STATS_LOCK:
-            _EXPORT_STATS["accepted" if accepted else "failed"] += 1
-            _EXPORT_STATS["last_status"] = (
-                "accepted" if accepted else ("partial" if partial else "rejected"))
-            _EXPORT_STATS["last_error_type"] = (
-                "" if accepted else ("partial_success" if partial else
-                                      ("invalid_response" if rejected_spans < 0
-                                       else "http_status")))
+        if record_stats:
+            with _EXPORT_STATS_LOCK:
+                _EXPORT_STATS["accepted" if accepted else "failed"] += 1
+                _EXPORT_STATS["last_status"] = (
+                    "accepted" if accepted else ("partial" if partial else "rejected"))
+                _EXPORT_STATS["last_error_type"] = (
+                    "" if accepted else ("partial_success" if partial else
+                                          ("invalid_response" if rejected_spans < 0
+                                           else "http_status")))
         reason = ("accepted" if accepted else
                   ("partial_success" if partial else
                    ("invalid_collector_response" if rejected_spans < 0
@@ -463,19 +466,21 @@ async def export_trace(trace: Mapping[str, Any], *, sender=None,
                 "request_bytes": len(body), "preparation_ms": preparation_ms,
                 "content_redacted": True}
     except Exception as exc:
-        with _EXPORT_STATS_LOCK:
-            _EXPORT_STATS["failed"] += 1
-            _EXPORT_STATS["last_status"] = "failed"
-            _EXPORT_STATS["last_error_type"] = type(exc).__name__
+        if record_stats:
+            with _EXPORT_STATS_LOCK:
+                _EXPORT_STATS["failed"] += 1
+                _EXPORT_STATS["last_status"] = "failed"
+                _EXPORT_STATS["last_error_type"] = type(exc).__name__
         return {"ok": False, "exported": False, "reason": "transport_failure",
                 "error_type": type(exc).__name__, "span_count": span_count,
                 "request_bytes": len(body), "preparation_ms": preparation_ms,
                 "content_redacted": True}
     finally:
-        with _EXPORT_STATS_LOCK:
-            _EXPORT_STATS["last_duration_ms"] = round(
-                (time.perf_counter() - started) * 1000, 3)
-            _EXPORT_STATS["last_span_count"] = span_count
+        if record_stats:
+            with _EXPORT_STATS_LOCK:
+                _EXPORT_STATS["last_duration_ms"] = round(
+                    (time.perf_counter() - started) * 1000, 3)
+                _EXPORT_STATS["last_span_count"] = span_count
 
 
 def merge_traces(traces: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
