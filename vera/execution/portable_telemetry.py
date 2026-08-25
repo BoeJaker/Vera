@@ -7,9 +7,12 @@ network connection.
 
 from __future__ import annotations
 
+import asyncio
+from collections import OrderedDict
 import hashlib
 import json
 import os
+import random
 import re
 import threading
 import time
@@ -42,6 +45,18 @@ class ExporterConfig:
     max_request_bytes: int = 1_048_576
     headers: tuple[tuple[str, str], ...] = ()
     reason: str = "not_configured"
+
+
+@dataclass(frozen=True)
+class QueueConfig:
+    enabled: bool
+    max_queue: int = 64
+    batch_size: int = 8
+    flush_seconds: float = 0.1
+    dedupe_limit: int = 1024
+    retry_max: int = 2
+    retry_backoff_seconds: float = 0.1
+    reason: str = "auto_export_disabled"
 
 
 _EXPORT_STATS: dict[str, Any] = {
@@ -122,6 +137,28 @@ def exporter_config(environ: Mapping[str, str] | None = None) -> ExporterConfig:
         max_request_bytes=_bounded_int(env.get("VERA_OTLP_MAX_REQUEST_BYTES"),
                                        1_048_576, 1024, 4_194_304),
         headers=_parse_headers(headers), reason="configured",
+    )
+
+
+def queue_config(environ: Mapping[str, str] | None = None) -> QueueConfig:
+    env = environ if environ is not None else os.environ
+    enabled_value = str(env.get("VERA_OTLP_AUTO_EXPORT") or "").strip().lower()
+    exporter = exporter_config(env)
+    if enabled_value not in {"1", "true", "yes", "on"}:
+        return QueueConfig(enabled=False)
+    if not exporter.enabled:
+        return QueueConfig(enabled=False, reason=exporter.reason)
+    return QueueConfig(
+        enabled=True,
+        max_queue=_bounded_int(env.get("VERA_OTLP_QUEUE_SIZE"), 64, 1, 256),
+        batch_size=_bounded_int(env.get("VERA_OTLP_BATCH_SIZE"), 8, 1, 32),
+        flush_seconds=_bounded_float(env.get("VERA_OTLP_FLUSH_MS"),
+                                     100.0, 0.0, 1000.0) / 1000.0,
+        dedupe_limit=_bounded_int(env.get("VERA_OTLP_DEDUPE_SIZE"), 1024, 16, 4096),
+        retry_max=_bounded_int(env.get("VERA_OTLP_RETRY_MAX"), 2, 0, 3),
+        retry_backoff_seconds=_bounded_float(env.get("VERA_OTLP_RETRY_BACKOFF_MS"),
+                                             100.0, 0.0, 1000.0) / 1000.0,
+        reason="configured",
     )
 
 
@@ -330,6 +367,7 @@ def exporter_status(environ: Mapping[str, str] | None = None) -> dict[str, Any]:
     config = exporter_config(environ)
     with _EXPORT_STATS_LOCK:
         stats = dict(_EXPORT_STATS)
+    queue = globals().get("TELEMETRY_QUEUE")
     return {
         "state": "configured" if config.enabled else config.reason,
         "enabled": config.enabled,
@@ -341,6 +379,8 @@ def exporter_status(environ: Mapping[str, str] | None = None) -> dict[str, Any]:
         "max_request_bytes": config.max_request_bytes,
         "header_count": len(config.headers),
         "content_redacted": True,
+        "queue": queue.status() if queue is not None else {
+            "enabled": False, "reason": "not_initialized"},
         **stats,
     }
 
@@ -436,3 +476,183 @@ async def export_trace(trace: Mapping[str, Any], *, sender=None,
             _EXPORT_STATS["last_duration_ms"] = round(
                 (time.perf_counter() - started) * 1000, 3)
             _EXPORT_STATS["last_span_count"] = span_count
+
+
+def merge_traces(traces: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    """Combine already-redacted traces into one bounded OTLP export unit."""
+    spans = []
+    for trace in traces:
+        spans.extend(list(trace.get("spans") or []))
+    return {
+        "schema": SCHEMA, "authoritative": False, "offline": True,
+        "exported": False, "content_redacted": True,
+        "span_count": len(spans), "truncated": False, "spans": spans,
+    }
+
+
+class PortableTelemetryQueue:
+    """One-process, non-blocking, bounded queue for terminal root Runs."""
+
+    def __init__(self, *, sender=None, environ: Mapping[str, str] | None = None,
+                 retry_jitter=None) -> None:
+        self.sender = sender
+        self.environ = environ
+        self.retry_jitter = retry_jitter or (lambda: random.uniform(0.8, 1.2))
+        self._queue: asyncio.Queue | None = None
+        self._worker: asyncio.Task | None = None
+        self._seen: OrderedDict[str, None] = OrderedDict()
+        self._closing = False
+        self._stats = {
+            "offered": 0, "enqueued": 0, "deduplicated": 0,
+            "dropped": 0, "exported_traces": 0, "failed_traces": 0,
+            "exported_batches": 0, "failed_batches": 0,
+            "retries": 0,
+            "last_result": "never",
+        }
+
+    def _config(self) -> QueueConfig:
+        return queue_config(self.environ)
+
+    def status(self) -> dict[str, Any]:
+        config = self._config()
+        return {
+            "enabled": config.enabled, "reason": config.reason,
+            "max_queue": config.max_queue, "batch_size": config.batch_size,
+            "flush_ms": int(config.flush_seconds * 1000),
+            "retry_max": config.retry_max,
+            "queue_depth": self._queue.qsize() if self._queue else 0,
+            "worker_running": bool(self._worker and not self._worker.done()),
+            "closing": self._closing, **dict(self._stats),
+        }
+
+    def offer_run(self, run: Run, children: Iterable[Run] = ()) -> bool:
+        config = self._config()
+        if (not config.enabled or self._closing or run.parent_run_id or
+                run.status not in {RunStatus.COMPLETED, RunStatus.FAILED,
+                                   RunStatus.CANCELLED, RunStatus.TIMED_OUT,
+                                   RunStatus.SKIPPED}):
+            return False
+        return self.offer(project_run_trace(run, children), key=run.id)
+
+    def offer(self, trace: Mapping[str, Any], *, key: str) -> bool:
+        config = self._config()
+        if not config.enabled or self._closing:
+            return False
+        self._stats["offered"] += 1
+        if key in self._seen:
+            self._stats["deduplicated"] += 1
+            return False
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._stats["dropped"] += 1
+            self._stats["last_result"] = "no_running_loop"
+            return False
+        if self._queue is None:
+            self._queue = asyncio.Queue(maxsize=config.max_queue)
+        try:
+            self._queue.put_nowait(dict(trace))
+        except asyncio.QueueFull:
+            self._stats["dropped"] += 1
+            self._stats["last_result"] = "queue_full"
+            return False
+        self._seen[key] = None
+        self._seen.move_to_end(key)
+        while len(self._seen) > config.dedupe_limit:
+            self._seen.popitem(last=False)
+        self._stats["enqueued"] += 1
+        if self._worker is None or self._worker.done():
+            self._worker = loop.create_task(self._run(), name="vera-otlp-export")
+        return True
+
+    async def _send_with_retry(self, trace: Mapping[str, Any]) -> dict[str, Any]:
+        config = self._config()
+        retryable_statuses = {429, 502, 503, 504}
+        for attempt in range(config.retry_max + 1):
+            result = await export_trace(trace, sender=self.sender, environ=self.environ)
+            retryable = (result.get("reason") == "transport_failure" or
+                         result.get("status_code") in retryable_statuses)
+            if result.get("ok") or not retryable or attempt >= config.retry_max:
+                return result
+            self._stats["retries"] += 1
+            if config.retry_backoff_seconds:
+                await asyncio.sleep(config.retry_backoff_seconds * (2 ** attempt) *
+                                    float(self.retry_jitter()))
+        return result
+
+    async def _export_batch(self, traces: list[dict[str, Any]]) -> None:
+        result = await self._send_with_retry(merge_traces(traces))
+        results = [result]
+        if result.get("reason") == "request_too_large" and len(traces) > 1:
+            results = [await self._send_with_retry(trace) for trace in traces]
+        if len(results) == 1:
+            successful = len(traces) if result.get("ok") else 0
+            failed = len(traces) - successful
+        else:
+            successful = sum(1 for item in results if item.get("ok"))
+            failed = len(traces) - successful
+        self._stats["exported_traces"] += successful
+        self._stats["failed_traces"] += failed
+        if failed:
+            self._stats["failed_batches"] += 1
+            self._stats["last_result"] = str(results[-1].get("reason") or "failed")
+        else:
+            self._stats["exported_batches"] += 1
+            self._stats["last_result"] = "accepted"
+
+    async def _run(self) -> None:
+        assert self._queue is not None
+        carry = None
+        try:
+            while True:
+                first = carry if carry is not None else await self._queue.get()
+                carry = None
+                batch = [first]
+                config = self._config()
+                if config.flush_seconds:
+                    await asyncio.sleep(config.flush_seconds)
+                span_count = len(first.get("spans") or [])
+                while len(batch) < config.batch_size:
+                    try:
+                        candidate = self._queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                    candidate_spans = len(candidate.get("spans") or [])
+                    if span_count + candidate_spans > 200:
+                        carry = candidate
+                        break
+                    batch.append(candidate)
+                    span_count += candidate_spans
+                try:
+                    await self._export_batch(batch)
+                except Exception as exc:
+                    self._stats["failed_traces"] += len(batch)
+                    self._stats["failed_batches"] += 1
+                    self._stats["last_result"] = type(exc).__name__
+                finally:
+                    for _ in batch:
+                        self._queue.task_done()
+                if carry is not None:
+                    # The carried item was removed from the queue and remains unfinished.
+                    continue
+        except asyncio.CancelledError:
+            if carry is not None:
+                self._queue.task_done()
+            raise
+
+    async def close(self, *, flush: bool = True, timeout_seconds: float = 2.0) -> None:
+        self._closing = True
+        if self._queue and flush:
+            try:
+                await asyncio.wait_for(self._queue.join(), timeout=max(0.01, timeout_seconds))
+            except asyncio.TimeoutError:
+                self._stats["last_result"] = "shutdown_timeout"
+        if self._worker and not self._worker.done():
+            self._worker.cancel()
+            try:
+                await self._worker
+            except asyncio.CancelledError:
+                pass
+
+
+TELEMETRY_QUEUE = PortableTelemetryQueue()

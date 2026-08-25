@@ -602,6 +602,11 @@
           '<span class="lp-goal">Content-redacted projection · exporter ' +
           esc(tel.exporter || 'not configured') + ' · ' + esc(tel.export_accepted || 0) + ' accepted / ' +
           esc(tel.export_failed || 0) + ' failed' +
+          ' · queue ' + esc(tel.export_queue_depth || 0) +
+          (tel.export_queue_dropped ? ' · ' + esc(tel.export_queue_dropped) + ' dropped' : '') +
+          (tel.export_queue_deduplicated ? ' · ' + esc(tel.export_queue_deduplicated) + ' deduplicated' : '') +
+          (tel.export_queue_retries ? ' · ' + esc(tel.export_queue_retries) + ' retries' : '') +
+          (tel.export_queue_failed_traces ? ' · ' + esc(tel.export_queue_failed_traces) + ' trace failures' : '') +
           (tel.export_last_duration_ms == null ? '' : ' · last ' + esc(tel.export_last_duration_ms) + ' ms') +
           '.</span></div></div>';
       }

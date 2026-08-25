@@ -66,7 +66,9 @@ These distinctions are deliberate:
 - Telemetry projection is local and content-redacted. Activity reports the
   redacted state and bounded success/failure counters of the optional OTLP/HTTP
   JSON exporter. It claims export only after a collector accepts a request;
-  endpoint and authorization-header values are never shown.
+  endpoint and authorization-header values are never shown. When automatic
+  export is explicitly enabled, the same card reports queue depth, drops,
+  deduplication, retries and terminal trace failures.
 - Free-text failure/control reasons and result bodies are excluded from Activity
   evidence.
 
