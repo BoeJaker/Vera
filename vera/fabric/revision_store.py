@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 import re
 import sqlite3
 from typing import Any, Iterable
-from datetime import datetime
 
 from .record_revision import RecordRevision
 
@@ -267,6 +267,19 @@ class RevisionStore:
             row = conn.execute("SELECT * FROM fabric_record_heads WHERE record_id=?",
                                (record_id,)).fetchone()
             return dict(row) if row else None
+
+    def revision(self, revision_id: str) -> dict[str, Any]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT envelope_json FROM fabric_record_revisions "
+                "WHERE revision_id=?", (revision_id,)).fetchone()
+            if not row:
+                raise KeyError("revision not found")
+            return json.loads(row["envelope_json"])
+
+    def current(self, record_id: str) -> dict[str, Any] | None:
+        head = self.head(record_id)
+        return self.revision(head["revision_id"]) if head else None
 
     def receipt(self, revision_id: str, projection: str) -> dict[str, Any]:
         with self._connect() as conn:
