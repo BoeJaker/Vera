@@ -1103,9 +1103,13 @@ async def cap_provision(target: str = "", image_id: str = "", name: str = "",
         _extra = []
         if any(_x in feats for _x in ("file-client", "file-server")):
             _extra += ["--cap-add", "SYS_ADMIN"]
+        # a base-OS image (debian:12 etc.) exits immediately; keep it alive so features
+        # can be applied via docker exec and it persists as a lightweight feature-host.
+        # A service image provisioned without features keeps its own CMD.
+        _keep = "tail -f /dev/null" if any(_x != "enrol" for _x in feats) else ""
         res = await _call("docker.run", host_id="", image=img.get("source_url", ""),
                           name=name or f"foundry-{job_id}", network="host",
-                          extra_args=" ".join(_extra))
+                          command=_keep, extra_args=" ".join(_extra))
         step("run", res)
         cname = res.get("name") or name or f"foundry-{job_id}"
         if res.get("error") or not res.get("ok"):
