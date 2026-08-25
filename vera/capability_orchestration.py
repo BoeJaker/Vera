@@ -5055,9 +5055,10 @@ def capability(
     http_tags:   List[str]      = None,   # OpenAPI tags  (defaults to [group])
     # ── MCP config ─────────────────────────────────────────────────────────
     mcp_expose:  bool           = True,   # include in /mcp/tools listing
-    # Optional Capability Contract v2 declarations.  Registration and dispatch
-    # do not consume this metadata; the contract projector exposes it for
-    # inspection/linting while legacy capabilities migrate incrementally.
+    # Optional Capability Contract v2 declarations. Registration and dispatch
+    # semantics remain unchanged; the central wrapper projects a content-free
+    # shadow policy decision from this metadata while enforcement and trusted
+    # approval receipts migrate incrementally.
     contract:    Optional[dict] = None,
 ):
     """
@@ -5098,6 +5099,9 @@ def capability(
                     _sid = (kw.get("session_id","") or chain.get("session_id","")
                             or _CURRENT_SESSION)
                     if not silent:
+                        from Vera.vera.capability_policy_core import evaluate_policy_shadow
+                        _policy_shadow = evaluate_policy_shadow(
+                            name, contract, {"session_id": _sid})
                         await emit_event({
                             "type":        "cap.call",
                             "name":        name,
@@ -5108,6 +5112,7 @@ def capability(
                             "trigger_cap": chain.get("trigger_cap",""),
                             "group":       group,
                             "args_preview": _args_preview(kw),
+                            "policy":      _policy_shadow,
                         })
                         await _mirror_cap_activity("call", name, _sid, tid, group,
                                                    args=_args_compact(kw))
@@ -5989,6 +5994,38 @@ async def cap_resolve_shadow(canonical_task: str, allowed_effects=None,
         "policy_requirements": policy_requirements,
         "candidate_limit": candidate_limit,
     }, observations=evidence)
+
+
+@capability(
+    "cap.policy.shadow", memory="off",
+    description="Preview the shared execution-policy decision for one registered "
+                "capability without granting authority or invoking it. Supplied grants "
+                "and approval flags are simulation inputs only.",
+    contract={
+        "canonical_task": "capability.policy.inspect", "effects": ["read"],
+        "output_schema": {"type": "object"}, "approval": {"status": "not_required"},
+        "trust": {"status": "internal_registry"}, "secrets": {"status": "not_required"},
+        "filesystem": {"status": "not_required"}, "network": {"status": "not_required"},
+        "tenant": {"status": "global_read_only"},
+        "idempotency": {"status": "idempotent"}, "cancellation": {"status": "not_required"},
+        "pagination": {"status": "not_applicable"},
+        "resources": {"status": "declared", "classes": ["cpu"]}, "owner": "vera",
+    },
+)
+async def cap_policy_shadow(name: str, allowed_effects=None, session_id: str = "",
+                            tenant_id: str = "", approval_present: bool = False,
+                            opaque_secret_refs: bool = False, trace_id=None):
+    from Vera.vera.capability_policy_core import evaluate_policy_shadow
+    entry = CAPABILITY_REGISTRY.get((name or "").strip())
+    if not entry:
+        return {"error": "capability_unknown", "name": (name or "").strip(),
+                "authorized": False, "executed": False}
+    context = {"session_id": session_id, "tenant_id": tenant_id,
+               "approval_present": approval_present,
+               "opaque_secret_refs": opaque_secret_refs}
+    if isinstance(allowed_effects, list):
+        context["allowed_effects"] = allowed_effects
+    return evaluate_policy_shadow(name, entry.get("contract"), context)
 
 
 @capability(

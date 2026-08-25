@@ -81,6 +81,8 @@ gallery without overwriting this authored guide.
 - [Master roadmap](MASTER-ROADMAP.md)
 - [Modern AI ecosystem roadmap](40-ai-ecosystem-roadmap.md)
 - [Capability contracts](43-capability-contracts.md)
+- [Frozen evaluation corpus](44-evaluation-corpus.md)
+- [Capability policy boundary](45-capability-policy.md)
 
 ## Complete guide index
 
@@ -130,6 +132,8 @@ gallery without overwriting this authored guide.
 | 41 | [System inventory](41-system-inventory.md) | Runtime inventory, overlap evidence, and consolidation inputs |
 | 42 | [Performance baseline](42-performance-baseline.md) | Code-author timing envelope, aggregation, and queued benchmarks |
 | 43 | [Capability contracts](43-capability-contracts.md) | Contract v2 manifests, declarations, linting, and rollout |
+| 44 | [Frozen evaluation corpus](44-evaluation-corpus.md) | Deterministic and queued-live evaluation lanes |
+| 45 | [Capability policy boundary](45-capability-policy.md) | Shadow decisions, effect grants, approvals, and enforcement path |
 
 ## Planning and delivery
 
