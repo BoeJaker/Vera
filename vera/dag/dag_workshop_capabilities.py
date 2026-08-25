@@ -12783,6 +12783,14 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
         "work (e.g. \"Research scanning techniques\", \"Generate the scanner script\", "
         "\"Run & test the scanner\"). It must NOT be a capability name or skill id — the "
         "caps/skills go in the `caps`/`skills` fields, never in the title.\n"
+        # PARITY: the shared rule set every planner variant must carry (see
+        # _V7_PLANNER_SHARED_RULES). _V7_CAP_ROUTING was reaching the MINIMAL branch,
+        # the controller and adjust — but not this one, so anyone setting
+        # VERA_LOOP_MINIMAL_PLAN=0 to restore the full-schema primary (the documented
+        # escape hatch) silently lost cap routing AND the "already checked, do not
+        # re-verify" rule that lives inside it. Measured 2026-08-25 by capturing both
+        # composed prompts: present in minimal, absent here.
+        + _V7_CAP_ROUTING
         + ("SUCCESS CRITERIA: give each step a `success` field — ONE short, objectively "
            "checkable criterion for that step (e.g. \"the script runs without errors and "
            "prints the open ports\", NOT \"do the step well\"). Also give a top-level "
@@ -20362,6 +20370,27 @@ _V7_CRITERIA_RULE = (
     "about behaviour. (Observed: a done_when reading \"functions correctly in a browser\" with "
     "no operator.run step sent a run to `python3 -m http.server`, where it hung until it was "
     "killed.) Use operator.run, or omit the claim.\n")
+
+
+# ── Shared planner rule set (Phase 3) ────────────────────────────────────────
+# The rules EVERY planner variant must carry. The planner has two prompt bodies —
+# the full schema and the minimal/tolerant one that has been the default primary
+# since 2026-08-17 (VERA_LOOP_MINIMAL_PLAN) — and they drift: a rule added to one
+# is silently inert in the other. That has now bitten twice in opposite
+# directions: _V7_CRITERIA_RULE reached only the full branch (so it did nothing on
+# every real run), and _V7_CAP_ROUTING reached only the minimal branch (so the
+# documented VERA_LOOP_MINIMAL_PLAN=0 escape hatch silently dropped cap routing).
+#
+# Each entry is (rule_id, marker) where `marker` is a distinctive phrase from the
+# rule's text. tests/test_planner_rule_parity.py composes BOTH prompts for real
+# and asserts every marker appears in each — so the next rule added to one branch
+# only fails the gate instead of going quietly missing.
+_V7_PLANNER_SHARED_RULES = (
+    ("cap_routing",        "CAPABILITY ROUTING — match the deliverable"),
+    ("authored_verified",  "ALREADY CHECKED, EVERY LANGUAGE"),
+    ("criteria_settleable", "FOR A FILE THIS RUN AUTHORS, THE PROOF"),
+    ("behaviour_operator", "WANT THE PAGE'S BEHAVIOUR VERIFIED TOO"),
+)
 
 
 _V7_CAP_ROUTING = (
