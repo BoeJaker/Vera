@@ -12570,11 +12570,14 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
         done_when = ""
         catalog_set = set(catalog_names)
         try:
-            await _emit_stage_context(
-                "planner", variant="minimal", system=sys, prompt=prompt,
-                model=plan_model, role="planner",
-                session_id=sid, stream_id=stream_id, cycle=None,
-                runtime={"goal_chars": len(goal or ""), "caps_count": len(catalog_names or [])})
+            try:
+                await _emit_stage_context(
+                    "planner", variant="minimal", system=sys, prompt=prompt,
+                    model=plan_model, role="planner",
+                    session_id=sid, stream_id=stream_id, cycle=None,
+                    runtime={"goal_chars": len(goal or ""), "caps_count": len(catalog_names or [])})
+            except Exception as _ae:      # pragma: no cover â€” instrumentation must never alter a stage
+                log.debug("stage-context emit skipped: %s", _ae)
             raw = await _safe_ollama_generate_dw(
                 prompt, system=sys, model=plan_model, instance_id=instance_id,
                 prefer_gpu=prefer_gpu, json_mode=True, options=plan_opts,
@@ -12849,11 +12852,14 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
         # catches it, steps stays empty, and the loop's existing STEPWISE
         # fallback (bootstrap step + adaptive re-plan from evidence) takes
         # over gracefully instead of hanging forever.
-        await _emit_stage_context(
-            "planner", variant="full", system=sys, prompt=prompt,
-            model=plan_model, role="planner",
-            session_id=sid, stream_id=stream_id, cycle=None,
-            runtime={"goal_chars": len(goal or ""), "caps_count": len(catalog_names or [])})
+        try:
+            await _emit_stage_context(
+                "planner", variant="full", system=sys, prompt=prompt,
+                model=plan_model, role="planner",
+                session_id=sid, stream_id=stream_id, cycle=None,
+                runtime={"goal_chars": len(goal or ""), "caps_count": len(catalog_names or [])})
+        except Exception as _ae:      # pragma: no cover â€” instrumentation must never break a run
+            log.debug("stage-context emit skipped: %s", _ae)
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=plan_model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True, options=plan_opts,
@@ -15039,12 +15045,21 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             _exec_opts = {"temperature": 0.7, "top_p": 0.95,
                           "seed": (int(time.time() * 1000) + turns) & 0x7fffffff}
             _perturb_next = False
-        await _emit_stage_context(
-            "executor", system=sys, prompt=user_msg, model=model, role="executor",
-            session_id=session_id, stream_id=stream_id, cycle=cur_cycle, step_id=step_id,
-            runtime={"caps": caps, "caps_count": len(caps or []),
-                     "context_chars": len(ctx_slice or ""),
-                     "skills": [s.get("id", "") for s in (loaded_skills or [])]})
+        # `turns`, not `cur_cycle`: cur_cycle is only bound further down this
+        # function, so reading it here raised UnboundLocalError and CRASHED the
+        # step — instrumentation taking a run down, which is the one thing it
+        # must never do. The helper's own try/except cannot catch that: the
+        # error happens while EVALUATING these arguments, before the call. Hence
+        # the guard below as well.
+        try:
+            await _emit_stage_context(
+                "executor", system=sys, prompt=user_msg, model=model, role="executor",
+                session_id=session_id, stream_id=stream_id, cycle=turns, step_id=step_id,
+                runtime={"caps": caps, "caps_count": len(caps or []),
+                         "context_chars": len(ctx_slice or ""),
+                         "skills": [s.get("id", "") for s in (loaded_skills or [])]})
+        except Exception as _ae:                       # pragma: no cover
+            log.debug("executor stage-context emit skipped: %s", _ae)
         raw = await _safe_ollama_generate_dw(
             user_msg, system=sys, model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True, options=_exec_opts,
@@ -17181,10 +17196,13 @@ async def _v5_master_plan(goal: str, catalog_brief: str = "", *, model: str = ""
             f"GOAL: {goal}\n\nIn ONE sentence, describe the ideal expert PLANNER persona to "
             "design a strategy for this goal (their domain expertise and planning style). "
             "Reply with just the persona description.")
-        await _emit_stage_context(
-            "master_plan", variant="persona", prompt=_mp_persona_prompt, model=model,
-            role="planner", session_id=sid, stream_id=stream_id,
-            runtime={"goal_chars": len(goal or "")})
+        try:
+            await _emit_stage_context(
+                "master_plan", variant="persona", prompt=_mp_persona_prompt, model=model,
+                role="planner", session_id=sid, stream_id=stream_id,
+                runtime={"goal_chars": len(goal or "")})
+        except Exception as _ae:      # pragma: no cover â€” instrumentation must never break a run
+            log.debug("stage-context emit skipped: %s", _ae)
         p_raw = await _safe_ollama_generate_dw(
             _mp_persona_prompt,
             system=("You assemble expert planner personas on demand. Name the specific domain "
@@ -17219,10 +17237,13 @@ async def _v5_master_plan(goal: str, catalog_brief: str = "", *, model: str = ""
             pass
     long_form = ""
     try:
-        await _emit_stage_context(
-            "master_plan", variant="long_form", model=model, role="planner",
-            session_id=sid, stream_id=stream_id,
-            runtime={"goal_chars": len(goal or "")})
+        try:
+            await _emit_stage_context(
+                "master_plan", variant="long_form", model=model, role="planner",
+                session_id=sid, stream_id=stream_id,
+                runtime={"goal_chars": len(goal or "")})
+        except Exception as _ae:      # pragma: no cover â€” instrumentation must never alter a stage
+            log.debug("stage-context emit skipped: %s", _ae)
         lf_raw = await _safe_ollama_generate_dw(
             (f"GOAL: {goal}\n\n"
              "Write a COMPREHENSIVE long-form plan. This is a MULTI-DAY, multi-session strategy: "
@@ -17322,10 +17343,13 @@ async def _v5_split_master_plan(goal: str, long_form: str, *, model: str = "",
     cap_block = (("\n\nAVAILABLE CAPABILITIES (name — description) — pick each piece's caps BY "
                   "EXACT NAME from this list only:\n" + cap_catalog) if cap_catalog else "")
     try:
-        await _emit_stage_context(
-            "plan_split", model=model, role="planner",
-            session_id=session_id, stream_id=stream_id,
-            runtime={"goal_chars": len(goal or ""), "context_chars": len(long_form or "")})
+        try:
+            await _emit_stage_context(
+                "plan_split", model=model, role="planner",
+                session_id=session_id, stream_id=stream_id,
+                runtime={"goal_chars": len(goal or ""), "context_chars": len(long_form or "")})
+        except Exception as _ae:      # pragma: no cover â€” instrumentation must never alter a stage
+            log.debug("stage-context emit skipped: %s", _ae)
         raw = await _safe_ollama_generate_dw(
             (f"GOAL: {goal}\n\nMASTER PLAN:\n{long_form}{cap_block}\n\n"
              f"Split this plan into its natural ORDERED pieces (phases / work-streams / major "
@@ -18525,11 +18549,14 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
               + (_last_view or "(no output captured)")
               + "\n\nDecide the next move.")
     try:
-        await _emit_stage_context(
-            "controller", variant="", system=sys, prompt=prompt,
-            model=model, role="controller",
-            session_id=session_id, stream_id="", cycle=None,
-            runtime={"goal_chars": len(goal or ""), "ledger_steps": len(results or []), "pending_steps": len(queue or []), "caps_count": len(catalog_names or [])})
+        try:
+            await _emit_stage_context(
+                "controller", variant="", system=sys, prompt=prompt,
+                model=model, role="controller",
+                session_id=session_id, stream_id="", cycle=None,
+                runtime={"goal_chars": len(goal or ""), "ledger_steps": len(results or []), "pending_steps": len(queue or []), "caps_count": len(catalog_names or [])})
+        except Exception as _ae:      # pragma: no cover â€” instrumentation must never alter a stage
+            log.debug("stage-context emit skipped: %s", _ae)
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True, timeout=_V5_UTILITY_TIMEOUT,
@@ -18682,11 +18709,14 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
     prompt = (f"LEDGER:\n{ledger}\n{files_block}\n"
               "Is the GOAL fully achieved? If not, what is missing?")
     try:
-        await _emit_stage_context(
-            "gate", system=sys, prompt=prompt, model=model, role="controller",
-            session_id=session_id,
-            runtime={"goal_chars": len(goal or ""), "ledger_steps": len(results or []),
-                     "caps_count": len(catalog_names or [])})
+        try:
+            await _emit_stage_context(
+                "gate", system=sys, prompt=prompt, model=model, role="controller",
+                session_id=session_id,
+                runtime={"goal_chars": len(goal or ""), "ledger_steps": len(results or []),
+                         "caps_count": len(catalog_names or [])})
+        except Exception as _ae:      # pragma: no cover â€” instrumentation must never alter a stage
+            log.debug("stage-context emit skipped: %s", _ae)
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True)
@@ -19313,10 +19343,13 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
               + f"RESULT SUMMARY (last cycle only):\n{(res.get('summary') or '')[:2000]}\n\n"
                 "Was the criterion met?")
     try:
-        await _emit_stage_context(
-            "verifier", system=sys, prompt=prompt, model=model, role="controller",
-            session_id=session_id, step_id=step.get("id"),
-            runtime={"goal_chars": len(str(step.get("goal") or ""))})
+        try:
+            await _emit_stage_context(
+                "verifier", system=sys, prompt=prompt, model=model, role="controller",
+                session_id=session_id, step_id=step.get("id"),
+                runtime={"goal_chars": len(str(step.get("goal") or ""))})
+        except Exception as _ae:      # pragma: no cover â€” instrumentation must never alter a stage
+            log.debug("stage-context emit skipped: %s", _ae)
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True, timeout=_V5_UTILITY_TIMEOUT)
@@ -19599,10 +19632,13 @@ async def _v6_adjust_step(failed_step: Dict[str, Any], failed_res: Dict[str, Any
               + f"AVAILABLE CAPABILITIES:\n{cap_lines}\n\nDesign the adjusted step."
               + _v6_recovery_lineage_block(lineage))
     try:
-        await _emit_stage_context(
-            "adjust", system=sys, prompt=prompt, model=model, role="controller",
-            session_id=session_id, step_id=(failed_step or {}).get("id"),
-            runtime={"caps_count": len(catalog_names or [])})
+        try:
+            await _emit_stage_context(
+                "adjust", system=sys, prompt=prompt, model=model, role="controller",
+                session_id=session_id, step_id=(failed_step or {}).get("id"),
+                runtime={"caps_count": len(catalog_names or [])})
+        except Exception as _ae:      # pragma: no cover â€” instrumentation must never alter a stage
+            log.debug("stage-context emit skipped: %s", _ae)
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True)
@@ -20097,11 +20133,14 @@ async def _v7_classify_tier(goal: str, heuristic_tier: str, catalog_brief: str, 
               f"AVAILABLE CAPABILITIES (sample):\n{catalog_brief[:1400]}\n\n"
               "Which tier best fits this goal?")
     try:
-        await _emit_stage_context(
-            "tier", variant="", system=sys, prompt=prompt,
-            model=model, role="tier",
-            session_id=session_id, stream_id="", cycle=None,
-            runtime={"goal_chars": len(goal or "")})
+        try:
+            await _emit_stage_context(
+                "tier", variant="", system=sys, prompt=prompt,
+                model=model, role="tier",
+                session_id=session_id, stream_id="", cycle=None,
+                runtime={"goal_chars": len(goal or "")})
+        except Exception as _ae:      # pragma: no cover â€” instrumentation must never alter a stage
+            log.debug("stage-context emit skipped: %s", _ae)
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True, timeout=_V5_UTILITY_TIMEOUT,
@@ -20241,9 +20280,12 @@ async def _v7_classify_intent(goal: str, heuristic_intent: str, *, model: str,
     prompt = (f"GOAL: {goal[:1000]}\n\nA cheap heuristic suggests: {heuristic_intent}.\n"
               "Which intent best fits?")
     try:
-        await _emit_stage_context(
-            "intent", system=sys, prompt=prompt, model=model, role="tier",
-            session_id=session_id, runtime={"goal_chars": len(goal or "")})
+        try:
+            await _emit_stage_context(
+                "intent", system=sys, prompt=prompt, model=model, role="tier",
+                session_id=session_id, runtime={"goal_chars": len(goal or "")})
+        except Exception as _ae:      # pragma: no cover â€” instrumentation must never alter a stage
+            log.debug("stage-context emit skipped: %s", _ae)
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True, timeout=_V5_UTILITY_TIMEOUT,
