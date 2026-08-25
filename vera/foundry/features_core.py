@@ -55,7 +55,7 @@ def _mesh_feature(ctx) -> str:
         "TOKEN='" + token + "'\n"
         "BODY=$(printf '{\"pubkey\":\"%s\",\"token\":\"%s\",\"host\":\"%s\",\"label\":\"%s\"}' \"$PUB\" \"$TOKEN\" \"$HOST\" \"$(hostname)\")\n"
         "RESP=$(curl -sk -H 'Content-Type: application/json' -d \"$BODY\" \"$VERA/netsec/mesh/enroll\" 2>/dev/null)\n"
-        "printf '%s' \"$RESP\" | grep -q '\"ok\": true' || { echo \"[foundry] mesh enrol failed: $RESP\"; exit 1; }\n"
+        "printf '%s' \"$RESP\" | jq -e '.ok == true' >/dev/null 2>&1 || { echo \"[foundry] mesh enrol failed: $RESP\"; exit 1; }\n"
         "printf '%s' \"$RESP\" | jq -r .conf | sed \"s|__PRIVKEY__|$(cat /etc/wireguard/vera0.key)|\" > /etc/wireguard/vera0.conf\n"
         "chmod 600 /etc/wireguard/vera0.conf\n"
         "wg-quick down vera0 2>/dev/null || true\n"
