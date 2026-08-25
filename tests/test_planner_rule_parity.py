@@ -99,3 +99,40 @@ def test_both_variants_carry_the_identical_rule_set():
 def test_the_shared_set_is_not_empty():
     """Guards against the guard being neutered by emptying the tuple."""
     assert len(M._V7_PLANNER_SHARED_RULES) >= 4
+
+
+@pytest.mark.parametrize("variant,minimal", [("minimal", True), ("full", False)])
+def test_planner_actually_emits_a_stage_record_with_rule_ids(variant, minimal):
+    """The emit must FIRE, not be swallowed by its own guard.
+
+    Every stage-context emit is wrapped in try/except so instrumentation can
+    never take a run down. The cost is that a bad call signature is silent: when
+    `rule_ids` was added to the call sites before the wrapper accepted it, every
+    planner emit raised TypeError, the guard logged at debug, and the planner
+    record simply stopped appearing — with nothing failing. Only diffing a live
+    run against an earlier one revealed it. This pins the emit firing WITH its
+    rule ids, so the same mistake fails here instead.
+    """
+    seen = []
+    real_emit = M._emit_stage_context
+
+    async def _spy(stage, **kw):
+        # Record only AFTER the real emit returns. Recording first would log the
+        # attempt even when the real call raises — and since the call site wraps
+        # every emit in try/except, that would make this test pass against the
+        # very bug it exists to catch (verified: it did).
+        result = await real_emit(stage, **kw)
+        seen.append((stage, kw.get("variant"), kw.get("rule_ids")))
+        return result
+
+    M._emit_stage_context = _spy
+    try:
+        _compose(minimal)
+    finally:
+        M._emit_stage_context = real_emit
+
+    planner = [s for s in seen if s[0] == "planner" and s[1] == variant]
+    assert planner, f"planner:{variant} emitted no stage record at all"
+    ids = planner[0][2] or []
+    assert "cap_routing" in ids and "criteria_settleable" in ids, (
+        f"planner:{variant} emitted rule_ids={ids}; expected the shared rules")
