@@ -1,0 +1,122 @@
+{
+  "schema": "vera.resolver-shadow-corpus/v1",
+  "revision": 1,
+  "policy": {
+    "synthetic_only": true,
+    "model_calls": false,
+    "network_calls": false,
+    "capability_execution": false
+  },
+  "cases": [
+    {
+      "id": "resolver.disallowed-effect",
+      "registry": {
+        "unsafe.delete": {
+          "schema": {"type": "object", "properties": {}},
+          "mode": "local",
+          "source": "local",
+          "contract": {"canonical_task": "records.read", "effects": ["delete"]}
+        }
+      },
+      "request": {"canonical_task": "records.read", "allowed_effects": ["read"]},
+      "unsafe_names": ["unsafe.delete"],
+      "expected": {"selected": null}
+    },
+    {
+      "id": "resolver.safe-effect-over-unsafe",
+      "registry": {
+        "safe.read": {
+          "schema": {"type": "object", "properties": {}},
+          "mode": "local",
+          "source": "local",
+          "contract": {"canonical_task": "records.read", "effects": ["read"]}
+        },
+        "unsafe.delete": {
+          "schema": {"type": "object", "properties": {}},
+          "mode": "local",
+          "source": "local",
+          "contract": {"canonical_task": "records.read", "effects": ["delete"]}
+        }
+      },
+      "request": {"canonical_task": "records.read", "allowed_effects": ["read"]},
+      "unsafe_names": ["unsafe.delete"],
+      "expected": {"selected": "safe.read"}
+    },
+    {
+      "id": "resolver.output-contract",
+      "registry": {
+        "answer.number": {
+          "schema": {"type": "object", "properties": {}},
+          "mode": "local",
+          "source": "local",
+          "contract": {
+            "canonical_task": "answer.generate",
+            "effects": ["none"],
+            "output_schema": {"type": "object", "required": ["answer"], "properties": {"answer": {"type": "number"}}}
+          }
+        },
+        "answer.text": {
+          "schema": {"type": "object", "properties": {}},
+          "mode": "local",
+          "source": "local",
+          "contract": {
+            "canonical_task": "answer.generate",
+            "effects": ["none"],
+            "output_schema": {"type": "object", "required": ["answer"], "properties": {"answer": {"type": "string"}}}
+          }
+        }
+      },
+      "request": {"canonical_task": "answer.generate", "output_schema": {"type": "object", "required": ["answer"], "properties": {"answer": {"type": "string"}}}},
+      "unsafe_names": ["answer.number"],
+      "expected": {"selected": "answer.text"}
+    },
+    {
+      "id": "resolver.policy-unknown-fails-closed",
+      "registry": {
+        "network.safe": {
+          "schema": {"type": "object", "properties": {}},
+          "mode": "local",
+          "source": "local",
+          "contract": {"canonical_task": "records.read", "effects": ["read"], "network": {"status": "not_required"}}
+        },
+        "network.unknown": {
+          "schema": {"type": "object", "properties": {}},
+          "mode": "local",
+          "source": "local",
+          "contract": {"canonical_task": "records.read", "effects": ["read"]}
+        }
+      },
+      "request": {"canonical_task": "records.read", "policy_requirements": {"network": ["not_required"]}},
+      "unsafe_names": ["network.unknown"],
+      "expected": {"selected": "network.safe"}
+    },
+    {
+      "id": "resolver.observed-health",
+      "registry": {
+        "provider.healthy": {"schema": {"type": "object", "properties": {}}, "mode": "local", "source": "local", "contract": {"canonical_task": "text.generate", "effects": ["model"]}},
+        "provider.unhealthy": {"schema": {"type": "object", "properties": {}}, "mode": "local", "source": "local", "contract": {"canonical_task": "text.generate", "effects": ["model"]}}
+      },
+      "request": {"canonical_task": "text.generate", "allowed_effects": ["model"]},
+      "observations": [
+        {"name": "provider.healthy", "success_rate": 0.9, "health": {"status": "observed", "healthy": true}},
+        {"name": "provider.unhealthy", "success_rate": 1.0, "health": {"status": "observed", "healthy": false}}
+      ],
+      "unsafe_names": ["provider.unhealthy"],
+      "expected": {"selected": "provider.healthy"}
+    },
+    {
+      "id": "resolver.quality-ranking",
+      "registry": {
+        "provider.low": {"schema": {"type": "object", "properties": {}}, "mode": "local", "source": "local", "contract": {"canonical_task": "text.generate", "effects": ["model"]}},
+        "provider.high": {"schema": {"type": "object", "properties": {}}, "mode": "local", "source": "local", "contract": {"canonical_task": "text.generate", "effects": ["model"]}}
+      },
+      "request": {"canonical_task": "text.generate", "allowed_effects": ["model"]},
+      "observations": [
+        {"name": "provider.low", "success_rate": 0.9, "quality": {"status": "observed", "score": 0.2}},
+        {"name": "provider.high", "success_rate": 0.9, "quality": {"status": "observed", "score": 0.9}}
+      ],
+      "unsafe_names": [],
+      "expected": {"selected": "provider.high"}
+    }
+  ]
+}

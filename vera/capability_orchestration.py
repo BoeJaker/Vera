@@ -6027,6 +6027,39 @@ async def eval_corpus_inspect(detail: bool = False, lane: str = "", domain: str 
                        "truncated": len(cases) > bounded, "cases": cases[:bounded]})
     return result
 
+
+@capability(
+    "eval.resolver.shadow", memory="off", silent=True,
+    http_method="GET", http_path="/eval/resolver/shadow", http_tags=["eval", "caps"],
+    description="Run Vera's frozen synthetic resolver corpus through the pure shadow "
+                "resolver. Reports exact selection accuracy and unsafe-choice rate; "
+                "never invokes, authorizes, or executes a candidate capability.",
+    contract={
+        "canonical_task": "evaluation.resolver.shadow", "effects": ["read", "filesystem"],
+        "output_schema": {"type": "object"}, "approval": {"status": "not_required"},
+        "trust": {"status": "repository_fixture"}, "secrets": {"status": "not_required"},
+        "filesystem": {"status": "read_repository_fixture"},
+        "network": {"status": "not_required"}, "tenant": {"status": "global_read_only"},
+        "idempotency": {"status": "idempotent"}, "cancellation": {"status": "not_required"},
+        "pagination": {"status": "bounded"},
+        "resources": {"status": "declared", "classes": ["cpu"]}, "owner": "vera",
+    },
+)
+async def eval_resolver_shadow(detail: bool = False, limit: int = 50, trace_id=None):
+    from pathlib import Path
+    from Vera.vera.evaluation_corpus_core import evaluate_resolver_corpus, load_corpus
+    path = Path(__file__).resolve().parent.parent / "evaluations" / "resolver-shadow-v1.json"
+    corpus = load_corpus(path)
+    report = evaluate_resolver_corpus(corpus)
+    cases = report.pop("cases", [])
+    result = {**report, "revision": corpus.get("revision"),
+              "policy": corpus.get("policy", {})}
+    if detail:
+        bounded = max(1, min(int(limit or 50), 200))
+        result.update({"returned": min(len(cases), bounded),
+                       "truncated": len(cases) > bounded, "cases": cases[:bounded]})
+    return result
+
 @capability("mcp.call", memory="auto",
             http_method="POST", http_path="/mcp/call", http_tags=["mcp"],
             mcp_expose=False,
