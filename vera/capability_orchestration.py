@@ -6145,6 +6145,36 @@ async def eval_resolver_shadow(detail: bool = False, limit: int = 50, trace_id=N
                        "truncated": len(cases) > bounded, "cases": cases[:bounded]})
     return result
 
+
+@capability(
+    "eval.policy.boundary", memory="off", silent=True,
+    http_method="GET", http_path="/eval/policy/boundary", http_tags=["eval", "cap"],
+    description="Run the frozen deterministic W1-05 adversarial policy corpus. Covers "
+                "prompt injection, alias bypass, callbacks, replayed approvals, secret "
+                "leakage, and confused deputy without invoking capabilities or networks.",
+    contract={
+        "canonical_task": "evaluation.policy.boundary", "effects": ["read"],
+        "output_schema": {"type": "object"}, "approval": {"status": "not_required"},
+        "trust": {"status": "repository_fixture"}, "secrets": {"status": "not_required"},
+        "filesystem": {"status": "read_repository_fixture"},
+        "network": {"status": "not_required"}, "tenant": {"status": "global_read_only"},
+        "idempotency": {"status": "idempotent"}, "cancellation": {"status": "not_required"},
+        "pagination": {"status": "bounded"},
+        "resources": {"status": "declared", "classes": ["cpu"]}, "owner": "vera",
+    },
+)
+async def eval_policy_boundary(detail: bool = False, limit: int = 50, trace_id=None):
+    from pathlib import Path
+    from .capability_policy_eval_core import evaluate_policy_corpus, load_policy_corpus
+    path = Path(__file__).resolve().parent.parent / "evaluations" / "policy-boundary-v1.json"
+    report = evaluate_policy_corpus(load_policy_corpus(path))
+    cases = report.pop("cases", [])
+    if detail:
+        bounded = max(1, min(int(limit or 50), 100))
+        report.update({"returned": min(len(cases), bounded),
+                       "truncated": len(cases) > bounded, "cases": cases[:bounded]})
+    return report
+
 @capability("mcp.call", memory="auto",
             http_method="POST", http_path="/mcp/call", http_tags=["mcp"],
             mcp_expose=False,
