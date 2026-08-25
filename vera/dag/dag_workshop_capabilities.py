@@ -3096,6 +3096,7 @@ async def cap_workshop_agent_loop_trace(session_id: str = "",
     # What each LLM stage was GIVEN, not just what it said. `repeats` is the one
     # to read first: a stage handed a byte-identical prompt twice that answered
     # differently is the fixation signal, and it was previously invisible.
+    warnings: List[str] = []
     stage_recs = [e for e in events if str(e.get("type") or "") == "agent_loop.stage_context"]
     stage_summary: Dict[str, Any] = {}
     stage_diffs: List[Dict[str, Any]] = []
@@ -3123,7 +3124,6 @@ async def cap_workshop_agent_loop_trace(session_id: str = "",
     planned_ids = {s.get("id") for s in (plan.get("steps") or [])}
     inserted_ids = {i.get("id") for c in control for i in c.get("inserted") or []}
 
-    warnings: List[str] = []
     for c in control:
         for i in c.get("inserted") or []:
             warnings.append(
@@ -17177,10 +17177,16 @@ async def _v5_master_plan(goal: str, catalog_brief: str = "", *, model: str = ""
     back-compat but intentionally IGNORED."""
     persona = ("a world-class strategic planner with deep, relevant domain expertise for the goal")
     try:
-        p_raw = await _safe_ollama_generate_dw(
+        _mp_persona_prompt = (
             f"GOAL: {goal}\n\nIn ONE sentence, describe the ideal expert PLANNER persona to "
             "design a strategy for this goal (their domain expertise and planning style). "
-            "Reply with just the persona description.",
+            "Reply with just the persona description.")
+        await _emit_stage_context(
+            "master_plan", variant="persona", prompt=_mp_persona_prompt, model=model,
+            role="planner", session_id=sid, stream_id=stream_id,
+            runtime={"goal_chars": len(goal or "")})
+        p_raw = await _safe_ollama_generate_dw(
+            _mp_persona_prompt,
             system=("You assemble expert planner personas on demand. Name the specific domain "
                     "expertise the goal demands."),
             model=model, instance_id=instance_id, prefer_gpu=prefer_gpu, json_mode=False,
@@ -17213,6 +17219,10 @@ async def _v5_master_plan(goal: str, catalog_brief: str = "", *, model: str = ""
             pass
     long_form = ""
     try:
+        await _emit_stage_context(
+            "master_plan", variant="long_form", model=model, role="planner",
+            session_id=sid, stream_id=stream_id,
+            runtime={"goal_chars": len(goal or "")})
         lf_raw = await _safe_ollama_generate_dw(
             (f"GOAL: {goal}\n\n"
              "Write a COMPREHENSIVE long-form plan. This is a MULTI-DAY, multi-session strategy: "
@@ -17292,7 +17302,8 @@ async def _v5_split_master_plan(goal: str, long_form: str, *, model: str = "",
                                 instance_id: str = "", prefer_gpu: bool = True,
                                 catalog_names: Optional[List[str]] = None,
                                 max_caps_per_piece: int = 6,
-                                max_split_pieces: int = 6) -> List[Dict[str, Any]]:
+                                max_split_pieces: int = 6,
+                                session_id: str = "", stream_id: str = "") -> List[Dict[str, Any]]:
     """Split the long-form master plan into ordered pieces (one per phase /
     work-stream) — up to `max_split_pieces`. LLM first; heading heuristic as
     fallback; [] means 'do not bother — plan it in one shot' (short/simple plans).
@@ -17311,6 +17322,10 @@ async def _v5_split_master_plan(goal: str, long_form: str, *, model: str = "",
     cap_block = (("\n\nAVAILABLE CAPABILITIES (name — description) — pick each piece's caps BY "
                   "EXACT NAME from this list only:\n" + cap_catalog) if cap_catalog else "")
     try:
+        await _emit_stage_context(
+            "plan_split", model=model, role="planner",
+            session_id=session_id, stream_id=stream_id,
+            runtime={"goal_chars": len(goal or ""), "context_chars": len(long_form or "")})
         raw = await _safe_ollama_generate_dw(
             (f"GOAL: {goal}\n\nMASTER PLAN:\n{long_form}{cap_block}\n\n"
              f"Split this plan into its natural ORDERED pieces (phases / work-streams / major "
@@ -17415,7 +17430,8 @@ async def _v5_plan_master_piecewise(goal: str, catalog_names: List[str],
                                          instance_id=instance_id, prefer_gpu=prefer_gpu,
                                          catalog_names=catalog_names,
                                          max_caps_per_piece=max_caps_per_piece,
-                                         max_split_pieces=max_split_pieces)
+                                         max_split_pieces=max_split_pieces,
+                                         session_id=sid, stream_id=stream_id)
     cap_override_mode = (cap_override_mode or "off").strip().lower()
     _catalog_set = set(catalog_names)
     if len(pieces) < 2:
@@ -19527,7 +19543,8 @@ async def _v6_adjust_step(failed_step: Dict[str, Any], failed_res: Dict[str, Any
                           goal: str, *, catalog_names: List[str], valid_skill_ids: set,
                           new_id: int, phase_policy: str = "sparingly",
                           allowed_phases: Optional[List[str]] = None,
-                          model: str, instance_id: str, prefer_gpu: bool) -> Dict[str, Any]:
+                          model: str, instance_id: str, prefer_gpu: bool,
+                          session_id: str = "") -> Dict[str, Any]:
     """Produce an ADJUSTED retry of a step that failed its success bar, tuned to get
     PAST the specific problem the verifier reported. One cheap call returns a new
     tactic (reframed goal), the caps it should use (its own plus any better-suited
@@ -19582,6 +19599,10 @@ async def _v6_adjust_step(failed_step: Dict[str, Any], failed_res: Dict[str, Any
               + f"AVAILABLE CAPABILITIES:\n{cap_lines}\n\nDesign the adjusted step."
               + _v6_recovery_lineage_block(lineage))
     try:
+        await _emit_stage_context(
+            "adjust", system=sys, prompt=prompt, model=model, role="controller",
+            session_id=session_id, step_id=(failed_step or {}).get("id"),
+            runtime={"caps_count": len(catalog_names or [])})
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True)
@@ -22258,7 +22279,7 @@ async def cap_dag_agent_loop_v6(
             failed_step, failed_res, goal, catalog_names=catalog_names,
             valid_skill_ids=valid_skill_ids, new_id=new_id, phase_policy=phase_policy,
             allowed_phases=allowed_phases, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu)
+            prefer_gpu=prefer_gpu, session_id=sid)
 
     async def _journal_step(step, res):
         """Fold a finished step into the structured journal (complex/long-term
@@ -22434,7 +22455,8 @@ async def cap_dag_agent_loop_v6(
                 step, res, goal, catalog_names=catalog_names,
                 valid_skill_ids=valid_skill_ids, new_id=step["id"],
                 phase_policy=phase_policy, allowed_phases=allowed_phases,
-                model=model, instance_id=instance_id, prefer_gpu=prefer_gpu)
+                model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+                session_id=sid)
             # Minimal expansion: keep the step's own caps + at most N new ones.
             adj_caps = [c for c in (adj.get("caps") or []) if c in base_caps]
             for c in (adj.get("caps") or []):
