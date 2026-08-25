@@ -75,3 +75,13 @@ returns raw environment values, receipts, nonces, arguments, or secrets.
 This is still a narrow rollout, not global authorization. Promotion of another
 family requires complete contracts, frozen bypass fixtures, observed shadow
 parity, and an explicit rollback plan.
+
+## Frozen W1-05 gate
+
+`eval.policy.boundary` runs `evaluations/policy-boundary-v1.json` as one
+deterministic completion report. The six cases cover every named W1-05 attack:
+prompt injection, alias bypass, callback injection, replayed approval, secret
+leakage, and confused deputy. Invalid or incomplete corpora fail closed before
+case evaluation. The evaluator uses only synthetic receipts, invokes no
+capability, performs no network access, and returns reason codes rather than
+fixture values.
