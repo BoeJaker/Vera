@@ -5963,6 +5963,8 @@ async def cap_contract_observations(prefix: str = "", event_limit: int = 500,
 )
 async def cap_resolve_shadow(canonical_task: str, allowed_effects=None,
                              required_resources=None, preferred=None,
+                             output_schema: dict = None,
+                             policy_requirements: dict = None,
                              event_limit: int = 200, candidate_limit: int = 100,
                              trace_id=None):
     from Vera.vera.capability_contract_core import (
@@ -5983,6 +5985,8 @@ async def cap_resolve_shadow(canonical_task: str, allowed_effects=None,
         "allowed_effects": allowed_effects if isinstance(allowed_effects, list) else [],
         "required_resources": required_resources if isinstance(required_resources, list) else [],
         "preferred": preferred if isinstance(preferred, list) else [],
+        "output_schema": output_schema,
+        "policy_requirements": policy_requirements,
         "candidate_limit": candidate_limit,
     }, observations=evidence)
 
