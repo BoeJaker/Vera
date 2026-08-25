@@ -29,6 +29,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Union
 
+from .capability_enforcement import PolicyEnforcementDenied, enforcement_projection
+
 # HF tokenizers spins up Rust/rayon worker threads on first use; on a server that
 # forks subprocesses (docker/exec spawns) that both wastes CPU competing with the
 # event loop and risks a fork-after-parallelism deadlock (the "process just got
@@ -5114,6 +5116,8 @@ def capability(
                         _policy_shadow["trusted_context"] = (
                             _trusted.projection() if _trusted is not None
                             else {"present": False})
+                        _enforcement = enforcement_projection(name, _policy_shadow)
+                        _policy_shadow["enforcement"] = _enforcement
                         await emit_event({
                             "type":        "cap.call",
                             "name":        name,
@@ -5128,6 +5132,14 @@ def capability(
                         })
                         await _mirror_cap_activity("call", name, _sid, tid, group,
                                                    args=_args_compact(kw))
+                        if _enforcement["blocked"]:
+                            await emit_event({
+                                "type": "cap.denied", "name": name,
+                                "trace_id": tid, "session_id": _sid,
+                                "group": group, "policy": _policy_shadow,
+                            })
+                            raise PolicyEnforcementDenied(
+                                name, _policy_shadow["verdict"])
                     if mode=="distributed" and REDIS:
                         task_id=await dispatch_task(name,kw,tid)
                         # Per-cap timeout: LLM caps need 240-300s, research
@@ -5217,6 +5229,8 @@ def capability(
                             trigger_cap=chain.get("trigger_cap", ""),
                         )
                     return result
+                except PolicyEnforcementDenied:
+                    raise
                 except Exception as e:
                     last_err=e; attempt+=1
                     _elapsed_ms = round((time.monotonic()-_t0)*1000)
@@ -6041,6 +6055,28 @@ async def cap_policy_shadow(name: str, allowed_effects=None, session_id: str = "
 
 
 @capability(
+    "cap.policy.enforcement.status", memory="off", silent=True,
+    http_method="GET", http_path="/cap/policy/enforcement", http_tags=["cap", "obs"],
+    description="Inspect the bounded capability-policy rollout mode, supported and selected "
+                "families, invalid configuration, and kill-switch instruction. Returns no "
+                "environment values, receipts, nonces, arguments, or secrets.",
+    contract={
+        "canonical_task": "capability.policy.enforcement.inspect", "effects": ["read"],
+        "output_schema": {"type": "object"}, "approval": {"status": "not_required"},
+        "trust": {"status": "internal_configuration_projection"},
+        "secrets": {"status": "not_required"}, "filesystem": {"status": "not_required"},
+        "network": {"status": "not_required"}, "tenant": {"status": "global_read_only"},
+        "idempotency": {"status": "idempotent"}, "cancellation": {"status": "not_required"},
+        "pagination": {"status": "not_applicable"},
+        "resources": {"status": "declared", "classes": ["cpu"]}, "owner": "vera",
+    },
+)
+async def cap_policy_enforcement_status(trace_id=None):
+    from .capability_enforcement import enforcement_status
+    return enforcement_status()
+
+
+@capability(
     "eval.corpus.inspect", memory="off", silent=True,
     http_method="GET", http_path="/eval/corpus", http_tags=["eval", "obs"],
     description="Inspect Vera's versioned frozen evaluation corpus without running "
@@ -6238,6 +6274,8 @@ def _make_mcp_call_handler():
             )
         except HTTPException:
             raise
+        except PolicyEnforcementDenied as e:
+            raise HTTPException(403, str(e))
         except asyncio.CancelledError:
             log.debug("mcp/call cancelled (client disconnected) for %s", name)
             raise
@@ -9047,6 +9085,8 @@ def _make_get_handler(cap: dict, cap_name: str):
             return await _json_response(result)
         except HTTPException:
             raise
+        except PolicyEnforcementDenied as e:
+            raise HTTPException(403, str(e))
         except Exception as e:
             log.error("GET cap %s: %s", cap_name, e, exc_info=True)
             raise HTTPException(500, f"{type(e).__name__}: {e}")
@@ -9107,6 +9147,8 @@ def _make_post_handler(cap: dict, cap_name: str):
             return await _json_response(result)
         except HTTPException:
             raise
+        except PolicyEnforcementDenied as e:
+            raise HTTPException(403, str(e))
         except (asyncio.CancelledError, RuntimeError) as e:
             if isinstance(e, asyncio.CancelledError) or \
                "transport" in str(e).lower() or "closed" in str(e).lower():
