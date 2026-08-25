@@ -18,3 +18,10 @@ def test_mesh_feature_empty_ctx_still_renders():
     sc = feature_script("mesh", {})
     assert sc.startswith("#!/bin/sh")
     assert "/netsec/mesh/enroll" in sc
+
+
+def test_mesh_ok_check_is_whitespace_robust():
+    # Vera serves COMPACT json ("ok":true, no space); the enrol success check must
+    # not rely on a spaced grep pattern that never matches. jq is robust to whitespace.
+    sc = feature_script("mesh", {"vera_url": "https://x:8999", "mesh_token": "T"})
+    assert "jq -e" in sc and ".ok" in sc
