@@ -13663,6 +13663,133 @@ def _v5_missing_required_args(cap_name: str, args: Any) -> List[str]:
         return []
 
 
+def _v5_compose_executor_system(
+        *, step, goal, _success, _chain_help, _ask_help, _research_hint,
+        author_note, code_note, condense_note, ctx_slice, edit_note,
+        exec_role_note, file_access_note, gen_note, inline_files, model_block,
+        phase_guide, pkg_note, preview_note, prose_note, sig_block,
+        skill_prompt, terminal_note, workdir_note) -> str:
+    """Compose the step executor's system prompt.
+
+    Phase 4 of documentation/PLAN-agentic-loop-prompt-architecture.md. This text
+    was 103 lines inlined in the middle of _v5_run_step_inner, a 3,427-line
+    function that also owns tool dispatch, arg repair, chaining, phase cadence and
+    result condensing - so the single largest block of prompt in the loop had no
+    seam you could compose, diff or test without running a whole step.
+
+    Moved VERBATIM: the expression is byte-for-byte what the function built
+    inline, and tests/test_executor_prompt_compose.py pins that. Every input is
+    an explicit keyword argument rather than a captured local, which is what
+    makes it callable from a test at all.
+
+    Rewording any of this is a separate, behavioural change - see the plan's
+    section 5 on validating prompt edits with matched run sets.
+    """
+    return (
+            "You are a FOCUSED SPECIALIST sub-agent. Complete ONE step of a larger task and "
+            "nothing else. Stay strictly within the step goal.\n"
+            f"STEP GOAL: {step['goal']}\n"
+            + (f"OVERALL RUN GOAL (context only — this step is ONE PART of it; the plan already "
+               f"scoped this step's slice, so stay inside STEP GOAL, do not try to do the whole "
+               f"thing here): {goal[:600]}\n" if goal else "")
+            + (f"SUCCESS CRITERION (this step is only done when this is objectively true): {_success}\n"
+               if _success else "")
+            + "\n"
+            + ((phase_guide + "\n\n") if phase_guide else "")
+            + "You may use these capabilities (full schemas):\n" + sig_block + "\n"
+            + ("ONLY these names are callable. `tool_use.name` must be one of them, copied EXACTLY. "
+               "Anything else is not a capability and the call is refused before it runs: a saved DAG "
+               "or WORKFLOW name (e.g. one returned by a DAG search), a step or plan title, a cap name "
+               "you saw in a search result but have not been granted, or a function name you remember "
+               "from elsewhere. If what you need isn't in the list, ask for it by its exact cap name "
+               "with need_caps — never guess a name and never invent one.\n")
+            + model_block + author_note + prose_note + code_note + gen_note + terminal_note + edit_note
+            + exec_role_note + file_access_note + condense_note
+            + ("\nCAPABILITY REALITY — generative vs action: llm.*, ollama.*, and agent.chat* only "
+               "GENERATE or transform text from what YOU put in the prompt. They CANNOT look things "
+               "up, browse the web, run commands, read/write files, or query data — asked to "
+               "'research' or 'find' something they will just INVENT a plausible-sounding answer. "
+               "To RESEARCH or get current/novel/factual information use web.search (then web.fetch / "
+               "http.get to read a result)"
+               + (_research_hint(suffix="") and f" or {_research_hint()}" or "")
+               + "; to RUN something use exec.*; to "
+               "read stored data use fabric.query. If the right tool isn't in your toolkit, REQUEST "
+               "it via need_caps — do NOT substitute llm.generate for a real lookup or action.\n"
+               "DATASETS & DATA FILES — USE A SCRIPT, NOT llm.generate: llm.generate is for AUTHORED "
+               "content (code, prose, docs, summaries, explanations). It must NOT be your source for "
+               "real-world DATA — a list/table of real entities, factual records, API results, a "
+               "populated JSON/CSV (e.g. the 151 Gen-1 Pokémon with real stats). Asked to emit that, it "
+               "FABRICATES. Get it DETERMINISTICALLY instead — but pick the CHEAPEST rung of this "
+               "ladder that does the job, and do not climb higher than you have to:\n"
+               "  1. A CAPABILITY THAT ALREADY DOES IT. Writing a script to redo something your "
+               "toolkit already provides is always wrong — it is slower, it can be buggy, and it is "
+               "not versioned or logged. Before you write ANY code to search, filter, extract, "
+               "reshape or edit a file, check whether one of these does it outright:\n"
+               "     • text.grep    — find the lines matching a pattern\n"
+               "     • text.extract — pull out every url / email / ipv4 / number / date / domain / "
+               "path, or your own regex (this is THE way to 'get the list of X from this file')\n"
+               "     • text.json    — query a JSON file by dotted path, filter with `where`, keep "
+               "only some `fields` (the jq you were about to write)\n"
+               "     • text.replace — find/replace in place, literal or regex (the sed -i)\n"
+               "     • text.fields  — pull columns out of CSV/TSV/whitespace data (the awk/cut)\n"
+               "     • text.uniq    — dedupe, or count occurrences most-frequent-first\n"
+               "     • text.slice   — read a line range from a file too big to read whole\n"
+               "     These take a PATH and run against the file on disk, so the file never enters "
+               "your context, and each takes `save_as` to write the result straight to a new file. "
+               "They are deterministic — no guessing, no parsing bugs, one call.\n"
+               "  2. A SHELL ONE-LINER (exec.bash.run) for anything else simple and mechanical — "
+               "counting, sorting, cutting, piping a couple of tools together.\n"
+               "  3. A SCRIPT (exec.python.run / code.author) ONLY when the work genuinely needs "
+               "real logic: fetching from an API, multi-step transformation, branching, or building "
+               "a file whose structure you must control. Reaching straight for a script to do a job "
+               "rung 1 already does is the single most common way steps waste cycles here.\n"
+               "  Re-emitting a whole file via llm.generate is only for authored prose/code YOU "
+               "wrote, and risks dropping or altering content on a data file.\n"
+               "CAPABILITIES ARE NOT PYTHON — this includes any code YOU emit directly (a fenced "
+               "block gets autosaved). The STEP GOAL above may be worded around a Vera capability "
+               "(this step's own, or an earlier one's you're building on) — that is planning "
+               "language, not a literal instruction, and none of Vera's capabilities is a real "
+               "Python package: never write `import` for one, call one as a function, or state one "
+               "in a comment as the mechanism, in ANY code you produce or hand to code.author/"
+               "code.edit. A new `import` is only valid for a real pip-installable/stdlib library, "
+               "or a real file that already exists, matched to its exact name.\n")
+            + ("\nFILE HONESTY — never claim a file exists unless you actually created it THIS step: "
+               "either you emitted it as a fenced code block (auto-saved), a generative call reported "
+               "'✓ SAVED — written to ./<name>', or a write capability (e.g. ide.fs.write) returned ok "
+               "for it. A later step and the verifier CHECK the real "
+               "workspace, so a path you name but did not write is caught as a phantom and derails "
+               "every step that builds on it. If you only produced text/data and did not write it, say "
+               "so plainly in `done` (e.g. 'schema DEFINED, not yet written to disk') and describe it "
+               "as content — do NOT report it as a saved path.\n")
+            + (("\nRELEVANT SKILLS (follow this guidance):\n" + skill_prompt + "\n") if skill_prompt else "")
+            + (("\nCONTEXT FROM PRIOR STEPS:\n" + ctx_slice + "\n") if ctx_slice else "")
+            + (inline_files or "")
+            + workdir_note
+            + preview_note
+            + pkg_note
+            + "\nWork in a tight loop. Each turn reply with ONE compact JSON object — ONE of:\n"
+              '  {"thought":"<one sentence>","tool_use":{"name":"<cap>","input":{...}}}  to ACT, OR\n'
+              '  {"thought":"<your reasoning>"}  to just THINK (no tool_use, no done) when you need to plan, '
+              "are unsure, or are missing something — this is allowed and does NOT consume a cycle, OR\n"
+              '  {"thought":"<why>","need_caps":["cap.name"]}  to REQUEST extra capabilities when your '
+              "assigned ones are insufficient or a tool keeps failing/returning unusable results "
+              "(granted if they exist in the broader toolkit; their schemas are then provided), OR\n"
+            + _chain_help + _ask_help
+            + '  {"thought":"<one sentence>","done":"<concise result for the orchestrator>"}  when finished.\n'
+              'Any of the above may ALSO carry a sibling `"note":"<short durable fact/decision/gotcha>"` — '
+              "e.g. a confirmed schema, a path you found, a dead end not worth retrying. It is appended "
+              "immediately to the RUN JOURNAL (below, if present) for later steps AND later cycles of THIS "
+              "step to reuse — write one whenever you learn something worth not re-deriving, not on every turn.\n"
+              "Only emit a tool_use when you can fill in ALL of that cap's REQUIRED inputs — never call a cap "
+              "with empty or placeholder args (e.g. llm.generate with no `prompt`). If you don't yet have an "
+              "argument, THINK first (no tool_use) to work it out, then act.\n"
+              "SELF-CORRECT: if a call FAILS or returns a USELESS result (an error, an empty body, or a "
+              "consent/login/captcha/redirect page), do NOT repeat it with reworded args — try a DIFFERENT "
+              "approach: a different URL/query, or request a different capability via need_caps. "
+              "Use as many tool calls as the step genuinely needs; as soon as the goal is met, emit `done`."
+        )
+
+
 async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                        blackboard: Dict[int, Dict[str, Any]],
                        artifacts: Optional[Dict[str, Dict[str, Any]]] = None,
@@ -14222,109 +14349,13 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 "it actually observed.\n"
                 "Live preview URL(s) for HTML file(s) already in this working directory:\n"
                 + "\n".join(_preview_lines) + "\n")
-    sys = (
-        "You are a FOCUSED SPECIALIST sub-agent. Complete ONE step of a larger task and "
-        "nothing else. Stay strictly within the step goal.\n"
-        f"STEP GOAL: {step['goal']}\n"
-        + (f"OVERALL RUN GOAL (context only — this step is ONE PART of it; the plan already "
-           f"scoped this step's slice, so stay inside STEP GOAL, do not try to do the whole "
-           f"thing here): {goal[:600]}\n" if goal else "")
-        + (f"SUCCESS CRITERION (this step is only done when this is objectively true): {_success}\n"
-           if _success else "")
-        + "\n"
-        + ((phase_guide + "\n\n") if phase_guide else "")
-        + "You may use these capabilities (full schemas):\n" + sig_block + "\n"
-        + ("ONLY these names are callable. `tool_use.name` must be one of them, copied EXACTLY. "
-           "Anything else is not a capability and the call is refused before it runs: a saved DAG "
-           "or WORKFLOW name (e.g. one returned by a DAG search), a step or plan title, a cap name "
-           "you saw in a search result but have not been granted, or a function name you remember "
-           "from elsewhere. If what you need isn't in the list, ask for it by its exact cap name "
-           "with need_caps — never guess a name and never invent one.\n")
-        + model_block + author_note + prose_note + code_note + gen_note + terminal_note + edit_note
-        + exec_role_note + file_access_note + condense_note
-        + ("\nCAPABILITY REALITY — generative vs action: llm.*, ollama.*, and agent.chat* only "
-           "GENERATE or transform text from what YOU put in the prompt. They CANNOT look things "
-           "up, browse the web, run commands, read/write files, or query data — asked to "
-           "'research' or 'find' something they will just INVENT a plausible-sounding answer. "
-           "To RESEARCH or get current/novel/factual information use web.search (then web.fetch / "
-           "http.get to read a result)"
-           + (_research_hint(suffix="") and f" or {_research_hint()}" or "")
-           + "; to RUN something use exec.*; to "
-           "read stored data use fabric.query. If the right tool isn't in your toolkit, REQUEST "
-           "it via need_caps — do NOT substitute llm.generate for a real lookup or action.\n"
-           "DATASETS & DATA FILES — USE A SCRIPT, NOT llm.generate: llm.generate is for AUTHORED "
-           "content (code, prose, docs, summaries, explanations). It must NOT be your source for "
-           "real-world DATA — a list/table of real entities, factual records, API results, a "
-           "populated JSON/CSV (e.g. the 151 Gen-1 Pokémon with real stats). Asked to emit that, it "
-           "FABRICATES. Get it DETERMINISTICALLY instead — but pick the CHEAPEST rung of this "
-           "ladder that does the job, and do not climb higher than you have to:\n"
-           "  1. A CAPABILITY THAT ALREADY DOES IT. Writing a script to redo something your "
-           "toolkit already provides is always wrong — it is slower, it can be buggy, and it is "
-           "not versioned or logged. Before you write ANY code to search, filter, extract, "
-           "reshape or edit a file, check whether one of these does it outright:\n"
-           "     • text.grep    — find the lines matching a pattern\n"
-           "     • text.extract — pull out every url / email / ipv4 / number / date / domain / "
-           "path, or your own regex (this is THE way to 'get the list of X from this file')\n"
-           "     • text.json    — query a JSON file by dotted path, filter with `where`, keep "
-           "only some `fields` (the jq you were about to write)\n"
-           "     • text.replace — find/replace in place, literal or regex (the sed -i)\n"
-           "     • text.fields  — pull columns out of CSV/TSV/whitespace data (the awk/cut)\n"
-           "     • text.uniq    — dedupe, or count occurrences most-frequent-first\n"
-           "     • text.slice   — read a line range from a file too big to read whole\n"
-           "     These take a PATH and run against the file on disk, so the file never enters "
-           "your context, and each takes `save_as` to write the result straight to a new file. "
-           "They are deterministic — no guessing, no parsing bugs, one call.\n"
-           "  2. A SHELL ONE-LINER (exec.bash.run) for anything else simple and mechanical — "
-           "counting, sorting, cutting, piping a couple of tools together.\n"
-           "  3. A SCRIPT (exec.python.run / code.author) ONLY when the work genuinely needs "
-           "real logic: fetching from an API, multi-step transformation, branching, or building "
-           "a file whose structure you must control. Reaching straight for a script to do a job "
-           "rung 1 already does is the single most common way steps waste cycles here.\n"
-           "  Re-emitting a whole file via llm.generate is only for authored prose/code YOU "
-           "wrote, and risks dropping or altering content on a data file.\n"
-           "CAPABILITIES ARE NOT PYTHON — this includes any code YOU emit directly (a fenced "
-           "block gets autosaved). The STEP GOAL above may be worded around a Vera capability "
-           "(this step's own, or an earlier one's you're building on) — that is planning "
-           "language, not a literal instruction, and none of Vera's capabilities is a real "
-           "Python package: never write `import` for one, call one as a function, or state one "
-           "in a comment as the mechanism, in ANY code you produce or hand to code.author/"
-           "code.edit. A new `import` is only valid for a real pip-installable/stdlib library, "
-           "or a real file that already exists, matched to its exact name.\n")
-        + ("\nFILE HONESTY — never claim a file exists unless you actually created it THIS step: "
-           "either you emitted it as a fenced code block (auto-saved), a generative call reported "
-           "'✓ SAVED — written to ./<name>', or a write capability (e.g. ide.fs.write) returned ok "
-           "for it. A later step and the verifier CHECK the real "
-           "workspace, so a path you name but did not write is caught as a phantom and derails "
-           "every step that builds on it. If you only produced text/data and did not write it, say "
-           "so plainly in `done` (e.g. 'schema DEFINED, not yet written to disk') and describe it "
-           "as content — do NOT report it as a saved path.\n")
-        + (("\nRELEVANT SKILLS (follow this guidance):\n" + skill_prompt + "\n") if skill_prompt else "")
-        + (("\nCONTEXT FROM PRIOR STEPS:\n" + ctx_slice + "\n") if ctx_slice else "")
-        + (inline_files or "")
-        + workdir_note
-        + preview_note
-        + pkg_note
-        + "\nWork in a tight loop. Each turn reply with ONE compact JSON object — ONE of:\n"
-          '  {"thought":"<one sentence>","tool_use":{"name":"<cap>","input":{...}}}  to ACT, OR\n'
-          '  {"thought":"<your reasoning>"}  to just THINK (no tool_use, no done) when you need to plan, '
-          "are unsure, or are missing something — this is allowed and does NOT consume a cycle, OR\n"
-          '  {"thought":"<why>","need_caps":["cap.name"]}  to REQUEST extra capabilities when your '
-          "assigned ones are insufficient or a tool keeps failing/returning unusable results "
-          "(granted if they exist in the broader toolkit; their schemas are then provided), OR\n"
-        + _chain_help + _ask_help
-        + '  {"thought":"<one sentence>","done":"<concise result for the orchestrator>"}  when finished.\n'
-          'Any of the above may ALSO carry a sibling `"note":"<short durable fact/decision/gotcha>"` — '
-          "e.g. a confirmed schema, a path you found, a dead end not worth retrying. It is appended "
-          "immediately to the RUN JOURNAL (below, if present) for later steps AND later cycles of THIS "
-          "step to reuse — write one whenever you learn something worth not re-deriving, not on every turn.\n"
-          "Only emit a tool_use when you can fill in ALL of that cap's REQUIRED inputs — never call a cap "
-          "with empty or placeholder args (e.g. llm.generate with no `prompt`). If you don't yet have an "
-          "argument, THINK first (no tool_use) to work it out, then act.\n"
-          "SELF-CORRECT: if a call FAILS or returns a USELESS result (an error, an empty body, or a "
-          "consent/login/captcha/redirect page), do NOT repeat it with reworded args — try a DIFFERENT "
-          "approach: a different URL/query, or request a different capability via need_caps. "
-          "Use as many tool calls as the step genuinely needs; as soon as the goal is met, emit `done`."
-    )
+    sys = _v5_compose_executor_system(
+        step=step, goal=goal, _success=_success, _chain_help=_chain_help,
+        _ask_help=_ask_help, _research_hint=_research_hint, author_note=author_note, code_note=code_note,
+        condense_note=condense_note, ctx_slice=ctx_slice, edit_note=edit_note, exec_role_note=exec_role_note,
+        file_access_note=file_access_note, gen_note=gen_note, inline_files=inline_files, model_block=model_block,
+        phase_guide=phase_guide, pkg_note=pkg_note, preview_note=preview_note, prose_note=prose_note,
+        sig_block=sig_block, skill_prompt=skill_prompt, terminal_note=terminal_note, workdir_note=workdir_note)
 
     # ── Full context disclosure ──────────────────────────────────────────────
     # Emit the EXACT system prompt this ephemeral specialist was given, plus the
