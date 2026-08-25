@@ -41,6 +41,24 @@ class DataRecord:
 
 Datasets are first-class: every record belongs to one dataset, and datasets carry their own metadata, sources, and (optionally) explicit relationships to other datasets.
 
+### Canonical revision migration
+
+The first W2-01 kernel slice adds the storage-neutral
+`vera.fabric-record-revision/v1` contract in
+`vera.fabric.record_revision`. It separates a stable logical `record_id` from an
+immutable `revision_id`, and binds content or an artifact reference, ordered
+parent revisions, snapshot identity, source, policy, metadata, content schema,
+media type, timestamps, valid time, and tombstone state into a full SHA-256
+identity. Nested caller input is copied
+into canonical JSON so later mutation cannot alter an existing observation.
+
+This is currently a contract boundary, not a silent migration of `DataRecord` or
+the tables above. Existing ingestion behavior remains unchanged until one
+dataset path can atomically persist the authoritative revision and a durable
+receipt for each graph/vector projection. At that point projections may report
+`pending`, `applied`, `failed`, `stale`, `rebuilding`, or `removed` without
+pretending a partial fan-out was fully consistent.
+
 ---
 
 ## 3. The ingestion pipeline
