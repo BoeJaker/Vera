@@ -52,12 +52,20 @@ media type, timestamps, valid time, and tombstone state into a full SHA-256
 identity. Nested caller input is copied
 into canonical JSON so later mutation cannot alter an existing observation.
 
-This is currently a contract boundary, not a silent migration of `DataRecord` or
-the tables above. Existing ingestion behavior remains unchanged until one
-dataset path can atomically persist the authoritative revision and a durable
-receipt for each graph/vector projection. At that point projections may report
-`pending`, `applied`, `failed`, `stale`, `rebuilding`, or `removed` without
-pretending a partial fan-out was fully consistent.
+`vera.fabric.revision_store.RevisionStore` now supplies the first transactional
+authority path for that contract. Its dedicated SQLite tables atomically persist
+the revision, current-head compare-and-swap, projection receipts and an audit
+event. Receipts report `pending`, `applied`, `failed`, `stale`, `rebuilding`, or
+`removed`; applied and failed outcomes require bounded evidence. Bounded
+reconciliation locates failed/stale work, and authority rollback schedules the
+restored revision's projections for a new generation instead of merely moving a
+head pointer.
+
+This remains an injected-path kernel rather than a silent migration of
+`DataRecord` or the tables above. Existing ingestion behavior is unchanged. A
+subsequent slice will expose one policy-gated Fabric revision API and attach
+actual projection workers; until then these receipts do not claim that FAISS,
+Chroma or Neo4j were contacted.
 
 ---
 
