@@ -127,6 +127,29 @@ ranking quality or external storage. Hugging Face, DuckDB, DVC and Lance adapter
 plus compatibility over the current SQLite/PostgreSQL/FAISS/Chroma paths, remain
 subsequent slices; their live tests stay queued.
 
+The LIB-19 follow-on adds an optional Hugging Face Datasets adapter without
+installing that ecosystem into Vera's core runtime. An integration host injects
+`datasets.load_dataset` and must report the exact supported package version,
+currently `datasets==4.8.4`. Source descriptors accept only Hub `owner/name`
+repositories pinned to a full commit SHA, plus explicit config and split. Loader
+calls pass `token=False`, preventing ambient credential discovery; a later
+secret-reference integration is required for private datasets.
+
+For a complete sized split, `materialize` copies schema/features, bounded
+provenance and every JSON-compatible row into a content-addressed Vera snapshot.
+It refuses oversized datasets rather than silently sampling or truncating them.
+For `streaming=True`, `stream_page` returns bounded rows and a checksummed cursor
+containing the provider's own checkpoint state. Resume recreates the exact pinned
+source and invokes `load_state_dict`; cursors cannot cross revisions, configs or
+splits. A page is never called a complete snapshot, and reaching an exact page
+boundary may require one final empty request to observe exhaustion.
+
+No public capability selects this adapter yet. The deterministic suite injects
+fake loaders and streams; it performs no import, Hub request, cache write or
+credential lookup. Live verification of dataset card/license metadata, commit
+resolution, cache ceilings, public/private access and real stream recovery
+remains queued.
+
 ---
 
 ## 3. The ingestion pipeline
