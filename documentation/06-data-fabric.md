@@ -107,6 +107,26 @@ retry, corrupt-local refusal and checksum-verified restore. Live S3/Garage
 compatibility and legacy compatibility aliases remain queued rather than
 inferred from those deterministic tests.
 
+### Dataset and query provider migration
+
+The first W2-03 slice introduces the storage-neutral contracts in
+`vera.fabric.dataset_provider`. A `DatasetSnapshot` binds dataset identity,
+creation time, JSON schema, provenance and the complete frozen record sequence
+to a SHA-256 snapshot ID. `DatasetProvider` exposes exact/latest metadata and
+bounded snapshot scans; `QueryProvider` accepts an immutable request and returns
+provider/provenance-labelled result pages. Opaque cursors are checksummed and
+bound to the exact snapshot or query semantics, so they fail closed when reused
+against changed filters, text, projection mode or another snapshot.
+
+`CancellationSignal` is a process-local reference seam for mapping a native
+runtime's cancellation mechanism into cooperative provider checkpoints. The
+offline `FrozenDatasetProvider` exists to exercise the contract deterministically
+and intentionally supports only equality filters and substring matching. It is
+not wired into the current Fabric query capability and makes no claim about
+ranking quality or external storage. Hugging Face, DuckDB, DVC and Lance adapters,
+plus compatibility over the current SQLite/PostgreSQL/FAISS/Chroma paths, remain
+subsequent slices; their live tests stay queued.
+
 ---
 
 ## 3. The ingestion pipeline
