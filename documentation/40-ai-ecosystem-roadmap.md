@@ -862,6 +862,16 @@ dependency isolation, and teardown.
 Import one small pinned dataset and stream one larger public fixture through an
 isolated adapter into record/snapshot manifests. No training occurs.
 
+**Offline implementation status:** the adapter boundary is complete against the
+documented `datasets==4.8.4` loading and iterable-checkpoint APIs. It requires a
+full Hub commit SHA, explicit config/split, injected loader/version, no ambient
+token, bounded complete materialization, and source-bound `state_dict` streaming
+resume. It does not install or import the optional package in Vera core and does
+not expose a public network capability. Official references:
+[loading methods](https://huggingface.co/docs/datasets/v4.8.4/package_reference/loading_methods)
+and [streaming/checkpoints](https://huggingface.co/docs/datasets/v4.8.4/stream).
+The small/large Hub fixtures and cache/license/card checks remain queued-live.
+
 Gate: revision/hash/license/card, split/schema, streaming resume, cache limits,
 offline replay, malicious builder prevention, export, and removal.
 
