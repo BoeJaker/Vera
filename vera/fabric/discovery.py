@@ -81,6 +81,8 @@ from Vera.vera.capability_orchestration import (
     APP, capability, emit_event, now_iso, register_ui, CAPABILITY_REGISTRY,
 )
 
+from Vera.vera.fabric import url_dataset_resolve as _url_ds
+
 log = logging.getLogger("vera.fabric_discovery")
 
 # ── Tunables ──────────────────────────────────────────────────────────────
@@ -3149,7 +3151,7 @@ async def discover_ingest_page(
     _ensure_tables()
     wa = _wa()
     ds_id = (re.sub(r"[^a-zA-Z0-9_.]", "_", dataset_id.strip())[:80]
-             if dataset_id.strip() else (_dataset_for_url(url) or _auto_ds(url)))
+             if dataset_id.strip() else (await _dataset_for_url_async(url) or _auto_ds(url)))
 
     # Acquire content if asked to fetch
     if fetch and not html and not text:
@@ -7310,22 +7312,35 @@ def _topic_for_dataset(ds_id: str) -> str:
     return ds_id.replace("_", " ")
 
 
+_URL_DS_CACHE = _url_ds.ResolveCache()
+
+
 def _dataset_for_url(url: str) -> str:
-    """Find which discovery dataset a page URL belongs to (via fabric_records)."""
+    """Find which discovery dataset a page URL belongs to (via fabric_records).
+
+    The underlying query is a leading-wildcard LIKE over every JSON blob in
+    fabric_records - 2.6s measured, a full scan whether it matches or not. The
+    ANSWER is unchanged here; only the cost is. Results (including misses, which
+    cost exactly as much) are memoised per URL, so a re-fetch no longer repays it.
+
+    âš  Still synchronous, so on an async path call it through
+    `_dataset_for_url_async` - running this on the event loop stalls the whole
+    instance (perf.scan, 2026-08-26: 4 stalls on this line, worst 50.5s).
+    """
     try:
-        rows = _sqlite_conn().execute(
-            'SELECT dataset_id, data FROM fabric_records WHERE data LIKE ? LIMIT 8',
-            ('%"url": "' + url + '"%',)).fetchall()
-        for r in rows:
-            try:
-                d = json.loads(r["data"]) if r["data"] else {}
-            except Exception:
-                continue
-            if (d.get("url") or "").split("#")[0] == url:
-                return r["dataset_id"]
+        return _url_ds.resolve_cached(_sqlite_conn(), url, _URL_DS_CACHE)
     except Exception as e:
         log.debug("dataset_for_url: %s", e)
     return ""
+
+
+async def _dataset_for_url_async(url: str) -> str:
+    """`_dataset_for_url` off the event loop. Use this from any async caller."""
+    try:
+        return await asyncio.to_thread(_dataset_for_url, url)
+    except Exception as e:
+        log.debug("dataset_for_url_async: %s", e)
+        return ""
 
 
 @capability(
