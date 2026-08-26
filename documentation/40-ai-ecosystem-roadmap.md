@@ -893,8 +893,20 @@ path traversal, offline behavior, export round trip, and no worktree mutation.
 
 ### LIB-22 — DuckDB QueryProvider
 
-Run read-only SQL over frozen Parquet/Arrow artifact fixtures through an isolated
-DuckDB adapter. Keep extension installation disabled initially.
+**Offline adapter implemented.** Query checksum-verified local Parquet
+artifacts through a structured `QueryRequest`; never accept caller SQL. The
+adapter binds paths and equality values as parameters, enforces bounded pages
+and query-bound cursors, and uses a fresh locked-down connection with extension
+installation/loading and ambient cloud credential discovery disabled. The
+optional runtime is pinned to `duckdb==1.5.5`.
+
+The deterministic fake-backed gate covers injection refusal, binding and
+checksum enforcement, parameterization, cursor semantics, cancellation,
+bounded errors and connection teardown. Real DuckDB/Parquet execution,
+malicious-file, measured memory/time, concurrency and Arrow decisions remain
+queued-live. See DuckDB's current [Python API](https://duckdb.org/docs/stable/clients/python/overview),
+[configuration reference](https://duckdb.org/docs/stable/configuration/overview)
+and [Parquet reader](https://duckdb.org/docs/lts/data/parquet/overview).
 
 Gate: read-only enforcement, SQL/schema types, memory/time/output limits,
 cancellation, artifact provenance, malicious files, concurrency, and teardown.

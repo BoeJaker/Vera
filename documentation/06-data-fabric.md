@@ -150,6 +150,34 @@ credential lookup. Live verification of dataset card/license metadata, commit
 resolution, cache ceilings, public/private access and real stream recovery
 remains queued.
 
+The LIB-22 follow-on adds `DuckDBArtifactQueryProvider`, an optional analytical
+adapter over one immutable local Parquet artifact. It verifies the artifact's
+stored SHA-256 before construction and again before every page, derives the
+dataset snapshot identity from that checksum, and returns bounded
+`QueryPage` results with artifact and engine provenance. It deliberately does
+not expose SQL. Equality filters use restricted column identifiers and bound
+values; paths, limits and offsets are parameters, while opaque cursors remain
+bound to the full `QueryRequest` semantics.
+
+The default connection path requires exactly `duckdb==1.5.5`, creates a fresh
+in-memory connection rather than using DuckDB's shared global connection, and
+locks configuration after disabling extension auto-install/load, unsigned
+extensions, ambient S3 configuration and general external access. Only the
+already verified artifact path is allow-listed. Text search, arbitrary
+expressions, non-scalar filters, non-Parquet media, writes and extension use
+are outside this adapter.
+
+This slice is not yet a public capability or a replacement for `fabric.query`.
+Deterministic tests use an injected connection and exercise statement shape,
+parameter binding, pagination, cancellation, binding/checksum rejection,
+bounded errors and teardown without importing DuckDB. Live DuckDB execution,
+real and malformed Parquet, memory/time enforcement and concurrency remain
+queued. The security posture follows DuckDB's
+[configuration options](https://duckdb.org/docs/stable/configuration/overview),
+[security guidance](https://duckdb.org/docs/current/operations_manual/securing_duckdb/overview),
+and recommendation to use independent package connections rather than the
+[shared Python connection](https://duckdb.org/docs/stable/clients/python/overview).
+
 ---
 
 ## 3. The ingestion pipeline
