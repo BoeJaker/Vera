@@ -85,13 +85,27 @@ implementation stores bytes by SHA-256 under hash-sharded paths and keeps
 immutable metadata, retention and reference identity in SQLite. Atomic publish,
 bounded reads, verification, idempotent duplicates, non-retargetable references,
 monotonic retention and partial-file cleanup are deterministic conformance
-behavior. It is not yet wired over the existing S3-compatible `ObjectStore` and
-does not redirect existing artifact stores. The local provider is exposed through
+behavior. The local provider is exposed through
 `fabric.artifact.put/stat/get/verify/reference`, gated by
 `FABRIC_ARTIFACT_POLICY`. Reads and writes have separate size ceilings
 (`FABRIC_ARTIFACT_MAX_GET_BYTES` and `FABRIC_ARTIFACT_MAX_PUT_BYTES`), and
-authorization precedes decoding or storage access. S3-compatible adapters and
-legacy compatibility aliases remain subsequent slices.
+authorization precedes decoding or storage access.
+
+Remote replication is deliberately opt-in. With
+`FABRIC_ARTIFACT_REPLICA=object_store`, the adapter copies locally committed
+artifacts to the existing S3-compatible `ObjectStore` under deterministic
+checksum keys. Local storage remains authoritative: a remote outage returns the
+successful local artifact plus a durable failed replica receipt instead of
+rolling back the put. `fabric.artifact.replica.reconcile` performs bounded
+retries only after verifying local bytes, and `fabric.artifact.restore_local`
+repairs a missing or corrupt local object only when downloaded bytes match the
+immutable local checksum and size. Both repair operations use the artifact
+caller policy. The default `none` mode performs no replica network calls.
+
+The offline conformance suite uses an injected fake backend to exercise outage,
+retry, corrupt-local refusal and checksum-verified restore. Live S3/Garage
+compatibility and legacy compatibility aliases remain queued rather than
+inferred from those deterministic tests.
 
 ---
 

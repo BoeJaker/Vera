@@ -73,7 +73,9 @@ from Vera.vera.capability_orchestration import (
 from Vera.vera.sandbox_guard import write_blocked as _sbx_write_blocked, \
     is_write_cypher as _sbx_is_write_cypher
 from Vera.vera.fabric.record_revision import create_record_revision
-from Vera.vera.fabric.artifact_provider import LocalArtifactProvider
+from Vera.vera.fabric.artifact_provider import (
+    LocalArtifactProvider, ObjectStoreArtifactBackend, ReplicatedArtifactProvider,
+)
 from Vera.vera.fabric.caller_policy import CallerPolicy
 from Vera.vera.fabric.revision_path import RevisionAccessDenied, RevisionPath
 from Vera.vera.fabric.revision_policy import RevisionPolicy
@@ -172,6 +174,7 @@ REVISION_POLICY_JSON = os.getenv("FABRIC_REVISION_POLICY", "")
 ARTIFACT_ROOT = os.getenv(
     "FABRIC_ARTIFACT_ROOT", str(Path(__file__).parent / "artifact_store"))
 ARTIFACT_POLICY_JSON = os.getenv("FABRIC_ARTIFACT_POLICY", "")
+ARTIFACT_REPLICA = os.getenv("FABRIC_ARTIFACT_REPLICA", "none").strip().lower()
 ARTIFACT_MAX_PUT_BYTES = int(os.getenv("FABRIC_ARTIFACT_MAX_PUT_BYTES", str(64 * 1024 * 1024)))
 ARTIFACT_MAX_GET_BYTES = int(os.getenv("FABRIC_ARTIFACT_MAX_GET_BYTES", str(8 * 1024 * 1024)))
 # Retrieval relevance knobs (see execute_query). min_score is the cosine floor a
@@ -4993,7 +4996,11 @@ async def _pg_connect_loop():
 
 _REVISION_STORE: Optional[RevisionStore] = None
 _ARTIFACT_PROVIDER: Optional[LocalArtifactProvider] = None
-_ARTIFACT_WRITE_ACTIONS = frozenset({"artifact.put", "artifact.reference"})
+_ARTIFACT_REPLICA_PROVIDER: Optional[ReplicatedArtifactProvider] = None
+_ARTIFACT_WRITE_ACTIONS = frozenset({
+    "artifact.put", "artifact.reference", "artifact.replica.reconcile",
+    "artifact.restore_local",
+})
 
 
 def _canonical_revision_path() -> RevisionPath:
@@ -5022,6 +5029,19 @@ def _artifact_provider() -> LocalArtifactProvider:
         _ARTIFACT_PROVIDER = LocalArtifactProvider(
             ARTIFACT_ROOT, max_put_bytes=ARTIFACT_MAX_PUT_BYTES)
     return _ARTIFACT_PROVIDER
+
+
+def _artifact_replica_provider() -> Optional[ReplicatedArtifactProvider]:
+    """Return the explicitly configured replica; local storage remains authority."""
+    global _ARTIFACT_REPLICA_PROVIDER
+    if ARTIFACT_REPLICA in {"", "none"}:
+        return None
+    if ARTIFACT_REPLICA != "object_store":
+        raise ValueError("FABRIC_ARTIFACT_REPLICA must be none or object_store")
+    if _ARTIFACT_REPLICA_PROVIDER is None:
+        _ARTIFACT_REPLICA_PROVIDER = ReplicatedArtifactProvider(
+            _artifact_provider(), ObjectStoreArtifactBackend(OBJECT_STORE))
+    return _ARTIFACT_REPLICA_PROVIDER
 
 
 def _require_artifact(policy: CallerPolicy, action: str,
@@ -5251,19 +5271,31 @@ async def cap_fabric_artifact_put(data_b64: str, media_type: str,
         policy = _artifact_policy()
         _require_artifact(policy, "artifact.put")
         provider = _artifact_provider()
+        replica = _artifact_replica_provider()
         encoded = str(data_b64 or "").strip()
         if len(encoded) > ((ARTIFACT_MAX_PUT_BYTES + 2) // 3) * 4 + 4:
             raise ValueError("encoded artifact exceeds configured size limit")
         data = base64.b64decode(encoded, validate=True)
-        stat = await asyncio.to_thread(
-            provider.put, data, media_type=media_type, created_at=created_at,
-            retain_until=retain_until)
+        replica_receipt = None
+        if replica is None:
+            stat = await asyncio.to_thread(
+                provider.put, data, media_type=media_type, created_at=created_at,
+                retain_until=retain_until)
+        else:
+            result = await asyncio.to_thread(
+                replica.put, data, media_type=media_type, created_at=created_at,
+                retain_until=retain_until)
+            stat = result["artifact"]
+            replica_receipt = result["replica_receipt"]
     except (ValueError, TypeError, OSError, binascii.Error,
             RevisionAccessDenied) as exc:
         return {"ok": False, "error": str(exc), "mutated": False}
     await emit_event({"type": "fabric.artifact.put", "artifact_id": stat.artifact_id,
                       "size": stat.size, "media_type": stat.media_type})
-    return {"ok": True, "artifact": asdict(stat)}
+    response = {"ok": True, "artifact": asdict(stat)}
+    if replica_receipt is not None:
+        response["replica_receipt"] = replica_receipt
+    return response
 
 
 @capability(
@@ -5348,6 +5380,64 @@ async def cap_fabric_artifact_reference(artifact_id: str, reference_id: str,
     except (ValueError, KeyError, OSError, RevisionAccessDenied) as exc:
         return {"ok": False, "error": str(exc), "mutated": False}
     return {"ok": True, "reference": reference}
+
+
+@capability(
+    "fabric.artifact.replica.reconcile", memory="off",
+    http_method="POST", http_path="/fabric/artifacts/replica/reconcile",
+    http_tags=["fabric"],
+    description="Policy-gated bounded retry of failed artifact replication. "
+                "Requires FABRIC_ARTIFACT_REPLICA=object_store. Local verified "
+                "bytes remain authoritative; limit is clamped to 1..100.",
+    contract={**_ARTIFACT_CONTRACT_BASE,
+              "canonical_task": "fabric.artifact.replica.reconcile",
+              "effects": ["write", "filesystem", "network"],
+              "network": {"status": "explicit_opt_in_object_store"},
+              "idempotency": {"status": "durable_receipt_retry"},
+              "pagination": {"status": "bounded"}},
+)
+async def cap_fabric_artifact_replica_reconcile(limit: int = 25,
+                                                trace_id=None) -> Dict:
+    try:
+        _require_artifact(_artifact_policy(), "artifact.replica.reconcile")
+        replica = _artifact_replica_provider()
+        if replica is None:
+            raise ValueError("artifact replica is disabled")
+        receipts = await asyncio.to_thread(
+            replica.reconcile, updated_at=now_iso(), limit=limit)
+    except (ValueError, TypeError, KeyError, OSError,
+            RevisionAccessDenied) as exc:
+        return {"ok": False, "error": str(exc), "mutated": False}
+    return {"ok": True, "candidates": len(receipts), "receipts": receipts}
+
+
+@capability(
+    "fabric.artifact.restore_local", memory="off",
+    http_method="POST", http_path="/fabric/artifacts/restore-local",
+    http_tags=["fabric"],
+    description="Policy-gated repair of a missing or corrupt local artifact from "
+                "its checksum-verified replica. Requires an explicitly configured "
+                "artifact replica and never accepts mismatched remote bytes.",
+    contract={**_ARTIFACT_CONTRACT_BASE,
+              "canonical_task": "fabric.artifact.restore_local",
+              "effects": ["write", "filesystem", "network"],
+              "network": {"status": "explicit_opt_in_object_store"},
+              "idempotency": {"status": "checksum_verified"}},
+)
+async def cap_fabric_artifact_restore_local(artifact_id: str,
+                                            trace_id=None) -> Dict:
+    try:
+        _require_artifact(
+            _artifact_policy(), "artifact.restore_local", artifact_id)
+        replica = _artifact_replica_provider()
+        if replica is None:
+            raise ValueError("artifact replica is disabled")
+        stat = await asyncio.to_thread(
+            replica.restore_local, artifact_id, created_at=now_iso())
+    except (ValueError, TypeError, KeyError, OSError,
+            RevisionAccessDenied) as exc:
+        return {"ok": False, "error": str(exc), "mutated": False}
+    return {"ok": True, "artifact": asdict(stat), "verified": True}
 
 @capability(
     "fabric.ingest", memory="off",
