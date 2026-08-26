@@ -38,6 +38,7 @@ _CRITICAL_MODULES = {
     "test_loop_stage_audit",      # Phase 0 stage-context records - must never carry prompt bodies
     "test_gate_cancel_release",  # Ollama-gate heartbeat frees the slot the moment its run is cancelled (no runaway GPU hold)
     "test_code_author_repair_guard",  # code.author repair must never "fix" a file by gutting it (2026-08-24 empty-stub incident)
+    "test_url_dataset_resolve",  # web.fetch stall fix - the url->dataset scan must keep its answer while off the loop (2026-08-26)
     "test_role_profile_merge",   # a USER routing override must not silently discard declared sampling/num_ctx (2026-08-24)
     "test_executor_compose_callsite",  # Phase 4 - every prompt block reaches the executor, unswapped (a drop/swap is silent)
 }
