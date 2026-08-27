@@ -20,6 +20,7 @@ from vera.fabric.dataset_provider import (
 
 MEMORY_SCHEMA = "vera.memory-projection/v1"
 MEMORY_QUERY_SCHEMA = "vera.memory-query/v1"
+MEMORY_EXPORT_SCHEMA = "vera.memory-export/v1"
 MAX_MEMORY_PAGE = 500
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$")
 _MEMORY_ID = re.compile(r"^mem_[0-9a-f]{64}$")
@@ -338,6 +339,23 @@ class MemoryPage:
                 "generation": self.generation}
 
 
+@dataclass(frozen=True)
+class MemoryExportPage:
+    export_id: str
+    projections: tuple[dict, ...]
+    next_cursor: str
+    provider: str
+    generation: int
+
+    def to_dict(self) -> dict:
+        return {"schema": MEMORY_EXPORT_SCHEMA, "export_id": self.export_id,
+                "projections": [json.loads(_json(item, "memory export item",
+                                                  max_bytes=131_072))
+                                for item in self.projections],
+                "next_cursor": self.next_cursor, "provider": self.provider,
+                "generation": self.generation}
+
+
 class MemoryProvider(Protocol):
     name: str
     def apply(self, projection: MemoryProjection,
@@ -346,6 +364,9 @@ class MemoryProvider(Protocol):
             *, include_text: bool = True) -> dict: ...
     def search(self, query: MemoryQuery, access: MemoryAccessContext, *,
                cancellation: CancellationSignal | None = None) -> MemoryPage: ...
+    def export(self, access: MemoryAccessContext, *, namespace: str = "",
+               include_text: bool = False, limit: int = 50, cursor: str = "",
+               cancellation: CancellationSignal | None = None) -> MemoryExportPage: ...
 
 
 MemoryAuthorizer = Callable[[str, MemoryAccessContext, Mapping[str, Any]], bool]
@@ -472,3 +493,53 @@ class FrozenMemoryProvider:
                        if next_offset < len(candidates) else "")
         return MemoryPage(query.query_id, hits, next_cursor, self.name,
                           self._generation)
+
+    def export(self, access: MemoryAccessContext, *, namespace: str = "",
+               include_text: bool = False, limit: int = 50, cursor: str = "",
+               cancellation: CancellationSignal | None = None) -> MemoryExportPage:
+        """Return one deterministic, policy-filtered projection page.
+
+        Export is observational: it includes tombstones, never advances provider
+        state, and does not imply that the projection is authoritative.
+        """
+        namespace = _identifier(namespace, "namespace") if namespace else ""
+        limit = int(limit)
+        if limit < 1 or limit > MAX_MEMORY_PAGE:
+            raise ValueError(f"limit must be between 1 and {MAX_MEMORY_PAGE}")
+        cursor = str(cursor or "")
+        if len(cursor) > 16_384:
+            raise ValueError("cursor exceeds size limit")
+        signal = cancellation or CancellationSignal()
+        signal.checkpoint()
+        context = {"tenant_id": access.tenant_id,
+                   "principal_id": access.principal_id,
+                   "session_id": access.session_id,
+                   "purpose": access.purpose,
+                   "namespace": namespace,
+                   "include_text": bool(include_text)}
+        self._allowed("export", access, context)
+        export_id = "mexp_" + _hash({"schema": MEMORY_EXPORT_SCHEMA,
+                                     **context})
+        identity = f"{export_id}:{self._generation}"
+        offset = _read_cursor(cursor, kind="memory-export", identity=identity)
+        visible: list[MemoryProjection] = []
+        for item in sorted(self._records.values(), key=lambda value: value.memory_id):
+            signal.checkpoint()
+            if item.tenant_id != access.tenant_id:
+                continue
+            if namespace and item.namespace != namespace:
+                continue
+            try:
+                self._allowed("read", access, self._context(item))
+            except MemoryAccessDenied:
+                continue
+            visible.append(item)
+        selected = visible[offset:offset + limit]
+        projections = tuple(item.to_dict(include_text=bool(include_text))
+                            for item in selected)
+        next_offset = offset + len(projections)
+        next_cursor = (_cursor({"kind": "memory-export", "identity": identity,
+                                "offset": next_offset})
+                       if next_offset < len(visible) else "")
+        return MemoryExportPage(export_id, projections, next_cursor, self.name,
+                                self._generation)
