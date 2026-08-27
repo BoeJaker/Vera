@@ -173,6 +173,20 @@ async def _open_session(url: str = "", kind: str = "", base_url: str = "",
     resolved = await _targets.ensure_target(target, _call, _default_base_url())
     if not resolved.get("ready"):
         return {"error": resolved.get("error", "target not ready"), "resolved": resolved}
+    # A caller who NAMED a url meant to land on it. If resolution produced no
+    # start_url, the session would open on about:blank and the operator would be
+    # asked to pursue its goal on an empty page - which it does, by wandering
+    # (2026-08-27: it tried two public timer sites, was allowlist-blocked, then
+    # drove Vera's own UI). Fail loudly here instead: one clear error beats
+    # fifteen cycles of plausible-looking nonsense. Deliberately NOT raised when
+    # no url was supplied - "start_url may be empty (caller navigates)" is a
+    # legitimate contract for open-then-act flows.
+    if url and not str(resolved.get("start_url") or "").strip():
+        return {"error": ("target resolved with no start_url, so the browser would open "
+                          "on a blank page: url=%r was dropped by kind=%r. Pass the url "
+                          "WITHOUT kind, or pass kind with the base_url/id it needs."
+                          % (url, kind or "")),
+                "resolved": resolved}
     try:
         sess = await _be.start_session(
             session_id=session_id, base_url=resolved["base_url"],

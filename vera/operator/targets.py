@@ -50,8 +50,24 @@ def resolve_target(target: Dict[str, Any], default_base_url: str = "") -> Dict[s
 
     if kind == "sandbox":
         base = target.get("base_url") or SANDBOX_BASE
-        start = _panel_url(base, target["panel_id"]) if target.get("panel_id") else ""
-        return {"kind": "sandbox", "base_url": base, "start_url": start, "canvas": False}
+        # An EXPLICIT url wins. Without this the caller's url was silently
+        # dropped: kind="sandbox" resolved a base and an EMPTY start_url, so
+        # _open_session skipped its goto and the browser sat on about:blank.
+        # Observed 2026-08-27 (session 5be4562e): the loop asked the operator to
+        # verify a countdown page and passed the correct preview url alongside
+        # kind="sandbox" - which in THIS vocabulary means a Loop Lab dev
+        # container, not the session's workspace preview. The url was discarded,
+        # the operator woke on a blank page with the goal "click the Start
+        # button", went looking for a countdown timer on the open internet, was
+        # allowlist-blocked twice, and ended up clicking around Vera's own UI.
+        # Roughly fifteen cycles of churn from one dropped argument.
+        _u = str(target.get("url") or "").strip()
+        if target.get("panel_id"):
+            start = _panel_url(base, target["panel_id"])
+        else:
+            start = _u
+        return {"kind": "sandbox", "base_url": (base or _origin(_u) or base),
+                "start_url": start, "canvas": False}
 
     if kind == "panel":
         base = target.get("base_url") or default_base_url or "http://localhost:8999"
