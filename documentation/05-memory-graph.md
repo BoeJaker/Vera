@@ -72,11 +72,20 @@ page sequence. The frozen adapter's deterministic lexical score exists only to
 exercise filtering, ordering and pagination; it makes no semantic-retrieval
 quality claim.
 
+The read-only `native_memory_adapter` now covers the first compatibility seam.
+It consumes a plain native record snapshot plus a trusted binding to an exact
+Fabric `RecordRevision`; it deliberately does not import the native Memory
+runtime or touch its backends. Tenant, namespace, record/revision identity,
+policy, content authority and tombstone state cannot be taken from arbitrary
+legacy metadata. The adapter emits an exact Fabric citation, strips arbitrary
+metadata/vectors/relations/model/source URL fields, fails on identity or archive
+conflicts, and ensures tombstones expose none of the text retained by legacy
+soft deletion.
+
 The current `MemoryRecord`, Postgres authority claim, Chroma/Neo4j fan-out and
-`memory.*` API remain unchanged pending a compatibility adapter. That follow-on
-must reconcile the older mutable/archive model with Fabric revision receipts,
-tenant policy, citations, tombstones, export and recovery before traffic moves.
-MemPalace and second-provider trials remain queued with other live tests.
+`memory.*` API remain unchanged. Fabric revision receipt creation, bulk
+projection/export, reconciliation and recovery must be proven before traffic
+moves. MemPalace and second-provider trials remain queued with other live tests.
 
 ---
 

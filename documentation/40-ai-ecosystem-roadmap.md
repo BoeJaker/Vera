@@ -927,7 +927,7 @@ cancellation, artifact provenance, malicious files, concurrency, and teardown.
 
 ### W2-04 — portable MemoryProvider boundary
 
-**Offline contract implemented.** Memory adapters now have a provider-neutral
+**Offline contract and native compatibility projection implemented.** Memory adapters now have a provider-neutral
 target that treats Fabric record revisions as authority, requires exact source
 citations, carries explicit tenant/principal policy context, and standardizes
 bounded filters, pagination, tombstones and redacted result projection. The
@@ -935,9 +935,16 @@ source revision content hash remains distinct from the derived projection hash.
 The frozen adapter is default-deny and deterministic; it is a conformance reference,
 not a new production memory store or a ranking benchmark.
 
+The read-only native adapter converts plain `MemoryRecord` snapshots only when
+given an explicit tenant/native-ID binding to an immutable Fabric revision. It
+does not import the live Memory runtime, query a backend, trust arbitrary native
+metadata for authority, or redirect a capability. Conflicting identity, type,
+archive/tombstone or lifecycle data fails closed; sensitive/unbounded native
+fields are not forwarded.
+
 Current Vera Memory, Postgres, Chroma, Neo4j and the public `memory.*`
-capabilities remain unchanged. Native compatibility and projection receipts
-come next. MemPalace and a second provider still require queued live trials for
+capabilities remain unchanged. Fabric receipt creation, bulk projection,
+export/reconciliation and recovery come next. MemPalace and a second provider still require queued live trials for
 identity, citation fidelity, tenant/session isolation, ranking, outage/sync,
 update/tombstone/delete/export and reconciliation behavior before either can be
 advertised.

@@ -102,6 +102,13 @@ def test_citations_reject_credentials_invalid_ids_and_non_json_locator():
                        record_id=RECORD, revision_id="bad")
 
 
+def test_citations_have_total_value_semantics():
+    first = citation()
+    second = citation()
+    assert first == second
+    assert "source.primary" in repr(first)
+
+
 def test_caller_supplied_fabric_record_ids_are_supported():
     item = projection(record_id="rec_external:item-1",
                       citations=[citation(record_id="rec_external:item-1")])

@@ -93,8 +93,6 @@ class MemoryCitation:
     uri: str
     record_id: str
     revision_id: str
-    source_content_hash: str
-    projection_hash: str
     label: str = ""
     locator_json: str = field(default="{}", repr=False)
 
