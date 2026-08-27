@@ -64,6 +64,20 @@ Projection-backed training boundary (W2-05)
   runtime behavior until shadow parity and migration evidence are complete;
   Fabric revisions remain the data authority throughout.
 
+  `worldview_shadow_parity.compare_legacy_worldview_snapshot` supplies the
+  first non-executing comparison seam for that migration. It accepts a frozen
+  copy of the record dictionaries and `(source, target, relation)` tuples already
+  produced by Worldview's current loaders, then compares them with the projection
+  manifest. The report exposes bounded record IDs, counts, relation types and
+  checksums only—never text, embeddings or graph payloads.
+
+  Readiness requires exact record coverage, the pinned embedding dimension and
+  finite values, complete matching Fabric revision/content-hash evidence, and no
+  dangling graph endpoints. Missing or extra records, absent provenance, drift,
+  malformed vectors and edges remain explicit blockers. Creating this report
+  neither invokes the loaders nor changes training; collecting live shadow
+  evidence remains a separately authorized step.
+
 Capabilities registered
 ───────────────────────
   worldview.train                   — full 3-stage training
