@@ -11388,7 +11388,11 @@ def _v5_apply_edits(content: str, edits: List[Dict[str, Any]]) -> Dict[str, Any]
         find = str(e.get("find") or "")
         repl = str(e.get("replace") if e.get("replace") is not None else "")
         if not find:
-            errors.append(f"edit {i + 1}: empty `find`")
+            errors.append(
+                f"edit {i + 1}: empty `find` - an edit must anchor on text that "
+                "EXISTS in the file. To INSERT where there is nothing to replace, "
+                "use the nearest existing line as `find` and repeat that line "
+                "unchanged in `replace`, around your new text.")
             continue
         # Try the anchor VERBATIM first — a file may legitimately contain text
         # that looks like a gutter (markdown tables, other numbered listings), and
@@ -11530,9 +11534,27 @@ async def cap_code_edit(path: str, task: str = "", session_id: str = "", repo: s
                     "hint": "anchors must be copied exactly from the file and be unique"}
         await emit_event({"type": "code.edit.retry", "path": path,
                           "attempt": attempt, "error": last_err})
-        _prompt = (f"{prompt}\n\n─────\nYOUR PREVIOUS EDITS WERE REJECTED:\n{last_err}\n"
-                   "Return corrected JSON edits. Copy each `find` EXACTLY from the file "
-                   "above, with enough context to be unique.")
+        # Tell it which edits were FINE, not only what broke. Measured 2026-08-27:
+        # batches of up to 6 edits are normal and succeed, but ONE malformed edit
+        # invalidates the whole batch (`ok = applied and not errors`), and the
+        # feedback carried only the error string - so the model re-derived every
+        # edit blind against a full re-send of the file, three times, and then the
+        # call failed outright (23s for nothing). The atomic save is deliberate and
+        # STAYS: applying a subset of a 6-edit rename would leave a file that parses
+        # and is semantically half-renamed, which is worse than a clean retry.
+        _kept = "\n".join(
+            "  - KEEP (applied cleanly): %s"
+            % " ".join(str(a.get("find_preview") or "").split())[:70]
+            for a in ((res or {}).get("applied") or []))
+        _broke = "\n".join("  - FIX: %s" % str(e)[:200]
+                            for e in ((res or {}).get("errors") or [])[:6]) or ("  - FIX: %s" % last_err)
+        _prompt = (f"{prompt}\n\n─────\n"
+                   "YOUR PREVIOUS EDITS WERE NOT SAVED. Nothing in the file changed.\n"
+                   + (f"{_kept}\n" if _kept else "")
+                   + f"{_broke}\n"
+                   "Resend the COMPLETE edit list: repeat every edit marked KEEP exactly "
+                   "as it was, and correct only those marked FIX. Copy each `find` EXACTLY "
+                   "from the file above, with enough context to be unique.")
 
     saved = await code_store_save(path, res["content"], session_id=session_id, repo=repo,
                                   message=f"code.edit: {task[:80]}", lang=lang)
