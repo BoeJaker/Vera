@@ -45,6 +45,25 @@ Key design choices
     space and (b) low likelihood under the dynamics model.
   • Concepts get LLM-labelled lazily on first inspection.
 
+Projection-backed training boundary (W2-05)
+────────────────────────────────────────────
+  `vera.worldview.worldview_projection_adapter` defines an additive offline
+  path from Fabric graph/vector projections to a frozen JEPA training manifest.
+  The manifest pins both projection specification IDs and generations, the
+  embedding model package/dimension/preprocessing/metric, exact active
+  record-revision pairs, tombstone count, and hashes of both complete snapshots.
+
+  Graph and vector inputs must cover the same records and agree on authoritative
+  Fabric revision, content hash, and tombstone state. Missing/extra records,
+  duplicates, forged projection identities, revision drift, mixed embedding
+  dimensions, cancellation, and oversized snapshots fail closed. The manifest
+  contains no embeddings, graph payload, source content, or training result.
+
+  This is not wired into `worldview.train` yet and performs no model work or live
+  Chroma/Neo4j access. The current direct backend path remains active for
+  runtime behavior until shadow parity and migration evidence are complete;
+  Fabric revisions remain the data authority throughout.
+
 Capabilities registered
 ───────────────────────
   worldview.train                   — full 3-stage training
