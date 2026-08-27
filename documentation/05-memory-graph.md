@@ -45,6 +45,39 @@ Records are stored in two places by default:
 
 Session nodes are stored as `(s:Session {session_id, agent_name, created_at, ...})`. The Neo4j backend creates a `(:Session)-[:CONTAINS]->(:Memory)` edge automatically for every record with a `session_id`, so the harness can scope queries to a single session without joining anything explicitly.
 
+### Portable MemoryProvider migration
+
+W2-04 begins an additive provider boundary in
+`vera.fabric.memory_provider`; it does not redirect the capabilities described
+below. A `MemoryProjection` points to an authoritative Fabric `record_id` and
+`revision_id`, retains tenant/namespace/session/type lifecycle context, and
+requires at least one citation to that exact revision. The stable `memory_id`
+is derived from tenant, namespace and Fabric record identity, while updated
+content remains a new Fabric revision. Tombstones carry no projected text.
+The source revision's content hash and the projected text hash are distinct
+fields, preserving an audit seam for provider-specific summarization or mapping.
+
+The associated `MemoryAccessContext` always names the tenant and principal.
+Providers receive a bounded policy context containing identity, lifecycle and
+the projection's declared policy—but never memory text. The offline
+`FrozenMemoryProvider` denies by default and uses an injected authorizer for
+apply, search and exact reads, including per-result policy checks. A cross-tenant
+lookup returns no record rather than leaking its existence.
+
+`MemoryQuery` standardizes bounded query text, namespace/session/type/tags,
+tombstone visibility, text redaction, page size and opaque pagination. Cursors
+are checksummed and tied to both the exact query semantics and provider
+generation, so a changing projection cannot silently shift an in-progress
+page sequence. The frozen adapter's deterministic lexical score exists only to
+exercise filtering, ordering and pagination; it makes no semantic-retrieval
+quality claim.
+
+The current `MemoryRecord`, Postgres authority claim, Chroma/Neo4j fan-out and
+`memory.*` API remain unchanged pending a compatibility adapter. That follow-on
+must reconcile the older mutable/archive model with Fabric revision receipts,
+tenant policy, citations, tombstones, export and recovery before traffic moves.
+MemPalace and second-provider trials remain queued with other live tests.
+
 ---
 
 ## 2. The session chain

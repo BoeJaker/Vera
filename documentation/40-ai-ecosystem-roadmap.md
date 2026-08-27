@@ -925,6 +925,23 @@ and [Parquet reader](https://duckdb.org/docs/lts/data/parquet/overview).
 Gate: read-only enforcement, SQL/schema types, memory/time/output limits,
 cancellation, artifact provenance, malicious files, concurrency, and teardown.
 
+### W2-04 — portable MemoryProvider boundary
+
+**Offline contract implemented.** Memory adapters now have a provider-neutral
+target that treats Fabric record revisions as authority, requires exact source
+citations, carries explicit tenant/principal policy context, and standardizes
+bounded filters, pagination, tombstones and redacted result projection. The
+source revision content hash remains distinct from the derived projection hash.
+The frozen adapter is default-deny and deterministic; it is a conformance reference,
+not a new production memory store or a ranking benchmark.
+
+Current Vera Memory, Postgres, Chroma, Neo4j and the public `memory.*`
+capabilities remain unchanged. Native compatibility and projection receipts
+come next. MemPalace and a second provider still require queued live trials for
+identity, citation fidelity, tenant/session isolation, ranking, outage/sync,
+update/tombstone/delete/export and reconciliation behavior before either can be
+advertised.
+
 ### LIB-23 — Lance format experiment
 
 Write and read one frozen multimodal dataset revision through object storage and
