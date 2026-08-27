@@ -145,3 +145,78 @@ def test_cached_answer_matches_the_uncached_scan(conn):
     for url in ("https://a.example/page", "https://b.example/other",
                 "https://c.example/x", "https://nope.example/none"):
         assert resolve_cached(conn, url, cache) == scan_for_dataset(conn, url)
+
+
+# â”€â”€ web.fetch files pages under its own dataset â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Leaving the dataset unset made discover_ingest_page resolve it with the full
+# fabric_records scan. Measured on 20 real pages that scan added nothing 12/20
+# times, and the other 8 filed one-off fetches into curated corpora
+# (agent_rag.*, research.citations) - mutating agents' knowledge bases as a side
+# effect. These pin the naming so the scan branch stays unreachable from here.
+
+from vera.fabric.url_dataset_resolve import auto_dataset_for_url  # noqa: E402
+
+
+@pytest.mark.parametrize("url,expected", [
+    ("https://en.wikipedia.org/wiki/Event_loop", "web.en_wikipedia_org"),
+    ("http://rss.arxiv.org/rss/cs.CL", "web.rss_arxiv_org"),
+    ("https://learn.microsoft.com/en-us/azure/", "web.learn_microsoft_com"),
+    ("example.com/x", "web.example_com"),            # scheme-less still works
+    ("https://UPPER.Example.COM/", "web.upper_example_com"),   # case-folded
+    ("https://localhost:8999/health", "web.localhost_8999"),   # port kept, sanitised
+])
+def test_dataset_name_is_stable_per_domain(url, expected):
+    assert auto_dataset_for_url(url) == expected
+
+
+def test_dataset_name_is_never_empty_for_a_real_url():
+    """The whole point: a non-empty dataset means the scan branch is never taken.
+
+    discover_ingest_page only falls back to the fabric_records scan when
+    dataset_id is blank, so as long as this returns something for every url
+    web.fetch can reach, that path cannot be re-entered by accident.
+    """
+    for url in ("https://a.example/p", "http://b.example", "c.example/x",
+                "https://d.example:8443/x?y=1#z"):
+        assert auto_dataset_for_url(url).strip() not in ("", "web.")
+
+
+def test_dataset_name_is_bounded():
+    """Host slug is capped, so a hostile hostname cannot make an unbounded id."""
+    url = "https://" + ("a" * 500) + ".example.com/x"
+    ds = auto_dataset_for_url(url)
+    assert len(ds) <= len("web.") + 30
+
+
+def test_query_string_and_fragment_do_not_split_the_dataset():
+    """Re-fetching must upsert in place, not scatter copies across datasets.
+
+    The dataset comes from the HOST only, so tracking params and fragments -
+    which change constantly on real links - must not mint a new dataset each
+    time. (Record ids stay per-url, so distinct pages remain distinct.)
+    """
+    base = auto_dataset_for_url("https://en.wikipedia.org/wiki/Event_loop")
+    for variant in ("https://en.wikipedia.org/wiki/Event_loop?utm_source=x",
+                    "https://en.wikipedia.org/wiki/Event_loop#History",
+                    "https://en.wikipedia.org/wiki/Other_Page"):
+        assert auto_dataset_for_url(variant) == base, variant
+
+
+def test_an_explicit_default_port_splits_the_dataset(): 
+    """Pins a pre-existing wart, deliberately NOT repaired here.
+
+    The slug is built from `netloc`, which keeps the port, so
+    "https://host:443/x" files under `web.host_443` while "https://host/x"
+    files under `web.host` - the same site in two datasets. Normalising it
+    would move pages for every caller of discovery._auto_ds, including the
+    crawl paths, so it is a separate decision rather than a rider on the
+    web.fetch change. Recorded so the behaviour is known, not assumed.
+    """
+    assert auto_dataset_for_url("https://en.wikipedia.org:443/x") == "web.en_wikipedia_org_443"
+    assert auto_dataset_for_url("https://en.wikipedia.org/x") == "web.en_wikipedia_org"
+
+
+def test_different_hosts_get_different_datasets():
+    """Control - the helper must not pass the tests above by returning a constant."""
+    assert (auto_dataset_for_url("https://a.example/p")
+            != auto_dataset_for_url("https://b.example/p"))

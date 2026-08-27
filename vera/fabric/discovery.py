@@ -3103,8 +3103,8 @@ def _new_crawl_id(seed: str, ds: str) -> str:
 
 
 def _auto_ds(url: str) -> str:
-    host = urlparse(url if url.startswith(("http://", "https://")) else "https://" + url).netloc
-    return f"web.{re.sub(r'[^a-z0-9]', '_', host.lower())[:30]}"
+    """Per-domain dataset for a url. Single definition in url_dataset_resolve."""
+    return _url_ds.auto_dataset_for_url(url)
 
 
 def _page_rid(dataset_id: str, url: str) -> str:
