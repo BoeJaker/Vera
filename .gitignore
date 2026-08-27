@@ -110,4 +110,9 @@ vera/mesh/firmware/bin/*.bin
 # but do not publish or re-add them to the repository.
 documentation/specs/
 documentation/postmortems/
+# Public documentation is the numbered subsystem series. Unnumbered root
+# Markdown is internal planning/evaluation/handover material: keep local copies
+# on disk, but never publish or re-add them. Nested tracked assets are unaffected.
+/documentation/*.md
+!/documentation/[0-9][0-9]-*.md
 .vera-work/

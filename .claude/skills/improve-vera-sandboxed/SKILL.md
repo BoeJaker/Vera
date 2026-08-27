@@ -241,6 +241,22 @@ do not duplicate their full content, and never store secrets, prompts, or result
 bodies in the work plan. Refresh it after milestones, scope changes, blockers,
 handoffs, and immediately before review.
 
+### Internal planning is not published documentation
+
+- Only numbered root documents matching `documentation/[0-9][0-9]-*.md` are
+  publishable subsystem documentation. Do not create plans, evaluations,
+  handovers, internal notes, roadmaps, or postmortems in `documentation/`.
+- Use gitignored `.vera-work/planning/` inside the feature worktree for private,
+  temporary analysis that genuinely needs a file. It is local scratch/handoff
+  material, not durable coordination and must contain no secrets or raw results.
+- Convert every actionable or multi-session plan into Loop Lab's durable work
+  plane: an umbrella `board.item.upsert` item (`labels:["plan"]`) and child work
+  items linked through `plan=<umbrella-id>`. Keep branch, pipeline and session
+  fields current; use `board.comment` for concise evidence/progress links.
+- Keep `.vera-work/work-plan.json` concise and link its `board_item_ids` to those
+  records. Do not duplicate a board plan as Markdown. `notes.*` is the capture
+  plane; promote actionable notes into board items before implementation.
+
 ## 4. Commit via the HOST — git-over-SMB does NOT work
 A worktree's `.git` points at a Linux host path (`…/.git/worktrees/…`) that
 Windows/SMB can't resolve, so running `git` in the worktree from your machine
@@ -400,13 +416,12 @@ authorized for the session. It all shows in the Loop Lab CI/CD + Review tabs.
 Work isn't done when the code lands; it's done when the **shared planning state
 reflects reality**. Two standing obligations, every unit:
 
-- **Update the plan.** When a milestone/tech-debt item lands, changes status, or
-  a new issue is found, reflect it in the route-forward plan
-  (`documentation/README.md` and the shared board) and keep the source plans'
-  glyphs in sync (§2 — docs route through `bleeding-edge` like everything else).
-  A plan that lags the code is worse than no plan: other agents act on it. Mark
-  items ✓/◐/○ with the landing commit; record the *reason* for tech debt, not just
-  that it exists.
+- **Update the board plan.** When a milestone/tech-debt item lands, changes
+  status, or a new issue is found, update its Loop Lab umbrella/child items and
+  link the landing commit or evidence. A stale board is worse than no plan:
+  other agents act on it. Update a numbered public subsystem document only when
+  user-facing behavior or architecture changed; never recreate a private plan
+  under `documentation/`.
 - **Use the board as the primary planning + inter-agent communication mechanism.**
   The board (`board.*`, out-of-tree file tier) — not chat, not a local note — is
   the durable, shared work surface every agent reads and writes: capture work as
@@ -422,6 +437,4 @@ linked pipeline's state (decision/gate/review → lane + a comment) onto its ite
 and now runs on a **scheduled poll** (`board.sync.poll`, every
 `VERA_BOARD_SYNC_INTERVAL_S`, toggle `VERA_BOARD_SYNC_ENABLED`), so the board
 tracks pipeline movement without a human call — idempotent via each item's
-`sync_sig`. Plan-doc freshness is not yet automated: that stays a manual step
-here (a doc-staleness check on merge is the tracked follow-on — route-forward
-Phase E / M2).
+`sync_sig`. Planning Markdown is not a parallel source of truth.
