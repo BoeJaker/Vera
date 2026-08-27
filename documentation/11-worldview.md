@@ -86,6 +86,15 @@ Projection-backed training boundary (W2-05)
   carry a canonical revision. This does not change training inputs, backend
   authority, routing, or initiate shadow traffic.
 
+  `worldview_shadow_snapshot` provides the next offline boundary. It copies
+  explicit loader outputs into an immutable, bounded in-process snapshot,
+  retaining only record identity, embeddings, revision/hash evidence and edge
+  tuples. Source text and unrelated metadata are discarded. Alignment,
+  duplicate IDs, malformed edges, record/edge ceilings and cancellation fail
+  closed; malformed embeddings and missing provenance remain visible to the
+  parity report instead of being repaired. The snapshot is not a capability or
+  persistence format and performs no backend reads.
+
 Capabilities registered
 ───────────────────────
   worldview.train                   — full 3-stage training
