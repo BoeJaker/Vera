@@ -3893,6 +3893,56 @@ async def _ws_send_bounded(ws, sub, payload: dict, timeout: float = 5.0):
 _RESUME_TTL        = int(os.getenv("VERA_RESUME_TTL", "604800") or 604800)   # 7 days
 _RESUME_MAX_EVENTS = int(os.getenv("VERA_RESUME_MAX_EVENTS", "4000") or 4000)
 
+# Durable loop-run history - deliberately NOT TTL'd (see the persist site below).
+_LOOP_HIST_KEY     = "vera:loop:history:run:%s"
+_LOOP_HIST_INDEX   = "vera:loop:history:index"
+_LOOP_HIST_CFG     = "vera:loop:history:cfg"
+_LOOP_HIST_EVERY   = 50           # trim once every N writes, not on every event
+_loop_hist_writes  = 0
+
+
+async def _loop_history_cfg() -> dict:
+    """UI-settable retention policy, clamped. Falls back to the default."""
+    try:
+        from Vera.vera.dag.loop_run_history import normalise_config
+    except Exception:
+        return {"max_runs": 2000, "max_age_days": 90}
+    raw = {}
+    try:
+        if REDIS:
+            raw = json.loads((await REDIS.get(_LOOP_HIST_CFG)) or "{}")
+    except Exception:
+        raw = {}
+    return normalise_config(raw)
+
+
+async def _loop_history_trim() -> None:
+    """Drop records outside the policy. Amortised: only every _LOOP_HIST_EVERY
+    writes, because this runs on the event-persist path and must stay cheap."""
+    global _loop_hist_writes
+    _loop_hist_writes += 1
+    if _loop_hist_writes % _LOOP_HIST_EVERY:
+        return
+    try:
+        from Vera.vera.dag.loop_run_history import ids_to_drop
+        if not REDIS:
+            return
+        scored = await REDIS.zrange(_LOOP_HIST_INDEX, 0, -1, withscores=True)
+        pairs = [((i.decode() if isinstance(i, bytes) else i), s) for i, s in (scored or [])]
+        drop = ids_to_drop(pairs, await _loop_history_cfg())
+        if not drop:
+            return
+        pipe = REDIS.pipeline()
+        for sid in drop:
+            pipe.delete(_LOOP_HIST_KEY % sid)
+            pipe.zrem(_LOOP_HIST_INDEX, sid)
+            # The OLD index leaked forever; clear the tombstone here too.
+            pipe.zrem("vera:loop:sessions", sid)
+        await pipe.execute()
+    except Exception as e:
+        log.debug("loop history trim: %s", e)
+
+
 async def _persist_loop_event(event: dict, ev_json: str):
     """Best-effort append of an agent-loop event to its session's replay list +
     keep the run-state current. Skips transient high-frequency token events (the
@@ -3937,7 +3987,17 @@ async def _persist_loop_event(event: dict, ev_json: str):
         pipe.hset(rkey, mapping=upd)
         pipe.expire(rkey, _RESUME_TTL)
         pipe.zadd("vera:loop:sessions", {sid: time.time()})
+        # The DURABLE half. Everything above is resume state and rightly carries
+        # _RESUME_TTL (7 days) - replaying 4,000 events is a short-lived concern.
+        # History is not: the Loops pane inherited that resume window as its
+        # retention policy and silently aged out at a week, while the zset index
+        # was never trimmed and grew forever as tombstones pointing at expired
+        # hashes. So a compact summary is written with NO TTL, under its own
+        # policy (last 2,000 runs AND 90 days, both settable from the UI).
+        pipe.hset(_LOOP_HIST_KEY % sid, mapping=upd)
+        pipe.zadd(_LOOP_HIST_INDEX, {sid: time.time()})
         await pipe.execute()
+        await _loop_history_trim()
     except Exception as e:
         if "MISCONF" not in str(e):
             log.debug("resume persist: %s", e)
