@@ -54,6 +54,8 @@ below. A `MemoryProjection` points to an authoritative Fabric `record_id` and
 requires at least one citation to that exact revision. The stable `memory_id`
 is derived from tenant, namespace and Fabric record identity, while updated
 content remains a new Fabric revision. Tombstones carry no projected text.
+The source revision's content hash and the projected text hash are distinct
+fields, preserving an audit seam for provider-specific summarization or mapping.
 
 The associated `MemoryAccessContext` always names the tenant and principal.
 Providers receive a bounded policy context containing identity, lifecycle and

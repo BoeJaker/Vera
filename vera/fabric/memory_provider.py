@@ -25,6 +25,7 @@ _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$")
 _MEMORY_ID = re.compile(r"^mem_[0-9a-f]{64}$")
 _RECORD_ID = re.compile(r"^rec_[A-Za-z0-9._:-]{1,251}$")
 _REVISION_ID = re.compile(r"^rev_[0-9a-f]{64}$")
+_SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 _TOKEN = re.compile(r"[a-z0-9]{2,}")
 _URI_SCHEME = re.compile(r"^[a-z][a-z0-9+.-]{1,31}$")
 
@@ -92,6 +93,8 @@ class MemoryCitation:
     uri: str
     record_id: str
     revision_id: str
+    source_content_hash: str
+    projection_hash: str
     label: str = ""
     locator_json: str = field(default="{}", repr=False)
 
@@ -157,7 +160,8 @@ class MemoryProjection:
     schema: str = MEMORY_SCHEMA
 
     def __init__(self, *, tenant_id: str, namespace: str, record_id: str,
-                 revision_id: str, record_type: str, created_at: str,
+                 revision_id: str, source_content_hash: str,
+                 record_type: str, created_at: str,
                  text: str, citations: Sequence[MemoryCitation],
                  session_id: str = "", updated_at: str = "",
                  importance: float = 0.5, tombstone: bool = False,
@@ -171,6 +175,9 @@ class MemoryProjection:
             raise ValueError("invalid record_id")
         if not _REVISION_ID.fullmatch(str(revision_id or "")):
             raise ValueError("invalid revision_id")
+        source_content_hash = str(source_content_hash or "").lower()
+        if not _SHA256.fullmatch(source_content_hash):
+            raise ValueError("invalid source_content_hash")
         created_at = _timestamp(created_at, "created_at")
         updated_at = _timestamp(updated_at or created_at, "updated_at")
         if datetime.fromisoformat(updated_at.replace("Z", "+00:00")) < \
@@ -207,7 +214,10 @@ class MemoryProjection:
         values = {
             "memory_id": memory_id, "tenant_id": tenant_id,
             "namespace": namespace, "record_id": record_id,
-            "revision_id": revision_id, "session_id": session_id,
+            "revision_id": revision_id,
+            "source_content_hash": source_content_hash,
+            "projection_hash": "sha256:" + hashlib.sha256(text.encode()).hexdigest(),
+            "session_id": session_id,
             "record_type": record_type, "created_at": created_at,
             "updated_at": updated_at, "importance": importance,
             "tombstone": bool(tombstone), "text": text,
@@ -231,6 +241,8 @@ class MemoryProjection:
         return {"schema": self.schema, "memory_id": self.memory_id,
                 "tenant_id": self.tenant_id, "namespace": self.namespace,
                 "record_id": self.record_id, "revision_id": self.revision_id,
+                "source_content_hash": self.source_content_hash,
+                "projection_hash": self.projection_hash,
                 "session_id": self.session_id, "record_type": self.record_type,
                 "created_at": self.created_at, "updated_at": self.updated_at,
                 "importance": self.importance, "tombstone": self.tombstone,
@@ -361,6 +373,7 @@ class FrozenMemoryProvider:
                 "session_id": item.session_id, "record_type": item.record_type,
                 "memory_id": item.memory_id, "record_id": item.record_id,
                 "revision_id": item.revision_id, "tombstone": item.tombstone,
+                "source_content_hash": item.source_content_hash,
                 "policy": item.policy}
 
     def apply(self, projection: MemoryProjection,

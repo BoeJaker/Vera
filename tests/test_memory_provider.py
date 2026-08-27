@@ -19,6 +19,7 @@ LATER = "2026-01-02T00:00:00Z"
 RECORD = "rec_" + "a" * 64
 REVISION = "rev_" + "b" * 64
 REVISION_2 = "rev_" + "c" * 64
+CONTENT_HASH = "sha256:" + "2" * 64
 
 
 def access(tenant="tenant.one", principal="user.one", **kwargs):
@@ -36,6 +37,7 @@ def citation(record_id=RECORD, revision_id=REVISION, **kwargs):
 def projection(**overrides):
     values = dict(tenant_id="tenant.one", namespace="memory.general",
                   record_id=RECORD, revision_id=REVISION,
+                  source_content_hash=CONTENT_HASH,
                   record_type="fact", session_id="session.one",
                   created_at=NOW, text="Vera uses cited portable memory",
                   citations=[citation()], tags=["vera", "portable"],
@@ -77,6 +79,15 @@ def test_projection_requires_authoritative_citation_and_valid_lifecycle():
                            tombstone=True,
                            citations=[citation(revision_id=REVISION_2)])
     assert tombstone.tombstone is True and tombstone.text == ""
+    with pytest.raises(ValueError, match="source_content_hash"):
+        projection(source_content_hash="md5:bad")
+
+
+def test_projection_keeps_authority_hash_distinct_from_derived_text_hash():
+    item = projection()
+    assert item.source_content_hash == CONTENT_HASH
+    assert item.projection_hash.startswith("sha256:")
+    assert item.projection_hash != item.source_content_hash
 
 
 def test_citations_reject_credentials_invalid_ids_and_non_json_locator():

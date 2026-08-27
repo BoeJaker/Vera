@@ -931,7 +931,8 @@ cancellation, artifact provenance, malicious files, concurrency, and teardown.
 target that treats Fabric record revisions as authority, requires exact source
 citations, carries explicit tenant/principal policy context, and standardizes
 bounded filters, pagination, tombstones and redacted result projection. The
-frozen adapter is default-deny and deterministic; it is a conformance reference,
+source revision content hash remains distinct from the derived projection hash.
+The frozen adapter is default-deny and deterministic; it is a conformance reference,
 not a new production memory store or a ranking benchmark.
 
 Current Vera Memory, Postgres, Chroma, Neo4j and the public `memory.*`
