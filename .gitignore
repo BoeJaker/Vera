@@ -115,4 +115,12 @@ documentation/postmortems/
 # on disk, but never publish or re-add them. Nested tracked assets are unaffected.
 /documentation/*.md
 !/documentation/[0-9][0-9]-*.md
+# ...and the PUBLIC index pages, which are not planning material. README.md is
+# the documentation map every numbered guide is reached through ("Welcome to the
+# map of Vera"), and GALLERY.md is the generated screenshot gallery it links to,
+# whose images are deliberately committed so they render on GitHub. The blanket
+# rule above swept both out with the internal notes and broke the published
+# index; they are public documentation and stay tracked.
+!/documentation/README.md
+!/documentation/GALLERY.md
 .vera-work/
