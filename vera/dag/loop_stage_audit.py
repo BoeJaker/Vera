@@ -157,17 +157,36 @@ def summarise(records: List[Dict[str, Any]]) -> Dict[str, Any]:
         key = r.get("stage") or "?"
         if r.get("variant"):
             key = f"{key}:{r['variant']}"
-        e = by.setdefault(key, {"stage": key, "calls": 0, "chars": [], "shas": []})
+        e = by.setdefault(key, {"stage": key, "calls": 0, "chars": [],
+                                "sys_chars": [], "usr_chars": [],
+                                "shas": [], "p_shas": []})
         e["calls"] += 1
         e["chars"].append(r.get("total_chars") or 0)
+        e["sys_chars"].append(r.get("system_chars") or 0)
+        e["usr_chars"].append(r.get("prompt_chars") or 0)
         e["shas"].append(r.get("system_sha"))
+        e["p_shas"].append(r.get("prompt_sha"))
     out = []
     for e in by.values():
         chars = e.pop("chars")
+        sysc = e.pop("sys_chars")
+        usrc = e.pop("usr_chars")
         shas = e.pop("shas")
+        p_shas = e.pop("p_shas")
         e["max_chars"] = max(chars) if chars else 0
         e["min_chars"] = min(chars) if chars else 0
+        # SPLIT the roll-up. The totals above hid which HALF of a stage's context
+        # was growing: the executor's user turn alone carries pending_note (4KB)
+        # and _msg (2KB), so "20,370 chars" could be a bigger system prompt or a
+        # bigger user turn and nothing said which.
+        e["max_system_chars"] = max(sysc) if sysc else 0
+        e["max_prompt_chars"] = max(usrc) if usrc else 0
         e["repeat_identical_system"] = len(shas) - len(set(shas))
+        # ...and the user turn gets its own repeat count. A stage re-sent an
+        # identical USER turn is the dedupe-relevant signal - a repeated system
+        # prompt is normal and expected, a repeated user turn means the stage was
+        # asked the same question twice.
+        e["repeat_identical_prompt"] = len(p_shas) - len(set(p_shas))
         out.append(e)
     order = {s: i for i, s in enumerate(STAGE_ORDER)}
     out.sort(key=lambda e: (order.get(str(e["stage"]).split(":")[0], 99), e["stage"]))

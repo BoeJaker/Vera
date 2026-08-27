@@ -15,6 +15,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from vera.dag import loop_stage_audit as A  # noqa: E402
+import json as _json  # noqa: E402
 
 
 # ── the record never carries bodies ──────────────────────────────────────────
@@ -123,3 +124,46 @@ def test_handles_empty_and_none_safely():
     assert A.diff_records({}, {})["identical_input"] is True
     assert A.summarise([])["total_calls"] == 0
     assert A.summarise([None, "junk"])["total_calls"] == 0
+
+
+# â”€â”€ the roll-up must distinguish the two halves of a stage's context â”€â”€â”€â”€â”€â”€â”€â”€
+def test_summary_splits_system_from_the_user_turn():
+    """Totals alone hid WHICH half was growing.
+
+    The executor's user turn carries pending_note (4KB) and _msg (2KB) on top of
+    its system prompt, so a stage reported as "20,370 chars" could be a bigger
+    system prompt or a bigger user turn - and nothing said which. Both are
+    recorded per call; only the roll-up was collapsing them.
+    """
+    recs = [A.stage_record("executor", system="S" * 100, prompt="U" * 50),
+            A.stage_record("executor", system="S" * 100, prompt="U" * 900)]
+    st = A.summarise(recs)["stages"][0]
+    assert st["max_system_chars"] == 100, "the system prompt did not grow"
+    assert st["max_prompt_chars"] == 900, "the USER TURN is what grew"
+    assert st["max_chars"] == 1000, "the total is still reported"
+
+
+def test_a_repeated_user_turn_is_counted_separately():
+    """A repeated SYSTEM prompt is normal; a repeated USER turn is the signal.
+
+    It means the stage was asked the same question twice - which is what a
+    dedupe or a stuck loop looks like from the outside.
+    """
+    same = [A.stage_record("controller", system="S" * 10, prompt="identical"),
+            A.stage_record("controller", system="S" * 10, prompt="identical")]
+    st = A.summarise(same)["stages"][0]
+    assert st["repeat_identical_prompt"] == 1
+    assert st["repeat_identical_system"] == 1
+
+    differing = [A.stage_record("controller", system="S" * 10, prompt="first"),
+                 A.stage_record("controller", system="S" * 10, prompt="second")]
+    st2 = A.summarise(differing)["stages"][0]
+    assert st2["repeat_identical_prompt"] == 0, "different questions are not repeats"
+    assert st2["repeat_identical_system"] == 1, "the system prompt WAS identical"
+
+
+def test_the_split_still_carries_no_prompt_bodies():
+    """The standing rule: a record may carry sizes and hashes, never the text."""
+    recs = [A.stage_record("executor", system="SECRETSYS", prompt="SECRETUSER")]
+    blob = _json.dumps(A.summarise(recs))
+    assert "SECRETSYS" not in blob and "SECRETUSER" not in blob
