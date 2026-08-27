@@ -62,7 +62,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from fastapi import Request
 from fastapi.responses import HTMLResponse, StreamingResponse
@@ -72,6 +72,8 @@ from Vera.vera.capability_orchestration import (
     APP, CAPABILITY_REGISTRY, capability, emit_event, now_iso,
     register_ui, register_routing_profile,
 )
+
+from Vera.vera.dag import chain_deps as _chain_deps
 
 log = logging.getLogger("vera.dag_workshop")
 
@@ -14719,6 +14721,9 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             return bool(v)
 
         chain_out: List[Any] = []
+        # Indices whose output is MISSING - a hop that failed, or one skipped
+        # because it needed a failed hop. Poison is transitive through both.
+        poisoned: Set[int] = set()
         any_ok = False
         for hop in spec:
             # Conditional edge (optional): run this hop only when its `when` ref is
@@ -14732,6 +14737,19 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                                       "stream_id": stream_id, "step_id": step_id,
                                       "tool": str(hop.get("name") or ""), "when": str(_when)[:120]})
                     continue
+            # Does this hop USE a hop that failed? Only then is it poisoned. A hop
+            # that never referenced the failure runs normally - the pipeline used
+            # to `break` here, abandoning independent work over an unrelated
+            # failure and leaving the loop to rediscover it over later cycles.
+            _dead_ref = _chain_deps.blocked_by(hop, poisoned)
+            if _dead_ref is not None:
+                poisoned.add(len(chain_out))      # its own output is missing too
+                chain_out.append(None)            # keep $N indices stable
+                await emit_event({"type": "agent_loop_v5.chain_skip", "session_id": sid,
+                                  "stream_id": stream_id, "step_id": step_id,
+                                  "tool": str(hop.get("name") or ""),
+                                  "reason": f"depends on failed hop ${_dead_ref}"})
+                continue
             hop_tool = _v5_resolve_tool_name(str(hop.get("name")).strip(), allowed, catalog_set)
             # Auto-grant a catalog cap the chain reaches for (chaining implies intent).
             # Mirrors the single-tool path — including its BOUND and its phase
@@ -15092,8 +15110,11 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                                         else ("unusable result" if hop_unhelpful else "")),
                               "session_id": sid})
             if not entry_ok:
-                # A broken hop poisons everything downstream — stop the pipeline.
-                break
+                # Poison THIS hop's output, then carry on. Whatever referenced it
+                # is skipped above; whatever did not is still worth running.
+                # chain_out already holds this hop's (failed) result, so $N indices
+                # stay stable either way.
+                poisoned.add(len(chain_out) - 1)
         return any_ok
 
     while productive < max(1, cycle_budget) and turns < max_turns:
