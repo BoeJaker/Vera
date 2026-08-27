@@ -11289,7 +11289,9 @@ async def cap_prose_author(task: str = "", path: str = "", context_files=None,
     if not task:
         return {"ok": False, "error": "task is required — describe what the document must cover "
                                        "(or pass content/text with an existing draft to incorporate)"}
-    path = _code_norm_path(str(path or "").strip()) or "generated.md"
+    # Same collapse as code.author: a caller handing back `/workspace/x` or
+    # `workspace/x` must not be re-joined to /workspace/workspace/x.
+    path = _code_workspace_path(path) or "generated.md"
     # Redirect a CODE file to code.author — HTML/CSS/JS/... are code, not prose, and
     # must be syntax-checked + versioned as code, not authored as an ungrounded document.
     _pext = (os.path.splitext(path)[1].lstrip(".") or "").lower()
@@ -11696,7 +11698,7 @@ async def cap_code_edit(path: str, task: str = "", session_id: str = "", repo: s
 )
 async def cap_code_read(path: str, session_id: str = "", repo: str = "", version: int = 0,
                         trace_id=None) -> Dict[str, Any]:
-    path = _code_norm_path(path)
+    path = _code_workspace_path(path, repo)
     scope = _code_scope(session_id, repo)
     rec = await asyncio.to_thread(_code_get_sync, scope, path, int(version) or None)
     if not rec:
@@ -11717,7 +11719,7 @@ async def cap_code_read(path: str, session_id: str = "", repo: str = "", version
 )
 async def cap_code_versions(path: str, session_id: str = "", repo: str = "",
                             trace_id=None) -> Dict[str, Any]:
-    path = _code_norm_path(path)
+    path = _code_workspace_path(path, repo)
     scope = _code_scope(session_id, repo)
     versions = await asyncio.to_thread(_code_list_sync, scope, path)
     return {"ok": True, "path": path, "scope": scope, "versions": versions}
@@ -11732,7 +11734,7 @@ async def cap_code_versions(path: str, session_id: str = "", repo: str = "",
 )
 async def cap_code_diff(path: str, session_id: str = "", repo: str = "",
                         v1: int = 0, v2: int = 0, trace_id=None) -> Dict[str, Any]:
-    path = _code_norm_path(path)
+    path = _code_workspace_path(path, repo)
     scope = _code_scope(session_id, repo)
     versions = await asyncio.to_thread(_code_list_sync, scope, path)
     if not versions:
@@ -11759,7 +11761,7 @@ async def cap_code_diff(path: str, session_id: str = "", repo: str = "",
 )
 async def cap_code_restore(path: str, version: int, session_id: str = "", repo: str = "",
                            trace_id=None) -> Dict[str, Any]:
-    path = _code_norm_path(path)
+    path = _code_workspace_path(path, repo)
     scope = _code_scope(session_id, repo)
     rec = await asyncio.to_thread(_code_get_sync, scope, path, int(version))
     if not rec:
