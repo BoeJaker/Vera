@@ -3194,6 +3194,44 @@ async def workshop_loop_session_state(request: Request):
         return {"run": {}, "events": [], "count": 0, "error": str(e)}
 
 
+@APP.get("/workshop/agent_loop/history_config")
+async def workshop_loop_history_config_get():
+    """Retention policy for loop history, for the UI's settings pane."""
+    from Vera.vera.dag.loop_run_history import (
+        MAX_MAX_AGE_DAYS, MAX_MAX_RUNS, MIN_MAX_AGE_DAYS, MIN_MAX_RUNS,
+        normalise_config)
+    r = _redis()
+    raw = {}
+    if r:
+        try:
+            raw = json.loads((await r.get("vera:loop:history:cfg")) or "{}")
+        except Exception:
+            raw = {}
+    cfg = normalise_config(raw)
+    cfg["bounds"] = {"max_runs": [MIN_MAX_RUNS, MAX_MAX_RUNS],
+                     "max_age_days": [MIN_MAX_AGE_DAYS, MAX_MAX_AGE_DAYS]}
+    return cfg
+
+
+@APP.post("/workshop/agent_loop/history_config")
+async def workshop_loop_history_config_set(request: Request):
+    """Set it. Values are CLAMPED, never rejected: a fat-fingered entry must not
+    be able to mean 'keep nothing' (data loss) or 'keep everything' (unbounded)."""
+    from Vera.vera.dag.loop_run_history import normalise_config
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    cfg = normalise_config(body or {})
+    r = _redis()
+    if r:
+        try:
+            await r.set("vera:loop:history:cfg", json.dumps(cfg))
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+    return {"ok": True, **cfg}
+
+
 @APP.get("/workshop/agent_loop/sessions")
 async def workshop_loop_sessions(request: Request):
     """Recent loop sessions (newest first) with their run-state — lets a client
@@ -3204,11 +3242,23 @@ async def workshop_loop_sessions(request: Request):
     limit = max(1, min(100, int(request.query_params.get("limit", "30") or 30)))
     want  = (request.query_params.get("status", "") or "").strip()
     try:
-        ids = await r.zrevrange("vera:loop:sessions", 0, limit * 2)
+        # Read the DURABLE history index, falling back to the old resume index.
+        # The resume hash carries a 7-day TTL, so this list used to shrink to a
+        # rolling week while the old zset kept its tombstones - the endpoint
+        # skipped them here, which is why the pane showed 9 records one hour and
+        # 22 the next. History now comes from vera:loop:history:*, retained by
+        # policy (last 2,000 runs AND 90 days, settable from the UI).
+        ids = await r.zrevrange("vera:loop:history:index", 0, limit * 2)
+        if not ids:
+            ids = await r.zrevrange("vera:loop:sessions", 0, limit * 2)
         out = []
         for iid in ids or []:
             sid = _rd(iid)
+            # Live/resume state first (it is the freshest while a run is going),
+            # then the durable record for anything past the resume window.
             run_raw = await r.hgetall(f"vera:loop:run:{sid}")
+            if not run_raw:
+                run_raw = await r.hgetall(f"vera:loop:history:run:{sid}")
             run = {_rd(k): _rd(v) for k, v in (run_raw or {}).items()}
             if not run:
                 continue
