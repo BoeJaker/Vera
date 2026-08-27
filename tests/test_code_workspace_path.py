@@ -90,3 +90,43 @@ def test_author_and_edit_agree_on_the_same_input():
         # and must NOT carry its own private copy of the collapse
         assert 'parts[0] == "workspace"' not in body and '_pp[0] == "workspace"' not in body, \
             "%s re-inlined its own collapse - that is how the two drifted apart" % name
+
+
+def test_every_path_taking_code_cap_uses_the_shared_helper():
+    """Writer and READERS must agree, or a saved file cannot be found again.
+
+    code.author now stores `statkit/stats.py`. A reader still calling the raw
+    normaliser would look up `workspace/statkit/stats.py` for the same request
+    and miss. Swept together rather than one cap at a time - fixing the writer
+    alone is what produced this class of bug in the first place.
+    """
+    import ast
+    import inspect
+    import pathlib
+
+    src = pathlib.Path(inspect.getsourcefile(M)).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    want = {"cap_code_author", "cap_code_edit", "cap_prose_author",
+            "cap_code_read", "cap_code_versions", "cap_code_diff", "cap_code_restore"}
+    seen = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in want:
+            seen[node.name] = ast.get_source_segment(src, node) or ""
+    missing = want - set(seen)
+    assert not missing, "caps not found: %s" % sorted(missing)
+    for name, body in seen.items():
+        assert "_code_workspace_path(" in body, \
+            "%s still normalises its path without the workspace collapse" % name
+
+
+def test_the_collapse_is_not_applied_twice():
+    """Applying it twice would eat a genuine nested workspace/workspace/ path.
+
+    Each cap collapses the CALLER's input exactly once; the shared store is not
+    given a second pass. This pins the boundary, since a `workspace/workspace/x`
+    path is legal and must survive as `workspace/x`.
+    """
+    once = M._code_workspace_path("workspace/workspace/x.py")
+    assert once == "workspace/x.py"
+    assert M._code_workspace_path(once) == "x.py", \
+        "a second pass eats another segment - do not chain these calls"
