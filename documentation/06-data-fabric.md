@@ -78,6 +78,28 @@ failed/stale receipts through `rebuilding`. Existing `fabric.ingest` behavior
 is unchanged, and this slice makes no claim that FAISS, Chroma, PostgreSQL or
 Neo4j were contacted.
 
+### Graph and vector projection contract
+
+W2-05 begins an additive provider-neutral boundary in
+`vera.fabric.projection_provider`. A `ProjectionSpec` identifies a graph or
+vector backend plus its schema version. Vector specifications must additionally
+pin the exact model-package identity, dimension, preprocessing contract and
+distance metric; changing any of them creates a different projection space and
+requires rebuild rather than mixed-vector reuse.
+
+Each `ProjectionEntry` binds a stable projection identity to one exact Fabric
+record revision, its authoritative content hash and a separate hash of the
+derived graph/vector payload. Tombstones carry no derived payload. The offline
+`FrozenProjectionProvider` demonstrates idempotent apply, compare-and-swap
+revision updates, bounded snapshots, drift reconciliation and generation-guarded
+atomic rebuild. Reconciliation reports only identity and checksum evidence; it
+does not make a derived index authoritative or repair it implicitly.
+
+This contract does not redirect the existing Neo4j, FAISS or Chroma paths and
+does not claim Qdrant is installed. Backend adapters, dual-read/fallback,
+retrieval-quality evidence and outage recovery remain later, explicitly tested
+slices; live trials stay queued.
+
 ### ArtifactProvider migration
 
 The W2-02 provider kernel begins in `vera.fabric.artifact_provider`. Its local
