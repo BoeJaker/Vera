@@ -1883,6 +1883,14 @@ _PKG_CATALOG: List[Dict[str, Any]] = [
     {"name": "tabulate", "kind": "pip", "imports": ["tabulate"], "group": "data",
      "summary": "Render tables as text/markdown."},
     # ── documents + reporting ────────────────────────────────────────────────
+    # -- testing ---------------------------------------------------------------
+    # A loop that authors a package then tries to run its tests hits this first.
+    # Observed 2026-08-26: nine exec.bash.run calls in one step discovering that
+    # `python3 -m pytest` has no pytest, on a step that had already written the
+    # tests. `bins` matters as much as `imports` here: the model reaches for a
+    # bare `pytest ...` as often as `python -m pytest`.
+    {"name": "pytest", "kind": "pip", "imports": ["pytest"], "bins": ["pytest"],
+     "group": "testing", "summary": "The test runner; needed to run any tests the run writes."},
     {"name": "markdown", "kind": "pip", "imports": ["markdown"], "group": "docs",
      "summary": "Markdown → HTML."},
     {"name": "jinja2", "kind": "pip", "imports": ["jinja2"], "group": "docs",
@@ -2007,6 +2015,36 @@ def scan_shell_bins(command: str) -> List[str]:
     for tok in _SH_TOKEN_RE.findall(command or ""):
         if tok in known and tok not in out:
             out.append(tok)
+    return out
+
+
+# `python -m <module>` names a MODULE, not a binary, so scan_shell_bins cannot
+# see it: the binary (python3) is present and the thing that is missing is
+# invisible. That is exactly how a step burned nine cycles on `python3 -m pytest`
+# (2026-08-26) - the reactive "<bin>: not found" retry never fires either,
+# because nothing was "not found" as far as the shell was concerned.
+_PY_DASH_M_RE = re.compile(r"\bpython[0-9.]*\s+-m\s+([A-Za-z_][A-Za-z0-9_]*)")
+
+
+def scan_shell_python_modules(command: str) -> List[str]:
+    """Python modules a shell command runs via `python -m X`, plus console
+    scripts from the catalog that are really pip packages (pytest).
+
+    Deliberately narrow: only `-m` (unambiguous) and catalog `bins` whose entry
+    is kind=pip. Guessing a pip package from an arbitrary bare word would prompt
+    the user to install something irrelevant.
+    """
+    out: List[str] = []
+    for m in _PY_DASH_M_RE.findall(command or ""):
+        if m not in out:
+            out.append(m)
+    pip_bins = {b: (e.get("imports") or [e["name"]])[0]
+                for e in _PKG_CATALOG if e.get("kind") == "pip"
+                for b in (e.get("bins") or [])}
+    for tok in _SH_TOKEN_RE.findall(command or ""):
+        mod = pip_bins.get(tok)
+        if mod and mod not in out:
+            out.append(mod)
     return out
 
 
@@ -2438,17 +2476,37 @@ async def preflight_shell(sid: str, command: str, *,
                           event_sid: str = "") -> Optional[Dict[str, Any]]:
     """Missing-binary gate for a shell command about to run in `sid`."""
     bins = scan_shell_bins(command)
-    if not bins:
+    mods = scan_shell_python_modules(command)
+    if not bins and not mods:
         return None
-    present = await _probe_bins(sid, bins)
-    if not present:
+    reqs = []
+
+    if bins:
+        present = await _probe_bins(sid, bins)
+        if present:
+            # kind comes from the CATALOG entry, not a hardcoded "apt": a console
+            # script like `pytest` is a pip package, and apt-installing it would
+            # fail or fetch something else entirely.
+            known = {b: (pkg, "apt") for b, pkg in _APT_PKG_FOR_MISSING_BIN.items()}
+            for e in _PKG_CATALOG:
+                for b in (e.get("bins") or []):
+                    known.setdefault(b, (e["name"], e.get("kind") or "apt"))
+            for b in bins:
+                if present.get(b) is False and b in known:
+                    pkg, kind = known[b]
+                    reqs.append({"package": pkg, "kind": kind, "needed_for": b})
+
+    if mods:
+        # Probe the REAL interpreter rather than trusting a name table (same
+        # reasoning as preflight_python).
+        mpresent = await _probe_python_modules(sid, mods)
+        if mpresent:
+            for m in mods:
+                if mpresent.get(m) is False:
+                    reqs.append({"package": _pkg_for_import(m), "kind": "pip",
+                                 "needed_for": "python -m %s" % m})
+    if not reqs:
         return None
-    known = dict(_APT_PKG_FOR_MISSING_BIN)
-    for e in _PKG_CATALOG:
-        for b in (e.get("bins") or []):
-            known.setdefault(b, e["name"])
-    reqs = [{"package": known[b], "kind": "apt", "needed_for": b}
-            for b in bins if present.get(b) is False and b in known]
     # de-dup: several binaries often come from one package (dnsutils → dig+nslookup)
     seen, uniq = set(), []
     for q in reqs:
