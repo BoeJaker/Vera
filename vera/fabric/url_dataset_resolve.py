@@ -30,7 +30,9 @@ human, not a refactor; see documentation/PLAN-agentic-loop-next-pass.md Phase F.
 from __future__ import annotations
 
 import json
+import re
 import time
+from urllib.parse import urlparse
 from typing import Any, Dict, Optional, Tuple
 
 # The original query, verbatim in behaviour: match the url inside the JSON blob,
@@ -119,3 +121,14 @@ def resolve_cached(conn: Any, url: str, cache: Optional[ResolveCache] = None,
     val = scan_for_dataset(conn, url)
     cache.put(url, val, now=now)
     return val
+
+def auto_dataset_for_url(url: str) -> str:
+    """The per-domain dataset a web page falls into: "web.<host>".
+
+    Moved here verbatim from discovery._auto_ds so there is ONE definition that
+    is importable without the app (discovery pulls in the whole fabric stack),
+    which is what lets `web.fetch`'s dataset choice be tested at all.
+    """
+    host = urlparse(url if url.startswith(("http://", "https://"))
+                    else "https://" + url).netloc
+    return "web." + re.sub(r"[^a-z0-9]", "_", host.lower())[:30]

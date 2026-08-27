@@ -83,6 +83,9 @@ from Vera.vera.config import cfg
 # research pipeline and fabric web acquisition.
 from Vera.vera.web import web_client as _wc
 
+from Vera.vera.fabric.url_dataset_resolve import (
+    auto_dataset_for_url as _auto_web_dataset)
+
 log = logging.getLogger("vera.web_capabilities")
 
 
@@ -650,8 +653,20 @@ async def cap_web_fetch(
     if ingest_to_fabric and text and not block_reason:
         if disc:
             try:
+                # File the page under its own web dataset unless the caller named
+                # one. Leaving dataset_id empty made discover_ingest_page resolve
+                # it by scanning every JSON blob in fabric_records (2.6s, and a
+                # full scan whether it matched or not - the 2026-08-26 event-loop
+                # stall). Measured on 20 real web_fetch pages, that scan added
+                # nothing 12/20 times, and the other 8 were arguably WRONG: it
+                # filed one-off fetches into curated corpora (agent_rag.azure_expert,
+                # agent_rag.gatherer, research.citations), quietly mutating agents'
+                # knowledge bases as a side effect of someone fetching a page.
+                # web.search already passes an explicit dataset; web.fetch was the
+                # only path that did not.
+                ds_for_ingest = (dataset_id or "").strip() or _auto_web_dataset(url)
                 ing = await disc.discover_ingest_page(
-                    url, dataset_id=dataset_id, html=html, text=text, title=title,
+                    url, dataset_id=ds_for_ingest, html=html, text=text, title=title,
                     extract_entities=True, reconcile=True, full_fetch=True,
                     tags=["web_fetch", domain])
                 if isinstance(ing, dict) and not ing.get("error"):
