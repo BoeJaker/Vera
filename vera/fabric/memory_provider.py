@@ -74,6 +74,7 @@ class MemoryAccessContext:
     principal_id: str
     session_id: str = ""
     purpose: str = ""
+    request_id: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "tenant_id", _identifier(self.tenant_id, "tenant_id"))
@@ -85,6 +86,9 @@ class MemoryAccessContext:
         if len(str(self.purpose or "")) > 256:
             raise ValueError("purpose exceeds size limit")
         object.__setattr__(self, "purpose", str(self.purpose or "").strip())
+        if self.request_id:
+            object.__setattr__(self, "request_id", _identifier(
+                self.request_id, "request_id"))
 
 
 @dataclass(frozen=True, init=False)
