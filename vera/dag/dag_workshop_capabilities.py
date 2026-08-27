@@ -8225,8 +8225,12 @@ def _v5_seed_caps_for(goal: str) -> List[str]:
     # unreachable dead code: it can only ADD operator.run to a step's caps if
     # the catalog already has it. Goal-level (not just step-level) matching
     # closes that gap at the source.
-    if _V5_UI_VERIFY_STEP_RE.search(goal or ""):
+    if (_V5_UI_VERIFY_STEP_RE.search(goal or "")
+            or _V5_WEB_ARTIFACT_RE.search(goal or "")):
         # browser.navigate deliberately excluded — see _V5_LOOP_DENYLIST.
+        # Seeding it does NOT force a browser step: a step only uses the cap if
+        # its own caps list it. It just means the option EXISTS when the plan or
+        # the controller decides behaviour needs proving.
         if "operator.run" not in seeds:
             seeds.append("operator.run")
     # Canonical-retrieval gate: swap gated read seeds for their canonical
@@ -8264,6 +8268,46 @@ def _v5_seed_caps_for(goal: str) -> List[str]:
 #   comment for the full reasoning.
 _V5_LOOP_DENYLIST = {"browser.navigate"}
 
+# WHOLE FAMILIES the loop must never be offered, by prefix.
+#   evolve.* — Vera's own CI/CD and self-modification surface: repo registry,
+#   pipelines, branch promotion, sandbox lifecycle, unit-test runners. Two
+#   separate problems, seen live in the 2026-08-27 census:
+#     1. It does not do what a goal wants. A step trying to run the tests it had
+#        just written reached for evolve.unittest.run and got
+#        "unknown repo '/workspace/statkit' — register it via evolve.repo.add",
+#        twice, then flailed through context.search_caps and memory.seek looking
+#        for an alternative. That cap runs pytest for a REGISTERED REPO BRANCH in
+#        an ephemeral container; it cannot see a session workspace at all. Its
+#        NAME is the trap — it is exactly what a model reaching for "run the
+#        tests" will pick.
+#     2. It is Vera modifying itself. A goal-driven loop that wanders into
+#        evolve.pipeline.promote or evolve.sandbox.down is landing code or
+#        tearing down another agent's container as a side effect of some
+#        unrelated task. Not a hypothetical risk worth leaving open.
+#   To TEST that something works, the loop already has the right tool:
+#   operator.run drives a real headless browser against the page served from the
+#   session sandbox. That is the intended route, not a repo test runner.
+_V5_LOOP_DENY_PREFIXES = ("evolve.",)
+
+# ...with one deliberate exception. Two shipped coding profiles (loop_profiles:
+# "code-writing", "code-editing") explicitly grant this so a coding loop can
+# raise a review for what it wrote. A blanket prefix deny would silently remove a
+# cap those profiles were built around, so it is allowed through BY NAME. It is
+# also the one member of the family that neither operates on a repo the loop
+# cannot see nor mutates anything: it raises a review request. Everything else in
+# evolve.* stays denied.
+_V5_LOOP_DENY_EXCEPT = {"evolve.pipeline.review.request"}
+
+
+def _v5_cap_denied(cap: str) -> bool:
+    """True if the agentic loop must never be offered this cap."""
+    c = str(cap or "")
+    if c in _V5_LOOP_DENY_EXCEPT:
+        return False
+    if c in _V5_LOOP_DENYLIST:
+        return True
+    return any(c.startswith(p) for p in _V5_LOOP_DENY_PREFIXES)
+
 
 def _v5_deflood_catalog(catalog: List[str], goal: str, *, per_ns_cap: int = 6) -> List[str]:
     """Stop one big namespace (e.g. 20+ netscan.* caps) crowding out everything
@@ -8274,7 +8318,7 @@ def _v5_deflood_catalog(catalog: List[str], goal: str, *, per_ns_cap: int = 6) -
     counts: Dict[str, int] = {}
     out: List[str] = []
     for c in catalog:
-        if c in _V5_LOOP_DENYLIST:
+        if _v5_cap_denied(c):
             continue
         ns = c.split(".")[0]
         # If the goal mentions the namespace, don't trim it.
@@ -12374,6 +12418,18 @@ _V5_PROSE_STEP_NOUN_RE = re.compile(
 # A step that must VERIFY a rendered/interactive UI actually works (not just
 # that a file exists) — needs a real browser, not exec.*/webbrowser.open()
 # inside a headless, display-less sandbox (§3.13).
+# A goal that PRODUCES something viewable needs operator.run in the catalog even
+# when its text never says "verify". _V5_UI_VERIFY_STEP_RE below requires a verb
+# (verif|test|check|confirm) AND a UI noun, so "Create clock.html - a page with a
+# live digital clock" does not match it, operator.run was never seeded, and the
+# controller then correctly obeyed its own rule: "If NO cap in the catalog can
+# settle the check, do not insert it." The controller was never the problem -
+# the cap was absent exactly when the run later decided a browser check was
+# wanted. Matching the ARTIFACT closes that.
+_V5_WEB_ARTIFACT_RE = re.compile(
+    r"(\.html?\b|\bweb ?(?:app|page|site)\b|\bfront[- ]?end\b|\bdashboard\b"
+    r"|\bsingle[- ]page\b|\blanding page\b)", re.I)
+
 _V5_UI_VERIFY_STEP_RE = re.compile(
     r"\b(verif\w*|test\w*|check\w*|confirm\w*)\b.{0,60}\b(html|web ?page|\bpage\b|website|"
     r"\bui\b|button|click\w*|render\w*|browser|front[- ]?end|interface)\b", re.I)
