@@ -142,6 +142,22 @@ def build_projection_entry(revision: RecordRevision, spec: ProjectionSpec,
                            payload_hash, revision.tombstone)
 
 
+def validate_projection_entry(entry: ProjectionEntry, spec: ProjectionSpec) -> None:
+    """Validate externally supplied projection evidence against one spec."""
+    if not isinstance(entry, ProjectionEntry) or entry.spec_id != spec.spec_id:
+        raise ValueError("projection entry does not match provider specification")
+    if not _PROJECTION_ID.fullmatch(entry.projection_id) or not _RECORD_ID.fullmatch(
+            entry.record_id) or not _REVISION_ID.fullmatch(entry.revision_id):
+        raise ValueError("projection entry has invalid identity")
+    expected_id = "proj_" + hashlib.sha256(
+        f"{entry.spec_id}\0{entry.record_id}".encode()).hexdigest()
+    if entry.projection_id != expected_id or not isinstance(entry.tombstone, bool):
+        raise ValueError("projection entry identity checksum mismatch")
+    if not _SHA256.fullmatch(entry.source_content_hash) or not _SHA256.fullmatch(
+            entry.projection_hash):
+        raise ValueError("projection entry has invalid hashes")
+
+
 @dataclass(frozen=True)
 class ProjectionReconciliation:
     provider: str
@@ -201,18 +217,7 @@ class FrozenProjectionProvider:
         return entry
 
     def _validate(self, entry: ProjectionEntry) -> None:
-        if not isinstance(entry, ProjectionEntry) or entry.spec_id != self.spec.spec_id:
-            raise ValueError("projection entry does not match provider specification")
-        if not _PROJECTION_ID.fullmatch(entry.projection_id) or not _RECORD_ID.fullmatch(
-                entry.record_id) or not _REVISION_ID.fullmatch(entry.revision_id):
-            raise ValueError("projection entry has invalid identity")
-        expected_id = "proj_" + hashlib.sha256(
-            f"{entry.spec_id}\0{entry.record_id}".encode()).hexdigest()
-        if entry.projection_id != expected_id or not isinstance(entry.tombstone, bool):
-            raise ValueError("projection entry identity checksum mismatch")
-        if not _SHA256.fullmatch(entry.source_content_hash) or not _SHA256.fullmatch(
-                entry.projection_hash):
-            raise ValueError("projection entry has invalid hashes")
+        validate_projection_entry(entry, self.spec)
 
     def snapshot(self, *, cancellation: CancellationSignal | None = None) -> tuple[ProjectionEntry, ...]:
         signal = cancellation or CancellationSignal()
