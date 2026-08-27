@@ -969,6 +969,36 @@ def _shell_argv(shell: str, command: str) -> List[str]:
     return ["sh", "-lc", command]
 
 
+# A timeout enforced on the HOST kills the local `docker exec` client, not the
+# process inside the container. Observed 2026-08-27: a step ran a hand-written
+# socketserver `serve_forever()` through exec.python.run; the client-side timeout
+# path calls proc.kill(), which killed the client while the server kept running
+# and holding port 8000 - still alive 17 minutes later, until it was killed by
+# hand. The leftover also blocks the port for every later run in that container.
+#
+# So the bound has to be applied where the process lives. `timeout(1)` exists in
+# both coreutils (debian, the python:3.x images) and busybox, but it is probed
+# rather than assumed: if it is missing the command runs exactly as before, which
+# is no worse than today.
+#
+# Servers are NOT prohibited by this - starting one is a legitimate thing to do.
+# It is simply bounded and cleaned up, which is what makes it safe to allow.
+_TIMEOUT_RC = 124          # GNU/busybox `timeout(1)`: the command was killed
+
+
+def _bounded_cmd(inner: str, secs: int) -> str:
+    """`inner`, killed inside the container after `secs` if it has not exited.
+
+    Only the payload is wrapped, never the caller's cleanup: the run_code
+    builders append `rc=$?; rm -f <tmpfile>` AFTER the interpreter, and that must
+    still run when the interpreter is killed - otherwise the temp script leaks
+    too (it did: /tmp/vera_d010dd24.py survived the incident above).
+    """
+    secs = max(1, int(secs or 0))
+    return ('_vt=""; command -v timeout >/dev/null 2>&1 && '
+            '_vt="timeout -k 5 %d"; $_vt %s' % (secs, inner))
+
+
 async def _exec_in(session_id: str, command: str, *, workdir: str = "",
                    timeout: int = 120, shell: str = "sh") -> Optional[Dict]:
     """Run `command` in the session container. None if there's no sandbox.
@@ -995,8 +1025,20 @@ async def _exec_in(session_id: str, command: str, *, workdir: str = "",
     args += _confine_env_args(cfg)
     args += [rec["container"], *_shell_argv(shell, command)]
     res = await dk._run_local(await dk._docker_argv(host, args), timeout=timeout)
-    return {"ok": res.get("ok", False), "rc": res.get("rc"),
-            "stdout": res.get("stdout", ""), "stderr": res.get("stderr", ""),
+    _rc, _err = res.get("rc"), res.get("stderr", "")
+    if _rc == _TIMEOUT_RC:
+        # rc 124 is `timeout(1)` saying it killed the command. Say so plainly:
+        # a bare 124 tells the model nothing, and the commonest cause is code
+        # that never returns by design (a server, a watch loop, `sleep`), which
+        # it should either background properly or not run at all.
+        _err = ((_err + "\n") if _err else "") + (
+            "[sandbox] killed after %ss - this command did not exit on its own. "
+            "If you need something that keeps running (an http server, a watcher), "
+            "it cannot be run in the foreground here: the step waits for it. To "
+            "check that a PAGE behaves, use operator.run instead." % timeout)
+    return {"ok": res.get("ok", False), "rc": _rc,
+            "stdout": res.get("stdout", ""), "stderr": _err,
+            "timed_out": _rc == _TIMEOUT_RC,
             "sandboxed": True}
 
 
@@ -1038,8 +1080,10 @@ async def _run_code_in(session_id: str, language: str, code: str, *,
     b64 = base64.b64encode(code.encode()).decode()
     fname = f"/tmp/vera_{uuid.uuid4().hex[:8]}.{ext}"
     argline = " ".join(shlex.quote(a) for a in (args or []))
+    # Bound the INTERPRETER only, so `rc=$?; rm -f` still runs when it is killed.
+    _payload = _bounded_cmd(f"{' '.join(prefix)} {fname} {argline}", timeout)
     script = (f"echo {b64} | base64 -d > {fname}; "
-              f"{' '.join(prefix)} {fname} {argline}; rc=$?; rm -f {fname}; exit $rc")
+              f"{_payload}; rc=$?; rm -f {fname}; exit $rc")
     out = await _exec_in(session_id, script, timeout=timeout)
     if out is not None:
         out["language"] = lang
@@ -2862,7 +2906,13 @@ async def route_shell(session_id: str, command: str, timeout: int = 60,
         if gate is not None:
             gate.setdefault("elapsed_ms", 0)
             return gate
-    res = await _exec_in(rec["session_id"], command, timeout=int(timeout or 60), shell=shell)
+    # Same bound for a plain shell command (exec.bash.run). `sh -c <quoted>` so
+    # the timeout covers the WHOLE command - wrapping bare text would apply it to
+    # the first word only, leaving `cd /w && python3 -m http.server` unbounded.
+    # pwsh is left alone: different interpreter, different quoting.
+    _cmd = (command if shell == "pwsh"
+            else _bounded_cmd("sh -c " + shlex.quote(command), int(timeout or 60)))
+    res = await _exec_in(rec["session_id"], _cmd, timeout=int(timeout or 60), shell=shell)
     if res is not None and shell != "pwsh":
         res = await _auto_install_missing_bin_and_retry(
             rec["session_id"], command, res, workdir="", timeout=int(timeout or 60), shell=shell)
@@ -2990,8 +3040,10 @@ async def route_code_argv(session_id: str, language: str, code: str, *,
     b64 = base64.b64encode(code.encode()).decode()
     fname = f"/tmp/vera_{uuid.uuid4().hex[:8]}.{ext}"
     argline = " ".join(shlex.quote(a) for a in (args or []))
+    # Bound the INTERPRETER only, so `rc=$?; rm -f` still runs when it is killed.
+    _payload = _bounded_cmd(f"{' '.join(prefix)} {fname} {argline}", timeout)
     script = (f"echo {b64} | base64 -d > {fname}; "
-              f"{' '.join(prefix)} {fname} {argline}; rc=$?; rm -f {fname}; exit $rc")
+              f"{_payload}; rc=$?; rm -f {fname}; exit $rc")
     return await route_shell_argv(session_id, script)
 
 
