@@ -7,10 +7,10 @@ description: Recursively diagnose and fix a live issue anywhere in Vera (not age
 
 This packages the working method that took the v7 agentic loop's
 UI-verification path from completely broken to a confirmed, end-to-end
-working state over one long session (`documentation/35-agentic-loop-v6-improvement-plan.md`,
-`documentation/36-agentic-loop-v7-evaluation.md`). Applies to ANY Vera
-subsystem, not just the agentic loop — the loop was just what that
-session happened to be working on.
+working state over one long session. Applies to ANY Vera subsystem, not just
+the agentic loop. Use `improve-vera-sandboxed` for all source, documentation and
+skill changes; this skill's live cycle supplies diagnostic evidence, not
+permission to edit the live or main checkout.
 
 ## 0. Before anything else — the rule that gets violated if you're not careful
 
@@ -63,10 +63,13 @@ the constraint is specifically about concurrent Ollama/GPU consumers.
    see §3.
 4. **Verify against the real shipped code before trusting a fix.** See
    §2 — this has a specific, easy-to-miss trap.
-5. **Document as you go**, not after — dated, numbered entries (this
-   codebase's convention is `§2.N` for a fix, `§N` for a doc section) in
-   a living plan doc, written at the moment each fix lands, not batched
-   at the end.
+5. **Record evidence as you go**, not after. Put temporary private analysis in
+   the sandbox worktree's gitignored `.vera-work/planning/`; keep the concise
+   `.vera-work/work-plan.json` handoff current. Convert actionable plans into an
+   umbrella Loop Lab board item plus linked child items, and post progress as
+   `board.comment` entries. Do not create plan/evaluation/handover Markdown in
+   `documentation/`; only numbered `documentation/[0-9][0-9]-*.md` files are
+   public subsystem documentation.
 6. **Restart Vera** to pick up the change — see §4 for how, and what to
    check first.
 7. **Re-test live**, one test at a time (§0), and keep going until the
