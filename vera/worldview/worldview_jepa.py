@@ -1546,7 +1546,8 @@ async def _fetch_records_with_embeddings(dataset_id: str = "",
     Returns (rids, embeddings_np, meta_dict) where:
       - rids:          list of record IDs in order
       - embeddings_np: numpy float32 array of shape (N, dim) — NO Python list conversion
-      - meta_dict:     {rid: {dataset_id, text, created_at, tags}} — metadata only
+      - meta_dict:     {rid: {dataset_id, text, created_at, tags,
+                              revision_id, content_hash}} — metadata only
 
     Keeping embeddings as a contiguous numpy array avoids the ~120 MB overhead
     of converting 5000+ × 768 numpy rows into Python lists of float objects.
@@ -1616,11 +1617,15 @@ async def _fetch_records_with_embeddings(dataset_id: str = "",
                             tags = []
                     out_rids.append(rid)
                     valid_indices.append(i)
+                    from Vera.vera.worldview.legacy_snapshot_provenance import (
+                        legacy_snapshot_provenance,
+                    )
                     out_meta[rid] = {
                         "dataset_id": meta.get("dataset_id", "") or "",
                         "text":       (text or "")[:200],
                         "created_at": meta.get("created_at", "") or "",
                         "tags":       tags or [],
+                        **legacy_snapshot_provenance(meta),
                     }
 
                 # Build embeddings numpy array directly from Chroma's array

@@ -78,6 +78,14 @@ Projection-backed training boundary (W2-05)
   neither invokes the loaders nor changes training; collecting live shadow
   evidence remains a separately authorized step.
 
+  The legacy Chroma loader now preserves backend-supplied `revision_id` and
+  `content_hash` evidence in its frozen metadata snapshot. Projection-shaped
+  `source_content_hash` is normalized to that same snapshot field. Missing,
+  non-string, or oversized provenance remains empty rather than being inferred,
+  so the shadow comparator fails honestly for older entries that do not yet
+  carry a canonical revision. This does not change training inputs, backend
+  authority, routing, or initiate shadow traffic.
+
 Capabilities registered
 ───────────────────────
   worldview.train                   — full 3-stage training
