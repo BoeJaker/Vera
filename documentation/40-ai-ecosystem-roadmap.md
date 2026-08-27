@@ -942,8 +942,15 @@ metadata for authority, or redirect a capability. Conflicting identity, type,
 archive/tombstone or lifecycle data fails closed; sensitive/unbounded native
 fields are not forwarded.
 
+The same adapter can emit a deterministic, payload-free conversion receipt
+binding the complete canonical native snapshot hash to the exact authority and
+derived projection hashes. This makes offline replay and tamper comparison
+possible without claiming that any provider persisted the result. Apply/read
+audit receipts remain a separate gate.
+
 Current Vera Memory, Postgres, Chroma, Neo4j and the public `memory.*`
-capabilities remain unchanged. Fabric receipt creation, bulk projection,
+capabilities remain unchanged. Fabric revision creation, provider-operation
+receipts, bulk projection,
 export/reconciliation and recovery come next. MemPalace and a second provider still require queued live trials for
 identity, citation fidelity, tenant/session isolation, ranking, outage/sync,
 update/tombstone/delete/export and reconciliation behavior before either can be

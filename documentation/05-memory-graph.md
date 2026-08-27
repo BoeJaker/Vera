@@ -82,8 +82,16 @@ metadata/vectors/relations/model/source URL fields, fails on identity or archive
 conflicts, and ensures tombstones expose none of the text retained by legacy
 soft deletion.
 
+`project_native_memory_with_receipt` adds deterministic conversion evidence
+without retaining the native payload. Its receipt binds the canonical native
+snapshot hash, adapter version, authority revision/source hash and derived
+projection hash. It is intentionally not a provider-write acknowledgement:
+successful apply, persistence, later reads and reconciliation need their own
+auditable provider events.
+
 The current `MemoryRecord`, Postgres authority claim, Chroma/Neo4j fan-out and
-`memory.*` API remain unchanged. Fabric revision receipt creation, bulk
+`memory.*` API remain unchanged. Fabric revision creation,
+provider-operation audit receipts, bulk
 projection/export, reconciliation and recovery must be proven before traffic
 moves. MemPalace and second-provider trials remain queued with other live tests.
 
