@@ -18,6 +18,9 @@ from vera.fabric.memory_provider import MemoryCitation, MemoryProjection
 from vera.fabric.record_revision import RecordRevision
 
 
+NATIVE_PROJECTION_RECEIPT_SCHEMA = "vera.native-memory-projection-receipt/v1"
+
+
 @dataclass(frozen=True)
 class NativeMemoryBinding:
     """Trusted authority needed to project one legacy native-memory identity."""
@@ -33,6 +36,42 @@ class NativeMemoryBinding:
         if not native_id or len(native_id) > 256:
             raise ValueError("invalid native_memory_id")
         object.__setattr__(self, "native_memory_id", native_id)
+
+
+@dataclass(frozen=True)
+class NativeProjectionReceipt:
+    """Payload-free evidence for one deterministic compatibility conversion."""
+
+    receipt_id: str
+    native_memory_id: str
+    native_snapshot_hash: str
+    tenant_id: str
+    memory_id: str
+    record_id: str
+    revision_id: str
+    source_content_hash: str
+    projection_hash: str
+    tombstone: bool
+    adapter: str = "vera.fabric.native_memory_adapter/v1"
+    schema: str = NATIVE_PROJECTION_RECEIPT_SCHEMA
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema, "receipt_id": self.receipt_id,
+            "adapter": self.adapter, "native_memory_id": self.native_memory_id,
+            "native_snapshot_hash": self.native_snapshot_hash,
+            "tenant_id": self.tenant_id, "memory_id": self.memory_id,
+            "record_id": self.record_id, "revision_id": self.revision_id,
+            "source_content_hash": self.source_content_hash,
+            "projection_hash": self.projection_hash,
+            "tombstone": self.tombstone,
+        }
+
+
+@dataclass(frozen=True)
+class NativeProjectionResult:
+    projection: MemoryProjection
+    receipt: NativeProjectionReceipt
 
 
 def _snapshot_value(snapshot: Mapping[str, Any], name: str, default: Any = "") -> Any:
@@ -76,6 +115,21 @@ def _safe_metadata(snapshot: Mapping[str, Any], native_id: str) -> dict[str, Any
         if value:
             result[f"native_{field}"] = value
     return result
+
+
+def _snapshot_hash(snapshot: Mapping[str, Any]) -> str:
+    try:
+        encoded = json.dumps(
+            dict(snapshot), sort_keys=True, separators=(",", ":"),
+            ensure_ascii=False, allow_nan=False,
+        )
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise ValueError("native snapshot must be finite JSON") from exc
+    if json.loads(encoded) != dict(snapshot):
+        raise ValueError("native snapshot must use JSON string object keys")
+    if len(encoded.encode("utf-8")) > 1_048_576:
+        raise ValueError("native snapshot exceeds receipt size limit")
+    return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def project_native_memory(
@@ -170,3 +224,41 @@ def project_native_memory(
         policy=json.loads(revision.policy_json),
         metadata=_safe_metadata(snapshot, native_id),
     )
+
+
+def project_native_memory_with_receipt(
+    snapshot: Mapping[str, Any], *, binding: NativeMemoryBinding,
+) -> NativeProjectionResult:
+    """Convert a snapshot and return deterministic, payload-free evidence.
+
+    The receipt proves conversion inputs and output hashes.  It does not claim
+    that a provider accepted or persisted the projection; that requires a
+    separate provider-operation audit event.
+    """
+    projection = project_native_memory(snapshot, binding=binding)
+    snapshot_hash = _snapshot_hash(snapshot)
+    identity = {
+        "schema": NATIVE_PROJECTION_RECEIPT_SCHEMA,
+        "adapter": "vera.fabric.native_memory_adapter/v1",
+        "native_memory_id": binding.native_memory_id,
+        "native_snapshot_hash": snapshot_hash,
+        "tenant_id": projection.tenant_id,
+        "memory_id": projection.memory_id,
+        "record_id": projection.record_id,
+        "revision_id": projection.revision_id,
+        "source_content_hash": projection.source_content_hash,
+        "projection_hash": projection.projection_hash,
+        "tombstone": projection.tombstone,
+    }
+    encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"))
+    receipt = NativeProjectionReceipt(
+        receipt_id="mpr_" + hashlib.sha256(encoded.encode()).hexdigest(),
+        native_memory_id=binding.native_memory_id,
+        native_snapshot_hash=snapshot_hash,
+        tenant_id=projection.tenant_id, memory_id=projection.memory_id,
+        record_id=projection.record_id, revision_id=projection.revision_id,
+        source_content_hash=projection.source_content_hash,
+        projection_hash=projection.projection_hash,
+        tombstone=projection.tombstone,
+    )
+    return NativeProjectionResult(projection=projection, receipt=receipt)
