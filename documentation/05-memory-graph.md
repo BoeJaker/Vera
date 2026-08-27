@@ -97,11 +97,23 @@ generation—but no memory/query text, result payload or raw error message.
 Underlying provider errors remain visible to the caller. The bounded frozen
 sink demonstrates idempotency and capacity failure; it is not durable evidence.
 
+The reference provider also exposes a bounded, policy-filtered projection
+export. Export ordering is deterministic, includes tombstones, redacts text by
+default and uses checksummed cursors bound to the provider generation, tenant,
+principal and export options. It remains an observation of derived provider
+state—not a new authority or a backup of Fabric content.
+
+`memory_reconciliation.reconcile_memory_provider` compares that visible export
+with an explicitly supplied set of authoritative Fabric projections. Its
+payload-free report classifies matching, missing, unexpected and drifted memory
+identities and hashes both complete sets. It never writes, repairs, deletes or
+discloses memory text. A provider mutation during paging, malformed export,
+cross-tenant expected record, duplicate identity or oversized set fails closed.
+
 The current `MemoryRecord`, Postgres authority claim, Chroma/Neo4j fan-out and
 `memory.*` API remain unchanged. Fabric revision creation, durable audit
-storage/signing, bulk
-projection/export, reconciliation and recovery must be proven before traffic
-moves. MemPalace and second-provider trials remain queued with other live tests.
+storage/signing, repair/recovery and traffic migration still require later
+proof. MemPalace and second-provider trials remain queued with other live tests.
 
 ---
 
