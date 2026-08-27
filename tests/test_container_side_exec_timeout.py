@@ -81,3 +81,29 @@ def test_the_builders_bound_the_interpreter_not_the_cleanup():
         assert "rm -f" in b, "the builder must still clean up its temp file"
         assert b.index("_payload") < b.index("rm -f"), \
             "the bound must cover the interpreter only, so cleanup still runs"
+
+
+def test_the_host_wait_outlasts_the_container_bound():
+    """Otherwise the two race and the caller loses the useful result.
+
+    Found on the FIRST LIVE RUN of this fix, which unit tests could not see: with
+    both timeouts set to the same value the host-side wait usually won, so the
+    caller got rc=-1 and an empty stderr instead of rc=124 and the message saying
+    the command never exits on its own. The process still died - the container
+    bound fired regardless - but the diagnosis was lost, which is most of the
+    value.
+
+    The grace must also exceed `timeout -k 5`'s own kill delay, or the host can
+    still return while the container is between SIGTERM and SIGKILL.
+    """
+    assert S._TIMEOUT_GRACE_S > 5, "must outlast `timeout -k 5`'s kill delay"
+
+
+def test_the_grace_is_applied_where_a_container_bound_exists(monkeypatch):
+    """...and only there: an unbounded direct _exec_in must not be extended."""
+    import inspect
+    src = inspect.getsource(S)
+    # the run_code builder and route_shell both add the grace
+    assert "timeout=timeout + _TIMEOUT_GRACE_S" in src, "run_code builder lacks the grace"
+    assert "_host_to = int(timeout or 60) + (0 if shell == \"pwsh\" else _TIMEOUT_GRACE_S)" in src, \
+        "route_shell lacks the grace"
