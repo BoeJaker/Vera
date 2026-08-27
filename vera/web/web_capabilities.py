@@ -574,18 +574,26 @@ async def cap_web_search(
                 "with the fetch, and — when ingest_to_fabric is set — persists the page into the fabric "
                 "discovery store and refreshes its entities (extracting new ones and disconnecting/pruning "
                 "entities no longer present on the page). "
+                "THAT INGEST RUNS IN THE BACKGROUND: the page is returned as soon as it is fetched "
+                "(~0.15s) rather than after enrichment (12-126s measured), so `ingest` comes back "
+                "'scheduled' and `entities`/`record_id` are NOT in the result. `fabric_dataset` IS "
+                "returned immediately because it is deterministic (web.<host>). Pass await_ingest=true "
+                "ONLY if you must query the fabric for this page in the same breath — it restores the "
+                "old blocking behaviour and its full cost. "
                 "Input: url (str!), timeout (float default 8.0), max_chars (int default 16000), "
-                "ingest_to_fabric (bool default True), dataset_id (str — discovery dataset). "
+                "ingest_to_fabric (bool default True), await_ingest (bool default False), "
+                "dataset_id (str — discovery dataset). "
                 "Output: {url, title, text, domain, status_code, fetched_at, chars, elapsed_ms, "
                 "blocked, block_reason, via_reader, reader_error (non-empty when the reader "
                 "fallback was tried and did NOT rescue a blocked page — e.g. it timed out), "
-                "recalled, entities, fabric_dataset}.",
+                "recalled, fabric_dataset, ingest ('scheduled'|'done'|'skipped')}.",
 )
 async def cap_web_fetch(
     url:               str,
     timeout:           float = DEFAULT_TIMEOUT,
     max_chars:         int   = MAX_PAGE_CHARS,
     ingest_to_fabric:  bool  = True,
+    await_ingest:      bool  = False,
     dataset_id:        str   = "",
     trace_id=None,
 ) -> Dict[str, Any]:
@@ -650,7 +658,20 @@ async def cap_web_fetch(
     # Ingest into the fabric discovery store (full page → entities + reconcile).
     # Never ingest a page we still believe is a challenge/consent interstitial —
     # it would poison the discovery graph with boilerplate entities.
-    if ingest_to_fabric and text and not block_reason:
+    #
+    # RUNS IN THE BACKGROUND. Measured on prod 2026-08-27: the fetch itself is
+    # ~0.15s while awaiting the ingest made the caller wait 12-126s (embedding +
+    # a GLiNER/spaCy NER pass over the page), and a single research run spent
+    # over three minutes of its life inside web.fetch. Nothing in the returned
+    # result depended on the ingest finishing: no caller reads `entities` or
+    # `record_id`, and `fabric_dataset` is now DETERMINISTIC (web.<host>), so it
+    # is reported immediately without waiting for anything.
+    #
+    # Pass await_ingest=True if you must query the fabric for this page in the
+    # same breath — that restores the old blocking behaviour for that caller only.
+    async def _ingest_page():
+        """The enrichment nobody is blocked on. Errors are logged, never raised
+        into the caller, because by now the page has already been returned."""
         if disc:
             try:
                 # File the page under its own web dataset unless the caller named
@@ -664,22 +685,20 @@ async def cap_web_fetch(
                 # knowledge bases as a side effect of someone fetching a page.
                 # web.search already passes an explicit dataset; web.fetch was the
                 # only path that did not.
-                ds_for_ingest = (dataset_id or "").strip() or _auto_web_dataset(url)
                 ing = await disc.discover_ingest_page(
                     url, dataset_id=ds_for_ingest, html=html, text=text, title=title,
                     extract_entities=True, reconcile=True, full_fetch=True,
                     tags=["web_fetch", domain])
-                if isinstance(ing, dict) and not ing.get("error"):
-                    out["fabric_dataset"] = ing.get("dataset_id", "")
-                    out["entities"]       = ing.get("entities", 0)
-                    out["record_id"]      = ing.get("record_id", "")
+                ents = ing.get("entities", 0) if isinstance(ing, dict) else 0
+                err = ing.get("error", "") if isinstance(ing, dict) else "no result"
             except Exception as e:
+                ents, err = 0, str(e)[:200]
                 log.debug("web.fetch discovery ingest: %s", e)
         else:
             # Legacy fallback: research_fabric ingest (no discovery module loaded)
+            ents, err = 0, ""
             rf = _research_fabric()
             if rf:
-                ds = f"web.crawl.{_sanitise_domain(domain)}"
                 try:
                     rec = rf.shape_record(
                         text       = (title + "\n\n" + text)[:rf.TEXT_INDEX_LIMIT],
@@ -690,11 +709,31 @@ async def cap_web_fetch(
                         extra      = {"status_code": status, "fetched_at": fetched_at},
                         tags       = ["web_fetch", domain],
                     )
-                    await rf.ingest_research_record(ds, rec, source="web.fetch",
+                    await rf.ingest_research_record(ds_for_ingest, rec, source="web.fetch",
                                                      tags=["web_fetch", domain])
-                    out["fabric_dataset"] = ds
                 except Exception as e:
+                    err = str(e)[:200]
                     log.debug("web.fetch fabric ingest: %s", e)
+        # Say so either way — a background failure that logged nothing would be
+        # invisible, which is how "the fabric is missing pages" becomes unfindable.
+        await emit_event({"type": "web.fetch.ingested", "url": url, "domain": domain,
+                          "dataset": ds_for_ingest, "entities": ents,
+                          "error": (err or "")[:200]})
+
+    ds_for_ingest = ""
+    if ingest_to_fabric and text and not block_reason:
+        ds_for_ingest = ((dataset_id or "").strip()
+                         or (_auto_web_dataset(url) if disc
+                             else "web.crawl." + _sanitise_domain(domain)))
+        out["fabric_dataset"] = ds_for_ingest
+        if await_ingest:
+            await _ingest_page()
+            out["ingest"] = "done"
+        else:
+            _spawn(_ingest_page())
+            out["ingest"] = "scheduled"
+    else:
+        out["ingest"] = "skipped"
 
     await emit_event({
         "type":         "web.fetch.done",
