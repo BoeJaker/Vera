@@ -984,6 +984,12 @@ def _shell_argv(shell: str, command: str) -> List[str]:
 # Servers are NOT prohibited by this - starting one is a legitimate thing to do.
 # It is simply bounded and cleaned up, which is what makes it safe to allow.
 _TIMEOUT_RC = 124          # GNU/busybox `timeout(1)`: the command was killed
+# The host-side wait must outlast the CONTAINER-side bound, or the two race and
+# the host usually wins - which is what happened on the first live run of this
+# fix: the process did die (the container bound still fired), but the caller got
+# rc=-1 with an empty stderr instead of rc=124 and the message explaining what
+# happened. The grace covers `timeout -k 5`'s kill delay plus docker overhead.
+_TIMEOUT_GRACE_S = 15
 
 
 def _bounded_cmd(inner: str, secs: int) -> str:
@@ -1084,7 +1090,7 @@ async def _run_code_in(session_id: str, language: str, code: str, *,
     _payload = _bounded_cmd(f"{' '.join(prefix)} {fname} {argline}", timeout)
     script = (f"echo {b64} | base64 -d > {fname}; "
               f"{_payload}; rc=$?; rm -f {fname}; exit $rc")
-    out = await _exec_in(session_id, script, timeout=timeout)
+    out = await _exec_in(session_id, script, timeout=timeout + _TIMEOUT_GRACE_S)
     if out is not None:
         out["language"] = lang
     return out
@@ -2912,7 +2918,8 @@ async def route_shell(session_id: str, command: str, timeout: int = 60,
     # pwsh is left alone: different interpreter, different quoting.
     _cmd = (command if shell == "pwsh"
             else _bounded_cmd("sh -c " + shlex.quote(command), int(timeout or 60)))
-    res = await _exec_in(rec["session_id"], _cmd, timeout=int(timeout or 60), shell=shell)
+    _host_to = int(timeout or 60) + (0 if shell == "pwsh" else _TIMEOUT_GRACE_S)
+    res = await _exec_in(rec["session_id"], _cmd, timeout=_host_to, shell=shell)
     if res is not None and shell != "pwsh":
         res = await _auto_install_missing_bin_and_retry(
             rec["session_id"], command, res, workdir="", timeout=int(timeout or 60), shell=shell)
