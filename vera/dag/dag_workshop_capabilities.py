@@ -20480,10 +20480,22 @@ def _v7_intent_plan_directive(intent: str, *, max_steps: int = 8) -> str:
             "author step, not a research project.\n")
     if it == "research":
         return (
-            "GOAL INTENT = RESEARCH. The goal needs EXTERNAL/CURRENT information you do not have. Plan "
-            "information-gathering FIRST (web.search → web.fetch/http.get), each step ending in concrete "
-            "notes, THEN the step(s) that use those findings, wired with `needs`. Never use llm.generate "
-            "to 'look up' or invent facts.\n")
+            "GOAL INTENT = RESEARCH. The goal needs EXTERNAL/CURRENT information you do not have.\n"
+            "  • Plan information-gathering FIRST (web.search → web.fetch/http.get), each step "
+            "ending in concrete notes. Never use llm.generate to 'look up' or invent facts.\n"
+            "  • THEN PLAN THE WRITE-UP AS ITS OWN FINAL STEP, and give that step `prose.author`. "
+            "Research that was only FETCHED has not been DELIVERED — the deliverable is a FILE "
+            "SOMEONE READS. That step passes the files the earlier steps produced as context_files, "
+            "names its own output file, and is wired to them with `needs`.\n"
+            "  • NEVER write the plan so RETRIEVAL ALONE SATISFIES IT. A done_when or success like "
+            "\"information is retrieved\", \"sources are fetched\", or \"content is extracted into "
+            "readable text\" is WRONG: every one of those is already true the moment a fetch returns, "
+            "so the run stops before a single word is written. Word them as the FILE EXISTING WITH "
+            "ITS REQUIRED CONTENT — e.g. \"summary.md exists covering the five most significant "
+            "developments, each with its source URL\".\n"
+            "  • Do NOT plan a code.author step to parse or summarise what you fetched. Turning "
+            "fetched material into readable text is prose.author's job; code.author is for programs "
+            "and structured data.\n")
     if it == "action":
         return (
             "GOAL INTENT = ACTION. The goal is to run/operate/inspect a system. Plan concrete exec.* / "
