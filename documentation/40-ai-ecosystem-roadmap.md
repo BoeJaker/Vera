@@ -948,9 +948,16 @@ derived projection hashes. This makes offline replay and tamper comparison
 possible without claiming that any provider persisted the result. Apply/read
 audit receipts remain a separate gate.
 
+That audit gate now has an offline contract and wrapper. Apply, read and search
+attempts emit checksummed receipts keyed by an explicit caller request ID, with
+normalized success/denial/not-found/invalid/cancelled/provider-error outcomes.
+Only identities, safe context hashes, counts and generation are recorded; text,
+result bodies and exception messages are excluded. The reference sink is
+bounded and idempotent, not durable or signed.
+
 Current Vera Memory, Postgres, Chroma, Neo4j and the public `memory.*`
-capabilities remain unchanged. Fabric revision creation, provider-operation
-receipts, bulk projection,
+capabilities remain unchanged. Fabric revision creation, durable/signed audit
+storage, bulk projection,
 export/reconciliation and recovery come next. MemPalace and a second provider still require queued live trials for
 identity, citation fidelity, tenant/session isolation, ranking, outage/sync,
 update/tombstone/delete/export and reconciliation behavior before either can be

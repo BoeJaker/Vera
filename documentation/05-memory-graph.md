@@ -89,9 +89,17 @@ projection hash. It is intentionally not a provider-write acknowledgement:
 successful apply, persistence, later reads and reconciliation need their own
 auditable provider events.
 
+`memory_audit.AuditedMemoryProvider` now supplies the provider-operation side
+of that seam for offline conformance. Every apply/read/search attempt with an
+explicit caller request ID produces a checksummed receipt for its normalized
+outcome. The receipt contains identity, safe context hashes, counts and
+generation—but no memory/query text, result payload or raw error message.
+Underlying provider errors remain visible to the caller. The bounded frozen
+sink demonstrates idempotency and capacity failure; it is not durable evidence.
+
 The current `MemoryRecord`, Postgres authority claim, Chroma/Neo4j fan-out and
-`memory.*` API remain unchanged. Fabric revision creation,
-provider-operation audit receipts, bulk
+`memory.*` API remain unchanged. Fabric revision creation, durable audit
+storage/signing, bulk
 projection/export, reconciliation and recovery must be proven before traffic
 moves. MemPalace and second-provider trials remain queued with other live tests.
 
