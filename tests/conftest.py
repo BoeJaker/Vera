@@ -41,6 +41,7 @@ _CRITICAL_MODULES = {
     "test_url_dataset_resolve",  # web.fetch stall fix - the url->dataset scan must keep its answer while off the loop (2026-08-26)
     "test_loop_cap_denylist",    # evolve.* never offered to a loop; operator.run reachable for web artifacts
     "test_operator_target_resolution",  # an explicit url must reach the browser whatever `kind` says
+    "test_code_workspace_path",  # code.author and code.edit must resolve a path identically (no /workspace/workspace/)
     "test_chain_deps",           # a failed chain hop poisons what USES it, not the whole pipeline
     "test_loop_run_history",     # unified loop-run record: retention policy must never mean keep-nothing or keep-everything
     "test_role_profile_merge",   # a USER routing override must not silently discard declared sampling/num_ctx (2026-08-24)

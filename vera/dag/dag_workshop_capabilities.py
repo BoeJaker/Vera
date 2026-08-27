@@ -10073,6 +10073,34 @@ def _code_norm_path(path: str) -> str:
     return "/".join(parts)[:300]
 
 
+def _code_workspace_path(path: str, repo: str = "") -> str:
+    """Normalise a logical path AND collapse a redundant leading `workspace/`.
+
+    In the session-workspace context that base is IMPLICIT: the store already
+    roots everything at /workspace, so a caller handing back `/workspace/x` or
+    `workspace/x` (very often the loop's own model echoing a previous fs_path)
+    would re-join to `/workspace/workspace/x`.
+
+    This collapse existed on code.edit ONLY, which fixed reading and left
+    WRITING to produce the doubled path. Observed 2026-08-27, census goal
+    build-multifile: code.author(path='/workspace/statkit/stats.py') reported
+    fs_path=/workspace/workspace/statkit/stats.py, and the container ended up
+    with BOTH trees - /workspace/statkit/stats.py and
+    /workspace/workspace/statkit/stats.py. The step then spent ten cycles
+    hunting the file, failed code.edit three times and re-authored the whole
+    file at 47s a go.
+
+    Shared by both caps so they cannot drift apart again. Repo paths are left
+    alone: there `workspace/` can be a real top-level directory.
+    """
+    p = _code_norm_path(str(path or "").strip())
+    if not repo:
+        parts = p.split("/")
+        if len(parts) > 1 and parts[0] == "workspace":
+            p = "/".join(parts[1:])
+    return p
+
+
 def _code_scope(session_id: str = "", repo: str = "") -> str:
     return (repo or session_id or "default").strip()[:120]
 
@@ -10659,7 +10687,7 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
     if not task:
         return {"ok": False, "error": "task is required — describe WHAT to build, in words, "
                                        "not code (code.author writes the code for you)."}
-    path = _code_norm_path(str(path or "").strip()) or "generated.py"
+    path = _code_workspace_path(path) or "generated.py"
     # Redirect a PROSE/DOCUMENT file to prose.author — .md/.txt/.rst are documents,
     # not code, and must be authored by the WRITER role (grounded on the real file
     # listing), never by the coder whose system prompt demands "running code".
@@ -11544,18 +11572,9 @@ async def cap_code_edit(path: str, task: str = "", session_id: str = "", repo: s
                         trace_id=None) -> Dict[str, Any]:
     """Targeted edit of an existing file, with the same verify-and-repair contract
     as code.author: nothing is saved that does not parse."""
-    path = _code_norm_path(str(path or "").strip())
-    # A caller (often the loop's own model, echoing a prior fs_path) may hand back
-    # the artifact-absolute `/workspace/x` or a redundant relative `workspace/x`. In
-    # the session workspace context (no repo) that base is IMPLICIT, so the leading
-    # `workspace/` _code_norm_path leaves behind must collapse to `x` — otherwise the
-    # edit re-joins to /workspace/workspace/x, a shadow file every later run chases
-    # (observed: an author→run→edit→run loop stuck on the doubled path). Repo edits,
-    # where `workspace/` can be a real top-level dir, are left untouched.
-    if not repo:
-        _pp = path.split("/")
-        if len(_pp) > 1 and _pp[0] == "workspace":
-            path = "/".join(_pp[1:])
+    # Same normalisation as code.author, from ONE definition - the two used to
+    # differ, which is exactly how the doubled-path shadow file appeared.
+    path = _code_workspace_path(path, repo)
     task = str(task or "").strip()
     if not path:
         return {"ok": False, "error": "path required"}
