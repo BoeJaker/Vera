@@ -178,6 +178,35 @@ queued. The security posture follows DuckDB's
 and recommendation to use independent package connections rather than the
 [shared Python connection](https://duckdb.org/docs/stable/clients/python/overview).
 
+The LIB-21 follow-on adds an inspect-only bridge from one local DVC-tracked file
+to Vera's artifact contract. `DVCArtifactAdapter` requires an explicit stable
+repository identity, full Git commit and relative standalone `.dvc` descriptor.
+It resolves `HEAD` using bounded reads of in-tree Git metadata and accepts only
+one cached regular-file output in DVC's default
+`.dvc/cache/files/md5/<prefix>/<suffix>` layout. It never invokes Git or DVC,
+loads `.dvc/config`, follows a remote, discovers credentials, checks out data,
+or executes `dvc.yaml` commands.
+
+Before import, the adapter checks descriptor size and structure, path
+containment, declared size and MD5 cache identity. It then commits the already
+verified bytes to `LocalArtifactProvider`, which supplies Vera's SHA-256
+identity, and returns an `ArtifactRef` plus the independent DVC/Git provenance.
+This preserves both ecosystems' identities instead of treating DVC's MD5 as
+Vera's authority. The source record includes a SHA-256 descriptor observation,
+and import rechecks both descriptor bytes and `HEAD`; v1 does not independently
+prove that the working descriptor is clean and Git-tracked. Unsupported
+directories, custom caches, multiple/uncached
+outputs and remotes fail closed rather than silently broadening effects.
+
+The deterministic fixture gate confirms missing/corrupt cache handling,
+revision mismatch, packed refs, traversal/symlink refusal, size ceilings,
+unsupported descriptor shapes, ArtifactRef conversion and source-repository
+non-mutation. DVC's own documentation notes that tracked outputs are located
+through `.dvc`/`dvc.yaml` metadata and local cache or configured remotes in
+[`dvc get`](https://dvc.org/doc/command-reference/get); Vera deliberately stops
+before that command's download and workspace-writing behavior. Live DVC/API,
+remote, credential, directory and custom-cache trials remain queued.
+
 ---
 
 ## 3. The ingestion pipeline

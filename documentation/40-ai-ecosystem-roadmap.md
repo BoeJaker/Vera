@@ -885,8 +885,22 @@ cancellation, checkpoint ArtifactRefs, and unsupported topology disclosure.
 
 ### LIB-21 — DVC repository adapter
 
-Inspect and import one DVC-tracked artifact from a local fixture repository, then
-export a Vera ArtifactRef mapping. Do not execute its pipeline.
+**Offline local-file adapter implemented.** Inspect one standalone `.dvc`
+descriptor at an explicitly pinned Git `HEAD`, verify its single file in the
+default DVC 3 MD5 cache, and copy the exact bytes into Vera's SHA-256
+ArtifactProvider with an `ArtifactRef` plus DVC/Git provenance. The adapter does
+not invoke Git/DVC, load remote configuration or credentials, check out a
+workspace, or execute a pipeline. It records and rechecks the descriptor's
+SHA-256 observation alongside `HEAD`; proving the descriptor is a clean tracked
+blob at that commit remains a repository-intake follow-on, not an inferred claim.
+
+The deterministic gate covers Git/DVC identity, packed refs, descriptor/cache
+containment, missing/corrupt objects, size limits, source non-mutation and
+rejection of directory, multiple, uncached and pipeline outputs. DVC's
+[`get` contract](https://dvc.org/doc/command-reference/get) documents how normal
+DVC retrieval may consult local cache or a configured remote and write an
+output; those effects, the DVC Python API, custom cache directories and live
+remote/credential tests remain explicitly queued.
 
 Gate: Git/DVC identity, remote and credential boundary, missing cache, hash mismatch,
 path traversal, offline behavior, export round trip, and no worktree mutation.
