@@ -5319,14 +5319,12 @@ async def evolve_pipeline_review(id: str = "", verdict: str = "", findings: str 
 
 @capability("evolve.pipeline.test", memory="on",
             http_method="POST", http_path="/evolve/pipeline/test", http_tags=["evolve"],
-            description="(Generic-repo code pipelines only — repo != 'vera'.) "
-                        "Gate a code pipeline's branch once its edit has landed: "
-                        "runs the repo's test_cmd in the branch worktree, computes "
-                        "gate_delta against the baseline already recorded at "
-                        "branch-creation time, and sets gate_passed/status. Merge "
-                        "stays manual (evolve.pipeline.promote/.rollback). For "
-                        "repo='vera' use the dev sandbox (Sandbox tab) instead — "
-                        "this capability refuses that case. Input: id (str!). "
+            description="Gate a code pipeline's committed branch once its edit has landed. "
+                        "For Vera, parses every changed Python file from the branch ref and "
+                        "runs the isolated critical tier through evolve.unittest.run. For "
+                        "registered external repos, runs test_cmd and evaluates its baseline "
+                        "delta. Records gate_passed/status; merge remains manual. Input: id "
+                        "(str!). "
                         "Output: {ok, gate_passed, gate_delta}.")
 async def evolve_pipeline_test(id: str = "", trace_id=None):
     got = await evolve_pipeline_get(id=id)
@@ -5334,12 +5332,62 @@ async def evolve_pipeline_test(id: str = "", trace_id=None):
     if not rec:
         return {"error": got.get("error") or "pipeline not found"}
     repo = rec.get("repo") or DEFAULT_REPO_ID
-    if rec.get("kind") != "code" or repo == DEFAULT_REPO_ID:
-        return {"error": "evolve.pipeline.test is only for code pipelines with "
-                         "repo != 'vera' — use the dev sandbox for the Vera repo"}
+    if rec.get("kind") != "code":
+        return {"error": "evolve.pipeline.test requires a code pipeline"}
     worktree = rec.get("worktree")
     if not worktree or not Path(worktree).exists():
         return {"error": "no worktree for this pipeline (branch step may have failed)"}
+    if repo == DEFAULT_REPO_ID:
+        branch = str(rec.get("branch") or "")
+        target = str(rec.get("to") or "bleeding-edge")
+        changed_res = await _git("diff", "--name-only", f"{target}...{branch}",
+                                 repo_root=await _resolve_repo_root(repo))
+        if not changed_res.get("ok"):
+            return {"error": changed_res.get("err") or "could not inspect branch diff"}
+        changed = [line for line in (changed_res.get("out") or "").splitlines()
+                   if line.strip()]
+        py_files = [path for path in changed if path.endswith(".py")]
+        import ast as _ast
+        parse_errors = []
+        root = await _resolve_repo_root(repo)
+        for path in py_files:
+            shown = await _git("show", f"{branch}:{path}", repo_root=root)
+            if not shown.get("ok"):
+                continue
+            try:
+                _ast.parse(shown.get("out") or "")
+            except SyntaxError as exc:
+                parse_errors.append(f"{path}: {exc}")
+        compile_ok = not parse_errors
+        _pstep(rec, "gate", compile_ok,
+               f"compile-check {len(py_files)} .py file(s): " +
+               ("PASS" if compile_ok else "FAIL — " + "; ".join(parse_errors[:3])))
+        critical = await evolve_unittest_run(branch=branch, paths="tests",
+                                             markers="critical", timeout=300)
+        critical_ok = bool(critical.get("ok")) and not critical.get("error")
+        _pstep(rec, "critical-tests", critical_ok,
+               critical.get("summary") or critical.get("error") or
+               ("PASS" if critical_ok else "FAIL"))
+        passed = compile_ok and critical_ok
+        rec["commits"] = [line for line in (await _git(
+            "log", "--oneline", f"{target}..{branch}", repo_root=root)).get(
+                "out", "").splitlines() if line.strip()]
+        rec["changed_files"] = changed
+        rec["gate_passed"] = passed
+        rec["status"] = "tested"
+        rec["decision"] = "pending"
+        rec["current"] = ("branch tested — gate PASSED, ready to promote (merge)"
+                          if passed else "branch tested — gate FAILED, recommend rollback")
+        await _save_pipeline(rec)
+        await _audit("pipeline.test", f"vera:{branch} — "
+                     f"{'PASS' if passed else 'FAIL'} (compile + critical)",
+                     id=id, repo=repo, gate_passed=passed)
+        await emit_event({"type": "evolve.pipeline.done", "id": id,
+                          "decision": "pending", "kind": "code",
+                          "gate_passed": passed})
+        return {"ok": True, "gate_passed": passed, "compile_ok": compile_ok,
+                "critical_ok": critical_ok,
+                "output": critical.get("summary") or critical.get("error") or ""}
     test_cmd = rec.get("test_cmd") or DEFAULT_TEST_CMD
     cand = await _repo_test_gate(worktree, test_cmd)
     if cand.get("error"):
