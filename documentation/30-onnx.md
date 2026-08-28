@@ -16,6 +16,18 @@ storage, verification/signature policy, safe ONNX import, activation/rollback,
 legacy aliases, and inference parity are later slices. No model or external
 runtime tests are enabled by this contract.
 
+The second W2-06 slice adds `SQLiteModelPackageRegistry`. Canonical package JSON
+and aliases survive restart in transactional tables; package content is
+revalidated and its identity recomputed on every read, so malformed or forged
+stored state fails visibly. Alias changes are compare-and-set operations.
+
+`verify_local_artifact` separately produces a read-only receipt for an explicit
+local path or local `file:` URI. It checks the size ceiling, expected size and
+streamed SHA-256 with cancellation, and reports missing, unsupported, oversized,
+size-mismatched, hash-mismatched or verified state. Verification never imports,
+moves, deletes, activates, or executes the artifact. Signature trust policy and
+durable receipt history remain later work.
+
 Vera can turn a **trained ML Workshop module** into a portable `.onnx` artifact
 and serve it through ONNX Runtime (ORT) — as a first-class capability and on the
 edge nodes — so inference no longer needs the NumPy/PyTorch training stack
