@@ -7,12 +7,13 @@ import hashlib
 import json
 from pathlib import Path
 import sqlite3
-from typing import Callable
+from typing import Callable, Mapping, Sequence
 from urllib.parse import unquote, urlparse
 
 from .model_package import (
     ModelArtifact, ModelPackage, ModelPackageConflict, _identifier,
     model_package_from_dict)
+from .legacy_binding import LegacyModelCapabilityBinding
 
 
 MAX_VERIFY_BYTES = 100 * 1024 * 1024 * 1024
@@ -41,6 +42,13 @@ class SQLiteModelPackageRegistry:
                     previous_package_id TEXT NOT NULL,
                     package_id TEXT NOT NULL,
                     reverted_operation_id TEXT UNIQUE);
+                CREATE TABLE IF NOT EXISTS legacy_model_capability_bindings (
+                    capability TEXT NOT NULL,
+                    selector TEXT NOT NULL,
+                    package_id TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    PRIMARY KEY(capability, selector),
+                    FOREIGN KEY(package_id) REFERENCES model_packages(package_id));
             """)
 
     def _connect(self) -> sqlite3.Connection:
@@ -188,6 +196,88 @@ class SQLiteModelPackageRegistry:
                     "COALESCE(reverted_operation_id,'') FROM model_package_activations "
                     "ORDER BY sequence").fetchall()
         return tuple(self._receipt_from_row(row) for row in rows)
+
+    def bind_legacy_capability(
+            self, binding: LegacyModelCapabilityBinding, *,
+            expected_package_id: str = "") -> LegacyModelCapabilityBinding:
+        """CAS-bind one legacy invocation identity without invoking it."""
+        if not isinstance(binding, LegacyModelCapabilityBinding):
+            raise TypeError("binding must be LegacyModelCapabilityBinding")
+        self.bind_legacy_capabilities(
+            (binding,), expected_package_ids={
+                binding.legacy_identity: expected_package_id})
+        return binding
+
+    def bind_legacy_capabilities(
+            self, bindings: Sequence[LegacyModelCapabilityBinding], *,
+            expected_package_ids: Mapping[str, str] | None = None,
+            ) -> tuple[LegacyModelCapabilityBinding, ...]:
+        """CAS-bind a unique group atomically, so migrations cannot be partial."""
+        bindings = tuple(bindings)
+        if not bindings or not all(isinstance(item, LegacyModelCapabilityBinding)
+                                   for item in bindings):
+            raise TypeError("bindings must contain LegacyModelCapabilityBinding values")
+        keys = tuple((item.capability, item.selector) for item in bindings)
+        if len(set(keys)) != len(keys):
+            raise ValueError("legacy binding group contains duplicate identities")
+        expected = {str(key): str(value or "")
+                    for key, value in dict(expected_package_ids or {}).items()}
+        identities = {item.legacy_identity for item in bindings}
+        if set(expected) - identities:
+            raise ValueError("expected package IDs contain an unknown legacy identity")
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            decisions = []
+            for binding in bindings:
+                if not conn.execute("SELECT 1 FROM model_packages WHERE package_id=?",
+                                    (binding.package_id,)).fetchone():
+                    raise KeyError("package is not registered")
+                row = conn.execute(
+                    "SELECT package_id,source FROM legacy_model_capability_bindings "
+                    "WHERE capability=? AND selector=?",
+                    (binding.capability, binding.selector)).fetchone()
+                if row == (binding.package_id, binding.source):
+                    decisions.append((binding, False))
+                    continue
+                current = row[0] if row else ""
+                if current != expected.get(binding.legacy_identity, ""):
+                    raise ModelPackageConflict("legacy binding compare-and-set failed")
+                decisions.append((binding, True))
+            for binding, should_write in decisions:
+                if should_write:
+                    conn.execute(
+                        "INSERT INTO legacy_model_capability_bindings VALUES (?,?,?,?) "
+                        "ON CONFLICT(capability,selector) DO UPDATE SET "
+                        "package_id=excluded.package_id,source=excluded.source",
+                        (binding.capability, binding.selector,
+                         binding.package_id, binding.source))
+        return bindings
+
+    def resolve_legacy_capability(
+            self, capability: str, selector: str = "") -> LegacyModelCapabilityBinding | None:
+        capability = _identifier(capability, "legacy capability")
+        if selector:
+            selector = _identifier(selector, "legacy selector")
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT capability,selector,package_id,source "
+                "FROM legacy_model_capability_bindings WHERE capability=? AND selector=?",
+                (capability, selector)).fetchone()
+        return self._legacy_binding_from_row(row) if row else None
+
+    def legacy_capability_bindings(self) -> tuple[LegacyModelCapabilityBinding, ...]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT capability,selector,package_id,source "
+                "FROM legacy_model_capability_bindings ORDER BY capability,selector").fetchall()
+        return tuple(self._legacy_binding_from_row(row) for row in rows)
+
+    @staticmethod
+    def _legacy_binding_from_row(row) -> LegacyModelCapabilityBinding:
+        try:
+            return LegacyModelCapabilityBinding(*row)
+        except (TypeError, ValueError) as exc:
+            raise ModelPackageStoreCorrupt("stored legacy capability binding is corrupt") from exc
 
     @staticmethod
     def _current_alias(conn: sqlite3.Connection, name: str) -> str:
