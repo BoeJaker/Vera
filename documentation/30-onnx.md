@@ -1,5 +1,21 @@
 # 30 · ONNX Export & Runtime
 
+## Portable ModelPackage boundary
+
+W2-06 begins with `vera.models.model_package`, an offline provider-neutral
+identity contract. A package pins architecture and format; role-addressed
+artifact URIs with SHA-256 and size; tokenizer and preprocessing; framework and
+optional opset; source, licence, signature, training/evaluation lineage;
+hardware requirements; and typed task/input/output compatibility. Canonical
+ordering produces a stable `mpkg_…` identity.
+
+The first registry is deliberately in-memory and non-executing. Registration is
+immutable and idempotent, aliases use compare-and-set semantics, and registering
+a URI never opens, moves, deletes, verifies, or activates its file. Durable
+storage, verification/signature policy, safe ONNX import, activation/rollback,
+legacy aliases, and inference parity are later slices. No model or external
+runtime tests are enabled by this contract.
+
 Vera can turn a **trained ML Workshop module** into a portable `.onnx` artifact
 and serve it through ONNX Runtime (ORT) — as a first-class capability and on the
 edge nodes — so inference no longer needs the NumPy/PyTorch training stack

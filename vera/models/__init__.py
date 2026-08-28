@@ -1,0 +1,1 @@
+"""Portable model lifecycle contracts."""
