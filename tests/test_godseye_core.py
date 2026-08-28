@@ -9,6 +9,8 @@ directly. Two things here are load-bearing enough to be explicit matrices:
     clone` treats ``ext::sh -c …`` as a remote helper — i.e. remote code
     execution by URL — and a leading ``-`` turns any argument into an option.
 """
+import os
+
 import pytest
 
 from vera.godseye import godseye_core as C
@@ -183,6 +185,27 @@ def test_ordinary_refs_are_accepted(ref):
 ])
 def test_hostile_refs_are_refused(ref):
     assert C.is_safe_ref(ref) is False
+
+
+def test_git_env_neutralises_operator_config():
+    # prod carries url."git@github.com:".insteadOf=https://github.com/ in
+    # ~/.gitconfig, which rewrote the pinned HTTPS url to SSH and failed the
+    # clone of a PUBLIC repo with "Permission denied (publickey)".
+    env = C.git_env({"PATH": "/usr/bin", "HOME": "/home/boejaker"})
+    assert env["GIT_CONFIG_GLOBAL"] == os.devnull
+    assert env["GIT_CONFIG_SYSTEM"] == os.devnull
+    assert env["GIT_CONFIG_NOSYSTEM"] == "1"
+    # A credential prompt on a non-tty would hang the capability forever.
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+    # The rest of the process environment still has to survive.
+    assert env["PATH"] == "/usr/bin" and env["HOME"] == "/home/boejaker"
+
+
+def test_git_env_does_not_mutate_the_caller_environment():
+    base = {"PATH": "/usr/bin"}
+    C.git_env(base)
+    assert base == {"PATH": "/usr/bin"}
+    assert "GIT_CONFIG_GLOBAL" in C.git_env(None)      # usable with no base
 
 
 def test_clone_and_update_argv_shape(tmp_path):
