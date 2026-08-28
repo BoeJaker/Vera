@@ -14,6 +14,9 @@ from .model_package import (
     ModelArtifact, ModelPackage, ModelPackageConflict, _identifier,
     model_package_from_dict)
 from .legacy_binding import LegacyModelCapabilityBinding
+from .admission import (
+    ModelAdmissionReceipt, ModelDeploymentTarget, ModelPackageAdmissionRejected,
+    ModelTrustPolicy, evaluate_model_admission)
 
 
 MAX_VERIFY_BYTES = 100 * 1024 * 1024 * 1024
@@ -49,6 +52,12 @@ class SQLiteModelPackageRegistry:
                     source TEXT NOT NULL,
                     PRIMARY KEY(capability, selector),
                     FOREIGN KEY(package_id) REFERENCES model_packages(package_id));
+                CREATE TABLE IF NOT EXISTS model_package_admissions (
+                    activation_operation_id TEXT PRIMARY KEY,
+                    admission_id TEXT NOT NULL UNIQUE,
+                    receipt_json TEXT NOT NULL,
+                    FOREIGN KEY(activation_operation_id)
+                        REFERENCES model_package_activations(operation_id));
             """)
 
     def _connect(self) -> sqlite3.Connection:
@@ -115,31 +124,117 @@ class SQLiteModelPackageRegistry:
         expected_package_id = str(expected_package_id or "")
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
+            return self._activate_in_connection(
+                conn, name, package_id, expected_package_id, operation_id)
+
+    def activate_admitted(
+            self, name: str, package_id: str, *, expected_package_id: str = "",
+            operation_id: str, policy: ModelTrustPolicy,
+            target: ModelDeploymentTarget) -> "AdmittedModelActivation":
+        """Re-evaluate admission and atomically persist it with activation."""
+        from .model_package import _identifier
+        name = _identifier(name, "alias")
+        operation_id = _identifier(operation_id, "operation ID")
+        expected_package_id = str(expected_package_id or "")
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             existing = self._activation_by_operation(conn, operation_id)
             if existing is not None:
+                row = conn.execute(
+                    "SELECT receipt_json FROM model_package_admissions "
+                    "WHERE activation_operation_id=?", (operation_id,)).fetchone()
+                if not row:
+                    raise ModelPackageConflict(
+                        "operation ID belongs to an activation without admission evidence")
+                receipt = self._admission_from_json(row[0])
+                candidate = self._stored_package(conn, package_id)
+                expected_receipt = evaluate_model_admission(candidate, policy, target)
                 if (existing.kind, existing.alias, existing.previous_package_id,
-                        existing.package_id, existing.reverted_operation_id) != (
-                            "activate", name, expected_package_id, package_id, ""):
+                        existing.package_id, receipt.admission_id) != (
+                            "activate", name, expected_package_id, package_id,
+                            expected_receipt.admission_id):
                     raise ModelPackageConflict("operation ID was already used for another request")
-                return existing
-            if not conn.execute("SELECT 1 FROM model_packages WHERE package_id=?",
-                                (package_id,)).fetchone():
-                raise KeyError("package is not registered")
-            current = self._current_alias(conn, name)
-            if current != expected_package_id:
-                raise ModelPackageConflict("activation compare-and-set failed")
-            if current == package_id:
-                raise ModelPackageConflict("package is already active")
-            conn.execute("INSERT INTO model_package_aliases VALUES (?,?) "
-                         "ON CONFLICT(alias) DO UPDATE SET package_id=excluded.package_id",
-                         (name, package_id))
-            cursor = conn.execute(
-                "INSERT INTO model_package_activations "
-                "(operation_id,kind,alias,previous_package_id,package_id,reverted_operation_id) "
-                "VALUES (?,?,?,?,?,NULL)",
-                (operation_id, "activate", name, current, package_id))
-            return ModelActivationReceipt(cursor.lastrowid, operation_id, "activate", name,
-                                          current, package_id, "")
+                return AdmittedModelActivation(existing, receipt)
+            package = self._stored_package(conn, package_id)
+            receipt = evaluate_model_admission(package, policy, target)
+            if not receipt.accepted:
+                raise ModelPackageAdmissionRejected(receipt)
+            activation = self._activate_in_connection(
+                conn, name, package_id, expected_package_id, operation_id)
+            encoded = json.dumps(receipt.to_dict(), sort_keys=True, separators=(",", ":"))
+            conn.execute("INSERT INTO model_package_admissions VALUES (?,?,?)",
+                         (operation_id, receipt.admission_id, encoded))
+            return AdmittedModelActivation(activation, receipt)
+
+    def _activate_in_connection(self, conn: sqlite3.Connection, name: str,
+                                package_id: str, expected_package_id: str,
+                                operation_id: str) -> "ModelActivationReceipt":
+        existing = self._activation_by_operation(conn, operation_id)
+        if existing is not None:
+            if (existing.kind, existing.alias, existing.previous_package_id,
+                    existing.package_id, existing.reverted_operation_id) != (
+                        "activate", name, expected_package_id, package_id, ""):
+                raise ModelPackageConflict("operation ID was already used for another request")
+            return existing
+        if not conn.execute("SELECT 1 FROM model_packages WHERE package_id=?",
+                            (package_id,)).fetchone():
+            raise KeyError("package is not registered")
+        current = self._current_alias(conn, name)
+        if current != expected_package_id:
+            raise ModelPackageConflict("activation compare-and-set failed")
+        if current == package_id:
+            raise ModelPackageConflict("package is already active")
+        conn.execute("INSERT INTO model_package_aliases VALUES (?,?) "
+                     "ON CONFLICT(alias) DO UPDATE SET package_id=excluded.package_id",
+                     (name, package_id))
+        cursor = conn.execute(
+            "INSERT INTO model_package_activations "
+            "(operation_id,kind,alias,previous_package_id,package_id,reverted_operation_id) "
+            "VALUES (?,?,?,?,?,NULL)",
+            (operation_id, "activate", name, current, package_id))
+        return ModelActivationReceipt(cursor.lastrowid, operation_id, "activate", name,
+                                      current, package_id, "")
+
+    def admission_for_activation(self, operation_id: str) -> ModelAdmissionReceipt | None:
+        operation_id = _identifier(operation_id, "operation ID")
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT receipt_json FROM model_package_admissions "
+                "WHERE activation_operation_id=?", (operation_id,)).fetchone()
+        return self._admission_from_json(row[0]) if row else None
+
+    def admission_history(self) -> tuple[ModelAdmissionReceipt, ...]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT a.receipt_json FROM model_package_admissions a "
+                "JOIN model_package_activations x "
+                "ON x.operation_id=a.activation_operation_id ORDER BY x.sequence").fetchall()
+        return tuple(self._admission_from_json(row[0]) for row in rows)
+
+    @staticmethod
+    def _stored_package(conn: sqlite3.Connection, package_id: str) -> ModelPackage:
+        row = conn.execute("SELECT package_json FROM model_packages WHERE package_id=?",
+                           (package_id,)).fetchone()
+        if not row:
+            raise KeyError("package is not registered")
+        try:
+            return model_package_from_dict(json.loads(row[0]))
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            raise ModelPackageStoreCorrupt("stored model package is corrupt") from exc
+
+    @staticmethod
+    def _admission_from_json(encoded: str) -> ModelAdmissionReceipt:
+        try:
+            value = json.loads(encoded)
+            policy = ModelTrustPolicy(**value["policy"])
+            target = ModelDeploymentTarget(**value["target"])
+            receipt = ModelAdmissionReceipt(
+                value["package_id"], policy, target, tuple(value["reasons"]))
+            if value.get("schema") != receipt.schema or value.get("admission_id") != receipt.admission_id:
+                raise ValueError("admission identity mismatch")
+            return receipt
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ModelPackageStoreCorrupt("stored model admission is corrupt") from exc
 
     def rollback(self, activation_operation_id: str, *, operation_id: str) -> "ModelActivationReceipt":
         """Reverse one activation iff its alias still points at that activation's target."""
@@ -335,6 +430,16 @@ class ModelActivationReceipt:
 
     def to_dict(self) -> dict:
         return dict(self.__dict__)
+
+
+@dataclass(frozen=True)
+class AdmittedModelActivation:
+    activation: ModelActivationReceipt
+    admission: ModelAdmissionReceipt
+
+    def to_dict(self) -> dict:
+        return {"activation": self.activation.to_dict(),
+                "admission": self.admission.to_dict()}
 
 
 @dataclass(frozen=True)

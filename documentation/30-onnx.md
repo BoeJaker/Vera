@@ -57,6 +57,22 @@ capabilities do not yet consult the binding, and no inference call is redirected
 by this slice. That traffic step remains gated on identical legacy/package
 inference evidence.
 
+Before an audited alias activation, `evaluate_model_admission` compares the
+package against an explicit `ModelDeploymentTarget` and `ModelTrustPolicy`. It
+classifies task and input/output contract mismatches, insufficient declared
+memory, missing accelerators, unsupported framework/opset, and missing or
+untrusted signature identifiers. The stable receipt contains package, policy,
+target and reason identities, not model data.
+
+`activate_admitted` recomputes this receipt from the immutable stored package;
+it does not accept a caller's assertion that admission passed. An accepted
+receipt and alias activation commit in one transaction and remain queryable by
+operation or in activation order. Rejected or corrupt evidence leaves no alias
+or activation entry. This is a declarative admission gate: target facts are not
+hardware probes, and trusted signature identifiers are policy input rather than
+cryptographic signature verification. Those live/trust integrations and
+inference parity remain separately queued gates.
+
 Vera can turn a **trained ML Workshop module** into a portable `.onnx` artifact
 and serve it through ONNX Runtime (ORT) — as a first-class capability and on the
 edge nodes — so inference no longer needs the NumPy/PyTorch training stack
