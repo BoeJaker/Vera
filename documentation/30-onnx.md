@@ -43,6 +43,20 @@ inspect artifact files, create an ONNX Runtime session, or claim inference
 parity. The older low-level `alias` method remains for compatibility but does
 not produce activation history and is not the audited deployment path.
 
+Legacy ONNX invocation identities can also be attached to package identity
+without changing how they execute. `legacy_onnx_bindings` describes both the
+selector-based `ml.onnx.run#<slug>` identity and its dynamic
+`ml.onnx.model.<slug>` capability. `bind_legacy_capabilities` verifies that the
+target package is registered and writes the pair transactionally with
+compare-and-set protection; conflicts cannot leave a half-migrated pair.
+Bindings retain their manifest-source provenance, survive reopen, and are
+queryable independently of execution.
+
+This is a discovery and migration bridge, not runtime delegation: the legacy
+capabilities do not yet consult the binding, and no inference call is redirected
+by this slice. That traffic step remains gated on identical legacy/package
+inference evidence.
+
 Vera can turn a **trained ML Workshop module** into a portable `.onnx` artifact
 and serve it through ONNX Runtime (ORT) — as a first-class capability and on the
 edge nodes — so inference no longer needs the NumPy/PyTorch training stack
