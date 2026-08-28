@@ -95,6 +95,14 @@ Projection-backed training boundary (W2-05)
   parity report instead of being repaired. The snapshot is not a capability or
   persistence format and performs no backend reads.
 
+  `worldview_shadow_evidence` can accumulate those payload-free reports in an
+  immutable bounded in-memory window. Entries retain observation time,
+  manifest/snapshot identities, readiness and failure counts—not record IDs or
+  source payloads. Its summary keeps each failure class visible and reports the
+  current consecutive-ready run, so a later failure resets readiness evidence
+  instead of disappearing inside an aggregate. Persistence and live collection
+  remain deliberately unimplemented.
+
 Capabilities registered
 ───────────────────────
   worldview.train                   — full 3-stage training
