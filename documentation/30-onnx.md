@@ -219,7 +219,26 @@ explicit.
 
 ---
 
-## 9. Dependencies
+## 9. Portable package import boundary
+
+Vera's provider-neutral model layer can register an existing ONNX artifact by
+reference through `inspect_and_register_onnx`. The import boundary requires an
+immutable `ModelPackage` with exactly one `model` artifact whose path ends in
+`.onnx`. It hashes every declared artifact under an explicit size limit before
+writing the package to a registry.
+
+This operation is deliberately inspect-only: it does not import ONNX libraries,
+parse a graph, create an inference session, activate an alias, or move, delete,
+rewrite, or execute the source file. A failed, cancelled, missing, changed, or
+oversized artifact returns a verification-failed receipt and performs no
+registry write. Loading, inference parity, activation, and rollback remain
+separate gated lifecycle operations.
+
+Implementation: [`vera/models/onnx_import.py`](../vera/models/onnx_import.py).
+
+---
+
+## 10. Dependencies
 
 ```
 onnx>=1.16            # graph builder for ml.export.onnx
