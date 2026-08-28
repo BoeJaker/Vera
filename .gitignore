@@ -124,3 +124,11 @@ documentation/postmortems/
 !/documentation/README.md
 !/documentation/GALLERY.md
 .vera-work/
+
+# Third-party apps Vera integrates but does NOT absorb. Each one stays its own
+# upstream git repository, cloned here at runtime (godseye.repo.sync) and built
+# into static assets Vera serves; none of their source — or their node_modules /
+# dist / build logs — is ever tracked by Vera. `godseye.repo.sync` REFUSES to
+# clone into a path this file does not already exclude, because an un-ignored
+# vendor tree makes every checkout permanently dirty and blocks promotes.
+/vendor/

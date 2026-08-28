@@ -1,0 +1,355 @@
+"""godseye_core.py — pure logic for the vendored Godseye integration.
+
+App-free on purpose (no orchestrator, no Redis, no FastAPI) so the pieces that
+are easy to get *quietly* wrong — the static-asset path guard, the build-log
+state machine, the git argv builders, BYOK key handling — are unit-testable
+without booting Vera. ``godseye_capabilities`` wires this to caps/routes/UI.
+
+Godseye (https://github.com/VrushankPatel/godseye) is a **separate upstream
+repo**, deliberately NOT vendored into Vera's source tree: it is cloned at
+runtime into a git-ignored directory and built into static assets that Vera
+serves. Nothing under ``vendor/`` is ever tracked by Vera's git.
+"""
+from __future__ import annotations
+
+import re
+import shlex
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+# ── Constants ────────────────────────────────────────────────────────────────
+UPSTREAM_URL = "https://github.com/VrushankPatel/godseye"
+
+#: URL prefix the built SPA is served under. The Vite build MUST be given the
+#: matching ``--base`` or every hashed asset 404s (they are absolute URLs).
+APP_MOUNT = "/godseye/app"
+APP_BASE = APP_MOUNT + "/"
+
+#: Node image used for the containerised build — the host needs no toolchain.
+#: Vite 7 requires Node >= 20.19, so pin a major that satisfies it.
+DEFAULT_NODE_IMAGE = "node:22-alpine"
+
+#: Godseye's "bring your own key" integrations. Every one is optional: absent
+#: keys just disable that layer in the UI. Values are inlined into the bundle at
+#: BUILD time (that is how Vite `import.meta.env` works), so anyone who can load
+#: the built page can read them — they are treated as low-sensitivity API keys,
+#: sealed at rest but never claimed to be secret from the browser.
+BYOK_KEYS: tuple = (
+    "VITE_GOOGLE_MAPS_3D_KEY",
+    "VITE_GOOGLE_MAPS_API_KEY",
+    "VITE_MAPBOX_ACCESS_TOKEN",
+    "VITE_YOUTUBE_API_KEY",
+    "VITE_GUARDIAN_API_KEY",
+    "VITE_AISSTREAM_API_KEY",
+    "VITE_FIREBASE_RTDB_URL",
+    "VITE_GODSEYE_CACHE_SECRET",
+)
+
+#: Marker the build script appends as its last line. Its presence is the ONLY
+#: reliable "the build finished" signal — the container is detached, so an
+#: absent marker means "still running OR died hard", never "succeeded".
+EXIT_MARKER = "GODSEYE_EXIT="
+
+_SAFE_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$")
+_STAGE_LINE = re.compile(r"^\[godseye\] --- (.+?) ---\s*$")
+
+
+# ── Layout ───────────────────────────────────────────────────────────────────
+def repo_root(module_file: str) -> Path:
+    """Vera's repo root, derived from a file inside ``vera/godseye/``."""
+    return Path(module_file).resolve().parent.parent.parent
+
+
+def resolve_layout(root: Path, env: Optional[Dict[str, str]] = None) -> Dict[str, Path]:
+    """Where the vendored clone, its build state and its built assets live.
+
+    ``VERA_GODSEYE_DIR`` overrides the clone directory outright (so an operator
+    can park it on a bigger disk); everything else hangs off it. The default
+    keeps the clone inside the repo working directory but under ``vendor/``,
+    which Vera's .gitignore excludes — see ``clone_dir_is_ignored``.
+    """
+    env = env or {}
+    override = (env.get("VERA_GODSEYE_DIR") or "").strip()
+    clone = Path(override).expanduser() if override else Path(root) / "vendor" / "godseye"
+    clone = clone if clone.is_absolute() else (Path(root) / clone)
+    state = clone.parent / ".godseye"
+    return {
+        "vendor_dir": clone.parent,
+        "clone_dir": clone,
+        "state_dir": state,
+        "log_path": state / "build.log",
+        "dist_dir": clone / "dist",
+        "env_file": clone / ".env.local",
+    }
+
+
+# ── Static asset serving ─────────────────────────────────────────────────────
+def gitignore_covers(rel_dir: str, gitignore_text: str) -> bool:
+    """Does this .gitignore exclude ``rel_dir`` (a path relative to the repo)?
+
+    A deliberately conservative fallback for when `git check-ignore` cannot be
+    consulted — Vera also runs from containers with no ``.git`` at all, and
+    "couldn't ask git" must not silently become "go ahead and clone into the
+    tracked tree". Only recognises a literal rule for the directory or one of
+    its ancestors; anything cleverer (globs, negations) reads as NOT covered,
+    which fails closed.
+    """
+    parts = [p for p in str(rel_dir or "").replace("\\", "/").split("/") if p and p != "."]
+    if not parts:
+        return False
+    prefixes = ["/".join(parts[:i + 1]) for i in range(len(parts))]
+    wanted = set()
+    for p in prefixes:
+        wanted |= {p, f"/{p}", f"{p}/", f"/{p}/"}
+    hit = False
+    for raw in (gitignore_text or "").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("!"):
+            # A re-include anywhere in the file means this fallback cannot be
+            # sure, and "not sure" must mean "no".
+            if line[1:].strip() in wanted:
+                return False
+            continue
+        if line in wanted:
+            hit = True
+    return hit
+
+
+def resolve_asset(dist_dir: Path, rel: str) -> Optional[Path]:
+    """Map a request path under ``/godseye/app/`` to a file inside ``dist``.
+
+    Returns None when the path escapes ``dist`` or is not an existing file.
+    Traversal is rejected on the RESOLVED path rather than by pattern-matching
+    the raw string, so encoded/duplicated separators and symlinks inside dist
+    cannot walk out of the served root.
+    """
+    rel = (rel or "").lstrip("/")
+    if not rel:
+        rel = "index.html"
+    if "\x00" in rel:
+        return None
+    try:
+        base = Path(dist_dir).resolve()
+        target = (base / rel).resolve()
+    except (OSError, ValueError, RuntimeError):
+        return None
+    if target != base and base not in target.parents:
+        return None
+    if not target.is_file():
+        return None
+    return target
+
+
+def cache_control_for(path: str) -> str:
+    """Vite emits content-hashed files under ``assets/`` — those are immutable.
+    ``index.html`` never is: it is the pointer that changes on every rebuild, so
+    caching it is how you get a page wired to assets that no longer exist.
+    """
+    name = str(path).replace("\\", "/").rsplit("/", 1)[-1]
+    if name in ("index.html", "") or name.endswith(".html"):
+        return "no-store"
+    return "public, max-age=31536000, immutable"
+
+
+# ── Build log ────────────────────────────────────────────────────────────────
+def parse_build_log(text: str, tail: int = 40) -> Dict[str, Any]:
+    """Turn the raw build log into state. Never guesses from elapsed time."""
+    lines = [ln for ln in (text or "").splitlines()]
+    exit_code: Optional[int] = None
+    stage = ""
+    for ln in lines:
+        m = _STAGE_LINE.match(ln)
+        if m:
+            stage = m.group(1)
+        if ln.startswith(EXIT_MARKER):
+            rest = ln[len(EXIT_MARKER):].strip().split()
+            try:
+                exit_code = int(rest[0]) if rest else None
+            except ValueError:
+                exit_code = None
+    finished = exit_code is not None
+    return {
+        "started": bool(lines),
+        "finished": finished,
+        "running": bool(lines) and not finished,
+        "ok": finished and exit_code == 0,
+        "exit_code": exit_code,
+        "stage": stage,
+        "lines": len(lines),
+        "tail": lines[-max(0, int(tail)):] if tail else [],
+    }
+
+
+# ── git argv builders ────────────────────────────────────────────────────────
+def is_safe_repo_url(url: str) -> bool:
+    """Only plain http(s) URLs. Rejects anything that git would read as an
+    OPTION (a leading '-'), plus ssh/file/ext transports — `git clone` accepts
+    `ext::sh -c ...` as a remote, which is remote code execution by URL."""
+    u = (url or "").strip()
+    if not u or u.startswith("-") or any(c.isspace() for c in u):
+        return False
+    return u.startswith("http://") or u.startswith("https://")
+
+
+def allowed_repo_url(url: str, env: Optional[Dict[str, str]] = None) -> Tuple[bool, str]:
+    """Is this repository allowed to be cloned, built and SERVED by Vera?
+
+    ``godseye.repo.sync`` is reachable by any caller a capability is reachable
+    by, including agent loops. Whatever it clones gets built and served as
+    JavaScript from Vera's own origin, and its npm ``postinstall`` scripts run
+    during the build — so an arbitrary URL here is arbitrary code execution plus
+    same-origin script injection. The URL is therefore PINNED to the vendored
+    upstream unless an operator deliberately points ``VERA_GODSEYE_REPO_URL``
+    somewhere else (e.g. an internal mirror). Env is operator-controlled;
+    capability arguments are not.
+    """
+    u = (url or "").strip()
+    if not is_safe_repo_url(u):
+        return False, f"unsafe repo url: {u!r} (http(s) only)"
+    allowed = {UPSTREAM_URL, UPSTREAM_URL + ".git"}
+    override = ((env or {}).get("VERA_GODSEYE_REPO_URL") or "").strip()
+    if override:
+        allowed |= {override, override.rstrip("/")}
+    if u.rstrip("/") in {a.rstrip("/") for a in allowed}:
+        return True, ""
+    return False, (
+        f"{u} is not the vendored Godseye upstream. Vera builds and serves this "
+        "repo's JavaScript on its own origin, so the source is pinned to "
+        f"{UPSTREAM_URL}; set VERA_GODSEYE_REPO_URL to allow a mirror.")
+
+
+def is_safe_ref(ref: str) -> bool:
+    """Conservative branch/tag/sha filter — no option injection, no `..`."""
+    r = (ref or "").strip()
+    if not r or ".." in r or r.endswith(".lock") or r.endswith("/"):
+        return False
+    return bool(_SAFE_REF.match(r))
+
+
+def clone_argv(url: str, dest: Path, ref: str = "", depth: int = 1) -> List[str]:
+    argv = ["git", "clone"]
+    if depth and int(depth) > 0:
+        argv += ["--depth", str(int(depth))]
+    if ref:
+        argv += ["--branch", ref]
+    argv += ["--", url, str(dest)]
+    return argv
+
+
+def update_argv(ref: str = "") -> List[List[str]]:
+    """Idempotent 'bring the existing clone up to date' sequence.
+
+    Uses fetch + hard reset rather than `git pull`: the clone is a managed
+    artifact, not somewhere anyone should be committing, and a merge conflict
+    here would leave it wedged with no interactive way out.
+    """
+    target = ref or "HEAD"
+    seq: List[List[str]] = [["git", "fetch", "--depth", "1", "origin", target]]
+    seq.append(["git", "checkout", "--force", "--detach", "FETCH_HEAD"])
+    return seq
+
+
+# ── BYOK config ──────────────────────────────────────────────────────────────
+def clean_env_value(value: str) -> str:
+    """Strip anything that could end an assignment early.
+
+    Quoting alone is NOT enough here: dotenv accepts multi-line quoted values,
+    so a key containing a newline still lands as a second `KEY=…` line in the
+    generated file for anyone reading it (and a lone stray quote can swallow the
+    following lines). No real API key contains a control character, so the
+    honest fix is to drop them rather than trust the quoting.
+    """
+    return "".join(ch for ch in str(value or "") if ch.isprintable()).strip()
+
+
+def env_file_text(config: Dict[str, str]) -> str:
+    """Render ``.env.local`` for the Vite build from a config mapping.
+
+    Only recognised VITE_ keys are emitted, each stripped of control characters
+    and then shell-quoted, so no value can inject a second assignment.
+    """
+    out = ["# Generated by Vera (godseye.config.set) — do not edit by hand.",
+           "# Values are inlined into the built bundle by Vite at build time."]
+    for key in BYOK_KEYS:
+        val = clean_env_value((config or {}).get(key, ""))
+        if not val:
+            continue
+        out.append(f"{key}={shlex.quote(val)}")
+    return "\n".join(out) + "\n"
+
+
+def redact_config(config: Dict[str, str]) -> Dict[str, str]:
+    """Never hand raw keys back over the API — show only enough to recognise."""
+    out: Dict[str, str] = {}
+    for key in BYOK_KEYS:
+        val = str((config or {}).get(key, "") or "")
+        if not val:
+            out[key] = ""
+        elif len(val) <= 8:
+            out[key] = "*" * len(val)
+        else:
+            out[key] = f"{val[:3]}{'*' * 6}{val[-2:]}"
+    return out
+
+
+def known_config(config: Dict[str, str]) -> Dict[str, str]:
+    """Drop anything that is not a recognised Godseye BYOK key."""
+    return {k: str(v or "") for k, v in (config or {}).items() if k in BYOK_KEYS}
+
+
+# ── docker build argv ────────────────────────────────────────────────────────
+def docker_build_argv(*, vendor_dir: Path, script_path: Path, clone_name: str,
+                      image: str = DEFAULT_NODE_IMAGE, container: str = "godseye-build",
+                      uid: int = 0, gid: int = 0, base: str = APP_BASE,
+                      refresh_manifests: bool = False,
+                      clean_install: bool = False) -> List[str]:
+    """`docker run` argv for a one-shot containerised production build.
+
+    Detached on purpose: the build outlives any single HTTP request, and its
+    only progress channel is the log file inside the bind mount, which the
+    caller can read while it is still running.
+
+    Runs as the HOST's uid/gid so ``node_modules``/``dist`` do not come back
+    root-owned — the 2026-08-28 first attempt did exactly that and then could
+    not write its own log on the next run.
+    """
+    env = {
+        "GODSEYE_SRC": f"/work/{clone_name}",
+        "GODSEYE_LOG": "/work/.godseye/build.log",
+        "GODSEYE_BASE": base or APP_BASE,
+        "GODSEYE_REFRESH": "1" if refresh_manifests else "0",
+        "GODSEYE_CLEAN_INSTALL": "1" if clean_install else "0",
+        "HOME": "/tmp",
+        "npm_config_cache": "/tmp/.npm",
+    }
+    argv = ["docker", "run", "-d", "--name", container,
+            "--user", f"{int(uid)}:{int(gid)}",
+            "-v", f"{vendor_dir}:/work",
+            "-v", f"{script_path}:/opt/godseye_build.sh:ro"]
+    for k, v in env.items():
+        argv += ["-e", f"{k}={v}"]
+    argv += [image, "sh", "/opt/godseye_build.sh"]
+    return argv
+
+
+def summarize_dist(files: Sequence[Path], dist_dir: Path) -> Dict[str, Any]:
+    """Compact description of a built bundle for `godseye.status`."""
+    total = 0
+    newest = 0.0
+    count = 0
+    for f in files:
+        try:
+            st = f.stat()
+        except OSError:
+            continue
+        count += 1
+        total += st.st_size
+        newest = max(newest, st.st_mtime)
+    return {
+        "built": count > 0 and (Path(dist_dir) / "index.html").is_file(),
+        "files": count,
+        "bytes": total,
+        "mtime": newest or None,
+    }

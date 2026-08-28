@@ -9110,6 +9110,10 @@ async def lifespan(app: FastAPI):
         # with enforced per-app access) over app.mount/operator/mcp-catalog/identity.
         # Loaded last so its lazy cap lookups resolve every referenced subsystem.
         os.path.join(_here, "integrations/integrations_capabilities.py"),
+        # Godseye: the vendored 3D geospatial globe. Its upstream repo is cloned
+        # at runtime into a git-ignored vendor/ dir and built into static assets
+        # Vera serves — no Godseye source is tracked here.
+        os.path.join(_here, "godseye/godseye_capabilities.py"),
         os.path.join(_here, "vera_graph_panels.py")
 
     ]

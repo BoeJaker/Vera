@@ -1,0 +1,264 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Godseye</title>
+<style>
+  :root{ --bg0:#0d0f12; --bg1:#14171c; --bg2:#1b1f26; --fg:#d6dde6; --t2:#9aa4b2;
+         --t3:#6b7480; --acc:#5aa9ff; --line:#252b34; --run:#3ecf8e; --stop:#e05a5a;
+         --warn:#e0a94a; }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg0);color:var(--fg);
+    font:13px/1.45 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  #wrap{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+  header{display:flex;align-items:center;gap:8px;padding:9px 14px;
+    border-bottom:1px solid var(--line);flex-shrink:0}
+  .ttl{font-weight:600;font-size:14px}.sp{flex:1}
+  .sub{color:var(--t3);font-size:11px}
+  .btn{background:var(--bg2);color:var(--fg);border:1px solid var(--line);border-radius:7px;
+    padding:6px 11px;font-size:12px;cursor:pointer}
+  .btn:hover{border-color:var(--acc)}
+  .btn.pri{background:var(--acc);color:#04121f;border-color:var(--acc);font-weight:600}
+  .btn.sm{padding:3px 8px;font-size:11px}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .bdg{font-size:10px;padding:2px 7px;border-radius:99px;border:1px solid var(--line);
+    color:var(--t2);white-space:nowrap}
+  .bdg.ok{color:var(--run);border-color:#1f5c42}
+  .bdg.no{color:var(--t3)}
+  .bdg.busy{color:var(--warn);border-color:#5c4a1f}
+  .bdg.err{color:var(--stop);border-color:#5c2626}
+  #setup{border-bottom:1px solid var(--line);padding:14px;overflow:auto;flex-shrink:0;
+    max-height:62vh;background:var(--bg1)}
+  #setup.hide{display:none}
+  .row{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+  .step{display:flex;gap:11px;align-items:flex-start;padding:11px;border:1px solid var(--line);
+    border-radius:10px;background:var(--bg0);margin-bottom:9px}
+  .step .n{width:22px;height:22px;border-radius:99px;background:var(--bg2);color:var(--t2);
+    display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0}
+  .step.done .n{background:#153726;color:var(--run)}
+  .step .bd{flex:1;min-width:0}
+  .step h3{margin:0 0 3px;font-size:12.5px;font-weight:600}
+  .step p{margin:0 0 8px;color:var(--t2);font-size:11.5px}
+  code{background:var(--bg2);padding:1px 5px;border-radius:4px;font-size:11px}
+  pre#log{margin:0;padding:10px;background:#07090b;border:1px solid var(--line);
+    border-radius:8px;max-height:230px;overflow:auto;font-size:11px;line-height:1.5;
+    color:var(--t2);white-space:pre-wrap;word-break:break-word}
+  #frame{flex:1;position:relative;min-height:0}
+  #frame iframe{width:100%;height:100%;border:none;background:#000;display:block}
+  #blank{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    color:var(--t3);text-align:center;padding:24px}
+  table.keys{width:100%;border-collapse:collapse;font-size:11.5px}
+  table.keys td{padding:3px 6px 3px 0;vertical-align:middle}
+  table.keys input{width:100%;background:var(--bg2);border:1px solid var(--line);
+    color:var(--fg);border-radius:6px;padding:4px 7px;font-size:11.5px}
+  .kname{color:var(--t2);white-space:nowrap;font-family:ui-monospace,monospace}
+  .kset{color:var(--t3);font-family:ui-monospace,monospace;white-space:nowrap}
+  #toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--bg2);
+    border:1px solid var(--line);border-radius:8px;padding:8px 14px;font-size:12px;opacity:0;
+    pointer-events:none;transition:opacity .2s;z-index:9}
+  #toast.on{opacity:1} #toast.err{border-color:var(--stop);color:#ffb3b3}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <header>
+    <span class="ttl">&#127757; Godseye</span>
+    <span id="chips" class="row" style="margin:0;gap:6px"></span>
+    <span class="sp"></span>
+    <button class="btn sm" id="btnSetup" onclick="toggleSetup()">Setup</button>
+    <button class="btn sm" onclick="reloadApp()">Reload</button>
+    <a class="btn sm" href="/godseye/app/" target="_blank" rel="noopener"
+       style="text-decoration:none">Open &#8599;</a>
+  </header>
+
+  <div id="setup">
+    <div class="step" id="s1">
+      <div class="n">1</div>
+      <div class="bd">
+        <h3>Vendor the upstream repo</h3>
+        <p id="p1">Godseye is a separate project. Vera clones it into a git-ignored
+           directory and never tracks its source.</p>
+        <button class="btn" id="btnSync" onclick="sync()">Clone / update</button>
+      </div>
+    </div>
+
+    <div class="step" id="s2">
+      <div class="n">2</div>
+      <div class="bd">
+        <h3>Build the globe</h3>
+        <p id="p2">Runs <code>npm ci</code> + <code>vite build</code> in a throwaway
+           Node container &mdash; this host needs no Node toolchain. Takes several
+           minutes the first time.</p>
+        <div class="row">
+          <button class="btn pri" id="btnBuild" onclick="build(false)">Build</button>
+          <button class="btn" id="btnBuildFull" onclick="build(true)"
+                  title="Also re-verify thousands of upstream CCTV/satellite feeds. Slow.">Build + refresh feeds</button>
+        </div>
+        <pre id="log" style="display:none"></pre>
+      </div>
+    </div>
+
+    <div class="step" id="s3">
+      <div class="n">3</div>
+      <div class="bd">
+        <h3>Optional API keys</h3>
+        <p>Every key is optional &mdash; an unset key just disables that layer.
+           Vite inlines them into the built bundle, so anyone who can load the page
+           can read them. Changing a key needs a rebuild.</p>
+        <table class="keys"><tbody id="keys"></tbody></table>
+        <div class="row" style="margin:9px 0 0">
+          <button class="btn" onclick="saveKeys()">Save keys</button>
+          <span class="sub" id="keyNote"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="frame"><div id="blank">Loading&hellip;</div></div>
+</div>
+<div id="toast"></div>
+
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let ST={}, POLL=null, SETUP_PINNED=false;
+
+function toast(m,e){const t=$('#toast');t.textContent=m;t.className='on'+(e?' err':'');
+  clearTimeout(t._h);t._h=setTimeout(()=>t.className='',3000);}
+async function api(path,method='GET',body){
+  const o={method,headers:{'Content-Type':'application/json'}};
+  if(body)o.body=JSON.stringify(body);
+  const r=await fetch(path,o); let j={};
+  try{j=await r.json();}catch(e){}
+  if(!r.ok&&!j.error)j.error='HTTP '+r.status;
+  return j;
+}
+function bytes(n){ if(!n)return '0 B'; const u=['B','KB','MB','GB'];
+  let i=0,v=n; while(v>=1024&&i<u.length-1){v/=1024;i++;} return v.toFixed(v<10&&i?1:0)+' '+u[i]; }
+
+function toggleSetup(){ SETUP_PINNED=$('#setup').classList.contains('hide');
+  $('#setup').classList.toggle('hide'); }
+
+function renderChips(){
+  const c=[], b=ST.build||{}, d=ST.dist||{}, cm=ST.commit||{};
+  c.push(ST.cloned ? `<span class="bdg ok">cloned ${esc(cm.short||'')}</span>`
+                   : '<span class="bdg no">not cloned</span>');
+  if(b.running) c.push(`<span class="bdg busy">building${b.stage?' &middot; '+esc(b.stage):''}</span>`);
+  else if(d.built) c.push(`<span class="bdg ok">built &middot; ${bytes(d.bytes)}</span>`);
+  else if(b.finished&&!b.ok) c.push(`<span class="bdg err">build failed (exit ${esc(b.exit_code)})</span>`);
+  else c.push('<span class="bdg no">not built</span>');
+  if(ST.cloned&&!ST.vendor_ignored) c.push('<span class="bdg err">vendor dir NOT git-ignored</span>');
+  $('#chips').innerHTML=c.join('');
+}
+
+function renderSteps(){
+  const b=ST.build||{}, d=ST.dist||{}, cm=ST.commit||{};
+  $('#s1').classList.toggle('done', !!ST.cloned);
+  $('#s2').classList.toggle('done', !!d.built);
+  $('#p1').innerHTML = ST.cloned
+    ? `Cloned at <code>${esc((ST.paths||{}).clone_dir||'')}</code>`
+      + (cm.short?` &middot; <code>${esc(cm.short)}</code> ${esc(cm.subject||'')}`:'')
+    : `Will clone <code>${esc(ST.upstream||'')}</code> into `
+      + `<code>${esc((ST.paths||{}).clone_dir||'')}</code>.`;
+  $('#btnSync').textContent = ST.cloned ? 'Update to latest' : 'Clone';
+  $('#p2').innerHTML = d.built
+    ? `Built: ${d.files} files, ${bytes(d.bytes)}. Served at <code>/godseye/app/</code>.`
+    : 'Runs <code>npm ci</code> + <code>vite build</code> in a throwaway Node container '
+      + '&mdash; this host needs no Node toolchain. Takes several minutes the first time.';
+  const busy=!!b.running;
+  $('#btnBuild').disabled=busy||!ST.cloned;
+  $('#btnBuildFull').disabled=busy||!ST.cloned;
+  $('#btnSync').disabled=busy;
+  $('#btnBuild').textContent = busy ? 'Building…' : (d.built ? 'Rebuild' : 'Build');
+}
+
+function renderLog(b){
+  const el=$('#log');
+  if(!b || !b.started){ el.style.display='none'; return; }
+  el.style.display='block';
+  el.textContent=(b.tail||[]).join('\n');
+  el.scrollTop=el.scrollHeight;
+}
+
+function renderKeys(cfg){
+  const rows=(cfg.known||[]).map(k=>{
+    const shown=(cfg.keys||{})[k]||'';
+    return `<tr><td class="kname">${esc(k)}</td>`
+      +`<td><input data-key="${esc(k)}" placeholder="${shown?'unchanged':'not set'}"></td>`
+      +`<td class="kset">${esc(shown)}</td></tr>`;
+  });
+  $('#keys').innerHTML=rows.join('');
+  $('#keyNote').textContent=(cfg.set&&cfg.set.length)
+    ? cfg.set.length+' key(s) set — rebuild to apply' : '';
+}
+
+function mountApp(){
+  const d=ST.dist||{}, f=$('#frame');
+  if(!d.built){
+    f.innerHTML='<div id="blank">The globe appears here once Godseye is cloned and built.</div>';
+    return;
+  }
+  // Reuse the existing iframe rather than re-creating it, so a status poll
+  // never reloads (and resets) a globe the user is already flying around.
+  if(!f.querySelector('iframe')){
+    f.innerHTML='<iframe src="/godseye/app/" allow="fullscreen; clipboard-read; clipboard-write" '
+      +'referrerpolicy="no-referrer"></iframe>';
+  }
+}
+function reloadApp(){ const i=$('#frame').querySelector('iframe');
+  if(i) i.src='/godseye/app/?t='+Date.now(); else refresh(); }
+
+async function refresh(){
+  const s=await api('/godseye/status');
+  if(s.error){ toast(s.error,true); return; }
+  ST=s; renderChips(); renderSteps(); renderLog(s.build); mountApp();
+  // Auto-open Setup only while there is genuinely something to do; once the
+  // globe is up it stays out of the way unless the user pinned it open.
+  const needs=!s.cloned || !(s.dist||{}).built || (s.build||{}).running;
+  if(!SETUP_PINNED) $('#setup').classList.toggle('hide', !needs);
+  if((s.build||{}).running) startPoll(); else stopPoll();
+}
+
+function startPoll(){ if(POLL)return; POLL=setInterval(async()=>{
+  const b=await api('/godseye/build/status?tail=40');
+  if(b.error)return;
+  ST.build=b; ST.dist=b.dist||ST.dist;
+  renderChips(); renderSteps(); renderLog(b);
+  if(!b.running){ stopPoll(); toast(b.ok?'Build finished':'Build failed — see the log',!b.ok);
+    refresh(); }
+},3000); }
+function stopPoll(){ if(POLL){clearInterval(POLL);POLL=null;} }
+
+async function sync(){
+  $('#btnSync').disabled=true; toast('Fetching Godseye…');
+  const r=await api('/godseye/repo/sync','POST',{});
+  if(r.error||r.ok===false) toast(r.error||'sync failed',true);
+  else toast(r.action==='cloned'?'Cloned':'Updated to '+((r.commit||{}).short||'latest'));
+  await refresh();
+}
+async function build(full){
+  toast('Starting build…');
+  const r=await api('/godseye/build','POST',{refresh_manifests:!!full,force:true});
+  if(r.error||r.ok===false){ toast(r.error||'build failed to start',true); return; }
+  await refresh(); startPoll();
+}
+async function loadKeys(){ const c=await api('/godseye/config'); if(!c.error) renderKeys(c); }
+async function saveKeys(){
+  const keys={};
+  document.querySelectorAll('#keys input').forEach(i=>{
+    const v=i.value.trim(); if(v) keys[i.dataset.key]=v;
+  });
+  if(!Object.keys(keys).length){ toast('Nothing to save — fill a key first'); return; }
+  const r=await api('/godseye/config/set','POST',{keys});
+  if(r.error||r.ok===false){ toast(r.error||'save failed',true); return; }
+  toast('Saved — rebuild to apply');
+  document.querySelectorAll('#keys input').forEach(i=>i.value='');
+  loadKeys();
+}
+
+refresh(); loadKeys();
+setInterval(()=>{ if(!POLL) refresh(); }, 20000);
+</script>
+</body>
+</html>
