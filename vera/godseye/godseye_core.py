@@ -12,6 +12,7 @@ serves. Nothing under ``vendor/`` is ever tracked by Vera's git.
 """
 from __future__ import annotations
 
+import os
 import re
 import shlex
 from pathlib import Path
@@ -226,6 +227,32 @@ def is_safe_ref(ref: str) -> bool:
     if not r or ".." in r or r.endswith(".lock") or r.endswith("/"):
         return False
     return bool(_SAFE_REF.match(r))
+
+
+def git_env(base: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """Environment for the vendor clone's git calls — the operator's git config
+    must not reach them.
+
+    The clone is a managed artifact fetched ANONYMOUSLY over HTTPS from a pinned
+    URL. Inheriting ``~/.gitconfig`` breaks that: prod carries
+    ``url."git@github.com:".insteadOf = https://github.com/``, which silently
+    rewrites the pinned HTTPS URL into an SSH one, so cloning a PUBLIC repo dies
+    with "git@github.com: Permission denied (publickey)" as the Vera process
+    user. Credential helpers and commit-signing config are equally unwanted.
+
+    ``GIT_CONFIG_GLOBAL``/``GIT_CONFIG_SYSTEM`` need git >= 2.32; older git
+    ignores them, and ``GIT_CONFIG_NOSYSTEM`` still covers /etc/gitconfig there.
+    ``GIT_TERMINAL_PROMPT=0`` keeps a credential prompt from hanging the call
+    forever if a URL ever does need auth.
+    """
+    env = dict(base or {})
+    env.update({
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_TERMINAL_PROMPT": "0",
+    })
+    return env
 
 
 def clone_argv(url: str, dest: Path, ref: str = "", depth: int = 1) -> List[str]:

@@ -96,12 +96,13 @@ def _open(v: str) -> str:
 
 
 async def _run(argv: List[str], cwd: Optional[Path] = None,
-               timeout: int = 300) -> Dict[str, Any]:
+               timeout: int = 300,
+               env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     """Run a command with no shell — every argument stays a separate argv entry,
     so a hostile branch name or URL cannot become a second command."""
     try:
         proc = await asyncio.create_subprocess_exec(
-            *argv, cwd=str(cwd) if cwd else None,
+            *argv, cwd=str(cwd) if cwd else None, env=env,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     except FileNotFoundError:
         return {"ok": False, "rc": 127, "out": "", "err": f"{argv[0]}: not found on this host"}
@@ -296,9 +297,12 @@ async def godseye_repo_sync(ref: str = "", url: str = "", depth: int = 1,
             "of Vera's tracked tree; add the directory to .gitignore (or set "
             "VERA_GODSEYE_DIR to a path outside the repo) first.")}
 
+    # The operator's ~/.gitconfig must not reach these calls — see _core.git_env.
+    genv = _core.git_env(dict(os.environ))
+
     if (clone / ".git").exists():
         for argv in _core.update_argv(ref):
-            r = await _run(argv, cwd=clone, timeout=600)
+            r = await _run(argv, cwd=clone, timeout=600, env=genv)
             if not r["ok"]:
                 return {"ok": False, "action": "update", "error": r["err"] or r["out"],
                         "argv": argv}
@@ -306,7 +310,7 @@ async def godseye_repo_sync(ref: str = "", url: str = "", depth: int = 1,
     else:
         clone.parent.mkdir(parents=True, exist_ok=True)
         r = await _run(_core.clone_argv(url, clone, ref=ref, depth=depth),
-                       cwd=clone.parent, timeout=900)
+                       cwd=clone.parent, timeout=900, env=genv)
         if not r["ok"]:
             return {"ok": False, "action": "clone", "error": r["err"] or r["out"]}
         action = "cloned"
