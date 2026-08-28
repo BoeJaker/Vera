@@ -12,9 +12,10 @@ ordering produces a stable `mpkg_…` identity.
 The first registry is deliberately in-memory and non-executing. Registration is
 immutable and idempotent, aliases use compare-and-set semantics, and registering
 a URI never opens, moves, deletes, verifies, or activates its file. Durable
-storage, verification/signature policy, safe ONNX import, activation/rollback,
-legacy aliases, and inference parity are later slices. No model or external
-runtime tests are enabled by this contract.
+storage, read-only verification, safe ONNX import, and audited activation and
+rollback now build on that boundary. Signature policy, legacy capability aliases,
+and inference parity remain later slices. No model or external runtime tests are
+enabled by this contract.
 
 The second W2-06 slice adds `SQLiteModelPackageRegistry`. Canonical package JSON
 and aliases survive restart in transactional tables; package content is
@@ -27,6 +28,20 @@ streamed SHA-256 with cancellation, and reports missing, unsupported, oversized,
 size-mismatched, hash-mismatched or verified state. Verification never imports,
 moves, deletes, activates, or executes the artifact. Signature trust policy and
 durable receipt history remain later work.
+
+`SQLiteModelPackageRegistry.activate` is the audited control-plane operation for
+changing a serving alias. It requires the expected current package and a
+caller-supplied idempotency ID, then moves the alias and appends a
+`ModelActivationReceipt` in one immediate SQLite transaction. Competing stale
+requests fail without a partial history entry. `rollback` names the exact
+activation receipt to reverse and succeeds only while the alias still points to
+that activation's target; retrying the same rollback is idempotent, while a
+second or stale rollback is refused. Reopen preserves ordered history.
+
+Activation here changes registry identity only. It does not load a model,
+inspect artifact files, create an ONNX Runtime session, or claim inference
+parity. The older low-level `alias` method remains for compatibility but does
+not produce activation history and is not the audited deployment path.
 
 Vera can turn a **trained ML Workshop module** into a portable `.onnx` artifact
 and serve it through ONNX Runtime (ORT) — as a first-class capability and on the
