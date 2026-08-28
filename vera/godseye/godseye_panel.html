@@ -88,8 +88,8 @@
       <div class="bd">
         <h3>Build the globe</h3>
         <p id="p2">Runs <code>npm ci</code> + <code>vite build</code> in a throwaway
-           Node container &mdash; this host needs no Node toolchain. Takes several
-           minutes the first time.</p>
+           Node container &mdash; this host needs no Node toolchain, but it does need
+           Docker. Takes several minutes the first time.</p>
         <div class="row">
           <button class="btn pri" id="btnBuild" onclick="build(false)">Build</button>
           <button class="btn" id="btnBuildFull" onclick="build(true)"

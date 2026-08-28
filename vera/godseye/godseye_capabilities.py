@@ -329,6 +329,8 @@ async def godseye_repo_sync(ref: str = "", url: str = "", depth: int = 1,
                 "why godseye.repo.sync pins which repo may be vendored. "
                 "Returns as soon as the build STARTS — poll godseye.build.status "
                 "for real progress; never infer progress from elapsed time. "
+                "Needs a Docker socket, so it works where Vera runs natively, "
+                "not from inside a sandbox container. "
                 "Inputs: refresh_manifests (bool=false — slow, re-verifies "
                 "thousands of upstream feeds), clean_install (bool=false — force "
                 "a full `npm ci` even when node_modules is current), image (str), "
