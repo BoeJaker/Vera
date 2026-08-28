@@ -9,7 +9,8 @@ directly. Two things here are load-bearing enough to be explicit matrices:
     clone` treats ``ext::sh -c …`` as a remote helper — i.e. remote code
     execution by URL — and a leading ``-`` turns any argument into an option.
 """
-import os
+import json
+from pathlib import Path
 
 import pytest
 
@@ -187,40 +188,99 @@ def test_hostile_refs_are_refused(ref):
     assert C.is_safe_ref(ref) is False
 
 
-def test_git_env_neutralises_operator_config():
-    # prod carries url."git@github.com:".insteadOf=https://github.com/ in
-    # ~/.gitconfig, which rewrote the pinned HTTPS url to SSH and failed the
-    # clone of a PUBLIC repo with "Permission denied (publickey)".
-    env = C.git_env({"PATH": "/usr/bin", "HOME": "/home/boejaker"})
-    assert env["GIT_CONFIG_GLOBAL"] == os.devnull
-    assert env["GIT_CONFIG_SYSTEM"] == os.devnull
-    assert env["GIT_CONFIG_NOSYSTEM"] == "1"
-    # A credential prompt on a non-tty would hang the capability forever.
-    assert env["GIT_TERMINAL_PROMPT"] == "0"
-    # The rest of the process environment still has to survive.
-    assert env["PATH"] == "/usr/bin" and env["HOME"] == "/home/boejaker"
+def test_sync_argv_runs_git_in_a_container_not_on_the_host(tmp_path):
+    # The host's ~/.gitconfig carries
+    # url."git@github.com:".insteadOf=https://github.com/, which rewrote the
+    # pinned HTTPS url to SSH and failed the clone of a PUBLIC repo with
+    # "Permission denied (publickey)". A container has no such config to inherit.
+    argv = C.docker_sync_argv(vendor_dir=tmp_path / "vendor",
+                              script_path=tmp_path / "sync.sh",
+                              clone_name="godseye", url="https://h/r",
+                              ref="main", depth=1, uid=1000, gid=1000)
+    assert argv[0] == "docker" and "git" not in argv[:2]
+    # Attached + --rm: a shallow clone finishes in seconds, and nothing is left
+    # behind to name-clash with the next run.
+    assert "--rm" in argv and "-d" not in argv and "--name" not in argv
+    mounts = [argv[i + 1] for i, a in enumerate(argv) if a == "-v"]
+    assert f"{tmp_path / 'vendor'}:/work" in mounts
+    assert f"{tmp_path / 'sync.sh'}:/opt/godseye_sync.sh:ro" in mounts
+    env = dict(argv[i + 1].split("=", 1) for i, a in enumerate(argv) if a == "-e")
+    assert env["GODSEYE_URL"] == "https://h/r" and env["GODSEYE_REF"] == "main"
+    assert env["GODSEYE_SRC"] == "/work/godseye"
+    # Root inside (installing git needs it); the script hands the tree back to
+    # the host user so the UNPRIVILEGED build can write node_modules/dist.
+    assert "--user" not in argv
+    assert (env["GODSEYE_UID"], env["GODSEYE_GID"]) == ("1000", "1000")
+    assert argv[-3:] == [C.DEFAULT_NODE_IMAGE, "sh", "/opt/godseye_sync.sh"]
 
 
-def test_git_env_does_not_mutate_the_caller_environment():
-    base = {"PATH": "/usr/bin"}
-    C.git_env(base)
-    assert base == {"PATH": "/usr/bin"}
-    assert "GIT_CONFIG_GLOBAL" in C.git_env(None)      # usable with no base
+def test_sync_argv_depth_and_ref_are_optional(tmp_path):
+    argv = C.docker_sync_argv(vendor_dir=tmp_path, script_path=tmp_path / "s.sh",
+                              clone_name="godseye", url="https://h/r", depth=0)
+    env = dict(argv[i + 1].split("=", 1) for i, a in enumerate(argv) if a == "-e")
+    assert env["GODSEYE_DEPTH"] == "0"        # 0 = full clone, the script skips --depth
+    assert env["GODSEYE_REF"] == ""
 
 
-def test_clone_and_update_argv_shape(tmp_path):
-    argv = C.clone_argv("https://h/r", tmp_path / "godseye", ref="main", depth=1)
-    assert argv[:4] == ["git", "clone", "--depth", "1"]
-    # `--` before the URL: even a url that slipped the filter cannot become a flag.
-    assert argv[-3] == "--" and argv[-2] == "https://h/r"
-    # No ref -> no --branch (cloning a sha via --branch fails).
-    assert "--branch" not in C.clone_argv("https://h/r", tmp_path / "g")
-    # depth=0 means a full clone, not `--depth 0` (which git rejects).
-    assert "--depth" not in C.clone_argv("https://h/r", tmp_path / "g", depth=0)
-    # Update is fetch + hard checkout, never a merge that could wedge the clone.
-    seq = C.update_argv("main")
-    assert seq[0][:2] == ["git", "fetch"] and "--force" in seq[1]
-    assert not any("pull" in a for step in seq for a in step)
+def test_sync_script_contract():
+    """The git sequence now lives in shell, so guard it where it is."""
+    raw = (Path(__file__).resolve().parent.parent
+           / "vera" / "godseye" / "godseye_sync.sh").read_text(encoding="utf-8")
+    # Assert about the COMMANDS, not the prose — the comments discuss `git pull`
+    # precisely to explain why it is not used.
+    script = "\n".join(ln for ln in raw.splitlines()
+                       if not ln.lstrip().startswith("#"))
+    # fetch + hard checkout, never a merge that could wedge a managed clone.
+    assert "git fetch" in script and "checkout --force --detach" in script
+    assert "git pull" not in script
+    # `--` before the url: a url that slipped the filter cannot become a flag.
+    assert '-- "$URL" "$SRC"' in script
+    # Never block on a credential prompt.
+    assert "GIT_TERMINAL_PROMPT=0" in script
+    # The build runs unprivileged and must be able to write into the clone.
+    assert 'chown -R "$UID_:$GID_"' in script
+    # ...which then makes git refuse the host-owned repo on the SECOND run
+    # ("detected dubious ownership"), so the update path must declare it safe.
+    assert "safe.directory" in script
+
+
+# ── describing the clone without host git ────────────────────────────────────
+def test_repo_meta_prefers_what_the_sync_container_recorded(tmp_path):
+    state, clone = tmp_path / ".godseye", tmp_path / "godseye"
+    state.mkdir()
+    (state / "repo.json").write_text(json.dumps({
+        "sha": "a" * 40, "short": "aaaaaaa", "subject": "Add globe",
+        "committed_at": "2026-08-29T00:00:00Z", "action": "cloned"}), encoding="utf-8")
+    meta = C.read_repo_meta(state, clone)
+    assert meta["short"] == "aaaaaaa" and meta["subject"] == "Add globe"
+
+
+def test_repo_meta_falls_back_to_git_head_for_a_hand_made_clone(tmp_path):
+    state, clone = tmp_path / ".godseye", tmp_path / "godseye"
+    git = clone / ".git"
+    git.mkdir(parents=True)
+    (git / "HEAD").write_text("b" * 40 + "\n", encoding="utf-8")     # detached
+    assert C.read_repo_meta(state, clone)["sha"] == "b" * 40
+
+    (git / "HEAD").write_text("ref: refs/heads/master\n", encoding="utf-8")
+    (git / "refs" / "heads").mkdir(parents=True)
+    (git / "refs" / "heads" / "master").write_text("c" * 40 + "\n", encoding="utf-8")
+    assert C.read_repo_meta(state, clone)["short"] == "c" * 7
+
+    # A fresh clone keeps its refs packed rather than loose.
+    (git / "refs" / "heads" / "master").unlink()
+    (git / "packed-refs").write_text(
+        "# pack-refs with: peeled\n" + "d" * 40 + " refs/heads/master\n", encoding="utf-8")
+    assert C.read_repo_meta(state, clone)["sha"] == "d" * 40
+
+
+def test_repo_meta_is_empty_when_there_is_nothing_to_describe(tmp_path):
+    assert C.read_repo_meta(tmp_path / "none", tmp_path / "none") == {}
+    # Corrupt metadata must not be trusted, and must not raise either.
+    state = tmp_path / ".godseye"
+    state.mkdir()
+    (state / "repo.json").write_text("{not json", encoding="utf-8")
+    assert C.read_repo_meta(state, tmp_path / "nope") == {}
 
 
 # ── BYOK config ──────────────────────────────────────────────────────────────

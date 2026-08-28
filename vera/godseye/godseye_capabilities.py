@@ -14,6 +14,8 @@ that clone:
 
   • ``godseye.status``        — is it cloned / built / configured, and at what commit
   • ``godseye.repo.sync``     — clone it, or fast-forward an existing clone
+                                (git runs in a container too, so the host needs
+                                no git and imposes no git config on the fetch)
   • ``godseye.build``         — build it in a throwaway Node container (the host
                                 needs no Node toolchain at all) into ``dist/``
   • ``godseye.build.status``  — real build progress, read from the build log
@@ -62,11 +64,21 @@ log = logging.getLogger("vera.godseye")
 _HERE = Path(__file__).parent
 _ROOT = _core.repo_root(__file__)
 _BUILD_SCRIPT = _HERE / "godseye_build.sh"
+_SYNC_SCRIPT = _HERE / "godseye_sync.sh"
 _BUILD_CONTAINER = "godseye-build"
 KEY_CONFIG = "vera:godseye:config"
 
 
 # ── small helpers ────────────────────────────────────────────────────────────
+def _host_uid() -> int:
+    return getattr(os, "getuid", lambda: 0)()
+
+
+def _host_gid() -> int:
+    return getattr(os, "getgid", lambda: 0)()
+
+
+
 def _layout() -> Dict[str, Path]:
     """Resolved every call so a VERA_GODSEYE_DIR change takes effect without a
     restart (and so tests can drive it by environment)."""
@@ -172,15 +184,14 @@ async def _ignore_verdict(clone: Path, rel: Path) -> Tuple[bool, str]:
     return False, (r["err"] or "could not run `git check-ignore`")
 
 
-async def _clone_commit(clone: Path) -> Dict[str, str]:
+def _clone_commit(clone: Path) -> Dict[str, str]:
+    """What the clone is sitting on — read from the metadata the sync container
+    wrote, or from .git/HEAD. Deliberately does NOT shell out to git: the host
+    is not required to have it (that is the whole point of syncing in a
+    container), and status is polled by an open panel."""
     if not (clone / ".git").exists():
         return {}
-    r = await _run(["git", "-C", str(clone), "log", "-1", "--format=%H%n%h%n%cI%n%s"],
-                   timeout=30)
-    if not r["ok"]:
-        return {}
-    parts = (r["out"].splitlines() + ["", "", "", ""])[:4]
-    return {"sha": parts[0], "short": parts[1], "committed_at": parts[2], "subject": parts[3]}
+    return _core.read_repo_meta(_layout()["state_dir"], clone)
 
 
 #: A built Cesium bundle is ~2,000 files. The panel polls status every 3s during
@@ -255,7 +266,7 @@ async def godseye_status(trace_id=None) -> Dict[str, Any]:
     return {
         "upstream": _core.UPSTREAM_URL,
         "cloned": cloned,
-        "commit": await _clone_commit(lay["clone_dir"]) if cloned else {},
+        "commit": _clone_commit(lay["clone_dir"]) if cloned else {},
         "dist": await _dist_summary(),
         "build": _read_log(tail=12),
         "config_set": sorted(k for k, v in cfg.items() if v),
@@ -274,8 +285,11 @@ async def godseye_status(trace_id=None) -> Dict[str, Any]:
                 "directory, or fast-forward an existing clone. Godseye stays a "
                 "SEPARATE repo — this never adds its source to Vera's git. "
                 "Refuses to clone into a path Vera's git can see (that would "
-                "leave every checkout dirty). Inputs: ref (branch/tag/sha), url "
-                "(str, defaults to upstream), depth (int=1, 0=full). "
+                "leave every checkout dirty). git runs INSIDE a throwaway "
+                "container, so the host needs no git and cannot impose its own "
+                "git config on the fetch — needs a Docker socket, same as "
+                "godseye.build. Inputs: ref (branch/tag/sha), url (str, defaults "
+                "to upstream), depth (int=1, 0=full). "
                 "Output: {ok, action, commit, path}.",
 )
 async def godseye_repo_sync(ref: str = "", url: str = "", depth: int = 1,
@@ -297,25 +311,25 @@ async def godseye_repo_sync(ref: str = "", url: str = "", depth: int = 1,
             "of Vera's tracked tree; add the directory to .gitignore (or set "
             "VERA_GODSEYE_DIR to a path outside the repo) first.")}
 
-    # The operator's ~/.gitconfig must not reach these calls — see _core.git_env.
-    genv = _core.git_env(dict(os.environ))
+    if not _SYNC_SCRIPT.is_file():
+        return {"ok": False, "error": f"sync script missing: {_SYNC_SCRIPT}"}
+    clone.parent.mkdir(parents=True, exist_ok=True)
+    lay["state_dir"].mkdir(parents=True, exist_ok=True)
 
-    if (clone / ".git").exists():
-        for argv in _core.update_argv(ref):
-            r = await _run(argv, cwd=clone, timeout=600, env=genv)
-            if not r["ok"]:
-                return {"ok": False, "action": "update", "error": r["err"] or r["out"],
-                        "argv": argv}
-        action = "updated"
-    else:
-        clone.parent.mkdir(parents=True, exist_ok=True)
-        r = await _run(_core.clone_argv(url, clone, ref=ref, depth=depth),
-                       cwd=clone.parent, timeout=900, env=genv)
-        if not r["ok"]:
-            return {"ok": False, "action": "clone", "error": r["err"] or r["out"]}
-        action = "cloned"
+    # git runs in the container, never on the host — see godseye_sync.sh.
+    argv = _core.docker_sync_argv(
+        vendor_dir=lay["vendor_dir"], script_path=_SYNC_SCRIPT,
+        clone_name=clone.name, url=url, ref=ref, depth=depth,
+        image=os.environ.get("VERA_GODSEYE_IMAGE") or _core.DEFAULT_NODE_IMAGE,
+        uid=_host_uid(), gid=_host_gid())
+    r = await _run(argv, timeout=900)
+    if not r["ok"]:
+        return {"ok": False, "action": "sync",
+                "error": r["err"] or r["out"] or "git container failed"}
 
-    commit = await _clone_commit(clone)
+    meta = _core.read_repo_meta(lay["state_dir"], clone)
+    action = meta.get("action") or "synced"
+    commit = {k: meta.get(k, "") for k in ("sha", "short", "committed_at", "subject")}
     await emit_event({"type": "godseye.repo.synced", "action": action,
                       "commit": commit.get("short", ""), "path": str(clone)})
     return {"ok": True, "action": action, "commit": commit, "path": str(clone),
@@ -370,12 +384,12 @@ async def godseye_build(refresh_manifests: bool = False, image: str = "",
     except OSError as e:
         log.warning("godseye: could not write %s: %s", lay["env_file"], e)
 
-    uid = getattr(os, "getuid", lambda: 0)()
-    gid = getattr(os, "getgid", lambda: 0)()
     argv = _core.docker_build_argv(
         vendor_dir=lay["vendor_dir"], script_path=_BUILD_SCRIPT,
-        clone_name=lay["clone_dir"].name, image=(image or _core.DEFAULT_NODE_IMAGE),
-        container=_BUILD_CONTAINER, uid=uid, gid=gid,
+        clone_name=lay["clone_dir"].name,
+        image=(image or os.environ.get("VERA_GODSEYE_IMAGE")
+               or _core.DEFAULT_NODE_IMAGE),
+        container=_BUILD_CONTAINER, uid=_host_uid(), gid=_host_gid(),
         base=_core.APP_BASE, refresh_manifests=bool(refresh_manifests),
         clean_install=bool(clean_install))
     # Claim the log BEFORE the container starts. Until the container truncates

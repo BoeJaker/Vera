@@ -12,7 +12,7 @@ serves. Nothing under ``vendor/`` is ever tracked by Vera's git.
 """
 from __future__ import annotations
 
-import os
+import json
 import re
 import shlex
 from pathlib import Path
@@ -52,6 +52,7 @@ BYOK_KEYS: tuple = (
 EXIT_MARKER = "GODSEYE_EXIT="
 
 _SAFE_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$")
+_SHA_RE = re.compile(r"^[0-9a-f]{7,64}$")
 _STAGE_LINE = re.compile(r"^\[godseye\] --- (.+?) ---\s*$")
 
 
@@ -229,53 +230,51 @@ def is_safe_ref(ref: str) -> bool:
     return bool(_SAFE_REF.match(r))
 
 
-def git_env(base: Optional[Dict[str, str]] = None) -> Dict[str, str]:
-    """Environment for the vendor clone's git calls — the operator's git config
-    must not reach them.
+def read_repo_meta(state_dir: Path, clone_dir: Path) -> Dict[str, Any]:
+    """Describe the vendored clone WITHOUT running git on the host.
 
-    The clone is a managed artifact fetched ANONYMOUSLY over HTTPS from a pinned
-    URL. Inheriting ``~/.gitconfig`` breaks that: prod carries
-    ``url."git@github.com:".insteadOf = https://github.com/``, which silently
-    rewrites the pinned HTTPS URL into an SSH one, so cloning a PUBLIC repo dies
-    with "git@github.com: Permission denied (publickey)" as the Vera process
-    user. Credential helpers and commit-signing config are equally unwanted.
+    ``godseye_sync.sh`` captures the commit metadata inside the container that
+    actually has git and writes it here, so nothing on the host needs a git
+    binary — or the right git configuration — to answer godseye.status.
 
-    ``GIT_CONFIG_GLOBAL``/``GIT_CONFIG_SYSTEM`` need git >= 2.32; older git
-    ignores them, and ``GIT_CONFIG_NOSYSTEM`` still covers /etc/gitconfig there.
-    ``GIT_TERMINAL_PROMPT=0`` keeps a credential prompt from hanging the call
-    forever if a URL ever does need auth.
+    Falls back to reading ``.git/HEAD`` directly (plus loose/packed refs) so a
+    clone made by hand, or one predating the metadata file, still reports a sha.
     """
-    env = dict(base or {})
-    env.update({
-        "GIT_CONFIG_GLOBAL": os.devnull,
-        "GIT_CONFIG_SYSTEM": os.devnull,
-        "GIT_CONFIG_NOSYSTEM": "1",
-        "GIT_TERMINAL_PROMPT": "0",
-    })
-    return env
+    meta_path = Path(state_dir) / "repo.json"
+    try:
+        data = json.loads(meta_path.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and data.get("sha"):
+            return data
+    except (OSError, ValueError):
+        pass
+
+    sha = _head_sha(Path(clone_dir))
+    return {"sha": sha, "short": sha[:7], "committed_at": "", "subject": "",
+            "source": "git-head"} if sha else {}
 
 
-def clone_argv(url: str, dest: Path, ref: str = "", depth: int = 1) -> List[str]:
-    argv = ["git", "clone"]
-    if depth and int(depth) > 0:
-        argv += ["--depth", str(int(depth))]
-    if ref:
-        argv += ["--branch", ref]
-    argv += ["--", url, str(dest)]
-    return argv
-
-
-def update_argv(ref: str = "") -> List[List[str]]:
-    """Idempotent 'bring the existing clone up to date' sequence.
-
-    Uses fetch + hard reset rather than `git pull`: the clone is a managed
-    artifact, not somewhere anyone should be committing, and a merge conflict
-    here would leave it wedged with no interactive way out.
-    """
-    target = ref or "HEAD"
-    seq: List[List[str]] = [["git", "fetch", "--depth", "1", "origin", target]]
-    seq.append(["git", "checkout", "--force", "--detach", "FETCH_HEAD"])
-    return seq
+def _head_sha(clone: Path) -> str:
+    """Resolve .git/HEAD to a sha — detached (a raw sha) or symbolic."""
+    git_dir = clone / ".git"
+    try:
+        head = (git_dir / "HEAD").read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    if not head.startswith("ref:"):
+        return head if _SHA_RE.match(head) else ""
+    ref = head[4:].strip()
+    try:
+        return (git_dir / ref).read_text(encoding="utf-8").strip()
+    except OSError:
+        pass
+    try:                                        # packed-refs, for a fresh clone
+        for line in (git_dir / "packed-refs").read_text(encoding="utf-8").splitlines():
+            parts = line.split()
+            if len(parts) == 2 and parts[1] == ref:
+                return parts[0]
+    except OSError:
+        pass
+    return ""
 
 
 # ── BYOK config ──────────────────────────────────────────────────────────────
@@ -326,7 +325,44 @@ def known_config(config: Dict[str, str]) -> Dict[str, str]:
     return {k: str(v or "") for k, v in (config or {}).items() if k in BYOK_KEYS}
 
 
-# ── docker build argv ────────────────────────────────────────────────────────
+# ── docker argv ──────────────────────────────────────────────────────────────
+def docker_sync_argv(*, vendor_dir: Path, script_path: Path, clone_name: str,
+                     url: str, ref: str = "", depth: int = 1,
+                     image: str = DEFAULT_NODE_IMAGE, uid: int = 0, gid: int = 0,
+                     ) -> List[str]:
+    """`docker run` argv for the clone/update, which happens in a container too.
+
+    Not because the host cannot run git, but because it should not: the host's
+    git config rewrites GitHub HTTPS urls to SSH (see godseye_sync.sh), and a
+    container simply has no operator config to inherit.
+
+    Attached and ``--rm``, unlike the build: a shallow clone finishes in seconds,
+    so the caller can just wait for it and report the result, and there is no
+    container left behind to name-clash with the next run.
+
+    Runs as ROOT — the node image has no git and installing it needs root — and
+    the script chowns the result to uid/gid so the unprivileged build can write
+    node_modules/dist into it afterwards.
+    """
+    env = {
+        "GODSEYE_SRC": f"/work/{clone_name}",
+        "GODSEYE_URL": url,
+        "GODSEYE_REF": ref or "",
+        "GODSEYE_DEPTH": str(max(0, int(depth))),
+        "GODSEYE_META": "/work/.godseye/repo.json",
+        "GODSEYE_UID": str(int(uid)),
+        "GODSEYE_GID": str(int(gid)),
+        "HOME": "/tmp",
+    }
+    argv = ["docker", "run", "--rm",
+            "-v", f"{vendor_dir}:/work",
+            "-v", f"{script_path}:/opt/godseye_sync.sh:ro"]
+    for k, v in env.items():
+        argv += ["-e", f"{k}={v}"]
+    argv += [image, "sh", "/opt/godseye_sync.sh"]
+    return argv
+
+
 def docker_build_argv(*, vendor_dir: Path, script_path: Path, clone_name: str,
                       image: str = DEFAULT_NODE_IMAGE, container: str = "godseye-build",
                       uid: int = 0, gid: int = 0, base: str = APP_BASE,
