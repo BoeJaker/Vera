@@ -11,7 +11,8 @@ from typing import Callable
 from urllib.parse import unquote, urlparse
 
 from .model_package import (
-    ModelArtifact, ModelPackage, ModelPackageConflict, model_package_from_dict)
+    ModelArtifact, ModelPackage, ModelPackageConflict, _identifier,
+    model_package_from_dict)
 
 
 MAX_VERIFY_BYTES = 100 * 1024 * 1024 * 1024
@@ -32,6 +33,14 @@ class SQLiteModelPackageRegistry:
                 CREATE TABLE IF NOT EXISTS model_package_aliases (
                     alias TEXT PRIMARY KEY, package_id TEXT NOT NULL,
                     FOREIGN KEY(package_id) REFERENCES model_packages(package_id));
+                CREATE TABLE IF NOT EXISTS model_package_activations (
+                    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                    operation_id TEXT NOT NULL UNIQUE,
+                    kind TEXT NOT NULL CHECK(kind IN ('activate', 'rollback')),
+                    alias TEXT NOT NULL,
+                    previous_package_id TEXT NOT NULL,
+                    package_id TEXT NOT NULL,
+                    reverted_operation_id TEXT UNIQUE);
             """)
 
     def _connect(self) -> sqlite3.Connection:
@@ -88,6 +97,154 @@ class SQLiteModelPackageRegistry:
             conn.execute("INSERT INTO model_package_aliases VALUES (?,?) "
                          "ON CONFLICT(alias) DO UPDATE SET package_id=excluded.package_id",
                          (name, package_id))
+
+    def activate(self, name: str, package_id: str, *, expected_package_id: str = "",
+                 operation_id: str) -> "ModelActivationReceipt":
+        """Move an alias and append its receipt in one immediate transaction."""
+        from .model_package import _identifier
+        name = _identifier(name, "alias")
+        operation_id = _identifier(operation_id, "operation ID")
+        expected_package_id = str(expected_package_id or "")
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            existing = self._activation_by_operation(conn, operation_id)
+            if existing is not None:
+                if (existing.kind, existing.alias, existing.previous_package_id,
+                        existing.package_id, existing.reverted_operation_id) != (
+                            "activate", name, expected_package_id, package_id, ""):
+                    raise ModelPackageConflict("operation ID was already used for another request")
+                return existing
+            if not conn.execute("SELECT 1 FROM model_packages WHERE package_id=?",
+                                (package_id,)).fetchone():
+                raise KeyError("package is not registered")
+            current = self._current_alias(conn, name)
+            if current != expected_package_id:
+                raise ModelPackageConflict("activation compare-and-set failed")
+            if current == package_id:
+                raise ModelPackageConflict("package is already active")
+            conn.execute("INSERT INTO model_package_aliases VALUES (?,?) "
+                         "ON CONFLICT(alias) DO UPDATE SET package_id=excluded.package_id",
+                         (name, package_id))
+            cursor = conn.execute(
+                "INSERT INTO model_package_activations "
+                "(operation_id,kind,alias,previous_package_id,package_id,reverted_operation_id) "
+                "VALUES (?,?,?,?,?,NULL)",
+                (operation_id, "activate", name, current, package_id))
+            return ModelActivationReceipt(cursor.lastrowid, operation_id, "activate", name,
+                                          current, package_id, "")
+
+    def rollback(self, activation_operation_id: str, *, operation_id: str) -> "ModelActivationReceipt":
+        """Reverse one activation iff its alias still points at that activation's target."""
+        from .model_package import _identifier
+        activation_operation_id = _identifier(activation_operation_id, "activation operation ID")
+        operation_id = _identifier(operation_id, "operation ID")
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            existing = self._activation_by_operation(conn, operation_id)
+            if existing is not None:
+                if (existing.kind != "rollback" or
+                        existing.reverted_operation_id != activation_operation_id):
+                    raise ModelPackageConflict("operation ID was already used for another request")
+                return existing
+            activation = self._activation_by_operation(conn, activation_operation_id)
+            if activation is None or activation.kind != "activate":
+                raise KeyError("activation receipt was not found")
+            already = conn.execute(
+                "SELECT 1 FROM model_package_activations WHERE reverted_operation_id=?",
+                (activation_operation_id,)).fetchone()
+            if already:
+                raise ModelPackageConflict("activation was already rolled back")
+            current = self._current_alias(conn, activation.alias)
+            if current != activation.package_id:
+                raise ModelPackageConflict("rollback compare-and-set failed")
+            if activation.previous_package_id:
+                conn.execute("UPDATE model_package_aliases SET package_id=? WHERE alias=?",
+                             (activation.previous_package_id, activation.alias))
+            else:
+                conn.execute("DELETE FROM model_package_aliases WHERE alias=?", (activation.alias,))
+            cursor = conn.execute(
+                "INSERT INTO model_package_activations "
+                "(operation_id,kind,alias,previous_package_id,package_id,reverted_operation_id) "
+                "VALUES (?,?,?,?,?,?)",
+                (operation_id, "rollback", activation.alias, current,
+                 activation.previous_package_id, activation_operation_id))
+            return ModelActivationReceipt(
+                cursor.lastrowid, operation_id, "rollback", activation.alias,
+                current, activation.previous_package_id, activation_operation_id)
+
+    def activation_history(self, name: str = "") -> tuple["ModelActivationReceipt", ...]:
+        from .model_package import _identifier
+        if name:
+            name = _identifier(name, "alias")
+        with self._connect() as conn:
+            if name:
+                rows = conn.execute(
+                    "SELECT sequence,operation_id,kind,alias,previous_package_id,package_id,"
+                    "COALESCE(reverted_operation_id,'') FROM model_package_activations "
+                    "WHERE alias=? ORDER BY sequence", (name,)).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT sequence,operation_id,kind,alias,previous_package_id,package_id,"
+                    "COALESCE(reverted_operation_id,'') FROM model_package_activations "
+                    "ORDER BY sequence").fetchall()
+        return tuple(self._receipt_from_row(row) for row in rows)
+
+    @staticmethod
+    def _current_alias(conn: sqlite3.Connection, name: str) -> str:
+        row = conn.execute("SELECT package_id FROM model_package_aliases WHERE alias=?",
+                           (name,)).fetchone()
+        return row[0] if row else ""
+
+    @staticmethod
+    def _activation_by_operation(conn: sqlite3.Connection,
+                                 operation_id: str) -> "ModelActivationReceipt | None":
+        row = conn.execute(
+            "SELECT sequence,operation_id,kind,alias,previous_package_id,package_id,"
+            "COALESCE(reverted_operation_id,'') FROM model_package_activations "
+            "WHERE operation_id=?", (operation_id,)).fetchone()
+        return SQLiteModelPackageRegistry._receipt_from_row(row) if row else None
+
+    @staticmethod
+    def _receipt_from_row(row) -> "ModelActivationReceipt":
+        try:
+            return ModelActivationReceipt(*row)
+        except (TypeError, ValueError) as exc:
+            raise ModelPackageStoreCorrupt("stored activation receipt is corrupt") from exc
+
+
+@dataclass(frozen=True)
+class ModelActivationReceipt:
+    sequence: int
+    operation_id: str
+    kind: str
+    alias: str
+    previous_package_id: str
+    package_id: str
+    reverted_operation_id: str = ""
+
+    def __post_init__(self) -> None:
+        if isinstance(self.sequence, bool) or int(self.sequence) < 1:
+            raise ValueError("activation sequence must be positive")
+        object.__setattr__(self, "sequence", int(self.sequence))
+        object.__setattr__(self, "operation_id", _identifier(
+            self.operation_id, "operation ID"))
+        if self.kind not in {"activate", "rollback"}:
+            raise ValueError("unsupported activation receipt kind")
+        object.__setattr__(self, "alias", _identifier(self.alias, "alias"))
+        for field_name in ("previous_package_id", "package_id"):
+            value = getattr(self, field_name)
+            if value:
+                object.__setattr__(self, field_name, _identifier(value, field_name))
+        if self.reverted_operation_id:
+            object.__setattr__(self, "reverted_operation_id", _identifier(
+                self.reverted_operation_id, "reverted operation ID"))
+        if self.kind == "activate" and self.reverted_operation_id:
+            raise ValueError("activation cannot revert another operation")
+        if self.kind == "rollback" and not self.reverted_operation_id:
+            raise ValueError("rollback must name the reverted activation")
+
+    def to_dict(self) -> dict:
+        return dict(self.__dict__)
 
 
 @dataclass(frozen=True)
