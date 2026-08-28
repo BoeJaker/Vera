@@ -132,6 +132,12 @@ def verify_local_artifact(package_id: str, artifact: ModelArtifact, *,
     status, observed_size, observed_hash = "unsupported_uri", -1, ""
     if path is not None:
         try:
+            if cancelled and cancelled():
+                return ArtifactVerificationReceipt(
+                    package_id=package_id, role=artifact.role, uri=artifact.uri,
+                    status="cancelled", expected_sha256=artifact.sha256,
+                    observed_sha256="", expected_size_bytes=artifact.size_bytes,
+                    observed_size_bytes=-1)
             stat = path.stat()
             observed_size = stat.st_size
             if not path.is_file():
