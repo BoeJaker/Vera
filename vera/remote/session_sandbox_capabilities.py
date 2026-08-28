@@ -1663,6 +1663,7 @@ async def cap_sbx_cfg_get(trace_id=None) -> Dict:
             "confine_writes": bool(cfg.get("confine_writes", True)),
             "package_policy": _pkg_policy(cfg),
             "package_allowlist": _pkg_listcfg(cfg, "package_allowlist"),
+            "package_headless_auto": _pkg_headless_auto(cfg),
             "package_blocklist": _pkg_listcfg(cfg, "package_blocklist"),
             "package_preload": _pkg_listcfg(cfg, "package_preload"),
             "package_ask_timeout_secs": int(cfg.get("package_ask_timeout_secs")
@@ -1698,7 +1699,11 @@ async def cap_sbx_cfg_get(trace_id=None) -> Dict:
                 "(str — what happens when code needs a package the sandbox lacks: "
                 "'ask' (default) pauses the run and prompts the user to approve the "
                 "install, 'auto' installs it silently, 'deny' never installs and "
-                "fails the run with the list), package_allowlist (str/list — names "
+                "fails the run with the list), package_headless_auto (bool - STOPGAP: when "
+                "there is no one to answer an approval prompt (unattended loop, CI), an "
+                "ASK becomes an INSTALL instead of a 300s timeout then failure; blocklist "
+                "and policy=deny still win; env VERA_SANDBOX_PKG_HEADLESS_AUTO overrides), "
+                "package_allowlist (str/list — names "
                 "ALWAYS auto-installed even in ask mode, i.e. already-approved "
                 "packages), package_blocklist (str/list — names never installed, "
                 "whatever the policy), package_preload (str/list — pip packages "
@@ -1720,6 +1725,7 @@ async def cap_sbx_cfg_set(docker_host_id: Optional[str] = None,
                           package_blocklist: Any = None,
                           package_preload: Any = None,
                           package_ask_timeout_secs: Optional[int] = None,
+                          package_headless_auto: Optional[bool] = None,
                           trace_id=None) -> Dict:
     cfg = await _get_cfg()
     if docker_host_id is not None:
@@ -1768,6 +1774,14 @@ async def cap_sbx_cfg_set(docker_host_id: Optional[str] = None,
             cfg["package_ask_timeout_secs"] = max(15, int(package_ask_timeout_secs))
         except Exception:
             return {"ok": False, "error": "package_ask_timeout_secs must be an integer"}
+    if package_headless_auto is not None:
+        cfg["package_headless_auto"] = bool(package_headless_auto)
+        # Say it out loud. This widens what installs without review, so turning
+        # it on should be findable in the log afterwards, not just in a config
+        # blob nobody re-reads.
+        log.warning("sandbox package policy: headless auto-install %s - an ASK "
+                    "will now INSTALL instead of waiting for a human",
+                    "ENABLED" if cfg["package_headless_auto"] else "disabled")
     await _save_cfg(cfg)
     await emit_event({"type": "remote.sandbox.config",
                       "docker_host_id": cfg.get("docker_host_id", ""),
@@ -1879,6 +1893,33 @@ _PKG_PENDING_LOCAL: Dict[str, asyncio.Future] = {}
 _PKG_POLICY_ASK = "ask"       # default — pause and ask the user (approve/deny)
 _PKG_POLICY_AUTO = "auto"     # install whatever a script needs, no prompt
 _PKG_POLICY_DENY = "deny"     # never install; the run fails with a clear message
+
+# STOPGAP - deliberately blunt, default OFF. When a run has NO ONE to answer
+# (an unattended census, a scheduled loop, CI), policy="ask" does not protect
+# anything: the gate emits an approval request, waits package_ask_timeout_secs
+# (300s) for a human who is not there, then fails the step anyway. Observed
+# 2026-08-27: a loop that had just WRITTEN its own tests stalled five minutes on
+# `pytest` and failed, having asked a question nobody could receive.
+#
+# With this set, an ASK becomes an AUTO instead of a timeout. It is a real
+# widening of what installs without review, so:
+#   * it defaults to False and must be turned on deliberately;
+#   * the blocklist and policy="deny" still win - this only converts ASK;
+#   * every install it authorises is logged and carries headless_auto=True in
+#     the result, so the bypass is visible afterwards rather than silent.
+# The better answer is for the loop to declare "I am unattended" per-run and for
+# a curated set to auto-install on that basis. This is the stopgap until then.
+_PKG_HEADLESS_AUTO_ENV = "VERA_SANDBOX_PKG_HEADLESS_AUTO"
+
+
+def _pkg_headless_auto(cfg: Dict) -> bool:
+    """True when an unanswerable ASK should install instead of timing out."""
+    env = os.getenv(_PKG_HEADLESS_AUTO_ENV, "").strip().lower()
+    if env in ("1", "true", "yes", "on"):
+        return True
+    if env in ("0", "false", "no", "off"):
+        return False
+    return bool(cfg.get("package_headless_auto") or False)
 _PKG_ASK_TIMEOUT_DEFAULT = 300
 
 # Import name → distribution name, for the cases where they differ. Only the
@@ -2236,6 +2277,7 @@ def _classify_requests(cfg: Dict, reqs: List[Dict[str, Any]]) -> Dict[str, List[
     yes to beautifulsoup4 once should never be asked again, without having to
     turn prompting off globally."""
     policy = _pkg_policy(cfg)
+    headless_auto = _pkg_headless_auto(cfg)
     allow = set(_pkg_listcfg(cfg, "package_allowlist"))
     block = set(_pkg_listcfg(cfg, "package_blocklist"))
     auto, ask, denied = [], [], []
@@ -2248,6 +2290,11 @@ def _classify_requests(cfg: Dict, reqs: List[Dict[str, Any]]) -> Dict[str, List[
                                             "(sandbox package policy = deny)"})
         elif policy == _PKG_POLICY_AUTO or n in allow:
             auto.append(req)
+        elif headless_auto:
+            # Nobody can answer, so asking is just a slow failure. Marked so the
+            # bypass is visible in the result rather than indistinguishable from
+            # a normal auto-install.
+            auto.append({**req, "headless_auto": True})
         else:
             ask.append(req)
     return {"auto": auto, "ask": ask, "denied": denied}
