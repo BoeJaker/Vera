@@ -163,6 +163,38 @@ class ModelPackageConflict(ValueError):
     pass
 
 
+def model_package_from_dict(value: Mapping[str, Any]) -> ModelPackage:
+    """Strictly reconstruct a package and verify its content-derived identity."""
+    if not isinstance(value, Mapping):
+        raise TypeError("model package value must be a mapping")
+    expected_id = str(value.get("package_id") or "")
+    if value.get("schema", MODEL_PACKAGE_SCHEMA) != MODEL_PACKAGE_SCHEMA:
+        raise ValueError("unsupported model package schema")
+    try:
+        artifacts = tuple(ModelArtifact(**item) for item in value["artifacts"])
+        compatibility = ModelCompatibility(**value["compatibility"])
+        metadata = tuple(sorted(dict(value.get("metadata") or {}).items()))
+        package = ModelPackage(
+            name=value["name"], version=value["version"],
+            architecture=value["architecture"], format=value["format"],
+            artifacts=artifacts, compatibility=compatibility,
+            framework=value.get("framework", ""),
+            framework_version=value.get("framework_version", ""),
+            opset=value.get("opset"), tokenizer=value.get("tokenizer", ""),
+            preprocessing=value.get("preprocessing", ""),
+            source_uri=value.get("source_uri", ""),
+            source_revision=value.get("source_revision", ""),
+            license=value.get("license", ""), signature=value.get("signature", ""),
+            training_run_id=value.get("training_run_id", ""),
+            evaluation_report_ids=tuple(value.get("evaluation_report_ids") or ()),
+            metadata=metadata)
+    except (KeyError, TypeError) as exc:
+        raise ValueError("malformed model package value") from exc
+    if expected_id and expected_id != package.package_id:
+        raise ModelPackageConflict("stored package identity does not match content")
+    return package
+
+
 class InMemoryModelPackageRegistry:
     def __init__(self) -> None:
         self._packages: dict[str, ModelPackage] = {}
