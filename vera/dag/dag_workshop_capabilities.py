@@ -2961,9 +2961,52 @@ def _rd(v):
 
 # Fallback staleness window (only used when there's no live in-process task, e.g.
 # after a server restart or on another worker): a 'running' run with no event this
-# recent is treated as INTERRUPTED. Generous so a long tool call between events on
-# another worker isn't misread as dead. The sessions zset score is the last-event epoch.
-_LOOP_STALE_SECS = int(os.getenv("VERA_LOOP_STALE_SECS", "600") or 600)
+# recent is treated as INTERRUPTED. The sessions zset score is the last-event epoch.
+#
+# It MUST outlast one legitimate generation, or a run that is merely mid-LLM-call
+# is declared dead while it is still working. The old flat 600s was SHORTER than
+# OLLAMA_GEN_TIMEOUT (900s): census author-then-edit (2026-08-29) finished all 3 of
+# its steps, went quiet for one long final generation, was reported "interrupted"
+# at 874s -- and then went back to "running" 50 minutes later. The same rule is
+# already applied to the gate backstop (_GATE_MAX_HOLD_S, "> OLLAMA_GEN_TIMEOUT so
+# a legit long gen is never clipped"); this is the one place it was missed.
+_LOOP_GEN_TIMEOUT_S = float(os.getenv("OLLAMA_GEN_TIMEOUT", "900") or 900)
+_LOOP_STALE_SECS = int(os.getenv("VERA_LOOP_STALE_SECS", "")
+                       or max(600.0, _LOOP_GEN_TIMEOUT_S + 300.0))
+
+
+def _register_loop_task(sid: str) -> None:
+    """Register THIS coroutine as the live runner for `sid`.
+
+    Only the SSE /stream wrapper used to do this, so a loop started through the
+    cap -- dag.agent_loop_v5/v6/v7 via /mcp/call, dream, or the scheduler -- was
+    invisible to the registry. Two consequences, both seen live on 2026-08-29:
+
+      * _loop_run_is_stale could never take its live-task short-circuit, so it
+        fell through to the activity marker and called a merely-quiet run dead;
+      * cancel had no task to cancel and could only set the Redis flag, which is
+        why every cancel of a census run answered "no live runner task in this
+        process" while the run carried on holding the GPU.
+
+    setdefault, never assignment: an SSE-registered runner for the same session
+    is the real owner and must not be displaced. The done-callback removes only
+    the entry it put there.
+    """
+    if not sid:
+        return
+    try:
+        task = asyncio.current_task()
+    except Exception:
+        return
+    if task is None or _AGENT_LOOP_TASKS.get(sid) is not None:
+        return
+    _AGENT_LOOP_TASKS[sid] = task
+
+    def _drop(_t, _sid=sid):
+        if _AGENT_LOOP_TASKS.get(_sid) is _t:
+            _AGENT_LOOP_TASKS.pop(_sid, None)
+
+    task.add_done_callback(_drop)
 
 
 async def _loop_run_is_stale(r, sid: str, run: dict) -> bool:
@@ -3181,6 +3224,11 @@ async def workshop_loop_session_state(request: Request):
         # (the process that was driving it died — e.g. a server restart). Surface
         # that so the client shows it as interrupted instead of tailing forever.
         run["stale"] = await _loop_run_is_stale(r, sid, run)
+        # `status` stays DERIVED (the client needs it, or it tails a dead run
+        # forever), but the underlying value is preserved so a programmatic
+        # consumer can tell "quiet" from "dead" -- a census harness polling
+        # `status` recorded a false failure and moved on while the run continued.
+        run["status_raw"] = run.get("status", "")
         if run.get("status") == "running" and run["stale"]:
             run["status"] = "interrupted"
         total = await r.llen(f"vera:loop:events:{sid}")
@@ -3270,6 +3318,7 @@ async def workshop_loop_sessions(request: Request):
             # status. Applied BEFORE the filter so ?status=running means genuinely
             # live, which is exactly what a caller asking for resumable runs wants.
             run["stale"] = await _loop_run_is_stale(r, sid, run)
+            run["status_raw"] = run.get("status", "")
             if run.get("status") == "running" and run["stale"]:
                 run["status"] = "interrupted"
             if want and run.get("status") != want:
@@ -18057,6 +18106,7 @@ async def cap_dag_agent_loop_v5(
     if disable_memory_inject:
         _orch.SUPPRESS_MEMORY_INJECT.set(True)
     sid = session_id or str(uuid.uuid4())
+    _register_loop_task(sid)
     max_steps = max(1, min(20, int(max_steps)))
     step_cycle_budget = max(1, min(20, int(step_cycle_budget)))
     catalog_size = max(8, min(80, int(catalog_size)))
@@ -21805,6 +21855,9 @@ async def cap_dag_agent_loop_v6(
         _LOOP_SESSION_CV.set(sid)
     except Exception:
         pass
+    # Same gap, same reason: make this run's liveness DEFINITIVE from every launch
+    # path, so a quiet run is not called dead and cancel has a task to cancel.
+    _register_loop_task(sid)
     max_steps = max(1, min(20, int(max_steps)))
     step_cycle_budget = max(1, min(20, int(step_cycle_budget)))
     catalog_size = max(8, min(80, int(catalog_size)))
