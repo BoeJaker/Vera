@@ -23,8 +23,15 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from vera.log_setup import (          # noqa: E402
     DEFAULT_BACKUPS, DEFAULT_MAX_BYTES, MAX_BACKUPS, MAX_MAX_BYTES,
-    MIN_MAX_BYTES, OFFLOAD_ATTR, resolve_log_config, should_offload,
+    MIN_MAX_BYTES, OFFLOAD_ATTR, already_installed, resolve_log_config,
+    should_offload,
 )
+
+
+def _tagged(path):
+    h = logging.handlers.RotatingFileHandler(path, delay=True)
+    setattr(h, OFFLOAD_ATTR, True)
+    return h
 
 DEFAULT_DIR = "/var/tmp/vera-state/logs"
 
@@ -122,3 +129,48 @@ def test_foreign_handlers_are_still_left_alone():
     class SomeoneElsesConsole(logging.StreamHandler):
         pass
     assert should_offload(SomeoneElsesConsole()) is False
+
+
+# ── the handler must be installed once per PROCESS, not once per import ─────
+def test_a_second_import_does_not_add_a_second_handler(tmp_path):
+    """Vera is a namespace package, so capability_orchestration is imported more
+    than once under different module names and each copy runs the install.
+    THREE copies were observed live, and every line was written to the log three
+    times."""
+    p = str(tmp_path / "vera.log")
+    assert already_installed([], p) is False
+    root_handlers = [logging.StreamHandler(), _tagged(p)]
+    assert already_installed(root_handlers, p) is True
+    for h in root_handlers[1:]:
+        h.close()
+
+
+def test_a_different_log_path_is_not_mistaken_for_ours(tmp_path):
+    a, b = str(tmp_path / "a.log"), str(tmp_path / "b.log")
+    h = _tagged(a)
+    assert already_installed([h], b) is False
+    h.close()
+
+
+def test_the_same_path_written_differently_is_still_the_same_file(tmp_path):
+    """A relative-vs-absolute or dot-laden path must not slip past and install a
+    second handler onto the identical file."""
+    p = tmp_path / "vera.log"
+    h = _tagged(str(p))
+    assert already_installed([h], str(tmp_path / "." / "vera.log")) is True
+    h.close()
+
+
+def test_an_untagged_file_handler_on_the_same_path_is_not_claimed_as_ours(tmp_path):
+    """Someone else's handler on that path is not evidence WE installed one -
+    and we must not silently skip our own install because of it."""
+    p = str(tmp_path / "vera.log")
+    h = logging.handlers.RotatingFileHandler(p, delay=True)   # untagged
+    assert already_installed([h], p) is False
+    h.close()
+
+
+def test_handlers_without_a_filename_do_not_break_the_check():
+    h = logging.StreamHandler()
+    setattr(h, OFFLOAD_ATTR, True)          # tagged console handler, no baseFilename
+    assert already_installed([h], "/tmp/vera.log") is False

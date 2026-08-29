@@ -100,6 +100,29 @@ def resolve_log_config(env: Mapping[str, str], *, default_dir: Any) -> dict:
     }
 
 
+def already_installed(handlers, path: str) -> bool:
+    """True if one of ours is already writing to `path`.
+
+    `capability_orchestration` is imported more than once under different module
+    names — Vera is a namespace package, so `Vera.vera.capability_orchestration`
+    and `vera.capability_orchestration` are separate module objects that each run
+    the module body. Observed live: three copies, so the root logger collected
+    three file handlers and every line was written to the log three times.
+
+    The root logger is the shared thing here, so asking IT what is already
+    attached is the honest check — a module-level "did I run" flag would be a
+    per-copy answer to a process-wide question.
+    """
+    target = os.path.abspath(str(path))
+    for h in handlers or []:
+        if not getattr(h, OFFLOAD_ATTR, False):
+            continue
+        existing = getattr(h, "baseFilename", "")
+        if existing and os.path.abspath(str(existing)) == target:
+            return True
+    return False
+
+
 def should_offload(handler: logging.Handler) -> bool:
     """True for handlers whose writes must be moved off the event loop.
 
