@@ -11,6 +11,19 @@ does not replace registration, dispatch, or authorization. Existing capabilities
 continue to run exactly as before while their metadata is made explicit and
 improved incrementally.
 
+The resulting control path is intentionally layered:
+
+1. the registry exposes the implementation and input schema;
+2. Contract v2 describes canonical task, effects, output, policy, and resources;
+3. `cap.resolve.shadow` ranks eligible implementations without invoking them;
+4. the policy boundary decides whether scoped authority is sufficient;
+5. the existing dispatcher executes only after that boundary; and
+6. activity and privacy-safe observations report what actually happened.
+
+Keeping these stages separate prevents a good resolver score from becoming an
+authorization grant and prevents recent runtime telemetry from silently
+rewriting a stable declaration.
+
 ## Manifest model
 
 Every registry entry can be projected as `vera.capability-contract/v2`. The
@@ -167,6 +180,8 @@ explicit generation/authoring contracts. Subsequent W1-03 slices should:
    identified;
 5. feed complete, gated manifests to W1-04 resolver shadow mode.
 
-Execution selection remains unchanged until shadow evaluation demonstrates that
-the richer contracts improve choices without unsafe exclusions or added side
-effects.
+The deterministic resolver corpus now demonstrates the pure selection boundary,
+and the first narrow policy family has reversible enforcement. General execution
+selection remains unchanged: promotion beyond that family still requires
+complete gated contracts, frozen safety cases, shadow parity, and an explicit
+rollback plan.

@@ -499,7 +499,7 @@ sandbox → the code pipeline holds for manual review instead of failing.
 |---|---|
 | `evolve.sandbox.status` | Descriptor + live health probe of the dev port |
 | `evolve.sandbox.up` | Worktree + `vera-dev` container + snapshot for a branch |
-| `evolve.sandbox.down` | Stop container, remove worktree (+ the VS Code sidecar) |
+| `evolve.sandbox.down` | Stop the exact container and sidecar; preserve the worktree by default |
 | `evolve.sandbox.snapshot` | Copy Loop Lab state into the dev Redis DB |
 | `evolve.sandbox.diff` | Unified `git diff <base>` of the worktree (committed + uncommitted edits; untracked files listed) — powers the panel's **Changes** pane |
 | `evolve.sandbox.code.attach` | code-server sidecar (`vera-dev-code`, port `VERA_DEV_CODE_PORT`/8996) with the worktree bind-mounted, registered behind the `/vscode/loop-lab-dev/` same-origin proxy |
@@ -530,6 +530,23 @@ links and visible notes references.
 Lifecycle safety still outranks the plan. A plan cannot make a dirty, unknown,
 protected, or Git-severed sandbox safe to restart or reap; preflight remains the
 authority for lifecycle mutations.
+
+### Repository-shared private planning
+
+Files that must outlive one worktree but must never reach origin belong under
+`<git-common-dir>/vera-work/shared-planning/`. Resolve the root with
+`git rev-parse --git-common-dir`; do not assume it is the worktree's `.git`
+file. Every linked checkout—main, bleeding-edge, and feature sandboxes—uses the
+same common Git directory, so a handover saved there is visible across the
+topology and is intrinsically outside Git's tracked working tree.
+
+Use a bounded subdirectory named for the board item or work unit, and include no
+secrets, raw prompts, credentials, or unredacted result bodies. This is a
+supporting-file store, not another backlog. Actionable plans are Loop Lab board
+items and child items; progress/evidence is recorded as board comments;
+`.vera-work/work-plan.json` remains the sandbox-local pointer to those records.
+Once a shared handover is obsolete, archive or remove it deliberately rather
+than publishing it under `documentation/`.
 
 ### Recovering a severed worktree without losing changes
 

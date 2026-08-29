@@ -244,6 +244,24 @@ ws.onmessage = (e) => {
 
 ---
 
+### Execution and capability feedback
+
+Recent interoperability work adds shared evidence rather than a separate panel
+for every runtime. Activity cards and graph sidebars can link Run, workflow,
+task, capability, session, trace, and parent/child identities; distinguish a
+native authority from a shadow projection; and show attempts, progress,
+artifacts, controls, and terminal state. Capability views can additionally show
+the canonical task, declared effects, lifecycle, operational observations,
+resolver exclusions/ranking, and policy verdict or enforcement selection.
+
+These displays are projections. A UI button or graph edge must not imply that a
+shadow Run owns execution, that a resolver authorized its preferred candidate,
+or that a static DBOS/Temporal mapping is runnable. Panels should surface the
+authority and evidence source beside the status, and link back to Activity,
+Loop Lab, or the native studio for the actual operation.
+
+---
+
 ## 10. Reloading panels
 
 The harness has a reload button. Hitting it:

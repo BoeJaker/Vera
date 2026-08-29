@@ -88,6 +88,23 @@ cancellation boundaries. Those gaps require the separately authorized DBOS and
 Postgres crash-recovery spike; the manifest does not claim that documentation
 alone proves them.
 
+LIB-17 adds the corresponding offline Temporal comparison as
+`workflow.durability.temporal_paper`. It pins `temporalio==1.32.0`, binds the
+same fixture and the exact DBOS mapping identity, and maps the canonical steps
+to Workflows, Activities, durable timers, retry/timeout options, cancellation,
+history events, Signals/Updates, patching, and Worker Versioning candidates.
+The output is a deterministic review manifest: it never imports the SDK, starts
+a Worker, connects to a Temporal service, or executes a workflow.
+
+The decision gate is deliberately asymmetric with a benchmark. Temporal is
+recorded as a candidate for cross-service workers, long-lived histories,
+versioned routing, messages, child workflows, schedules, visibility/retention,
+and in-flight migration. Every category remains `requires_live_evidence` until
+a named DBOS limitation is measured against the same Vera fixture. Consequently
+the manifest reports `recommendation: defer`, `decision_ready: false`, and
+`live_pilot_approved: false`; documentation breadth is not treated as proof of
+runtime superiority.
+
 ## Workflow IR inspection facade
 
 The held W1-02 foundation introduces a versioned, runtime-neutral description

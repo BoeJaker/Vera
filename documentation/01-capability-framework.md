@@ -8,6 +8,14 @@ UI, and distributed-dispatch surfaces from that registration.
 
 Skills, ontologies, DAGs, pipelines, and external MCP servers are all defined as — or proxied through — capabilities. There is one registry, one event surface, one observability layer, regardless of where the underlying work comes from.
 
+The registry now has two complementary layers. The original entry remains the
+execution-compatible source for invocation. Capability Contract v2 projects a
+machine-readable description of canonical task, effects, lifecycle, output,
+policy, resources, and operational evidence. Resolvers and tool-using models can
+therefore distinguish similar implementations without changing legacy dispatch.
+See [Capability contracts](./43-capability-contracts.md) and
+[Capability policy](./45-capability-policy.md).
+
 This document is the reference for what the decorator does, how the registry is shaped, and how each interface consumes it.
 
 ---

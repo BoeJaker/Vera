@@ -76,6 +76,13 @@ This is still a narrow rollout, not global authorization. Promotion of another
 family requires complete contracts, frozen bypass fixtures, observed shadow
 parity, and an explicit rollback plan.
 
+The surrounding UI and activity surfaces consume only the bounded policy
+projection: verdict/reason codes, whether enforcement selected the family, and
+whether the call would be or was blocked. They do not receive receipt material,
+nonces, signing keys, arguments, or result content. Resolver preference remains
+separate from authorization—a top-ranked candidate can still be denied, and a
+valid receipt cannot make an incompatible candidate eligible.
+
 ## Frozen W1-05 gate
 
 `eval.policy.boundary` runs `evaluations/policy-boundary-v1.json` as one
