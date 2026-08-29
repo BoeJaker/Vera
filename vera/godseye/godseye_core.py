@@ -26,6 +26,10 @@ UPSTREAM_URL = "https://github.com/VrushankPatel/godseye"
 APP_MOUNT = "/godseye/app"
 APP_BASE = APP_MOUNT + "/"
 
+#: The branch our fork's work lives on. Kept distinct from any upstream branch
+#: name so `godseye.repo.sync` can always tell "ours" from "theirs".
+WORK_BRANCH = "vera"
+
 #: Node image used for the containerised build — the host needs no toolchain.
 #: Vite 7 requires Node >= 20.19, so pin a major that satisfies it.
 DEFAULT_NODE_IMAGE = "node:22-alpine"
@@ -75,6 +79,16 @@ def resolve_layout(root: Path, env: Optional[Dict[str, str]] = None) -> Dict[str
     clone = Path(override).expanduser() if override else Path(root) / "vendor" / "godseye"
     clone = clone if clone.is_absolute() else (Path(root) / clone)
     state = clone.parent / ".godseye"
+
+    # The fork lives OUTSIDE the vendor directory on purpose. Everything under
+    # vendor/ is disposable — git-ignored, rebuildable, and deleted whenever the
+    # clone is reset — so a fork kept in there would take our own commits with
+    # it. ``VERA_GODSEYE_FORK`` can point this at any git remote (a Gitea repo,
+    # say) without a code change.
+    fork_override = (env.get("VERA_GODSEYE_FORK") or "").strip()
+    fork = Path(fork_override).expanduser() if fork_override else \
+        Path(env.get("HOME") or Path.home()) / "godseye-fork.git"
+
     return {
         "vendor_dir": clone.parent,
         "clone_dir": clone,
@@ -82,6 +96,7 @@ def resolve_layout(root: Path, env: Optional[Dict[str, str]] = None) -> Dict[str
         "log_path": state / "build.log",
         "dist_dir": clone / "dist",
         "env_file": clone / ".env.local",
+        "fork_dir": fork,
     }
 
 
@@ -362,9 +377,10 @@ def known_config(config: Dict[str, str]) -> Dict[str, str]:
 
 # ── docker argv ──────────────────────────────────────────────────────────────
 def docker_sync_argv(*, vendor_dir: Path, script_path: Path, clone_name: str,
-                     url: str, ref: str = "", depth: int = 1,
+                     url: str, ref: str = "", depth: int = 0,
                      image: str = DEFAULT_NODE_IMAGE, uid: int = 0, gid: int = 0,
-                     ) -> List[str]:
+                     fork_dir: Optional[Path] = None,
+                     work_branch: str = WORK_BRANCH) -> List[str]:
     """`docker run` argv for the clone/update, which happens in a container too.
 
     Not because the host cannot run git, but because it should not: the host's
@@ -387,11 +403,17 @@ def docker_sync_argv(*, vendor_dir: Path, script_path: Path, clone_name: str,
         "GODSEYE_META": "/work/.godseye/repo.json",
         "GODSEYE_UID": str(int(uid)),
         "GODSEYE_GID": str(int(gid)),
+        "GODSEYE_BRANCH": work_branch or WORK_BRANCH,
+        "GODSEYE_FORK": "/fork" if fork_dir else "",
         "HOME": "/tmp",
     }
     argv = ["docker", "run", "--rm",
             "-v", f"{vendor_dir}:/work",
             "-v", f"{script_path}:/opt/godseye_sync.sh:ro"]
+    if fork_dir:
+        # Mounted at a fixed path so the container never has to know where on
+        # the host the fork lives.
+        argv += ["-v", f"{fork_dir}:/fork"]
     for k, v in env.items():
         argv += ["-e", f"{k}={v}"]
     argv += [image, "sh", "/opt/godseye_sync.sh"]

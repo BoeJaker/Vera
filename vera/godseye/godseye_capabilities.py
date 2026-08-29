@@ -283,8 +283,14 @@ async def godseye_status(trace_id=None) -> Dict[str, Any]:
 @capability(
     "godseye.repo.sync", memory="on",
     http_method="POST", http_path="/godseye/repo/sync", http_tags=["godseye"],
-    description="Clone the Godseye upstream repo into Vera's git-ignored vendor "
-                "directory, or fast-forward an existing clone. Godseye stays a "
+    description="Clone OUR FORK of Godseye into Vera's git-ignored vendor "
+                "directory, or bring upstream's changes into it. The clone is a "
+                "real fork: remote `upstream` is only ever fetched, our commits "
+                "live on branch `vera`, and updating MERGES upstream into that "
+                "branch — never a hard reset, so local work survives. A merge "
+                "conflict stops with the tree untouched and reports it. The "
+                "branch is pushed to a durable fork remote outside the "
+                "disposable vendor dir (VERA_GODSEYE_FORK). Godseye stays a "
                 "SEPARATE repo — this never adds its source to Vera's git. "
                 "Refuses to clone into a path Vera's git can see (that would "
                 "leave every checkout dirty). git runs INSIDE a throwaway "
@@ -294,7 +300,7 @@ async def godseye_status(trace_id=None) -> Dict[str, Any]:
                 "to upstream), depth (int=1, 0=full). "
                 "Output: {ok, action, commit, path}.",
 )
-async def godseye_repo_sync(ref: str = "", url: str = "", depth: int = 1,
+async def godseye_repo_sync(ref: str = "", url: str = "", depth: int = 0,
                             trace_id=None) -> Dict[str, Any]:
     url = (url or os.environ.get("VERA_GODSEYE_REPO_URL") or _core.UPSTREAM_URL).strip()
     ref = (ref or "").strip()
@@ -317,14 +323,28 @@ async def godseye_repo_sync(ref: str = "", url: str = "", depth: int = 1,
         return {"ok": False, "error": f"sync script missing: {_SYNC_SCRIPT}"}
     clone.parent.mkdir(parents=True, exist_ok=True)
     lay["state_dir"].mkdir(parents=True, exist_ok=True)
+    fork = lay["fork_dir"]
+    try:
+        fork.mkdir(parents=True, exist_ok=True)     # the container inits it bare
+    except OSError as e:
+        log.warning("godseye: fork dir %s unusable (%s) — syncing without it", fork, e)
+        fork = None
 
     # git runs in the container, never on the host — see godseye_sync.sh.
     argv = _core.docker_sync_argv(
         vendor_dir=lay["vendor_dir"], script_path=_SYNC_SCRIPT,
         clone_name=clone.name, url=url, ref=ref, depth=depth,
         image=os.environ.get("VERA_GODSEYE_IMAGE") or _core.DEFAULT_NODE_IMAGE,
-        uid=_host_uid(), gid=_host_gid())
-    r = await _run(argv, timeout=900)
+        uid=_host_uid(), gid=_host_gid(), fork_dir=fork)
+    r = await _run(argv, timeout=1800)
+    # rc 5 is the deliberate "upstream merge conflicts with our fork" signal:
+    # the tree was left untouched and a human has to reconcile it.
+    if r.get("rc") == 5:
+        meta = _core.read_repo_meta(lay["state_dir"], clone)
+        return {"ok": False, "action": "conflict", "commit": meta,
+                "error": ("upstream does not merge cleanly into our fork branch "
+                          f"'{_core.WORK_BRANCH}'. Nothing was changed. Resolve it in "
+                          f"{clone} (git merge upstream/HEAD) and push to the fork.")}
     if not r["ok"]:
         return {"ok": False, "action": "sync",
                 "error": r["err"] or r["out"] or "git container failed"}
@@ -335,6 +355,10 @@ async def godseye_repo_sync(ref: str = "", url: str = "", depth: int = 1,
     await emit_event({"type": "godseye.repo.synced", "action": action,
                       "commit": commit.get("short", ""), "path": str(clone)})
     return {"ok": True, "action": action, "commit": commit, "path": str(clone),
+            "branch": meta.get("branch", _core.WORK_BRANCH),
+            "fork": str(fork) if fork else "",
+            "ahead": meta.get("ahead", 0), "behind": meta.get("behind", 0),
+            "merge": meta.get("merge", ""), "pushed": meta.get("pushed", ""),
             "next": "godseye.build"}
 
 

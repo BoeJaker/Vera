@@ -263,6 +263,61 @@ def test_sync_argv_runs_git_in_a_container_not_on_the_host(tmp_path):
     assert argv[-3:] == [C.DEFAULT_NODE_IMAGE, "sh", "/opt/godseye_sync.sh"]
 
 
+def test_the_fork_lives_outside_the_disposable_vendor_dir(tmp_path):
+    lay = C.resolve_layout(tmp_path, {"HOME": str(tmp_path / "home")})
+    fork = lay["fork_dir"]
+    # Everything under vendor/ is git-ignored and gets deleted on a reset; a
+    # fork kept in there would take our own commits with it.
+    assert lay["vendor_dir"] not in fork.parents and fork != lay["vendor_dir"]
+    assert lay["clone_dir"] not in fork.parents
+
+
+def test_the_fork_can_be_pointed_anywhere(tmp_path):
+    lay = C.resolve_layout(tmp_path, {"VERA_GODSEYE_FORK": str(tmp_path / "elsewhere.git")})
+    assert lay["fork_dir"] == tmp_path / "elsewhere.git"
+
+
+def test_sync_argv_wires_both_remotes_and_our_branch(tmp_path):
+    argv = C.docker_sync_argv(vendor_dir=tmp_path / "vendor",
+                              script_path=tmp_path / "s.sh", clone_name="godseye",
+                              url="https://h/r", fork_dir=tmp_path / "fork.git")
+    env = dict(argv[i + 1].split("=", 1) for i, a in enumerate(argv) if a == "-e")
+    assert env["GODSEYE_URL"] == "https://h/r"
+    assert env["GODSEYE_BRANCH"] == C.WORK_BRANCH
+    # Fixed mount point: the container never needs to know the host layout.
+    assert env["GODSEYE_FORK"] == "/fork"
+    mounts = [argv[i + 1] for i, a in enumerate(argv) if a == "-v"]
+    assert f"{tmp_path / 'fork.git'}:/fork" in mounts
+    # A fork has to merge and push, and neither is reliable from a shallow
+    # history — so full depth is the default here, unlike a throwaway mirror.
+    assert env["GODSEYE_DEPTH"] == "0"
+
+
+def test_sync_argv_without_a_fork_mounts_nothing_extra(tmp_path):
+    argv = C.docker_sync_argv(vendor_dir=tmp_path, script_path=tmp_path / "s.sh",
+                              clone_name="godseye", url="https://h/r")
+    env = dict(argv[i + 1].split("=", 1) for i, a in enumerate(argv) if a == "-e")
+    assert env["GODSEYE_FORK"] == ""
+    assert not any(m.endswith(":/fork") for m in
+                   [argv[i + 1] for i, a in enumerate(argv) if a == "-v"])
+
+
+def test_sync_script_is_a_fork_not_a_mirror():
+    raw = (Path(__file__).resolve().parent.parent
+           / "vera" / "godseye" / "godseye_sync.sh").read_text(encoding="utf-8")
+    script = "\n".join(ln for ln in raw.splitlines()
+                       if not ln.lstrip().startswith("#"))
+    # Updating MERGES upstream into our branch. A hard reset/detach would throw
+    # our commits away, which is the one thing a fork must never do.
+    assert "git merge --no-edit" in script
+    assert "checkout --force --detach" not in script
+    assert "reset --hard" not in script
+    # A conflict must abort and report, leaving the tree as it was.
+    assert "merge --abort" in script and "MERGE_STATUS=conflict" in script
+    # `upstream` is fetch-only; nothing may push our fork at the original.
+    assert "git push fork" in script and "git push upstream" not in script
+
+
 def test_sync_argv_depth_and_ref_are_optional(tmp_path):
     argv = C.docker_sync_argv(vendor_dir=tmp_path, script_path=tmp_path / "s.sh",
                               clone_name="godseye", url="https://h/r", depth=0)
@@ -279,8 +334,9 @@ def test_sync_script_contract():
     # precisely to explain why it is not used.
     script = "\n".join(ln for ln in raw.splitlines()
                        if not ln.lstrip().startswith("#"))
-    # fetch + hard checkout, never a merge that could wedge a managed clone.
-    assert "git fetch" in script and "checkout --force --detach" in script
+    # Upstream is only ever FETCHED. (How it is then integrated is the fork
+    # model's business — see test_sync_script_is_a_fork_not_a_mirror.)
+    assert "git fetch" in script
     assert "git pull" not in script
     # `--` before the url: a url that slipped the filter cannot become a flag.
     assert '-- "$URL" "$SRC"' in script
@@ -289,8 +345,11 @@ def test_sync_script_contract():
     # The build runs unprivileged and must be able to write into the clone.
     assert 'chown -R "$UID_:$GID_"' in script
     # ...which then makes git refuse the host-owned repo on the SECOND run
-    # ("detected dubious ownership"), so the update path must declare it safe.
-    assert "safe.directory" in script
+    # ("detected dubious ownership"). It has to be declared safe in a real
+    # GLOBAL config: git ignores safe.directory from -c/GIT_CONFIG_*, so the
+    # env form silently failed and the fork push died with that exact error.
+    assert 'git config --global --add safe.directory "$SRC"' in script
+    assert 'safe.directory "$FORK"' in script
 
 
 def test_build_script_precompresses_the_bundle():
