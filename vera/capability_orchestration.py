@@ -8477,6 +8477,14 @@ async def cap_workflow_durability_dbos_mapping(trace_id=None):
     from Vera.vera.execution.dbos_mapping import compile_dbos_mapping
     return compile_dbos_mapping().to_dict()
 
+
+@capability("workflow.durability.temporal_paper", memory="off",
+            description="Inspect the offline Temporal durability mapping and decision gate",
+            contract=_inspection_contract("workflow.durability.temporal_paper", effects=["none"]))
+async def cap_workflow_durability_temporal_paper(trace_id=None):
+    from Vera.vera.execution.temporal_mapping import compile_temporal_mapping
+    return compile_temporal_mapping().to_dict()
+
 @capability("dag.plan", memory="on",
             http_method="POST", http_path="/dag/plan", http_tags=["dag"],
             description="Ask the LLM to produce a DAG execution plan for a natural-language goal.")

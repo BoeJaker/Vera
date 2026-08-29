@@ -42,6 +42,20 @@ stream should be removed only after confirming no live producer depends on it.
 For suspected stalled agents, compare board heartbeat, active session, pipeline
 state, sandbox state, and recent capability events before reassignment.
 
+Capability activity now has enough structure to explain *why* an action was
+available or refused. Contract projections supply canonical task, lifecycle,
+effects, and resource posture; privacy-safe observations supply sample count,
+success rate, and latency; resolver shadow supplies ranked/excluded candidates;
+and policy events supply allow/deny/indeterminate plus selected/would-block/
+blocked state. Activity stores and renders the bounded metadata and identifiers,
+never arguments, prompts, result bodies, secret values, approval receipts, or
+exception text.
+
+This evidence also feeds memory and context graphs as references rather than
+duplicated authority. A graph node can navigate to the exact activity or Run,
+but the native capability/DAG remains authoritative and the board remains the
+source of work ownership.
+
 ## Run evidence in the Activity UI
 
 The W1-01 UI projects the native DAG lifecycle without taking authority from

@@ -35,6 +35,22 @@ A Vera capability is simultaneously:
 There is one registry and one execution contract. A tool does not need separate
 implementations for the UI, API, agent runtime, and worker cluster.
 
+A capability is more than a remotely callable function. Its registered name is
+a stable operation identity; its JSON schema tells callers how to supply data;
+its Capability Contract describes the task it fulfils, effects it may cause,
+resources and authority it needs, lifecycle, and operational expectations. The
+same wrapper then applies tracing, policy observation or enforcement, activity
+recording, error normalization, optional caching, and local or worker dispatch.
+This lets a model choose between several implementations of the same task using
+machine-readable evidence instead of guessing from similar names.
+
+Registration does not itself grant authority. A capability can be discoverable
+while policy still denies a particular call, and inspection capabilities can
+describe plans, contracts, runtime mappings, or health without executing the
+thing they describe. This separation—**describe, resolve, authorize, execute,
+observe**—is what allows Vera to interoperate with external MCP servers and
+agent or workflow runtimes without absorbing each one into a new bespoke loop.
+
 ## What you can build
 
 | Area | What Vera provides |
@@ -147,6 +163,11 @@ After the module is loaded, `example.greet` is discoverable through MCP,
 callable through the registry and HTTP route, visible to planners, and
 represented by its input schema in the harness.
 
+For production-facing tools, also declare a v2 `contract` with a canonical
+task, effects, output schema, policy posture, owner, and resource class. Legacy
+capabilities continue to work, but unknown declarations remain visible as
+migration gaps and are not silently interpreted as safe defaults.
+
 ```bash
 curl http://localhost:8999/mcp/call \
   -H 'content-type: application/json' \
@@ -165,7 +186,7 @@ streams, caching, memory, worker dispatch, errors, and UI registration.
 | Configure local models | [Ollama cluster](documentation/04-ollama-cluster.md) · [vLLM](documentation/21-vllm.md) |
 | Store and retrieve knowledge | [Memory graph](documentation/05-memory-graph.md) · [Data fabric](documentation/06-data-fabric.md) |
 | Operate websites or Vera itself | [Operator](documentation/34-operator.md) |
-| Develop Vera safely | [Loop Lab](documentation/33-evolve.md) · [Development lifecycle](documentation/specs/dev-lifecycle-and-repo-hygiene.md) |
+| Develop Vera safely | [Loop Lab, sandboxes, review, and promotion](documentation/33-evolve.md) |
 | Size or troubleshoot a deployment | [Performance and sizing](documentation/00-performance-and-sizing.md) · [Workers and syslog](documentation/22-workers-jobs-syslog.md) |
 | Browse every subsystem | [Documentation hub](documentation/README.md) |
 
@@ -223,8 +244,8 @@ Vera changes quickly. Before submitting a change:
 4. never commit credentials, generated secrets, or local environment files; and
 5. use Vera's isolated development workflow for Vera repository changes.
 
-The canonical development and release rules are documented in
-[Development lifecycle and repository hygiene](documentation/specs/dev-lifecycle-and-repo-hygiene.md).
+The canonical development and release workflow is documented in
+[Loop Lab](documentation/33-evolve.md).
 
 ## License
 

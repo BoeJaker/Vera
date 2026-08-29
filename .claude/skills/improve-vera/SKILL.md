@@ -63,9 +63,11 @@ the constraint is specifically about concurrent Ollama/GPU consumers.
    see §3.
 4. **Verify against the real shipped code before trusting a fix.** See
    §2 — this has a specific, easy-to-miss trap.
-5. **Record evidence as you go**, not after. Put temporary private analysis in
-   the sandbox worktree's gitignored `.vera-work/planning/`; keep the concise
-   `.vera-work/work-plan.json` handoff current. Convert actionable plans into an
+5. **Record evidence as you go**, not after. Put cross-worktree private plans
+   and handovers under `<git-common-dir>/vera-work/shared-planning/<work-unit>/`
+   (resolve it with `git rev-parse --git-common-dir`); reserve the sandbox's
+   gitignored `.vera-work/planning/` for disposable local scratch. Keep the
+   concise `.vera-work/work-plan.json` handoff current. Convert actionable plans into an
    umbrella Loop Lab board item plus linked child items, and post progress as
    `board.comment` entries. Do not create plan/evaluation/handover Markdown in
    `documentation/`; only numbered `documentation/[0-9][0-9]-*.md` files are

@@ -823,6 +823,25 @@ different eligible deployments.
 
 ## Round 2 bounded work units
 
+### Implemented foundation: W0 through the durability decision gate
+
+The foundation work is now represented in public subsystem documents rather
+than relying on private roadmap/hand-over files:
+
+| Concern | Implemented boundary | Detailed guide |
+|---|---|---|
+| Performance evidence | Reproducible baseline vocabulary, resource envelopes, and no blanket capacity promise | [Performance and sizing](./00-performance-and-sizing.md), [Performance baseline](./42-performance-baseline.md) |
+| Capability structure | Contract v2 projection, lint, coverage, incremental gate, operational observations, lifecycle, and canonical task families | [Capability contracts](./43-capability-contracts.md) |
+| Evaluation | Frozen deterministic/queued-live corpus, resolver safety lane, policy-adversarial lane, and portable telemetry lane | [Evaluation corpus](./44-evaluation-corpus.md) |
+| Selection and authority | Deterministic resolver shadow; pure policy decisions; trusted receipts; narrow reversible enforcement | [Capability policy](./45-capability-policy.md) |
+| Execution interoperability | Run shadow, Workflow IR import/export/validation, adapter contracts, and explicit unsupported semantics | [DAG engine](./03-dag-engine.md) |
+| Runtime comparison | Vendor-neutral crash/recovery fixture plus static DBOS and Temporal mappings, with every executable pilot queued | [DAG engine](./03-dag-engine.md) |
+| Operator feedback | Activity, graphs, harness status, contract/policy evidence, and board-linked sandbox work plans | [Harness UI](./02-harness-ui.md), [Activity and boards](./39-activity-boards.md), [Loop Lab](./33-evolve.md) |
+
+These pieces form one path—describe, measure, resolve, authorize, execute, and
+observe—while leaving native execution authoritative until a specific adapter
+passes the relevant conformance and live gates.
+
 ### LIB-15 — durable runtime semantic fixture
 
 Implement a runtime-neutral durability fixture before adding DBOS: deterministic
@@ -868,6 +887,17 @@ deploying it. List every mismatch with DBOS and Vera.
 
 Gate: approve a live Temporal pilot only if a named distributed/longevity/versioning
 requirement cannot be satisfied safely by DBOS.
+
+**Offline comparison implemented; live pilot deferred.** The stable manifest
+targets `temporalio==1.32.0`, binds the exact LIB-15 fixture and LIB-16 DBOS
+mapping identities, and records candidate mappings for Workflows, Activities,
+timers, retries/timeouts, cancellation, history events, Signals/Updates,
+patching, and Worker Versioning. It imports and executes no Temporal runtime.
+Cross-service workers, long-lived history, versioned routing, messaging, child
+workflows, schedules, visibility/retention, and in-flight migration all remain
+`requires_live_evidence`; no measured DBOS failure currently justifies a live
+Temporal pilot. The decision therefore remains `defer`, not-ready, and
+unapproved.
 
 ### LIB-18 — agent SDK conformance expansion
 

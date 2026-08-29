@@ -246,9 +246,13 @@ handoffs, and immediately before review.
 - Only numbered root documents matching `documentation/[0-9][0-9]-*.md` are
   publishable subsystem documentation. Do not create plans, evaluations,
   handovers, internal notes, roadmaps, or postmortems in `documentation/`.
-- Use gitignored `.vera-work/planning/` inside the feature worktree for private,
-  temporary analysis that genuinely needs a file. It is local scratch/handoff
-  material, not durable coordination and must contain no secrets or raw results.
+- Use `<git-common-dir>/vera-work/shared-planning/<work-unit>/` for private
+  plans or handovers that must be visible from main, bleeding-edge, and linked
+  sandboxes without ever entering origin. Resolve the root with
+  `git rev-parse --git-common-dir`; a linked worktree's `.git` is a pointer, not
+  the common directory. Use `.vera-work/planning/` only for disposable scratch
+  local to one sandbox. Neither location may contain secrets, raw prompts,
+  credentials, or unredacted result bodies.
 - Convert every actionable or multi-session plan into Loop Lab's durable work
   plane: an umbrella `board.item.upsert` item (`labels:["plan"]`) and child work
   items linked through `plan=<umbrella-id>`. Keep branch, pipeline and session

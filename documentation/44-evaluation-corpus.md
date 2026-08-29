@@ -39,3 +39,21 @@ accuracy and unsafe-choice rate, and verifies every preview remains
 never partially executed. The lane makes no model, network, or capability call;
 live/model comparison remains queued. `eval.resolver.shadow` exposes the
 aggregate report and returns bounded per-case details only when requested.
+
+## Policy and portable telemetry lanes
+
+`evaluations/policy-boundary-v1.json` freezes the W1-05 adversarial cases for
+prompt injection, alias and callback bypass, replayed approval, secret leakage,
+and confused-deputy behavior. `eval.policy.boundary` evaluates synthetic facts
+and receipts only; it does not invoke the selected capability or touch a network.
+
+`evaluations/run-telemetry-v1.json` freezes the W1-06 portable telemetry cases.
+`eval.run.telemetry` checks OTLP-compatible shape, lineage, retry and terminal
+semantics, redaction, failure isolation, structural bounds, and default-off
+behavior using injected transports. Export to a real collector remains a
+separately queued live integration, so a deterministic pass proves the adapter
+contract rather than external service operation.
+
+Together the lanes distinguish three kinds of evidence: declared contracts,
+synthetic deterministic conformance, and explicitly budgeted live measurements.
+Vera does not promote one kind into another implicitly.
