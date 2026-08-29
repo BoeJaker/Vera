@@ -848,6 +848,16 @@ fails current adapters that claim unsupported guarantees.
 Compile the LIB-15 workflow to DBOS and map native state/events to Run. Use an
 isolated database schema and no model calls.
 
+**Offline mapping implemented; executable spike still queued.** A stable manifest
+targets `dbos==2.30.0` and binds the LIB-15 fixture identity, Workflow IR hash,
+definition/implementation revisions, DBOS workflow/step/sleep constructs,
+retry/timeout options, status projection, and Run-event evidence sources. It
+does not import DBOS, emit runnable source, connect to Postgres, or execute a
+workflow. The manifest remains not-ready while timeout/cancel provenance,
+absolute wake conversion, compatible-version patches, external-effect receipts,
+event ordering, large-result ArtifactRefs, and cancellation boundaries lack live
+evidence.
+
 Gate: restart/recovery at every boundary; idempotency; retry ownership; cancellation;
 version mismatch; state/artifact limits; database loss behavior; full teardown.
 

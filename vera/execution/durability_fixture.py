@@ -131,6 +131,11 @@ class DurabilityFixture:
                            for item in self.crash_boundaries)
         if len(set(boundaries)) != len(boundaries) or not boundaries:
             raise ValueError("crash boundaries must be non-empty and unique")
+        expected_boundaries = tuple(
+            boundary for step in workflow["steps"]
+            for boundary in (f"before:{step['id']}", f"after:{step['id']}"))
+        if boundaries != expected_boundaries:
+            raise ValueError("crash boundaries must match every Workflow IR step boundary")
         object.__setattr__(self, "crash_boundaries", boundaries)
         scenarios = tuple(self.scenarios)
         if not scenarios or not all(isinstance(item, DurabilityScenario) for item in scenarios):

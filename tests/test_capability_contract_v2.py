@@ -227,6 +227,7 @@ def test_run_and_workflow_inspection_families_have_gated_contracts():
         "workflow.ir.gaps": "workflow.compatibility.analyze",
         "workflow.durability.fixture": "workflow.durability.fixture",
         "workflow.durability.gaps": "workflow.durability.analyze",
+        "workflow.durability.dbos_mapping": "workflow.durability.dbos_mapping",
     }
     manifests = [
         project_contract(name, runtime_orchestration.CAPABILITY_REGISTRY[name])
