@@ -8435,6 +8435,38 @@ async def cap_workflow_ir_gaps(workflow: dict, adapter: str = "vera.native_dag",
     from Vera.vera.execution.workflow_ir import analyze_adapter
     return analyze_adapter(workflow, adapter=adapter)
 
+
+@capability("workflow.durability.fixture", memory="off",
+            description="Return the canonical LIB-15 durability fixture: normalized Workflow "
+                        "IR, crash/recovery scenarios, expected Run events, and stable identity. "
+                        "This inspection capability never executes a workflow or effect.",
+            contract=_inspection_contract("workflow.durability.fixture", effects=["none"]))
+async def cap_workflow_durability_fixture(trace_id=None):
+    from Vera.vera.execution.durability_fixture import build_durability_fixture
+    return build_durability_fixture().to_dict()
+
+
+@capability("workflow.durability.gaps", memory="off",
+            description="Statically compare LIB-15 with either a named built-in Workflow IR "
+                        "adapter or a supplied RuntimeDurabilityProfile. Provide exactly one of "
+                        "adapter/profile. No runtime is imported or invoked.",
+            contract=_inspection_contract("workflow.durability.analyze", effects=["none"]))
+async def cap_workflow_durability_gaps(adapter: str = "", profile: dict = None,
+                                       trace_id=None):
+    from Vera.vera.execution.durability_fixture import (
+        analyze_durability_profile, analyze_workflow_adapter_durability,
+        durability_profile_from_dict)
+    if bool(adapter) == bool(profile):
+        return {"ok": False, "error": "exactly_one_profile_source_required",
+                "executes": False}
+    try:
+        if adapter:
+            return analyze_workflow_adapter_durability(adapter)
+        return analyze_durability_profile(durability_profile_from_dict(profile))
+    except (TypeError, ValueError) as exc:
+        return {"ok": False, "error": "invalid_durability_profile",
+                "detail": str(exc), "executes": False}
+
 @capability("dag.plan", memory="on",
             http_method="POST", http_path="/dag/plan", http_tags=["dag"],
             description="Ask the LLM to produce a DAG execution plan for a natural-language goal.")

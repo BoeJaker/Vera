@@ -829,6 +829,17 @@ Implement a runtime-neutral durability fixture before adding DBOS: deterministic
 steps, durable wait, retry, timeout, cancel, idempotent external effect, crash at
 every boundary, version change, resume, and complete Run events.
 
+**Offline contract implemented.** The canonical fixture is normalized Workflow
+IR with pinned definition and implementation revisions. It specifies clean,
+retry, cancel, timeout, compatible-version resume, incompatible-version refusal,
+and before/after-every-step crash
+scenarios, including expected Run event types, resume points, attempts, and
+effect-receipt counts. A static profile analyzer fails closed on absent semantics
+or events, non-executable adapters, unsafe version policy, missing
+key-and-receipt deduplication, and unsupported exactly-once claims. It imports or
+executes no runtime and performs no external effect. DBOS/Temporal mappings and
+all crash/recovery execution remain queued-live.
+
 Gate: the fixture describes expected behavior without referencing a vendor and
 fails current adapters that claim unsupported guarantees.
 

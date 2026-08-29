@@ -225,6 +225,8 @@ def test_run_and_workflow_inspection_families_have_gated_contracts():
         "workflow.ir.migrate": "workflow.migrate",
         "workflow.ir.adapters": "workflow.adapters.list",
         "workflow.ir.gaps": "workflow.compatibility.analyze",
+        "workflow.durability.fixture": "workflow.durability.fixture",
+        "workflow.durability.gaps": "workflow.durability.analyze",
     }
     manifests = [
         project_contract(name, runtime_orchestration.CAPABILITY_REGISTRY[name])
@@ -240,6 +242,8 @@ def test_run_and_workflow_inspection_families_have_gated_contracts():
         assert "model" not in by_name[name]["effects"]["declared"]
 
     assert by_name["workflow.ir.validate"]["effects"] == {
+        "status": "declared", "declared": ["none"]}
+    assert by_name["workflow.durability.gaps"]["effects"] == {
         "status": "declared", "declared": ["none"]}
     assert by_name["run.shadow.list"]["effects"] == {
         "status": "declared", "declared": ["filesystem", "read"]}
