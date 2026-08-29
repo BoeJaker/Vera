@@ -1130,43 +1130,90 @@ async def _run_pathfile_in(session_id: str, language: str, path: str, *,
     return out
 
 
+def _default_session_id() -> str:
+    """The running session, when the caller did not name one.
+
+    The agentic loop reaches these caps through a model-authored call that has
+    no way to know the session id, and both caps declare session_id required.
+    ide.fs.* only ever worked from a loop because its router falls back to the
+    trigger chain exactly like this.
+    """
+    try:
+        sl = sys.modules.get("syslog")
+        if sl:
+            return sl.get_trigger_chain().get("session_id", "") or ""
+    except Exception:
+        pass
+    return ""
+
+
 # ---- files inside the container --------------------------------------------
 @capability(
     "sandbox.session.fs.write",
     http_method="POST", http_path="/remote/sandbox/fs/write", http_tags=["remote", "sandbox"],
-    description="Write a file inside a session sandbox. Inputs: session_id (str!), "
-                "path (str!), content (str). Output: {ok, path, bytes}.",
+    description="Write a file inside a session sandbox. Inputs: path (str!), "
+                "content (str), session_id (str, defaults to the running session). "
+                "Output: {ok, path, bytes, created}.",
 )
 async def cap_sbx_fs_write(session_id: str = "", path: str = "", content: str = "",
                            trace_id=None) -> Dict:
+    """Delegates to route_fs_write - the SAME router ide.fs.write uses.
+
+    This used to call _exec_in directly, which does not create the session's
+    sandbox. A caller writing before anything else had touched the session got
+    "no sandbox for this session" while ide.fs.write, going through the router,
+    succeeded on the identical request. Two caps for one operation, one of them
+    quietly weaker, is how they drifted; there is now a single implementation.
+    """
     if not path:
         return {"ok": False, "error": "path required"}
-    b64 = base64.b64encode((content or "").encode()).decode()
-    res = await _exec_in(session_id,
-                         f"mkdir -p $(dirname {shlex.quote(path)}); "
-                         f"echo {b64} | base64 -d > {shlex.quote(path)}", timeout=45)
+    sid = session_id or _default_session_id()
+    if not sid:
+        return {"ok": False, "error": "no session for this write"}
+    res = await route_fs_write(sid, path, content or "")
     if res is None:
         return {"ok": False, "error": "no sandbox for this session"}
-    if not res.get("ok"):
-        return {"ok": False, "error": res.get("stderr") or "write failed"}
-    return {"ok": True, "path": path, "bytes": len((content or '').encode())}
+    if res.get("error"):
+        return {"ok": False, "error": res["error"]}
+    return {"ok": True, "path": res.get("path", path),
+            "bytes": res.get("bytes", len((content or "").encode())),
+            "created": res.get("created")}
 
 
 @capability(
     "sandbox.session.fs.read",
     http_method="POST", http_path="/remote/sandbox/fs/read", http_tags=["remote", "sandbox"],
-    description="Read a file inside a session sandbox. Inputs: session_id (str!), "
-                "path (str!). Output: {ok, path, text}.",
+    description="Read a file inside a session sandbox. Inputs: path (str!), "
+                "session_id (str, defaults to the running session). "
+                "Output: {ok, path, text, content, size, truncated}.",
 )
-async def cap_sbx_fs_read(session_id: str = "", path: str = "", trace_id=None) -> Dict:
+async def cap_sbx_fs_read(session_id: str = "", path: str = "",
+                          max_bytes: int = 1_048_576, trace_id=None) -> Dict:
+    """Delegates to route_fs_read - the SAME router ide.fs.read uses.
+
+    This used to be a bare `cat`, so it had none of the router's recovery: the
+    existence probe, the unique-basename self-correction, or the "files in
+    /workspace: ..." listing that tells a caller what IS there. Returns `text`
+    (its long-standing key) and `content` (the router's / ide.fs.read's key) so
+    either name works.
+    """
     if not path:
         return {"ok": False, "error": "path required"}
-    res = await _exec_in(session_id, f"cat {shlex.quote(path)}", timeout=30)
+    sid = session_id or _default_session_id()
+    if not sid:
+        return {"ok": False, "error": "no session for this read"}
+    res = await route_fs_read(sid, path, max_bytes=max_bytes)
     if res is None:
         return {"ok": False, "error": "no sandbox for this session"}
-    if not res.get("ok"):
-        return {"ok": False, "error": res.get("stderr") or "read failed"}
-    return {"ok": True, "path": path, "text": res.get("stdout", "")}
+    if res.get("error"):
+        return {"ok": False, "error": res["error"]}
+    body = res.get("content", "")
+    out = {"ok": True, "path": res.get("path", path), "text": body,
+           "content": body, "size": res.get("size"),
+           "truncated": res.get("truncated")}
+    if res.get("resolved_from"):
+        out["resolved_from"] = res["resolved_from"]
+    return out
 
 
 @capability(

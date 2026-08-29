@@ -8142,7 +8142,7 @@ _V5_CATALOG_MAX_DEFAULT = 40      # caps shown to the orchestrator (name+desc)
 # own file I/O for a script's data output. ide.fs.write stays a registered
 # capability (so a profile can still opt in explicitly) but is never
 # auto-granted.
-_V5_ESSENTIAL_ACTION_CAPS = ("exec.bash.run", "ide.fs.read", "http.get")
+_V5_ESSENTIAL_ACTION_CAPS = ("exec.bash.run", "sandbox.session.fs.read", "http.get")
 
 # File-access caps EVERY acting step can always reach, granted ON TOP of the
 # planner's assignment (they never consume its per-step cap budget). The loop
@@ -8153,12 +8153,12 @@ _V5_ESSENTIAL_ACTION_CAPS = ("exec.bash.run", "ide.fs.read", "http.get")
 # explore/verify contract is preserved. See the ide.fs.write note above — file
 # CREATION always goes through code.author/prose.author (always seeded via
 # _V5_CORE_SEED_CAPS below), never a raw write.
-_V5_ALWAYS_FILE_CAPS = ("exec.bash.run", "exec.python.run", "ide.fs.read")
-_V5_ALWAYS_FILE_CAPS_RO = ("ide.fs.read",)   # read-only phases: no write
+_V5_ALWAYS_FILE_CAPS = ("exec.bash.run", "exec.python.run", "sandbox.session.fs.read")
+_V5_ALWAYS_FILE_CAPS_RO = ("sandbox.session.fs.read",)   # read-only phases: no write
 
 # Caps ALWAYS worth offering (run a command/script, persist/read a file, fetch a
 # URL, search data/caps). exec.python.run is here so a step can write+run a script.
-_V5_CORE_SEED_CAPS = ("exec.bash.run", "exec.python.run", "ide.fs.read",
+_V5_CORE_SEED_CAPS = ("exec.bash.run", "exec.python.run", "sandbox.session.fs.read",
                       "http.get", "caps.search", "fabric.query", "code.author",
                       # code.edit rides alongside code.author: without it in the
                       # catalog the only route to changing an existing file is a
@@ -8201,7 +8201,7 @@ _V5_INFRA_PREFIXES = ("netscan.", "exec.ssh", "proxmox.", "docker.", "k8s.", "ku
 _V5_INVESTIGATION_CAPS = ("web.research", "web.crawl", "web.search", "web.fetch", "http.get",
                           "research.quick_search", "fabric.query",
                           "fabric.entity_graph.query", "caps.search", "caps.describe",
-                          "context.search_caps", "ide.fs.read", "exec.bash.run",
+                          "context.search_caps", "sandbox.session.fs.read", "exec.bash.run",
                           "exec.python.run")
 
 
@@ -8266,7 +8266,18 @@ def _v5_seed_caps_for(goal: str) -> List[str]:
 #   gathering. Still a real, registered capability — just never offered to
 #   the agentic loop specifically. See _V5_WEB_RESEARCH_SEED_CAPS's own
 #   comment for the full reasoning.
-_V5_LOOP_DENYLIST = {"browser.navigate"}
+_V5_LOOP_DENYLIST = {"browser.navigate",
+                     # File CREATION in a loop goes through code.author /
+                     # prose.author, or the cap that generated the data writes
+                     # it. A raw write cap is redundant with those and was only
+                     # ever reached as an escape hatch: census build-multifile
+                     # (2026-08-29) hit a path bug, tried ide.fs.write to route
+                     # around it, was refused BY STEP SCOPE, and then spent the
+                     # rest of its wall cap inventing writers - ending on a step
+                     # titled "Force-persist __init__.py via ide.fs.read
+                     # write-back". Denying it outright states the rule once,
+                     # instead of leaving a cap visible that scope will refuse.
+                     "ide.fs.write", "sandbox.session.fs.write"}
 
 # WHOLE FAMILIES the loop must never be offered, by prefix.
 #   evolve.* — Vera's own CI/CD and self-modification surface: repo registry,
@@ -8663,13 +8674,13 @@ _V5_TOOL_ALIASES = {
     "runpowershell": "exec.ps.run",
     # → http.get  (fetch a URL)
     "httprequest": "http.get", "httpfetch": "http.get", "fetchurl": "http.get",
-    # → ide.fs.read  (read a file — the OpenAI-style generic names models reach
+    # → sandbox.session.fs.read  (read a file — the OpenAI-style generic names models reach
     #   for instead of the namespaced cap; observed live wasting a full loop
     #   cycle each time they bounce off the scope gate). Same {path} arg shape.
-    "readfile": "ide.fs.read", "openfile": "ide.fs.read", "catfile": "ide.fs.read",
-    "getfile": "ide.fs.read", "loadfile": "ide.fs.read", "viewfile": "ide.fs.read",
-    "filecontents": "ide.fs.read", "getfilecontents": "ide.fs.read",
-    "readfilecontent": "ide.fs.read", "fsread": "ide.fs.read",
+    "readfile": "sandbox.session.fs.read", "openfile": "sandbox.session.fs.read", "catfile": "sandbox.session.fs.read",
+    "getfile": "sandbox.session.fs.read", "loadfile": "sandbox.session.fs.read", "viewfile": "sandbox.session.fs.read",
+    "filecontents": "sandbox.session.fs.read", "getfilecontents": "sandbox.session.fs.read",
+    "readfilecontent": "sandbox.session.fs.read", "fsread": "sandbox.session.fs.read",
     # → ide.fs.write  (write a file). Same {path, content} arg shape.
     "writefile": "ide.fs.write", "savefile": "ide.fs.write", "putfile": "ide.fs.write",
     "createfile": "ide.fs.write", "filewrite": "ide.fs.write", "writetofile": "ide.fs.write",
@@ -8708,7 +8719,7 @@ _V5_BUILD_CAPS = {"llm.generate", "code.author", "code.edit", "prose.author",
                   "exec.python.run", "exec.bash.run",
                   "ml.agent.build_and_test", "ide.fs.write"}
 # Read-only/context caps that are useful to BOTH halves of a split.
-_V5_SHARED_READ_CAPS = ("ide.fs.read", "http.get", "fabric.query",
+_V5_SHARED_READ_CAPS = ("sandbox.session.fs.read", "http.get", "fabric.query",
                         "memory.seek", "memory.read", "memory.browse")
 
 # A GENUINE "do X, THEN do Y" seam between two units of work. The split only fires
@@ -8763,7 +8774,7 @@ def _v5_split_compound_single_step(steps: List[Dict[str, Any]], goal: str) -> Li
         return out
 
     research_caps = _dedup(research + shared)[:8]
-    build_caps = _dedup(build + ["ide.fs.read"] + [c for c in shared if c != "ide.fs.read"])[:8]
+    build_caps = _dedup(build + ["sandbox.session.fs.read"] + [c for c in shared if c != "sandbox.session.fs.read"])[:8]
     return [
         {"id": 1, "title": ("Research: " + research_goal)[:120], "goal": research_goal,
          "caps": research_caps, "skills": [], "needs": [], "complex": False, "phases": []},
@@ -8786,7 +8797,7 @@ _V5_LONGFORM_EXACT = {"web.fetch", "web.search_and_crawl", "llm.summarize",
 # OBSERVATION of a read (not the file), the model reads that as "the file is
 # partial" and re-reads forever. Size these to fit a typical model context so a
 # normal file is shown in FULL. Env-tunable for larger/smaller context models.
-_V5_FILEREAD_CAPS = {"ide.fs.read", "code.read"}
+_V5_FILEREAD_CAPS = {"sandbox.session.fs.read", "code.read"}
 # Discovery caps whose results are NAMES rather than usable output — the model
 # reads a ranked list of DAG/cap names and calls one directly ("Get PokeAPI Gen 1
 # Endpoints"). Their previews get an explicit "these are not callable" header.
@@ -10168,7 +10179,7 @@ def _code_list_sync(scope: str, path: str) -> List[Dict[str, Any]]:
 
 async def _code_mirror_to_fs(session_id: str, path: str, content: str) -> str:
     """Write the LATEST content to the run's artifact dir so it is runnable and
-    readable via ide.fs.read. Sandbox-aware: when the session has an active
+    readable via sandbox.session.fs.read. Sandbox-aware: when the session has an active
     sandbox this lands in the container's /workspace (where its runs execute),
     never on the host. Returns the absolute fs path (or '')."""
     try:
@@ -10337,7 +10348,7 @@ def _unescape_collapsed_code(content: str) -> str:
     description="Save (version) a code/text file in the data-fabric code store. Creates a NEW "
                 "immutable version keyed by (scope, path); identical content is a no-op. The "
                 "LATEST is mirrored to the run's artifact dir (runnable + readable via "
-                "ide.fs.read). Input: path (str!), content (str!), session_id (str — scopes the "
+                "sandbox.session.fs.read). Input: path (str!), content (str!), session_id (str — scopes the "
                 "file set), repo (str — overrides scope), message (str), lang (str), push_gitea "
                 "(bool — also commit to the configured Gitea), mirror_fs (bool default True). "
                 "Output: {ok, path, scope, version, bytes, lang, fs_path, sha, gitea?}.",
@@ -12077,7 +12088,7 @@ def _v5_stub_code_fences(text: str, saved: List[Dict[str, Any]],
                     "(re-saving overwrites to a new version); if it is genuinely too large for one "
                     "response, split it across multiple files. Do NOT leave it truncated.]")
         return (f"[✔ code block ({n_lines} lines, {len(code)} chars) {where} — it is COMPLETE, "
-                "not truncated. Read it back with ide.fs.read if you need it. Do NOT regenerate "
+                "not truncated. Read it back with sandbox.session.fs.read if you need it. Do NOT regenerate "
                 "or 'complete' it.]")
 
     return _CODE_FENCE_RE.sub(_sub, text)
@@ -12893,7 +12904,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
         "transforms → writes it (exec.python.run, or exec.bash.run with sed/jq/awk) — deterministic, "
         "exact, never drops or invents content; never ask llm.generate to 'edit' a data file. "
         "(3) a wholesale REWRITE / RESTRUCTURE of authored prose/code (most of the file changes) → "
-        "re-generate with llm.generate (read the latest via code.read / ide.fs.read, re-emit the FULL "
+        "re-generate with llm.generate (read the latest via code.read / sandbox.session.fs.read, re-emit the FULL "
         "file with the SAME `# file:` path — a new version is saved automatically). Reserve (3) for a "
         "genuine rewrite, never a few changed lines. Do NOT use llm.plan to 'plan a DAG' for a coding "
         "task (llm.plan builds a DAG WORKFLOW, only for when the user explicitly asks for a DAG/pipeline).\n"
@@ -12904,7 +12915,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
         "an outline, never placeholders like 'TBD' or '[expand here]' — with llm.generate, naming "
         "the file in the step goal (the generation is written to that file AUTOMATICALLY, so this "
         "one step both writes and saves it); (3) for LONG documents, split by "
-        "SECTION: each step reads the saved file (ide.fs.read), APPENDS/COMPLETES its sections, and "
+        "SECTION: each step reads the saved file (sandbox.session.fs.read), APPENDS/COMPLETES its sections, and "
         "re-emits the FULL updated document (a new version — nothing is "
         "lost); (4) a final REVIEW step that reads the whole file, fixes gaps, and confirms every "
         "section is complete. The saved file is the deliverable the user downloads.\n"
@@ -12920,7 +12931,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
         "first inspecting the environment/data/web, put up to " + str(_V5_RECON_MAX) + " READ-ONLY "
         "actions in `recon`. Allowed recon: caps.search, context.search_caps, memory.seek, "
         "memory.map, memory.browse, fabric.query, "
-        "http.get, ide.fs.read, AND read-only shell via exec.bash.run (args {\"command\":\"…\"}) "
+        "http.get, sandbox.session.fs.read, AND read-only shell via exec.bash.run (args {\"command\":\"…\"}) "
         "using ONLY exploratory commands — ls, cat, head, tail, grep/rg, find, pwd, whoami, env, "
         "stat, wc (NO redirection >, pipes-to-writers, rm/mv/cp, or anything that writes/runs/"
         "installs). Recon runs BEFORE the plan is finalised and the findings are fed back to you. "
@@ -14143,9 +14154,9 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
     # The file-read cap this step can ACTUALLY call. Prompts used to name
     # `code.read` unconditionally, so a step without it dutifully tried to call a
     # capability it did not have — self-inflicted phantom-cap calls.
-    _read_cap = next((c for c in ("code.read", "ide.fs.read") if c in caps),
-                     next((c for c in ("ide.fs.read", "code.read") if c in extra_file_caps),
-                          "ide.fs.read"))
+    _read_cap = next((c for c in ("code.read", "sandbox.session.fs.read") if c in caps),
+                     next((c for c in ("sandbox.session.fs.read", "code.read") if c in extra_file_caps),
+                          "sandbox.session.fs.read"))
 
     # Coding route: one cap, the coding specialist, grounded + versioned. Shown
     # whenever it is reachable, because "write the code yourself" is the failure
@@ -16939,7 +16950,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                                     f"in your working directory ({len(_gtxt):,} chars). The file "
                                     "EXISTS: do NOT write it again with ide.fs.write or a shell "
                                     "heredoc, and do not re-generate it. Refer to it by that RELATIVE "
-                                    "name; ide.fs.read it if you need it back.]")
+                                    "name; sandbox.session.fs.read it if you need it back.]")
                                 preview += gen_saved_note
                                 # Value LEADS with the bare relative path: the journal
                                 # takes the first line as the artifact path and PROBES
@@ -18750,7 +18761,7 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
         "exec.python.run to parse the file, then prose.author to compose the document grounded on it).\n"
         "VERIFICATION STEPS: when a claimed result needs PROOF (code that 'works', an API "
         "that 'responds', an edit that 'applied', a system state), insert a verification "
-        "step with exec caps (exec.python.run / exec.bash.run + code.read/ide.fs.read) and "
+        "step with exec caps (exec.python.run / exec.bash.run + code.read/sandbox.session.fs.read) and "
         "phase it [\"verify\"]; its goal must say: write the SMALLEST test script that "
         "decides the claim and print a PASS/FAIL verdict plus at most ~10 lines of "
         "decision-relevant evidence — never dump whole files/logs/responses.\n"

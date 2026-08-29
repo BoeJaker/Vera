@@ -513,23 +513,26 @@ _BUILTIN_SKILLS: list[dict] = [
         ),
     },
     {
-        "id": "sys-exec-fileio", "version": 3,
+        "id": "sys-exec-fileio", "version": 4,
         "name": "Files & terminal I/O",
         "description": "How to CREATE, read, edit and search files (and use the shell), persisting artifacts to the artifact directory so the user can iterate on them.",
         "type": "tool_hint", "tags": ["system", "exec", "files"],
-        "applies_to_caps": ["ide.fs.write", "ide.fs.read", "ide.fs.list",
+        "applies_to_caps": ["sandbox.session.fs.read", "sandbox.session.fs.write",
+                            "ide.fs.write", "ide.fs.read", "ide.fs.list",
                             "exec.bash.run", "exec.ps.run", "exec.code.run", "exec.python.run"],
         "content": (
             "CREATING & ITERATING ON FILES (artifacts):\n"
-            "• To CREATE or OVERWRITE a file, use ide.fs.write(path=\"<ARTIFACT_DIR>/<name.ext>\", "
-            "content=\"<full file content>\"). It creates parent dirs and persists the file so it can "
-            "be re-read and edited in later turns. ALWAYS write generated artifacts (scripts, docs, "
-            "configs) into the ARTIFACT DIRECTORY given in your context using an ABSOLUTE path — never "
-            "only to a temp path that vanishes.\n"
-            "• To READ a file: ide.fs.read(path=\"...\"). To LIST what exists: ide.fs.list(path=\"<dir>\").\n"
-            "• To EDIT a file: ide.fs.read it, apply your change to the content, then ide.fs.write the "
-            "FULL new content back to the same path. For a small in-place tweak you may instead use "
-            "exec.bash.run with sed -i 's/old/new/g' <path>.\n"
+            "• To CREATE or OVERWRITE a file, use code.author(path=\"<name.ext>\", task=\"…\") for "
+            "code, or prose.author for documents. They write the file into the workspace AND version "
+            "it, so it can be re-read and edited later. There is no raw file-write cap to reach for: "
+            "a cap that generates data writes its own output. Paths are relative to the workspace "
+            "(\"pkg/mod.py\"), not absolute.\n"
+            "• To READ a file: sandbox.session.fs.read(path=\"…\"). To LIST what exists: "
+            "exec.bash.run with ls. If a read reports the file missing, believe it and list the "
+            "directory — do NOT re-author the same file hoping it appears.\n"
+            "• To EDIT a file: code.edit(path=…) with the change you want. Re-emitting a whole file "
+            "through code.author loses unrelated content. For a small in-place tweak you may instead "
+            "use exec.bash.run with sed -i 's/old/new/g' <path>.\n"
             "• To RUN a saved script, pass its PATH (not its source): exec.python.run(path=\"<ARTIFACT_DIR>/app.py\") "
             "— exec.code.run/exec.python.run/exec.node.run accept a `path` to run an existing file, inferring "
             "the language from the extension. (exec.bash.run \"python <path>\" also works.) Do NOT put "
@@ -540,7 +543,8 @@ _BUILTIN_SKILLS: list[dict] = [
             "• sed -n '10,40p' file to view ranges; awk for columns; head / tail / wc / find / ls / cat for cheap reads.\n"
             "• Chain with pipes to get exactly what you need in ONE call.\n"
             "• Read-only shell (grep/ls/find/head/tail/wc/cat/sed -n) is exploration; writes "
-            "(ide.fs.write, sed -i, >, mv, rm, mkdir, install) are actions — verify after with a read-only check."
+            "(code.author, code.edit, sed -i, >, mv, rm, mkdir, install) are actions — verify after "
+            "with a read-only check."
         ),
     },
     {

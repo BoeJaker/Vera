@@ -98,7 +98,7 @@ LOOP_PROFILES: List[Dict[str, Any]] = [
                        "task, iterating until it works. Auto-saves & versions "
                        "generated code to the code store.",
         "caps": ["exec.python.run", "exec.bash.run",
-                 "ide.fs.read", "ide.code.grep",
+                 "sandbox.session.fs.read", "ide.code.grep",
                  "ide.code.outline", "ide.code.tool_manifest",
                  "code.author", "code.save", "code.read", "code.versions",
                  "evolve.pipeline.review.request"],
@@ -118,7 +118,7 @@ LOOP_PROFILES: List[Dict[str, Any]] = [
                        "targeted patches over rewrites.",
         "caps": ["ide.code.read_lines", "ide.code.edit_lines",
                  "ide.code.insert_at", "ide.code.replace", "ide.code.grep",
-                 "ide.code.list_files", "ide.fs.read",
+                 "ide.code.list_files", "sandbox.session.fs.read",
                  "code.edit", "code.save", "code.diff", "code.read",
                  "evolve.pipeline.review.request"],
         "skills": "sys-exec-fileio",
@@ -135,7 +135,7 @@ LOOP_PROFILES: List[Dict[str, Any]] = [
         "description": "Runs tests / exercises code and reports what passed, what "
                        "failed and the failing output — never claims green "
                        "without running it.",
-        "caps": ["exec.python.run", "exec.bash.run", "ide.fs.read",
+        "caps": ["exec.python.run", "exec.bash.run", "sandbox.session.fs.read",
                  "ide.code.grep", "ide.code.list_files", "code.read"],
         "skills": "sys-exec-fileio",
         "panels": True,
@@ -152,7 +152,7 @@ LOOP_PROFILES: List[Dict[str, Any]] = [
                        "diff, reasons about failure modes, and confirms the code "
                        "actually does what it should.",
         "caps": ["llm.code_review", "llm.explain", "ide.code.grep",
-                 "ide.fs.read", "exec.bash.run",
+                 "sandbox.session.fs.read", "exec.bash.run",
                  "code.read", "code.diff", "code.versions"],
         "skills": "",
         "panels": True,
@@ -172,7 +172,7 @@ LOOP_PROFILES: List[Dict[str, Any]] = [
                        "spew. The active counterpart to code-verification's "
                        "read-and-reason review.",
         "caps": ["exec.python.run", "exec.bash.run", "exec.code.run",
-                 "code.read", "code.diff", "ide.fs.read", "ide.code.grep",
+                 "code.read", "code.diff", "sandbox.session.fs.read", "ide.code.grep",
                  "ide.code.list_files", "http.get", "health.check"],
         "skills": "",
         "panels": False,
@@ -188,7 +188,7 @@ LOOP_PROFILES: List[Dict[str, Any]] = [
         "description": "Version-control operations: status, diff, log, staged "
                        "commits with clear messages. Inspects before it commits.",
         "caps": ["ide.git.status", "ide.git.diff", "ide.git.log",
-                 "ide.git.commit", "exec.bash.run", "ide.fs.read"],
+                 "ide.git.commit", "exec.bash.run", "sandbox.session.fs.read"],
         "skills": "",
         "panels": True,
         "defaults": {"prefer_terminal_tools": True},
@@ -203,7 +203,7 @@ LOOP_PROFILES: List[Dict[str, Any]] = [
         "description": "Filesystem work: browse, read, write, move and organise "
                        "files across the workspace roots. Confirms a path before "
                        "it overwrites or deletes.",
-        "caps": ["ide.fs.read", "ide.fs.list", "ide.fs.browse",
+        "caps": ["sandbox.session.fs.read", "ide.fs.list", "ide.fs.browse",
                  "ide.fs.delete", "ide.fs.roots", "ide.fs.exists",
                  "exec.bash.run"],
         "skills": "sys-exec-fileio",
@@ -280,7 +280,7 @@ LOOP_PROFILES: List[Dict[str, Any]] = [
                        "run, test and version code end to end. A revised, "
                        "engine-backed take on the IDE's own agent loop — drives "
                        "the IDE panel directly via the panel bridge.",
-        "caps": ["ide.fs.read", "ide.fs.list", "ide.code.grep",
+        "caps": ["sandbox.session.fs.read", "ide.fs.list", "ide.code.grep",
                  "ide.code.read_lines", "ide.code.edit_lines", "ide.code.replace",
                  "ide.code.outline", "ide.code.tool_manifest",
                  "ide.git.status", "ide.git.diff", "ide.git.commit",
