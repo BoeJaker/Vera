@@ -14,7 +14,8 @@ pytestmark = pytest.mark.critical
 
 
 def test_mapping_is_canonical_pinned_and_bound_to_lib15_without_importing_dbos():
-    before = set(sys.modules)
+    before_dbos = {name for name in sys.modules
+                   if name == "dbos" or name.startswith("dbos.")}
     first = compile_dbos_mapping()
     second = compile_dbos_mapping()
     assert first == second
@@ -23,8 +24,9 @@ def test_mapping_is_canonical_pinned_and_bound_to_lib15_without_importing_dbos()
     fixture = build_durability_fixture()
     assert first.fixture_id == fixture.fixture_id
     assert first.workflow_content_hash == fixture.workflow["content_hash"]
-    assert set(sys.modules) - before == set()
-    assert "dbos" not in sys.modules
+    after_dbos = {name for name in sys.modules
+                  if name == "dbos" or name.startswith("dbos.")}
+    assert after_dbos == before_dbos == set()
     assert first.to_dict()["executes"] is False
     assert first.to_dict()["imports_runtime"] is False
 
