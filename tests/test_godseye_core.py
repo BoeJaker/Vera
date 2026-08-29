@@ -95,8 +95,57 @@ def test_gitignore_fallback_fails_closed_when_unsure(rel, text):
 def test_cache_control_never_pins_the_html_entrypoint():
     assert C.cache_control_for("index.html") == "no-store"
     assert C.cache_control_for("/godseye/app/index.html") == "no-store"
+
+
+def test_only_content_hashed_assets_are_immutable():
+    # Vite renames these on every build, so pinning them is safe...
     assert "immutable" in C.cache_control_for("assets/index-abc123.js")
-    assert "immutable" in C.cache_control_for("cesium/Workers/w.js")
+    assert "immutable" in C.cache_control_for("/godseye/app/assets/x-9f8e7d.css")
+    # ...but Cesium keeps its filenames across versions. Pinning THOSE for a
+    # year serves a stale runtime to everyone who loaded the previous build.
+    for p in ("cesium/Workers/w.js", "cesium/Cesium.js",
+              "manifests/cctv-verified.json", "data/osmMilitarySites.json"):
+        cc = C.cache_control_for(p)
+        assert "immutable" not in cc and "max-age=3600" in cc
+
+
+def test_cache_control_judges_the_requested_name_not_the_sidecar():
+    # The .gz is an encoding of the same resource; it must not change the policy.
+    assert C.cache_control_for("assets/index-abc.js.gz") == \
+        C.cache_control_for("assets/index-abc.js")
+    assert C.cache_control_for("index.html.gz") == "no-store"
+
+
+# ── precompressed asset negotiation ──────────────────────────────────────────
+@pytest.fixture()
+def gz_pair(tmp_path):
+    plain = tmp_path / "Cesium.js"
+    plain.write_text("x" * 500, encoding="utf-8")
+    (tmp_path / "Cesium.js.gz").write_bytes(b"\x1f\x8b fake")
+    return plain
+
+
+def test_gzip_is_served_only_when_the_client_asks(gz_pair):
+    assert C.negotiate_encoding(gz_pair, "gzip") == (
+        Path(str(gz_pair) + ".gz"), "gzip")
+    assert C.negotiate_encoding(gz_pair, "gzip, deflate, br") [1] == "gzip"
+    assert C.negotiate_encoding(gz_pair, "gzip;q=1.0, *;q=0.5")[1] == "gzip"
+    # Case is not significant in a header.
+    assert C.negotiate_encoding(gz_pair, "GZIP")[1] == "gzip"
+
+
+def test_a_client_that_did_not_offer_gzip_gets_the_original(gz_pair):
+    for accept in ("", "identity", "br", "deflate", "*"):
+        send, enc = C.negotiate_encoding(gz_pair, accept)
+        assert (send, enc) == (gz_pair, ""), accept
+    # "br" must not match on a substring of some other token either.
+    assert C.negotiate_encoding(gz_pair, "x-gzipped")[1] == ""
+
+
+def test_missing_sidecar_falls_back_to_the_plain_file(tmp_path):
+    plain = tmp_path / "only.js"
+    plain.write_text("hello", encoding="utf-8")
+    assert C.negotiate_encoding(plain, "gzip") == (plain, "")
 
 
 # ── build log state machine ──────────────────────────────────────────────────
@@ -242,6 +291,21 @@ def test_sync_script_contract():
     # ...which then makes git refuse the host-owned repo on the SECOND run
     # ("detected dubious ownership"), so the update path must declare it safe.
     assert "safe.directory" in script
+
+
+def test_build_script_precompresses_the_bundle():
+    """Nothing compresses these at request time, so the build must."""
+    raw = (Path(__file__).resolve().parent.parent
+           / "vera" / "godseye" / "godseye_build.sh").read_text(encoding="utf-8")
+    script = "\n".join(ln for ln in raw.splitlines()
+                       if not ln.lstrip().startswith("#"))
+    assert "gzip -9 -k" in script
+    # -k keeps the original: the sidecar is an ADDITION, and a client that does
+    # not send Accept-Encoding: gzip still has to get a file to read.
+    for suffix in ("'*.js'", "'*.css'", "'*.json'"):
+        assert suffix in script
+    # Never compress a compressed file into a second layer.
+    assert "! -name '*.gz'" in script
 
 
 # ── describing the clone without host git ────────────────────────────────────

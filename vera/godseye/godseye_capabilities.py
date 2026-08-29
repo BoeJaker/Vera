@@ -41,11 +41,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import mimetypes
 import os
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from fastapi import Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
 import Vera.vera.capability_orchestration as _orch
@@ -519,7 +521,7 @@ async def _godseye_app_root():
 
 
 @APP.get(_core.APP_MOUNT + "/{path:path}", include_in_schema=False)
-async def _godseye_app(path: str = ""):
+async def _godseye_app(request: Request, path: str = ""):
     lay = _layout()
     dist = lay["dist_dir"]
     if not (dist / "index.html").is_file():
@@ -538,12 +540,27 @@ async def _godseye_app(path: str = ""):
             return JSONResponse({"error": "not found", "path": path}, status_code=404)
         target = dist / "index.html"
 
-    return FileResponse(str(target), headers={
+    # Serve the build-time .gz sidecar to clients that asked for gzip. The load
+    # path is 17.7 MB raw / 3.5 MB gzipped, and none of it was being compressed.
+    send, encoding = _core.negotiate_encoding(target, request.headers.get("accept-encoding", ""))
+
+    headers = {
         "Cache-Control": _core.cache_control_for(target.name),
+        # Any cache in front of this must key on the encoding, or a gzip body
+        # gets replayed to a client that cannot decode it.
+        "Vary": "Accept-Encoding",
         # The bundle is same-origin content Vera serves; keep it from being
         # sniffed into something else.
         "X-Content-Type-Options": "nosniff",
-    })
+    }
+    if encoding:
+        headers["Content-Encoding"] = encoding
+
+    # media_type comes from the ORIGINAL name: left to itself FileResponse would
+    # read ".gz" and label a JavaScript bundle application/gzip, which the
+    # browser downloads instead of executing.
+    media_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+    return FileResponse(str(send), media_type=media_type, headers=headers)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
