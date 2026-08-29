@@ -8485,6 +8485,14 @@ async def cap_workflow_durability_temporal_paper(trace_id=None):
     from Vera.vera.execution.temporal_mapping import compile_temporal_mapping
     return compile_temporal_mapping().to_dict()
 
+
+@capability("interop.a2a.conformance", memory="off",
+            description="Inspect the offline A2A v1.0 mapping and conformance lanes",
+            contract=_inspection_contract("interop.a2a.conformance", effects=["none"]))
+async def cap_interop_a2a_conformance(trace_id=None):
+    from Vera.vera.execution.a2a_mapping import compile_a2a_protocol_mapping
+    return compile_a2a_protocol_mapping().to_dict()
+
 @capability("dag.plan", memory="on",
             http_method="POST", http_path="/dag/plan", http_tags=["dag"],
             description="Ask the LLM to produce a DAG execution plan for a natural-language goal.")

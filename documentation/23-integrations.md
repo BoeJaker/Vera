@@ -1,4 +1,4 @@
-# 23 · Integrations — Calendar, Email, Telegram, Accounts
+# 23 · Integrations — Services, Accounts, and Agent Protocols
 
 Four outward-facing modules that connect Vera to the everyday world. They share two foundations: the unified **Accounts** registry (credentials configured once, reused everywhere) and **Fernet-sealed secrets** (see [Security & Secrets](./29-security.md)). Each also bridges selected `vera:events` outward and ingests inbound data into the [Data Fabric](./06-data-fabric.md).
 
@@ -99,7 +99,38 @@ The bot token is sealed via the shared secrets helper; config persists in `vera:
 
 ---
 
-## 5. Common threads
+## 5. A2A agent interoperability
+
+A2A is the boundary for communicating with an independent, potentially opaque
+remote agent; MCP remains the boundary for tools and resources used by an agent.
+LIB-02 begins with a non-executing v1.0 contract in
+`vera/execution/a2a_mapping.py` and the inspection capability
+`interop.a2a.conformance`.
+
+The manifest pins `a2a-sdk==1.1.2` for later implementation, but does not import
+it. It maps Agent Cards and skills to unauthorised remote Capability Contract v2
+candidates, server-assigned task IDs to `Run.task_id`, remote context IDs to an
+opaque namespaced policy field rather than a Vera session, task states to Run
+states/events, and verified outputs to `ArtifactRef`. Unknown, auth-required,
+input-required, and rejected states retain their A2A meaning instead of being
+silently coerced.
+
+`analyze_agent_card` validates an inline card without fetching it. It bounds
+size/depth, rejects plaintext credential-like values and credential-bearing or
+non-HTTPS endpoints, honours ordered v1.0 interfaces, fails closed on unsupported
+required extensions, and projects skills with unknown effects and
+`authorized: false`, `executable: false`. It never registers those candidates.
+
+The deterministic matrix covers card shape, malicious metadata, status coverage,
+identity authority, and artifact boundaries. Actual discovery, a read-only task,
+authentication/policy, duplicate sends, cancellation, disconnect/resubscribe,
+push callbacks, artifact fetching, and teardown remain `queued_live`. Until those
+pass, the manifest reports no client/server implementation and
+`ready_for_execution: false`.
+
+---
+
+## 6. Common threads
 
 - **Sealed secrets** — every credential is Fernet-sealed at rest and redacted from the UI ([Security & Secrets](./29-security.md)).
 - **Event bridges** — Email and Telegram can both forward `vera:events` outward, turning Vera's internal stream into notifications.
