@@ -417,6 +417,17 @@ ArtifactRef. Start with discovery and one non-mutating task.
 Gate: authentication/policy, cancellation, duplicates, disconnect/resume, artifact
 verification, malicious metadata, and unsupported parts.
 
+**Offline protocol foundation implemented; client/server work remains queued.**
+The stable `vera.a2a-protocol-mapping/v1` manifest targets A2A protocol `1.0`
+and `a2a-sdk==1.1.2`. It maps Agent Cards/skills to unauthorised Capability v2
+candidates, preserves server-owned task/context identity, maps every task state
+to Run or an explicit semantic gap, and requires verification before any Part or
+Artifact becomes an `ArtifactRef`. Inline card analysis is bounded and rejects
+plaintext credentials, unsafe endpoints, duplicate skills, unsupported versions/
+bindings, and required extensions Vera does not understand. It performs no
+discovery, SDK import, network call, registration, task, stream, callback,
+artifact fetch, or cancellation. Six live cases remain queued behind the gate.
+
 ### LIB-03 — EvalProvider contract
 
 Implement neutral evaluation records and frozen fixtures, then adapt DeepEval and

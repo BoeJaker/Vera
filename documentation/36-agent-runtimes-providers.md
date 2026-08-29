@@ -11,6 +11,7 @@ available hardware.
 |---|---|---|
 | Native runtime | DAG and `loops.*` | Vera owns planning, tools, state, and events |
 | Agent bridge | smolagents, LangGraph, PydanticAI | Vera owns launch/policy; framework owns its internal run |
+| Remote agent protocol | A2A v1.0 | Remote agent owns its task; Vera owns local policy, projection, and verified artifacts |
 | Coding bridge | Claude Code, Codex, remote IDE agents | Vera owns work item, branch, capacity, and handoff |
 | Provider | hosted chat/model APIs | Sealed credentials, model discovery, usage, and cost |
 | Catalog | Hugging Face/Ollama metadata | Search, fit estimation, and installation handoff |
@@ -43,6 +44,13 @@ capability policy remains authoritative. Do not grant a framework every tool
 merely because it runs in a container. Scope filesystem/network access, pass
 secrets by reference, and treat framework output as untrusted until validated.
 
+The first A2A foundation makes this ownership concrete without opening a network
+boundary. Agent Cards are discovery evidence, not trusted registration; skills
+become unresolved remote candidates rather than capabilities; A2A task/context
+IDs remain server-owned; and Task/Message/Artifact projections cannot authorize
+effects. This protocol layer must land before Google ADK or OpenAI Agents SDK can
+join a common RuntimeAdapter/A2A conformance matrix.
+
 ## Troubleshooting
 
 Separate dependency/image failure, provider authentication, model lookup,
@@ -54,6 +62,7 @@ needed to fix it.
 ## Source map
 
 - `vera/agentbridges/` — catalog, environment, and launch normalization.
+- `vera/execution/a2a_mapping.py` — offline A2A v1.0 mapping and conformance lanes.
 - `vera/smolagents/`, `vera/langgraph/`, `vera/pydanticai/` — adapters.
 - `vera/providers/` — credentials, models, chat, pricing, and usage.
 - `vera/catalog/` — discovery and hardware-fit estimates.
