@@ -109,6 +109,13 @@ def _install_file_log_handler() -> str:
         # A log inside the checkout would dirty the tracked tree and block every
         # promote, so a mis-pointed path fails here rather than silently.
         _sp.guard_out_of_tree(cfg["path"])
+        # This module is imported more than once under different names (Vera is
+        # a namespace package), and each copy runs this. Three copies were
+        # observed live, so without this the root logger collects three handlers
+        # and every line lands in the log three times.
+        _root = logging.getLogger()
+        if _ls.already_installed(_root.handlers, cfg["path"]):
+            return ""
         import logging.handlers as _lh
         h = _lh.RotatingFileHandler(cfg["path"], maxBytes=cfg["max_bytes"],
                                     backupCount=cfg["backups"], encoding="utf-8",
@@ -119,7 +126,7 @@ def _install_file_log_handler() -> str:
         # Tagged so _offload_blocking_log_handlers moves it behind a queue: a
         # stalling disk must not stall the event loop (see log_setup docstring).
         setattr(h, _ls.OFFLOAD_ATTR, True)
-        logging.getLogger().addHandler(h)
+        _root.addHandler(h)
         return cfg["path"]
     except Exception as _e:
         log.warning("file logging unavailable (%s: %s) — console only",
