@@ -34,6 +34,7 @@ _CRITICAL_MODULES = {
     "test_gate_sweep",          # Ollama-gate leaked-lease sweep — MUST never clear a peer host's live slot (double-books GPU)
     "test_ollama_slot_permit",   # leaked per-node generation permit wedged ALL generation (2026-08-29)
     "test_artifact_path_segments",  # _safe_seg ate __init__.py -> a package could never import (2026-08-29)
+    "test_loop_fs_cap_unification",  # one fs story: sandbox caps read, code.author writes (2026-08-29)
     "test_gate_renew",          # Ollama-gate renewable-lease heartbeat — orphaned slot self-heals fast; renew is owner-fenced
     "test_loop_prompt_rules",      # Phase 1 - rule registry: one definition, consumers named
     "test_planner_rule_parity",   # Phase 3 - a shared planner rule must reach BOTH prompt variants
