@@ -73,6 +73,16 @@ def build_prompt(goal: str, observation, history: Optional[List[Dict[str, Any]]]
     return {"system": _SYSTEM, "user": user}
 
 
+# Quote characters models substitute for ASCII quotes. Keyed by ordinal so this
+# source stays ASCII (non-ASCII does not survive every edit path here).
+_SMART_QUOTES = {
+    0x201C: chr(34), 0x201D: chr(34), 0x201E: chr(34), 0x201F: chr(34),
+    0x2033: chr(34), 0x00AB: chr(34), 0x00BB: chr(34),
+    0x2018: chr(39), 0x2019: chr(39), 0x201A: chr(39), 0x201B: chr(39),
+    0x2032: chr(39),
+}
+
+
 def parse_decision(text: str) -> Dict[str, Any]:
     """Extract {thought, action, args, done} from an LLM response. Tolerant of
     code fences and surrounding prose. Returns {error} if unrecoverable."""
@@ -90,6 +100,17 @@ def parse_decision(text: str) -> Dict[str, Any]:
     try:
         d = json.loads(raw)
     except Exception:
+        # Curly quotes are not JSON, but a model that emits them around its keys
+        # is otherwise handing over a perfectly good decision. Rejecting it
+        # outright cost a whole operator step (census build-browser-verified,
+        # 2026-08-29: "could not parse decision JSON"). Retried only AFTER a
+        # strict parse fails, so this is strictly more permissive than before and
+        # never changes a response that already parsed.
+        try:
+            d = json.loads(raw.translate(_SMART_QUOTES))
+        except Exception:
+            d = None
+    if d is None:
         # last resort: some models emit action on its own line
         m = re.search(r'"?action"?\s*[:=]\s*"?(\w+)"?', text)
         if m:

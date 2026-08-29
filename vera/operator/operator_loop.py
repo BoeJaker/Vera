@@ -170,5 +170,12 @@ async def run_loop(goal: str, session, *,
         else:
             consecutive_errors = 0
 
-    return {"ok": True, "done": done, "reason": reason, "summary": summary,
+    # A run that ended WITHOUT reaching its goal is not a success. Reporting
+    # ok=True for reason="max_steps" told the caller nothing had gone wrong, so
+    # the agentic loop simply called operator.run again: census
+    # build-browser-verified (2026-08-29) made four calls, two of which spent
+    # 9m16s and 7m45s hitting the step ceiling and still reporting ok, together
+    # eating 86% of the step's wall budget. `reason` already carried the truth;
+    # only `ok` disagreed with it.
+    return {"ok": bool(done), "done": done, "reason": reason, "summary": summary,
             "steps": steps, "step_count": len(steps), "screenshots": screenshots}
