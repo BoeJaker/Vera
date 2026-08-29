@@ -1396,42 +1396,48 @@ async def _ollama_slot(iid: str, timeout: Optional[float] = None):
                 f"{int(wait)}s (node busy with earlier requests)")
     else:
         await sem.acquire()
-    # ── Cross-process GPU gate ("one big queue") ─────────────────────────────
-    # The local semaphore above serialises WITHIN this process; this lease
-    # serialises the same node ACROSS prod + every dev sandbox, so they don't
-    # flood one GPU. Fail-open by construction: a None lease (gate off / node
-    # ungated / coord Redis down / queued past the wait budget) just means the
-    # caller proceeds unslotted — generation is never blocked by the gate.
-    _lease = None
-    _hb_task = None
-    # Token-liveness marker shared with the heartbeat: the generation body
-    # (`async with _ollama_slot(...) as act:`) refreshes it on every streamed
-    # token, so the heartbeat can tell a LIVE generation (marker moving) from an
-    # orphaned/hung one (marker frozen) and free a wedged slot itself. Callers
-    # that ignore the yielded marker fall back to the heartbeat's hard cap.
-    _activity = {"t": time.monotonic(), "beats": 0}
-    if _GATE_ON:
-        try:
-            if COORD_REDIS is None:
-                await _ensure_coord_redis()
-            _cap = _gate.capacity_for(bool(OLLAMA_INSTANCES.get(iid, {}).get("has_gpu")))
-            if _cap > 0 and COORD_REDIS is not None:
-                # SHORT lease + heartbeat (not the 30-min hard TTL). If this
-                # generation is cancelled/crashed and its heartbeat stops, the
-                # slot expires within lease_ttl_ms and the node self-heals —
-                # instead of a wedged slot blocking every later loop-planner call
-                # for the full TTL (the recurring GPU hang, 2026-08-18).
-                _lease = await _gate.acquire(
-                    COORD_REDIS, iid, _cap, _gate.lease_ttl_ms(), _gate.wait_s())
-                if _lease is not None:
-                    # Capture the driving run's session so the heartbeat can free
-                    # the slot the instant that run is cancelled, and the activity
-                    # marker so it can free a slot whose generation went silent.
-                    _hb_task = asyncio.ensure_future(
-                        _gate_heartbeat(_lease, _current_run_session(), _activity))
-        except Exception as _ge:
-            log.debug("ollama gate acquire skipped for %s: %s", iid, _ge)
+    # The permit is HELD from here on, so every exit path below must reach the
+    # finally that releases it. The gate block used to sit OUTSIDE the try: a
+    # cancellation in it raises CancelledError, which is a BaseException and so
+    # slips past its `except Exception`, skipping sem.release() and leaking this
+    # node's only permit for the life of the process - every later request on
+    # that node then blocks forever on acquire, chat included.
     try:
+        # ── Cross-process GPU gate ("one big queue") ─────────────────────────────
+        # The local semaphore above serialises WITHIN this process; this lease
+        # serialises the same node ACROSS prod + every dev sandbox, so they don't
+        # flood one GPU. Fail-open by construction: a None lease (gate off / node
+        # ungated / coord Redis down / queued past the wait budget) just means the
+        # caller proceeds unslotted — generation is never blocked by the gate.
+        _lease = None
+        _hb_task = None
+        # Token-liveness marker shared with the heartbeat: the generation body
+        # (`async with _ollama_slot(...) as act:`) refreshes it on every streamed
+        # token, so the heartbeat can tell a LIVE generation (marker moving) from an
+        # orphaned/hung one (marker frozen) and free a wedged slot itself. Callers
+        # that ignore the yielded marker fall back to the heartbeat's hard cap.
+        _activity = {"t": time.monotonic(), "beats": 0}
+        if _GATE_ON:
+            try:
+                if COORD_REDIS is None:
+                    await _ensure_coord_redis()
+                _cap = _gate.capacity_for(bool(OLLAMA_INSTANCES.get(iid, {}).get("has_gpu")))
+                if _cap > 0 and COORD_REDIS is not None:
+                    # SHORT lease + heartbeat (not the 30-min hard TTL). If this
+                    # generation is cancelled/crashed and its heartbeat stops, the
+                    # slot expires within lease_ttl_ms and the node self-heals —
+                    # instead of a wedged slot blocking every later loop-planner call
+                    # for the full TTL (the recurring GPU hang, 2026-08-18).
+                    _lease = await _gate.acquire(
+                        COORD_REDIS, iid, _cap, _gate.lease_ttl_ms(), _gate.wait_s())
+                    if _lease is not None:
+                        # Capture the driving run's session so the heartbeat can free
+                        # the slot the instant that run is cancelled, and the activity
+                        # marker so it can free a slot whose generation went silent.
+                        _hb_task = asyncio.ensure_future(
+                            _gate_heartbeat(_lease, _current_run_session(), _activity))
+            except Exception as _ge:
+                log.debug("ollama gate acquire skipped for %s: %s", iid, _ge)
         yield _activity
     finally:
         if _hb_task is not None:

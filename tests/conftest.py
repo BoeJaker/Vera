@@ -32,6 +32,7 @@ _CRITICAL_MODULES = {
     "test_session_watch_core",  # closed-loop Phase C — auto-resume gate: never re-run finished/human/declared work
     "test_board_core",          # Agent Boards leasing — claim resolution + Phase E handoff (only holder can hand off)
     "test_gate_sweep",          # Ollama-gate leaked-lease sweep — MUST never clear a peer host's live slot (double-books GPU)
+    "test_ollama_slot_permit",   # leaked per-node generation permit wedged ALL generation (2026-08-29)
     "test_gate_renew",          # Ollama-gate renewable-lease heartbeat — orphaned slot self-heals fast; renew is owner-fenced
     "test_loop_prompt_rules",      # Phase 1 - rule registry: one definition, consumers named
     "test_planner_rule_parity",   # Phase 3 - a shared planner rule must reach BOTH prompt variants
