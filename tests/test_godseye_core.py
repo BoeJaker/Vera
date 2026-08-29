@@ -116,6 +116,50 @@ def test_cache_control_judges_the_requested_name_not_the_sidecar():
     assert C.cache_control_for("index.html.gz") == "no-store"
 
 
+# ── map tile proxy ───────────────────────────────────────────────────────────
+@pytest.mark.parametrize("z,y,x", [(0, 0, 0), (1, 1, 1), (10, 511, 1023),
+                                   (19, 0, 524287)])
+def test_real_tile_coordinates_are_accepted(z, y, x):
+    assert C.tile_is_valid(z, y, x) is True
+
+
+@pytest.mark.parametrize("z,y,x", [
+    (-1, 0, 0),                 # negative zoom
+    (20, 0, 0),                 # past what Esri serves
+    (1, 2, 0), (1, 0, 2),       # outside the 2^z grid for that zoom
+    (0, -1, 0), (0, 0, -1),     # negative index
+    ("../..", 0, 0),            # path traversal attempt
+    ("1e3", 0, 0), (None, 0, 0), ("", 0, 0),
+])
+def test_bad_tile_coordinates_are_refused(z, y, x):
+    # These feed both an upstream URL and a cache path, so a miss here is an
+    # open proxy and a path-traversal sink at the same time.
+    assert C.tile_is_valid(z, y, x) is False
+
+
+def test_tile_cache_path_is_built_from_ints(tmp_path):
+    p = C.tile_cache_path(tmp_path, 3, 4, 5)
+    assert p == tmp_path / "3" / "4" / "5.jpg"
+    assert tmp_path in p.parents
+
+
+def test_tile_url_targets_the_configured_host_only():
+    url = C.tile_upstream_url(3, 4, 5)
+    assert url.startswith("https://server.arcgisonline.com/")
+    assert url.endswith("/3/4/5")
+    # An operator may point it at a mirror; the coordinates are still ints.
+    custom = C.tile_upstream_url(3, 4, 5, "https://tiles.int/{z}/{y}/{x}.jpg")
+    assert custom == "https://tiles.int/3/4/5.jpg"
+
+
+def test_tiles_are_cached_outside_the_clone(tmp_path):
+    lay = C.resolve_layout(tmp_path, {"HOME": str(tmp_path / "h")})
+    # Inside the state dir, not the clone: a repo sync must never be able to
+    # delete the tile cache, and the cache must never dirty the fork's tree.
+    assert lay["tile_dir"].parent == lay["state_dir"]
+    assert lay["clone_dir"] not in lay["tile_dir"].parents
+
+
 # ── precompressed asset negotiation ──────────────────────────────────────────
 @pytest.fixture()
 def gz_pair(tmp_path):
