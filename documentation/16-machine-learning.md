@@ -7,6 +7,30 @@ The `machine learning/` module is a live neural-network construction, training, 
 
 Everything is pure-Python + NumPy by default, so it runs anywhere; PyTorch/JAX are used automatically when present.
 
+## Portable training, evaluation, and prompt boundary
+
+W2-07 begins with immutable contracts in
+[`vera/models/training_contracts.py`](../vera/models/training_contracts.py). A
+`PromptPackage` gives ordered role/template messages, declared variables,
+output contract, metadata, and a canonical `ppkg_…` identity. A
+`TrainingRequest` pins the dataset revision, objective, base ModelPackage,
+optional PromptPackage, and scalar hyperparameters; `TrainingRun` records the
+runtime-neutral lifecycle and requires successful runs to produce a
+ModelPackage identity.
+
+`EvaluationRequest` pins the subject, dataset revision, prompt, and complete
+metric set. `EvaluationReport` records finite thresholded metrics, case counts,
+provider identity, terminal outcome, and a canonical `eval_…` identity. It
+cannot claim a pass unless every requested metric is present and passes and no
+case failed. Strict reconstruction recomputes identities and derived pass flags,
+so changed or forged serialized evidence fails visibly.
+
+`EvalProvider` and `TrainingRuntime` are structural protocols with explicit
+profiles; defining or validating these contracts invokes neither protocol. The
+current ML Workshop remains unchanged. Deterministic evaluation execution,
+DeepEval/Promptfoo adapters, Accelerate, PEFT, MLflow, DSPy, live judges, and
+training execution are subsequent gated slices.
+
 ---
 
 ## 1. Modules as compute graphs (Workshop)
