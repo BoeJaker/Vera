@@ -96,6 +96,15 @@ UI projections should link to underlying run/action metadata instead of
 inventing a parallel state model. Explicit unknowns are preferable to a polished
 timeline that guesses what occurred.
 
+The Agent Bridges panel is the interoperability-specific projection. It shows
+LIB02's A2A foundation and inert client/server plan status, LIB18 runtime
+candidate/dimension coverage, queued live cases, and registration state for the
+shared Run, Workflow IR, telemetry, durability, runtime-matrix, and A2A
+capabilities. This complements—rather than duplicates—the existing Run evidence
+in Activity, the harness overlay, Chat/LHM, and Memory Graph. Readiness labels
+come from the backing inspection capability; the panel does not infer readiness
+from package presence or a successful page load.
+
 Loop Lab follows the same principle. The board is the authoritative operational
 plan; sandbox work plans are concise handoffs; private Markdown shared across
 worktrees lives under `<git-common-dir>/vera-work/shared-planning/` and is never

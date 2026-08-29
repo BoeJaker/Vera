@@ -35,6 +35,8 @@ from fastapi.responses import HTMLResponse
 from Vera.vera.agentbridges.agentbridge_registry import BRIDGES, BY_ID
 from Vera.vera.agentbridges.agentbridge_runtime import image_present
 from Vera.vera.agentbridges.runtime_matrix import compile_runtime_matrix
+from Vera.vera.execution.a2a_adapter import compile_a2a_adapter_status
+from Vera.vera.execution.a2a_mapping import compile_a2a_protocol_mapping
 from Vera.vera.capability_orchestration import (
     APP, CAPABILITY_REGISTRY, capability, register_ui,
 )
@@ -54,6 +56,57 @@ log = logging.getLogger("vera.agentbridges.catalog")
 )
 async def agentbridge_runtime_matrix(trace_id=None) -> Dict[str, Any]:
     return compile_runtime_matrix().to_dict()
+
+
+@capability(
+    "agentbridge.interoperability", http_method="GET",
+    http_path="/agentbridge/interoperability", http_tags=["agentbridge", "interop"],
+    memory="off", silent=True,
+    description="Return an inspection-only summary of the A2A adapter, external "
+                "runtime matrix, and shared Vera contracts visible to Agent Bridge. "
+                "Does not import optional runtimes, contact remote agents, or execute.",
+)
+async def agentbridge_interoperability(trace_id=None) -> Dict[str, Any]:
+    matrix = compile_runtime_matrix().to_dict()
+    mapping = compile_a2a_protocol_mapping().to_dict()
+    adapter = compile_a2a_adapter_status()
+    shared = (
+        ("run_protocol", "run.shadow.list"),
+        ("workflow_ir", "workflow.ir.validate"),
+        ("portable_telemetry", "run.telemetry.status"),
+        ("durability_fixture", "workflow.durability.fixture"),
+        ("runtime_matrix", "agentbridge.runtime_matrix"),
+        ("a2a_conformance", "interop.a2a.conformance"),
+    )
+    return {
+        "schema": "vera.agentbridge-interoperability/v1",
+        "a2a": {
+            "mapping_id": mapping["mapping_id"],
+            "foundation": adapter["foundation"],
+            "client_plan_contract": adapter["client_plan_contract"],
+            "server_plan_contract": adapter["server_plan_contract"],
+            "client_transport": adapter["client_transport"],
+            "server_listener": adapter["server_listener"],
+            "deterministic_cases": mapping["lanes"]["deterministic"],
+            "queued_live_cases": mapping["lanes"]["queued_live"],
+            "ready_for_execution": mapping["ready_for_execution"],
+        },
+        "runtime_matrix": {
+            "matrix_id": matrix.get("matrix_id"),
+            "candidate_count": matrix.get("candidate_count", 0),
+            "dimension_count": len(matrix.get("dimensions", [])),
+            "queued_live_cases": len(matrix.get("required_live_cases", [])),
+            "execution_lane": matrix.get("execution_lane"),
+            "ready_for_selection": matrix.get("ready_for_selection", False),
+        },
+        "shared_contracts": [
+            {"id": key, "capability": cap, "registered": cap in CAPABILITY_REGISTRY}
+            for key, cap in shared
+        ],
+        "imports_optional_runtimes": False,
+        "network_io": False,
+        "executes": False,
+    }
 
 _HERE = Path(__file__).parent
 _PANEL_HTML_PATH = _HERE / "agentbridge_catalog_panel.html"
@@ -186,7 +239,9 @@ register_ui(
   </iframe>
 </div>""",
     "",
-    ui_caps=["agentbridge.catalog", "agentbridge.check_updates", "agentbridge.image.ensure"],
+    ui_caps=["agentbridge.catalog", "agentbridge.runtime_matrix",
+             "agentbridge.interoperability", "agentbridge.check_updates",
+             "agentbridge.image.ensure"],
     # mode="tab" (2026-08-16 fix, was "inject" — invisible by default: see
     # the identical fix + rationale in mcp_catalog_capabilities.py, same day
     # this panel was reported not showing up anywhere).

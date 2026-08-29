@@ -417,7 +417,8 @@ ArtifactRef. Start with discovery and one non-mutating task.
 Gate: authentication/policy, cancellation, duplicates, disconnect/resume, artifact
 verification, malicious metadata, and unsupported parts.
 
-**Offline protocol foundation implemented; client/server work remains queued.**
+**Offline protocol foundation and adapter-plan contracts implemented; live
+client/server transports remain queued.**
 The stable `vera.a2a-protocol-mapping/v1` manifest targets A2A protocol `1.0`
 and `a2a-sdk==1.1.2`. It maps Agent Cards/skills to unauthorised Capability v2
 candidates, preserves server-owned task/context identity, maps every task state
@@ -427,6 +428,16 @@ plaintext credentials, unsafe endpoints, duplicate skills, unsupported versions/
 bindings, and required extensions Vera does not understand. It performs no
 discovery, SDK import, network call, registration, task, stream, callback,
 artifact fetch, or cancellation. Six live cases remain queued behind the gate.
+
+The follow-up `vera.a2a-adapter-plan/v1` contract now makes the next boundary
+executable by tooling without performing I/O. It deterministically plans one
+reviewed `effects=["none"]` task, retains stable local Run/message correlation,
+keeps server task/context IDs opaque, requires an out-of-band credential
+reference and `allow_non_mutating` policy decision, and defines an authenticated
+server exposure plan. Both plans report `queued_live`; they do not resolve
+credentials, import the optional SDK, start a listener, send a request, register
+a capability, or create an ArtifactRef. The Agent Bridges panel shows this
+contract/live distinction alongside LIB18's runtime matrix.
 
 ### LIB-03 — EvalProvider contract
 
