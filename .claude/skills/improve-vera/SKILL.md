@@ -71,7 +71,11 @@ the constraint is specifically about concurrent Ollama/GPU consumers.
    umbrella Loop Lab board item plus linked child items, and post progress as
    `board.comment` entries. Do not create plan/evaluation/handover Markdown in
    `documentation/`; only numbered `documentation/[0-9][0-9]-*.md` files are
-   public subsystem documentation.
+   public subsystem documentation. When legacy internal Markdown is still
+   physically present there, prove each file is untracked and move its exact
+   path to `<git-common-dir>/vera-work/shared-planning/legacy-documentation/`.
+   Preserve relative paths, refuse overwrites, and verify before/after hashes;
+   never bulk-delete the old directory.
 6. **Restart Vera** to pick up the change — see §4 for how, and what to
    check first.
 7. **Re-test live**, one test at a time (§0), and keep going until the

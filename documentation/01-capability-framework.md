@@ -326,6 +326,22 @@ If a module isn't found or fails to import, the orchestrator logs the error and 
 
 ## 12. Common pitfalls
 
+## 13. The capability control path
+
+Registration is the start of a capability's lifecycle, not permission to run
+it. Modern Vera separates **describe, resolve, authorize, execute, and observe**.
+Contract v2 describes canonical task and effects; shadow resolution ranks
+eligible implementations without invoking them; policy retains local authority;
+the selected local, worker, provider, workflow, or remote adapter executes; and
+Run/activity evidence records what happened. Unknown legacy metadata stays
+unknown rather than being guessed safe.
+
+An inspection capability can expose a plan, contract, runtime mapping, or health
+assessment without performing the operation it describes. See
+[capability contracts](43-capability-contracts.md),
+[capability policy](45-capability-policy.md), and
+[interoperability foundations](46-interoperability-foundations.md).
+
 - **`interval=0` in the scheduler** fires every second. Don't pass 0 expecting "off" — pass a very large number like 999999, or simply don't call `schedule()`.
 - **`memory="auto"`** is a legacy value, accepted for compatibility, treated as `"on"`.
 - **Don't call `record_cap_interaction` directly** — it's a deprecated no-op kept only so older modules don't crash. Activity recording is handled inside the wrapper now.

@@ -51,6 +51,24 @@ thing they describe. This separation—**describe, resolve, authorize, execute,
 observe**—is what allows Vera to interoperate with external MCP servers and
 agent or workflow runtimes without absorbing each one into a new bespoke loop.
 
+The capability is therefore Vera's unit of interoperability, not merely its
+RPC format. A complete capability has five independently inspectable layers:
+
+| Layer | Question it answers | Typical evidence |
+|---|---|---|
+| Identity and schema | What stable task is this, and what data does it accept and return? | Registered name, canonical task, JSON input/output schema |
+| Effects and authority | What can it change, and who may permit that change? | Effect declaration, approval mode, secret/filesystem/network policy |
+| Execution | Where and how can it run? | Local/worker/provider adapter, timeout, cancellation, retry and idempotency semantics |
+| Operations | Is this implementation suitable now? | Availability, health, cost, latency, resource and quality observations |
+| Evidence | What actually happened? | Run events, activity records, artifacts, traces and provenance |
+
+Those layers deliberately do not collapse into one score. Discovery does not
+authorize execution; a provider's advertised tool does not become trusted
+because it was found; and telemetry can inform selection without rewriting the
+declared contract. Native Python, workers, MCP tools, model providers, workflow
+engines, and remote agents can therefore share a control path while each runtime
+retains authority over its own execution state.
+
 ## What you can build
 
 | Area | What Vera provides |
