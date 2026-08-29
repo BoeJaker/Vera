@@ -43,6 +43,7 @@ _CRITICAL_MODULES = {
     "test_operator_target_resolution",  # an explicit url must reach the browser whatever `kind` says
     "test_code_workspace_path",  # code.author and code.edit must resolve a path identically (no /workspace/workspace/)
     "test_headless_package_auto",  # a human-approval bypass must stay off by default and never override deny/blocklist
+    "test_ollama_inflight",      # a routing slot whose request never returned must be reclaimed
     "test_chain_deps",           # a failed chain hop poisons what USES it, not the whole pipeline
     "test_loop_run_history",     # unified loop-run record: retention policy must never mean keep-nothing or keep-everything
     "test_role_profile_merge",   # a USER routing override must not silently discard declared sampling/num_ctx (2026-08-24)

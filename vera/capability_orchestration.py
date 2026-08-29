@@ -83,6 +83,8 @@ except ImportError as _e:
     _NEO_IMPORT_ERR = str(_e)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s [%(name)s] %(message)s")
+from Vera.vera import ollama_inflight as _oi_inflight
+
 log = logging.getLogger("vera.orch")
 
 # Set by long-running callers (e.g. the agentic loop) so the ollama.* events
@@ -1707,11 +1709,59 @@ def _embed_node_id() -> str:
     return ""
 
 
+# â”€â”€ Ollama routing slots: hold, release, and reclaim what never came back â”€â”€â”€â”€
+# in_use is the router's load signal. It is released in a `finally`, which is
+# correct as long as the coroutine RESUMES - and a request that never returns
+# never resumes, so the slot stays held forever and pick_instance routes around
+# a node that is actually idle. Cancelling does not help: the cancel flag is
+# only seen BETWEEN awaits, and a coroutine blocked on an HTTP read reaches none.
+# Observed 2026-08-28: in_use=2 with no loop sessions, gate free, and every model
+# past its keep-alive expiry.
+#
+# Each hold is recorded with a start time so a sweep can tell a long generation
+# from a lost one. The counter is only ever DECREASED by exactly what was
+# reclaimed - never recomputed - because media slots share it.
+def _inflight_hold(inst: dict, slot_id: str) -> None:
+    try:
+        inst.setdefault("_inflight", {})[slot_id] = time.monotonic()
+    except Exception:
+        pass
+
+
+def _inflight_release(inst: dict, slot_id: str) -> None:
+    try:
+        (inst.get("_inflight") or {}).pop(slot_id, None)
+    except Exception:
+        pass
+
+
+def _inflight_sweep() -> None:
+    """Reclaim slots older than the generation timeout + grace. Cheap; called
+    from pick_instance so a stuck slot cannot steer routing indefinitely."""
+    try:
+        max_age = _oi_inflight.max_age_for(OLLAMA_GEN_TIMEOUT)
+        now = time.monotonic()
+        for iid, inst in (OLLAMA_INSTANCES or {}).items():
+            fl = inst.get("_inflight")
+            if not fl:
+                continue
+            new_in_use, reclaimed = _oi_inflight.reconcile(
+                inst.get("in_use", 0), fl, now, max_age)
+            if reclaimed:
+                inst["in_use"] = new_in_use
+                log.warning("ollama slot sweep: reclaimed %d stuck slot(s) on %s "
+                            "(held > %.0fs, request never returned) - in_use now %d",
+                            len(reclaimed), iid, max_age, new_in_use)
+    except Exception as e:
+        log.debug("inflight sweep: %s", e)
+
+
 def pick_instance(prefer_gpu: bool = False, instance_id: Optional[str] = None,
                   model: Optional[str] = None, job_type: Optional[str] = None,
                   rule_override: Optional[dict] = None,
                   explain: Optional[dict] = None,
                   ctx_need: int = 0) -> Optional[str]:
+    _inflight_sweep()   # reclaim slots whose request never returned
     # `explain`, when passed, is filled with the decision trail so callers can
     # log/emit WHY a node was chosen (rule applied, filters, tie-break).
     trail: List[str] = []
@@ -2609,7 +2659,9 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     # idle — on a slow CPU node that reads as a lockup. Reserving here closes that
     # race so the next picker sees this node's raised load and spreads out. The
     # single `finally` at the end releases it exactly once.
+    _req_slot_id = str(uuid.uuid4())[:12]
     inst["in_use"] = inst.get("in_use", 0) + 1
+    _inflight_hold(inst, _req_slot_id)
     mdl    = eff_model or OLLAMA_MODEL
     body   = {"model":mdl,"prompt":prompt,"stream":stream_cb is not None}
     if system:    body["system"]  = system
@@ -2989,7 +3041,9 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                 # in_use accounting as a primary request, so it honours the
                 # "one in-flight request per node" contract instead of piling an
                 # extra concurrent generation onto the fallback node.
+                _fb_slot_id = str(uuid.uuid4())[:12]
                 fb_inst["in_use"] = fb_inst.get("in_use", 0) + 1
+                _inflight_hold(fb_inst, _fb_slot_id)
                 try:
                     # Same only-fail-when-idle semantics as the primary path:
                     # unbounded queue wait UNLESS the caller passed an explicit
@@ -3043,6 +3097,7 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                         return "".join(fbuf) or "".join(ftbuf)
                 finally:
                     fb_inst["in_use"] = max(0, fb_inst.get("in_use", 1) - 1)
+                    _inflight_release(fb_inst, _fb_slot_id)
             except Exception: pass
         return ""
     except asyncio.CancelledError:
@@ -3067,6 +3122,7 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         raise
     finally:
         inst["in_use"]=max(0,inst["in_use"]-1)
+        _inflight_release(inst, _req_slot_id)
 
 
 def _ollama_log_append(entry: dict):
@@ -3206,7 +3262,9 @@ async def _ollama_embed_impl(text: str, model: Optional[str] = None,
     # Reserve the routing slot synchronously (before the emit_event await below)
     # so concurrent embed calls see this node's raised load and spread out,
     # rather than all picking the same "least busy" node across the await gap.
+    _emb_slot_id = str(uuid.uuid4())[:12]
     inst["in_use"] = inst.get("in_use", 0) + 1
+    _inflight_hold(inst, _emb_slot_id)
 
     caller = _ollama_caller_info()
     req_id = str(uuid.uuid4())[:12]
@@ -3419,6 +3477,7 @@ async def _ollama_embed_impl(text: str, model: Optional[str] = None,
         raise
     finally:
         inst["in_use"] = max(0, inst.get("in_use", 1) - 1)
+        _inflight_release(inst, _emb_slot_id)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # UTILS
