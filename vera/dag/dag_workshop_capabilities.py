@@ -3051,6 +3051,8 @@ async def cap_workshop_agent_loop_trace(session_id: str = "",
     r = _redis()
     if not r or not sid:
         return {"error": "session_id required (and Redis must be reachable)"}
+    if _loop_trace_core is None:
+        return {"error": "loop_trace_core unavailable", "session_id": sid}
     try:
         run_raw = await r.hgetall(f"vera:loop:run:{sid}")
         run = {_rd(k): _rd(v) for k, v in (run_raw or {}).items()}
@@ -3067,145 +3069,15 @@ async def cap_workshop_agent_loop_trace(session_id: str = "",
         return {"session_id": sid, "run": run, "plan": {}, "steps": [],
                 "control": [], "counters": {}, "warnings": ["no events for this session"]}
 
-    def _clip(v, n=220):
-        s = str(v or "").strip()
-        return s if include_text or len(s) <= n else s[:n] + "…"
-
-    plan: Dict[str, Any] = {}
-    by_step: Dict[Any, Dict[str, Any]] = {}
-    control: List[Dict[str, Any]] = []
-    order: List[Any] = []
-    n_think = n_act = 0
-    ver = set()
-
-    for e in events:
-        t = str(e.get("type") or "")
-        if e.get("ver"):
-            ver.add(f"{e.get('ver')}@{e.get('br')}")
-        if t.endswith(".tier"):
-            plan["tier"] = e.get("tier")
-        elif t.endswith(".intent"):
-            plan["intent"] = e.get("intent")
-        elif t.endswith(".plan"):
-            plan["done_when"] = _clip(e.get("done_when"), 300)
-            plan["steps"] = [{"id": s.get("id"), "title": s.get("title"),
-                              "caps": s.get("caps"), "phases": s.get("phases") or [],
-                              "success": _clip(s.get("success"), 200)}
-                             for s in (e.get("steps") or [])]
-        elif t.endswith("think_delta"):
-            n_think += 1
-        elif t.endswith(".tool_call"):
-            sid_k = e.get("step_id")
-            if sid_k not in by_step:
-                by_step[sid_k] = {"step_id": sid_k, "calls": [], "title": ""}
-                order.append(sid_k)
-            by_step[sid_k]["calls"].append({"cycle": e.get("cycle"),
-                                            "tool": e.get("tool"),
-                                            "repeat": bool(e.get("repeat"))})
-            n_act += 1
-        elif t.endswith(".tool_done"):
-            sid_k = e.get("step_id")
-            calls = (by_step.get(sid_k) or {}).get("calls") or []
-            for c in reversed(calls):
-                if c.get("tool") == e.get("tool") and "ok" not in c:
-                    c["ok"] = bool(e.get("ok"))
-                    c["ms"] = e.get("elapsed_ms")
-                    if e.get("cached"):
-                        c["served_from"] = e.get("cached")
-                    if not e.get("ok"):
-                        c["error"] = _clip(e.get("error") or e.get("preview"), 160)
-                    break
-        elif t.endswith(".step_start"):
-            sid_k = e.get("step_id")
-            by_step.setdefault(sid_k, {"step_id": sid_k, "calls": []})
-            if sid_k not in order:
-                order.append(sid_k)
-            by_step[sid_k]["title"] = e.get("title") or by_step[sid_k].get("title", "")
-        elif t.endswith(".step_done"):
-            sid_k = e.get("step_id")
-            by_step.setdefault(sid_k, {"step_id": sid_k, "calls": []})["ok"] = bool(e.get("ok"))
-        elif t.endswith(".assess"):
-            control.append({"after_step": e.get("after_step"),
-                            "action": e.get("action"),
-                            "goal_met": bool(e.get("goal_met")),
-                            "assessment": _clip(e.get("assessment")),
-                            "direction": _clip(e.get("direction")),
-                            "inserted": [{"id": s.get("id"), "title": s.get("title"),
-                                          "caps": s.get("caps")}
-                                         for s in (e.get("steps") or [])]})
-        elif t.endswith(".gate"):
-            plan["gate"] = {k: _clip(e.get(k)) for k in ("verdict", "reason", "met")
-                            if e.get(k) is not None}
-
-    # ── Stage-context records (Phase 0) ──────────────────────────────────────
-    # What each LLM stage was GIVEN, not just what it said. `repeats` is the one
-    # to read first: a stage handed a byte-identical prompt twice that answered
-    # differently is the fixation signal, and it was previously invisible.
-    warnings: List[str] = []
-    stage_recs = [e for e in events if str(e.get("type") or "") == "agent_loop.stage_context"]
-    stage_summary: Dict[str, Any] = {}
-    stage_diffs: List[Dict[str, Any]] = []
-    if stage_recs and _stage_audit is not None:
-        try:
-            stage_summary = _stage_audit.summarise(stage_recs)
-            seen: Dict[str, Dict[str, Any]] = {}
-            for r in stage_recs:
-                key = f"{r.get('stage')}:{r.get('variant') or ''}"
-                if key in seen:
-                    d = _stage_audit.diff_records(seen[key], r)
-                    if d.get("identical_input") or d.get("changed") or d.get("runtime_changed"):
-                        stage_diffs.append(d)
-                seen[key] = r
-        except Exception as _se:
-            log.debug("stage summary failed: %s", _se)
-    for d in stage_diffs:
-        if d.get("identical_input"):
-            warnings.append(
-                f"stage {d.get('stage')} was given a BYTE-IDENTICAL prompt again "
-                f"(cycle {d.get('from_cycle')} -> {d.get('to_cycle')}) — if its answer "
-                f"changed, nothing in its input explains why")
-
-    steps = [by_step[k] for k in order if k in by_step]
-    planned_ids = {s.get("id") for s in (plan.get("steps") or [])}
-    inserted_ids = {i.get("id") for c in control for i in c.get("inserted") or []}
-
-    for c in control:
-        for i in c.get("inserted") or []:
-            warnings.append(
-                f"controller INSERTED step {i.get('id')} '{i.get('title')}' "
-                f"after step {c.get('after_step')} (caps={i.get('caps')})")
-    for s in steps:
-        calls = s.get("calls") or []
-        served = [c for c in calls if c.get("served_from")]
-        if served:
-            warnings.append(f"step {s.get('step_id')}: {len(served)} read(s) served from "
-                            f"the artifact registry (re-read of an unchanged file)")
-        seen: Dict[str, int] = {}
-        for c in calls:
-            seen[str(c.get("tool"))] = seen.get(str(c.get("tool")), 0) + 1
-        for tool, n in seen.items():
-            if n >= 3:
-                warnings.append(f"step {s.get('step_id')}: {tool} called {n}x")
-        for c in calls:
-            if c.get("ok") is False:
-                warnings.append(f"step {s.get('step_id')}: {c.get('tool')} FAILED — "
-                                f"{c.get('error') or ''}")
-
-    counters = {
-        "events": len(events),
-        "planned_steps": len(plan.get("steps") or []),
-        "executed_steps": len(steps),
-        "inserted_steps": len(inserted_ids - planned_ids),
-        "tool_calls": n_act,
-        "think_deltas": n_think,
-        "think_ratio": (round(n_think / max(1, n_think + n_act), 3)),
-        "cycles_per_step": {str(s.get("step_id")): len(s.get("calls") or []) for s in steps},
-        "code_version": sorted(ver),
-    }
-    counters["stage_calls"] = (stage_summary or {}).get("total_calls", 0)
-    return {"session_id": sid, "run": run, "plan": plan, "steps": steps,
-            "control": control, "stages": (stage_summary or {}).get("stages", []),
-            "stage_diffs": stage_diffs, "counters": counters, "warnings": warnings}
+    # The reduction itself lives in loop_trace_core so it can be unit-tested
+    # without Redis or the app. It also owns the step ACCOUNTING: an executed
+    # step must be attributable to the plan, a controller insertion, a
+    # completion-gate follow-up, or the fast path — anything else is counted as
+    # `unaccounted_steps` and named in warnings rather than silently skewing the
+    # counters the census reads.
+    digest = _loop_trace_core.digest_events(
+        events, include_text=include_text, stage_audit=_stage_audit)
+    return {"session_id": sid, "run": run, **digest}
 
 
 @APP.get("/workshop/agent_loop/session_state")
@@ -13338,6 +13210,17 @@ except Exception:                                     # pragma: no cover
     except Exception:
         _stage_audit = None
         log.warning("loop_stage_audit unavailable — stage-context audit disabled")
+
+# The pure event->digest reduction behind workshop.agent_loop.trace. Same
+# import-safe shape: a diagnostic must never be the thing that stops a run.
+try:
+    from Vera.vera.dag import loop_trace_core as _loop_trace_core
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import loop_trace_core as _loop_trace_core
+    except Exception:
+        _loop_trace_core = None
+        log.warning("loop_trace_core unavailable — agent_loop.trace disabled")
 
 
 async def _emit_stage_context(stage: str, *, system: str = "", prompt: str = "",
