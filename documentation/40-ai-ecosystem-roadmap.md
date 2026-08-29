@@ -912,6 +912,12 @@ unapproved.
 
 ### LIB-18 — agent SDK conformance expansion
 
+**Offline comparison contract implemented; all execution remains queued-live.**
+`agentbridge.runtime_matrix` separates upstream-documented features from
+Vera-verified adapter coverage across ten candidates and fifteen dimensions. It
+selects no universal winner and freezes the failure/lifecycle cases required
+before any runtime can advance through live admission.
+
 Add Google ADK and OpenAI Agents SDK to the existing RuntimeAdapter/A2A test matrix.
 Keep Strands optional and Agno protocol-only initially.
 

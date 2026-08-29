@@ -16,6 +16,22 @@ available hardware.
 | Provider | hosted chat/model APIs | Sealed credentials, model discovery, usage, and cost |
 | Catalog | Hugging Face/Ollama metadata | Search, fit estimation, and installation handoff |
 
+## Offline runtime comparison matrix
+
+`agentbridge.runtime_matrix` is the non-executing LIB18 comparison surface. It
+covers native Vera, the shipped LangGraph/PydanticAI/Smolagents bridges, and
+prospective OpenClaw, Google ADK, OpenAI Agents SDK, Strands, Agno, and
+Hermes-compatible paths. Each is assessed across tools, providers, handoffs,
+structured output, policy, sessions, recovery, traces, resources, teardown,
+streaming, cancellation, artifacts, sandboxing, and MCP.
+
+Every dimension has separate **upstream** and **Vera** states. Upstream means
+current official documentation describes the feature; Vera means repository
+adapter code has implemented or verified it. An advertised upstream session or
+guardrail therefore remains `not_integrated` until Vera has evidence. The
+matrix imports no optional runtime, installs nothing, performs no model/network
+call, and selects no winner. All execution and failure drills are `queued_live`.
+
 ## Launch lifecycle
 
 1. Inspect bridge/provider status and dependencies.
@@ -62,6 +78,8 @@ needed to fix it.
 ## Source map
 
 - `vera/agentbridges/` — catalog, environment, and launch normalization.
+- `vera/agentbridges/runtime_matrix.py` — deterministic upstream-versus-Vera
+  feature matrix and queued live conformance cases.
 - `vera/execution/a2a_mapping.py` — offline A2A v1.0 mapping and conformance lanes.
 - `vera/smolagents/`, `vera/langgraph/`, `vera/pydanticai/` — adapters.
 - `vera/providers/` — credentials, models, chat, pricing, and usage.
