@@ -5519,6 +5519,16 @@ async def cap_dag_agent_loop_v3(
     auto_continue_max  = max(0, int(auto_continue_max))
     triage_top_k = max(1, min(64, int(triage_top_k)))
     sid = session_id or str(uuid.uuid4())
+    # Stamp this run's session onto the async context at the RUNNER ROOT and make
+    # its liveness definitive, exactly as v6 does. Without the stamp this run's
+    # generations see an empty session and ignore its cooperative cancel at the
+    # chokepoint; without the registration a cap-invoked run looks stale while it
+    # is still working and cancel has no task to stop.
+    try:
+        _LOOP_SESSION_CV.set(sid)
+    except Exception:
+        pass
+    _register_loop_task(sid)
 
     # Scope ollama.* events to this run so the UI can show which node served each
     # planner call (task-local contextvar — no leak across concurrent runs).
@@ -7126,6 +7136,16 @@ async def cap_dag_agent_loop_v4(
     auto_continue_max  = max(0, int(auto_continue_max))
     triage_top_k = max(1, min(64, int(triage_top_k)))
     sid = session_id or str(uuid.uuid4())
+    # Stamp this run's session onto the async context at the RUNNER ROOT and make
+    # its liveness definitive, exactly as v6 does. Without the stamp this run's
+    # generations see an empty session and ignore its cooperative cancel at the
+    # chokepoint; without the registration a cap-invoked run looks stale while it
+    # is still working and cancel has no task to stop.
+    try:
+        _LOOP_SESSION_CV.set(sid)
+    except Exception:
+        pass
+    _register_loop_task(sid)
 
     ctx = _ctx()
     ds  = _dag_store()
@@ -18106,6 +18126,15 @@ async def cap_dag_agent_loop_v5(
     if disable_memory_inject:
         _orch.SUPPRESS_MEMORY_INJECT.set(True)
     sid = session_id or str(uuid.uuid4())
+    # Stamp this run's session onto the async context at the RUNNER ROOT and make
+    # its liveness definitive, exactly as v6 does. Without the stamp this run's
+    # generations see an empty session and ignore its cooperative cancel at the
+    # chokepoint; without the registration a cap-invoked run looks stale while it
+    # is still working and cancel has no task to stop.
+    try:
+        _LOOP_SESSION_CV.set(sid)
+    except Exception:
+        pass
     _register_loop_task(sid)
     max_steps = max(1, min(20, int(max_steps)))
     step_cycle_budget = max(1, min(20, int(step_cycle_budget)))

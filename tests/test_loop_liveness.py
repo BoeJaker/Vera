@@ -119,3 +119,35 @@ def test_the_underlying_status_is_preserved_wherever_it_is_derived():
     assert overwrites >= 1
     assert src.count('run["status_raw"]') == overwrites, (
         "a derivation site overwrites status without preserving the raw value")
+
+def test_every_runner_root_stamps_its_session_and_registers_itself():
+    """Swept by SHAPE: whichever runner mints a session id must do both.
+
+    v6 stamped the cancel context and registered; v3, v4 and v5 minted a session
+    and did neither (v5 gained the registration first). A runner missing the
+    stamp has generations that see an empty session and ignore its cooperative
+    cancel at the chokepoint - the un-stoppable run. A runner missing the
+    registration looks stale while it is still working. v7 delegates to v6 and
+    mints nothing, so it is exempt by the same rule that catches the others.
+    """
+    import ast
+    src = open(DAG, encoding="utf-8").read()
+    lines = src.split("\n")
+    tree = ast.parse(src)
+    checked = 0
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not node.name.startswith("cap_dag_agent_loop"):
+            continue
+        seg = ast.get_source_segment(src, node) or ""
+        mints = any("sid = session_id or str(uuid.uuid4())" in lines[i - 1]
+                    for i in range(node.lineno, (node.end_lineno or node.lineno) + 1))
+        if not mints:
+            continue            # delegates to another runner; nothing to own
+        checked += 1
+        assert "_LOOP_SESSION_CV.set(" in seg, \
+            "%s mints a session but never stamps the cancel context" % node.name
+        assert "_register_loop_task(" in seg, \
+            "%s mints a session but never registers its runner task" % node.name
+    assert checked >= 4, "expected every v3-v6 runner root, found %d" % checked
