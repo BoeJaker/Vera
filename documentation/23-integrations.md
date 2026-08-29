@@ -107,6 +107,13 @@ LIB-02 begins with a non-executing v1.0 contract in
 `vera/execution/a2a_mapping.py` and the inspection capability
 `interop.a2a.conformance`.
 
+`vera/execution/a2a_adapter.py` adds deterministic client and server plans for
+the next integration step. It can plan one reviewed non-mutating task and an
+authenticated server exposure, but deliberately performs no discovery fetch,
+credential resolution, request, listener, registration, or artifact promotion.
+The Agent Bridges UI reports these contracts separately from the queued live
+transport and conformance work.
+
 The manifest pins `a2a-sdk==1.1.2` for later implementation, but does not import
 it. It maps Agent Cards and skills to unauthorised remote Capability Contract v2
 candidates, server-assigned task IDs to `Run.task_id`, remote context IDs to an

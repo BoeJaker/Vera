@@ -67,6 +67,14 @@ html,body{ margin:0;padding:0;background:var(--bg);color:var(--fg);
 .empty{ text-align:center;color:var(--dim);padding:46px 0;font-size:12px; }
 .hint-box{ font-size:10.5px;color:var(--dim);line-height:1.6;background:var(--bg1);
   border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:14px; }
+.interop{ display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin-bottom:14px; }
+.interop-card{ background:var(--bg1);border:1px solid var(--border);border-radius:8px;padding:12px 14px; }
+.interop-card h2{ margin:0 0 7px;font-size:11px;color:var(--fg2);text-transform:uppercase;letter-spacing:.05em; }
+.metric{ font:600 18px/1.2 var(--mono);color:var(--acc); }
+.metric-note{ margin-top:4px;font-size:10px;color:var(--dim); }
+.contract-list{ display:flex;flex-wrap:wrap;gap:5px;margin-top:8px; }
+.contract{ font-size:9px;border:1px solid var(--border2);border-radius:10px;padding:2px 7px;color:var(--dim); }
+.contract.ready{ color:var(--acc2);border-color:color-mix(in srgb,var(--acc2) 55%,var(--border)); }
 </style>
 </head>
 <body>
@@ -82,6 +90,7 @@ html,body{ margin:0;padding:0;background:var(--bg);color:var(--fg);
     </div>
   </div>
   <div id="content"><div class="wrap">
+    <div id="interop" class="interop"><div class="empty">loading interoperability status…</div></div>
     <div class="hint-box">Each bridge runs its own external agent library in a dedicated, throwaway Docker
       container — never in Vera's own process. Versions are <b>pinned</b> deliberately (agentbridge_registry.py);
       "Check for updates" only reports drift against PyPI's latest — nothing here rebuilds an image or bumps a
@@ -102,13 +111,41 @@ const esc = s => String(s??'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>
 
 let BRIDGES = [];
 let DRIFT = {};   // bridge id -> [{package, pinned, latest, drift}]
+let INTEROP = null;
 
 async function load(){
-  const j = await api('/agentbridge/catalog');
+  const [j, interop] = await Promise.all([
+    api('/agentbridge/catalog'), api('/agentbridge/interoperability')
+  ]);
   BRIDGES = j.bridges || [];
+  INTEROP = interop && !interop.error ? interop : null;
   document.getElementById('subtitle').textContent =
     BRIDGES.length + ' bridge' + (BRIDGES.length===1?'':'s') + ' registered';
+  renderInterop();
   render();
+}
+
+function renderInterop(){
+  const el = document.getElementById('interop');
+  if (!INTEROP){ el.innerHTML='<div class="hint-box">Interoperability status unavailable.</div>'; return; }
+  const a=INTEROP.a2a||{}, m=INTEROP.runtime_matrix||{}, contracts=INTEROP.shared_contracts||[];
+  const registered=contracts.filter(x=>x.registered).length;
+  el.innerHTML=`
+    <div class="interop-card"><h2>A2A · LIB02</h2>
+      <div class="metric">${esc(a.foundation||'unknown')}</div>
+      <div class="metric-note">client/server plans ${esc(a.client_plan_contract||'?')}/${esc(a.server_plan_contract||'?')}; transport ${esc(a.client_transport||'?')}</div>
+      <div class="contract-list"><span class="contract ready">${esc(a.deterministic_cases||0)} deterministic</span><span class="contract">${esc(a.queued_live_cases||0)} queued live</span><span class="contract">execution ${a.ready_for_execution?'ready':'blocked'}</span></div>
+    </div>
+    <div class="interop-card"><h2>Runtime matrix · LIB18</h2>
+      <div class="metric">${esc(m.candidate_count||0)} runtimes</div>
+      <div class="metric-note">${esc(m.dimension_count||0)} dimensions · ${esc(m.queued_live_cases||0)} live cases queued</div>
+      <div class="contract-list"><span class="contract">${esc(m.execution_lane||'unknown')}</span><span class="contract">selection ${m.ready_for_selection?'ready':'not ready'}</span></div>
+    </div>
+    <div class="interop-card"><h2>Shared Vera contracts</h2>
+      <div class="metric">${registered}/${contracts.length}</div>
+      <div class="metric-note">registered capability surfaces available to bridge tooling</div>
+      <div class="contract-list">${contracts.map(x=>`<span class="contract ${x.registered?'ready':''}" title="${esc(x.capability)}">${esc(x.id)}</span>`).join('')}</div>
+    </div>`;
 }
 
 function render(){

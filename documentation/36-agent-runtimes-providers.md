@@ -67,6 +67,13 @@ IDs remain server-owned; and Task/Message/Artifact projections cannot authorize
 effects. This protocol layer must land before Google ADK or OpenAI Agents SDK can
 join a common RuntimeAdapter/A2A conformance matrix.
 
+Agent Bridges also exposes an interoperability summary in its UI. The summary
+shows the LIB02 A2A mapping and inert client/server plans, LIB18 candidate and
+dimension counts, queued live gates, and whether shared Vera contract
+capabilities are actually registered. “Implemented” there means the bounded,
+deterministic planning contract exists; transport/listener execution remains
+labelled `queued_live` until the explicit live gate is authorised and passes.
+
 ## Troubleshooting
 
 Separate dependency/image failure, provider authentication, model lookup,
