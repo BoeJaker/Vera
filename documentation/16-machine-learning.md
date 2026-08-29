@@ -27,9 +27,17 @@ so changed or forged serialized evidence fails visibly.
 
 `EvalProvider` and `TrainingRuntime` are structural protocols with explicit
 profiles; defining or validating these contracts invokes neither protocol. The
-current ML Workshop remains unchanged. Deterministic evaluation execution,
-DeepEval/Promptfoo adapters, Accelerate, PEFT, MLflow, DSPy, live judges, and
-training execution are subsequent gated slices.
+offline `DeterministicScalarEvalProvider` is the reference implementation for
+that evaluation boundary. It consumes a pinned `ScalarEvaluationFixture` of
+already-observed, finite metric values, verifies exact subject and dataset
+revision matches, applies declared maximize/minimize thresholds, and emits a
+canonical `EvaluationReport`. Its fixed arithmetic-mean aggregation and
+case-level failure count are reproducible and perform no model, judge, trainer,
+network, or external-provider call.
+
+The current ML Workshop remains unchanged. DeepEval/Promptfoo adapters,
+Accelerate, PEFT, MLflow, DSPy, live judges, and training execution are
+subsequent gated slices.
 
 ---
 
