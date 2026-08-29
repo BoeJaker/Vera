@@ -130,6 +130,15 @@ fi
 git remote get-url origin >/dev/null 2>&1 && git remote remove origin
 
 git fetch $(depth_args) upstream || exit 4
+
+# A clone left shallow by an older sync (or an explicit depth) cannot be pushed
+# to the fork — git rejects it with "shallow update not allowed", so our commits
+# would live nowhere but a disposable directory. Deepen it unless the caller
+# deliberately asked to stay shallow.
+if [ "${DEPTH:-0}" -eq 0 ] 2>/dev/null && [ -f .git/shallow ]; then
+  git fetch --unshallow upstream >/dev/null 2>&1 \
+    || git fetch --depth=2147483647 upstream >/dev/null 2>&1 || true
+fi
 UPSTREAM_REF="upstream/${REF:-HEAD}"
 git rev-parse --verify "$UPSTREAM_REF" >/dev/null 2>&1 || UPSTREAM_REF="upstream/HEAD"
 git rev-parse --verify "$UPSTREAM_REF" >/dev/null 2>&1 || UPSTREAM_REF=FETCH_HEAD

@@ -97,6 +97,7 @@ def resolve_layout(root: Path, env: Optional[Dict[str, str]] = None) -> Dict[str
         "dist_dir": clone / "dist",
         "env_file": clone / ".env.local",
         "fork_dir": fork,
+        "tile_dir": state / "tiles",
     }
 
 
@@ -157,6 +158,46 @@ def resolve_asset(dist_dir: Path, rel: str) -> Optional[Path]:
     if not target.is_file():
         return None
     return target
+
+
+# ── map tile cache ───────────────────────────────────────────────────────────
+#: Godseye asks the browser to pull Esri World Imagery tiles straight from
+#: arcgisonline on every pan and zoom, uncached. Vera proxies them instead so a
+#: tile is fetched from the internet once and served from local disk after that.
+TILE_UPSTREAM = ("https://server.arcgisonline.com/ArcGIS/rest/services/"
+                 "World_Imagery/MapServer/tile/{z}/{y}/{x}")
+TILE_MOUNT = "/godseye/tiles"
+
+#: Esri's World Imagery tops out at 19. Anything beyond is a client bug or an
+#: attempt to make us issue unbounded upstream requests.
+TILE_MAX_ZOOM = 19
+
+
+def tile_is_valid(z: int, y: int, x: int) -> bool:
+    """Is this a real tile coordinate?
+
+    The z/y/x go into an upstream URL and into a cache path, so they are
+    validated as integers in range rather than interpolated as text — that is
+    what keeps this from being both a path-traversal sink and an open proxy.
+    """
+    try:
+        z, y, x = int(z), int(y), int(x)
+    except (TypeError, ValueError):
+        return False
+    if z < 0 or z > TILE_MAX_ZOOM:
+        return False
+    limit = 1 << z                       # a zoom level is a 2^z square of tiles
+    return 0 <= y < limit and 0 <= x < limit
+
+
+def tile_cache_path(cache_root: Path, z: int, y: int, x: int) -> Path:
+    """Where a tile is cached. Only ever called with validated coordinates, and
+    built from ints so no caller-supplied string reaches the path."""
+    return Path(cache_root) / str(int(z)) / str(int(y)) / f"{int(x)}.jpg"
+
+
+def tile_upstream_url(z: int, y: int, x: int, template: str = "") -> str:
+    return (template or TILE_UPSTREAM).format(z=int(z), y=int(y), x=int(x))
 
 
 def negotiate_encoding(target: Path, accept_encoding: str) -> tuple:

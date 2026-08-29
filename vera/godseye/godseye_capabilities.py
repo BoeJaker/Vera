@@ -47,8 +47,11 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import httpx
 from fastapi import Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (
+    FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response,
+)
 
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import (
@@ -535,6 +538,56 @@ async def _godseye_panel():
     if not p.is_file():                             # pragma: no cover — defensive
         return _placeholder("Godseye", "godseye_panel.html not found")
     return HTMLResponse(p.read_text(encoding="utf-8"))
+
+
+@APP.get(_core.TILE_MOUNT + "/{z}/{y}/{x}", include_in_schema=False)
+async def _godseye_tile(z: int, y: int, x: int):
+    """Cache-in-front-of-Esri for the globe's base imagery.
+
+    Godseye asks the BROWSER for every tile straight from arcgisonline, so a
+    pan or zoom is a burst of cross-internet round trips and nothing is ever
+    reused between sessions or between people. Proxying them means each tile
+    crosses the internet once and is LAN-speed forever after.
+
+    Deliberately narrow: coordinates are validated as integers in range and the
+    upstream URL is built from those ints, so this cannot be steered at another
+    host or walked out of the cache directory.
+    """
+    if not _core.tile_is_valid(z, y, x):
+        return JSONResponse({"error": "bad tile coordinate"}, status_code=400)
+
+    cached = _core.tile_cache_path(_layout()["tile_dir"], z, y, x)
+    headers = {
+        # Imagery for a fixed z/y/x does not change in any way we care about.
+        "Cache-Control": "public, max-age=604800",
+        "X-Content-Type-Options": "nosniff",
+    }
+    if cached.is_file():
+        return FileResponse(str(cached), media_type="image/jpeg",
+                            headers={**headers, "X-Godseye-Tile": "hit"})
+
+    url = _core.tile_upstream_url(z, y, x, os.environ.get("VERA_GODSEYE_TILE_URL", ""))
+    try:
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+            r = await client.get(url)
+    except Exception as e:
+        return JSONResponse({"error": f"tile fetch failed: {e}"}, status_code=502)
+    if r.status_code != 200 or not r.content:
+        return JSONResponse({"error": "upstream tile unavailable",
+                             "status": r.status_code}, status_code=502)
+
+    # Write via a temp file in the same directory: a half-written tile that a
+    # concurrent request could serve as a truncated image is worse than a miss.
+    try:
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        tmp = cached.with_suffix(".part")
+        tmp.write_bytes(r.content)
+        tmp.replace(cached)
+    except OSError as e:                            # a full disk must not 500
+        log.warning("godseye: could not cache tile %s/%s/%s: %s", z, y, x, e)
+
+    return Response(content=r.content, media_type="image/jpeg",
+                    headers={**headers, "X-Godseye-Tile": "miss"})
 
 
 @APP.get(_core.APP_MOUNT, include_in_schema=False)
