@@ -87,6 +87,50 @@ from Vera.vera import ollama_inflight as _oi_inflight
 
 log = logging.getLogger("vera.orch")
 
+
+def _install_file_log_handler() -> str:
+    """Give prod a log on disk, whatever launched it.
+
+    Vera is started by hand, so stdout is whatever terminal ran it — on the live
+    instance that is a /dev/pts, which means incidents get diagnosed through
+    endpoints and sockets instead of a log. Doing this in-process rather than in
+    a launcher means it holds for every way Vera gets started.
+
+    Never fatal: a logging problem must not be the thing that stops the app.
+    """
+    try:
+        # Inside the try on purpose: an import failure here must cost the log
+        # file, not the instance.
+        from Vera.vera import log_setup as _ls
+        from Vera.vera import state_paths as _sp
+        cfg = _ls.resolve_log_config(os.environ, default_dir=_sp.state_dir("logs"))
+        if not cfg["enabled"]:
+            return ""
+        # A log inside the checkout would dirty the tracked tree and block every
+        # promote, so a mis-pointed path fails here rather than silently.
+        _sp.guard_out_of_tree(cfg["path"])
+        import logging.handlers as _lh
+        h = _lh.RotatingFileHandler(cfg["path"], maxBytes=cfg["max_bytes"],
+                                    backupCount=cfg["backups"], encoding="utf-8",
+                                    delay=True)
+        h.setLevel(cfg["level"])
+        h.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)s [%(name)s] %(message)s"))
+        # Tagged so _offload_blocking_log_handlers moves it behind a queue: a
+        # stalling disk must not stall the event loop (see log_setup docstring).
+        setattr(h, _ls.OFFLOAD_ATTR, True)
+        logging.getLogger().addHandler(h)
+        return cfg["path"]
+    except Exception as _e:
+        log.warning("file logging unavailable (%s: %s) — console only",
+                    type(_e).__name__, _e)
+        return ""
+
+
+_LOG_FILE_PATH = _install_file_log_handler()
+if _LOG_FILE_PATH:
+    log.info("logging to %s", _LOG_FILE_PATH)
+
 # Set by long-running callers (e.g. the agentic loop) so the ollama.* events
 # emitted during generation can be scoped to that run's session and surfaced in
 # its UI (which Ollama node served the request). Defaults to "" (unscoped).
@@ -8831,15 +8875,19 @@ def _offload_blocking_log_handlers():
     console (paused terminal, SSH backpressure, journald stall) otherwise
     blocks the event loop — a captured 1.5s stall was uvicorn's access logger
     inside stream.write. One queue PER logger so records keep their original
-    handler routing (no cross-logger duplication)."""
+    handler routing (no cross-logger duplication).
+
+    Our own file handler is included: it writes to a disk that can stall just as
+    a console can, so it gets the same treatment. Foreign handlers are still
+    left alone — see log_setup.should_offload."""
     if _LOG_QLISTENERS:
         return
     import logging.handlers as _lh  # noqa: F401  (ensures logging.handlers loaded)
     import queue as _q
+    from Vera.vera.log_setup import should_offload as _should_offload
     for name in (None, "uvicorn", "uvicorn.access", "uvicorn.error"):
         lg = logging.getLogger(name)
-        # Exact type only — leave RotatingFileHandler/QueueHandler/etc alone.
-        plain = [h for h in lg.handlers if type(h) is logging.StreamHandler]
+        plain = [h for h in lg.handlers if _should_offload(h)]
         if not plain:
             continue
         q = _q.SimpleQueue()
