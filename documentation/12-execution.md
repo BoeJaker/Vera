@@ -191,6 +191,19 @@ System tools used opportunistically (called via bash, optional): `arp`, `ping` (
 
 ## Execution boundary and diagnostics
 
+### Runtime-neutral Runs
+
+The execution foundation separates Vera's durable `Run` identity and events
+from the engine that performs work. Workflow IR, local DAGs, provider calls,
+and remote-agent tasks can project into the same lifecycle without pretending
+their native identifiers are interchangeable. Adapters preserve native
+authority, report lossy state mappings, and bind cancellation, timeouts,
+retries, artifacts, and teardown to the Run rather than to a UI session.
+
+This is the basis for adding external runtimes without creating another bespoke
+loop. See [agent runtimes and providers](36-agent-runtimes-providers.md) and
+[interoperability foundations](46-interoperability-foundations.md).
+
 Execution capabilities normalize local shell, PowerShell, Python, and remote
 SSH work behind one result contract: command, target, exit code, standard output,
 standard error, duration, and error state. Network mapping resolves a logical

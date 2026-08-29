@@ -548,6 +548,13 @@ items and child items; progress/evidence is recorded as board comments;
 Once a shared handover is obsolete, archive or remove it deliberately rather
 than publishing it under `documentation/`.
 
+The reserved migration area for legacy ignored plans, evaluations, handovers,
+specs, and postmortems is
+`<git-common-dir>/vera-work/shared-planning/legacy-documentation/`. Before moving
+anything, prove it is untracked. Move exact files, preserve relative paths,
+refuse overwrites, and verify before/after checksums; never bulk-delete the old
+directory. The board remains the operational plan after migration.
+
 ### Recovering a severed worktree without losing changes
 
 `evolve.sandbox.worktree.repair(branch, dry_run=true)` repairs one fully

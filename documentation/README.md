@@ -78,11 +78,11 @@ gallery without overwriting this authored guide.
 - [Security](29-security.md)
 - [Cluster encryption](32-cluster-encryption.md)
 - [Loop Lab](33-evolve.md)
-- [Master roadmap](MASTER-ROADMAP.md)
 - [Modern AI ecosystem roadmap](40-ai-ecosystem-roadmap.md)
 - [Capability contracts](43-capability-contracts.md)
 - [Frozen evaluation corpus](44-evaluation-corpus.md)
 - [Capability policy boundary](45-capability-policy.md)
+- [Interoperability foundations](46-interoperability-foundations.md)
 
 ## Complete guide index
 
@@ -134,16 +134,16 @@ gallery without overwriting this authored guide.
 | 43 | [Capability contracts](43-capability-contracts.md) | Contract v2 manifests, declarations, linting, and rollout |
 | 44 | [Frozen evaluation corpus](44-evaluation-corpus.md) | Deterministic and queued-live evaluation lanes |
 | 45 | [Capability policy boundary](45-capability-policy.md) | Shadow decisions, effect grants, approvals, and enforcement path |
+| 46 | [Interoperability foundations](46-interoperability-foundations.md) | Common contracts, Runs, adapters, evidence, model packages, Worldview, and A2A boundaries |
 
 ## Planning and delivery
 
-- [Vera master roadmap](MASTER-ROADMAP.md) — the combined dependency-aware
-  programme across every subsystem, convergence work, ecosystem adapters, quality
-  gates, and queued live tests.
-- [Internal improvement notes](INTERNAL-IMPROVEMENT-NOTES.md) — source evidence,
-  architecture decisions, and system-by-system review.
-- [Modern AI ecosystem roadmap](40-ai-ecosystem-roadmap.md) — library and protocol
-  research, admission criteria, and bounded adapter experiments.
+Published documentation contains subsystem guides, not agent handovers or live
+plans. Loop Lab's board is the operational source of truth. Private supporting
+files shared across main, bleeding-edge, and sandboxes live outside the worktree
+under `<git-common-dir>/vera-work/shared-planning/`; sandbox-local handoff state
+lives in gitignored `.vera-work/work-plan.json`. See
+[Loop Lab](33-evolve.md#repository-shared-private-planning).
 
 ## Screenshot maintenance
 

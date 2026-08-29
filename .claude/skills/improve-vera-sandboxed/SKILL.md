@@ -253,6 +253,14 @@ handoffs, and immediately before review.
   the common directory. Use `.vera-work/planning/` only for disposable scratch
   local to one sandbox. Neither location may contain secrets, raw prompts,
   credentials, or unredacted result bodies.
+- The Git-common directory is the reserved cross-worktree location: do not put
+  shared plans in the main checkout merely because every sandbox can see that
+  checkout over SMB. If legacy ignored plans, evaluations, handovers, specs, or
+  postmortems are found under `documentation/`, first prove they are untracked,
+  then move each exact file into
+  `<git-common-dir>/vera-work/shared-planning/legacy-documentation/`, preserving
+  relative paths. Refuse overwrites and verify the before/after checksum. Never
+  use a repository-wide glob or delete the source before its copy is verified.
 - Convert every actionable or multi-session plan into Loop Lab's durable work
   plane: an umbrella `board.item.upsert` item (`labels:["plan"]`) and child work
   items linked through `plan=<umbrella-id>`. Keep branch, pipeline and session
