@@ -1087,7 +1087,17 @@ async def _run_code_in(session_id: str, language: str, code: str, *,
     fname = f"/tmp/vera_{uuid.uuid4().hex[:8]}.{ext}"
     argline = " ".join(shlex.quote(a) for a in (args or []))
     # Bound the INTERPRETER only, so `rc=$?; rm -f` still runs when it is killed.
-    _payload = _bounded_cmd(f"{' '.join(prefix)} {fname} {argline}", timeout)
+    _inner = f"{' '.join(prefix)} {fname} {argline}"
+    if lang == "python":
+        # Python puts the SCRIPT'S directory on sys.path[0], not the cwd, so
+        # `python3 /workspace/pkg/test_x.py` cannot import `pkg` however well
+        # formed the package is - census build-multifile (2026-08-29) hit
+        # ModuleNotFoundError four times and adding __init__.py did not help,
+        # because the workspace root was never on the path. An inline snippet
+        # runs from /tmp and has the same problem.
+        _inner = ("PYTHONPATH=" + shlex.quote(_WORKDIR) +
+               '${PYTHONPATH:+:$PYTHONPATH} ') + _inner
+    _payload = _bounded_cmd(_inner, timeout)
     script = (f"echo {b64} | base64 -d > {fname}; "
               f"{_payload}; rc=$?; rm -f {fname}; exit $rc")
     out = await _exec_in(session_id, script, timeout=timeout + _TIMEOUT_GRACE_S)
@@ -1124,6 +1134,15 @@ async def _run_pathfile_in(session_id: str, language: str, path: str, *,
     prefix, _ext = spec
     argline = " ".join(shlex.quote(a) for a in (args or []))
     cmd = f"{' '.join(prefix)} {shlex.quote(path)} {argline}".strip()
+    if lang == "python":
+        # Python puts the SCRIPT'S directory on sys.path[0], not the cwd, so
+        # `python3 /workspace/pkg/test_x.py` cannot import `pkg` however well
+        # formed the package is - census build-multifile (2026-08-29) hit
+        # ModuleNotFoundError four times and adding __init__.py did not help,
+        # because the workspace root was never on the path. An inline snippet
+        # runs from /tmp and has the same problem.
+        cmd = ("PYTHONPATH=" + shlex.quote(_WORKDIR) +
+               '${PYTHONPATH:+:$PYTHONPATH} ') + cmd
     out = await _exec_in(session_id, cmd, timeout=timeout)
     if out is not None:
         out["language"] = lang
@@ -3142,7 +3161,14 @@ async def route_code_argv(session_id: str, language: str, code: str, *,
     fname = f"/tmp/vera_{uuid.uuid4().hex[:8]}.{ext}"
     argline = " ".join(shlex.quote(a) for a in (args or []))
     # Bound the INTERPRETER only, so `rc=$?; rm -f` still runs when it is killed.
-    _payload = _bounded_cmd(f"{' '.join(prefix)} {fname} {argline}", timeout)
+    _inner = f"{' '.join(prefix)} {fname} {argline}"
+    if lang == "python":
+        # Same reason as the other two runners: a snippet executes from a scratch
+        # directory, so without this the workspace root is not on sys.path and it
+        # cannot import the package the run just authored.
+        _inner = ("PYTHONPATH=" + shlex.quote(_WORKDIR) +
+                  '${PYTHONPATH:+:$PYTHONPATH} ') + _inner
+    _payload = _bounded_cmd(_inner, timeout)
     script = (f"echo {b64} | base64 -d > {fname}; "
               f"{_payload}; rc=$?; rm -f {fname}; exit $rc")
     return await route_shell_argv(session_id, script)

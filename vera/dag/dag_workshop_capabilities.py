@@ -10698,7 +10698,14 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
     if not task:
         return {"ok": False, "error": "task is required — describe WHAT to build, in words, "
                                        "not code (code.author writes the code for you)."}
-    path = _code_workspace_path(path) or "generated.py"
+    path = _code_workspace_path(path)
+    if not path:
+        # Falling back to "generated.py" wrote a file nobody asked for and
+        # reported ok=true. Census build-multifile (2026-08-29) burned three
+        # cycles authoring the same 1755-byte generated.py before anyone
+        # noticed the path was missing. An error names the problem once.
+        return {"ok": False, "error": "path is required - name the file to write, "
+                                      "relative to the workspace (e.g. 'pkg/mod.py')."}
     # Redirect a PROSE/DOCUMENT file to prose.author — .md/.txt/.rst are documents,
     # not code, and must be authored by the WRITER role (grounded on the real file
     # listing), never by the coder whose system prompt demands "running code".
@@ -11302,7 +11309,10 @@ async def cap_prose_author(task: str = "", path: str = "", context_files=None,
                                        "(or pass content/text with an existing draft to incorporate)"}
     # Same collapse as code.author: a caller handing back `/workspace/x` or
     # `workspace/x` must not be re-joined to /workspace/workspace/x.
-    path = _code_workspace_path(path) or "generated.md"
+    path = _code_workspace_path(path)
+    if not path:
+        return {"ok": False, "error": "path is required - name the document to write, "
+                                      "relative to the workspace (e.g. 'notes.md')."}
     # Redirect a CODE file to code.author — HTML/CSS/JS/... are code, not prose, and
     # must be syntax-checked + versioned as code, not authored as an ungrounded document.
     _pext = (os.path.splitext(path)[1].lstrip(".") or "").lower()
@@ -11547,8 +11557,17 @@ def _v5_apply_edits(content: str, edits: List[Dict[str, Any]]) -> Dict[str, Any]
                           f"(first 60 chars: {find[:60]!r})")
             continue
         if n > 1:
-            errors.append(f"edit {i + 1}: `find` matches {n} places — make it unique "
-                          "by including more surrounding context")
+            # Naming WHERE it matched turns a dead end into a next move: the editor
+            # can pick a neighbouring unique line instead of guessing what "more
+            # context" means (census build-multifile, 2026-08-29).
+            _at, _pos = [], out.find(find)
+            while _pos != -1 and len(_at) < 6:
+                _at.append(out.count("\n", 0, _pos) + 1)
+                _pos = out.find(find, _pos + 1)
+            errors.append(f"edit {i + 1}: `find` matches {n} places (lines "
+                          f"{', '.join(str(a) for a in _at)}) — extend it with an "
+                          "adjacent unique line (a def/comment above or below) so it "
+                          "matches exactly once")
             continue
         out = out.replace(find, repl, 1)
         applied.append({"find_preview": find[:80], "removed": len(find), "added": len(repl)})
