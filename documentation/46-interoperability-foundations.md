@@ -53,6 +53,12 @@ This lets Vera compare native DAG execution with libraries such as LangGraph,
 DBOS, or Temporal around one Run protocol instead of wrapping each library in a
 new agent loop.
 
+The LIB18 runtime matrix applies that boundary to agent frameworks. It keeps
+upstream-documented features separate from Vera-verified bridge behavior across
+native Vera, LangGraph, PydanticAI, Smolagents, OpenClaw, Google ADK, OpenAI
+Agents SDK, Strands, Agno, and Hermes-compatible paths. Static declarations can
+identify gaps and required tests; they cannot select a universal winner.
+
 ## Models, ONNX, and Worldview
 
 `ModelPackage` is the portable boundary between training, evaluation, import,

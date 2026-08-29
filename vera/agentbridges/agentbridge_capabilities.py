@@ -34,12 +34,26 @@ from fastapi.responses import HTMLResponse
 
 from Vera.vera.agentbridges.agentbridge_registry import BRIDGES, BY_ID
 from Vera.vera.agentbridges.agentbridge_runtime import image_present
+from Vera.vera.agentbridges.runtime_matrix import compile_runtime_matrix
 from Vera.vera.capability_orchestration import (
     APP, CAPABILITY_REGISTRY, capability, register_ui,
 )
 import os
 
 log = logging.getLogger("vera.agentbridges.catalog")
+
+
+@capability(
+    "agentbridge.runtime_matrix", http_method="GET",
+    http_path="/agentbridge/runtime_matrix", http_tags=["agentbridge"],
+    memory="off", silent=True,
+    description="Return the deterministic LIB18 agent-runtime comparison. "
+                "Separates upstream claims from Vera-verified bridge coverage; "
+                "imports and executes no optional runtime and keeps every live "
+                "comparison queued.",
+)
+async def agentbridge_runtime_matrix(trace_id=None) -> Dict[str, Any]:
+    return compile_runtime_matrix().to_dict()
 
 _HERE = Path(__file__).parent
 _PANEL_HTML_PATH = _HERE / "agentbridge_catalog_panel.html"
