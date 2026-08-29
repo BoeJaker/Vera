@@ -74,6 +74,20 @@ either a named built-in Workflow IR adapter or one strict serialized runtime
 profile; ambiguous or malformed input fails closed. Both capability contracts
 declare no effects.
 
+LIB-16's first offline slice adds `workflow.durability.dbos_mapping`. It binds
+the fixture identity and Workflow IR hash to a `dbos==2.30.0` review manifest,
+mapping workflow IDs, application versions, steps, durable sleep, retry/timeout
+options, statuses, and Run-event evidence sources. The manifest is data rather
+than generated Python and reports `executes: false`, `imports_runtime: false`.
+
+It intentionally remains `ready_for_execution: false`. Blocking gaps cover the
+absolute-wake-to-duration conversion, DBOS's timeout/cancel status ambiguity,
+compatible-version patch planning, independent-effect key/receipt evidence,
+Run-event observation completeness, large-result ArtifactRef policy, and
+cancellation boundaries. Those gaps require the separately authorized DBOS and
+Postgres crash-recovery spike; the manifest does not claim that documentation
+alone proves them.
+
 ## Workflow IR inspection facade
 
 The held W1-02 foundation introduces a versioned, runtime-neutral description

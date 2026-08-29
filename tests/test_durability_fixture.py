@@ -127,6 +127,11 @@ def test_fixture_rejects_missing_or_duplicate_crash_coverage():
     with pytest.raises(ValueError, match="scenario IDs must be unique"):
         DurabilityFixture(scenarios=fixture.scenarios + (fixture.scenarios[0],), **base)
 
+    with pytest.raises(ValueError, match="Workflow IR step boundary"):
+        DurabilityFixture(
+            scenarios=fixture.scenarios,
+            **{**base, "crash_boundaries": fixture.crash_boundaries[:-1]})
+
 
 def test_scenarios_reject_incoherent_crash_and_terminal_metadata():
     with pytest.raises(ValueError, match="require a boundary"):

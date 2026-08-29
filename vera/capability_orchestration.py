@@ -8467,6 +8467,16 @@ async def cap_workflow_durability_gaps(adapter: str = "", profile: dict = None,
         return {"ok": False, "error": "invalid_durability_profile",
                 "detail": str(exc), "executes": False}
 
+
+@capability("workflow.durability.dbos_mapping", memory="off",
+            description="Return the pinned, static LIB-15 to DBOS mapping manifest and all "
+                        "blocking semantic gaps. Does not import DBOS, generate runnable code, "
+                        "connect to Postgres, or execute workflows/effects.",
+            contract=_inspection_contract("workflow.durability.dbos_mapping", effects=["none"]))
+async def cap_workflow_durability_dbos_mapping(trace_id=None):
+    from Vera.vera.execution.dbos_mapping import compile_dbos_mapping
+    return compile_dbos_mapping().to_dict()
+
 @capability("dag.plan", memory="on",
             http_method="POST", http_path="/dag/plan", http_tags=["dag"],
             description="Ask the LLM to produce a DAG execution plan for a natural-language goal.")
