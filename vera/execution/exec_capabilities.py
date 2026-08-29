@@ -904,7 +904,15 @@ def _safe_seg(s: str) -> str:
     """Filesystem-safe single path segment (no separators / traversal)."""
     s = (s or "").strip().replace("\\", "_").replace("/", "_")
     s = re.sub(r"[^A-Za-z0-9._-]", "_", s)
-    s = s.strip("._") or "default"
+    # Collapse ONLY a segment that is entirely dots/underscores - "." and ".."
+    # are traversal, and "___" carries no name. Stripping those characters off
+    # the FRONT of a real name is what silently rewrote __init__.py to
+    # init__.py: code.author reported ok=true with the requested path while the
+    # file landed elsewhere, so the package never imported and the loop
+    # re-authored it six times (census build-multifile, 2026-08-29). Dotfiles
+    # (.gitignore, .env) are legitimate workspace files and survive too.
+    if not s.strip("._"):
+        s = "default"
     return s[:80]
 
 
