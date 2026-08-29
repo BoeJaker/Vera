@@ -44,6 +44,36 @@ This slice is intentionally a compatibility facade. Later Workflow IR and
 runtime-adapter work can emit the same contract without requiring Vera to replace
 LangGraph, external runtimes, or its own established DAG execution paths.
 
+### Runtime-neutral durability fixture
+
+LIB-15 adds a static conformance fixture in
+[`durability_fixture.py`](../vera/execution/durability_fixture.py). It combines a
+normalized Workflow IR definition with pinned definition/implementation
+revisions and expected Run event sequences for clean completion, retry,
+timeout, cancellation, compatible-version resume, incompatible-version refusal,
+and a crash immediately before and after every step. The workflow declares a durable wait, runtime-owned
+retry and timeout, and an external effect protected by an idempotency key and a
+durable receipt.
+
+`RuntimeDurabilityProfile` lets an adapter declare exactly which semantics and
+Run events it can preserve. `analyze_durability_profile` compares that profile
+with the fixture and returns explicit gaps. It rejects an `exactly_once` claim
+for external effects: the portable contract is replay plus deduplication by key
+and retained receipt, because a runtime cannot manufacture exactly-once behavior
+in an independent service.
+
+The fixture and analyzer both report `executes: false`. They do not import or
+start DBOS, Temporal, Prefect, Dagster, or Vera's native DAG runner, and they do
+not sleep, retry, recover, cancel, or perform the declared effect. Their purpose
+is to make later runtime pilots comparable before any engine is entrusted with
+real workflow authority.
+
+The same inspection boundary is available to tools as
+`workflow.durability.fixture` and `workflow.durability.gaps`. The latter accepts
+either a named built-in Workflow IR adapter or one strict serialized runtime
+profile; ambiguous or malformed input fails closed. Both capability contracts
+declare no effects.
+
 ## Workflow IR inspection facade
 
 The held W1-02 foundation introduces a versioned, runtime-neutral description
