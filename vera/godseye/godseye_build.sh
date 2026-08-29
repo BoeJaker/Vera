@@ -86,5 +86,21 @@ if [ "$rc" -eq 0 ] && [ "$BASE" != "/" ]; then
   fi
 fi
 
+# Vera serves dist/ straight off disk, so whatever is here is what goes over the
+# wire — and the load path is 17.7 MB of highly compressible text (Cesium.js
+# plus ~11 MB of feed manifests), which gzips to 3.5 MB. Compress it ONCE, here,
+# rather than per request: the bundle does not change between builds, so there
+# is nothing to invalidate and no CPU on the hot path. Serving picks the .gz
+# sidecar only for clients that asked for it (godseye_core.negotiate_encoding).
+if [ "$rc" -eq 0 ]; then
+  echo "[godseye] --- precompressing assets ---" >> "$LOG" 2>&1
+  find dist -type f -size +1k ! -name '*.gz' \
+    \( -name '*.js' -o -name '*.css' -o -name '*.json' -o -name '*.html' \
+       -o -name '*.svg' -o -name '*.wasm' -o -name '*.glsl' -o -name '*.map' \) \
+    -exec gzip -9 -k -f {} + >> "$LOG" 2>&1
+  echo "[godseye] precompressed $(find dist -name '*.gz' -type f | wc -l) files" \
+    >> "$LOG" 2>&1
+fi
+
 echo "GODSEYE_EXIT=$rc" >> "$LOG" 2>&1
 exit "$rc"

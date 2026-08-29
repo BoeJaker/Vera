@@ -144,15 +144,50 @@ def resolve_asset(dist_dir: Path, rel: str) -> Optional[Path]:
     return target
 
 
-def cache_control_for(path: str) -> str:
-    """Vite emits content-hashed files under ``assets/`` — those are immutable.
-    ``index.html`` never is: it is the pointer that changes on every rebuild, so
-    caching it is how you get a page wired to assets that no longer exist.
+def negotiate_encoding(target: Path, accept_encoding: str) -> tuple:
+    """Pick the precompressed sidecar when — and only when — the client asked.
+
+    ``godseye_build.sh`` gzips the bundle at build time, so serving is a plain
+    file read with a header rather than per-request compression. Returns
+    ``(path_to_send, content_encoding)``; ``content_encoding`` is "" when the
+    original file is being sent, which is what a client that did not offer gzip
+    must always get.
     """
-    name = str(path).replace("\\", "/").rsplit("/", 1)[-1]
+    accept = (accept_encoding or "").lower()
+    if not any(tok.strip().split(";")[0] == "gzip" for tok in accept.split(",")):
+        return (target, "")
+    gz = Path(str(target) + ".gz")
+    try:
+        if gz.is_file():
+            return (gz, "gzip")
+    except OSError:
+        pass
+    return (target, "")
+
+
+def cache_control_for(path: str) -> str:
+    """Vite emits content-hashed files under ``assets/`` — only THOSE are safe to
+    pin forever, because a rebuild changes their names.
+
+    Everything else keeps its name across rebuilds: ``cesium/Cesium.js`` is
+    still ``cesium/Cesium.js`` after a Godseye upgrade, so marking it immutable
+    would serve a year-stale runtime to anyone who had loaded the old one. Those
+    get a short TTL instead — long enough to skip a revalidation storm across
+    the hundreds of Cesium worker/asset files, short enough that an upgrade
+    lands the same day.
+
+    ``index.html`` is never cached: it is the pointer to the hashed assets, so a
+    stale copy is how you get a page wired to files that no longer exist.
+    """
+    p = str(path).replace("\\", "/")
+    if p.endswith(".gz"):                       # judge by what was REQUESTED
+        p = p[:-3]
+    name = p.rsplit("/", 1)[-1]
     if name in ("index.html", "") or name.endswith(".html"):
         return "no-store"
-    return "public, max-age=31536000, immutable"
+    if "/assets/" in p or p.startswith("assets/"):
+        return "public, max-age=31536000, immutable"
+    return "public, max-age=3600, must-revalidate"
 
 
 # ── Build log ────────────────────────────────────────────────────────────────
