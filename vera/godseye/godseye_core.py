@@ -175,8 +175,20 @@ TILE_MOUNT = "/godseye/tiles"
 #:
 #: An allowlist, not a pass-through: the layer name selects one of these fixed
 #: templates, so no caller can point this at an arbitrary host.
+#: Free 3D terrain. Terrarium PNGs encode elevation as RGB
+#: (height = R*256 + G + B/256 - 32768), which Cesium cannot consume directly —
+#: it wants quantized-mesh. The fork decodes these into a HeightmapTerrainData,
+#: which Cesium DOES accept natively, so no server-side mesh conversion is
+#: needed. Open data, no key, which is why it is the default rather than
+#: Cesium Ion or Google.
+TERRAIN_UPSTREAM = ("https://s3.amazonaws.com/elevation-tiles-prod/terrarium/"
+                    "{z}/{x}/{y}.png")
+
 TILE_LAYERS = {
     "imagery": TILE_UPSTREAM,
+    # Note the {x}/{y} order differs from the imagery layers' {y}/{x}; the
+    # template is per-layer precisely so providers can disagree about this.
+    "terrain": TERRAIN_UPSTREAM,
     "reference": ("https://services.arcgisonline.com/ArcGIS/rest/services/"
                   "Reference/World_Reference_Overlay/MapServer/tile/{z}/{y}/{x}"),
     "places": ("https://services.arcgisonline.com/ArcGIS/rest/services/"
@@ -185,11 +197,26 @@ TILE_LAYERS = {
 
 #: Per-layer zoom ceilings, mirroring the providers' own maximumLevel. Asking
 #: beyond them only produces upstream 404s.
-TILE_LAYER_MAX_ZOOM = {"imagery": 19, "reference": 8, "places": 15}
+TILE_LAYER_MAX_ZOOM = {"imagery": 19, "reference": 8, "places": 15, "terrain": 15}
+
+#: Only the satellite base is JPEG. The label overlays need alpha and the
+#: elevation tiles carry data in their exact RGB values, so both are PNG —
+#: and because these responses are served with X-Content-Type-Options: nosniff,
+#: mislabelling them is not something the browser will quietly correct.
+TILE_LAYER_MEDIA = {"imagery": "image/jpeg", "reference": "image/png",
+                    "places": "image/png", "terrain": "image/png"}
 
 
 def tile_layer_is_valid(layer: str) -> bool:
     return layer in TILE_LAYERS
+
+
+def tile_media_type(layer: str) -> str:
+    return TILE_LAYER_MEDIA.get(layer, "image/jpeg")
+
+
+def tile_extension(layer: str) -> str:
+    return ".png" if tile_media_type(layer) == "image/png" else ".jpg"
 
 #: Esri's World Imagery tops out at 19. Anything beyond is a client bug or an
 #: attempt to make us issue unbounded upstream requests.
@@ -222,7 +249,8 @@ def tile_cache_path(cache_root: Path, z: int, y: int, x: int,
     path."""
     if not tile_layer_is_valid(layer):
         raise ValueError(f"unknown tile layer: {layer!r}")
-    return Path(cache_root) / layer / str(int(z)) / str(int(y)) / f"{int(x)}.jpg"
+    return (Path(cache_root) / layer / str(int(z)) / str(int(y))
+            / f"{int(x)}{tile_extension(layer)}")
 
 
 def tile_upstream_url(z: int, y: int, x: int, template: str = "",
