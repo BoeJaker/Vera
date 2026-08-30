@@ -9198,6 +9198,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "networking/netsec_capabilities.py"),
         os.path.join(_here, "interaction/interaction_capabilities.py"),
         os.path.join(_here, "foundry/foundry_capabilities.py"),
+        os.path.join(_here, "printer/printer_capabilities.py"),
         os.path.join(_here, "workers/docker_capabilities.py"),
         os.path.join(_here, "workers/workers.py"),
         os.path.join(_here, "workers/nodes_capabilities.py"),
