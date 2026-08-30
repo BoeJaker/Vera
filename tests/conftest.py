@@ -61,6 +61,7 @@ _CRITICAL_MODULES = {
     "test_operator_census_core",  # the operator census must not launder a run's self-report into success
     "test_operator_cancel",     # a cancelled browser run must stop early, and must never score as finished
     "test_plan_shape",          # a complex goal planned as ONE step leaves the gate to rebuild it (2026-08-30)
+    "test_operator_repeat_guard",  # O19 - hammering one element on one page must stop; different elements must not
     "test_role_profile_merge",   # a USER routing override must not silently discard declared sampling/num_ctx (2026-08-24)
     "test_executor_compose_callsite",  # Phase 4 - every prompt block reaches the executor, unswapped (a drop/swap is silent)
     "test_godseye_core",       # vendored-app static serving: a path-guard hole serves arbitrary host files; git argv must reject option/ext:: injection
