@@ -11457,6 +11457,17 @@ def _v5_strip_gutter(text: str) -> str:
     return _V5_GUTTER_RE.sub("", text or "")
 
 
+# Edit-anchor hints (what to say when a find/replace anchor is not in the file).
+try:
+    from Vera.vera.dag import edit_anchor_hint as _edit_anchor_hint
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import edit_anchor_hint as _edit_anchor_hint
+    except Exception:
+        _edit_anchor_hint = None
+        log.warning("edit_anchor_hint unavailable - missing-anchor errors stay terse")
+
+
 def _v5_apply_edits(content: str, edits: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Apply anchored find/replace edits. {ok, content, applied, errors}.
 
@@ -11494,8 +11505,15 @@ def _v5_apply_edits(content: str, edits: List[Dict[str, Any]]) -> Dict[str, Any]
                 repl = _v5_strip_gutter(repl) if _V5_GUTTER_RE.search(repl) else repl
                 n = out.count(find)
         if n == 0:
-            errors.append(f"edit {i + 1}: `find` text not present in the file "
-                          f"(first 60 chars: {find[:60]!r})")
+            # Naming what IS there turns a dead end into a next move - the same
+            # reasoning already applied to the n>1 branch below. Echoing the
+            # model's own `find` back at it told it the one thing it already
+            # knew, so the retry repeated the mistake: census run 16,
+            # author-then-edit step 3, cycles 10 and 14, 32s each.
+            errors.append(_edit_anchor_hint.describe_missing_anchor(
+                out, find, edit_no=i + 1) if _edit_anchor_hint is not None
+                else f"edit {i + 1}: `find` text not present in the file "
+                     f"(first 60 chars: {find[:60]!r})")
             continue
         if n > 1:
             # Naming WHERE it matched turns a dead end into a next move: the editor
