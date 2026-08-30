@@ -4443,7 +4443,7 @@ async def _scheduled_mainline_mirror_refresh() -> None:
 
 
 schedule(_scheduled_mainline_mirror_refresh, _MAINLINE_MIRROR_REFRESH_INTERVAL_S,
-         name="evolve.mainline_mirror.refresh", skip_in_sandbox=True)
+         name="evolve.mainline_mirror.refresh", skip_in_sandbox=True, singleton=True)
 
 
 async def _ensure_worktree(branch: str, repo_root: Optional[Path] = None) -> Dict[str, Any]:
@@ -8009,7 +8009,8 @@ async def _sandbox_idle_sweep() -> None:
         log.debug("sandbox idle sweep: %s", e)
 
 
-schedule(_sandbox_idle_sweep, _SANDBOX_IDLE_SWEEP_INTERVAL_S, name="evolve.sandbox.idle_sweep")
+schedule(_sandbox_idle_sweep, _SANDBOX_IDLE_SWEEP_INTERVAL_S, name="evolve.sandbox.idle_sweep",
+         singleton=True)   # pauses/reaps CONTAINERS every instance can see
 
 
 def _fabric_sqlite_path(root: Optional[Path] = None) -> Path:
@@ -9156,7 +9157,8 @@ async def _scaffolding_sweep() -> None:
         log.debug("scaffolding sweep: %s", e)
 
 
-schedule(_scaffolding_sweep, _SCAFFOLD_SWEEP_INTERVAL_S, name="evolve.scaffolding.sweep")
+schedule(_scaffolding_sweep, _SCAFFOLD_SWEEP_INTERVAL_S, name="evolve.scaffolding.sweep",
+         singleton=True)   # removes shared worktrees/branches
 
 
 # ═════════════════════════════════════════════════════════════════════════════
