@@ -29,13 +29,19 @@ import os
 import time
 from collections import deque
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import APP, capability, emit_event, now_iso
 from Vera.vera.security import secrets as vsecrets
+from Vera.vera.providers.structured_generation import (
+    plan_structured_generation,
+    plan_structured_retry,
+    structured_generation_status,
+    validate_structured_value,
+)
 
 log = logging.getLogger("vera.providers")
 
@@ -462,6 +468,87 @@ async def cap_providers_usage(limit: int = 100, trace_id=None) -> Dict:
         "total_output_tokens": sum(t.get("output_tokens", 0) for t in totals),
     }
     return {"recent": recent, "totals": totals, "summary": summary}
+
+
+@capability(
+    "providers.structured.status", memory="off", silent=True,
+    http_method="GET", http_path="/providers/structured/status",
+    http_tags=["providers", "structured"],
+    description="Return the offline LIB-04 structured-generation contract and "
+                "static provider-native, Instructor, and Outlines profiles. "
+                "Does not import optional providers, call a model, or decode tokens.",
+)
+async def cap_structured_status(trace_id=None) -> Dict:
+    return structured_generation_status()
+
+
+@capability(
+    "providers.structured.plan", memory="off",
+    http_method="POST", http_path="/providers/structured/plan",
+    http_tags=["providers", "structured"],
+    description="Normalize a bounded portable JSON Schema and return an inert "
+                "provider/retry/streaming/semantic-validation plan. Inputs: schema "
+                "(object!), provider_profile, retry_budget, retry_owner, streaming, "
+                "semantic_validator_ref, latency_budget_ms. No prompt is accepted.",
+)
+async def cap_structured_plan(
+        schema: Optional[Dict] = None, provider_profile: str = "",
+        retry_budget: int = 0, retry_owner: str = "", streaming: bool = False,
+        semantic_validator_ref: str = "", latency_budget_ms: int = 0,
+        trace_id=None) -> Dict:
+    try:
+        analysis, plan = plan_structured_generation(
+            schema or {}, provider_profile=provider_profile,
+            retry_budget=retry_budget, retry_owner=retry_owner,
+            streaming=streaming,
+            semantic_validator_ref=semantic_validator_ref,
+            latency_budget_ms=latency_budget_ms)
+        return {"analysis": analysis.to_dict(), "plan": plan.to_dict(),
+                "network_io": False, "model_called": False, "executes": False}
+    except (TypeError, ValueError) as exc:
+        return {"error": str(exc), "accepted": False,
+                "ready_for_generation": False, "network_io": False,
+                "model_called": False, "executes": False}
+
+
+@capability(
+    "providers.structured.validate", memory="off",
+    http_method="POST", http_path="/providers/structured/validate",
+    http_tags=["providers", "structured"],
+    description="Deterministically validate one supplied JSON value against the "
+                "portable schema subset and a supplied semantic outcome. Returns "
+                "paths/codes, never the value, and runs no semantic validator or model.",
+)
+async def cap_structured_validate(
+        schema: Optional[Dict] = None, value: Any = None,
+        semantic_status: str = "not_requested", trace_id=None) -> Dict:
+    try:
+        return validate_structured_value(
+            schema or {}, value, semantic_status=semantic_status)
+    except (TypeError, ValueError) as exc:
+        return {"error": str(exc), "valid": False, "value_returned": False,
+                "validator_executed": False, "model_called": False,
+                "executes": False}
+
+
+@capability(
+    "providers.structured.retry.plan", memory="off",
+    http_method="POST", http_path="/providers/structured/retry/plan",
+    http_tags=["providers", "structured"],
+    description="Plan, but never start, a bounded schema/semantic correction "
+                "attempt under the single retry owner recorded by a structured plan.",
+)
+async def cap_structured_retry_plan(
+        plan: Optional[Dict] = None, failure_kind: str = "",
+        completed_attempts: int = 0, trace_id=None) -> Dict:
+    try:
+        return plan_structured_retry(
+            plan or {}, failure_kind=failure_kind,
+            completed_attempts=completed_attempts)
+    except (TypeError, ValueError) as exc:
+        return {"error": str(exc), "allowed": False,
+                "attempt_started": False, "model_called": False,
+                "executes": False}
 
 
 @capability("providers.usage.clear", memory="off",

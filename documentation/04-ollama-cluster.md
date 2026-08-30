@@ -101,6 +101,16 @@ All routing control lives in the top-level **Model Routing** tab (`/ui/panels/mo
 
 **vLLM** — vLLM servers appear in the Model Routing page alongside Ollama nodes. Any job-type rule, per-cap rule, or role-profile role pinned to `vllm:<id>` (or `vllm:*` for the best one) makes `ollama_generate` delegate that traffic to `vllm_generate`, falling back to normal Ollama routing when no vLLM node is online.
 
+### Structured output is a provider contract
+
+vLLM's `guided_json` argument is one possible execution mechanism, not Vera's
+canonical structured-output API. The provider-neutral LIB-04 foundation lives in
+`vera/providers/structured_generation.py` and gives provider-native schemas,
+Instructor, and Outlines one bounded schema, validation, streaming, latency, and
+retry-ownership vocabulary. Its current deterministic lane performs schema/value
+inspection only; no model or provider is invoked. Runtime schema/stream parity
+and measured latency remain queued for explicit live testing.
+
 ---
 
 ## 4. Transparent proxy
