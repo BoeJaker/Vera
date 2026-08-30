@@ -13267,6 +13267,16 @@ except Exception:                                     # pragma: no cover
         _plan_cap_routing = None
         log.warning("plan_cap_routing unavailable — edit steps keep the planner's caps")
 
+# Plan-shape checks (is this plan decomposed enough for its tier?).
+try:
+    from Vera.vera.dag import plan_shape_core as _plan_shape
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import plan_shape_core as _plan_shape
+    except Exception:
+        _plan_shape = None
+        log.warning("plan_shape_core unavailable — under-decomposition guard off")
+
 
 async def _emit_stage_context(stage: str, *, system: str = "", prompt: str = "",
                               model: str = "", role: str = "", session_id: str = "",
@@ -22483,6 +22493,47 @@ async def cap_dag_agent_loop_v6(
     # planner has planned something else (in the observed case, a whole plan
     # about crypto markets for a goal asking for a Gen 1 Pokédex, lifted from
     # recalled conversation). Re-plan once with no memory injection at all.
+    # UNDER-DECOMPOSITION GUARD — a complex goal planned as ONE step.
+    # The tier classifier is not the problem here: build-multifile is classified
+    # `complex` in every recorded census run, yet the planner intermittently
+    # returns one step for it (runs 11/12/14b) where it returns three or four in
+    # the others (runs 1/6/9/10/13). When it returns one, the completion gate
+    # rebuilds the plan a step at a time and the run hits its wall cap — 1500s
+    # against 420s for the same goal planned properly. Same prompt, different
+    # answer, so this is a shape check on the RESULT, not more prompt.
+    _under, _why = ((False, "") if _plan_shape is None else
+                    _plan_shape.is_underdecomposed(
+                        tier_rank=_v7_tier_rank(tier),
+                        complex_rank=_v7_tier_rank("complex"), steps=steps))
+    if _under:
+        await emit_event({"type": "agent_loop_v6.plan_underdecomposed",
+                          "session_id": sid, "stream_id": stream_id, "tier": tier,
+                          "titles": [str(s.get("title") or "")[:80] for s in steps],
+                          "note": _why})
+        try:
+            # Same recovery the drift guard uses: the MINIMAL prompt and a fresh
+            # planner seed, so the retry genuinely differs instead of re-deriving
+            # the same flat plan.
+            _re = await _v5_orchestrate_plan(
+                _orig_goal, catalog_names, skills, cap_skill_map,
+                model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+                max_steps=max_steps, minimal=True, want_success=True,
+                phase_policy=phase_policy,
+                allowed_phases=allowed_phases, sid=sid, stream_id=stream_id)
+            _rsteps = (_re or {}).get("steps") or []
+            _took = _plan_shape.better_plan(steps, _rsteps)
+            await emit_event({"type": "agent_loop_v6.plan_underdecomposed_replan",
+                              "session_id": sid, "stream_id": stream_id,
+                              "accepted": _took, "from_steps": len(steps),
+                              "to_steps": len(_rsteps),
+                              "titles": [str(s.get("title") or "")[:80] for s in _rsteps][:8]})
+            # Only if it actually decomposed further: an equally flat retry is no
+            # better, and taking it would make the run look recovered when it is not.
+            if _took:
+                steps = _rsteps
+        except Exception as _e:
+            log.debug("v6 under-decomposition re-plan failed: %s", _e)
+
     if _plan_drifted(_orig_goal, steps):
         await emit_event({"type": "agent_loop_v6.plan_drift", "session_id": sid,
                           "stream_id": stream_id,
