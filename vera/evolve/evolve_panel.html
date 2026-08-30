@@ -215,6 +215,7 @@ html.vpb-nav-hosted body{padding-left:0}
   <button class="btn" data-sec="notes" onclick="nav('notes')"><span class="ic">✎</span>Notes</button>
   <button class="btn" data-sec="capacity" onclick="nav('capacity')"><span class="ic">▰</span>Capacity</button>
   <button class="btn" data-sec="swarm" onclick="nav('swarm')"><span class="ic">◇</span>Swarm</button>
+  <button class="btn" data-sec="census" onclick="nav('census')"><span class="ic">◷</span>Census</button>
   <button class="btn" data-sec="master" onclick="nav('master')"><span class="ic">◉</span>Master</button>
   <div class="rail-grp">Library</div>
   <button class="btn" data-sec="tasks" onclick="nav('tasks')"><span class="ic">☰</span>Tasks</button>
@@ -424,6 +425,37 @@ html.vpb-nav-hosted body{padding-left:0}
     <div id="swarm-summary" class="row" style="gap:6px;flex-wrap:wrap;margin:6px 0"></div>
     <div id="swarm-body"><div class="empty">Loading…</div></div>
     <div class="hint" style="margin-top:6px">A live cross-section of what the swarm is doing right now — running Loop Lab loops, edit-queue agents, live CI/CD pipelines, dispatched board work, active Claude sessions and dev containers — aggregated from their own feeds. Click through to the relevant tab / drill-down.</div>
+  </div>
+</div>
+
+<!-- ── CENSUS: the agentic-loop measuring instrument, run over run ── -->
+<div class="sec" id="sec-census" style="display:none">
+  <div class="card">
+    <div class="card-h"><span class="card-t">Census — agentic loop, run over run</span>
+      <span class="hint" id="census-trend">—</span>
+      <span style="flex:1"></span>
+      <button class="btn sm" onclick="loadCensus()">&#8635;</button>
+    </div>
+    <div id="census-runs"><div class="empty">Loading…</div></div>
+    <div class="hint" style="margin-top:6px">12 goals, run serially against the live instance. <b>trusted</b> is the column to read first: a run whose own step accounting does not reconcile (<code>unaccounted &gt; 0</code>, or one predating the counter) cannot settle whether a goal really improved — a delta drawn from it may be measuring the instrument rather than the loop.</div>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">Compare</span>
+      <select id="census-base" style="min-width:110px" onchange="loadCensusCompare()"></select>
+      <span class="hint" style="margin:0 6px">&rarr;</span>
+      <select id="census-head" style="min-width:110px" onchange="loadCensusCompare()"></select>
+      <span style="flex:1"></span>
+      <span class="hint" id="census-cmp-counts"></span>
+    </div>
+    <div id="census-compare"><div class="empty">Pick two runs.</div></div>
+    <div class="hint" style="margin-top:6px">Always per goal, never averaged — the goals differ by two orders of magnitude in cost, so a run-level mean says nothing. Worst news first.</div>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">Fixes per run</span>
+      <span class="hint">board items mapped to the run that found / verified them</span>
+    </div>
+    <div id="census-board"><div class="empty">Loading…</div></div>
+    <div class="hint" style="margin-top:6px">Label a board item <code>census:found:&lt;run&gt;</code> or <code>census:fixed:&lt;run&gt;</code> to place it here.</div>
   </div>
 </div>
 
@@ -1066,7 +1098,7 @@ function nav(sec){
   document.querySelectorAll('#nav .btn').forEach(b=>b.classList.toggle('on',b.dataset.sec===sec));
   document.querySelectorAll('.sec').forEach(s=>s.style.display=s.id==='sec-'+sec?'':'none');
   const f={test:loadTest,tasks:loadTasks,runs:loadRuns,unittests:loadUnitTests,master:loadMaster,improve:loadSessions,watch:loadWatch,pipelines:()=>{loadGit();loadPipelines()},
-    review:loadReview,logs:loadLogs,csessions:loadCSessions,board:loadBoardTab,notes:loadNotes,capacity:loadCapacity,swarm:loadSwarm,
+    review:loadReview,logs:loadLogs,csessions:loadCSessions,board:loadBoardTab,notes:loadNotes,capacity:loadCapacity,swarm:loadSwarm,census:loadCensus,
     sources:loadSources,sandbox:loadSandbox,activity:loadAudit,variants:loadVariants,settings:fillSettings,overview:loadOverview,errors:loadErrors}[sec];
   if(f)f();
   // Keep the outer shell's injected top-level sub-menu in sync when this
@@ -1084,7 +1116,7 @@ if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
   {id:'test', label:'Test'}, {id:'improve', label:'Improve'}, {id:'watch', label:'Watch'},
   {id:'overview', label:'Suite'}, {id:'errors', label:'Errors'}, {id:'variants', label:'Variants'},
   {id:'activity', label:'Activity'},
-  {id:'pipelines', label:'CI / CD'}, {id:'review', label:'Review'}, {id:'sources', label:'Sources'}, {id:'sandbox', label:'Sandbox'}, {id:'logs', label:'Logs'}, {id:'csessions', label:'Sessions'}, {id:'board', label:'Board'}, {id:'notes', label:'Notes'}, {id:'capacity', label:'Capacity'}, {id:'swarm', label:'Swarm'},
+  {id:'pipelines', label:'CI / CD'}, {id:'review', label:'Review'}, {id:'sources', label:'Sources'}, {id:'sandbox', label:'Sandbox'}, {id:'logs', label:'Logs'}, {id:'csessions', label:'Sessions'}, {id:'board', label:'Board'}, {id:'notes', label:'Notes'}, {id:'capacity', label:'Capacity'}, {id:'swarm', label:'Swarm'}, {id:'census', label:'Census'},
   {id:'tasks', label:'Tasks'}, {id:'runs', label:'Runs'}, {id:'unittests', label:'Unit tests'}, {id:'settings', label:'Settings'},
 ]);
 
@@ -2140,6 +2172,103 @@ async function loadSwarm(){
   h+=_swSect('Dev containers',sandboxes,c=>_swRow('#6a6a6a',esc(c.branch||c.name||c.container||'?'),esc((c.port?(':'+c.port):'')+(c.active?' · active':'')),c.branch?('openBranchSandbox(\''+esc(c.branch)+'\')'):''),'sandbox');
   el.innerHTML=h||'<div class="empty">The swarm is idle — no running loops, pipelines, dispatches or active sessions right now.</div>';
   if($('swarm-follow')&&$('swarm-follow').checked&&typeof _curSec==='function'&&_curSec()==='swarm'){clearTimeout(window._swarmT);window._swarmT=setTimeout(loadSwarm,4000)}
+}
+
+/* ═══ CENSUS: the agentic-loop measuring instrument, run over run ═══
+   Deliberately does NOT rank runs by step count. Counts say how much happened,
+   never whether it was aimed at the goal — so the numbers are context and the
+   drill-down (done_when, the steps actually chosen, the gate's verdict) is the
+   thing you judge by. */
+const _CEN_CHG={improved:'#3cb371',held:'#8a8a8a',regressed:'#c96b6b',missing:'#6a6a6a'};
+function _cenSec(s){return s==null?'—':(s>=60?(Math.round(s/60)+'m'):(Math.round(s)+'s'))}
+function _cenStatus(s){
+  const c=s==='done'?'#3cb371':(s==='wall-cap'?'#c9a35a':'#c96b6b');
+  return '<span class="sc" style="color:'+c+'">'+esc(s||'—')+'</span>';
+}
+async function loadCensus(){
+  const el=$('census-runs');if(!el)return;
+  const r=await api('/census/runs');
+  const runs=(r&&r.runs)||[];
+  if(!runs.length){el.innerHTML='<div class="empty">No census runs found'+(r&&r.dir?(' in <code>'+esc(r.dir)+'</code>'):'')+'.</div>';return}
+  el.innerHTML='<table><tr><th>run</th><th>goals</th><th>done</th><th>wall-cap</th><th>gate ins.</th><th>unacc.</th><th>warns</th><th>total</th><th>counters</th></tr>'
+    +runs.slice().reverse().map(s=>'<tr class="clk" onclick="openCensusRun(\''+esc(s.run_id)+'\')">'
+      +'<td class="mono">'+esc(s.run_id)+'</td><td>'+s.goals+'</td>'
+      +'<td style="color:#3cb371">'+s.done+'</td><td style="color:#c9a35a">'+s.wall_capped+'</td>'
+      +'<td>'+(s.gate_inserted_total||0)+'</td>'
+      +'<td'+(s.unaccounted_total?' style="color:#c96b6b;font-weight:600"':'')+'>'+(s.unaccounted_total||0)+'</td>'
+      +'<td>'+(s.warnings_total||0)+'</td><td class="mono">'+_cenSec(s.wall_total_s)+'</td>'
+      +'<td>'+(s.counters_reconcile?'<span style="color:#3cb371">reconcile</span>':'<span style="color:#c96b6b" title="this run\'s step accounting does not add up — numbers from it may be measuring the instrument">suspect</span>')+'</td>'
+      +'</tr>').join('')+'</table>';
+  const t=r.trend_trusted||r.trend_all;
+  $('census-trend').textContent=t?(t.from+' → '+t.to+': '+t.done_from+' → '+t.done_to+' done ('+(t.delta>=0?'+':'')+t.delta+')'):(runs.length+' run(s)');
+  // Default the comparison to the two most recent runs.
+  const ids=runs.map(s=>s.run_id);
+  ['census-base','census-head'].forEach((id,i)=>{
+    const sel=$(id);if(!sel)return;
+    sel.innerHTML=ids.slice().reverse().map(x=>'<option>'+esc(x)+'</option>').join('');
+    sel.value=ids[i===0?Math.max(0,ids.length-2):ids.length-1]||ids[0];
+  });
+  loadCensusCompare();loadCensusBoard();
+}
+async function loadCensusCompare(){
+  const el=$('census-compare');if(!el)return;
+  const b=$('census-base')&&$('census-base').value,h=$('census-head')&&$('census-head').value;
+  if(!b||!h||b===h){el.innerHTML='<div class="empty">Pick two different runs.</div>';$('census-cmp-counts').textContent='';return}
+  const r=await api('/census/compare?base='+encodeURIComponent(b)+'&head='+encodeURIComponent(h));
+  if(!r||r.error){el.innerHTML='<div class="empty">'+esc((r&&r.error)||'compare failed')+'</div>';return}
+  const c=r.counts||{};
+  $('census-cmp-counts').innerHTML=Object.keys(_CEN_CHG).filter(k=>c[k]).map(k=>'<span style="color:'+_CEN_CHG[k]+';margin-left:8px">'+c[k]+' '+k+'</span>').join('')
+    +((!r.base_trusted||!r.head_trusted)?' <span style="color:#c96b6b;margin-left:8px" title="a run whose counters do not reconcile">⚠ suspect counters</span>':'');
+  el.innerHTML='<table><tr><th>goal</th><th>outcome</th><th>'+esc(b)+'</th><th>'+esc(h)+'</th><th>wall Δ</th><th>steps</th><th></th></tr>'
+    +(r.goals||[]).map(g=>'<tr class="clk" onclick="openCensusGoal(\''+esc(h)+'\',\''+esc(g.id)+'\')">'
+      +'<td>'+esc(g.id)+'</td>'
+      +'<td style="color:'+(_CEN_CHG[g.outcome_change]||'#888')+'">'+esc(g.outcome_change)+'</td>'
+      +'<td>'+_cenStatus(g.base_status)+'</td><td>'+_cenStatus(g.head_status)+'</td>'
+      +'<td class="mono">'+(g.wall_delta_s==null?'—':((g.wall_delta_s>0?'+':'')+Math.round(g.wall_delta_s)+'s'))+'</td>'
+      +'<td class="mono">'+(g.base_planned==null?'—':(g.base_planned+'/'+g.base_executed))+' → '+(g.head_planned==null?'—':(g.head_planned+'/'+g.head_executed))+'</td>'
+      +'<td>'+(g.head_unaccounted?'<span style="color:#c96b6b" title="a step no producer claims">⚠</span>':'')+'</td>'
+      +'</tr>').join('')+'</table>'
+    +'<div class="hint" style="margin-top:6px">planned/executed is context, not a score — click a goal to read what it actually did.</div>';
+}
+async function loadCensusBoard(){
+  const el=$('census-board');if(!el)return;
+  const r=await api('/census/board');
+  const by=(r&&r.by_run)||{};const keys=Object.keys(by);
+  if(!keys.length){el.innerHTML='<div class="empty">No board items are labelled to a census run yet.</div>';return}
+  el.innerHTML=keys.sort().reverse().map(k=>{
+    const g=by[k]||{};
+    const list=(arr,lbl,col)=>(arr&&arr.length)?('<div style="margin:2px 0 2px 10px"><span style="color:'+col+'">'+lbl+'</span> '
+      +arr.map(i=>'<span class="tag clk" onclick="openBoardItem(\''+esc(i.id)+'\')" title="'+esc(i.title||'')+'">'+esc(i.id)+'</span>').join(' ')+'</div>'):'';
+    return '<div style="margin-bottom:6px"><b class="mono">'+esc(k)+'</b>'+list(g.fixed,'fixed','#3cb371')+list(g.found,'found','#c96b6b')+'</div>';
+  }).join('');
+}
+function openCensusRun(run){
+  const sel=$('census-head');if(sel){sel.value=run;loadCensusCompare()}
+}
+async function openCensusGoal(run,goal){
+  const r=await api('/census/goal?run='+encodeURIComponent(run)+'&goal='+encodeURIComponent(goal));
+  if(!r||r.error){toast((r&&r.error)||'no evidence');return}
+  const e=r.evidence||{};
+  const steps=(e.steps||[]).map(s=>'<tr>'
+    +'<td class="mono">'+esc(String(s.id))+(s.planned?'':' <span style="color:#c96b6b" title="the planner never listed this step">+</span>')+'</td>'
+    +'<td>'+esc(s.title||'')+'</td>'
+    +'<td class="mono">'+esc((s.caps||[]).join(', '))+'</td>'
+    +'<td class="mono">'+esc((s.tools||[]).join(', '))+'</td>'
+    +'<td>'+(s.cycles||0)+'</td>'
+    +'<td>'+(s.ok===false?'<span style="color:#c96b6b">failed</span>':(s.ok?'<span style="color:#3cb371">ok</span>':'—'))+'</td>'
+    +'</tr>').join('');
+  openModal(
+    '<div class="row" style="align-items:center;margin-bottom:8px"><b>'+esc(goal)+'</b>'
+    +'<span class="hint" style="margin-left:8px">'+esc(run)+'</span>'
+    +'<span style="flex:1"></span><button class="btn sm" onclick="closeModal()">&#10005;</button></div>'
+    +'<div class="hint" style="margin-bottom:6px">'+esc(e.how_to_read||'')+'</div>'
+    +'<div style="margin-bottom:6px"><b>done_when</b><div class="mono" style="white-space:pre-wrap">'+esc(e.done_when||'(not recorded)')+'</div></div>'
+    +'<div class="row" style="gap:10px;margin-bottom:6px"><span>status '+_cenStatus(e.goal_status)+'</span>'
+      +'<span class="hint">tier '+esc(e.tier||'—')+' · intent '+esc(e.intent||'—')+' · '+_cenSec(e.wall_s)+'</span></div>'
+    +(e.gate_complete===false?('<div style="color:#c96b6b;margin-bottom:6px"><b>gate said INCOMPLETE:</b> '+esc((e.gate_missing||[]).join('; '))+'</div>'):'')
+    +(steps?('<table><tr><th>step</th><th>title</th><th>planned caps</th><th>tools used</th><th>cycles</th><th></th></tr>'+steps+'</table>'):'<div class="empty">No step detail — the run\'s event log has aged out.</div>')
+    +((e.unplanned_steps||[]).length?('<div class="hint" style="margin-top:6px;color:#c96b6b">steps marked + were never in the plan: '+esc((e.unplanned_steps||[]).join(', '))+'</div>'):'')
+    +((e.warnings||[]).length?('<div class="hint" style="margin-top:6px">'+(e.warnings||[]).map(w=>'• '+esc(w)).join('<br>')+'</div>'):''));
 }
 
 /* ═══ SESSIONS: Claude Code session watch (§6.6) — read-only classify ═══ */
