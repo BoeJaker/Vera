@@ -103,7 +103,7 @@ The bot token is sealed via the shared secrets helper; config persists in `vera:
 
 A2A is the boundary for communicating with an independent, potentially opaque
 remote agent; MCP remains the boundary for tools and resources used by an agent.
-LIB-02 begins with a non-executing v1.0 contract in
+The agent-to-agent foundation begins with a non-executing v1.0 contract in
 `vera/execution/a2a_mapping.py` and the inspection capability
 `interop.a2a.conformance`.
 
@@ -139,13 +139,13 @@ pass, the manifest reports no client/server implementation and
 
 ## 6. External source intake
 
-W3-06 adds an inspection boundary in
+Vera applies an inspection boundary in
 `vera/integrations/source_intake.py` before an external source can become an
 integration, MCP catalog entry, wrapper, or active capability. The lifecycle is:
 
 `discovered → inspected → proposed → built → verified → approved → active → deprecated → removed`
 
-Only the first three states are implemented in this slice. An inline MCP
+The first three states are implemented. An inline MCP
 descriptor or OpenAPI document is bounded, fingerprinted, checked for plaintext
 credentials and unsafe endpoints, and projected into candidates with
 `effects_status: unknown`, `authorized: false`, and `executable: false`.
@@ -162,11 +162,11 @@ The read-only surfaces are:
 | `integration.source.transition.plan` | Validate one adjacent transition without applying it |
 
 Transitions through `inspected` and `proposed` can be planned deterministically.
-`built` and every later state are explicitly queued for W3-07 or an operator
+`built` and every later state require further implementation or an operator
 approval boundary. Existing MCP discovery/catalog and Fabric OpenAPI crawling
 remain operational systems; they do not bypass this admission contract.
 
-W3-07 begins with the next non-executing boundary in
+The build-planning boundary in
 `vera/integrations/source_build_plan.py`. It accepts bounded inline proposals for
 exactly pinned Python packages, CLI artifacts, OCI images, and repositories.
 Python and CLI sources require exact versions plus artifact SHA-256 digests; OCI

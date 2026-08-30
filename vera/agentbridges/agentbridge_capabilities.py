@@ -53,7 +53,7 @@ log = logging.getLogger("vera.agentbridges.catalog")
     "agentbridge.runtime_matrix", http_method="GET",
     http_path="/agentbridge/runtime_matrix", http_tags=["agentbridge"],
     memory="off", silent=True,
-    description="Return the deterministic LIB18 agent-runtime comparison. "
+    description="Return the deterministic agent-runtime compatibility comparison. "
                 "Separates upstream claims from Vera-verified bridge coverage; "
                 "imports and executes no optional runtime and keeps every live "
                 "comparison queued.",

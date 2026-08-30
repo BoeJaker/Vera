@@ -18,7 +18,7 @@ available hardware.
 
 ## Offline runtime comparison matrix
 
-`agentbridge.runtime_matrix` is the non-executing LIB18 comparison surface. It
+`agentbridge.runtime_matrix` is the non-executing runtime comparison surface. It
 covers native Vera, the shipped LangGraph/PydanticAI/Smolagents bridges, and
 prospective OpenClaw, Google ADK, OpenAI Agents SDK, Strands, Agno, and
 Hermes-compatible paths. Each is assessed across tools, providers, handoffs,
@@ -55,7 +55,7 @@ provider invoices.
 
 ## Structured generation contract
 
-LIB-04 starts with the provider-neutral, non-executing contract in
+Structured generation starts with the provider-neutral, non-executing contract in
 `vera/providers/structured_generation.py`. It normalizes a bounded portable JSON
 Schema subset, assigns a stable schema and plan identity, records exactly one
 retry owner, and describes optional semantic validation, latency, and streaming
@@ -83,7 +83,7 @@ provider's schema feature from becoming a separate canonical task family.
 
 ### Portable document parsing and Docling
 
-`vera/providers/document_parser.py` adds the LIB-06 `DocumentParser` contract.
+`vera/providers/document_parser.py` defines the portable `DocumentParser` contract.
 It compiles an inert plan from an original `ArtifactRef`, supplied inspection
 metadata, OCR policy, and bounded page/element/time/memory/artifact ceilings.
 Encrypted, corrupt, oversized, cancelled, and OCR-required-but-disabled inputs
@@ -126,15 +126,15 @@ effects. This protocol layer must land before Google ADK or OpenAI Agents SDK ca
 join a common RuntimeAdapter/A2A conformance matrix.
 
 Agent Bridges also exposes an interoperability summary in its UI. The summary
-shows the LIB02 A2A mapping and inert client/server plans, LIB18 candidate and
+shows the A2A mapping and inert client/server plans, runtime candidate and
 dimension counts, queued live gates, and whether shared Vera contract
-capabilities are actually registered. It also reports W3-06 MCP/OpenAPI source
+capabilities are actually registered. It also reports MCP/OpenAPI source
 intake as an inspection-only lifecycle, separating its implemented discovery,
 inspection, and proposal states from queued build, verification, approval, and
 activation. “Implemented” there means the bounded,
 deterministic planning contract exists; transport/listener execution remains
 labelled `queued_live` until the explicit live gate is authorised and passes.
-W3-07 adds an equally inert build/activation proposal for pinned Python, CLI,
+The source build contract adds an equally inert build/activation proposal for pinned Python, CLI,
 OCI, and repository sources. Agent Bridges shows the plan-contract state and
 source-kind count, but exposes no build or activation action; actual external
 materialisation and conformance remain queued.
