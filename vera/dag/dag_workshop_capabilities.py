@@ -9877,21 +9877,10 @@ def _v5_module_not_found_hint(tool: str, err: str) -> str:
 
 def _v5_result_failure_reason(res: Dict[str, Any], rc: int) -> str:
     """Real reason a result dict that LOOKS like a failure (rc!=0 / ok:false)
-    actually failed. The generic check this feeds only knows the SHELL-COMMAND
-    shape (rc/stdout/stderr) — capabilities that fail without ever running a
-    command (http.get/http.post returning a non-2xx, an API wrapper returning
-    ok:false) use different field names (status/body/text/message), and none of
-    those were ever checked. The result was a real error with the actual cause
-    sitting right there in the dict, discarded, and replaced with the useless
-    'command failed (rc=0)' — informative to no one, and 'rc=0' is actively
-    misleading since 0 normally means success. Widen the field list and, for an
-    HTTP-shaped result, lead with the status code."""
-    status = res.get("status") or res.get("status_code")
-    body = str(res.get("stderr") or res.get("error") or res.get("stdout")
-               or res.get("body") or res.get("text") or res.get("message") or "").strip()
-    if status:
-        return (f"HTTP {status}: {body[:400]}" if body else f"HTTP {status} (no response body)")
-    return body[:600] or f"failed with no error detail (rc={rc}, keys={sorted(res.keys())[:8]})"
+    actually failed. Delegates to the pure core, which carries the field list
+    and the record of what each widening of it cost us."""
+    from .result_failure_reason import failure_reason as _failure_reason
+    return _failure_reason(res, rc)
 
 
 def _v5_make_tool_stream_cb(stream_id: str, step_id: int, cycle: int, tool: str, session_id: str):

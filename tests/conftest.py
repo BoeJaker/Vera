@@ -13,6 +13,8 @@ known set of modules, so the tier is defined in one place.
 import pytest
 
 _CRITICAL_MODULES = {
+    "test_operator_target_fallback",  # a busy primary must not make browser verification impossible (2026-08-30)
+    "test_result_failure_reason",  # a failed cap must say why, whatever it names the field (2026-08-30)
     "test_planner_guards",     # planner drift / skill-filter — the 2026-08-06 incidents
     "test_provenance",         # event -> commit/branch provenance stamping
     "test_ws_changes_guard",   # Workspace-Changes accept clobber-guard (compare-and-swap)
