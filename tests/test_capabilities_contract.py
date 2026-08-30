@@ -21,11 +21,39 @@ def test_operator_caps_registered(orch):
     assert not missing, f"unregistered operator caps: {missing}"
 
 
+#: The one capability that predates dot-namespacing and cannot be renamed.
+#: `echo` (POST /debug/echo) is referenced by the welcome guide
+#: (welcome/index.html), the scaffold tool (tools/scaffold.py), a selftest task
+#: definition in evolve_capabilities.py (`allowed_caps` and a `cap_called`
+#: check), the DAG placeholder in capability_orchestration.html, and the
+#: published documentation (01-capability-framework.md). Renaming it to
+#: `debug.echo` would break all of those, so the convention takes the exception
+#: rather than the other way round. Everything registered since IS namespaced -
+#: its own neighbours are `health.check` and `ui.panels`.
+LEGACY_UNNAMESPACED_CAPS = {"echo"}
+
+
 def test_all_caps_wellformed(orch):
     reg = orch.CAPABILITY_REGISTRY
     for name, cap in reg.items():
         assert cap.get("func") is not None, f"{name} has no func"
+        if name in LEGACY_UNNAMESPACED_CAPS:
+            continue
         assert "." in name, f"{name} is not dot-namespaced"
+
+
+def test_the_legacy_exception_has_not_grown(orch):
+    """The allowlist is a record of one historical name, not a licence.
+
+    A NEW un-namespaced capability should fail the test above, not be added
+    here. This asserts the exception still describes reality: if `echo` is ever
+    renamed, this fails and the allowlist gets deleted rather than lingering.
+    """
+    reg = orch.CAPABILITY_REGISTRY
+    assert LEGACY_UNNAMESPACED_CAPS <= set(reg), (
+        "allowlisted cap no longer exists; remove it from "
+        "LEGACY_UNNAMESPACED_CAPS: %s" % (LEGACY_UNNAMESPACED_CAPS - set(reg)))
+    assert {n for n in reg if "." not in n} == LEGACY_UNNAMESPACED_CAPS
 
 
 def test_operator_http_caps_have_paths(orch):
