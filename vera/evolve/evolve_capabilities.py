@@ -6813,6 +6813,7 @@ from Vera.vera.evolve.sandbox_pool import (          # noqa: E402
     alloc_db as _pool_alloc_db,
     capacity_snapshot as _pool_capacity_snapshot,
 )
+from Vera.vera.evolve import sandbox_pool_reconcile as _pool_reconcile  # noqa: E402
 from Vera.vera.evolve.sandbox_reap import (          # noqa: E402
     plan_reap as _plan_reap,
     orphan_composes as _orphan_composes,
@@ -8917,6 +8918,28 @@ async def _list_worktrees() -> List[Dict[str, Any]]:
                         "fully-merged typed branches that have no worktree/live sandbox; "
                         "uses `git branch -d` which re-verifies merged, never loses WIP), "
                         "base (str=''=default branch), protect (list[str] branch names).")
+def _probe_worktree(path: str) -> str:
+    """PRESENT / ABSENT / UNKNOWN for a worktree path.
+
+    `Path.exists()` collapses "it is not there" and "I could not look" into
+    False - it swallows OSError - and the caller then deletes a descriptor and
+    force-removes its container. Distinguish the two: absence is only concluded
+    when the PARENT directory is readable and the entry is genuinely not in it.
+    """
+    try:
+        p = Path(path)
+        if p.exists():
+            return _pool_reconcile.PRESENT
+        parent = p.parent
+        if not parent.is_dir():
+            return _pool_reconcile.UNKNOWN      # cannot even see the container dir
+        list(parent.iterdir())                  # readable? raises if not
+        return _pool_reconcile.ABSENT
+    except OSError as e:
+        log.warning("sandbox.prune: could not probe worktree %s: %s", path, e)
+        return _pool_reconcile.UNKNOWN
+
+
 async def evolve_sandbox_prune(dry_run: bool = True, delete_branches: bool = False,
                                base: str = "", protect: List[str] = None,
                                delete_merged_branches: bool = False, trace_id=None):
@@ -8947,18 +8970,33 @@ async def evolve_sandbox_prune(dry_run: bool = True, delete_branches: bool = Fal
     if prim.get("worktree"):
         protected_paths.append(prim["worktree"])          # ALWAYS protect the primary's worktree
     live_composes: List[str] = []
-    stale_pool: List[str] = []
-    heal_pool: List[str] = []                             # T2: pool entries whose worktree is GONE
+    # O26 (2026-08-30): both reaps below were decided from reads that were never
+    # checked. `_sh` returns {"ok": False, "out": ""} for a missing binary, a
+    # 240s timeout or any exception, so a FAILED `docker ps -a` was
+    # indistinguishable from "no containers exist" and un-registered the entire
+    # estate in one pass; `Path.exists()` returns False on an OSError, so a
+    # transient stat blip read as "worktree gone" and took the container with
+    # it. Observed: 13 registrations to 0, and the pinned mirror repeatedly
+    # dropped while its worktree was demonstrably present. Deleting a descriptor
+    # is irreversible, so an unobservable read must decide nothing - the rule
+    # lifecycle_preflight already applies. See sandbox_pool_reconcile.
+    _probe: Dict[str, str] = {}
     for slug, d in pool.items():
         wt = d.get("worktree")
         if wt:
             protected_paths.append(wt)                    # ALWAYS protect a registered sandbox's worktree
-            if not Path(wt).exists():
-                heal_pool.append(slug)                    # half-alive: descriptor kept, worktree gone
+            _probe[slug] = _probe_worktree(wt)
         if d.get("name") in exists:
             live_composes.append(d.get("compose", f"docker-compose.dev-{slug}.yml"))
-        else:
-            stale_pool.append(slug)                       # container TRULY removed (not in docker ps -a)
+    _recon = _pool_reconcile.plan_pool_reconcile(
+        pool, container_names=exists, docker_ok=bool(ps.get("ok")),
+        worktree_probe=_probe)
+    stale_pool: List[str] = _recon["stale"]
+    heal_pool: List[str] = _recon["heal"]
+    if not _recon["docker_observable"]:
+        log.warning("sandbox.prune: docker state unobservable (rc=%s, err=%s) - "
+                    "leaving all %d pool descriptor(s) untouched",
+                    ps.get("code"), (ps.get("err") or "")[:200], len(pool))
     # which candidate branches are fully merged into base (0 unique commits) —
     # and which worktrees hold UNCOMMITTED changes (never reap those, even if
     # merged: rev-list only sees committed history, so WIP left in a worktree
@@ -9078,8 +9116,8 @@ async def evolve_sandbox_prune(dry_run: bool = True, delete_branches: bool = Fal
     await _audit("sandbox.prune",
                  f"reaped {len(result['removed'])} worktree(s), "
                  f"{len(result['removed_branches'])} merged branch(es), "
-                 f"{len(orphan_yml)} compose(s), {len(stale_pool)} dead pool entr(ies), "
-                 f"{len(result['reconciled_pool'])} reconciled (worktree-gone)")
+                 f"{len(orphan_yml)} compose(s) | pool: "
+                 + _pool_reconcile.audit_summary(_recon, pool))
     await emit_event({"type": "evolve.sandbox.prune",
                       "removed": len(result["removed"]),
                       "removed_branches": len(result["removed_branches"]),
