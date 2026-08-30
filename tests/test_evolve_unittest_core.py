@@ -5,6 +5,7 @@ lowercase `vera.*` path so it binds to THIS worktree, not the main checkout (see
 dev-lifecycle-and-repo-hygiene §8.3 #9 / `worktree-testable-cores-pattern`)."""
 from vera.evolve.evolve_unittest_core import (
     sanitize_pytest_args, build_inner_cmd, build_docker_argv, parse_pytest_output,
+    format_failure_details,
 )
 
 
@@ -114,6 +115,25 @@ def test_parse_all_passed():
 def test_parse_mixed_failed():
     r = parse_pytest_output(_out(1, _junit(12, failures=1)))
     assert not r["ok"] and r["failed"] == 1 and r["passed"] == 11 and r["total"] == 12
+
+
+def test_parse_reports_failed_test_name_and_description():
+    junit = ('<?xml version="1.0"?><testsuites><testsuite name="pytest" errors="0" '
+             'failures="1" skipped="0" tests="2"><testcase '
+             'classname="tests.test_example" name="test_expected_contract"><failure '
+             'message="assert expected == actual">traceback details</failure></testcase>'
+             '<testcase classname="tests.test_example" name="test_ok" />'
+             '</testsuite></testsuites>')
+    r = parse_pytest_output(_out(1, junit))
+
+    assert r["failure_details"] == [{
+        "node_id": "tests.test_example::test_expected_contract",
+        "name": "test_expected_contract",
+        "description": "assert expected == actual",
+        "kind": "failure",
+    }]
+    assert format_failure_details(r["failure_details"]) == (
+        "tests.test_example::test_expected_contract: assert expected == actual")
 
 
 def test_parse_errors_counted():

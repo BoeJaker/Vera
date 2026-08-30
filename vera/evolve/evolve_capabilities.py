@@ -5365,9 +5365,12 @@ async def evolve_pipeline_test(id: str = "", trace_id=None):
         critical = await evolve_unittest_run(branch=branch, paths="tests",
                                              markers="critical", timeout=300)
         critical_ok = bool(critical.get("ok")) and not critical.get("error")
+        failures = critical.get("failure_details") or []
+        failure_text = _ut_format_failures(failures)
+        critical_summary = critical.get("summary") or critical.get("error") or (
+            "PASS" if critical_ok else "FAIL")
         _pstep(rec, "critical-tests", critical_ok,
-               critical.get("summary") or critical.get("error") or
-               ("PASS" if critical_ok else "FAIL"))
+               critical_summary + ((" — " + failure_text) if failure_text else ""))
         passed = compile_ok and critical_ok
         rec["commits"] = [line for line in (await _git(
             "log", "--oneline", f"{target}..{branch}", repo_root=root)).get(
@@ -5386,8 +5389,8 @@ async def evolve_pipeline_test(id: str = "", trace_id=None):
                           "decision": "pending", "kind": "code",
                           "gate_passed": passed})
         return {"ok": True, "gate_passed": passed, "compile_ok": compile_ok,
-                "critical_ok": critical_ok,
-                "output": critical.get("summary") or critical.get("error") or ""}
+                "critical_ok": critical_ok, "failure_details": failures,
+                "output": critical_summary + (("\n" + failure_text) if failure_text else "")}
     test_cmd = rec.get("test_cmd") or DEFAULT_TEST_CMD
     cand = await _repo_test_gate(worktree, test_cmd)
     if cand.get("error"):
@@ -7444,6 +7447,7 @@ async def evolve_sandbox_exec(cmd: str = "", where: str = "container",
 from Vera.vera.evolve.evolve_unittest_core import (   # noqa: E402
     sanitize_pytest_args as _ut_sanitize, build_inner_cmd as _ut_inner,
     build_docker_argv as _ut_argv, parse_pytest_output as _ut_parse,
+    format_failure_details as _ut_format_failures,
 )
 
 
@@ -7463,7 +7467,8 @@ from Vera.vera.evolve.evolve_unittest_core import (   # noqa: E402
                         "'critical'), extra (str — extra pytest flags), timeout (int=600), "
                         "repo (str — a registered non-vera repo runs ITS OWN test_cmd in its "
                         "checkout instead of Vera pytest; default '' / 'vera' keeps the ephemeral "
-                        "pytest path). Output: {ok, summary, code, out, repo, branch, ...}.")
+                        "pytest path). Output includes summary plus failure_details "
+                        "with each failed test's node_id, name, kind, and concise description.")
 async def evolve_unittest_run(branch: str = "", paths: str = "tests", markers: str = "",
                               extra: str = "", timeout: int = 600, repo: str = "",
                               trace_id=None):

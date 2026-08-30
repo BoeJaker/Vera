@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 import shlex
+import xml.etree.ElementTree as ET
 from typing import Dict, List, Tuple
 
 # What a caller may pass through to pytest. Deliberately strict — these tokens are
@@ -123,9 +124,54 @@ def parse_pytest_output(out: str) -> Dict:
     ok = (failures == 0 and errors == 0 and tests > 0 and (rc is None or rc == 0))
     summary = (f"{passed} passed, {failures} failed, {errors} errors, {skipped} skipped (rc={rc})"
                if (found or tests) else f"(no results parsed; rc={rc})")
+    failure_details = _parse_failure_details(text)
     return {"ok": ok, "passed": passed, "failed": failures, "errors": errors,
             "skipped": skipped, "total": tests, "rc": (rc if rc is not None else -1),
-            "summary": summary}
+            "summary": summary, "failure_details": failure_details}
+
+
+def _parse_failure_details(text: str) -> List[Dict[str, str]]:
+    """Extract bounded failed-test identities and descriptions from JUnit XML."""
+    start = text.find("__VERA_JUNIT__")
+    end = text.find("__VERA_RC=", start + 1)
+    if start < 0 or end < 0:
+        return []
+    xml_text = text[start + len("__VERA_JUNIT__"):end].strip()
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return []
+    details: List[Dict[str, str]] = []
+    for case in root.iter("testcase"):
+        outcome = case.find("failure")
+        kind = "failure"
+        if outcome is None:
+            outcome = case.find("error")
+            kind = "error"
+        if outcome is None:
+            continue
+        classname = case.get("classname", "")
+        name = case.get("name", "")
+        message = " ".join((outcome.get("message") or "").split())
+        body = " ".join((outcome.text or "").split())
+        details.append({
+            "node_id": f"{classname}::{name}" if classname else name,
+            "name": name,
+            "description": (message or body or kind)[:500],
+            "kind": kind,
+        })
+        if len(details) >= 50:
+            break
+    return details
+
+
+def format_failure_details(details: List[Dict[str, str]], limit: int = 10) -> str:
+    """Format bounded failure evidence for pipeline summaries and API output."""
+    return "; ".join(
+        f"{item.get('node_id') or item.get('name')}: "
+        f"{item.get('description') or item.get('kind') or 'failed'}"
+        for item in (details or [])[:max(0, int(limit))]
+    )
 
 
 def _iattr(tag: str, name: str) -> int:
