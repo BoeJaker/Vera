@@ -75,6 +75,11 @@ from Vera.vera.output_formats import REVIEW_STYLES
 # deliver stage loops these instead of a hard-coded telegram/memory/notebook
 # ladder, so email/chat and skill-defined channels work without editing it.
 from Vera.vera import delivery as _delivery
+from Vera.vera.dream.dream_workflow_ir import (
+    DEFAULT_GENERIC_DREAM_PIPELINE,
+    compile_generic_dream_workflow,
+    materialize_generic_dream_stage_plan,
+)
 
 log = logging.getLogger("vera.dream")
 
@@ -9484,6 +9489,7 @@ async def _run_cycle(
     # Resolve a referenced composite pipeline: fields from the registered
     # pipeline fill in anything the trigger hasn't set inline (trigger wins).
     pref = trig.get("pipeline_ref") or seed.get("pipeline_ref")
+    uses_builtin_generic_workflow = not pref and not trig.get("pipeline")
     if pref:
         reg = await _get_pipeline(pref)
         if reg:
@@ -9500,10 +9506,7 @@ async def _run_cycle(
     if seed.get("force_caps"):
         trig["whitelist"] = [c for c in seed["force_caps"] if isinstance(c, str)]
 
-    pipeline_seed = trig.get("pipeline") or [
-        "dream.stage.gather", "dream.stage.themes", "dream.stage.plan",
-        "dream.stage.execute", "dream.stage.synthesize", "dream.stage.deliver",
-    ]
+    pipeline_seed = trig.get("pipeline") or list(DEFAULT_GENERIC_DREAM_PIPELINE)
     if seed.get("only_stages"):
         pipeline_seed = [s for s in pipeline_seed if s in set(seed["only_stages"])]
     elif seed.get("skip_stages"):
@@ -9514,6 +9517,18 @@ async def _run_cycle(
         pipeline_seed = [s for s in pipeline_seed
                          if s not in ("dream.stage.execute", "dream.stage.deliver")]
 
+    # W4-01: the built-in generic path now takes its ordered stage plan from a
+    # normalized Workflow IR contract.  Dream remains the execution owner for
+    # stage calls and all lifecycle semantics; malformed IR fails closed rather
+    # than silently falling back to the legacy list.
+    workflow_plan = None
+    if uses_builtin_generic_workflow:
+        workflow = compile_generic_dream_workflow(pipeline_seed)
+        workflow_plan = materialize_generic_dream_stage_plan(workflow)
+        workflow_plan["source_trigger"] = str(trig.get("name") or "")
+        workflow_plan["preview"] = bool(preview_only)
+        pipeline_seed = list(workflow_plan["stages"])
+
     state: Dict[str, Any] = {
         "trigger": trig, "cycle_id": cycle_id,
         "started_at": now_iso(), "seed": seed, "preview": preview_only,
@@ -9522,6 +9537,8 @@ async def _run_cycle(
         # user activity. Only the scheduler's idle-fired cycles run unforced.
         "force": bool(force),
     }
+    if workflow_plan:
+        state["workflow_ir"] = dict(workflow_plan)
 
     # Journal id: each TRIGGER keeps a persistent journal so its "train of
     # thought" accrues across cycles (the unit of continuation). Project dreams
@@ -9598,6 +9615,7 @@ async def _run_cycle(
         "pipeline": pipeline_seed,
         "preview":  preview_only,
         "seed_keys": list(seed.keys()) if seed else [],
+        "workflow_ir": dict(workflow_plan) if workflow_plan else None,
     })
 
     # Seed the poll-able live-progress snapshot for this cycle.
@@ -9899,8 +9917,11 @@ async def _run_cycle(
         "execute":    {k: v for k, v in (state.get("execute") or {}).items() if k != "state"},
         "seed":       state.get("seed") or {},
         "trigger_prompt": trig.get("prompt", ""),
+        "pipeline":   list(pipeline_seed),
         "has_detail": True,
     }
+    if workflow_plan:
+        record["workflow_ir"] = dict(workflow_plan)
 
     # ── Finalize the output workspace ────────────────────────────────────
     # journal.md (the train of thought) + meta.json land beside the stage
@@ -9925,7 +9946,8 @@ async def _run_cycle(
                 "elapsed_s": record.get("elapsed_s"),
                 "themes": record.get("themes"),
                 "delivered": record.get("delivered"),
-                "pipeline": trig.get("pipeline", []),
+                "pipeline": pipeline_seed,
+                "workflow_ir": workflow_plan,
             }, indent=2, default=str))
         except Exception:
             pass
@@ -9949,7 +9971,8 @@ async def _run_cycle(
         "trigger_full":  {k: v for k, v in trig.items() if k != "prompt"},
         "trigger_prompt": trig.get("prompt", ""),
         "output_style":  trig.get("output_style", ""),
-        "pipeline":      trig.get("pipeline", []),
+        "pipeline":      list(pipeline_seed),
+        "workflow_ir":   workflow_plan,
         "started_at":    state.get("started_at"),
         "ended_at":      now_iso(),
         "elapsed_s":     round(elapsed, 2),

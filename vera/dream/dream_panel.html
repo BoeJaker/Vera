@@ -3730,6 +3730,12 @@ async function openCycleDetail(cycleId){
     html+='<div style="font-size:10px;color:var(--fg3);margin-bottom:8px"><b>Pipeline:</b> '
       +d.pipeline.map(s=>esc(s.replace('dream.stage.',''))).join(' \u2192 ')+'</div>';
   }
+  if(d.workflow_ir){
+    const w=d.workflow_ir;
+    html+='<div style="font-size:9.5px;color:var(--fg2);margin:-2px 0 10px;padding:6px 8px;background:var(--bg3);border-left:3px solid var(--acc);border-radius:4px">'
+      +'<b>Workflow IR '+esc(w.ir_version||'')+'</b> &middot; '+esc(w.execution_owner||'')
+      +'<br><span style="font-family:var(--mono);font-size:8.5px;color:var(--fg3)">'+esc(w.content_hash||'')+'</span></div>';
+  }
 
   // Trigger prompt
   if(d.trigger_prompt){
@@ -4930,7 +4936,7 @@ function updateActiveDreamDetail(ev){
   if(ev.type==='dream.cycle.started'){
     _activeDreamState={trigger:ev.trigger||'',label:ev.label||'',cycle_id:ev.cycle_id||'',
       started_at:ev.started_at||new Date().toISOString(),pipeline:ev.pipeline||[],
-      stages_completed:[],stage_log:[],current_stage:'',refined_goal:null,tools_called:[],title:''};
+      workflow_ir:ev.workflow_ir||null,stages_completed:[],stage_log:[],current_stage:'',refined_goal:null,tools_called:[],title:''};
     renderActiveDream();
   }
   else if(ev.type==='dream.stage.summary'){
@@ -5059,6 +5065,11 @@ function renderActiveDream(){
     if(!s.cycle_id){b.innerHTML='<div class="empty">No active dream.</div>';}
     else{
       let html='';
+      if(s.workflow_ir){
+        html+='<div style="font-size:9px;padding:5px 8px;background:var(--bg3);border-left:3px solid var(--acc);border-radius:4px;margin-bottom:8px;color:var(--fg2)">'
+          +'Workflow IR '+esc(s.workflow_ir.ir_version||'')+' &middot; '+esc(s.workflow_ir.execution_owner||'')
+          +'<br><span style="font-family:var(--mono);font-size:8px;color:var(--fg3)">'+esc(s.workflow_ir.content_hash||'')+'</span></div>';
+      }
       // ── Source-review progress banner (when a deep review is the active session) ──
       if(s.kind==='review'&&s.review){
         const rv=s.review;

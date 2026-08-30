@@ -1,5 +1,15 @@
 # 12 · Execution & Network Mapping
 
+## Dream adapter boundary
+
+The first product migration onto Workflow IR is Dream's built-in generic,
+non-iterative pipeline. Workflow IR owns its normalized ordered plan and stable
+definition hash; `dream.native-stage-runner` remains the declared execution
+owner. This boundary deliberately preserves Dream's HITL, cancellation,
+journaling, artifact collation, progress, and persistence while making the plan
+inspectable and portable. Workflow IR still has no general execution entry point,
+and custom or iterative Dream pipelines remain native until separately gated.
+
 `execution/exec_capabilities.py` is two capability groups in one module: **`exec.*`** — shell, PowerShell, code, and SSH execution — and **`netscan.*`** — network asset discovery, target probing, and an auxiliary topology graph. Both are governed by a single configurable **exec sandbox policy**, and both surface their own harness tabs (the tabbed **Exec** consoles and the Cytoscape **Netmap**).
 
 This is the module that lets Vera (and an agent driving it) actually *touch* the host and the network — so the sandbox section is the most important part of the page.
