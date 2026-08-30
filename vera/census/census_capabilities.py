@@ -237,30 +237,65 @@ def _rd(v: Any) -> str:
     return v.decode() if isinstance(v, (bytes, bytearray)) else str(v)
 
 
+async def _is_stale(r, sid: str, run: Dict[str, Any]) -> bool:
+    """Defer to the loop's own staleness rule — do not re-invent it.
+
+    A run orphaned by a restart keeps `status: running` forever, because nothing
+    is left alive to write a terminal status. The sessions route already corrects
+    for this (`running` + stale → `interrupted`) via `_loop_run_is_stale`, which
+    checks the in-process task registry first and only then falls back to the
+    activity marker. Reading Redis directly and skipping that is how census.live
+    came to report an 11-hour-old cancelled chat session as the live census run.
+
+    If the helper cannot be imported, fail CLOSED — treat the run as stale rather
+    than show a zombie as active. A missing live view is a gap; a confidently
+    wrong one sends you debugging the wrong run.
+    """
+    try:
+        from Vera.vera.dag.dag_workshop_capabilities import _loop_run_is_stale
+    except Exception as e:                            # pragma: no cover
+        log.info("census.live: staleness helper unavailable (%s) — not claiming live", e)
+        return True
+    try:
+        return bool(await _loop_run_is_stale(r, sid, run))
+    except Exception:
+        return True
+
+
 async def _running_loop() -> Dict[str, Any]:
-    """The loop session currently running, if any.
+    """The loop session GENUINELY running, if any.
 
     /workshop/agent_loop/sessions is a plain route rather than a capability, so
-    this reads the same Redis keys it does instead of reaching over HTTP to our
-    own process.
+    this reads the same Redis keys it does — including the same durable-history
+    index with the resume index as fallback — instead of reaching over HTTP to
+    our own process.
     """
     r = _redis()
     if not r:
         return {}
+    sids: List[Any] = []
     try:
-        sids = await r.zrevrange(_SESSIONS_KEY, 0, 40)
+        sids = await r.zrevrange("vera:loop:history:index", 0, 40) or []
+        if not sids:
+            sids = await r.zrevrange(_SESSIONS_KEY, 0, 40) or []
     except Exception as e:
         log.info("census.live: session index unavailable: %s", e)
         return {}
-    for raw in sids or []:
+    for raw in sids:
         sid = _rd(raw)
         try:
-            run = {_rd(k): _rd(v) for k, v in (await r.hgetall(_RUN_KEY % sid) or {}).items()}
+            raw_run = await r.hgetall(_RUN_KEY % sid)
+            if not raw_run:
+                raw_run = await r.hgetall("vera:loop:history:run:%s" % sid)
+            run = {_rd(k): _rd(v) for k, v in (raw_run or {}).items()}
         except Exception:
             continue
-        if run.get("status") == "running":
-            run["session_id"] = sid
-            return run
+        if not run or run.get("status") != "running":
+            continue
+        if await _is_stale(r, sid, run):
+            continue          # orphaned by a restart, not actually running
+        run["session_id"] = sid
+        return run
     return {}
 
 
