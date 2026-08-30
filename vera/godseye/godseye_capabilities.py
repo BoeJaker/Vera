@@ -61,6 +61,7 @@ from Vera.vera.capability_orchestration import (
 from Vera.vera.godseye import godseye_core as _core
 from Vera.vera.godseye import godseye_cctv_core as _cctv
 from Vera.vera.godseye import godseye_imagery_core as _img
+from Vera.vera.godseye import godseye_buildings_core as _bld
 
 try:
     from Vera.vera.security import secrets as vsecrets
@@ -773,6 +774,75 @@ async def imagery_search(bbox: Optional[List[float]] = None, limit: int = 50,
                                errors=errors, skipped=skipped)
     await emit_event({"type": "godseye.imagery.searched",
                       "count": result["count"], "errors": len(errors)})
+    result["ok"] = True
+    return result
+
+
+@capability(
+    "buildings.fetch", memory="on",
+    http_method="POST", http_path="/godseye/buildings", http_tags=["godseye"],
+    description="OpenStreetMap building footprints with heights, for 3D "
+                "extrusion on the globe — the other half of free 3D maps, "
+                "alongside open elevation tiles. Cached on a snapped bbox grid "
+                "because Overpass is shared, slow and rate-limited; an oversized "
+                "bbox is REFUSED rather than sent. Inputs: bbox ([south,west,"
+                "north,east]!), limit (int). Output: {count, buildings[], "
+                "cached, truncated, attribution}.",
+)
+async def buildings_fetch(bbox: Optional[List[float]] = None,
+                          limit: int = _bld.DEFAULT_LIMIT,
+                          trace_id=None) -> Dict[str, Any]:
+    if not bbox or len(bbox) != 4:
+        return {"ok": False, "error": "bbox required as [south, west, north, east]"}
+    sane, why = _bld.bbox_is_sane(bbox)
+    if not sane:
+        return {"ok": False, "error": why}
+
+    box = tuple(float(v) for v in bbox)
+    limit = max(1, min(int(limit or _bld.DEFAULT_LIMIT), 5000))
+    cache_dir = _layout()["state_dir"] / "buildings"
+    cached_path = cache_dir / f"{_bld.bbox_cache_key(box)}.json"
+
+    if cached_path.is_file():
+        try:
+            doc = json.loads(cached_path.read_text(encoding="utf-8"))
+            doc["cached"] = True
+            doc["ok"] = True
+            return doc
+        except (OSError, ValueError):
+            pass                                    # fall through and refetch
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+            r = await client.post(
+                _bld.OVERPASS_URL,
+                data={"data": _bld.overpass_query(box)},
+                headers={"user-agent": "Vera/Godseye buildings"})
+        if r.status_code != 200:
+            # 429 here means we are being told to back off, not that the area
+            # has no buildings — do not cache it as an empty answer.
+            return {"ok": False, "error": f"overpass HTTP {r.status_code}",
+                    "retryable": r.status_code in (429, 504)}
+        payload = r.json()
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"[:200]}
+
+    raw = payload.get("elements") if isinstance(payload, dict) else None
+    buildings = _bld.parse_overpass(payload, limit)
+    result = _bld.build_result(
+        buildings, bbox=box, generated_at=now_iso(),
+        truncated=bool(isinstance(raw, list) and len(raw) > len(buildings)))
+
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        tmp = cached_path.with_suffix(".part")
+        tmp.write_text(json.dumps(result), encoding="utf-8")
+        tmp.replace(cached_path)
+    except OSError as e:
+        log.warning("godseye: could not cache buildings: %s", e)
+
+    await emit_event({"type": "godseye.buildings.fetched",
+                      "count": result["count"], "truncated": result["truncated"]})
     result["ok"] = True
     return result
 
