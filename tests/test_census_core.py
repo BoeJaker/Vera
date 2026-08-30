@@ -359,6 +359,41 @@ def test_an_unmatched_active_goal_does_not_fake_a_position():
     assert p["position"] is None and len(p["remaining"]) == 4
 
 
+# ── liveness must defer to the loop's own rule ─────────────────────────────
+_CAPS_SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "vera", "census", "census_capabilities.py")
+
+
+def _caps_src():
+    with open(_CAPS_SRC, encoding="utf-8") as fh:
+        return fh.read()
+
+
+def test_live_defers_to_the_loops_own_staleness_rule():
+    """A run orphaned by a restart keeps status:running forever - nothing is left
+    alive to write a terminal status. census.live read Redis directly and skipped
+    that correction, so it reported an 11-hour-old cancelled chat session as the
+    live census run. Reuse the shared helper; never re-derive the threshold."""
+    src = _caps_src()
+    # The IMPORT specifically: a local rebinding of the same name would satisfy a
+    # bare substring check while quietly reintroducing the bug.
+    assert ("from Vera.vera.dag.dag_workshop_capabilities import _loop_run_is_stale"
+            in src), "census.live must import the loop's own staleness helper"
+    assert "await _loop_run_is_stale(" in src
+    # A local threshold would drift from the loop's own definition.
+    assert "_LOOP_STALE_SECS" not in src
+    for invented in ("stale_secs", "STALE_SECONDS", "MAX_IDLE"):
+        assert invented not in src
+
+
+def test_live_reads_the_same_indexes_the_sessions_route_does():
+    """The route prefers the durable history index and falls back to the resume
+    index; reading only one silently misses runs."""
+    src = _caps_src()
+    assert "vera:loop:history:index" in src and "vera:loop:sessions" in src
+    assert "vera:loop:history:run:" in src
+
+
 def test_malformed_items_and_labels_do_not_explode():
     assert board_links_by_run([None, {}, {"labels": None},
                                {"labels": [FOUND_PREFIX]}]) == {}
