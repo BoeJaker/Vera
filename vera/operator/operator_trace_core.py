@@ -40,6 +40,11 @@ PHASES = ("observe", "think", "act", "verify")
 # goal — the distinction L8 was landed for.
 CEILING_REASONS = ("max_steps", "step_ceiling", "ceiling", "budget")
 
+# A run stopped from outside. It says nothing about the operator's quality, so it
+# must never be scored as an outcome — the same reasoning that makes a
+# wedged-node measurement instrument noise rather than a result.
+CANCEL_REASONS = ("cancelled", "canceled", "stopped")
+
 
 def _clip(v: Any, n: int = 300) -> str:
     s = str(v or "").strip()
@@ -113,6 +118,7 @@ def digest_events(events: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
 
     reason = str(run.get("reason") or "")
     ceiling_hit = any(k in reason.lower() for k in CEILING_REASONS)
+    cancelled = any(k in reason.lower() for k in CANCEL_REASONS)
 
     for a, n in sorted(repeats.items(), key=lambda kv: -kv[1]):
         warnings.append(f"the same action was attempted {n}x: {a}")
@@ -136,6 +142,8 @@ def digest_events(events: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         "repeated_actions": len(repeats),
         # The operator's own claim vs the ceiling, side by side, because L8.
         "ceiling_hit": ceiling_hit,
+        # Stopped from outside: not a result, and must never be scored as one.
+        "cancelled": cancelled,
     }
     return {"run": run, "steps": steps, "counters": counters, "warnings": warnings,
             "started_at": started, "ended_at": ended,
@@ -166,6 +174,7 @@ def summarise_run(run_id: str, events: Sequence[Dict[str, Any]]) -> Dict[str, An
         "errors": c["errors"],
         "repeated_actions": c["repeated_actions"],
         "ceiling_hit": c["ceiling_hit"],
+        "cancelled": c["cancelled"],
         "duration_s": d["duration_s"],
         "started_at": d["started_at"],
         # A run with no `done` event never finished — it was cancelled, or the

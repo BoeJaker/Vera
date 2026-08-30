@@ -114,6 +114,47 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+# Cooperative cancel. Mirrors the agentic loop's flag-first design: the flag is
+# authoritative and outlives any one process, so a run started elsewhere (or
+# orphaned by a restart) can still be told to stop.
+_OP_CANCEL_KEY = "vera:operator:cancel:%s"
+_OP_CANCEL_TTL = 6 * 3600
+
+
+async def _op_set_cancel(run_id: str) -> bool:
+    r = getattr(_orch, "REDIS", None)
+    if r is None or not run_id:
+        return False
+    try:
+        await r.set(_OP_CANCEL_KEY % run_id, "1", ex=_OP_CANCEL_TTL)
+        return True
+    except Exception as e:
+        log.debug("operator cancel flag write failed for %s: %s", run_id, e)
+        return False
+
+
+async def _op_is_cancelled(run_id: str) -> bool:
+    """Fail-OPEN: if we cannot read the flag, the run continues. A Redis blip
+    must not silently kill healthy browser runs."""
+    r = getattr(_orch, "REDIS", None)
+    if r is None or not run_id:
+        return False
+    try:
+        return bool(await r.get(_OP_CANCEL_KEY % run_id))
+    except Exception:
+        return False
+
+
+async def _op_clear_cancel(run_id: str) -> None:
+    r = getattr(_orch, "REDIS", None)
+    if r is None or not run_id:
+        return
+    try:
+        await r.delete(_OP_CANCEL_KEY % run_id)
+    except Exception:
+        pass
+
+
 async def _op_events(run_id: str) -> List[Dict[str, Any]]:
     """The persisted event list for one run, or [] once it has aged out."""
     r = getattr(_orch, "REDIS", None)
@@ -415,9 +456,11 @@ async def cap_connect(source: str = "", ref: str = "", goal: str = "",
     await _op_record(run_id, {"type": "operator.run", "stage": "start", "run_id": run_id,
                               "goal": goal[:200], "target": resolved.get("kind"),
                               "source": source, "ref": ref})
+    await _op_clear_cancel(run_id)
     result = await _loop.run_loop(goal, s, call_cap=_call, policy=policy, provider=provider,
                                   max_steps=int(max_steps), canvas=resolved.get("canvas", False),
-                                  shots_dir=_shots_dir(sid) + f"/run-{run_id}", on_step=_on_step)
+                                  shots_dir=_shots_dir(sid) + f"/run-{run_id}", on_step=_on_step,
+                                  should_cancel=lambda: _op_is_cancelled(run_id))
     if not keep_open:
         await _be.close_session(sid)
     result.update({"run_id": run_id, "source": source, "ref": ref,
@@ -671,10 +714,14 @@ async def cap_run(goal: str = "", url: str = "", kind: str = "", base_url: str =
 
     await _op_record(run_id, {"type": "operator.run", "stage": "start", "run_id": run_id,
                               "goal": goal[:200], "target": resolved.get("kind")})
+    # A stale flag from a previous run of the same id would cancel this one
+    # instantly; ids are random, but clearing is cheap and removes the class.
+    await _op_clear_cancel(run_id)
     result = await _loop.run_loop(
         goal, s, call_cap=_call, policy=policy, provider=provider, model=model,
         max_steps=int(max_steps), canvas=resolved.get("canvas", False),
-        shots_dir=shots, on_step=_on_step)
+        shots_dir=shots, on_step=_on_step,
+        should_cancel=lambda: _op_is_cancelled(run_id))
     # Assemble the per-step screenshots into a GIF of the whole run (the frames
     # already exist — this is nearly free).
     if record_gif and result.get("screenshots"):
@@ -1144,6 +1191,34 @@ async def cap_operator_trace(run_id: str = "", trace_id=None) -> Dict[str, Any]:
                 "note": "runs are kept for 14 days; runs from before operator "
                         "recording landed were never persisted at all"}
     return {"run_id": rid, **_op_trace.digest_events(events)}
+
+
+@capability("operator.cancel", memory="on",
+            http_method="POST", http_path="/operator/cancel", http_tags=["operator"],
+            description=(
+                "STOP a running operator (browser) run. Sets a cooperative cancel "
+                "flag the run checks BEFORE each step, so it stops without buying "
+                "one more browser action and one more LLM call. The agentic loop "
+                "has had this for a long time; the operator did not, which is how "
+                "a cancelled census run left an operator generation running 1211s "
+                "against the shared GPU.\n"
+                "HONEST LIMIT: this stops the run issuing further work. It cannot "
+                "abort the single generation already in flight — that ends on its "
+                "own timeout — so a slot can stay busy briefly after cancelling. "
+                "The flag is authoritative and outlives the process, so a run "
+                "orphaned by a restart can still be told to stop. Inputs: run_id "
+                "(str!). Output: {ok, run_id, flag_set}."),
+            )
+async def cap_operator_cancel(run_id: str = "", trace_id=None) -> Dict[str, Any]:
+    rid = (run_id or "").strip()
+    if not rid:
+        return {"ok": False, "error": "run_id is required"}
+    ok = await _op_set_cancel(rid)
+    await _op_record(rid, {"type": "operator.run", "stage": "cancel_requested",
+                           "run_id": rid})
+    return {"ok": bool(ok), "run_id": rid, "flag_set": bool(ok),
+            "note": ("the run stops before its next step; a generation already in "
+                     "flight still ends on its own timeout")}
 
 
 @capability("operator.runs", memory="off", silent=True,
