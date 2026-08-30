@@ -128,7 +128,7 @@ async function load(){
 function renderInterop(){
   const el = document.getElementById('interop');
   if (!INTEROP){ el.innerHTML='<div class="hint-box">Interoperability status unavailable.</div>'; return; }
-  const a=INTEROP.a2a||{}, m=INTEROP.runtime_matrix||{}, contracts=INTEROP.shared_contracts||[];
+  const a=INTEROP.a2a||{}, m=INTEROP.runtime_matrix||{}, intake=INTEROP.source_intake||{}, contracts=INTEROP.shared_contracts||[];
   const registered=contracts.filter(x=>x.registered).length;
   el.innerHTML=`
     <div class="interop-card"><h2>A2A · LIB02</h2>
@@ -140,6 +140,11 @@ function renderInterop(){
       <div class="metric">${esc(m.candidate_count||0)} runtimes</div>
       <div class="metric-note">${esc(m.dimension_count||0)} dimensions · ${esc(m.queued_live_cases||0)} live cases queued</div>
       <div class="contract-list"><span class="contract">${esc(m.execution_lane||'unknown')}</span><span class="contract">selection ${m.ready_for_selection?'ready':'not ready'}</span></div>
+    </div>
+    <div class="interop-card"><h2>Source intake · W3-06</h2>
+      <div class="metric">${esc((intake.supported_kinds||[]).length)} formats</div>
+      <div class="metric-note">${esc((intake.implemented_states||[]).join(' → ')||'unavailable')}</div>
+      <div class="contract-list"><span class="contract ready">inspection only</span><span class="contract">${esc((intake.queued_states||[]).length)} states queued</span><span class="contract">execution ${intake.executes?'enabled':'blocked'}</span></div>
     </div>
     <div class="interop-card"><h2>Shared Vera contracts</h2>
       <div class="metric">${registered}/${contracts.length}</div>
