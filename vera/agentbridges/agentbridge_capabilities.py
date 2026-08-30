@@ -39,6 +39,7 @@ from Vera.vera.execution.a2a_adapter import compile_a2a_adapter_status
 from Vera.vera.execution.a2a_mapping import compile_a2a_protocol_mapping
 from Vera.vera.integrations.source_intake import lifecycle_contract
 from Vera.vera.integrations.source_build_plan import build_plan_contract
+from Vera.vera.providers.structured_generation import structured_generation_status
 from Vera.vera.capability_orchestration import (
     APP, CAPABILITY_REGISTRY, capability, register_ui,
 )
@@ -74,6 +75,7 @@ async def agentbridge_interoperability(trace_id=None) -> Dict[str, Any]:
     adapter = compile_a2a_adapter_status()
     intake = lifecycle_contract()
     build_plan = build_plan_contract()
+    structured = structured_generation_status()
     shared = (
         ("capability_v2", "cap.contract.manifest"),
         ("resolver_shadow", "cap.resolve.shadow"),
@@ -88,6 +90,10 @@ async def agentbridge_interoperability(trace_id=None) -> Dict[str, Any]:
         ("source_inspection", "integration.source.inspect"),
         ("source_build_status", "integration.source.build.status"),
         ("source_build_plan", "integration.source.build.plan"),
+        ("structured_status", "providers.structured.status"),
+        ("structured_plan", "providers.structured.plan"),
+        ("structured_validate", "providers.structured.validate"),
+        ("structured_retry", "providers.structured.retry.plan"),
     )
     return {
         "schema": "vera.agentbridge-interoperability/v1",
@@ -121,6 +127,15 @@ async def agentbridge_interoperability(trace_id=None) -> Dict[str, Any]:
             "build_source_kinds": build_plan["supported_kinds"],
             "build_execution": build_plan["build_execution"],
             "activation_execution": build_plan["activation_execution"],
+        },
+        "structured_generation": {
+            "contract": structured["contract"],
+            "deterministic_validation": structured["deterministic_validation"],
+            "provider_profiles": structured["provider_profiles"],
+            "provider_execution": structured["provider_execution"],
+            "model_execution": structured["model_execution"],
+            "model_called": structured["model_called"],
+            "executes": structured["executes"],
         },
         "shared_contracts": [
             {"id": key, "capability": cap, "registered": cap in CAPABILITY_REGISTRY}

@@ -87,6 +87,13 @@ tr:hover td{background:rgba(158,143,160,.05)}
   <span class="status-hint" id="ts"></span>
 </div>
 
+<div class="card" id="structured-status" style="margin-bottom:12px">
+  <div class="card-h"><span class="dot" id="structured-dot"></span>
+    <span class="card-t">Structured generation · LIB04</span>
+    <span class="kind-badge">inspection only</span></div>
+  <div class="test-out" id="structured-detail">Loading contract status…</div>
+</div>
+
 <!-- Usage KPIs -->
 <div class="kpi-row">
   <div class="kpi"><div class="kpi-val cost" id="k-cost">$0</div><div class="kpi-sub">total cost</div></div>
@@ -211,13 +218,26 @@ async function loadModels(id, selected){
 async function reload(){
   $('ts').textContent='loading…';
   try{
-    const j = await api('/providers/list');
+    const [j,structured] = await Promise.all([
+      api('/providers/list'), api('/providers/structured/status')
+    ]);
     _providers = j.providers||[];
+    renderStructured(structured);
     renderProviders();
     fillPlayground();
     $('ts').textContent='updated '+new Date().toLocaleTimeString();
   }catch(e){ $('ts').textContent='error: '+e.message; }
   loadUsage();
+}
+
+function renderStructured(s){
+  const profiles=s&&s.provider_profiles||[];
+  $('structured-dot').className='dot '+(s&&s.contract==='implemented'?'ok':'err');
+  $('structured-detail').textContent = s&&s.contract
+    ? profiles.map(p=>p.id+': '+p.availability).join(' · ')
+      +' · deterministic validation '+s.deterministic_validation
+      +' · provider/model execution '+s.provider_execution+'/'+s.model_execution
+    : 'Structured-generation contract unavailable';
 }
 
 async function test(id){

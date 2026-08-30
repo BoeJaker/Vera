@@ -452,6 +452,14 @@ timeout, partial reports, and stable case identity.
 Adapt provider-native schema generation, Instructor, and Outlines behind one
 contract.
 
+**Offline foundation implemented.** `vera.structured-generation-plan/v1`
+normalizes a bounded portable schema subset, exposes static provider-native,
+Instructor, and Outlines profiles, assigns one retry owner, validates supplied
+JSON without returning it, and plans bounded schema/semantic correction without
+starting an attempt. Optional provider imports, model calls, constrained token
+decoding, streaming, semantic-validator execution, and latency measurements
+remain `queued_live`.
+
 Gate: valid/invalid schemas, unsupported constructs, retry budget, cancellation,
 streaming, latency, and semantic-validator failures.
 

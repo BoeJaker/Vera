@@ -53,6 +53,34 @@ Provider usage should retain provider, model, token counts, price revision, and
 request identity. Updating a pricing table changes estimates, not historical
 provider invoices.
 
+## Structured generation contract
+
+LIB-04 starts with the provider-neutral, non-executing contract in
+`vera/providers/structured_generation.py`. It normalizes a bounded portable JSON
+Schema subset, assigns a stable schema and plan identity, records exactly one
+retry owner, and describes optional semantic validation, latency, and streaming
+requirements. Provider-native JSON Schema, Instructor correction, and Outlines
+constrained decoding are static profiles behind the same record.
+
+`providers.structured.validate` deterministically checks supplied JSON values
+and returns only violation paths/codes—not the value. It does not run a semantic
+validator. Schema and semantic failures can produce a bounded retry plan;
+provider failures are not silently retried, and cancellation or timeout is
+terminal. Streaming remains explicitly unverified.
+
+The provider page and Agent Bridges show contract/profile state, while all three
+execution paths remain `queued_live`. The offline layer imports neither
+Instructor nor Outlines, accepts no prompt, calls no model, decodes no token, and
+starts no stream. This prevents vLLM's existing `guided_json` option or a hosted
+provider's schema feature from becoming a separate canonical task family.
+
+| Capability | Purpose |
+|---|---|
+| `providers.structured.status` | Inspect profiles and execution readiness |
+| `providers.structured.plan` | Normalize schema and plan provider/retry ownership |
+| `providers.structured.validate` | Validate supplied JSON without returning it |
+| `providers.structured.retry.plan` | Plan but never start one correction attempt |
+
 ## Trust boundary
 
 External runtimes may propose tool calls or return structured events, but Vera's
@@ -98,7 +126,8 @@ needed to fix it.
 - `vera/integrations/source_intake.py` and `source_build_plan.py` — bounded
   discovery and inert build/activation admission contracts.
 - `vera/smolagents/`, `vera/langgraph/`, `vera/pydanticai/` — adapters.
-- `vera/providers/` — credentials, models, chat, pricing, and usage.
+- `vera/providers/` — credentials, models, chat, pricing, usage, and the neutral
+  structured-generation contract.
 - `vera/catalog/` — discovery and hardware-fit estimates.
 - `vera/ide/` and `vera/board/` — coding-agent execution and work ownership.
 

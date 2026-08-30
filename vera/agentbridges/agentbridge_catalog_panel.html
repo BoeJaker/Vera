@@ -128,7 +128,7 @@ async function load(){
 function renderInterop(){
   const el = document.getElementById('interop');
   if (!INTEROP){ el.innerHTML='<div class="hint-box">Interoperability status unavailable.</div>'; return; }
-  const a=INTEROP.a2a||{}, m=INTEROP.runtime_matrix||{}, intake=INTEROP.source_intake||{}, contracts=INTEROP.shared_contracts||[];
+  const a=INTEROP.a2a||{}, m=INTEROP.runtime_matrix||{}, intake=INTEROP.source_intake||{}, structured=INTEROP.structured_generation||{}, contracts=INTEROP.shared_contracts||[];
   const registered=contracts.filter(x=>x.registered).length;
   el.innerHTML=`
     <div class="interop-card"><h2>A2A · LIB02</h2>
@@ -146,6 +146,11 @@ function renderInterop(){
       <div class="metric-note">${esc((intake.implemented_states||[]).join(' → ')||'unavailable')}</div>
       <div class="contract-list"><span class="contract ready">inspection only</span><span class="contract">${esc((intake.queued_states||[]).length)} states queued</span><span class="contract">execution ${intake.executes?'enabled':'blocked'}</span></div>
       <div class="metric-note">W3-07 build plan ${esc(intake.build_plan_contract||'unavailable')} · ${esc((intake.build_source_kinds||[]).length)} source kinds · activation ${esc(intake.activation_execution||'unknown')}</div>
+    </div>
+    <div class="interop-card"><h2>Structured generation · LIB04</h2>
+      <div class="metric">${esc((structured.provider_profiles||[]).length)} profiles</div>
+      <div class="metric-note">contract ${esc(structured.contract||'unknown')} · validation ${esc(structured.deterministic_validation||'unknown')}</div>
+      <div class="contract-list"><span class="contract ready">schema inspection</span><span class="contract">providers ${esc(structured.provider_execution||'unknown')}</span><span class="contract">model ${structured.model_called?'called':'not called'}</span></div>
     </div>
     <div class="interop-card"><h2>Shared Vera contracts</h2>
       <div class="metric">${registered}/${contracts.length}</div>

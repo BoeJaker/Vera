@@ -102,7 +102,10 @@ candidate/dimension coverage, queued live cases, and registration state for the
 shared Run, Workflow IR, telemetry, durability, runtime-matrix, A2A, Capability
 v2, resolver/policy, and source-intake capabilities. It also distinguishes
 W3-07's implemented inert build-plan contract from queued build and activation
-execution. This complements—rather than duplicates—the existing Run evidence
+execution. LIB-04 adds the same distinction for structured generation: the
+portable schema/validation/retry contract is implemented, while provider-native,
+Instructor, Outlines, streaming, and model execution remain queued. This
+complements—rather than duplicates—the existing Run evidence
 in Activity, the harness overlay, Chat/LHM, and Memory Graph. Readiness labels
 come from the backing inspection capability; the panel does not infer readiness
 from package presence or a successful page load.
@@ -122,6 +125,8 @@ published.
 - Resolver observations inform; they do not mutate declarations.
 - Workflow adapters translate; native runtimes keep native authority.
 - Model packages identify artifacts; activation remains reviewed.
+- Structured schemas validate supplied values; provider decoding and semantic
+  validators remain separately authorized runtime work.
 - Worldview projections provide parity evidence; they do not feed training by
   default.
 - A2A discovery projects candidates; it does not register or execute them.

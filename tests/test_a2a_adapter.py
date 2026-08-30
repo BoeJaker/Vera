@@ -113,11 +113,16 @@ def test_agentbridge_interoperability_capability_and_panel_expose_status():
         "cli", "oci", "python", "repository"]
     assert result["source_intake"]["build_execution"] == "queued_live"
     assert result["source_intake"]["activation_execution"] == "queued_live"
+    assert result["structured_generation"]["contract"] == "implemented"
+    assert result["structured_generation"]["deterministic_validation"] == "implemented"
+    assert result["structured_generation"]["provider_execution"] == "queued_live"
+    assert result["structured_generation"]["model_called"] is False
     contracts = {item["id"]: item for item in result["shared_contracts"]}
     assert contracts["capability_v2"]["capability"] == "cap.contract.manifest"
     assert contracts["resolver_shadow"]["capability"] == "cap.resolve.shadow"
     assert contracts["source_inspection"]["capability"] == "integration.source.inspect"
     assert contracts["source_build_plan"]["capability"] == "integration.source.build.plan"
+    assert contracts["structured_plan"]["capability"] == "providers.structured.plan"
     assert result["network_io"] is False
     assert result["executes"] is False
     panel = caps._PANEL_HTML_PATH.read_text(encoding="utf-8")
@@ -126,4 +131,5 @@ def test_agentbridge_interoperability_capability_and_panel_expose_status():
     assert "Runtime matrix · LIB18" in panel
     assert "Source intake · W3-06" in panel
     assert "W3-07 build plan" in panel
+    assert "Structured generation · LIB04" in panel
     assert "Shared Vera contracts" in panel
