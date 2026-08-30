@@ -5836,15 +5836,88 @@ _SANDBOX_SKIP_LOGGED = set()
 
 
 def schedule(fn: Callable, interval: float, name: Optional[str] = None,
-             skip_in_sandbox: bool = False):
+             skip_in_sandbox: bool = False, singleton: bool = False):
+    """Register a periodic job.
+
+    ``singleton=True`` means the job mutates state SHARED by every instance
+    (the pool registry, worktrees, containers) and must run in exactly one of
+    them. See vera/scheduler_leadership.py for why: seventeen orchestrators
+    were found alive on one host, fourteen of them portless and up to twelve
+    days old, each running every ambient sweep against the one shared Redis.
+    Jobs without the flag are unaffected.
+    """
     SCHEDULED_TASKS.append({"fn": fn, "int": interval, "name": name or fn.__name__,
-                            "last": None, "runs": 0, "skip_in_sandbox": skip_in_sandbox})
+                            "last": None, "runs": 0, "skip_in_sandbox": skip_in_sandbox,
+                            "singleton": singleton})
+
+_LEADER_STATE: Dict[str, Any] = {"is_leader": False, "checked_at": None, "holder": None}
+_LEADER_KEY = "vera:scheduler:leader"
+
+
+def _instance_identity() -> str:
+    """Who this process is, for the lease. Host+pid is enough to be unique and
+    is readable in a log when you are trying to work out which of seventeen
+    instances did something."""
+    import socket
+    return f"{socket.gethostname()}:{os.getpid()}"
+
+
+async def _refresh_scheduler_leadership() -> None:
+    """Claim or renew the singleton lease. Never raises into the scheduler."""
+    import time as _time
+    from Vera.vera import scheduler_leadership as _lead
+    now = _time.time()
+    if not _lead.should_check_lease(now=now, last_checked=_LEADER_STATE["checked_at"]):
+        return
+    me = _instance_identity()
+    try:
+        # The lease must be visible to EVERY instance, so it lives on the
+        # coordinator Redis - the same one the ollama GPU gate leases through -
+        # not on a per-instance db.
+        await _ensure_coord_redis()
+        r = COORD_REDIS or REDIS
+        if r is None:
+            # No coordinator: a single instance cannot be told apart from a
+            # cluster, so behave as before rather than silently stopping the
+            # sweeps entirely.
+            _LEADER_STATE.update({"is_leader": True, "checked_at": now,
+                                  "holder": me})
+            return
+        raw = await r.get(_LEADER_KEY)
+        holder, expires_at = None, None
+        if raw:
+            try:
+                rec = json.loads(raw.decode() if isinstance(raw, (bytes, bytearray)) else raw)
+                holder, expires_at = rec.get("holder"), float(rec.get("expires_at") or 0)
+            except Exception:
+                holder, expires_at = None, None
+        d = _lead.lease_decision(now=now, me=me, holder=holder, expires_at=expires_at)
+        if d["claim"]:
+            await r.set(_LEADER_KEY,
+                        json.dumps({"holder": me, "expires_at": now + _lead.LEASE_TTL_S}),
+                        ex=int(_lead.LEASE_TTL_S) + 10)
+        if d["run"] != _LEADER_STATE["is_leader"]:
+            log.info("scheduler leadership changed: %s (%s)", d["run"], d["reason"])
+        _LEADER_STATE.update({"is_leader": bool(d["run"]), "checked_at": now,
+                              "holder": me if d["run"] else holder})
+    except Exception as e:
+        # Fail OPEN for availability: a Redis blip must not stop the sweeps
+        # forever. The jobs themselves are individually guarded (see
+        # sandbox_pool_reconcile) against acting on an unobservable read.
+        log.debug("scheduler leadership check failed: %s", e)
+        _LEADER_STATE["checked_at"] = now
+
 
 async def scheduler_loop():
     _sandbox = is_dev_sandbox()
+    from Vera.vera import scheduler_leadership as _lead
     while True:
         now=datetime.utcnow()
+        if not _sandbox:
+            await _refresh_scheduler_leadership()
         for task in SCHEDULED_TASKS:
+            if not _lead.may_run(task, is_leader=bool(_LEADER_STATE["is_leader"])):
+                continue
             # Leech boot: never fire heavy ambient jobs inside a dev sandbox.
             if _sandbox and (task.get("skip_in_sandbox")
                              or task["name"] in _SANDBOX_SKIP_JOBS):
