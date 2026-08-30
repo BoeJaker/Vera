@@ -585,8 +585,9 @@ async def _serve_tile(layer: str, z: int, y: int, x: int):
     url = _core.tile_upstream_url(
         z, y, x, os.environ.get("VERA_GODSEYE_TILE_URL", ""), layer=layer)
     try:
-        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
-            r = await client.get(url)
+        # Shared pooled client: a per-request client meant a TLS handshake per
+        # tile, which made proxying slower than fetching upstream directly.
+        r = await (await _tile_client()).get(url)
     except Exception as e:
         return JSONResponse({"error": f"tile fetch failed: {e}"}, status_code=502)
     if r.status_code != 200 or not r.content:
@@ -780,6 +781,39 @@ async def imagery_search(bbox: Optional[List[float]] = None, limit: int = 50,
                       "count": result["count"], "errors": len(errors)})
     result["ok"] = True
     return result
+
+
+#: ONE shared client for upstream tile fetches, for the whole process.
+#:
+#: Measured 2026-08-30: label-overlay tiles were taking 2.3-6.6 SECONDS each on
+#: a cold cache. The cause was this module creating a fresh httpx.AsyncClient
+#: per request — a new TCP connection and TLS handshake to Esri for every one
+#: of ~192 tiles in a page load. Proxying was therefore SLOWER than letting the
+#: browser fetch direct, which is the opposite of the point.
+#:
+#: A shared pooled client reuses connections across tiles. Kept module-level and
+#: lazily built because there is no event loop at import time.
+_TILE_CLIENT: Optional["httpx.AsyncClient"] = None
+_TILE_CLIENT_LOCK = asyncio.Lock()
+
+
+async def _tile_client() -> "httpx.AsyncClient":
+    global _TILE_CLIENT
+    if _TILE_CLIENT is not None and not _TILE_CLIENT.is_closed:
+        return _TILE_CLIENT
+    async with _TILE_CLIENT_LOCK:
+        if _TILE_CLIENT is None or _TILE_CLIENT.is_closed:
+            _TILE_CLIENT = httpx.AsyncClient(
+                timeout=httpx.Timeout(20.0, connect=8.0),
+                follow_redirects=True,
+                # Enough keepalive slots that a whole screen of tiles reuses
+                # connections instead of renegotiating TLS each time.
+                limits=httpx.Limits(max_connections=32,
+                                    max_keepalive_connections=16,
+                                    keepalive_expiry=120.0),
+                headers={"user-agent": "Vera/Godseye tiles"},
+            )
+    return _TILE_CLIENT
 
 
 def _streams_path() -> Path:
