@@ -40,6 +40,7 @@ capabilities in their own right is a separate follow-up, not part of this.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import mimetypes
 import os
@@ -58,6 +59,7 @@ from Vera.vera.capability_orchestration import (
     APP, capability, emit_event, now_iso, register_ui,
 )
 from Vera.vera.godseye import godseye_core as _core
+from Vera.vera.godseye import godseye_cctv_core as _cctv
 
 try:
     from Vera.vera.security import secrets as vsecrets
@@ -601,6 +603,89 @@ async def _serve_tile(layer: str, z: int, y: int, x: int):
 
     return Response(content=r.content, media_type="image/jpeg",
                     headers={**headers, "X-Godseye-Tile": "miss"})
+
+
+@capability(
+    "cctv.sources", memory="off", silent=True,
+    http_method="GET", http_path="/godseye/cctv/sources", http_tags=["godseye"],
+    description="Open CCTV providers Vera aggregates for the globe's camera "
+                "layer, plus the ones probed and found CLOSED (several '511' "
+                "sites now require an API key, including one Godseye still "
+                "calls). Output: {sources[], closed{}}.",
+)
+async def cctv_sources(trace_id=None) -> Dict[str, Any]:
+    return {"sources": _cctv.SOURCES, "count": len(_cctv.SOURCES),
+            "closed": _cctv.CLOSED_SOURCES,
+            "manifest_url": "/godseye/cctv/manifest.json"}
+
+
+@capability(
+    "cctv.refresh", memory="on",
+    http_method="POST", http_path="/godseye/cctv/refresh", http_tags=["godseye"],
+    description="Fetch every registered CCTV provider and rebuild the camera "
+                "manifest Godseye consumes. Sources are fetched concurrently "
+                "and a provider that fails is recorded in the manifest's errors "
+                "rather than shrinking the map silently. Inputs: per_source "
+                "(int cap, 0=all), timeout (int). Output: {ok, feedCount, "
+                "byProvider, errors}.",
+)
+async def cctv_refresh(per_source: int = 0, timeout: int = 45,
+                       trace_id=None) -> Dict[str, Any]:
+    groups: List[Any] = []
+    errors: Dict[str, str] = {}
+    limit = per_source if per_source and per_source > 0 else 5000
+
+    async def _one(src: Dict[str, Any], client) -> None:
+        try:
+            r = await client.get(src["url"], headers={"user-agent": "Vera/Godseye"})
+            if r.status_code != 200:
+                errors[src["id"]] = f"HTTP {r.status_code}"
+                return
+            body = r.text if src["kind"] == "caltrans" else r.json()
+            feeds = _cctv.parse_source(src, body, limit)
+            if not feeds:
+                # An empty parse is nearly always a changed payload, not an
+                # empty province — surface it instead of quietly losing cameras.
+                errors[src["id"]] = "parsed 0 cameras"
+            groups.append(feeds)
+        except Exception as e:
+            errors[src["id"]] = f"{type(e).__name__}: {e}"[:200]
+
+    async with httpx.AsyncClient(timeout=float(timeout), follow_redirects=True) as client:
+        await asyncio.gather(*(_one(s, client) for s in _cctv.SOURCES))
+
+    manifest = _cctv.build_manifest(groups, generated_at=now_iso(), errors=errors)
+    lay = _layout()
+    try:
+        lay["state_dir"].mkdir(parents=True, exist_ok=True)
+        path = lay["state_dir"] / "cctv-manifest.json"
+        tmp = path.with_suffix(".part")
+        tmp.write_text(json.dumps(manifest), encoding="utf-8")
+        tmp.replace(path)
+    except OSError as e:
+        return {"ok": False, "error": f"could not write manifest: {e}"}
+
+    await emit_event({"type": "godseye.cctv.refreshed",
+                      "feeds": manifest["feedCount"], "errors": len(errors)})
+    return {"ok": True, "feedCount": manifest["feedCount"],
+            "byProvider": manifest["byProvider"], "errors": errors}
+
+
+@APP.get("/godseye/cctv/manifest.json", include_in_schema=False)
+async def _godseye_cctv_manifest():
+    """The camera list, in the shape Godseye's CameraLayer already parses.
+
+    Pointing the fork's VERIFIED_CCTV_MANIFEST constant here is what makes Vera
+    the source of truth: adding a provider then needs no fork change and no
+    rebuild. Serves the last good manifest and never blocks on the network — a
+    slow provider must not stall the globe's camera layer.
+    """
+    path = _layout()["state_dir"] / "cctv-manifest.json"
+    if path.is_file():
+        return FileResponse(str(path), media_type="application/json",
+                            headers={"Cache-Control": "public, max-age=300"})
+    return JSONResponse({"generatedAt": "", "feedCount": 0, "feeds": [],
+                         "errors": {"manifest": "not built yet — run cctv.refresh"}})
 
 
 @APP.get(_core.APP_MOUNT, include_in_schema=False)
