@@ -2,6 +2,22 @@
 
 `dream/dream_capabilities.py` is Vera's proactive background cognition system. When the orchestrator has been **idle** for a while, Dream spins up a background **dream cycle**: a pipeline of small capabilities — *sensors* that gather context and *stages* that reason and act — strung together by a **trigger** record. It's how Vera "thinks" when nobody is talking to it.
 
+## Workflow IR convergence
+
+The built-in generic pipeline (`gather → themes → plan → execute → synthesize →
+deliver`) now compiles to normalized Workflow IR before it runs. The validated IR
+stage plan—not a parallel hard-coded list—is authoritative for that narrow path.
+Dream still owns stage invocation, cancellation, low-signal exit, HITL, journals,
+artifacts, live progress, and cycle persistence. This separates the portable
+workflow description from Dream product policy without introducing a second
+executor or changing custom and iterative pipelines prematurely.
+
+Each migrated cycle records the Workflow IR version, stable content hash, stage
+IDs, and execution owner in its event, history record, detail record, and
+`meta.json`. The live Dream panel and cycle-detail view display that provenance.
+Malformed ownership, stage order, or task provenance fails closed; it cannot
+silently fall back to the legacy list.
+
 It is by far the largest module in the system (~150 capabilities). This page is a map of the architecture and the capability groups, not an exhaustive per-cap reference.
 
 ---
