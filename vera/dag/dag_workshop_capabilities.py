@@ -12230,6 +12230,40 @@ def _v5_cap_skill_map(skills: List[Dict[str, Any]]) -> Dict[str, List[str]]:
     return out
 
 
+async def _v5_route_edit_steps(steps: List[Dict[str, Any]], *,
+                               sid: str = "", stream_id: str = "") -> List[Dict[str, Any]]:
+    """Re-route steps that CHANGE a file to code.edit before the plan is emitted.
+
+    The planner routinely plans a single-file deliverable as several sequential
+    `code.author` steps — while its own success text for those steps says the
+    file "is updated by code.edit". Each author call on an existing file is a
+    full re-emit, which is what drops the previous step's work.
+
+    Applied at both runners' plan choke point, so it holds for every planner
+    prompt variant rather than whichever one someone remembered to edit. Both
+    caps are universal essentials in the toolkit either way, so this changes the
+    STEER only and can never leave a step unable to author.
+
+    Best-effort: a repair must never be the thing that stops a run.
+    """
+    try:
+        routed, changes = _plan_cap_routing.route_edit_steps(steps)
+    except Exception as e:                      # pragma: no cover — never fatal
+        log.debug("edit-step cap routing skipped: %s", e)
+        return steps
+    if not changes:
+        return steps
+    for ch in changes:
+        log.info("plan: step %s re-routed %s -> %s (%s)",
+                 ch.get("id"), ch.get("from"), ch.get("to"), ch.get("reason"))
+    try:
+        await emit_event({"type": "agent_loop_v6.cap_reroute", "session_id": sid,
+                          "stream_id": stream_id, "changes": changes})
+    except Exception:
+        pass
+    return routed
+
+
 def _v5_apply_skill_suggestions(steps: List[Dict[str, Any]],
                                 cap_skill_map: Dict[str, List[str]],
                                 eligible_ids: set, enabled: bool = True) -> None:
@@ -13221,6 +13255,17 @@ except Exception:                                     # pragma: no cover
     except Exception:
         _loop_trace_core = None
         log.warning("loop_trace_core unavailable — agent_loop.trace disabled")
+
+# Deterministic cap routing for plan steps that CHANGE a file rather than create
+# one. Import-safe like the other pure cores.
+try:
+    from Vera.vera.dag import plan_cap_routing as _plan_cap_routing
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import plan_cap_routing as _plan_cap_routing
+    except Exception:
+        _plan_cap_routing = None
+        log.warning("plan_cap_routing unavailable — edit steps keep the planner's caps")
 
 
 async def _emit_stage_context(stage: str, *, system: str = "", prompt: str = "",
@@ -18309,6 +18354,9 @@ async def cap_dag_agent_loop_v5(
     # Soft-merge cap-suggested skills into steps that picked none (orchestrator
     # choices are preserved; this only fills gaps).
     _v5_apply_skill_suggestions(steps, cap_skill_map, eligible_skill_ids, auto_suggest_skills)
+    # BEFORE the plan is emitted, so the plan the user sees is the plan that runs.
+    steps = await _v5_route_edit_steps(steps, sid=sid, stream_id=stream_id)
+    plan["steps"] = steps
     await emit_event({"type": "agent_loop_v5.plan", "session_id": sid, "stream_id": stream_id,
                       "steps": [{"id": s["id"], "title": s["title"], "caps": s["caps"],
                                  "skills": s["skills"], "complex": bool(s.get("complex")),
@@ -22482,6 +22530,9 @@ async def cap_dag_agent_loop_v6(
         else:
             s["phases"] = [p for p in allowed_phases if p in set(s.get("phases") or [])]
     _v5_apply_skill_suggestions(steps, cap_skill_map, eligible_skill_ids, auto_suggest_skills)
+    # BEFORE the plan is emitted, so the plan the user sees is the plan that runs.
+    steps = await _v5_route_edit_steps(steps, sid=sid, stream_id=stream_id)
+    plan["steps"] = steps
     await emit_event({"type": "agent_loop_v6.plan", "session_id": sid, "stream_id": stream_id,
                       "steps": [{"id": s["id"], "title": s["title"], "caps": s["caps"],
                                  "skills": s["skills"], "complex": bool(s.get("complex")),
@@ -24049,6 +24100,7 @@ async def workshop_agent_loop_stream(request: Request):
             "agent_loop_v6.master_plan_piece_fallback",
             "agent_loop_v6.plan_token",
             "agent_loop_v6.plan",
+            "agent_loop_v6.cap_reroute",
             "agent_loop_v6.ledger",
             "agent_loop_v6.assess",
             "agent_loop_v6.verify",

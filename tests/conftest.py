@@ -54,6 +54,7 @@ _CRITICAL_MODULES = {
     "test_loop_run_history",     # unified loop-run record: retention policy must never mean keep-nothing or keep-everything
     "test_loop_trace_accounting",  # every executed step must name its producer - the census reads these counters (2026-08-29)
     "test_log_setup",           # prod's file log: out-of-tree (dirty tree blocks promote) + swept off the event loop (2026-08-29)
+    "test_plan_cap_routing",    # an edit step must not be a code.author re-emit - re-emits drop earlier steps' work (2026-08-30)
     "test_role_profile_merge",   # a USER routing override must not silently discard declared sampling/num_ctx (2026-08-24)
     "test_executor_compose_callsite",  # Phase 4 - every prompt block reaches the executor, unswapped (a drop/swap is silent)
     "test_godseye_core",       # vendored-app static serving: a path-guard hole serves arbitrary host files; git argv must reject option/ext:: injection
