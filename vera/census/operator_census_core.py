@@ -41,9 +41,17 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Sequence
 
 INCOMPLETE, CEILING, ERRORED, FINISHED = "incomplete", "ceiling", "errored", "finished"
+# Stopped from outside. NOT a rung on the quality ladder — it says nothing about
+# how well the operator performed, exactly like a measurement taken against a
+# wedged node. It shares incomplete's rank so it can never read as progress.
+CANCELLED = "cancelled"
 
 # Worst → best. Used only to give a CHANGE a direction; it is not a score.
-_RANK = {INCOMPLETE: 0, CEILING: 1, ERRORED: 2, FINISHED: 3}
+_RANK = {INCOMPLETE: 0, CANCELLED: 0, CEILING: 1, ERRORED: 2, FINISHED: 3}
+
+# Outcomes that make a run unusable for comparison: nothing about their
+# duration or step count reflects the operator's behaviour.
+_NOT_COMPARABLE = (INCOMPLETE, CANCELLED)
 
 
 def outcome_of(rec: Dict[str, Any]) -> str:
@@ -57,6 +65,11 @@ def outcome_of(rec: Dict[str, Any]) -> str:
         return INCOMPLETE
     if not rec.get("completed"):
         return INCOMPLETE
+    # Checked before ceiling and errors: a run stopped from outside tells you
+    # nothing about the operator, and a cancelled run that happens to have zero
+    # errors would otherwise be classified `finished` — the worst possible lie.
+    if rec.get("cancelled"):
+        return CANCELLED
     if rec.get("ceiling_hit"):
         return CEILING
     if int(rec.get("errors") or 0) > 0:
@@ -83,15 +96,17 @@ def summarise_run(run_id: str, records: Sequence[Dict[str, Any]]) -> Dict[str, A
         "errored": by.get(ERRORED, 0),
         "ceiling": by.get(CEILING, 0),
         "incomplete": by.get(INCOMPLETE, 0),
+        "cancelled": by.get(CANCELLED, 0),
         "steps_total": sum(int(r.get("steps") or 0) for r in recs),
         "errors_total": sum(int(r.get("errors") or 0) for r in recs),
         # The browser thrash signature, aggregated: how many goals had ANY action
         # attempted three or more times.
         "thrashing_goals": sum(1 for r in recs if int(r.get("repeated_actions") or 0) > 0),
         "duration_total_s": round(sum(durs), 1),
-        # A run where anything is incomplete cannot be compared cleanly: an
-        # incomplete goal has no trustworthy duration or step count.
-        "comparable": bool(recs) and by.get(INCOMPLETE, 0) == 0,
+        # A run containing anything incomplete or cancelled cannot be compared
+        # cleanly: neither has a duration or step count that reflects the
+        # operator rather than whatever stopped it.
+        "comparable": bool(recs) and not any(by.get(o, 0) for o in _NOT_COMPARABLE),
     }
 
 
@@ -127,7 +142,10 @@ def compare_runs(base: Sequence[Dict[str, Any]],
             "base_duration_s": _num(br.get("duration_s")),
             "head_duration_s": _num(hr.get("duration_s")),
         }
-        if ho == CEILING:
+        if ho == CANCELLED:
+            rec["note"] = ("stopped from outside — this measures whoever cancelled "
+                           "it, not the operator; exclude it rather than read it")
+        elif ho == CEILING:
             rec["note"] = ("stopped at its step ceiling — its own reason may still "
                            "read like success, so it settles nothing")
         elif ho == INCOMPLETE:
@@ -162,6 +180,7 @@ def record_from_trace(goal_id: str, trace: Dict[str, Any]) -> Dict[str, Any]:
         "screenshots": int(c.get("screenshots") or 0),
         "repeated_actions": int(c.get("repeated_actions") or 0),
         "ceiling_hit": bool(c.get("ceiling_hit")),
+        "cancelled": bool(c.get("cancelled")),
         "duration_s": (trace or {}).get("duration_s"),
         "completed": bool((trace or {}).get("ended_at")),
         "warnings": (trace or {}).get("warnings") or [],

@@ -60,9 +60,22 @@ async def run_loop(goal: str, session, *,
                    on_step: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
                    observe_fn: Optional[Callable] = None,
                    think_fn: Optional[Callable] = None,
-                   act_fn: Optional[Callable] = None) -> Dict[str, Any]:
+                   act_fn: Optional[Callable] = None,
+                   should_cancel: Optional[Callable[[], Awaitable[bool]]] = None
+                   ) -> Dict[str, Any]:
     """Drive ``session`` toward ``goal``. Returns
-    {ok, done, steps, reason, summary, screenshots, error}."""
+    {ok, done, steps, reason, summary, screenshots, error}.
+
+    ``should_cancel`` is polled once per step, BEFORE the step observes or
+    thinks. Without it a cancelled operator run kept driving the browser and
+    kept issuing LLM calls: observed 2026-08-30, a census run was cancelled and
+    its operator generation ran on for 1211s against the shared GPU. The agentic
+    loop has had a cooperative-cancel check for a long time; this is the same
+    idea in the same place.
+
+    It stops the run issuing ANY further work. It cannot abort the single
+    generation already in flight — that ends on its own timeout — so the honest
+    claim is "no new work after cancel", not "instantly free"."""
     if not (goal or "").strip():
         return {"error": "goal required", "steps": []}
 
@@ -87,6 +100,22 @@ async def run_loop(goal: str, session, *,
                 log.debug("operator on_step callback failed: %s", e)
 
     for i in range(1, max_steps + 1):
+        # Checked BEFORE observing or thinking, so a cancel stops the run without
+        # buying one more browser action and one more LLM call.
+        if should_cancel is not None:
+            try:
+                if await should_cancel():
+                    reason = "cancelled"
+                    rec = {"i": i, "phase": "cancelled",
+                           "reason": "run cancelled before step %d" % i}
+                    steps.append(rec)
+                    await _emit(rec)
+                    break
+            except Exception:
+                # A cancel check that errors must not stop a healthy run; the
+                # worst case is the old behaviour.
+                pass
+
         t0 = time.time()
         try:
             obs = await observe(session, i)
