@@ -277,7 +277,7 @@ async def _read_new_bytes(instance_id: str, rel: str, offset: int) -> Optional[s
         except OSError as e:
             log.warning("claude_sessions: local read failed for %s: %s", rel, e)
             return None
-    inst = _get_instance(instance_id)
+    inst = await _get_instance(instance_id)
     if inst and inst.get("kind") == "ssh":
         host_id = inst.get("host_id", "")
         if not host_id:
@@ -371,7 +371,7 @@ async def _ingest_file(instance_id: str, rel: str, state: dict) -> int:
 async def cap_claude_sessions_sources(trace_id=None) -> dict:
     sources = [{"instance_id": "", "label": "local (Vera host)",
                 "kind": "local", "alive": True}]
-    for inst in _load_instances():
+    for inst in await _load_instances():
         if inst.get("kind") == "vscode-client":
             sources.append({
                 "instance_id": inst.get("id", ""),
@@ -423,7 +423,7 @@ async def cap_claude_sessions_scan(instance_id: str = "", trace_id=None) -> dict
         # Off the loop, same as _git()/subprocess calls elsewhere in the codebase.
         files = await asyncio.get_event_loop().run_in_executor(None, _local_scan)
         return {"source": "local", "files": files}
-    inst = _get_instance(instance_id)
+    inst = await _get_instance(instance_id)
     if not inst:
         return {"error": f"instance not found: {instance_id}"}
     if inst.get("kind") == "ssh":
@@ -811,7 +811,7 @@ async def _scheduled_ingest_all():
         await cap_claude_sessions_ingest_all(instance_id="")
     except Exception as e:
         log.warning("claude_sessions: scheduled local ingest failed: %s", e)
-    for inst in _load_instances():
+    for inst in await _load_instances():
         iid = inst.get("id", "")
         if inst.get("kind") == "vscode-client" and _client_alive(iid):
             try:

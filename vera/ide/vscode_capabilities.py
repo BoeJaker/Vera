@@ -104,10 +104,10 @@ def _rmod():
     return None
 
 
-def _load_instances() -> List[dict]:
+async def _load_instances() -> List[dict]:
     m = _rmod()
     if m:
-        return m._load_instances()
+        return await m._load_instances()
     try:
         if _INSTANCES_FILE.exists():
             return json.loads(_INSTANCES_FILE.read_text(encoding="utf-8"))
@@ -116,10 +116,10 @@ def _load_instances() -> List[dict]:
     return []
 
 
-def _save_instances(rows: List[dict]) -> None:
+async def _save_instances(rows: List[dict]) -> None:
     m = _rmod()
     if m:
-        m._save_instances(rows)
+        await m._save_instances(rows)
         return
     try:
         _INSTANCES_FILE.write_text(json.dumps(rows, indent=2), encoding="utf-8")
@@ -127,34 +127,34 @@ def _save_instances(rows: List[dict]) -> None:
         log.warning("vscode: could not write instances: %s", e)
 
 
-def _get_instance(iid: str) -> Optional[dict]:
-    for r in _load_instances():
+async def _get_instance(iid: str) -> Optional[dict]:
+    for r in await _load_instances():
         if r.get("id") == iid:
             return r
     return None
 
 
-def _upsert_instance(rec: dict) -> dict:
-    rows = _load_instances()
+async def _upsert_instance(rec: dict) -> dict:
+    rows = await _load_instances()
     for r in rows:
         if r.get("id") == rec["id"]:
             r.update(rec)
             r["updated_at"] = now_iso()
-            _save_instances(rows)
+            await _save_instances(rows)
             return r
     rec.setdefault("created_at", now_iso())
     rec["updated_at"] = now_iso()
     rows.append(rec)
-    _save_instances(rows)
+    await _save_instances(rows)
     return rec
 
 
-def _delete_instance(iid: str) -> bool:
-    rows = _load_instances()
+async def _delete_instance(iid: str) -> bool:
+    rows = await _load_instances()
     keep = [r for r in rows if r.get("id") != iid]
     if len(keep) == len(rows):
         return False
-    _save_instances(keep)
+    await _save_instances(keep)
     return True
 
 
@@ -250,9 +250,9 @@ def _central_env_url() -> str:
     return os.getenv("VSCODE_CENTRAL_URL", "").strip().rstrip("/")
 
 
-def _resolve_target(iid: str) -> Tuple[str, Optional[dict]]:
+async def _resolve_target(iid: str) -> Tuple[str, Optional[dict]]:
     """(upstream base url, instance record|None) for a proxy id."""
-    inst = _get_instance(iid)
+    inst = await _get_instance(iid)
     if inst and inst.get("url"):
         return inst["url"].rstrip("/"), inst
     if iid == CENTRAL_ID:
@@ -401,7 +401,7 @@ async def vscode_proxy_root(iid: str):
 @APP.api_route("/vscode/{iid}/{path:path}", include_in_schema=False,
                methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
 async def vscode_proxy(iid: str, path: str, request: Request):
-    base, _inst = _resolve_target(iid)
+    base, _inst = await _resolve_target(iid)
     if not base:
         return Response(f"vscode proxy: unknown instance '{iid}'", status_code=502,
                         media_type="text/plain")
@@ -453,7 +453,7 @@ async def vscode_proxy(iid: str, path: str, request: Request):
 
 @APP.websocket("/vscode/{iid}/{path:path}")
 async def vscode_proxy_ws(ws: WebSocket, iid: str, path: str):
-    base, _inst = _resolve_target(iid)
+    base, _inst = await _resolve_target(iid)
     if not base:
         await ws.close(code=4404)
         return
@@ -567,7 +567,7 @@ _KIND_ORDER = {"central": 0, "sandbox-worker": 1, "container": 2,
                 "has_token, ...}], count}.",
 )
 async def ide_vscode_instances(trace_id=None):
-    rows = [_public(r) for r in _load_instances()]
+    rows = [_public(r) for r in await _load_instances()]
     if not any(r.get("id") == CENTRAL_ID for r in rows) and _central_env_url():
         rows.insert(0, {
             "id": CENTRAL_ID, "label": "Central VS Code (vera)", "kind": "central",
@@ -575,7 +575,7 @@ async def ide_vscode_instances(trace_id=None):
             "has_token": bool(os.getenv("VSCODE_PASSWORD", "").strip()),
         })
     for r in rows:
-        base, _ = _resolve_target(r.get("id", ""))
+        base, _ = await _resolve_target(r.get("id", ""))
         r["proxy"] = f"/vscode/{r['id']}/" if base else ""
     rows.sort(key=lambda r: (_KIND_ORDER.get(r.get("kind", ""), 9),
                              r.get("label", "") or ""))
@@ -686,7 +686,7 @@ async def ide_vscode_central_ensure(
     image = image or _CENTRAL_IMAGE
     projects_volume = projects_volume \
         or os.getenv("VSCODE_PROJECTS_VOLUME", "").strip() or "vera_vera-projects"
-    existing = _get_instance(CENTRAL_ID)
+    existing = await _get_instance(CENTRAL_ID)
     pw = password or _known_password(existing, CENTRAL_ID) or uuid.uuid4().hex
     steps: List[dict] = []
 
@@ -729,7 +729,7 @@ async def ide_vscode_central_ensure(
     steps += await _central_integrations(host, _CENTRAL_CONTAINER, "/home/coder/projects")
 
     url = _central_env_url() or f"http://{await _docker_host_addr(host)}:{port}"
-    rec = _upsert_instance({
+    rec = await _upsert_instance({
         "id": CENTRAL_ID, "label": "Central VS Code (vera)", "kind": "central",
         "url": url, "port": port, "image": image,
         "docker_host_id": host["id"], "container": _CENTRAL_CONTAINER,
@@ -754,8 +754,8 @@ async def ide_vscode_central_ensure(
                 "Output: {ok, exists, running, reachable, url, proxy, has_token}.",
 )
 async def ide_vscode_central_status(trace_id=None):
-    inst = _get_instance(CENTRAL_ID)
-    base, _ = _resolve_target(CENTRAL_ID)
+    inst = await _get_instance(CENTRAL_ID)
+    base, _ = await _resolve_target(CENTRAL_ID)
     out: Dict[str, Any] = {
         "ok": True, "exists": bool(inst or base), "url": base,
         "proxy": f"/vscode/{CENTRAL_ID}/" if base else "",
@@ -791,7 +791,7 @@ async def ide_vscode_central_status(trace_id=None):
                 "Output: {ok, instance_id, password}.",
 )
 async def ide_vscode_password_reveal(instance_id: str = "", trace_id=None):
-    inst = _get_instance(instance_id)
+    inst = await _get_instance(instance_id)
     pw = _known_password(inst, instance_id)
     if not pw:
         return {"ok": False, "error": "no stored password for this instance"}
@@ -811,7 +811,7 @@ async def ide_vscode_password_reveal(instance_id: str = "", trace_id=None):
 )
 async def ide_vscode_password_set(instance_id: str = "", password: str = "",
                                   trace_id=None):
-    inst = _get_instance(instance_id)
+    inst = await _get_instance(instance_id)
     if not inst and instance_id != CENTRAL_ID:
         return {"ok": False, "error": f"instance not found: {instance_id}"}
     pw = password or uuid.uuid4().hex
@@ -853,12 +853,12 @@ async def ide_vscode_password_set(instance_id: str = "", password: str = "",
             return {"ok": False,
                     "error": res.get("error") or res.get("stderr") or "remote update failed"}
 
-    rows = _load_instances()
+    rows = await _load_instances()
     for r in rows:
         if r.get("id") == instance_id:
             r["token_sealed"] = _seal(pw)
             r["updated_at"] = now_iso()
-    _save_instances(rows)
+    await _save_instances(rows)
     await emit_event({"type": "ide.vscode.password", "action": "rotated",
                       "instance_id": instance_id})
     return {"ok": True, "instance_id": instance_id, "password": pw}
@@ -872,9 +872,9 @@ def _worker_id(session_id: str) -> str:
     return f"sbxw-{safe}"
 
 
-def _pick_port() -> int:
+async def _pick_port() -> int:
     used = set()
-    for r in _load_instances():
+    for r in await _load_instances():
         try:
             used.add(int(r.get("port", 0) or 0))
         except Exception:
@@ -903,7 +903,7 @@ async def ide_vscode_sandbox_workers(trace_id=None):
             sandboxes = res.get("sandboxes", [])
         except Exception as e:
             log.debug("vscode: sandbox list failed: %s", e)
-    workers = {r.get("session_id"): r for r in _load_instances()
+    workers = {r.get("session_id"): r for r in await _load_instances()
                if r.get("kind") == "sandbox-worker"}
     out = []
     for s in sandboxes:
@@ -949,10 +949,10 @@ async def ide_vscode_sandbox_attach(
         return {"ok": False, "error": "sandbox's docker host unavailable"}
 
     iid = _worker_id(session_id)
-    existing = _get_instance(iid)
+    existing = await _get_instance(iid)
     cname = srec["container"] + "-code"
     vol = srec.get("volume") or sbx._volname(session_id)
-    port = int(port or (existing or {}).get("port", 0) or 0) or _pick_port()
+    port = int(port or (existing or {}).get("port", 0) or 0) or await _pick_port()
     pw = password or _known_password(existing, iid) or uuid.uuid4().hex
 
     state = await sbx._container_running(dk, host, cname)
@@ -976,7 +976,7 @@ async def ide_vscode_sandbox_attach(
             return {"ok": False, "error": run.get("error", "docker run failed")}
 
     url = f"http://{await _docker_host_addr(host)}:{port}"
-    rec = _upsert_instance({
+    rec = await _upsert_instance({
         "id": iid, "label": f"Sandbox worker · {session_id[:20]}",
         "kind": "sandbox-worker", "session_id": session_id,
         "url": url, "port": port, "container": cname,
@@ -1000,7 +1000,7 @@ async def ide_vscode_sandbox_attach(
 async def ide_vscode_sandbox_detach(session_id: str = "", instance_id: str = "",
                                     trace_id=None):
     iid = instance_id or _worker_id(session_id)
-    inst = _get_instance(iid)
+    inst = await _get_instance(iid)
     if not inst:
         return {"ok": False, "error": f"worker not found: {iid}"}
     dk = _dk()
@@ -1009,7 +1009,7 @@ async def ide_vscode_sandbox_detach(session_id: str = "", instance_id: str = "",
         if host:
             await dk._run_local(
                 await dk._docker_argv(host, ["rm", "-f", inst["container"]]), timeout=60)
-    _delete_instance(iid)
+    await _delete_instance(iid)
     await emit_event({"type": "ide.vscode.worker", "action": "detached", "id": iid})
     return {"ok": True, "removed": iid}
 
