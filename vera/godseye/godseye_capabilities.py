@@ -656,6 +656,10 @@ async def cctv_refresh(per_source: int = 0, timeout: int = 45,
     async with httpx.AsyncClient(timeout=float(timeout), follow_redirects=True) as client:
         await asyncio.gather(*(_one(s, client) for s in _cctv.SOURCES))
 
+    # Fold in any stream urls already resolved, so a refresh does not downgrade
+    # cameras back to stills and throw away work cctv.streams.resolve has done.
+    known_streams = _load_streams()
+    groups = [_cctv.apply_streams(g, known_streams) for g in groups]
     manifest = _cctv.build_manifest(groups, generated_at=now_iso(), errors=errors)
     lay = _layout()
     try:
@@ -778,6 +782,87 @@ async def imagery_search(bbox: Optional[List[float]] = None, limit: int = 50,
     return result
 
 
+def _streams_path() -> Path:
+    return _layout()["state_dir"] / "cctv-streams.json"
+
+
+def _load_streams() -> Dict[str, str]:
+    try:
+        data = json.loads(_streams_path().read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+@capability(
+    "cctv.streams.resolve", memory="on",
+    http_method="POST", http_path="/godseye/cctv/streams/resolve",
+    http_tags=["godseye"],
+    description="Turn stream-CAPABLE cameras into actual playable video. "
+                "Caltrans flags roughly two thirds of its cameras as having "
+                "live HLS, but the playlist url is only on each camera's "
+                "detail page and is NOT derivable from it — so this reads those "
+                "pages and caches the result. Deliberately incremental and "
+                "rate-limited: there are thousands, and resolving them in one "
+                "burst is how an IP gets blocked. Call repeatedly; it resumes "
+                "where it left off. Inputs: batch (int=200), concurrency "
+                "(int=6). Output: {resolved, failed, cached_total, remaining}.",
+)
+async def cctv_streams_resolve(batch: int = 200, concurrency: int = 6,
+                               trace_id=None) -> Dict[str, Any]:
+    manifest_path = _layout()["state_dir"] / "cctv-manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"ok": False, "error": "no camera manifest yet — run cctv.refresh first"}
+
+    feeds = manifest.get("feeds") or []
+    streams = _load_streams()
+    targets = _cctv.pending_stream_targets(feeds, streams,
+                                           limit=max(1, min(int(batch), 1000)))
+    if not targets:
+        return {"ok": True, "resolved": 0, "failed": 0,
+                "cached_total": len(streams), "remaining": 0,
+                "note": "every stream-capable camera is resolved"}
+
+    sem = asyncio.Semaphore(max(1, min(int(concurrency), 12)))
+    resolved, failed = {}, 0
+
+    async def _one(target: Dict[str, str], client) -> None:
+        nonlocal failed
+        async with sem:                     # a hard ceiling on concurrent hits
+            try:
+                r = await client.get(target["detailsUrl"],
+                                     headers={"user-agent": "Vera/Godseye"})
+                url = _cctv.extract_stream_url(r.text) if r.status_code == 200 else ""
+                if url:
+                    resolved[target["id"]] = url
+                else:
+                    failed += 1
+            except Exception:
+                failed += 1
+
+    async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as client:
+        await asyncio.gather(*(_one(t, client) for t in targets))
+
+    streams.update(resolved)
+    try:
+        p = _streams_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".part")
+        tmp.write_text(json.dumps(streams), encoding="utf-8")
+        tmp.replace(p)
+    except OSError as e:
+        return {"ok": False, "error": f"could not persist streams: {e}"}
+
+    remaining = len(_cctv.pending_stream_targets(feeds, streams, limit=100000))
+    await emit_event({"type": "godseye.cctv.streams.resolved",
+                      "resolved": len(resolved), "remaining": remaining})
+    return {"ok": True, "resolved": len(resolved), "failed": failed,
+            "cached_total": len(streams), "remaining": remaining,
+            "next": "call again to continue" if remaining else "complete"}
+
+
 @capability(
     "buildings.fetch", memory="on",
     http_method="POST", http_path="/godseye/buildings", http_tags=["godseye"],
@@ -848,18 +933,33 @@ async def buildings_fetch(bbox: Optional[List[float]] = None,
 
 
 @APP.get("/godseye/cctv/manifest.json", include_in_schema=False)
-async def _godseye_cctv_manifest():
+async def _godseye_cctv_manifest(video: int = 0):
     """The camera list, in the shape Godseye's CameraLayer already parses.
 
     Pointing the fork's VERIFIED_CCTV_MANIFEST constant here is what makes Vera
     the source of truth: adding a provider then needs no fork change and no
     rebuild. Serves the last good manifest and never blocks on the network — a
     slow provider must not stall the globe's camera layer.
+
+    `?video=1` returns only cameras you can actually watch motion on. Most
+    agency cameras are stills by design, so this is a large reduction, not a
+    cosmetic filter.
     """
     path = _layout()["state_dir"] / "cctv-manifest.json"
     if path.is_file():
-        return FileResponse(str(path), media_type="application/json",
-                            headers={"Cache-Control": "public, max-age=300"})
+        if not video:
+            return FileResponse(str(path), media_type="application/json",
+                                headers={"Cache-Control": "public, max-age=300"})
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            return JSONResponse({"feeds": [], "feedCount": 0,
+                                 "errors": {"manifest": str(e)}}, status_code=200)
+        feeds = _cctv.video_only(doc.get("feeds") or [])
+        doc["feeds"] = feeds
+        doc["feedCount"] = len(feeds)
+        doc["filtered"] = "video"
+        return JSONResponse(doc, headers={"Cache-Control": "public, max-age=300"})
     return JSONResponse({"generatedAt": "", "feedCount": 0, "feeds": [],
                          "errors": {"manifest": "not built yet — run cctv.refresh"}})
 
