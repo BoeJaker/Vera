@@ -153,14 +153,39 @@ def test_tile_url_targets_the_configured_host_only():
 
 
 # ── all three imagery layers, not just the base ──────────────────────────────
+def test_only_the_satellite_base_is_jpeg():
+    # These are served with X-Content-Type-Options: nosniff, so a PNG labelled
+    # image/jpeg will not be quietly corrected by the browser — it just fails.
+    # The label overlays need alpha; terrain carries elevation in exact RGB.
+    assert C.tile_media_type("imagery") == "image/jpeg"
+    for png in ("reference", "places", "terrain"):
+        assert C.tile_media_type(png) == "image/png", png
+    assert C.tile_extension("imagery") == ".jpg"
+    assert C.tile_extension("terrain") == ".png"
+
+
+def test_terrain_is_cached_and_served_as_its_own_layer(tmp_path):
+    assert C.tile_layer_is_valid("terrain") is True
+    p = C.tile_cache_path(tmp_path, 5, 6, 7, "terrain")
+    assert p.name == "7.png" and "terrain" in p.parts
+    # Terrarium orders its path {z}/{x}/{y}, the imagery layers {z}/{y}/{x};
+    # a per-layer template is what lets providers disagree about that.
+    assert C.tile_upstream_url(5, 6, 7, layer="terrain").endswith("/5/7/6.png")
+    assert C.tile_upstream_url(5, 6, 7, layer="imagery").endswith("/5/6/7")
+
+
 def test_every_layer_the_globe_stacks_can_be_proxied():
     # The globe composites satellite imagery plus two Esri label overlays.
     # Proxying only the base left two thirds of the tile traffic going straight
     # to the internet, which is why caching the base alone barely helped.
-    assert set(C.TILE_LAYERS) == {"imagery", "reference", "places"}
+    assert set(C.TILE_LAYERS) == {"imagery", "reference", "places", "terrain"}
     for name in C.TILE_LAYERS:
-        assert C.tile_upstream_url(3, 4, 5, layer=name).endswith("/3/4/5")
         assert C.tile_layer_is_valid(name) is True
+        assert C.tile_upstream_url(3, 4, 5, layer=name).startswith("https://")
+    # The three Esri layers share {z}/{y}/{x}; terrain does NOT — see
+    # test_terrain_is_cached_and_served_as_its_own_layer.
+    for name in ("imagery", "reference", "places"):
+        assert C.tile_upstream_url(3, 4, 5, layer=name).endswith("/3/4/5")
 
 
 def test_layer_names_are_an_allowlist_not_a_pass_through():

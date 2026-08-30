@@ -60,6 +60,7 @@ from Vera.vera.capability_orchestration import (
 )
 from Vera.vera.godseye import godseye_core as _core
 from Vera.vera.godseye import godseye_cctv_core as _cctv
+from Vera.vera.godseye import godseye_imagery_core as _img
 
 try:
     from Vera.vera.security import secrets as vsecrets
@@ -577,7 +578,7 @@ async def _serve_tile(layer: str, z: int, y: int, x: int):
         "X-Content-Type-Options": "nosniff",
     }
     if cached.is_file():
-        return FileResponse(str(cached), media_type="image/jpeg",
+        return FileResponse(str(cached), media_type=_core.tile_media_type(layer),
                             headers={**headers, "X-Godseye-Tile": "hit"})
 
     url = _core.tile_upstream_url(
@@ -601,7 +602,7 @@ async def _serve_tile(layer: str, z: int, y: int, x: int):
     except OSError as e:                            # a full disk must not 500
         log.warning("godseye: could not cache tile %s/%s/%s: %s", z, y, x, e)
 
-    return Response(content=r.content, media_type="image/jpeg",
+    return Response(content=r.content, media_type=_core.tile_media_type(layer),
                     headers={**headers, "X-Godseye-Tile": "miss"})
 
 
@@ -669,6 +670,111 @@ async def cctv_refresh(per_source: int = 0, timeout: int = 45,
                       "feeds": manifest["feedCount"], "errors": len(errors)})
     return {"ok": True, "feedCount": manifest["feedCount"],
             "byProvider": manifest["byProvider"], "errors": errors}
+
+
+@capability(
+    "imagery.sources", memory="off", silent=True,
+    http_method="GET", http_path="/godseye/imagery/sources", http_tags=["godseye"],
+    description="Geospatial image providers: which need no key, and which are "
+                "key-gated and therefore currently skipped. This is search BY "
+                "LOCATION, not reverse image lookup. Output: {open[], keyed{}, "
+                "available[]}.",
+)
+async def imagery_sources(trace_id=None) -> Dict[str, Any]:
+    keyed = {name: {"env": env, "configured": bool(os.environ.get(env))}
+             for name, env in _img.KEYED_PROVIDERS.items()}
+    return {"open": list(_img.OPEN_PROVIDERS), "keyed": keyed,
+            "available": list(_img.OPEN_PROVIDERS)
+                         + [n for n, v in keyed.items() if v["configured"]],
+            "note": "Mapillary is the only provider carrying a camera bearing; "
+                    "set VERA_MAPILLARY_TOKEN to enable it."}
+
+
+@capability(
+    "imagery.search", memory="on",
+    http_method="POST", http_path="/godseye/imagery/search", http_tags=["godseye"],
+    description="Find images taken within a bounding box, across every "
+                "configured provider concurrently. Search BY LOCATION — not "
+                "reverse image search. A provider that fails is reported in "
+                "`errors`; one lacking a key is reported in `skipped`, kept "
+                "separate so a broken source cannot hide behind 'no key'. "
+                "Inputs: bbox ([south,west,north,east]!), limit (int=50), "
+                "sources (list[str]). Output: {count, byProvider, images[], "
+                "errors, skipped}.",
+)
+async def imagery_search(bbox: Optional[List[float]] = None, limit: int = 50,
+                         sources: Optional[List[str]] = None,
+                         trace_id=None) -> Dict[str, Any]:
+    if not bbox or len(bbox) != 4:
+        return {"ok": False, "error": "bbox required as [south, west, north, east]"}
+    try:
+        box = tuple(float(v) for v in bbox)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "bbox values must be numbers"}
+    if box[0] > box[2] or box[1] > box[3]:
+        return {"ok": False, "error": "bbox must be [south, west, north, east]"}
+
+    lat, lon, radius = _img.bbox_centre(box)
+    limit = max(1, min(int(limit or 50), 200))
+    wanted = set(sources or (list(_img.OPEN_PROVIDERS) + list(_img.KEYED_PROVIDERS)))
+    groups: List[List[Dict[str, Any]]] = []
+    errors: Dict[str, str] = {}
+    skipped: Dict[str, str] = {}
+
+    async def _get(client, url, params):
+        r = await client.get(url, params=params,
+                             headers={"user-agent": "Vera/Godseye imagery"})
+        r.raise_for_status()
+        return r.json()
+
+    async def _run_provider(name: str, client) -> None:
+        try:
+            if name == "commons":
+                geo = await _get(client, _img.COMMONS_API,
+                                 _img.commons_geosearch_params(lat, lon, radius, limit))
+                ids = [row.get("pageid") for row
+                       in (((geo or {}).get("query") or {}).get("geosearch") or [])
+                       if row.get("pageid")]
+                if not ids:
+                    groups.append([])
+                    return
+                # Coordinates and urls come from different endpoints; batch the
+                # second call so this stays two requests, not one per image.
+                info = await _get(client, _img.COMMONS_API,
+                                  _img.commons_imageinfo_params(ids))
+                groups.append(_img.parse_commons(geo, info))
+            elif name == "wikipedia":
+                groups.append(_img.parse_wikipedia(await _get(
+                    client, _img.WIKIPEDIA_API,
+                    _img.wikipedia_geosearch_params(lat, lon, radius, limit))))
+            elif name == "inaturalist":
+                groups.append(_img.parse_inaturalist(await _get(
+                    client, _img.INAT_API, _img.inat_params(box, limit))))
+            elif name in _img.KEYED_PROVIDERS:
+                token = os.environ.get(_img.KEYED_PROVIDERS[name], "")
+                if not token:
+                    skipped[name] = f"no {_img.KEYED_PROVIDERS[name]}"
+                    return
+                if name == "mapillary":
+                    groups.append(_img.parse_mapillary(await _get(
+                        client, _img.MAPILLARY_API,
+                        _img.mapillary_params(box, token, limit))))
+                else:
+                    groups.append(_img.parse_flickr(await _get(
+                        client, _img.FLICKR_API,
+                        _img.flickr_params(box, token, limit))))
+        except Exception as e:
+            errors[name] = f"{type(e).__name__}: {e}"[:200]
+
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        await asyncio.gather(*(_run_provider(n, client) for n in sorted(wanted)))
+
+    result = _img.build_result(groups, bbox=box, generated_at=now_iso(),
+                               errors=errors, skipped=skipped)
+    await emit_event({"type": "godseye.imagery.searched",
+                      "count": result["count"], "errors": len(errors)})
+    result["ok"] = True
+    return result
 
 
 @APP.get("/godseye/cctv/manifest.json", include_in_schema=False)
