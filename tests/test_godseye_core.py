@@ -139,7 +139,7 @@ def test_bad_tile_coordinates_are_refused(z, y, x):
 
 def test_tile_cache_path_is_built_from_ints(tmp_path):
     p = C.tile_cache_path(tmp_path, 3, 4, 5)
-    assert p == tmp_path / "3" / "4" / "5.jpg"
+    assert p == tmp_path / "imagery" / "3" / "4" / "5.jpg"
     assert tmp_path in p.parents
 
 
@@ -150,6 +150,44 @@ def test_tile_url_targets_the_configured_host_only():
     # An operator may point it at a mirror; the coordinates are still ints.
     custom = C.tile_upstream_url(3, 4, 5, "https://tiles.int/{z}/{y}/{x}.jpg")
     assert custom == "https://tiles.int/3/4/5.jpg"
+
+
+# ── all three imagery layers, not just the base ──────────────────────────────
+def test_every_layer_the_globe_stacks_can_be_proxied():
+    # The globe composites satellite imagery plus two Esri label overlays.
+    # Proxying only the base left two thirds of the tile traffic going straight
+    # to the internet, which is why caching the base alone barely helped.
+    assert set(C.TILE_LAYERS) == {"imagery", "reference", "places"}
+    for name in C.TILE_LAYERS:
+        assert C.tile_upstream_url(3, 4, 5, layer=name).endswith("/3/4/5")
+        assert C.tile_layer_is_valid(name) is True
+
+
+def test_layer_names_are_an_allowlist_not_a_pass_through():
+    for bad in ("", "../../etc", "http://evil/{z}", "IMAGERY", None, "tiles"):
+        assert C.tile_layer_is_valid(bad) is False
+        assert C.tile_is_valid(3, 4, 5, bad) is False
+        with pytest.raises(ValueError):
+            C.tile_upstream_url(3, 4, 5, layer=bad)
+
+
+def test_layers_are_cached_apart(tmp_path):
+    # Same z/y/x means different imagery per layer; one cache slot would serve
+    # a labels tile as satellite imagery.
+    paths = {C.tile_cache_path(tmp_path, 3, 4, 5, n) for n in C.TILE_LAYERS}
+    assert len(paths) == len(C.TILE_LAYERS)
+    with pytest.raises(ValueError):
+        C.tile_cache_path(tmp_path, 3, 4, 5, "../escape")
+
+
+def test_each_layer_keeps_its_own_zoom_ceiling():
+    # The label overlays stop at lower zooms than the imagery; asking past them
+    # only produces upstream 404s.
+    assert C.tile_is_valid(19, 0, 0, "imagery") is True
+    assert C.tile_is_valid(9, 0, 0, "reference") is False
+    assert C.tile_is_valid(8, 0, 0, "reference") is True
+    assert C.tile_is_valid(16, 0, 0, "places") is False
+    assert C.tile_is_valid(15, 0, 0, "places") is True
 
 
 def test_tiles_are_cached_outside_the_clone(tmp_path):
