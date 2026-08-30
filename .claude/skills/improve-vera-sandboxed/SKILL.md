@@ -243,6 +243,12 @@ handoffs, and immediately before review.
 
 ### Internal planning is not published documentation
 
+- Keep roadmap package IDs, wave/slice/stage labels, board IDs, and other
+  delivery-plan vocabulary out of product UI, capability descriptions, and
+  published subsystem prose. Describe the feature, behavior, maturity, and
+  remaining limitations directly. Internal identifiers belong only in the
+  shared planning area, work plan, board, commit history, and test names when
+  traceability genuinely requires them.
 - Only numbered root documents matching `documentation/[0-9][0-9]-*.md` are
   publishable subsystem documentation. Do not create plans, evaluations,
   handovers, internal notes, roadmaps, or postmortems in `documentation/`.

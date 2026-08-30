@@ -53,7 +53,7 @@ This lets Vera compare native DAG execution with libraries such as LangGraph,
 DBOS, or Temporal around one Run protocol instead of wrapping each library in a
 new agent loop.
 
-The LIB18 runtime matrix applies that boundary to agent frameworks. It keeps
+The runtime matrix applies that boundary to agent frameworks. It keeps
 upstream-documented features separate from Vera-verified bridge behavior across
 native Vera, LangGraph, PydanticAI, Smolagents, OpenClaw, Google ADK, OpenAI
 Agents SDK, Strands, Agno, and Hermes-compatible paths. Static declarations can
@@ -97,14 +97,14 @@ inventing a parallel state model. Explicit unknowns are preferable to a polished
 timeline that guesses what occurred.
 
 The Agent Bridges panel is the interoperability-specific projection. It shows
-LIB02's A2A foundation and inert client/server plan status, LIB18 runtime
+the A2A foundation and inert client/server plan status, runtime
 candidate/dimension coverage, queued live cases, and registration state for the
 shared Run, Workflow IR, telemetry, durability, runtime-matrix, A2A, Capability
 v2, resolver/policy, and source-intake capabilities. It also distinguishes
-W3-07's implemented inert build-plan contract from queued build and activation
-execution. LIB-04 adds the same distinction for structured generation: the
+the implemented inert build-plan contract from queued build and activation
+execution. Structured generation adds the same distinction: the
 portable schema/validation/retry contract is implemented, while provider-native,
-Instructor, Outlines, streaming, and model execution remain queued. LIB-06 adds
+Instructor, Outlines, streaming, and model execution remain queued. Document parsing adds
 the same honest boundary for documents: Agent Bridge displays the portable
 parse/frozen-corpus contract, supported media types, stable citation identity,
 and the `not_imported` Docling profile. Parsing, OCR, fidelity measurement, and
