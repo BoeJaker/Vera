@@ -172,4 +172,5 @@ def test_capability_wrappers_preserve_the_inert_boundary():
     panel = (caps._HERE / "integrations_panel.html").read_text(encoding="utf-8")
     assert "/integrations/source/lifecycle" in panel
     assert "Source intake" in panel
-    assert "inspection only · no network/install/activation" in panel
+    assert "MCP + OpenAPI inspection" in panel
+    assert "build plans · execution queued" in panel

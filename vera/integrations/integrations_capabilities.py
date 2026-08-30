@@ -59,6 +59,10 @@ from Vera.vera.integrations.source_intake import (
     lifecycle_contract as _source_lifecycle_contract,
     plan_transition as _plan_source_transition,
 )
+from Vera.vera.integrations.source_build_plan import (
+    build_plan_contract as _source_build_plan_contract,
+    plan_source_build as _plan_source_build,
+)
 
 try:
     from Vera.vera.security import secrets as vsecrets
@@ -877,6 +881,40 @@ async def integration_source_transition_plan(
 
 
 @capability(
+    "integration.source.build.status", http_method="GET",
+    http_path="/integrations/source/build/status",
+    http_tags=["integration", "intake"], memory="off", silent=True,
+    description="Return the deterministic W3-07 build/activation proposal contract. "
+                "Python, CLI, OCI, and repository execution remain queued; this "
+                "surface performs no fetch, install, build, activation, secret "
+                "resolution, network request, or external execution.",
+)
+async def integration_source_build_status(trace_id=None):
+    return _source_build_plan_contract()
+
+
+@capability(
+    "integration.source.build.plan", http_method="POST",
+    http_path="/integrations/source/build/plan",
+    http_tags=["integration", "intake"], memory="off",
+    description="Validate one bounded inline Python, CLI, OCI, or repository "
+                "descriptor and return an inert provenance/evidence/approval/"
+                "rollback plan. Input: document (object!). The plan is not applied.",
+)
+async def integration_source_build_plan(document: Optional[Dict] = None,
+                                        trace_id=None):
+    try:
+        return _plan_source_build(document or {}).to_dict()
+    except (TypeError, ValueError) as exc:
+        return {"schema": "vera.external-source-build-plan/v1",
+                "error": str(exc), "accepted": False,
+                "ready_for_build": False, "ready_for_activation": False,
+                "credentials_resolved": False, "network_io": False,
+                "fetches": False, "installs": False, "builds": False,
+                "activates": False, "registers": False, "executes": False}
+
+
+@capability(
     "integration.panel.html",
     http_method="GET", http_path="/integrations/panel", http_tags=["integration", "ui"],
     memory="off", silent=True,
@@ -904,6 +942,7 @@ register_ui(
         "integration.import_apps", "identity.resolve.status",
         "integration.source.lifecycle", "integration.source.inspect",
         "integration.source.transition.plan",
+        "integration.source.build.status", "integration.source.build.plan",
         # the one-click "register & secure everything" button drives autoenroll
         "autoenroll.scan", "autoenroll.run", "autoenroll.pending",
     ],
