@@ -70,6 +70,66 @@ def test_caltrans_ignores_noise_and_dedupes():
     assert len(C.parse_caltrans(CALTRANS + CALTRANS, CALTRANS_SRC)) == 2
 
 
+# ── live video, not stills ───────────────────────────────────────────────────
+def test_caltrans_keeps_the_stream_flag_the_first_parser_threw_away():
+    feeds = C.parse_caltrans(CALTRANS, CALTRANS_SRC)
+    # Field 5 is Caltrans' own "has live video" flag: cam 1 is "0", cam 2 "1".
+    # Roughly two thirds of their cameras set it; ignoring it discards every
+    # live stream the agency publishes.
+    assert feeds[0]["streamCapable"] is False and feeds[0]["detailsUrl"] is None
+    assert feeds[1]["streamCapable"] is True
+    assert feeds[1]["detailsUrl"].endswith(".htm")
+
+
+def test_stream_url_is_read_from_the_page_because_it_is_not_derivable():
+    html = ('<div><video src="x"></video>'
+            "var src = 'https://wzmedia.dot.ca.gov/D1/eureka_5th_r_320x240"
+            ".stream/playlist.m3u8';</div>")
+    # Page slug "us101eureka5thrstreetlookingnorth" vs stream "eureka_5th_r" —
+    # no rule maps one to the other, hence the per-camera page read.
+    assert C.extract_stream_url(html).endswith("/playlist.m3u8")
+    assert C.extract_stream_url("<html>no stream here</html>") == ""
+    assert C.extract_stream_url(None) == ""
+
+
+def test_a_camera_is_only_video_once_a_real_playlist_is_held():
+    feeds = C.parse_caltrans(CALTRANS, CALTRANS_SRC)
+    flagged = feeds[1]["id"]
+    # The flag alone is a promise, not a stream: promoting on it would fill the
+    # map with cameras that show nothing when clicked.
+    assert C.video_only(feeds) == []
+    applied = C.apply_streams(feeds, {flagged: "https://x/playlist.m3u8"})
+    videos = C.video_only(applied)
+    assert len(videos) == 1 and videos[0]["mediaType"] == "stream"
+    assert videos[0]["videoUrl"].endswith(".m3u8")
+
+
+def test_tfl_clips_count_as_video_but_never_as_stream():
+    feeds = C.parse_tfl(TFL, TFL_SRC)
+    assert feeds[0]["mediaType"] == "video"
+    assert feeds[0] in C.video_only(feeds)       # watchable motion
+    assert feeds[0]["mediaType"] != "stream"     # but not live
+
+
+def test_resolution_is_batched_and_resumable():
+    feeds = C.parse_caltrans(CALTRANS, CALTRANS_SRC)
+    todo = C.pending_stream_targets(feeds, {})
+    assert [t["id"] for t in todo] == [feeds[1]["id"]]     # only the flagged one
+    # Already-resolved cameras are not re-fetched, which is what makes repeated
+    # calls resume rather than restart.
+    assert C.pending_stream_targets(feeds, {feeds[1]["id"]: "u"}) == []
+    assert len(C.pending_stream_targets(feeds * 50, {}, limit=3)) == 3
+
+
+def test_manifest_reports_video_coverage_and_what_is_still_pending():
+    feeds = C.parse_caltrans(CALTRANS, CALTRANS_SRC)
+    m = C.build_manifest([feeds], generated_at="t")
+    assert m["videoCount"] == 0 and m["streamPending"] == 1
+    m2 = C.build_manifest([C.apply_streams(feeds, {feeds[1]["id"]: "https://x.m3u8"})],
+                          generated_at="t")
+    assert m2["videoCount"] == 1 and m2["streamPending"] == 0
+
+
 def test_split_handles_the_non_ascii_separator():
     assert C.split_catalog_payload("a\xa4b\xa4c") == ["a", "b", "c"]
     assert C.split_catalog_payload("") == []

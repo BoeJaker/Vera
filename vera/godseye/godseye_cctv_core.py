@@ -25,7 +25,17 @@ from typing import Any, Dict, Iterable, List, Optional
 #: Output shape is Godseye's own: mergeFeeds() drops anything without finite
 #: `lat`/`lng` (note lng, NOT lon) and dedupes on provider:id:lat:lng.
 FEED_KEYS = ("id", "name", "lat", "lng", "url", "videoUrl", "fallbackUrl",
-             "city", "mediaType", "refreshSeconds", "provider")
+             "city", "mediaType", "refreshSeconds", "provider",
+             # Most agency cameras are STILLS by design. These two carry the
+             # difference: `streamCapable` says the operator publishes live
+             # video for this camera, `detailsUrl` is the page where the stream
+             # url has to be read from (it is not derivable — the page slug
+             # "us101eureka5thrstreetlookingnorth" becomes "eureka_5th_r").
+             "streamCapable", "detailsUrl")
+
+#: A camera is only "video" if you can actually watch motion. Stills refreshed
+#: every few minutes are not, however often they update.
+VIDEO_MEDIA_TYPES = ("stream", "video")
 
 #: Caltrans publishes one district file per district, 01-12, and each really is
 #: distinct data (verified by hash — d01/d04/d08/d12 all differ). Godseye reads
@@ -128,6 +138,10 @@ def parse_caltrans(text: str, source: Dict[str, Any],
             continue
         page_url, name = parts[0], parts[3] or f"Caltrans Camera {i + 1}"
         lng, lat = _num(parts[1]), _num(parts[2])
+        # Field 5 is Caltrans' own "this camera has live video" flag. Roughly
+        # two thirds of them set it, and ignoring it — as the first version of
+        # this parser did — throws away every live stream the agency publishes.
+        stream_capable = str(parts[4] if len(parts) > 4 else "0").strip() == "1"
         if lat is None or lng is None or not page_url.startswith("https://"):
             continue
         loc = _CALTRANS_LOC.search(page_url)
@@ -144,7 +158,9 @@ def parse_caltrans(text: str, source: Dict[str, Any],
             url=still, videoUrl=None, fallbackUrl=still,
             city=source.get("region", ""), mediaType="image",
             refreshSeconds=source.get("refresh_seconds"),
-            provider=source["provider"]))
+            provider=source["provider"],
+            streamCapable=stream_capable,
+            detailsUrl=page_url if stream_capable else None))
         if len(feeds) >= limit:
             break
     return feeds
@@ -238,6 +254,66 @@ def parse_source(source: Dict[str, Any], body: Any,
 
 
 # ── manifest assembly ────────────────────────────────────────────────────────
+_M3U8 = re.compile(r"https://[^\s\"'<>]+\.m3u8")
+
+
+def extract_stream_url(html: str) -> str:
+    """Pull the HLS playlist out of a camera's detail page.
+
+    It cannot be derived: the page slug is
+    ``us101eureka5thrstreetlookingnorth`` while the stream is
+    ``wzmedia.dot.ca.gov/D1/eureka_5th_r_320x240.stream/playlist.m3u8``. So the
+    page has to be read once per camera — which is why results are cached
+    rather than re-resolved on every manifest build.
+    """
+    m = _M3U8.search(str(html or ""))
+    return m.group(0) if m else ""
+
+
+def apply_streams(feeds: List[Dict[str, Any]],
+                  streams: Dict[str, str]) -> List[Dict[str, Any]]:
+    """Fold resolved stream urls back into feeds, by feed id.
+
+    A camera becomes ``mediaType: "stream"`` only once a real playlist url is
+    held for it. A `streamCapable` flag on its own is a promise, not a stream;
+    promoting on the flag alone fills the map with cameras that show nothing.
+    """
+    out = []
+    for feed in feeds:
+        url = (streams or {}).get(feed.get("id", ""))
+        if url:
+            feed = {**feed, "videoUrl": url, "mediaType": "stream"}
+        out.append(feed)
+    return out
+
+
+def video_only(feeds: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Stills refreshed every few minutes are not video, however often they
+    update — that distinction is the whole point of this filter."""
+    return [f for f in feeds if f.get("mediaType") in VIDEO_MEDIA_TYPES]
+
+
+def pending_stream_targets(feeds: List[Dict[str, Any]], streams: Dict[str, str],
+                           limit: int = 250) -> List[Dict[str, str]]:
+    """Which cameras still need their detail page read.
+
+    Batched so resolution is incremental and resumable: there are thousands,
+    and hammering an agency web server to fill a cache in one pass is how an IP
+    gets blocked.
+    """
+    out = []
+    for feed in feeds:
+        fid = feed.get("id", "")
+        if not feed.get("streamCapable") or not feed.get("detailsUrl"):
+            continue
+        if fid in (streams or {}):
+            continue
+        out.append({"id": fid, "detailsUrl": feed["detailsUrl"]})
+        if len(out) >= limit:
+            break
+    return out
+
+
 def merge_feeds(groups: Iterable[Iterable[Dict[str, Any]]]) -> List[Dict[str, Any]]:
     """Same dedupe key Godseye's own mergeFeeds uses, so a camera that appears
     in two providers collapses to one marker rather than stacking."""
@@ -269,6 +345,11 @@ def build_manifest(groups: Iterable[Iterable[Dict[str, Any]]], *, generated_at: 
         "verifiedCount": len(feeds),
         "catalogCount": 0,
         "continuousLiveCount": sum(1 for f in feeds if f.get("mediaType") == "stream"),
+        # How much of the map is watchable motion vs a refreshing still, and
+        # how much live video is still waiting on a detail-page read.
+        "videoCount": len(video_only(feeds)),
+        "streamPending": sum(1 for f in feeds
+                             if f.get("streamCapable") and f.get("mediaType") != "stream"),
         "source": "vera",
         "byProvider": by_provider,
         "errors": errors or {},
