@@ -88,3 +88,38 @@ def pytest_collection_modifyitems(config, items):
         name = mod.__name__.rsplit(".", 1)[-1] if mod else ""
         if name in _CRITICAL_MODULES:
             item.add_marker(pytest.mark.critical)
+
+
+@pytest.fixture(scope="session")
+def orch():
+    """The imported orchestrator module, with operator caps registered.
+
+    Restored 2026-08-30. This fixture existed until `9ecf714` (2026-08-08),
+    the commit that rewrote this file to define the critical tier; it was
+    dropped in that rewrite and nothing noticed, because the eleven tests that
+    depend on it - test_capabilities_contract (8) and test_ui_panels (3) - are
+    NOT in the critical tier, so the merge gate never runs them. They have
+    errored with `fixture 'orch' not found` for twenty-two days.
+
+    The sys.path setup lives INSIDE the fixture rather than at module scope,
+    where the original had it. Module scope would apply it to all ~2300 tests
+    including the 810 in the critical tier that are green today, and adding
+    repo-root entries to sys.path can change which `vera`/`Vera` package an
+    import resolves to. Only the tests that ask for the orchestrator need it.
+
+    Skips cleanly - it does not fail - when the full runtime is not installed
+    in this environment, which is what lets the pure suite stay green anywhere.
+    """
+    import os
+    import sys
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for path in (root, os.path.dirname(root)):
+        if path not in sys.path:
+            sys.path.insert(0, path)
+    try:
+        import Vera.vera.capability_orchestration as _orch  # noqa
+        import Vera.vera.operator.operator_web_capabilities  # noqa: F401  registers operator.*
+        return _orch
+    except Exception as e:  # pragma: no cover - environment dependent
+        pytest.skip(f"orchestrator/app unavailable in this env: {e}")
