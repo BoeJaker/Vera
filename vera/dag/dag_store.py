@@ -1500,6 +1500,30 @@ async def dag_store_get(id: str = "", name: str = "", trace_id=None):
 
 
 @capability(
+    "dag.workflow.inspect", memory="off",
+    http_method="GET", http_path="/dag/workflow/inspect", http_tags=["dag"],
+    description="Project one stored DAG into Workflow IR while preserving its stored "
+                "identity, definition hash, registered capability aliases, conversion "
+                "gaps, and native execution-mode ownership. Read-only; never executes.",
+)
+async def dag_workflow_inspect(id: str = "", name: str = "", trace_id=None):
+    from Vera.vera.dag.stored_dag_workflow import inspect_stored_dag_workflow
+    rec = await DAG_STORE.get(id) if id else None
+    if not rec and name:
+        rec = await DAG_STORE.get_by_name(name)
+    if not rec:
+        return {"error": f"DAG not found: {id or name}", "executes": False,
+                "mutates": False}
+    aliases = [cap_name for cap_name, dag_id in _DAG_CAP_REGISTRY.list().items()
+               if dag_id == rec.id]
+    try:
+        return inspect_stored_dag_workflow(rec.to_dict(), registered_aliases=aliases)
+    except (TypeError, ValueError) as exc:
+        return {"error": "invalid_stored_dag", "detail": str(exc),
+                "executes": False, "mutates": False}
+
+
+@capability(
     "dag.store_search", memory="off",
     http_method="POST", http_path="/dag/store/search", http_tags=["dag"],
     description="Semantic + keyword search across stored DAGs. "
