@@ -4712,16 +4712,19 @@ function parseState(){try{return JSON.parse(document.getElementById('dagState').
 async function runDag(){
   const dag=parseDag();if(!dag)return;
   setEl('dagStatus','⟳ Running…','');
-  const res=await api('/dag/run','POST',{dag,state:parseState(),supervised:false});
+  const res=await api('/dag/run','POST',{dag,state:parseState(),supervised:false,include_workflow_ir:true});
   renderDagResult(res?.result??res);
-  setEl('dagStatus','✓ Done','ok');
+  const wir=res?.workflow_ir||{};
+  setEl('dagStatus',wir.authoritative
+    ?('✓ Done · Workflow IR '+String(wir.workflow_hash||'').slice(0,22)+'…')
+    :('✓ Done · native compatibility'+(wir.reason?' · '+wir.reason:'')),'ok');
 }
 async function runDagSup(){
   const dag=parseDag();if(!dag)return;
   setEl('dagStatus',' Supervised…','');
-  const res=await api('/dag/run','POST',{dag,state:parseState(),supervised:true});
+  const res=await api('/dag/run','POST',{dag,state:parseState(),supervised:true,include_workflow_ir:true});
   renderDagResult(res?.result??res);
-  setEl('dagStatus','✓ Supervised done','ok');
+  setEl('dagStatus','✓ Supervised done · native (IR parity pending)','ok');
 }
 
 function renderDagResult(result) {

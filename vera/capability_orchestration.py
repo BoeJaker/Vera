@@ -8323,25 +8323,43 @@ async def cap_ollama_embed_config_set(
 
 @capability("dag.run", memory="on",
             http_method="POST", http_path="/dag/run", http_tags=["dag"],
-            description="Execute a DAG against an initial state. Set supervised=true for LLM checkpoints.")
+            description="Execute a DAG against an initial state. Set supervised=true for LLM "
+                        "checkpoints. Set include_workflow_ir=true to inspect the exact Workflow "
+                        "IR authority or explicit native-compatibility evidence without changing "
+                        "the default response shape.")
 async def cap_dag_run(dag: list = None, state: dict = None, supervised: bool = False,
-                      session_id: str = "", trace_id=None):
+                      session_id: str = "", include_workflow_ir: bool = False,
+                      trace_id=None):
+    from Vera.vera.execution.dag_workflow_execution import prepare_plain_dag_execution
     from Vera.vera.execution.run_shadow import execute_dag_with_run_shadow
     tid = trace_id or new_id()
+    execution_graph = dag or []
+    workflow_evidence = {
+        "authoritative": False, "mode": "native_supervised",
+        "reason": "supervised_parity_pending", "workflow_hash": "",
+    }
     if supervised:
         async def native_executor(graph, initial_state, _trace_id, _observer):
             return await supervised_run_graph(graph, initial_state,
                                               trace_id=_trace_id,
                                               run_observer=_observer)
     else:
+        workflow_evidence = prepare_plain_dag_execution(execution_graph)
+        execution_graph = workflow_evidence["graph"]
         async def native_executor(graph, initial_state, native_trace_id, observer):
             return await run_graph(graph, initial_state, native_trace_id,
                                    run_observer=observer)
     result = await execute_dag_with_run_shadow(
-        executor=native_executor, graph=dag or [], state=state or {},
+        executor=native_executor, graph=execution_graph, state=state or {},
         trace_id=tid, emit=emit_event, session_id=session_id,
+        workflow_id=workflow_evidence.get("workflow_hash") or tid,
     )
-    return {"trace_id":tid,"result":result}
+    response = {"trace_id": tid, "result": result}
+    if include_workflow_ir:
+        response["workflow_ir"] = {
+            key: value for key, value in workflow_evidence.items() if key != "graph"
+        }
+    return response
 
 def _inspection_contract(canonical_task: str, *, filesystem: str = "not_required",
                          tenant: str = "request_scoped", pagination: str = "not_applicable",

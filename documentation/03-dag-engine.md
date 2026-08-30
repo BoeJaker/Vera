@@ -123,6 +123,18 @@ supervised, monitored, streamed, and stepwise execution remain native. This
 slice neither edits the saved record nor claims execution parity; those modes
 move only after their separate Run/control/recovery gates pass.
 
+Supported unsupervised `dag.run` definitions now pass through an exact Workflow
+IR boundary. Vera imports the submitted graph, normalizes it, exports it, and
+requires canonical round-trip equality before the Workflow IR definition becomes
+authoritative. The materialized graph still runs through the established native
+node executor, preserving capability invocation, conditions, parallel state
+merge, errors, and Run observation. The Workflow IR content hash becomes the
+Run `workflow_id`; callers may request the corresponding provenance metadata
+without changing the legacy response shape. Callable conditions, malformed
+nodes, or any non-exact definition stay on an explicitly labelled
+`native_compatibility` path; no lossy execution is permitted. Supervised,
+monitored, streamed, and stepwise modes remain native and separately gated.
+
 The initial portable core covers sequential capability tasks, flat parallel
 groups, output state keys, and `CONDITION:<state-key>` guards. Native input/output
 maps round-trip under namespaced extensions but are reported as non-blocking gaps

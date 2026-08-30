@@ -232,3 +232,9 @@ def test_dag_run_capability_keeps_existing_response_shape(monkeypatch):
     assert set(result) == {"trace_id", "result"}
     assert [event["event"]["type"] for event in events] == [
         "run.started", "run.completed"]
+
+    inspected = asyncio.run(orchestration.cap_dag_run.__wrapped__(
+        dag=[["test.cap", "answer"]], state={"input": "same"},
+        supervised=False, include_workflow_ir=True, trace_id="trace-1"))
+    assert inspected["workflow_ir"]["authoritative"] is True
+    assert inspected["workflow_ir"]["workflow_hash"].startswith("sha256:")

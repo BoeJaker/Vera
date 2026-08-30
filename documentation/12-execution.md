@@ -10,6 +10,15 @@ journaling, artifact collation, progress, and persistence while making the plan
 inspectable and portable. Workflow IR still has no general execution entry point,
 and custom or iterative Dream pipelines remain native until separately gated.
 
+## Plain DAG execution boundary
+
+Exactly round-trippable unsupervised DAG definitions now use normalized
+Workflow IR as their authoritative definition boundary. The existing native DAG
+runner still owns node effects, so execution behavior does not fork; Run records
+bind `workflow_id` to the Workflow IR content hash. Definitions that cannot be
+represented exactly retain native execution with explicit compatibility
+evidence. Supervised and the other enhanced DAG modes do not inherit this claim.
+
 `execution/exec_capabilities.py` is two capability groups in one module: **`exec.*`** — shell, PowerShell, code, and SSH execution — and **`netscan.*`** — network asset discovery, target probing, and an auxiliary topology graph. Both are governed by a single configurable **exec sandbox policy**, and both surface their own harness tabs (the tabbed **Exec** consoles and the Cytoscape **Netmap**).
 
 This is the module that lets Vera (and an agent driving it) actually *touch* the host and the network — so the sandbox section is the most important part of the page.
