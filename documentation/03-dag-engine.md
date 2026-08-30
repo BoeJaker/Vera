@@ -113,6 +113,16 @@ native DAG structure into Workflow IR; `workflow.ir.export_dag` performs the
 reverse conversion; and `workflow.ir.validate` returns the normalized document
 and stable SHA-256 content hash. All three report `executes: false`.
 
+W4-02 begins product convergence with `dag.workflow.inspect`. Unlike the raw
+array converter, this read-only facade starts from a persisted DAG ID or name
+and preserves the record identity, a stable hash of the DAG plus initial state,
+the stored content-hash status, and every currently registered `dag.*`
+capability alias. The DAG Workshop shows this evidence beside the saved
+definition. It also lists conversion gaps and states plainly that plain,
+supervised, monitored, streamed, and stepwise execution remain native. This
+slice neither edits the saved record nor claims execution parity; those modes
+move only after their separate Run/control/recovery gates pass.
+
 The initial portable core covers sequential capability tasks, flat parallel
 groups, output state keys, and `CONDITION:<state-key>` guards. Native input/output
 maps round-trip under namespaced extensions but are reported as non-blocking gaps

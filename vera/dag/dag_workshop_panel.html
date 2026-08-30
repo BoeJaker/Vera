@@ -1590,7 +1590,10 @@ function libRender(){
 async function libSelect(id){
   document.querySelectorAll('.dag-card').forEach(c=>c.classList.toggle('selected', c.dataset.id===id));
   LIB_SELECTED = id;
-  const d = await api('/dag/store/get?id='+encodeURIComponent(id));
+  const [d,wir] = await Promise.all([
+    api('/dag/store/get?id='+encodeURIComponent(id)),
+    api('/dag/workflow/inspect?id='+encodeURIComponent(id))
+  ]);
   if(!d){ toast('Could not load DAG','err'); return; }
   const det = document.getElementById('libDetail'); det.classList.add('open');
   const stepsHtml = (d.dag||[]).map((node,i)=>{
@@ -1612,6 +1615,14 @@ async function libSelect(id){
     <div class="detail-sec"><div class="detail-sec-h">Steps (${(d.dag||[]).length})</div><div class="dag-step-list">${stepsHtml}</div></div>
     <div class="detail-sec"><div class="detail-sec-h">Initial state</div>
       <pre class="preview-block">${esc(JSON.stringify(d.initial_state||{},null,2))}</pre></div>
+    ${wir&&!wir.error?`<div class="detail-sec"><div class="detail-sec-h">Workflow IR inspection</div>
+      <div style="font-size:9.5px;color:var(--text2);line-height:1.5;padding:6px 8px;background:var(--bg0);border:1px solid var(--border2);border-radius:4px">
+        <b>${wir.ok?'Portable definition':'Compatibility gaps'}</b> · read-only · native execution
+        <br><span style="font-family:var(--mono);font-size:8.5px;color:var(--dim2)">${esc(wir.workflow_hash||'no portable hash')}</span>
+        <br>definition ${esc(wir.record?.definition_hash||'')} · stored hash ${esc(wir.record?.stored_hash_status||'unknown')}
+        <br>aliases: ${esc((wir.aliases||[]).join(', ')||'not registered')}
+        <br>gaps: ${(wir.gaps||[]).length} · supervised/monitored/streamed/stepwise remain native
+      </div></div>`:''}
     <div class="action-row" style="margin-top:auto;padding-top:8px;border-top:1px solid var(--border)">
       <button class="btn sm primary" onclick="libRunSelected()">Run</button>
       <button class="btn sm" onclick="libEditSelected()">Edit</button>
