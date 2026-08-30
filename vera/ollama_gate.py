@@ -28,7 +28,7 @@ import os
 import socket
 import time
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 _HOST = socket.gethostname()
 
@@ -185,6 +185,64 @@ def is_reapable_local_lease(owner: str, this_host: str, pid_alive) -> bool:
     if not host or host != this_host or pid is None:
         return False
     return not pid_alive(pid)
+
+
+def is_lease_of_host(owner: str, host: str) -> bool:
+    """True when this lease was minted by `host`.
+
+    Deliberately NOT a variant of is_reapable_local_lease: that one asks "did a
+    dead process on MY host leak this", and its refusal to touch another host's
+    lease is a safety rule that must stay intact. This asks a different, narrower
+    question with a different justification — see release_leases_for_host.
+    """
+    h, _pid = parse_owner(owner)
+    return bool(h) and bool(host) and h == host
+
+
+async def release_leases_for_host(r, host: str) -> Dict[str, Any]:
+    """Clear every gate slot owned by `host`. Caller must KNOW that host cannot
+    still be working.
+
+    The one legitimate use is immediately before `docker pause`. A paused
+    container is SIGSTOPped: it cannot renew its lease, cannot release it, and
+    cannot use it — but the lease still looks live (unexpired, owned), so
+    sweep_dead_local_leases correctly refuses to reclaim it, since it cannot
+    verify a peer's liveness and clearing a live peer slot would double-book the
+    GPU. A frozen owner is precisely the case that rule cannot distinguish.
+
+    Observed 2026-08-30: the container `vera-dev`, paused, held the capacity-1
+    GPU slot; a census loop waited its entire 25-minute cap and recorded
+    planned=0 executed=0 — it never got a slot at all.
+
+    Pausing is what makes this safe. We are not guessing whether the owner is
+    alive: we are about to freeze it, so it definitionally does no further work
+    with the slot. And the idle-reap only pauses containers it has judged IDLE,
+    so a lease still held at that point is already leaked. Never raises.
+    """
+    cleared: List[Dict[str, str]] = []
+    if r is None or not host:
+        return {"cleared": [], "count": 0}
+    try:
+        keys = []
+        async for k in r.scan_iter(match="vera:ollama:gate:*:slot:*"):
+            keys.append(k.decode() if isinstance(k, (bytes, bytearray)) else str(k))
+    except Exception:
+        return {"cleared": [], "count": 0, "error": "scan_iter unavailable"}
+    for k in keys:
+        try:
+            v = await r.get(k)
+        except Exception:
+            continue
+        if v is None:
+            continue
+        owner = v.decode() if isinstance(v, (bytes, bytearray)) else str(v)
+        if is_lease_of_host(owner, host):
+            try:
+                if await r.eval(_RELEASE_LUA, 1, k, owner):   # owner-fenced del
+                    cleared.append({"key": k, "owner": owner})
+            except Exception:
+                pass
+    return {"cleared": cleared, "count": len(cleared)}
 
 
 def _pid_alive(pid: int) -> bool:

@@ -7078,6 +7078,39 @@ async def _sandbox_pinned() -> set:
         return set()
 
 
+async def _release_container_gate_leases(name: str) -> int:
+    """Hand back any Ollama gate slot held by container `name`, before pausing it.
+
+    A gate owner token is `<hostname>:<pid>:<hash>`, and docker sets a container's
+    hostname to its short id — so the container's id is the key to its leases.
+
+    Never raises and never blocks the pause: failing to release costs the old
+    behaviour (a slot held until its TTL), while failing to pause would leave an
+    idle container running. Returns how many slots were handed back.
+    """
+    try:
+        insp = await _sh(["docker", "inspect", "-f", "{{.Config.Hostname}}", name],
+                         timeout=10)
+        host = (insp.get("out") or "").strip()
+        if not host:
+            return 0
+        from Vera.vera import capability_orchestration as _orch
+        from Vera.vera import ollama_gate as _gate
+        r = getattr(_orch, "COORD_REDIS", None)
+        if r is None:
+            return 0
+        res = await _gate.release_leases_for_host(r, host)
+        n = int(res.get("count") or 0)
+        if n:
+            log.info("evolve: released %d GPU gate slot(s) held by %s (%s) before pause",
+                     n, name, host)
+            await _audit("sandbox.gate", f"released {n} gate slot(s) from {name} before pause")
+        return n
+    except Exception as e:                            # pragma: no cover
+        log.debug("gate release before pause skipped for %s: %s", name, e)
+        return 0
+
+
 async def _sandbox_unpause_if_paused(name: str) -> bool:
     """Auto-resume a paused container before docker-exec'ing into it. The idle
     reaper may have frozen it; this makes over-pausing HARMLESS — the next real
@@ -7793,11 +7826,14 @@ async def evolve_sandbox_pause(trace_id=None):
     status = await _sandbox_container_status()
     if status != "running":
         return {"ok": False, "error": f"sandbox container is '{status or 'absent'}', not running"}
+    released = await _release_container_gate_leases(_SANDBOX_CONTAINER)
     r = await _sh(["docker", "pause", _SANDBOX_CONTAINER], timeout=15)
     if r["ok"]:
         await _audit("sandbox.pause", "paused manually")
-        await emit_event({"type": "evolve.sandbox.paused", "manual": True})
-    return {"ok": r["ok"], "error": r["err"] if not r["ok"] else ""}
+        await emit_event({"type": "evolve.sandbox.paused", "manual": True,
+                          "gate_released": released})
+    return {"ok": r["ok"], "error": r["err"] if not r["ok"] else "",
+            "gate_released": released}
 
 
 @capability("evolve.sandbox.resume", memory="off",
@@ -7913,6 +7949,13 @@ async def _sandbox_reap(dry_run: bool = False) -> Dict[str, Any]:
         plan.append({"name": name, "branch": branch, "idle_s": idle_s})
     if not dry_run:
         for p in plan:
+            # BEFORE freezing it: hand back any GPU gate slot it holds. A paused
+            # container cannot renew, release or use its lease, but the lease still
+            # looks live, so the leaked-lease sweep rightly won't touch it — and the
+            # gate is capacity 1, so one frozen holder starves prod, every sandbox
+            # and the census until the TTL expires (observed 2026-08-30: a census
+            # goal burned its whole 25-minute cap and recorded planned=0 executed=0).
+            p["gate_released"] = await _release_container_gate_leases(p["name"])
             rr = await _sh(["docker", "pause", p["name"]], timeout=15)
             p["paused"] = bool(rr["ok"])
             if rr["ok"]:
