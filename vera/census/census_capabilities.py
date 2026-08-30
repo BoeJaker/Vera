@@ -16,10 +16,11 @@ harness owns the runs; this owns reading them. That matters because the census
 is the measuring instrument — a UI that could quietly perturb it would make
 every number it displays suspect.
 """
+import asyncio
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY, capability
 from Vera.vera.census import census_core as cc
@@ -39,9 +40,29 @@ _MAX_BYTES = 8 * 1024 * 1024
 _MAX_RECORDS = 500
 
 
-def _read_run(path: Path) -> List[Dict[str, Any]]:
+# Parsed runs, keyed by (path, mtime_ns, size). An ARCHIVED run never changes,
+# so re-parsing every file on every panel refresh is pure waste; only the live
+# census.jsonl moves, and its stat changes when it does. Bounded because the
+# census dir only ever holds a few dozen files.
+_CACHE: Dict[str, Tuple[Tuple[int, int], List[Dict[str, Any]]]] = {}
+_CACHE_MAX = 64
+
+
+def _stat_key(path: Path) -> Optional[Tuple[int, int]]:
+    try:
+        st = path.stat()
+        return (st.st_mtime_ns, st.st_size)
+    except Exception:
+        return None
+
+
+def _read_run_sync(path: Path) -> List[Dict[str, Any]]:
     """Parse one census JSONL file. A malformed line is skipped, not fatal —
     the file is appended to by a live run and can be caught mid-write."""
+    key = _stat_key(path)
+    cached = _CACHE.get(str(path))
+    if key is not None and cached is not None and cached[0] == key:
+        return cached[1]
     out: List[Dict[str, Any]] = []
     try:
         if path.stat().st_size > _MAX_BYTES:
@@ -61,9 +82,60 @@ def _read_run(path: Path) -> List[Dict[str, Any]]:
                 if len(out) >= _MAX_RECORDS:
                     break
     except FileNotFoundError:
-        pass
+        return out
     except Exception as e:
         log.warning("census: reading %s failed: %s", path, e)
+        return out
+    if key is not None:
+        if len(_CACHE) >= _CACHE_MAX:
+            _CACHE.clear()
+        _CACHE[str(path)] = (key, out)
+    return out
+
+
+async def _read_run(path: Path) -> List[Dict[str, Any]]:
+    """Off the event loop. These are small files on local disk, but the panel
+    reads every run at once and the box is often mid-census — and synchronous
+    I/O inside an async handler is exactly the stall pattern that produced the
+    WebSocket flapping this codebase already has a fix for. Cheap to do right."""
+    return await asyncio.to_thread(_read_run_sync, path)
+
+
+def _redis():
+    """The shared client, fetched late — importing it at module scope binds
+    whatever REDIS was at import time, which is None during startup."""
+    try:
+        from Vera.vera import capability_orchestration as _orch
+        return getattr(_orch, "REDIS", None)
+    except Exception:
+        return None
+
+
+# The loop's own replay log. Same key the trace cap reads; the run's OUTPUT text
+# only exists here (the run hash holds goal/status/timestamps and nothing else).
+_EVENTS_KEY = "vera:loop:events:%s"
+_MAX_EVENTS = 4000
+
+
+async def _loop_events(session_id: str) -> List[Dict[str, Any]]:
+    """Raw events for one loop run, or [] when they have aged out."""
+    r = _redis()
+    sid = (session_id or "").strip()
+    if not r or not sid:
+        return []
+    try:
+        raw = await r.lrange(_EVENTS_KEY % sid, 0, _MAX_EVENTS - 1)
+    except Exception as e:
+        log.info("census: events for %s unavailable: %s", sid, e)
+        return []
+    out: List[Dict[str, Any]] = []
+    for x in raw or []:
+        try:
+            d = json.loads(x.decode() if isinstance(x, (bytes, bytearray)) else x)
+        except Exception:
+            continue
+        if isinstance(d, dict):
+            out.append(d)
     return out
 
 
@@ -95,8 +167,11 @@ def _run_files() -> Dict[str, Path]:
         "trend_trusted, dir}."),
 )
 async def cap_census_runs(trace_id=None) -> Dict[str, Any]:
-    summaries = [cc.summarise_run(rid, _read_run(p))
-                 for rid, p in _run_files().items()]
+    files = _run_files()
+    # Concurrently, not one after another: this is the panel's first call and it
+    # touches every run, so serialising the reads is the whole latency.
+    records = await asyncio.gather(*(_read_run(p) for p in files.values()))
+    summaries = [cc.summarise_run(rid, recs) for rid, recs in zip(files, records)]
     hist = cc.history(summaries)
     hist["dir"] = str(CENSUS_DIR)
     return hist
@@ -117,7 +192,7 @@ async def cap_census_run(run: str = "", trace_id=None) -> Dict[str, Any]:
     files = _run_files()
     if rid not in files:
         return {"error": f"unknown run '{rid}'", "available": sorted(files)}
-    records = _read_run(files[rid])
+    records = await _read_run(files[rid])
     return {"run_id": rid, "summary": cc.summarise_run(rid, records),
             "records": records}
 
@@ -144,7 +219,7 @@ async def cap_census_compare(base: str = "", head: str = "", trace_id=None) -> D
     if missing:
         return {"error": f"unknown run(s): {', '.join(missing)}",
                 "available": sorted(files)}
-    br, hr = _read_run(files[b]), _read_run(files[h])
+    br, hr = await asyncio.gather(_read_run(files[b]), _read_run(files[h]))
     goals = cc.compare_runs(br, hr)
     counts: Dict[str, int] = {}
     for g in goals:
@@ -152,6 +227,117 @@ async def cap_census_compare(base: str = "", head: str = "", trace_id=None) -> D
     return {"base": b, "head": h, "goals": goals, "counts": counts,
             "base_trusted": cc.summarise_run(b, br)["counters_reconcile"],
             "head_trusted": cc.summarise_run(h, hr)["counters_reconcile"]}
+
+
+_SESSIONS_KEY = "vera:loop:sessions"
+_RUN_KEY = "vera:loop:run:%s"
+
+
+def _rd(v: Any) -> str:
+    return v.decode() if isinstance(v, (bytes, bytearray)) else str(v)
+
+
+async def _running_loop() -> Dict[str, Any]:
+    """The loop session currently running, if any.
+
+    /workshop/agent_loop/sessions is a plain route rather than a capability, so
+    this reads the same Redis keys it does instead of reaching over HTTP to our
+    own process.
+    """
+    r = _redis()
+    if not r:
+        return {}
+    try:
+        sids = await r.zrevrange(_SESSIONS_KEY, 0, 40)
+    except Exception as e:
+        log.info("census.live: session index unavailable: %s", e)
+        return {}
+    for raw in sids or []:
+        sid = _rd(raw)
+        try:
+            run = {_rd(k): _rd(v) for k, v in (await r.hgetall(_RUN_KEY % sid) or {}).items()}
+        except Exception:
+            continue
+        if run.get("status") == "running":
+            run["session_id"] = sid
+            return run
+    return {}
+
+
+def _goal_ids_sync() -> List[str]:
+    try:
+        with (CENSUS_DIR / "goals.json").open(encoding="utf-8") as fh:
+            return [str(g.get("id")) for g in json.load(fh) if isinstance(g, dict)]
+    except Exception:
+        return []
+
+
+@capability(
+    "census.live", memory="off", silent=True,
+    http_method="GET", http_path="/census/live", http_tags=["census", "workshop"],
+    description=(
+        "The census RUN IN FLIGHT — what it has finished, what it is working on "
+        "right now, and that goal's live stats. A goal only lands in "
+        "census.jsonl when it FINISHES, so for the one-to-three hours a census "
+        "takes the history shows nothing; this is that window. Returns "
+        "goals_total/completed/remaining from goals.json (real queue order), "
+        "plus the running loop's goal, elapsed seconds, live counters and its "
+        "steps so far with cycle counts. Safe to poll. Output: {active, "
+        "progress, recent[], counters, steps[]}."),
+)
+async def cap_census_live(trace_id=None) -> Dict[str, Any]:
+    files = _run_files()
+    done = await _read_run(files[cc.CURRENT]) if cc.CURRENT in files else []
+    goal_ids = await asyncio.to_thread(_goal_ids_sync)
+    run = await _running_loop()
+
+    counters: Dict[str, Any] = {}
+    steps: List[Dict[str, Any]] = []
+    active_goal = ""
+    sid = str(run.get("session_id") or "")
+    if sid:
+        try:
+            fn = (CAPABILITY_REGISTRY.get("workshop.agent_loop.trace") or {}).get("func")
+            if fn is not None:
+                tr = await fn(session_id=sid) or {}
+                counters = tr.get("counters") or {}
+                for s in tr.get("steps") or []:
+                    steps.append({"id": s.get("step_id"), "title": s.get("title") or "",
+                                  "ok": s.get("ok"), "cycles": len(s.get("calls") or [])})
+        except Exception as e:
+            log.info("census.live: trace for %s unavailable: %s", sid, e)
+    # Match the running loop back to a census goal by its goal text, since the
+    # harness does not stamp the goal id onto the loop session.
+    gtext = str(run.get("goal") or "")
+    if gtext:
+        try:
+            with (CENSUS_DIR / "goals.json").open(encoding="utf-8") as fh:
+                for g in json.load(fh):
+                    if isinstance(g, dict) and str(g.get("goal") or "")[:80] == gtext[:80]:
+                        active_goal = str(g.get("id")); break
+        except Exception:
+            pass
+
+    elapsed = None
+    try:
+        from datetime import datetime, timezone
+        st = str(run.get("started_at") or "").replace("Z", "+00:00")
+        if st:
+            elapsed = round((datetime.now(timezone.utc)
+                             - datetime.fromisoformat(st)).total_seconds(), 1)
+    except Exception:
+        pass
+
+    return {
+        "active": ({"session_id": sid, "goal": gtext, "goal_id": active_goal,
+                    "started_at": run.get("started_at"), "elapsed_s": elapsed}
+                   if sid else None),
+        "progress": cc.live_progress(goal_ids, done, active_goal),
+        "counters": counters,
+        "steps": steps,
+        "recent": [{"id": r.get("id"), "status": r.get("status"),
+                    "wall_s": r.get("wall_s")} for r in done[-6:]],
+    }
 
 
 @capability(
@@ -175,7 +361,7 @@ async def cap_census_goal(run: str = "", goal: str = "", trace_id=None) -> Dict[
     files = _run_files()
     if rid not in files:
         return {"error": f"unknown run '{rid}'", "available": sorted(files)}
-    rec = next((r for r in _read_run(files[rid]) if r.get("id") == gid), None)
+    rec = next((r for r in await _read_run(files[rid]) if r.get("id") == gid), None)
     if rec is None:
         return {"error": f"goal '{gid}' not in run '{rid}'"}
     trace: Dict[str, Any] = {}
@@ -190,8 +376,13 @@ async def cap_census_goal(run: str = "", goal: str = "", trace_id=None) -> Dict[
             # gone. That is a missing view, not an error worth failing on.
             log.info("census.goal: trace for %s unavailable: %s", sid, e)
             trace = {"error": f"{type(e).__name__}: {e}"}
+    # The OUTPUT — what the loop actually wrote. Neither the census record nor
+    # the trace digest carries a line of it, and judging a run means reading it.
+    events = await _loop_events(sid)
     return {"run_id": rid, "record": rec,
             "evidence": cc.goal_evidence(rec, trace),
+            "outputs": cc.run_outputs(events),
+            "events_available": len(events),
             "trace_available": bool(trace and not trace.get("error"))}
 
 

@@ -20,7 +20,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from vera.census.census_core import (          # noqa: E402
     CURRENT, FIXED_PREFIX, FOUND_PREFIX, board_links_by_run, compare_runs,
-    goal_evidence, history, run_id_from_filename, run_sort_key, summarise_run,
+    goal_evidence, history, live_progress, run_id_from_filename, run_outputs,
+    run_sort_key, summarise_run,
 )
 
 
@@ -254,6 +255,108 @@ def test_an_item_can_be_found_in_one_run_and_fixed_in_another():
     by = board_links_by_run(ITEMS)
     assert "loop-o1" in str(by["run10"]["found"])
     assert "loop-o1" in str(by["run12"]["fixed"])
+
+
+# ── the run's OUTPUT — the thing you actually judge by ─────────────────────
+EVENTS = [
+    {"type": "agent_loop_v5.step_done", "step_id": 1, "summary": "made the dir"},
+    {"type": "agent_loop_v5.tool_done", "step_id": 2, "tool": "code.author",
+     "ok": True, "args": {"path": "/workspace/statkit/stats.py"},
+     "preview": "wrote 42 lines"},
+    {"type": "agent_loop_v5.step_done", "step_id": 2, "summary": "raw tool dump"},
+    {"type": "agent_loop_v6.step_finalized", "step_id": 2,
+     "summary": "Authored stats.py; syntax VERIFIED by the code author."},
+    {"type": "agent_loop_v5.proven_code_protected", "path": "stats.py"},
+    {"type": "agent_loop_v5.proven_code_protected", "path": "stats.py"},
+    {"type": "agent_loop_v6.done", "summary": "package created with mean/median"},
+]
+
+
+def test_the_run_output_is_recovered_from_its_events():
+    """Neither the census record nor the trace digest carries a line of what the
+    loop actually wrote."""
+    o = run_outputs(EVENTS)
+    assert o["has_final"] is True
+    assert o["final"] == "package created with mean/median"
+
+
+def test_a_finalised_step_summary_wins_over_the_raw_one():
+    """step_finalized is the considered version; step_done is the tool dump."""
+    o = run_outputs(EVENTS)
+    s2 = [s for s in o["steps"] if s["step_id"] == 2][0]
+    assert s2["final_summary"].startswith("Authored stats.py")
+    assert s2["summary"] == "raw tool dump"        # kept, not discarded
+
+
+def test_authored_files_are_listed_as_the_deliverable():
+    o = run_outputs(EVENTS)
+    assert [a["path"] for a in o["artifacts"]] == ["/workspace/statkit/stats.py"]
+    assert o["artifacts"][0]["tool"] == "code.author" and o["artifacts"][0]["ok"] is True
+
+
+def test_self_correction_events_are_counted():
+    """The loop fighting itself is invisible in the step shape: build-multifile
+    fired proven_code_protected EIGHT times while failing to persist one file."""
+    assert run_outputs(EVENTS)["notable"]["proven_code_protected"] == 2
+
+
+def test_a_cancelled_run_reports_no_final_rather_than_pretending():
+    o = run_outputs([e for e in EVENTS if not str(e["type"]).endswith(".done")])
+    assert o["has_final"] is False and o["final"] == ""
+
+
+def test_long_output_is_clipped_for_a_panel_not_an_archive():
+    o = run_outputs([{"type": "agent_loop_v6.done", "summary": "x" * 9000}], limit=100)
+    assert len(o["final"]) == 101 and o["final"].endswith("…")
+
+
+def test_a_non_authoring_tool_is_not_an_artifact():
+    o = run_outputs([{"type": "agent_loop_v5.tool_done", "tool": "exec.bash.run",
+                      "ok": True, "args": {"path": "/tmp/x"}, "preview": "ls"}])
+    assert o["artifacts"] == []
+
+
+def test_the_same_file_authored_twice_is_listed_once():
+    ev = [{"type": "agent_loop_v5.tool_done", "tool": "code.author", "ok": True,
+           "args": {"path": "a.py"}, "preview": "v1"},
+          {"type": "agent_loop_v5.tool_done", "tool": "code.author", "ok": True,
+           "args": {"path": "a.py"}, "preview": "v2"}]
+    assert [a["path"] for a in run_outputs(ev)["artifacts"]] == ["a.py"]
+
+
+def test_outputs_survive_an_empty_or_malformed_event_list():
+    o = run_outputs([])
+    assert o["final"] == "" and o["steps"] == [] and o["artifacts"] == []
+    assert run_outputs([{"type": "x"}, {}])["notable"] == {}
+
+
+# ── an in-flight run must be visible while it is in flight ─────────────────
+GOAL_IDS = ["build-simple-code", "build-multifile", "research-web", "trivial-chat"]
+
+
+def test_live_progress_shows_where_an_unfinished_run_has_got_to():
+    """A goal only lands in census.jsonl when it FINISHES, so without this a
+    census is invisible for the one-to-three hours it takes."""
+    p = live_progress(GOAL_IDS, [_rec("build-simple-code")], active_goal="build-multifile")
+    assert p["goals_total"] == 4 and p["completed"] == 1
+    assert p["active_goal"] == "build-multifile" and p["position"] == 2
+    assert p["remaining"] == ["research-web", "trivial-chat"]
+
+
+def test_remaining_follows_the_harness_queue_order_not_the_records():
+    p = live_progress(GOAL_IDS, [_rec("research-web")], active_goal="build-simple-code")
+    assert p["remaining"] == ["build-multifile", "trivial-chat"]
+
+
+def test_live_progress_with_nothing_running():
+    p = live_progress(GOAL_IDS, [_rec("build-simple-code")])
+    assert p["active_goal"] == "" and p["position"] is None
+    assert len(p["remaining"]) == 3
+
+
+def test_an_unmatched_active_goal_does_not_fake_a_position():
+    p = live_progress(GOAL_IDS, [], active_goal="something-else")
+    assert p["position"] is None and len(p["remaining"]) == 4
 
 
 def test_malformed_items_and_labels_do_not_explode():

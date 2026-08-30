@@ -240,6 +240,100 @@ def compare_runs(base: Sequence[Dict[str, Any]],
     return out
 
 
+# Guard/self-correction events worth surfacing next to the output. These are the
+# loop TELLING YOU it fought itself, and they are invisible in the step shape:
+# build-multifile (run 12) fired proven_code_protected EIGHT times while failing
+# to persist one file, which is the whole story of that run.
+_NOTABLE = ("proven_code_protected", "arg_correction", "follow_up_skipped",
+            "plan_drift", "scope_widened", "replan", "cap_reroute")
+
+
+def run_outputs(events: Sequence[Dict[str, Any]], *, limit: int = 4000) -> Dict[str, Any]:
+    """What the run actually PRODUCED, pulled out of its event stream.
+
+    The census record carries counters and the trace digest carries step shape;
+    neither carries a single line of what the loop wrote. But judging a run means
+    reading its output, so this collects the text the run itself emitted:
+
+      * the final summary (`.done`) — absent when a run was cancelled or capped,
+        which is itself worth showing rather than hiding;
+      * each step's own summary, preferring the FINALISED one where a step was
+        finalised (that is the considered version, not the raw tool dump);
+      * files the run claims to have authored, from the authoring calls;
+      * guard events that show the loop fighting itself.
+
+    Text is clipped per field: this feeds a panel, not an archive, and a single
+    tool preview can be tens of KB.
+    """
+    def _clip(v: Any) -> str:
+        s = str(v or "").strip()
+        return s if len(s) <= limit else s[:limit] + "…"
+
+    final = ""
+    steps: Dict[str, Dict[str, Any]] = {}
+    artifacts: List[Dict[str, str]] = []
+    notable: Dict[str, int] = {}
+    seen_paths: Set[str] = set()
+
+    def _slot(sid: Any) -> Dict[str, Any]:
+        # Step ids cross a JSON boundary, so 1 and "1" must land in one slot.
+        k = str(sid).strip() if sid is not None else "?"
+        return steps.setdefault(k or "?", {"step_id": sid, "summary": "",
+                                           "final_summary": ""})
+
+    for e in events or []:
+        t = str(e.get("type") or "")
+        for n in _NOTABLE:
+            if t.endswith("." + n):
+                notable[n] = notable.get(n, 0) + 1
+        if t.endswith(".done"):
+            final = _clip(e.get("summary") or e.get("final"))
+        elif t.endswith(".step_done"):
+            _slot(e.get("step_id"))["summary"] = _clip(e.get("summary"))
+        elif t.endswith(".step_finalized"):
+            _slot(e.get("step_id"))["final_summary"] = _clip(e.get("summary"))
+        elif t.endswith(".tool_done"):
+            # An authoring call names the file it wrote; that IS the deliverable.
+            path = str((e.get("args") or {}).get("path") or e.get("path") or "").strip()
+            tool = str(e.get("tool") or "")
+            if path and tool in ("code.author", "code.edit", "prose.author") \
+                    and path not in seen_paths:
+                seen_paths.add(path)
+                artifacts.append({"path": path, "tool": tool,
+                                  "ok": bool(e.get("ok")),
+                                  "preview": _clip(e.get("preview"))})
+    return {
+        "final": final,
+        "has_final": bool(final),
+        "steps": [steps[k] for k in sorted(steps, key=lambda x: (len(x), x))],
+        "artifacts": artifacts,
+        "notable": notable,
+    }
+
+
+def live_progress(goal_ids: Sequence[str], done_records: Sequence[Dict[str, Any]],
+                  active_goal: str = "") -> Dict[str, Any]:
+    """Where an in-flight census has got to.
+
+    A run only lands in census.jsonl when a goal FINISHES, so for the one-to-
+    three hours a census takes, the panel showed nothing at all — the run was
+    invisible exactly while it was the most interesting thing on the box.
+
+    Order comes from goals.json, not from the records, so `remaining` is the
+    real queue rather than "everything we haven't seen".
+    """
+    done = {str(r.get("id")) for r in done_records or [] if isinstance(r, dict)}
+    ordered = [str(g) for g in goal_ids or []]
+    remaining = [g for g in ordered if g not in done and g != active_goal]
+    return {
+        "goals_total": len(ordered),
+        "completed": len(done),
+        "active_goal": active_goal or "",
+        "remaining": remaining,
+        "position": (ordered.index(active_goal) + 1) if active_goal in ordered else None,
+    }
+
+
 def run_ids_from_labels(labels: Iterable[str], prefix: str) -> List[str]:
     """Run ids a board item names under one label prefix."""
     out: List[str] = []
