@@ -268,5 +268,5 @@ def test_provider_and_agent_bridge_surfaces_are_registered_in_source():
                 "providers.document.teardown.plan"):
         assert cap in provider_source
         assert cap in bridge_source
-    assert "Document parser · LIB06" in provider_panel
-    assert "Document parser · LIB06" in bridge_panel
+    assert "Document parser" in provider_panel
+    assert "Document parsing" in bridge_panel

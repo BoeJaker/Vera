@@ -127,9 +127,9 @@ def test_agentbridge_interoperability_capability_and_panel_expose_status():
     assert result["executes"] is False
     panel = caps._PANEL_HTML_PATH.read_text(encoding="utf-8")
     assert "/agentbridge/interoperability" in panel
-    assert "A2A · LIB02" in panel
-    assert "Runtime matrix · LIB18" in panel
-    assert "Source intake · W3-06" in panel
-    assert "W3-07 build plan" in panel
-    assert "Structured generation · LIB04" in panel
+    assert "Agent-to-agent protocol" in panel
+    assert "Runtime compatibility" in panel
+    assert "Source intake" in panel
+    assert "build contract" in panel
+    assert "Structured generation" in panel
     assert "Shared Vera contracts" in panel
