@@ -36,6 +36,8 @@ import asyncio
 import base64
 import contextvars
 import json
+# "Succeeded and printed nothing" must not read as "no information".
+from Vera.vera.execution import exec_result_note as _exec_result_note
 import logging
 import os
 import re
@@ -476,10 +478,11 @@ async def _exec_local(command: str, *, workdir: str = "", timeout: int = 120,
         return {"ok": False, "rc": -1, "stdout": "",
                 "stderr": f"timed out after {int(timeout)}s", "sandboxed": True,
                 "backend": _LOCAL_BACKEND}
-    return {"ok": proc.returncode == 0, "rc": proc.returncode,
-            "stdout": (out or b"").decode("utf-8", "replace"),
-            "stderr": (err or b"").decode("utf-8", "replace"),
-            "sandboxed": True, "backend": _LOCAL_BACKEND}
+    return _exec_result_note.annotate({
+        "ok": proc.returncode == 0, "rc": proc.returncode,
+        "stdout": (out or b"").decode("utf-8", "replace"),
+        "stderr": (err or b"").decode("utf-8", "replace"),
+        "sandboxed": True, "backend": _LOCAL_BACKEND})
 
 
 async def _get_rec(session_id: str) -> Optional[Dict]:
@@ -1071,10 +1074,11 @@ async def _exec_in(session_id: str, command: str, *, workdir: str = "",
             "If you need something that keeps running (an http server, a watcher), "
             "it cannot be run in the foreground here: the step waits for it. To "
             "check that a PAGE behaves, use operator.run instead." % timeout)
-    return {"ok": res.get("ok", False), "rc": _rc,
-            "stdout": res.get("stdout", ""), "stderr": _err,
-            "timed_out": _rc == _TIMEOUT_RC,
-            "sandboxed": True}
+    return _exec_result_note.annotate({
+        "ok": res.get("ok", False), "rc": _rc,
+        "stdout": res.get("stdout", ""), "stderr": _err,
+        "timed_out": _rc == _TIMEOUT_RC,
+        "sandboxed": True})
 
 
 @capability(

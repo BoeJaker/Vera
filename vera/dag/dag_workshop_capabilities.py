@@ -2763,6 +2763,17 @@ def _result_preview(result: Any, max_len: int = 1500) -> str:
         return "null"
     if isinstance(result, str):
         return result if len(result) <= max_len else result[:max_len] + _trunc_marker(max_len, len(result))
+    # A command that succeeded and printed nothing has told the model something,
+    # but an empty stdout reads as "no information" — census run 16 step 8 got
+    # rc=0/stdout="" five times and kept re-verifying with slight variations
+    # (python vs python3, absolute vs relative) because it could not tell. Said
+    # here, at the chokepoint EVERY capability result passes through on its way
+    # to the model, rather than in each exec cap that someone remembers.
+    if _exec_note is not None:
+        try:
+            result = _exec_note.annotate(result)
+        except Exception:                     # pragma: no cover — never fatal
+            pass
     try:
         s = json.dumps(result, default=str, ensure_ascii=False)
     except Exception:
@@ -13266,6 +13277,16 @@ except Exception:                                     # pragma: no cover
     except Exception:
         _plan_cap_routing = None
         log.warning("plan_cap_routing unavailable — edit steps keep the planner's caps")
+
+# "Succeeded and printed nothing" is a result, not a blank. Import-safe.
+try:
+    from Vera.vera.execution import exec_result_note as _exec_note
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.execution import exec_result_note as _exec_note
+    except Exception:
+        _exec_note = None
+        log.warning("exec_result_note unavailable — silent successes stay ambiguous")
 
 # Plan-shape checks (is this plan decomposed enough for its tier?).
 try:
