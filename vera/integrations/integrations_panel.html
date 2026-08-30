@@ -66,6 +66,10 @@
   #toast.on{opacity:1}#toast.err{border-color:var(--stop);color:var(--stop)}
   pre.plan{background:var(--bg0);border:1px solid var(--line);border-radius:8px;padding:10px;
     font:11px/1.4 ui-monospace,monospace;max-height:280px;overflow:auto;white-space:pre-wrap}
+  #intake{display:none;align-items:center;gap:8px;padding:7px 14px;border-bottom:1px solid var(--line);
+    background:var(--bg1);color:var(--t2);font-size:11px;flex-wrap:wrap}
+  #intake.on{display:flex} #intake .arr{color:var(--t3)}
+  #intake .queued{color:var(--warn)} #intake .ready{color:var(--run)}
 </style>
 </head>
 <body>
@@ -79,6 +83,7 @@
     <button class="btn sm" onclick="openDiscover()">⌕ Discover</button>
     <button class="btn sm pri" onclick="openRegister()">⚿ Register &amp; secure</button>
   </header>
+  <div id="intake" role="status" aria-live="polite"></div>
   <div id="grid"></div>
 </div>
 
@@ -148,13 +153,25 @@ async function api(path,method='GET',body){const o={method,headers:{'Content-Typ
   const r=await fetch(path,o);let j={};try{j=await r.json();}catch(e){} if(!r.ok&&!j.error)j.error='HTTP '+r.status; return j;}
 
 async function load(){
-  const r=await api('/integrations/list'); ITEMS=r.integrations||[];
+  const [r,life]=await Promise.all([
+    api('/integrations/list'), api('/integrations/source/lifecycle')
+  ]); ITEMS=r.integrations||[];
+  renderIntake(life);
   $('#count').textContent=ITEMS.length?ITEMS.length+' services':'';
   const g=$('#grid');
   if(!ITEMS.length){g.innerHTML='<div id="empty">No integrations yet.<br><br>'
     +'<button class="btn pri" onclick="openDiscover()">⌕ Discover local services</button></div>';return;}
   g.innerHTML='';
   ITEMS.forEach(it=>g.appendChild(card(it)));
+}
+function renderIntake(life){
+  const el=$('#intake');
+  if(!life||life.error){el.className='';el.textContent='';return;}
+  const done=life.implemented_states||[], queued=life.queued_states||[];
+  el.className='on';
+  el.innerHTML='<b>Source intake</b><span class="ready">'+done.map(esc).join(' → ')+'</span>'
+    +'<span class="arr">→</span><span class="queued">'+queued.map(esc).join(' → ')+' queued</span>'
+    +'<span class="sp"></span><span>MCP + OpenAPI · inspection only · no network/install/activation</span>';
 }
 function card(it){
   const d=document.createElement('div'); d.className='card'+(it.sensitive?' sens':'');

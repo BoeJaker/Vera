@@ -103,10 +103,20 @@ def test_agentbridge_interoperability_capability_and_panel_expose_status():
     assert result["a2a"]["client_transport"] == "queued_live"
     assert result["runtime_matrix"]["candidate_count"] >= 10
     assert result["runtime_matrix"]["dimension_count"] == 15
+    assert result["source_intake"]["implemented_states"] == [
+        "discovered", "inspected", "proposed"]
+    assert result["source_intake"]["supported_kinds"] == ["mcp", "openapi"]
+    assert result["source_intake"]["network_io"] is False
+    assert result["source_intake"]["executes"] is False
+    contracts = {item["id"]: item for item in result["shared_contracts"]}
+    assert contracts["capability_v2"]["capability"] == "cap.contract.manifest"
+    assert contracts["resolver_shadow"]["capability"] == "cap.resolve.shadow"
+    assert contracts["source_inspection"]["capability"] == "integration.source.inspect"
     assert result["network_io"] is False
     assert result["executes"] is False
     panel = caps._PANEL_HTML_PATH.read_text(encoding="utf-8")
     assert "/agentbridge/interoperability" in panel
     assert "A2A · LIB02" in panel
     assert "Runtime matrix · LIB18" in panel
+    assert "Source intake · W3-06" in panel
     assert "Shared Vera contracts" in panel

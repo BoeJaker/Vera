@@ -70,7 +70,10 @@ join a common RuntimeAdapter/A2A conformance matrix.
 Agent Bridges also exposes an interoperability summary in its UI. The summary
 shows the LIB02 A2A mapping and inert client/server plans, LIB18 candidate and
 dimension counts, queued live gates, and whether shared Vera contract
-capabilities are actually registered. “Implemented” there means the bounded,
+capabilities are actually registered. It also reports W3-06 MCP/OpenAPI source
+intake as an inspection-only lifecycle, separating its implemented discovery,
+inspection, and proposal states from queued build, verification, approval, and
+activation. “Implemented” there means the bounded,
 deterministic planning contract exists; transport/listener execution remains
 labelled `queued_live` until the explicit live gate is authorised and passes.
 

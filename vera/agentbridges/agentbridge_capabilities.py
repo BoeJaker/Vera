@@ -37,6 +37,7 @@ from Vera.vera.agentbridges.agentbridge_runtime import image_present
 from Vera.vera.agentbridges.runtime_matrix import compile_runtime_matrix
 from Vera.vera.execution.a2a_adapter import compile_a2a_adapter_status
 from Vera.vera.execution.a2a_mapping import compile_a2a_protocol_mapping
+from Vera.vera.integrations.source_intake import lifecycle_contract
 from Vera.vera.capability_orchestration import (
     APP, CAPABILITY_REGISTRY, capability, register_ui,
 )
@@ -70,13 +71,19 @@ async def agentbridge_interoperability(trace_id=None) -> Dict[str, Any]:
     matrix = compile_runtime_matrix().to_dict()
     mapping = compile_a2a_protocol_mapping().to_dict()
     adapter = compile_a2a_adapter_status()
+    intake = lifecycle_contract()
     shared = (
+        ("capability_v2", "cap.contract.manifest"),
+        ("resolver_shadow", "cap.resolve.shadow"),
+        ("policy_shadow", "cap.policy.shadow"),
         ("run_protocol", "run.shadow.list"),
         ("workflow_ir", "workflow.ir.validate"),
         ("portable_telemetry", "run.telemetry.status"),
         ("durability_fixture", "workflow.durability.fixture"),
         ("runtime_matrix", "agentbridge.runtime_matrix"),
         ("a2a_conformance", "interop.a2a.conformance"),
+        ("source_lifecycle", "integration.source.lifecycle"),
+        ("source_inspection", "integration.source.inspect"),
     )
     return {
         "schema": "vera.agentbridge-interoperability/v1",
@@ -98,6 +105,14 @@ async def agentbridge_interoperability(trace_id=None) -> Dict[str, Any]:
             "queued_live_cases": len(matrix.get("required_live_cases", [])),
             "execution_lane": matrix.get("execution_lane"),
             "ready_for_selection": matrix.get("ready_for_selection", False),
+        },
+        "source_intake": {
+            "schema": intake["schema"],
+            "implemented_states": intake["implemented_states"],
+            "queued_states": intake["queued_states"],
+            "supported_kinds": intake["supported_kinds"],
+            "network_io": intake["network_io"],
+            "executes": intake["executes"],
         },
         "shared_contracts": [
             {"id": key, "capability": cap, "registered": cap in CAPABILITY_REGISTRY}
