@@ -1050,6 +1050,28 @@ identity, citation fidelity, tenant/session isolation, ranking, outage/sync,
 update/tombstone/delete/export and reconciliation behavior before either can be
 advertised.
 
+### LIB-06 — portable DocumentParser and Docling admission
+
+**Offline contract implemented; Docling execution remains queued.** Vera now has
+a bounded `DocumentParser` plan/result boundary around source `ArtifactRef`s.
+It defines portable media types, parser/config provenance, deterministic
+source/page/locator element IDs, exact citations, OCR declarations, resource
+ceilings, derived-artifact budgets, cancellation, and non-destructive teardown.
+Encrypted, corrupt, oversized, malformed, or policy-incompatible evidence fails
+closed before a file is opened.
+
+The frozen-corpus evaluator accepts supplied result evidence and compares
+content-free text/table/layout hashes across at most 64 cases. It neither runs a
+parser nor publishes extracted text. The Provider and Agent Bridge panels expose
+the distinction between the implemented contract and the `not_imported`,
+`queued_live` Docling profile.
+
+Still queued: installing and isolating pinned Docling; converting the frozen
+corpus; measuring fidelity, OCR, latency and resources; cancellation and crash
+behavior; corrupt/encrypted inputs; artifact persistence; and complete teardown.
+Unstructured remains a later comparison against the same corpus rather than a
+parallel dependency added without evidence.
+
 ### LIB-23 — Lance format experiment
 
 Write and read one frozen multimodal dataset revision through object storage and

@@ -336,6 +336,21 @@ The thread is persistent — closing and reopening the panel preserves the last 
 - [Ollama Cluster](./04-ollama-cluster.md) — the tier-to-instance routing
 - [IDE Module](./08-ide.md) — code generation, which shares the same pipeline
 
+## Document-parser boundary
+
+Research citations may eventually consume rich document structure, but Research
+does not own conversion. `providers.document.*` now defines an offline,
+provider-neutral `DocumentParser` boundary around an original `ArtifactRef`.
+Plans carry supplied inspection evidence, resource ceilings, OCR policy, parser
+profile, and a stable identity. Supplied results are checked for source-bound
+element IDs, page/locator citations, parser/config provenance, derived-artifact
+budgets, and explicit OCR use before any future record or artifact write.
+
+The current Docling profile is `not_imported` and `queued_live`; Vera does not
+open documents or run OCR in this layer. A bounded frozen-corpus evaluator
+compares only text/table/layout hashes and issue codes, never document content.
+Research remains a consumer of verified cited records, not an implicit parser.
+
 ## Screenshots
 
 <!-- VERA:AUTO:screenshots START -->

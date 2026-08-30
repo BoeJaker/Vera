@@ -128,7 +128,7 @@ async function load(){
 function renderInterop(){
   const el = document.getElementById('interop');
   if (!INTEROP){ el.innerHTML='<div class="hint-box">Interoperability status unavailable.</div>'; return; }
-  const a=INTEROP.a2a||{}, m=INTEROP.runtime_matrix||{}, intake=INTEROP.source_intake||{}, structured=INTEROP.structured_generation||{}, contracts=INTEROP.shared_contracts||[];
+  const a=INTEROP.a2a||{}, m=INTEROP.runtime_matrix||{}, intake=INTEROP.source_intake||{}, structured=INTEROP.structured_generation||{}, documents=INTEROP.document_parser||{}, contracts=INTEROP.shared_contracts||[];
   const registered=contracts.filter(x=>x.registered).length;
   el.innerHTML=`
     <div class="interop-card"><h2>A2A · LIB02</h2>
@@ -151,6 +151,11 @@ function renderInterop(){
       <div class="metric">${esc((structured.provider_profiles||[]).length)} profiles</div>
       <div class="metric-note">contract ${esc(structured.contract||'unknown')} · validation ${esc(structured.deterministic_validation||'unknown')}</div>
       <div class="contract-list"><span class="contract ready">schema inspection</span><span class="contract">providers ${esc(structured.provider_execution||'unknown')}</span><span class="contract">model ${structured.model_called?'called':'not called'}</span></div>
+    </div>
+    <div class="interop-card"><h2>Document parser · LIB06</h2>
+      <div class="metric">${esc((documents.provider_profiles||[]).length)} profile</div>
+      <div class="metric-note">contract ${esc(documents.contract||'unknown')} · corpus ${esc(documents.frozen_corpus_contract||'unknown')} · stable IDs ${esc(documents.stable_element_ids||'unknown')}</div>
+      <div class="contract-list"><span class="contract ready">inspection only</span><span class="contract">parser ${esc(documents.parser_execution||'unknown')}</span><span class="contract">OCR ${esc(documents.ocr_execution||'unknown')}</span><span class="contract">provider ${documents.provider_imported?'imported':'not imported'}</span></div>
     </div>
     <div class="interop-card"><h2>Shared Vera contracts</h2>
       <div class="metric">${registered}/${contracts.length}</div>

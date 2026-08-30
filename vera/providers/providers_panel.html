@@ -94,6 +94,13 @@ tr:hover td{background:rgba(158,143,160,.05)}
   <div class="test-out" id="structured-detail">Loading contract status…</div>
 </div>
 
+<div class="card" id="document-status" style="margin-bottom:12px">
+  <div class="card-h"><span class="dot" id="document-dot"></span>
+    <span class="card-t">Document parser · LIB06</span>
+    <span class="kind-badge">inspection only</span></div>
+  <div class="test-out" id="document-detail">Loading contract status…</div>
+</div>
+
 <!-- Usage KPIs -->
 <div class="kpi-row">
   <div class="kpi"><div class="kpi-val cost" id="k-cost">$0</div><div class="kpi-sub">total cost</div></div>
@@ -218,11 +225,13 @@ async function loadModels(id, selected){
 async function reload(){
   $('ts').textContent='loading…';
   try{
-    const [j,structured] = await Promise.all([
-      api('/providers/list'), api('/providers/structured/status')
+    const [j,structured,documents] = await Promise.all([
+      api('/providers/list'), api('/providers/structured/status'),
+      api('/providers/document/status')
     ]);
     _providers = j.providers||[];
     renderStructured(structured);
+    renderDocuments(documents);
     renderProviders();
     fillPlayground();
     $('ts').textContent='updated '+new Date().toLocaleTimeString();
@@ -238,6 +247,17 @@ function renderStructured(s){
       +' · deterministic validation '+s.deterministic_validation
       +' · provider/model execution '+s.provider_execution+'/'+s.model_execution
     : 'Structured-generation contract unavailable';
+}
+
+function renderDocuments(s){
+  const profiles=s&&s.provider_profiles||[];
+  $('document-dot').className='dot '+(s&&s.contract==='implemented'?'ok':'err');
+  $('document-detail').textContent = s&&s.contract
+    ? profiles.map(p=>p.id+': '+p.availability).join(' · ')
+      +' · frozen corpus '+s.frozen_corpus_contract
+      +' · stable IDs '+s.stable_element_ids
+      +' · parser/OCR '+s.parser_execution+'/'+s.ocr_execution
+    : 'Document-parser contract unavailable';
 }
 
 async function test(id){

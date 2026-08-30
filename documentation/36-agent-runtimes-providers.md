@@ -81,6 +81,36 @@ provider's schema feature from becoming a separate canonical task family.
 | `providers.structured.validate` | Validate supplied JSON without returning it |
 | `providers.structured.retry.plan` | Plan but never start one correction attempt |
 
+### Portable document parsing and Docling
+
+`vera/providers/document_parser.py` adds the LIB-06 `DocumentParser` contract.
+It compiles an inert plan from an original `ArtifactRef`, supplied inspection
+metadata, OCR policy, and bounded page/element/time/memory/artifact ceilings.
+Encrypted, corrupt, oversized, cancelled, and OCR-required-but-disabled inputs
+fail before provider import or file access. Element IDs deterministically bind
+source checksum, page, ordinal, kind, and locator.
+
+Supplied adapter evidence is validated without returning extracted content or
+writing records. Every element needs text/structure hashes and a citation back
+to the exact source checksum, page, and locator. Parser version/configuration,
+derived-artifact checksums and budgets, OCR engine/languages, duplicate
+positions, and cancellation are checked explicitly. A frozen-corpus evaluator
+compares bounded text/table/layout hashes so later Docling and alternative
+adapters can use the same evidence format.
+
+The Docling profile is currently `not_imported`; conversion, fidelity, OCR,
+resource enforcement, cancellation propagation, and teardown execution remain
+`queued_live`. The teardown capability returns a checklist only and never
+deletes the original or verified data.
+
+| Capability | Purpose |
+|---|---|
+| `providers.document.status` | Inspect portable contract and honest Docling readiness |
+| `providers.document.plan` | Compile a bounded, non-executing parse plan |
+| `providers.document.validate` | Validate supplied provenance, IDs, citations, bounds, and OCR evidence |
+| `providers.document.corpus.evaluate` | Compare frozen-corpus hash evidence without content |
+| `providers.document.teardown.plan` | Plan isolated cleanup without starting it |
+
 ## Trust boundary
 
 External runtimes may propose tool calls or return structured events, but Vera's
@@ -127,7 +157,7 @@ needed to fix it.
   discovery and inert build/activation admission contracts.
 - `vera/smolagents/`, `vera/langgraph/`, `vera/pydanticai/` — adapters.
 - `vera/providers/` — credentials, models, chat, pricing, usage, and the neutral
-  structured-generation contract.
+  structured-generation and document-parser contracts.
 - `vera/catalog/` — discovery and hardware-fit estimates.
 - `vera/ide/` and `vera/board/` — coding-agent execution and work ownership.
 
