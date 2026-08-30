@@ -70,6 +70,9 @@ import asyncio
 import ipaddress
 import json
 import logging
+# "Succeeded and printed nothing" must not read as "no information" — see the
+# module docstring for the census run that made this necessary.
+from Vera.vera.execution import exec_result_note as _exec_result_note
 import os
 import re
 import shlex
@@ -624,13 +627,13 @@ async def _run_local(argv: List[str], stdin_data: str = "",
 
     so = stdout_b.decode("utf-8", errors="replace")[:_MAX_OUTPUT]
     se = stderr_b.decode("utf-8", errors="replace")[:_MAX_OUTPUT]
-    return {
+    return _exec_result_note.annotate({
         "ok":         proc.returncode == 0,
         "rc":         proc.returncode,
         "stdout":     so,
         "stderr":     se,
         "elapsed_ms": round((time.monotonic() - t0) * 1000),
-    }
+    })
 
 
 @capability(
@@ -2033,14 +2036,14 @@ async def _ssh_run_on(
                 else (result.stdout.decode("utf-8", "replace")[:_MAX_OUTPUT] if result.stdout else "")
             se = (result.stderr or "")[:_MAX_OUTPUT] if isinstance(result.stderr, str) \
                 else (result.stderr.decode("utf-8", "replace")[:_MAX_OUTPUT] if result.stderr else "")
-            return {
+            return _exec_result_note.annotate({
                 "ok":         (result.exit_status == 0),
                 "rc":         result.exit_status or 0,
                 "stdout":     so,
                 "stderr":     se,
                 "elapsed_ms": round((time.monotonic() - t0) * 1000),
                 "host":       host,
-            }
+            })
     except asyncio.TimeoutError:
         return {"ok": False, "error": f"timeout after {timeout}s",
                 "rc": -1, "stdout": "", "stderr": "", "host": host,
