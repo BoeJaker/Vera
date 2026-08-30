@@ -113,6 +113,8 @@ published.
 ## Boundaries that remain deliberate
 
 - Contracts describe; policy authorizes.
+- Source inspection proposes; catalogs, builds, and activation remain separate
+  reviewed state transitions.
 - Resolver observations inform; they do not mutate declarations.
 - Workflow adapters translate; native runtimes keep native authority.
 - Model packages identify artifacts; activation remains reviewed.

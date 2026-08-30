@@ -54,6 +54,11 @@ from Vera.vera.capability_orchestration import (
     APP, capability, emit_event, now_iso, register_ui,
 )
 from Vera.vera.integrations import policy as _policy
+from Vera.vera.integrations.source_intake import (
+    inspect_source as _inspect_source,
+    lifecycle_contract as _source_lifecycle_contract,
+    plan_transition as _plan_source_transition,
+)
 
 try:
     from Vera.vera.security import secrets as vsecrets
@@ -821,6 +826,57 @@ async def integration_embed_proxy(iid: str, request: Request, path: str = ""):
 #  PANEL
 # ═════════════════════════════════════════════════════════════════════════════
 @capability(
+    "integration.source.lifecycle", http_method="GET",
+    http_path="/integrations/source/lifecycle", http_tags=["integration", "intake"],
+    memory="off", silent=True,
+    description="Return the deterministic W3-06 external-source lifecycle contract. "
+                "This inspection surface performs no fetch, install, build, secret "
+                "resolution, activation, model call, network request, or execution.",
+)
+async def integration_source_lifecycle(trace_id=None):
+    return _source_lifecycle_contract()
+
+
+@capability(
+    "integration.source.inspect", http_method="POST",
+    http_path="/integrations/source/inspect", http_tags=["integration", "intake"],
+    memory="off",
+    description="Inspect one bounded inline MCP descriptor or OpenAPI document and "
+                "project unauthorised capability candidates. Inputs: kind (mcp|openapi), "
+                "document (object!), source_id (optional for OpenAPI). No URL is fetched "
+                "and no catalog/integration record is written.",
+)
+async def integration_source_inspect(kind: str = "", document: Optional[Dict] = None,
+                                     source_id: str = "", trace_id=None):
+    try:
+        return _inspect_source(kind, document or {}, source_id=source_id).to_dict()
+    except (TypeError, ValueError) as exc:
+        return {"error": str(exc), "kind": kind, "accepted": False,
+                "registers": False, "network_io": False, "executes": False}
+
+
+@capability(
+    "integration.source.transition.plan", http_method="POST",
+    http_path="/integrations/source/transition/plan",
+    http_tags=["integration", "intake"], memory="off",
+    description="Plan one adjacent external-source lifecycle transition without "
+                "applying it. W3-06 permits inspected/proposed planning only; build and "
+                "later states remain queued. Inputs: source_id, current, target, "
+                "evidence_refs (list).",
+)
+async def integration_source_transition_plan(
+        source_id: str = "", current: str = "", target: str = "",
+        evidence_refs: Optional[List[str]] = None, trace_id=None):
+    try:
+        return _plan_source_transition(
+            source_id, current, target, tuple(evidence_refs or ()))
+    except (TypeError, ValueError) as exc:
+        return {"error": str(exc), "allowed": False, "applied": False,
+                "installs": False, "builds": False, "activates": False,
+                "executes": False}
+
+
+@capability(
     "integration.panel.html",
     http_method="GET", http_path="/integrations/panel", http_tags=["integration", "ui"],
     memory="off", silent=True,
@@ -846,6 +902,8 @@ register_ui(
         "integration.api.call", "integration.mcp.call", "integration.connections",
         "integration.discover", "integration.identity.register",
         "integration.import_apps", "identity.resolve.status",
+        "integration.source.lifecycle", "integration.source.inspect",
+        "integration.source.transition.plan",
         # the one-click "register & secure everything" button drives autoenroll
         "autoenroll.scan", "autoenroll.run", "autoenroll.pending",
     ],

@@ -137,7 +137,38 @@ pass, the manifest reports no client/server implementation and
 
 ---
 
-## 6. Common threads
+## 6. External source intake
+
+W3-06 adds an inspection boundary in
+`vera/integrations/source_intake.py` before an external source can become an
+integration, MCP catalog entry, wrapper, or active capability. The lifecycle is:
+
+`discovered → inspected → proposed → built → verified → approved → active → deprecated → removed`
+
+Only the first three states are implemented in this slice. An inline MCP
+descriptor or OpenAPI document is bounded, fingerprinted, checked for plaintext
+credentials and unsafe endpoints, and projected into candidates with
+`effects_status: unknown`, `authorized: false`, and `executable: false`.
+Inspection never fetches a URL, starts an MCP command, resolves an external
+`$ref`, writes a catalog record, installs a package, builds a wrapper, activates
+an integration, or uses a secret.
+
+The read-only surfaces are:
+
+| Capability | Purpose |
+|---|---|
+| `integration.source.lifecycle` | Report implemented and queued lifecycle states |
+| `integration.source.inspect` | Inspect one inline MCP/OpenAPI fixture |
+| `integration.source.transition.plan` | Validate one adjacent transition without applying it |
+
+Transitions through `inspected` and `proposed` can be planned deterministically.
+`built` and every later state are explicitly queued for W3-07 or an operator
+approval boundary. Existing MCP discovery/catalog and Fabric OpenAPI crawling
+remain operational systems; they do not bypass this admission contract.
+
+---
+
+## 7. Common threads
 
 - **Sealed secrets** — every credential is Fernet-sealed at rest and redacted from the UI ([Security & Secrets](./29-security.md)).
 - **Event bridges** — Email and Telegram can both forward `vera:events` outward, turning Vera's internal stream into notifications.
