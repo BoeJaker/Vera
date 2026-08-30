@@ -128,7 +128,47 @@ def test_the_trend_over_reconciling_runs_is_reported_separately():
 
 
 def test_a_single_run_has_no_trend():
-    assert history([summarise_run("run1", [_rec("a")])])["trend_all"] is None
+    assert history([summarise_run("run1", [_rec("a")])])["trend_complete"] is None
+
+
+# ── a partial run is not comparable, and must not drive the trend ──────────
+def test_a_partial_run_is_excluded_from_the_trend():
+    """Measured against the real files this once reported run1 -> current,
+    done 2 -> 1, delta -1 — 'we got worse' — while run 12 was three goals into
+    twelve. Half the archived files are partial, and the live census.jsonl is
+    partial for the hours a run takes."""
+    full_a = summarise_run("run10", [_rec(f"g{i}") for i in range(12)])
+    full_b = summarise_run("run11", [_rec(f"g{i}") for i in range(11)]
+                           + [_rec("g11", status="wall-cap")])
+    in_flight = summarise_run(CURRENT, [_rec("g0")])          # 1 of 12 so far
+    h = history([full_a, full_b, in_flight])
+    assert h["full_goal_count"] == 12
+    assert h["partial_count"] == 1 and h["complete_count"] == 2
+    t = h["trend_complete"]
+    assert t["from"] == "run10" and t["to"] == "run11"        # NOT `current`
+    assert t["done_from"] == 12 and t["done_to"] == 11 and t["of_goals"] == 12
+
+
+def test_partial_runs_are_flagged_on_the_run_itself():
+    h = history([summarise_run("run10", [_rec(f"g{i}") for i in range(12)]),
+                 summarise_run("run4-partial", [_rec("g0")])])
+    by = {s["run_id"]: s for s in h["runs"]}
+    assert by["run10"]["partial"] is False
+    assert by["run4-partial"]["partial"] is True
+
+
+def test_there_is_no_trend_over_every_run():
+    """A number spanning partial and complete runs could only ever mislead, so
+    it must not exist for the UI to reach for."""
+    h = history([summarise_run("run10", [_rec(f"g{i}") for i in range(12)]),
+                 summarise_run(CURRENT, [_rec("g0")])])
+    assert "trend_all" not in h
+    assert h["trend_complete"] is None       # only one complete run
+
+
+def test_all_runs_equal_size_means_none_are_partial():
+    h = history([summarise_run("run1", [_rec("a")]), summarise_run("run2", [_rec("a")])])
+    assert h["partial_count"] == 0 and h["complete_count"] == 2
 
 
 # ── goal evidence: the material you actually judge by ──────────────────────
