@@ -19,6 +19,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Awaitable, Callable, Dict, Optional
 
+from . import target_fallback as _fallback
+
 log = logging.getLogger("vera.operator.targets")
 
 SANDBOX_BASE = "http://localhost:8998"
@@ -142,25 +144,44 @@ async def ensure_target(target: Dict[str, Any],
     # operator browser already ignores the self-signed cert).
     branch = target.get("branch") or ""
     name = target.get("name") or ""
-    if call_cap and (branch or name):
+
+    def _adopt(s):
+        resolved["base_url"] = s["url"]
+        resolved["start_url"] = (_panel_url(s["url"], target["panel_id"])
+                                 if target.get("panel_id") else resolved.get("start_url") or "")
+        resolved.update({"ready": True, "error": "", "container": s.get("name")})
+        return resolved
+
+    async def _list_sandboxes():
         try:
             lst = await call_cap("evolve.sandbox.list")
-            for s in (lst or {}).get("sandboxes", []):
-                if s.get("running") and s.get("url") and (
-                        (branch and s.get("branch") == branch) or
-                        (name and s.get("name") == name)):
-                    resolved["base_url"] = s["url"]
-                    resolved["start_url"] = (_panel_url(s["url"], target["panel_id"])
-                                             if target.get("panel_id") else "")
-                    resolved.update({"ready": True, "error": "", "container": s.get("name")})
-                    return resolved
+            return (lst or {}).get("sandboxes", []) or []
         except Exception as e:
             log.debug("sandbox target list lookup failed: %s", e)
+            return []
+
+    if call_cap and (branch or name):
+        hit = _fallback.pick_sandbox(await _list_sandboxes(), branch=branch, name=name)
+        if hit:
+            return _adopt(hit)
 
     # Boot / ensure the PRIMARY sandbox Vera. evolve.sandbox.ensure is idempotent.
     res = await call_cap("evolve.sandbox.ensure", branch=branch) if call_cap else \
         {"error": "no cap dispatcher"}
     if isinstance(res, dict) and res.get("error"):
+        # The primary is a one-owner-at-a-time singleton, so on a busy estate
+        # this is the NORMAL outcome, not an exceptional one - and it used to
+        # end the browser step outright even with a standing sandbox running
+        # and idle. Nobody named a container, so any safe one will do; see
+        # target_fallback for what "safe" excludes.
+        alt = (_fallback.pick_sandbox(await _list_sandboxes())
+               if (call_cap and not branch and not name) else None)
+        if alt:
+            _adopt(alt)
+            resolved["note"] = _fallback.substitution_note(alt, res["error"])
+            resolved["primary_error"] = res["error"]
+            log.info("operator target: %s", resolved["note"])
+            return resolved
         resolved.update({"ready": False, "error": f"sandbox ensure: {res['error']}"})
         return resolved
     # Prefer a base_url/port the cap reports back, else the default.
