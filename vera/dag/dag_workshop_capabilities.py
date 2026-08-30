@@ -24101,6 +24101,13 @@ async def workshop_agent_loop_stream(request: Request):
             "agent_loop_v6.plan_token",
             "agent_loop_v6.plan",
             "agent_loop_v6.cap_reroute",
+            # An operator.run is frequently a STEP of a loop, and its events were
+            # dropped here — so the one part of a run that could burn the whole
+            # wall cap (every census goal with a browser step did, in runs 12 and
+            # 13) was the one part the renderer never showed. O13.
+            "operator.run",
+            "operator.step",
+            "operator.session",
             "agent_loop_v6.ledger",
             "agent_loop_v6.assess",
             "agent_loop_v6.verify",

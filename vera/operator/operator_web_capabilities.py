@@ -38,6 +38,7 @@ from Vera.vera.operator import operator_loop as _loop
 from Vera.vera.operator import targets as _targets
 from Vera.vera.operator import capture as _capture
 from Vera.vera.operator import tours as _tours
+from Vera.vera.operator import operator_trace_core as _op_trace
 from Vera.vera.operator import connectors as _connectors
 from Vera.vera.operator.actions import ACTIONS
 from Vera.vera.operator.missions import run_mission, list_missions
@@ -68,6 +69,69 @@ def _shots_dir(session_id: str) -> str:
 
 def _safe_seg(s: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", str(s or "")).strip("-") or "capture"
+
+
+# ── run history (O13) ────────────────────────────────────────────────────────
+# The operator emitted its events and forgot them. A finished run could not be
+# re-examined at all, which is why every census goal with a browser step could
+# burn its whole 25-minute cap with nothing to show for it. The agentic loop has
+# kept a replay log per session for a long time; this is the same idea, same
+# shape, so the two can eventually be read by one surface.
+_OP_EVENTS_KEY = "vera:operator:events:%s"
+_OP_RUNS_KEY = "vera:operator:runs"
+_OP_EVENTS_MAX = 2000          # a long browser run is ~hundreds of steps
+_OP_EVENTS_TTL = 14 * 24 * 3600
+_OP_RUNS_KEEP = 500
+
+
+async def _op_record(run_id: str, ev: Dict[str, Any]) -> None:
+    """Persist one operator event AND emit it. Never raises: recording a run must
+    never be the thing that breaks the run."""
+    try:
+        await emit_event(ev)
+    except Exception as e:                                   # pragma: no cover
+        log.debug("operator emit failed: %s", e)
+    r = getattr(_orch, "REDIS", None)
+    if r is None or not run_id:
+        return
+    try:
+        rec = dict(ev)
+        rec.setdefault("ts", _now_iso())
+        k = _OP_EVENTS_KEY % run_id
+        await r.rpush(k, json.dumps(rec, default=str))
+        await r.ltrim(k, -_OP_EVENTS_MAX, -1)
+        await r.expire(k, _OP_EVENTS_TTL)
+        # Index by start time so `operator.runs` is ordered without reading every
+        # event list, and trimmed so it cannot grow without bound.
+        await r.zadd(_OP_RUNS_KEY, {run_id: time.time()})
+        await r.zremrangebyrank(_OP_RUNS_KEY, 0, -(_OP_RUNS_KEEP + 1))
+    except Exception as e:                                   # pragma: no cover
+        log.debug("operator record failed for %s: %s", run_id, e)
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+async def _op_events(run_id: str) -> List[Dict[str, Any]]:
+    """The persisted event list for one run, or [] once it has aged out."""
+    r = getattr(_orch, "REDIS", None)
+    if r is None or not run_id:
+        return []
+    try:
+        raw = await r.lrange(_OP_EVENTS_KEY % run_id, 0, _OP_EVENTS_MAX - 1)
+    except Exception:
+        return []
+    out: List[Dict[str, Any]] = []
+    for x in raw or []:
+        try:
+            d = json.loads(x.decode() if isinstance(x, (bytes, bytearray)) else x)
+        except Exception:
+            continue
+        if isinstance(d, dict):
+            out.append(d)
+    return out
 
 
 def _gif_out_path(domain: str, name: str) -> Dict[str, str]:
@@ -341,11 +405,16 @@ async def cap_connect(source: str = "", ref: str = "", goal: str = "",
 
     async def _on_step(rec: Dict[str, Any]):
         shot = rec.get("screenshot", "")
-        await emit_event({"type": "operator.step", "run_id": run_id, "i": rec.get("i"),
-                          "phase": rec.get("phase"), "action": rec.get("action"),
-                          "thought": rec.get("thought", "")[:200], "reason": rec.get("reason", ""),
-                          "screenshot": f"/operator/artifact?path={_artifact_rel(shot)}" if shot else ""})
+        await _op_record(run_id, {
+            "type": "operator.step", "run_id": run_id, "i": rec.get("i"),
+            "phase": rec.get("phase"), "action": rec.get("action"),
+            "thought": rec.get("thought", "")[:200], "reason": rec.get("reason", ""),
+            "error": rec.get("error", ""),
+            "screenshot": f"/operator/artifact?path={_artifact_rel(shot)}" if shot else ""})
 
+    await _op_record(run_id, {"type": "operator.run", "stage": "start", "run_id": run_id,
+                              "goal": goal[:200], "target": resolved.get("kind"),
+                              "source": source, "ref": ref})
     result = await _loop.run_loop(goal, s, call_cap=_call, policy=policy, provider=provider,
                                   max_steps=int(max_steps), canvas=resolved.get("canvas", False),
                                   shots_dir=_shots_dir(sid) + f"/run-{run_id}", on_step=_on_step)
@@ -353,6 +422,8 @@ async def cap_connect(source: str = "", ref: str = "", goal: str = "",
         await _be.close_session(sid)
     result.update({"run_id": run_id, "source": source, "ref": ref,
                    "session_id": sid if keep_open else ""})
+    await _op_record(run_id, {"type": "operator.run", "stage": "done", "run_id": run_id,
+                              "reason": result.get("reason"), "steps": result.get("step_count")})
     return result
 
 
@@ -591,14 +662,15 @@ async def cap_run(goal: str = "", url: str = "", kind: str = "", base_url: str =
 
     async def _on_step(rec: Dict[str, Any]):
         shot = rec.get("screenshot", "")
-        await emit_event({"type": "operator.step", "run_id": run_id,
-                          "i": rec.get("i"), "phase": rec.get("phase"),
-                          "action": rec.get("action"), "thought": rec.get("thought", "")[:200],
-                          "reason": rec.get("reason", ""), "error": rec.get("error", ""),
-                          "screenshot": f"/operator/artifact?path={_artifact_rel(shot)}" if shot else ""})
+        await _op_record(run_id, {
+            "type": "operator.step", "run_id": run_id,
+            "i": rec.get("i"), "phase": rec.get("phase"),
+            "action": rec.get("action"), "thought": rec.get("thought", "")[:200],
+            "reason": rec.get("reason", ""), "error": rec.get("error", ""),
+            "screenshot": f"/operator/artifact?path={_artifact_rel(shot)}" if shot else ""})
 
-    await emit_event({"type": "operator.run", "stage": "start", "run_id": run_id,
-                      "goal": goal[:200], "target": resolved.get("kind")})
+    await _op_record(run_id, {"type": "operator.run", "stage": "start", "run_id": run_id,
+                              "goal": goal[:200], "target": resolved.get("kind")})
     result = await _loop.run_loop(
         goal, s, call_cap=_call, policy=policy, provider=provider, model=model,
         max_steps=int(max_steps), canvas=resolved.get("canvas", False),
@@ -619,9 +691,9 @@ async def cap_run(goal: str = "", url: str = "", kind: str = "", base_url: str =
         await _be.close_session(s.session_id)
     result.update({"run_id": run_id, "goal": goal, "target": resolved.get("kind"),
                    "session_id": s.session_id if (keep_open or not own) else ""})
-    await emit_event({"type": "operator.run", "stage": "done", "run_id": run_id,
-                      "reason": result.get("reason"), "steps": result.get("step_count"),
-                      "gif": result.get("gif", "")})
+    await _op_record(run_id, {"type": "operator.run", "stage": "done", "run_id": run_id,
+                              "reason": result.get("reason"), "steps": result.get("step_count"),
+                              "gif": result.get("gif", "")})
     return result
 
 
@@ -1043,6 +1115,65 @@ async def _operator_panel():
                         status_code=404)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  TRACE  (O13) — read a browser run back, the way the agentic loop can be read
+# ─────────────────────────────────────────────────────────────────────────────
+@capability("operator.trace", memory="off", silent=True,
+            http_method="GET", http_path="/operator/trace", http_tags=["operator", "obs"],
+            description=(
+                "READ-ONLY diagnostic digest of ONE operator (browser) run — the "
+                "operator's answer to workshop.agent_loop.trace. Returns what it "
+                "was asked to do, each observe/think/act step with its action, "
+                "thought, error and screenshot, phase coverage, and warnings for "
+                "the failure shapes that matter: the SAME action attempted 3+ "
+                "times (the browser thrash signature), steps that errored, and a "
+                "run that stopped because it ran out of STEPS rather than because "
+                "it finished. That last one is flagged next to the run's own "
+                "`reason`, because an operator run reporting success after hitting "
+                "its step ceiling is a real observed failure, not a hypothetical. "
+                "Offers no verdict of its own. Inputs: run_id (str!). Output: "
+                "{run, steps[], counters, warnings[], duration_s}."),
+            )
+async def cap_operator_trace(run_id: str = "", trace_id=None) -> Dict[str, Any]:
+    rid = (run_id or "").strip()
+    if not rid:
+        return {"error": "run_id is required"}
+    events = await _op_events(rid)
+    if not events:
+        return {"error": f"no recorded events for run '{rid}'",
+                "note": "runs are kept for 14 days; runs from before operator "
+                        "recording landed were never persisted at all"}
+    return {"run_id": rid, **_op_trace.digest_events(events)}
+
+
+@capability("operator.runs", memory="off", silent=True,
+            http_method="GET", http_path="/operator/runs", http_tags=["operator", "obs"],
+            description=(
+                "LIST recent operator (browser) runs, newest first — goal, target, "
+                "steps, errors, repeated actions, whether it hit its step ceiling, "
+                "duration, and whether it COMPLETED at all. An incomplete run is "
+                "worth looking at: it means the run never wrote its `done` event, "
+                "so it was cancelled or its process died holding it. Inputs: limit "
+                "(int=30). Output: {runs[], count}."),
+            )
+async def cap_operator_runs(limit: int = 30, trace_id=None) -> Dict[str, Any]:
+    r = getattr(_orch, "REDIS", None)
+    if r is None:
+        return {"runs": [], "count": 0, "error": "redis unavailable"}
+    n = max(1, min(200, int(limit or 30)))
+    try:
+        ids = await r.zrevrange(_OP_RUNS_KEY, 0, n - 1)
+    except Exception as e:
+        return {"runs": [], "count": 0, "error": f"{type(e).__name__}: {e}"}
+    out: List[Dict[str, Any]] = []
+    for raw in ids or []:
+        rid = raw.decode() if isinstance(raw, (bytes, bytearray)) else str(raw)
+        events = await _op_events(rid)
+        if events:
+            out.append(_op_trace.summarise_run(rid, events))
+    return {"runs": out, "count": len(out)}
+
+
 register_ui(
     "operator-studio", "Operator", "🕹",
     """<div id="operator-mount" style="height:100%;display:flex;flex-direction:column;">
@@ -1055,7 +1186,7 @@ register_ui(
              "operator.screenshot", "operator.act", "operator.think",
              "operator.step", "operator.run", "operator.mission.list",
              "operator.mission.run", "docs.build", "docs.gallery",
-             "operator.test.run"],
+             "operator.test.run", "operator.trace", "operator.runs"],
     mode="tab", tab_order=73,
 )
 
