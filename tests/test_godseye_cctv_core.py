@@ -130,6 +130,29 @@ def test_manifest_reports_video_coverage_and_what_is_still_pending():
     assert m2["videoCount"] == 1 and m2["streamPending"] == 0
 
 
+def test_bbox_prune_keeps_only_what_is_in_view():
+    # Measured 2026-08-30: the full manifest is multi-megabyte and the browser
+    # spent SECONDS in single main-thread tasks parsing it. Filtering server
+    # side removes the cost rather than compressing it slightly better.
+    feeds = [
+        {"id": "in", "lat": 51.50, "lng": -0.12},
+        {"id": "out-lat", "lat": 20.00, "lng": -0.12},
+        {"id": "out-lng", "lat": 51.50, "lng": 40.00},
+        {"id": "edge", "lat": 51.52, "lng": -0.10},      # inclusive boundary
+        {"id": "noplace"},
+    ]
+    kept = {f["id"] for f in C.in_bbox(feeds, (51.49, -0.15, 51.52, -0.10))}
+    assert kept == {"in", "edge"}
+
+
+@pytest.mark.parametrize("bbox", [None, [], (1, 2, 3), "junk", (1, 2, "x", 4)])
+def test_a_missing_or_broken_bbox_returns_everything(bbox):
+    # Degrading to "unfiltered" is right: a filter that silently returns
+    # nothing looks exactly like an area with no cameras.
+    feeds = [{"id": "a", "lat": 1.0, "lng": 2.0}]
+    assert C.in_bbox(feeds, bbox) == feeds
+
+
 def test_split_handles_the_non_ascii_separator():
     assert C.split_catalog_payload("a\xa4b\xa4c") == ["a", "b", "c"]
     assert C.split_catalog_payload("") == []
