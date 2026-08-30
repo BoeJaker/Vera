@@ -28,7 +28,9 @@ import sys
 import time
 from typing import Any, Dict, List, Optional
 
-from Vera.vera.capability_orchestration import capability, emit_event
+from pathlib import Path as _Path
+from fastapi.responses import HTMLResponse
+from Vera.vera.capability_orchestration import capability, emit_event, APP, register_ui
 from Vera.vera.printer.escpos_core import text_job, raster_job, INIT, CUT
 
 # 58mm heads are 384 dots; 80mm are 576. Default 384; override per-call or via env.
@@ -354,3 +356,29 @@ try:
         default_format="text", needs_target=False, source="printer")
 except Exception as _e:  # delivery module optional / may change shape
     pass
+
+
+_HERE = _Path(__file__).resolve().parent
+
+
+@APP.get("/printer/panel")
+async def _printer_panel():
+    p = _HERE / "printer_panel.html"
+    return HTMLResponse(p.read_text(encoding="utf-8") if p.exists()
+                        else "<p style='color:red'>printer_panel.html not found</p>")
+
+
+register_ui(
+    "printer",
+    "Thermal Printer",
+    "\U0001f5a8\ufe0f",
+    """<div style="height:100%;display:flex;flex-direction:column">
+  <iframe src="/printer/panel"
+          style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"
+          title="Thermal Printer"></iframe>
+</div>""",
+    "",
+    ui_caps=["printer.status", "printer.print.image", "printer.print.text",
+             "printer.print.nice", "printer.print.label", "printer.notify"],
+    mode="element",
+)
