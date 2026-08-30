@@ -99,8 +99,10 @@ timeline that guesses what occurred.
 The Agent Bridges panel is the interoperability-specific projection. It shows
 LIB02's A2A foundation and inert client/server plan status, LIB18 runtime
 candidate/dimension coverage, queued live cases, and registration state for the
-shared Run, Workflow IR, telemetry, durability, runtime-matrix, and A2A
-capabilities. This complements—rather than duplicates—the existing Run evidence
+shared Run, Workflow IR, telemetry, durability, runtime-matrix, A2A, Capability
+v2, resolver/policy, and source-intake capabilities. It also distinguishes
+W3-07's implemented inert build-plan contract from queued build and activation
+execution. This complements—rather than duplicates—the existing Run evidence
 in Activity, the harness overlay, Chat/LHM, and Memory Graph. Readiness labels
 come from the backing inspection capability; the panel does not infer readiness
 from package presence or a successful page load.
@@ -113,8 +115,10 @@ published.
 ## Boundaries that remain deliberate
 
 - Contracts describe; policy authorizes.
-- Source inspection proposes; catalogs, builds, and activation remain separate
-  reviewed state transitions.
+- Source inspection proposes; the build-plan contract specifies immutable
+  provenance, evidence, least privilege, approval, rollback, export, upgrade,
+  and teardown without performing them. Catalogs, builders, and activation
+  remain separate reviewed state transitions.
 - Resolver observations inform; they do not mutate declarations.
 - Workflow adapters translate; native runtimes keep native authority.
 - Model packages identify artifacts; activation remains reviewed.

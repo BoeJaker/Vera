@@ -166,6 +166,32 @@ Transitions through `inspected` and `proposed` can be planned deterministically.
 approval boundary. Existing MCP discovery/catalog and Fabric OpenAPI crawling
 remain operational systems; they do not bypass this admission contract.
 
+W3-07 begins with the next non-executing boundary in
+`vera/integrations/source_build_plan.py`. It accepts bounded inline proposals for
+exactly pinned Python packages, CLI artifacts, OCI images, and repositories.
+Python and CLI sources require exact versions plus artifact SHA-256 digests; OCI
+references require `image@sha256`; repositories require credential-free HTTPS,
+a full commit revision, and an archive digest. These are unverified provenance
+claims until later evidence proves them.
+
+Each proposal declares entry points, licence, effects, CPU/memory/accelerator
+needs, opaque `secretref:` references, and a deny-or-HTTPS-allowlist network
+policy. The resulting stable plan queues materialisation, SBOM/licence/malware/
+vulnerability scans, manifest and policy review, conformance, rollback and
+teardown proof, approval, activation, export, upgrade, rollback, and teardown.
+It always reports `ready_for_build: false`, `ready_for_activation: false`, and
+that no credential, network, fetch, install, build, registration, activation, or
+execution occurred. A generated wrapper therefore remains a proposal.
+
+| Capability | Purpose |
+|---|---|
+| `integration.source.build.status` | Report supported source kinds, required evidence, and queued execution |
+| `integration.source.build.plan` | Validate one inline descriptor and return an inert reproducible plan |
+
+Real materialisation, scans, builders, approval consumption, activation, and
+rollback evidence remain `queued_live`; this contract does not call Vera's
+existing image builders or repository tooling.
+
 ---
 
 ## 7. Common threads

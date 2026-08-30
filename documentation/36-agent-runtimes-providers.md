@@ -76,6 +76,10 @@ inspection, and proposal states from queued build, verification, approval, and
 activation. “Implemented” there means the bounded,
 deterministic planning contract exists; transport/listener execution remains
 labelled `queued_live` until the explicit live gate is authorised and passes.
+W3-07 adds an equally inert build/activation proposal for pinned Python, CLI,
+OCI, and repository sources. Agent Bridges shows the plan-contract state and
+source-kind count, but exposes no build or activation action; actual external
+materialisation and conformance remain queued.
 
 ## Troubleshooting
 
@@ -91,6 +95,8 @@ needed to fix it.
 - `vera/agentbridges/runtime_matrix.py` — deterministic upstream-versus-Vera
   feature matrix and queued live conformance cases.
 - `vera/execution/a2a_mapping.py` — offline A2A v1.0 mapping and conformance lanes.
+- `vera/integrations/source_intake.py` and `source_build_plan.py` — bounded
+  discovery and inert build/activation admission contracts.
 - `vera/smolagents/`, `vera/langgraph/`, `vera/pydanticai/` — adapters.
 - `vera/providers/` — credentials, models, chat, pricing, and usage.
 - `vera/catalog/` — discovery and hardware-fit estimates.
