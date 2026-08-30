@@ -14,6 +14,20 @@ Generated files are written under `_out/` next to the module and served read-onl
 
 `render.dream_export` is the bridge to Dream: a long autonomous review or synthesis can be exported straight to a shareable DOCX/PDF. The `REVIEW_STYLES` / output-format profiles shared with chat and dream (`vera.output_formats`) define what those documents look like.
 
+## Parsing is not rendering
+
+Render remains product policy for producing presentation files. Inbound document
+understanding belongs to the separate `providers.document.*` contract. That
+boundary accepts an original `ArtifactRef`, describes a future isolated parser,
+and validates supplied records, derived artifacts, citations, OCR declarations,
+and resource evidence. It does not route conversion binaries through Render or
+treat a rendered file as parsed merely because it exists.
+
+The initial Docling profile is static and `queued_live`: the offline contract
+imports no Docling package and reads no file. A future live adapter must retain
+the original artifact and parser/config provenance; Render may consume verified
+records or derived artifacts only after that separate gate succeeds.
+
 ---
 
 ## See also

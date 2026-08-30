@@ -104,8 +104,12 @@ v2, resolver/policy, and source-intake capabilities. It also distinguishes
 W3-07's implemented inert build-plan contract from queued build and activation
 execution. LIB-04 adds the same distinction for structured generation: the
 portable schema/validation/retry contract is implemented, while provider-native,
-Instructor, Outlines, streaming, and model execution remain queued. This
-complements—rather than duplicates—the existing Run evidence
+Instructor, Outlines, streaming, and model execution remain queued. LIB-06 adds
+the same honest boundary for documents: Agent Bridge displays the portable
+parse/frozen-corpus contract, supported media types, stable citation identity,
+and the `not_imported` Docling profile. Parsing, OCR, fidelity measurement, and
+teardown execution remain queued, and no document content is projected into the
+panel. This complements—rather than duplicates—the existing Run evidence
 in Activity, the harness overlay, Chat/LHM, and Memory Graph. Readiness labels
 come from the backing inspection capability; the panel does not infer readiness
 from package presence or a successful page load.
@@ -127,6 +131,9 @@ published.
 - Model packages identify artifacts; activation remains reviewed.
 - Structured schemas validate supplied values; provider decoding and semantic
   validators remain separately authorized runtime work.
+- Document-parser plans validate supplied provenance, IDs, citations, hashes,
+  bounds, and OCR declarations; Docling conversion and persistence remain
+  separately authorized isolated runtime work. Render remains output policy.
 - Worldview projections provide parity evidence; they do not feed training by
   default.
 - A2A discovery projects candidates; it does not register or execute them.

@@ -40,6 +40,7 @@ from Vera.vera.execution.a2a_mapping import compile_a2a_protocol_mapping
 from Vera.vera.integrations.source_intake import lifecycle_contract
 from Vera.vera.integrations.source_build_plan import build_plan_contract
 from Vera.vera.providers.structured_generation import structured_generation_status
+from Vera.vera.providers.document_parser import document_parser_status
 from Vera.vera.capability_orchestration import (
     APP, CAPABILITY_REGISTRY, capability, register_ui,
 )
@@ -76,6 +77,7 @@ async def agentbridge_interoperability(trace_id=None) -> Dict[str, Any]:
     intake = lifecycle_contract()
     build_plan = build_plan_contract()
     structured = structured_generation_status()
+    documents = document_parser_status()
     shared = (
         ("capability_v2", "cap.contract.manifest"),
         ("resolver_shadow", "cap.resolve.shadow"),
@@ -94,6 +96,11 @@ async def agentbridge_interoperability(trace_id=None) -> Dict[str, Any]:
         ("structured_plan", "providers.structured.plan"),
         ("structured_validate", "providers.structured.validate"),
         ("structured_retry", "providers.structured.retry.plan"),
+        ("document_status", "providers.document.status"),
+        ("document_plan", "providers.document.plan"),
+        ("document_validate", "providers.document.validate"),
+        ("document_corpus", "providers.document.corpus.evaluate"),
+        ("document_teardown", "providers.document.teardown.plan"),
     )
     return {
         "schema": "vera.agentbridge-interoperability/v1",
@@ -136,6 +143,19 @@ async def agentbridge_interoperability(trace_id=None) -> Dict[str, Any]:
             "model_execution": structured["model_execution"],
             "model_called": structured["model_called"],
             "executes": structured["executes"],
+        },
+        "document_parser": {
+            "contract": documents["contract"],
+            "provider_profiles": documents["provider_profiles"],
+            "portable_media_types": documents["portable_media_types"],
+            "frozen_corpus_contract": documents["frozen_corpus_contract"],
+            "stable_element_ids": documents["stable_element_ids"],
+            "citations": documents["citations"],
+            "parser_execution": documents["parser_execution"],
+            "ocr_execution": documents["ocr_execution"],
+            "queued_live_gates": documents["queued_live_gates"],
+            "provider_imported": documents["optional_provider_imported"],
+            "executes": documents["executes"],
         },
         "shared_contracts": [
             {"id": key, "capability": cap, "registered": cap in CAPABILITY_REGISTRY}

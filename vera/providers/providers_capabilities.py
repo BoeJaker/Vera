@@ -42,6 +42,13 @@ from Vera.vera.providers.structured_generation import (
     structured_generation_status,
     validate_structured_value,
 )
+from Vera.vera.providers.document_parser import (
+    compile_document_parse_plan,
+    document_parser_status,
+    document_parser_teardown_plan,
+    evaluate_frozen_document_corpus,
+    validate_document_parse_result,
+)
 
 log = logging.getLogger("vera.providers")
 
@@ -549,6 +556,92 @@ async def cap_structured_retry_plan(
         return {"error": str(exc), "allowed": False,
                 "attempt_started": False, "model_called": False,
                 "executes": False}
+
+
+@capability(
+    "providers.document.status", memory="off", silent=True,
+    http_method="GET", http_path="/providers/document/status",
+    http_tags=["providers", "document"],
+    description="Return the offline LIB-06 portable DocumentParser contract and "
+                "static Docling profile. Does not import Docling, open a document, "
+                "run OCR, access the network, or execute conversion.",
+)
+async def cap_document_status(trace_id=None) -> Dict:
+    return document_parser_status()
+
+
+@capability(
+    "providers.document.plan", memory="off",
+    http_method="POST", http_path="/providers/document/plan",
+    http_tags=["providers", "document"],
+    description="Compile an inert bounded document-parse plan from an ArtifactRef "
+                "and supplied inspection metadata. Inputs: artifact, inspection, "
+                "provider_profile, ocr_policy, resource_limits, cancelled. Reads no file.",
+)
+async def cap_document_plan(
+        artifact: Optional[Dict] = None, inspection: Optional[Dict] = None,
+        provider_profile: str = "docling", ocr_policy: str = "disabled",
+        resource_limits: Optional[Dict] = None, cancelled: bool = False,
+        trace_id=None) -> Dict:
+    try:
+        return compile_document_parse_plan(
+            artifact or {}, inspection=inspection or {},
+            provider_profile=provider_profile, ocr_policy=ocr_policy,
+            resource_limits=resource_limits or {}, cancelled=cancelled)
+    except (TypeError, ValueError) as exc:
+        return {"error": str(exc), "accepted": False,
+                "ready_for_execution": False, "files_read": False,
+                "network_io": False, "executes": False}
+
+
+@capability(
+    "providers.document.validate", memory="off",
+    http_method="POST", http_path="/providers/document/validate",
+    http_tags=["providers", "document"],
+    description="Validate supplied parser evidence against a portable parse plan. "
+                "Checks provenance, stable IDs, citations, bounds and OCR declaration; "
+                "returns hashes and issue codes, never extracted document content.",
+)
+async def cap_document_validate(
+        plan: Optional[Dict] = None, result: Optional[Dict] = None,
+        trace_id=None) -> Dict:
+    try:
+        return validate_document_parse_result(plan or {}, result or {})
+    except (TypeError, ValueError) as exc:
+        return {"error": str(exc), "valid": False, "content_returned": False,
+                "records_written": 0, "artifacts_written": 0, "executes": False}
+
+
+@capability(
+    "providers.document.corpus.evaluate", memory="off",
+    http_method="POST", http_path="/providers/document/corpus/evaluate",
+    http_tags=["providers", "document", "evaluation"],
+    description="Evaluate up to 64 supplied frozen-corpus evidence cases using "
+                "deterministic text/table/layout hashes. Does not run Docling or expose content.",
+)
+async def cap_document_corpus_evaluate(cases: Optional[List[Dict]] = None,
+                                       trace_id=None) -> Dict:
+    try:
+        return evaluate_frozen_document_corpus(cases or [])
+    except (TypeError, ValueError) as exc:
+        return {"error": str(exc), "passed": False, "content_returned": False,
+                "provider_imported": False, "executes": False}
+
+
+@capability(
+    "providers.document.teardown.plan", memory="off",
+    http_method="POST", http_path="/providers/document/teardown/plan",
+    http_tags=["providers", "document"],
+    description="Return an inert teardown checklist for an isolated parser plan. "
+                "Never deletes the source, verified records, artifacts, or a container.",
+)
+async def cap_document_teardown_plan(plan: Optional[Dict] = None,
+                                     trace_id=None) -> Dict:
+    try:
+        return document_parser_teardown_plan(plan or {})
+    except (TypeError, ValueError) as exc:
+        return {"error": str(exc), "action_started": False,
+                "deletes_source_artifact": False, "executes": False}
 
 
 @capability("providers.usage.clear", memory="off",
