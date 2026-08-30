@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY, capability
 from Vera.vera.census import census_core as cc
+from Vera.vera.census import operator_census_core as occ
 
 import logging
 
@@ -149,6 +150,27 @@ def _run_files() -> Dict[str, Path]:
                 found[rid] = p
     except Exception as e:
         log.warning("census: listing %s failed: %s", CENSUS_DIR, e)
+    return found
+
+
+# The operator census keeps its own files alongside the loop's, distinguished by
+# prefix rather than directory so both are archived and rotated the same way.
+_OP_PREFIX = "operator-census"
+
+
+def _op_run_files() -> Dict[str, Path]:
+    """run_id -> file, for every OPERATOR census JSONL."""
+    found: Dict[str, Path] = {}
+    try:
+        for p in sorted(CENSUS_DIR.glob(_OP_PREFIX + "*.jsonl")):
+            name = p.name[len(_OP_PREFIX):]
+            # Reuse the loop census's naming rule by normalising the prefix:
+            # "operator-census.run3.jsonl" -> "run3", bare -> "current".
+            rid = cc.run_id_from_filename("census" + name)
+            if rid:
+                found[rid] = p
+    except Exception as e:
+        log.warning("census: listing operator runs in %s failed: %s", CENSUS_DIR, e)
     return found
 
 
@@ -419,6 +441,76 @@ async def cap_census_goal(run: str = "", goal: str = "", trace_id=None) -> Dict[
             "outputs": cc.run_outputs(events),
             "events_available": len(events),
             "trace_available": bool(trace and not trace.get("error"))}
+
+
+@capability(
+    "census.operator.runs", memory="off", silent=True,
+    http_method="GET", http_path="/census/operator/runs", http_tags=["census", "operator"],
+    description=(
+        "LIST operator-census runs — the browser's own measuring instrument. Per "
+        "run: goals, and how many FINISHED (ran cleanly to a stop), ERRORED, hit "
+        "their step CEILING, or are INCOMPLETE (no completion event at all), plus "
+        "total steps/errors, how many goals showed the thrash signature, and "
+        "`comparable` (false when any goal is incomplete, since an incomplete "
+        "goal has no trustworthy duration or step count). NOTE: `finished` means "
+        "ran cleanly to a stop, NOT that the browser achieved the goal — nothing "
+        "here decides that. Output: {runs[], count, dir}."),
+)
+async def cap_census_operator_runs(trace_id=None) -> Dict[str, Any]:
+    files = _op_run_files()
+    records = await asyncio.gather(*(_read_run(p) for p in files.values()))
+    runs = [occ.summarise_run(rid, recs) for rid, recs in zip(files, records)]
+    runs.sort(key=lambda s: cc.run_sort_key(str(s.get("run_id") or "")))
+    return {"runs": runs, "count": len(runs), "dir": str(CENSUS_DIR)}
+
+
+@capability(
+    "census.operator.run", memory="off", silent=True,
+    http_method="GET", http_path="/census/operator/run", http_tags=["census", "operator"],
+    description=(
+        "ONE operator-census run in full — every goal's record, each carrying the "
+        "`run_id` of the underlying browser run so a row can be opened straight "
+        "into operator.trace for the step-by-step. Inputs: run (str='current'). "
+        "Output: {run_id, summary, records[]}."),
+)
+async def cap_census_operator_run(run: str = "", trace_id=None) -> Dict[str, Any]:
+    rid = (run or cc.CURRENT).strip()
+    files = _op_run_files()
+    if rid not in files:
+        return {"error": f"unknown operator run '{rid}'", "available": sorted(files)}
+    records = await _read_run(files[rid])
+    return {"run_id": rid, "summary": occ.summarise_run(rid, records),
+            "records": records}
+
+
+@capability(
+    "census.operator.compare", memory="off", silent=True,
+    http_method="GET", http_path="/census/operator/compare", http_tags=["census", "operator"],
+    description=(
+        "Compare two operator-census runs PER GOAL, worst news first. The outcome "
+        "ladder is worst-to-best incomplete < ceiling < errored < finished — a run "
+        "at its CEILING ranks BELOW one that errored honestly, because its own "
+        "`reason` may still read like success while it merely ran out of steps "
+        "(the failure L8 was landed for). `outcome_change` is a transition to "
+        "investigate, not a score. Inputs: base (str!), head (str!). Output: "
+        "{base, head, goals[], counts}."),
+)
+async def cap_census_operator_compare(base: str = "", head: str = "",
+                                      trace_id=None) -> Dict[str, Any]:
+    files = _op_run_files()
+    b, h = (base or "").strip(), (head or cc.CURRENT).strip()
+    missing = [x for x in (b, h) if x not in files]
+    if missing:
+        return {"error": f"unknown run(s): {', '.join(missing)}",
+                "available": sorted(files)}
+    br, hr = await asyncio.gather(_read_run(files[b]), _read_run(files[h]))
+    goals = occ.compare_runs(br, hr)
+    counts: Dict[str, int] = {}
+    for g in goals:
+        counts[g["outcome_change"]] = counts.get(g["outcome_change"], 0) + 1
+    return {"base": b, "head": h, "goals": goals, "counts": counts,
+            "base_comparable": occ.summarise_run(b, br)["comparable"],
+            "head_comparable": occ.summarise_run(h, hr)["comparable"]}
 
 
 @capability(

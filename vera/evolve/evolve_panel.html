@@ -461,6 +461,15 @@ html.vpb-nav-hosted body{padding-left:0}
     <div class="hint" style="margin-top:6px">Always per goal, never averaged — the goals differ by two orders of magnitude in cost, so a run-level mean says nothing. Worst news first.</div>
   </div>
   <div class="card">
+    <div class="card-h"><span class="card-t">Operator (browser) runs</span>
+      <span class="hint" id="census-op-status">—</span>
+      <span style="flex:1"></span>
+      <button class="btn sm" onclick="loadCensusOperator()">&#8635;</button>
+    </div>
+    <div id="census-operator"><div class="empty">Loading…</div></div>
+    <div class="hint" style="margin-top:6px"><b>finished</b> means the run reached a clean stop, <b>not</b> that the browser achieved the goal — nothing here decides that. A run at its step <b>ceiling</b> ranks BELOW one that <b>errored</b>: its own reason can still read like success while it merely ran out of steps. Click a run for its step-by-step.</div>
+  </div>
+  <div class="card">
     <div class="card-h"><span class="card-t">Fixes per run</span>
       <span class="hint">board items mapped to the run that found / verified them</span>
     </div>
@@ -2269,7 +2278,69 @@ async function loadCensus(){
       +(s.partial?(' · partial '+s.goals+'/'+(r.full_goal_count||s.goals)):'')+'</option>').join('');
     sel.value=pick[i===0?Math.max(0,pick.length-2):pick.length-1]||ids[0];
   });
-  loadCensusCompare();loadCensusBoard();
+  loadCensusCompare();loadCensusBoard();loadCensusOperator();
+}
+const _OP_OUT={finished:'#3cb371',errored:'#c9a35a',ceiling:'#c96b6b',incomplete:'#8a8a8a'};
+async function loadCensusOperator(){
+  const el=$('census-operator');if(!el)return;
+  // Two sources: the operator CENSUS (labelled batches) if any exist, and the
+  // raw recent runs, which exist as soon as any browser run happens.
+  const [cen,recent]=await Promise.all([api('/census/operator/runs'),api('/operator/runs?limit=12')]);
+  let h='';
+  const cr=(cen&&cen.runs)||[];
+  if(cr.length){
+    h+='<table><tr><th>run</th><th>goals</th><th>finished</th><th>errored</th><th>ceiling</th><th>incomplete</th><th>thrash</th><th>total</th></tr>'
+      +cr.slice().reverse().map(s=>'<tr>'
+        +'<td class="mono">'+esc(s.run_id)+'</td><td>'+s.goals+'</td>'
+        +'<td style="color:'+_OP_OUT.finished+'">'+s.finished+'</td>'
+        +'<td style="color:'+_OP_OUT.errored+'">'+s.errored+'</td>'
+        +'<td style="color:'+_OP_OUT.ceiling+'">'+s.ceiling+'</td>'
+        +'<td style="color:'+_OP_OUT.incomplete+'">'+s.incomplete+'</td>'
+        +'<td'+(s.thrashing_goals?' style="color:#c96b6b"':'')+'>'+s.thrashing_goals+'</td>'
+        +'<td class="mono">'+_cenSec(s.duration_total_s)+'</td></tr>').join('')+'</table>';
+  }
+  const rr=(recent&&recent.runs)||[];
+  h+='<div class="hint" style="margin:8px 0 4px">Recent browser runs'+(cr.length?'':' (no operator census batches recorded yet)')+'</div>';
+  h+=rr.length
+    ?('<table><tr><th>run</th><th>goal</th><th>outcome</th><th>steps</th><th>err</th><th>thrash</th><th>took</th></tr>'
+      +rr.map(r=>{
+        const out=!r.completed?'incomplete':(r.ceiling_hit?'ceiling':(r.errors?'errored':'finished'));
+        return '<tr class="clk" onclick="openOperatorTrace(\''+esc(r.run_id)+'\')">'
+          +'<td class="mono">'+esc(r.run_id)+'</td>'
+          +'<td>'+esc((r.goal||'').slice(0,60))+'</td>'
+          +'<td style="color:'+(_OP_OUT[out])+'">'+out+'</td>'
+          +'<td class="mono">'+(r.steps||0)+'</td>'
+          +'<td'+(r.errors?' style="color:#c96b6b"':'')+'>'+(r.errors||0)+'</td>'
+          +'<td'+(r.repeated_actions?' style="color:#c96b6b"':'')+'>'+(r.repeated_actions||0)+'</td>'
+          +'<td class="mono">'+_cenSec(r.duration_s)+'</td></tr>';}).join('')+'</table>')
+    :'<div class="empty">No browser runs recorded yet. Recording started when operator observability landed — earlier runs were never persisted.</div>';
+  el.innerHTML=h;
+  $('census-op-status').textContent=(cr.length?(cr.length+' batch(es) · '):'')+rr.length+' recent run(s)';
+}
+async function openOperatorTrace(runId){
+  const t=await api('/operator/trace?run_id='+encodeURIComponent(runId));
+  if(!t||t.error){toast((t&&t.error)||'no trace');return}
+  const c=t.counters||{}, r=t.run||{};
+  const steps=(t.steps||[]).map(s=>'<tr>'
+    +'<td class="mono">'+esc(String(s.i))+'</td><td>'+esc(s.phase||'')+'</td>'
+    +'<td class="mono">'+esc(s.action||'')+'</td><td>'+esc(s.thought||'')+'</td>'
+    +'<td'+(s.error?' style="color:#c96b6b"':'')+'>'+esc(s.error||'')+'</td>'
+    +'<td>'+(s.screenshot?'<a href="'+esc(s.screenshot)+'" target="_blank">shot</a>':'')+'</td></tr>').join('');
+  openModal(
+    '<div class="row" style="align-items:center;margin-bottom:8px"><b>Operator run</b>'
+    +'<span class="hint mono" style="margin-left:8px">'+esc(runId)+'</span>'
+    +'<span style="flex:1"></span><button class="btn sm" onclick="closeModal()">&#10005;</button></div>'
+    +'<div style="margin-bottom:6px"><b>goal</b><div class="mono" style="white-space:pre-wrap">'+esc(r.goal||'')+'</div></div>'
+    +'<div class="row" style="gap:12px;flex-wrap:wrap;margin-bottom:6px">'
+      +'<span>steps <b>'+(c.steps||0)+'</b></span><span>errors <b>'+(c.errors||0)+'</b></span>'
+      +'<span>shots <b>'+(c.screenshots||0)+'</b></span>'
+      +'<span class="hint">'+_cenSec(t.duration_s)+'</span>'
+      +'<span>reason <b>'+esc(String(r.reason||'—'))+'</b></span>'
+      +(c.ceiling_hit?'<span style="color:#c96b6b;font-weight:600">hit its step ceiling — the reason above settles nothing</span>':'')
+    +'</div>'
+    +(steps?('<table><tr><th>#</th><th>phase</th><th>action</th><th>thought</th><th>error</th><th></th></tr>'+steps+'</table>')
+           :'<div class="empty">No steps recorded.</div>')
+    +((t.warnings||[]).length?('<div class="hint" style="margin-top:6px">'+(t.warnings||[]).map(w=>'• '+esc(w)).join('<br>')+'</div>'):''));
 }
 async function loadCensusCompare(){
   const el=$('census-compare');if(!el)return;
