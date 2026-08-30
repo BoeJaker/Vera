@@ -8903,21 +8903,6 @@ async def _list_worktrees() -> List[Dict[str, Any]]:
     return wts
 
 
-@capability("evolve.sandbox.prune", memory="on",
-            http_method="POST", http_path="/evolve/sandbox/prune", http_tags=["evolve"],
-            description="Reap STALE sandbox leftovers: loop-lab worktrees whose "
-                        "branch is fully merged (0 unique commits) with no live "
-                        "container, orphaned per-branch compose files, and dead pool "
-                        "entries. DRY-RUN by default — reports keep/reap/review "
-                        "without changing anything. review = worktrees with UNMERGED "
-                        "commits (never auto-removed; needs a manual decision). A live "
-                        "sandbox's worktree and the main checkout are NEVER touched. "
-                        "Inputs: dry_run (bool=True), delete_branches (bool=False — "
-                        "off keeps every reap fully restorable via git worktree add), "
-                        "delete_merged_branches (bool=False — also delete STANDALONE "
-                        "fully-merged typed branches that have no worktree/live sandbox; "
-                        "uses `git branch -d` which re-verifies merged, never loses WIP), "
-                        "base (str=''=default branch), protect (list[str] branch names).")
 def _probe_worktree(path: str) -> str:
     """PRESENT / ABSENT / UNKNOWN for a worktree path.
 
@@ -8940,6 +8925,21 @@ def _probe_worktree(path: str) -> str:
         return _pool_reconcile.UNKNOWN
 
 
+@capability("evolve.sandbox.prune", memory="on",
+            http_method="POST", http_path="/evolve/sandbox/prune", http_tags=["evolve"],
+            description="Reap STALE sandbox leftovers: loop-lab worktrees whose "
+                        "branch is fully merged (0 unique commits) with no live "
+                        "container, orphaned per-branch compose files, and dead pool "
+                        "entries. DRY-RUN by default — reports keep/reap/review "
+                        "without changing anything. review = worktrees with UNMERGED "
+                        "commits (never auto-removed; needs a manual decision). A live "
+                        "sandbox's worktree and the main checkout are NEVER touched. "
+                        "Inputs: dry_run (bool=True), delete_branches (bool=False — "
+                        "off keeps every reap fully restorable via git worktree add), "
+                        "delete_merged_branches (bool=False — also delete STANDALONE "
+                        "fully-merged typed branches that have no worktree/live sandbox; "
+                        "uses `git branch -d` which re-verifies merged, never loses WIP), "
+                        "base (str=''=default branch), protect (list[str] branch names).")
 async def evolve_sandbox_prune(dry_run: bool = True, delete_branches: bool = False,
                                base: str = "", protect: List[str] = None,
                                delete_merged_branches: bool = False, trace_id=None):

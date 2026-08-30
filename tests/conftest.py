@@ -13,6 +13,7 @@ known set of modules, so the tier is defined in one place.
 import pytest
 
 _CRITICAL_MODULES = {
+    "test_capability_decorator_binding",  # a decorator binds to whatever def comes next (2026-08-30)
     "test_sandbox_pool_reconcile",  # a failed read must never be read as "it is gone" (2026-08-30)
     "test_ide_instance_store_await",  # a sync mirror of an async helper loses writes silently (2026-08-30)
     "test_operator_target_fallback",  # a busy primary must not make browser verification impossible (2026-08-30)
