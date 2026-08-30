@@ -287,6 +287,33 @@ def apply_streams(feeds: List[Dict[str, Any]],
     return out
 
 
+def in_bbox(feeds: List[Dict[str, Any]],
+            bbox: Optional[Sequence[float]]) -> List[Dict[str, Any]]:
+    """Keep only cameras inside a view.
+
+    Measured 2026-08-30: the full camera manifest is a multi-megabyte JSON
+    document, and the browser spent SECONDS on single main-thread tasks — a
+    6.6s request plus the `JSON.parse` and entity construction that follow.
+    Sending a whole planet of cameras so the client can draw a city's worth is
+    the actual cost; filtering here removes it at the source rather than
+    compressing it slightly better.
+    """
+    if not bbox or len(bbox) != 4:
+        return feeds
+    try:
+        south, west, north, east = (float(v) for v in bbox)
+    except (TypeError, ValueError):
+        return feeds
+    out = []
+    for f in feeds:
+        lat, lng = f.get("lat"), f.get("lng")
+        if not isinstance(lat, (int, float)) or not isinstance(lng, (int, float)):
+            continue
+        if south <= lat <= north and west <= lng <= east:
+            out.append(f)
+    return out
+
+
 def video_only(feeds: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Stills refreshed every few minutes are not video, however often they
     update — that distinction is the whole point of this filter."""

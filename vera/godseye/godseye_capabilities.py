@@ -933,7 +933,7 @@ async def buildings_fetch(bbox: Optional[List[float]] = None,
 
 
 @APP.get("/godseye/cctv/manifest.json", include_in_schema=False)
-async def _godseye_cctv_manifest(video: int = 0):
+async def _godseye_cctv_manifest(video: int = 0, bbox: str = "", limit: int = 0):
     """The camera list, in the shape Godseye's CameraLayer already parses.
 
     Pointing the fork's VERIFIED_CCTV_MANIFEST constant here is what makes Vera
@@ -947,7 +947,7 @@ async def _godseye_cctv_manifest(video: int = 0):
     """
     path = _layout()["state_dir"] / "cctv-manifest.json"
     if path.is_file():
-        if not video:
+        if not video and not bbox and not limit:
             return FileResponse(str(path), media_type="application/json",
                                 headers={"Cache-Control": "public, max-age=300"})
         try:
@@ -955,11 +955,33 @@ async def _godseye_cctv_manifest(video: int = 0):
         except (OSError, ValueError) as e:
             return JSONResponse({"feeds": [], "feedCount": 0,
                                  "errors": {"manifest": str(e)}}, status_code=200)
-        feeds = _cctv.video_only(doc.get("feeds") or [])
+
+        feeds = doc.get("feeds") or []
+        applied = []
+        if video:
+            feeds = _cctv.video_only(feeds)
+            applied.append("video")
+        if bbox:
+            # Measured: shipping every camera on earth so the client can draw a
+            # city's worth cost seconds of main-thread JSON.parse. Cut it here.
+            try:
+                box = [float(v) for v in bbox.split(",")]
+            except ValueError:
+                return JSONResponse({"feeds": [], "feedCount": 0, "errors": {
+                    "bbox": "expected south,west,north,east"}}, status_code=400)
+            feeds = _cctv.in_bbox(feeds, box)
+            applied.append("bbox")
+        if limit and limit > 0:
+            feeds = feeds[:int(limit)]
+            applied.append("limit")
+
         doc["feeds"] = feeds
         doc["feedCount"] = len(feeds)
-        doc["filtered"] = "video"
-        return JSONResponse(doc, headers={"Cache-Control": "public, max-age=300"})
+        doc["filtered"] = ",".join(applied)
+        return JSONResponse(doc, headers={
+            # Varies per view, so a shared long cache would serve one user's
+            # bbox to another.
+            "Cache-Control": "private, max-age=60"})
     return JSONResponse({"generatedAt": "", "feedCount": 0, "feeds": [],
                          "errors": {"manifest": "not built yet — run cctv.refresh"}})
 
