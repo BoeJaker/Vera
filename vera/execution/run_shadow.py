@@ -16,10 +16,11 @@ Emitter = Callable[[dict[str, Any]], Awaitable[None]]
 
 async def execute_dag_with_run_shadow(*, executor, graph: list, state: dict,
                                       trace_id: str, emit: Emitter,
-                                      session_id: str = "") -> dict:
+                                      session_id: str = "",
+                                      workflow_id: str = "") -> dict:
     """Execute the native DAG unchanged while best-effort shadow events observe it."""
     run = Run(id=str(uuid4()), kind="vera.dag", trace_id=trace_id,
-              workflow_id=trace_id, session_id=session_id)
+              workflow_id=workflow_id or trace_id, session_id=session_id)
 
     async def shadow(status: RunStatus, event_type: str,
                      payload: dict[str, Any] | None = None) -> None:
