@@ -8250,7 +8250,10 @@ async def cap_ollama_embed_config_set(
 
 @capability("dag.run", memory="on",
             http_method="POST", http_path="/dag/run", http_tags=["dag"],
-            description="Execute a DAG against an initial state. Set supervised=true for LLM checkpoints.")
+            description="Execute a DAG against an initial state. Set supervised=true for LLM "
+                        "checkpoints. Set include_workflow_ir=true to inspect the exact Workflow "
+                        "IR authority or explicit native-compatibility evidence without changing "
+                        "the default response shape.")
 async def cap_dag_run(dag: list = None, state: dict = None, supervised: bool = False,
                       session_id: str = "", include_workflow_ir: bool = False,
                       trace_id=None):
