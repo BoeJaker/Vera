@@ -24,6 +24,15 @@ They were two *blind spots* in this reduction:
     The old reduction harvested insertions from `.assess` events ONLY
     (`e["steps"]`), so an entire second insertion channel was invisible.
 
+  * `research-web` in run 15 (`planned=3 executed=5`, one step claimed by
+    nothing). A THIRD channel: when a step fails, the `extra_step` recovery
+    strategy mints a replacement step through `_v6_adjust_step`, pushes it onto
+    the queue and runs it — emitting `agent_loop_v6.recovery_step` and nothing
+    the accounting read. Two fired in that run, both because `web.research`
+    returned zero sources; step 9 "Targeted vendor site search via web.search"
+    was one of them. This is the producer the plan called "the third producer"
+    and could not name for two passes.
+
   * `trivial-chat` (`planned=0 executed=1`). The v7 single-cap **fast path**
     short-circuits planning entirely: it emits a synthetic `step_start` /
     `tool_done` / `step_done` for step 1 so the shared renderer shows a real
@@ -91,6 +100,7 @@ def digest_events(events: Sequence[Dict[str, Any]],
     by_step: Dict[Any, Dict[str, Any]] = {}
     control: List[Dict[str, Any]] = []
     gates: List[Dict[str, Any]] = []
+    recoveries: List[Dict[str, Any]] = []
     order: List[Any] = []
     n_think = n_act = 0
     # Calls that name no step at all. They are not steps and must never inflate
@@ -172,6 +182,17 @@ def digest_events(events: Sequence[Dict[str, Any]],
                             "inserted": [{"id": s.get("id"), "title": s.get("title"),
                                           "caps": s.get("caps")}
                                          for s in (e.get("steps") or [])]})
+        elif t.endswith(".recovery_step"):
+            # The `extra_step` failure-recovery path: a failed step is replaced
+            # by an adjusted one that is pushed onto the queue and RUN. Third
+            # insertion channel, and the one that produced run 15's unaccounted
+            # step.
+            _s = e.get("step") if isinstance(e.get("step"), dict) else {}
+            recoveries.append({"from_step": e.get("from_step"),
+                               "id": _s.get("id"), "title": _s.get("title"),
+                               "adjusted": bool(e.get("adjusted")),
+                               "caps": e.get("caps") or [],
+                               "reason": _clip(e.get("reason"))})
         elif t.endswith(".gate"):
             # The completion gate's REAL shape. It was previously read for keys
             # (`verdict`/`reason`/`met`) the emitter has never written, so the
@@ -192,7 +213,9 @@ def digest_events(events: Sequence[Dict[str, Any]],
     control_inserted.discard(None)
     gate_inserted = {norm_id(i.get("id")) for g in gates for i in g.get("follow_up") or []}
     gate_inserted.discard(None)
-    inserted_ids = control_inserted | gate_inserted
+    recovery_inserted = {norm_id(r.get("id")) for r in recoveries}
+    recovery_inserted.discard(None)
+    inserted_ids = control_inserted | gate_inserted | recovery_inserted
     executed_ids = {norm_id(s.get("step_id")) for s in steps}
     executed_ids.discard(None)
 
@@ -239,6 +262,11 @@ def digest_events(events: Sequence[Dict[str, Any]],
             warnings.append(
                 f"controller INSERTED step {i.get('id')} '{i.get('title')}' "
                 f"after step {c.get('after_step')} (caps={i.get('caps')})")
+    for r in recoveries:
+        warnings.append(
+            f"failure-recovery REPLACED step {r.get('from_step')} with step "
+            f"{r.get('id')} '{r.get('title')}' (caps={r.get('caps')}) — because: "
+            f"{r.get('reason') or 'no reason recorded'}")
     for g in gates:
         for i in g.get("follow_up") or []:
             warnings.append(
@@ -286,6 +314,7 @@ def digest_events(events: Sequence[Dict[str, Any]],
         "inserted_steps": len(inserted_ids - planned_ids),
         "controller_inserted_steps": len(control_inserted - planned_ids),
         "gate_inserted_steps": len(gate_inserted - planned_ids),
+        "recovery_inserted_steps": len(recovery_inserted - planned_ids),
         "fast_path_steps": len(fast_path_ids),
         "unaccounted_steps": len(unaccounted),
         "unattributed_calls": unattributed_calls,
@@ -298,6 +327,7 @@ def digest_events(events: Sequence[Dict[str, Any]],
     counters["stage_calls"] = (stage_summary or {}).get("total_calls", 0)
 
     return {"plan": plan, "steps": steps, "control": control, "gates": gates,
+            "recoveries": recoveries,
             "stages": (stage_summary or {}).get("stages", []),
             "stage_diffs": stage_diffs, "counters": counters, "warnings": warnings}
 

@@ -137,6 +137,63 @@ def test_the_fast_path_flag_cannot_excuse_a_planned_run():
     assert c["unaccounted_steps"] == 1
 
 
+# ── the third producer, finally named (run 15, research-web) ───────────────
+def _recovery(from_step, new_id, title, reason="web.research returned count: 0"):
+    return {"type": "agent_loop_v6.recovery_step", "from_step": from_step,
+            "step": {"id": new_id, "title": title}, "adjusted": True,
+            "caps": ["web.research", "web.search"], "reason": reason}
+
+
+# The real shape from session 9d1236a3: planned [1,2,3]; step 1 failed and
+# recovery minted 4; assess inserted 5-8; step 6 failed and recovery minted 9;
+# assess inserted 10. Executed 1, 5, 6, 10, 9 — and 9 was claimed by nothing.
+RESEARCH_WEB = (
+    [_plan(1, 2, 3)]
+    + _ran(1)
+    + [_recovery(1, 4, "Fetch WebGPU stats directly via HTTP GET"),
+       _assess(1, action="insert", inserted=[5, 6, 7, 8])]
+    + _ran(5) + _ran(6)
+    + [_recovery(6, 9, "Targeted vendor site search via web.search"),
+       _assess(6, action="insert", inserted=[10])]
+    + _ran(10) + _ran(9)
+)
+
+
+def test_a_failure_recovery_step_is_an_insertion():
+    """The third channel. When a step fails, the extra_step strategy mints a
+    replacement through _v6_adjust_step and RUNS it — emitting
+    agent_loop_v6.recovery_step and nothing the accounting read."""
+    c = digest_events(RESEARCH_WEB)["counters"]
+    assert c["recovery_inserted_steps"] == 2          # steps 4 and 9
+    assert c["controller_inserted_steps"] == 5        # 5,6,7,8,10
+
+
+def test_the_run_15_unaccounted_step_is_now_accounted_for():
+    """Step 9 executed and was claimed by nothing. That single unaccounted step
+    is what the plan called 'the third producer' for two passes."""
+    d = digest_events(RESEARCH_WEB)
+    assert d["counters"]["unaccounted_steps"] == 0
+    assert accounting_is_consistent(d["counters"])
+    assert 9 in [r["id"] for r in d["recoveries"]]
+
+
+def test_a_recovery_says_which_step_it_replaced_and_why():
+    """A replacement whose cause is not recorded just moves the mystery."""
+    d = digest_events(RESEARCH_WEB)
+    r = [x for x in d["recoveries"] if x["id"] == 9][0]
+    assert r["from_step"] == 6
+    assert "count: 0" in r["reason"]
+    assert any("REPLACED step 6 with step 9" in w for w in d["warnings"])
+
+
+def test_a_recovery_step_that_never_ran_is_not_double_counted():
+    """Step 4 was minted but superseded before running. It must count as an
+    insertion channel without inventing an executed step."""
+    d = digest_events(RESEARCH_WEB)
+    assert 4 not in [s["step_id"] for s in d["steps"]]
+    assert d["counters"]["executed_steps"] == 5
+
+
 # ── the durable guard: a third producer must announce itself ────────────────
 def test_a_step_nothing_declares_is_counted_and_named():
     """The whole point. Step 9 executed; the plan does not contain it, no
