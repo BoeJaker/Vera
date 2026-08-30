@@ -32,13 +32,23 @@ def _functions(path):
 
 
 def test_every_sandbox_interpreter_runner_puts_the_workspace_on_pythonpath():
-    """Swept by SHAPE, not by name: a third runner added later is caught too."""
+    """Swept by SHAPE, not by name: a third runner added later is caught too.
+
+    The prefix now has ONE definition (`_pythonpath_prefix`) rather than three
+    inline copies, because the copies drifted: the two wrapped by `_bounded_cmd`
+    were silently broken by the `timeout` wrapper while the unwrapped one kept
+    working (2026-08-30, census run 16). So a runner satisfies this by CALLING
+    the helper — accepting a hand-rolled assignment as well would re-open the
+    door to exactly the divergence that hid the bug.
+    """
     runners = {n: b for n, b in _functions(SBX) if "' '.join(prefix)" in b}
     assert len(runners) >= 2, "expected the inline and by-path runners, got %s" % list(runners)
     for name, body in runners.items():
-        assert "PYTHONPATH=" in body and "_WORKDIR" in body, (
+        assert "_pythonpath_prefix()" in body, (
             "%s runs an interpreter without the workspace root on PYTHONPATH - a "
-            "package-relative import from a loop-authored project cannot resolve" % name)
+            "package-relative import from a loop-authored project cannot resolve. "
+            "Use _pythonpath_prefix(); a hand-rolled 'PYTHONPATH=' assignment "
+            "breaks under the timeout wrapper." % name)
 
 
 def test_the_authoring_caps_no_longer_invent_a_filename():
