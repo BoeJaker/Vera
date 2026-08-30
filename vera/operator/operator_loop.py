@@ -14,6 +14,7 @@ real defaults wired to :mod:`perception`, :mod:`thinker`, :mod:`actions` and
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
@@ -49,6 +50,29 @@ def _make_default_think(call_cap, provider: str, model: str) -> Callable:
 
 async def _default_act(session, action: str, args: Dict[str, Any]):
     return await _actions.perform(session, action, args)
+
+
+# How many times the identical action may repeat on the identical page before
+# the run stops. Deliberately generous: a browser legitimately repeats itself a
+# few times (retrying a slow click, dismissing a re-appearing banner). Five in a
+# row with nothing changing is not that. Env-tunable so a real counter-example
+# can be accommodated without a code change.
+_REPEAT_LIMIT = max(2, int(os.getenv("VERA_OPERATOR_REPEAT_LIMIT", "5") or 5))
+
+
+def _repeat_signature(action: str, args: Optional[Dict[str, Any]], url: str) -> str:
+    """Identity of an attempt, for the repeat guard.
+
+    Includes the ARGS — the element and text, not just the verb — because
+    "click" repeated says nothing on its own: eleven clicks on eleven different
+    elements is progress. And includes the URL, so navigating between repeats
+    (pagination, a wizard) never accumulates.
+    """
+    try:
+        a = json.dumps(args or {}, sort_keys=True, default=str)[:400]
+    except Exception:
+        a = str(args)[:400]
+    return "%s|%s|%s" % (str(action or ""), a, str(url or ""))
 
 
 async def run_loop(goal: str, session, *,
@@ -88,6 +112,10 @@ async def run_loop(goal: str, session, *,
     steps: List[Dict[str, Any]] = []
     screenshots: List[str] = []
     consecutive_errors = 0
+    # Repeat guard state: the last (action, args, url) and how many times running.
+    # See the check below for why the URL is part of the key.
+    last_sig: Optional[str] = None
+    same_sig_count = 0
     reason = "max_steps"
     done = False
     summary = ""
@@ -198,6 +226,30 @@ async def run_loop(goal: str, session, *,
                 break
         else:
             consecutive_errors = 0
+
+        # REPEAT GUARD. Census run 15: a verification step clicked Start ELEVEN
+        # times, ran the timer out, then spent its remaining steps unable to tell
+        # whether "Time's up!" was success or the residue of its own clicks. It
+        # burned 437s — 29% of that goal's entire budget — and hit its ceiling.
+        #
+        # Keyed on action + args + URL, not on the action alone. "click" repeated
+        # is not evidence of anything: eleven clicks on eleven different elements
+        # is progress. The same element, same args, same page, over and over, is
+        # not. Including the URL is what keeps legitimate repetition safe — a
+        # paginating "Next" changes the page, so it never accumulates.
+        sig = _repeat_signature(action, args, getattr(obs, "url", ""))
+        same_sig_count = same_sig_count + 1 if sig == last_sig else 1
+        last_sig = sig
+        if same_sig_count >= _REPEAT_LIMIT:
+            reason = "repeating_action"
+            rec = {"i": i, "phase": "repeating",
+                   "action": action, "args": args,
+                   "reason": ("the same action was repeated %d times on the same "
+                              "page with no change — stopping rather than spending "
+                              "the rest of the budget on it" % same_sig_count)}
+            steps.append(rec)
+            await _emit(rec)
+            break
 
     # A run that ended WITHOUT reaching its goal is not a success. Reporting
     # ok=True for reason="max_steps" told the caller nothing had gone wrong, so
