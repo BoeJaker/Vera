@@ -33,6 +33,10 @@ from Vera.vera.printer.escpos_core import text_job, raster_job, INIT, CUT
 
 # 58mm heads are 384 dots; 80mm are 576. Default 384; override per-call or via env.
 DEFAULT_WIDTH = int(os.environ.get("VERA_PRINTER_WIDTH", "384"))
+# Cheap USB thermal printers overrun on a single large bulk write (dmesg
+# "nonzero write bulk status -108" -> the device USB-resets); pace it in chunks.
+_CHUNK = int(os.environ.get("VERA_PRINTER_CHUNK", "512"))
+_PACE = float(os.environ.get("VERA_PRINTER_PACE", "0.012"))
 _FONT_CANDIDATES = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
@@ -56,20 +60,33 @@ def _find_device() -> str:
 
 
 def _write(data: bytes) -> Dict[str, Any]:
-    dev = _find_device()
-    if not dev:
-        return {"ok": False, "error": "no thermal printer found (looked for "
-                "/dev/vera-printer, /dev/usb/lp*, /dev/ttyUSB*/ttyACM*)"}
-    try:
-        with open(dev, "wb", buffering=0) as f:
-            f.write(data)
-        return {"ok": True, "device": dev, "bytes": len(data)}
-    except PermissionError:
-        return {"ok": False, "device": dev,
-                "error": "permission denied on %s -- Vera's user needs write access "
-                         "(udev rule: GROUP=plugdev, MODE=0660)" % dev}
-    except Exception as e:
-        return {"ok": False, "device": dev, "error": "write %s failed: %s" % (dev, e)}
+    # Pace the write in chunks so a big raster does not overrun the printer buffer,
+    # and retry once if the device is mid-reconnect (udev re-creates the symlink on
+    # re-enumeration) or reset us mid-write.
+    err = "no thermal printer found (looked for /dev/vera-printer, /dev/usb/lp*, /dev/ttyUSB*/ttyACM*)"
+    for attempt in (1, 2):
+        dev = _find_device()
+        if not dev:
+            if attempt == 1:
+                time.sleep(1.5); continue
+            break
+        try:
+            with open(dev, "wb", buffering=0) as f:
+                for i in range(0, len(data), _CHUNK):
+                    f.write(data[i:i + _CHUNK]); f.flush()
+                    if _PACE and i + _CHUNK < len(data):
+                        time.sleep(_PACE)
+            return {"ok": True, "device": dev, "bytes": len(data)}
+        except PermissionError:
+            return {"ok": False, "device": dev,
+                    "error": "permission denied on %s -- Vera's user needs write access "
+                             "(udev rule: GROUP=plugdev, MODE=0660)" % dev}
+        except OSError as e:
+            err = "write %s failed: %s" % (dev, e)
+            if attempt == 1:
+                time.sleep(1.5); continue   # printer may have reset mid-write; let it re-enumerate
+            break
+    return {"ok": False, "error": err}
 
 
 def _pil():
