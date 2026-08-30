@@ -2192,15 +2192,21 @@ async function loadCensus(){
   if(!runs.length){el.innerHTML='<div class="empty">No census runs found'+(r&&r.dir?(' in <code>'+esc(r.dir)+'</code>'):'')+'.</div>';return}
   el.innerHTML='<table><tr><th>run</th><th>goals</th><th>done</th><th>wall-cap</th><th>gate ins.</th><th>unacc.</th><th>warns</th><th>total</th><th>counters</th></tr>'
     +runs.slice().reverse().map(s=>'<tr class="clk" onclick="openCensusRun(\''+esc(s.run_id)+'\')">'
-      +'<td class="mono">'+esc(s.run_id)+'</td><td>'+s.goals+'</td>'
+      +'<td class="mono">'+esc(s.run_id)+(s.partial?' <span class="tag" title="fewer goals than a full pass — not comparable, excluded from the trend">partial</span>':'')+'</td><td>'+s.goals+'</td>'
       +'<td style="color:#3cb371">'+s.done+'</td><td style="color:#c9a35a">'+s.wall_capped+'</td>'
       +'<td>'+(s.gate_inserted_total||0)+'</td>'
       +'<td'+(s.unaccounted_total?' style="color:#c96b6b;font-weight:600"':'')+'>'+(s.unaccounted_total||0)+'</td>'
       +'<td>'+(s.warnings_total||0)+'</td><td class="mono">'+_cenSec(s.wall_total_s)+'</td>'
       +'<td>'+(s.counters_reconcile?'<span style="color:#3cb371">reconcile</span>':'<span style="color:#c96b6b" title="this run\'s step accounting does not add up — numbers from it may be measuring the instrument">suspect</span>')+'</td>'
       +'</tr>').join('')+'</table>';
-  const t=r.trend_trusted||r.trend_all;
-  $('census-trend').textContent=t?(t.from+' → '+t.to+': '+t.done_from+' → '+t.done_to+' done ('+(t.delta>=0?'+':'')+t.delta+')'):(runs.length+' run(s)');
+  // Only ever a trend over COMPLETE runs — a partial run's done-count against a
+  // full one is a confident wrong answer (it once read "delta -1" while the run
+  // was 3 goals into 12).
+  const t=r.trend_trusted||r.trend_complete, tr=!!r.trend_trusted;
+  $('census-trend').innerHTML=t
+    ?(esc(t.from)+' → '+esc(t.to)+': '+t.done_from+' → '+t.done_to+'/'+t.of_goals+' done <b>('+(t.delta>=0?'+':'')+t.delta+')</b>'
+      +' <span class="hint">'+(tr?'counters reconcile':'counters suspect')+'</span>')
+    :(runs.length+' run(s) · '+(r.complete_count||0)+' complete — need 2 complete runs for a trend');
   // Default the comparison to the two most recent runs.
   const ids=runs.map(s=>s.run_id);
   ['census-base','census-head'].forEach((id,i)=>{

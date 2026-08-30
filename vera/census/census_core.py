@@ -284,18 +284,37 @@ def history(summaries: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     goal can reach it having dropped half the request — so this says where to
     look, and `goal_evidence()` says what actually happened.
 
-    The trend over runs whose counters reconcile is reported SEPARATELY: an
+    **A PARTIAL RUN IS NOT COMPARABLE AND IS EXCLUDED.** Half the archived files
+    are partial (`census.run4-partial.jsonl` has one goal), and the live
+    `census.jsonl` is partial for the hours a run takes. Counting those in a
+    done-count trend produces a confident, wrong answer: measured against the
+    real files this reported `run1 → current, done 2 → 1, delta −1` — "we got
+    worse" — while run 12 was simply three goals into twelve. A run is treated
+    as complete only if it covers as many goals as the fullest run present.
+
+    The trend over runs whose counters also reconcile is reported SEPARATELY: an
     improvement measured across a run whose own accounting did not add up is not
     evidence, and averaging the two would launder it into one number.
     """
     ordered = sorted(summaries or [], key=lambda s: run_sort_key(str(s.get("run_id") or "")))
-    trusted = [s for s in ordered if s.get("counters_reconcile")]
+    # The goal set is defined by the harness, not by us, so the fullest run
+    # present is the only available definition of "a complete pass".
+    full = max((int(s.get("goals") or 0) for s in ordered), default=0)
+    ordered = [dict(s, partial=(int(s.get("goals") or 0) < full)) for s in ordered]
+    complete = [s for s in ordered if not s["partial"]]
+    trusted = [s for s in complete if s.get("counters_reconcile")]
+
     def _span(rows):
         if len(rows) < 2:
             return None
         return {"from": rows[0]["run_id"], "to": rows[-1]["run_id"],
                 "done_from": rows[0]["done"], "done_to": rows[-1]["done"],
-                "delta": rows[-1]["done"] - rows[0]["done"]}
+                "delta": rows[-1]["done"] - rows[0]["done"],
+                "of_goals": full}
     return {"runs": ordered, "count": len(ordered),
+            "full_goal_count": full,
+            "complete_count": len(complete), "partial_count": len(ordered) - len(complete),
             "trusted_count": len(trusted),
-            "trend_all": _span(ordered), "trend_trusted": _span(trusted)}
+            # Named for what it actually spans. There is deliberately NO trend
+            # over every run: that number could only ever mislead.
+            "trend_complete": _span(complete), "trend_trusted": _span(trusted)}
