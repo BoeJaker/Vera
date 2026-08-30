@@ -55,6 +55,22 @@ def _num(v: Any) -> Optional[float]:
     return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
 
 
+def _attempt_key(action: str, args: Any) -> str:
+    """Identity of one attempt: the verb AND what it was aimed at.
+
+    Runs recorded before args were captured fall back to the bare verb, which is
+    the old (over-reporting) behaviour — the honest option for records that
+    cannot support better.
+    """
+    if not isinstance(args, dict) or not args:
+        return str(action)
+    try:
+        import json as _json
+        return "%s %s" % (action, _json.dumps(args, sort_keys=True, default=str)[:200])
+    except Exception:
+        return str(action)
+
+
 def digest_events(events: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     """Fold one operator run's events into a readable digest.
 
@@ -90,6 +106,8 @@ def digest_events(events: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
                 "i": e.get("i"),
                 "phase": e.get("phase") or "",
                 "action": _clip(e.get("action"), 200),
+                "args": e.get("args") if isinstance(e.get("args"), dict) else {},
+                "url": e.get("url") or "",
                 "thought": _clip(e.get("thought"), 300),
                 "reason": _clip(e.get("reason"), 200),
                 "error": _clip(e.get("error"), 200),
@@ -107,13 +125,21 @@ def digest_events(events: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     errors = [s for s in steps if s.get("error")]
     with_shot = [s for s in steps if s.get("screenshot")]
 
-    # Repeated identical actions are the operator's thrash signature — the
+    # Repeated identical attempts are the operator's thrash signature — the
     # browser equivalent of a step burning cycles without moving.
+    #
+    # Keyed on action + ARGS, not the action alone. Counting bare verbs
+    # over-reports badly: eleven clicks on eleven different elements is progress,
+    # and reporting it as "click attempted 11x" would send you hunting a
+    # non-problem. Older runs recorded no args, so they degrade to the verb —
+    # the previous behaviour, for records that cannot do better.
     seen: Dict[str, int] = {}
     for s in steps:
         a = s.get("action") or ""
-        if a:
-            seen[a] = seen.get(a, 0) + 1
+        if not a:
+            continue
+        key = _attempt_key(a, s.get("args"))
+        seen[key] = seen.get(key, 0) + 1
     repeats = {a: n for a, n in seen.items() if n >= 3}
 
     reason = str(run.get("reason") or "")

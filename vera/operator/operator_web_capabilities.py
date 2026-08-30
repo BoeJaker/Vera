@@ -708,7 +708,14 @@ async def cap_run(goal: str = "", url: str = "", kind: str = "", base_url: str =
         await _op_record(run_id, {
             "type": "operator.step", "run_id": run_id,
             "i": rec.get("i"), "phase": rec.get("phase"),
-            "action": rec.get("action"), "thought": rec.get("thought", "")[:200],
+            "action": rec.get("action"),
+            # ARGS, not just the verb. Without them "click 11x" is ambiguous
+            # between eleven clicks on one element (thrash) and eleven on
+            # different ones (progress) — and that ambiguity is exactly what made
+            # run 15's author-then-edit failure hard to read.
+            "args": rec.get("args") or {},
+            "url": rec.get("url", ""),
+            "thought": rec.get("thought", "")[:200],
             "reason": rec.get("reason", ""), "error": rec.get("error", ""),
             "screenshot": f"/operator/artifact?path={_artifact_rel(shot)}" if shot else ""})
 
