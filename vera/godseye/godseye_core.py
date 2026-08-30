@@ -168,36 +168,69 @@ TILE_UPSTREAM = ("https://server.arcgisonline.com/ArcGIS/rest/services/"
                  "World_Imagery/MapServer/tile/{z}/{y}/{x}")
 TILE_MOUNT = "/godseye/tiles"
 
+#: The globe stacks THREE imagery layers, not one — satellite base plus two
+#: semi-transparent Esri label overlays. Proxying only the base left two thirds
+#: of the tile traffic still going straight to the internet on every pan, which
+#: is why caching the base alone barely moved the needle.
+#:
+#: An allowlist, not a pass-through: the layer name selects one of these fixed
+#: templates, so no caller can point this at an arbitrary host.
+TILE_LAYERS = {
+    "imagery": TILE_UPSTREAM,
+    "reference": ("https://services.arcgisonline.com/ArcGIS/rest/services/"
+                  "Reference/World_Reference_Overlay/MapServer/tile/{z}/{y}/{x}"),
+    "places": ("https://services.arcgisonline.com/ArcGIS/rest/services/"
+               "Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"),
+}
+
+#: Per-layer zoom ceilings, mirroring the providers' own maximumLevel. Asking
+#: beyond them only produces upstream 404s.
+TILE_LAYER_MAX_ZOOM = {"imagery": 19, "reference": 8, "places": 15}
+
+
+def tile_layer_is_valid(layer: str) -> bool:
+    return layer in TILE_LAYERS
+
 #: Esri's World Imagery tops out at 19. Anything beyond is a client bug or an
 #: attempt to make us issue unbounded upstream requests.
 TILE_MAX_ZOOM = 19
 
 
-def tile_is_valid(z: int, y: int, x: int) -> bool:
-    """Is this a real tile coordinate?
+def tile_is_valid(z: int, y: int, x: int, layer: str = "imagery") -> bool:
+    """Is this a real tile coordinate for this layer?
 
     The z/y/x go into an upstream URL and into a cache path, so they are
     validated as integers in range rather than interpolated as text — that is
     what keeps this from being both a path-traversal sink and an open proxy.
     """
+    if not tile_layer_is_valid(layer):
+        return False
     try:
         z, y, x = int(z), int(y), int(x)
     except (TypeError, ValueError):
         return False
-    if z < 0 or z > TILE_MAX_ZOOM:
+    if z < 0 or z > TILE_LAYER_MAX_ZOOM.get(layer, TILE_MAX_ZOOM):
         return False
     limit = 1 << z                       # a zoom level is a 2^z square of tiles
     return 0 <= y < limit and 0 <= x < limit
 
 
-def tile_cache_path(cache_root: Path, z: int, y: int, x: int) -> Path:
-    """Where a tile is cached. Only ever called with validated coordinates, and
-    built from ints so no caller-supplied string reaches the path."""
-    return Path(cache_root) / str(int(z)) / str(int(y)) / f"{int(x)}.jpg"
+def tile_cache_path(cache_root: Path, z: int, y: int, x: int,
+                    layer: str = "imagery") -> Path:
+    """Where a tile is cached. Only ever called with a validated layer name and
+    coordinates, and built from ints so no caller-supplied string reaches the
+    path."""
+    if not tile_layer_is_valid(layer):
+        raise ValueError(f"unknown tile layer: {layer!r}")
+    return Path(cache_root) / layer / str(int(z)) / str(int(y)) / f"{int(x)}.jpg"
 
 
-def tile_upstream_url(z: int, y: int, x: int, template: str = "") -> str:
-    return (template or TILE_UPSTREAM).format(z=int(z), y=int(y), x=int(x))
+def tile_upstream_url(z: int, y: int, x: int, template: str = "",
+                      layer: str = "imagery") -> str:
+    if not template and not tile_layer_is_valid(layer):
+        raise ValueError(f"unknown tile layer: {layer!r}")
+    tpl = template or TILE_LAYERS[layer]
+    return tpl.format(z=int(z), y=int(y), x=int(x))
 
 
 def negotiate_encoding(target: Path, accept_encoding: str) -> tuple:

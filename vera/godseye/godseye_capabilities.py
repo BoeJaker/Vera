@@ -541,7 +541,18 @@ async def _godseye_panel():
 
 
 @APP.get(_core.TILE_MOUNT + "/{z}/{y}/{x}", include_in_schema=False)
-async def _godseye_tile(z: int, y: int, x: int):
+async def _godseye_tile_legacy(z: int, y: int, x: int):
+    """The original single-layer path, kept so a bundle built before the
+    per-layer route was added keeps rendering instead of losing its map."""
+    return await _serve_tile("imagery", z, y, x)
+
+
+@APP.get(_core.TILE_MOUNT + "/{layer}/{z}/{y}/{x}", include_in_schema=False)
+async def _godseye_tile(layer: str, z: int, y: int, x: int):
+    return await _serve_tile(layer, z, y, x)
+
+
+async def _serve_tile(layer: str, z: int, y: int, x: int):
     """Cache-in-front-of-Esri for the globe's base imagery.
 
     Godseye asks the BROWSER for every tile straight from arcgisonline, so a
@@ -553,10 +564,11 @@ async def _godseye_tile(z: int, y: int, x: int):
     upstream URL is built from those ints, so this cannot be steered at another
     host or walked out of the cache directory.
     """
-    if not _core.tile_is_valid(z, y, x):
-        return JSONResponse({"error": "bad tile coordinate"}, status_code=400)
+    if not _core.tile_is_valid(z, y, x, layer):
+        return JSONResponse({"error": "bad tile coordinate or layer",
+                             "layers": sorted(_core.TILE_LAYERS)}, status_code=400)
 
-    cached = _core.tile_cache_path(_layout()["tile_dir"], z, y, x)
+    cached = _core.tile_cache_path(_layout()["tile_dir"], z, y, x, layer)
     headers = {
         # Imagery for a fixed z/y/x does not change in any way we care about.
         "Cache-Control": "public, max-age=604800",
@@ -566,7 +578,8 @@ async def _godseye_tile(z: int, y: int, x: int):
         return FileResponse(str(cached), media_type="image/jpeg",
                             headers={**headers, "X-Godseye-Tile": "hit"})
 
-    url = _core.tile_upstream_url(z, y, x, os.environ.get("VERA_GODSEYE_TILE_URL", ""))
+    url = _core.tile_upstream_url(
+        z, y, x, os.environ.get("VERA_GODSEYE_TILE_URL", ""), layer=layer)
     try:
         async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
             r = await client.get(url)
