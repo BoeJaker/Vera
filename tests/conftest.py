@@ -20,6 +20,7 @@ _CRITICAL_MODULES = {
     "test_stop_explanation",  # an operator that stopped must say why (2026-08-31)
     "test_pool_reconcile_running",  # a live container outranks a worktree probe (2026-08-31)
     "test_census_panel_modals",  # a modal must appear on the click (2026-08-31)
+    "test_fenced_json",  # a fenced reply must survive losing its fence (2026-08-31)
     "test_ambient_dreaming_is_opt_in",  # nothing dreams on a box nobody asked (2026-08-31)
     "test_sandbox_estate_guard",  # a sandbox must not promote to main or reap the estate (2026-08-31)
     "test_sandbox_does_not_reap_the_estate",  # a dev sandbox must not reap the shared estate (2026-08-31)

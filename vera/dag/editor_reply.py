@@ -49,6 +49,17 @@ MALFORMED = "malformed"
 EDITS = "edits"
 
 
+def _quote_reply(raw_text: str, head: int = 160, tail: int = 80) -> str:
+    """Both ENDS of the reply. 60 leading characters could not tell a fence
+    problem from malformed JSON - run 21's failure quoted an opening that
+    looked perfectly well-formed, and the fault (a stray brace before "note")
+    was near the end where nobody could see it."""
+    s = str(raw_text or "").strip()
+    if len(s) <= head + tail + 20:
+        return f"it was {s!r}"
+    return f"it began {s[:head]!r} and ended {s[-tail:]!r}"
+
+
 def classify(obj: Any, raw_text: str = "") -> Dict[str, Any]:
     """What the editor actually said.
 
@@ -58,7 +69,7 @@ def classify(obj: Any, raw_text: str = "") -> Dict[str, Any]:
         return {"kind": UNPARSEABLE, "edits": [], "note": "",
                 "retry_worthwhile": True,
                 "error": ("the editor's reply was not the requested JSON object"
-                          + (f" (it began {raw_text.strip()[:60]!r})" if raw_text.strip() else ""))}
+                          + (f" ({_quote_reply(raw_text)})" if raw_text.strip() else ""))}
 
     note = str(obj.get("note") or "").strip()
     edits = obj.get("edits")
