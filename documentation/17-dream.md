@@ -65,6 +65,14 @@ making users express their desired working window in UTC. Trigger detail
 returns the content-addressed, non-executing schedule contract used for the
 decision.
 
+After downtime, Dream does not replay every missed interval. Its explicit
+schedule policy coalesces the backlog into at most one eligible cycle, which
+must still pass the local-hours, idle, sensor, resource, and exclusion gates.
+The trigger editor states this behavior, while trigger detail, timeline, and
+upcoming-event records expose the policy identity and maximum catch-up count.
+The accompanying decision event reports how many intervals were missed but can
+neither start a cycle nor replay effects.
+
 ---
 
 ## 3. Sensors — firing gates (and collectors — content)

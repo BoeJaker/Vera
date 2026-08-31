@@ -325,10 +325,16 @@ async def _emit_workflow_trigger(action: Dict[str, Any], due_kind: str) -> None:
     """Best-effort portable evidence; native scheduling stays authoritative."""
     try:
         from Vera.vera.execution.workflow_trigger import (
+            calendar_action_schedule_decision,
             calendar_action_workflow_trigger,
         )
+        observed_at = now_iso()
         event = calendar_action_workflow_trigger(
-            action, observed_at=now_iso(), due_kind=due_kind,
+            action, observed_at=observed_at, due_kind=due_kind,
+        )
+        decision = calendar_action_schedule_decision(
+            action, observed_at=observed_at, due_kind=due_kind,
+            trigger_id=event["trigger_id"],
         )
     except Exception as exc:
         log.debug("sched workflow trigger build: %s", exc)
@@ -347,6 +353,10 @@ async def _emit_workflow_trigger(action: Dict[str, Any], due_kind: str) -> None:
             await emit_event(receipt)
         except Exception as exc:
             log.debug("sched workflow trigger receipt event: %s", exc)
+    try:
+        await emit_event(decision)
+    except Exception as exc:
+        log.debug("sched workflow schedule decision event: %s", exc)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

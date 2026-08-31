@@ -2130,6 +2130,12 @@ def _dream_schedule_contract(trig: Dict[str, Any]) -> Dict[str, Any]:
     return dream_trigger_schedule(trig)
 
 
+def _dream_schedule_policy(trig: Dict[str, Any]) -> Dict[str, Any]:
+    from Vera.vera.execution.workflow_schedule_policy import dream_trigger_policy
+
+    return dream_trigger_policy(trig)
+
+
 def _within_hours(h_start: int, h_end: int, now: Optional[datetime] = None,
                   timezone_name: str = "UTC") -> bool:
     from Vera.vera.execution.workflow_schedule import within_schedule_window
@@ -10364,11 +10370,17 @@ async def _emit_dream_workflow_trigger(trig: Dict[str, Any]) -> None:
     """Best-effort portable evidence; the Dream scheduler keeps authority."""
     try:
         from Vera.vera.execution.workflow_trigger import (
+            dream_schedule_decision,
             dream_schedule_workflow_trigger,
         )
         previous_run = await _last_run_ts(str(trig.get("name") or "")) or ""
+        observed_at = now_iso()
         event = dream_schedule_workflow_trigger(
-            trig, observed_at=now_iso(), previous_run=previous_run,
+            trig, observed_at=observed_at, previous_run=previous_run,
+        )
+        decision = dream_schedule_decision(
+            trig, observed_at=observed_at, previous_run=previous_run,
+            trigger_id=event["trigger_id"],
         )
     except Exception as exc:
         log.debug("dream workflow trigger build: %s", exc)
@@ -10387,6 +10399,10 @@ async def _emit_dream_workflow_trigger(trig: Dict[str, Any]) -> None:
             await emit_event(receipt)
         except Exception as exc:
             log.debug("dream workflow trigger receipt event: %s", exc)
+    try:
+        await emit_event(decision)
+    except Exception as exc:
+        log.debug("dream workflow schedule decision event: %s", exc)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -13674,6 +13690,10 @@ async def dream_trigger_list(trace_id=None):
     triggers = await _list_triggers()
     for t in triggers:
         t["last_run"] = await _last_run_ts(t.get("name", "?"))
+        try:
+            t["schedule_policy"] = _dream_schedule_policy(t)
+        except (TypeError, ValueError) as exc:
+            t["schedule_policy_error"] = str(exc)
     return {"triggers": triggers, "count": len(triggers)}
 
 
@@ -13689,6 +13709,7 @@ async def dream_trigger_get(name: str, trace_id=None):
     trig["last_run"] = await _last_run_ts(name)
     try:
         trig["schedule_contract"] = _dream_schedule_contract(trig)
+        trig["schedule_policy"] = _dream_schedule_policy(trig)
     except (TypeError, ValueError) as exc:
         trig["schedule_error"] = str(exc)
     return {"trigger": trig}
@@ -13795,12 +13816,14 @@ async def dream_trigger_upsert(
 
     try:
         schedule_contract = _dream_schedule_contract(existing)
+        schedule_policy = _dream_schedule_policy(existing)
     except (TypeError, ValueError) as exc:
         return {"ok": False, "error": f"invalid schedule: {exc}"}
 
     await _save_trigger(existing)
     return {"ok": True, "trigger": {**existing,
-                                      "schedule_contract": schedule_contract}}
+                                      "schedule_contract": schedule_contract,
+                                      "schedule_policy": schedule_policy}}
 
 
 @capability(
@@ -17044,6 +17067,7 @@ async def dream_timeline(hours_ahead: int = 24, trace_id=None):
             min_idle = int(trig.get("min_idle_minutes", 15))
             cooldown = int(trig.get("min_interval_minutes", 60))
             schedule = _dream_schedule_contract(trig)
+            schedule_policy = _dream_schedule_policy(trig)
             from Vera.vera.execution.workflow_schedule import within_schedule_window
             from zoneinfo import ZoneInfo
             schedule_zone = ZoneInfo(schedule["timezone"])
@@ -17098,6 +17122,9 @@ async def dream_timeline(hours_ahead: int = 24, trace_id=None):
                 "hours_window": f"{h_start}-{h_end}",
                 "timezone": schedule["timezone"],
                 "schedule_id": schedule["schedule_id"],
+                "schedule_policy": schedule_policy["mode"],
+                "schedule_policy_id": schedule_policy["policy_id"],
+                "max_catch_up": schedule_policy["max_catch_up"],
                 "min_idle": min_idle,
                 "cooldown_minutes": cooldown,
                 "cooldown_until": cooldown_until,
@@ -17173,6 +17200,7 @@ async def dream_schedule_events(days_ahead: int = 7, max_per_trigger: int = 20,
             h_end = int(trig.get("hours_end", 24))
             cooldown = max(0, int(trig.get("min_interval_minutes", 60)))
             schedule = _dream_schedule_contract(trig)
+            schedule_policy = _dream_schedule_policy(trig)
             from Vera.vera.execution.workflow_schedule import within_schedule_window
             from zoneinfo import ZoneInfo
             schedule_zone = ZoneInfo(schedule["timezone"])
@@ -17219,6 +17247,9 @@ async def dream_schedule_events(days_ahead: int = 7, max_per_trigger: int = 20,
                     "local_start": local_start.isoformat(),
                     "timezone":   schedule["timezone"],
                     "schedule_id": schedule["schedule_id"],
+                    "schedule_policy": schedule_policy["mode"],
+                    "schedule_policy_id": schedule_policy["policy_id"],
+                    "max_catch_up": schedule_policy["max_catch_up"],
                     "all_day":    False,
                     "mode":       trig.get("mode") or "",
                     "hitl":       bool(trig.get("hitl")),

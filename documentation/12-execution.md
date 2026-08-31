@@ -45,8 +45,19 @@ clock hours. The definition is content-addressed, rejects unknown fields and
 invalid zones, and declares `executes: false`; it is portable schedule evidence,
 not another scheduler or authority path.
 
-Duplicate, misfire, and catch-up policy remain explicitly native. A small
-out-of-tree SQLite ledger now records each valid
+Misfire and catch-up behavior is now projected through a separate closed
+`vera.workflow-schedule-policy/v1` contract and
+`vera.workflow-schedule-decision/v1` event. Calendar's time-based one-shots
+retain their native "fire once when next observed" behavior after downtime.
+Dream explicitly coalesces any number of missed intervals into at most one
+eligible cycle. Each decision records the due instant, lateness, missed
+occurrence count, chosen disposition, schedule/policy/trigger identities, and
+declares both `executes: false` and `replay_effects: false`. It cannot claim a
+run, invoke a target, or bypass the products' normal gates. A closed `skip`
+classification exists for future adapters, but is not silently applied to
+existing schedules.
+
+A small out-of-tree SQLite ledger records each valid
 trigger identity atomically and emits a separate
 `vera.workflow-trigger-receipt/v1` observation. It survives process reopen,
 classifies the first observation versus later duplicates, retains bounded UTC
@@ -54,7 +65,7 @@ observation times and counts, and rejects identity reuse with changed schedule
 or authority semantics. The receipt is evidence only: it does not suppress a
 native dispatch, schedule work, replay a trigger, or claim exactly-once effects.
 Ledger, trigger-stream, or receipt-stream failure remains isolated from native
-execution.
+execution. Schedule-decision stream failure is isolated in the same way.
 
 `execution/exec_capabilities.py` is two capability groups in one module: **`exec.*`** — shell, PowerShell, code, and SSH execution — and **`netscan.*`** — network asset discovery, target probing, and an auxiliary topology graph. Both are governed by a single configurable **exec sandbox policy**, and both surface their own harness tabs (the tabbed **Exec** consoles and the Cytoscape **Netmap**).
 

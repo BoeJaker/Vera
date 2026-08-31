@@ -81,6 +81,8 @@ def test_timeline_reports_local_slots_from_same_schedule_contract(monkeypatch):
     result = asyncio.run(dream.dream_timeline(hours_ahead=2))
     item = result["triggers"][0]
     assert item["timezone"] == "Europe/London"
+    assert item["schedule_policy"] == "coalesce_once"
+    assert item["max_catch_up"] == 1
     assert item["windows"][0]["hour"] == 8
     assert item["windows"][0]["in_window"] is True
     assert item["windows"][0]["instant"] == "2026-10-26T08:30:00Z"
