@@ -6,6 +6,7 @@ import pytest
 from vera.execution.dag_workflow_execution import (
     prepare_dag_execution,
     prepare_plain_dag_execution,
+    prepare_streamed_dag_execution,
     workflow_execution_metadata,
 )
 from vera.execution.run_projection import ShadowRunRegistry
@@ -91,6 +92,18 @@ def test_public_provenance_excludes_the_materialized_graph():
     assert "graph" not in metadata
     assert metadata["workflow_hash"].startswith("sha256:")
     assert metadata["mode"] == "workflow_ir_materialized"
+
+
+def test_streamed_preparation_preserves_default_payload_and_opt_in_provenance():
+    graph = [["alpha", "out"]]
+    default = prepare_streamed_dag_execution(graph)
+    visible = prepare_streamed_dag_execution(graph, include_workflow_ir=True)
+
+    assert default["graph"] == graph
+    assert default["graph"] is not graph
+    assert default["workflow_ir"] is None
+    assert visible["workflow_ir"]["workflow_hash"].startswith("sha256:")
+    assert "graph" not in visible["workflow_ir"]
 
 
 @pytest.mark.asyncio

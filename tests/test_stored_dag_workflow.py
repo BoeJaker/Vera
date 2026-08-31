@@ -45,14 +45,14 @@ def test_definition_hash_changes_with_initial_state_but_not_usage_metadata():
     assert inspect_stored_dag_workflow(changed)["record"]["definition_hash"] != first["record"]["definition_hash"]
 
 
-def test_stored_plain_and_monitored_modes_share_the_exact_ir_boundary():
+def test_stored_plain_monitored_and_streamed_modes_share_the_exact_ir_boundary():
     result = inspect_stored_dag_workflow(_record())
 
     assert set(result["execution_modes"]) == {"plain", "supervised", "monitored", "streamed", "stepwise"}
     assert result["execution_modes"]["plain"]["workflow_ir_authoritative"] is True
     assert result["execution_modes"]["monitored"]["workflow_ir_authoritative"] is True
+    assert result["execution_modes"]["streamed"]["workflow_ir_authoritative"] is True
     assert result["execution_modes"]["supervised"]["native_authoritative"] is True
-    assert result["execution_modes"]["streamed"]["native_authoritative"] is True
     assert result["execution_modes"]["stepwise"]["native_authoritative"] is True
 
 
@@ -85,5 +85,5 @@ def test_workshop_and_capability_expose_the_same_read_only_inspection_route():
     assert '"dag.workflow.inspect"' in store_source
     assert 'http_path="/dag/workflow/inspect"' in store_source
     assert "/dag/workflow/inspect?id=" in panel_source
-    assert "plain/monitored use exact IR preparation" in panel_source
-    assert "supervised/streamed/stepwise remain native" in panel_source
+    assert "plain/monitored/one-shot streamed use exact IR preparation" in panel_source
+    assert "supervised/stepwise remain native" in panel_source
