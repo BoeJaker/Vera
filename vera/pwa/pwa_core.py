@@ -118,6 +118,27 @@ def _clean_shortcuts(value: Any) -> List[Dict[str, str]]:
     return out
 
 
+# The env var that identifies a Loop Lab sandbox container. It must be this
+# one and NOT VERA_DEV_MODE: prod's own .env sets VERA_DEV_MODE=1 as well, so
+# keying off that switched the PWA off on the one instance that matters (it
+# served the self-uninstalling worker, and Chrome refused to install). Only
+# evolve's per-branch compose sets VERA_IS_DEV_SANDBOX.
+SANDBOX_ENV_VAR = "VERA_IS_DEV_SANDBOX"
+
+
+def is_pooled_sandbox(env: Mapping[str, str]) -> bool:
+    """True inside a Loop Lab per-branch dev container.
+
+    Those containers take their host port from a pool, and a service worker's
+    caches are keyed by origin -- which includes the port but not the branch --
+    so a page cached under :8982 today could resurface under a different
+    branch's sandbox tomorrow. The install layer defaults off there, and
+    nowhere else.
+    """
+    value = str(env.get(SANDBOX_ENV_VAR, "") or "").strip().lower()
+    return value not in ("", "0", "false", "no")
+
+
 def normalise_config(patch: Mapping[str, Any] | None = None,
                      base: Mapping[str, Any] | None = None,
                      ) -> Tuple[Dict[str, Any], List[str]]:

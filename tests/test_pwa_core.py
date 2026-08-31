@@ -113,6 +113,31 @@ def test_stored_config_is_revalidated_not_trusted():
     assert cfg["short_name"] == "Vera"          # the valid parts still apply
 
 
+# -- where the install layer defaults off ------------------------------------
+
+def test_vera_dev_mode_alone_must_not_disable_the_pwa():
+    """The 2026-08-31 regression: prod's own .env sets VERA_DEV_MODE=1, so
+    keying the sandbox guard off it switched the PWA off ON PROD -- /sw.js
+    served the self-uninstalling worker and Chrome refused to install."""
+    assert core.is_pooled_sandbox({"VERA_DEV_MODE": "1"}) is False
+    assert core.is_pooled_sandbox({}) is False
+    assert core.SANDBOX_ENV_VAR != "VERA_DEV_MODE"
+
+
+def test_only_the_sandbox_env_var_turns_the_guard_on():
+    for truthy in ("1", "true", "yes", "TRUE"):
+        assert core.is_pooled_sandbox({core.SANDBOX_ENV_VAR: truthy}) is True
+    for falsy in ("", "0", "false", "no", "  "):
+        assert core.is_pooled_sandbox({core.SANDBOX_ENV_VAR: falsy}) is False
+
+
+def test_sandbox_guard_reads_the_var_evolve_actually_sets():
+    """evolve's per-branch compose sets VERA_IS_DEV_SANDBOX; if that name ever
+    changes there, this is the test that should fail rather than the feature
+    silently defaulting the wrong way on prod."""
+    assert core.SANDBOX_ENV_VAR == "VERA_IS_DEV_SANDBOX"
+
+
 # ── versioning ──────────────────────────────────────────────────────────────
 
 def test_version_changes_with_config_and_with_sources():

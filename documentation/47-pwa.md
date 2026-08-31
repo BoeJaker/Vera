@@ -34,6 +34,8 @@ The worker never calls `skipWaiting()` on install. Swapping it under a running d
 
 `pwa.config.set(enabled=false)` is a real kill switch: `/sw.js` then serves a worker that drops every `vera-pwa-*` cache and unregisters itself, so browsers that already installed it clean themselves up rather than running the old one forever.
 
+The install layer defaults **off inside a Loop Lab per-branch container** and nowhere else. Those containers take their host port from a pool, and a service worker's caches are keyed by origin — which includes the port but not the branch — so a page cached under `:8982` today could resurface under a different branch's sandbox tomorrow. The signal is `VERA_IS_DEV_SANDBOX`, which only evolve's per-branch compose sets; deliberately **not** `VERA_DEV_MODE`, which prod's own `.env` sets as well. `pwa.config.set(enabled=true)` turns it on in a sandbox to test the install flow there.
+
 ## Where the logic lives
 
 `pwa_core.py` is app-free — no FastAPI, no Redis — and holds the config schema and validation, the manifest builder, the cache policy, and the icon rasteriser. `sw.js` carries a single `__VERA_PWA_POLICY__` placeholder that the route fills from `pwa_core.cache_policy()`, so the routing rules have one definition rather than a Python copy and a JavaScript copy that drift. `tests/test_pwa_core.py` asserts that every key the policy emits is actually read by `sw.js`, and that the shipped shell still carries the tags that make it installable.

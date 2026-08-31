@@ -52,8 +52,9 @@ from Vera.vera.capability_orchestration import APP, capability, emit_event
 
 from Vera.vera.pwa.pwa_core import (
     APPLE_ICON_SIZE, ASSET_STRATEGIES, DEFAULT_CONFIG, DISPLAY_MODES,
-    ICON_SIZES, RENDERABLE_SIZES, asset_version, build_manifest, cache_policy,
-    head_tags, icon_urls, normalise_config, render_icon, render_icon_svg,
+    ICON_SIZES, RENDERABLE_SIZES, SANDBOX_ENV_VAR, asset_version, build_manifest,
+    cache_policy, head_tags, icon_urls, is_pooled_sandbox, normalise_config,
+    render_icon, render_icon_svg,
 )
 
 log = logging.getLogger("vera.pwa")
@@ -61,18 +62,15 @@ log = logging.getLogger("vera.pwa")
 _HERE = Path(__file__).parent
 _REDIS_KEY = "vera:pwa:config"
 
-# Loop Lab hands out sandbox PORTS from a pool, so :8982 is a different branch
-# next week — and a service worker's caches are keyed by origin, which includes
-# the port but not the branch. A cached page could therefore resurface under a
-# later, unrelated sandbox whenever that container is down. Prod has no such
-# ambiguity, so the install layer is simply off by default in dev containers;
-# pwa.config.set(enabled=true) turns it on in one when you want to test it.
-_DEV_MODE = (os.getenv("VERA_DEV_MODE", "").strip().lower()
-             not in ("", "0", "false", "no"))
+# Off by default ONLY inside a Loop Lab per-branch container — see
+# pwa_core.is_pooled_sandbox for why, and for why VERA_DEV_MODE is the wrong
+# signal to read (prod's own .env sets it too). pwa.config.set(enabled=true)
+# turns it on in a sandbox when you want to test the install flow there.
+_IN_POOLED_SANDBOX = is_pooled_sandbox(os.environ)
 
 # Live config, lazily hydrated from Redis on first use. Redis is the store of
 # record; this is only a cache so the icon/manifest routes don't round-trip.
-_CONFIG: Dict[str, Any] = dict(DEFAULT_CONFIG, enabled=not _DEV_MODE)
+_CONFIG: Dict[str, Any] = dict(DEFAULT_CONFIG, enabled=not _IN_POOLED_SANDBOX)
 _CONFIG_LOADED = False
 
 # Rendered icons, keyed by (size, maskable, background, colour). Rasterising a
@@ -106,7 +104,7 @@ async def _load_config() -> Dict[str, Any]:
             # foreign origin into the manifest of an installed app.
             # A stored config from a previous branch on this pooled
             # port must not switch the worker back on in a sandbox.
-            stored.setdefault("enabled", not _DEV_MODE)
+            stored.setdefault("enabled", not _IN_POOLED_SANDBOX)
             _CONFIG, _ = normalise_config(stored)
     except Exception as exc:
         log.warning("pwa: could not load config from redis (%s) - using defaults", exc)
@@ -118,10 +116,11 @@ def _disabled_reason(cfg: Dict[str, Any]) -> str:
     disabled PWA looking like a bug."""
     if cfg.get("enabled", True):
         return ""
-    if _DEV_MODE:
-        return ("dev container (VERA_DEV_MODE): sandbox ports are pooled, so a "
-                "cached page could resurface under a different branch. Call "
-                "pwa.config.set(enabled=true) to test the PWA in this sandbox.")
+    if _IN_POOLED_SANDBOX:
+        return ("Loop Lab sandbox container (%s is set): sandbox ports are "
+                "pooled, so a page cached here could resurface under a "
+                "different branch later. Call pwa.config.set(enabled=true) "
+                "to test the install flow in this sandbox." % SANDBOX_ENV_VAR)
     return "switched off via pwa.config.set(enabled=false)"
 
 
@@ -409,7 +408,7 @@ async def pwa_status(trace_id=None):
         "assets_ok": all(assets.values()),
         "icons_rendered": len(_ICON_CACHE),
         "config_source": "redis" if _redis() else "in-memory defaults",
-        "dev_mode": _DEV_MODE,
+        "in_pooled_sandbox": _IN_POOLED_SANDBOX,
         "disabled_reason": _disabled_reason(cfg),
         "policy": policy,
         "urls": {"manifest": "/manifest.webmanifest", "service_worker": "/sw.js",
