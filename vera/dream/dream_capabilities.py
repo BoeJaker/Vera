@@ -2817,6 +2817,19 @@ async def _journal_append(
             })
         except Exception:
             pass
+    # Opt-in: route director thoughts to the thermal printer if the user has
+    # subscribed the "dreams" source (print.push checks the subscription; it is a
+    # no-op when off). Best-effort + non-blocking so journalling never depends on it.
+    if kind == "thought":
+        try:
+            _pp = CAPABILITY_REGISTRY.get("print.push")
+            _fn = (_pp.get("raw") or _pp.get("func")) if _pp else None
+            if _fn:
+                asyncio.create_task(_fn(source="dreams",
+                                        title=(title or "Dream director"),
+                                        body=(text or ""), level="info"))
+        except Exception:
+            pass
     return entry
 
 

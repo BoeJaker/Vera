@@ -11489,6 +11489,17 @@ except Exception:                                     # pragma: no cover
         log.warning("edit_anchor_hint unavailable - missing-anchor errors stay terse")
 
 
+# Reading what the editor actually said, rather than reporting "no edits".
+try:
+    from Vera.vera.dag import editor_reply as _editor_reply
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import editor_reply as _editor_reply
+    except Exception:
+        _editor_reply = None
+        log.warning("editor_reply unavailable - decline replies stay opaque")
+
+
 def _v5_apply_edits(content: str, edits: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Apply anchored find/replace edits. {ok, content, applied, errors}.
 
@@ -11641,10 +11652,25 @@ async def cap_code_edit(path: str, task: str = "", session_id: str = "", repo: s
                            session_id=session_id, caller="code.edit", trace_id=trace_id)
         except Exception as e:
             return {"ok": False, "error": f"generation failed: {e}", "path": path}
-        obj = _extract_json(_strip_think(_v5_gen_text(raw) or "")[0]) or {}
-        edits = obj.get("edits") if isinstance(obj, dict) else None
-        if not isinstance(edits, list) or not edits:
-            last_err = "the editor returned no edits"
+        _raw_text = _strip_think(_v5_gen_text(raw) or "")[0]
+        obj = _extract_json(_raw_text) or {}
+        # An empty `edits` list WITH a note is the model declining, in the exact
+        # shape we asked for - not a malfunction. Measured 2026-08-31: six of
+        # eight identical runs of "Make the timer better." came back as
+        # {"edits": [], "note": "No specific changes requested ..."} and every
+        # one was reported as the contentless "the editor returned no edits",
+        # then re-run. See editor_reply for the three cases this used to
+        # collapse into one.
+        _verdict = _editor_reply.classify(obj, _raw_text)
+        edits = _verdict["edits"]
+        if _verdict["kind"] != _editor_reply.EDITS:
+            last_err = _verdict["error"]
+            if not _verdict["retry_worthwhile"]:
+                # A decline is an ANSWER. Asking the identical question again is
+                # not a retry, it is a repetition - and it costs a generation.
+                return {"ok": False, "path": path, "error": last_err,
+                        "declined": True, "note": _verdict["note"],
+                        "hint": "name a specific change (what to alter, and where)"}
         else:
             res = _v5_apply_edits(current, edits)
             if res["ok"]:

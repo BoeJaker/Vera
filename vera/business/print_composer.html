@@ -95,7 +95,8 @@ Type here — it renders exactly as it will print. Pick a font + size below.</te
         </div>
         <div class="row">
           <div><label>Align</label><select id="t_align" onchange="render()"><option>left</option><option>center</option><option>right</option></select></div>
-          <div class="chk" style="margin-top:22px"><input type="checkbox" id="t_bold" onchange="render()"><label style="margin:0">Bold</label></div>
+          <div><label>Weight</label><select id="t_weight" onchange="render()"><option value="400">Normal</option><option value="700" selected>Bold</option><option value="900">Extra bold</option></select></div>
+          <div style="flex-basis:100%;margin-top:6px"><label>Heading (optional)</label><input id="t_head" oninput="render()" placeholder="big bold title on top" style="width:100%"></div>
         </div>
       </div>
 
@@ -175,6 +176,17 @@ Sun: 15</textarea>
         <div class="chk"><input type="checkbox" id="c_cut" checked><label style="margin:0">Auto-cut after each print</label></div>
         <div class="mini" style="margin-top:8px">Targets come from the printer registry — the server USB printer, a printer on <b>this computer</b> (Web Serial), or a USB-ESP32 over the mesh.</div>
         <button class="btn wide" onclick="testPrint()">Send a test print</button>
+        <hr style="border:none;border-top:1px solid var(--border);margin:12px 0">
+        <div class="mini" style="margin-bottom:6px">Notifications to the printer</div>
+        <div class="chk"><input type="checkbox" id="n_master" onchange="saveSubs()"><label style="margin:0"><b>Print Vera notifications</b> (master)</label></div>
+        <div style="margin:6px 0 0 6px">
+          <div class="chk"><input type="checkbox" id="n_system" onchange="saveSubs()"><label style="margin:0">System alerts</label></div>
+          <div class="chk"><input type="checkbox" id="n_dreams" onchange="saveSubs()"><label style="margin:0">Dream director</label></div>
+          <div class="chk"><input type="checkbox" id="n_narrator" onchange="saveSubs()"><label style="margin:0">Narrator</label></div>
+          <div class="chk"><input type="checkbox" id="n_chat" onchange="saveSubs()"><label style="margin:0">Chat replies</label></div>
+        </div>
+        <div class="mini" style="margin-top:6px">Master off silences all printer notifications. Any source can also be printed on demand by selecting its text and using the floating Print button.</div>
+        <div class="mini" id="n_st" style="margin-top:4px"></div>
         <vera-thermal-printer id="tpEl" baud="9600" style="display:none"></vera-thermal-printer>
       </div>
     </div>
@@ -220,14 +232,21 @@ function wrap(x,text,font,maxw){x.font=font;const words=(text||'').split(/\s+/);
 function render(){
   const pad=10, w=WIDTH, inner=w-pad*2;
   if(MODE==='text'){
-    const sz=+$('t_sz').value, ff=$('t_font').value, al=$('t_align').value, bold=$('t_bold').checked?'bold ':'';
-    const font=`${bold}${sz}px ${ff}`;
+    const sz=+$('t_sz').value, ff=$('t_font').value, al=$('t_align').value;
+    const wt=($('t_weight')&&$('t_weight').value)||'700', xb=(wt==='900');
+    const font=`${wt} ${sz}px ${ff}`;
+    const head=(($('t_head')&&$('t_head').value)||'').trim();
+    const hsz=Math.round(sz*1.55), hfont=`800 ${hsz}px ${ff}`, hlh=Math.ceil(hsz*1.3);
     // measure
     const m=document.createElement('canvas').getContext('2d');
     let lines=[];($('t_text').value||'').split('\n').forEach(p=>{lines=lines.concat(p.trim()===''?['']:wrap(m,p,font,inner));});
-    const lh=Math.ceil(sz*1.32), h=pad*2+lines.length*lh;
-    const x=ctxFor(h);x.font=font;
-    lines.forEach((ln,i)=>{const tw=x.measureText(ln).width;let lx=pad;if(al==='center')lx=(w-tw)/2;if(al==='right')lx=w-pad-tw;x.fillText(ln,lx,pad+i*lh);});
+    const lh=Math.ceil(sz*1.32), h=pad*2+(head?hlh+10:0)+lines.length*lh;
+    const x=ctxFor(h);
+    const draw=(t,fx,fy,heavy)=>{x.fillText(t,fx,fy);if(heavy){x.fillText(t,fx+1,fy);x.fillText(t,fx,fy+1);}};
+    let y=pad;
+    if(head){x.font=hfont;const tw=x.measureText(head).width;const hx=al==='right'?w-pad-tw:(al==='left'?pad:(w-tw)/2);draw(head,hx,y,true);y+=hlh;x.fillRect(pad,y,inner,2);y+=10;}
+    x.font=font;
+    lines.forEach((ln)=>{const tw=x.measureText(ln).width;let lx=pad;if(al==='center')lx=(w-tw)/2;if(al==='right')lx=w-pad-tw;draw(ln,lx,y,xb);y+=lh;});
   }
   else if(MODE==='list'){
     const title=$('l_title').value, boxes=$('l_boxes').checked;
@@ -237,7 +256,7 @@ function render(){
     const x=ctxFor(h);let y=pad;
     x.font=`bold ${tsz}px system-ui`;const tw=x.measureText(title).width;x.fillText(title,(w-tw)/2,y);y+=Math.ceil(tsz*1.4);
     x.fillRect(pad,y,inner,2);y+=12;
-    x.font=`${isz}px system-ui`;
+    x.font=`700 ${isz}px system-ui`;
     items.forEach(it=>{if(boxes){x.lineWidth=2;x.strokeRect(pad+2,y+3,isz-8,isz-8);}x.fillText(it,pad+(boxes?isz+2:0),y);y+=lh;});
   }
   else if(MODE==='recipe'){
@@ -245,7 +264,7 @@ function render(){
     const ing=($('r_ing').value||'').split('\n').filter(s=>s.trim());
     const steps=($('r_steps').value||'').split('\n').filter(s=>s.trim());
     const m=document.createElement('canvas').getContext('2d');
-    const bodyF='24px system-ui';let lc=0;ing.forEach(s=>lc+=wrap(m,'• '+s,bodyF,inner).length);
+    const bodyF='700 24px system-ui';let lc=0;ing.forEach(s=>lc+=wrap(m,'• '+s,bodyF,inner).length);
     let sc=0;steps.forEach((s,i)=>sc+=wrap(m,(i+1)+'. '+s,bodyF,inner).length);
     const lh=32;
     const total=pad*2+40+(note?24:0)+30+lc*lh+30+sc*lh+20;
@@ -361,6 +380,16 @@ async function saveDaily(){const t=($('dp_time').value||'07:00').split(':');
   const r=await post('/print/config/set',{enabled:$('dp_en').checked,hour:parseInt(t[0]||'7',10),minute:parseInt(t[1]||'0',10),items:items.join(','),printer_id:targetId()});
   $('dp_st').textContent=(r&&r.ok)?('saved — '+($('dp_en').checked?('daily at '+$('dp_time').value):'off')):'save failed';
 }
+async function loadSubs(){const r=await j('/print/subs');const s=(r&&r.subs)||{};const src=s.sources||{};
+  if($('n_master'))$('n_master').checked=s.master!==false;
+  if($('n_system'))$('n_system').checked=src.system!==false;
+  if($('n_dreams'))$('n_dreams').checked=!!src.dreams;
+  if($('n_narrator'))$('n_narrator').checked=!!src.narrator;
+  if($('n_chat'))$('n_chat').checked=!!src.chat;
+}
+async function saveSubs(){const r=await post('/print/subs/set',{master:$('n_master').checked,system:$('n_system').checked,dreams:$('n_dreams').checked,narrator:$('n_narrator').checked,chat:$('n_chat').checked});
+  if($('n_st')){$('n_st').textContent=(r&&r.ok)?'saved':'save failed';setTimeout(()=>{if($('n_st'))$('n_st').textContent='';},1200);}
+}
 // ---- print routing + helpers ----
 let PRINTERS=[], TARGET=null;
 async function printJob(path, body){
@@ -409,5 +438,6 @@ function tplDel(){const n=$('tpl_sel').value;if(!n)return;const all=tplStore();d
 refreshStatus();setInterval(refreshStatus,15000);
 tplRefresh();
 loadDaily();
+loadSubs();
 render();
 </script>
