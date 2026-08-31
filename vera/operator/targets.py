@@ -174,15 +174,32 @@ async def ensure_target(target: Dict[str, Any],
         # end the browser step outright even with a standing sandbox running
         # and idle. Nobody named a container, so any safe one will do; see
         # target_fallback for what "safe" excludes.
-        alt = (_fallback.pick_sandbox(await _list_sandboxes())
-               if (call_cap and not branch and not name) else None)
+        # Fall back even when a branch/name WAS named. The named lookup above
+        # already failed, so that container does not exist - and refusing to
+        # substitute then just fails the step, which is strictly worse than
+        # driving a safe sandbox and saying so. Census run 19: an operator.run
+        # died in 2.4s on the occupied primary while a pinned, running,
+        # driveable sandbox was registered the whole time, because the model had
+        # named a branch and that silently disabled this.
+        _pool = await _list_sandboxes() if call_cap else []
+        alt = _fallback.pick_sandbox(_pool) if call_cap else None
         if alt:
             _adopt(alt)
-            resolved["note"] = _fallback.substitution_note(alt, res["error"])
+            note = _fallback.substitution_note(alt, res["error"])
+            if branch or name:
+                note += (f" (the requested {'branch ' + branch if branch else 'name ' + name}"
+                         " has no live sandbox)")
+            resolved["note"] = note
             resolved["primary_error"] = res["error"]
-            log.info("operator target: %s", resolved["note"])
+            log.info("operator target: %s", note)
             return resolved
-        resolved.update({"ready": False, "error": f"sandbox ensure: {res['error']}"})
+        # Nothing was chosen - say WHY, or the next occurrence is as opaque as
+        # this one was.
+        why = _fallback.decline_reason(_pool, branch=branch, name=name)
+        log.warning("operator target: primary unavailable (%s) and no fallback "
+                    "taken - %s", res["error"], why)
+        resolved.update({"ready": False,
+                         "error": f"sandbox ensure: {res['error']} - {why}"})
         return resolved
     # Prefer a base_url/port the cap reports back, else the default.
     base = SANDBOX_BASE

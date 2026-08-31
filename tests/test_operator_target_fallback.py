@@ -117,11 +117,40 @@ def test_a_working_primary_is_still_used_and_the_estate_is_not_listed():
     assert "evolve.sandbox.list" not in calls
 
 
-def test_a_named_branch_is_not_silently_replaced_when_it_is_missing():
+def test_a_named_branch_that_does_not_exist_still_gets_a_browser():
+    """Changed 2026-08-31 after census run 19. Refusing to substitute for a
+    branch that HAS NO SANDBOX just fails the step - the named lookup already
+    proved it does not exist. An operator.run died in 2.4s on the occupied
+    primary while a pinned, running, driveable sandbox sat registered, because
+    the model had named a branch and that silently disabled the fallback."""
     cap, _ = _cap_factory([MIRROR])
     out = _run(ensure_target({"kind": "sandbox", "branch": "feat/not-here"}, cap))
+    assert out["ready"] is True
+    assert out["base_url"] == "http://localhost:8994"
+    assert "feat/not-here" in out["note"], "the substitution must say what was asked for"
+
+
+def test_a_named_branch_that_EXISTS_is_still_matched_exactly():
+    """The original guarantee survives: naming a live container gets THAT one."""
+    cap, _ = _cap_factory([MIRROR, UNOWNED])
+    out = _run(ensure_target({"kind": "sandbox", "branch": "feat/spare"}, cap))
+    assert out["ready"] is True and out["base_url"] == "http://localhost:8992"
+
+
+def test_when_nothing_is_usable_the_error_says_why():
+    """The line that was missing: a guard that declines silently cannot be
+    debugged. Run 19's failure was indistinguishable from an empty list."""
+    cap, _ = _cap_factory([OTHERS_WIP])          # live, but another agent's
+    out = _run(ensure_target({"kind": "sandbox"}, cap))
     assert out["ready"] is False
-    assert "sandbox ensure" in out["error"]
+    assert "primary sandbox is occupied" in out["error"]
+    assert "another agent" in out["error"] or "owned and unpinned" in out["error"]
+
+
+def test_an_empty_list_is_reported_as_such_not_as_no_candidate():
+    cap, _ = _cap_factory([])
+    out = _run(ensure_target({"kind": "sandbox"}, cap))
+    assert "list was empty" in out["error"]
 
 
 def test_an_explicit_url_survives_being_routed_to_a_named_container():
@@ -140,3 +169,20 @@ def test_a_url_target_never_touches_the_sandbox_machinery():
     out = _run(ensure_target({"kind": "url", "url": "https://example.com/x"}, cap))
     assert out["ready"] is True and out["start_url"] == "https://example.com/x"
     assert calls == []
+
+
+# --- the refusal reason -----------------------------------------------------
+
+def test_decline_reason_names_the_actual_obstacle():
+    from vera.operator.target_fallback import decline_reason
+    assert "empty" in decline_reason([])
+    assert "driveable" in decline_reason([{**UNOWNED, "running": False}])
+    assert "another agent" in decline_reason([OTHERS_WIP])
+    r = decline_reason([MIRROR], branch="feat/nope")
+    assert "feat/nope" in r and "live" in r
+
+
+def test_decline_reason_never_raises_on_junk():
+    from vera.operator.target_fallback import decline_reason
+    for junk in (None, [], [{}], [{"name": None}]):
+        assert isinstance(decline_reason(junk), str)
