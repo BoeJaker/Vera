@@ -19,6 +19,25 @@ bind `workflow_id` to the Workflow IR content hash. Definitions that cannot be
 represented exactly retain native execution with explicit compatibility
 evidence. Supervised and the other enhanced DAG modes do not inherit this claim.
 
+## Shared scheduling trigger evidence
+
+The long-term Calendar scheduler and Dream's idle scheduler now project their
+native fire decisions into the same `vera.workflow-trigger/v1` event envelope.
+The envelope gives downstream observers a stable trigger and idempotency key,
+source revision, opaque target reference, schedule kind, explicit timezone,
+occurrence identity, and native authority declaration. It never contains an
+action title, goal, instructions, Dream prompt, sensor result, or workflow
+payload, and it cannot execute work.
+
+This is an observation boundary, not a replacement scheduler. Calendar still
+owns timestamp and threshold evaluation, user notification, and system-action
+dispatch. Dream still owns idle, hour-window, cooldown, sensor, and resource
+gates plus cycle creation. Projection or event-bus failure is isolated from
+those existing decisions. Duplicate, misfire, and catch-up policy remain
+explicitly native until the shared trigger consumer and durable receipt ledger
+are introduced; the envelope does not claim that a stable key alone prevents
+duplicate execution.
+
 `execution/exec_capabilities.py` is two capability groups in one module: **`exec.*`** — shell, PowerShell, code, and SSH execution — and **`netscan.*`** — network asset discovery, target probing, and an auxiliary topology graph. Both are governed by a single configurable **exec sandbox policy**, and both surface their own harness tabs (the tabbed **Exec** consoles and the Cytoscape **Netmap**).
 
 This is the module that lets Vera (and an agent driving it) actually *touch* the host and the network — so the sandbox section is the most important part of the page.
