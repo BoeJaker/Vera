@@ -114,7 +114,7 @@ def test_calendar_adapter_matches_native_naive_utc_and_redacts_action_content():
     assert event["source"]["kind"] == "calendar.action"
     assert event["schedule"] == {
         "kind": "time", "timezone": "UTC",
-        "scheduled_for": "2026-09-01T09:00:00+00:00",
+        "scheduled_for": "2026-09-01T09:00:00Z",
     }
     assert "private title" not in str(event)
     assert "private goal" not in str(event)
@@ -143,6 +143,15 @@ def test_dream_adapter_uses_prior_run_as_recurrence_identity_and_redacts_prompt(
     assert first["occurrence"]["key"] == "initial"
     assert "private prompt" not in str(first)
     assert "description" not in str(first)
+
+
+def test_dream_adapter_projects_configured_iana_timezone():
+    event = dream_schedule_workflow_trigger({
+        "name": "briefing", "timezone": "Europe/London",
+        "hours_start": 8, "hours_end": 10, "min_interval_minutes": 60,
+    }, observed_at=NOW)
+
+    assert event["schedule"]["timezone"] == "Europe/London"
 
 
 def test_calendar_native_fire_survives_projection_and_receipt_failure(monkeypatch):

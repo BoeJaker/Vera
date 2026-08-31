@@ -220,21 +220,17 @@ def calendar_action_workflow_trigger(action: Mapping[str, Any], *, observed_at: 
         "trigger": action.get("trigger") or {},
         "profile": str(action.get("profile") or ""),
     }
-    scheduled_for = str(action.get("when") or "") if due_kind == "time" else ""
-    if scheduled_for:
-        try:
-            parsed = datetime.fromisoformat(scheduled_for.replace("Z", "+00:00"))
-        except ValueError as exc:
-            raise ValueError("action.when must be ISO-8601") from exc
-        if parsed.tzinfo is None or parsed.utcoffset() is None:
-            # Match longterm_scheduler._parse_iso: legacy naive values mean UTC.
-            scheduled_for = parsed.replace(tzinfo=ZoneInfo("UTC")).isoformat()
+    from .workflow_schedule import calendar_action_schedule
+
+    schedule = calendar_action_schedule(action, due_kind=due_kind)
+    definition["schedule_id"] = schedule["schedule_id"]
     return build_workflow_trigger(
         source_kind="calendar.action", source_id=action_id,
         source_revision=_hash(definition),
         target_ref=f"sched.action:{action_id}", schedule_kind=due_kind,
         occurrence_key="one-shot", observed_at=observed_at,
-        timezone_name="UTC", scheduled_for=scheduled_for,
+        timezone_name=schedule["timezone"],
+        scheduled_for=schedule["scheduled_for"],
         native_owner="vera.calendar.longterm_scheduler",
     )
 
@@ -245,6 +241,9 @@ def dream_schedule_workflow_trigger(trigger: Mapping[str, Any], *, observed_at: 
     if not isinstance(trigger, Mapping):
         raise TypeError("trigger must be an object")
     name = _required_text("trigger.name", trigger.get("name"))
+    from .workflow_schedule import dream_trigger_schedule
+
+    schedule = dream_trigger_schedule(trigger)
     definition = {
         "name": name,
         "hours_start": trigger.get("hours_start", 0),
@@ -257,11 +256,13 @@ def dream_schedule_workflow_trigger(trigger: Mapping[str, Any], *, observed_at: 
         "pipeline": list(trigger.get("pipeline") or []),
         "mode": str(trigger.get("mode") or ""),
         "hitl": bool(trigger.get("hitl", False)),
+        "timezone": schedule["timezone"],
+        "schedule_id": schedule["schedule_id"],
     }
     return build_workflow_trigger(
         source_kind="dream.trigger", source_id=name,
         source_revision=_hash(definition), target_ref=f"dream.trigger:{name}",
         schedule_kind="idle_interval",
         occurrence_key=str(previous_run or "initial"), observed_at=observed_at,
-        timezone_name="UTC", native_owner="vera.dream.scheduler",
+        timezone_name=schedule["timezone"], native_owner="vera.dream.scheduler",
     )

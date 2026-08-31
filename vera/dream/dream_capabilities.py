@@ -2119,14 +2119,25 @@ async def _call_cap(name: str, **kwargs) -> Any:
         return {"error": f"{type(e).__name__}: {e}"}
 
 
-def _within_hours(h_start: int, h_end: int, now: Optional[datetime] = None) -> bool:
-    now = now or datetime.now(timezone.utc)
-    h = now.hour
-    if h_start == h_end:
-        return True
-    if h_start < h_end:
-        return h_start <= h < h_end
-    return h >= h_start or h < h_end
+def _dream_schedule_contract(trig: Dict[str, Any]) -> Dict[str, Any]:
+    from Vera.vera.execution.workflow_schedule import dream_trigger_schedule
+
+    return dream_trigger_schedule(trig)
+
+
+def _within_hours(h_start: int, h_end: int, now: Optional[datetime] = None,
+                  timezone_name: str = "UTC") -> bool:
+    from Vera.vera.execution.workflow_schedule import within_schedule_window
+
+    instant = now or datetime.now(timezone.utc)
+    if instant.tzinfo is None or instant.utcoffset() is None:
+        # Legacy internal callers implicitly treated a naive hour as UTC.
+        instant = instant.replace(tzinfo=timezone.utc)
+    schedule = _dream_schedule_contract({
+        "timezone": timezone_name, "hours_start": h_start, "hours_end": h_end,
+        "min_interval_minutes": 0,
+    })
+    return within_schedule_window(schedule, instant)
 
 
 async def _get_config() -> Dict[str, Any]:
@@ -10302,17 +10313,25 @@ async def _trigger_due(trig: Dict[str, Any], idle_min: float) -> bool:
         return False
     if idle_min < float(trig.get("min_idle_minutes", 15)):
         return False
-    if not _within_hours(int(trig.get("hours_start", 0)), int(trig.get("hours_end", 24))):
+    from Vera.vera.execution.workflow_schedule import recurrence_due, within_schedule_window
+
+    now_utc = datetime.now(timezone.utc)
+    try:
+        schedule = _dream_schedule_contract(trig)
+    except (TypeError, ValueError) as exc:
+        log.warning("dream trigger %s has invalid schedule: %s", trig.get("name"), exc)
+        return False
+    if not within_schedule_window(schedule, now_utc):
         return False
     last = await _last_run_ts(trig.get("name", "?"))
-    if last:
-        try:
-            last_dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
-            mins_since = (datetime.now(timezone.utc) - last_dt).total_seconds() / 60.0
-            if mins_since < float(trig.get("min_interval_minutes", 60)):
-                return False
-        except Exception:
-            pass
+    try:
+        if not recurrence_due(schedule, last_completed_at=str(last or ""),
+                              instant=now_utc):
+            return False
+    except (TypeError, ValueError) as exc:
+        log.warning("dream trigger %s has invalid recurrence state: %s",
+                    trig.get("name"), exc)
+        return False
     # Sensor gate: only fire when the trigger's sensors clear their signal
     # threshold AND any configured match (regex/text) condition holds. This is
     # the single, coherent place firing is decided — configurable per trigger
@@ -13184,8 +13203,9 @@ async def _maybe_fire_project_dream(idle_min: float) -> Optional[str]:
             continue
         if mins_since < float((trig or {}).get("min_interval_minutes", 240)):
             continue
-        if trig and not _within_hours(int(trig.get("hours_start", 0)),
-                                      int(trig.get("hours_end", 24))):
+        if trig and not _within_hours(
+                int(trig.get("hours_start", 0)), int(trig.get("hours_end", 24)),
+                timezone_name=str(trig.get("timezone") or "UTC")):
             continue
         slug = p.get("slug") or (k.decode() if isinstance(k, bytes) else str(k))
         cands.append((mins_since, slug))
@@ -13657,6 +13677,10 @@ async def dream_trigger_get(name: str, trace_id=None):
     if not trig:
         return {"error": "not found"}
     trig["last_run"] = await _last_run_ts(name)
+    try:
+        trig["schedule_contract"] = _dream_schedule_contract(trig)
+    except (TypeError, ValueError) as exc:
+        trig["schedule_error"] = str(exc)
     return {"trigger": trig}
 
 
@@ -13678,6 +13702,7 @@ async def dream_trigger_upsert(
     hours_end: Optional[int] = None,
     min_idle_minutes: Optional[int] = None,
     min_interval_minutes: Optional[int] = None,
+    timezone_name: Optional[str] = None,
     require_signal: Optional[float] = None,
     deliver_to: Optional[List[str]] = None,
     deliver_config: Optional[Dict[str, Any]] = None,   # {channel: {format, target}} per-channel overrides
@@ -13719,6 +13744,7 @@ async def dream_trigger_upsert(
         "hours_start": 0, "hours_end": 24,
         "min_idle_minutes": 15,
         "min_interval_minutes": 120,
+        "timezone": "UTC",
         "require_signal": 0.2,
         "deliver_to": ["memory"],
         "sensor_params": {}, "stage_params": {},
@@ -13733,6 +13759,7 @@ async def dream_trigger_upsert(
         "hours_start": hours_start, "hours_end": hours_end,
         "min_idle_minutes": min_idle_minutes,
         "min_interval_minutes": min_interval_minutes,
+        "timezone": timezone_name,
         "require_signal": require_signal,
         "deliver_to": deliver_to, "deliver_config": deliver_config, "prompt": prompt,
         "sensor_params": sensor_params, "stage_params": stage_params,
@@ -13756,8 +13783,14 @@ async def dream_trigger_upsert(
     if existing.get("depth") not in ("brief", "standard", "deep", "exhaustive"):
         existing["depth"] = "standard"
 
+    try:
+        schedule_contract = _dream_schedule_contract(existing)
+    except (TypeError, ValueError) as exc:
+        return {"ok": False, "error": f"invalid schedule: {exc}"}
+
     await _save_trigger(existing)
-    return {"ok": True, "trigger": existing}
+    return {"ok": True, "trigger": {**existing,
+                                      "schedule_contract": schedule_contract}}
 
 
 @capability(
@@ -16982,11 +17015,11 @@ async def dream_timeline(hours_ahead: int = 24, trace_id=None):
         triggers = await _list_triggers()
     except Exception as e:
         return {"triggers": [], "count": 0, "error": str(e),
-                "current_hour": datetime.now().hour, "current_idle": 0,
+                "current_hour": datetime.now(timezone.utc).hour, "current_idle": 0,
                 "hours_ahead": int(hours_ahead)}
 
     idle = await _idle_minutes()
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     results: List[Dict[str, Any]] = []
     hours_ahead = max(1, min(72, int(hours_ahead or 24)))
 
@@ -16996,10 +17029,14 @@ async def dream_timeline(hours_ahead: int = 24, trace_id=None):
                 continue
 
             name = trig.get("name", "?")
-            h_start = int(trig.get("hours_start") or 0)
-            h_end = int(trig.get("hours_end") or 24)
-            min_idle = int(trig.get("min_idle_minutes") or 15)
-            cooldown = int(trig.get("min_interval_minutes") or 60)
+            h_start = int(trig.get("hours_start", 0))
+            h_end = int(trig.get("hours_end", 24))
+            min_idle = int(trig.get("min_idle_minutes", 15))
+            cooldown = int(trig.get("min_interval_minutes", 60))
+            schedule = _dream_schedule_contract(trig)
+            from Vera.vera.execution.workflow_schedule import within_schedule_window
+            from zoneinfo import ZoneInfo
+            schedule_zone = ZoneInfo(schedule["timezone"])
 
             last_run = None
             try:
@@ -17012,25 +17049,30 @@ async def dream_timeline(hours_ahead: int = 24, trace_id=None):
                 try:
                     last_dt = datetime.fromisoformat(
                         last_run.replace("Z", "+00:00"))
-                    cooldown_until_dt = last_dt.replace(
-                        tzinfo=None) + timedelta(minutes=cooldown)
+                    if last_dt.tzinfo is None or last_dt.utcoffset() is None:
+                        last_dt = last_dt.replace(tzinfo=timezone.utc)
+                    cooldown_until_dt = last_dt.astimezone(timezone.utc) + timedelta(
+                        seconds=schedule["recurrence"]["interval_seconds"])
                     if cooldown_until_dt > now:
-                        cooldown_until = cooldown_until_dt.isoformat()
+                        cooldown_until = cooldown_until_dt.isoformat().replace("+00:00", "Z")
                 except Exception:
                     pass
 
             windows: List[Dict[str, Any]] = []
             for h_offset in range(hours_ahead):
                 check_time = now + timedelta(hours=h_offset)
-                h = check_time.hour
-                in_window = _within_hours(h_start, h_end, check_time)
+                local_time = check_time.astimezone(schedule_zone)
+                h = local_time.hour
+                in_window = within_schedule_window(schedule, check_time)
                 blocked = bool(
                     cooldown_until
-                    and check_time.isoformat() < cooldown_until
+                    and check_time < cooldown_until_dt
                 )
                 windows.append({
                     "hour": h,
-                    "time": check_time.strftime("%H:%M"),
+                    "time": local_time.strftime("%H:%M"),
+                    "instant": check_time.isoformat().replace("+00:00", "Z"),
+                    "utc_offset": local_time.strftime("%z"),
                     "offset_h": h_offset,
                     "in_window": in_window,
                     "blocked_cooldown": blocked,
@@ -17044,6 +17086,8 @@ async def dream_timeline(hours_ahead: int = 24, trace_id=None):
                 "trigger": name,
                 "label": trig.get("label", name),
                 "hours_window": f"{h_start}-{h_end}",
+                "timezone": schedule["timezone"],
+                "schedule_id": schedule["schedule_id"],
                 "min_idle": min_idle,
                 "cooldown_minutes": cooldown,
                 "cooldown_until": cooldown_until,
@@ -17105,7 +17149,7 @@ async def dream_schedule_events(days_ahead: int = 7, max_per_trigger: int = 20,
 
     days_ahead = max(1, min(30, int(days_ahead or 7)))
     max_per_trigger = max(1, min(200, int(max_per_trigger or 20)))
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     horizon = now + timedelta(days=days_ahead)
     events: List[Dict[str, Any]] = []
 
@@ -17115,9 +17159,13 @@ async def dream_schedule_events(days_ahead: int = 7, max_per_trigger: int = 20,
                 continue
             name = trig.get("name", "?")
             label = trig.get("label", name)
-            h_start = int(trig.get("hours_start") or 0)
-            h_end = int(trig.get("hours_end") or 24)
-            cooldown = max(15, int(trig.get("min_interval_minutes") or 60))
+            h_start = int(trig.get("hours_start", 0))
+            h_end = int(trig.get("hours_end", 24))
+            cooldown = max(0, int(trig.get("min_interval_minutes", 60)))
+            schedule = _dream_schedule_contract(trig)
+            from Vera.vera.execution.workflow_schedule import within_schedule_window
+            from zoneinfo import ZoneInfo
+            schedule_zone = ZoneInfo(schedule["timezone"])
 
             # Start projecting from the end of the current cooldown (if any).
             cursor = now
@@ -17129,8 +17177,11 @@ async def dream_schedule_events(days_ahead: int = 7, max_per_trigger: int = 20,
             if last_run and isinstance(last_run, str):
                 try:
                     last_dt = datetime.fromisoformat(
-                        last_run.replace("Z", "+00:00")).replace(tzinfo=None)
-                    cd_until = last_dt + timedelta(minutes=cooldown)
+                        last_run.replace("Z", "+00:00"))
+                    if last_dt.tzinfo is None or last_dt.utcoffset() is None:
+                        last_dt = last_dt.replace(tzinfo=timezone.utc)
+                    cd_until = last_dt.astimezone(timezone.utc) + timedelta(
+                        seconds=schedule["recurrence"]["interval_seconds"])
                     if cd_until > cursor:
                         cursor = cd_until
                 except Exception:
@@ -17141,29 +17192,35 @@ async def dream_schedule_events(days_ahead: int = 7, max_per_trigger: int = 20,
             while cursor < horizon and count < max_per_trigger and guard < 5000:
                 guard += 1
                 # Advance to the next moment inside the trigger's hours window.
-                if not _within_hours(h_start, h_end, cursor):
+                if not within_schedule_window(schedule, cursor):
                     cursor += timedelta(minutes=30)
                     continue
                 start = cursor.replace(second=0, microsecond=0)
                 end = start + timedelta(minutes=15)
+                local_start = start.astimezone(schedule_zone)
                 events.append({
                     "id":         f"dream:{name}:{int(start.timestamp())}",
                     "title":      f"💭 {label}",
                     "trigger":    name,
                     "label":      label,
                     "project":    trig.get("project") or "",
-                    "start":      start.isoformat(),
-                    "end":        end.isoformat(),
+                    "start":      start.isoformat().replace("+00:00", "Z"),
+                    "end":        end.isoformat().replace("+00:00", "Z"),
+                    "local_start": local_start.isoformat(),
+                    "timezone":   schedule["timezone"],
+                    "schedule_id": schedule["schedule_id"],
                     "all_day":    False,
                     "mode":       trig.get("mode") or "",
                     "hitl":       bool(trig.get("hitl")),
-                    "recurrence": f"every ~{cooldown}m within {h_start}:00-{h_end}:00",
+                    "recurrence": (f"every ~{cooldown}m within "
+                                   f"{h_start}:00-{h_end}:00 {schedule['timezone']}"),
                     "source":     "dream",
                     "color":      DREAM_EVENT_COLOR,
                     "read_only":  True,
                 })
                 count += 1
-                cursor = start + timedelta(minutes=cooldown)
+                cursor = start + timedelta(
+                    seconds=max(60, schedule["recurrence"]["interval_seconds"]))
         except Exception as e:
             log.debug("schedule.events trigger %s: %s", trig.get("name"), e)
             continue

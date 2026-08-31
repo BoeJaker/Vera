@@ -52,6 +52,19 @@ A **trigger** record is the unit of configuration. It declares:
 | `dream.trigger.delete` / `dream.trigger.toggle` | Remove / enable-disable |
 | `dream.trigger.generate` | **LLM**: synthesise a trigger from a description |
 
+Trigger hours are local to the trigger's explicit IANA timezone (UTC by
+default). The trigger editor exposes that timezone alongside the start/end
+hours. Dream validates the zone and window before saving; an invalid schedule
+fails closed before sensor collection or cycle creation. Overnight windows are
+supported, and `0–24` (or equal endpoints) denotes a full day.
+
+Cooldown recurrence is anchored to the previous completed run and measured as
+elapsed UTC time, while the hours window is evaluated in local civil time. This
+keeps recurrence duration stable through daylight-saving transitions without
+making users express their desired working window in UTC. Trigger detail
+returns the content-addressed, non-executing schedule contract used for the
+decision.
+
 ---
 
 ## 3. Sensors — firing gates (and collectors — content)
@@ -157,6 +170,13 @@ after a process restart increments its receipt instead of inventing another
 identity. This currently improves audit and duplicate diagnosis; it deliberately
 does not gate cycle creation, because Dream's native recurrence and effect
 semantics have not yet migrated to the shared scheduling policy.
+
+The timeline and upcoming-event projections use the same timezone-aware window
+and elapsed-recurrence evaluator as the scheduler gate. Their records include
+the IANA timezone, local time/UTC offset, canonical UTC instant, and stable
+schedule identity, so the UI can explain a projected slot instead of presenting
+an ambiguous hour. These views remain forecasts: idle, sensors, resources, and
+other native gates can still prevent a projected event from firing.
 
 ### Output workspace — files, not context
 
