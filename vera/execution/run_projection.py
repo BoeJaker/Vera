@@ -268,3 +268,280 @@ class DagRunObserver:
                                      "progress": self.parent.progress},
             causation_id=causation_id)
         await self._publish(self.parent, event)
+
+
+class StreamDagRunProjection:
+    """Failure-isolated Run projection of the native DAG SSE lifecycle.
+
+    The native generator remains the execution and event authority.  This
+    observer records only content-free lifecycle metadata, and intentionally
+    never emits into or modifies the caller's SSE stream.
+    """
+
+    def __init__(self, *, mode: str, trace_id: str, session_id: str = "",
+                 graph: list | None = None, registry=None) -> None:
+        self.mode = "stepwise" if mode == "stepwise" else "oneshot"
+        self.registry = registry if registry is not None else SHADOW_RUNS
+        self.parent = Run(
+            id=str(uuid4()), kind="vera.dag.stream", trace_id=trace_id,
+            workflow_id=trace_id, session_id=session_id,
+        )
+        self.children: dict[int, Run] = {}
+        self.finished = 0
+        self.total: int | None = None
+        self._started = False
+        self._terminal = False
+        if graph is not None:
+            self.bind_graph(graph)
+        elif self.mode == "stepwise":
+            self._safe(self._start)
+
+    @property
+    def run_id(self) -> str:
+        return self.parent.id
+
+    def _record(self, run: Run, event: RunEvent) -> None:
+        self.registry.record(run, event)
+
+    def _safe(self, operation, *args, **kwargs) -> None:
+        try:
+            operation(*args, **kwargs)
+        except Exception:
+            # Projection failures must never alter native streamed execution.
+            return
+
+    def _start(self) -> None:
+        if self._started:
+            return
+        event = self.parent.transition(
+            RunStatus.RUNNING, event_type="run.started",
+            payload={"execution_mode": self.mode},
+        )
+        self._record(self.parent, event)
+        self._started = True
+
+    def bind_graph(self, graph: list) -> None:
+        """Attach exact one-shot definition identity without executing it."""
+        self._safe(self._bind_graph, graph)
+
+    def _bind_graph(self, graph: list) -> None:
+        from .dag_workflow_execution import prepare_dag_execution
+
+        prepared = prepare_dag_execution(graph)
+        workflow_hash = str(prepared.get("workflow_hash") or "")
+        if workflow_hash:
+            self.parent.workflow_id = workflow_hash
+        self.total = _leaf_count(prepared.get("graph") or graph)
+        self._start()
+        event = self.parent.record_event(
+            "run.workflow.bound",
+            payload={
+                "definition_authority": (
+                    "workflow_ir" if prepared.get("authoritative") else "native"
+                ),
+                "node_count": self.total,
+            },
+            causation_id=self.parent.events[-1].id,
+        )
+        self._record(self.parent, event)
+
+    def observe(self, event_type: str, payload: dict[str, Any] | None = None) -> None:
+        """Observe one native event; invalid or duplicate input is harmless."""
+        self._safe(self._observe, str(event_type or ""), dict(payload or {}))
+
+    def _observe(self, event_type: str, payload: dict[str, Any]) -> None:
+        if self._terminal:
+            return
+        self._start()
+        if event_type == "dag.step_start":
+            self._step_started(payload)
+        elif event_type == "dag.hitl_request":
+            self._approval_pending(payload)
+        elif event_type == "dag.hitl_rejected":
+            self._step_cancelled(payload, "approval_rejected")
+        elif event_type == "dag.step_done":
+            self._step_finished(payload, failed=False)
+        elif event_type == "dag.step_error":
+            self._step_finished(payload, failed=True)
+        elif event_type == "dag.error":
+            self.fail("native_stream_error")
+        elif event_type == "dag.complete":
+            if "aborted_at" in payload:
+                self.cancel("approval_rejected")
+            else:
+                self.complete()
+
+    @staticmethod
+    def _step(payload: dict[str, Any]) -> int:
+        return int(payload.get("step", 0))
+
+    def _workflow_id(self, payload: dict[str, Any]) -> str:
+        metadata = payload.get("workflow_ir")
+        if isinstance(metadata, dict) and metadata.get("workflow_hash"):
+            return str(metadata["workflow_hash"])
+        if self.mode != "stepwise":
+            return self.parent.workflow_id
+        cap_name = str(payload.get("cap") or "")
+        out_key = str(payload.get("out_key") or "")
+        if not cap_name or cap_name == "[parallel]" or not out_key:
+            return self.parent.workflow_id
+        from .dag_workflow_execution import prepare_stepwise_dag_action
+
+        prepared = prepare_stepwise_dag_action(
+            cap_name, out_key, include_workflow_ir=True,
+        )
+        return str((prepared.get("workflow_ir") or {}).get("workflow_hash")
+                   or self.parent.workflow_id)
+
+    def _step_started(self, payload: dict[str, Any]) -> None:
+        step = self._step(payload)
+        if step in self.children:
+            return
+        if "total" in payload:
+            self.total = max(0, int(payload["total"]))
+        cap_name = str(payload.get("cap") or "[unknown]")
+        child = Run(
+            id=str(uuid4()), kind="vera.dag.stream.step",
+            parent_run_id=self.parent.id, workflow_id=self._workflow_id(payload),
+            task_id=str(step), session_id=self.parent.session_id,
+            trace_id=self.parent.trace_id,
+        )
+        self.children[step] = child
+        event = child.transition(
+            RunStatus.RUNNING, event_type="run.started",
+            payload={"capability": cap_name, "step": step},
+            causation_id=self.parent.events[-1].id,
+        )
+        self._record(child, event)
+
+    def _approval_pending(self, payload: dict[str, Any]) -> None:
+        step = self._step(payload)
+        child = self.children.get(step)
+        if not child or child.status != RunStatus.RUNNING:
+            return
+        event = child.transition(
+            RunStatus.APPROVAL_PENDING, event_type="run.approval.pending",
+            payload={"capability": str(payload.get("cap") or "[unknown]"),
+                     "step": step},
+            causation_id=child.events[-1].id,
+        )
+        self._record(child, event)
+
+    def _resume_if_pending(self, child: Run, step: int) -> None:
+        if child.status != RunStatus.APPROVAL_PENDING:
+            return
+        event = child.transition(
+            RunStatus.RUNNING, event_type="run.approval.resumed",
+            payload={"step": step}, causation_id=child.events[-1].id,
+        )
+        self._record(child, event)
+
+    def _step_cancelled(self, payload: dict[str, Any], reason: str) -> None:
+        step = self._step(payload)
+        child = self.children.get(step)
+        if not child or child.status not in {
+                RunStatus.RUNNING, RunStatus.APPROVAL_PENDING}:
+            return
+        event = child.transition(
+            RunStatus.CANCELLED, event_type="run.cancelled",
+            payload={"step": step, "reason_code": reason},
+            causation_id=child.events[-1].id,
+        )
+        self._record(child, event)
+        self._progress(event.id)
+
+    def _step_finished(self, payload: dict[str, Any], *, failed: bool) -> None:
+        step = self._step(payload)
+        child = self.children.get(step)
+        if not child:
+            return
+        self._resume_if_pending(child, step)
+        if child.status != RunStatus.RUNNING:
+            return
+        cap_name = str(payload.get("cap") or "[parallel]")
+        if failed:
+            child.error = RunError(
+                code="dag_stream_step_error", message="native stream step failed",
+            )
+            status, kind = RunStatus.FAILED, "run.failed"
+        else:
+            status, kind = RunStatus.COMPLETED, "run.completed"
+        event = child.transition(
+            status, event_type=kind,
+            payload={"capability": cap_name, "step": step},
+            causation_id=child.events[-1].id,
+        )
+        self._record(child, event)
+        self._progress(event.id)
+
+    def _progress(self, causation_id: str) -> None:
+        self.finished += 1
+        progress = None
+        if self.total:
+            progress = min(1.0, self.finished / self.total)
+            self.parent.progress = progress
+        payload: dict[str, Any] = {"completed_steps": self.finished}
+        if self.total is not None:
+            payload["total_steps"] = self.total
+        if progress is not None:
+            payload["progress"] = progress
+        event = self.parent.record_event(
+            "run.progress", payload=payload, causation_id=causation_id,
+        )
+        self._record(self.parent, event)
+
+    def complete(self) -> None:
+        self._safe(self._terminate, RunStatus.COMPLETED, "run.completed", "")
+
+    def fail(self, reason_code: str = "native_stream_error") -> None:
+        self._safe(self._terminate, RunStatus.FAILED, "run.failed", reason_code)
+
+    def cancel(self, reason_code: str = "stream_cancelled") -> None:
+        self._safe(self._terminate, RunStatus.CANCELLED, "run.cancelled", reason_code)
+
+    def _terminate(self, status: RunStatus, event_type: str, reason_code: str) -> None:
+        self._start()
+        if self._terminal or self.parent.status != RunStatus.RUNNING:
+            return
+        child_status = (
+            RunStatus.FAILED if status == RunStatus.FAILED else RunStatus.CANCELLED
+        )
+        child_event_type = (
+            "run.failed" if child_status == RunStatus.FAILED else "run.cancelled"
+        )
+        if status != RunStatus.COMPLETED:
+            for step, child in self.children.items():
+                if child.status not in {
+                        RunStatus.RUNNING, RunStatus.APPROVAL_PENDING}:
+                    continue
+                if child_status == RunStatus.FAILED:
+                    self._resume_if_pending(child, step)
+                if child_status == RunStatus.FAILED:
+                    child.error = RunError(
+                        code=reason_code or "native_stream_error",
+                        message="native DAG stream failed",
+                    )
+                child_event = child.transition(
+                    child_status, event_type=child_event_type,
+                    payload={"step": step, "reason_code": reason_code},
+                    causation_id=child.events[-1].id,
+                )
+                self._record(child, child_event)
+        if status == RunStatus.FAILED:
+            self.parent.error = RunError(
+                code=reason_code or "native_stream_error",
+                message="native DAG stream failed",
+            )
+        if status == RunStatus.COMPLETED:
+            self.parent.progress = 1.0
+        payload: dict[str, Any] = {"completed_steps": self.finished}
+        if reason_code:
+            payload["reason_code"] = reason_code
+        if status == RunStatus.COMPLETED:
+            payload["progress"] = 1.0
+        event = self.parent.transition(
+            status, event_type=event_type, payload=payload,
+            causation_id=self.parent.events[-1].id,
+        )
+        self._record(self.parent, event)
+        self._terminal = True

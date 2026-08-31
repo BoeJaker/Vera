@@ -10158,7 +10158,9 @@ async def dag_plan_stream_endpoint(request: Request):
     include_workflow_ir = bool(body.get("include_workflow_ir", False))
 
     async def _gen():
+        import asyncio as _asyncio
         import time as _time
+        import uuid as _uuid
         _t0_stream = _time.monotonic()
         # Counters / accumulators for the recorded activity entry
         plan_dag_arr  = []
@@ -10167,12 +10169,31 @@ async def dag_plan_stream_endpoint(request: Request):
         steps_emitted  = 0
         last_state_keys: list = []
 
+        # The projection is deliberately private to the server: it records
+        # durable lifecycle metadata without adding bytes to the native SSE
+        # contract or becoming an execution authority.
+        _run_projection = None
+        if mode == "stepwise" or do_execute:
+            try:
+                from Vera.vera.execution.run_projection import StreamDagRunProjection
+                _run_projection = StreamDagRunProjection(
+                    mode=mode, trace_id=str(_uuid.uuid4()),
+                    session_id=session_id,
+                )
+            except Exception:
+                _run_projection = None
+
+        def _observe(t, d):
+            if _run_projection is not None:
+                _run_projection.observe(t, d)
+
         def _sse(t, d):
             return f"data: {_json.dumps({'type':t,**d})}\n\n".encode()
 
         try:
             if not goal:
                 plan_error = "No goal provided"
+                _observe("dag.error", {"error": plan_error})
                 yield _sse("dag.error", {"error": plan_error}); return
 
             # ── STEPWISE MODE ─────────────────────────────────────────────────
@@ -10186,6 +10207,7 @@ async def dag_plan_stream_endpoint(request: Request):
                         steps_emitted += 1
                     elif ev_type == "dag.error":
                         plan_error = (ev_data or {}).get("error", "")
+                    _observe(ev_type, ev_data)
                     yield _sse(ev_type, ev_data)
                 yield b"data: [DONE]\n\n"
                 return
@@ -10196,10 +10218,12 @@ async def dag_plan_stream_endpoint(request: Request):
                 plan = await plan_dag(goal)
             except Exception as e:
                 plan_error = str(e)
+                _observe("dag.error", {"error": plan_error})
                 yield _sse("dag.error", {"error": plan_error}); return
 
             if plan.get("error") and not plan.get("dag"):
                 plan_error = plan["error"]
+                _observe("dag.error", {"error": plan_error})
                 yield _sse("dag.error", {"error": plan_error}); return
 
             dag_arr      = plan.get("dag", [])
@@ -10216,8 +10240,11 @@ async def dag_plan_stream_endpoint(request: Request):
                     )
                 except (TypeError, ValueError) as e:
                     plan_error = f"Invalid DAG definition: {e}"
+                    _observe("dag.error", {"error": plan_error})
                     yield _sse("dag.error", {"error": plan_error})
                     return
+            if _run_projection is not None:
+                _run_projection.bind_graph(dag_arr)
             # CRITICAL: merge the plan's initial_state with any seed state from caller
             plan_state   = dict(plan.get("initial_state") or {})
             plan_state.update(seed_state)          # caller seed takes precedence
@@ -10245,11 +10272,20 @@ async def dag_plan_stream_endpoint(request: Request):
                     workflow_prepared=workflow_prepared):
                 if ev_type == "step.complete":
                     steps_emitted += 1
+                _observe(ev_type, ev_data)
                 yield _sse(ev_type, ev_data)
                 if isinstance(ev_data, dict) and "state" in ev_data:
                     last_state_keys = list((ev_data.get("state") or {}).keys())[:20]
 
             yield b"data: [DONE]\n\n"
+        except (_asyncio.CancelledError, GeneratorExit):
+            if _run_projection is not None:
+                _run_projection.cancel("stream_cancelled")
+            raise
+        except BaseException:
+            if _run_projection is not None:
+                _run_projection.fail("stream_generator_error")
+            raise
         finally:
             elapsed_ms = round((_time.monotonic() - _t0_stream) * 1000)
             try:
