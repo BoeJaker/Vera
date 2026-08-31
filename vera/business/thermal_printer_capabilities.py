@@ -82,7 +82,7 @@ _FONT_BOLD = [
 
 try:
     from Vera.vera.capability_orchestration import (
-        capability, emit_event, now_iso, register_ui, enum_schema,
+        capability, emit_event, now_iso, register_ui, enum_schema, schedule, CAPABILITY_REGISTRY,
     )
     from Vera.vera.fabric.data_fabric import _sqlite_conn
     _CAP_AVAILABLE = True
@@ -871,6 +871,185 @@ if _CAP_AVAILABLE:
         return {"ok": True, **res}
 
     # ── Element registration ─────────────────────────────────────────────────
+
+    # ── Live feeds -> printer (schedule / dreams / news) + daily auto-print ────
+
+    async def _invoke(cap_name, **kw):
+        """Call another Vera capability in-process; returns its dict or {}."""
+        try:
+            c = CAPABILITY_REGISTRY.get(cap_name)
+            fn = (c.get("raw") or c.get("func")) if c else None
+            if not fn:
+                return {}
+            r = await fn(**kw)
+            return r if isinstance(r, dict) else {}
+        except Exception as e:
+            log.debug("print _invoke %s: %s", cap_name, e)
+            return {}
+
+    def _fmt_schedule(brief):
+        today = (brief or {}).get("today") or []
+        lines = [(brief or {}).get("today_human") or "Today", ""]
+        if not today:
+            lines.append("(nothing scheduled)")
+        for e in today:
+            loc = ("   @ " + str(e["location"])) if e.get("location") else ""
+            if e.get("all_day"):
+                lines.append("- all day   " + str(e.get("title", "")) + loc)
+            else:
+                s = str(e.get("start", "")); en = str(e.get("end", ""))
+                hm = s[11:16] if len(s) >= 16 else s
+                hm2 = ("-" + en[11:16]) if len(en) >= 16 else ""
+                lines.append("- " + hm + hm2 + "  " + str(e.get("title", "")) + loc)
+        return chr(10).join(lines)
+
+    def _fmt_dreams(journal):
+        ent = (journal or {}).get("entries") or []
+        lines = ["Dream digest", ""]
+        for e in ent[-6:]:
+            ts = str(e.get("ts", "")); when = ts[:16].replace("T", " ")
+            lines.append("* " + str(e.get("title") or e.get("kind") or "entry")
+                         + (("  (" + when + ")") if when else ""))
+            if e.get("text"):
+                lines.append(str(e["text"])[:400])
+            lines.append("")
+        return chr(10).join(lines)
+
+    def _fetch_news(n=8):
+        import urllib.request as _u
+        try:
+            req = _u.Request("https://hn.algolia.com/api/v1/search?tags=front_page",
+                             headers={"User-Agent": "Vera-printer"})
+            data = json.loads(_u.urlopen(req, timeout=12).read().decode("utf-8", "replace"))
+            lines = ["News - HN front page", ""]
+            for h in (data.get("hits") or [])[:n]:
+                t = str(h.get("title") or "").strip()
+                if t:
+                    lines.append("* " + t)
+            return chr(10).join(lines) if len(lines) > 2 else ""
+        except Exception:
+            return ""
+
+    async def _print_feed(text, printer_id, preview, stage):
+        if not text:
+            return {"error": "nothing to print"}
+        if preview:
+            return {"ok": True, "text": text, "preview": True}
+        printer = await _run(_db_get_printer, printer_id or "default")
+        try:
+            data = await _run(lambda: build_nice_text(text.split(chr(10)), _width_for(printer, 0),
+                                                      26, align="left", cut=True))
+        except Exception:
+            data = build_text(text, align="left", cut=True)
+        res = await _route(printer, data)
+        await emit_event({"type": "print.job", "stage": stage,
+                          "message": f"{stage} via {res.get('transport')}"})
+        return {"ok": True, "text": text, **res}
+
+    @capability("print.schedule", http_method="POST", http_path="/print/schedule",
+                http_tags=["print"],
+                description="Print (or preview) today's calendar schedule. Input: printer_id, "
+                            "preview (bool -- return text without printing). Output: {ok, text, ...}.")
+    async def cap_print_schedule(printer_id: str = "", preview: bool = False, trace_id=None):
+        await _ensure_schema()
+        return await _print_feed(_fmt_schedule(await _invoke("cal.assistant.briefing")),
+                                 printer_id, preview, "schedule")
+
+    @capability("print.dream_digest", http_method="POST", http_path="/print/dream_digest",
+                http_tags=["print"],
+                description="Print (or preview) a digest of recent dream journal entries. "
+                            "Input: printer_id, preview (bool). Output: {ok, text, ...}.")
+    async def cap_print_dream_digest(printer_id: str = "", preview: bool = False, trace_id=None):
+        await _ensure_schema()
+        return await _print_feed(_fmt_dreams(await _invoke("dream.director.journal")),
+                                 printer_id, preview, "dream_digest")
+
+    @capability("print.news", http_method="POST", http_path="/print/news",
+                http_tags=["print"],
+                description="Print (or preview) current news headlines (HN front page). "
+                            "Input: printer_id, preview (bool), count (int=8). Output: {ok, text, ...}.")
+    async def cap_print_news(printer_id: str = "", preview: bool = False, count: int = 8, trace_id=None):
+        await _ensure_schema()
+        text = await _run(_fetch_news, max(1, min(20, int(count or 8))))
+        return await _print_feed(text or "", printer_id, preview, "news")
+
+    def _daily_cfg_get():
+        try:
+            conn = _sqlite_conn()
+            try:
+                conn.execute("CREATE TABLE IF NOT EXISTS print_kv (k TEXT PRIMARY KEY, v TEXT)")
+                r = conn.execute("SELECT v FROM print_kv WHERE k='daily'").fetchone()
+                conn.commit()
+                return json.loads(dict(r)["v"]) if r else {}
+            finally:
+                conn.close()
+        except Exception:
+            return {}
+
+    def _daily_cfg_set(patch):
+        cur = _daily_cfg_get(); cur.update(patch or {})
+        try:
+            conn = _sqlite_conn()
+            try:
+                conn.execute("CREATE TABLE IF NOT EXISTS print_kv (k TEXT PRIMARY KEY, v TEXT)")
+                conn.execute("INSERT OR REPLACE INTO print_kv (k,v) VALUES ('daily',?)",
+                             (json.dumps(cur),))
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception:
+            pass
+        return cur
+
+    @capability("print.config.get", http_method="GET", http_path="/print/config",
+                http_tags=["print"], memory="off", silent=True,
+                description="Get daily auto-print settings {enabled, hour, minute, items, printer_id}.")
+    async def cap_print_config_get(trace_id=None):
+        return {"config": await _run(_daily_cfg_get)}
+
+    @capability("print.config.set", http_method="POST", http_path="/print/config/set",
+                http_tags=["print"],
+                description="Set daily auto-print. Input: enabled (bool), hour (0-23), minute (0-59), "
+                            "items (csv of schedule,dreams,news), printer_id. When enabled, Vera prints "
+                            "those feeds once at the chosen time each day.")
+    async def cap_print_config_set(enabled: bool = None, hour: int = None, minute: int = None,
+                                   items: str = None, printer_id: str = None, trace_id=None):
+        patch = {}
+        if enabled is not None: patch["enabled"] = bool(enabled)
+        if hour is not None: patch["hour"] = max(0, min(23, int(hour)))
+        if minute is not None: patch["minute"] = max(0, min(59, int(minute)))
+        if items is not None: patch["items"] = [x.strip() for x in str(items).split(",") if x.strip()]
+        if printer_id is not None: patch["printer_id"] = printer_id
+        return {"ok": True, "config": await _run(_daily_cfg_set, patch)}
+
+    _daily_state = {"last_day": None}
+
+    async def _daily_print_tick():
+        try:
+            cfg = await _run(_daily_cfg_get)
+            if not cfg.get("enabled"):
+                return
+            import datetime as _dt
+            now = _dt.datetime.now()
+            if now.hour != int(cfg.get("hour", 7)) or now.minute < int(cfg.get("minute", 0)):
+                return
+            day = now.strftime("%Y-%m-%d")
+            if _daily_state.get("last_day") == day:
+                return
+            _daily_state["last_day"] = day
+            pid = cfg.get("printer_id") or ""
+            for it in (cfg.get("items") or ["schedule"]):
+                if it == "schedule": await cap_print_schedule(printer_id=pid)
+                elif it == "dreams": await cap_print_dream_digest(printer_id=pid)
+                elif it == "news": await cap_print_news(printer_id=pid)
+            log.info("daily auto-print: printed %s", cfg.get("items"))
+        except Exception as e:
+            log.debug("daily print tick: %s", e)
+
+    try:
+        schedule(_daily_print_tick, 60, name="daily_print", skip_in_sandbox=True, singleton=True)
+    except Exception as _e:                        # pragma: no cover
+        log.debug("daily print scheduler not registered: %s", _e)
 
     @capability(
         "print.notify", http_method="POST", http_path="/print/notify",
