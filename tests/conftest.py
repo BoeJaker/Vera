@@ -13,6 +13,8 @@ known set of modules, so the tier is defined in one place.
 import pytest
 
 _CRITICAL_MODULES = {
+    "test_sandbox_file_target",  # the operator can be pointed at a file it just wrote (2026-08-31)
+    "test_operator_progress",  # a run that changes nothing must stop; a long run must not (2026-08-31)
     "test_output_budget",  # a stated length must bound the generation (2026-08-31)
     "test_edit_anchor_hint",  # a rejected edit must leave the model something to correct (2026-08-31)
     "test_scheduler_leadership",  # sweeps that mutate shared state run in ONE instance (2026-08-31)

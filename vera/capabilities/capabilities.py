@@ -1853,6 +1853,11 @@ async def llm_generate(
     caller:        str   = "",       # true caller label for logging (e.g. "dream_research")
     output_format: str   = "",       # shared output-format profile (vera.output_formats)
     job_type:      str   = "",       # cluster routing hint (embedding|chat|dream|code|...)
+    think=None,                      # None = model default; False disables a
+                                     # reasoning model's <think> pass (ollama's
+                                     # API switch). ollama_generate already
+                                     # defaults it False for json_mode; this
+                                     # exposes it to callers that are not.
     profile:       str   = "",       # routing profile (e.g. "loop") — with role, picks model+sampling
     role:          str   = "",       # routing role within the profile (e.g. "coder", "writer")
     files=None,                      # path | 'path:start-end' | list — read + prepended as context
@@ -1994,6 +1999,7 @@ async def llm_generate(
         caller_override=_caller_info,
         job_type=job_type or None,
         profile=profile or None, role=role or None,
+        think=think,
         options=_gen_opts, meta_out=_meta,
     )
     chosen = pick_instance(prefer_gpu=prefer_gpu, instance_id=instance_id or None,

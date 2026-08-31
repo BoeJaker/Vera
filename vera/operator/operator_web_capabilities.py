@@ -47,6 +47,30 @@ from Vera.vera.operator.docs import directives as _directives
 
 log = logging.getLogger("vera.operator")
 
+
+from . import operator_progress as _progress          # noqa: E402
+from . import sandbox_file_target as _sfile           # noqa: E402
+
+
+def _orch_base_url() -> str:
+    """This orchestrator's own base URL, for building sandbox preview links.
+
+    Same derivation the loop already uses for _v5_sandbox_preview_url, kept
+    here so the operator can resolve a path without importing the loop.
+    """
+    scheme = "http"
+    port = os.environ.get("VERA_ORCH_PORT", "").strip()
+    try:
+        _cfg = getattr(_orch, "cfg", None)
+        if _cfg is not None:
+            if getattr(_cfg, "TLS_ENABLED", False):
+                scheme = "https"
+            if not port:
+                port = str(getattr(_cfg, "ORCHESTRATOR_PORT", "") or "")
+    except Exception:
+        pass
+    return f"{scheme}://localhost:{port or '8999'}"
+
 _HERE = Path(__file__).resolve().parent
 _PANEL_PATH = _HERE / "operator_studio_panel.html"
 
@@ -681,9 +705,25 @@ async def cap_run(goal: str = "", url: str = "", kind: str = "", base_url: str =
                   dry_run: Optional[bool] = None, allow_destructive: Optional[bool] = None,
                   keep_open: bool = False, branch: str = "", panel_id: str = "",
                   id: str = "", record_gif: bool = False, gif_duration_ms: int = 900,
+                  path: str = "", sandbox_session: str = "",
+                  progress_tolerance: int = 0, think: Optional[bool] = None,
                   trace_id=None) -> Dict[str, Any]:
     if not (goal or "").strip():
         return {"error": "goal required"}
+    # Point the operator at a FILE a step just wrote. A path is something the
+    # caller already knows; a URL is something it has to be told and reproduce.
+    # Census run 18: two runs spent 21 minutes clicking Vera's own dashboard
+    # hunting for a timer that lived in timer.html, because no URL was passed.
+    _target_note = ""
+    if path and not url:
+        _sbx = str(sandbox_session or session_id or "").strip()
+        _res = _sfile.resolve(url, path, base_url=_orch_base_url(), session_id=_sbx)
+        if _res.get("url"):
+            url = _res["url"]
+            _target_note = _res.get("note") or ""
+            log.info("operator.run target from path: %s", _target_note)
+        elif _res.get("note"):
+            log.warning("operator.run: %s", _res["note"])
     if not _be.playwright_available():
         return {"error": _be.INSTALL_HINT}
     own = False
@@ -728,6 +768,9 @@ async def cap_run(goal: str = "", url: str = "", kind: str = "", base_url: str =
         goal, s, call_cap=_call, policy=policy, provider=provider, model=model,
         max_steps=int(max_steps), canvas=resolved.get("canvas", False),
         shots_dir=shots, on_step=_on_step,
+        progress_tolerance=(int(progress_tolerance) if progress_tolerance
+                            else _progress.DEFAULT_TOLERANCE),
+        think=think,
         should_cancel=lambda: _op_is_cancelled(run_id))
     # Assemble the per-step screenshots into a GIF of the whole run (the frames
     # already exist — this is nearly free).
