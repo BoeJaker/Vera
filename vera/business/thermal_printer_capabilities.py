@@ -1053,7 +1053,8 @@ if _CAP_AVAILABLE:
 
     # ── Notification subscriptions: control what auto-prints ──────────────────
     _SUBS_DEFAULT = {"master": True, "sources": {"system": True, "dreams": False,
-                                                 "narrator": False, "chat": False}}
+                                                 "narrator": False, "chat": False,
+                                                 "markets": False}}
 
     def _subs_get():
         try:
@@ -1111,11 +1112,12 @@ if _CAP_AVAILABLE:
                             "master on/off), system / dreams / narrator / chat (bool, per-source). "
                             "Output: {ok, subs}.")
     async def cap_print_subs_set(master: bool = None, system: bool = None, dreams: bool = None,
-                                 narrator: bool = None, chat: bool = None, trace_id=None):
+                                 narrator: bool = None, chat: bool = None, markets: bool = None,
+                                 trace_id=None):
         patch = {}
         if master is not None: patch["master"] = bool(master)
         src = {}
-        for k, v in (("system", system), ("dreams", dreams), ("narrator", narrator), ("chat", chat)):
+        for k, v in (("system", system), ("dreams", dreams), ("narrator", narrator), ("chat", chat), ("markets", markets)):
             if v is not None: src[k] = bool(v)
         if src: patch["sources"] = src
         return {"ok": True, "subs": await _run(_subs_set, patch)}
@@ -1133,7 +1135,15 @@ if _CAP_AVAILABLE:
         await _ensure_schema()
         if not force and not await _run(_subs_allows, source):
             return {"ok": True, "printed": False, "skipped": True, "source": source}
-        r = await cap_print_notify(title=(title or source.title()), body=body, level=level,
+        _SRC_LABEL = {"system": "SYSTEM ALERT", "dreams": "DREAM DIRECTOR",
+                      "narrator": "NARRATOR", "chat": "CHAT", "markets": "MARKET ALERT"}
+        label = _SRC_LABEL.get(source, (source or "note").upper())
+        sub = (title or "").strip()
+        parts = ["=" * 28]
+        if sub and sub.lower() != label.lower():
+            parts.append(sub)
+        parts += ["", (body or "")]
+        r = await cap_print_notify(title=label, body=chr(10).join(parts), level=level,
                                    printer_id=printer_id, force=True)
         return {"ok": True, "printed": bool(r.get("routed") or r.get("escpos_b64")),
                 "source": source, **r}

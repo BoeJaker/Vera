@@ -2365,6 +2365,16 @@ if _CAP_AVAILABLE and HAS_NUMPY:
                           "price": price, "pnl_pct": pnl,
                           "mode": extra.get("mode"), "account": extra.get("account"),
                           "message": msg})
+        try:
+            _co = sys.modules.get("Vera.vera.capability_orchestration")
+            _reg = getattr(_co, "CAPABILITY_REGISTRY", None) if _co else None
+            _pp = _reg.get("print.push") if _reg else None
+            _fn = (_pp.get("raw") or _pp.get("func")) if _pp else None
+            if _fn:
+                asyncio.create_task(_fn(source="markets", title="Market alert",
+                                        body=msg, level="info"))
+        except Exception:
+            pass
         if "telegram" in (channels or []):
             tg = sys.modules.get("telegram_capabilities")
             if tg and hasattr(tg, "tg_notify"):

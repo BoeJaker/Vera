@@ -189,6 +189,7 @@ Sun: 15</textarea>
           <div class="chk"><input type="checkbox" id="n_dreams" onchange="saveSubs()"><label style="margin:0">Dream director</label></div>
           <div class="chk"><input type="checkbox" id="n_narrator" onchange="saveSubs()"><label style="margin:0">Narrator</label></div>
           <div class="chk"><input type="checkbox" id="n_chat" onchange="saveSubs()"><label style="margin:0">Chat replies</label></div>
+          <div class="chk"><input type="checkbox" id="n_markets" onchange="saveSubs()"><label style="margin:0">Market alerts</label></div>
         </div>
         <div class="mini" style="margin-top:6px">Master off silences all printer notifications. Any source can also be printed on demand by selecting its text and using the floating Print button.</div>
         <div class="mini" id="n_st" style="margin-top:4px"></div>
@@ -396,8 +397,9 @@ async function loadSubs(){const r=await j('/print/subs');const s=(r&&r.subs)||{}
   if($('n_dreams'))$('n_dreams').checked=!!src.dreams;
   if($('n_narrator'))$('n_narrator').checked=!!src.narrator;
   if($('n_chat'))$('n_chat').checked=!!src.chat;
+  if($('n_markets'))$('n_markets').checked=!!src.markets;
 }
-async function saveSubs(){const r=await post('/print/subs/set',{master:$('n_master').checked,system:$('n_system').checked,dreams:$('n_dreams').checked,narrator:$('n_narrator').checked,chat:$('n_chat').checked});
+async function saveSubs(){const r=await post('/print/subs/set',{master:$('n_master').checked,system:$('n_system').checked,dreams:$('n_dreams').checked,narrator:$('n_narrator').checked,chat:$('n_chat').checked,markets:$('n_markets').checked});
   if($('n_st')){$('n_st').textContent=(r&&r.ok)?'saved':'save failed';setTimeout(()=>{if($('n_st'))$('n_st').textContent='';},1200);}
 }
 // ---- print routing + helpers ----
