@@ -10329,6 +10329,13 @@ async def _trigger_due(trig: Dict[str, Any], idle_min: float) -> bool:
     return True
 
 
+def _record_dream_workflow_trigger(event: Dict[str, Any]) -> Dict[str, Any]:
+    from Vera.vera.execution.workflow_trigger_receipts import (
+        default_workflow_trigger_receipt_ledger,
+    )
+    return default_workflow_trigger_receipt_ledger().record(event)
+
+
 async def _emit_dream_workflow_trigger(trig: Dict[str, Any]) -> None:
     """Best-effort portable evidence; the Dream scheduler keeps authority."""
     try:
@@ -10339,9 +10346,23 @@ async def _emit_dream_workflow_trigger(trig: Dict[str, Any]) -> None:
         event = dream_schedule_workflow_trigger(
             trig, observed_at=now_iso(), previous_run=previous_run,
         )
+    except Exception as exc:
+        log.debug("dream workflow trigger build: %s", exc)
+        return
+    receipt = None
+    try:
+        receipt = _record_dream_workflow_trigger(event)
+    except Exception as exc:
+        log.debug("dream workflow trigger receipt: %s", exc)
+    try:
         await emit_event(event)
     except Exception as exc:
         log.debug("dream workflow trigger projection: %s", exc)
+    if receipt:
+        try:
+            await emit_event(receipt)
+        except Exception as exc:
+            log.debug("dream workflow trigger receipt event: %s", exc)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

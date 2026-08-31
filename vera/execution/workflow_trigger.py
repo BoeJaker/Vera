@@ -84,6 +84,10 @@ def build_workflow_trigger(
         "source_revision": source_revision,
         "occurrence_key": occurrence_key,
         "target_ref": target_ref,
+        "schedule_kind": schedule_kind,
+        "timezone": timezone_name,
+        "scheduled_for": scheduled_for,
+        "native_owner": native_owner,
     }
     trigger_id = _hash(identity)
     envelope = {
@@ -188,6 +192,9 @@ def validate_workflow_trigger(value: Mapping[str, Any]) -> dict[str, Any]:
         "source_kind": source["kind"], "source_id": source["id"],
         "source_revision": source["revision"],
         "occurrence_key": occurrence["key"], "target_ref": target["ref"],
+        "schedule_kind": schedule["kind"], "timezone": schedule["timezone"],
+        "scheduled_for": schedule["scheduled_for"],
+        "native_owner": authority["scheduler"],
     }
     expected = _hash(identity)
     if value.get("trigger_id") != expected or value.get("idempotency_key") != expected:

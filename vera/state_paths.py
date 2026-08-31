@@ -57,6 +57,15 @@ def state_root() -> Path:
     raw = os.getenv("VERA_STATE_DIR", "").strip()
     root = Path(raw).expanduser() if raw else _DEFAULT_STATE_ROOT
     root = root.resolve()
+    try:
+        root.relative_to(_REPO_ROOT)
+    except ValueError:
+        pass
+    else:
+        raise ValueError(
+            "refusing to use an in-repository VERA_STATE_DIR: "
+            f"{root} (repo root {_REPO_ROOT})"
+        )
     root.mkdir(parents=True, exist_ok=True)
     return root
 
