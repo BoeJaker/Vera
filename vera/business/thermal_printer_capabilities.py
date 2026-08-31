@@ -34,12 +34,51 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import glob
+import io
 import json
 import logging
+import os
+import time
 from pathlib import Path as _Path
 from typing import Dict, List, Optional
 
 log = logging.getLogger("vera.print")
+
+# Cheap USB thermal printers overrun on a single large bulk write (dmesg
+# "nonzero write bulk status received: -108" -> the device USB-resets); every
+# server transport paces the bytes in _CHUNK-sized slices with a short gap.
+_CHUNK = int(os.environ.get("VERA_PRINTER_CHUNK", "512"))
+_PACE = float(os.environ.get("VERA_PRINTER_PACE", "0.012"))
+
+# Pure, app-free transport helpers (unit-tested in tests/test_print_transport_core.py).
+from Vera.vera.business.print_transport_core import (
+    is_raw_lp as _is_raw_lp,
+    find_server_device as _find_server_device,
+    paced_chunks as _paced_chunks_raw,
+)
+
+
+def _paced_chunks(data: bytes):
+    return _paced_chunks_raw(data, _CHUNK)
+
+
+# Raw ESC/POS raster framing lives in the shared, pure, unit-tested escpos_core;
+# this module renders images/fonts to 1-bpp rows (Pillow) and hands them there.
+try:
+    from Vera.vera.printer.escpos_core import raster_job as _raster_job
+except Exception:                                   # pragma: no cover
+    _raster_job = None
+
+_FONT_CANDIDATES = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+]
+_FONT_BOLD = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+]
 
 try:
     from Vera.vera.capability_orchestration import (
@@ -52,7 +91,7 @@ except ImportError as e:                       # pragma: no cover
     _CAP_AVAILABLE = False
 
 
-TRANSPORTS = ["server_serial", "webserial", "mesh"]
+TRANSPORTS = ["server_serial", "server_usb", "webserial", "mesh"]
 _SCHEMA_READY = False
 
 
@@ -269,6 +308,97 @@ def build_item_label(spec: dict) -> bytes:
 # Printer registry (sqlite)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _pil():
+    from PIL import Image, ImageDraw, ImageFont  # noqa: F401
+    return Image, ImageDraw, ImageFont
+
+
+def _font(size, bold=False):
+    _, _, ImageFont = _pil()
+    for p in (_FONT_BOLD if bold else []) + _FONT_CANDIDATES:
+        if os.path.exists(p):
+            return ImageFont.truetype(p, max(6, int(size)))
+    return ImageFont.load_default()
+
+
+def _image_to_rows(img, width):
+    """PIL image -> (w, h, [row_bytes]) 1-bpp, MSB-first, 1=black (Floyd-Steinberg)."""
+    if img.mode != "L":
+        img = img.convert("L")
+    if img.width != width:
+        h = max(1, int(img.height * width / img.width))
+        img = img.resize((width, h))
+    img = img.convert("1")
+    w, h = img.size
+    bpr = (w + 7) // 8
+    px = img.load()
+    rows = []
+    for y in range(h):
+        row = bytearray(bpr)
+        for x in range(w):
+            if px[x, y] == 0:
+                row[x >> 3] |= (0x80 >> (x & 7))
+        rows.append(bytes(row))
+    return w, h, rows
+
+
+def _render_text_image(lines, width, font_size, align="left", title=None):
+    """Render an optional bold title + body lines to a 1-bpp bitmap for raster."""
+    Image, ImageDraw, _ = _pil()
+    body_font = _font(font_size)
+    title_font = _font(int(font_size * 1.6), bold=True) if title else None
+    pad = 6
+
+    def _wh(draw, text, font):
+        try:
+            b = draw.textbbox((0, 0), text, font=font); return b[2] - b[0], b[3] - b[1]
+        except Exception:
+            return draw.textsize(text, font=font)
+
+    tmp = ImageDraw.Draw(Image.new("L", (width, 10), 255))
+    total_h, heights = pad, []
+    if title:
+        _, th = _wh(tmp, title, title_font); heights.append(("t", title, th)); total_h += th + 4
+    for ln in lines:
+        _, lh = _wh(tmp, ln or " ", body_font); heights.append(("b", ln, lh)); total_h += lh + 2
+    total_h += pad
+    img = Image.new("L", (width, total_h), 255)
+    d = ImageDraw.Draw(img)
+    y = pad
+    for kind, text, h in heights:
+        font = title_font if kind == "t" else body_font
+        tw, _ = _wh(d, text or " ", font)
+        x = 0 if align == "left" else (width - tw) // 2 if align == "center" else width - tw
+        d.text((max(0, x), y), text or "", fill=0, font=font)
+        y += h + (4 if kind == "t" else 2)
+    return _image_to_rows(img, width)
+
+
+def _width_for(printer, width_px=0):
+    if width_px:
+        return int(width_px)
+    mm = int((printer or {}).get("width_mm", 58) or 58)
+    return 576 if mm >= 80 else 384
+
+
+def build_image_raster(image_bytes, width_px, cut=True, align="center"):
+    """Decode any image -> 1-bpp rows scaled to head width -> GS v 0 raster."""
+    if _raster_job is None:
+        raise RuntimeError("escpos_core.raster_job unavailable")
+    Image, _, _ = _pil()
+    img = Image.open(io.BytesIO(image_bytes))
+    w, h, rows = _image_to_rows(img, int(width_px))
+    return _raster_job(w, h, rows, align=align, cut=cut)
+
+
+def build_nice_text(lines, width_px, font_size=28, align="left", title="", cut=True):
+    if _raster_job is None:
+        raise RuntimeError("escpos_core.raster_job unavailable")
+    w, h, rows = _render_text_image(lines, int(width_px), int(font_size),
+                                    align=align, title=(title or None))
+    return _raster_job(w, h, rows, align="left", cut=cut)
+
+
 def _ensure_schema_sync():
     global _SCHEMA_READY
     conn = _sqlite_conn()
@@ -289,6 +419,22 @@ def _ensure_schema_sync():
             );
         """)
         conn.commit()
+        try:
+            empty = conn.execute("SELECT COUNT(*) FROM print_printers").fetchone()[0] == 0
+        except Exception:
+            empty = False
+        if empty:
+            dev = _find_server_device()
+            if dev:
+                import uuid as _uuid
+                _now = now_iso()
+                conn.execute(
+                    "INSERT INTO print_printers (id,name,transport,port,baud,node_id,"
+                    "width_mm,is_default,config,created_at,updated_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (f"prn_{_uuid.uuid4().hex[:10]}", f"Server USB ({dev})",
+                     "server_usb", dev, 9600, "", 58, 1, "{}", _now, _now))
+                conn.commit()
     finally:
         conn.close()
     _SCHEMA_READY = True
@@ -380,7 +526,38 @@ def _list_serial_ports() -> List[dict]:
                     "hwid": getattr(p, "hwid", "")})
     return out
 
+def _raw_write(port: str, data: bytes) -> dict:
+    """Chunked, reconnect-safe write to a raw usblp char device (/dev/vera-printer,
+    /dev/usb/lp*). Re-resolves the device and retries once if it reset mid-write."""
+    err = "no server thermal printer found"
+    for attempt in (1, 2):
+        dev = port if (port and os.path.exists(port)) else _find_server_device()
+        if not dev:
+            if attempt == 1:
+                time.sleep(1.5); continue
+            break
+        try:
+            with open(dev, "wb", buffering=0) as f:
+                for chunk, more in _paced_chunks(data):
+                    f.write(chunk); f.flush()
+                    if _PACE and more:
+                        time.sleep(_PACE)
+            return {"ok": True, "wrote": len(data), "device": dev}
+        except PermissionError:
+            return {"ok": False, "error": f"permission denied on {dev} "
+                    "(udev: GROUP=plugdev, MODE=0660)"}
+        except OSError as e:
+            err = f"raw write {dev} failed: {e}"
+            if attempt == 1:
+                time.sleep(1.5); continue
+            break
+    return {"ok": False, "error": err}
+
+
 def _serial_write(port: str, baud: int, data: bytes) -> dict:
+    # A usblp char device configured as a "serial" printer uses the raw path.
+    if _is_raw_lp(port):
+        return _raw_write(port, data)
     serial = _pyserial()
     if not serial:
         return {"ok": False, "error": "pyserial not installed on server (pip install pyserial)"}
@@ -388,8 +565,10 @@ def _serial_write(port: str, baud: int, data: bytes) -> dict:
         return {"ok": False, "error": "no serial port configured"}
     try:
         with serial.Serial(port, int(baud or 9600), timeout=2) as ser:
-            ser.write(data)
-            ser.flush()
+            for chunk, more in _paced_chunks(data):
+                ser.write(chunk); ser.flush()
+                if _PACE and more:
+                    time.sleep(_PACE)
         return {"ok": True, "wrote": len(data)}
     except Exception as e:
         return {"ok": False, "error": f"serial write failed: {e}"}
@@ -406,7 +585,10 @@ async def _route(printer: Optional[dict], data: bytes) -> dict:
         return result
     result["transport"] = printer.get("transport")
     tr = printer.get("transport")
-    if tr == "server_serial":
+    if tr == "server_usb":
+        w = await _run(_raw_write, printer.get("port", ""), data)
+        result["routed"] = bool(w.get("ok")); result.update(w)
+    elif tr == "server_serial":
         w = await _run(_serial_write, printer.get("port", ""),
                        printer.get("baud", 9600), data)
         result["routed"] = bool(w.get("ok")); result.update(w)
@@ -446,8 +628,15 @@ if _CAP_AVAILABLE:
         serial_ok = _pyserial() is not None
         ports = await _run(_list_serial_ports) if serial_ok else []
         printers = await _run(_db_list_printers)
+        server_device = await _run(_find_server_device)
+        try:
+            import PIL
+            pil_ok, pil_ver = True, getattr(PIL, "__version__", "")
+        except Exception:
+            pil_ok, pil_ver = False, ""
         return {"pyserial": serial_ok, "ports": ports, "printers": printers,
-                "transports": TRANSPORTS}
+                "transports": TRANSPORTS, "server_device": server_device or None,
+                "pil": pil_ok, "pil_version": pil_ver}
 
     @capability(
         "print.printers", http_method="GET", http_path="/print/printers",
@@ -609,6 +798,76 @@ if _CAP_AVAILABLE:
             return {"error": f"bad base64: {e}"}
         printer = await _run(_db_get_printer, printer_id or "default")
         res = await _route(printer, data)
+        return {"ok": True, **res}
+
+    @capability(
+        "print.image", http_method="POST", http_path="/print/image",
+        http_tags=["print"],
+        schema=enum_schema(align=["left", "center", "right"]),
+        description="Print an IMAGE (chart, photo, logo, a WYSIWYG-composed canvas) on a "
+                    "thermal printer -- dithered to 1-bpp and scaled to the head width, then "
+                    "routed via the printer's transport (server/webserial/mesh). Provide ONE "
+                    "of: image_b64 (base64 PNG/JPG), path (server file), url (http). "
+                    "printer_id (omit for default), width_px (omit to derive from width_mm: "
+                    "384 for 58mm, 576 for 80mm), align, cut (bool=true). "
+                    "Output: {ok, escpos_b64, bytes, transport, routed}.")
+    async def cap_print_image(
+        image_b64: str = "", path: str = "", url: str = "", printer_id: str = "",
+        width_px: int = 0, align: str = "center", cut: bool = True, trace_id=None):
+        await _ensure_schema()
+        try:
+            if image_b64:
+                raw = base64.b64decode(image_b64)
+            elif path:
+                raw = _Path(path).read_bytes()
+            elif url:
+                import urllib.request
+                raw = urllib.request.urlopen(url, timeout=20).read()
+            else:
+                return {"error": "provide image_b64 | path | url"}
+        except Exception as e:
+            return {"error": f"could not load image: {e}"}
+        printer = await _run(_db_get_printer, printer_id or "default")
+        width = _width_for(printer, width_px)
+        try:
+            data = await _run(lambda: build_image_raster(raw, width, cut=cut, align=align))
+        except ImportError:
+            return {"error": "Pillow not available on the server (needed for image printing)"}
+        except Exception as e:
+            return {"error": f"raster build failed: {e}"}
+        res = await _route(printer, data)
+        await emit_event({"type": "print.job", "stage": "image",
+                          "message": f"image {len(data)}B via {res.get('transport')}"})
+        return {"ok": True, **res}
+
+    @capability(
+        "print.nice", http_method="POST", http_path="/print/nice",
+        http_tags=["print"],
+        schema=enum_schema(align=["left", "center", "right"]),
+        description="Print text rendered with a TrueType font at any point size (nicer than "
+                    "the built-in font), rasterised and routed via the printer's transport. "
+                    "Input: text (str!, newlines allowed), title (str -- bold header), "
+                    "font_size (int=28), align, printer_id, width_px, cut (bool=true). "
+                    "Output: {ok, escpos_b64, bytes, transport, routed}.")
+    async def cap_print_nice(
+        text: str = "", title: str = "", font_size: int = 28, align: str = "left",
+        printer_id: str = "", width_px: int = 0, cut: bool = True, trace_id=None):
+        await _ensure_schema()
+        if not (text or title):
+            return {"error": "text or title required"}
+        printer = await _run(_db_get_printer, printer_id or "default")
+        width = _width_for(printer, width_px)
+        try:
+            data = await _run(lambda: build_nice_text(
+                (text or "").split(chr(10)), width, font_size, align=align,
+                title=title, cut=cut))
+        except ImportError:
+            return {"error": "Pillow not available on the server"}
+        except Exception as e:
+            return {"error": f"render failed: {e}"}
+        res = await _route(printer, data)
+        await emit_event({"type": "print.job", "stage": "nice",
+                          "message": f"nice text {len(data)}B via {res.get('transport')}"})
         return {"ok": True, **res}
 
     # ── Element registration ─────────────────────────────────────────────────
