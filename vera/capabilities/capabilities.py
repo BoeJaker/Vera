@@ -1782,6 +1782,16 @@ async def _llm_save_output(save_as: str, text: str, session_id: str = "") -> dic
         return {"save_error": str(e)[:200]}
 
 
+# Output budget: a stated length should bound the generation (see the module).
+try:
+    from Vera.vera.capabilities import output_budget as _output_budget
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.capabilities import output_budget as _output_budget
+    except Exception:
+        _output_budget = None
+
+
 @capability(
     "llm.generate",
     http_method="POST", http_path="/llm/generate", http_tags=["llm", "generate"],
@@ -1955,7 +1965,22 @@ async def llm_generate(
         _ctx = await effective_num_ctx(model, instance_id or None, prefer_gpu, manual=_want_ctx)
         _gen_opts = {"num_ctx": _ctx, "num_predict": _ctx}
     except Exception:
+        _ctx = _want_ctx
         _gen_opts = {"num_predict": _want_ctx}
+    # When the request STATES a length, size num_predict to it. The comment
+    # above assumes "the model still stops early at a natural EOS for short
+    # answers"; census run 18 disproved that and it cost a goal - prose-only
+    # asked for a 200-word explainer and got eval_count=16384, the ceiling
+    # itself, in a single 949s call. No stated length leaves the full window
+    # alone, which is what protects long structured outputs from truncation.
+    if _output_budget is not None:
+        try:
+            _bud = _output_budget.budget_tokens(prompt or "", ceiling=int(_ctx))
+            if _bud:
+                _gen_opts["num_predict"] = _bud
+                log.info("llm.generate %s", _output_budget.describe(prompt or "", ceiling=int(_ctx)))
+        except Exception as _be:                       # pragma: no cover
+            log.debug("output budget skipped: %s", _be)
     # Per-call sampling overrides (e.g. code.author's repeat_penalty/temperature)
     # merged on top so they reach ollama even when the profile/role options are
     # empty (a live Model-Routing override can wipe the declared role options).

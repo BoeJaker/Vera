@@ -13,6 +13,7 @@ known set of modules, so the tier is defined in one place.
 import pytest
 
 _CRITICAL_MODULES = {
+    "test_output_budget",  # a stated length must bound the generation (2026-08-31)
     "test_edit_anchor_hint",  # a rejected edit must leave the model something to correct (2026-08-31)
     "test_scheduler_leadership",  # sweeps that mutate shared state run in ONE instance (2026-08-31)
     "test_capability_decorator_binding",  # a decorator binds to whatever def comes next (2026-08-30)
