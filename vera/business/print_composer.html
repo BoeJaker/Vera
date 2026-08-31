@@ -95,7 +95,8 @@ Type here — it renders exactly as it will print. Pick a font + size below.</te
         </div>
         <div class="row">
           <div><label>Align</label><select id="t_align" onchange="render()"><option>left</option><option>center</option><option>right</option></select></div>
-          <div class="chk" style="margin-top:22px"><input type="checkbox" id="t_bold" onchange="render()"><label style="margin:0">Bold</label></div>
+          <div><label>Weight</label><select id="t_weight" onchange="render()"><option value="400">Normal</option><option value="700" selected>Bold</option><option value="900">Extra bold</option></select></div>
+          <div style="flex-basis:100%;margin-top:6px"><label>Heading (optional)</label><input id="t_head" oninput="render()" placeholder="big bold title on top" style="width:100%"></div>
         </div>
       </div>
 
@@ -220,14 +221,21 @@ function wrap(x,text,font,maxw){x.font=font;const words=(text||'').split(/\s+/);
 function render(){
   const pad=10, w=WIDTH, inner=w-pad*2;
   if(MODE==='text'){
-    const sz=+$('t_sz').value, ff=$('t_font').value, al=$('t_align').value, bold=$('t_bold').checked?'bold ':'';
-    const font=`${bold}${sz}px ${ff}`;
+    const sz=+$('t_sz').value, ff=$('t_font').value, al=$('t_align').value;
+    const wt=($('t_weight')&&$('t_weight').value)||'700', xb=(wt==='900');
+    const font=`${wt} ${sz}px ${ff}`;
+    const head=(($('t_head')&&$('t_head').value)||'').trim();
+    const hsz=Math.round(sz*1.55), hfont=`800 ${hsz}px ${ff}`, hlh=Math.ceil(hsz*1.3);
     // measure
     const m=document.createElement('canvas').getContext('2d');
     let lines=[];($('t_text').value||'').split('\n').forEach(p=>{lines=lines.concat(p.trim()===''?['']:wrap(m,p,font,inner));});
-    const lh=Math.ceil(sz*1.32), h=pad*2+lines.length*lh;
-    const x=ctxFor(h);x.font=font;
-    lines.forEach((ln,i)=>{const tw=x.measureText(ln).width;let lx=pad;if(al==='center')lx=(w-tw)/2;if(al==='right')lx=w-pad-tw;x.fillText(ln,lx,pad+i*lh);});
+    const lh=Math.ceil(sz*1.32), h=pad*2+(head?hlh+10:0)+lines.length*lh;
+    const x=ctxFor(h);
+    const draw=(t,fx,fy,heavy)=>{x.fillText(t,fx,fy);if(heavy){x.fillText(t,fx+1,fy);x.fillText(t,fx,fy+1);}};
+    let y=pad;
+    if(head){x.font=hfont;const tw=x.measureText(head).width;const hx=al==='right'?w-pad-tw:(al==='left'?pad:(w-tw)/2);draw(head,hx,y,true);y+=hlh;x.fillRect(pad,y,inner,2);y+=10;}
+    x.font=font;
+    lines.forEach((ln)=>{const tw=x.measureText(ln).width;let lx=pad;if(al==='center')lx=(w-tw)/2;if(al==='right')lx=w-pad-tw;draw(ln,lx,y,xb);y+=lh;});
   }
   else if(MODE==='list'){
     const title=$('l_title').value, boxes=$('l_boxes').checked;
@@ -237,7 +245,7 @@ function render(){
     const x=ctxFor(h);let y=pad;
     x.font=`bold ${tsz}px system-ui`;const tw=x.measureText(title).width;x.fillText(title,(w-tw)/2,y);y+=Math.ceil(tsz*1.4);
     x.fillRect(pad,y,inner,2);y+=12;
-    x.font=`${isz}px system-ui`;
+    x.font=`700 ${isz}px system-ui`;
     items.forEach(it=>{if(boxes){x.lineWidth=2;x.strokeRect(pad+2,y+3,isz-8,isz-8);}x.fillText(it,pad+(boxes?isz+2:0),y);y+=lh;});
   }
   else if(MODE==='recipe'){
@@ -245,7 +253,7 @@ function render(){
     const ing=($('r_ing').value||'').split('\n').filter(s=>s.trim());
     const steps=($('r_steps').value||'').split('\n').filter(s=>s.trim());
     const m=document.createElement('canvas').getContext('2d');
-    const bodyF='24px system-ui';let lc=0;ing.forEach(s=>lc+=wrap(m,'• '+s,bodyF,inner).length);
+    const bodyF='700 24px system-ui';let lc=0;ing.forEach(s=>lc+=wrap(m,'• '+s,bodyF,inner).length);
     let sc=0;steps.forEach((s,i)=>sc+=wrap(m,(i+1)+'. '+s,bodyF,inner).length);
     const lh=32;
     const total=pad*2+40+(note?24:0)+30+lc*lh+30+sc*lh+20;

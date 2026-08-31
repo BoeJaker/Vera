@@ -345,7 +345,7 @@ def _image_to_rows(img, width):
 def _render_text_image(lines, width, font_size, align="left", title=None):
     """Render an optional bold title + body lines to a 1-bpp bitmap for raster."""
     Image, ImageDraw, _ = _pil()
-    body_font = _font(font_size)
+    body_font = _font(font_size, bold=True)
     title_font = _font(int(font_size * 1.6), bold=True) if title else None
     pad = 6
 
