@@ -96,3 +96,34 @@ def substitution_note(sandbox: Mapping[str, Any], primary_error: str) -> str:
             f"'{_s(sandbox.get('name')) or '?'}' "
             f"(branch {_s(sandbox.get('branch')) or '?'}) at "
             f"{_s(sandbox.get('url'))} instead")
+
+
+def decline_reason(sandboxes, *, branch: str = "", name: str = "") -> str:
+    """Why nothing was chosen - the line that was missing.
+
+    Census run 19: an `operator.run` died in 2.4s on "primary sandbox is
+    occupied by another branch" while a pinned, running, driveable sandbox was
+    registered the whole time. Nothing logged the refusal, so the cause could
+    not be told apart from the list simply being empty. A guard that declines
+    silently is a guard nobody can debug.
+    """
+    items = list(sandboxes or [])
+    if not items:
+        return "the sandbox list was empty (or could not be read)"
+    live = [s for s in items if is_driveable(s)]
+    if not live:
+        states = ", ".join(
+            "%s(running=%s paused=%s url=%s)" % (
+                _s(s.get("name")) or "?", s.get("running"), s.get("paused"),
+                "yes" if _s(s.get("url")) else "no")
+            for s in items[:4])
+        return f"none of {len(items)} sandbox(es) was driveable: {states}"
+    if branch or name:
+        return (f"no sandbox matches the requested "
+                f"{'branch ' + branch if branch else 'name ' + name!r}; "
+                f"{len(live)} other(s) are live")
+    owned = [_s(s.get("name")) for s in live if _s(s.get("owner")) and not s.get("pinned")]
+    if owned:
+        return (f"{len(live)} live sandbox(es), but all are another agent's "
+                f"working containers (owned and unpinned): {', '.join(owned[:4])}")
+    return "no safe candidate among %d live sandbox(es)" % len(live)
