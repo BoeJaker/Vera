@@ -23,6 +23,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 from . import actions as _actions
 from . import perception as _perception
 from . import safety as _safety
+from . import operator_progress as _progress
 from . import thinker as _thinker
 
 log = logging.getLogger("vera.operator.loop")
@@ -41,10 +42,20 @@ def _make_default_observe(shots_dir: str) -> Callable:
     return _observe
 
 
-def _make_default_think(call_cap, provider: str, model: str) -> Callable:
+def _make_default_think(call_cap, provider: str, model: str,
+                        think: Optional[bool] = None) -> Callable:
+    """`think=False` turns OFF a reasoning model's <think> pass.
+
+    Measured in census run 18: each operator.think spent 35-60s generating
+    560-946 tokens to decide ONE browser action, and every one of the fifteen
+    steps was phase="act" - the reasoning was not buying observation. Off by
+    default (None = the model's own default) since this trades decision quality
+    for speed and that is the caller's call, not ours.
+    """
     async def _think(goal, observation, history, canvas):
         return await _thinker.decide(goal, observation, history, call_cap,
-                                     provider=provider, model=model, canvas=canvas)
+                                     provider=provider, model=model, canvas=canvas,
+                                     think=think)
     return _think
 
 
@@ -80,6 +91,8 @@ async def run_loop(goal: str, session, *,
                    policy: Optional[_safety.SafetyPolicy] = None,
                    provider: str = "ollama", model: str = "",
                    max_steps: int = 15, canvas: bool = False,
+                   progress_tolerance: int = _progress.DEFAULT_TOLERANCE,
+                   think: Optional[bool] = None,
                    shots_dir: str = "",
                    on_step: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
                    observe_fn: Optional[Callable] = None,
@@ -105,7 +118,8 @@ async def run_loop(goal: str, session, *,
 
     policy = policy or _safety.SafetyPolicy()
     observe = observe_fn or _make_default_observe(shots_dir)
-    think = think_fn or _make_default_think(call_cap, provider, model)
+    think_llm = think
+    think = think_fn or _make_default_think(call_cap, provider, model, think_llm)
     act = act_fn or _default_act
 
     history: List[Dict[str, Any]] = []
@@ -116,6 +130,10 @@ async def run_loop(goal: str, session, *,
     # See the check below for why the URL is part of the key.
     last_sig: Optional[str] = None
     same_sig_count = 0
+    # Progress state: what the PAGE looked like, not what was done to it. A run
+    # doing real work may take as many turns as it needs; what is worth stopping
+    # is one whose actions stop changing anything. See operator_progress.
+    prog_state: Optional[Dict[str, Any]] = None
     reason = "max_steps"
     done = False
     summary = ""
@@ -154,6 +172,27 @@ async def run_loop(goal: str, session, *,
             break
         if getattr(obs, "screenshot_path", ""):
             screenshots.append(obs.screenshot_path)
+
+        # Judged BEFORE thinking: a page that has not moved in several acts is
+        # not worth another 40-second decision. The observation reflects the
+        # page AFTER the previous act, so consecutive identical observations
+        # are consecutive acts that changed nothing.
+        prog_state = _progress.update(
+            prog_state,
+            _progress.page_signature(
+                url=getattr(obs, "url", ""), title=getattr(obs, "title", ""),
+                refs=[getattr(e, "ref", "") for e in (getattr(obs, "elements", None) or [])]),
+            last_action=(history[-1].get("action") if history else None))
+        if _progress.should_stop(prog_state, progress_tolerance):
+            reason = _progress.STOP_REASON
+            rec = {"i": i, "phase": "no_progress", "url": getattr(obs, "url", ""),
+                   "reason": _progress.describe(
+                       prog_state, progress_tolerance,
+                       [str(h.get("action") or "") for h in history]),
+                   "screenshot": getattr(obs, "screenshot_path", "")}
+            steps.append(rec)
+            await _emit(rec)
+            break
 
         decision = await think(goal, obs, history, canvas)
         if isinstance(decision, dict) and decision.get("error"):

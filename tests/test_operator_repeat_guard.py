@@ -96,8 +96,16 @@ def test_it_is_not_reported_as_success():
 # ── what must NOT be stopped ────────────────────────────────────────────────
 def test_clicking_different_elements_is_progress_not_thrash():
     """Eleven clicks on eleven elements is a working run. A guard keyed on the
-    VERB alone would have killed this."""
-    res, calls = _run([_click("e%d" % i) for i in range(1, 13)], max_steps=12)
+    VERB alone would have killed this.
+
+    The urls are supplied because a WORKING run is one whose page responds:
+    since 2026-08-31 the loop also stops a run whose page never changes at all
+    (operator_progress), and this stub previously reported the identical page
+    forever. That is a fixture gap, not a conflict - clicking twelve elements
+    that each do nothing is the census run 18 failure, and
+    test_twelve_dead_clicks_on_a_static_page_stop_the_run below pins it."""
+    urls = ["http://example.com/p%d" % i for i in range(1, 13)]
+    res, calls = _run([_click("e%d" % i) for i in range(1, 13)], urls=urls, max_steps=12)
     assert res["reason"] != "repeating_action"
     assert calls["act"] == 12
 
@@ -165,3 +173,13 @@ def test_records_without_args_fall_back_to_the_old_behaviour():
     ev = [{"type": "operator.step", "i": i, "phase": "act", "action": "click"}
           for i in range(1, 12)]
     assert digest_events(ev)["counters"]["repeated_actions"] == 1
+
+
+def test_twelve_dead_clicks_on_a_static_page_stop_the_run():
+    """The other half of the rule, added 2026-08-31. Twelve clicks on twelve
+    DIFFERENT elements that never change the page is not progress - it is
+    census run 18's author-then-edit, which spent 21 minutes doing exactly this
+    and reported max_steps."""
+    res, calls = _run([_click("e%d" % i) for i in range(1, 13)], max_steps=12)
+    assert res["reason"] == "no_progress"
+    assert calls["act"] < 12

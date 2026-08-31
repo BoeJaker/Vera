@@ -137,7 +137,8 @@ def _split_provider(provider: str) -> tuple:
 async def decide(goal: str, observation, history: Optional[List[Dict[str, Any]]],
                  call_cap: Callable[..., Awaitable[Any]],
                  provider: str = "ollama", model: str = "",
-                 canvas: bool = False, max_tokens: int = 512) -> Dict[str, Any]:
+                 canvas: bool = False, max_tokens: int = 512,
+                 think=None) -> Dict[str, Any]:
     """Run one think step through the LLM. Returns a decision dict (see
     ``parse_decision``) plus {provider, error}. Never raises."""
     prompt = build_prompt(goal, observation, history, canvas=canvas)
@@ -149,6 +150,7 @@ async def decide(goal: str, observation, history: Optional[List[Dict[str, Any]]]
             res = await call_cap(
                 "llm.generate", prompt=prompt["user"], system=prompt["system"],
                 model=model or None, job_type="code", caller="operator.think",
+                think=think,
             )
         else:
             res = await call_cap(
