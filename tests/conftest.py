@@ -13,6 +13,7 @@ known set of modules, so the tier is defined in one place.
 import pytest
 
 _CRITICAL_MODULES = {
+    "test_prose_author_think",  # the writer must write, not ruminate (2026-08-31)
     "test_sandbox_file_target",  # the operator can be pointed at a file it just wrote (2026-08-31)
     "test_operator_progress",  # a run that changes nothing must stop; a long run must not (2026-08-31)
     "test_output_budget",  # a stated length must bound the generation (2026-08-31)
