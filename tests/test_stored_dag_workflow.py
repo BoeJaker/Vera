@@ -56,6 +56,9 @@ def test_stored_converged_modes_share_definition_ir_and_native_control():
     assert result["execution_modes"]["supervised"]["native_authoritative"] is True
     assert result["execution_modes"]["stepwise"]["native_authoritative"] is True
     assert result["execution_modes"]["supervised"]["control_authority"] == "native_supervisor"
+    assert result["execution_modes"]["stepwise"]["per_action_workflow_ir"] is True
+    assert result["execution_modes"]["stepwise"]["definition_authority"] == "per_action_workflow_ir"
+    assert result["execution_modes"]["stepwise"]["parity_gate"] == "per_action_exact"
 
 
 def test_lossy_native_definition_returns_explicit_gaps_without_workflow():
@@ -87,5 +90,6 @@ def test_workshop_and_capability_expose_the_same_read_only_inspection_route():
     assert '"dag.workflow.inspect"' in store_source
     assert 'http_path="/dag/workflow/inspect"' in store_source
     assert "/dag/workflow/inspect?id=" in panel_source
-    assert "plain/monitored/supervised/one-shot streamed use exact IR preparation" in panel_source
-    assert "stepwise control remains native" in panel_source
+    assert "exact definitions use IR preparation" in panel_source
+    assert "stepwise actions get individual IR identities" in panel_source
+    assert "adaptive control remains native" in panel_source

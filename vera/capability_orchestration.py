@@ -10130,7 +10130,8 @@ async def dag_plan_stream_endpoint(request: Request):
       auto_approve_secs : int  — seconds before auto-approve (default 30)
       state             : dict — seed state (merged with plan's initial_state)
       include_workflow_ir: bool — add graph-free definition provenance to
-                                  dag.plan_ready (default false)
+                                  dag.plan_ready or stepwise action events
+                                  (default false)
       session_id        : str  — caller's session id; required for activity
                                  recording. Without it, the call still runs
                                  but does not appear in syslog as a cap.call.
@@ -10179,7 +10180,8 @@ async def dag_plan_stream_endpoint(request: Request):
             # result, then decides what to do next.
             if mode == "stepwise":
                 async for ev_type, ev_data in _stepwise_run(
-                        goal, seed_state, hitl, auto_approve_secs):
+                        goal, seed_state, hitl, auto_approve_secs,
+                        include_workflow_ir=include_workflow_ir):
                     if ev_type == "step.complete":
                         steps_emitted += 1
                     elif ev_type == "dag.error":
@@ -10280,7 +10282,10 @@ async def dag_plan_stream_endpoint(request: Request):
                               headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})
 
 
-async def _stepwise_run(goal: str, state: dict, hitl: bool, auto_approve_secs: int):
+async def _stepwise_run(
+    goal: str, state: dict, hitl: bool, auto_approve_secs: int,
+    *, include_workflow_ir: bool = False,
+):
     """
     Agentic step-by-step execution loop.
     Each iteration:
@@ -10374,26 +10379,47 @@ async def _stepwise_run(goal: str, state: dict, hitl: bool, auto_approve_secs: i
         params   = dict(decision.get("params") or {})
         out_key  = decision.get("out_key", f"result_{step}")
         reason   = decision.get("reason", "")
+        from Vera.vera.execution.dag_workflow_execution import (
+            prepare_stepwise_dag_action,
+        )
+        try:
+            action_prepared = prepare_stepwise_dag_action(
+                cap_name, out_key, include_workflow_ir=include_workflow_ir,
+            )
+        except (TypeError, ValueError) as e:
+            yield "dag.step_error", {
+                "step": step,
+                "cap": cap_name if isinstance(cap_name, str) else "",
+                "error": f"Invalid step definition: {e}",
+            }
+            return
+        cap_name = action_prepared["cap"]
+        out_key = action_prepared["out_key"]
+
+        def _with_workflow_ir(payload):
+            if action_prepared["workflow_ir"] is not None:
+                payload["workflow_ir"] = action_prepared["workflow_ir"]
+            return payload
 
         # Merge params into state so cap can find them
         run_state = dict(state)
         run_state.update(params)
 
-        yield "dag.step_start", {
+        yield "dag.step_start", _with_workflow_ir({
             "step": step, "cap": cap_name, "out_key": out_key,
             "params": params, "reason": reason,
-        }
+        })
 
         if hitl:
             step_trace = str(_uuid.uuid4())
             fut = asyncio.get_event_loop().create_future()
             _HITL_PENDING[step_trace] = fut
-            yield "dag.hitl_request", {
+            yield "dag.hitl_request", _with_workflow_ir({
                 "step": step, "cap": cap_name, "out_key": out_key,
                 "params": params, "trace_id": step_trace,
                 "auto_approve_secs": auto_approve_secs,
                 "reason": reason,
-            }
+            })
             try:
                 dec = await asyncio.wait_for(fut, timeout=float(auto_approve_secs))
             except asyncio.TimeoutError:
@@ -10412,7 +10438,9 @@ async def _stepwise_run(goal: str, state: dict, hitl: bool, auto_approve_secs: i
         # Execute the capability
         cap_obj = CAPABILITY_REGISTRY.get(cap_name)
         if not cap_obj:
-            yield "dag.step_error", {"step": step, "cap": cap_name, "error": "unknown capability"}
+            yield "dag.step_error", _with_workflow_ir(
+                {"step": step, "cap": cap_name, "error": "unknown capability"}
+            )
             state[out_key] = {"error": "unknown capability"}
         else:
             try:
@@ -10421,15 +10449,17 @@ async def _stepwise_run(goal: str, state: dict, hitl: bool, auto_approve_secs: i
                 state[out_key] = result
                 result_preview = str(result)[:300] if result is not None else "null"
                 history.append({"cap": cap_name, "result": result_preview})
-                yield "dag.step_done", {
+                yield "dag.step_done", _with_workflow_ir({
                     "step": step, "cap": cap_name, "out_key": out_key,
                     "result_preview": result_preview,
-                }
+                })
             except Exception as e:
                 err = str(e)
                 state[out_key] = {"error": err}
                 history.append({"cap": cap_name, "result": f"ERROR: {err}"})
-                yield "dag.step_error", {"step": step, "cap": cap_name, "error": err}
+                yield "dag.step_error", _with_workflow_ir(
+                    {"step": step, "cap": cap_name, "error": err}
+                )
 
         step += 1
 

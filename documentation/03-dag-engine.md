@@ -151,10 +151,18 @@ while the native supervisor remains the control authority for checkpoints,
 retries, inserted recovery nodes, and aborts. For exact definitions, runtime
 decisions modify only the materialized execution graph; they do not rewrite the
 submitted or stored definition. Non-canonical definitions retain the explicit
-native-compatibility behavior. The Workflow IR hash identifies what execution started
-from, while Run events describe subsequent control decisions. Stepwise execution
-retains its native adaptive-planning path because no complete graph exists at
-its start.
+native-compatibility behavior. The Workflow IR hash identifies what execution
+started from, while Run events describe subsequent control decisions.
+
+Stepwise execution cannot claim one complete definition at startup because its
+next action depends on the preceding result. Instead, each generated one-node
+action receives its own exact Workflow IR identity before HITL and invocation.
+The adaptive planner and state loop remain native. With
+`include_workflow_ir=true`, `dag.step_start`, `dag.hitl_request`,
+`dag.step_done`, and `dag.step_error` carry the same graph-free identity for
+that action; default event payloads are unchanged. The DAG Workshop requests
+this evidence and shows the definition identity and native control mode beside
+the action parameters, result, error, or approval request.
 
 The initial portable core covers sequential capability tasks, flat parallel
 groups, output state keys, and `CONDITION:<state-key>` guards. Native input/output
@@ -344,6 +352,11 @@ IR version, mode, and gap report on `dag.plan_ready`.
 ### Stepwise mode
 
 `mode="stepwise"` in `dag.plan_stream` switches from "plan everything up front, then execute" to "plan one step at a time, executing each before planning the next". The LLM sees the previous results when planning the next step, so it can adapt the plan based on what actually happened. Slower but more robust for under-specified goals.
+
+Because there is no complete graph up front, portability is expressed per
+action rather than by inventing a future plan. Set `include_workflow_ir=true`
+to attach each action's definition hash, IR version, compatibility mode, and
+native-control declaration to its streamed lifecycle events.
 
 ---
 

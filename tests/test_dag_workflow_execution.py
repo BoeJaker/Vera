@@ -6,6 +6,7 @@ import pytest
 from vera.execution.dag_workflow_execution import (
     prepare_dag_execution,
     prepare_plain_dag_execution,
+    prepare_stepwise_dag_action,
     prepare_streamed_dag_execution,
     workflow_execution_metadata,
 )
@@ -119,6 +120,25 @@ def test_streamed_preparation_preserves_default_payload_and_opt_in_provenance():
     assert default["workflow_ir"] is None
     assert visible["workflow_ir"]["workflow_hash"].startswith("sha256:")
     assert "graph" not in visible["workflow_ir"]
+
+
+def test_stepwise_action_has_identity_without_claiming_an_upfront_workflow():
+    default = prepare_stepwise_dag_action("alpha", "out")
+    visible = prepare_stepwise_dag_action(
+        "alpha", "out", include_workflow_ir=True,
+    )
+
+    assert default == {"cap": "alpha", "out_key": "out", "workflow_ir": None}
+    assert visible["cap"] == "alpha"
+    assert visible["out_key"] == "out"
+    assert visible["workflow_ir"]["workflow_hash"].startswith("sha256:")
+    assert "graph" not in visible["workflow_ir"]
+
+
+@pytest.mark.parametrize("cap_name,out_key", [("", "out"), (None, "out"), ("alpha", "")])
+def test_stepwise_action_rejects_malformed_identity(cap_name, out_key):
+    with pytest.raises(ValueError):
+        prepare_stepwise_dag_action(cap_name, out_key)
 
 
 @pytest.mark.asyncio

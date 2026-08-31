@@ -63,13 +63,15 @@ def inspect_stored_dag_workflow(
                 mode in converged_modes and prepared["authoritative"]
             ),
             "definition_authority": (
-                "workflow_ir"
-                if mode in converged_modes and prepared["authoritative"]
-                else "native"
+                "per_action_workflow_ir" if mode == "stepwise"
+                else "workflow_ir"
+                if mode in converged_modes and prepared["authoritative"] else "native"
             ),
             "control_authority": control_authority[mode],
+            "per_action_workflow_ir": mode == "stepwise",
             "parity_gate": (
-                prepared["mode"]
+                "per_action_exact" if mode == "stepwise"
+                else prepared["mode"]
                 if mode in converged_modes else "pending"
             ),
         }
