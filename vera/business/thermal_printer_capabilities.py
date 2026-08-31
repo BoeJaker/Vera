@@ -872,6 +872,56 @@ if _CAP_AVAILABLE:
 
     # ── Element registration ─────────────────────────────────────────────────
 
+    @capability(
+        "print.notify", http_method="POST", http_path="/print/notify",
+        http_tags=["print"],
+        schema=enum_schema(level=["info", "warn", "alert"]),
+        description="Print a formatted NOTIFICATION on the thermal printer -- Vera's "
+                    "important-work/update channel on paper. Input: title, body, level "
+                    "(info|warn|alert), printer_id. Also the 'printer' delivery channel. "
+                    "Output: {ok, escpos_b64, bytes, transport, routed}.")
+    async def cap_print_notify(title: str = "", body: str = "", level: str = "info",
+                               printer_id: str = "", trace_id=None):
+        await _ensure_schema()
+        import time as _t
+        mark = {"info": "*", "warn": "!!", "alert": "###"}.get((level or "info").lower(), "*")
+        head = f"{mark} VERA {(level or 'info').upper()} {mark}"
+        stamp = _t.strftime("%Y-%m-%d %H:%M")
+        printer = await _run(_db_get_printer, printer_id or "default")
+        width = _width_for(printer, 0)
+        try:
+            data = await _run(lambda: build_nice_text(
+                [stamp, ""] + (body or "").split(chr(10)), width, 26, align="left",
+                title=(title or head), cut=True))
+        except Exception:
+            data = build_text((title or head) + chr(10) + stamp + chr(10) * 2 + (body or ""),
+                              align="left", cut=True)
+        res = await _route(printer, data)
+        await emit_event({"type": "print.job", "stage": "notify",
+                          "message": f"notify via {res.get('transport')}"})
+        return {"ok": True, **res}
+
+    try:
+        from Vera.vera import delivery as _delivery
+        _delivery.register_channel(
+            "printer", label="Thermal printer", cap="print.notify",
+            default_format="text", needs_target=False, source="print")
+    except Exception:                              # pragma: no cover
+        pass
+
+    register_ui(
+        "thermal-printer", "Thermal Printer", "\U0001f5a8\ufe0f",
+        """<div style="height:100%;display:flex;flex-direction:column">
+  <iframe src="/print/panel"
+          style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"
+          title="Thermal Printer" allow="serial; usb; clipboard-read; clipboard-write"></iframe>
+</div>""",
+        "",
+        ui_caps=["print.status", "print.image", "print.nice", "print.text",
+                 "print.label", "print.printers", "print.printer.upsert", "print.notify"],
+        mode="element",
+    )
+
     _HERE = _Path(__file__).parent
 
     try:
