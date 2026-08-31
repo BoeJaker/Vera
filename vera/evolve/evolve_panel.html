@@ -1108,7 +1108,29 @@ async function autonomousRelease(){
 }
 function toast(m){const t=document.createElement('div');t.className='toast';t.textContent=m;document.body.appendChild(t);setTimeout(()=>{t.style.opacity=0;t.style.transition='opacity .3s';setTimeout(()=>t.remove(),300)},3400)}
 function openModal(h){$('modal').innerHTML=h;$('modal-bg').classList.add('on')}
-function closeModal(){$('modal-bg').classList.remove('on')}
+function closeModal(){$('modal-bg').classList.remove('on');try{cenAloStop()}catch(_){}}
+/* A modal must appear on the CLICK, not when its data arrives.
+   Every census modal used to `await api(...)` FIRST and only then call
+   openModal, so a slow endpoint looked exactly like a dead button - and on
+   error it toasted and opened nothing at all, which is the "often not loading"
+   report. Open a frame immediately, fill it when the data lands, and render
+   failures INSIDE the modal so a click always produces something.
+   The sequence token stops a slow response painting over a newer modal. */
+let _modalSeq=0;
+function openModalLoading(title,sub){
+  const tok=++_modalSeq;
+  openModal('<div class="row" style="align-items:center;margin-bottom:8px"><b>'+esc(title)+'</b>'
+    +(sub?'<span class="hint mono" style="margin-left:8px">'+esc(sub)+'</span>':'')
+    +'<span style="flex:1"></span><button class="btn sm" onclick="closeModal()">&#10005;</button></div>'
+    +'<div id="modal-body"><span class="spin"></span> loading&hellip;</div>');
+  return tok;
+}
+function modalFill(tok,h){
+  if(tok!==_modalSeq)return false;
+  const b=$('modal-body');if(!b)return false;
+  b.innerHTML=h;return true;
+}
+function modalFail(tok,msg){modalFill(tok,'<div class="empty">'+esc(msg||'failed')+'</div>')}
 function scColor(v){if(v==null)return'var(--dim2)';v=+v;return v>=8?'var(--ok)':v>=6?'var(--acc2)':v>=4?'var(--warn)':'var(--err)'}
 function scBg(v){if(v==null)return'var(--bg3)';v=+v;return v>=8?'rgba(109,184,122,.16)':v>=6?'rgba(143,184,122,.14)':v>=4?'rgba(201,163,90,.14)':'rgba(201,107,107,.14)'}
 function scChip(v){return '<span class="sc" style="color:'+scColor(v)+';background:'+scBg(v)+'">'+(v==null?'—':(+v).toFixed(1))+'</span>'}
@@ -2226,6 +2248,9 @@ async function loadCensusLive(){
     +'<td>'+(s.ok===false?'<span style="color:#c96b6b">failed</span>':(s.ok?'<span style="color:#3cb371">ok</span>':'<span class="hint">running</span>'))+'</td></tr>').join('');
   el.innerHTML='<div style="margin-bottom:6px"><b>'+esc(a.goal_id||'(unmatched goal)')+'</b>'
       +' <span class="hint mono">'+esc((a.session_id||'').slice(0,8))+'</span>'
+      +(a.session_id?(' <button class="btn sm" title="watch the agent loop\'s own output, live"'
+        +' onclick="openCensusLiveLoop(\''+esc(a.session_id)+'\',\''+esc(a.goal_id||'')+'\')">'
+        +'\u25f7 loop output</button>'):'')
       +'<div class="hint" style="margin-top:2px">'+esc((a.goal||'').slice(0,240))+'</div></div>'
     +'<div class="row" style="gap:12px;flex-wrap:wrap;margin-bottom:6px">'
       +'<span>planned <b>'+(c.planned_steps==null?'—':c.planned_steps)+'</b></span>'
@@ -2318,19 +2343,17 @@ async function loadCensusOperator(){
   $('census-op-status').textContent=(cr.length?(cr.length+' batch(es) · '):'')+rr.length+' recent run(s)';
 }
 async function openOperatorTrace(runId){
+  const tok=openModalLoading('Operator run',runId);
   const t=await api('/operator/trace?run_id='+encodeURIComponent(runId));
-  if(!t||t.error){toast((t&&t.error)||'no trace');return}
+  if(!t||t.error){modalFail(tok,(t&&t.error)||'no trace recorded for this run');return}
   const c=t.counters||{}, r=t.run||{};
   const steps=(t.steps||[]).map(s=>'<tr>'
     +'<td class="mono">'+esc(String(s.i))+'</td><td>'+esc(s.phase||'')+'</td>'
     +'<td class="mono">'+esc(s.action||'')+'</td><td>'+esc(s.thought||'')+'</td>'
     +'<td'+(s.error?' style="color:#c96b6b"':'')+'>'+esc(s.error||'')+'</td>'
     +'<td>'+(s.screenshot?'<a href="'+esc(s.screenshot)+'" target="_blank">shot</a>':'')+'</td></tr>').join('');
-  openModal(
-    '<div class="row" style="align-items:center;margin-bottom:8px"><b>Operator run</b>'
-    +'<span class="hint mono" style="margin-left:8px">'+esc(runId)+'</span>'
-    +'<span style="flex:1"></span><button class="btn sm" onclick="closeModal()">&#10005;</button></div>'
-    +'<div style="margin-bottom:6px"><b>goal</b><div class="mono" style="white-space:pre-wrap">'+esc(r.goal||'')+'</div></div>'
+  modalFill(tok,
+    '<div style="margin-bottom:6px"><b>goal</b><div class="mono" style="white-space:pre-wrap">'+esc(r.goal||'')+'</div></div>'
     +'<div class="row" style="gap:12px;flex-wrap:wrap;margin-bottom:6px">'
       +'<span>steps <b>'+(c.steps||0)+'</b></span><span>errors <b>'+(c.errors||0)+'</b></span>'
       +'<span>shots <b>'+(c.screenshots||0)+'</b></span>'
@@ -2352,15 +2375,25 @@ async function loadCensusCompare(){
   $('census-cmp-counts').innerHTML=Object.keys(_CEN_CHG).filter(k=>c[k]).map(k=>'<span style="color:'+_CEN_CHG[k]+';margin-left:8px">'+c[k]+' '+k+'</span>').join('')
     +((!r.base_trusted||!r.head_trusted)?' <span style="color:#c96b6b;margin-left:8px" title="a run whose counters do not reconcile">⚠ suspect counters</span>':'');
   el.innerHTML='<table><tr><th>goal</th><th>outcome</th><th>'+esc(b)+'</th><th>'+esc(h)+'</th><th>wall Δ</th><th>steps</th><th></th></tr>'
-    +(r.goals||[]).map(g=>'<tr class="clk" onclick="openCensusGoal(\''+esc(h)+'\',\''+esc(g.id)+'\')">'
+    // A compare row describes TWO runs, so it cannot have one click target.
+    // The whole line used to open the HEAD record silently - there was no way
+    // to reach the base run's evidence, and nothing said which of the two you
+    // were about to get. Each run's own cell is now the button for its own
+    // record.
+    +(r.goals||[]).map(g=>'<tr>'
       +'<td>'+esc(g.id)+'</td>'
       +'<td style="color:'+(_CEN_CHG[g.outcome_change]||'#888')+'">'+esc(g.outcome_change)+'</td>'
-      +'<td>'+_cenStatus(g.base_status)+'</td><td>'+_cenStatus(g.head_status)+'</td>'
+      +'<td class="clk" title="open the '+esc(b)+' record for '+esc(g.id)+'"'
+        +' onclick="openCensusGoal(\''+esc(b)+'\',\''+esc(g.id)+'\')">'
+        +_cenStatus(g.base_status)+' <span class="hint">\u2197</span></td>'
+      +'<td class="clk" title="open the '+esc(h)+' record for '+esc(g.id)+'"'
+        +' onclick="openCensusGoal(\''+esc(h)+'\',\''+esc(g.id)+'\')">'
+        +_cenStatus(g.head_status)+' <span class="hint">\u2197</span></td>'
       +'<td class="mono">'+(g.wall_delta_s==null?'—':((g.wall_delta_s>0?'+':'')+Math.round(g.wall_delta_s)+'s'))+'</td>'
       +'<td class="mono">'+(g.base_planned==null?'—':(g.base_planned+'/'+g.base_executed))+' → '+(g.head_planned==null?'—':(g.head_planned+'/'+g.head_executed))+'</td>'
       +'<td>'+(g.head_unaccounted?'<span style="color:#c96b6b" title="a step no producer claims">⚠</span>':'')+'</td>'
       +'</tr>').join('')+'</table>'
-    +'<div class="hint" style="margin-top:6px">planned/executed is context, not a score — click a goal to read what it actually did.</div>';
+    +'<div class="hint" style="margin-top:6px">planned/executed is context, not a score — click a run\'s own cell (\u2197) to read what it actually did in THAT run.</div>';
 }
 async function loadCensusBoard(){
   const el=$('census-board');if(!el)return;
@@ -2377,9 +2410,54 @@ async function loadCensusBoard(){
 function openCensusRun(run){
   const sel=$('census-head');if(sel){sel.value=run;loadCensusCompare()}
 }
+/* The actual agent-loop output for a census goal, live.
+   Same transport the Test section settled on: POLL
+   /workshop/agent_loop/session_state?since=N (plain JSON, index-exact, full
+   replay from 0). No SSE and no event bus, so it cannot silently miss events,
+   and a finished run replays in full rather than showing nothing. */
+let _cenAloSid='',_cenAloSince=0,_cenAloTimer=null;
+function cenAloStop(){if(_cenAloTimer)clearTimeout(_cenAloTimer);_cenAloTimer=null;_cenAloSid='';_cenAloSince=0}
+function _cenAloStat(t){const n=document.getElementById('cen-alo-stat');if(n)n.textContent=t}
+async function cenAloPoll(){
+  if(!_cenAloSid)return;
+  const el=document.getElementById('cen-alo');
+  if(!el){cenAloStop();return}                     // modal closed under us
+  const st=await api('/workshop/agent_loop/session_state?session_id='
+                     +encodeURIComponent(_cenAloSid)+'&since='+_cenAloSince);
+  const evs=(st&&st.events)||[];
+  if(evs.length){
+    if(el.appendEvents){try{el.appendEvents(evs)}catch(_){}}
+    else if(el.appendEvent){evs.forEach(e=>{try{el.appendEvent(e)}catch(_){}})}
+    _cenAloSince=(st&&typeof st.count==='number'&&st.count>=_cenAloSince+evs.length)
+      ? st.count : (_cenAloSince+evs.length);
+  }
+  const status=(st&&st.run&&st.run.status)||'';
+  if(status&&status!=='running'){
+    _cenAloStat(_cenAloSince+' events \u00b7 '+status);
+    return;                                        // terminal: stop polling
+  }
+  _cenAloStat(_cenAloSince?('\u25cf live \u00b7 '+_cenAloSince+' events'):'waiting for events\u2026');
+  _cenAloTimer=setTimeout(cenAloPoll,3000);
+}
+function cenAloBlock(sid){
+  if(!sid)return '<div class="hint">No agent-loop session recorded for this goal.</div>';
+  return '<div class="row" style="align-items:center;margin:6px 0 4px"><b>Agent loop</b>'
+    +'<span class="hint mono" style="margin-left:8px">'+esc(sid.slice(0,8))+'</span>'
+    +'<span class="hint" id="cen-alo-stat" style="margin-left:8px">connecting\u2026</span></div>'
+    +'<vera-agent-loop-output id="cen-alo" compact="true" show-toolkit="true" show-triage="true"'
+    +' style="height:340px;overflow:auto;display:block"></vera-agent-loop-output>';
+}
+function cenAloStart(sid){cenAloStop();if(!sid)return;_cenAloSid=sid;_cenAloSince=0;cenAloPoll()}
+/* Open the running census goal's loop output straight from the live card. */
+function openCensusLiveLoop(sid,goalId){
+  const tok=openModalLoading('Agent loop \u00b7 '+(goalId||'running goal'),sid||'');
+  modalFill(tok,cenAloBlock(sid));
+  cenAloStart(sid);
+}
 async function openCensusGoal(run,goal){
+  const tok=openModalLoading('Census goal \u00b7 '+goal,run);
   const r=await api('/census/goal?run='+encodeURIComponent(run)+'&goal='+encodeURIComponent(goal));
-  if(!r||r.error){toast((r&&r.error)||'no evidence');return}
+  if(!r||r.error){modalFail(tok,(r&&r.error)||'no evidence recorded for this goal');return}
   const e=r.evidence||{}, o=r.outputs||{};
   const _pre=t=>'<div class="mono" style="white-space:pre-wrap;background:var(--bg2);border-radius:5px;padding:6px 9px;margin:2px 0;font-size:10.5px;max-height:220px;overflow:auto">'+esc(t)+'</div>';
   // The OUTPUT — what the loop actually wrote. Shown FIRST: it is the thing you
@@ -2411,11 +2489,9 @@ async function openCensusGoal(run,goal){
     +'<td>'+(s.cycles||0)+'</td>'
     +'<td>'+(s.ok===false?'<span style="color:#c96b6b">failed</span>':(s.ok?'<span style="color:#3cb371">ok</span>':'—'))+'</td>'
     +'</tr>').join('');
-  openModal(
-    '<div class="row" style="align-items:center;margin-bottom:8px"><b>'+esc(goal)+'</b>'
-    +'<span class="hint" style="margin-left:8px">'+esc(run)+'</span>'
-    +'<span style="flex:1"></span><button class="btn sm" onclick="closeModal()">&#10005;</button></div>'
-    +'<div class="hint" style="margin-bottom:6px">'+esc(e.how_to_read||'')+'</div>'
+  const _sid=String((r.record&&r.record.session_id)||'');
+  modalFill(tok,
+    '<div class="hint" style="margin-bottom:6px">'+esc(e.how_to_read||'')+'</div>'
     +'<div style="margin-bottom:6px"><b>done_when</b><div class="mono" style="white-space:pre-wrap">'+esc(e.done_when||'(not recorded)')+'</div></div>'
     +'<div class="row" style="gap:10px;margin-bottom:6px"><span>status '+_cenStatus(e.goal_status)+'</span>'
       +'<span class="hint">tier '+esc(e.tier||'—')+' · intent '+esc(e.intent||'—')+' · '+_cenSec(e.wall_s)+'</span></div>'
@@ -2423,7 +2499,13 @@ async function openCensusGoal(run,goal){
     +(e.gate_complete===false?('<div style="color:#c96b6b;margin-bottom:6px"><b>gate said INCOMPLETE:</b> '+esc((e.gate_missing||[]).join('; '))+'</div>'):'')
     +(steps?('<table><tr><th>step</th><th>title</th><th>planned caps</th><th>tools used</th><th>cycles</th><th></th></tr>'+steps+'</table>'):'<div class="empty">No step detail — the run\'s event log has aged out.</div>')
     +((e.unplanned_steps||[]).length?('<div class="hint" style="margin-top:6px;color:#c96b6b">steps marked + were never in the plan: '+esc((e.unplanned_steps||[]).join(', '))+'</div>'):'')
-    +((e.warnings||[]).length?('<div class="hint" style="margin-top:6px">'+(e.warnings||[]).map(w=>'• '+esc(w)).join('<br>')+'</div>'):''));
+    +((e.warnings||[]).length?('<div class="hint" style="margin-top:6px">'+(e.warnings||[]).map(w=>'• '+esc(w)).join('<br>')+'</div>'):'')
+    // The loop's OWN output, replayed in full (and tailing live if it is still
+    // running). Everything above is the census's summary OF the run; this is
+    // the run.
+    +'<details style="margin-top:8px"'+(_sid?' open':'')+'><summary class="clk"><b>Agent loop output</b></summary>'
+    +cenAloBlock(_sid)+'</details>');
+  if(_sid)cenAloStart(_sid);
 }
 
 /* ═══ SESSIONS: Claude Code session watch (§6.6) — read-only classify ═══ */
