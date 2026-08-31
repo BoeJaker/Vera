@@ -60,18 +60,11 @@ def prepare_dag_execution(graph: list, *, supervised: bool = False) -> dict[str,
     """Prepare a DAG for execution without changing supervised semantics."""
     if not isinstance(graph, list):
         raise TypeError("graph must be an array")
-    if supervised:
-        return {
-            "schema": SCHEMA,
-            "authoritative": False,
-            "mode": "native_supervised",
-            "graph": graph,
-            "workflow_hash": "",
-            "ir_version": "",
-            "gaps": [],
-            "executes": False,
-        }
-    return prepare_plain_dag_execution(graph)
+    prepared = prepare_plain_dag_execution(graph)
+    prepared["control_mode"] = (
+        "native_supervised" if supervised else "native_plain"
+    )
+    return prepared
 
 
 def workflow_execution_metadata(prepared: dict[str, Any]) -> dict[str, Any]:
@@ -82,6 +75,7 @@ def workflow_execution_metadata(prepared: dict[str, Any]) -> dict[str, Any]:
         "mode": prepared.get("mode", "native_compatibility"),
         "workflow_hash": prepared.get("workflow_hash", ""),
         "ir_version": prepared.get("ir_version", ""),
+        "control_mode": prepared.get("control_mode", "native_plain"),
         "gaps": list(prepared.get("gaps") or []),
     }
     if prepared.get("reason"):

@@ -75,14 +75,29 @@ def test_non_list_graph_is_rejected_before_any_adapter_work():
         prepare_plain_dag_execution({})
 
 
-def test_supervised_execution_remains_an_explicit_native_boundary():
+def test_supervised_execution_materializes_definition_but_keeps_native_control():
     graph = [["alpha", "out"]]
     result = prepare_dag_execution(graph, supervised=True)
 
-    assert result["mode"] == "native_supervised"
+    assert result["mode"] == "workflow_ir_materialized"
+    assert result["control_mode"] == "native_supervised"
+    assert result["authoritative"] is True
+    assert result["graph"] == graph
+    assert result["graph"] is not graph
+    assert result["workflow_hash"].startswith("sha256:")
+
+
+def test_supervised_callable_definition_stays_explicitly_native_compatible():
+    def condition(_state):
+        return True
+
+    graph = [["alpha", "out", condition]]
+    result = prepare_dag_execution(graph, supervised=True)
+
+    assert result["mode"] == "native_compatibility"
+    assert result["control_mode"] == "native_supervised"
     assert result["authoritative"] is False
     assert result["graph"] is graph
-    assert result["workflow_hash"] == ""
 
 
 def test_public_provenance_excludes_the_materialized_graph():
@@ -134,4 +149,6 @@ def test_dag_ui_distinguishes_ir_authority_from_native_modes():
 
     assert "Workflow IR '+String(wir.workflow_hash" in panel
     assert "native compatibility" in panel
-    assert "Supervised done · native (IR parity pending)" in panel
+    assert "Supervised done · Workflow IR " in panel
+    assert "native compatibility" in panel
+    assert "native supervision" in panel

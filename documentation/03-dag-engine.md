@@ -145,9 +145,16 @@ the same boundary before its established SSE/HITL executor begins. Planning,
 approval ordering, parallel merge behavior, previews, completion events, and
 memory recording stay native. The default event payloads are unchanged; setting
 `include_workflow_ir=true` adds graph-free provenance to `dag.plan_ready`.
-Supervised and stepwise execution retain their native control paths so
-checkpoint, pause, resume, and adaptive planning behavior cannot be silently
-weakened.
+
+Supervised runs also materialize the exact definition before the first node,
+while the native supervisor remains the control authority for checkpoints,
+retries, inserted recovery nodes, and aborts. For exact definitions, runtime
+decisions modify only the materialized execution graph; they do not rewrite the
+submitted or stored definition. Non-canonical definitions retain the explicit
+native-compatibility behavior. The Workflow IR hash identifies what execution started
+from, while Run events describe subsequent control decisions. Stepwise execution
+retains its native adaptive-planning path because no complete graph exists at
+its start.
 
 The initial portable core covers sequential capability tasks, flat parallel
 groups, output state keys, and `CONDITION:<state-key>` guards. Native input/output
@@ -277,10 +284,11 @@ Executes the DAG linearly. State flows through. No LLM involvement — every cap
 After every step, an LLM inspects the result and decides:
 
 - `continue` — proceed to the next step
-- `retry` — re-run this step (useful when the result looked wrong)
+- `retry_node` — re-run this step (useful when the result looked wrong)
+- `insert_node` — add a registered recovery capability before continuing
 - `abort` — stop the DAG
 
-This gives you safety on long-running plans where one bad step would waste later steps. Set via `dag.run`'s `supervised=true` flag.
+This gives you safety on long-running plans where one bad step would waste later steps. Set via `dag.run`'s `supervised=true` flag. The definition is exact-round-tripped through Workflow IR first; supervision remains native and model-driven.
 
 ### `dag.run/monitored` — auto-correcting
 

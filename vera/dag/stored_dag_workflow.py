@@ -48,15 +48,26 @@ def inspect_stored_dag_workflow(
     aliases = sorted({alias for alias in registered_aliases
                       if isinstance(alias, str) and alias})
     gaps = list(imported.get("gaps") or [])
-    converged_modes = {"plain", "monitored", "streamed"}
+    converged_modes = {"plain", "supervised", "monitored", "streamed"}
+    control_authority = {
+        "plain": "native_runner",
+        "supervised": "native_supervisor",
+        "monitored": "native_monitor",
+        "streamed": "native_hitl_stream",
+        "stepwise": "native_agentic_loop",
+    }
     mode_status = {
         mode: {
-            "native_authoritative": (
-                mode not in converged_modes or not prepared["authoritative"]
-            ),
+            "native_authoritative": True,
             "workflow_ir_authoritative": (
                 mode in converged_modes and prepared["authoritative"]
             ),
+            "definition_authority": (
+                "workflow_ir"
+                if mode in converged_modes and prepared["authoritative"]
+                else "native"
+            ),
+            "control_authority": control_authority[mode],
             "parity_gate": (
                 prepared["mode"]
                 if mode in converged_modes else "pending"
