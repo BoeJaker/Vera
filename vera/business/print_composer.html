@@ -176,6 +176,17 @@ Sun: 15</textarea>
         <div class="chk"><input type="checkbox" id="c_cut" checked><label style="margin:0">Auto-cut after each print</label></div>
         <div class="mini" style="margin-top:8px">Targets come from the printer registry — the server USB printer, a printer on <b>this computer</b> (Web Serial), or a USB-ESP32 over the mesh.</div>
         <button class="btn wide" onclick="testPrint()">Send a test print</button>
+        <hr style="border:none;border-top:1px solid var(--border);margin:12px 0">
+        <div class="mini" style="margin-bottom:6px">Notifications to the printer</div>
+        <div class="chk"><input type="checkbox" id="n_master" onchange="saveSubs()"><label style="margin:0"><b>Print Vera notifications</b> (master)</label></div>
+        <div style="margin:6px 0 0 6px">
+          <div class="chk"><input type="checkbox" id="n_system" onchange="saveSubs()"><label style="margin:0">System alerts</label></div>
+          <div class="chk"><input type="checkbox" id="n_dreams" onchange="saveSubs()"><label style="margin:0">Dream director</label></div>
+          <div class="chk"><input type="checkbox" id="n_narrator" onchange="saveSubs()"><label style="margin:0">Narrator</label></div>
+          <div class="chk"><input type="checkbox" id="n_chat" onchange="saveSubs()"><label style="margin:0">Chat replies</label></div>
+        </div>
+        <div class="mini" style="margin-top:6px">Master off silences all printer notifications. Any source can also be printed on demand by selecting its text and using the floating Print button.</div>
+        <div class="mini" id="n_st" style="margin-top:4px"></div>
         <vera-thermal-printer id="tpEl" baud="9600" style="display:none"></vera-thermal-printer>
       </div>
     </div>
@@ -369,6 +380,16 @@ async function saveDaily(){const t=($('dp_time').value||'07:00').split(':');
   const r=await post('/print/config/set',{enabled:$('dp_en').checked,hour:parseInt(t[0]||'7',10),minute:parseInt(t[1]||'0',10),items:items.join(','),printer_id:targetId()});
   $('dp_st').textContent=(r&&r.ok)?('saved — '+($('dp_en').checked?('daily at '+$('dp_time').value):'off')):'save failed';
 }
+async function loadSubs(){const r=await j('/print/subs');const s=(r&&r.subs)||{};const src=s.sources||{};
+  if($('n_master'))$('n_master').checked=s.master!==false;
+  if($('n_system'))$('n_system').checked=src.system!==false;
+  if($('n_dreams'))$('n_dreams').checked=!!src.dreams;
+  if($('n_narrator'))$('n_narrator').checked=!!src.narrator;
+  if($('n_chat'))$('n_chat').checked=!!src.chat;
+}
+async function saveSubs(){const r=await post('/print/subs/set',{master:$('n_master').checked,system:$('n_system').checked,dreams:$('n_dreams').checked,narrator:$('n_narrator').checked,chat:$('n_chat').checked});
+  if($('n_st')){$('n_st').textContent=(r&&r.ok)?'saved':'save failed';setTimeout(()=>{if($('n_st'))$('n_st').textContent='';},1200);}
+}
 // ---- print routing + helpers ----
 let PRINTERS=[], TARGET=null;
 async function printJob(path, body){
@@ -417,5 +438,6 @@ function tplDel(){const n=$('tpl_sel').value;if(!n)return;const all=tplStore();d
 refreshStatus();setInterval(refreshStatus,15000);
 tplRefresh();
 loadDaily();
+loadSubs();
 render();
 </script>

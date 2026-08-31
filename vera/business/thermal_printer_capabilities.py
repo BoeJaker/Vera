@@ -1051,6 +1051,93 @@ if _CAP_AVAILABLE:
     except Exception as _e:                        # pragma: no cover
         log.debug("daily print scheduler not registered: %s", _e)
 
+    # ── Notification subscriptions: control what auto-prints ──────────────────
+    _SUBS_DEFAULT = {"master": True, "sources": {"system": True, "dreams": False,
+                                                 "narrator": False, "chat": False}}
+
+    def _subs_get():
+        try:
+            conn = _sqlite_conn()
+            try:
+                conn.execute("CREATE TABLE IF NOT EXISTS print_kv (k TEXT PRIMARY KEY, v TEXT)")
+                r = conn.execute("SELECT v FROM print_kv WHERE k='subs'").fetchone()
+                conn.commit()
+                if not r:
+                    return json.loads(json.dumps(_SUBS_DEFAULT))
+                d = json.loads(dict(r)["v"]) or {}
+                out = json.loads(json.dumps(_SUBS_DEFAULT))
+                if "master" in d:
+                    out["master"] = bool(d["master"])
+                out["sources"].update({k: bool(v) for k, v in (d.get("sources") or {}).items()})
+                return out
+            finally:
+                conn.close()
+        except Exception:
+            return json.loads(json.dumps(_SUBS_DEFAULT))
+
+    def _subs_set(patch):
+        cur = _subs_get()
+        if "master" in (patch or {}):
+            cur["master"] = bool(patch["master"])
+        if "sources" in (patch or {}):
+            cur["sources"].update({k: bool(v) for k, v in (patch["sources"] or {}).items()})
+        try:
+            conn = _sqlite_conn()
+            try:
+                conn.execute("CREATE TABLE IF NOT EXISTS print_kv (k TEXT PRIMARY KEY, v TEXT)")
+                conn.execute("INSERT OR REPLACE INTO print_kv (k,v) VALUES ('subs',?)", (json.dumps(cur),))
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception:
+            pass
+        return cur
+
+    def _subs_allows(source):
+        s = _subs_get()
+        if not s.get("master", True):
+            return False
+        return bool((s.get("sources") or {}).get(source, source == "system"))
+
+    @capability("print.subs.get", http_method="GET", http_path="/print/subs",
+                http_tags=["print"], memory="off", silent=True,
+                description="Get printer notification subscriptions {master, sources:{system,dreams,narrator,chat}}.")
+    async def cap_print_subs_get(trace_id=None):
+        return {"subs": await _run(_subs_get)}
+
+    @capability("print.subs.set", http_method="POST", http_path="/print/subs/set",
+                http_tags=["print"],
+                description="Control what auto-prints to the thermal printer. Input: master (bool -- "
+                            "master on/off), system / dreams / narrator / chat (bool, per-source). "
+                            "Output: {ok, subs}.")
+    async def cap_print_subs_set(master: bool = None, system: bool = None, dreams: bool = None,
+                                 narrator: bool = None, chat: bool = None, trace_id=None):
+        patch = {}
+        if master is not None: patch["master"] = bool(master)
+        src = {}
+        for k, v in (("system", system), ("dreams", dreams), ("narrator", narrator), ("chat", chat)):
+            if v is not None: src[k] = bool(v)
+        if src: patch["sources"] = src
+        return {"ok": True, "subs": await _run(_subs_set, patch)}
+
+    @capability("print.push", http_method="POST", http_path="/print/push",
+                http_tags=["print"],
+                schema=enum_schema(source=["system", "dreams", "narrator", "chat"]),
+                description="Route a piece of output to the thermal printer IF the user has subscribed "
+                            "that source (see print.subs) -- the single entry any subsystem (dream "
+                            "director, narrator, chat, alerts) calls. Input: source, title, body, level, "
+                            "printer_id, force (bool, ignore subscription). Output: {ok, printed, ...}.")
+    async def cap_print_push(source: str = "system", title: str = "", body: str = "",
+                             level: str = "info", printer_id: str = "", force: bool = False,
+                             trace_id=None):
+        await _ensure_schema()
+        if not force and not await _run(_subs_allows, source):
+            return {"ok": True, "printed": False, "skipped": True, "source": source}
+        r = await cap_print_notify(title=(title or source.title()), body=body, level=level,
+                                   printer_id=printer_id, force=True)
+        return {"ok": True, "printed": bool(r.get("routed") or r.get("escpos_b64")),
+                "source": source, **r}
+
     @capability(
         "print.notify", http_method="POST", http_path="/print/notify",
         http_tags=["print"],
@@ -1060,8 +1147,10 @@ if _CAP_AVAILABLE:
                     "(info|warn|alert), printer_id. Also the 'printer' delivery channel. "
                     "Output: {ok, escpos_b64, bytes, transport, routed}.")
     async def cap_print_notify(title: str = "", body: str = "", level: str = "info",
-                               printer_id: str = "", trace_id=None):
+                               printer_id: str = "", force: bool = False, trace_id=None):
         await _ensure_schema()
+        if not force and not (await _run(_subs_get)).get("master", True):
+            return {"ok": True, "skipped": True, "reason": "printer notifications are off"}
         import time as _t
         mark = {"info": "*", "warn": "!!", "alert": "###"}.get((level or "info").lower(), "*")
         head = f"{mark} VERA {(level or 'info').upper()} {mark}"
