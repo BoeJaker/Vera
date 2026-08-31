@@ -138,10 +138,16 @@ error collection, optional parameter correction, usage statistics, and stored
 state overrides still run through their established native services after the
 definition is materialized. Their default response shapes are unchanged;
 `dag.store_run` and `dag.run_monitored` callers can opt into graph-free
-`workflow_ir` provenance with `include_workflow_ir=true`. Supervised, streamed,
-and stepwise execution retain
-their native control paths so checkpoint, pause, and resume behavior cannot be
-silently weakened.
+`workflow_ir` provenance with `include_workflow_ir=true`.
+
+One-shot `dag.plan_stream` execution prepares the complete validated plan at
+the same boundary before its established SSE/HITL executor begins. Planning,
+approval ordering, parallel merge behavior, previews, completion events, and
+memory recording stay native. The default event payloads are unchanged; setting
+`include_workflow_ir=true` adds graph-free provenance to `dag.plan_ready`.
+Supervised and stepwise execution retain their native control paths so
+checkpoint, pause, resume, and adaptive planning behavior cannot be silently
+weakened.
 
 The initial portable core covers sequential capability tasks, flat parallel
 groups, output state keys, and `CONDITION:<state-key>` guards. Native input/output
@@ -320,6 +326,12 @@ dag.error           — fatal error
 ```
 
 This is what powers the live DAG Workshop output strip.
+
+For one-shot mode, the full plan is exact-round-tripped through Workflow IR
+before the first execution event. Unsupported or non-canonical definitions use
+the explicit native-compatibility path instead of losing behavior. Add
+`include_workflow_ir=true` to the request to receive the definition hash,
+IR version, mode, and gap report on `dag.plan_ready`.
 
 ### Stepwise mode
 

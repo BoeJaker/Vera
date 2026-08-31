@@ -89,6 +89,20 @@ def workflow_execution_metadata(prepared: dict[str, Any]) -> dict[str, Any]:
     return metadata
 
 
+def prepare_streamed_dag_execution(
+    graph: list, *, include_workflow_ir: bool = False,
+) -> dict[str, Any]:
+    """Prepare one complete streamed graph without executing or emitting it."""
+    prepared = prepare_dag_execution(graph)
+    return {
+        "graph": prepared["graph"],
+        "workflow_ir": (
+            workflow_execution_metadata(prepared)
+            if include_workflow_ir else None
+        ),
+    }
+
+
 def _fallback(graph: list, reason: str, detail: str = "", gaps: list | None = None) -> dict[str, Any]:
     return {
         "schema": SCHEMA,

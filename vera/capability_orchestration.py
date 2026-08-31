@@ -10033,8 +10033,16 @@ async def dag_hitl_respond(request: Request):
     return {"status": "received", "action": action, "trace_id": trace_id}
 
 
-async def _hitl_run_graph_stream(graph, state, hitl, auto_approve_secs):
+async def _hitl_run_graph_stream(
+    graph, state, hitl, auto_approve_secs, *, workflow_prepared=None,
+):
     import json as _json, uuid as _uuid
+    if workflow_prepared is None:
+        from Vera.vera.execution.dag_workflow_execution import (
+            prepare_streamed_dag_execution,
+        )
+        workflow_prepared = prepare_streamed_dag_execution(graph)
+    graph = workflow_prepared["graph"]
     for i, node in enumerate(graph):
         is_parallel = isinstance(node, list) and isinstance(node[0], list)
         cap_name = None if is_parallel else (node[0] if isinstance(node, list) else node)
@@ -10117,6 +10125,8 @@ async def dag_plan_stream_endpoint(request: Request):
       hitl              : bool — pause for human approval before each step
       auto_approve_secs : int  — seconds before auto-approve (default 30)
       state             : dict — seed state (merged with plan's initial_state)
+      include_workflow_ir: bool — add graph-free definition provenance to
+                                  dag.plan_ready (default false)
       session_id        : str  — caller's session id; required for activity
                                  recording. Without it, the call still runs
                                  but does not appear in syslog as a cap.call.
@@ -10140,6 +10150,7 @@ async def dag_plan_stream_endpoint(request: Request):
     auto_approve_secs = int(body.get("auto_approve_secs", 30))
     seed_state        = dict(body.get("state") or {})
     session_id        = body.get("session_id", "") or ""
+    include_workflow_ir = bool(body.get("include_workflow_ir", False))
 
     async def _gen():
         import time as _time
@@ -10188,11 +10199,24 @@ async def dag_plan_stream_endpoint(request: Request):
             dag_arr      = plan.get("dag", [])
             plan_dag_arr = dag_arr
             plan_rationale = plan.get("rationale", "")
+            from Vera.vera.execution.dag_workflow_execution import (
+                prepare_streamed_dag_execution,
+            )
+            workflow_prepared = None
+            if do_execute or include_workflow_ir:
+                try:
+                    workflow_prepared = prepare_streamed_dag_execution(
+                        dag_arr, include_workflow_ir=include_workflow_ir,
+                    )
+                except (TypeError, ValueError) as e:
+                    plan_error = f"Invalid DAG definition: {e}"
+                    yield _sse("dag.error", {"error": plan_error})
+                    return
             # CRITICAL: merge the plan's initial_state with any seed state from caller
             plan_state   = dict(plan.get("initial_state") or {})
             plan_state.update(seed_state)          # caller seed takes precedence
 
-            yield _sse("dag.plan_ready", {
+            plan_ready = {
                 "dag":          dag_arr,
                 "initial_state": plan_state,
                 "rationale":    plan_rationale,
@@ -10202,13 +10226,17 @@ async def dag_plan_stream_endpoint(request: Request):
                 "steps":        len(dag_arr),
                 "execute":      do_execute,
                 "hitl":         hitl,
-            })
+            }
+            if workflow_prepared and workflow_prepared["workflow_ir"] is not None:
+                plan_ready["workflow_ir"] = workflow_prepared["workflow_ir"]
+            yield _sse("dag.plan_ready", plan_ready)
 
             if not do_execute:
                 yield _sse("dag.done", {"dag": dag_arr}); return
 
             async for ev_type, ev_data in _hitl_run_graph_stream(
-                    dag_arr, plan_state, hitl, auto_approve_secs):
+                    dag_arr, plan_state, hitl, auto_approve_secs,
+                    workflow_prepared=workflow_prepared):
                 if ev_type == "step.complete":
                     steps_emitted += 1
                 yield _sse(ev_type, ev_data)

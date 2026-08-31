@@ -1621,7 +1621,7 @@ async function libSelect(id){
         <br><span style="font-family:var(--mono);font-size:8.5px;color:var(--dim2)">${esc(wir.workflow_hash||'no portable hash')}</span>
         <br>definition ${esc(wir.record?.definition_hash||'')} · stored hash ${esc(wir.record?.stored_hash_status||'unknown')}
         <br>aliases: ${esc((wir.aliases||[]).join(', ')||'not registered')}
-        <br>gaps: ${(wir.gaps||[]).length} · plain/monitored use exact IR preparation; supervised/streamed/stepwise remain native
+        <br>gaps: ${(wir.gaps||[]).length} · plain/monitored/one-shot streamed use exact IR preparation; supervised/stepwise remain native
       </div></div>`:''}
     <div class="action-row" style="margin-top:auto;padding-top:8px;border-top:1px solid var(--border)">
       <button class="btn sm primary" onclick="libRunSelected()">Run</button>

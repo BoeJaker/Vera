@@ -48,7 +48,7 @@ def inspect_stored_dag_workflow(
     aliases = sorted({alias for alias in registered_aliases
                       if isinstance(alias, str) and alias})
     gaps = list(imported.get("gaps") or [])
-    converged_modes = {"plain", "monitored"}
+    converged_modes = {"plain", "monitored", "streamed"}
     mode_status = {
         mode: {
             "native_authoritative": (
