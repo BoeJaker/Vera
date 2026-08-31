@@ -33,8 +33,20 @@ This is an observation boundary, not a replacement scheduler. Calendar still
 owns timestamp and threshold evaluation, user notification, and system-action
 dispatch. Dream still owns idle, hour-window, cooldown, sensor, and resource
 gates plus cycle creation. Projection or event-bus failure is isolated from
-those existing decisions. Duplicate, misfire, and catch-up policy remain
-explicitly native. A small out-of-tree SQLite ledger now records each valid
+those existing decisions.
+
+Both adapters now derive their evidence from a closed,
+`vera.workflow-schedule/v1` definition. Calendar one-shots are normalized to a
+canonical UTC instant. Dream recurrences carry an explicit IANA timezone, a
+local-hours window, and an elapsed-time interval anchored to the last completed
+run. Local window checks therefore follow daylight-saving transitions while
+cooldowns measure real elapsed UTC time, avoiding duplicated or skipped wall
+clock hours. The definition is content-addressed, rejects unknown fields and
+invalid zones, and declares `executes: false`; it is portable schedule evidence,
+not another scheduler or authority path.
+
+Duplicate, misfire, and catch-up policy remain explicitly native. A small
+out-of-tree SQLite ledger now records each valid
 trigger identity atomically and emits a separate
 `vera.workflow-trigger-receipt/v1` observation. It survives process reopen,
 classifies the first observation versus later duplicates, retains bounded UTC
