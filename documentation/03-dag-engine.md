@@ -8,7 +8,7 @@ The DAG Workshop tab in the harness is the interactive surface; the capabilities
 
 ## Run protocol shadow
 
-The W1-01 integration wraps the existing `dag.run` path with a
+The run-protocol integration wraps the existing `dag.run` path with a
 runtime-neutral Run projection. It does not replace the DAG engine: native
 inputs, scheduling, HITL, cancellation, results, and failures remain
 authoritative. Observation failure is isolated so it cannot change the native
@@ -40,13 +40,13 @@ Journals created before identity/checkpoint metadata was introduced can still be
 verified and exported, but older event rows may recover only the fields encoded
 in those events. The implementation does not invent missing lineage.
 
-This slice is intentionally a compatibility facade. Later Workflow IR and
+This is intentionally a compatibility facade. Workflow IR and
 runtime-adapter work can emit the same contract without requiring Vera to replace
 LangGraph, external runtimes, or its own established DAG execution paths.
 
 ### Runtime-neutral durability fixture
 
-LIB-15 adds a static conformance fixture in
+A static conformance fixture in
 [`durability_fixture.py`](../vera/execution/durability_fixture.py). It combines a
 normalized Workflow IR definition with pinned definition/implementation
 revisions and expected Run event sequences for clean completion, retry,
@@ -74,7 +74,7 @@ either a named built-in Workflow IR adapter or one strict serialized runtime
 profile; ambiguous or malformed input fails closed. Both capability contracts
 declare no effects.
 
-LIB-16's first offline slice adds `workflow.durability.dbos_mapping`. It binds
+`workflow.durability.dbos_mapping` binds
 the fixture identity and Workflow IR hash to a `dbos==2.30.0` review manifest,
 mapping workflow IDs, application versions, steps, durable sleep, retry/timeout
 options, statuses, and Run-event evidence sources. The manifest is data rather
@@ -88,7 +88,7 @@ cancellation boundaries. Those gaps require the separately authorized DBOS and
 Postgres crash-recovery spike; the manifest does not claim that documentation
 alone proves them.
 
-LIB-17 adds the corresponding offline Temporal comparison as
+The corresponding offline Temporal comparison is available as
 `workflow.durability.temporal_paper`. It pins `temporalio==1.32.0`, binds the
 same fixture and the exact DBOS mapping identity, and maps the canonical steps
 to Workflows, Activities, durable timers, retry/timeout options, cancellation,
@@ -107,21 +107,19 @@ runtime superiority.
 
 ## Workflow IR inspection facade
 
-The held W1-02 foundation introduces a versioned, runtime-neutral description
-layer without changing execution. `workflow.ir.import_dag` converts supported
+Vera includes a versioned, runtime-neutral description layer for portable
+workflow definitions. `workflow.ir.import_dag` converts supported
 native DAG structure into Workflow IR; `workflow.ir.export_dag` performs the
 reverse conversion; and `workflow.ir.validate` returns the normalized document
 and stable SHA-256 content hash. All three report `executes: false`.
 
-W4-02 begins product convergence with `dag.workflow.inspect`. Unlike the raw
-array converter, this read-only facade starts from a persisted DAG ID or name
+`dag.workflow.inspect` connects that definition layer to persisted DAGs.
+Unlike the raw array converter, this read-only facade starts from a DAG ID or name
 and preserves the record identity, a stable hash of the DAG plus initial state,
 the stored content-hash status, and every currently registered `dag.*`
 capability alias. The DAG Workshop shows this evidence beside the saved
-definition. It also lists conversion gaps and states plainly that plain,
-supervised, monitored, streamed, and stepwise execution remain native. This
-slice neither edits the saved record nor claims execution parity; those modes
-move only after their separate Run/control/recovery gates pass.
+definition. It also lists conversion gaps and identifies the execution boundary
+used by each mode without editing the stored record.
 
 Supported unsupervised `dag.run` definitions now pass through an exact Workflow
 IR boundary. Vera imports the submitted graph, normalizes it, exports it, and
@@ -132,8 +130,18 @@ merge, errors, and Run observation. The Workflow IR content hash becomes the
 Run `workflow_id`; callers may request the corresponding provenance metadata
 without changing the legacy response shape. Callable conditions, malformed
 nodes, or any non-exact definition stay on an explicitly labelled
-`native_compatibility` path; no lossy execution is permitted. Supervised,
-monitored, streamed, and stepwise modes remain native and separately gated.
+`native_compatibility` path; no lossy execution is permitted.
+
+Stored runs, dynamically registered DAG capabilities, and monitored runs use
+the same exact preparation boundary when they are unsupervised. Monitoring,
+error collection, optional parameter correction, usage statistics, and stored
+state overrides still run through their established native services after the
+definition is materialized. Their default response shapes are unchanged;
+`dag.store_run` and `dag.run_monitored` callers can opt into graph-free
+`workflow_ir` provenance with `include_workflow_ir=true`. Supervised, streamed,
+and stepwise execution retain
+their native control paths so checkpoint, pause, and resume behavior cannot be
+silently weakened.
 
 The initial portable core covers sequential capability tasks, flat parallel
 groups, output state keys, and `CONDITION:<state-key>` guards. Native input/output
@@ -147,10 +155,10 @@ the result.
 This strict boundary is what makes later LangGraph, Temporal, ONNX workflow, and
 other runtime adapters honest: unsupported semantics are visible before any
 engine is selected. Retry, timeout, effects, schedules, loops/maps/reducers,
-compensation, HITL, and subworkflows remain subsequent W1-02 slices rather than
+compensation, HITL, and subworkflows remain future interoperability work rather than
 being inferred from Vera's compact DAG arrays.
 
-The second held slice adds explicit JSON-schema port descriptors and typed value
+Workflow IR also supports explicit JSON-schema port descriptors and typed value
 references for state, secrets, artifacts, records, and literals. References are
 validated and hashed as opaque descriptions; the adapter never resolves a
 secret, fetches an artifact, or reads a record. Task contracts can also declare
@@ -160,7 +168,7 @@ services. Native DAG export reports all of these as blocking gaps because the
 compact array cannot preserve or enforce them. Explicit `allow_lossy` is the only
 way to obtain an array with those contracts removed.
 
-The third held slice represents subworkflow references, conditional choices,
+Structural nodes represent subworkflow references, conditional choices,
 bounded maps, and reducers as strictly validated structural nodes. Nested step
 IDs remain globally unique within the document, subworkflows use opaque artifact
 or record references, and all values must be canonical JSON. The native DAG
@@ -169,7 +177,7 @@ flattens a branch, guesses collection semantics, resolves a child workflow, or
 executes a reducer. With explicit lossy export, unsupported nodes are omitted and
 the returned gap report remains attached.
 
-The fourth held slice adds workflow-level schedules, resource envelopes, and
+Workflow-level contracts cover schedules, resource envelopes, and
 opaque provider requirements, plus task-level HITL approval and compensation
 contracts. Schedule ownership is explicit (`runtime` or `external`), resource
 numbers must be finite and positive, approval declarations cannot masquerade as
@@ -178,7 +186,7 @@ timeout. These records are descriptive only: Vera does not schedule work,
 consume an approval, reserve a provider, or invoke rollback through Workflow IR.
 Native DAG export reports every operational contract as a blocking gap.
 
-The fifth held slice adds explicit current-version migration and declarative
+Explicit current-version migration and declarative
 adapter profiles. `workflow.ir.migrate` normalizes IR 1.0 without changing its
 hash semantics and refuses unknown source or target versions. It never invents a
 migration. `workflow.ir.adapters` distinguishes schema availability from

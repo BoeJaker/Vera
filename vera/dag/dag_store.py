@@ -75,6 +75,10 @@ import httpx
 
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.config import cfg
+from Vera.vera.execution.dag_workflow_execution import (
+    prepare_dag_execution,
+    workflow_execution_metadata,
+)
 from Vera.vera.capability_orchestration import (
     APP,                   # noqa
     CAPABILITY_REGISTRY,
@@ -873,13 +877,16 @@ class ExecutionMonitor:
         trace_id:       str,
         max_corrections: int = 3,
         supervised:      bool = False,
+        include_workflow_ir: bool = False,
     ) -> dict:
         """Execute dag, then attempt LLM-driven error correction for failed nodes."""
         from Vera.vera.capability_orchestration import run_graph, supervised_run_graph
 
         t0     = time.monotonic()
+        prepared = prepare_dag_execution(dag, supervised=supervised)
         fn     = supervised_run_graph if supervised else run_graph
-        result = await fn(dag, dict(state))
+        execution_graph = prepared["graph"]
+        result = await fn(execution_graph, dict(state))
         runtime_ms = (time.monotonic() - t0) * 1000
 
         # Find errors in result
@@ -889,7 +896,7 @@ class ExecutionMonitor:
         corrections = []
         if errors and max_corrections > 0:
             corrections = await self._correct_errors(
-                dag, state, result, errors, max_corrections
+                execution_graph, state, result, errors, max_corrections
             )
             # Apply corrections
             for corr in corrections:
@@ -904,9 +911,11 @@ class ExecutionMonitor:
             "errors_found": len(errors),
             "corrections":  len([c for c in corrections if c.get("success")]),
             "error_keys":   list(errors.keys()),
+            "workflow_id":  prepared.get("workflow_hash") or None,
+            "execution_mode": prepared["mode"],
         })
 
-        return {
+        response = {
             "result":          result,
             "runtime_ms":      round(runtime_ms),
             "errors_found":    len(errors),
@@ -917,6 +926,9 @@ class ExecutionMonitor:
                 "corrected":   [c["output_key"] for c in corrections if c.get("success")],
             }
         }
+        if include_workflow_ir:
+            response["workflow_ir"] = workflow_execution_metadata(prepared)
+        return response
 
     async def _correct_errors(
         self,
@@ -1580,7 +1592,8 @@ async def dag_store_delete(id: str, trace_id=None):
     "dag.store_run", memory="on",
     http_method="POST", http_path="/dag/store/run", http_tags=["dag"],
     description="Load a stored DAG by id or name and execute it. "
-                "Optionally override initial_state. Returns result + execution report.",
+                "Optionally override initial_state. Returns result + execution report; "
+                "include_workflow_ir adds graph-free execution provenance.",
 )
 async def dag_store_run(
     id:            str  = "",
@@ -1588,6 +1601,7 @@ async def dag_store_run(
     state_override:str  = "{}",
     supervised:    bool = False,
     auto_correct:  bool = True,
+    include_workflow_ir: bool = False,
     trace_id=None,
 ):
     rec = None
@@ -1604,13 +1618,17 @@ async def dag_store_run(
 
     if auto_correct:
         result = await EXEC_MONITOR.run_and_correct(
-            rec.dag, state, tid, supervised=supervised
+            rec.dag, state, tid, supervised=supervised,
+            include_workflow_ir=include_workflow_ir,
         )
     else:
         from Vera.vera.capability_orchestration import run_graph, supervised_run_graph
+        prepared = prepare_dag_execution(rec.dag, supervised=supervised)
         fn     = supervised_run_graph if supervised else run_graph
-        raw    = await fn(rec.dag, state)
+        raw    = await fn(prepared["graph"], state)
         result = {"result": raw, "runtime_ms": round((time.monotonic()-t0)*1000)}
+        if include_workflow_ir:
+            result["workflow_ir"] = workflow_execution_metadata(prepared)
 
     # Update usage stats
     await DAG_STORE.update_stats(rec.id, result.get("runtime_ms", 0))
@@ -1623,13 +1641,15 @@ async def dag_store_run(
     "dag.run_monitored", memory="on",
     http_method="POST", http_path="/dag/run/monitored", http_tags=["dag"],
     description="Execute a DAG with Redis monitoring and LLM error correction. "
-                "Failed nodes are automatically retried with LLM-corrected inputs.",
+                "Failed nodes are automatically retried with LLM-corrected inputs. "
+                "include_workflow_ir adds graph-free execution provenance.",
 )
 async def dag_run_monitored(
     dag:          str,            # JSON array string
     state:        str  = "{}",
     supervised:   bool = False,
     auto_correct: bool = True,
+    include_workflow_ir: bool = False,
     trace_id=None,
 ):
     try: dag_arr = json.loads(dag)
@@ -1643,6 +1663,7 @@ async def dag_run_monitored(
         dag_arr, state_dict, tid,
         max_corrections=3 if auto_correct else 0,
         supervised=supervised,
+        include_workflow_ir=include_workflow_ir,
     )
 
 
