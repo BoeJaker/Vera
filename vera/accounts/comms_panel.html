@@ -57,6 +57,7 @@ html,body{ margin:0;padding:0;height:100%;background:var(--bg);color:var(--fg);o
       <div class="subtab" data-k="calendar"><span class="gl">🗓</span> Calendar</div>
       <div class="subtab" data-k="email"><span class="gl">✉</span> Email</div>
       <div class="subtab" data-k="telegram"><span class="gl">✈</span> Telegram</div>
+      <div class="subtab" data-k="printer"><span class="gl">🖨</span> Printer</div>
     </nav>
   </aside>
   <div id="frames">
@@ -64,6 +65,7 @@ html,body{ margin:0;padding:0;height:100%;background:var(--bg);color:var(--fg);o
     <iframe data-k="calendar" data-src="/cal/panel" allow="clipboard-read; clipboard-write"></iframe>
     <iframe data-k="email" data-src="/mail/panel" allow="clipboard-read; clipboard-write"></iframe>
     <iframe data-k="telegram" data-src="/telegram/panel" allow="clipboard-read; clipboard-write"></iframe>
+    <iframe data-k="printer" data-src="/print/panel" allow="serial; usb; clipboard-read; clipboard-write"></iframe>
   </div>
 </div>
 <script>

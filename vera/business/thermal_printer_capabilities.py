@@ -885,6 +885,13 @@ if _CAP_AVAILABLE:
                                 media_type="application/javascript")
             return Response("/* thermal_printer_element.js not found */",
                             media_type="application/javascript", status_code=404)
+
+        @_APP.get("/print/panel", include_in_schema=False)
+        async def _print_panel_route():
+            from fastapi.responses import HTMLResponse
+            p = _HERE / "print_composer.html"
+            return HTMLResponse(p.read_text(encoding="utf-8") if p.exists()
+                                else "<p style='color:red'>print_composer.html not found</p>")
     except Exception as _e:                       # pragma: no cover
         log.debug("thermal element route not mounted: %s", _e)
 

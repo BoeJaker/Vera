@@ -748,7 +748,7 @@ register_ui(
     """<div id="comms-panel-mount" style="height:100%;display:flex;flex-direction:column;">
   <iframe src="/comms/panel"
           style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"
-          allow="clipboard-read; clipboard-write">
+          allow="clipboard-read; clipboard-write; serial; usb">
   </iframe>
 </div>""",
     "",
