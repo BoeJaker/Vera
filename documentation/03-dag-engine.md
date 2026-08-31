@@ -164,6 +164,17 @@ that action; default event payloads are unchanged. The DAG Workshop requests
 this evidence and shows the definition identity and native control mode beside
 the action parameters, result, error, or approval request.
 
+Executed one-shot and stepwise streams also create a non-authoritative Run
+projection alongside their native SSE lifecycle. Each emitted step becomes a
+child Run; approval pauses and resumptions, rejection, step failure, client
+cancellation, fatal stream failure, progress, and completion are recorded in
+the same checksummed journal used by other DAG shadows. One-shot parent Runs
+use the complete Workflow IR hash, while adaptive child Runs use the exact
+per-action identity. The projection stores lifecycle metadata only: goals,
+parameters, state, result previews, approval tokens, and native error text are
+not copied into it. Projection or journal failure is isolated, and no
+`run.event` bytes are added to the established SSE response.
+
 The initial portable core covers sequential capability tasks, flat parallel
 groups, output state keys, and `CONDITION:<state-key>` guards. Native input/output
 maps round-trip under namespaced extensions but are reported as non-blocking gaps

@@ -5,7 +5,11 @@ import time
 import pytest
 
 from vera.execution.run_journal import SqliteRunJournal
-from vera.execution.run_projection import DagRunObserver, ShadowRunRegistry
+from vera.execution.run_projection import (
+    DagRunObserver,
+    ShadowRunRegistry,
+    StreamDagRunProjection,
+)
 from vera.execution.run_protocol import Run, RunStatus
 
 
@@ -289,3 +293,127 @@ def test_observer_overhead_stays_below_generous_shadow_budget():
 
     assert min(samples) < 0.5
     assert len(final_registry.list(limit=200)) == 101
+
+
+def test_stream_projection_records_approval_resume_and_definition_identity():
+    registry = ShadowRunRegistry()
+    projection = StreamDagRunProjection(
+        mode="stepwise", trace_id="trace", session_id="chat-1",
+        registry=registry,
+    )
+
+    projection.observe("dag.step_start", {
+        "step": 0, "cap": "example.cap", "out_key": "answer",
+    })
+    projection.observe("dag.hitl_request", {
+        "step": 0, "cap": "example.cap", "out_key": "answer",
+        "trace_id": "private-approval-reference",
+    })
+    projection.observe("dag.step_done", {
+        "step": 0, "cap": "example.cap", "out_key": "answer",
+        "result_preview": "must not enter the Run projection",
+    })
+    projection.observe("dag.complete", {
+        "state": {"secret": "must not enter the Run projection"},
+        "steps_taken": 1,
+    })
+
+    record = registry.get(projection.run_id)
+    child = record["children"][0]
+    assert record["run"]["status"] == "completed"
+    assert record["run"]["progress"] == 1.0
+    assert child["status"] == "completed"
+    assert child["workflow_id"] != "trace"
+    assert [event["type"] for event in child["events"]] == [
+        "run.started", "run.approval.pending", "run.approval.resumed",
+        "run.completed",
+    ]
+    exported = registry.journal.export(projection.run_id)
+    assert exported["event_count"] == 3
+    assert "secret" not in str(record)
+    assert "result_preview" not in str(record)
+    assert "private-approval-reference" not in str(record)
+
+
+def test_stream_projection_records_rejection_failure_and_cancellation():
+    registry = ShadowRunRegistry()
+    rejected = StreamDagRunProjection(
+        mode="oneshot", trace_id="reject", graph=[["example.cap", "answer"]],
+        registry=registry,
+    )
+    rejected.observe("dag.step_start", {
+        "step": 0, "total": 1, "cap": "example.cap", "out_key": "answer",
+    })
+    rejected.observe("dag.hitl_request", {"step": 0, "cap": "example.cap"})
+    rejected.observe("dag.hitl_rejected", {"step": 0, "cap": "example.cap"})
+    rejected.observe("dag.complete", {
+        "state": {}, "aborted_at": 0, "reason": "user rejected",
+    })
+    rejected_record = registry.get(rejected.run_id)
+    assert rejected_record["run"]["status"] == "cancelled"
+    assert rejected_record["children"][0]["status"] == "cancelled"
+
+    failed = StreamDagRunProjection(
+        mode="stepwise", trace_id="failed", registry=registry,
+    )
+    failed.observe("dag.error", {"error": "sensitive planner response"})
+    assert registry.get(failed.run_id)["run"]["status"] == "failed"
+    assert "sensitive planner response" not in str(registry.get(failed.run_id))
+
+    cancelled = StreamDagRunProjection(
+        mode="stepwise", trace_id="cancelled", registry=registry,
+    )
+    cancelled.cancel()
+    assert registry.get(cancelled.run_id)["run"]["status"] == "cancelled"
+
+
+def test_stream_projection_is_failure_isolated():
+    class BrokenRegistry:
+        def record(self, *_args):
+            raise RuntimeError("journal unavailable")
+
+    projection = StreamDagRunProjection(
+        mode="stepwise", trace_id="trace", registry=BrokenRegistry(),
+    )
+    projection.observe("dag.step_start", {
+        "step": 0, "cap": "example.cap", "out_key": "answer",
+    })
+    projection.observe("dag.step_done", {"step": 0, "cap": "example.cap"})
+    projection.complete()
+
+    # Projection state can be incomplete, but failures never escape to native
+    # streamed execution.
+    assert projection.run_id
+
+
+def test_stream_projection_replays_parent_and_children_from_durable_journal(tmp_path):
+    path = tmp_path / "stream-runs.sqlite3"
+    journal = SqliteRunJournal(path)
+    registry = ShadowRunRegistry(max_runs=20, journal=journal)
+    projection = StreamDagRunProjection(
+        mode="oneshot", trace_id="trace", session_id="chat-1",
+        graph=[["example.cap", "answer"]], registry=registry,
+    )
+    projection.observe("dag.step_start", {
+        "step": 0, "total": 1, "cap": "example.cap", "out_key": "answer",
+    })
+    projection.observe("dag.step_done", {
+        "step": 0, "cap": "example.cap", "out_key": "answer",
+    })
+    projection.observe("dag.complete", {"state": {"answer": "private"}})
+    parent_id = projection.run_id
+    journal.close()
+
+    reopened = SqliteRunJournal(path)
+    recovered = ShadowRunRegistry(max_runs=20, journal=reopened)
+    record = recovered.get(parent_id)
+
+    assert recovered.recovery == {
+        "attempted": True, "recovered": 2, "failed": 0, "failures": [],
+    }
+    assert record["run"]["status"] == "completed"
+    assert record["run"]["progress"] == 1.0
+    assert record["children"][0]["status"] == "completed"
+    assert record["journal"]["ok"] is True
+    assert "private" not in str(record)
+    reopened.close()
