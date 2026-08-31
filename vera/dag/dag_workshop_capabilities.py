@@ -11500,6 +11500,30 @@ except Exception:                                     # pragma: no cover
         log.warning("editor_reply unavailable - decline replies stay opaque")
 
 
+# Bounding how much the editor may emit for the file it is editing.
+try:
+    from Vera.vera.dag import editor_output_bound as _editor_output_bound
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import editor_output_bound as _editor_output_bound
+    except Exception:
+        _editor_output_bound = None
+        log.warning("editor_output_bound unavailable - the editor stays "
+                    "unbounded (num_predict = the whole context window)")
+
+# Naming the edit that unbalanced the markup, rather than only the file.
+try:
+    from Vera.vera.dag import edit_tag_balance as _edit_tag_balance
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import edit_tag_balance as _edit_tag_balance
+    except Exception:
+        _edit_tag_balance = None
+        log.warning("edit_tag_balance unavailable - a broken-markup retry will "
+                    "not be told which edit broke it")
+
+
+
 def _v5_apply_edits(content: str, edits: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Apply anchored find/replace edits. {ok, content, applied, errors}.
 
@@ -11644,12 +11668,20 @@ async def cap_code_edit(path: str, task: str = "", session_id: str = "", repo: s
         return {"ok": False, "error": "llm.generate is unavailable"}
 
     attempts = max(1, int(os.getenv("V5_EDIT_MAX_ATTEMPTS", "3") or 3))
+    # Bound the editor by the file it is editing. Nothing bounded it before:
+    # llm.generate hands num_predict the whole context window, so a runaway edit
+    # of a 2KB file was free to spend 16384 tokens - which is what census run 20
+    # did, 1073s of it, before failing. `options` merges OVER the role options,
+    # so temperature/top_p from the coder role are untouched.
+    _edit_gen_options = ({"num_predict": _editor_output_bound.edit_num_predict(len(current))}
+                         if _editor_output_bound is not None else None)
     _prompt, last_err, res = prompt, "", None
     for attempt in range(1, attempts + 1):
         try:
             raw = await fn(prompt=_prompt, system=sys_prompt, output_format="json",
                            profile=LOOP_ROUTING_PROFILE, role="coder",
-                           session_id=session_id, caller="code.edit", trace_id=trace_id)
+                           options=_edit_gen_options, session_id=session_id,
+                           caller="code.edit", trace_id=trace_id)
         except Exception as e:
             return {"ok": False, "error": f"generation failed: {e}", "path": path}
         _raw_text = _strip_think(_v5_gen_text(raw) or "")[0]
@@ -11679,6 +11711,16 @@ async def cap_code_edit(path: str, task: str = "", session_id: str = "", repo: s
                     break
                 last_err = (f"the edited file no longer parses — "
                             f"{chk.get('checker','parser')}: {chk.get('error','')}")
+                # Which edit did it. Without this the retry is told only that
+                # the FILE is broken and re-derives every edit blind - census
+                # run 20 did that three times, 1728s, and never recovered.
+                if _edit_tag_balance is not None:
+                    try:
+                        _culprit = _edit_tag_balance.describe(edits)
+                    except Exception:                 # pragma: no cover
+                        _culprit = ""
+                    if _culprit:
+                        last_err += "\n" + _culprit
             else:
                 last_err = "; ".join(res["errors"][:4])
         if attempt >= attempts:
