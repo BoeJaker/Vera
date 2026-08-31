@@ -68,6 +68,7 @@ try{var t=localStorage.getItem('vera-theme');if(t)document.documentElement.setAt
         <div class="tab" data-m="recipe">Recipe</div>
         <div class="tab" data-m="graph">Graph</div>
         <div class="tab" data-m="image">Image</div>
+        <div class="tab" data-m="feeds">Feeds</div>
         <div class="tab" data-m="cfg">Routing</div>
       </div>
       <div class="tplbar" style="display:flex;gap:6px;align-items:center;margin:6px 0 2px">
@@ -144,6 +145,12 @@ Sun: 15</textarea>
         <div class="chk"><input type="checkbox" id="i_dither" checked onchange="render()"><label style="margin:0">Dither (photos)</label></div>
       </div>
 
+      <div class="pane" data-p="feeds">
+        <div class="mini">Pull a live feed into the composer, then edit &amp; print it.</div>
+        <button class="btn wide" onclick="feedSchedule()">📅 Today’s schedule</button>
+        <button class="btn wide" onclick="feedDreams()" style="margin-top:6px">🌙 Dream digest</button>
+        <div class="mini" id="feed_st" style="margin-top:8px"></div>
+      </div>
       <div class="pane" data-p="cfg">
         <label>Send to</label>
         <select id="c_printer" onchange="onTarget()"></select>
@@ -299,6 +306,30 @@ async function doPrint(){
 async function testNotify(){const r=await post('/printer/notify',{title:'Printer wired up',body:'Vera can now send notifications, lists,\nrecipes, graphs and images to paper.',level:'info'});
   if(r&&r.ok)toast('notification sent to printer');else toast((r&&r.error)||'failed',true);}
 
+// ---- feeds (live data into the composer) ----
+async function feedSchedule(){const st=$('feed_st');if(st)st.textContent='loading…';
+  const s=await j('/cal/assistant/briefing');
+  if(!s||!Array.isArray(s.today)){if(st)st.textContent='could not load schedule';return;}
+  const NL=String.fromCharCode(10);
+  const hm=e=>new Date(e).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+  const fmt=e=>{ if(e.all_day) return '- all day   '+e.title+(e.location?('   @ '+e.location):'');
+    return '- '+hm(e.start)+(e.end?('-'+hm(e.end)):'')+'  '+e.title+(e.location?('   @ '+e.location):''); };
+  const lines=[(s.today_human||'Today'),''].concat(s.today.length?s.today.map(fmt):['(nothing scheduled)']);
+  $('t_text').value=lines.join(NL); $('t_align').value='left';
+  document.querySelector('.tab[data-m="text"]').click(); if(st)st.textContent='loaded — edit & print';
+}
+async function feedDreams(){const st=$('feed_st');if(st)st.textContent='loading…';
+  const s=await j('/dream/director/journal'); const ent=(s&&s.entries)||[];
+  if(!ent.length){if(st)st.textContent='no dream journal yet';return;}
+  const NL=String.fromCharCode(10); const recent=ent.slice(-6);
+  const lines=['Dream digest',''];
+  recent.forEach(e=>{ const d=e.ts?new Date(e.ts):null;
+    const t=d?d.toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'';
+    lines.push('* '+(e.title||e.kind||'entry')+(t?('  ('+t+')'):''));
+    if(e.text) lines.push(String(e.text).slice(0,400)); lines.push(''); });
+  $('t_text').value=lines.join(NL); $('t_align').value='left';
+  document.querySelector('.tab[data-m="text"]').click(); if(st)st.textContent='loaded — edit & print';
+}
 // ---- print routing + helpers ----
 let PRINTERS=[], TARGET=null;
 async function printJob(path, body){
