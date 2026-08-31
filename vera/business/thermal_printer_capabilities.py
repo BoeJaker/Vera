@@ -942,6 +942,16 @@ if _CAP_AVAILABLE:
             p = _HERE / "print_composer.html"
             return HTMLResponse(p.read_text(encoding="utf-8") if p.exists()
                                 else "<p style='color:red'>print_composer.html not found</p>")
+
+        @_APP.get("/ui/vera-print-selection.js", include_in_schema=False)
+        async def _print_selection_js():
+            from fastapi.responses import Response
+            p = _HERE / "vera-print-selection.js"
+            if p.exists():
+                return Response(p.read_text(encoding="utf-8"),
+                                media_type="application/javascript; charset=utf-8")
+            return Response("/* vera-print-selection.js not found */",
+                            media_type="application/javascript; charset=utf-8", status_code=404)
     except Exception as _e:                       # pragma: no cover
         log.debug("thermal element route not mounted: %s", _e)
 

@@ -652,3 +652,9 @@
   if(document.readyState === 'complete' || document.readyState === 'interactive'){ setTimeout(publishStateDebounced, 100); }
   else { document.addEventListener('DOMContentLoaded', function(){ setTimeout(publishStateDebounced, 100); }); }
 })();
+
+/* Vera: load the select-anywhere -> thermal print helper (isolated, best-effort) */
+try{ (function(){ if(window.__veraPrintSelLoad) return; window.__veraPrintSelLoad = 1;
+  var s = document.createElement('script'); s.src = '/ui/vera-print-selection.js'; s.async = true;
+  (document.head || document.documentElement).appendChild(s);
+})(); }catch(e){}
