@@ -10025,6 +10025,19 @@ def _code_norm_path(path: str) -> str:
     return "/".join(parts)[:300]
 
 
+# One definition of "this path already starts at the workspace root", shared
+# with the READ side so a write can never land somewhere the read did not look.
+try:
+    from Vera.vera import workspace_path as _workspace_path
+except Exception:                                     # pragma: no cover
+    try:
+        from vera import workspace_path as _workspace_path
+    except Exception:
+        _workspace_path = None
+        log.warning("workspace_path unavailable - code.author/code.edit fall "
+                    "back to the pre-2026-08-31 collapse (shadow files possible)")
+
+
 def _code_workspace_path(path: str, repo: str = "") -> str:
     """Normalise a logical path AND collapse a redundant leading `workspace/`.
 
@@ -10042,11 +10055,20 @@ def _code_workspace_path(path: str, repo: str = "") -> str:
     hunting the file, failed code.edit three times and re-authored the whole
     file at 47s a go.
 
-    Shared by both caps so they cannot drift apart again. Repo paths are left
-    alone: there `workspace/` can be a real top-level directory.
+    Shared by both caps so they cannot drift apart again - and, since 2026-08-31,
+    with the READ side too (vera.workspace_path), which is where it drifted next:
+    the read collapsed the prefix unconditionally while this collapsed it only
+    without a repo, so a call carrying an absolute path AND a repo read the real
+    file and wrote a shadow beside it. See vera/workspace_path.py for the census
+    run 21 evidence. A RELATIVE `workspace/` inside a repo is still left alone -
+    there it can be a real top-level directory.
     """
-    p = _code_norm_path(str(path or "").strip())
-    if not repo:
+    raw = str(path or "").strip()
+    p = _code_norm_path(raw)
+    if _workspace_path is not None:
+        if _workspace_path.should_collapse(raw, repo):
+            p = _workspace_path.collapse_workspace_prefix(p)
+    elif not repo:                                    # pragma: no cover
         parts = p.split("/")
         if len(parts) > 1 and parts[0] == "workspace":
             p = "/".join(parts[1:])
