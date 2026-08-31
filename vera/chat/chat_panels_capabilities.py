@@ -854,6 +854,14 @@ async def cap_chat_deliver(
 ):
     if not (report or "").strip():
         return {"ok": False, "error": "report is required"}
+    try:
+        _pp = CAPABILITY_REGISTRY.get("print.push")
+        _fn = (_pp.get("raw") or _pp.get("func")) if _pp else None
+        if _fn:
+            _bridge_asyncio.create_task(_fn(source="chat", title=(title or "Chat"),
+                                            body=(report or ""), level="info"))
+    except Exception:
+        pass
     reply = await cap_panel_dispatch(
         session_id=session_id,
         action="__chat_deliver__",
