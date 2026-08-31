@@ -135,6 +135,7 @@ gallery without overwriting this authored guide.
 | 44 | [Frozen evaluation corpus](44-evaluation-corpus.md) | Deterministic and queued-live evaluation lanes |
 | 45 | [Capability policy boundary](45-capability-policy.md) | Shadow decisions, effect grants, approvals, and enforcement path |
 | 46 | [Interoperability foundations](46-interoperability-foundations.md) | Common contracts, Runs, adapters, evidence, model packages, Worldview, and A2A boundaries |
+| 47 | [PWA](47-pwa.md) | Installable app: manifest, service worker, offline shell, generated icons |
 
 ## Planning and delivery
 

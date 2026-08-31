@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vera — Install / PWA</title>
+<link rel="stylesheet" href="/ui/vera-panel.css">
+<script src="/ui/vera-ui.js"></script>
+<!-- Also loaded here so the panel still reports real client state when it is
+     opened directly at /pwa/panel rather than inside the harness iframe. The
+     client suppresses its install pill in an iframe, so this cannot double up. -->
+<script src="/ui/pwa/pwa.js" defer></script>
+<style>
+  body{margin:0;padding:18px;background:var(--bg0,#181614);color:var(--text,#ddd5c8);
+       font-family:var(--sans,system-ui,sans-serif);font-size:13px}
+  h2{font-size:13px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;
+     color:var(--dim2,#8a7e70);margin:0 0 12px}
+  .wrap{max-width:900px;display:flex;flex-direction:column;gap:16px}
+  .card{background:var(--bg1,#1f1d1a);border:1px solid var(--border,#3a3530);
+        border-radius:var(--radius,5px);padding:16px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+  label{display:block;font-size:11px;color:var(--dim2,#8a7e70);margin-bottom:5px}
+  input,select{width:100%;padding:7px 9px;background:var(--bg2,#272421);
+        color:var(--text,#ddd5c8);border:1px solid var(--border,#3a3530);
+        border-radius:var(--radius-sm,3px);font:inherit;font-size:12px}
+  input[type=color]{padding:2px;height:32px}
+  button{cursor:pointer;border:1px solid var(--border,#3a3530);
+         border-radius:var(--radius-sm,3px);padding:7px 14px;font:inherit;
+         font-size:12px;font-weight:600;background:var(--bg2,#272421);
+         color:var(--text,#ddd5c8)}
+  button.primary{background:var(--acc,#5a9e8f);color:var(--bg0,#181614);border-color:transparent}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:14px}
+  .kv{display:flex;justify-content:space-between;gap:14px;padding:6px 0;
+      border-bottom:1px solid var(--border,#3a3530);font-size:12px}
+  .kv:last-child{border-bottom:none}
+  .kv span:first-child{color:var(--dim2,#8a7e70)}
+  .mono{font-family:var(--mono,monospace);font-size:11px}
+  .ok{color:var(--ok,#6db87a)} .bad{color:var(--err,#c96b6b)} .warn{color:var(--warn,#c9a35a)}
+  .note{font-size:11.5px;line-height:1.6;color:var(--dim2,#8a7e70);margin-top:10px}
+  .icons{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+  .icons img{border-radius:8px;background:var(--bg2,#272421)}
+  ul{margin:8px 0 0 18px;padding:0;font-size:11.5px;line-height:1.7;color:var(--dim2,#8a7e70)}
+  #msg{font-size:11.5px;min-height:16px;margin-top:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="card">
+    <h2>This browser</h2>
+    <div id="client"><span class="mono">checking…</span></div>
+    <div class="row">
+      <button class="primary" id="install" disabled>Install Vera</button>
+      <button id="update">Check for update</button>
+      <button id="clear">Clear app cache</button>
+      <button id="unregister">Unregister worker</button>
+    </div>
+    <div id="msg"></div>
+  </div>
+
+  <div class="card">
+    <h2>Server status</h2>
+    <div id="status"><span class="mono">loading…</span></div>
+  </div>
+
+  <div class="card">
+    <h2>App icons</h2>
+    <div class="icons" id="icons"></div>
+  </div>
+
+  <div class="card">
+    <h2>Configuration</h2>
+    <div class="grid">
+      <div><label for="f-name">App name</label><input id="f-name"></div>
+      <div><label for="f-short">Short name (launcher)</label><input id="f-short"></div>
+      <div><label for="f-display">Display mode</label><select id="f-display"></select></div>
+      <div><label for="f-strategy">Asset caching</label><select id="f-strategy"></select></div>
+      <div><label for="f-theme">Theme colour</label><input type="color" id="f-theme"></div>
+      <div><label for="f-bg">Background colour</label><input type="color" id="f-bg"></div>
+      <div><label for="f-icon">Icon colour</label><input type="color" id="f-icon"></div>
+      <div><label for="f-enabled">Enabled</label>
+           <select id="f-enabled"><option value="true">yes</option>
+                                  <option value="false">no — uninstall workers</option></select></div>
+    </div>
+    <div class="row">
+      <button class="primary" id="save">Save</button>
+      <button id="reload">Discard changes</button>
+    </div>
+    <div class="note">
+      <strong>network-first</strong> (default) always asks the server and only
+      falls back to the cache when it can't answer, so an edited panel is live
+      on the next load exactly as it is today.
+      <strong>stale-while-revalidate</strong> serves the cached copy first and
+      refreshes behind it — faster, but a UI change can be one load behind.
+    </div>
+  </div>
+
+</div>
+<script>
+const api = (p, o) => fetch(p, o).then(r => r.json());
+const el = (id) => document.getElementById(id);
+let CONFIG = null;
+
+function msg(text, cls) {
+  const m = el('msg');
+  m.textContent = text || '';
+  m.className = cls || '';
+}
+
+function kv(label, value, cls) {
+  return `<div class="kv"><span>${label}</span>` +
+         `<span class="mono ${cls || ''}">${value}</span></div>`;
+}
+
+function renderClient() {
+  const s = (window.parent && window.parent.__VERA_PWA__) || window.__VERA_PWA__;
+  if (!s) {
+    el('client').innerHTML = kv('client script',
+      'not loaded on this page — open Vera’s main window', 'warn');
+    return;
+  }
+  const standalone = window.matchMedia('(display-mode: standalone)').matches
+                  || (window.parent && window.parent.matchMedia
+                      && window.parent.matchMedia('(display-mode: standalone)').matches);
+  el('client').innerHTML =
+      kv('secure context', s.secureContext ? 'yes' : 'NO', s.secureContext ? 'ok' : 'bad')
+    + kv('service worker', s.supported ? (s.registered ? 'registered' : 'not registered')
+                                       : 'unsupported',
+         s.registered ? 'ok' : 'warn')
+    + kv('controlling this page', s.controlled ? 'yes' : 'not yet', s.controlled ? 'ok' : '')
+    + kv('running standalone', standalone ? 'yes' : 'no (browser tab)', standalone ? 'ok' : '')
+    + kv('worker version', s.version || '—')
+    + (s.error ? kv('error', s.error, 'bad') : '');
+
+  const btn = el('install');
+  btn.disabled = !s.installable;
+  btn.textContent = standalone ? 'Already installed'
+                  : (s.installable ? 'Install Vera'
+                                   : 'Install (browser has not offered yet)');
+  if (!s.secureContext) {
+    msg('This origin is not a secure context, so the browser refuses to register '
+      + 'a service worker. Trust Vera’s TLS certificate on this device (or '
+      + 'reach it over localhost) and reload.', 'warn');
+  }
+}
+
+function renderStatus(st) {
+  const a = st.assets_present || {};
+  const missing = Object.keys(a).filter(k => !a[k]);
+  el('status').innerHTML =
+      kv('enabled', st.enabled ? 'yes' : 'no', st.enabled ? 'ok' : 'warn')
+    + kv('version', st.version)
+    + kv('asset files', missing.length ? 'missing: ' + missing.join(', ') : 'all present',
+         missing.length ? 'bad' : 'ok')
+    + kv('config source', st.config_source)
+    + kv('asset strategy', (st.policy || {}).assetStrategy)
+    + kv('network timeout', ((st.policy || {}).networkTimeoutMs || 0) + ' ms')
+    + kv('page cache limit', (st.policy || {}).maxPageCacheEntries)
+    + kv('manifest', st.urls.manifest)
+    + kv('service worker', st.urls.service_worker)
+    + kv('offline shell', st.urls.offline)
+    + '<div class="note">A browser will install Vera when all of these hold:'
+    + '<ul>' + (st.install_requirements || []).map(r => `<li>${r}</li>`).join('') + '</ul></div>';
+
+  const v = st.version;
+  el('icons').innerHTML =
+      `<img src="/ui/pwa/icon-192.png?v=${v}" width="88" height="88" alt="icon 192">`
+    + `<img src="/ui/pwa/maskable-192.png?v=${v}" width="64" height="64" alt="maskable 192">`
+    + `<img src="/ui/pwa/icon.svg?v=${v}" width="48" height="48" alt="icon svg">`
+    + `<span class="mono" style="color:var(--dim2)">any / maskable / vector</span>`;
+}
+
+function fillForm(cfg) {
+  CONFIG = cfg;
+  el('f-name').value = cfg.name;
+  el('f-short').value = cfg.short_name;
+  el('f-theme').value = cfg.theme_color;
+  el('f-bg').value = cfg.background_color;
+  el('f-icon').value = cfg.icon_color;
+  el('f-enabled').value = String(!!cfg.enabled);
+}
+
+function fillOptions(st) {
+  el('f-display').innerHTML = (st.displays || []).map(
+    d => `<option value="${d}">${d}</option>`).join('');
+  el('f-strategy').innerHTML = (st.asset_strategies || []).map(
+    s => `<option value="${s}">${s}</option>`).join('');
+}
+
+async function load() {
+  const [st, cfg] = await Promise.all([api('/pwa/status'), api('/pwa/config')]);
+  fillOptions(st);
+  renderStatus(st);
+  fillForm(cfg.config);
+  el('f-display').value = cfg.config.display;
+  el('f-strategy').value = cfg.config.asset_strategy;
+  renderClient();
+}
+
+el('save').addEventListener('click', async () => {
+  msg('saving…');
+  const body = {
+    name: el('f-name').value.trim(),
+    short_name: el('f-short').value.trim(),
+    display: el('f-display').value,
+    asset_strategy: el('f-strategy').value,
+    theme_color: el('f-theme').value,
+    background_color: el('f-bg').value,
+    icon_color: el('f-icon').value,
+    enabled: el('f-enabled').value === 'true',
+  };
+  try {
+    const res = await api('/pwa/config', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (res.error) { msg(res.error, 'bad'); return; }
+    const rejected = (res.rejected || []);
+    msg('saved' + (rejected.length ? ' — ignored invalid: ' + rejected.join(', ') : '')
+      + '. Installed clients pick this up on their next visit.',
+      rejected.length ? 'warn' : 'ok');
+    await load();
+  } catch (e) { msg(String(e), 'bad'); }
+});
+
+el('reload').addEventListener('click', () => { msg(''); load(); });
+
+function pwa() { return (window.parent && window.parent.veraPWA) || window.veraPWA; }
+
+el('install').addEventListener('click', async () => {
+  const p = pwa();
+  if (!p) { msg('the PWA client is not loaded on the parent page', 'bad'); return; }
+  const r = await p.install();
+  msg(r.ok ? 'prompt outcome: ' + r.outcome : r.reason, r.ok ? 'ok' : 'warn');
+});
+el('update').addEventListener('click', async () => {
+  const p = pwa();
+  if (!p) { msg('the PWA client is not loaded on the parent page', 'bad'); return; }
+  await p.checkForUpdate();
+  msg('asked the browser to re-check /sw.js', 'ok');
+});
+el('clear').addEventListener('click', async () => {
+  const p = pwa();
+  const n = p ? await p.clearCaches() : 0;
+  msg('cleared ' + n + ' cache(s)', 'ok');
+});
+el('unregister').addEventListener('click', async () => {
+  const p = pwa();
+  if (!p) { msg('the PWA client is not loaded on the parent page', 'bad'); return; }
+  await p.unregister();
+  msg('service worker unregistered — reload to re-register', 'ok');
+  renderClient();
+});
+
+load().catch(e => msg(String(e), 'bad'));
+</script>
+</body>
+</html>

@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Vera — offline</title>
+<!-- Deliberately self-contained: this page is what the service worker shows
+     when the network is gone, so it must not depend on a single other
+     request succeeding. Icon inlined, styles inlined, no fonts. -->
+<style>
+  :root{color-scheme:dark}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{min-height:100vh;display:flex;align-items:center;justify-content:center;
+       padding:24px;background:#181614;color:#ddd5c8;
+       font-family:'IBM Plex Sans',system-ui,-apple-system,sans-serif}
+  .card{max-width:420px;width:100%;text-align:center}
+  svg{width:76px;height:76px;margin-bottom:22px;opacity:.9}
+  h1{font-size:18px;font-weight:600;letter-spacing:.2px;margin-bottom:10px}
+  p{font-size:13px;line-height:1.65;color:#8a7e70;margin-bottom:8px}
+  .row{margin-top:22px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+  button{cursor:pointer;border:1px solid #3a3530;border-radius:5px;
+         padding:9px 18px;font:inherit;font-size:12px;font-weight:600;
+         background:#5a9e8f;color:#181614;border-color:transparent}
+  button.ghost{background:transparent;color:#8a7e70;border-color:#3a3530}
+  .status{margin-top:18px;font-family:'JetBrains Mono','Fira Mono',monospace;
+          font-size:11px;color:#6a6058;min-height:15px}
+</style>
+</head>
+<body>
+  <div class="card">
+    <!-- Same mark and geometry as pwa_core.render_icon_svg(), drawn without
+         its background tile so it sits directly on the page. -->
+    <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Vera">
+      <path d="M 122.7 148.1 L 256.0 383.0 L 389.3 148.1" fill="none" stroke="#5a9e8f"
+            stroke-width="73.0" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="122.7" cy="148.1" r="51.7" fill="#5a9e8f"/>
+      <circle cx="256.0" cy="383.0" r="51.7" fill="#5a9e8f"/>
+      <circle cx="389.3" cy="148.1" r="51.7" fill="#5a9e8f"/>
+    </svg>
+    <h1>Vera is unreachable</h1>
+    <p>The app shell loaded from your device, but the orchestrator did not
+       answer. It may be restarting, or this device may be offline.</p>
+    <p>This page will retry on its own as soon as the connection returns.</p>
+    <div class="row">
+      <button id="retry" type="button">Retry now</button>
+      <button id="clear" class="ghost" type="button">Clear app cache</button>
+    </div>
+    <div class="status" id="status"></div>
+  </div>
+<script>
+(function () {
+  var status = document.getElementById('status');
+  var retrying = false;
+
+  function say(text) { status.textContent = text || ''; }
+
+  function retry() {
+    if (retrying) return;
+    retrying = true;
+    say('reconnecting…');
+    // Ask for something tiny and uncacheable; a success means the server is
+    // really back, not that a cached copy happened to be lying around.
+    fetch('/health', { cache: 'no-store' })
+      .then(function (res) {
+        if (res && res.ok) { location.reload(); return; }
+        throw new Error('status ' + (res && res.status));
+      })
+      .catch(function () {
+        retrying = false;
+        say('still unreachable — retrying automatically');
+      });
+  }
+
+  document.getElementById('retry').addEventListener('click', retry);
+
+  document.getElementById('clear').addEventListener('click', function () {
+    if (!window.caches) { say('no cache storage in this browser'); return; }
+    caches.keys().then(function (keys) {
+      return Promise.all(keys
+        .filter(function (k) { return k.indexOf('vera-pwa-') === 0; })
+        .map(function (k) { return caches.delete(k); }));
+    }).then(function () { say('cache cleared — reload when back online'); })
+      .catch(function () { say('could not clear the cache'); });
+  });
+
+  window.addEventListener('online', retry);
+  setInterval(function () { if (navigator.onLine) retry(); }, 15000);
+  if (navigator.onLine) setTimeout(retry, 1500);
+})();
+</script>
+</body>
+</html>

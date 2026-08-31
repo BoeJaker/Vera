@@ -9448,6 +9448,10 @@ async def lifespan(app: FastAPI):
         # at runtime into a git-ignored vendor/ dir and built into static assets
         # Vera serves — no Godseye source is tracked here.
         os.path.join(_here, "godseye/godseye_capabilities.py"),
+        # PWA: makes the harness installable — manifest, service worker,
+        # offline shell and generated app icons. Depends on nothing but APP,
+        # so its position here is only about keeping the list tidy.
+        os.path.join(_here, "pwa/pwa_capabilities.py"),
         os.path.join(_here, "vera_graph_panels.py")
 
     ]
