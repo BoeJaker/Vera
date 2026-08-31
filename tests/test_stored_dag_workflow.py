@@ -45,12 +45,15 @@ def test_definition_hash_changes_with_initial_state_but_not_usage_metadata():
     assert inspect_stored_dag_workflow(changed)["record"]["definition_hash"] != first["record"]["definition_hash"]
 
 
-def test_native_execution_modes_are_explicitly_not_claimed_by_ir():
+def test_stored_plain_and_monitored_modes_share_the_exact_ir_boundary():
     result = inspect_stored_dag_workflow(_record())
 
     assert set(result["execution_modes"]) == {"plain", "supervised", "monitored", "streamed", "stepwise"}
-    assert all(v["native_authoritative"] for v in result["execution_modes"].values())
-    assert not any(v["workflow_ir_authoritative"] for v in result["execution_modes"].values())
+    assert result["execution_modes"]["plain"]["workflow_ir_authoritative"] is True
+    assert result["execution_modes"]["monitored"]["workflow_ir_authoritative"] is True
+    assert result["execution_modes"]["supervised"]["native_authoritative"] is True
+    assert result["execution_modes"]["streamed"]["native_authoritative"] is True
+    assert result["execution_modes"]["stepwise"]["native_authoritative"] is True
 
 
 def test_lossy_native_definition_returns_explicit_gaps_without_workflow():
@@ -61,6 +64,9 @@ def test_lossy_native_definition_returns_explicit_gaps_without_workflow():
     assert result["ok"] is False
     assert result["workflow"] is None
     assert result["gaps"][0]["blocking"] is True
+    assert result["execution_modes"]["plain"]["native_authoritative"] is True
+    assert result["execution_modes"]["plain"]["workflow_ir_authoritative"] is False
+    assert result["execution_modes"]["plain"]["parity_gate"] == "native_compatibility"
 
 
 @pytest.mark.parametrize("field,value", [("id", ""), ("name", ""), ("dag", {}), ("initial_state", [])])
@@ -79,4 +85,5 @@ def test_workshop_and_capability_expose_the_same_read_only_inspection_route():
     assert '"dag.workflow.inspect"' in store_source
     assert 'http_path="/dag/workflow/inspect"' in store_source
     assert "/dag/workflow/inspect?id=" in panel_source
-    assert "supervised/monitored/streamed/stepwise remain native" in panel_source
+    assert "plain/monitored use exact IR preparation" in panel_source
+    assert "supervised/streamed/stepwise remain native" in panel_source

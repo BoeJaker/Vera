@@ -3,7 +3,11 @@ from pathlib import Path
 
 import pytest
 
-from vera.execution.dag_workflow_execution import prepare_plain_dag_execution
+from vera.execution.dag_workflow_execution import (
+    prepare_dag_execution,
+    prepare_plain_dag_execution,
+    workflow_execution_metadata,
+)
 from vera.execution.run_projection import ShadowRunRegistry
 import vera.execution.run_shadow as run_shadow
 
@@ -68,6 +72,25 @@ def test_malformed_json_safe_graph_stays_native_with_blocking_gap_evidence():
 def test_non_list_graph_is_rejected_before_any_adapter_work():
     with pytest.raises(TypeError, match="graph must be an array"):
         prepare_plain_dag_execution({})
+
+
+def test_supervised_execution_remains_an_explicit_native_boundary():
+    graph = [["alpha", "out"]]
+    result = prepare_dag_execution(graph, supervised=True)
+
+    assert result["mode"] == "native_supervised"
+    assert result["authoritative"] is False
+    assert result["graph"] is graph
+    assert result["workflow_hash"] == ""
+
+
+def test_public_provenance_excludes_the_materialized_graph():
+    result = prepare_dag_execution([["alpha", "out"]])
+    metadata = workflow_execution_metadata(result)
+
+    assert "graph" not in metadata
+    assert metadata["workflow_hash"].startswith("sha256:")
+    assert metadata["mode"] == "workflow_ir_materialized"
 
 
 @pytest.mark.asyncio

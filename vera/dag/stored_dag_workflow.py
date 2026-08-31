@@ -7,6 +7,7 @@ import json
 from typing import Any, Iterable
 
 from Vera.vera.execution.workflow_ir import import_native_dag
+from Vera.vera.execution.dag_workflow_execution import prepare_plain_dag_execution
 
 
 SCHEMA = "vera.stored-dag-workflow-inspection/v1"
@@ -43,14 +44,23 @@ def inspect_stored_dag_workflow(
     definition_hash = _canonical_hash({"dag": dag, "initial_state": initial_state})
     stored_hash = record.get("content_hash") or ""
     imported = import_native_dag(dag, name=name, allow_lossy=False)
+    prepared = prepare_plain_dag_execution(dag)
     aliases = sorted({alias for alias in registered_aliases
                       if isinstance(alias, str) and alias})
     gaps = list(imported.get("gaps") or [])
+    converged_modes = {"plain", "monitored"}
     mode_status = {
         mode: {
-            "native_authoritative": True,
-            "workflow_ir_authoritative": False,
-            "parity_gate": "pending" if mode != "plain" else "definition_only",
+            "native_authoritative": (
+                mode not in converged_modes or not prepared["authoritative"]
+            ),
+            "workflow_ir_authoritative": (
+                mode in converged_modes and prepared["authoritative"]
+            ),
+            "parity_gate": (
+                prepared["mode"]
+                if mode in converged_modes else "pending"
+            ),
         }
         for mode in _NATIVE_MODES
     }

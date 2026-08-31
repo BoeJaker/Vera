@@ -56,6 +56,39 @@ def prepare_plain_dag_execution(graph: list) -> dict[str, Any]:
     }
 
 
+def prepare_dag_execution(graph: list, *, supervised: bool = False) -> dict[str, Any]:
+    """Prepare a DAG for execution without changing supervised semantics."""
+    if not isinstance(graph, list):
+        raise TypeError("graph must be an array")
+    if supervised:
+        return {
+            "schema": SCHEMA,
+            "authoritative": False,
+            "mode": "native_supervised",
+            "graph": graph,
+            "workflow_hash": "",
+            "ir_version": "",
+            "gaps": [],
+            "executes": False,
+        }
+    return prepare_plain_dag_execution(graph)
+
+
+def workflow_execution_metadata(prepared: dict[str, Any]) -> dict[str, Any]:
+    """Return the stable, graph-free provenance exposed by DAG entry points."""
+    metadata = {
+        "schema": prepared["schema"],
+        "authoritative": bool(prepared.get("authoritative")),
+        "mode": prepared.get("mode", "native_compatibility"),
+        "workflow_hash": prepared.get("workflow_hash", ""),
+        "ir_version": prepared.get("ir_version", ""),
+        "gaps": list(prepared.get("gaps") or []),
+    }
+    if prepared.get("reason"):
+        metadata["reason"] = prepared["reason"]
+    return metadata
+
+
 def _fallback(graph: list, reason: str, detail: str = "", gaps: list | None = None) -> dict[str, Any]:
     return {
         "schema": SCHEMA,
