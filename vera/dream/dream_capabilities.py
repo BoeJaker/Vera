@@ -2136,6 +2136,40 @@ def _dream_schedule_policy(trig: Dict[str, Any]) -> Dict[str, Any]:
     return dream_trigger_policy(trig)
 
 
+def _dream_lifecycle(trig: Dict[str, Any]) -> Dict[str, Any]:
+    from Vera.vera.execution.workflow_schedule_lifecycle import (
+        dream_trigger_lifecycle,
+    )
+
+    return dream_trigger_lifecycle(trig)
+
+
+async def _transition_dream_lifecycle(name: str, state: str) -> Dict[str, Any]:
+    trig = await _get_trigger(name)
+    if not trig:
+        return {"ok": False, "error": "not found"}
+    from Vera.vera.execution.workflow_schedule_lifecycle import (
+        transition_schedule_lifecycle,
+    )
+
+    try:
+        event = transition_schedule_lifecycle(
+            _dream_lifecycle(trig), requested_state=state,
+            observed_at=now_iso(),
+        )
+    except (TypeError, ValueError) as exc:
+        return {"ok": False, "error": str(exc)}
+    trig["lifecycle_state"] = state
+    trig["enabled"] = state == "active"
+    await _save_trigger(trig)
+    try:
+        await emit_event(event)
+    except Exception as exc:
+        log.debug("dream lifecycle projection: %s", exc)
+    return {"ok": True, "trigger": trig, "lifecycle": event["lifecycle"],
+            "transition": event}
+
+
 def _within_hours(h_start: int, h_end: int, now: Optional[datetime] = None,
                   timezone_name: str = "UTC") -> bool:
     from Vera.vera.execution.workflow_schedule import within_schedule_window
@@ -10333,7 +10367,12 @@ async def _eval_trigger_sensors(trig: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def _trigger_due(trig: Dict[str, Any], idle_min: float) -> bool:
-    if not trig.get("enabled"):
+    try:
+        lifecycle = _dream_lifecycle(trig)
+    except (TypeError, ValueError) as exc:
+        log.warning("dream trigger %s has invalid lifecycle: %s", trig.get("name"), exc)
+        return False
+    if lifecycle["state"] != "active" or not trig.get("enabled"):
         return False
     if idle_min < float(trig.get("min_idle_minutes", 15)):
         return False
@@ -13715,6 +13754,7 @@ async def dream_trigger_list(trace_id=None):
         t["last_run"] = await _last_run_ts(t.get("name", "?"))
         try:
             t["schedule_policy"] = _dream_schedule_policy(t)
+            t["lifecycle"] = _dream_lifecycle(t)
         except (TypeError, ValueError) as exc:
             t["schedule_policy_error"] = str(exc)
     return {"triggers": triggers, "count": len(triggers)}
@@ -13733,6 +13773,7 @@ async def dream_trigger_get(name: str, trace_id=None):
     try:
         trig["schedule_contract"] = _dream_schedule_contract(trig)
         trig["schedule_policy"] = _dream_schedule_policy(trig)
+        trig["lifecycle"] = _dream_lifecycle(trig)
     except (TypeError, ValueError) as exc:
         trig["schedule_error"] = str(exc)
     return {"trigger": trig}
@@ -13805,6 +13846,7 @@ async def dream_trigger_upsert(
         "whitelist": [], "no_hitl_caps": [],
         "depth": "standard", "max_steps": 6,
         "director_managed": False,
+        "lifecycle_state": "active",
     }
 
     fields = {
@@ -13833,6 +13875,20 @@ async def dream_trigger_upsert(
             existing[k] = v
     existing["name"] = name
 
+    try:
+        current_lifecycle = _dream_lifecycle(existing)
+    except (TypeError, ValueError) as exc:
+        return {"ok": False, "error": f"invalid lifecycle: {exc}"}
+    if current_lifecycle["state"] == "cancelled":
+        if enabled is True:
+            return {"ok": False, "error": "cancelled triggers cannot be resumed"}
+        existing["enabled"] = False
+        existing["lifecycle_state"] = "cancelled"
+    elif enabled is not None:
+        existing["lifecycle_state"] = "active" if enabled else "paused"
+    else:
+        existing["lifecycle_state"] = current_lifecycle["state"]
+
     # Validate depth
     if existing.get("depth") not in ("brief", "standard", "deep", "exhaustive"):
         existing["depth"] = "standard"
@@ -13840,13 +13896,15 @@ async def dream_trigger_upsert(
     try:
         schedule_contract = _dream_schedule_contract(existing)
         schedule_policy = _dream_schedule_policy(existing)
+        lifecycle = _dream_lifecycle(existing)
     except (TypeError, ValueError) as exc:
         return {"ok": False, "error": f"invalid schedule: {exc}"}
 
     await _save_trigger(existing)
     return {"ok": True, "trigger": {**existing,
                                       "schedule_contract": schedule_contract,
-                                      "schedule_policy": schedule_policy}}
+                                      "schedule_policy": schedule_policy,
+                                      "lifecycle": lifecycle}}
 
 
 @capability(
@@ -13868,9 +13926,36 @@ async def dream_trigger_toggle(name: str, enabled: Optional[bool] = None, trace_
     trig = await _get_trigger(name)
     if not trig:
         return {"ok": False, "error": "not found"}
-    trig["enabled"] = bool(enabled) if enabled is not None else (not trig.get("enabled"))
-    await _save_trigger(trig)
-    return {"ok": True, "trigger": trig}
+    target = ("active" if bool(enabled) else "paused") if enabled is not None \
+        else ("paused" if _dream_lifecycle(trig)["state"] == "active" else "active")
+    return await _transition_dream_lifecycle(name, target)
+
+
+@capability(
+    "dream.trigger.pause", memory="off",
+    http_method="POST", http_path="/dream/trigger/pause", http_tags=["dream"],
+    description="Pause a dream trigger without deleting it. Input: name (str!).",
+)
+async def dream_trigger_pause(name: str, trace_id=None):
+    return await _transition_dream_lifecycle(name, "paused")
+
+
+@capability(
+    "dream.trigger.resume", memory="off",
+    http_method="POST", http_path="/dream/trigger/resume", http_tags=["dream"],
+    description="Resume a paused dream trigger. Input: name (str!).",
+)
+async def dream_trigger_resume(name: str, trace_id=None):
+    return await _transition_dream_lifecycle(name, "active")
+
+
+@capability(
+    "dream.trigger.cancel", memory="off",
+    http_method="POST", http_path="/dream/trigger/cancel", http_tags=["dream"],
+    description="Cancel a dream trigger while preserving its record. Input: name (str!).",
+)
+async def dream_trigger_cancel(name: str, trace_id=None):
+    return await _transition_dream_lifecycle(name, "cancelled")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
