@@ -87,6 +87,29 @@ from Vera.vera import ollama_inflight as _oi_inflight
 
 log = logging.getLogger("vera.orch")
 
+# What a dev sandbox may not do to the world outside itself. Imported near the
+# top so it precedes every use in this file - `wrap` consults it on every
+# capability call. Absolute rather than relative purely for consistency with
+# how the evolve package is reached elsewhere here; this module is imported as
+# a package (python -m Vera.vera.capability_orchestration), NOT loaded by path
+# like the _module_files entry points below, so either form would work.
+# Both spellings: this package is reachable as `Vera.vera.*` in production and
+# as `vera.*` under pytest/sys.path, and a guard that silently becomes None in
+# one of them is a SAFETY control that fails OPEN. If neither resolves, say so
+# loudly rather than quietly running unguarded.
+_estate_guard = None
+for _eg_mod in ("Vera.vera.evolve.sandbox_estate_guard",
+                "vera.evolve.sandbox_estate_guard"):
+    try:
+        import importlib as _il
+        _estate_guard = _il.import_module(_eg_mod)
+        break
+    except Exception:                                 # pragma: no cover
+        continue
+if _estate_guard is None:                             # pragma: no cover
+    log.error("sandbox estate guard UNAVAILABLE - a dev sandbox is NOT "
+              "prevented from promoting to main or reaping the estate")
+
 
 def _install_file_log_handler() -> str:
     """Give prod a log on disk, whatever launched it.
@@ -5266,6 +5289,21 @@ def capability(
 
         @functools.wraps(func)
         async def wrap(**kw):
+            # A dev sandbox is a FULL Vera process and registers every
+            # capability prod does - including promote_to_main, branch.delete
+            # and sandbox.prune - while sharing prod's coordinator Redis. The
+            # VERA_IS_DEV_SANDBOX flag gated only SCHEDULED jobs; nothing
+            # stopped a loop, an agent or a user calling these against the
+            # sandbox's own API. Census 20: a prune from outside prod emptied
+            # the shared sandbox pool mid-run and cost a goal its browser.
+            # Refused BEFORE anything else happens - no events, no retries.
+            if _estate_guard is not None and is_dev_sandbox():
+                try:
+                    if _estate_guard.is_denied(name, in_sandbox=True):
+                        log.warning("sandbox estate guard: refused %s", name)
+                        return _estate_guard.refusal(name)
+                except Exception as _eg:              # pragma: no cover
+                    log.debug("estate guard skipped for %s: %s", name, _eg)
             tid     = kw.pop("trace_id",None) or new_id()
             attempt = 0; last_err = None
             # Pull trigger chain from context vars (set by vera_syslog patcher)
