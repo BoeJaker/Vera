@@ -143,6 +143,14 @@ Pick it in the Composite Pipelines editor (a dropdown appears for each of these 
 | `dream.preview` / `dream.preview.last` | Dry-run a pipeline without acting |
 | `dream.schedule.events` | Upcoming scheduled fires |
 
+When the idle scheduler selects a configured trigger, it also emits the shared
+content-safe workflow-trigger envelope before starting the native cycle. Its
+occurrence key is based on the trigger's previous completed run, so repeated
+observation of the same due decision has stable identity while the next
+recurrence receives a new identity. This evidence does not move idle, cooldown,
+sensor, cancellation, or cycle authority out of Dream, and event projection
+failure cannot prevent the selected cycle from starting.
+
 ### Output workspace — files, not context
 
 Every (non-preview) cycle collates its material into real files under `vera/dream/outputs/<cycle_id>/` as stages complete: `01-gather.md` (full, untruncated working set), `02-themes.md`, `03-plan.md`, `04-findings.md` (appended per iteration by the investigate/agent-loop/project_action stages), `report.md`, `journal.md`, `meta.json`. The file list rides on the history record and cycle detail (chips → click to view), and agent loops launched by dream stages are instructed to collate substantial results into durable output (notebook/workspace files) rather than carrying everything in their context window.

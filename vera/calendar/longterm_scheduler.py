@@ -314,6 +314,20 @@ def _due_by_time(action: Dict[str, Any]) -> bool:
     return bool(dt and _now_dt() >= dt)
 
 
+async def _emit_workflow_trigger(action: Dict[str, Any], due_kind: str) -> None:
+    """Best-effort portable evidence; native scheduling stays authoritative."""
+    try:
+        from Vera.vera.execution.workflow_trigger import (
+            calendar_action_workflow_trigger,
+        )
+        event = calendar_action_workflow_trigger(
+            action, observed_at=now_iso(), due_kind=due_kind,
+        )
+        await emit_event(event)
+    except Exception as exc:
+        log.debug("sched workflow trigger projection: %s", exc)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # COMMS — user-side notification + reply round-trip
 # ─────────────────────────────────────────────────────────────────────────────
@@ -435,16 +449,22 @@ async def _evaluate_once() -> Dict[str, Any]:
             continue
         trig = a.get("trigger") or {}
         due = False
+        due_kind = ""
         if trig and trig.get("cap"):
             verdict = await _eval_trigger(trig)
             a["last_eval"] = now_iso()
             await _save_action(a)
             if verdict is True:
                 due = True
+                due_kind = "condition"
         if not due and a.get("when"):
             due = _due_by_time(a)
+            if due:
+                due_kind = "time"
         if not due:
             continue
+
+        await _emit_workflow_trigger(a, due_kind)
 
         if a.get("side") == "system":
             # Respect the concurrency cap so parallel system runs don't stampede.

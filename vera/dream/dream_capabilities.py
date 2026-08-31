@@ -10329,6 +10329,21 @@ async def _trigger_due(trig: Dict[str, Any], idle_min: float) -> bool:
     return True
 
 
+async def _emit_dream_workflow_trigger(trig: Dict[str, Any]) -> None:
+    """Best-effort portable evidence; the Dream scheduler keeps authority."""
+    try:
+        from Vera.vera.execution.workflow_trigger import (
+            dream_schedule_workflow_trigger,
+        )
+        previous_run = await _last_run_ts(str(trig.get("name") or "")) or ""
+        event = dream_schedule_workflow_trigger(
+            trig, observed_at=now_iso(), previous_run=previous_run,
+        )
+        await emit_event(event)
+    except Exception as exc:
+        log.debug("dream workflow trigger projection: %s", exc)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # DREAM DIRECTOR — the ambient thought orchestrator
 # ─────────────────────────────────────────────────────────────────────────────
@@ -13324,6 +13339,7 @@ async def _scheduler_loop():
             for trig in triggers:
                 if await _trigger_due(trig, idle):
                     log.info("dream firing trigger: %s (idle %.1fm)", trig.get("name"), idle)
+                    await _emit_dream_workflow_trigger(trig)
                     _CYCLE_TASK = asyncio.create_task(_run_cycle(trig))
                     break  # one per tick
 
