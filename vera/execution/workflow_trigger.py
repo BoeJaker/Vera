@@ -113,9 +113,9 @@ def build_workflow_trigger(
             "projection": "workflow_trigger",
         },
         "policy": {
-            "duplicates": "native_unverified",
-            "misfire": "native_unverified",
-            "catch_up": "native_unverified",
+            "duplicates": "receipt_observed",
+            "misfire": "decision_sidecar",
+            "catch_up": "max_one_no_effect_replay",
         },
         "executes": False,
     }
@@ -183,9 +183,9 @@ def validate_workflow_trigger(value: Mapping[str, Any]) -> dict[str, Any]:
     if authority.get("execution") != "native" \
             or authority.get("projection") != "workflow_trigger":
         raise ValueError("authority declaration is unsupported")
-    if policy != {"duplicates": "native_unverified",
-                  "misfire": "native_unverified",
-                  "catch_up": "native_unverified"}:
+    if policy != {"duplicates": "receipt_observed",
+                  "misfire": "decision_sidecar",
+                  "catch_up": "max_one_no_effect_replay"}:
         raise ValueError("policy declaration is unsupported")
     identity = {
         "schema": SCHEMA,
@@ -221,9 +221,12 @@ def calendar_action_workflow_trigger(action: Mapping[str, Any], *, observed_at: 
         "profile": str(action.get("profile") or ""),
     }
     from .workflow_schedule import calendar_action_schedule
+    from .workflow_schedule_policy import calendar_action_policy
 
     schedule = calendar_action_schedule(action, due_kind=due_kind)
+    policy = calendar_action_policy(action, due_kind=due_kind)
     definition["schedule_id"] = schedule["schedule_id"]
+    definition["schedule_policy_id"] = policy["policy_id"]
     return build_workflow_trigger(
         source_kind="calendar.action", source_id=action_id,
         source_revision=_hash(definition),
@@ -242,8 +245,10 @@ def dream_schedule_workflow_trigger(trigger: Mapping[str, Any], *, observed_at: 
         raise TypeError("trigger must be an object")
     name = _required_text("trigger.name", trigger.get("name"))
     from .workflow_schedule import dream_trigger_schedule
+    from .workflow_schedule_policy import dream_trigger_policy
 
     schedule = dream_trigger_schedule(trigger)
+    policy = dream_trigger_policy(trigger)
     definition = {
         "name": name,
         "hours_start": trigger.get("hours_start", 0),
@@ -258,6 +263,7 @@ def dream_schedule_workflow_trigger(trigger: Mapping[str, Any], *, observed_at: 
         "hitl": bool(trigger.get("hitl", False)),
         "timezone": schedule["timezone"],
         "schedule_id": schedule["schedule_id"],
+        "schedule_policy_id": policy["policy_id"],
     }
     return build_workflow_trigger(
         source_kind="dream.trigger", source_id=name,
@@ -265,4 +271,41 @@ def dream_schedule_workflow_trigger(trigger: Mapping[str, Any], *, observed_at: 
         schedule_kind="idle_interval",
         occurrence_key=str(previous_run or "initial"), observed_at=observed_at,
         timezone_name=schedule["timezone"], native_owner="vera.dream.scheduler",
+    )
+
+
+def calendar_action_schedule_decision(
+    action: Mapping[str, Any], *, observed_at: str, due_kind: str,
+    trigger_id: str = "",
+) -> dict[str, Any]:
+    """Classify one Calendar observation; execution remains Calendar-owned."""
+    from .workflow_schedule import calendar_action_schedule
+    from .workflow_schedule_policy import (
+        calendar_action_policy,
+        classify_schedule_occurrence,
+    )
+
+    schedule = calendar_action_schedule(action, due_kind=due_kind)
+    policy = calendar_action_policy(action, due_kind=due_kind)
+    return classify_schedule_occurrence(
+        schedule, policy, evaluated_at=observed_at, trigger_id=trigger_id,
+    )
+
+
+def dream_schedule_decision(
+    trigger: Mapping[str, Any], *, observed_at: str, previous_run: str = "",
+    trigger_id: str = "",
+) -> dict[str, Any]:
+    """Classify one Dream recurrence; execution remains Dream-owned."""
+    from .workflow_schedule import dream_trigger_schedule
+    from .workflow_schedule_policy import (
+        classify_schedule_occurrence,
+        dream_trigger_policy,
+    )
+
+    schedule = dream_trigger_schedule(trigger)
+    policy = dream_trigger_policy(trigger)
+    return classify_schedule_occurrence(
+        schedule, policy, evaluated_at=observed_at,
+        last_completed_at=previous_run, trigger_id=trigger_id,
     )

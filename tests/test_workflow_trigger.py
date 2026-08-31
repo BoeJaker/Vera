@@ -6,7 +6,9 @@ from vera.execution.workflow_trigger import (
     EVENT_TYPE,
     SCHEMA,
     build_workflow_trigger,
+    calendar_action_schedule_decision,
     calendar_action_workflow_trigger,
+    dream_schedule_decision,
     dream_schedule_workflow_trigger,
     validate_workflow_trigger,
 )
@@ -39,8 +41,8 @@ def test_trigger_identity_is_deterministic_across_observation_time():
         "execution": "native", "projection": "workflow_trigger",
     }
     assert first["policy"] == {
-        "duplicates": "native_unverified", "misfire": "native_unverified",
-        "catch_up": "native_unverified",
+        "duplicates": "receipt_observed", "misfire": "decision_sidecar",
+        "catch_up": "max_one_no_effect_replay",
     }
     assert first["executes"] is False
 
@@ -154,6 +156,36 @@ def test_dream_adapter_projects_configured_iana_timezone():
     assert event["schedule"]["timezone"] == "Europe/London"
 
 
+def test_adapter_decisions_correlate_to_trigger_without_private_content():
+    action = {
+        "id": "action-1", "title": "private", "goal": "private goal",
+        "when": "2026-08-31T09:00:00Z", "side": "system",
+    }
+    trigger = calendar_action_workflow_trigger(
+        action, observed_at=NOW, due_kind="time")
+    decision = calendar_action_schedule_decision(
+        action, observed_at=NOW, due_kind="time",
+        trigger_id=trigger["trigger_id"])
+
+    assert decision["trigger_id"] == trigger["trigger_id"]
+    assert decision["classification"] == "misfire"
+    assert decision["disposition"] == "due_once"
+    assert "private" not in str(decision)
+
+    dream_trigger = {
+        "name": "briefing", "prompt": "private prompt", "timezone": "UTC",
+        "hours_start": 0, "hours_end": 24, "min_interval_minutes": 60,
+    }
+    dream_event = dream_schedule_workflow_trigger(
+        dream_trigger, observed_at=NOW, previous_run="2026-08-31T08:00:00Z")
+    dream_decision = dream_schedule_decision(
+        dream_trigger, observed_at=NOW, previous_run="2026-08-31T08:00:00Z",
+        trigger_id=dream_event["trigger_id"])
+    assert dream_decision["disposition"] == "coalesced_once"
+    assert dream_decision["missed_occurrences"] == 4
+    assert "private prompt" not in str(dream_decision)
+
+
 def test_calendar_native_fire_survives_projection_and_receipt_failure(monkeypatch):
     from vera.calendar import longterm_scheduler as scheduler
 
@@ -198,6 +230,53 @@ def test_calendar_native_fire_survives_projection_and_receipt_failure(monkeypatc
     assert ("saved", "action-1") in calls
 
 
+def test_calendar_emits_correlated_receipt_and_schedule_decision(
+        monkeypatch, tmp_path):
+    from vera.calendar import longterm_scheduler as scheduler
+    from vera.execution import workflow_trigger_receipts as receipts
+
+    action = {
+        "id": "action-1", "title": "private title", "side": "user",
+        "status": "scheduled", "when": "2020-01-01T00:00:00Z",
+        "trigger": {}, "comms_channel": "test",
+    }
+    emitted = []
+
+    async def get_config():
+        return dict(scheduler.DEFAULT_CONFIG)
+
+    async def list_actions():
+        return [dict(action)]
+
+    async def save_action(value):
+        return value
+
+    async def notify(_action, _channel):
+        return True
+
+    async def emit(event):
+        emitted.append(event)
+
+    ledger = receipts.WorkflowTriggerReceiptLedger(tmp_path / "receipts.sqlite3")
+    monkeypatch.setattr(scheduler, "_get_config", get_config)
+    monkeypatch.setattr(scheduler, "_list_actions", list_actions)
+    monkeypatch.setattr(scheduler, "_save_action", save_action)
+    monkeypatch.setattr(scheduler, "_notify_user", notify)
+    monkeypatch.setattr(scheduler, "emit_event", emit)
+    monkeypatch.setattr(scheduler, "_record_workflow_trigger", ledger.record)
+
+    result = asyncio.run(scheduler._evaluate_once())
+
+    assert result["fired"] == ["action-1"]
+    assert [item["type"] for item in emitted] == [
+        EVENT_TYPE, "workflow.trigger.receipt.recorded",
+        "workflow.schedule.decision",
+    ]
+    assert emitted[2]["trigger_id"] == emitted[0]["trigger_id"]
+    assert emitted[2]["disposition"] == "due_once"
+    assert "private title" not in str(emitted[2])
+
+
 def test_dream_projection_emits_same_contract_and_is_failure_isolated(
         monkeypatch, tmp_path):
     from vera.dream import dream_capabilities as dream
@@ -226,6 +305,10 @@ def test_dream_projection_emits_same_contract_and_is_failure_isolated(
     assert emitted[0]["source"]["kind"] == "dream.trigger"
     assert emitted[1]["type"] == "workflow.trigger.receipt.recorded"
     assert emitted[1]["classification"] == "first_seen"
+    assert emitted[2]["type"] == "workflow.schedule.decision"
+    assert emitted[2]["trigger_id"] == emitted[0]["trigger_id"]
+    assert emitted[2]["disposition"] == "coalesced_once"
+    assert emitted[2]["executes"] is False
 
     async def broken_emit(_event):
         raise RuntimeError("event bus unavailable")

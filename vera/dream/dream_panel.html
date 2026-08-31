@@ -1729,6 +1729,7 @@ async function openTrigEditor(t={},isNew=true){
   <div class="form-row"><label class="fld">Hours end</label><input id="te-he" type="number" min="0" max="24" value="${t.hours_end??24}"></div>
   <div class="form-row"><label class="fld">Min idle (m)</label><input id="te-mi" type="number" min="0" value="${t.min_idle_minutes??15}"></div>
   <div class="form-row"><label class="fld">Interval (m)</label><input id="te-mv" type="number" min="0" value="${t.min_interval_minutes??120}"></div>
+  <div class="full form-row"><label class="fld">Downtime handling</label><div style="font-size:10px;color:var(--fg2);padding:7px 9px;border:1px solid var(--border);border-radius:5px;background:var(--bg3)">Coalesce missed intervals into at most one eligible cycle. Vera never replays a backlog of effects; normal idle, hours, sensor and resource gates still apply.</div></div>
   <div class="form-row"><label class="fld">Require signal (0–1)</label><input id="te-rs" type="number" step="0.05" min="0" max="1" value="${t.require_signal??0}"></div>
   <div class="form-row"><label class="fld">Max steps</label><input id="te-ms" type="number" min="1" max="30" value="${t.max_steps??6}"></div>
   <div class="form-section-h">Output <span class="hint">where results are delivered</span></div>
