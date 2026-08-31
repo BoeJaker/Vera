@@ -11227,7 +11227,8 @@ def _v5_prose_ungrounded_refs(text: str, real_files: Optional[List[str]]) -> Lis
 )
 async def cap_prose_author(task: str = "", path: str = "", context_files=None,
                            content: str = "", text: str = "",
-                           session_id: str = "", trace_id=None,
+                           session_id: str = "", think: Optional[bool] = None,
+                           trace_id=None,
                            stream_cb=None) -> Dict[str, Any]:
     """Author ONE prose/document file with the writer role and persist it, grounded
     against the sandbox's REAL file listing — see the module note above this
@@ -11345,9 +11346,28 @@ async def cap_prose_author(task: str = "", path: str = "", context_files=None,
     if not fn:
         return {"ok": False, "error": "llm.generate is unavailable"}
     try:
+        # The writer is a reasoning model, and left to itself it reasons instead
+        # of writing. Measured directly against the model this role routes to,
+        # same 200-word task, num_predict=4096:
+        #
+        #   thinking ON,  no instruction   eval=4096  words=0    21596 chars of
+        #                                                        <think>, hit the cap
+        #   thinking ON,  "stop at ~200 words, do not add sections"
+        #                                  eval=4096  words=0    17887 chars, hit the cap
+        #   thinking OFF, no instruction   eval=278   words=227  finished on its own
+        #   thinking OFF, same instruction eval=303   words=259  finished on its own
+        #
+        # Instructing it to be brief changed nothing - both instructed runs
+        # produced ZERO words. Turning the reasoning pass off produced a
+        # complete answer in ~1/14th the tokens, stopping at done="stop" rather
+        # than being truncated. This is what made census run 18's prose-only
+        # spend 949 seconds on one call and wall-cap a goal that had passed in
+        # run 16. Overridable, because a genuinely long structured document may
+        # want the reasoning pass - but it must be asked for.
         res = await fn(prompt=prompt, system=sys_prompt, output_format="code",
                        profile=LOOP_ROUTING_PROFILE, role="writer",
                        files=files or None, session_id=session_id,
+                       think=(False if think is None else think),
                        caller="prose.author", trace_id=trace_id, stream_cb=stream_cb)
     except Exception as e:
         return {"ok": False, "error": f"generation failed: {e}"}
@@ -11382,6 +11402,7 @@ async def cap_prose_author(task: str = "", path: str = "", context_files=None,
                                   "to remove ungrounded claims.",
                            output_format="json", profile=LOOP_ROUTING_PROFILE, role="writer",
                            session_id=session_id, caller="prose.author.repair",
+                           think=(False if think is None else think),
                            trace_id=trace_id, stream_cb=stream_cb)
             obj = _extract_json(_strip_think(_v5_gen_text(raw) or "")[0]) or {}
             edits = obj.get("edits") if isinstance(obj, dict) else None
