@@ -48,8 +48,13 @@ from Vera.vera.operator.docs import directives as _directives
 log = logging.getLogger("vera.operator")
 
 
-from . import operator_progress as _progress          # noqa: E402
-from . import sandbox_file_target as _sfile           # noqa: E402
+# ABSOLUTE, like every other sibling import in this file. This module is loaded
+# by the orchestrator's module loader as a TOP-LEVEL module with no parent
+# package, so `from . import x` raises "attempted relative import with no known
+# parent package" and the whole operator subsystem fails to register - which is
+# exactly what shipped on 2026-08-31 and took operator.run out of prod.
+from Vera.vera.operator import operator_progress as _progress   # noqa: E402
+from Vera.vera.operator import sandbox_file_target as _sfile    # noqa: E402
 
 
 def _orch_base_url() -> str:
