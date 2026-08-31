@@ -884,9 +884,13 @@ class ExecutionMonitor:
 
         t0     = time.monotonic()
         prepared = prepare_dag_execution(dag, supervised=supervised)
-        fn     = supervised_run_graph if supervised else run_graph
         execution_graph = prepared["graph"]
-        result = await fn(execution_graph, dict(state))
+        if supervised:
+            result = await supervised_run_graph(
+                execution_graph, dict(state), workflow_prepared=prepared,
+            )
+        else:
+            result = await run_graph(execution_graph, dict(state))
         runtime_ms = (time.monotonic() - t0) * 1000
 
         # Find errors in result
@@ -1624,8 +1628,12 @@ async def dag_store_run(
     else:
         from Vera.vera.capability_orchestration import run_graph, supervised_run_graph
         prepared = prepare_dag_execution(rec.dag, supervised=supervised)
-        fn     = supervised_run_graph if supervised else run_graph
-        raw    = await fn(prepared["graph"], state)
+        if supervised:
+            raw = await supervised_run_graph(
+                prepared["graph"], state, workflow_prepared=prepared,
+            )
+        else:
+            raw = await run_graph(prepared["graph"], state)
         result = {"result": raw, "runtime_ms": round((time.monotonic()-t0)*1000)}
         if include_workflow_ir:
             result["workflow_ir"] = workflow_execution_metadata(prepared)

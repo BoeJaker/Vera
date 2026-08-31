@@ -5586,7 +5586,12 @@ async def _get_syslog_context(cap_name: str, error_msg: str) -> str:
 
 async def supervised_run_graph(graph: list, state: dict, supervision_every: int = 1,
                                max_node_retries: int = 2, trace_id: str = "",
-                               run_observer=None, _path: tuple = ()) -> dict:
+                               run_observer=None, _path: tuple = (),
+                               workflow_prepared=None) -> dict:
+    if workflow_prepared is None:
+        from Vera.vera.execution.dag_workflow_execution import prepare_dag_execution
+        workflow_prepared = prepare_dag_execution(graph, supervised=True)
+    graph = workflow_prepared["graph"]
     log_entries=[]
     i=0
     while i<len(graph):
@@ -8330,22 +8335,21 @@ async def cap_ollama_embed_config_set(
 async def cap_dag_run(dag: list = None, state: dict = None, supervised: bool = False,
                       session_id: str = "", include_workflow_ir: bool = False,
                       trace_id=None):
-    from Vera.vera.execution.dag_workflow_execution import prepare_plain_dag_execution
+    from Vera.vera.execution.dag_workflow_execution import prepare_dag_execution
     from Vera.vera.execution.run_shadow import execute_dag_with_run_shadow
     tid = trace_id or new_id()
     execution_graph = dag or []
-    workflow_evidence = {
-        "authoritative": False, "mode": "native_supervised",
-        "reason": "supervised_parity_pending", "workflow_hash": "",
-    }
+    workflow_evidence = prepare_dag_execution(
+        execution_graph, supervised=supervised,
+    )
+    execution_graph = workflow_evidence["graph"]
     if supervised:
         async def native_executor(graph, initial_state, _trace_id, _observer):
             return await supervised_run_graph(graph, initial_state,
                                               trace_id=_trace_id,
-                                              run_observer=_observer)
+                                              run_observer=_observer,
+                                              workflow_prepared=workflow_evidence)
     else:
-        workflow_evidence = prepare_plain_dag_execution(execution_graph)
-        execution_graph = workflow_evidence["graph"]
         async def native_executor(graph, initial_state, native_trace_id, observer):
             return await run_graph(graph, initial_state, native_trace_id,
                                    run_observer=observer)

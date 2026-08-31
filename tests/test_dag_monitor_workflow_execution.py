@@ -44,15 +44,16 @@ async def test_unsupervised_monitor_executes_the_ir_materialized_graph(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_supervised_monitor_preserves_the_original_native_graph(monkeypatch):
+async def test_supervised_monitor_materializes_graph_and_preserves_native_control(monkeypatch):
     source = [["alpha", "out"]]
     observed = {}
 
     async def should_not_run_plain(*_args, **_kwargs):
         raise AssertionError("supervised execution reached plain runner")
 
-    async def supervised_run_graph(graph, state):
+    async def supervised_run_graph(graph, state, *, workflow_prepared=None):
         observed["graph"] = graph
+        observed["workflow_prepared"] = workflow_prepared
         return state
 
     async def emit(_event):
@@ -67,9 +68,12 @@ async def test_supervised_monitor_preserves_the_original_native_graph(monkeypatc
         include_workflow_ir=True,
     )
 
-    assert observed["graph"] is source
-    assert result["workflow_ir"]["mode"] == "native_supervised"
-    assert result["workflow_ir"]["authoritative"] is False
+    assert observed["graph"] == source
+    assert observed["graph"] is not source
+    assert observed["workflow_prepared"]["graph"] is observed["graph"]
+    assert result["workflow_ir"]["mode"] == "workflow_ir_materialized"
+    assert result["workflow_ir"]["control_mode"] == "native_supervised"
+    assert result["workflow_ir"]["authoritative"] is True
 
 
 @pytest.mark.asyncio
@@ -99,3 +103,42 @@ async def test_monitor_default_response_shape_and_callable_compatibility_are_pre
         "result", "runtime_ms", "errors_found", "corrections",
         "execution_report",
     }
+
+
+@pytest.mark.asyncio
+async def test_supervised_retry_mutates_only_the_materialized_definition(monkeypatch):
+    source = [["alpha", "a"], ["beta", "b"]]
+    calls = []
+    decisions = iter([
+        {"action": "retry_node", "reason": "retry"},
+        {"action": "continue", "reason": "continue"},
+    ])
+
+    async def alpha():
+        calls.append("alpha")
+        return "a"
+
+    async def beta():
+        calls.append("beta")
+        return "b"
+
+    async def supervise(*_args, **_kwargs):
+        return next(decisions)
+
+    async def emit(_event):
+        return None
+
+    for name, func in (("alpha", alpha), ("beta", beta)):
+        monkeypatch.setitem(
+            orchestration.CAPABILITY_REGISTRY,
+            name,
+            {"func": func, "schema": {"type": "object", "properties": {}}},
+        )
+    monkeypatch.setattr(orchestration, "_llm_supervise", supervise)
+    monkeypatch.setattr(orchestration, "emit_event", emit)
+
+    result = await orchestration.supervised_run_graph(source, {})
+
+    assert calls == ["alpha", "alpha", "beta"]
+    assert result == {"a": "a", "b": "b"}
+    assert source == [["alpha", "a"], ["beta", "b"]]
