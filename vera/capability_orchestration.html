@@ -22,6 +22,22 @@
     d.style.height='calc(100vh / '+sc+')';}}catch(e){}})();</script>
 <meta charset="UTF-8">
 <title>Vera — Orchestrator Harness</title>
+<!-- PWA: what makes this shell installable as an app. Served by
+     vera/pwa/pwa_capabilities.py; the exact tag set is produced by
+     pwa_core.head_tags() and asserted against this file by
+     tests/test_pwa_core.py, so the two cannot silently drift.
+     The viewport tag also finally activates the max-width:1100px/680px
+     rules further down, which a phone never applied without it. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#181614">
+<link rel="icon" href="/ui/pwa/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/ui/pwa/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Vera">
+<script src="/ui/pwa/pwa.js" defer></script>
 <script src="/ui/vera-ui.js?v=scale2"></script>
 <!-- Fonts loaded non-render-blocking: the shell paints immediately with the
      system fallbacks in the CSS var stacks, then swaps in the web fonts if/when
