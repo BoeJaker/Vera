@@ -16,6 +16,7 @@ _CRITICAL_MODULES = {
     "test_editor_reply",  # an editor that declines has told you something (2026-08-31)
     "test_editor_output_bound",  # bound the editor by the file it edits (2026-08-31)
     "test_edit_tag_balance",  # name the edit that unbalanced the markup (2026-08-31)
+    "test_workspace_path",  # a write must land where the read looked (2026-08-31)
     "test_ambient_dreaming_is_opt_in",  # nothing dreams on a box nobody asked (2026-08-31)
     "test_sandbox_estate_guard",  # a sandbox must not promote to main or reap the estate (2026-08-31)
     "test_sandbox_does_not_reap_the_estate",  # a dev sandbox must not reap the shared estate (2026-08-31)

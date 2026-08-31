@@ -100,6 +100,19 @@ from Vera.vera.capability_orchestration import (
 
 log = logging.getLogger("vera.exec")
 
+
+# The workspace-root collapse, shared with the code.author/code.edit WRITE side
+# (vera.workspace_path) so the two can never disagree about where a path points.
+# They did, until 2026-08-31: see that module for the census run 21 evidence.
+try:
+    from Vera.vera.workspace_path import collapse_workspace_prefix as _collapse_workspace_prefix
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.workspace_path import collapse_workspace_prefix as _collapse_workspace_prefix
+    except Exception:
+        def _collapse_workspace_prefix(p):
+            return re.sub(r"^/?workspace/", "", str(p or ""))
+
 # Coerce timeout into an int, accepting formats like 10s, 60m, 1h, etc.
 def parse_timeout(t: Any) -> int:
     if isinstance(t, (int, float)):
@@ -1113,7 +1126,7 @@ async def artifact_file_exists(session_id: str = "", relpath: str = "") -> Optio
     # Host artifact dir.
     try:
         base = artifact_dir(session_id=session_id)
-        rel = re.sub(r"^/?workspace/", "", pnorm).lstrip("/")
+        rel = _collapse_workspace_prefix(pnorm).lstrip("/")
         parts = [s for s in rel.split("/") if s and s not in (".", "..")]
         if not parts:
             return None
@@ -1159,7 +1172,7 @@ async def read_artifact_file(session_id: str = "", relpath: str = "",
             log.debug("read_artifact_file sandbox read failed for %s: %s", cpath, e)
     try:
         base = artifact_dir(session_id=session_id)
-        rel = re.sub(r"^/?workspace/", "", pnorm).lstrip("/")
+        rel = _collapse_workspace_prefix(pnorm).lstrip("/")
         parts = [s for s in rel.split("/") if s and s not in (".", "..")]
         if not parts:
             return None
