@@ -263,7 +263,12 @@ DEFAULT_IDLE_RESET_PREFIXES = [
 ]
 
 DEFAULT_CONFIG: Dict[str, Any] = {
-    "enabled":                 True,
+    # OPT-IN since 2026-08-31. Ambient dreaming used to start on boot on any
+    # non-sandbox instance, so a machine nobody was using generated LLM traffic
+    # on its own. Prod's persisted config already said enabled:false - the code
+    # default was simply never brought in line, which meant a fresh instance,
+    # or one whose config key was cleared, quietly resumed dreaming.
+    "enabled":                 False,
     "min_idle_minutes":        15,
     "tick_interval_seconds":   60,
     "telegram_bridge":         True,
@@ -10409,7 +10414,12 @@ KEY_NARRATOR_INTENT   = "vera:system:narrator:intent"    # last detected USER IN
 NARRATOR_JOURNAL_ID   = "narrator"                        # dream journal the narrative logs to
 
 DIRECTOR_DEFAULTS: Dict[str, Any] = {
-    "enabled":               True,
+    # OPT-IN since 2026-08-31. Unlike the scheduler this had NO persisted
+    # config at all (vera:dream:director:config was empty), so it was running
+    # in production solely on this default. Measured that day: three ambient
+    # "thinks" of 2775s, 2120s and 2364s - 121 minutes of CPU for 573 tokens
+    # total, at 0.1 tok/s - on a box nobody had asked to dream.
+    "enabled":               False,
     "tick_seconds":          240,    # loop cadence (queue drain + conversation)
     # Ambient THINKING is deliberately less frequent than the tick: a richer
     # thought at most once per this gap, instead of a shallow one every tick.
@@ -12472,7 +12482,7 @@ async def _director_loop():
         try:
             cfg = await _director_cfg()
             tick = max(60, int(cfg.get("tick_seconds", 240)))
-            d_enabled = bool(cfg.get("enabled", True))            # PA / dream director
+            d_enabled = bool(cfg.get("enabled", False))            # PA / dream director
             n_enabled = bool(cfg.get("narrator_enabled", False))  # system narrator
             # Tick at least as often as the narrator's fast-tier cadence so quick
             # takes actually feel real-time (floored at 60s).
@@ -12713,7 +12723,7 @@ async def system_narrator_start(trace_id=None):
 async def system_narrator_stop(trace_id=None):
     global _DIRECTOR_TASK, _DIRECTOR_RUN
     cfg = await _director_cfg_patch({"narrator_enabled": False})
-    if not cfg.get("enabled", True) and _director_task_running():
+    if not cfg.get("enabled", False) and _director_task_running():
         _DIRECTOR_RUN = False
         if _DIRECTOR_TASK and not _DIRECTOR_TASK.done():
             _DIRECTOR_TASK.cancel()
@@ -13293,7 +13303,7 @@ async def dream_background_allowed() -> Dict[str, Any]:
         busy = await _system_schedule_busy()
     except Exception:
         busy = False
-    enabled = bool(cfg.get("enabled", True))
+    enabled = bool(cfg.get("enabled", False))
     running = 0
     try:
         running = await _running_background_loops()
@@ -18631,7 +18641,7 @@ async def _startup():
             log.info("dream: scheduler + director auto-start skipped (dev sandbox)")
         else:
             cfg = await _get_config()
-            if cfg.get("enabled", True):
+            if cfg.get("enabled", False):
                 global _SCHED_RUN, _SCHED_TASK
                 if not _SCHED_RUN:
                     _SCHED_RUN = True
@@ -18642,7 +18652,7 @@ async def _startup():
             # off only on CPU-pool pressure. Its own config (dream.director.config)
             # gates it.
             dcfg = await _director_cfg()
-            if dcfg.get("enabled", True):
+            if dcfg.get("enabled", False):
                 global _DIRECTOR_RUN, _DIRECTOR_TASK
                 if not _DIRECTOR_RUN:
                     _DIRECTOR_RUN = True
