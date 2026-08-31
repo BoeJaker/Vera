@@ -13,6 +13,7 @@ known set of modules, so the tier is defined in one place.
 import pytest
 
 _CRITICAL_MODULES = {
+    "test_own_origin_tls",  # trust OUR cert only - never the open internet (2026-08-31)
     "test_loader_modules_have_no_parent_package",  # a relative import silently unregisters a whole subsystem (2026-08-31)
     "test_prose_author_think",  # the writer must write, not ruminate (2026-08-31)
     "test_sandbox_file_target",  # the operator can be pointed at a file it just wrote (2026-08-31)

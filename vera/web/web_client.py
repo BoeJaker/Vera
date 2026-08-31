@@ -359,15 +359,30 @@ def set_api_hook(fn: Optional[Callable[[str], Awaitable[Optional[Dict[str, Any]]
 # Sessions
 # ─────────────────────────────────────────────────────────────────────────────
 def new_session(timeout: float = DEFAULT_TIMEOUT,
-                headers: Optional[Dict[str, str]] = None) -> httpx.AsyncClient:
+                headers: Optional[Dict[str, str]] = None,
+                url: str = "") -> httpx.AsyncClient:
     """
     A browser-fingerprinted client for reuse across a crawl: one TLS handshake,
     cookies persist between pages (consent cookies set on page 1 are presented
     on page 2 — exactly what a real browser does).
     """
+    # Our own self-signed cert is not a stranger's: a fetch of a URL Vera
+    # itself published (a sandbox preview, a panel) fails CERTIFICATE_VERIFY
+    # otherwise. Narrow by construction - `verify_for` returns True, full
+    # verification, for every host that is not this orchestrator. See
+    # vera/web/own_origin.py for the census run 19 evidence.
+    _verify = True
+    if url:
+        try:
+            from Vera.vera.web import own_origin as _own
+            _hosts, _port = _own.own_identity()
+            _verify = _own.verify_for(url, own_hosts=_hosts, own_port=_port)
+        except Exception:
+            _verify = True
     return httpx.AsyncClient(timeout=timeout,
                              headers=headers or BROWSER_HEADERS,
                              follow_redirects=True,
+                             verify=_verify,
                              http2=HTTP2)
 
 
@@ -466,7 +481,7 @@ async def fetch_page(url: str, *,
     # 4. Direct fetch with the browser fingerprint.
     html_body, status, transport_err = "", 0, ""
     own_client = client is None
-    c = client or new_session(timeout)
+    c = client or new_session(timeout, url=url)
     try:
         r = await c.get(fetch_url)
         html_body, status = r.text, r.status_code
