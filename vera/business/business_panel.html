@@ -910,7 +910,8 @@ async function printJob(path, body){
 RENDER.printer = async ()=>{
   const st=await api('/print/status');
   const nodes=[el('h2',{},'Thermal printer'),
-    el('div',{class:'sub'},'A standalone module (print.*), surfaced here as an element. Print receipts, packing slips & address labels. Three transports: this browser (Web Serial), the server, or a USB-ESP32 over the mesh.')];
+    el('div',{class:'sub'},'Compose & print to the server USB printer, a printer on this computer (Web Serial), or a USB-ESP32 over the mesh. Registry + advanced controls are below.'),
+    el('iframe',{src:'/print/panel',style:'width:100%;height:660px;border:1px solid var(--border,#333);border-radius:8px;background:var(--bg0,#0d0f12);margin:6px 0',allow:'serial; usb; clipboard-read; clipboard-write'})];
 
   // Web Serial element
   const host=el('div',{style:'max-width:520px;margin-bottom:16px'});
