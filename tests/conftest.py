@@ -13,6 +13,7 @@ known set of modules, so the tier is defined in one place.
 import pytest
 
 _CRITICAL_MODULES = {
+    "test_ambient_dreaming_is_opt_in",  # nothing dreams on a box nobody asked (2026-08-31)
     "test_sandbox_estate_guard",  # a sandbox must not promote to main or reap the estate (2026-08-31)
     "test_sandbox_does_not_reap_the_estate",  # a dev sandbox must not reap the shared estate (2026-08-31)
     "test_own_origin_tls",  # trust OUR cert only - never the open internet (2026-08-31)
