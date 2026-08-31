@@ -14,6 +14,14 @@ real defaults wired to :mod:`perception`, :mod:`thinker`, :mod:`actions` and
 
 from __future__ import annotations
 
+try:
+    from Vera.vera.operator import stop_explanation as _stop_explanation
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.operator import stop_explanation as _stop_explanation
+    except Exception:
+        _stop_explanation = None
+
 import json
 import logging
 import os
@@ -297,5 +305,16 @@ async def run_loop(goal: str, session, *,
     # 9m16s and 7m45s hitting the step ceiling and still reporting ok, together
     # eating 86% of the step's wall budget. `reason` already carried the truth;
     # only `ok` disagreed with it.
-    return {"ok": bool(done), "done": done, "reason": reason, "summary": summary,
-            "steps": steps, "step_count": len(steps), "screenshots": screenshots}
+    # The explanation the branches above already wrote lives in steps[-1]; the
+    # caller only ever saw `reason`. Census run 21, author-then-edit step 3:
+    # three operator.run calls on the SAME url, 735s in total, each reported to
+    # the agentic loop as the single word "no_progress".
+    _explanation = _stop_explanation.explain(reason, steps) if _stop_explanation else ""
+    out = {"ok": bool(done), "done": done, "reason": reason, "summary": summary,
+           "steps": steps, "step_count": len(steps), "screenshots": screenshots}
+    if _explanation:
+        out["explanation"] = _explanation
+        # `reason` stays the machine-readable code; `error` is what the agentic
+        # loop surfaces to the executor that has to decide what to do next.
+        out.setdefault("error", _explanation)
+    return out
