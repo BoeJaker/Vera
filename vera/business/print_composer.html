@@ -149,7 +149,19 @@ Sun: 15</textarea>
         <div class="mini">Pull a live feed into the composer, then edit &amp; print it.</div>
         <button class="btn wide" onclick="feedSchedule()">📅 Today’s schedule</button>
         <button class="btn wide" onclick="feedDreams()" style="margin-top:6px">🌙 Dream digest</button>
+        <button class="btn wide" onclick="feedNews()" style="margin-top:6px">📰 News headlines</button>
         <div class="mini" id="feed_st" style="margin-top:8px"></div>
+        <hr style="border:none;border-top:1px solid var(--border);margin:12px 0">
+        <div class="mini" style="margin-bottom:6px">Daily auto-print (from the server printer)</div>
+        <div class="chk"><input type="checkbox" id="dp_en"><label style="margin:0">Print automatically each day</label></div>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:6px"><label style="margin:0">at</label><input id="dp_time" type="time" value="07:00" style="width:120px"></div>
+        <div style="display:flex;gap:12px;margin-top:6px;flex-wrap:wrap">
+          <label class="chk" style="margin:0"><input type="checkbox" id="dp_sched" checked> schedule</label>
+          <label class="chk" style="margin:0"><input type="checkbox" id="dp_dreams"> dreams</label>
+          <label class="chk" style="margin:0"><input type="checkbox" id="dp_news"> news</label>
+        </div>
+        <button class="btn wide" style="margin-top:8px" onclick="saveDaily()">Save daily schedule</button>
+        <div class="mini" id="dp_st" style="margin-top:6px"></div>
       </div>
       <div class="pane" data-p="cfg">
         <label>Send to</label>
@@ -330,6 +342,25 @@ async function feedDreams(){const st=$('feed_st');if(st)st.textContent='loading�
   $('t_text').value=lines.join(NL); $('t_align').value='left';
   document.querySelector('.tab[data-m="text"]').click(); if(st)st.textContent='loaded — edit & print';
 }
+async function feedNews(){const st=$('feed_st');if(st)st.textContent='loading…';
+  const r=await post('/print/news',{preview:true});
+  if(!r||!r.text){if(st)st.textContent=(r&&r.error)||'could not load news';return;}
+  $('t_text').value=r.text;$('t_align').value='left';
+  document.querySelector('.tab[data-m="text"]').click();if(st)st.textContent='loaded — edit & print';
+}
+async function loadDaily(){const r=await j('/print/config');const c=(r&&r.config)||{};
+  if($('dp_en'))$('dp_en').checked=!!c.enabled;
+  if(c.hour!=null&&$('dp_time'))$('dp_time').value=String(c.hour).padStart(2,'0')+':'+String(c.minute||0).padStart(2,'0');
+  const items=c.items||['schedule'];
+  if($('dp_sched'))$('dp_sched').checked=items.indexOf('schedule')>=0;
+  if($('dp_dreams'))$('dp_dreams').checked=items.indexOf('dreams')>=0;
+  if($('dp_news'))$('dp_news').checked=items.indexOf('news')>=0;
+}
+async function saveDaily(){const t=($('dp_time').value||'07:00').split(':');
+  const items=[];if($('dp_sched').checked)items.push('schedule');if($('dp_dreams').checked)items.push('dreams');if($('dp_news').checked)items.push('news');
+  const r=await post('/print/config/set',{enabled:$('dp_en').checked,hour:parseInt(t[0]||'7',10),minute:parseInt(t[1]||'0',10),items:items.join(','),printer_id:targetId()});
+  $('dp_st').textContent=(r&&r.ok)?('saved — '+($('dp_en').checked?('daily at '+$('dp_time').value):'off')):'save failed';
+}
 // ---- print routing + helpers ----
 let PRINTERS=[], TARGET=null;
 async function printJob(path, body){
@@ -377,5 +408,6 @@ function tplLoad(){const n=$('tpl_sel').value;if(!n){toast('pick a template firs
 function tplDel(){const n=$('tpl_sel').value;if(!n)return;const all=tplStore();delete all[n];localStorage.setItem('vera.print.tpl',JSON.stringify(all));tplRefresh();toast('template deleted');}
 refreshStatus();setInterval(refreshStatus,15000);
 tplRefresh();
+loadDaily();
 render();
 </script>
