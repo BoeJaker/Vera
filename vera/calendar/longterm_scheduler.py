@@ -314,6 +314,13 @@ def _due_by_time(action: Dict[str, Any]) -> bool:
     return bool(dt and _now_dt() >= dt)
 
 
+def _record_workflow_trigger(event: Dict[str, Any]) -> Dict[str, Any]:
+    from Vera.vera.execution.workflow_trigger_receipts import (
+        default_workflow_trigger_receipt_ledger,
+    )
+    return default_workflow_trigger_receipt_ledger().record(event)
+
+
 async def _emit_workflow_trigger(action: Dict[str, Any], due_kind: str) -> None:
     """Best-effort portable evidence; native scheduling stays authoritative."""
     try:
@@ -323,9 +330,23 @@ async def _emit_workflow_trigger(action: Dict[str, Any], due_kind: str) -> None:
         event = calendar_action_workflow_trigger(
             action, observed_at=now_iso(), due_kind=due_kind,
         )
+    except Exception as exc:
+        log.debug("sched workflow trigger build: %s", exc)
+        return
+    receipt = None
+    try:
+        receipt = _record_workflow_trigger(event)
+    except Exception as exc:
+        log.debug("sched workflow trigger receipt: %s", exc)
+    try:
         await emit_event(event)
     except Exception as exc:
         log.debug("sched workflow trigger projection: %s", exc)
+    if receipt:
+        try:
+            await emit_event(receipt)
+        except Exception as exc:
+            log.debug("sched workflow trigger receipt event: %s", exc)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

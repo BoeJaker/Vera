@@ -34,9 +34,15 @@ owns timestamp and threshold evaluation, user notification, and system-action
 dispatch. Dream still owns idle, hour-window, cooldown, sensor, and resource
 gates plus cycle creation. Projection or event-bus failure is isolated from
 those existing decisions. Duplicate, misfire, and catch-up policy remain
-explicitly native until the shared trigger consumer and durable receipt ledger
-are introduced; the envelope does not claim that a stable key alone prevents
-duplicate execution.
+explicitly native. A small out-of-tree SQLite ledger now records each valid
+trigger identity atomically and emits a separate
+`vera.workflow-trigger-receipt/v1` observation. It survives process reopen,
+classifies the first observation versus later duplicates, retains bounded UTC
+observation times and counts, and rejects identity reuse with changed schedule
+or authority semantics. The receipt is evidence only: it does not suppress a
+native dispatch, schedule work, replay a trigger, or claim exactly-once effects.
+Ledger, trigger-stream, or receipt-stream failure remains isolated from native
+execution.
 
 `execution/exec_capabilities.py` is two capability groups in one module: **`exec.*`** — shell, PowerShell, code, and SSH execution — and **`netscan.*`** — network asset discovery, target probing, and an auxiliary topology graph. Both are governed by a single configurable **exec sandbox policy**, and both surface their own harness tabs (the tabbed **Exec** consoles and the Cytoscape **Netmap**).
 

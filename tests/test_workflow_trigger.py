@@ -56,6 +56,12 @@ def test_trigger_validation_fails_closed_on_identity_timezone_and_extra_fields()
     forged = {**event, "trigger_id": "sha256:forged"}
     with pytest.raises(ValueError, match="identity"):
         validate_workflow_trigger(forged)
+    changed_schedule = {
+        **event,
+        "schedule": {**event["schedule"], "timezone": "Europe/London"},
+    }
+    with pytest.raises(ValueError, match="identity"):
+        validate_workflow_trigger(changed_schedule)
     with pytest.raises(ValueError, match="timezone offset"):
         build_workflow_trigger(
             source_kind="dream.trigger", source_id="briefing",
@@ -139,7 +145,7 @@ def test_dream_adapter_uses_prior_run_as_recurrence_identity_and_redacts_prompt(
     assert "description" not in str(first)
 
 
-def test_calendar_native_fire_survives_projection_failure(monkeypatch):
+def test_calendar_native_fire_survives_projection_and_receipt_failure(monkeypatch):
     from vera.calendar import longterm_scheduler as scheduler
 
     calls = []
@@ -172,6 +178,10 @@ def test_calendar_native_fire_survives_projection_failure(monkeypatch):
     monkeypatch.setattr(scheduler, "_save_action", save_action)
     monkeypatch.setattr(scheduler, "_notify_user", notify)
     monkeypatch.setattr(scheduler, "emit_event", broken_emit)
+    def broken_receipt(_event):
+        raise RuntimeError("receipt store unavailable")
+
+    monkeypatch.setattr(scheduler, "_record_workflow_trigger", broken_receipt)
     result = asyncio.run(scheduler._evaluate_once())
 
     assert result == {"evaluated": 1, "fired": ["action-1"]}
@@ -179,8 +189,10 @@ def test_calendar_native_fire_survives_projection_failure(monkeypatch):
     assert ("saved", "action-1") in calls
 
 
-def test_dream_projection_emits_same_contract_and_is_failure_isolated(monkeypatch):
+def test_dream_projection_emits_same_contract_and_is_failure_isolated(
+        monkeypatch, tmp_path):
     from vera.dream import dream_capabilities as dream
+    from vera.execution import workflow_trigger_receipts as receipts
 
     emitted = []
 
@@ -192,6 +204,8 @@ def test_dream_projection_emits_same_contract_and_is_failure_isolated(monkeypatc
 
     monkeypatch.setattr(dream, "_last_run_ts", last_run)
     monkeypatch.setattr(dream, "emit_event", emit)
+    ledger = receipts.WorkflowTriggerReceiptLedger(tmp_path / "receipts.sqlite3")
+    monkeypatch.setattr(dream, "_record_dream_workflow_trigger", ledger.record)
     asyncio.run(dream._emit_dream_workflow_trigger({
         "name": "briefing", "hours_start": 5, "hours_end": 9,
         "min_idle_minutes": 20, "min_interval_minutes": 720,
@@ -201,6 +215,8 @@ def test_dream_projection_emits_same_contract_and_is_failure_isolated(monkeypatc
     assert emitted[0]["type"] == EVENT_TYPE
     assert emitted[0]["schema"] == SCHEMA
     assert emitted[0]["source"]["kind"] == "dream.trigger"
+    assert emitted[1]["type"] == "workflow.trigger.receipt.recorded"
+    assert emitted[1]["classification"] == "first_seen"
 
     async def broken_emit(_event):
         raise RuntimeError("event bus unavailable")

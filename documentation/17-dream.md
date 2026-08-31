@@ -151,6 +151,13 @@ recurrence receives a new identity. This evidence does not move idle, cooldown,
 sensor, cancellation, or cycle authority out of Dream, and event projection
 failure cannot prevent the selected cycle from starting.
 
+Before publishing that evidence, Dream also records the observation in the
+shared durable trigger-receipt ledger. Re-observing the same due occurrence
+after a process restart increments its receipt instead of inventing another
+identity. This currently improves audit and duplicate diagnosis; it deliberately
+does not gate cycle creation, because Dream's native recurrence and effect
+semantics have not yet migrated to the shared scheduling policy.
+
 ### Output workspace — files, not context
 
 Every (non-preview) cycle collates its material into real files under `vera/dream/outputs/<cycle_id>/` as stages complete: `01-gather.md` (full, untruncated working set), `02-themes.md`, `03-plan.md`, `04-findings.md` (appended per iteration by the investigate/agent-loop/project_action stages), `report.md`, `journal.md`, `meta.json`. The file list rides on the history record and cycle detail (chips → click to view), and agent loops launched by dream stages are instructed to collate substantial results into durable output (notebook/workspace files) rather than carrying everything in their context window.
