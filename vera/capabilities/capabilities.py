@@ -2384,7 +2384,18 @@ async def http_get(url: str, timeout: int = 15, trace_id=None):
         # or the goal. Just the UA, not the full browser-fingerprint headers
         # web_client.py adds for scraping — this cap's contract is a raw,
         # simple request, not page-scraping hardening.
+        # Same reasoning as web.fetch: trust the certificate we issued to
+        # ourselves, and nobody else's. Census run 19 lost four cycles to
+        # CERTIFICATE_VERIFY_FAILED fetching Vera's own preview URL.
+        _verify = True
+        try:
+            from Vera.vera.web import own_origin as _own
+            _h, _p = _own.own_identity()
+            _verify = _own.verify_for(url, own_hosts=_h, own_port=_p)
+        except Exception:
+            _verify = True
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True,
+                                     verify=_verify,
                                      headers={"User-Agent": _WEB_USER_AGENT}) as c:
             t0=time.monotonic(); r=await c.get(url); ms=round((time.monotonic()-t0)*1000)
         return {"url":str(r.url),"status":r.status_code,"ok":r.is_success,"latency_ms":ms,
