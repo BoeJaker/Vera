@@ -8996,7 +8996,7 @@ async def evolve_sandbox_prune(dry_run: bool = True, delete_branches: bool = Fal
             live_composes.append(d.get("compose", f"docker-compose.dev-{slug}.yml"))
     _recon = _pool_reconcile.plan_pool_reconcile(
         pool, container_names=exists, docker_ok=bool(ps.get("ok")),
-        worktree_probe=_probe)
+        worktree_probe=_probe, pinned_names=await _sandbox_pinned())
     stale_pool: List[str] = _recon["stale"]
     heal_pool: List[str] = _recon["heal"]
     if not _recon["docker_observable"]:

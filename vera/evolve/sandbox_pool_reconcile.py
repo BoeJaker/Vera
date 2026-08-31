@@ -47,6 +47,7 @@ from typing import Any, Dict, Iterable, List
 PRESENT, ABSENT, UNKNOWN = "present", "absent", "unknown"
 
 KEEP_PINNED = "pinned: standing infrastructure is never auto-reaped"
+KEEP_RUNNING = ("container is running: a live container outranks a worktree probe")
 KEEP_DOCKER_BLIND = "docker state unobservable: refusing to infer removal"
 KEEP_WT_UNKNOWN = "worktree could not be probed: refusing to infer absence"
 
@@ -74,12 +75,16 @@ def docker_is_observable(*, ok: bool, container_names: Iterable[str],
 def plan_pool_reconcile(pool: Mapping[str, Mapping[str, Any]], *,
                         container_names: Iterable[str],
                         docker_ok: bool,
-                        worktree_probe: Mapping[str, str]) -> Dict[str, Any]:
+                        worktree_probe: Mapping[str, str],
+                        pinned_names: Iterable[str] = ()) -> Dict[str, Any]:
     """Split the pool into what may be reaped, healed, or must be left alone.
 
     ``worktree_probe`` maps slug -> PRESENT/ABSENT/UNKNOWN. A slug missing from
     it is treated as UNKNOWN, so a caller that forgets to probe something
     cannot accidentally delete it.
+
+    ``pinned_names`` is the set of container names (or slugs) that must never
+    be auto-reaped - pinning is stored in a Redis set, not on the descriptor.
     """
     names = {str(n).strip() for n in (container_names or []) if str(n).strip()}
     observable = docker_is_observable(ok=bool(docker_ok), container_names=names,
@@ -88,21 +93,43 @@ def plan_pool_reconcile(pool: Mapping[str, Mapping[str, Any]], *,
     heal: List[str] = []
     kept: Dict[str, str] = {}
 
+    pinned = {str(n).strip() for n in (pinned_names or []) if str(n).strip()}
+
     for slug, descriptor in (pool or {}).items():
         d = descriptor or {}
-        if d.get("pinned"):
+        name = str(d.get("name") or "")
+        # The pin lives in a Redis SET of container names, not on the
+        # descriptor, so `d["pinned"]` was never set and KEEP_PINNED never
+        # fired - the standing mirror was pinned and reaped anyway, three
+        # times on 2026-08-31. Accept the pin from either place.
+        if d.get("pinned") or (name and name in pinned) or slug in pinned:
             kept[slug] = KEEP_PINNED
+            continue
+
+        # Decided BEFORE the worktree verdict: if we cannot see docker we
+        # cannot conclude anything, and the ABSENT branch below force-removes
+        # a container.
+        if not observable:
+            kept[slug] = KEEP_DOCKER_BLIND
             continue
 
         probe = str(worktree_probe.get(slug, UNKNOWN) or UNKNOWN)
         if d.get("worktree") and probe == ABSENT:
+            # A RUNNING container is direct evidence the sandbox exists. A
+            # filesystem probe saying its worktree is missing is evidence of
+            # nothing more than what that process could see - and the caller
+            # acts on this by `docker rm -f`. Measured 2026-08-31: two
+            # consecutive hourly passes, 17 minutes apart with zero worktrees
+            # reaped in between, went PRESENT -> ABSENT for the same two
+            # descriptors and destroyed both live containers, one of them
+            # another agent's, 23 minutes old.
+            if name in names:
+                kept[slug] = KEEP_RUNNING
+                continue
             heal.append(slug)
             continue
 
-        if not observable:
-            kept[slug] = KEEP_DOCKER_BLIND
-            continue
-        if str(d.get("name") or "") not in names:
+        if name not in names:
             stale.append(slug)
             continue
 

@@ -82,9 +82,26 @@ def test_a_pinned_sandbox_is_never_healed_even_when_its_worktree_looks_absent():
 
 # --- the worktree probe ----------------------------------------------------
 
-def test_a_worktree_proven_absent_is_reconciled():
+def test_a_worktree_proven_absent_is_reconciled_only_when_nothing_is_running():
+    """NARROWED 2026-08-31, deliberately. This used to assert that an absent
+    worktree alone was grounds to reconcile - and the heal path runs
+    `docker rm -f`, so that assertion licensed destroying live containers.
+
+    Two consecutive hourly prune passes 17 minutes apart, with zero worktrees
+    reaped in between, went PRESENT -> ABSENT for the same two descriptors and
+    force-removed both running containers (the standing mirror, and another
+    agent's sandbox 23 minutes old). Why the probe flipped is still open; that
+    it was allowed to decide alone is what is fixed here.
+
+    A live container is direct evidence the sandbox exists. The reconcile still
+    happens when the container is genuinely gone too - the case below."""
     plan = _plan(probe={"mirror": PRESENT, "worker": ABSENT, "other": PRESENT})
-    assert plan["heal"] == ["worker"]
+    assert plan["heal"] == []
+    assert "running" in plan["kept"]["worker"]
+
+    gone = _plan(names=("vera-dev-mirror", "vera-dev-other"),
+                 probe={"mirror": PRESENT, "worker": ABSENT, "other": PRESENT})
+    assert gone["heal"] == ["worker"]
 
 
 def test_a_worktree_that_could_not_be_probed_is_never_reconciled():
