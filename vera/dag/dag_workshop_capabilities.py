@@ -2670,6 +2670,18 @@ _JSON_ACTION_KEYS = ("tool_use", "tool_call", "final", "todo_done",
                      "action", "tool", "capability", "name")
 
 
+# Taking a code fence off a reply without taking the reply with it.
+try:
+    from Vera.vera.dag import fenced_json as _fenced_json
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import fenced_json as _fenced_json
+    except Exception:
+        _fenced_json = None
+        log.warning("fenced_json unavailable - a malformed fenced reply is "
+                    "reduced to an empty string and cannot be salvaged")
+
+
 def _extract_json(raw: str) -> Optional[Dict]:
     # Strip thinking tokens first — qwen3/deepseek-r1 etc. wrap JSON in <think>
     s, _think = _strip_think(raw or "")
@@ -2685,7 +2697,13 @@ def _extract_json(raw: str) -> Optional[Dict]:
                     return cand
         except Exception:
             pass
-        if s.startswith("```"):
+        # NOT split("```",2)[-1]: for a COMPLETE fence that is the text AFTER
+        # the close, i.e. "" - which then starves the balanced-object scanner
+        # below, the very thing that exists to salvage a malformed fenced
+        # reply. Census run 21, build-browser-verified step 2. See fenced_json.
+        if _fenced_json is not None:
+            s = _fenced_json.strip_fence(s) or s
+        elif s.startswith("```"):                     # pragma: no cover
             s = s.split("```", 2)[-1].strip()
     # Fast path: the whole payload is already a single JSON object.
     whole = _coerce_json_loads(s)
