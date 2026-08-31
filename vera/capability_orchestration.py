@@ -5836,6 +5836,27 @@ _SANDBOX_SKIP_JOBS = {
     "longterm_scheduler",      # would auto-fire scheduled LOOPS in the sandbox
     "v8_program_tick",         # would auto-advance long-horizon PROGRAMS
     "worldview_startup_load",  # loads/embeds the worldview model
+    # These REAP THE SHARED ESTATE - containers, worktrees, branches and the
+    # sandbox pool registry that every instance reads. A dev sandbox has no
+    # business doing that to the box it is a guest on, and leech boot's whole
+    # premise ("never fire heavy ambient jobs inside a dev sandbox") already
+    # says so; they were simply never listed.
+    #
+    # Measured 2026-08-31 during census 20: a prune ran at 14:58 UTC emitting
+    # the PRE-fix audit text, ~18 minutes after prod restarted with the fix -
+    # so it ran somewhere else. The only Vera-image container running at that
+    # moment was another agent's dev sandbox, which was idle-paused four
+    # minutes later. It emptied the sandbox pool, and the operator - which
+    # falls back to any registered sandbox when the primary is occupied - then
+    # had nothing to choose from and reported "the sandbox list was empty".
+    #
+    # singleton=True already gates these to one instance, but that lease only
+    # binds instances running the NEW code; a container on an older image
+    # ignores it. This does not depend on the container's code being current
+    # only in the sense that both are needed - see the note in the commit.
+    "evolve.sandbox.idle_sweep",     # pauses/reaps CONTAINERS estate-wide
+    "evolve.scaffolding.sweep",      # removes shared worktrees and branches
+    "evolve.mainline_mirror.refresh",# rewrites the shared mirror worktree
 }
 _SANDBOX_SKIP_LOGGED = set()
 
