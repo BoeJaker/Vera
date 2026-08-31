@@ -70,6 +70,12 @@ try{var t=localStorage.getItem('vera-theme');if(t)document.documentElement.setAt
         <div class="tab" data-m="image">Image</div>
         <div class="tab" data-m="cfg">Routing</div>
       </div>
+      <div class="tplbar" style="display:flex;gap:6px;align-items:center;margin:6px 0 2px">
+        <select id="tpl_sel" style="flex:1"></select>
+        <button class="btn sm" onclick="tplLoad()" title="Load selected template">Load</button>
+        <button class="btn sm" onclick="tplSave()" title="Save the current setup as a template">Save</button>
+        <button class="btn sm" onclick="tplDel()" title="Delete selected template">✕</button>
+      </div>
 
       <div class="pane on" data-p="text">
         <label>Text</label>
@@ -117,7 +123,7 @@ Serve with lemon & sugar.</textarea>
 
       <div class="pane" data-p="graph">
         <div class="row">
-          <div><label>Type</label><select id="g_type" onchange="render()"><option value="bar">Bar</option><option value="line">Line</option></select></div>
+          <div><label>Type</label><select id="g_type" onchange="render()"><option value="bar">Bar</option><option value="hbar">Horizontal bar</option><option value="line">Line</option><option value="table">Table</option></select></div>
           <div><label>Title</label><input id="g_title" value="Weekly sales" oninput="render()"></div>
         </div>
         <label>Data — one <code>label: value</code> per line</label>
@@ -235,10 +241,27 @@ function render(){
   }
   else if(MODE==='graph'){
     const type=$('g_type').value,title=$('g_title').value;
-    const rows=($('g_data').value||'').split('\n').map(l=>{const m=l.split(':');return m.length>1?[m[0].trim(),parseFloat(m[1])]:null;}).filter(r=>r&&!isNaN(r[1]));
+    const raw=($('g_data').value||'').split('\n').map(l=>{const i=l.indexOf(':');return i<0?null:[l.slice(0,i).trim(),l.slice(i+1).trim()];}).filter(r=>r&&r[0]!=='');
+    if(type==='table'){
+      const th=title?34:0, rh=30, hh=pad*2+th+16+raw.length*rh, x=ctxFor(hh);let y=pad;
+      if(title){x.font='bold 24px system-ui';const tw=x.measureText(title).width;x.fillText(title,(w-tw)/2,y);y+=th;}
+      x.fillRect(pad,y,w-pad*2,2);y+=12;x.font='20px system-ui';
+      raw.forEach(r=>{x.fillText(r[0],pad,y);const vw=x.measureText(r[1]).width;x.fillText(r[1],w-pad-vw,y);y+=rh;});
+      return;
+    }
+    const rows=raw.map(r=>[r[0],parseFloat(r[1])]).filter(r=>!isNaN(r[1]));
+    const max=Math.max(1,...rows.map(r=>r[1]));
+    if(type==='hbar'){
+      const th=title?36:0, rh=34, hh=pad*2+th+rows.length*rh, x=ctxFor(hh);let y=pad;
+      if(title){x.font='bold 24px system-ui';const tw=x.measureText(title).width;x.fillText(title,(w-tw)/2,y);y+=th;}
+      x.font='16px system-ui';
+      const lw=Math.min(130,Math.max(10,...rows.map(r=>x.measureText(r[0]).width))+8), bx=pad+lw, bw=w-pad-bx-46;
+      rows.forEach(r=>{x.fillText(r[0],pad,y+4);const ww=Math.max(1,bw*r[1]/max);x.fillRect(bx,y,ww,20);x.fillText(String(r[1]),bx+ww+4,y+4);y+=rh;});
+      return;
+    }
     const h=300,x=ctxFor(h);const top=44,bot=h-46,left=pad+6,right=w-pad,gh=bot-top;
     x.font='bold 24px system-ui';const tw=x.measureText(title).width;x.fillText(title,(w-tw)/2,10);
-    const max=Math.max(1,...rows.map(r=>r[1]));x.lineWidth=2;x.strokeStyle='#000';x.fillStyle='#000';
+    x.lineWidth=2;x.strokeStyle='#000';x.fillStyle='#000';
     x.beginPath();x.moveTo(left,top);x.lineTo(left,bot);x.lineTo(right,bot);x.stroke();
     x.font='16px system-ui';
     if(type==='bar'){const bw=(right-left)/rows.length;rows.forEach((r,i)=>{const bh=gh*r[1]/max;const bx=left+i*bw+bw*0.18,by=bot-bh,ww=bw*0.64;x.fillRect(bx,by,ww,bh);const lw=x.measureText(r[0]).width;x.fillText(r[0],bx+ww/2-lw/2,bot+6);});}
@@ -308,6 +331,20 @@ async function refreshStatus(){const s=await j('/print/status');
   $('dot').classList.toggle('on',ok);
   $('st').textContent=ok?((dev?('server '+dev):'')+(PRINTERS.length?(' · '+PRINTERS.length+' printer'+(PRINTERS.length>1?'s':'')):'')+((s&&s.pil)?' · fonts/images ready':'')):'no printer registered yet — connect one in Routing';
 }
+// ---- templates (saved composer setups) ----
+function tplFields(){return [...document.querySelectorAll('.controls [id]')].filter(e=>/^(INPUT|SELECT|TEXTAREA)$/.test(e.tagName)&&e.id!=='tpl_sel'&&e.id!=='c_printer');}
+function tplCapture(){const o={_mode:MODE,_items:[...$('l_items').querySelectorAll('input')].map(i=>i.value)};tplFields().forEach(e=>{o[e.id]=e.type==='checkbox'?e.checked:e.value;});return o;}
+function tplApply(o){ if(o._mode){const t=document.querySelector('.tab[data-m="'+o._mode+'"]'); if(t)t.click();}
+  if(o._items){const d=$('l_items');d.innerHTML='';o._items.forEach(v=>addItem('l_items',v));}
+  tplFields().forEach(e=>{if(o[e.id]!==undefined){if(e.type==='checkbox')e.checked=o[e.id];else e.value=o[e.id];}}); render(); }
+function tplStore(){try{return JSON.parse(localStorage.getItem('vera.print.tpl')||'{}');}catch(e){return {};}}
+function tplRefresh(){const sel=$('tpl_sel');if(!sel)return;const all=tplStore();const cur=sel.value;
+  sel.innerHTML='<option value="">— templates —</option>'+Object.keys(all).sort().map(n=>'<option>'+n.replace(/</g,'&lt;')+'</option>').join('');
+  if([...sel.options].some(o=>o.value===cur))sel.value=cur;}
+function tplSave(){const name=(prompt('Save this setup as template — name:')||'').trim();if(!name)return;const all=tplStore();all[name]=tplCapture();try{localStorage.setItem('vera.print.tpl',JSON.stringify(all));}catch(e){toast('could not save',true);return;}tplRefresh();$('tpl_sel').value=name;toast('template saved');}
+function tplLoad(){const n=$('tpl_sel').value;if(!n){toast('pick a template first',true);return;}const all=tplStore();if(all[n])tplApply(all[n]);}
+function tplDel(){const n=$('tpl_sel').value;if(!n)return;const all=tplStore();delete all[n];localStorage.setItem('vera.print.tpl',JSON.stringify(all));tplRefresh();toast('template deleted');}
 refreshStatus();setInterval(refreshStatus,15000);
+tplRefresh();
 render();
 </script>
