@@ -13573,6 +13573,19 @@ def _v5_path_is_proven(artifacts: Dict[str, Dict[str, Any]], path: str) -> bool:
 # bookkeeping (tool_calls/granted/pending_note exist only in the single-tool
 # path), so each applies the decision with its own accounting rather than
 # being forced into an artificial shared side-effect shape.
+# Where a file the run already made actually lives (the registry key is the
+# BASENAME, so a bare filename silently means the workspace root).
+try:
+    from Vera.vera.dag import artifact_location as _artifact_location
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import artifact_location as _artifact_location
+    except Exception:
+        _artifact_location = None
+        log.warning("artifact_location unavailable - a bare filename can still "
+                    "create a second copy at the workspace root")
+
+
 def _v5_route_write_call(
     tool: str, args: Any, *, artifacts: Dict[str, Dict[str, Any]], catalog_set: set,
     proven_redirects: int, code_write_redirects: int,
@@ -13586,6 +13599,28 @@ def _v5_route_write_call(
     budget)."""
     if not isinstance(args, dict):
         return None
+
+    # RULE 0 - a file this run already made has a PLACE. The registry key is the
+    # basename ("the run works in one dir"), which stops being true the moment a
+    # goal builds a package: `stats.py` and `statkit/stats.py` share a key, so a
+    # bare filename is judged proven, reads the real file, and then saves at the
+    # workspace ROOT beside it. Census 22 build-multifile spent ten cycles on
+    # mv/cp/ls untangling exactly that, and wall-capped. The record carries
+    # fs_path; use it. Applied BEFORE the rules below so they judge the real
+    # path, and reported even when no other rule fires.
+    _relocated = ""
+    if _artifact_location is not None and tool in (
+            "code.author", "code.edit", "ide.fs.write", "code.save"):
+        _p_arg = "file" if ("file" in args and "path" not in args) else "path"
+        try:
+            _relocated = _artifact_location.known_location(
+                str(args.get(_p_arg) or ""), artifacts)
+        except Exception:                             # pragma: no cover
+            _relocated = ""
+        if _relocated:
+            args = dict(args)
+            _orig_path = str(args.get(_p_arg) or "")
+            args[_p_arg] = _relocated
 
     # RULE 1 — re-authoring a PROVEN file: code.author REPLACES the whole
     # file. Route to code.edit (shows the coder the CURRENT file, applies a
@@ -13671,6 +13706,12 @@ def _v5_route_write_call(
                 "context_files": ctx_files,
             }
 
+    if _relocated:
+        return {"kind": "path_relocated", "budget": None, "tool": tool,
+                "args": args, "path": _relocated, "orig_tool": tool,
+                "note": _artifact_location.relocation_note(_orig_path, _relocated),
+                "reason": f"bare path corrected to where the run already put it: {_relocated}",
+                "context_files": []}
     return None
 
 
