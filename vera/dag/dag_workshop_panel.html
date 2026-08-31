@@ -1621,7 +1621,7 @@ async function libSelect(id){
         <br><span style="font-family:var(--mono);font-size:8.5px;color:var(--dim2)">${esc(wir.workflow_hash||'no portable hash')}</span>
         <br>definition ${esc(wir.record?.definition_hash||'')} · stored hash ${esc(wir.record?.stored_hash_status||'unknown')}
         <br>aliases: ${esc((wir.aliases||[]).join(', ')||'not registered')}
-        <br>gaps: ${(wir.gaps||[]).length} · plain/monitored/supervised/one-shot streamed use exact IR preparation; stepwise control remains native
+        <br>gaps: ${(wir.gaps||[]).length} · exact definitions use IR preparation; stepwise actions get individual IR identities while adaptive control remains native
       </div></div>`:''}
     <div class="action-row" style="margin-top:auto;padding-top:8px;border-top:1px solid var(--border)">
       <button class="btn sm primary" onclick="libRunSelected()">Run</button>
@@ -3156,6 +3156,7 @@ async function planRun(){
     execute: reviewFirst ? false : wantExecute,
     hitl:    document.getElementById('planHitl').checked,
     auto_approve_secs: 30,
+    include_workflow_ir: true,
     state: {},
   };
   planEvent('starting', `Goal: ${esc(goal)}\nMode: ${esc(body.mode)}, execute=${body.execute}${reviewFirst?' (review-first)':''}, hitl=${body.hitl}`);
@@ -3187,6 +3188,12 @@ async function planRun(){
   }
   planFinish();
 }
+function planWorkflowEvidence(ev){
+  const wir=ev&&ev.workflow_ir;
+  if(!wir) return '';
+  const identity=wir.workflow_hash ? String(wir.workflow_hash).slice(0,30)+'…' : (wir.reason||'native compatibility');
+  return `definition ${identity} · ${wir.mode||'unknown'} · control ${wir.control_mode||'native'}`;
+}
 function handlePlanEvent(ev, opts){
   opts = opts || {};
   const t = ev.type || '';
@@ -3202,7 +3209,7 @@ function handlePlanEvent(ev, opts){
       return `  ${i+1}. ${cap}${out?' → '+out:''}`;
     }).join('\n');
     planEvent('plan ready ('+(ev.dag||[]).length+' steps)',
-      `${esc(ev.rationale||'(no rationale)')}\n\n${esc(stepLines)}`, 'plan');
+      `${esc(ev.rationale||'(no rationale)')}\n\n${esc(stepLines)}${ev.workflow_ir?'\n\n'+esc(planWorkflowEvidence(ev)):''}`, 'plan');
     document.getElementById('planAfterRow').style.display='flex';
 
     // If user asked for review-first, surface the review card with action buttons.
@@ -3210,15 +3217,20 @@ function handlePlanEvent(ev, opts){
       planAddReviewCard(ev, opts);
     }
   }
-  else if(t==='dag.step_start'){ planEvent('▶ step '+((ev.step||0)+1)+' '+(ev.cap||''), esc(JSON.stringify(ev.input||{},null,0).slice(0,400))); }
-  else if(t==='dag.step_done'){
-    const prev = ev.result_preview ? esc(String(ev.result_preview).slice(0,500)) : '(no result)';
-    planEvent('✓ step '+((ev.step||0)+1)+' done', prev, 'ok');
+  else if(t==='dag.step_start'){
+    const detail=JSON.stringify(ev.params||{},null,0).slice(0,400)+(ev.workflow_ir?'\n'+planWorkflowEvidence(ev):'');
+    planEvent('▶ step '+((ev.step||0)+1)+' '+(ev.cap||''), esc(detail));
   }
-  else if(t==='dag.step_error'){ planEvent('✗ step '+((ev.step||0)+1)+' error', esc(ev.error||''), 'err'); }
+  else if(t==='dag.step_done'){
+    const prev = ev.result_preview ? String(ev.result_preview).slice(0,500) : '(no result)';
+    planEvent('✓ step '+((ev.step||0)+1)+' done', esc(prev+(ev.workflow_ir?'\n'+planWorkflowEvidence(ev):'')), 'ok');
+  }
+  else if(t==='dag.step_error'){ planEvent('✗ step '+((ev.step||0)+1)+' error', esc((ev.error||'')+(ev.workflow_ir?'\n'+planWorkflowEvidence(ev):'')), 'err'); }
   else if(t==='dag.complete'){ planEvent('complete', 'state keys: '+Object.keys(ev.state||{}).join(', '), 'ok'); }
   else if(t==='dag.error'){ planEvent('error', esc(ev.error||''), 'err'); }
-  else if(t==='dag.hitl.request'){ planEvent('HITL', 'awaiting approval — open chat panel to approve/reject', 'warn'); }
+  else if(t==='dag.hitl_request'||t==='dag.hitl.request'){
+    planEvent('HITL', esc('awaiting approval — open chat panel to approve/reject'+(ev.workflow_ir?'\n'+planWorkflowEvidence(ev):'')), 'warn');
+  }
   else { planEvent(t, esc(JSON.stringify(ev).slice(0,400))); }
 }
 

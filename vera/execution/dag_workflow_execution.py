@@ -97,6 +97,28 @@ def prepare_streamed_dag_execution(
     }
 
 
+def prepare_stepwise_dag_action(
+    cap_name: str, out_key: str, *, include_workflow_ir: bool = False,
+) -> dict[str, Any]:
+    """Prepare one adaptive action without claiming an upfront workflow."""
+    if not isinstance(cap_name, str) or not cap_name:
+        raise ValueError("cap_name must be a non-empty string")
+    if not isinstance(out_key, str) or not out_key:
+        raise ValueError("out_key must be a non-empty string")
+    graph = [[cap_name, out_key]]
+    prepared = prepare_dag_execution(graph)
+    prepared["control_mode"] = "native_stepwise"
+    materialized = prepared["graph"][0]
+    return {
+        "cap": materialized[0],
+        "out_key": materialized[1],
+        "workflow_ir": (
+            workflow_execution_metadata(prepared)
+            if include_workflow_ir else None
+        ),
+    }
+
+
 def _fallback(graph: list, reason: str, detail: str = "", gaps: list | None = None) -> dict[str, Any]:
     return {
         "schema": SCHEMA,
