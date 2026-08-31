@@ -12349,6 +12349,16 @@ KEY_NARRATOR_QUICK = "vera:system:narrator:quick"   # rolling quick-take JSON li
 async def _narrator_deliver(cfg: Dict[str, Any], text: str, title: str = "📖 Vera") -> None:
     """Deliver a narrative / quick-take to the configured channels: chat, telegram,
     speak (TTS). Best-effort — a failing channel never blocks the others."""
+    # Opt-in: route the narrator's output to the thermal printer if the user
+    # subscribed the "narrator" source (print.push checks subs; no-op when off).
+    try:
+        _pp = CAPABILITY_REGISTRY.get("print.push")
+        _fn = (_pp.get("raw") or _pp.get("func")) if _pp else None
+        if _fn and (text or "").strip():
+            asyncio.create_task(_fn(source="narrator", title="Narrator",
+                                    body=(text or ""), level="info"))
+    except Exception:
+        pass
     channels = list(cfg.get("narrator_deliver") or [])
     if cfg.get("narrator_deliver_to_chat") and "chat" not in channels:
         channels.append("chat")                       # legacy flag → chat channel
