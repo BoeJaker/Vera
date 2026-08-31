@@ -1590,6 +1590,7 @@ async function loadLast(){const r=await api('/dream/last');const b=$('ov-last');
    ═══════════════════════════════════════════════════════════ */
 let _triggers=[],_senMeta=[],_stgMeta=[];
 let _agentModels=[],_agentList=[],_teTrigWl=[],_teTrigNh=[];
+let _teEnabled=true;
 const PHASE_COLORS={sense:'#3b82f6',analyze:'#8b5cf6',plan:'#ec4899',act:'#f97316',emit:'#10b981'};
 
 async function loadTriggers(){
@@ -1601,19 +1602,21 @@ function renderTrigList(q=''){const list=$('trig-list');
   const ts=_triggers.filter(t=>!q||t.name.includes(q)||(t.label||'').toLowerCase().includes(q)||(t.description||'').toLowerCase().includes(q));
   if(!ts.length){list.innerHTML='<div class="empty">No triggers'+(q?' matching "'+esc(q)+'"':'')+'.</div>';return}
   list.innerHTML=ts.map(t=>{
-    const on=t.enabled;
+    const state=t.lifecycle?.state||(t.enabled?'active':'paused');
+    const on=state==='active';
     const pipe=t.pipeline||[];
     const pipeHtml=pipe.map(s=>{const meta=_stgMeta.find(x=>x.id===s)||{};const ph=meta.phase||'analyze';return'<span class="tfm-node '+ph+'">'+esc(s.replace('dream.stage.',''))+'</span><span class="tfm-arrow">&#8594;</span>'}).join('').replace(/<span class="tfm-arrow">&#8594;<\/span>$/,'');
     const agentTag=t.agent?'<span class="tag agent">'+esc(t.agent)+'</span>':'';
     const projTag=t.project?'<span class="tag proj">'+esc(t.project)+'</span>':'';
     return '<div class="trig-item" id="ti-'+esc(t.name)+'"><div class="trig-row" onclick="trigToggleExp(\''+esc(t.name)+'\')">'
-      +'<div class="trig-toggle '+(on?'on':'')+'" onclick="event.stopPropagation();trigToggle(\''+esc(t.name)+'\','+(!on)+')" title="'+(on?'Disable':'Enable')+'"></div>'
+      +'<div class="trig-toggle '+(on?'on':'')+'" onclick="event.stopPropagation();'+(state==='cancelled'?'':('trigToggle(\''+esc(t.name)+'\',\''+(on?'paused':'active')+'\')'))+'" title="'+(state==='cancelled'?'Cancelled':(on?'Pause':'Resume'))+'"></div>'
       +'<div style="flex:1"><div class="trig-name">'+esc(t.label||t.name)+'</div>'
       +(t.description?'<div style="font-size:9.5px;color:var(--fg3)">'+esc(t.description)+'</div>':'')+'</div>'
       +'<div class="trig-meta">'
       +'<span class="tag mode">'+esc(t.mode||'')+'</span>'
       +(t.hitl?'<span class="tag hitl">HITL</span>':'')
       +(t.depth&&t.depth!=='standard'?'<span class="tag depth">'+esc(t.depth)+'</span>':'')
+      +(state!=='active'?'<span class="tag '+(state==='cancelled'?'hitl':'depth')+'">'+state.toUpperCase()+'</span>':'')
       +agentTag+projTag
       +'<span class="tag depth">'+(t.sensors||[]).length+'s / '+pipe.length+'p</span>'
       +'</div>'
@@ -1624,13 +1627,15 @@ function renderTrigList(q=''){const list=$('trig-list');
       +'</div>'
       +'<div class="trig-exp"><div class="trig-flow-mini">'+pipeHtml+'</div>'
       +'<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:5px">'
-      +'<button class="btn sm grn" onclick="openCurate(\''+esc(t.name)+'\',false)">Run now</button>'
+      +'<button class="btn sm grn" '+(state==='cancelled'?'disabled':'')+' onclick="openCurate(\''+esc(t.name)+'\',false)">Run now</button>'
       +'<button class="btn sm" onclick="editInPipeline(\''+esc(t.name)+'\')">Edit pipeline</button>'
+      +(state!=='cancelled'?'<button class="btn sm" onclick="cancelTrig(\''+esc(t.name)+'\')">Cancel</button>':'')
       +'<button class="btn red sm" onclick="delTrig(\''+esc(t.name)+'\')">Delete</button>'
       +'</div></div>'
       +'</div>'}).join('')}
 function trigToggleExp(n){const el=$('ti-'+n);el?.classList.toggle('open')}
-async function trigToggle(n,en){await post('/dream/trigger/toggle',{name:n,enabled:en});loadTriggers()}
+async function trigToggle(n,state){await post('/dream/trigger/'+(state==='active'?'resume':'pause'),{name:n});loadTriggers()}
+async function cancelTrig(n){if(!confirm('Cancel trigger "'+n+'"? Its record will be preserved and cannot be resumed.'))return;const r=await post('/dream/trigger/cancel',{name:n});if(r?.ok===false){toast('warn',r.error||'Could not cancel');return}toast('ok','Cancelled');loadTriggers()}
 async function delTrig(n){if(!confirm('Delete trigger "'+n+'"?'))return;await post('/dream/trigger/delete',{name:n});toast('ok','Deleted');loadTriggers()}
 function editInPipeline(n){nav('pipeline');setTimeout(()=>{const s=$('pipeline-trig-sel');s.value=n;pipelineLoadTrig()},200)}
 
@@ -1690,6 +1695,7 @@ async function openTrigEditor(t={},isNew=true){
   // Stash current trigger so the chip pickers can read/write its whitelist + no_hitl_caps
   _teTrigWl=[...(t.whitelist||[])];
   _teTrigNh=[...(t.no_hitl_caps||[])];
+  _teEnabled=t.enabled!==false;
   if(!_allCaps.length){const cr=await api('/dream/caps/search?limit=500');_allCaps=(cr?.caps||[])}
   const mOpts=MODES.map(m=>'<option value="'+m.v+'" '+(t.mode===m.v?'selected':'')+'>'+m.l+'</option>').join('');
   const dOpts=DEPTHS.map(d=>'<option value="'+d+'" '+((t.depth||'standard')===d?'selected':'')+'>'+d+'</option>').join('');
@@ -1834,7 +1840,7 @@ async function saveTrig(isNew){
   const sp=collectSensorParams('te');
   const agents=(_msState['te-agents']||[]).map(it=>typeof it==='string'?it:it.id);
   const models=(_msState['te-models']||[]).map(it=>typeof it==='string'?it:it.id);
-  const rec={name:$('te-n').value.trim(),label:$('te-l').value.trim()||$('te-n').value.trim(),description:$('te-d').value.trim(),enabled:true,sensors:sen,pipeline:pipe,whitelist:[..._teTrigWl],no_hitl_caps:[..._teTrigNh],mode:$('te-mode').value,depth:$('te-depth').value,hitl:$('te-hitl').value==='true',director_managed:$('te-dm').value==='true',timezone_name:$('te-tz').value.trim()||'UTC',hours_start:+$('te-hs').value,hours_end:+$('te-he').value,min_idle_minutes:+$('te-mi').value,min_interval_minutes:+$('te-mv').value,require_signal:+$('te-rs').value,max_steps:+$('te-ms').value,deliver_to:del,deliver_config:delCfg,prompt:$('te-pr').value,sensor_params:sp,agent:$('te-agent').value.trim(),agents,models,project:$('te-proj').value.trim()};
+  const rec={name:$('te-n').value.trim(),label:$('te-l').value.trim()||$('te-n').value.trim(),description:$('te-d').value.trim(),enabled:_teEnabled,sensors:sen,pipeline:pipe,whitelist:[..._teTrigWl],no_hitl_caps:[..._teTrigNh],mode:$('te-mode').value,depth:$('te-depth').value,hitl:$('te-hitl').value==='true',director_managed:$('te-dm').value==='true',timezone_name:$('te-tz').value.trim()||'UTC',hours_start:+$('te-hs').value,hours_end:+$('te-he').value,min_idle_minutes:+$('te-mi').value,min_interval_minutes:+$('te-mv').value,require_signal:+$('te-rs').value,max_steps:+$('te-ms').value,deliver_to:del,deliver_config:delCfg,prompt:$('te-pr').value,sensor_params:sp,agent:$('te-agent').value.trim(),agents,models,project:$('te-proj').value.trim()};
   if(!rec.name){toast('err','Name required');return}
   const r=await post('/dream/trigger/upsert',rec);if(r&&r.ok!==false){toast('ok','Saved');closeModal();loadTriggers()}else $('te-st').textContent='Failed: '+(r?.error||'?')}
 

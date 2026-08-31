@@ -49,7 +49,8 @@ A **trigger** record is the unit of configuration. It declares:
 |---|---|
 | `dream.trigger.list` / `dream.trigger.get` | Browse triggers |
 | `dream.trigger.upsert` | Create/update a trigger |
-| `dream.trigger.delete` / `dream.trigger.toggle` | Remove / enable-disable |
+| `dream.trigger.pause` / `resume` / `cancel` | Reversible pause/resume or terminal cancellation while preserving the record |
+| `dream.trigger.delete` / `dream.trigger.toggle` | Explicit deletion / compatibility toggle (the toggle now delegates to pause/resume) |
 | `dream.trigger.generate` | **LLM**: synthesise a trigger from a description |
 
 Trigger hours are local to the trigger's explicit IANA timezone (UTC by
@@ -72,6 +73,12 @@ The trigger editor states this behavior, while trigger detail, timeline, and
 upcoming-event records expose the policy identity and maximum catch-up count.
 The accompanying decision event reports how many intervals were missed but can
 neither start a cycle nor replay effects.
+
+Trigger lifecycle is distinct in the API and UI. Pausing is reversible and
+prevents scheduler selection; cancelling is terminal but retains the trigger
+for audit; deleting removes it. The trigger list labels paused and cancelled
+records, disables manual run for cancelled records, and exposes separate
+cancel/delete actions so these meanings are not collapsed into one boolean.
 
 ---
 

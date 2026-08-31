@@ -77,7 +77,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 }
 
 _STATUSES = ("pending", "scheduled", "notified", "awaiting_reply",
-             "running", "done", "failed", "cancelled")
+             "paused", "running", "done", "failed", "cancelled")
 
 # in-flight system action ids (avoid double-firing across ticks)
 _RUNNING: set = set()
@@ -209,6 +209,44 @@ async def _get_action(aid: str) -> Optional[Dict[str, Any]]:
         return json.loads(raw) if raw else None
     except Exception:
         return None
+
+
+def _action_lifecycle(action: Dict[str, Any]) -> Dict[str, Any]:
+    from Vera.vera.execution.workflow_schedule_lifecycle import (
+        calendar_action_lifecycle,
+    )
+
+    return calendar_action_lifecycle(action)
+
+
+async def _transition_action_lifecycle(action_id: str, state: str) -> Dict[str, Any]:
+    action = await _get_action(action_id)
+    if not action:
+        return {"ok": False, "error": "not found"}
+    native_status = str(action.get("status") or "pending").lower()
+    if native_status in {"running", "awaiting_reply"}:
+        return {"ok": False, "error": f"cannot change lifecycle while action is {native_status}"}
+    from Vera.vera.execution.workflow_schedule_lifecycle import (
+        transition_schedule_lifecycle,
+    )
+
+    try:
+        event = transition_schedule_lifecycle(
+            _action_lifecycle(action), requested_state=state,
+            observed_at=now_iso(),
+        )
+    except (TypeError, ValueError) as exc:
+        return {"ok": False, "error": str(exc)}
+    action["status"] = {
+        "active": "scheduled", "paused": "paused", "cancelled": "cancelled",
+    }[state]
+    saved = await _save_action(action)
+    try:
+        await emit_event(event)
+    except Exception as exc:
+        log.debug("sched lifecycle projection: %s", exc)
+    return {"ok": True, "action": saved, "lifecycle": event["lifecycle"],
+            "transition": event}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -476,7 +514,8 @@ async def _evaluate_once() -> Dict[str, Any]:
     fired: List[str] = []
     for a in actions:
         status = a.get("status")
-        if status in ("done", "failed", "cancelled", "running", "awaiting_reply"):
+        if status in ("done", "failed", "cancelled", "paused", "running",
+                      "awaiting_reply"):
             continue
         trig = a.get("trigger") or {}
         due = False
@@ -644,7 +683,13 @@ async def cap_sched_plan_generate(goal: str = "", horizon_days: int = 14,
                 "system_busy: bool}.",
 )
 async def cap_sched_plan_list(trace_id=None):
-    return {"actions": await _list_actions(),
+    actions = await _list_actions()
+    for action in actions:
+        try:
+            action["lifecycle"] = _action_lifecycle(action)
+        except (TypeError, ValueError) as exc:
+            action["lifecycle_error"] = str(exc)
+    return {"actions": actions,
             "system_busy": await system_schedule_busy()}
 
 
@@ -695,6 +740,33 @@ async def cap_sched_action_delete(id: str = "", trace_id=None):
         return {"ok": bool(n)}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+@capability(
+    "sched.action.pause", memory="on",
+    http_method="POST", http_path="/sched/action/pause", http_tags=["scheduler"],
+    description="Pause a scheduled action without deleting it. Input: id (str!).",
+)
+async def cap_sched_action_pause(id: str = "", trace_id=None):
+    return await _transition_action_lifecycle(id, "paused")
+
+
+@capability(
+    "sched.action.resume", memory="on",
+    http_method="POST", http_path="/sched/action/resume", http_tags=["scheduler"],
+    description="Resume a paused scheduled action. Input: id (str!).",
+)
+async def cap_sched_action_resume(id: str = "", trace_id=None):
+    return await _transition_action_lifecycle(id, "active")
+
+
+@capability(
+    "sched.action.cancel", memory="on",
+    http_method="POST", http_path="/sched/action/cancel", http_tags=["scheduler"],
+    description="Cancel a scheduled action while preserving its record. Input: id (str!).",
+)
+async def cap_sched_action_cancel(id: str = "", trace_id=None):
+    return await _transition_action_lifecycle(id, "cancelled")
 
 
 @capability(

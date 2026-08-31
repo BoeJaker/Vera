@@ -67,6 +67,18 @@ native dispatch, schedule work, replay a trigger, or claim exactly-once effects.
 Ledger, trigger-stream, or receipt-stream failure remains isolated from native
 execution. Schedule-decision stream failure is isolated in the same way.
 
+Schedule lifecycle is also explicit and portable without becoming a shared
+executor. `vera.workflow-schedule-lifecycle/v1` represents `active`, `paused`,
+terminal `cancelled`, `completed`, and `failed` states, with validated
+active↔paused and active/paused→cancelled transitions. In-flight and
+awaiting-reply Calendar actions fail closed rather than pretending that a state
+flag stopped work which is already underway. Calendar and Dream persist the native
+state first and emit content-safe transition evidence second. The evidence
+contains opaque source/revision identities, preserves the schedule record, and
+declares `executes: false`; event-stream failure cannot undo the native state
+change. Deletion remains a separate destructive operation rather than an alias
+for cancellation.
+
 `execution/exec_capabilities.py` is two capability groups in one module: **`exec.*`** — shell, PowerShell, code, and SSH execution — and **`netscan.*`** — network asset discovery, target probing, and an auxiliary topology graph. Both are governed by a single configurable **exec sandbox policy**, and both surface their own harness tabs (the tabbed **Exec** consoles and the Cytoscape **Netmap**).
 
 This is the module that lets Vera (and an agent driving it) actually *touch* the host and the network — so the sandbox section is the most important part of the page.
