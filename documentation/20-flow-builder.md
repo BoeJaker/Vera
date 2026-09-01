@@ -119,6 +119,21 @@ the UI or caller must resolve the discrepancy before execution. Every response
 declares `executes: false`, and existing providers and native DAG execution
 remain authoritative.
 
+The reusable builder displays this evidence beside the canvas node count. A
+green **Portable** badge means the graph fits the shared subset; amber **Native
+details** means provider-specific fields are retained exactly but will not be
+understood by every runtime; red **Blocked** means conversion is invalid,
+inconsistent, or unavailable. Selecting the badge opens paths and explanations
+without exposing document values. The status refreshes after graph edits and a
+`flow:compatibility` event lets host panels present the same result.
+
+Generic **Run as DAG** now obtains fresh compatibility evidence before building
+or submitting the native DAG request. Missing analysis and blocking gaps stop
+the run locally and are shown in the run log. Preserved native details remain
+visible but do not block the current native engine. Host-specific save formats
+remain under their providers because saving a Dream trigger or Fabric pipeline
+is not equivalent to claiming portable execution.
+
 ## Graph contract and execution handoff
 
 Flow Builder is an authoring surface, not a second workflow runtime. Nodes hold

@@ -32,6 +32,8 @@
  *   el.setGraph(graph)         — replace the model and re-render
  *   el.serialize()             — provider.serialize(graph) → host document
  *   el.loadFromSource(doc)     — provider.deserialize(doc) → model, then render
+ *   await el.getCompatibility() — portable/native/blocking Workflow IR evidence
+ *   await el.requireCompatible() — fail closed before execution
  *   el.reset()                 — clear nodes + selection
  *   el.refreshPalette()        — re-call provider.loadPalette()
  *   el.getSelected()           — currently-selected node or null
@@ -137,6 +139,18 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc,#5a9e8f)}
 .btn.danger{color:var(--err,#c75a5a);border-color:rgba(199,90,90,.4)}
 .btn.danger:hover{background:rgba(199,90,90,.12)}
 .btn:disabled{opacity:.4;cursor:not-allowed}
+.fb-compat{font-family:var(--mono,monospace);text-transform:none;letter-spacing:0}
+.fb-compat.checking{color:var(--dim,#7a8290)}
+.fb-compat.portable{color:var(--ok,#5a9e8f);border-color:rgba(90,158,143,.55)}
+.fb-compat.native{color:var(--warn,#d97757);border-color:rgba(217,119,87,.55)}
+.fb-compat.blocked{color:var(--err,#c75a5a);border-color:rgba(199,90,90,.65)}
+.fb-compat-panel{position:absolute;top:6px;left:6px;width:min(420px,calc(100% - 12px));max-height:68%;overflow:auto;
+  background:var(--bg0,#0e1116);border:1px solid var(--border2,#384151);border-radius:4px;padding:9px 11px;
+  z-index:85;box-shadow:0 6px 20px rgba(0,0,0,.5);font-size:10px;color:var(--text2,#aab2c0)}
+.fb-compat-panel h4{margin:0 0 6px;font-size:11px;color:var(--text,#e6e9ef)}
+.fb-compat-row{padding:4px 0;border-top:1px solid var(--border,#2a313e);line-height:1.4}
+.fb-compat-path{font-family:var(--mono,monospace);color:var(--acc2,#8fb87a);word-break:break-word}
+.fb-compat-detail{color:var(--dim,#7a8290)}
 
 /* 3-column shell */
 .fb-grid{display:grid;grid-template-columns:240px 1fr 320px;gap:8px;height:100%;min-height:0}
@@ -279,6 +293,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc,#5a9e8f)}
       Canvas
       <span class="grow"></span>
       <span data-role="count" style="font-size:9.5px;color:var(--dim,#7a8290);font-family:var(--mono,monospace)">0 nodes</span>
+      <button class="btn xs fb-compat checking" data-role="compat-badge" data-act="compat" title="Workflow portability and native-extension details">Checking…</button>
       <button class="btn xs" data-act="state" title="Show the state table (keys nodes can read/write)">State</button>
       <button class="btn xs" data-act="auto" title="Drop manual positions">Auto-layout</button>
       <button class="btn xs" data-act="clear">Clear</button>
@@ -286,6 +301,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc,#5a9e8f)}
     <div class="canvas-wrap" data-role="canvas-wrap">
       <svg class="canvas-svg" data-role="svg" xmlns="http://www.w3.org/2000/svg"></svg>
       <div class="canvas-hover-tip" data-role="tip"></div>
+      <div class="fb-compat-panel" data-role="compat-panel" style="display:none"></div>
       <div class="fb-state" data-role="state-table" style="display:none"></div>
       <div class="canvas-empty" data-role="empty">
         <svg class="ico" viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="18" r="3"/><line x1="6" y1="9" x2="12" y2="15"/><line x1="18" y1="9" x2="12" y2="15"/></svg>
@@ -316,6 +332,9 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc,#5a9e8f)}
       this._typeIndex = {};         // type -> item
       this._schemaCache = {};       // type -> schema
       this._palTimer = null;
+      this._compat = null;
+      this._compatSeq = 0;
+      this._compatTimer = null;
       this._drag = null;            // {id, startX, startY, ox, oy}
       this._dragMoved = false;
     }
@@ -330,6 +349,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc,#5a9e8f)}
       if(pn && window.VeraFlowProviders[pn]) this.setProvider(window.VeraFlowProviders[pn]);
       this._renderCanvas(); this._renderInspector();
     }
+    disconnectedCallback(){ clearTimeout(this._compatTimer); this._compatSeq++; }
 
     // ── element-scoped query helpers ─────────────────────────────────────────
     _$(role){ return this.shadowRoot.querySelector(`[data-role="${role}"]`); }
@@ -341,7 +361,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc,#5a9e8f)}
       const t = this._$('pal-title');
       if(t && p && p.paletteLabel) t.textContent = p.paletteLabel;
       this.refreshPalette();
-      this._renderCanvas(); this._renderInspector();
+      this._renderCanvas(); this._renderInspector(); this._scheduleCompatibility();
     }
     getProvider(){ return this._provider; }
     getGraph(){ return this._graph; }
@@ -349,11 +369,50 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc,#5a9e8f)}
       this._graph = graph && graph.nodes ? graph : { nodes:[], meta:{} };
       this._sel = null;
       this._reindex();
-      this._renderCanvas(); this._renderInspector();
+      this._renderCanvas(); this._renderInspector(); this._scheduleCompatibility();
     }
     getSelected(){ return this._graph.nodes.find(n=>n.id===this._sel) || null; }
     reset(){ this._graph = { nodes:[], meta:(this._graph&&this._graph.meta)||{} }; this._sel=null; this._renderCanvas(); this._renderInspector(); this._emit('flow:change'); }
     serialize(){ return this._provider && this._provider.serialize ? this._provider.serialize(this._graph) : null; }
+    async getCompatibility(opts){
+      opts = opts || {};
+      if(this._compat && !opts.refresh) return this._compat;
+      const seq = ++this._compatSeq;
+      this._renderCompatibility({checking:true});
+      let report;
+      try{
+        if(this._provider && this._provider.compatibility){
+          report = await this._provider.compatibility(this._graph);
+        }else{
+          const base = (this._provider && this._provider.base) || window._veraBase || '';
+          const res = await fetch(base+'/mcp/call', {method:'POST', headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({name:'workflow.flow_builder.analyze', arguments:{graph:this._graph}})});
+          if(!res.ok) throw new Error('HTTP '+res.status);
+          const body = await res.json();
+          report = body && body.content ? body.content : body;
+        }
+        if(!report || typeof report!=='object' || typeof report.ok!=='boolean' || report.executes!==false){
+          throw new Error('invalid compatibility response');
+        }
+      }catch(e){
+        report = {ok:false,classification:'unavailable',gaps:[{path:'compatibility',code:'analysis_unavailable',
+          detail:String(e&&e.message||e),blocking:true}],semantic_diff:[],executes:false};
+      }
+      if(seq!==this._compatSeq) return this._compat || report;
+      this._compat = report;
+      this._renderCompatibility(report);
+      this._emit('flow:compatibility',{report});
+      return report;
+    }
+    async requireCompatible(opts){
+      const report = await this.getCompatibility({refresh:true});
+      const blocking = (report.gaps||[]).filter(g=>g&&g.blocking);
+      if(!report.ok || blocking.length){
+        const err = new Error((opts&&opts.operation||'operation')+' blocked by workflow compatibility');
+        err.report = report; throw err;
+      }
+      return report;
+    }
     loadFromSource(doc){
       if(!this._provider || !this._provider.deserialize) return;
       const g = this._provider.deserialize(doc) || {nodes:[],meta:{}};
@@ -405,6 +464,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc,#5a9e8f)}
       this.shadowRoot.querySelector('[data-act="clear"]').addEventListener('click', ()=>this._clear());
       this.shadowRoot.querySelector('[data-act="auto"]').addEventListener('click', ()=>this.autoLayout());
       this.shadowRoot.querySelector('[data-act="state"]').addEventListener('click', ()=>this._toggleStateTable());
+      this.shadowRoot.querySelector('[data-act="compat"]').addEventListener('click', ()=>this._toggleCompatibility());
 
       // Canvas drop target
       const wrap = this._$('canvas-wrap');
@@ -653,7 +713,10 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc,#5a9e8f)}
     }
     _emit(name, detail){
       this.dispatchEvent(new CustomEvent(name, { detail: Object.assign({ graph:this._graph }, detail||{}), bubbles:true, composed:true }));
-      if(name==='flow:change' && this._provider && this._provider.onChange){ try{ this._provider.onChange(this._graph); }catch(_){} }
+      if(name==='flow:change'){
+        this._scheduleCompatibility();
+        if(this._provider && this._provider.onChange){ try{ this._provider.onChange(this._graph); }catch(_){} }
+      }
     }
 
     // ── Validation ───────────────────────────────────────────────────────────
@@ -875,12 +938,18 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc,#5a9e8f)}
     // Streams SSE; dispatches `flow:run` CustomEvents {phase, event?}.
     async runAsDag(opts){
       opts = opts || {};
-      const { dag, state } = this.toDag();
       const log = opts.into || null;
       const _line = (txt, cls)=>{ if(!log) return; const d=document.createElement('div'); d.textContent=txt;
         d.style.cssText='font-family:ui-monospace,monospace;font-size:10px;padding:1px 0;color:'+(cls==='err'?'#c75a5a':cls==='ok'?'#5a9e8f':'inherit');
         log.appendChild(d); log.scrollTop=log.scrollHeight; };
       if(log) log.innerHTML = '';
+      try{ await this.requireCompatible({operation:'run'}); }
+      catch(e){
+        const report=e&&e.report; const n=((report&&report.gaps)||[]).filter(g=>g&&g.blocking).length;
+        _line('✗ run blocked by workflow compatibility'+(n?' ('+n+' issue'+(n===1?'':'s')+')':''),'err');
+        this._renderCompatibility(report||this._compat); this._emit('flow:run',{phase:'error',error:'compatibility_blocked',report}); return;
+      }
+      const { dag, state } = this.toDag();
       if(!Array.isArray(dag) || !dag.length){ _line('Nothing to run — add at least one cap node.','err'); this._emit('flow:run',{phase:'error',error:'empty'}); return; }
       const body = JSON.stringify({ dag, state: Object.assign({}, state, opts.state||{}) });
       this._emit('flow:run',{phase:'start', dag, state});
@@ -912,6 +981,48 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc,#5a9e8f)}
         }
       }catch(e){ _line('✗ stream: '+(e&&e.message||e),'err'); }
       this._emit('flow:run',{phase:'done'});
+    }
+
+    _scheduleCompatibility(){
+      clearTimeout(this._compatTimer);
+      this._compatSeq++;
+      this._compat = null;
+      this._renderCompatibility({checking:true});
+      this._compatTimer = setTimeout(()=>this.getCompatibility({refresh:true}), 180);
+    }
+    _renderCompatibility(report){
+      const badge=this._$('compat-badge'); if(!badge)return;
+      badge.classList.remove('checking','portable','native','blocked');
+      if(!report || report.checking){ badge.textContent='Checking…'; badge.classList.add('checking'); return; }
+      const gaps=Array.isArray(report.gaps)?report.gaps:[];
+      const blocking=gaps.filter(g=>g&&g.blocking).length;
+      if(!report.ok || blocking){ badge.textContent='Blocked '+(blocking||gaps.length||1); badge.classList.add('blocked'); }
+      else if(report.classification==='native_extensions'){
+        badge.textContent='Native details '+gaps.length; badge.classList.add('native');
+      }else{ badge.textContent='Portable'; badge.classList.add('portable'); }
+      badge.title = blocking ? 'Execution is blocked until compatibility issues are resolved' :
+        (gaps.length ? 'Native details are preserved but are not portable' : 'Portable Workflow IR subset');
+      const panel=this._$('compat-panel'); if(panel&&panel.style.display!=='none') this._renderCompatibilityPanel();
+    }
+    _toggleCompatibility(){
+      const panel=this._$('compat-panel'); if(!panel)return;
+      const show=panel.style.display==='none'; panel.style.display=show?'block':'none';
+      if(show) this._renderCompatibilityPanel();
+    }
+    _renderCompatibilityPanel(){
+      const panel=this._$('compat-panel'), report=this._compat; if(!panel)return;
+      if(!report){ panel.innerHTML='<h4>Workflow compatibility</h4><div class="fb-compat-detail">Checking…</div>'; return; }
+      const gaps=Array.isArray(report.gaps)?report.gaps:[];
+      const diffs=Array.isArray(report.semantic_diff)?report.semantic_diff:[];
+      const status=(!report.ok||gaps.some(g=>g&&g.blocking))?'Execution blocked':
+        (report.classification==='native_extensions'?'Native details preserved':'Portable Workflow IR');
+      const rows=gaps.map(g=>'<div class="fb-compat-row"><div class="fb-compat-path">'+_esc(g.path||'workflow')+
+        (g.blocking?' · blocking':' · preserved')+'</div><div class="fb-compat-detail">'+_esc(g.detail||g.code||'Compatibility detail')+'</div></div>').join('');
+      const changed=diffs.map(d=>'<div class="fb-compat-row"><div class="fb-compat-path">'+_esc(d.path||'$')+
+        '</div><div class="fb-compat-detail">'+_esc(d.kind||'changed')+'</div></div>').join('');
+      panel.innerHTML='<h4>'+_esc(status)+'</h4><div class="fb-compat-detail">This analysis does not execute the flow.</div>'+
+        (rows||'<div class="fb-compat-row">No compatibility gaps.</div>')+
+        (changed?'<h4 style="margin-top:9px">Semantic differences</h4>'+changed:'');
     }
 
     _nodeHover(id, e){
