@@ -4178,6 +4178,15 @@ async def emit_event(event: dict):
     event.setdefault("ts", now_iso())
     _prov_stamp(event)     # compact git {ver, br, dirty} → correlate any event to code
     _session_stamp(event)  # {sid, via} → correlate any event to the session that triggered it
+    try:
+        import asyncio as _asyncio
+        from Vera.vera.execution.agent_loop_run_projection import observe_agent_loop_event
+        # Schedule an immutable snapshot: journal I/O must never add latency to
+        # the native event publisher or observe later mutation by a caller.
+        _asyncio.get_running_loop().call_soon(observe_agent_loop_event, dict(event))
+    except Exception:
+        # Shared Run history is a shadow read model, never event authority.
+        pass
     ev_json = json.dumps(event)
     if REDIS:
         try:

@@ -170,6 +170,13 @@ In `ide_panel.html`, the agent loop:
 
 The loop runs for `maxSteps` cycles (default 8) or until done/defer/abort. A "Continue" button extends with another batch without resetting state.
 
+Agent-loop work launched from the IDE is visible through the same content-free
+Run projection used by Chat and Activity. The projection groups capability
+calls beneath the parent agent-loop Run and retains lifecycle metadata only;
+source text, prompts, arguments, generated content, previews, and raw failures
+remain in their owning IDE/loop surfaces. This gives the IDE a shared run ID and
+status graph without making the Run projection another execution engine.
+
 ---
 
 ## 6. The IDE panel
