@@ -632,7 +632,7 @@ RENDER.market=async()=>{
   const al=el('div');ac.append(al);row.append(ac);m.append(row);
   async function loadWatch(){wl.innerHTML='<span class="spin"></span>';const r=await api('/business/watch/list');wl.innerHTML='';
     for(const w of (r.watches||[])){wl.append(el('div',{class:'row',style:'align-items:center;padding:6px 0;border-bottom:1px solid var(--border)'},
-      el('div',{style:'flex:1'},el('div',{style:'font-weight:600'},esc(w.name)),el('div',{class:'muted',style:'font-size:11px'},esc(w.query||'')+(w.max_price?(' · ≤'+money(w.max_price)):'')+' · '+(w.last_hits||0)+' hits')),
+      el('div',{style:'flex:1'},el('div',{style:'font-weight:600'},esc(w.name)),el('div',{class:'muted',style:'font-size:11px'},esc((w.kind==='url'?(w.url||''):(w.query||''))||'')+(w.max_price?(' · ≤'+money(w.max_price)):'')+' · '+(w.last_hits||0)+' hits')),
       el('button',{class:'btn sm',onclick:async()=>{toast('Scanning…');const x=await api('/business/watch/scan',{id:w.id});toast(`${x.new_alerts||0} deals`,'ok');loadAlerts();refreshChips();}},'scan'),
       el('button',{class:'btn sm danger',onclick:async()=>{await api('/business/watch/delete',{id:w.id});loadWatch();}},'✕')));}
     if(!(r.watches||[]).length)wl.append(el('div',{class:'empty'},'No watches yet'));}
@@ -643,10 +643,13 @@ RENDER.market=async()=>{
       el('div',{class:'mono'},money(a.price,a.currency))));}
     if(!(r.alerts||[]).length)al.append(el('div',{class:'empty'},'No deals yet — add watches and Scan.'));}
   function watchModal(w){form(w.id?'Edit watch':'New watch',[
-    {name:'name',label:'Name'},{name:'query',label:'Search terms',default:w.query||w.name||''},
-    {name:'platform',label:'Platform',type:'select',options:['any','ebay','vinted']},
+    {name:'name',label:'Name'},
+    {name:'kind',label:'Type',type:'select',options:['marketplace','url'],default:w.kind||'marketplace'},
+    {name:'query',label:'Search terms (marketplace watch)',default:w.query||w.name||''},
+    {name:'url',label:'Product page URL (url watch — Adafruit, RS, AliExpress, Amazon, a supermarket…)',default:w.url||''},
+    {name:'platform',label:'Marketplace platform',type:'select',options:['any','ebay','vinted','facebook']},
     {name:'max_price',label:'Target buy price £ (blank = auto vs median)',type:'number',step:'0.01'},
-    {name:'deal_discount',label:'…or flag this % below median (0.25 = 25%)',type:'number',step:'0.05',default:0.25}],
+    {name:'deal_discount',label:'…or flag this % below (median for marketplace, last price for URL)',type:'number',step:'0.05',default:0.25}],
     w,async o=>{o.id=w.id||'';const r=await api('/business/watch/upsert',o);closeModal();toast(r.ok?'Watch saved':'Error','ok');loadWatch();});}
   loadWatch();loadAlerts();
 };
