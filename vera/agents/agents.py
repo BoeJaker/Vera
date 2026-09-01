@@ -1441,6 +1441,33 @@ async def cap_agent_routing_set(agent: str, rules: str = "", trace_id=None):
 # Mounted outside the @capability system so FastAPI returns StreamingResponse
 # Client: EventSource('/agents/chat/stream') with POST polyfill or fetch+ReadableStream
 
+try:
+    from Vera.vera.agents import two_tier as _two_tier
+    from Vera.vera.agents import two_tier_stream as _tt_stream
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.agents import two_tier as _two_tier
+        from vera.agents import two_tier_stream as _tt_stream
+    except Exception:
+        _two_tier = _tt_stream = None
+        log.warning("two_tier unavailable - chat replies stay single-pass")
+
+
+def _tt_token_text(chunk) -> str:
+    """The text of an SSE token frame, or "" for any other frame."""
+    try:
+        raw = chunk.decode() if isinstance(chunk, (bytes, bytearray)) else str(chunk)
+        if '"type": "token"' not in raw and '"type":"token"' not in raw:
+            return ""
+        return json.loads(raw.split("data: ", 1)[1].strip()).get("text", "") or ""
+    except Exception:
+        return ""
+
+
+def _tt_token_frame(text: str) -> bytes:
+    return ("data: " + json.dumps({"type": "token", "text": text}) + "\n\n").encode()
+
+
 @APP.post("/agents/chat/stream")
 async def agent_chat_stream_endpoint(request: Request):
     """
@@ -1595,6 +1622,17 @@ async def agent_chat_stream_endpoint(request: Request):
     # Ollama endpoint while the main response generates on the first. The
     # main response sees the opener's instruction so it can avoid repeating
     # any likely opening — and is told to skip greetings entirely.
+    # Two-tier reply: answer from the question first; continue with the full
+    # context only if the model says it needs to. "off" | "fetched" | "message".
+    _tt_level = (_two_tier.normalise_level(
+        body.get("two_tier", getattr(agent, "two_tier", None)))
+        if _two_tier is not None else "off")
+    _tt_decider = (_two_tier.normalise_decider(
+        body.get("two_tier_decider", getattr(agent, "two_tier_decider", None)))
+        if _two_tier is not None else "tier1")
+    _tt_plan = ({"split": False} if _two_tier is None
+                else _two_tier.plan(_tt_level, _sys_prefix, history, _tt_decider))
+
     _qo_pref = body.get("quick_opener", None)
     _qo_enabled = getattr(agent, "quick_opener", False) if _qo_pref is None else bool(_qo_pref)
     _qo_threshold = max(200, int(getattr(agent, "quick_opener_threshold", 1500) or 1500))
@@ -1741,13 +1779,79 @@ async def agent_chat_stream_endpoint(request: Request):
             finally:
                 await _q.put(_MAIN_DONE)
 
+        async def _pump_two_tier():
+            """Tier 1 from the question alone, then tier 2 with everything.
+
+            Tier 1 deliberately does NOT await _web_task: waiting on a search is
+            part of the latency this exists to remove. Tier 2 gates on it exactly
+            as the single-pass path always did.
+            """
+            filt = _tt_stream.MarkerFilter()
+            try:
+                async for chunk in AGENT_RUNNER.run_stream(
+                        agent, message, _tt_plan["history"], session_id,
+                        use_tts=False, system_prefix=_tt_plan["system_prefix"]):
+                    tok = _tt_token_text(chunk)
+                    if not tok:
+                        await _q.put(chunk)             # status/thinking frames pass through
+                        continue
+                    safe = filt.feed(tok)
+                    if safe:
+                        await _q.put(_tt_token_frame(safe))
+                tail = filt.flush()
+                if tail:
+                    await _q.put(_tt_token_frame(tail))
+                # Under the tier1 decider the first pass has just told us whether
+                # it needs more. Under tier2 the second pass decides, so it must
+                # run either way - see two_tier.DECIDERS for why both exist.
+                if not (_tt_plan.get("always_run_tier2") or filt.seen):
+                    return                              # tier 1 answered it outright
+                _prefix2 = _sys_prefix
+                if _web_task is not None:
+                    try:
+                        _wres2 = await _web_task
+                    except Exception:
+                        _wres2 = None
+                    _frag2 = _format_web_context(_wres2)
+                    if _frag2:
+                        _prefix2 = (_prefix2 + "\n\n" + _frag2).strip()
+                gate = (_tt_stream.NoAdditionGate()
+                        if _tt_plan.get("always_run_tier2") else None)
+                async for chunk in AGENT_RUNNER.run_stream(
+                        agent, message, history, session_id, use_tts=use_tts,
+                        system_prefix=_two_tier.tier2_system_prefix(
+                            _prefix2, filt.text, _tt_plan.get("decider"))):
+                    if gate is None:
+                        await _q.put(chunk)
+                        continue
+                    tok2 = _tt_token_text(chunk)
+                    if not tok2:
+                        await _q.put(chunk)
+                        continue
+                    # Held back until "the context adds nothing" is ruled out -
+                    # otherwise a suppressed continuation would already be on
+                    # screen by the time we knew to suppress it.
+                    out2 = gate.feed(tok2)
+                    if out2:
+                        await _q.put(_tt_token_frame(out2))
+                if gate is not None:
+                    rest2 = gate.flush()
+                    if rest2:
+                        await _q.put(_tt_token_frame(rest2))
+            except BaseException as e:
+                await _q.put(e)
+            finally:
+                await _q.put(_MAIN_DONE)
+
         async def _pump_opener():
             txt = await _opener_task
             if txt:
                 await _q.put(
                     f"data: {json.dumps({'type': 'opener', 'text': txt})}\n\n".encode())
 
-        _main_pump = asyncio.create_task(_pump_main())
+        _main_pump = asyncio.create_task(
+            _pump_two_tier() if (_two_tier is not None and _tt_plan.get("split"))
+            else _pump_main())
         _op_pump = asyncio.create_task(_pump_opener()) if _opener_task else None
 
         async def _merged():
