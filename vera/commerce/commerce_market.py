@@ -49,7 +49,7 @@ try:
 except Exception:                              # pragma: no cover
     HAS_HTTPX = False
 
-WATCH_PLATFORMS = ["any", "ebay", "vinted"]
+WATCH_PLATFORMS = ["any", "ebay", "vinted", "facebook"]
 ALERT_KINDS = ["deal", "reprice"]
 # a listing this far below the market median counts as a deal even with no target
 DEFAULT_DEAL_DISCOUNT = 0.25
@@ -318,6 +318,44 @@ def _db_mark_alerts_seen(ids: List[str]) -> int:
 # Core scan logic
 # ─────────────────────────────────────────────────────────────────────────────
 
+async def _facebook_items(query: str, limit: int = 40) -> dict:
+    """Best-effort Facebook Marketplace search via the rendered browser. FB has no
+    API and usually shows a login wall, so results depend on a logged-in browser
+    session; degrades to a note when nothing can be parsed."""
+    import re as _re, urllib.parse as _up
+    _co = sys.modules.get("Vera.vera.capability_orchestration")
+    _reg = getattr(_co, "CAPABILITY_REGISTRY", None) if _co else None
+    bc = (_reg or {}).get("browser.content") or {}
+    fn = bc.get("raw") or bc.get("func")
+    if not fn:
+        return {"items": [], "summary": None, "note": "browser subsystem unavailable"}
+    url = "https://www.facebook.com/marketplace/search/?query=" + _up.quote(query)
+    try:
+        r = await fn(url=url, include_links=True, max_chars=40000)
+    except Exception as e:
+        return {"items": [], "summary": None, "note": f"facebook fetch failed: {e}"}
+    text = str((r or {}).get("text") if isinstance(r, dict) else "")
+    items, seen = [], set()
+    for m in _re.finditer(r"£ ?([0-9][0-9,]*(?:[.][0-9]{2})?)", text):
+        try:
+            price = float(m.group(1).replace(",", ""))
+        except Exception:
+            continue
+        if price <= 0 or price in seen:
+            continue
+        pre = text[max(0, m.start() - 90):m.start()].strip()
+        title = (pre.rsplit(chr(10), 1)[-1].strip() or query)[:80]
+        seen.add(price)
+        items.append({"platform": "facebook", "external_id": f"fb_{len(items)}",
+                      "title": title, "price": price, "url": url})
+        if len(items) >= limit:
+            break
+    if not items:
+        return {"items": [], "summary": None,
+                "note": "no Facebook listings parsed (login wall or no results)"}
+    return {"items": items, "summary": _summarise([i["price"] for i in items]), "note": ""}
+
+
 async def _market_for(query: str, platform: str, limit: int) -> dict:
     """Return merged items + per-source summaries for a query."""
     sources = {}
@@ -330,6 +368,10 @@ async def _market_for(query: str, platform: str, limit: int) -> dict:
         vi = await _vinted_items(query, limit)
         sources["vinted"] = vi.get("summary")
         all_items += vi.get("items", [])
+    if platform == "facebook":
+        fb = await _facebook_items(query, limit)
+        sources["facebook"] = fb.get("summary")
+        all_items += fb.get("items", [])
     combined = _summarise([_f(i.get("price")) for i in all_items if i.get("price")])
     return {"items": all_items, "by_platform": sources, "combined": combined}
 

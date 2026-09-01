@@ -357,13 +357,20 @@ RENDER.orders = async ()=>{
     tr.innerHTML=`<td class="mono">${esc(o.external_id||o.id)}</td><td class="mono">${esc(o.source)}</td><td>${nItems} item(s)</td><td class="right mono">${money(o.total,o.currency)}</td><td><span class="pill ${esc(o.status)}">${esc(o.status)}</span></td>`;
     const act=el('td',{class:'right'});const a=el('div',{class:'actions'});
     a.append(el('button',{class:'btn sm',onclick:()=>statusDialog('order',o)},'Status'),
-      el('button',{class:'btn sm',onclick:()=>viewItems(o)},'View'));
+      el('button',{class:'btn sm',onclick:()=>viewItems(o)},'View'),
+      el('button',{class:'btn sm',onclick:()=>printOrder(o)},'⎙ Print'));
     act.append(a);tr.append(act);t.append(tr);
   }
   const nodes=[el('h2',{},'Orders'),el('div',{class:'sub'},data.count+' orders'),bar];
   nodes.push(data.orders.length?t:el('div',{class:'empty'},'No orders. Create one manually or sync from a platform.'));
   setContent(...nodes);
 };
+async function printOrder(o){
+  const items=(o.items||[]).map(function(it){return {name:it.name||it.sku||'item',qty:Number(it.qty)||1,price:Number(it.unit_price)||0};});
+  const ref=String(o.external_id||o.id||'');
+  const r=await api('/print/receipt',{header:'ORDER',subheader:ref,items:items,total:o.total,currency:o.currency||'',order_id:ref,barcode:ref,footer:'Thank you'});
+  try{ const ok=r&&(r.routed||r.escpos_b64); toast(ok?'order sent to printer':((r&&r.error)||'print failed'), ok?'':'warn'); }catch(e){}
+}
 function orderForm(){
   openForm('New order',[
     {name:'customer_id',label:'Customer id (optional)'},
