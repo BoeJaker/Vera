@@ -123,7 +123,23 @@ def test_a_static_file_failure_names_the_python_alternative():
 
 def test_the_hint_says_what_the_browser_is_still_for():
     """A hint that just says "use python" would push it off real browser work."""
-    assert "only a browser shows" in se.STATIC_HINT
+    assert "cannot establish BEHAVIOUR" in se.STATIC_HINT
+    assert "needs a browser" in se.STATIC_HINT
+
+
+def test_the_hint_requires_reading_from_disk():
+    """Census 21 cyc12 pasted a COPY of the HTML into its own source and tested
+    that. Reading the artifact is the difference between checking the file and
+    checking a string literal."""
+    assert "FROM DISK" in se.STATIC_HINT
+
+
+def test_the_hint_refuses_a_self_declared_pass():
+    """Census 21 cyc12 printed "SUCCESS CRITERION MET: PASS" and the verifier
+    quoted it back as its reason. A script asserting its own success is the
+    false positive this whole hint nearly encouraged."""
+    assert "printing PASS is not evidence" in se.STATIC_HINT
+    assert "not a verdict you printed about yourself" in se.STATIC_HINT
 
 
 def test_an_application_page_gets_no_such_hint():

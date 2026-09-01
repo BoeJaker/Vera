@@ -46,21 +46,39 @@ UNSUCCESSFUL = ("no_progress", "max_steps", "repeating_action", "too_many_errors
 _STATIC_SUFFIXES = (".html", ".htm", ".svg", ".txt", ".md", ".json", ".css", ".js")
 
 STATIC_HINT = (
-    " This page is a static file this run produced. If the check is about its "
-    "CONTENT - an element exists, a script is well-formed, a value is right - "
-    "read it with exec.python.run and assert on the text instead: it is "
-    "seconds rather than minutes and it cannot fail for browser reasons. Keep "
-    "the browser for behaviour that only a browser shows (a click changing the "
-    "DOM, validation firing on input).")
+    " This page is a static file this run produced. A Python check can settle "
+    "questions about its CONTENT - does the handler exist, does the pattern "
+    "match the spec, does the markup parse - and for those, read the file FROM "
+    "DISK with exec.python.run and assert on what you read. Two things it "
+    "cannot do: it cannot establish BEHAVIOUR (that the error actually appears "
+    "when you type) because that needs a browser to run the JS, and a script "
+    "printing PASS is not evidence of anything - report what you READ, not a "
+    "verdict you printed about yourself.")
 
 
 def static_check_hint(url: str) -> str:
-    """The cheaper alternative, when the target is a file rather than an app.
+    """What a Python check CAN settle when the target is a file, and what it cannot.
 
-    Census run 21 passed build-browser-verified this way: three operator.run
-    calls failed, the loop verified with exec.python.run instead, and the goal
-    completed in 1308s. Run 23 kept driving the browser and spent 22 minutes on
-    a single call.
+    NARROWED 2026-09-01 after checking the evidence I first cited for it. I had
+    claimed census run 21 "passed build-browser-verified by verifying with
+    exec.python.run instead". It did not. Reading that run\'s three calls:
+
+      cyc8   real Selenium -> Traceback, no Chrome in the sandbox. The script
+             caught it, printed it and exited 0, so the cap reported ok/rc=0.
+      cyc11  a regex "DOM simulator" -> IndentationError, never ran.
+      cyc12  pasted a COPY of the HTML into its own source, regex-matched
+             "not-an-email" in Python, and printed "SUCCESS CRITERION MET: PASS".
+
+    The page was never loaded, the JS was never executed, and form.html was
+    never read from disk - cyc12 tested a string literal in its own source. The
+    step was then marked ok and the verifier agreed, quoting the script\'s own
+    "SUCCESS CRITERION MET" back as its reason. A false positive end to end, and
+    the run 21 census score is inflated by it.
+
+    So the earlier wording here - "read it with exec.python.run and assert on
+    the text" - licensed exactly what went wrong. The distinction that matters
+    is CONTENT versus BEHAVIOUR, and reading from DISK versus inlining a copy;
+    run 21 got both halves wrong.
     """
     u = str(url or "").split("?", 1)[0].split("#", 1)[0].strip().lower()
     return STATIC_HINT if u.endswith(_STATIC_SUFFIXES) else ""
