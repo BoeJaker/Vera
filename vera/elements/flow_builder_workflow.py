@@ -150,7 +150,7 @@ def graph_to_workflow_ir(graph: Any) -> dict[str, Any]:
         step: dict[str, Any] = {
             "id": node["id"], "type": "task", "task": node["type"],
         }
-        if "out" in node:
+        if "out" in node and node["out"] is not None:
             if not isinstance(node["out"], str):
                 return {"ok": False, "classification": "invalid", "workflow": None,
                         "gaps": [_gap(f"{path}.out", "invalid_output",

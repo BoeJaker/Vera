@@ -40,6 +40,16 @@ def test_portable_graph_round_trips_exactly_with_stable_ids():
     assert restored["executes"] is False
 
 
+def test_null_output_from_generic_canvas_is_portable_and_preserved():
+    graph = _graph()
+    graph["nodes"][0]["out"] = None
+    converted = graph_to_workflow_ir(graph)
+
+    assert converted["ok"] is True
+    assert "output" not in converted["workflow"]["steps"][0]
+    assert workflow_ir_to_graph(converted["workflow"])["graph"] == graph
+
+
 def test_native_fields_are_preserved_exactly_and_reported_before_execution():
     graph = _graph()
     graph["meta"]["viewport"] = {"zoom": 1.5}
