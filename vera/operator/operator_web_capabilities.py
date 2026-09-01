@@ -706,6 +706,7 @@ async def cap_step(session_id: str = "", goal: str = "", provider: str = "ollama
             schema=enum_schema(kind=["url", "live", "sandbox", "panel", "codeserver", "vm"]))
 async def cap_run(goal: str = "", url: str = "", kind: str = "", base_url: str = "",
                   provider: str = "ollama", model: str = "", max_steps: int = 15,
+                  max_seconds: float = 0,
                   session_id: str = "", allowlist: Optional[List[str]] = None,
                   dry_run: Optional[bool] = None, allow_destructive: Optional[bool] = None,
                   keep_open: bool = False, branch: str = "", panel_id: str = "",
@@ -771,7 +772,11 @@ async def cap_run(goal: str = "", url: str = "", kind: str = "", base_url: str =
     await _op_clear_cancel(run_id)
     result = await _loop.run_loop(
         goal, s, call_cap=_call, policy=policy, provider=provider, model=model,
-        max_steps=int(max_steps), canvas=resolved.get("canvas", False),
+        max_steps=int(max_steps),
+        # 0 = use the loop's own default budget; a caller with a tighter goal
+        # allowance can hand it a smaller one.
+        **({"max_seconds": float(max_seconds)} if max_seconds else {}),
+        canvas=resolved.get("canvas", False),
         shots_dir=shots, on_step=_on_step,
         progress_tolerance=(int(progress_tolerance) if progress_tolerance
                             else _progress.DEFAULT_TOLERANCE),

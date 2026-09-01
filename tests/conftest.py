@@ -24,6 +24,7 @@ _CRITICAL_MODULES = {
     "test_artifact_location",  # a file the run already made has a place (2026-09-01)
     "test_instance_identity",  # an estate write must name its writer (2026-09-01)
     "test_estate_role",  # only the estate owner may sweep it (2026-09-01)
+    "test_operator_budget",  # an operator run needs a clock (2026-09-01)
     "test_ambient_dreaming_is_opt_in",  # nothing dreams on a box nobody asked (2026-08-31)
     "test_sandbox_estate_guard",  # a sandbox must not promote to main or reap the estate (2026-08-31)
     "test_sandbox_does_not_reap_the_estate",  # a dev sandbox must not reap the shared estate (2026-08-31)
