@@ -152,6 +152,7 @@ Sun: 15</textarea>
         <button class="btn wide" onclick="feedSchedule()">📅 Today’s schedule</button>
         <button class="btn wide" onclick="feedDreams()" style="margin-top:6px">🌙 Dream digest</button>
         <button class="btn wide" onclick="feedNews()" style="margin-top:6px">📰 News headlines</button>
+        <div style="display:flex;gap:6px;margin-top:6px"><select id="fab_ds" style="flex:1"><option value="">— fabric source —</option></select><button class="btn" onclick="feedFabric()">Print</button></div>
         <div class="mini" id="feed_st" style="margin-top:8px"></div>
         <hr style="border:none;border-top:1px solid var(--border);margin:12px 0">
         <div class="mini" style="margin-bottom:6px">Daily auto-print (from the server printer)</div>
@@ -190,6 +191,8 @@ Sun: 15</textarea>
           <div class="chk"><input type="checkbox" id="n_narrator" onchange="saveSubs()"><label style="margin:0">Narrator</label></div>
           <div class="chk"><input type="checkbox" id="n_chat" onchange="saveSubs()"><label style="margin:0">Chat replies</label></div>
           <div class="chk"><input type="checkbox" id="n_markets" onchange="saveSubs()"><label style="margin:0">Market alerts</label></div>
+          <div class="chk"><input type="checkbox" id="n_deals" onchange="saveSubs()"><label style="margin:0">Product deals</label></div>
+          <div class="chk"><input type="checkbox" id="n_fabric" onchange="saveSubs()"><label style="margin:0">Fabric sources</label></div>
         </div>
         <div class="mini" style="margin-top:6px">Master off silences all printer notifications. Any source can also be printed on demand by selecting its text and using the floating Print button.</div>
         <div class="mini" id="n_st" style="margin-top:4px"></div>
@@ -398,10 +401,18 @@ async function loadSubs(){const r=await j('/print/subs');const s=(r&&r.subs)||{}
   if($('n_narrator'))$('n_narrator').checked=!!src.narrator;
   if($('n_chat'))$('n_chat').checked=!!src.chat;
   if($('n_markets'))$('n_markets').checked=!!src.markets;
+  if($('n_deals'))$('n_deals').checked=!!src.deals;
+  if($('n_fabric'))$('n_fabric').checked=!!src.fabric;
 }
-async function saveSubs(){const r=await post('/print/subs/set',{master:$('n_master').checked,system:$('n_system').checked,dreams:$('n_dreams').checked,narrator:$('n_narrator').checked,chat:$('n_chat').checked,markets:$('n_markets').checked});
+async function saveSubs(){const r=await post('/print/subs/set',{master:$('n_master').checked,system:$('n_system').checked,dreams:$('n_dreams').checked,narrator:$('n_narrator').checked,chat:$('n_chat').checked,markets:$('n_markets').checked,deals:$('n_deals').checked,fabric:$('n_fabric').checked});
   if($('n_st')){$('n_st').textContent=(r&&r.ok)?'saved':'save failed';setTimeout(()=>{if($('n_st'))$('n_st').textContent='';},1200);}
 }
+async function loadFabricDatasets(){const r=await j('/fabric/datasets');const sel=$('fab_ds');if(!sel)return;
+  const ds=(r&&r.datasets)||[];sel.innerHTML='<option value="">— fabric source —</option>'+ds.slice(0,80).map(function(d){const id=String(d.dataset_id||'');return '<option value="'+id.replace(/"/g,'&quot;')+'">'+id+' ('+(d.record_count||0)+')</option>';}).join('');}
+async function feedFabric(){const st=$('feed_st');const id=$('fab_ds')&&$('fab_ds').value;if(!id){if(st)st.textContent='pick a fabric source';return;}
+  if(st)st.textContent='loading…';const r=await post('/print/fabric',{dataset_id:id,preview:true,limit:10});
+  if(!r||!r.text){if(st)st.textContent=(r&&r.error)||'no items';return;}
+  $('t_text').value=r.text;$('t_align').value='left';document.querySelector('.tab[data-m="text"]').click();if(st)st.textContent='loaded — edit & print';}
 // ---- print routing + helpers ----
 let PRINTERS=[], TARGET=null;
 async function printJob(path, body){
@@ -451,5 +462,6 @@ refreshStatus();setInterval(refreshStatus,15000);
 tplRefresh();
 loadDaily();
 loadSubs();
+loadFabricDatasets();
 render();
 </script>

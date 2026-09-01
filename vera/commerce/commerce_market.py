@@ -483,6 +483,18 @@ if _CAP_AVAILABLE:
                                       "message": f"DEAL {w.get('name')}: {al['title'][:48]} "
                                                  f"£{_f(al['price']):.2f} — {al['reason']}",
                                       "url": al.get("url", "")})
+                try:
+                    _co = sys.modules.get("Vera.vera.capability_orchestration")
+                    _reg = getattr(_co, "CAPABILITY_REGISTRY", None) if _co else None
+                    _pp = _reg.get("print.push") if _reg else None
+                    _fn = (_pp.get("raw") or _pp.get("func")) if _pp else None
+                    if _fn:
+                        _dl = [f"{al['title'][:48]} £{_f(al['price']):.2f} — {al['reason']}"
+                               for al in r["alerts"][:5]]
+                        asyncio.create_task(_fn(source="deals", title=(w.get("name") or "Deal"),
+                                                body=chr(10).join(_dl), level="info"))
+                except Exception:
+                    pass
             results.append({"watch_id": r["watch_id"], "name": r.get("name"),
                             "median": r.get("median"), "hits": r.get("hits", 0)})
         return {"ok": True, "scanned": len(watches), "new_alerts": total, "results": results}

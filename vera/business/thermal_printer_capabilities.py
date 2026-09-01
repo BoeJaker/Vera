@@ -1051,10 +1051,32 @@ if _CAP_AVAILABLE:
     except Exception as _e:                        # pragma: no cover
         log.debug("daily print scheduler not registered: %s", _e)
 
+    @capability("print.fabric", http_method="POST", http_path="/print/fabric",
+                http_tags=["print"],
+                description="Print (or preview) the most recent items from a Data-Fabric dataset "
+                            "(news / RSS / collector feeds). Input: dataset_id (str!), limit (int=8), "
+                            "printer_id, preview (bool). Output: {ok, text, ...}.")
+    async def cap_print_fabric(dataset_id: str = "", limit: int = 8, printer_id: str = "",
+                               preview: bool = False, trace_id=None):
+        await _ensure_schema()
+        if not dataset_id:
+            return {"error": "dataset_id required"}
+        q = await _invoke("fabric.query", dataset_id=dataset_id,
+                          limit=max(1, min(30, int(limit or 8))))
+        rows = (q or {}).get("results") or []
+        lines = [str(dataset_id), ""]
+        for it in rows:
+            t = (str(it.get("text") or "").strip().replace(chr(10), " "))[:180]
+            if t:
+                lines.append("* " + t)
+        text = chr(10).join(lines) if len(lines) > 2 else ""
+        return await _print_feed(text, printer_id, preview, "fabric")
+
     # ── Notification subscriptions: control what auto-prints ──────────────────
     _SUBS_DEFAULT = {"master": True, "sources": {"system": True, "dreams": False,
                                                  "narrator": False, "chat": False,
-                                                 "markets": False}}
+                                                 "markets": False, "deals": False,
+                                                 "fabric": False}}
 
     def _subs_get():
         try:
@@ -1113,11 +1135,11 @@ if _CAP_AVAILABLE:
                             "Output: {ok, subs}.")
     async def cap_print_subs_set(master: bool = None, system: bool = None, dreams: bool = None,
                                  narrator: bool = None, chat: bool = None, markets: bool = None,
-                                 trace_id=None):
+                                 deals: bool = None, fabric: bool = None, trace_id=None):
         patch = {}
         if master is not None: patch["master"] = bool(master)
         src = {}
-        for k, v in (("system", system), ("dreams", dreams), ("narrator", narrator), ("chat", chat), ("markets", markets)):
+        for k, v in (("system", system), ("dreams", dreams), ("narrator", narrator), ("chat", chat), ("markets", markets), ("deals", deals), ("fabric", fabric)):
             if v is not None: src[k] = bool(v)
         if src: patch["sources"] = src
         return {"ok": True, "subs": await _run(_subs_set, patch)}
@@ -1136,7 +1158,8 @@ if _CAP_AVAILABLE:
         if not force and not await _run(_subs_allows, source):
             return {"ok": True, "printed": False, "skipped": True, "source": source}
         _SRC_LABEL = {"system": "SYSTEM ALERT", "dreams": "DREAM DIRECTOR",
-                      "narrator": "NARRATOR", "chat": "CHAT", "markets": "MARKET ALERT"}
+                      "narrator": "NARRATOR", "chat": "CHAT", "markets": "MARKET ALERT",
+                      "deals": "PRODUCT DEAL", "fabric": "FABRIC SOURCE"}
         label = _SRC_LABEL.get(source, (source or "note").upper())
         sub = (title or "").strip()
         parts = ["=" * 28]
