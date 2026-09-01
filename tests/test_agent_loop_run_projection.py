@@ -56,6 +56,63 @@ def test_agent_loop_and_tools_project_to_parent_child_runs_without_content():
         assert secret not in encoded
 
 
+def test_saved_outputs_bind_content_safe_artifacts_to_parent_and_producer():
+    registry = _registry()
+    projection = AgentLoopRunProjection(
+        session_id="session artifacts/one", engine="v7", registry=registry)
+    projection.observe({
+        "type": "agent_loop_v5.tool_call", "session_id": "session artifacts/one",
+        "step_id": 3, "cycle": 5, "tool": "code.author",
+        "args": {"content": "PRIVATE SOURCE"},
+    })
+    projection.observe({
+        "type": "agent_loop_v5.code_saved", "session_id": "session artifacts/one",
+        "step_id": 3, "cycle": 5,
+        "files": [{"path": "/private/host/workspace/app.py", "version": 4,
+                   "bytes": 321, "lang": "python",
+                   "fs_path": "/private/host/artifacts/app.py",
+                   "gitea": "https://private.invalid/repo"}],
+    })
+    projection.observe({
+        "type": "agent_loop_v5.tool_done", "session_id": "session artifacts/one",
+        "step_id": 3, "cycle": 5, "tool": "code.author", "ok": True,
+        "preview": "PRIVATE RESULT",
+    })
+    projection.finish()
+
+    root = registry.get(projection.run_id)
+    parent_artifact = root["run"]["artifacts"][0]
+    child_artifact = root["children"][0]["artifacts"][0]
+    assert parent_artifact == child_artifact
+    assert parent_artifact["kind"] == "file.source"
+    assert parent_artifact["uri"].endswith("/app.py")
+    assert parent_artifact["size_bytes"] == 321
+    assert parent_artifact["media_type"] == "text/x-python"
+    bound = [event for event in root["run"]["events"]
+             if event["type"] == "run.artifact.bound"]
+    assert bound[0]["payload"]["name"] == "app.py"
+    assert bound[0]["payload"]["version"] == "4"
+    encoded = json.dumps(registry.journal.export(projection.run_id), sort_keys=True)
+    for private in ("PRIVATE SOURCE", "PRIVATE RESULT", "/private/host",
+                    "private.invalid"):
+        assert private not in encoded
+
+
+def test_generated_output_artifacts_are_deduplicated_and_reject_bad_names():
+    registry = _registry()
+    projection = AgentLoopRunProjection(session_id="session-output", registry=registry)
+    projection.observe({"type": "agent_loop_v5.output_saved", "rel": "report.md"})
+    projection.observe({"type": "agent_loop_v5.output_saved", "rel": "report.md"})
+    projection.observe({"type": "agent_loop_v5.output_saved", "rel": ".."})
+    projection.observe({"type": "agent_loop_v5.code_saved", "files": "not-a-list"})
+    projection.finish()
+
+    root = registry.get(projection.run_id)
+    assert len(root["run"]["artifacts"]) == 1
+    assert root["run"]["artifacts"][0]["kind"] == "file.generated"
+    assert root["run"]["artifacts"][0]["uri"].endswith("/report.md")
+
+
 def test_failure_approval_and_parent_terminal_cleanup_are_explicit():
     registry = _registry()
     projection = AgentLoopRunProjection(session_id="session-b", registry=registry)

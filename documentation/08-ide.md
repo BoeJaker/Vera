@@ -173,9 +173,13 @@ The loop runs for `maxSteps` cycles (default 8) or until done/defer/abort. A "Co
 Agent-loop work launched from the IDE is visible through the same content-free
 Run projection used by Chat and Activity. The projection groups capability
 calls beneath the parent agent-loop Run and retains lifecycle metadata only;
-source text, prompts, arguments, generated content, previews, and raw failures
-remain in their owning IDE/loop surfaces. This gives the IDE a shared run ID and
-status graph without making the Run projection another execution engine.
+source text, prompts, arguments, generated content, previews, absolute paths,
+and raw failures remain in their owning IDE/loop surfaces. Files confirmed by a
+native save event are linked through a relative-name `ArtifactRef`, so the IDE
+can correlate a produced file with its parent and tool Runs without copying the
+file into Run history. This gives the IDE a shared run ID, status graph, and
+artifact identity without making the Run projection another execution engine
+or file store.
 
 ---
 
