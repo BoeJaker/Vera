@@ -70,6 +70,7 @@ try{var t=localStorage.getItem('vera-theme');if(t)document.documentElement.setAt
         <div class="tab" data-m="image">Image</div>
         <div class="tab" data-m="feeds">Feeds</div>
         <div class="tab" data-m="cfg">Routing</div>
+        <div class="tab" data-m="status">Status</div>
       </div>
       <div class="tplbar" style="display:flex;gap:6px;align-items:center;margin:6px 0 2px">
         <select id="tpl_sel" style="flex:1"></select>
@@ -198,6 +199,10 @@ Sun: 15</textarea>
         <div class="mini" id="n_st" style="margin-top:4px"></div>
         <vera-thermal-printer id="tpEl" baud="9600" style="display:none"></vera-thermal-printer>
       </div>
+      <div class="pane" data-p="status">
+        <div class="mini" style="margin-bottom:6px">What routes to the printer, and when.</div>
+        <div id="st_info"></div>
+      </div>
     </div>
 
     <div class="col preview">
@@ -223,7 +228,7 @@ async function post(u,b){return j(u,{method:'POST',headers:{'Content-Type':'appl
 // ---- tabs ----
 $('tabs').addEventListener('click',e=>{const t=e.target.closest('.tab');if(!t)return;
   MODE=t.dataset.m;[...document.querySelectorAll('.tab')].forEach(x=>x.classList.toggle('on',x===t));
-  [...document.querySelectorAll('.pane')].forEach(p=>p.classList.toggle('on',p.dataset.p===MODE));render();});
+  [...document.querySelectorAll('.pane')].forEach(p=>p.classList.toggle('on',p.dataset.p===MODE));if(MODE==='status')loadStatusTab();render();});
 function setWidth(){WIDTH=parseInt($('c_width').value);render();}
 
 // ---- item rows ----
@@ -413,6 +418,22 @@ async function feedFabric(){const st=$('feed_st');const id=$('fab_ds')&&$('fab_d
   if(st)st.textContent='loading…';const r=await post('/print/fabric',{dataset_id:id,preview:true,limit:10});
   if(!r||!r.text){if(st)st.textContent=(r&&r.error)||'no items';return;}
   $('t_text').value=r.text;$('t_align').value='left';document.querySelector('.tab[data-m="text"]').click();if(st)st.textContent='loaded — edit & print';}
+// ---- status infographic ----
+const _SRC_META={system:['🖥','System alerts','always-on notifications'],dreams:['🌙','Dream director','director thoughts'],narrator:['📖','Narrator','narratives & takes'],chat:['💬','Chat','delivered reports'],markets:['📈','Market alerts','trading signals'],deals:['🏷','Product deals','eBay/Vinted watches'],fabric:['🗂','Fabric sources','news/RSS/collector feeds']};
+function _stCard(title,body,color,tag){return '<div style="border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:8px;border-left:3px solid '+color+'"><div style="display:flex;justify-content:space-between;align-items:center"><b>'+title+'</b><span class="mini" style="color:'+color+'">'+(tag||'')+'</span></div><div class="mini" style="margin-top:3px">'+body+'</div></div>';}
+async function loadStatusTab(){const box=$('st_info');if(!box)return;box.innerHTML='<div class="mini">loading…</div>';
+  let st={},su={},cf={};try{const a=await Promise.all([j('/print/status'),j('/print/subs'),j('/print/config')]);st=a[0]||{};su=a[1]||{};cf=a[2]||{};}catch(e){}
+  const subs=su.subs||{},src=subs.sources||{},master=subs.master!==false;const cfg=cf.config||{};
+  const dev=st.server_device,np=((st.printers||[]).length);
+  let h=_stCard('🖨 Printer',(dev?('Server '+dev):'no server device')+(np?(' · '+np+' printer'+(np>1?'s':'')):'')+(st.pil?' · fonts/images ready':''),master?'#57d08a':'#e5b567',master?'notifications ON':'MASTER OFF');
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">';
+  for(const k in _SRC_META){const m=_SRC_META[k];const on=master&&(k==='system'?src.system!==false:!!src[k]);
+    h+='<div style="border:1px solid var(--border);border-radius:8px;padding:8px;opacity:'+(on?'1':'.5')+';background:'+(on?'rgba(87,208,138,.06)':'transparent')+'"><div style="font-size:13px">'+m[0]+' <b>'+m[1]+'</b></div><div class="mini">'+m[2]+'</div><div class="mini" style="color:'+(on?'#57d08a':'var(--dim2)')+'">'+(on?'● printing':'○ off')+'</div></div>';}
+  h+='</div>';
+  const den=!!cfg.enabled,dt=(String(cfg.hour==null?7:cfg.hour)).padStart(2,'0')+':'+(String(cfg.minute||0)).padStart(2,'0');
+  h+=_stCard('⏰ Daily auto-print',den?('every day at '+dt+' — '+((cfg.items||['schedule']).join(', '))):'off',den?'#57d08a':'var(--dim2)',den?'scheduled':'not scheduled');
+  box.innerHTML=h;
+}
 // ---- print routing + helpers ----
 let PRINTERS=[], TARGET=null;
 async function printJob(path, body){
