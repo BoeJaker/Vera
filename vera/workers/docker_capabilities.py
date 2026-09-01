@@ -537,6 +537,14 @@ DOCKER_STATS_TOP_N = 12          # shown/kept per host — dashboard tile space,
 DOCKER_STATS_HISTORY_MAX = 20    # ~10min of trend at the 30s sample cadence, per container
 _DOCKER_STATS_SAMPLE_CAP = 60    # max containers actually queried per host per tick, busiest-first by definition impossible to know in advance, so just capped by list order
 _DOCKER_STATS_CACHE: Dict[str, dict] = {}   # host_id -> {containers:[...], updated_at, error}
+try:
+    from Vera.vera.workers import image_drift as _image_drift
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.workers import image_drift as _image_drift
+    except Exception:
+        _image_drift = None
+
 _DOCKER_STATS_HISTORY: Dict[str, "deque"] = {}   # container_id(12-char) -> deque of {t,cpu_pct,mem_mb}
 
 
@@ -657,6 +665,39 @@ except Exception as e:
 )
 async def cap_docker_stats_top(trace_id=None) -> Dict:
     return {"hosts": _DOCKER_STATS_CACHE}
+
+
+@capability(
+    "docker.drift",
+    http_method="GET", http_path="/workers/docker/drift", http_tags=["docker"],
+    memory="off",
+    description="Which RUNNING containers are no longer on the image their tag now points "
+                "at. A container pins the image id it was created with, so a rebuilt or "
+                "re-pulled tag leaves every running container behind until it is RECREATED "
+                "- `docker restart` reuses the same container AND the same image, which is "
+                "how an instance runs weeks-old code while looking healthy. Loop Lab "
+                "sandboxes (vera-dev-*) and session sandboxes (vera-sbx-*) are excluded on "
+                "purpose: they are pinned to a branch and rolling them forward would destroy "
+                "what they exist to test. Input: host_id (str). "
+                "Output: {drifted:[{name,image,running,latest}], current, skipped, unknown, note}.",
+)
+async def cap_docker_drift(host_id: str = "", trace_id=None) -> Dict:
+    if _image_drift is None:
+        return {"error": "image_drift unavailable"}
+    ps = await cap_docker_ps(host_id=host_id, all=False)
+    if isinstance(ps, dict) and ps.get("error"):
+        return {"error": ps["error"]}
+    imgs = await cap_docker_images(host_id=host_id)
+    if isinstance(imgs, dict) and imgs.get("error"):
+        return {"error": imgs["error"]}
+    by_tag: Dict[str, str] = {}
+    for im in (imgs or {}).get("images", []) or []:
+        for tag in (im.get("RepoTags") or []):
+            by_tag[str(tag)] = str(im.get("Id") or "")
+    plan = _image_drift.classify((ps or {}).get("containers", []), by_tag)
+    plan["note"] = _image_drift.describe(plan)
+    plan["host_id"] = host_id or "local"
+    return plan
 
 
 @capability(

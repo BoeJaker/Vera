@@ -23,6 +23,14 @@ from Vera.vera.capability_orchestration import (
 )
 import Vera.vera.capability_orchestration as _orch
 
+try:
+    from Vera.vera.workers import worker_registry_hygiene as _wrh
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.workers import worker_registry_hygiene as _wrh
+    except Exception:
+        _wrh = None
+
 log = logging.getLogger("vera.workers")
 
 WORKER_META: dict = {}
@@ -69,6 +77,17 @@ async def _push_local_metrics():
                 # Write into every local worker entry
                 for wid in list(WORKER_REGISTRY.keys()):
                     try:
+                        # Metrics DESCRIBE a worker; they must not assert one
+                        # exists. hset CREATES a missing key, so once a
+                        # registration's 120s TTL lapsed this recreated it with
+                        # metrics only - no id, host, pid, started or
+                        # capabilities - and with no expiry, i.e. permanently.
+                        # Observed 2026-09-01 with a single instance running:
+                        # two such ghosts, indistinguishable from live workers
+                        # in obs.workers, which fills the gaps with "unknown".
+                        if _wrh is not None and not _wrh.may_write_metrics(
+                                bool(await r.exists(f"vera:workers:{wid}"))):
+                            continue
                         await r.hset(f"vera:workers:{wid}", mapping={
                             "cpu_pct":       str(metrics["cpu_pct"]),
                             "ram_used_gb":   str(metrics["ram_used_gb"]),
@@ -86,6 +105,11 @@ async def _push_local_metrics():
                         # restart wipes WORKER_REGISTRY, this stops firing and
                         # the entry expires out cleanly instead of lingering
                         # with stale data forever.
+                        # Refresh the TTL on ANY write. This used to sit
+                        # inside the `meta` branch only, so a metrics tick could
+                        # leave a key with no expiry at all - which is what made
+                        # the ghosts permanent instead of self-clearing.
+                        await r.expire(f"vera:workers:{wid}", 120)
                         meta = WORKER_META.get(wid)
                         if meta:
                             await r.hset(f"vera:workers:{wid}", mapping={

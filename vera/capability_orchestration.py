@@ -5864,6 +5864,24 @@ async def route_llm(prompt: str, prefer: Optional[str] = None) -> Any:
 # One-time _startup module-init hooks (interval 999999) are NOT here: a sandbox
 # still needs its panels/state initialised. A job may also self-declare via
 # schedule(..., skip_in_sandbox=True). See is_dev_sandbox()'s docstring.
+try:
+    from Vera.vera.evolve import estate_role as _estate_role
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.evolve import estate_role as _estate_role
+    except Exception:
+        _estate_role = None
+        log.warning("estate_role unavailable - any instance may sweep the estate")
+
+# Computed ONCE at import: neither can change without a restart, and re-stat'ing
+# the estate directory on every scheduler tick would be pointless I/O.
+_IS_WORKER = str(os.environ.get("VERA_IS_WORKER", "")).strip().lower() in (
+    "1", "true", "yes", "on")
+_ESTATE_PRESENT = (_estate_role.estate_is_present(
+                       os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                   if _estate_role is not None else True)
+
+
 _SANDBOX_SKIP_JOBS = {
     "agent_rag_refresh",       # re-embeds every agent's knowledge dataset
     "bench_node_perf",         # runs benchmark GENERATIONS against the nodes
@@ -5982,6 +6000,21 @@ async def scheduler_loop():
         for task in SCHEDULED_TASKS:
             if not _lead.may_run(task, is_leader=bool(_LEADER_STATE["is_leader"])):
                 continue
+            # Only the estate's OWNER may sweep it. The primary test is
+            # possession, not a flag: a foundry worker on another machine ran
+            # the hourly sweep for a day against this estate, and because
+            # .loop-lab-worktrees/ does not exist over there EVERY descriptor
+            # probed ABSENT and looked reapable. A flag only stops instances
+            # that carry it; the offender predated any flag we could add.
+            if _estate_role is not None and _estate_role.is_estate_job(task["name"]):
+                _d = _estate_role.decide(
+                    task["name"], estate_present=_ESTATE_PRESENT,
+                    is_worker=_IS_WORKER, is_dev_sandbox=bool(_sandbox))
+                if not _d["run"]:
+                    if task["name"] not in _SANDBOX_SKIP_LOGGED:
+                        _SANDBOX_SKIP_LOGGED.add(task["name"])
+                        log.warning("estate guard: %s", _d["reason"])
+                    continue
             # Leech boot: never fire heavy ambient jobs inside a dev sandbox.
             if _sandbox and (task.get("skip_in_sandbox")
                              or task["name"] in _SANDBOX_SKIP_JOBS):
