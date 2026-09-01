@@ -1118,6 +1118,8 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
     <div class="row" style="margin-top:4px"><label style="min-width:56px">GPU</label><input type="checkbox" id="cfgGpu"></div>
     <div class="row"><label style="min-width:56px">Think</label><input type="checkbox" id="cfgThink"></div>
     <div class="row"><label style="min-width:56px">Quick opener</label><input type="checkbox" id="cfgQuickOpener"></div>
+    <label class="row numrow" title="First pass answers immediately from a small prompt; a second pass continues the same reply once the context has loaded"><select id="cfgTwoTier" style="flex:1;min-width:0"><option value="">Agent default</option><option value="off">off</option><option value="fetched">fetched</option><option value="message">message</option></select><span class="nlbl" style="flex:0 0 auto">Two-tier</span></label>
+    <label class="row numrow" title="Who decides the second pass is needed"><select id="cfgTwoTierDecider" style="flex:1;min-width:0"><option value="">Agent default</option><option value="tier2">tier2 &mdash; decides with context</option><option value="tier1">tier1 &mdash; first pass reports</option></select><span class="nlbl" style="flex:0 0 auto">Decider</span></label>
     <div class="row"><label style="min-width:56px">Web live</label><input type="checkbox" id="cfgWebInteractive" checked title="When Web search is on, the server searches live: it shows a 'searching the web…' status and the sources found, then answers using them — instead of silently pre-fetching results into context"></div>
     <div class="sec" style="margin-top:5px">Agent capabilities</div>
     <div class="row"><label style="min-width:70px">Integrated</label><input type="checkbox" id="cfgCapInteg" title="Inject the cap manifest into this agent's prompts. Auto-synced with the selected agent's tool_mode: disabled when tool_mode='none'."></div>
@@ -3116,6 +3118,8 @@ const CH = (() => {
     ctxRollout:'Also pull context for the predicted next concepts (Worldview)',
     ctxNotes:'Inject the agent-maintained session memory note each turn',
     cfgQuickOpener:'Long prompts: instantly show a one-line acknowledgement from a second endpoint while the full answer generates',
+    cfgTwoTier:'Answer FIRST from a small prompt, then continue the same reply once the slow context has loaded. \'fetched\' drops retrieved material (session memory, ontology, past Q&A) from the first pass but keeps the conversation; \'message\' drops the conversation too. Blank = whatever the agent is set to.',
+    cfgTwoTierDecider:'tier2 always runs the second pass but lets it decide, with the context in front of it, whether anything needs adding. tier1 skips the second pass when the first says it is done - cheaper, but it is judging material it cannot see.',
     cfgWebInteractive:'When Web search is on, the server searches live — showing a “searching the web…” status and the sources found, then answering from them — instead of silently pre-fetching results',
     // Loop pane — titles cover the rest; these fill the title-less toggles.
     loopPause:'Pause for your approval before each loop step',
@@ -7796,6 +7800,10 @@ Your task: decide what to do next to advance toward the goal.
           system_prefix:ctxBlock||undefined,  // injected before agent's system prompt
           // Quick opener: checked forces on; unchecked leaves it to the agent record
           quick_opener:document.getElementById('cfgQuickOpener')?.checked||undefined,
+          // Two-tier reply: blank leaves it to the agent record, so a chat-side
+          // choice is an override for THIS turn rather than a permanent setting.
+          two_tier:document.getElementById('cfgTwoTier')?.value||undefined,
+          two_tier_decider:document.getElementById('cfgTwoTierDecider')?.value||undefined,
           // Live web search: when the web source is on AND "Web live" is checked,
           // the server runs the search itself (streams web_searching/web_results
           // and gates the answer on the results). Client web pre-fetch is skipped
@@ -11726,6 +11734,8 @@ Your task: decide what to do next to advance toward the goal.
         quick_opener:!!fresh.quick_opener,
         quick_opener_threshold:fresh.quick_opener_threshold??1500,
         quick_opener_model:fresh.quick_opener_model||'',
+        two_tier:fresh.two_tier||'off',
+        two_tier_decider:fresh.two_tier_decider||'tier2',
       };
       const res=await api('/agents/update','POST',body);
       if(res?.error){appendSys('Save failed: '+esc(res.error));}
@@ -11853,6 +11863,8 @@ Your task: decide what to do next to advance toward the goal.
       quick_opener:!!a.quick_opener,
       quick_opener_threshold:a.quick_opener_threshold??1500,
       quick_opener_model:a.quick_opener_model||'',
+      two_tier:a.two_tier||'off',
+      two_tier_decider:a.two_tier_decider||'tier2',
     };
     const res=await api('/agents/create','POST',body);
     if(res?.id||res?.name){

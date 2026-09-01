@@ -240,6 +240,12 @@ class AgentRecord:
     quick_opener:           bool = False
     quick_opener_threshold: int  = 1500   # min message chars to trigger
     quick_opener_model:     str  = ""     # empty = agent model (routed to the other pool)
+    # Two-tier reply (see vera/agents/two_tier.py). "off" | "fetched" | "message"
+    # for what the FIRST pass is starved of, and who decides the second pass is
+    # needed: "tier2" (decides with the context in front of it) | "tier1"
+    # (the first pass self-reports).
+    two_tier:               str  = "off"
+    two_tier_decider:       str  = "tier2"
 
     # Knowledge sources + per-agent RAG
     # knowledge_sources: enrichment sources this agent draws on. Each entry:
@@ -887,6 +893,8 @@ class AgentRegistry:
             quick_opener           =_b('quick_opener', False),
             quick_opener_threshold =_i('quick_opener_threshold', 1500),
             quick_opener_model     =_d('quick_opener_model', ''),
+            two_tier               =_d('two_tier', 'off'),
+            two_tier_decider       =_d('two_tier_decider', 'tier2'),
             knowledge_sources  =_j('knowledge_sources', []),
             rag_enabled        =_b('rag_enabled', False),
             rag_inject_limit   =_i('rag_inject_limit', 4),

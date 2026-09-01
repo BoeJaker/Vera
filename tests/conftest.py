@@ -27,6 +27,7 @@ _CRITICAL_MODULES = {
     "test_operator_budget",  # an operator run needs a clock (2026-09-01)
     "test_two_tier_chat",  # answer first, continue with context (2026-09-01)
     "test_two_tier_decider",  # who decides the second pass is needed (2026-09-01)
+    "test_two_tier_switch",  # a feature with no switch is unusable (2026-09-01)
     "test_ambient_dreaming_is_opt_in",  # nothing dreams on a box nobody asked (2026-08-31)
     "test_sandbox_estate_guard",  # a sandbox must not promote to main or reap the estate (2026-08-31)
     "test_sandbox_does_not_reap_the_estate",  # a dev sandbox must not reap the shared estate (2026-08-31)
