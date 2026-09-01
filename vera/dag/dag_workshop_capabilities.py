@@ -24158,6 +24158,19 @@ async def workshop_agent_loop_stream(request: Request):
             yield b"data: [DONE]\n\n"
             return
 
+        try:
+            from Vera.vera.execution.agent_loop_run_projection import (
+                bind_agent_loop_projection, finish_agent_loop_projection,
+                reset_agent_loop_projection, start_agent_loop_projection,
+            )
+            _run_projection = None
+        except Exception:
+            _run_projection = None
+            bind_agent_loop_projection = None
+            reset_agent_loop_projection = None
+            start_agent_loop_projection = None
+            finish_agent_loop_projection = None
+
         yield _sse({
             "type":             "start",
             "goal":             goal,
@@ -24172,6 +24185,11 @@ async def workshop_agent_loop_stream(request: Request):
         r = _redis()
         if not r:
             # Fallback: no Redis → just await and emit done
+            if start_agent_loop_projection:
+                _run_projection = start_agent_loop_projection(
+                    session_id=session_id, engine=version, profile=_profile_id)
+            _projection_token = (bind_agent_loop_projection(_run_projection)
+                                 if bind_agent_loop_projection else None)
             try:
                 cap = CAPABILITY_REGISTRY[cap_name]
                 kwargs = dict(
@@ -24246,10 +24264,21 @@ async def workshop_agent_loop_stream(request: Request):
                     except Exception as e:
                         log.debug("handover (v1/v2) failed: %s", e)
                 _record_history_turn(result)
+                if finish_agent_loop_projection:
+                    finish_agent_loop_projection(_run_projection, result=result)
                 yield _sse({"type": "result", **(result or {})})
+            except asyncio.CancelledError:
+                if finish_agent_loop_projection:
+                    finish_agent_loop_projection(_run_projection, cancelled=True)
+                raise
             except Exception as e:
+                if finish_agent_loop_projection:
+                    finish_agent_loop_projection(
+                        _run_projection, error_type=type(e).__name__)
                 yield _sse({"type": "error", "error": str(e)})
             finally:
+                if reset_agent_loop_projection:
+                    reset_agent_loop_projection(_projection_token)
                 _clear_cap_guard()
             yield b"data: [DONE]\n\n"
             return
@@ -24483,6 +24512,8 @@ async def workshop_agent_loop_stream(request: Request):
             # Stamp this run's session onto the context so EVERY descendant coroutine
             # (and any orphan it spawns) can self-cancel at the generation chokepoint.
             _LOOP_SESSION_CV.set(session_id or "")
+            _projection_token = (bind_agent_loop_projection(_run_projection)
+                                 if bind_agent_loop_projection else None)
             cap = CAPABILITY_REGISTRY[cap_name]
             try:
                 kwargs = dict(
@@ -24558,13 +24589,27 @@ async def workshop_agent_loop_stream(request: Request):
                             result["summary"] = ho
                     except Exception as e:
                         log.debug("handover (v1/v2 runner) failed: %s", e)
+                if finish_agent_loop_projection:
+                    finish_agent_loop_projection(_run_projection, result=result)
                 return result
+            except asyncio.CancelledError:
+                if finish_agent_loop_projection:
+                    finish_agent_loop_projection(_run_projection, cancelled=True)
+                raise
             except Exception as e:
                 log.exception("agent loop runner failed")
+                if finish_agent_loop_projection:
+                    finish_agent_loop_projection(
+                        _run_projection, error_type=type(e).__name__)
                 return {"error": str(e)}
             finally:
+                if reset_agent_loop_projection:
+                    reset_agent_loop_projection(_projection_token)
                 _clear_cap_guard()
 
+        if start_agent_loop_projection:
+            _run_projection = start_agent_loop_projection(
+                session_id=session_id, engine=version, profile=_profile_id)
         runner = asyncio.create_task(_runner())
         # Register this run so /workshop/agent_loop/cancel (the Stop button) can
         # stop it. It runs DETACHED from this SSE connection: a client disconnect

@@ -115,6 +115,17 @@ chat layer streams the resulting turn to the browser while the agent layer
 records durable history and usage. Tool calls re-enter the shared capability
 registry, so they inherit normal tracing, policy, and error reporting.
 
+Every streamed agent-loop request is also observed through the shared Run
+protocol. The native loop and SSE stream remain authoritative; the observer
+creates a non-authoritative parent Run plus child Runs for capability calls so
+Activity, run graphs, Chat, and IDE can correlate the same lifecycle. It records
+engine/profile, capability name, step/cycle identity, status, and elapsed time.
+Goals, prompts, tool arguments, thoughts, previews, results, and error text are
+excluded. Human-approval and clarification pauses appear as Run state changes,
+and cancellation, timeout, failure, completion, and session supersession close
+the projection explicitly. A projection outage never interrupts the native
+loop.
+
 Latency should be split by stage: client context fetch, memory/fabric recall,
 model queue, generation, capability execution, and persistence. Re-running the
 whole turn hides the cause. Use request/job history and capability traces to
