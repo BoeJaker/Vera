@@ -21,8 +21,9 @@ evidence. Supervised and the other enhanced DAG modes do not inherit this claim.
 
 ## Shared scheduling trigger evidence
 
-The long-term Calendar scheduler and Dream's idle scheduler now project their
-native fire decisions into the same `vera.workflow-trigger/v1` event envelope.
+The long-term Calendar scheduler, Dream's idle scheduler, and Research's
+continuous-iteration loop now project their native fire decisions into the
+same `vera.workflow-trigger/v1` event envelope.
 The envelope gives downstream observers a stable trigger and idempotency key,
 source revision, opaque target reference, schedule kind, explicit timezone,
 occurrence identity, and native authority declaration. It never contains an
@@ -50,7 +51,9 @@ Misfire and catch-up behavior is now projected through a separate closed
 `vera.workflow-schedule-decision/v1` event. Calendar's time-based one-shots
 retain their native "fire once when next observed" behavior after downtime.
 Dream explicitly coalesces any number of missed intervals into at most one
-eligible cycle. Each decision records the due instant, lateness, missed
+eligible cycle. Research exposes the same bounded catch-up evidence while
+honestly retaining its native immediate-on-restart behavior rather than using
+the shared decision as an execution gate. Each decision records the due instant, lateness, missed
 occurrence count, chosen disposition, schedule/policy/trigger identities, and
 declares both `executes: false` and `replay_effects: false`. It cannot claim a
 run, invoke a target, or bypass the products' normal gates. A closed `skip`
@@ -77,7 +80,9 @@ state first and emit content-safe transition evidence second. The evidence
 contains opaque source/revision identities, preserves the schedule record, and
 declares `executes: false`; event-stream failure cannot undo the native state
 change. Deletion remains a separate destructive operation rather than an alias
-for cancellation.
+for cancellation. Research iteration records project active and paused states;
+its native stop currently deletes the record, so the shared lifecycle adapter
+fails closed instead of manufacturing a preserved cancelled state.
 
 `execution/exec_capabilities.py` is two capability groups in one module: **`exec.*`** — shell, PowerShell, code, and SSH execution — and **`netscan.*`** — network asset discovery, target probing, and an auxiliary topology graph. Both are governed by a single configurable **exec sandbox policy**, and both surface their own harness tabs (the tabbed **Exec** consoles and the Cytoscape **Netmap**).
 

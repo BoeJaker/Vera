@@ -11,8 +11,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 SCHEMA = "vera.workflow-trigger/v1"
 EVENT_TYPE = "workflow.trigger.emitted"
-SOURCE_KINDS = {"calendar.action", "dream.trigger"}
-SCHEDULE_KINDS = {"time", "condition", "idle_interval"}
+SOURCE_KINDS = {"calendar.action", "dream.trigger", "research.iteration"}
+SCHEDULE_KINDS = {"time", "condition", "idle_interval", "completion_interval"}
 
 
 def _canonical(value: Any) -> str:
@@ -307,5 +307,53 @@ def dream_schedule_decision(
     policy = dream_trigger_policy(trigger)
     return classify_schedule_occurrence(
         schedule, policy, evaluated_at=observed_at,
+        last_completed_at=previous_run, trigger_id=trigger_id,
+    )
+
+
+def research_iteration_workflow_trigger(
+    iteration: Mapping[str, Any], *, observed_at: str, previous_run: str = "",
+) -> dict[str, Any]:
+    """Project one native Research iteration that is about to execute."""
+    if not isinstance(iteration, Mapping):
+        raise TypeError("iteration must be an object")
+    iteration_id = _required_text("iteration.id", iteration.get("id"))
+    from .workflow_schedule import research_iteration_schedule
+    from .workflow_schedule_policy import research_iteration_policy
+
+    schedule = research_iteration_schedule(iteration)
+    policy = research_iteration_policy(iteration)
+    definition = {
+        key: iteration.get(key) for key in (
+            "id", "target_type", "target_id", "seed_query", "mode",
+            "output_mode", "interval_secs",
+        )
+    }
+    definition["schedule_id"] = schedule["schedule_id"]
+    definition["schedule_policy_id"] = policy["policy_id"]
+    return build_workflow_trigger(
+        source_kind="research.iteration", source_id=iteration_id,
+        source_revision=_hash(definition),
+        target_ref=f"research.iteration:{iteration_id}",
+        schedule_kind="completion_interval",
+        occurrence_key=str(previous_run or "initial"), observed_at=observed_at,
+        timezone_name="UTC", native_owner="vera.research.iteration_loop",
+    )
+
+
+def research_iteration_schedule_decision(
+    iteration: Mapping[str, Any], *, observed_at: str, previous_run: str = "",
+    trigger_id: str = "",
+) -> dict[str, Any]:
+    """Classify Research recurrence evidence without controlling its loop."""
+    from .workflow_schedule import research_iteration_schedule
+    from .workflow_schedule_policy import (
+        classify_schedule_occurrence,
+        research_iteration_policy,
+    )
+
+    return classify_schedule_occurrence(
+        research_iteration_schedule(iteration),
+        research_iteration_policy(iteration), evaluated_at=observed_at,
         last_completed_at=previous_run, trigger_id=trigger_id,
     )
