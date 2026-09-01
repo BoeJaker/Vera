@@ -172,6 +172,9 @@ def _ensure_schema_sync():
                 last_scan    TEXT,
                 last_hits    INTEGER DEFAULT 0,
                 notes        TEXT,
+                url          TEXT,
+                kind         TEXT DEFAULT 'marketplace',
+                last_price   REAL,
                 created_at   TEXT,
                 updated_at   TEXT
             );
@@ -194,6 +197,11 @@ def _ensure_schema_sync():
             CREATE INDEX IF NOT EXISTS ix_alerts_watch ON commerce_market_alerts(watch_id);
             CREATE INDEX IF NOT EXISTS ix_alerts_ts ON commerce_market_alerts(ts);
         """)
+        for _c, _t in (("url", "TEXT"), ("kind", "TEXT DEFAULT 'marketplace'"), ("last_price", "REAL")):
+            try:
+                conn.execute("ALTER TABLE commerce_watches ADD COLUMN %s %s" % (_c, _t))
+            except Exception:
+                pass
         conn.commit()
     finally:
         conn.close()
@@ -205,7 +213,7 @@ async def _ensure_schema():
 
 _W_COLS = ("id", "name", "query", "platform", "max_price", "condition", "category",
            "deal_discount", "active", "notify", "last_scan", "last_hits", "notes",
-           "created_at", "updated_at")
+           "url", "kind", "last_price", "created_at", "updated_at")
 
 def _db_upsert_watch(fields: dict) -> dict:
     conn = _sqlite_conn()
@@ -376,7 +384,87 @@ async def _market_for(query: str, platform: str, limit: int) -> dict:
     return {"items": all_items, "by_platform": sources, "combined": combined}
 
 
+async def _url_price(url: str) -> dict:
+    """Best-effort current price for ANY product page (retail, refurb, marketplace)
+    via the rendered browser: schema.org / OpenGraph price meta first, else a
+    currency-symbol match in the visible text. Works across most storefronts."""
+    import re as _re
+    _co = sys.modules.get("Vera.vera.capability_orchestration")
+    _reg = getattr(_co, "CAPABILITY_REGISTRY", None) if _co else None
+    bc = (_reg or {}).get("browser.content") or {}
+    fn = bc.get("raw") or bc.get("func")
+    if not fn:
+        return {"price": None, "note": "browser subsystem unavailable"}
+    try:
+        r = await fn(url=url, include_links=False, max_chars=60000)
+    except Exception as e:
+        return {"price": None, "note": f"fetch failed: {e}"}
+    r = r if isinstance(r, dict) else {}
+    meta = r.get("meta") or {}
+    title = str(r.get("title") or url)[:80]
+    cur = (meta.get("product:price:currency") or meta.get("og:price:currency")
+           or meta.get("priceCurrency") or "GBP")
+    price = None
+    for k in ("product:price:amount", "og:price:amount", "price", "product:price",
+              "og:price", "twitter:data1"):
+        v = meta.get(k)
+        if v:
+            m = _re.search(r"([0-9][0-9,]*(?:[.][0-9]+)?)", str(v))
+            if m:
+                try:
+                    price = float(m.group(1).replace(",", "")); break
+                except Exception:
+                    pass
+    if price is None:
+        m = _re.search(r"([£$€])\s?([0-9][0-9,]*[.][0-9]{2})", str(r.get("text") or ""))
+        if m:
+            cur = {"£": "GBP", "$": "USD", "€": "EUR"}.get(m.group(1), cur)
+            try:
+                price = float(m.group(2).replace(",", ""))
+            except Exception:
+                pass
+    if price is None:
+        return {"price": None, "note": "no price found on page", "title": title}
+    return {"price": price, "currency": cur, "title": title}
+
+
+async def _scan_url_watch(w: dict) -> dict:
+    url = w.get("url") or ""
+    if not url:
+        return {"watch_id": w["id"], "hits": 0, "alerts": []}
+    pr = await _url_price(url)
+    price = _f(pr.get("price"), None)
+    if not price or price <= 0:
+        _db_upsert_watch({"id": w["id"], "last_scan": now_iso(), "last_hits": 0})
+        return {"watch_id": w["id"], "name": w.get("name"), "hits": 0, "alerts": [],
+                "note": pr.get("note")}
+    cur = pr.get("currency", "GBP")
+    max_price = _f(w.get("max_price"), None) if w.get("max_price") not in (None, "") else None
+    last = _f(w.get("last_price"), None) if w.get("last_price") not in (None, "") else None
+    discount = _f(w.get("deal_discount"), DEFAULT_DEAL_DISCOUNT) or DEFAULT_DEAL_DISCOUNT
+    is_deal, reason = False, ""
+    if max_price is not None and price <= max_price:
+        is_deal = True
+        reason = f"{cur} {price:.2f} at/below your {max_price:.2f} target"
+    elif last is not None and last > 0 and price < last * (1 - discount):
+        is_deal = True
+        reason = f"{cur} {price:.2f} dropped {round((1 - price / last) * 100)}% from {last:.2f}"
+    alerts = []
+    if is_deal and not _db_alert_exists(w["id"], "url", f"{price:.2f}"):
+        alerts.append(_db_add_alert({
+            "watch_id": w["id"], "kind": "deal", "platform": "url",
+            "external_id": f"{price:.2f}", "title": pr.get("title") or w.get("name") or url,
+            "price": price, "currency": cur, "market_median": last, "reason": reason,
+            "url": url, "photo": ""}))
+    _db_upsert_watch({"id": w["id"], "last_scan": now_iso(),
+                      "last_hits": len(alerts), "last_price": price})
+    return {"watch_id": w["id"], "name": w.get("name"), "price": price,
+            "hits": len(alerts), "alerts": alerts}
+
+
 async def _scan_watch(w: dict) -> dict:
+    if (w.get("kind") or "marketplace") == "url":
+        return await _scan_url_watch(w)
     query = w.get("query") or w.get("name") or ""
     if not query:
         return {"watch_id": w["id"], "hits": 0, "alerts": []}
@@ -460,16 +548,17 @@ if _CAP_AVAILABLE:
         id: str = "", name: str = "", query: str = "", platform: str = "any",
         max_price: float = None, deal_discount: float = None, condition: str = "",
         category: str = "", active: bool = True, notify: bool = True, notes: str = "",
-        trace_id=None):
+        url: str = "", kind: str = "", trace_id=None):
         await _ensure_schema()
         if not (name or id):
             return {"error": "name required"}
+        kind = (kind or ("url" if url else "marketplace")).strip()
         w = await _run(_db_upsert_watch, {
             "id": id or None, "name": name or None, "query": query or name or None,
             "platform": platform, "max_price": max_price, "deal_discount": deal_discount,
             "condition": condition or None, "category": category or None,
             "active": 1 if active else 0, "notify": 1 if notify else 0,
-            "notes": notes or None})
+            "notes": notes or None, "url": url or None, "kind": kind})
         return {"ok": True, "watch": w}
 
     @capability(
