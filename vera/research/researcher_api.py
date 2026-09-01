@@ -37,6 +37,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, asdict
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import AsyncIterator, Optional
@@ -8765,6 +8766,7 @@ async def cell_chat_rest(nb_id: str, cell_id: str, req: CellChatRequest):
 # In-memory registry of running iteration tasks
 _iter_tasks:  dict[str, asyncio.Task]  = {}   # it_id → asyncio.Task
 _iter_stop:   dict[str, bool]          = {}   # it_id → stop_requested
+_iter_evidence_tasks: set[asyncio.Task] = set()
 
 
 @dataclass
@@ -8908,6 +8910,67 @@ async def _iter_update_traversal(
             tm.knowledge_summary += f"\n\n[Iter {tm.iteration_count}] {query}: {result[:200]}"
 
 
+def _iteration_previous_run_iso(tm: TraversalMap) -> str:
+    raw = tm.last_run_at
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)) or raw <= 0:
+        return ""
+    try:
+        return datetime.fromtimestamp(raw, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    except (OverflowError, OSError, ValueError):
+        return ""
+
+
+def _record_iteration_workflow_trigger(event: dict) -> dict:
+    from Vera.vera.execution.workflow_trigger_receipts import (
+        default_workflow_trigger_receipt_ledger,
+    )
+    return default_workflow_trigger_receipt_ledger().record(event)
+
+
+async def _emit_iteration_workflow_trigger(it: dict, tm: TraversalMap) -> None:
+    """Emit portable evidence while leaving the Research loop authoritative."""
+    try:
+        from Vera.vera.execution.workflow_trigger import (
+            research_iteration_schedule_decision,
+            research_iteration_workflow_trigger,
+        )
+        observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        previous_run = _iteration_previous_run_iso(tm)
+        event = research_iteration_workflow_trigger(
+            it, observed_at=observed_at, previous_run=previous_run,
+        )
+        decision = research_iteration_schedule_decision(
+            it, observed_at=observed_at, previous_run=previous_run,
+            trigger_id=event["trigger_id"],
+        )
+    except Exception as exc:
+        log.debug("research iteration workflow trigger build: %s", exc)
+        return
+    receipt = None
+    try:
+        receipt = _record_iteration_workflow_trigger(event)
+    except Exception as exc:
+        log.debug("research iteration workflow trigger receipt: %s", exc)
+    for label, evidence in (
+        ("trigger", event), ("receipt", receipt), ("decision", decision),
+    ):
+        if evidence is None:
+            continue
+        try:
+            await _vera_emit(evidence)
+        except Exception as exc:
+            log.debug("research iteration workflow %s emission: %s", label, exc)
+
+
+def _schedule_iteration_workflow_trigger(it: dict, tm: TraversalMap) -> None:
+    """Keep projection I/O off the native iteration's critical path."""
+    task = asyncio.create_task(_emit_iteration_workflow_trigger(
+        dict(it), TraversalMap.from_dict(tm.to_dict()),
+    ))
+    _iter_evidence_tasks.add(task)
+    task.add_done_callback(_iter_evidence_tasks.discard)
+
+
 async def _run_iteration_loop(it_id: str) -> None:
     """
     The main iteration background loop.
@@ -8988,6 +9051,10 @@ async def _run_iteration_loop(it_id: str) -> None:
             continue
 
         log.info("Iteration %s (iter #%d): %r", it_id, tm.iteration_count+1, next_q[:80])
+
+        # Observation only: projection failures must never delay or suppress
+        # native Research work.
+        _schedule_iteration_workflow_trigger(it, tm)
 
         # Broadcast to anyone watching the iteration channel
         await broadcast(it_id, {
@@ -9531,6 +9598,32 @@ class IterCreateRequest(BaseModel):
     autostart:     bool       = True
 
 
+def _with_iteration_schedule_projection(iteration: dict) -> dict:
+    """Return detached API data enriched with non-executing schedule evidence."""
+    result = dict(iteration)
+    try:
+        from Vera.vera.execution.workflow_schedule import research_iteration_schedule
+        from Vera.vera.execution.workflow_schedule_lifecycle import (
+            research_iteration_lifecycle,
+        )
+        from Vera.vera.execution.workflow_schedule_policy import (
+            research_iteration_policy,
+        )
+        result["schedule_contract"] = research_iteration_schedule(iteration)
+        result["schedule_policy"] = research_iteration_policy(iteration)
+        result["schedule_lifecycle"] = research_iteration_lifecycle(iteration)
+        result["schedule_projection"] = {
+            "authority": "vera.research.iteration_loop",
+            "execution": "native",
+            "restart_behavior": "native_immediate",
+            "stop_behavior": "native_delete_record",
+            "executes": False,
+        }
+    except Exception as exc:
+        result["schedule_projection_error"] = str(exc)
+    return result
+
+
 @app.post("/api/iterate")
 async def create_iteration(req: IterCreateRequest):
     """Create (and optionally start) a continuous iteration target."""
@@ -9551,12 +9644,13 @@ async def create_iteration(req: IterCreateRequest):
     if req.autostart:
         task = asyncio.create_task(_run_iteration_loop(it["id"]))
         _iter_tasks[it["id"]] = task
-    return it
+    return _with_iteration_schedule_projection(it)
 
 
 @app.get("/api/iterate")
 async def list_iterations(status: Optional[str] = None):
-    return await DB.load_iteration_targets(status)
+    rows = await DB.load_iteration_targets(status)
+    return [_with_iteration_schedule_projection(row) for row in rows]
 
 
 @app.get("/api/iterate/{it_id}")
@@ -9564,7 +9658,7 @@ async def get_iteration(it_id: str):
     it = await DB.load_iteration_target(it_id)
     if not it: raise HTTPException(404, "Iteration not found")
     it["running"] = it_id in _iter_tasks
-    return it
+    return _with_iteration_schedule_projection(it)
 
 
 @app.post("/api/iterate/{it_id}/start")
@@ -9617,7 +9711,7 @@ async def update_iteration(it_id: str, payload: dict):
         if k in payload: it[k] = payload[k]
     it["updated_at"] = time.time()
     await DB.save_iteration_target(it)
-    return it
+    return _with_iteration_schedule_projection(it)
 
 
 @app.get("/api/iterate/{it_id}/map")
@@ -11023,7 +11117,7 @@ if _VERA_MODE:
         if autostart:
             task = asyncio.create_task(_run_iteration_loop(it["id"]))
             _iter_tasks[it["id"]] = task
-        return it
+        return _with_iteration_schedule_projection(it)
 
     @capability(
         "research.iterate.list",
@@ -11033,7 +11127,8 @@ if _VERA_MODE:
         schema={"properties": {"status": {"type": "string", "default": ""}}},
     )
     async def cap_iterate_list(status: str = "", trace_id=None):
-        return await DB.load_iteration_targets(status or None)
+        rows = await DB.load_iteration_targets(status or None)
+        return [_with_iteration_schedule_projection(row) for row in rows]
 
     @capability(
         "research.iterate.get",
@@ -11047,7 +11142,7 @@ if _VERA_MODE:
         if not it:
             return {"error": "Iteration not found"}
         it["running"] = it_id in _iter_tasks
-        return it
+        return _with_iteration_schedule_projection(it)
 
     @capability(
         "research.iterate.start",
@@ -11124,7 +11219,7 @@ if _VERA_MODE:
         if output_mode: it["output_mode"] = output_mode
         it["updated_at"] = time.time()
         await DB.save_iteration_target(it)
-        return it
+        return _with_iteration_schedule_projection(it)
 
     @capability(
         "research.iterate.map",

@@ -11,7 +11,7 @@ from typing import Any, Mapping
 SCHEMA = "vera.workflow-schedule-lifecycle/v1"
 EVENT_TYPE = "workflow.schedule.lifecycle.changed"
 STATES = frozenset({"active", "paused", "cancelled", "completed", "failed"})
-SOURCE_KINDS = frozenset({"calendar.action", "dream.trigger"})
+SOURCE_KINDS = frozenset({"calendar.action", "dream.trigger", "research.iteration"})
 ALLOWED_TRANSITIONS = {
     "active": frozenset({"active", "paused", "cancelled"}),
     "paused": frozenset({"paused", "active", "cancelled"}),
@@ -201,4 +201,30 @@ def dream_trigger_lifecycle(trigger: Mapping[str, Any]) -> dict[str, Any]:
         source_kind="dream.trigger", source_id=_text("trigger.name", trigger.get("name")),
         definition_revision=_hash(definition), state=state,
         native_owner="vera.dream.scheduler",
+    )
+
+
+def research_iteration_lifecycle(iteration: Mapping[str, Any]) -> dict[str, Any]:
+    """Project only persisted Research lifecycle states.
+
+    Native ``stop`` deletes the target, so a missing target is deliberately not
+    invented as a preserved cancellation record.
+    """
+    if not isinstance(iteration, Mapping):
+        raise TypeError("iteration must be an object")
+    status = str(iteration.get("status") or "").lower()
+    if status not in {"running", "paused"}:
+        raise ValueError("research iteration status is not safely projectable")
+    definition = {
+        key: iteration.get(key) for key in (
+            "id", "target_type", "target_id", "seed_query", "mode",
+            "output_mode", "interval_secs",
+        )
+    }
+    return build_schedule_lifecycle(
+        source_kind="research.iteration",
+        source_id=_text("iteration.id", iteration.get("id")),
+        definition_revision=_hash(definition),
+        state="active" if status == "running" else "paused",
+        native_owner="vera.research.iteration_loop",
     )

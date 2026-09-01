@@ -207,3 +207,22 @@ def dream_trigger_schedule(trigger: Mapping[str, Any]) -> dict[str, Any]:
         window_end_hour=int(trigger.get("hours_end", 24)),
         interval_seconds=max(0, int(float(trigger.get("min_interval_minutes", 60)) * 60)),
     )
+
+
+def research_iteration_schedule(iteration: Mapping[str, Any]) -> dict[str, Any]:
+    """Project Research's effective after-completion recurrence."""
+    if not isinstance(iteration, Mapping):
+        raise TypeError("iteration must be an object")
+    raw = iteration.get("interval_secs", 300)
+    if isinstance(raw, bool):
+        raise ValueError("iteration.interval_secs must be an integer")
+    try:
+        interval = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("iteration.interval_secs must be an integer") from exc
+    # The native loop sleeps for at least ten seconds after each completion.
+    return build_workflow_schedule(
+        kind="interval_after_completion", timezone_name="UTC",
+        window_start_hour=0, window_end_hour=24,
+        interval_seconds=max(10, interval),
+    )

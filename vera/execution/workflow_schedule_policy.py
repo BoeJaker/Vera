@@ -265,3 +265,10 @@ def calendar_action_policy(action: Mapping[str, Any], *, due_kind: str) -> dict[
 def dream_trigger_policy(trigger: Mapping[str, Any]) -> dict[str, Any]:
     # Dream's native scheduler has always collapsed downtime to one eligible cycle.
     return build_schedule_policy(mode="coalesce_once", grace_seconds=60)
+
+
+def research_iteration_policy(iteration: Mapping[str, Any]) -> dict[str, Any]:
+    """Describe Research restart behavior without replaying missed effects."""
+    if not isinstance(iteration, Mapping):
+        raise TypeError("iteration must be an object")
+    return build_schedule_policy(mode="coalesce_once", grace_seconds=0)

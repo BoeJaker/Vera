@@ -216,6 +216,24 @@ The standalone server lives at `:8765` by default. It owns:
 
 researcher_api is intentionally a separate process. It has its own DB, its own port, its own scheduler. Vera's capability layer is a thin wrapper that submits jobs, polls them, and persists results — researcher_api can run standalone if needed.
 
+### Continuous-iteration scheduling
+
+Recurring iteration targets expose the same non-executing schedule contracts
+used by Vera's other native schedulers. API and capability responses include an
+after-completion schedule, catch-up policy, and lifecycle projection. The
+effective interval reflects the loop's ten-second minimum, and trigger,
+decision, and receipt events are emitted when an iteration is about to begin.
+These records contain stable opaque identities rather than the seed query or
+research content.
+
+The Research loop remains the sole execution authority. A persisted `running`
+target is resumed immediately after server startup even when its projected
+interval has not elapsed; this behavior is reported as `native_immediate`, not
+hidden behind a false shared-scheduler claim. Likewise, the existing stop
+operation deletes its target. Because no record remains, the adapter projects
+only `active` and `paused` targets and does not invent a durable cancellation.
+Projection, ledger, or event-stream failure cannot block native research work.
+
 ---
 
 ## 9. The Vera bridge
