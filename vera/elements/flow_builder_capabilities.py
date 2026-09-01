@@ -38,6 +38,12 @@ from Vera.vera.capability_orchestration import (
     capability,
     register_ui,
 )
+from Vera.vera.elements.flow_builder_workflow import (
+    analyze_flow_builder_graph,
+    graph_to_workflow_ir,
+    semantic_diff,
+    workflow_ir_to_graph,
+)
 
 log = logging.getLogger("vera.flow_builder")
 
@@ -108,6 +114,42 @@ async def serve_flow_caps_js(trace_id=None):
         media_type="application/javascript",
         headers={"Cache-Control": "no-cache"},
     )
+
+
+@capability(
+    "workflow.flow_builder.analyze", memory="off",
+    description="Analyze a Flow Builder graph for loss-aware Workflow IR compatibility. Does not execute work.",
+    schema={"properties": {"graph": {"type": "object"}}},
+)
+async def flow_builder_analyze(graph: dict, trace_id=None):
+    return analyze_flow_builder_graph(graph)
+
+
+@capability(
+    "workflow.flow_builder.to_ir", memory="off",
+    description="Convert a Flow Builder graph to non-executing Workflow IR with exact native preservation.",
+    schema={"properties": {"graph": {"type": "object"}}},
+)
+async def flow_builder_to_ir(graph: dict, trace_id=None):
+    return graph_to_workflow_ir(graph)
+
+
+@capability(
+    "workflow.flow_builder.from_ir", memory="off",
+    description="Convert Workflow IR to a Flow Builder graph, refusing silent semantic loss.",
+    schema={"properties": {"workflow": {"type": "object"}}},
+)
+async def flow_builder_from_ir(workflow: dict, trace_id=None):
+    return workflow_ir_to_graph(workflow)
+
+
+@capability(
+    "workflow.flow_builder.diff", memory="off",
+    description="Compare two workflow documents by changed path and opaque hash without returning values.",
+    schema={"properties": {"before": {}, "after": {}}},
+)
+async def flow_builder_diff(before=None, after=None, trace_id=None):
+    return {"ok": True, "changes": semantic_diff(before, after), "executes": False}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

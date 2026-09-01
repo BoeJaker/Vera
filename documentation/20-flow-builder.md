@@ -92,6 +92,33 @@ The bare inject is mostly a discovery/registration hook — the element needs a 
 
 ## Screenshots
 
+## Workflow IR compatibility
+
+Flow Builder graphs can be inspected and converted through a non-executing,
+loss-aware Workflow IR bridge. The portable subset covers stable node IDs,
+task/capability types, outputs, literal parameters, state references, and basic
+name/description metadata. Canvas coordinates, conditions, host-specific node
+fields, and other provider metadata are retained exactly under the namespaced
+`vera.flow_builder.graph` extension and reported as native extensions rather
+than silently presented as portable semantics.
+
+The conversion surface is deliberately descriptive:
+
+- `workflow.flow_builder.analyze` returns classification, gaps, and opaque
+  semantic differences without returning the graph payload;
+- `workflow.flow_builder.to_ir` produces validated, content-addressed Workflow
+  IR while preserving the exact source graph;
+- `workflow.flow_builder.from_ir` reconstructs an exact preserved graph or
+  refuses IR structures and contracts the generic canvas cannot represent;
+- `workflow.flow_builder.diff` reports changed paths and hashes, not document
+  values.
+
+The preserved graph and visible IR steps are checked against each other. If one
+side changes independently, import fails with an `extension_ir_mismatch` gap;
+the UI or caller must resolve the discrepancy before execution. Every response
+declares `executes: false`, and existing providers and native DAG execution
+remain authoritative.
+
 ## Graph contract and execution handoff
 
 Flow Builder is an authoring surface, not a second workflow runtime. Nodes hold
