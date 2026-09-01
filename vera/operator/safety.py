@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from .actions import MUTATING_ACTIONS
 
@@ -97,6 +97,27 @@ class SafetyPolicy:
         return p
 
 
+def _resolve_goto(current_url: str, dest: str) -> str:
+    """An absolute destination wins; a relative one resolves against the page.
+
+    Kept here rather than in the caller because the ALLOWLIST is what reads the
+    host, and a check that reads a different string from the one the browser
+    will navigate to is worse than no check.
+    """
+    d = str(dest or "").strip()
+    cur = str(current_url or "").strip()
+    if not d:
+        return cur
+    if "://" in d:
+        return d
+    if not cur:
+        return d
+    try:
+        return urljoin(cur, d)
+    except Exception:
+        return d
+
+
 def evaluate(policy: SafetyPolicy, url: str, action: str,
              args: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Decide whether ``action`` may run. Returns
@@ -104,7 +125,16 @@ def evaluate(policy: SafetyPolicy, url: str, action: str,
     log the intended action but don't perform it."""
     args = args or {}
     # For goto, the *destination* host matters; otherwise the current url's host.
-    target_url = str(args.get("url") or url) if action == "goto" else url
+    # A RELATIVE destination is navigation within the page we are already on, so
+    # it must be resolved against the current url BEFORE the host is read.
+    # Without this, host_of("form.html") returns "form.html", which is not a
+    # local surface and not in any allowlist, so ordinary same-page navigation
+    # was refused: census run 23, build-browser-verified step 3 - "blocked: host
+    # 'form.html' is not a local/Vera surface - add 'form.html' to the allowlist".
+    if action == "goto":
+        target_url = _resolve_goto(url, str(args.get("url") or ""))
+    else:
+        target_url = url
     host = host_of(target_url)
     local = is_local_host(host, policy.extra_local)
     mutating = action in MUTATING_ACTIONS

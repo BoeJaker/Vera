@@ -39,7 +39,31 @@ from typing import Any, Dict, List, Optional
 # deliberately absent: the first is success, the second is the user's decision
 # and needs no explaining to the model.
 UNSUCCESSFUL = ("no_progress", "max_steps", "repeating_action", "too_many_errors",
-                "observe_error", "think_error", "blocked")
+                "observe_error", "think_error", "blocked", "time_budget")
+
+#: Pages that are just a file this run wrote. Driving a browser to assert their
+#: CONTENT is the expensive way to answer a cheap question.
+_STATIC_SUFFIXES = (".html", ".htm", ".svg", ".txt", ".md", ".json", ".css", ".js")
+
+STATIC_HINT = (
+    " This page is a static file this run produced. If the check is about its "
+    "CONTENT - an element exists, a script is well-formed, a value is right - "
+    "read it with exec.python.run and assert on the text instead: it is "
+    "seconds rather than minutes and it cannot fail for browser reasons. Keep "
+    "the browser for behaviour that only a browser shows (a click changing the "
+    "DOM, validation firing on input).")
+
+
+def static_check_hint(url: str) -> str:
+    """The cheaper alternative, when the target is a file rather than an app.
+
+    Census run 21 passed build-browser-verified this way: three operator.run
+    calls failed, the loop verified with exec.python.run instead, and the goal
+    completed in 1308s. Run 23 kept driving the browser and spent 22 minutes on
+    a single call.
+    """
+    u = str(url or "").split("?", 1)[0].split("#", 1)[0].strip().lower()
+    return STATIC_HINT if u.endswith(_STATIC_SUFFIXES) else ""
 
 # What to say when the loop stopped for a reason that left no step record to
 # quote - so the caller still gets a next move rather than a bare code.
@@ -51,6 +75,9 @@ FALLBACK = {
     "observe_error": "the page could not be observed at all",
     "think_error": "the operator model did not return a usable decision",
     "blocked": "the action was refused by the safety gate",
+    "time_budget": ("the run used its whole TIME budget without reaching the goal - "
+                    "this says nothing about the page, only that it was too slow to "
+                    "be worth the rest of the goal's allowance"),
 }
 
 

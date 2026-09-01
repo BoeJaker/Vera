@@ -15,6 +15,18 @@ real defaults wired to :mod:`perception`, :mod:`thinker`, :mod:`actions` and
 from __future__ import annotations
 
 try:
+    from Vera.vera.operator import operator_budget as _budget
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.operator import operator_budget as _budget
+    except Exception:
+        _budget = None
+
+# The signature default is evaluated at import, so it cannot reach through a
+# failed import. 480 mirrors operator_budget.DEFAULT_MAX_SECONDS.
+_OP_MAX_SECONDS = getattr(_budget, "DEFAULT_MAX_SECONDS", 480)
+
+try:
     from Vera.vera.operator import stop_explanation as _stop_explanation
 except Exception:                                     # pragma: no cover
     try:
@@ -99,6 +111,7 @@ async def run_loop(goal: str, session, *,
                    policy: Optional[_safety.SafetyPolicy] = None,
                    provider: str = "ollama", model: str = "",
                    max_steps: int = 15, canvas: bool = False,
+                   max_seconds: float = _OP_MAX_SECONDS,
                    progress_tolerance: int = _progress.DEFAULT_TOLERANCE,
                    think: Optional[bool] = None,
                    shots_dir: str = "",
@@ -153,7 +166,19 @@ async def run_loop(goal: str, session, *,
             except Exception as e:
                 log.debug("operator on_step callback failed: %s", e)
 
+    _t_start = time.time()
     for i in range(1, max_steps + 1):
+        # Checked BEFORE the step, so the budget is a promise about when this
+        # RETURNS rather than a limit it may overshoot by a whole generation.
+        # max_steps alone could not express this: 15 quick steps and 15 steps at
+        # 90s each are the same count. Census 23 had a single call run 22 min.
+        if _budget is not None and _budget.exhausted(_t_start, time.time(), max_seconds):
+            reason = _budget.STOP_REASON
+            rec = {"i": i, "phase": _budget.STOP_REASON,
+                   "reason": _budget.describe(time.time() - _t_start, max_seconds, i - 1)}
+            steps.append(rec)
+            await _emit(rec)
+            break
         # Checked BEFORE observing or thinking, so a cancel stops the run without
         # buying one more browser action and one more LLM call.
         if should_cancel is not None:
@@ -309,7 +334,23 @@ async def run_loop(goal: str, session, *,
     # caller only ever saw `reason`. Census run 21, author-then-edit step 3:
     # three operator.run calls on the SAME url, 735s in total, each reported to
     # the agentic loop as the single word "no_progress".
+    # The url matters: for a static file the caller has a far cheaper option
+    # than a browser, and the explanation is where it can be told so.
+    _last_url = ""
+    for _r in reversed(steps):
+        if isinstance(_r, dict) and _r.get("url"):
+            _last_url = str(_r["url"]); break
     _explanation = _stop_explanation.explain(reason, steps) if _stop_explanation else ""
+    # Appended by the CALLER, not passed into explain(): this module is imported
+    # as Vera.vera.operator.stop_explanation, which resolves to the DEPLOYED
+    # checkout, so a changed signature here breaks against the copy already on
+    # main until it catches up. getattr keeps a mixed-version estate working.
+    _hint = getattr(_stop_explanation, "static_check_hint", None) if _stop_explanation else None
+    if _explanation and _hint is not None:
+        try:
+            _explanation += _hint(_last_url)
+        except Exception:                             # pragma: no cover
+            pass
     out = {"ok": bool(done), "done": done, "reason": reason, "summary": summary,
            "steps": steps, "step_count": len(steps), "screenshots": screenshots}
     if _explanation:
