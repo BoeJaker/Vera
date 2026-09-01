@@ -126,6 +126,14 @@ and cancellation, timeout, failure, completion, and session supersession close
 the projection explicitly. A projection outage never interrupts the native
 loop.
 
+When the native loop confirms that it saved a file, the observer binds a
+content-safe `ArtifactRef` to the parent Run and, when identifiable, the tool
+Run that produced it. The reference retains the portable relative filename,
+native version, byte count, and language media type. It never copies file
+content, absolute host/container paths, repository URLs, or an unverified
+checksum into Run history. The native artifact store remains authoritative;
+the Run record is correlation evidence, not another file store.
+
 Latency should be split by stage: client context fetch, memory/fabric recall,
 model queue, generation, capability execution, and persistence. Re-running the
 whole turn hides the cause. Use request/job history and capability traces to

@@ -9,10 +9,15 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from contextvars import ContextVar, Token
+import hashlib
+import re
 from typing import Any, Mapping
+from urllib.parse import quote
 from uuid import uuid4
 
-from .run_protocol import Run, RunError, RunEvent, RunStatus, TERMINAL_STATUSES
+from .run_protocol import (
+    ArtifactRef, Run, RunError, RunEvent, RunStatus, TERMINAL_STATUSES,
+)
 from .run_projection import SHADOW_RUNS
 
 
@@ -44,6 +49,7 @@ class AgentLoopRunProjection:
         self.children: dict[str, Run] = {}
         self.active: dict[tuple[int, int, str], deque[str]] = defaultdict(deque)
         self.tool_sequence = 0
+        self.artifact_ids: set[str] = set()
         self._safe(self._start)
 
     @property
@@ -89,6 +95,10 @@ class AgentLoopRunProjection:
             self._tool_started(event)
         elif event_type.endswith(".tool_done"):
             self._tool_finished(event)
+        elif event_type.endswith(".output_saved"):
+            self._output_saved(event)
+        elif event_type.endswith(".code_saved"):
+            self._code_saved(event)
         elif event_type.endswith(".hitl_request") or event_type.endswith(".clarify_request"):
             self._approval_pending(event_type)
         elif event_type.endswith(".hitl_resolved") or event_type.endswith(".clarify_resolved"):
@@ -177,6 +187,90 @@ class AgentLoopRunProjection:
             causation_id=causation_id,
         )
         self._record(self.parent, event)
+
+    @staticmethod
+    def _artifact_name(value: Any) -> str:
+        """Return one portable relative filename, never an absolute host path."""
+        name = _text(value).replace("\\", "/").rsplit("/", 1)[-1]
+        if name in {"", ".", ".."} or any(ord(char) < 32 for char in name):
+            return ""
+        return name[:255]
+
+    def _artifact_targets(self, native: Mapping[str, Any]) -> list[Run]:
+        targets = [self.parent]
+        step_id = _integer(native.get("step_id"), -1)
+        cycle = _integer(native.get("cycle"), -1)
+        tool = _text(native.get("tool"))
+        for child in reversed(list(self.children.values())):
+            if child.status in TERMINAL_STATUSES:
+                continue
+            started = child.events[0].payload if child.events else {}
+            if (step_id >= 0 and _integer(started.get("step_id"), -1) != step_id):
+                continue
+            if cycle >= 0 and _integer(started.get("cycle"), -1) != cycle:
+                continue
+            if tool and _text(started.get("capability")) != tool:
+                continue
+            targets.append(child)
+            break
+        return targets
+
+    def _bind_artifact(self, native: Mapping[str, Any], *, name: str,
+                       version: Any = "", size_bytes: Any = None,
+                       media_type: str = "", kind: str = "file.generated") -> None:
+        safe_name = self._artifact_name(name)
+        if not safe_name:
+            return
+        safe_version = _text(version)
+        identity = "\0".join((self.parent.session_id, safe_name, safe_version))
+        artifact_id = "artifact-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+        if artifact_id in self.artifact_ids:
+            return
+        size = None
+        if size_bytes is not None:
+            parsed = _integer(size_bytes, -1)
+            size = parsed if parsed >= 0 else None
+        artifact = ArtifactRef(
+            id=artifact_id,
+            kind=kind,
+            uri=(f"artifact://session/{quote(self.parent.session_id, safe='')}"
+                 f"/{quote(safe_name, safe='')}"),
+            media_type=_text(media_type),
+            size_bytes=size,
+        )
+        self.artifact_ids.add(artifact_id)
+        for target in self._artifact_targets(native):
+            target.artifacts.append(artifact)
+            event = target.record_event(
+                "run.artifact.bound",
+                payload={"artifact_id": artifact.id, "kind": artifact.kind,
+                         "name": safe_name, "version": safe_version},
+                causation_id=target.events[-1].id if target.events else "",
+            )
+            self._record(target, event)
+
+    def _output_saved(self, native: Mapping[str, Any]) -> None:
+        self._bind_artifact(
+            native, name=native.get("rel"), kind="file.generated")
+
+    def _code_saved(self, native: Mapping[str, Any]) -> None:
+        files = native.get("files")
+        if not isinstance(files, list):
+            return
+        for item in files[:32]:
+            if not isinstance(item, Mapping):
+                continue
+            lang = _text(item.get("lang")).lower()
+            if not re.fullmatch(r"[a-z0-9.+-]{1,32}", lang):
+                lang = ""
+            self._bind_artifact(
+                native,
+                name=item.get("path"),
+                version=item.get("version"),
+                size_bytes=item.get("bytes"),
+                media_type=(f"text/x-{lang}" if lang else ""),
+                kind="file.source",
+            )
 
     def _approval_pending(self, source_type: str) -> None:
         if self.parent.status != RunStatus.RUNNING:
