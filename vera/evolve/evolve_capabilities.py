@@ -314,11 +314,31 @@ async def _call(name: str, **kw) -> Any:
 # is appended here so there is a full trail of what changed, when, and why —
 # and every rollback is itself a logged event.
 
+try:
+    from Vera.vera.evolve import instance_identity as _instance_identity
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.evolve import instance_identity as _instance_identity
+    except Exception:
+        _instance_identity = None
+        log.warning("instance_identity unavailable - estate writes will not "
+                    "name their writer")
+
+
 async def _audit(action: str, summary: str = "", **fields):
     r = _redis()
     entry = {"ts": now_iso(), "action": action, "summary": str(summary)[:400],
              **{k: (str(v)[:300] if isinstance(v, str) else v)
                 for k, v in fields.items()}}
+    # Name the writer. A stale instance runs its own copy of this file and will
+    # never reach this line, so an estate write with no `by` stamp identifies
+    # code older than 2026-09-01 - which is the only handle we get on an
+    # instance that cannot be asked anything. See instance_identity.
+    if _instance_identity is not None:
+        try:
+            entry = _instance_identity.stamp(entry)
+        except Exception:                             # pragma: no cover
+            pass
     if r:
         try:
             await r.lpush(KEY_AUDIT, json.dumps(entry, default=str))
@@ -327,6 +347,28 @@ async def _audit(action: str, summary: str = "", **fields):
             log.debug("evolve audit: %s", e)
     await emit_event({"type": "evolve.audit", **entry})
     return entry
+
+
+@capability("evolve.estate.writers", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/estate/writers", http_tags=["evolve"],
+            description="WHO has been mutating the shared estate (sandbox prune/down/reap, "
+                        "branch and worktree deletes) and which of them is running stale "
+                        "code. An entry with no `by` stamp was written by an instance "
+                        "predating 2026-09-01 - that is the signature of a container "
+                        "nobody has restarted, which spent a day silently deleting sandbox "
+                        "pool descriptors. Query: limit (int=400). "
+                        "Output: {writers:[{writer,count,actions,last_ts,stale,unstamped}], "
+                        "unstamped, stale_writers, current_ver, note}.")
+async def evolve_estate_writers(limit: int = 400, trace_id=None):
+    if _instance_identity is None:
+        return {"error": "instance_identity unavailable"}
+    rows = (await evolve_audit_list(limit=max(1, min(2000, int(limit or 400))))
+            or {}).get("audit", [])
+    plan = _instance_identity.classify_writers(
+        rows, current_ver=_instance_identity.identity().get("ver", ""))
+    plan["note"] = _instance_identity.describe(plan)
+    plan["scanned"] = len(rows)
+    return plan
 
 
 @capability("evolve.audit.list", memory="off", silent=True,
