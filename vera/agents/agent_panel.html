@@ -444,6 +444,26 @@ input[type=range]{padding:0;accent-color:var(--acc3);cursor:pointer}
               <input id="f-quick_opener_model" placeholder="e.g. llama3.2:1b">
             </div>
           </div>
+          <div class="g2" style="margin-bottom:12px">
+            <div style="background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:10px">
+              <div style="font-size:10px;font-weight:600;margin-bottom:6px">Two-tier reply (time to first token)</div>
+              <div style="font-size:9.5px;color:var(--dim2);margin-bottom:3px">First pass sees</div>
+              <select id="f-two_tier">
+                <option value="off">off &mdash; one pass with everything (default)</option>
+                <option value="fetched">fetched &mdash; drop retrieved material, keep the conversation</option>
+                <option value="message">message &mdash; the user's message alone</option>
+              </select>
+              <div class="hint">The first pass answers immediately from a small prompt &mdash; it does not wait for session memory, ontology fragments, retrieved Q&amp;A or a live web search. A second pass then continues the SAME reply with the full context. Unlike the quick opener above, the first pass actually answers.</div>
+            </div>
+            <div>
+              <div style="font-size:9.5px;color:var(--dim2);margin-bottom:3px">Who decides a second pass is needed</div>
+              <select id="f-two_tier_decider">
+                <option value="tier2">tier2 &mdash; the second pass, seeing the context</option>
+                <option value="tier1">tier1 &mdash; the first pass reports it needs more</option>
+              </select>
+              <div class="hint"><b>tier2</b> always runs the second generation but decides with the context in front of it, and stops silently when it adds nothing. <b>tier1</b> skips the second generation when the first says it is done &mdash; cheaper, but it is judging material it cannot see. Kept as a pair so they can be compared on real traffic.</div>
+            </div>
+          </div>
           <div class="sec">Agent Memory Note</div>
           <script src="/ui/vera-notes.js"></script>
           <vera-session-notes id="agent-notes-el" scope="agent" title="Agent memory" style="margin-bottom:12px;display:block"></vera-session-notes>
@@ -604,6 +624,8 @@ const AP = (() => {
     document.getElementById('f-quick_opener').checked=!!a.quick_opener;
     document.getElementById('f-quick_opener_threshold').value=a.quick_opener_threshold??1500;
     document.getElementById('f-quick_opener_model').value=a.quick_opener_model||'';
+    document.getElementById('f-two_tier').value=a.two_tier||'off';
+    document.getElementById('f-two_tier_decider').value=a.two_tier_decider||'tier2';
     routingTable=(a.routing_table||[]).slice();
     renderRoutingRows();
     document.getElementById('rt-status').textContent='';
@@ -626,6 +648,7 @@ const AP = (() => {
       memory_enabled:true,memory_inject:false,memory_inject_limit:5,memory_tags:'',
       notes_inject:true,cap_ontology_inject:false,
       quick_opener:false,quick_opener_threshold:1500,quick_opener_model:'',
+      two_tier:'off',two_tier_decider:'tier2',
       skill_ids:[],ontology_ids:[],routing_table:[]});
     showEd();tab('identity',document.querySelector('.mtab'));
   }
@@ -652,6 +675,8 @@ const AP = (() => {
       quick_opener:fc('f-quick_opener'),
       quick_opener_threshold:fi('f-quick_opener_threshold')||1500,
       quick_opener_model:fv('f-quick_opener_model'),
+      two_tier:fv('f-two_tier')||'off',
+      two_tier_decider:fv('f-two_tier_decider')||'tier2',
     };
     const res=await api('/agents/create','POST',body);
     if(!res||res.error){st.textContent='Error: '+(res?.error||'failed');st.className='status err';return;}
