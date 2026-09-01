@@ -33,7 +33,9 @@ def test_graph_changes_invalidate_inflight_analysis_and_debounce_refresh():
     assert schedule.index("this._compatSeq++") < schedule.index("this._compat = null")
     assert "setTimeout(()=>this.getCompatibility({refresh:true}), 180)" in schedule
     assert "if(seq!==this._compatSeq)" in SOURCE
-    assert "disconnectedCallback(){ clearTimeout(this._compatTimer); this._compatSeq++; }" in SOURCE
+    disconnected = SOURCE[SOURCE.index("disconnectedCallback(){"):SOURCE.index("// ── element-scoped")]
+    assert "clearTimeout(this._compatTimer)" in disconnected
+    assert "this._compatSeq++" in disconnected
 
 
 def test_generic_dag_execution_fails_closed_before_native_request():

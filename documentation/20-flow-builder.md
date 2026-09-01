@@ -134,6 +134,18 @@ visible but do not block the current native engine. Host-specific save formats
 remain under their providers because saving a Dream trigger or Fabric pipeline
 is not equivalent to claiming portable execution.
 
+The canvas also provides explicit **Export IR** and **Import IR** controls.
+Export returns the validated, content-addressed document from the shared
+conversion capability and identifies any native details retained in its Vera
+extension. Import is deliberately two-stage: pasted JSON is previewed through
+the shared reader without changing the canvas, then **Apply preview** is enabled
+only for the exact response that was validated. Invalid documents, blocking
+gaps, semantic differences, stale or edited previews, and unavailable analysis
+all leave the existing graph untouched. Import evidence lists affected paths
+and change kinds without echoing document values. Successful imports preserve
+stable node IDs and emit a `flow:workflow-import` event; exports and previews
+emit `flow:workflow-export` and `flow:workflow-import-preview` respectively.
+
 ## Graph contract and execution handoff
 
 Flow Builder is an authoring surface, not a second workflow runtime. Nodes hold

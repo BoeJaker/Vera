@@ -34,6 +34,9 @@
  *   el.loadFromSource(doc)     — provider.deserialize(doc) → model, then render
  *   await el.getCompatibility() — portable/native/blocking Workflow IR evidence
  *   await el.requireCompatible() — fail closed before execution
+ *   await el.exportWorkflowIR()  — return non-executing IR + compatibility evidence
+ *   await el.previewWorkflowIR(ir) — validate an import without changing the graph
+ *   el.applyWorkflowIR(preview)  — apply only an exact, prevalidated preview
  *   el.reset()                 — clear nodes + selection
  *   el.refreshPalette()        — re-call provider.loadPalette()
  *   el.getSelected()           — currently-selected node or null
@@ -68,6 +71,9 @@
  *                                          sequence edges; only data wires
  *                                          (state refs) are drawn. For pure
  *                                          dataflow domains.
+ *   toWorkflowIR(graph) -> report       — optional shared-conversion override
+ *   fromWorkflowIR(workflow) -> report  — optional shared-reader override;
+ *                                          both must declare executes:false
  *
  *   `ctx` passed to hooks: {el, graph, schema, esc, update(), select(id)}
  *
@@ -89,6 +95,9 @@
  *   flow:select   {node|null}      — selection changed
  *   flow:node-add {node}           — a node was appended
  *   flow:node-remove {id}          — a node was removed
+ *   flow:workflow-export {report}  — validated, non-executing export
+ *   flow:workflow-import-preview {report} — canvas is still unchanged
+ *   flow:workflow-import {content_hash, classification} — exact preview applied
  * ============================================================================
  */
 (function(){
@@ -151,6 +160,15 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc,#5a9e8f)}
 .fb-compat-row{padding:4px 0;border-top:1px solid var(--border,#2a313e);line-height:1.4}
 .fb-compat-path{font-family:var(--mono,monospace);color:var(--acc2,#8fb87a);word-break:break-word}
 .fb-compat-detail{color:var(--dim,#7a8290)}
+.fb-ir-panel{position:absolute;inset:6px;width:auto;max-height:calc(100% - 12px);overflow:auto;
+  background:var(--bg0,#0e1116);border:1px solid var(--border2,#384151);border-radius:4px;padding:10px;
+  z-index:90;box-shadow:0 6px 20px rgba(0,0,0,.5);font-size:10px;color:var(--text2,#aab2c0)}
+.fb-ir-panel h4{margin:0 0 7px;font-size:11px;color:var(--text,#e6e9ef)}
+.fb-ir-panel textarea{width:100%;min-height:210px;resize:vertical;font-family:var(--mono,monospace);font-size:10px;
+  line-height:1.45;color:var(--text,#e6e9ef);background:var(--bg1,#161a22);border:1px solid var(--border,#2a313e)}
+.fb-ir-actions{display:flex;align-items:center;gap:6px;margin-top:7px}.fb-ir-actions .grow{flex:1}
+.fb-ir-status{margin-top:7px;line-height:1.45;color:var(--dim,#7a8290)}
+.fb-ir-status.blocked{color:var(--err,#c75a5a)}.fb-ir-status.ready{color:var(--ok,#5a9e8f)}
 
 /* 3-column shell */
 .fb-grid{display:grid;grid-template-columns:240px 1fr 320px;gap:8px;height:100%;min-height:0}
@@ -294,6 +312,8 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc,#5a9e8f)}
       <span class="grow"></span>
       <span data-role="count" style="font-size:9.5px;color:var(--dim,#7a8290);font-family:var(--mono,monospace)">0 nodes</span>
       <button class="btn xs fb-compat checking" data-role="compat-badge" data-act="compat" title="Workflow portability and native-extension details">Checking…</button>
+      <button class="btn xs" data-act="ir-export" title="Export non-executing Workflow IR">Export IR</button>
+      <button class="btn xs" data-act="ir-import" title="Preview Workflow IR before importing">Import IR</button>
       <button class="btn xs" data-act="state" title="Show the state table (keys nodes can read/write)">State</button>
       <button class="btn xs" data-act="auto" title="Drop manual positions">Auto-layout</button>
       <button class="btn xs" data-act="clear">Clear</button>
@@ -302,6 +322,16 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc,#5a9e8f)}
       <svg class="canvas-svg" data-role="svg" xmlns="http://www.w3.org/2000/svg"></svg>
       <div class="canvas-hover-tip" data-role="tip"></div>
       <div class="fb-compat-panel" data-role="compat-panel" style="display:none"></div>
+      <div class="fb-ir-panel" data-role="ir-panel" style="display:none">
+        <h4 data-role="ir-title">Workflow IR</h4>
+        <textarea data-role="ir-text" spellcheck="false" aria-label="Workflow IR JSON"></textarea>
+        <div class="fb-ir-actions">
+          <button class="btn xs" data-act="ir-preview">Preview import</button>
+          <button class="btn xs" data-act="ir-apply" disabled>Apply preview</button>
+          <span class="grow"></span><button class="btn xs" data-act="ir-close">Close</button>
+        </div>
+        <div class="fb-ir-status" data-role="ir-status">No graph changes have been made.</div>
+      </div>
       <div class="fb-state" data-role="state-table" style="display:none"></div>
       <div class="canvas-empty" data-role="empty">
         <svg class="ico" viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="18" r="3"/><line x1="6" y1="9" x2="12" y2="15"/><line x1="18" y1="9" x2="12" y2="15"/></svg>
@@ -335,6 +365,9 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc,#5a9e8f)}
       this._compat = null;
       this._compatSeq = 0;
       this._compatTimer = null;
+      this._irPreview = null;
+      this._irPreviewJSON = '';
+      this._irSeq = 0;
       this._drag = null;            // {id, startX, startY, ox, oy}
       this._dragMoved = false;
     }
@@ -349,7 +382,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc,#5a9e8f)}
       if(pn && window.VeraFlowProviders[pn]) this.setProvider(window.VeraFlowProviders[pn]);
       this._renderCanvas(); this._renderInspector();
     }
-    disconnectedCallback(){ clearTimeout(this._compatTimer); this._compatSeq++; }
+    disconnectedCallback(){ clearTimeout(this._compatTimer); this._compatSeq++; this._irSeq++; }
 
     // ── element-scoped query helpers ─────────────────────────────────────────
     _$(role){ return this.shadowRoot.querySelector(`[data-role="${role}"]`); }
@@ -413,6 +446,50 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc,#5a9e8f)}
       }
       return report;
     }
+    async _workflowCall(name, args){
+      let report;
+      if(name==='workflow.flow_builder.to_ir' && this._provider && this._provider.toWorkflowIR){
+        report = await this._provider.toWorkflowIR(args.graph);
+      }else if(name==='workflow.flow_builder.from_ir' && this._provider && this._provider.fromWorkflowIR){
+        report = await this._provider.fromWorkflowIR(args.workflow);
+      }else{
+        const base = (this._provider && this._provider.base) || window._veraBase || '';
+        const res = await fetch(base+'/mcp/call', {method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({name,arguments:args})});
+        if(!res.ok) throw new Error('HTTP '+res.status);
+        const body = await res.json(); report = body && body.content ? body.content : body;
+      }
+      if(!report || typeof report!=='object' || typeof report.ok!=='boolean' || report.executes!==false){
+        throw new Error('invalid Workflow IR response');
+      }
+      return report;
+    }
+    async exportWorkflowIR(){
+      const report = await this._workflowCall('workflow.flow_builder.to_ir',{graph:this._graph});
+      if(!report.ok || !report.workflow){ const err=new Error('Workflow IR export blocked'); err.report=report; throw err; }
+      this._emit('flow:workflow-export',{report}); return report;
+    }
+    async previewWorkflowIR(workflow){
+      const report = await this._workflowCall('workflow.flow_builder.from_ir',{workflow});
+      this._irPreview = JSON.parse(JSON.stringify(report));
+      this._irPreviewJSON = JSON.stringify(this._irPreview);
+      this._emit('flow:workflow-import-preview',{report:this._irPreview});
+      return this._irPreview;
+    }
+    applyWorkflowIR(preview){
+      preview = preview || this._irPreview;
+      const blocking = preview && Array.isArray(preview.gaps) && preview.gaps.some(g=>g&&g.blocking);
+      const changed = preview && Array.isArray(preview.semantic_diff) && preview.semantic_diff.length;
+      const unchanged = preview===this._irPreview && JSON.stringify(preview)===this._irPreviewJSON;
+      if(!unchanged || !preview.ok || preview.executes!==false || !preview.graph || blocking || changed){
+        const err=new Error('Workflow IR import requires an exact, non-blocking preview'); err.report=preview; throw err;
+      }
+      this.setGraph(JSON.parse(JSON.stringify(preview.graph)));
+      this._irPreview = null;
+      this._irPreviewJSON = '';
+      this._emit('flow:workflow-import',{content_hash:preview.content_hash||'',classification:preview.classification});
+      return this._graph;
+    }
     loadFromSource(doc){
       if(!this._provider || !this._provider.deserialize) return;
       const g = this._provider.deserialize(doc) || {nodes:[],meta:{}};
@@ -465,6 +542,16 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc,#5a9e8f)}
       this.shadowRoot.querySelector('[data-act="auto"]').addEventListener('click', ()=>this.autoLayout());
       this.shadowRoot.querySelector('[data-act="state"]').addEventListener('click', ()=>this._toggleStateTable());
       this.shadowRoot.querySelector('[data-act="compat"]').addEventListener('click', ()=>this._toggleCompatibility());
+      this.shadowRoot.querySelector('[data-act="ir-export"]').addEventListener('click', ()=>this._openIRExport());
+      this.shadowRoot.querySelector('[data-act="ir-import"]').addEventListener('click', ()=>this._openIRImport());
+      this.shadowRoot.querySelector('[data-act="ir-preview"]').addEventListener('click', ()=>this._previewIRText());
+      this.shadowRoot.querySelector('[data-act="ir-apply"]').addEventListener('click', ()=>this._applyIRPreview());
+      this.shadowRoot.querySelector('[data-act="ir-close"]').addEventListener('click', ()=>this._closeIRPanel());
+      this._$('ir-text').addEventListener('input', ()=>{
+        this._irSeq++; this._irPreview=null; this._irPreviewJSON='';
+        this.shadowRoot.querySelector('[data-act="ir-apply"]').disabled=true;
+        this._setIRStatus('Document changed. Preview it again before applying.');
+      });
 
       // Canvas drop target
       const wrap = this._$('canvas-wrap');
@@ -1023,6 +1110,67 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc,#5a9e8f)}
       panel.innerHTML='<h4>'+_esc(status)+'</h4><div class="fb-compat-detail">This analysis does not execute the flow.</div>'+
         (rows||'<div class="fb-compat-row">No compatibility gaps.</div>')+
         (changed?'<h4 style="margin-top:9px">Semantic differences</h4>'+changed:'');
+    }
+
+    _setIRStatus(message, state, report){
+      const host=this._$('ir-status'); if(!host)return;
+      host.className='fb-ir-status'+(state?' '+state:'');
+      const gaps=report&&Array.isArray(report.gaps)?report.gaps:[];
+      const diffs=report&&Array.isArray(report.semantic_diff)?report.semantic_diff:[];
+      const rows=gaps.map(g=>'<div class="fb-compat-row"><span class="fb-compat-path">'+_esc(g.path||'workflow')+
+        '</span> — '+_esc(g.detail||g.code||'Compatibility issue')+'</div>').join('');
+      const changed=diffs.map(d=>'<div class="fb-compat-row"><span class="fb-compat-path">'+_esc(d.path||'$')+
+        '</span> — '+_esc(d.kind||'changed')+'</div>').join('');
+      host.innerHTML='<div>'+_esc(message)+'</div>'+rows+changed;
+    }
+    _closeIRPanel(){ this._irSeq++; const panel=this._$('ir-panel'); if(panel)panel.style.display='none'; }
+    async _openIRExport(){
+      const panel=this._$('ir-panel'), apply=this.shadowRoot.querySelector('[data-act="ir-apply"]');
+      const seq=++this._irSeq;
+      panel.style.display='block'; this._$('ir-title').textContent='Export Workflow IR'; apply.disabled=true;
+      this._irPreview=null; this._irPreviewJSON='';
+      this._$('ir-text').value=''; this._setIRStatus('Preparing a non-executing export…');
+      try{
+        const report=await this.exportWorkflowIR();
+        if(seq!==this._irSeq)return;
+        this._$('ir-text').value=JSON.stringify(report.workflow,null,2);
+        const n=(report.gaps||[]).length;
+        this._setIRStatus(n?'Export ready with '+n+' preserved native detail'+(n===1?'':'s')+'.':'Portable export ready.','ready',report);
+      }catch(e){ if(seq===this._irSeq)this._setIRStatus('Export blocked: '+String(e&&e.message||e),'blocked',e&&e.report); }
+    }
+    _openIRImport(){
+      this._irSeq++;
+      const panel=this._$('ir-panel'); panel.style.display='block'; this._$('ir-title').textContent='Import Workflow IR';
+      this._$('ir-text').value=''; this._irPreview=null; this._irPreviewJSON='';
+      this.shadowRoot.querySelector('[data-act="ir-apply"]').disabled=true;
+      this._setIRStatus('Paste Workflow IR, then preview it. The canvas will not change until Apply preview.');
+    }
+    async _previewIRText(){
+      const apply=this.shadowRoot.querySelector('[data-act="ir-apply"]'); apply.disabled=true;
+      const seq=++this._irSeq;
+      this._irPreview=null; this._irPreviewJSON='';
+      let workflow; try{ workflow=JSON.parse(this._$('ir-text').value); }
+      catch(e){ this._setIRStatus('Invalid JSON: '+String(e&&e.message||e),'blocked'); return; }
+      this._setIRStatus('Validating without changing the canvas…');
+      try{
+        const report=await this.previewWorkflowIR(workflow);
+        if(seq!==this._irSeq){
+          if(this._irPreview===report){ this._irPreview=null; this._irPreviewJSON=''; }
+          return;
+        }
+        const blocking=(report.gaps||[]).some(g=>g&&g.blocking), changed=(report.semantic_diff||[]).length;
+        if(!report.ok || blocking || changed || !report.graph){
+          this._setIRStatus('Import blocked. Resolve every listed incompatibility or semantic difference.','blocked',report); return;
+        }
+        apply.disabled=false;
+        const n=(report.gaps||[]).length;
+        this._setIRStatus(n?'Exact preview ready; '+n+' native detail'+(n===1?' is':'s are')+' preserved.':'Exact portable preview ready.','ready',report);
+      }catch(e){ if(seq===this._irSeq)this._setIRStatus('Import preview unavailable: '+String(e&&e.message||e),'blocked',e&&e.report); }
+    }
+    _applyIRPreview(){
+      try{ this.applyWorkflowIR(); this._closeIRPanel(); }
+      catch(e){ this.shadowRoot.querySelector('[data-act="ir-apply"]').disabled=true;
+        this._setIRStatus(String(e&&e.message||e),'blocked',e&&e.report); }
     }
 
     _nodeHover(id, e){
