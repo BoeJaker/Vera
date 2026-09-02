@@ -99,6 +99,8 @@ class AgentLoopRunProjection:
             self._output_saved(event)
         elif event_type.endswith(".code_saved"):
             self._code_saved(event)
+        elif event_type.endswith(".step_start"):
+            self._task_resolved(event)
         elif event_type.endswith(".hitl_request") or event_type.endswith(".clarify_request"):
             self._approval_pending(event_type)
         elif event_type.endswith(".hitl_resolved") or event_type.endswith(".clarify_resolved"):
@@ -127,6 +129,42 @@ class AgentLoopRunProjection:
             causation_id=self.parent.events[-1].id if self.parent.events else "",
         )
         self._record(self.parent, event)
+
+    def _task_resolved(self, native: Mapping[str, Any]) -> None:
+        """Project the allow-listed routing verdict, never the native step text."""
+        resolution = native.get("task_resolution")
+        if not isinstance(resolution, Mapping):
+            return
+        mode = _text(resolution.get("mode"))
+        if mode not in {"resolved", "compound"}:
+            return
+        allowed_tasks = {"source_file.author", "document.author"}
+        tasks = [task for task in resolution.get("canonical_tasks", [])
+                 if isinstance(task, str) and task in allowed_tasks]
+        selections = []
+        raw_selections = resolution.get("selections")
+        if isinstance(raw_selections, list):
+            for row in raw_selections[:2]:
+                if not isinstance(row, Mapping):
+                    continue
+                task = _text(row.get("canonical_task"))
+                selected = _text(row.get("selected"))
+                status = _text(row.get("status"))
+                if (task not in allowed_tasks or status != "resolved" or
+                        not re.fullmatch(r"[a-z][a-z0-9_.-]{0,127}", selected)):
+                    continue
+                selections.append({"canonical_task": task,
+                                   "selected": selected, "status": status})
+        if not tasks or not selections:
+            return
+        self._observe_parent("run.task.resolved", {
+            "step_id": _integer(native.get("step_id"), -1),
+            "mode": mode,
+            "canonical_tasks": tasks[:2],
+            "selections": selections,
+            "authorized": False,
+            "executed": False,
+        })
 
     def _tool_started(self, native: Mapping[str, Any]) -> None:
         tool = _text(native.get("tool")) or "[unknown]"
