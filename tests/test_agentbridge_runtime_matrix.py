@@ -48,6 +48,33 @@ def test_shipped_and_prospective_integrations_are_not_conflated():
     assert openai["tools"].vera == "not_integrated"
 
 
+def test_langgraph_lifecycle_and_packages_derive_from_runtime_adapter():
+    from vera.agentbridges.runtime_registry import RUNTIME_ADAPTERS
+
+    candidates = {item.runtime_id: item for item in compile_runtime_matrix().candidates}
+    langgraph = candidates["langgraph"]
+    descriptor = RUNTIME_ADAPTERS["langgraph"].descriptor
+    assert langgraph.package_refs == descriptor.package_refs
+    assessments = {item.dimension: item for item in langgraph.assessments}
+    for dimension in ("streaming", "cancellation", "resources", "teardown", "sandbox"):
+        assert assessments[dimension].vera == "supported"
+        assert assessments[dimension].evidence.startswith("RuntimeAdapter declaration:")
+    assert assessments["recovery"].vera == "not_integrated"
+    assert assessments["policy"].vera == "not_integrated"
+
+
+def test_adapter_projection_rejects_identity_confusion():
+    from dataclasses import replace
+    from vera.agentbridges.runtime_matrix import _apply_adapter
+    from vera.agentbridges.runtime_registry import RUNTIME_ADAPTERS
+
+    candidate = compile_runtime_matrix().candidates[0]
+    descriptor = replace(RUNTIME_ADAPTERS["langgraph"].descriptor,
+                         runtime_id="different")
+    with pytest.raises(ValueError, match="IDs must match"):
+        _apply_adapter(candidate, descriptor)
+
+
 def test_live_gate_covers_roadmap_failure_and_lifecycle_cases():
     cases = set(compile_runtime_matrix().required_live_cases)
     assert cases == {

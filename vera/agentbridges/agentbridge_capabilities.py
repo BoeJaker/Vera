@@ -26,7 +26,6 @@ Capabilities
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -35,9 +34,8 @@ from fastapi.responses import HTMLResponse
 
 from Vera.vera.agentbridges.agentbridge_registry import BRIDGES, BY_ID
 from Vera.vera.agentbridges.agentbridge_runtime import image_present
-from Vera.vera.agentbridges.runtime_adapter import ContainerRuntimeAdapter
+from Vera.vera.agentbridges.runtime_registry import RUNTIME_ADAPTERS
 from Vera.vera.agentbridges.runtime_matrix import compile_runtime_matrix
-from Vera.vera.langgraph.runtime_contract import langgraph_runtime_descriptor
 from Vera.vera.execution.a2a_adapter import compile_a2a_adapter_status
 from Vera.vera.execution.a2a_mapping import compile_a2a_protocol_mapping
 from Vera.vera.integrations.source_intake import lifecycle_contract
@@ -48,10 +46,7 @@ from Vera.vera.capability_orchestration import (
     APP, CAPABILITY_REGISTRY, capability, register_ui,
 )
 log = logging.getLogger("vera.agentbridges.catalog")
-_RUNTIME_ADAPTERS = {
-    "langgraph": ContainerRuntimeAdapter(langgraph_runtime_descriptor(
-        os.environ.get("LANGGRAPH_IMAGE", "vera-langgraph:latest"))),
-}
+_RUNTIME_ADAPTERS = RUNTIME_ADAPTERS
 
 
 @capability(
