@@ -75,12 +75,17 @@ def test_adapter_delegates_validated_run_without_changing_event_contract(monkeyp
     assert captured["emit"] is emit
 
 
-def test_unimplemented_user_cancellation_fails_closed_without_side_effects():
+def test_adapter_cancellation_delegates_to_exact_runner_registry(monkeypatch):
+    async def fake_cancel(run_id):
+        return {"ok": True, "accepted": True, "run_id": run_id,
+                "state": "cancellation_requested"}
+
+    monkeypatch.setattr(runtime.bridge, "cancel_bridge_run", fake_cancel)
     adapter = runtime.ContainerRuntimeAdapter(_descriptor())
     result = asyncio.run(adapter.cancel("run-1"))
     assert result == {
-        "ok": False, "supported": False, "runtime_id": "fixture-runtime",
-        "run_id": "run-1", "reason_code": "runtime_cancel_unsupported",
+        "ok": True, "accepted": True, "runtime_id": "fixture-runtime",
+        "run_id": "run-1", "state": "cancellation_requested",
     }
     with pytest.raises(ValueError, match="unsupported characters"):
         asyncio.run(adapter.cancel("bad\nrun"))
@@ -133,7 +138,7 @@ def test_langgraph_contract_is_static_and_visible_to_agent_bridge():
 
     descriptor = langgraph_runtime_descriptor().to_dict()
     assert descriptor["runtime_id"] == "langgraph"
-    assert descriptor["gaps"] == ["cancellation", "version_reporting"]
+    assert descriptor["gaps"] == ["version_reporting"]
     result = asyncio.run(caps.agentbridge_interoperability.__wrapped__())
     assert result["runtime_adapters"] == [descriptor]
     assert result["imports_optional_runtimes"] is False
