@@ -61,6 +61,8 @@ MAX_PAYLOAD_NODES = 2_048
 MAX_OBJECT_FIELDS = 128
 MAX_ARRAY_ITEMS = 256
 MAX_STRING_CHARS = 32_768
+PROCESS_EXIT_GRACE_S = 10.0
+PROCESS_KILL_GRACE_S = 5.0
 _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 
 
@@ -350,7 +352,7 @@ async def _stream_bridge_container_inner(
         _mark_terminal(control)
         await emit({**base, "type": f"{event_type_prefix}.error",
                     "reason_code": "launch_failed",
-                    "error": f"could not start container: {e}",
+                    "error": f"could not start container ({type(e).__name__})",
                     "elapsed_s": round(time.time() - t0, 2)})
         return
 
@@ -369,6 +371,7 @@ async def _stream_bridge_container_inner(
     timed_out = False
     protocol_error = ""
     cancelled = cancelled_before_bind
+    teardown_error = ""
 
     try:
         while True:
@@ -380,10 +383,14 @@ async def _stream_bridge_container_inner(
                 timed_out = True
                 break
             wait_for = min(stall_s, remaining)
+            deadline_limited = remaining <= stall_s
             try:
                 raw = await asyncio.wait_for(proc.stdout.readline(), timeout=wait_for)
             except asyncio.TimeoutError:
-                stalled = True
+                if deadline_limited:
+                    timed_out = True
+                else:
+                    stalled = True
                 break
             except (ValueError, asyncio.LimitOverrunError):
                 protocol_error = "bridge output line exceeds protocol bounds"
@@ -422,12 +429,27 @@ async def _stream_bridge_container_inner(
                     protocol_error = f"invalid result payload: {e}"
                 break
     finally:
-        if cancelled or stalled or timed_out or protocol_error:
+        termination_requested = bool(
+            cancelled or stalled or timed_out or protocol_error)
+        if termination_requested:
             _kill_owned_process(control)
         try:
-            await asyncio.wait_for(proc.wait(), timeout=10)
+            await asyncio.wait_for(proc.wait(), timeout=PROCESS_EXIT_GRACE_S)
+        except asyncio.TimeoutError:
+            if not termination_requested:
+                teardown_error = "container did not exit after output ended"
+            _kill_owned_process(control)
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=PROCESS_KILL_GRACE_S)
+            except Exception:
+                teardown_error = "container could not be reaped after kill"
         except Exception:
-            pass
+            teardown_error = "container wait failed"
+            _kill_owned_process(control)
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=PROCESS_KILL_GRACE_S)
+            except Exception:
+                teardown_error = "container could not be reaped after kill"
         stderr_task.cancel()
         await asyncio.gather(stderr_task, return_exceptions=True)
         with _ACTIVE_RUNS_LOCK:
@@ -435,7 +457,8 @@ async def _stream_bridge_container_inner(
 
     elapsed = round(time.time() - t0, 2)
 
-    if result is not None and not cancelled and not protocol_error:
+    if (result is not None and not cancelled and not protocol_error
+            and not teardown_error):
         _mark_terminal(control)
         result["elapsed_s"] = elapsed
         result["steps"] = steps_seen
@@ -445,7 +468,10 @@ async def _stream_bridge_container_inner(
         return
 
     _mark_terminal(control)
-    if cancelled or control.cancel_event.is_set():
+    if teardown_error:
+        reason_code = "teardown_failed"
+        err = teardown_error
+    elif cancelled or control.cancel_event.is_set():
         reason_code = "cancelled"
         err = "run cancelled"
     elif protocol_error:
@@ -462,7 +488,8 @@ async def _stream_bridge_container_inner(
         err = "container exited before printing its result line"
     err_tail = ("".join(stderr_buf))[-800:]
     await emit({**base, "type": f"{event_type_prefix}.error",
-               "reason_code": reason_code, "cancelled": reason_code == "cancelled",
+               "reason_code": reason_code,
+               "cancelled": bool(cancelled or control.cancel_event.is_set()),
                "error": err, "stderr_tail": err_tail, "elapsed_s": elapsed})
 
 

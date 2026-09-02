@@ -138,6 +138,9 @@ Active runs can be cancelled by validated run ID through the runner's owned
 process registry. Cancellation, timeout, malformed output, and normal completion
 converge on one terminal event and release the shared resource gate. Protocol
 payloads are bounded and cannot override trusted run, session, or event fields.
+Success is emitted only after the owned container process exits. If it prints a
+result and then hangs, Vera kills and reaps it; inability to reap becomes an
+explicit teardown failure rather than a false successful run.
 The image records its runtime identity and complete pinned package set as OCI
 labels. Agent Bridge can compare those labels with the declared adapter without
 starting the image; missing labels and drift remain visibly distinct from a

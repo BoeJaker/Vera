@@ -38,7 +38,20 @@ class _Process:
         return 0
 
 
-async def _run(monkeypatch, process, run_id="run-1"):
+class _SlowExitProcess(_Process):
+    def __init__(self, lines=(), blocked_waits=1):
+        super().__init__(lines)
+        self.blocked_waits = blocked_waits
+
+    async def wait(self):
+        self.wait_count += 1
+        if self.wait_count <= self.blocked_waits:
+            await asyncio.Event().wait()
+        return 0
+
+
+async def _run(monkeypatch, process, run_id="run-1", timeout_s=30,
+               stall_s=20, gate_instance_id=""):
     events = []
 
     async def create(*argv, **kwargs):
@@ -50,7 +63,8 @@ async def _run(monkeypatch, process, run_id="run-1"):
     monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
     task = asyncio.create_task(runtime.stream_bridge_container(
         run_id=run_id, session_id="session-1", argv=["docker", "run", "x"],
-        event_type_prefix="fixture.run", emit=emit, timeout_s=30, stall_s=20))
+        event_type_prefix="fixture.run", emit=emit, timeout_s=timeout_s,
+        stall_s=stall_s, gate_instance_id=gate_instance_id))
     return task, events
 
 
@@ -187,3 +201,80 @@ def test_generic_cancel_cap_routes_only_declared_runtime(monkeypatch):
     assert accepted["accepted"] is True
     assert unknown["reason_code"] == "runtime_adapter_unknown"
     assert unknown["supported_runtime_ids"] == ["langgraph"]
+
+
+def test_result_is_not_success_until_process_exits_and_is_reaped(monkeypatch):
+    async def scenario(blocked_waits):
+        monkeypatch.setattr(runtime, "PROCESS_EXIT_GRACE_S", 0.001)
+        monkeypatch.setattr(runtime, "PROCESS_KILL_GRACE_S", 0.001)
+        line = (runtime.RESULT_PREFIX + json.dumps({"ok": True, "answer": "done"}) + "\n").encode()
+        process = _SlowExitProcess([line], blocked_waits=blocked_waits)
+        task, events = await _run(monkeypatch, process)
+        await task
+        return process, events
+
+    process, events = asyncio.run(scenario(1))
+    assert process.kill_count == 1
+    assert process.wait_count == 2
+    assert not any(event["type"] == "fixture.run.done" for event in events)
+    assert events[-1]["reason_code"] == "teardown_failed"
+    assert events[-1]["error"] == "container did not exit after output ended"
+
+    process, events = asyncio.run(scenario(2))
+    assert process.kill_count == 1
+    assert process.wait_count == 2
+    assert events[-1]["reason_code"] == "teardown_failed"
+    assert events[-1]["error"] == "container could not be reaped after kill"
+
+
+def test_launch_failure_is_terminal_and_releases_acquired_gate(monkeypatch):
+    async def scenario():
+        events, releases = [], []
+
+        async def acquire(instance_id):
+            return {"instance_id": instance_id}
+
+        async def release(lease):
+            releases.append(lease)
+
+        async def create(*argv, **kwargs):
+            raise FileNotFoundError("dependency detail must not escape")
+
+        async def emit(event):
+            events.append(event)
+
+        monkeypatch.setattr(runtime, "acquire_gpu_gate", acquire)
+        monkeypatch.setattr(runtime, "release_gpu_gate", release)
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
+        await runtime.stream_bridge_container(
+            run_id="launch-fail", session_id="", argv=["missing"],
+            event_type_prefix="fixture.run", emit=emit, timeout_s=1,
+            stall_s=1, gate_instance_id="gpu-1")
+        return events, releases
+
+    events, releases = asyncio.run(scenario())
+    assert len([e for e in events if e["type"].endswith((".done", ".error"))]) == 1
+    assert events[-1]["reason_code"] == "launch_failed"
+    assert "dependency detail must not escape" not in str(events)
+    assert releases == [{"instance_id": "gpu-1"}]
+    assert runtime.active_bridge_run_ids() == []
+
+
+def test_crash_stall_and_timeout_have_distinct_terminal_reasons(monkeypatch):
+    async def scenario(process, timeout_s, stall_s):
+        task, events = await _run(
+            monkeypatch, process, timeout_s=timeout_s, stall_s=stall_s)
+        await task
+        return process, events
+
+    crashed, crash_events = asyncio.run(scenario(_Process([b""]), 1, 1))
+    assert crashed.kill_count == 0
+    assert crash_events[-1]["reason_code"] == "process_exit"
+
+    stalled, stall_events = asyncio.run(scenario(_Process(), 1, 0.001))
+    assert stalled.kill_count == 1
+    assert stall_events[-1]["reason_code"] == "stalled"
+
+    timed, timeout_events = asyncio.run(scenario(_Process(), 0.001, 1))
+    assert timed.kill_count == 1
+    assert timeout_events[-1]["reason_code"] == "timeout"
