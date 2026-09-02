@@ -3003,6 +3003,45 @@ _LOOP_GEN_TIMEOUT_S = float(os.getenv("OLLAMA_GEN_TIMEOUT", "900") or 900)
 _LOOP_STALE_SECS = int(os.getenv("VERA_LOOP_STALE_SECS", "")
                        or max(600.0, _LOOP_GEN_TIMEOUT_S + 300.0))
 
+try:
+    from Vera.vera.dag import loop_liveness as _loop_liveness
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import loop_liveness as _loop_liveness
+    except Exception:
+        _loop_liveness = None
+        log.warning("loop_liveness unavailable - a loop inside one long tool "
+                    "call can still be reported interrupted while working")
+
+#: Refreshed on a timer for as long as the runner task lives. The marker used to
+#: move only when an EVENT was emitted, so a loop inside one long call went quiet
+#: and was called dead - census 23 lost build-browser-verified that way while it
+#: was mid-operator.run and still had 100 minutes of real work left.
+_LOOP_HEARTBEAT_S = (_loop_liveness.heartbeat_interval(_LOOP_STALE_SECS)
+                     if _loop_liveness is not None else 60.0)
+_LOOP_HEARTBEATS: Dict[str, Any] = {}
+
+
+async def _loop_heartbeat(sid: str, task) -> None:
+    """Keep `sid`'s activity marker fresh while its runner task is alive.
+
+    Tied to the TASK, not to the loop's own progress: when the process dies or
+    is restarted there is no heartbeat, the marker ages out, and the run is
+    correctly reported interrupted - which is the case the stale check exists
+    for and must keep working.
+    """
+    try:
+        while task is not None and not task.done():
+            try:
+                r = _redis()
+                if r is not None:
+                    await r.zadd("vera:loop:sessions", {sid: time.time()})
+            except Exception as e:                    # pragma: no cover
+                log.debug("loop heartbeat %s: %s", sid, e)
+            await asyncio.sleep(_LOOP_HEARTBEAT_S)
+    except asyncio.CancelledError:
+        pass
+
 
 def _register_loop_task(sid: str) -> None:
     """Register THIS coroutine as the live runner for `sid`.
@@ -3030,10 +3069,18 @@ def _register_loop_task(sid: str) -> None:
     if task is None or _AGENT_LOOP_TASKS.get(sid) is not None:
         return
     _AGENT_LOOP_TASKS[sid] = task
+    if _loop_liveness is not None and sid not in _LOOP_HEARTBEATS:
+        try:
+            _LOOP_HEARTBEATS[sid] = asyncio.create_task(_loop_heartbeat(sid, task))
+        except Exception:                             # pragma: no cover
+            pass
 
     def _drop(_t, _sid=sid):
         if _AGENT_LOOP_TASKS.get(_sid) is _t:
             _AGENT_LOOP_TASKS.pop(_sid, None)
+        hb = _LOOP_HEARTBEATS.pop(_sid, None)
+        if hb is not None and not hb.done():
+            hb.cancel()
 
     task.add_done_callback(_drop)
 
