@@ -106,6 +106,27 @@ def _origin(url: str) -> str:
     return ""
 
 
+async def _boot_reserved(call_cap) -> Optional[dict]:
+    """Bring the reserved standing container up, or None if it cannot be.
+
+    Returns a sandbox-shaped dict so the caller can adopt it directly. A failure
+    here is not fatal - the caller still has the old primary path behind it -
+    so every error is swallowed deliberately and logged rather than raised.
+    """
+    try:
+        res = await call_cap("evolve.bleeding_edge.container.ensure")
+    except Exception as e:
+        log.debug("reserved sandbox ensure failed: %s", e)
+        return None
+    if not isinstance(res, dict) or res.get("error") or not res.get("url"):
+        log.debug("reserved sandbox ensure returned nothing driveable: %r", res)
+        return None
+    if not res.get("reachable", True):
+        log.debug("reserved sandbox came up unreachable: %r", res.get("name"))
+        return None
+    return dict(res)
+
+
 async def ensure_target(target: Dict[str, Any],
                         call_cap: Callable[..., Awaitable[Any]],
                         default_base_url: str = "") -> Dict[str, Any]:
@@ -164,6 +185,28 @@ async def ensure_target(target: Dict[str, Any],
         hit = _fallback.pick_sandbox(await _list_sandboxes(), branch=branch, name=name)
         if hit:
             return _adopt(hit)
+
+    # NOTHING NAMED - "just give me a browser". That request has no claim on the
+    # PRIMARY, which is a one-owner-at-a-time singleton belonging to whichever
+    # agent is working in it. Asking for it first and only falling back on
+    # refusal made contention the normal path: census 26's
+    # build-browser-verified burned its entire 1800s wall cap losing that race
+    # ("primary sandbox is occupied by another branch"), and runs 16 and 19 died
+    # the same way. The reserved standing container exists precisely so a
+    # browser step does not have to compete for anything, so go there FIRST and
+    # leave the primary alone.
+    if call_cap and not (branch or name):
+        reserved = _fallback.pick_reserved(await _list_sandboxes())
+        if not reserved:
+            # No reservation is up. BRING ONE UP rather than reaching for the
+            # primary - the standing container is idempotent and pinned, so
+            # this converges on the reserved sandbox instead of a queue.
+            reserved = await _boot_reserved(call_cap)
+        if reserved:
+            _adopt(reserved)
+            resolved["note"] = _fallback.reservation_note(reserved)
+            log.info("operator target: %s", resolved["note"])
+            return resolved
 
     # Boot / ensure the PRIMARY sandbox Vera. evolve.sandbox.ensure is idempotent.
     res = await call_cap("evolve.sandbox.ensure", branch=branch) if call_cap else \
