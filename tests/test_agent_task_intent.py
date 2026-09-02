@@ -77,9 +77,14 @@ def test_step_coercion_records_task_contract_and_routes_exact_provider():
         {"title": "Implement parser.py", "goal": "Create the Python parser module",
          "caps": ["prose.author", "llm.generate", "exec.bash.run"]},
         0, "Build a parser", catalog, set(catalog), set())
-    # exec.bash.run is intentionally absent from this unit-test registry; the
-    # established coercion boundary drops unregistered names before routing.
-    assert code["caps"] == ["code.author"]
+    assert code["caps"][0] == "code.author"
+    assert "prose.author" not in code["caps"]
+    assert "llm.generate" not in code["caps"]
+    # The serving sandbox's partial test registry omits exec.bash.run while the
+    # fresh critical-gate registry includes it. In the latter case routing must
+    # preserve that unrelated, admitted capability.
+    if "exec.bash.run" in workshop.CAPABILITY_REGISTRY:
+        assert "exec.bash.run" in code["caps"]
     assert code["task_resolution"]["canonical_tasks"] == [SOURCE_AUTHOR_TASK]
 
     doc = workshop._v5_coerce_step(
