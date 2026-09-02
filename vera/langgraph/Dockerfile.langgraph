@@ -1,4 +1,6 @@
 FROM python:3.11-slim
+LABEL io.vera.runtime.id="langgraph" \
+      io.vera.runtime.packages="langchain-core==1.5.5,langchain-openai==1.5.1,langgraph-prebuilt==1.1.0,langgraph==1.2.11"
 # Pinned: langgraph.prebuilt.create_react_agent is deprecated as of langgraph
 # 1.x (moving to langchain.agents.create_agent in V2) but still present and
 # working here. Pin so a future rebuild of this image doesn't silently land

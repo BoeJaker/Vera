@@ -43,6 +43,14 @@ def test_incomplete_invalid_contracts_fail_closed():
         runtime.RuntimeFeature("magic", "supported", "claim")
     with pytest.raises(ValueError, match="feature state"):
         runtime.RuntimeFeature("run", "maybe", "claim")
+    with pytest.raises(ValueError, match="package==version"):
+        runtime.RuntimeAdapterDescriptor(
+            runtime_id="bad-packages", label="Bad packages",
+            event_prefix="bad.run", image="bad:1", package_refs=("floating",),
+            features=runtime.feature_set({
+                name: ("supported", "Complete declaration")
+                for name in runtime.FEATURES
+            }))
     with pytest.raises(ValueError, match="timeouts"):
         runtime.ContainerRunRequest("run-1", "", ("docker",), 10, 20)
     with pytest.raises(ValueError, match="unsupported characters"):
@@ -120,6 +128,45 @@ def test_image_health_and_acquisition_are_separate_from_execution(monkeypatch):
     assert [call[0] for call in calls].count("build") == 1
 
 
+@pytest.mark.parametrize(
+    "command_result,status,reason,verified",
+    [
+        ({"ok": False, "out": "", "err": "private daemon detail"},
+         "unavailable", "image_inspect_failed", False),
+        ({"ok": True, "out": "null", "err": ""},
+         "unattested", "image_attestation_invalid", False),
+        ({"ok": True, "out": "{}", "err": ""},
+         "unattested", "image_attestation_missing", False),
+        ({"ok": True, "out": '{"io.vera.runtime.id":"other",'
+                               '"io.vera.runtime.packages":"fixture==2.0"}',
+          "err": ""}, "mismatch", "image_attestation_mismatch", False),
+        ({"ok": True, "out": '{"io.vera.runtime.id":"fixture-runtime",'
+                               '"io.vera.runtime.packages":"fixture==1.0"}',
+          "err": ""}, "verified", "verified", True),
+    ],
+)
+def test_version_report_is_read_only_bounded_and_honest(
+        monkeypatch, command_result, status, reason, verified):
+    calls = []
+
+    async def fake_sh(argv, timeout=0):
+        calls.append((argv, timeout))
+        return command_result
+
+    monkeypatch.setattr(runtime.bridge, "sh", fake_sh)
+    report = asyncio.run(runtime.ContainerRuntimeAdapter(_descriptor()).version_report())
+    assert report["status"] == status
+    assert report["reason_code"] == reason
+    assert report["verified"] is verified
+    assert report["executes_runtime"] is False
+    assert report["trust_level"] == "image_self_declared"
+    assert calls == [([
+        "docker", "image", "inspect", "fixture:1", "--format",
+        "{{json .Config.Labels}}",
+    ], 15)]
+    assert "private daemon detail" not in str(report)
+
+
 def test_langgraph_preserves_public_alias_and_uses_runtime_adapter():
     from pathlib import Path
 
@@ -138,7 +185,11 @@ def test_langgraph_contract_is_static_and_visible_to_agent_bridge():
 
     descriptor = langgraph_runtime_descriptor().to_dict()
     assert descriptor["runtime_id"] == "langgraph"
-    assert descriptor["gaps"] == ["version_reporting"]
+    assert descriptor["gaps"] == []
+    assert descriptor["package_refs"] == [
+        "langchain-core==1.5.5", "langchain-openai==1.5.1",
+        "langgraph-prebuilt==1.1.0", "langgraph==1.2.11",
+    ]
     result = asyncio.run(caps.agentbridge_interoperability.__wrapped__())
     assert result["runtime_adapters"] == [descriptor]
     assert result["imports_optional_runtimes"] is False
@@ -152,4 +203,33 @@ def test_agent_bridge_ui_exposes_adapter_maturity_without_internal_plan_labels()
     assert "Runtime adapters" in panel
     assert "gaps:" in panel
     assert "join(', ')" in panel
+    assert "Check image declaration" in panel
+    assert "/agentbridge/runtime/version" in panel
     assert "W3-03" not in panel and "P5-W11" not in panel
+
+
+def test_runtime_version_capability_routes_only_declared_adapters(monkeypatch):
+    from vera.agentbridges import agentbridge_capabilities as caps
+
+    async def fake_report():
+        return {"ok": True, "verified": True, "runtime_id": "langgraph"}
+
+    adapter = caps._RUNTIME_ADAPTERS["langgraph"]
+    monkeypatch.setattr(adapter, "version_report", fake_report)
+    report = asyncio.run(caps.agentbridge_runtime_version.__wrapped__("langgraph"))
+    unknown = asyncio.run(caps.agentbridge_runtime_version.__wrapped__("unknown"))
+    assert report["verified"] is True
+    assert unknown["reason_code"] == "runtime_adapter_unknown"
+    assert unknown["executes_runtime"] is False
+
+
+def test_langgraph_dockerfile_attestation_matches_declared_pins():
+    from pathlib import Path
+    from vera.langgraph.runtime_contract import langgraph_runtime_descriptor
+
+    dockerfile = (Path(__file__).parents[1] / "vera" / "langgraph" /
+                  "Dockerfile.langgraph").read_text(encoding="utf-8")
+    descriptor = langgraph_runtime_descriptor()
+    assert 'io.vera.runtime.id="langgraph"' in dockerfile
+    for package_ref in descriptor.package_refs:
+        assert package_ref in dockerfile
