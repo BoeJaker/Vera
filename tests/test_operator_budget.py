@@ -191,9 +191,17 @@ def test_a_failed_budget_import_cannot_break_the_signature():
 
 
 def test_the_cap_lets_a_caller_tighten_the_budget():
+    """The knob still exists - but the value is floored on the way in now.
+
+    This used to assert the cap passed float(max_seconds) straight through,
+    which is exactly what let census 24's model ask for 95 seconds and kill
+    its own run at 103. budget_kwargs replaced that raw forward; tightening
+    is still allowed, starving is not. See tests/test_progress_content.py.
+    """
     src = _read("vera", "operator", "operator_web_capabilities.py")
     assert "max_seconds: float = 0" in src
-    assert '"max_seconds": float(max_seconds)' in src
+    assert "_op_budget.budget_kwargs(max_seconds)" in src
+    assert ob.budget_kwargs(600) == {"max_seconds": 600.0}
 
 
 def test_the_explanation_is_given_the_page_url():

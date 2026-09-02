@@ -35,6 +35,7 @@ from Vera.vera.operator import actions as _actions
 from Vera.vera.operator import safety as _safety
 from Vera.vera.operator import thinker as _thinker
 from Vera.vera.operator import operator_loop as _loop
+from Vera.vera.operator import operator_budget as _op_budget
 from Vera.vera.operator import targets as _targets
 from Vera.vera.operator import capture as _capture
 from Vera.vera.operator import tours as _tours
@@ -775,7 +776,10 @@ async def cap_run(goal: str = "", url: str = "", kind: str = "", base_url: str =
         max_steps=int(max_steps),
         # 0 = use the loop's own default budget; a caller with a tighter goal
         # allowance can hand it a smaller one.
-        **({"max_seconds": float(max_seconds)} if max_seconds else {}),
+        # Floored: a caller may tighten the budget but not below the point where
+        # the run cannot finish anything. Census 24 saw a model ask for 95s and
+        # the run die at 103s after five steps. 0 still means "use the default".
+        **_op_budget.budget_kwargs(max_seconds),
         canvas=resolved.get("canvas", False),
         shots_dir=shots, on_step=_on_step,
         progress_tolerance=(int(progress_tolerance) if progress_tolerance

@@ -214,7 +214,10 @@ async def run_loop(goal: str, session, *,
             prog_state,
             _progress.page_signature(
                 url=getattr(obs, "url", ""), title=getattr(obs, "title", ""),
-                refs=[getattr(e, "ref", "") for e in (getattr(obs, "elements", None) or [])]),
+                refs=[getattr(e, "ref", "") for e in (getattr(obs, "elements", None) or [])],
+                # The observation has always carried the page text; the
+                # signature just never looked at it, so a countdown was invisible.
+                text=getattr(obs, "text", "")),
             last_action=(history[-1].get("action") if history else None))
         if _progress.should_stop(prog_state, progress_tolerance):
             reason = _progress.STOP_REASON

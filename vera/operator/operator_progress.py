@@ -47,17 +47,45 @@ STOP_REASON = "no_progress"
 
 
 def page_signature(*, url: str = "", title: str = "",
-                   refs: Optional[Iterable[str]] = None) -> str:
+                   refs: Optional[Iterable[str]] = None,
+                   text: str = "") -> str:
     """A stable digest of what the page IS, independent of what was done to it.
 
     Element refs are sorted, so the same controls in a different enumeration
     order are the same page - otherwise a re-render with identical content
     would read as progress and reset the counter forever.
+
+    TEXT IS PART OF THE PAGE. It was left out originally, and that made this
+    blind to the single most common thing a verification step exists to watch:
+    a value changing while the controls stay put. Census 24, author-then-edit -
+    "click Start, wait, confirm the countdown decrements" - failed no_progress
+    THREE times because a countdown changes only its text. url, title and the
+    two buttons were identical at every observation, so a page that was working
+    perfectly read as frozen, and the run was stopped for doing exactly what it
+    was asked to do.
+
+    The same blindness covers a progress bar filling, a validation message
+    appearing, a live log growing, a total recalculating - all content, no new
+    controls.
+
+    WHY IT IS SAFE TO INCLUDE NOW, and was not before. This detector was once
+    the only thing that stopped a runaway operator, so it had to fire on a page
+    that was merely re-rendering; including volatile text would have meant it
+    never fired at all. Since the time budget landed (operator_budget, 2026-09-01)
+    the clock is the backstop for "changing but going nowhere", which frees this
+    to answer the narrower question it should always have asked: has ANYTHING
+    changed. A page with a ticking clock in the corner will now never trip the
+    stall detector - that is deliberate, and it is the budget's job.
     """
     payload = json.dumps({
         "url": str(url or "").strip(),
         "title": str(title or "").strip(),
         "refs": sorted({str(r).strip() for r in (refs or []) if str(r).strip()}),
+        # Digested, not stored: the signature is compared, never read, and a
+        # page's whole text would make every stored state enormous.
+        "text": hashlib.sha256(
+            " ".join(str(text or "").split()).encode("utf-8", "replace")
+        ).hexdigest()[:16],
     }, sort_keys=True)
     return hashlib.sha256(payload.encode("utf-8", "replace")).hexdigest()[:16]
 
