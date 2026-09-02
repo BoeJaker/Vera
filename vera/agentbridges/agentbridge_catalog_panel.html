@@ -128,7 +128,7 @@ async function load(){
 function renderInterop(){
   const el = document.getElementById('interop');
   if (!INTEROP){ el.innerHTML='<div class="hint-box">Interoperability status unavailable.</div>'; return; }
-  const a=INTEROP.a2a||{}, m=INTEROP.runtime_matrix||{}, intake=INTEROP.source_intake||{}, structured=INTEROP.structured_generation||{}, documents=INTEROP.document_parser||{}, contracts=INTEROP.shared_contracts||[];
+  const a=INTEROP.a2a||{}, m=INTEROP.runtime_matrix||{}, adapters=INTEROP.runtime_adapters||[], intake=INTEROP.source_intake||{}, structured=INTEROP.structured_generation||{}, documents=INTEROP.document_parser||{}, contracts=INTEROP.shared_contracts||[];
   const registered=contracts.filter(x=>x.registered).length;
   el.innerHTML=`
     <div class="interop-card"><h2>Agent-to-agent protocol</h2>
@@ -140,6 +140,11 @@ function renderInterop(){
       <div class="metric">${esc(m.candidate_count||0)} runtimes</div>
       <div class="metric-note">${esc(m.dimension_count||0)} dimensions · ${esc(m.queued_live_cases||0)} live cases queued</div>
       <div class="contract-list"><span class="contract">${esc(m.execution_lane||'unknown')}</span><span class="contract">selection ${m.ready_for_selection?'ready':'not ready'}</span></div>
+    </div>
+    <div class="interop-card"><h2>Runtime adapters</h2>
+      <div class="metric">${esc(adapters.length)} migrated</div>
+      <div class="metric-note">${adapters.map(x=>esc(x.label||x.runtime_id)).join(' · ')||'No adapter contracts published'}</div>
+      <div class="contract-list">${adapters.map(x=>`<span class="contract ${x.execution_supported?'ready':''}">${esc(x.runtime_id)} · gaps: ${esc((x.gaps||[]).join(', ')||'none')}</span>`).join('')}</div>
     </div>
     <div class="interop-card"><h2>Source intake</h2>
       <div class="metric">${esc((intake.supported_kinds||[]).length)} formats</div>

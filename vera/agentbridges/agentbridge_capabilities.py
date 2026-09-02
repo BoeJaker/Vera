@@ -35,6 +35,7 @@ from fastapi.responses import HTMLResponse
 from Vera.vera.agentbridges.agentbridge_registry import BRIDGES, BY_ID
 from Vera.vera.agentbridges.agentbridge_runtime import image_present
 from Vera.vera.agentbridges.runtime_matrix import compile_runtime_matrix
+from Vera.vera.langgraph.runtime_contract import langgraph_runtime_descriptor
 from Vera.vera.execution.a2a_adapter import compile_a2a_adapter_status
 from Vera.vera.execution.a2a_mapping import compile_a2a_protocol_mapping
 from Vera.vera.integrations.source_intake import lifecycle_contract
@@ -78,6 +79,8 @@ async def agentbridge_interoperability(trace_id=None) -> Dict[str, Any]:
     build_plan = build_plan_contract()
     structured = structured_generation_status()
     documents = document_parser_status()
+    runtime_adapters = [langgraph_runtime_descriptor(
+        os.environ.get("LANGGRAPH_IMAGE", "vera-langgraph:latest")).to_dict()]
     shared = (
         ("capability_v2", "cap.contract.manifest"),
         ("resolver_shadow", "cap.resolve.shadow"),
@@ -123,6 +126,7 @@ async def agentbridge_interoperability(trace_id=None) -> Dict[str, Any]:
             "execution_lane": matrix.get("execution_lane"),
             "ready_for_selection": matrix.get("ready_for_selection", False),
         },
+        "runtime_adapters": runtime_adapters,
         "source_intake": {
             "schema": intake["schema"],
             "implemented_states": intake["implemented_states"],
