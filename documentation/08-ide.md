@@ -187,6 +187,13 @@ file into Run history. This gives the IDE a shared run ID, status graph, and
 artifact identity without making the Run projection another execution engine
 or file store.
 
+When an agent uses an explicit review, test, or commit capability successfully,
+the same parent Run records a content-free evidence link to that capability's
+child Run. This lets IDE and Activity views correlate a produced file with its
+review, verification, and commit lifecycle while the native capability remains
+the owner of detailed output. A failed verification remains visible as a failed
+Run and is never promoted to passed evidence.
+
 ---
 
 ## 6. The IDE panel

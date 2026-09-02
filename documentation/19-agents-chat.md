@@ -145,6 +145,13 @@ content, absolute host/container paths, repository URLs, or an unverified
 checksum into Run history. The native artifact store remains authoritative;
 the Run record is correlation evidence, not another file store.
 
+Successful review, test, and commit capabilities are also linked to the parent
+agent-loop Run as evidence. Each link names the evidence kind and capability and
+points to the authoritative child Run that performed the work. It does not copy
+review text, test output, commit messages, tool arguments, or result previews.
+Failed checks are retained as failed child Runs but are never labelled as passed
+evidence, and generic shell commands are not guessed to be tests.
+
 Latency should be split by stage: client context fetch, memory/fabric recall,
 model queue, generation, capability execution, and persistence. Re-running the
 whole turn hides the cause. Use request/job history and capability traces to

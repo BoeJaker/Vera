@@ -21,6 +21,20 @@ from .run_protocol import (
 from .run_projection import SHADOW_RUNS
 
 
+_EVIDENCE_CAPABILITIES = {
+    "ide.inspect.review_file": "review",
+    "evolve.pipeline.review": "review",
+    "ide.git.commit": "commit",
+    "operator.test.run": "test",
+    "evolve.pipeline.test": "test",
+    "evolve.selftest": "test",
+    "evolve.cap.test": "test",
+    "fabric.artifact.verify": "test",
+    "ml.onnx.verify": "test",
+    "providers.test": "test",
+}
+
+
 def _text(value: Any) -> str:
     return str(value or "").strip()
 
@@ -123,10 +137,12 @@ class AgentLoopRunProjection:
             else:
                 self.finish()
 
-    def _observe_parent(self, event_type: str, payload: dict[str, Any]) -> None:
+    def _observe_parent(self, event_type: str, payload: dict[str, Any], *,
+                        causation_id: str = "") -> None:
         event = self.parent.record_event(
             event_type, payload=payload,
-            causation_id=self.parent.events[-1].id if self.parent.events else "",
+            causation_id=(causation_id or
+                          (self.parent.events[-1].id if self.parent.events else "")),
         )
         self._record(self.parent, event)
 
@@ -214,7 +230,25 @@ class AgentLoopRunProjection:
                 causation_id=child.events[-1].id,
             )
         self._record(child, event)
+        if ok:
+            self._bind_evidence(child, capability=key[2], step_id=key[0],
+                                cycle=key[1], causation_id=event.id)
         self._record_progress(event.id)
+
+    def _bind_evidence(self, child: Run, *, capability: str, step_id: int,
+                       cycle: int, causation_id: str) -> None:
+        """Link a successful authoritative child Run as content-free evidence."""
+        kind = _EVIDENCE_CAPABILITIES.get(capability)
+        if not kind:
+            return
+        self._observe_parent("run.evidence.bound", {
+            "evidence_kind": kind,
+            "capability": capability,
+            "run_id": child.id,
+            "step_id": step_id,
+            "cycle": cycle,
+            "status": "passed" if kind == "test" else "completed",
+        }, causation_id=causation_id)
 
     def _record_progress(self, causation_id: str) -> None:
         finished = sum(child.status in TERMINAL_STATUSES
