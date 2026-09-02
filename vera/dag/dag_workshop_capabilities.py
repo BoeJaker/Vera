@@ -12637,40 +12637,34 @@ def _v5_coerce_step(st: Dict[str, Any], i: int, goal: str,
         c = _v5_resolve_tool_name(c.strip(), catalog_names, catalog_set)
         if c in CAPABILITY_REGISTRY and c not in caps:
             caps.append(c)
-    # ── Code steps get the authoring cap, deterministically ──────────────────
-    # Not a prompt hint the planner may ignore: if the step's own words say it
-    # PRODUCES a source file, code.author is added (and a bare llm.generate,
-    # which would hand back prose or JSON-wrapped code, is dropped in its
-    # favour). Prose/report steps are untouched.
+    # ── Resolve authoring intent through Capability Contracts ────────────────
+    # This replaces two independent cap-name conditionals with one task-level
+    # decision.  It is deterministic and per-step: explicit source/document
+    # deliverables resolve to their canonical task/provider, compound steps may
+    # retain both, and ambiguous steps preserve the planner's caps unchanged.
     _cap_blob = f"{title}\n{sgoal}"
-    if ("code.author" in catalog_set and "code.author" not in caps
-            and _V5_CODE_STEP_VERB_RE.search(_cap_blob)
-            and _V5_CODE_STEP_NOUN_RE.search(_cap_blob)):
-        caps = ["code.author"] + [c for c in caps if c != "llm.generate"]
-    # ── Prose/report steps get llm.generate, deterministically ──────────────
-    # Not a prompt hint the controller/adjust-step LLM may ignore either: this
-    # was a system-prompt-only fix (the controller/adjust-step system prompts
-    # were told a writing step needs llm.generate) and, observed live, that
-    # instruction was followed for the ORIGINAL master plan but ignored on a
-    # controller REPLAN — the specialist correctly tried to self-correct by
-    # requesting llm.generate directly, and was hard-denied by the anti-
-    # hallucination guard (which exists to stop llm.generate substituting for
-    # a real lookup, not to block genuine authoring) — with no legitimate path
-    # left, it fell back to a Python script hard-coding a canned narrative
-    # instead of a real synthesis of the data it had actually gathered. This
-    # makes the fix structural instead of hoping the small controller model
-    # follows the instruction every time.
-    # Prefer the GROUNDED author when it's available — same reasoning as the
-    # code-step swap above: a document step handed raw llm.generate has no
-    # grounding against what the run actually produced, and was observed
-    # inventing a fictional architecture (a backend/frontend/build system
-    # that was never built) then issuing install commands for it. Falls back
-    # to bare llm.generate when prose.author isn't in this run's catalog.
-    if _V5_PROSE_STEP_NOUN_RE.search(_cap_blob):
-        if "prose.author" in catalog_set and "prose.author" not in caps:
-            caps = ["prose.author"] + [c for c in caps if c != "llm.generate"]
-        elif "llm.generate" in catalog_set and "llm.generate" not in caps:
-            caps = caps + ["llm.generate"]
+    task_resolution = None
+    try:
+        from Vera.vera.agent_task_intent import (
+            public_task_resolution, resolve_authoring_tasks, route_authoring_caps,
+        )
+        _resolved = resolve_authoring_tasks(
+            _cap_blob, list(catalog_names), CAPABILITY_REGISTRY)
+        caps = route_authoring_caps(caps, _resolved)
+        task_resolution = public_task_resolution(_resolved)
+    except Exception as e:
+        # Routing metadata must never make an existing plan unusable. Preserve
+        # the historical deterministic rules as a compatibility fallback.
+        log.debug("authoring task resolution failed: %s", e)
+        if ("code.author" in catalog_set and "code.author" not in caps
+                and _V5_CODE_STEP_VERB_RE.search(_cap_blob)
+                and _V5_CODE_STEP_NOUN_RE.search(_cap_blob)):
+            caps = ["code.author"] + [c for c in caps if c != "llm.generate"]
+        if _V5_PROSE_STEP_NOUN_RE.search(_cap_blob):
+            if "prose.author" in catalog_set and "prose.author" not in caps:
+                caps = ["prose.author"] + [c for c in caps if c != "llm.generate"]
+            elif "llm.generate" in catalog_set and "llm.generate" not in caps:
+                caps = caps + ["llm.generate"]
     # ── UI/HTML verification steps get operator.run, swapping out browser.navigate ──
     # Additive for everything EXCEPT browser.navigate: a verification step
     # often legitimately also wants exec.*/ide.fs.read (e.g. to read the
@@ -12736,6 +12730,7 @@ def _v5_coerce_step(st: Dict[str, Any], i: int, goal: str,
         "goal": (sgoal or title or goal)[:400],
         "caps": caps, "skills": sk, "needs": needs,
         "complex": bool(st.get("complex")), "phases": phases,
+        "task_resolution": task_resolution,
         "success": _v5_first_str(st, _V5_STEP_SUCCESS_KEYS)[:240],
     }
 
@@ -14360,7 +14355,8 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
 
     await emit_event({"type": "agent_loop_v5.step_start", "session_id": sid, "stream_id": stream_id,
                       "step_id": step_id, "title": step["title"], "goal": step["goal"],
-                      "caps": caps, "skills": loaded_skills, "phase": phase})
+                      "caps": caps, "skills": loaded_skills, "phase": phase,
+                      "task_resolution": step.get("task_resolution")})
 
     # Model guidance — only when the step actually uses a generative cap, so the
     # specialist picks a REAL cluster model (or omits it) instead of inventing one.
@@ -17582,7 +17578,8 @@ async def _v5_run_phased_step(step: Dict[str, Any], phases: List[str], *, goal: 
     parent_id = step["id"]
     await emit_event({"type": "agent_loop_v5.step_start", "session_id": sid, "stream_id": stream_id,
                       "step_id": parent_id, "title": step["title"], "goal": step["goal"],
-                      "caps": step.get("caps") or [], "skills": [], "phases": phases})
+                      "caps": step.get("caps") or [], "skills": [], "phases": phases,
+                      "task_resolution": step.get("task_resolution")})
     await emit_event({"type": "agent_loop_v5.phases", "session_id": sid, "stream_id": stream_id,
                       "parent_id": parent_id, "title": step["title"], "phases": phases})
 
@@ -18603,7 +18600,8 @@ async def cap_dag_agent_loop_v5(
             list(cstep.get("caps") or []) + list(catalog_names)))[:catalog_size]
         await emit_event({"type": "agent_loop_v5.step_start", "session_id": sid, "stream_id": stream_id,
                           "step_id": parent_id, "title": cstep["title"], "goal": cstep["goal"],
-                          "caps": cstep.get("caps") or [], "skills": []})
+                          "caps": cstep.get("caps") or [], "skills": [],
+                          "task_resolution": cstep.get("task_resolution")})
         sub = await _v5_orchestrate_plan(
             cstep["goal"], sub_catalog, skills, cap_skill_map,
             model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
@@ -22880,7 +22878,8 @@ async def cap_dag_agent_loop_v6(
             await emit_event({"type": "agent_loop_v5.step_start", "session_id": sid,
                               "stream_id": stream_id, "step_id": parent_id,
                               "title": step["title"], "goal": step["goal"],
-                              "caps": step.get("caps") or [], "skills": []})
+                              "caps": step.get("caps") or [], "skills": [],
+                              "task_resolution": step.get("task_resolution")})
             sub = await _v5_orchestrate_plan(
                 step["goal"], sub_catalog, skills, cap_skill_map,
                 model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,

@@ -336,6 +336,15 @@ the selected local, worker, provider, workflow, or remote adapter executes; and
 Run/activity evidence records what happened. Unknown legacy metadata stays
 unknown rather than being guessed safe.
 
+Agent authoring steps use that same boundary to distinguish explicit source-file
+work from document work. A deterministic, model-free intent classifier maps the
+step to the canonical task `source_file.author` or `document.author`, and the
+shared resolver selects an eligible provider already admitted to the agent's
+catalog. Compound requests may retain both provider families. Ambiguous text or
+an unavailable resolution preserves the planner's existing scope. Resolution
+does not grant authority or execute anything; normal session and capability
+policy still govern the eventual call.
+
 An inspection capability can expose a plan, contract, runtime mapping, or health
 assessment without performing the operation it describes. See
 [capability contracts](43-capability-contracts.md),

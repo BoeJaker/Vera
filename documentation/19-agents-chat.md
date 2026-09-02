@@ -115,6 +115,17 @@ chat layer streams the resulting turn to the browser while the agent layer
 records durable history and usage. Tool calls re-enter the shared capability
 registry, so they inherit normal tracing, policy, and error reporting.
 
+Authoring steps are routed by task intent rather than by treating generation
+capabilities as interchangeable names. A deterministic, model-free classifier
+recognises explicit source-file and document deliverables, maps them to the
+Capability Contract canonical tasks `source_file.author` and
+`document.author`, and asks the shared resolver for an eligible provider from
+the step's admitted catalog. Explicit source steps use the coding provider;
+explicit document steps use the grounded prose provider; compound steps may
+retain both. Ambiguous text and resolver failure preserve the planner's
+existing scope. The routing decision grants no authority—the normal session
+guard and capability policy still decide whether the eventual call may run.
+
 Every streamed agent-loop request is also observed through the shared Run
 protocol. The native loop and SSE stream remain authoritative; the observer
 creates a non-authoritative parent Run plus child Runs for capability calls so

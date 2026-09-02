@@ -98,6 +98,45 @@ def test_saved_outputs_bind_content_safe_artifacts_to_parent_and_producer():
         assert private not in encoded
 
 
+def test_task_resolution_projects_allowlisted_metadata_without_step_content():
+    registry = _registry()
+    projection = AgentLoopRunProjection(session_id="session-routing", registry=registry)
+    projection.observe({
+        "type": "agent_loop_v5.step_start", "step_id": 2,
+        "title": "PRIVATE STEP", "goal": "PRIVATE GOAL",
+        "task_resolution": {
+            "mode": "resolved", "canonical_tasks": ["source_file.author"],
+            "selections": [{"canonical_task": "source_file.author",
+                            "selected": "code.author", "status": "resolved",
+                            "alternatives": ["PRIVATE ALTERNATIVE"]}],
+        },
+    })
+    projection.observe({
+        "type": "agent_loop_v5.step_start", "step_id": 3,
+        "task_resolution": {
+            "mode": "resolved", "canonical_tasks": ["PRIVATE TASK"],
+            "selections": [{"canonical_task": "source_file.author",
+                            "selected": "PRIVATE PROVIDER", "status": "resolved"}],
+        },
+    })
+    projection.finish()
+
+    events = registry.get(projection.run_id)["run"]["events"]
+    routed = [event for event in events if event["type"] == "run.task.resolved"]
+    assert len(routed) == 1
+    assert routed[0]["payload"] == {
+        "step_id": 2, "mode": "resolved",
+        "canonical_tasks": ["source_file.author"],
+        "selections": [{"canonical_task": "source_file.author",
+                        "selected": "code.author", "status": "resolved"}],
+        "authorized": False, "executed": False,
+    }
+    encoded = json.dumps(registry.journal.export(projection.run_id), sort_keys=True)
+    for private in ("PRIVATE STEP", "PRIVATE GOAL", "PRIVATE TASK",
+                    "PRIVATE PROVIDER", "PRIVATE ALTERNATIVE"):
+        assert private not in encoded
+
+
 def test_generated_output_artifacts_are_deduplicated_and_reject_bad_names():
     registry = _registry()
     projection = AgentLoopRunProjection(session_id="session-output", registry=registry)

@@ -1343,12 +1343,19 @@
           ? ` <span style="color:var(--acc2,#a8c87a);font-size:9px">· ${PH[ev.phase]||_esc(ev.phase)}</span>` : '';
         const phasesMeta = (ev.phases&&ev.phases.length)
           ? `<div class="alo-step-meta">▤ phases: ${ev.phases.map(p=>_esc(p)).join(' → ')}</div>` : '';
+        const TRL = {'source_file.author':'Source-file authoring',
+                     'document.author':'Document authoring'};
+        const taskRows = (((ev.task_resolution||{}).selections)||[])
+          .filter(r=>r&&r.selected)
+          .map(r=>`${_esc(TRL[r.canonical_task]||r.canonical_task||'Task')} → <code>${_esc(r.selected)}</code>`);
+        const taskMeta = taskRows.length
+          ? `<div class="alo-step-meta">◇ task routing: ${taskRows.join(' · ')}</div>` : '';
         const el = this._cycleEl(`<div class="alo-cycle-h">
             <span class="alo-cycle-tool">▶ Step ${_esc(String(ev.step_id))} — ${_esc(ev.title||'')}${phaseBadge}</span>
             <span class="alo-cycle-status"><span class="alo-spinner"></span> running…</span>
           </div>
           ${ev.goal?`<div class="alo-cycle-thought">${_esc(ev.goal)}</div>`:''}
-          <div class="alo-step-meta">🧰 scoped caps: ${caps}</div>${sk}${phasesMeta}`, 'step');
+          <div class="alo-step-meta">🧰 scoped caps: ${caps}</div>${taskMeta}${sk}${phasesMeta}`, 'step');
         if(el) el.setAttribute('data-step', String(ev.step_id));
         return;
       }

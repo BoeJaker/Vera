@@ -170,6 +170,12 @@ In `ide_panel.html`, the agent loop:
 
 The loop runs for `maxSteps` cycles (default 8) or until done/defer/abort. A "Continue" button extends with another batch without resetting state.
 
+For agent-loop steps, the UI shows the resolved authoring task beside the
+scoped capabilities—for example, “Source-file authoring → `code.author`”. This
+is a content-free explanation produced from the canonical capability contract,
+not another model decision. It does not expose the step prompt and does not
+bypass workspace or capability policy.
+
 Agent-loop work launched from the IDE is visible through the same content-free
 Run projection used by Chat and Activity. The projection groups capability
 calls beneath the parent agent-loop Run and retains lifecycle metadata only;
