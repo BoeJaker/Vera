@@ -38,6 +38,47 @@ DEFAULT_MAX_SECONDS = 480
 #: The stop reason, alongside max_steps / no_progress / repeating_action.
 STOP_REASON = "time_budget"
 
+#: The least a CALLER may ask for. Exposing max_seconds on the cap means the
+#: model can now set it, and it does: census 24, author-then-edit cyc7 passed
+#: max_seconds=95 and the run died at 103s having managed five steps of a task
+#: that needed a click and a two-second wait. One observe -> think -> act cycle
+#: contains a full generation, so a budget under a few of them cannot finish
+#: anything and only converts a slow run into a failed one. A caller may tighten
+#: the budget, but not below the point where the run is doomed.
+MIN_CALLER_SECONDS = 180.0
+
+
+def caller_budget(requested: float, default_s: float = DEFAULT_MAX_SECONDS) -> float:
+    """The budget to actually use for a caller-supplied value.
+
+    0 or absent means "no preference" and takes the default. Anything positive
+    is honoured, but floored - a model asking for 95s is expressing urgency, not
+    a considered estimate of how long a browser needs.
+    """
+    try:
+        req = float(requested or 0)
+    except (TypeError, ValueError):
+        return float(default_s)
+    if req <= 0:
+        return float(default_s)
+    return max(MIN_CALLER_SECONDS, req)
+
+
+def budget_kwargs(requested: float,
+                  default_s: float = DEFAULT_MAX_SECONDS) -> dict:
+    """The ``max_seconds`` kwargs to hand run_loop for a caller's value.
+
+    Empty when the caller expressed no preference, so run_loop's own default
+    applies rather than this module's copy of it drifting apart from it.
+    """
+    try:
+        req = float(requested or 0)
+    except (TypeError, ValueError):
+        return {}
+    if req <= 0:
+        return {}
+    return {"max_seconds": caller_budget(req, default_s)}
+
 
 def remaining(started_at: float, now: float,
               max_seconds: float = DEFAULT_MAX_SECONDS) -> float:
