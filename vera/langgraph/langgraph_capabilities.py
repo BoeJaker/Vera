@@ -17,12 +17,10 @@ Runs in a fresh, throwaway Docker container per invocation (image:
 vera-langgraph, built from Dockerfile.langgraph in this directory) — never
 in Vera's own process, never in vera:latest. See Dockerfile.langgraph.
 
-The actual docker-launch/stream/stall/event-emit plumbing lives in
-agentbridge_runtime.py's stream_bridge_container(), shared by every
-container-based bridge (2026-08-16 — this module and smolagents_capabilities.py
-each hand-rolled their own copy of it first; extracted once a third bridge,
-PydanticAI, was about to become a fourth copy). This module supplies only
-what's genuinely langgraph-specific: the image, argv, and event-type prefix.
+The runtime lifecycle is presented through a RuntimeAdapter. Its container
+implementation delegates docker-launch/stream/stall/event plumbing to the
+shared agentbridge_runtime runner. This module supplies only what is genuinely
+LangGraph-specific: the image, argv, and event-type prefix.
 
 langgraph.run is EVENT-DRIVEN, same contract as smolagents.run/openclaw.
 prompt: it returns immediately once the container is launched, with {ok,
@@ -61,9 +59,11 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict
 
-from Vera.vera.agentbridges.agentbridge_runtime import (
-    build_image, image_present, pick_ollama_instance, sh, stream_bridge_container,
+from Vera.vera.agentbridges.agentbridge_runtime import pick_ollama_instance
+from Vera.vera.agentbridges.runtime_adapter import (
+    ContainerRunRequest, ContainerRuntimeAdapter,
 )
+from Vera.vera.langgraph.runtime_contract import langgraph_runtime_descriptor
 from Vera.vera.capability_orchestration import (
     capability, emit_event, now_iso, OLLAMA_INSTANCES, OLLAMA_MODEL,
 )
@@ -74,6 +74,7 @@ _TIMEOUT_S = int(os.environ.get("LANGGRAPH_TIMEOUT_S", "300") or 300)
 _STALL_S = int(os.environ.get("LANGGRAPH_STALL_S", "60") or 60)
 _DOCKERFILE_DIR = str(Path(__file__).parent)
 _EVENT_PREFIX = "langgraph.run"
+_ADAPTER = ContainerRuntimeAdapter(langgraph_runtime_descriptor(_IMAGE))
 
 
 @capability(
@@ -85,12 +86,9 @@ _EVENT_PREFIX = "langgraph.run"
                 "Output: {enabled, docker_ok, image, image_present}.",
 )
 async def langgraph_status(trace_id=None) -> Dict[str, Any]:
-    docker_ok = (await sh(["docker", "version", "--format", "{{.Server.Version}}"],
-                          timeout=10)).get("ok", False)
-    present = await image_present(_IMAGE) if docker_ok else False
-    return {"enabled": _ENABLED, "docker_ok": docker_ok,
-            "image": _IMAGE, "image_present": present,
-            "timeout_s": _TIMEOUT_S}
+    health = await _ADAPTER.health()
+    return {"enabled": _ENABLED, **health, "timeout_s": _TIMEOUT_S,
+            "runtime_adapter": _ADAPTER.inspect()}
 
 
 @capability(
@@ -103,11 +101,12 @@ async def langgraph_status(trace_id=None) -> Dict[str, Any]:
                 "Inputs: force (bool). Output: {ok, present, action, log}.",
 )
 async def langgraph_image_ensure(force: bool = False, trace_id=None) -> Dict[str, Any]:
-    if not force and await image_present(_IMAGE):
+    if not force and await _ADAPTER.image_present():
         return {"ok": True, "present": True, "action": "none"}
     await emit_event({"type": "langgraph.image.build", "image": _IMAGE})
-    r = await build_image(_IMAGE, str(Path(_DOCKERFILE_DIR) / "Dockerfile.langgraph"),
-                          _DOCKERFILE_DIR)
+    r = await _ADAPTER.ensure_image(
+        dockerfile=str(Path(_DOCKERFILE_DIR) / "Dockerfile.langgraph"),
+        context_dir=_DOCKERFILE_DIR, force=True)
     await emit_event({"type": "langgraph.image.ensured", "image": _IMAGE, "ok": r["ok"]})
     return {**r, "action": "build"}
 
@@ -149,7 +148,7 @@ async def langgraph_run(goal: str, session_id: str = "", trace_id=None) -> Dict[
         return {"ok": False, "error": "no Ollama instance available "
                                       "(OLLAMA_INSTANCES empty or OLLAMA_MODEL unset)"}
 
-    if not await image_present(_IMAGE):
+    if not await _ADAPTER.image_present():
         ens = await langgraph_image_ensure()
         if not ens.get("ok"):
             return {"ok": False, "error": f"vera-langgraph image unavailable: "
@@ -173,12 +172,11 @@ async def langgraph_run(goal: str, session_id: str = "", trace_id=None) -> Dict[
     # gate_instance_id makes this container's Ollama call queue behind
     # Vera's own gated generation instead of firing blind and risking a
     # stall-kill under contention.
-    asyncio.ensure_future(stream_bridge_container(
-        run_id=run_id, session_id=session_id, argv=argv,
-        event_type_prefix=_EVENT_PREFIX, emit=emit_event,
+    request = ContainerRunRequest(
+        run_id=run_id, session_id=session_id, argv=tuple(argv),
         timeout_s=_TIMEOUT_S, stall_s=_STALL_S,
-        progress_kinds={"tool_call", "tool_result"},
-        gate_instance_id=instance_id,
-    ))
+        progress_kinds=frozenset({"tool_call", "tool_result"}),
+        gate_instance_id=instance_id)
+    asyncio.ensure_future(_ADAPTER.run(request, emit=emit_event))
 
     return {"ok": True, "run_id": run_id, "status": "running"}

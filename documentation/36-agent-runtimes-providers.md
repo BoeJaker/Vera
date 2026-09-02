@@ -125,9 +125,20 @@ IDs remain server-owned; and Task/Message/Artifact projections cannot authorize
 effects. This protocol layer must land before Google ADK or OpenAI Agents SDK can
 join a common RuntimeAdapter/A2A conformance matrix.
 
+Container-based agent bridges share a runtime-neutral lifecycle boundary before
+their library-specific code runs. The boundary declares image acquisition,
+health, dependency isolation, streaming events, cancellation, resource gates,
+teardown, and version reporting; unsupported or partial semantics remain
+visible rather than being inferred from a successful container launch.
+LangGraph is the first migrated bridge. Its existing `langgraph.*` capability
+names and `langgraph.run.*` events are unchanged, while image health/build and
+validated run requests now pass through the shared adapter. Static inspection
+does not import LangGraph, build an image, contact a model, or launch a run.
+
 Agent Bridges also exposes an interoperability summary in its UI. The summary
 shows the A2A mapping and inert client/server plans, runtime candidate and
-dimension counts, queued live gates, and whether shared Vera contract
+dimension counts, migrated adapter contracts with their explicit gaps, queued
+live gates, and whether shared Vera contract
 capabilities are actually registered. It also reports MCP/OpenAPI source
 intake as an inspection-only lifecycle, separating its implemented discovery,
 inspection, and proposal states from queued build, verification, approval, and
