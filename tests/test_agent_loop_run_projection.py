@@ -193,6 +193,48 @@ def test_duplicate_calls_are_correlated_fifo_and_unmatched_done_is_ignored():
     assert all(child["status"] == "completed" for child in children)
 
 
+def test_successful_review_test_and_commit_runs_bind_content_free_evidence():
+    registry = _registry()
+    projection = AgentLoopRunProjection(session_id="session-evidence", registry=registry)
+    capabilities = ("ide.inspect.review_file", "operator.test.run", "ide.git.commit")
+    for cycle, capability in enumerate(capabilities, 1):
+        projection.observe({"type": "agent_loop_v5.tool_call", "step_id": cycle,
+                            "cycle": cycle, "tool": capability,
+                            "args": {"private": "PRIVATE ARGUMENT"}})
+        projection.observe({"type": "agent_loop_v5.tool_done", "step_id": cycle,
+                            "cycle": cycle, "tool": capability, "ok": True,
+                            "preview": "PRIVATE RESULT"})
+    projection.finish()
+
+    root = registry.get(projection.run_id)
+    evidence = [event["payload"] for event in root["run"]["events"]
+                if event["type"] == "run.evidence.bound"]
+    assert [row["evidence_kind"] for row in evidence] == ["review", "test", "commit"]
+    assert [row["status"] for row in evidence] == ["completed", "passed", "completed"]
+    assert {row["run_id"] for row in evidence} == {
+        child["id"] for child in root["children"]}
+    evidence_events = [event for event in root["run"]["events"]
+                       if event["type"] == "run.evidence.bound"]
+    child_terminal_ids = {child["events"][-1]["id"] for child in root["children"]}
+    assert {event["causation_id"] for event in evidence_events} == child_terminal_ids
+    encoded = json.dumps(registry.journal.export(projection.run_id), sort_keys=True)
+    assert "PRIVATE ARGUMENT" not in encoded
+    assert "PRIVATE RESULT" not in encoded
+
+
+def test_failed_or_unclassified_tools_do_not_claim_evidence():
+    registry = _registry()
+    projection = AgentLoopRunProjection(session_id="session-no-evidence", registry=registry)
+    for capability, ok in (("operator.test.run", False), ("exec.bash.run", True)):
+        projection.observe({"type": "agent_loop_v5.tool_call", "step_id": 1,
+                            "cycle": 1, "tool": capability})
+        projection.observe({"type": "agent_loop_v5.tool_done", "step_id": 1,
+                            "cycle": 1, "tool": capability, "ok": ok})
+    projection.finish()
+    events = registry.get(projection.run_id)["run"]["events"]
+    assert not [event for event in events if event["type"] == "run.evidence.bound"]
+
+
 def test_global_observer_is_session_scoped_immutable_and_supersedes_safely():
     registry = _registry()
     sid = "projection-supersession-test"
