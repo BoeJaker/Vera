@@ -203,6 +203,8 @@ function render(){
         <button class="btn sm" ${b.image_present?'disabled':''} onclick="buildImage('${esc(b.id)}', this)">
           ${b.image_present ? '✓ image built' : '⚙ Build image'}
         </button>
+        ${((INTEROP&&INTEROP.runtime_adapters)||[]).some(x=>x.runtime_id===b.id)
+          ? `<button class="btn sm" onclick="verifyImage('${esc(b.id)}', this)">Check image declaration</button>` : ''}
         ${b.docs_url ? `<a class="btn sm" href="${esc(b.docs_url)}" target="_blank" rel="noopener">docs ↗</a>` : ''}
       </div>
       <div class="status-line" id="status-${esc(b.id)}"></div>
@@ -235,6 +237,21 @@ async function checkUpdates(){
   });
   btn.disabled = false; btn.textContent = '↻ Check for updates';
   render();
+}
+
+async function verifyImage(id, btn){
+  btn.disabled = true;
+  const line = document.getElementById('status-'+id);
+  line.className = 'status-line'; line.textContent = 'checking image attestation…';
+  const r = await api('/agentbridge/runtime/version?runtime_id='+encodeURIComponent(id));
+  btn.disabled = false;
+  if (r && r.verified){
+    line.className = 'status-line ok';
+    line.textContent = 'image declaration matches '+(r.observed_packages||[]).length+' package pins ✓';
+  } else {
+    line.className = 'status-line err';
+    line.textContent = 'attestation '+esc((r&&r.status)||'unavailable')+': '+esc((r&&r.reason_code)||'unknown');
+  }
 }
 
 load();

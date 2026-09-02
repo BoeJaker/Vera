@@ -7,6 +7,7 @@ bridge runner so existing event and capability aliases stay authoritative.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import re
 from typing import Any, Awaitable, Callable, Mapping, Protocol, runtime_checkable
 
@@ -14,6 +15,9 @@ from . import agentbridge_runtime as bridge
 
 
 SCHEMA = "vera.runtime-adapter/v1"
+VERSION_REPORT_SCHEMA = "vera.runtime-version-report/v1"
+RUNTIME_ID_LABEL = "io.vera.runtime.id"
+RUNTIME_PACKAGES_LABEL = "io.vera.runtime.packages"
 FEATURES = (
     "acquisition", "health", "dependency_isolation", "run", "stream",
     "events", "cancellation", "resource_gates", "teardown",
@@ -23,6 +27,7 @@ FEATURE_STATES = {"supported", "partial", "unsupported"}
 _ID = re.compile(r"[a-z][a-z0-9._-]{1,63}\Z")
 _EVENT_PREFIX = re.compile(r"[a-z][a-z0-9_.-]{1,127}\Z")
 _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
+_PACKAGE_REF = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,95}==[^,\s]{1,96}\Z")
 
 
 def _bounded(value: Any, label: str, maximum: int = 256) -> str:
@@ -68,6 +73,8 @@ class RuntimeAdapterDescriptor:
         object.__setattr__(self, "image", _bounded(self.image, "runtime image", 192))
         refs = tuple(sorted({_bounded(item, "package reference", 128)
                              for item in self.package_refs}))
+        if not refs or any(not _PACKAGE_REF.fullmatch(item) for item in refs):
+            raise ValueError("package_refs must use bounded package==version pins")
         object.__setattr__(self, "package_refs", refs)
         features = tuple(sorted(self.features, key=lambda item: item.name))
         if (len(features) != len(FEATURES)
@@ -131,6 +138,7 @@ class RuntimeAdapter(Protocol):
     async def image_present(self) -> bool: ...
     async def ensure_image(self, *, dockerfile: str, context_dir: str,
                            force: bool = False) -> dict[str, Any]: ...
+    async def version_report(self) -> dict[str, Any]: ...
     async def run(self, request: ContainerRunRequest, *, emit: EmitFn) -> None: ...
     async def cancel(self, run_id: str) -> dict[str, Any]: ...
 
@@ -163,6 +171,78 @@ class ContainerRuntimeAdapter:
         result = await bridge.build_image(
             self.descriptor.image, dockerfile, context_dir)
         return {**result, "action": "build"}
+
+    async def version_report(self) -> dict[str, Any]:
+        """Compare declared packages with inert OCI image labels.
+
+        Docker inspects image metadata only. The optional runtime is never
+        imported and the image is never started.
+        """
+        base = {
+            "schema": VERSION_REPORT_SCHEMA,
+            "runtime_id": self.descriptor.runtime_id,
+            "image": self.descriptor.image,
+            "expected_packages": list(self.descriptor.package_refs),
+            "executes_runtime": False,
+            "evidence_source": "oci_labels",
+            "trust_level": "image_self_declared",
+        }
+        result = await bridge.sh([
+            "docker", "image", "inspect", self.descriptor.image,
+            "--format", "{{json .Config.Labels}}",
+        ], timeout=15)
+        if not result.get("ok"):
+            return {**base, "ok": False, "verified": False,
+                    "status": "unavailable",
+                    "reason_code": "image_inspect_failed"}
+        raw = str(result.get("out") or "").strip()
+        if not raw or len(raw) > 65_536:
+            return {**base, "ok": False, "verified": False,
+                    "status": "unattested",
+                    "reason_code": "image_attestation_invalid"}
+        try:
+            labels = json.loads(raw)
+        except (TypeError, ValueError):
+            labels = None
+        if not isinstance(labels, dict):
+            return {**base, "ok": False, "verified": False,
+                    "status": "unattested",
+                    "reason_code": "image_attestation_invalid"}
+
+        observed_runtime = labels.get(RUNTIME_ID_LABEL)
+        packages_raw = labels.get(RUNTIME_PACKAGES_LABEL)
+        if not isinstance(observed_runtime, str) or not isinstance(packages_raw, str):
+            return {**base, "ok": False, "verified": False,
+                    "status": "unattested",
+                    "reason_code": "image_attestation_missing"}
+        parts = [item.strip() for item in packages_raw.split(",")]
+        if (not _ID.fullmatch(observed_runtime)
+                or not parts
+                or any(len(item) > 128 or not _PACKAGE_REF.fullmatch(item)
+                       for item in parts)
+                or len(parts) > 64 or len(set(parts)) != len(parts)):
+            return {**base, "ok": False, "verified": False,
+                    "status": "unattested",
+                    "reason_code": "image_attestation_invalid"}
+
+        expected = set(self.descriptor.package_refs)
+        observed = set(parts)
+        missing = sorted(expected - observed)
+        unexpected = sorted(observed - expected)
+        runtime_matches = observed_runtime == self.descriptor.runtime_id
+        verified = runtime_matches and not missing and not unexpected
+        return {
+            **base,
+            "ok": verified,
+            "verified": verified,
+            "status": "verified" if verified else "mismatch",
+            "reason_code": "verified" if verified else "image_attestation_mismatch",
+            "observed_runtime_id": observed_runtime[:64],
+            "observed_packages": sorted(observed),
+            "runtime_matches": runtime_matches,
+            "missing_packages": missing,
+            "unexpected_packages": unexpected,
+        }
 
     async def run(self, request: ContainerRunRequest, *, emit: EmitFn) -> None:
         await bridge.stream_bridge_container(

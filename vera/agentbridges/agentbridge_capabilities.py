@@ -95,6 +95,7 @@ async def agentbridge_interoperability(trace_id=None) -> Dict[str, Any]:
         ("durability_fixture", "workflow.durability.fixture"),
         ("runtime_matrix", "agentbridge.runtime_matrix"),
         ("runtime_cancel", "agentbridge.run.cancel"),
+        ("runtime_version", "agentbridge.runtime.version"),
         ("a2a_conformance", "interop.a2a.conformance"),
         ("source_lifecycle", "integration.source.lifecycle"),
         ("source_inspection", "integration.source.inspect"),
@@ -196,6 +197,29 @@ async def agentbridge_run_cancel(runtime_id: str, run_id: str,
                 "runtime_id": runtime_id,
                 "supported_runtime_ids": sorted(_RUNTIME_ADAPTERS)}
     return await adapter.cancel(run_id)
+
+
+@capability(
+    "agentbridge.runtime.version", http_method="GET",
+    http_path="/agentbridge/runtime/version", http_tags=["agentbridge"],
+    memory="off", silent=True,
+    description="Compare one isolated runtime image's self-declared identity and "
+                "pinned package set from read-only OCI labels. The image is never started and "
+                "the optional runtime is never imported. Input: runtime_id. "
+                "Output distinguishes verified, mismatch, unattested, unavailable, "
+                "and unknown-adapter states.",
+)
+async def agentbridge_runtime_version(runtime_id: str,
+                                      trace_id=None) -> Dict[str, Any]:
+    runtime_id = str(runtime_id or "").strip().lower()
+    adapter = _RUNTIME_ADAPTERS.get(runtime_id)
+    if adapter is None:
+        return {"ok": False, "verified": False,
+                "status": "unknown", "reason_code": "runtime_adapter_unknown",
+                "runtime_id": runtime_id,
+                "supported_runtime_ids": sorted(_RUNTIME_ADAPTERS),
+                "executes_runtime": False}
+    return await adapter.version_report()
 
 _HERE = Path(__file__).parent
 _PANEL_HTML_PATH = _HERE / "agentbridge_catalog_panel.html"
