@@ -134,6 +134,10 @@ LangGraph is the first migrated bridge. Its existing `langgraph.*` capability
 names and `langgraph.run.*` events are unchanged, while image health/build and
 validated run requests now pass through the shared adapter. Static inspection
 does not import LangGraph, build an image, contact a model, or launch a run.
+Active runs can be cancelled by validated run ID through the runner's owned
+process registry. Cancellation, timeout, malformed output, and normal completion
+converge on one terminal event and release the shared resource gate. Protocol
+payloads are bounded and cannot override trusted run, session, or event fields.
 
 Agent Bridges also exposes an interoperability summary in its UI. The summary
 shows the A2A mapping and inert client/server plans, runtime candidate and

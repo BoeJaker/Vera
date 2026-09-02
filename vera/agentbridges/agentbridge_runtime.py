@@ -45,12 +45,141 @@ gpu_gate below, wired into stream_bridge_container via `gate_iid`.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
 import json
+import math
+import re
+import threading
 import time
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 STEP_PREFIX = "BRIDGE_STEP:"
 RESULT_PREFIX = "BRIDGE_RESULT:"
+MAX_PROTOCOL_LINE_BYTES = 65_536
+MAX_PAYLOAD_DEPTH = 8
+MAX_PAYLOAD_NODES = 2_048
+MAX_OBJECT_FIELDS = 128
+MAX_ARRAY_ITEMS = 256
+MAX_STRING_CHARS = 32_768
+_RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
+
+
+@dataclass
+class _ActiveBridgeRun:
+    run_id: str
+    cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
+    process: Any = None
+    process_kill_sent: bool = False
+    terminal: bool = False
+
+
+_ACTIVE_RUNS: Dict[str, _ActiveBridgeRun] = {}
+_ACTIVE_RUNS_LOCK = threading.RLock()
+
+
+def _valid_run_id(run_id: Any) -> str:
+    value = str(run_id or "").strip()
+    if not _RUN_ID.fullmatch(value):
+        raise ValueError("run_id must be a bounded identifier")
+    return value
+
+
+def _register_run(run_id: str) -> Optional[_ActiveBridgeRun]:
+    control = _ActiveBridgeRun(run_id=run_id)
+    with _ACTIVE_RUNS_LOCK:
+        if run_id in _ACTIVE_RUNS:
+            return None
+        _ACTIVE_RUNS[run_id] = control
+    return control
+
+
+def _unregister_run(control: _ActiveBridgeRun) -> None:
+    with _ACTIVE_RUNS_LOCK:
+        if _ACTIVE_RUNS.get(control.run_id) is control:
+            _ACTIVE_RUNS.pop(control.run_id, None)
+
+
+def _mark_terminal(control: _ActiveBridgeRun) -> None:
+    with _ACTIVE_RUNS_LOCK:
+        control.terminal = True
+
+
+def _kill_owned_process(control: _ActiveBridgeRun) -> None:
+    """Send at most one kill to the exact process owned by this run."""
+    with _ACTIVE_RUNS_LOCK:
+        proc = control.process
+        if proc is None or control.process_kill_sent:
+            return
+        control.process_kill_sent = True
+    try:
+        proc.kill()
+    except ProcessLookupError:
+        pass
+    except Exception:
+        # Cleanup still waits/reaps below; cancellation remains requested.
+        pass
+
+
+async def cancel_bridge_run(run_id: str) -> Dict[str, Any]:
+    """Request cancellation of one active bridge run without shell lookup.
+
+    The registry owns the exact subprocess object, so cancellation never
+    guesses a container name or kills an unrelated process. The runner emits
+    the single terminal event and releases any GPU lease in its normal
+    ``finally`` path.
+    """
+    run_id = _valid_run_id(run_id)
+    with _ACTIVE_RUNS_LOCK:
+        control = _ACTIVE_RUNS.get(run_id)
+        if control is None or control.terminal:
+            return {"ok": False, "accepted": False, "run_id": run_id,
+                    "reason_code": "runtime_run_not_active"}
+        control.cancel_event.set()
+    _kill_owned_process(control)
+    return {"ok": True, "accepted": True, "run_id": run_id,
+            "state": "cancellation_requested"}
+
+
+def active_bridge_run_ids() -> List[str]:
+    """Return bounded identifiers only; never argv, prompts, or process data."""
+    with _ACTIVE_RUNS_LOCK:
+        return sorted(_ACTIVE_RUNS)[:256]
+
+
+def _bounded_payload(value: Any) -> Any:
+    """Validate untrusted bridge JSON before it reaches the event bus."""
+    remaining = [MAX_PAYLOAD_NODES]
+
+    def walk(item: Any, depth: int) -> Any:
+        remaining[0] -= 1
+        if remaining[0] < 0 or depth > MAX_PAYLOAD_DEPTH:
+            raise ValueError("payload structure exceeds bounds")
+        if item is None or isinstance(item, (bool, int)):
+            return item
+        if isinstance(item, float):
+            if not math.isfinite(item):
+                raise ValueError("payload number must be finite")
+            return item
+        if isinstance(item, str):
+            if len(item) > MAX_STRING_CHARS:
+                raise ValueError("payload string exceeds bounds")
+            return item
+        if isinstance(item, list):
+            if len(item) > MAX_ARRAY_ITEMS:
+                raise ValueError("payload array exceeds bounds")
+            return [walk(child, depth + 1) for child in item]
+        if isinstance(item, dict):
+            if len(item) > MAX_OBJECT_FIELDS:
+                raise ValueError("payload object exceeds bounds")
+            result = {}
+            for key, child in item.items():
+                if not isinstance(key, str) or not key or len(key) > 128:
+                    raise ValueError("payload key is invalid")
+                result[key] = walk(child, depth + 1)
+            return result
+        raise ValueError("payload contains an unsupported value")
+
+    return walk(value, 0)
 
 
 def pick_ollama_instance(ollama_instances: Dict[str, Dict[str, Any]]
@@ -128,7 +257,7 @@ async def _drain_stderr(stream: asyncio.StreamReader, buf: List[str]) -> None:
             line = await stream.readline()
             if not line:
                 break
-            buf.append(line.decode("utf-8", errors="replace"))
+            buf.append(line.decode("utf-8", errors="replace")[-2_000:])
             if len(buf) > 200:
                 del buf[:100]
     except Exception:
@@ -170,41 +299,66 @@ async def stream_bridge_container(
     it off as a background task (`asyncio.ensure_future`), since this
     function runs for the container's whole lifetime.
     """
-    base = {"run_id": run_id, "session_id": session_id}
+    run_id = _valid_run_id(run_id)
+    base = {"run_id": run_id, "session_id": str(session_id or "")[:256]}
     t0 = time.time()
+    control = _register_run(run_id)
+    if control is None:
+        await emit({**base, "type": f"{event_type_prefix}.error",
+                    "reason_code": "duplicate_run_id",
+                    "error": "run_id is already active", "elapsed_s": 0.0})
+        return
 
-    gate_lease = await acquire_gpu_gate(gate_instance_id) if gate_instance_id else None
-    if gate_lease is not None:
-        await emit({**base, "type": f"{event_type_prefix}.gate_acquired",
-                   "waited_s": gate_lease.get("waited_s", 0)})
-
+    gate_lease = None
     try:
+        gate_lease = (await acquire_gpu_gate(gate_instance_id)
+                      if gate_instance_id else None)
+        if gate_lease is not None:
+            await emit({**base, "type": f"{event_type_prefix}.gate_acquired",
+                       "waited_s": gate_lease.get("waited_s", 0)})
+        if control.cancel_event.is_set():
+            _mark_terminal(control)
+            await emit({**base, "type": f"{event_type_prefix}.error",
+                        "reason_code": "cancelled", "cancelled": True,
+                        "error": "run cancelled before container launch",
+                        "elapsed_s": round(time.time() - t0, 2)})
+            return
         await _stream_bridge_container_inner(
             base=base, t0=t0, argv=argv, event_type_prefix=event_type_prefix,
             emit=emit, timeout_s=timeout_s, stall_s=stall_s,
             step_line_prefix=step_line_prefix, result_line_prefix=result_line_prefix,
-            progress_kinds=progress_kinds,
+            progress_kinds=progress_kinds, control=control,
         )
     finally:
         # Released whatever happened above (done/error/stall/timeout/launch
         # failure/an exception this function didn't even anticipate) — a
         # bridge run must never strand a GPU slot for other callers.
         await release_gpu_gate(gate_lease)
+        _unregister_run(control)
 
 
 async def _stream_bridge_container_inner(
     *, base: Dict[str, str], t0: float, argv: List[str], event_type_prefix: str,
     emit: EmitFn, timeout_s: int, stall_s: int, step_line_prefix: str,
     result_line_prefix: str, progress_kinds: Optional[set],
+    control: _ActiveBridgeRun,
 ) -> None:
     try:
         proc = await asyncio.create_subprocess_exec(
             *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     except Exception as e:
+        _mark_terminal(control)
         await emit({**base, "type": f"{event_type_prefix}.error",
+                    "reason_code": "launch_failed",
                     "error": f"could not start container: {e}",
                     "elapsed_s": round(time.time() - t0, 2)})
         return
+
+    with _ACTIVE_RUNS_LOCK:
+        control.process = proc
+        cancelled_before_bind = control.cancel_event.is_set()
+    if cancelled_before_bind:
+        _kill_owned_process(control)
 
     stderr_buf: List[str] = []
     stderr_task = asyncio.ensure_future(_drain_stderr(proc.stderr, stderr_buf))
@@ -213,9 +367,14 @@ async def _stream_bridge_container_inner(
     steps_seen = 0
     stalled = False
     timed_out = False
+    protocol_error = ""
+    cancelled = cancelled_before_bind
 
     try:
         while True:
+            if control.cancel_event.is_set():
+                cancelled = True
+                break
             remaining = timeout_s - (time.time() - t0)
             if remaining <= 0:
                 timed_out = True
@@ -226,53 +385,84 @@ async def _stream_bridge_container_inner(
             except asyncio.TimeoutError:
                 stalled = True
                 break
+            except (ValueError, asyncio.LimitOverrunError):
+                protocol_error = "bridge output line exceeds protocol bounds"
+                break
+            except Exception as exc:
+                protocol_error = f"could not read bridge output: {type(exc).__name__}"
+                break
+            if control.cancel_event.is_set():
+                cancelled = True
+                break
             if not raw:
                 break  # EOF — process finished producing output
+            if len(raw) > MAX_PROTOCOL_LINE_BYTES:
+                protocol_error = "bridge output line exceeds protocol bounds"
+                break
             line = raw.decode("utf-8", errors="replace").rstrip("\n")
             if line.startswith(step_line_prefix):
                 try:
-                    info = json.loads(line[len(step_line_prefix):])
-                except Exception:
-                    continue
+                    info = _bounded_payload(json.loads(line[len(step_line_prefix):]))
+                    if not isinstance(info, dict):
+                        raise ValueError("step payload must be an object")
+                except Exception as exc:
+                    protocol_error = f"invalid step payload: {exc}"
+                    break
                 if progress_kinds is None or info.get("kind") in progress_kinds:
                     steps_seen += 1
-                await emit({**base, "type": f"{event_type_prefix}.step", **info})
+                await emit({**info, **base, "type": f"{event_type_prefix}.step"})
             elif line.startswith(result_line_prefix):
                 try:
-                    result = json.loads(line[len(result_line_prefix):])
+                    result = _bounded_payload(json.loads(line[len(result_line_prefix):]))
+                    if not isinstance(result, dict):
+                        raise ValueError("result payload must be an object")
+                    if not isinstance(result.get("ok"), bool):
+                        raise ValueError("result payload requires boolean ok")
                 except Exception as e:
-                    result = {"ok": False, "error": f"could not parse result: {e}"}
+                    protocol_error = f"invalid result payload: {e}"
                 break
     finally:
-        if stalled or timed_out:
-            try:
-                proc.kill()
-            except Exception:
-                pass
+        if cancelled or stalled or timed_out or protocol_error:
+            _kill_owned_process(control)
         try:
             await asyncio.wait_for(proc.wait(), timeout=10)
         except Exception:
             pass
         stderr_task.cancel()
+        await asyncio.gather(stderr_task, return_exceptions=True)
+        with _ACTIVE_RUNS_LOCK:
+            control.process = None
 
     elapsed = round(time.time() - t0, 2)
 
-    if result is not None:
-        result.setdefault("elapsed_s", elapsed)
-        result.setdefault("steps", steps_seen)
+    if result is not None and not cancelled and not protocol_error:
+        _mark_terminal(control)
+        result["elapsed_s"] = elapsed
+        result["steps"] = steps_seen
         await emit({**base, "type": f"{event_type_prefix}.done",
                     "ok": result.get("ok", False), "elapsed_s": elapsed,
                     "result": result})
         return
 
-    if stalled:
+    _mark_terminal(control)
+    if cancelled or control.cancel_event.is_set():
+        reason_code = "cancelled"
+        err = "run cancelled"
+    elif protocol_error:
+        reason_code = "invalid_output"
+        err = protocol_error
+    elif stalled:
+        reason_code = "stalled"
         err = f"no progress for {stall_s}s (stalled) — steps seen: {steps_seen}"
     elif timed_out:
+        reason_code = "timeout"
         err = f"timed out after {timeout_s}s — steps seen: {steps_seen}"
     else:
+        reason_code = "process_exit"
         err = "container exited before printing its result line"
     err_tail = ("".join(stderr_buf))[-800:]
     await emit({**base, "type": f"{event_type_prefix}.error",
+               "reason_code": reason_code, "cancelled": reason_code == "cancelled",
                "error": err, "stderr_tail": err_tail, "elapsed_s": elapsed})
 
 

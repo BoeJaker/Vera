@@ -20,7 +20,7 @@ def langgraph_runtime_descriptor(image: str = "vera-langgraph:latest") -> Runtim
             "run": ("supported", "Validated container requests delegate to the shared bridge runner."),
             "stream": ("supported", "BRIDGE_STEP and BRIDGE_RESULT lines stream through the shared parser."),
             "events": ("supported", "The existing langgraph.run event prefix is preserved."),
-            "cancellation": ("partial", "Timeout and stall kill are supported; user run-id cancellation is not yet exposed."),
+            "cancellation": ("supported", "Validated active run IDs map to exact owned process handles and one terminal event."),
             "resource_gates": ("supported", "The shared cross-process Ollama gate is acquired and always released."),
             "teardown": ("supported", "The runner kills stalled work and Docker removes the throwaway container."),
             "version_reporting": ("partial", "The pinned package and image are declared; live package attestation is queued."),

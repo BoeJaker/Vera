@@ -26,6 +26,7 @@ Capabilities
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -34,6 +35,7 @@ from fastapi.responses import HTMLResponse
 
 from Vera.vera.agentbridges.agentbridge_registry import BRIDGES, BY_ID
 from Vera.vera.agentbridges.agentbridge_runtime import image_present
+from Vera.vera.agentbridges.runtime_adapter import ContainerRuntimeAdapter
 from Vera.vera.agentbridges.runtime_matrix import compile_runtime_matrix
 from Vera.vera.langgraph.runtime_contract import langgraph_runtime_descriptor
 from Vera.vera.execution.a2a_adapter import compile_a2a_adapter_status
@@ -45,9 +47,11 @@ from Vera.vera.providers.document_parser import document_parser_status
 from Vera.vera.capability_orchestration import (
     APP, CAPABILITY_REGISTRY, capability, register_ui,
 )
-import os
-
 log = logging.getLogger("vera.agentbridges.catalog")
+_RUNTIME_ADAPTERS = {
+    "langgraph": ContainerRuntimeAdapter(langgraph_runtime_descriptor(
+        os.environ.get("LANGGRAPH_IMAGE", "vera-langgraph:latest"))),
+}
 
 
 @capability(
@@ -79,8 +83,8 @@ async def agentbridge_interoperability(trace_id=None) -> Dict[str, Any]:
     build_plan = build_plan_contract()
     structured = structured_generation_status()
     documents = document_parser_status()
-    runtime_adapters = [langgraph_runtime_descriptor(
-        os.environ.get("LANGGRAPH_IMAGE", "vera-langgraph:latest")).to_dict()]
+    runtime_adapters = [adapter.inspect()
+                        for adapter in _RUNTIME_ADAPTERS.values()]
     shared = (
         ("capability_v2", "cap.contract.manifest"),
         ("resolver_shadow", "cap.resolve.shadow"),
@@ -90,6 +94,7 @@ async def agentbridge_interoperability(trace_id=None) -> Dict[str, Any]:
         ("portable_telemetry", "run.telemetry.status"),
         ("durability_fixture", "workflow.durability.fixture"),
         ("runtime_matrix", "agentbridge.runtime_matrix"),
+        ("runtime_cancel", "agentbridge.run.cancel"),
         ("a2a_conformance", "interop.a2a.conformance"),
         ("source_lifecycle", "integration.source.lifecycle"),
         ("source_inspection", "integration.source.inspect"),
@@ -169,6 +174,28 @@ async def agentbridge_interoperability(trace_id=None) -> Dict[str, Any]:
         "network_io": False,
         "executes": False,
     }
+
+
+@capability(
+    "agentbridge.run.cancel", http_method="POST",
+    http_path="/agentbridge/run/cancel", http_tags=["agentbridge"],
+    memory="off",
+    description="Request cancellation of one active isolated agent-runtime run. "
+                "Inputs: runtime_id and run_id. The runtime adapter targets only "
+                "the exact process handle already owned by that run; it never "
+                "searches or kills by a guessed container name. Output reports "
+                "whether cancellation was accepted or the run was not active.",
+)
+async def agentbridge_run_cancel(runtime_id: str, run_id: str,
+                                 trace_id=None) -> Dict[str, Any]:
+    runtime_id = str(runtime_id or "").strip().lower()
+    adapter = _RUNTIME_ADAPTERS.get(runtime_id)
+    if adapter is None:
+        return {"ok": False, "accepted": False,
+                "reason_code": "runtime_adapter_unknown",
+                "runtime_id": runtime_id,
+                "supported_runtime_ids": sorted(_RUNTIME_ADAPTERS)}
+    return await adapter.cancel(run_id)
 
 _HERE = Path(__file__).parent
 _PANEL_HTML_PATH = _HERE / "agentbridge_catalog_panel.html"

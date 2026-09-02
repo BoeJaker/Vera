@@ -179,13 +179,12 @@ class ContainerRuntimeAdapter:
         )
 
     async def cancel(self, run_id: str) -> dict[str, Any]:
-        """Fail closed until the shared runner owns addressable process handles."""
+        """Request cancellation through the runner's exact process registry."""
         run_id = _bounded(run_id, "run_id", 128)
         if not _RUN_ID.fullmatch(run_id):
             raise ValueError("run_id contains unsupported characters")
-        return {"ok": False, "supported": False,
-                "runtime_id": self.descriptor.runtime_id, "run_id": run_id,
-                "reason_code": "runtime_cancel_unsupported"}
+        result = await bridge.cancel_bridge_run(run_id)
+        return {**result, "runtime_id": self.descriptor.runtime_id}
 
 
 def feature_set(states: Mapping[str, tuple[str, str]]) -> tuple[RuntimeFeature, ...]:
