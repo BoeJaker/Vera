@@ -31,6 +31,10 @@ adapter code has implemented or verified it. An advertised upstream session or
 guardrail therefore remains `not_integrated` until Vera has evidence. The
 matrix imports no optional runtime, installs nothing, performs no model/network
 call, and selects no winner. All execution and failure drills are `queued_live`.
+For a shipped RuntimeAdapter, package pins and directly equivalent lifecycle
+dimensions come from that adapter's declaration. This keeps execution evidence
+in one place without inflating unrelated matrix claims such as policy or
+recovery.
 
 ## Launch lifecycle
 

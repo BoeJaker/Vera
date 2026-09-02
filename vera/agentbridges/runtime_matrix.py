@@ -8,7 +8,7 @@ import re
 from typing import Any
 
 SCHEMA = "vera.agent-runtime-matrix/v1"
-EVIDENCE_AS_OF = "2026-08-29"
+EVIDENCE_AS_OF = "2026-09-02"
 DIMENSIONS = (
     "tools", "providers", "handoffs", "structured_output", "policy",
     "sessions", "recovery", "traces", "resources", "teardown",
@@ -18,6 +18,13 @@ UPSTREAM_STATES = {"supported", "partial", "unknown"}
 VERA_STATES = {"supported", "partial", "not_integrated", "not_applicable"}
 INTEGRATION_STATES = {"native", "shipped_bridge", "prospective", "compatibility_path"}
 _ID = re.compile(r"[a-z][a-z0-9._-]{1,63}\Z")
+_ADAPTER_DIMENSIONS = {
+    "streaming": "stream",
+    "cancellation": "cancellation",
+    "resources": "resource_gates",
+    "teardown": "teardown",
+    "sandbox": "dependency_isolation",
+}
 
 
 def _canonical(value: Any) -> str:
@@ -167,18 +174,58 @@ def _candidate(runtime_id: str, label: str, integration: str, url: str,
                             _features(upstream, vera_supported, vera_partial), gaps, notes)
 
 
+def _apply_adapter(candidate: RuntimeCandidate, descriptor: Any) -> RuntimeCandidate:
+    """Project only direct lifecycle equivalents from a shipped adapter.
+
+    Tools, providers, policy, recovery, traces and other semantic dimensions
+    remain independently assessed; an execution adapter must not inflate them.
+    """
+    if descriptor.runtime_id != candidate.runtime_id:
+        raise ValueError("runtime adapter and matrix candidate IDs must match")
+    features = {item.name: item for item in descriptor.features}
+    assessments = []
+    for item in candidate.assessments:
+        feature_name = _ADAPTER_DIMENSIONS.get(item.dimension)
+        if feature_name is None:
+            assessments.append(item)
+            continue
+        feature = features[feature_name]
+        vera_state = {
+            "supported": "supported",
+            "partial": "partial",
+            "unsupported": "not_integrated",
+        }[feature.state]
+        assessments.append(FeatureAssessment(
+            item.dimension, item.upstream, vera_state,
+            f"RuntimeAdapter declaration: {feature.evidence}"))
+    return RuntimeCandidate(
+        runtime_id=candidate.runtime_id,
+        label=candidate.label,
+        integration=candidate.integration,
+        upstream_url=candidate.upstream_url,
+        package_refs=descriptor.package_refs,
+        assessments=tuple(assessments),
+        gaps=candidate.gaps,
+        notes=candidate.notes,
+    )
+
+
 def compile_runtime_matrix() -> RuntimeMatrix:
+    from Vera.vera.agentbridges.runtime_registry import RUNTIME_ADAPTERS
+
     common = ("tools", "providers", "structured_output", "streaming")
     candidates = (
         _candidate("vera-native", "Vera native loops and DAGs", "native",
                    "https://github.com/BoeJaker/Vera", (), DIMENSIONS,
                    vera_supported=("tools", "providers", "policy", "sessions", "traces", "resources", "streaming", "cancellation", "artifacts", "sandbox", "mcp"),
                    vera_partial=("handoffs", "structured_output", "recovery", "teardown")),
-        _candidate("langgraph", "LangGraph", "shipped_bridge",
-                   "https://docs.langchain.com/oss/python/langgraph/", ("langgraph==1.2.11",),
-                   common + ("handoffs", "sessions", "recovery", "traces", "cancellation"),
-                   vera_supported=("tools", "providers", "streaming", "sandbox"),
-                   vera_partial=("resources", "teardown")),
+        _apply_adapter(
+            _candidate("langgraph", "LangGraph", "shipped_bridge",
+                       "https://docs.langchain.com/oss/python/langgraph/", (),
+                       common + ("handoffs", "sessions", "recovery", "traces", "cancellation"),
+                       vera_supported=("tools", "providers", "streaming", "sandbox"),
+                       vera_partial=("resources", "teardown")),
+            RUNTIME_ADAPTERS["langgraph"].descriptor),
         _candidate("pydanticai", "PydanticAI", "shipped_bridge",
                    "https://pydantic.dev/docs/ai/", ("pydantic-ai-slim==2.31.0",),
                    common + ("handoffs", "sessions", "recovery", "traces", "mcp"),
