@@ -85,6 +85,39 @@ def pick_sandbox(sandboxes: Iterable[Mapping[str, Any]], *,
     return None
 
 
+def pick_reserved(sandboxes: Iterable[Mapping[str, Any]]) -> Optional[dict]:
+    """The RESERVED standing container, or None if no reservation is up.
+
+    A reservation is a pinned, driveable sandbox. Pinned is the whole signal:
+    it means somebody deliberately keeps this container standing as shared
+    infrastructure, which is precisely what "I just need a browser" wants.
+
+    Deliberately NARROWER than pick_sandbox's fallback chain, which will also
+    take an unowned unpinned container. That is a reasonable last resort but it
+    is not a reservation - an unpinned container can be reaped or paused out
+    from under a run mid-click.
+    """
+    live = [dict(s) for s in (sandboxes or []) if is_driveable(s)]
+    live.sort(key=lambda s: _s(s.get("name")))
+    for s in live:
+        if s.get("pinned"):
+            return s
+    return None
+
+
+def reservation_note(sandbox: Mapping[str, Any]) -> str:
+    """Why this run is on the reserved container - said positively.
+
+    substitution_note explains a CONSOLATION ("the primary was unavailable, so
+    ..."). This is not that: the reserved container is the intended home for a
+    browser step, so the trace should not read like a degradation.
+    """
+    return (f"browser step running on the reserved standing sandbox "
+            f"'{_s(sandbox.get('name')) or '?'}' "
+            f"(branch {_s(sandbox.get('branch')) or '?'}) at "
+            f"{_s(sandbox.get('url'))}; the primary singleton was not touched")
+
+
 def substitution_note(sandbox: Mapping[str, Any], primary_error: str) -> str:
     """Why the operator is looking at this container and not the primary.
 
