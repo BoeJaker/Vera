@@ -38,18 +38,109 @@ ACTIONS: Dict[str, Dict[str, Any]] = {
 MUTATING_ACTIONS = {"click", "type", "press", "select", "goto", "nav"}
 
 
+#: Markers the ACTIONS specs use to annotate an argument: "!" required,
+#: "?" optional. They are NOTATION, never part of the key name.
+_ARG_MARKERS = "!?"
+
+
+def split_arg_spec(spec):
+    """('text! ref? clear?') -> (['text'], ['ref', 'clear'], '').
+
+    The third element is a free-form alternation ('ref | x,y') that has no
+    required/optional split, kept verbatim so click/hover still read naturally.
+    """
+    spec = str(spec or "").strip()
+    if not spec:
+        return [], [], ""
+    if "|" in spec:
+        return [], [], spec
+    required, optional = [], []
+    for tok in spec.replace(",", " ").split():
+        bare = tok.strip().rstrip(_ARG_MARKERS)
+        if not bare:
+            continue
+        (optional if tok.endswith("?") else required).append(bare)
+    return required, optional, ""
+
+
 def action_space_text() -> str:
-    """Human/LLM-readable listing of the action space for the thinker prompt."""
+    """Human/LLM-readable listing of the action space for the thinker prompt.
+
+    Argument names are rendered BARE, with required/optional said in words.
+
+    They used to be rendered with their annotation markers still attached -
+    "type(text! ref? clear? submit?)" - and nothing anywhere told the reader
+    that "!" meant required. So the model did the reasonable thing and used
+    what it was shown as the key name, emitting {"text!": "bad-email"}, which
+    validate_action then rejected as "type requires 'text'". Census 28's
+    build-browser-verified lost five consecutive operator runs to it, and the
+    history line echoed the bad key back each turn, teaching it again.
+
+    A prompt that documents an argument as `text!` and then rejects `text!` is
+    not a model failure. Fixed at the source here, and forgiven at the boundary
+    by normalise_arg_keys - the prompt should be right AND the parser should be
+    kind, because the next model will invent its own punctuation.
+    """
     lines = []
     for name, spec in ACTIONS.items():
-        args = spec["args"] or "(no args)"
-        lines.append(f"- {name}({args}) — {spec['doc']}")
+        required, optional, alternation = split_arg_spec(spec.get("args", ""))
+        if alternation:
+            args = "args: " + alternation
+        elif required or optional:
+            bits = []
+            if required:
+                bits.append("required: " + ", ".join(required))
+            if optional:
+                bits.append("optional: " + ", ".join(optional))
+            args = "; ".join(bits)
+        else:
+            args = "no args"
+        lines.append("- %s — %s — %s" % (name, args, spec["doc"]))
     return "\n".join(lines)
 
 
+#: Trailing characters a model may glue onto an argument NAME: the "!"/"?"
+#: annotation markers, and the "=" / ":" of an assignment it half-copied
+#: ({"ref= ": "e1"} was observed alongside {"text! ": "..."}).
+_KEY_NOISE = "!?=: \t"
+
+
+def normalise_arg_keys(args):
+    """Strip annotation noise a model glued onto argument NAMES.
+
+    {"text! ": "x", "ref= ": "e1", "clear?": True} -> {"text": "x", "ref": "e1",
+    "clear": True}. Values are never touched - only keys.
+
+    An exact key always wins: given both "text" and "text!", the documented one
+    is kept, because a model that emitted both meant the real one.
+
+    No action argument legitimately contains any of these characters (url, ref,
+    x, y, text, clear, submit, key, dy, dx, value, label, ms, selector,
+    direction, summary), so this cannot mangle a valid call.
+    """
+    out = {}
+    for raw_key, value in dict(args or {}).items():
+        if not isinstance(raw_key, str):
+            out[raw_key] = value
+            continue
+        clean = raw_key.strip().strip(_KEY_NOISE)
+        if not clean:
+            continue
+        # An exactly-correct key already present must not be overwritten by a
+        # noisy duplicate that normalises onto it.
+        if clean in out and raw_key != clean:
+            continue
+        out[clean] = value
+    return out
+
+
 def validate_action(action: str, args: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Pure structural validation. Returns {ok, error, action, args}."""
-    args = dict(args or {})
+    """Pure structural validation. Returns {ok, error, action, args}.
+
+    The returned ``args`` are NORMALISED and are what the caller must execute -
+    validating a repaired call and then running the raw one would fix nothing.
+    """
+    args = normalise_arg_keys(args)
     if action not in ACTIONS:
         return {"ok": False, "error": f"unknown action '{action}'. "
                 f"Valid: {', '.join(ACTIONS)}"}
