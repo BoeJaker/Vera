@@ -106,6 +106,21 @@ def _repeat_signature(action: str, args: Optional[Dict[str, Any]], url: str) -> 
     return "%s|%s|%s" % (str(action or ""), a, str(url or ""))
 
 
+#: How much of a page's text to remember per step. Long enough to carry a
+#: clock, a countdown, a total or a validation message; short enough that eight
+#: of them do not crowd out the current page.
+SEEN_CHARS = 120
+
+
+def _observed_text(obs) -> str:
+    """A one-line digest of what the page showed, for the history line."""
+    text = " ".join(str(getattr(obs, "text", "") or "").split())
+    if not text:
+        title = str(getattr(obs, "title", "") or "").strip()
+        return title[:SEEN_CHARS]
+    return text[:SEEN_CHARS]
+
+
 async def run_loop(goal: str, session, *,
                    call_cap: Optional[Callable[..., Awaitable[Any]]] = None,
                    policy: Optional[_safety.SafetyPolicy] = None,
@@ -290,7 +305,18 @@ async def run_loop(goal: str, session, *,
                "screenshot": getattr(obs, "screenshot_path", ""),
                "ms": int((time.time() - t0) * 1000)}
         steps.append(rec)
-        history.append({"action": action, "args": args, "result": result})
+        # The THOUGHT is kept because the run's own conclusion is the best
+        # signal that it has finished - operator/completion reads it.
+        history.append({"action": action, "args": args, "result": result,
+                        "thought": thought,
+                        # WHAT THE PAGE SHOWED. Without it a goal phrased as
+                        # "observe X count down from 01:30 to 00:00" is
+                        # impossible: the model gets one snapshot per turn and
+                        # no record of the previous ones, so it cannot see the
+                        # change it is being asked to confirm. Census 30 run
+                        # 00f154eb0e watched 01:30 -> 00:54 -> 00:00 and then
+                        # said "I need to start by clicking the Start button".
+                        "seen": _observed_text(obs)})
         session.history.append(rec)
         await _emit(rec)
 

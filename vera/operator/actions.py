@@ -134,13 +134,41 @@ def normalise_arg_keys(args):
     return out
 
 
+#: Arguments whose value is a KEYWORD, not free text: a key name, a direction.
+#: Quotes are never part of such a value, so a model that wrote "'Tab'" meant
+#: Tab. `text` is deliberately NOT here - a user may legitimately type quotes.
+_QUOTED_VALUE_ARGS = ("key", "direction")
+
+
+def normalise_arg_values(action: str, args):
+    """Unwrap quotes a model put around a KEYWORD argument.
+
+    Census 30, run c493020948: two consecutive steps issued
+    ``press {"key": "'Tab'"}``. Playwright has no key called ``'Tab'``, so both
+    were wasted, and the run went on to spend its whole budget waiting for a
+    blur that never happened.
+
+    Only the enumerated arguments are touched, and only a matching pair of
+    surrounding quotes is removed.
+    """
+    out = dict(args or {})
+    for name in _QUOTED_VALUE_ARGS:
+        val = out.get(name)
+        if not isinstance(val, str):
+            continue
+        v = val.strip()
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"', "`"):
+            out[name] = v[1:-1].strip()
+    return out
+
+
 def validate_action(action: str, args: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Pure structural validation. Returns {ok, error, action, args}.
 
     The returned ``args`` are NORMALISED and are what the caller must execute -
     validating a repaired call and then running the raw one would fix nothing.
     """
-    args = normalise_arg_keys(args)
+    args = normalise_arg_values(action, normalise_arg_keys(args))
     if action not in ACTIONS:
         return {"ok": False, "error": f"unknown action '{action}'. "
                 f"Valid: {', '.join(ACTIONS)}"}
