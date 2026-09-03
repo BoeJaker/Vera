@@ -83,6 +83,32 @@ _SMART_QUOTES = {
 }
 
 
+def finalise_decision(decision):
+    """Structural check + argument repair, applied to a parsed decision.
+
+    Split out so the repair is one function the loop and the tests both call.
+
+    validate_action REPAIRS argument names a model glued annotation onto
+    ("text!" -> "text"). actions.perform re-validates and already executes the
+    repaired args, so EXECUTION was never the gap. The gap was the decision
+    itself: it kept the RAW args, so operator_loop recorded "text!" in its
+    history, build_prompt echoed that back as the argument name every turn, and
+    its ``k != "text"`` filter no longer matched - so the typed value was fed
+    back too. The model was being retaught the wrong key on every pass. Writing
+    the repaired args back onto the decision is what closes that loop.
+
+    An invalid action is marked, never executed.
+    """
+    if not isinstance(decision, dict) or decision.get("error"):
+        return decision
+    v = validate_action(decision.get("action"), decision.get("args"))
+    if not v["ok"]:
+        decision["invalid"] = v["error"]
+    else:
+        decision["args"] = v["args"]
+    return decision
+
+
 def parse_decision(text: str) -> Dict[str, Any]:
     """Extract {thought, action, args, done} from an LLM response. Tolerant of
     code fences and surrounding prose. Returns {error} if unrecoverable."""
@@ -169,7 +195,5 @@ async def decide(goal: str, observation, history: Optional[List[Dict[str, Any]]]
     if decision.get("error"):
         return decision
     # structural sanity — surface (don't execute) an illegal action
-    v = validate_action(decision["action"], decision.get("args"))
-    if not v["ok"]:
-        decision["invalid"] = v["error"]
+    decision = finalise_decision(decision)
     return decision
