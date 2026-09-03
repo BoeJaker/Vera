@@ -11587,6 +11587,35 @@ except Exception:                                     # pragma: no cover
         log.warning("editor_reply unavailable - decline replies stay opaque")
 
 
+# A second accepted editor format, where the code is not inside a JSON string.
+try:
+    from Vera.vera.dag import edit_blocks as _edit_blocks
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import edit_blocks as _edit_blocks
+    except Exception:
+        _edit_blocks = None
+        log.warning("edit_blocks unavailable - the editor can only answer in "
+                    "JSON, so an unescaped quote in a code payload is a total loss")
+
+
+def _editor_obj_from_reply(raw_text: str) -> dict:
+    """Both accepted editor formats, in the order that loses least.
+
+    Delimited blocks are tried FIRST when present, because they cannot be
+    broken by an unescaped quote - which is the failure this exists for
+    (census 29, build-simple-code, three consecutive total losses). If blocks
+    are present but unusable we still fall through to JSON rather than fail:
+    a reply is allowed to be a hybrid, and refusing one we could read would
+    repeat the mistake being fixed.
+    """
+    if _edit_blocks is not None and _edit_blocks.looks_like_blocks(raw_text):
+        parsed = _edit_blocks.parse(raw_text)
+        if parsed.get("edits"):
+            return {"edits": parsed["edits"], "note": parsed.get("note", "")}
+    return _extract_json(raw_text) or {}
+
+
 # Bounding how much the editor may emit for the file it is editing.
 try:
     from Vera.vera.dag import editor_output_bound as _editor_output_bound
@@ -11723,10 +11752,12 @@ async def cap_code_edit(path: str, task: str = "", session_id: str = "", repo: s
     sys_prompt = (
         "You are the EDITOR of Vera's coding cohort. You make SURGICAL edits to an existing "
         "file — you never rewrite it.\n"
-        "Return ONLY a JSON object:\n"
-        '  {"edits":[{"find":"<exact text to replace>","replace":"<new text>"}, ...],'
-        '"note":"<one line on what you changed>"}\n'
-        "Rules:\n"
+        + (_edit_blocks.format_instructions() + "\n"
+           if _edit_blocks is not None else
+           "Return ONLY a JSON object:\n"
+           '  {"edits":[{"find":"<exact text to replace>","replace":"<new text>"}, ...],'
+           '"note":"<one line on what you changed>"}\n')
+        + "Rules:\n"
         "  • `find` must be copied EXACTLY from the file, including indentation, and must be "
         "UNIQUE — include enough surrounding lines to make it so. A non-unique or absent "
         "anchor is rejected.\n"
@@ -11772,7 +11803,7 @@ async def cap_code_edit(path: str, task: str = "", session_id: str = "", repo: s
         except Exception as e:
             return {"ok": False, "error": f"generation failed: {e}", "path": path}
         _raw_text = _strip_think(_v5_gen_text(raw) or "")[0]
-        obj = _extract_json(_raw_text) or {}
+        obj = _editor_obj_from_reply(_raw_text)
         # An empty `edits` list WITH a note is the model declining, in the exact
         # shape we asked for - not a malfunction. Measured 2026-08-31: six of
         # eight identical runs of "Make the timer better." came back as

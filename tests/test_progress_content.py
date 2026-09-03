@@ -109,13 +109,25 @@ def test_the_models_95_second_budget_is_floored():
     """cyc7 verbatim: it asked for 95s and died at 103s having managed five
     steps of a task needing a click and a two-second wait."""
     assert ob.caller_budget(95) == ob.MIN_CALLER_SECONDS
-    assert ob.MIN_CALLER_SECONDS >= 180
+    assert ob.MIN_CALLER_SECONDS >= 180   # now the default itself, 480
 
 
-def test_a_sensible_tightening_is_honoured():
-    """The point is a floor, not ignoring the caller."""
+def test_a_caller_may_extend_but_no_longer_shrink_below_the_default():
+    """CONTRACT CHANGED 2026-09-03, and this test with it.
+
+    It used to assert that 200s was "a sensible tightening" and honoured. The
+    floor was 180s then, and it was a guess. Census 29 spent it: three operator
+    runs stopped on "187s (budget 180s)" and "200s (budget 180s)" after 9 and 5
+    steps - 200s was not sensible, it was the same starvation one notch up.
+
+    Every caller value observed has come from the MODEL and every one has been
+    too small (95s in census 28, sub-180s in 29). So the floor IS the default:
+    extend freely, never shrink. max_steps remains the honest lever for
+    "keep this short"; the clock is not.
+    """
     assert ob.caller_budget(600) == 600
-    assert ob.caller_budget(200) == 200
+    assert ob.caller_budget(200) == ob.DEFAULT_MAX_SECONDS
+    assert ob.MIN_CALLER_SECONDS == float(ob.DEFAULT_MAX_SECONDS)
 
 
 def test_no_preference_takes_the_default():

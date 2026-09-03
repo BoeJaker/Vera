@@ -38,14 +38,21 @@ DEFAULT_MAX_SECONDS = 480
 #: The stop reason, alongside max_steps / no_progress / repeating_action.
 STOP_REASON = "time_budget"
 
-#: The least a CALLER may ask for. Exposing max_seconds on the cap means the
-#: model can now set it, and it does: census 24, author-then-edit cyc7 passed
-#: max_seconds=95 and the run died at 103s having managed five steps of a task
-#: that needed a click and a two-second wait. One observe -> think -> act cycle
-#: contains a full generation, so a budget under a few of them cannot finish
-#: anything and only converts a slow run into a failed one. A caller may tighten
-#: the budget, but not below the point where the run is doomed.
-MIN_CALLER_SECONDS = 180.0
+#: The least a CALLER may ask for - which is now the default itself: a caller
+#: may EXTEND the budget, never shrink it.
+#:
+#: This was 180s, and 180s was a guess. Census 29 spent it: three operator runs
+#: stopped on "time_budget ... 187s (budget 180s)" and "200s (budget 180s)"
+#: after 9 and 5 steps, on goals that plainly needed more. One observe/think/act
+#: cycle contains a whole generation - 20-40s on this hardware - so 180s buys
+#: about five cycles against a max_steps of 15, and the run is doomed before it
+#: starts.
+#:
+#: Every caller-supplied value observed so far has come from the MODEL, and
+#: every one has been too small: 95s in census 28, sub-180s in 29. The model is
+#: expressing urgency, not estimating how long a browser needs. max_steps is
+#: the honest lever for "keep this short"; the clock is not.
+MIN_CALLER_SECONDS = float(DEFAULT_MAX_SECONDS)
 
 
 def caller_budget(requested: float, default_s: float = DEFAULT_MAX_SECONDS) -> float:
