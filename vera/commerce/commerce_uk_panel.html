@@ -602,12 +602,12 @@ RENDER.sourcing=async()=>{
 
 // ── market & deals ───────────────────────────────────────────────────────────
 RENDER.market=async()=>{
-  const m=$('#main');m.innerHTML='<h2>Market &amp; Deals</h2><div class="sub">Live eBay + Vinted OSINT, watchlists & buy alerts</div>';
+  const m=$('#main');m.innerHTML='<h2>Market &amp; Deals</h2><div class="sub">Live eBay + Vinted + Facebook OSINT, plus URL watches on any store; watchlists &amp; buy alerts</div>';
   // search
   const sc=el('div',{class:'card'});sc.append(el('h3',{},'⌕ Market search'));
   const q=el('input',{placeholder:'e.g. Zelda amiibo, PS2 slim boxed',style:'flex:1;min-width:220px'});
   q.addEventListener('keydown',e=>{if(e.key==='Enter')search();});
-  const plat=el('select');['any','ebay','vinted'].forEach(x=>plat.append(el('option',{value:x},x)));
+  const plat=el('select');['any','ebay','vinted','facebook'].forEach(x=>plat.append(el('option',{value:x},x)));
   sc.append(el('div',{class:'row'},q,plat,el('button',{class:'btn pri',onclick:search},'Search'),
     el('button',{class:'btn',onclick:()=>watchModal({name:q.value,query:q.value})},'+ Watch this')));
   const sres=el('div',{style:'margin-top:10px'});sc.append(sres);m.append(sc);
