@@ -56,6 +56,7 @@ log = logging.getLogger("vera.operator")
 # exactly what shipped on 2026-08-31 and took operator.run out of prod.
 from Vera.vera.operator import operator_progress as _progress   # noqa: E402
 from Vera.vera.operator import sandbox_file_target as _sfile    # noqa: E402
+from Vera.vera.operator import goal_file as _goal_file          # noqa: E402
 
 
 def _orch_base_url() -> str:
@@ -722,6 +723,16 @@ async def cap_run(goal: str = "", url: str = "", kind: str = "", base_url: str =
     # Census run 18: two runs spent 21 minutes clicking Vera's own dashboard
     # hunting for a timer that lived in timer.html, because no URL was passed.
     _target_note = ""
+    # Neither a url nor a path was given - the planner just wrote a sentence.
+    # Before falling back to the orchestrator root (never the right place to
+    # verify a file this run wrote), see whether the goal NAMES the file.
+    # Census 29: three runs landed on https://localhost:8999/ and spent their
+    # budget clicking Vera's own dashboard.
+    if not url and not path:
+        _named = _goal_file.filename_in_goal(goal)
+        if _named:
+            path = _named
+            log.info("operator.run target from the goal text: %s", _named)
     if path and not url:
         _sbx = str(sandbox_session or session_id or "").strip()
         _res = _sfile.resolve(url, path, base_url=_orch_base_url(), session_id=_sbx)
