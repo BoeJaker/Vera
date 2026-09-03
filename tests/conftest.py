@@ -102,6 +102,7 @@ _CRITICAL_MODULES = {
     "test_godseye_core",       # vendored-app static serving: a path-guard hole serves arbitrary host files; git argv must reject option/ext:: injection
     "test_operator_arg_key_noise",
     "test_edit_blocks_and_target",
+    "test_operator_says_done",
 }
 
 

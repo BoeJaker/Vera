@@ -57,6 +57,13 @@ log = logging.getLogger("vera.operator")
 from Vera.vera.operator import operator_progress as _progress   # noqa: E402
 from Vera.vera.operator import sandbox_file_target as _sfile    # noqa: E402
 from Vera.vera.operator import goal_file as _goal_file          # noqa: E402
+# Dual-spelled: Vera.vera.* resolves to the MAIN checkout, which does not have
+# a module until it lands there - so a NEW sibling must fall back to the plain
+# package or every test in this file dies at import.
+try:
+    from Vera.vera.operator import session_target as _sess_target   # noqa: E402
+except ImportError:                                                  # pragma: no cover
+    from vera.operator import session_target as _sess_target        # noqa: E402
 
 
 def _orch_base_url() -> str:
@@ -754,6 +761,26 @@ async def cap_run(goal: str = "", url: str = "", kind: str = "", base_url: str =
             return start
         s = _be.get_session(start["session_id"])
         own = True
+    elif url:
+        # A REUSED session is still showing the previous run's page - nothing
+        # above navigated it, because only _open_session does that. Census 30
+        # run ce4b0a4725 was handed the correct preview url and spent all
+        # twelve steps on the dashboard trying to reach it. See session_target.
+        _cur = ""
+        try:
+            _cur = str(getattr(getattr(s, "page", None), "url", "") or "")
+        except Exception:
+            _cur = ""
+        if _sess_target.needs_navigation(_cur, url):
+            try:
+                _nav = await _actions.perform(s, "goto", {"url": url})
+                if _nav.get("error"):
+                    log.warning("operator.run: reused session could not reach %s: %s",
+                                url, _nav["error"])
+                else:
+                    log.info("operator.run: moved reused session %s -> %s", _cur, url)
+            except Exception as e:
+                log.warning("operator.run: navigating reused session failed: %s", e)
     resolved = s.target or {}
     # Session policy (set at connect) UNIONed with any per-run overrides.
     policy = _policy_for_session(s, allowlist=allowlist, dry_run=dry_run,

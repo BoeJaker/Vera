@@ -25,6 +25,7 @@ import re
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from .actions import ACTIONS, action_space_text, validate_action
+from . import completion as _completion
 
 log = logging.getLogger("vera.operator.thinker")
 
@@ -53,7 +54,14 @@ def build_prompt(goal: str, observation, history: Optional[List[Dict[str, Any]]]
         res = h.get("result") or {}
         status = "ok" if res.get("ok") else ("error: " + str(res.get("error", ""))[:80]
                                              if res.get("error") else "?")
-        hist_lines.append(f"- {act} {json.dumps(args, default=str)[:80]} → {status}")
+        line = f"- {act} {json.dumps(args, default=str)[:80]} → {status}"
+        # What the page SHOWED after the action. A history of verbs alone
+        # cannot answer "did it count down?" - the evidence the goal asks
+        # for lives in the text, and it used to scroll past unrecorded.
+        seen = str(h.get("seen") or "").strip()
+        if seen:
+            line += f"\n    page showed: {seen}"
+        hist_lines.append(line)
     hist_text = "\n".join(hist_lines) or "(nothing yet)"
 
     obs_text = observation.compact(max_elements=max_elements) \
@@ -67,8 +75,16 @@ def build_prompt(goal: str, observation, history: Optional[List[Dict[str, Any]]]
         f"ACTION SPACE (choose one):\n{action_space_text()}\n{canvas_note}\n\n"
         f"HISTORY (most recent last):\n{hist_text}\n\n"
         f"CURRENT PAGE:\n{obs_text}\n\n"
-        'Reply with one JSON object: '
-        '{"thought": "...", "action": "<name>", "args": {...}, "done": false}'
+        + (_completion.nudge_for(hist) + "\n\n"
+           if _completion.nudge_for(hist) else "")
+        # NOT '"done": false'. The template used to pre-fill the answer on
+        # every turn, and a slot shown with an answer in it gets copied -
+        # measured on this codebase the same day, where an editor
+        # placeholder came back as an edit's replacement. Only 3 of 19
+        # recent runs ever said done; 16 ran out of steps or time.
+        + 'Reply with one JSON object: '
+        '{"thought": "...", "action": "<name>", "args": {...}, '
+        '"done": true if the goal is now verified, otherwise false}'
     )
     return {"system": _SYSTEM, "user": user}
 
