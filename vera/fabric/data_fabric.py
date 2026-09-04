@@ -4746,7 +4746,14 @@ async def _pull_source(src: dict) -> int:
     if records and HAS_AIOSQLITE:
         try:
             all_ids = [r["id"] for r in records]
-            async with aiosqlite.connect(_db_path(ds_id)) as db:
+            # SQLITE_PATH, not _db_path(ds_id): _db_path has never existed in
+            # this module, so this raised NameError on EVERY pull and the
+            # except below logged it at debug and moved on. existing_ids
+            # therefore stayed empty, new_records became "all of them", and
+            # _run_extras re-embedded the entire pull every cycle - the exact
+            # storm the comment above says was fixed. Records live in one
+            # SQLITE_PATH database (see _sqlite_conn), not one file per dataset.
+            async with aiosqlite.connect(SQLITE_PATH) as db:
                 for ci in range(0, len(all_ids), 200):
                     chunk_ids = all_ids[ci:ci+200]
                     placeholders = ",".join("?" * len(chunk_ids))
@@ -4760,7 +4767,11 @@ async def _pull_source(src: dict) -> int:
                 log.info("pull %s: %d/%d records already exist — will skip embed for those",
                          label, len(existing_ids), len(records))
         except Exception as e:
-            log.debug("pre-insert dedup check: %s", e)
+            # WARNING, not debug. At debug this hid a NameError for as long as
+            # the check has existed, and the only visible symptom was a large
+            # embedding bill. If this guard breaks again it should say so.
+            log.warning("pre-insert dedup check failed - every record in this "
+                        "pull will be re-embedded: %s", e)
 
     # Bulk SQLite insert through the writer queue, with progress events.
     # We split into chunks so the UI gets a live stream of records appearing.
@@ -4868,6 +4879,40 @@ async def _pull_source(src: dict) -> int:
 # ─────────────────────────────────────────────────────────────────────────────
 
 _AUTO_PULL_SEM = None  # initialised lazily
+
+def _last_pull_epoch(src: dict) -> float:
+    """Epoch seconds of a source's last pull, from the PERSISTED field.
+
+    fabric_sources.last_pulled is written on every pull and reloaded by
+    _sqlite_sources (SELECT *), but the scheduler reads the in-memory
+    `_last_pull_ts`, which nothing ever seeded from it - so the stored value
+    was loaded and ignored, and every source went due on every boot.
+
+    Returns 0.0 when there is no usable timestamp, which keeps the old
+    behaviour for a source that genuinely has never been pulled.
+    """
+    raw = str(src.get("_last_pull_ts") or "").strip()
+    if raw:
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            pass
+    stamp = str(src.get("last_pulled") or "").strip()
+    if not stamp:
+        return 0.0
+    try:
+        # Imported locally, as elsewhere in this module: datetime is NOT a
+        # module-level name here, and assuming it was is how the bug this
+        # function exists to fix got in.
+        from datetime import datetime as _dt, timezone as _tz
+        txt = stamp.replace("Z", "+00:00")
+        d = _dt.fromisoformat(txt)
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=_tz.utc)
+        return d.timestamp()
+    except Exception:
+        return 0.0
+
 
 async def _auto_pull_loop():
     global _AUTO_PULL_SEM
@@ -9138,6 +9183,12 @@ async def _startup():
     try:
         srcs = await _sqlite_sources()
         for s in srcs:
+            # Seed the scheduler clock from the PERSISTED last_pulled. Without
+            # this _last_pull_ts is absent after a restart, so `now - 0 >=
+            # interval` is true for every source and all of them become due at
+            # once. Measured 2026-09-04: 1,885 sources pre-loaded, and the log
+            # showed 1,233 "returned no items" pulls after a single restart.
+            s["_last_pull_ts"] = _last_pull_epoch(s)
             _SOURCES[s["id"]] = s
         if srcs:
             log.info("data_fabric: loaded %d sources from SQLite", len(srcs))
