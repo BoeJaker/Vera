@@ -103,6 +103,7 @@ _CRITICAL_MODULES = {
     "test_operator_arg_key_noise",
     "test_edit_blocks_and_target",
     "test_operator_says_done",
+    "test_probe_backoff",
 }
 
 
