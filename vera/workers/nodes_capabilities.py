@@ -1468,6 +1468,20 @@ except Exception as e:
 TEMP_PROBE_SEC = 60.0
 _TEMP_INSTALL_BACKOFF = 3600.0 * 6   # don't hammer apt on a host that keeps failing
 
+# ...and don't hammer the CONNECTION either. Measured on prod 2026-09-04: of 28
+# registered hosts 21 answered "no route to host" and 4 "PermissionDenied", and
+# all 28 were dialled every 60s regardless - 92,928 cumulative SSH opens, ~64 a
+# minute, with the host process at 57% CPU and nothing running. The install step
+# above has had a backoff for ages; the dialling never did, and the dialling is
+# the expensive part. See probe_backoff.
+try:
+    from Vera.vera.workers import probe_backoff as _probe_backoff
+except ImportError:                                   # pragma: no cover
+    from vera.workers import probe_backoff as _probe_backoff
+
+#: host_id -> backoff state (see probe_backoff). Empty means "probe normally".
+_TEMP_BACKOFF: Dict[str, dict] = {}
+
 _TEMP_SCRIPT = r"""
 if command -v sensors >/dev/null 2>&1; then
   echo "SENSORS_BEGIN"
@@ -1739,8 +1753,23 @@ async def _probe_host_temp(host: Dict) -> None:
     if not host_id:
         return
     label = host.get("label") or host.get("host") or host_id
+    _now = time.time()
+    _bo = _TEMP_BACKOFF.get(host_id)
+    if _probe_backoff.should_skip(_bo, _now):
+        # Leave the cached entry in place but SAY it is stale, so a skipped
+        # host cannot be mistaken for one that was probed and had nothing.
+        _prev = dict(_TEMP_CACHE.get(host_id) or {})
+        _prev.update({"host_id": host_id, "label": label,
+                      "error": _probe_backoff.describe(_bo, _now)})
+        _TEMP_CACHE[host_id] = _prev
+        return
     try:
         r = await _ssh(host_id, _TEMP_SCRIPT, timeout=25)
+        _rerr = (r or {}).get("error") or ""
+        if _rerr:
+            _TEMP_BACKOFF[host_id] = _probe_backoff.record_failure(_bo, _now, _rerr)
+        else:
+            _TEMP_BACKOFF[host_id] = _probe_backoff.record_success(_bo)
         out = r.get("stdout", "") or ""
         temps: Dict[str, float] = {}
         missing_tools = []
@@ -1804,6 +1833,7 @@ async def _probe_host_temp(host: Dict) -> None:
             "updated_at": now_iso(), "error": error,
         }
     except Exception as e:
+        _TEMP_BACKOFF[host_id] = _probe_backoff.record_failure(_bo, _now, e)
         _TEMP_CACHE[host_id] = {
             "host_id": host_id, "label": label, "pve": False,
             "temps": {}, "max_c": None, "percpu": {}, "health": {"fan": {}, "voltage": {}, "power": {}},
