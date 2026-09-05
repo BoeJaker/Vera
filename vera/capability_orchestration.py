@@ -9475,6 +9475,10 @@ async def lifespan(app: FastAPI):
         # W0-03: deterministic summaries over the existing observability stream.
         os.path.join(_here, "performance/timing_capabilities.py"),
         os.path.join(_here, "mcp/mcp_catalog_capabilities.py"),
+        # n8n: workflow automation reached over its REST API, plus its MCP
+        # Server Trigger consumed through the real MCP client in vera/mcp/ —
+        # after the catalog, whose connect path reuses that same client.
+        os.path.join(_here, "n8n/n8n_capabilities.py"),
         os.path.join(_here, "evolve/evolve_capabilities.py"),
         # Closed-loop orchestrator (M7 Phase B) — part of Loop Lab; dedicated module.
         os.path.join(_here, "evolve/orchestrator_capabilities.py"),

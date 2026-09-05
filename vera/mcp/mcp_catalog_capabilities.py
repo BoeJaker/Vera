@@ -743,15 +743,85 @@ async def cap_connect(id: str = "", trace_id=None):
         return {"ok": bool(registered), "status": "connected" if registered else "error",
                 "registered": registered, "count": len(registered)}
 
-    # Non-Vera transports: validate config, store as configured/enabled.
     if not _is_configured(rec):
         missing = [f["label"] for f in rec.get("config_fields", [])
                    if f.get("required") and not _field_value(opened, f)]
         return {"error": "missing required config: " + ", ".join(missing)}
+
+    # http/sse are REAL MCP endpoints — connect properly and register the tools
+    # as capabilities, rather than storing a config the operator has no way to
+    # validate. stdio still needs an external runtime to launch the process.
+    if rec.get("transport") in ("sse", "http"):
+        url = opened.get("url", "").strip()
+        if not url:
+            return {"error": "set the server URL first"}
+        try:
+            registered = await _register_remote_mcp(rec, opened, url)
+        except Exception as e:
+            await _set_status(id, "error")
+            return {"error": f"MCP connect failed: {e}"}
+        await _set_status(id, "connected", enabled=True)
+        return {"ok": True, "status": "connected", "registered": registered,
+                "count": len(registered)}
+
     await _set_status(id, "configured", enabled=True)
     return {"ok": True, "status": "configured",
             "note": "Config stored. Launch via your MCP client runtime "
                     "(command/args/env below) or a Vera stdio bridge."}
+
+
+async def _register_remote_mcp(rec: Dict, opened: Dict, url: str) -> List[str]:
+    """Open a real MCP session and install each tool as `<server-id>.<tool>`."""
+    from Vera.vera.mcp.mcp_client import MCPClient
+    from Vera.vera.mcp import mcp_client_core as mcc
+
+    headers = dict(opened.get("headers") or {})
+    token = ""
+    for k in list(headers):
+        if k.lower() == "authorization":
+            token = headers.pop(k).replace("Bearer ", "").strip()
+    header_name, header_value = ("", "")
+    if headers:
+        header_name, header_value = next(iter(headers.items()))
+
+    transport = "sse" if rec.get("transport") == "sse" else "streamable_http"
+    conn = {"url": url, "token": token, "header_name": header_name,
+            "header_value": header_value, "transport": transport}
+
+    async with MCPClient(url, transport=transport, token=token,
+                         header_name=header_name, header_value=header_value,
+                         verify=False) as c:
+        tools = await c.list_tools()
+        label = (c.server_info or {}).get("name") or rec["id"]
+
+    registered: List[str] = []
+    for tool in tools:
+        if not tool.get("name"):
+            continue
+        cap = mcc.cap_name(rec["id"], tool["name"])
+
+        async def _proxy(_tool=tool["name"], _conn=dict(conn), **kwargs):
+            kwargs.pop("trace_id", None)
+            try:
+                async with MCPClient(
+                        _conn["url"], transport=_conn["transport"],
+                        token=_conn["token"], header_name=_conn["header_name"],
+                        header_value=_conn["header_value"], verify=False) as cli:
+                    return await cli.call_tool(_tool, kwargs)
+            except Exception as e:
+                return {"error": str(e)}
+
+        _orch.CAPABILITY_REGISTRY[cap] = {
+            "func": _proxy, "raw": _proxy,
+            "schema": mcc.tool_input_schema(tool),
+            "description": mcc.tool_description(tool, label),
+            "streams": [], "mode": "proxy", "source": "mcp_client",
+            "server": rec["id"], "server_url": url,
+            "tags": ["proxy", "mcp", rec["id"]], "mcp_expose": True,
+            "http_method": None, "http_path": None, "http_tags": ["proxy"],
+        }
+        registered.append(cap)
+    return registered
 
 
 async def _set_status(sid: str, status: str, enabled: Optional[bool] = None) -> None:
