@@ -68,7 +68,14 @@ def looks_like_blocks(text: str) -> bool:
     has a FIND and a REPLACE too.
     """
     s = str(text or "")
-    return (EDIT in s or FIND in s) and REPLACE in s
+    if (EDIT in s or FIND in s) and REPLACE in s:
+        return True
+    # A NOTE on its own is the editor DECLINING in the format we asked for -
+    # "No changes needed as the requested blur listener is already present"
+    # (census 33, build-browser-verified). Refusing to read it sent a perfectly
+    # good answer down the JSON path, where it was reported as a malformed
+    # reply and re-run. A decline is an ANSWER; see editor_reply.
+    return NOTE in s
 
 
 #: A line-number gutter as _v5_numbered emits it: "  98 | code".
@@ -130,6 +137,29 @@ def _strip_fence_lines(lines: List[str]) -> List[str]:
     return out
 
 
+def _unfence(lines: List[str]) -> List[str]:
+    """Drop a code fence wrapping ONE section's content.
+
+    _strip_fence_lines handles a fence around the whole reply. This is the
+    other place they appear: inside a FIND or REPLACE block, because the
+    content is often markdown or code and the model fences it out of habit.
+    Census 33, research-report: an anchor arrived as "```markdown\n# Redis and
+    Valkey: ..." and of course no such text was in the file.
+
+    Only a fence on the FIRST line is removed, with its partner on the last -
+    a fence in the middle is real content (a markdown file that contains a code
+    block), and stripping that would corrupt the anchor.
+    """
+    out = list(lines)
+    while out and not out[0].strip():
+        out.pop(0)
+    while out and not out[-1].strip():
+        out.pop()
+    if len(out) >= 2 and out[0].lstrip().startswith("```") and out[-1].strip() == "```":
+        return out[1:-1]
+    return lines
+
+
 def parse(text: str) -> Dict[str, Any]:
     """Parse delimited edit blocks. Returns ``{edits, note, error}``.
 
@@ -153,8 +183,8 @@ def parse(text: str) -> Dict[str, Any]:
 
     def flush():
         nonlocal find_buf, repl_buf, saw_replace
-        find_text = "\n".join(_strip_gutter(find_buf))
-        repl_text = "\n".join(_strip_gutter(repl_buf))
+        find_text = "\n".join(_strip_gutter(_unfence(find_buf)))
+        repl_text = "\n".join(_strip_gutter(_unfence(repl_buf)))
         if (find_text.strip() and saw_replace
                 and not _is_placeholder(find_text) and not _is_placeholder(repl_text)):
             edits.append({"find": find_text, "replace": repl_text})
@@ -198,6 +228,11 @@ def parse(text: str) -> Dict[str, Any]:
 
     note = "\n".join(note_lines).strip()
     if not edits:
+        if note:
+            # An explicit note and no edits is the editor declining in the shape
+            # we asked for. editor_reply.classify turns {edits: [], note: ...}
+            # into DECLINED - an answer, not a malfunction to retry.
+            return {"edits": [], "note": note, "error": ""}
         return {"edits": [], "note": note,
                 "error": ("edit blocks were present but none was complete - each "
                           "needs a " + FIND + " section and a " + REPLACE +

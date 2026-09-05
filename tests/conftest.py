@@ -107,6 +107,7 @@ _CRITICAL_MODULES = {
     "test_fabric_boot_storm",
     "test_editor_format_agreement",
     "test_poll_cache",
+    "test_anchor_and_decline",
 }
 
 
