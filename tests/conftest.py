@@ -109,6 +109,7 @@ _CRITICAL_MODULES = {
     "test_poll_cache",
     "test_anchor_and_decline",
     "test_census_quality",
+    "test_census_landed",
 }
 
 

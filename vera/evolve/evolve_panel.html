@@ -2475,10 +2475,38 @@ async function loadCensusCompare(){
 }
 async function loadCensusBoard(){
   const el=$('census-board');if(!el)return;
+  /* Derived first, labels second. The label-driven list depends on somebody
+     remembering to apply census:fixed:<run>, which is exactly why it went
+     stale; what the repository says needs no discipline at all. */
+  let head='';
+  try{
+    const L=await api('/census/landed');
+    const lb=(L&&L.by_run)||{};
+    const lk=Object.keys(lb).sort().reverse().filter(k=>(lb[k]||{}).count);
+    if(lk.length){
+      head='<div style="margin-bottom:10px">'
+        +'<div class="hint" style="margin-bottom:4px">Landed before each run &mdash; derived from the repository</div>'
+        +lk.slice(0,8).map(k=>{
+          const g=lb[k]||{};
+          const items=(g.commits||[]).filter(c=>c.is_merge).slice(0,6).map(c=>
+            '<span class="tag" title="'+esc(c.subject||'')+'">'+esc(c.branch||c.sha)+'</span>').join(' ');
+          const plain=(g.count||0)-(g.merges||0);
+          return '<div style="margin:3px 0"><b class="mono">'+esc(k)+'</b> '
+            +'<span class="hint">'+esc(g.summary||'')+'</span>'
+            +(items?('<div style="margin:2px 0 0 10px">'+items
+              +(plain?(' <span class="hint">+'+plain+' non-merge</span>'):'')+'</div>'):'');
+        }).join('')
+        +'<div class="hint" style="margin-top:6px">A commit is attributed to the first census that '
+        +'finished after it, so one that landed mid-run is counted against that run even though only '
+        +'its later goals could have used it.</div></div>';
+    }
+  }catch(_){}
   const r=await api('/census/board');
   const by=(r&&r.by_run)||{};const keys=Object.keys(by);
-  if(!keys.length){el.innerHTML='<div class="empty">No board items are labelled to a census run yet.</div>';return}
-  el.innerHTML=keys.sort().reverse().map(k=>{
+  if(!keys.length){el.innerHTML=head+'<div class="empty">No board items are labelled to a census run '
+    +'(the list above needs no labels).</div>';return}
+  el.innerHTML=head;
+  el.innerHTML=head+keys.sort().reverse().map(k=>{
     const g=by[k]||{};
     const list=(arr,lbl,col)=>(arr&&arr.length)?('<div style="margin:2px 0 2px 10px"><span style="color:'+col+'">'+lbl+'</span> '
       +arr.map(i=>'<span class="tag clk" onclick="openBoardItem(\''+esc(i.id)+'\')" title="'+esc(i.title||'')+'">'+esc(i.id)+'</span>').join(' ')+'</div>'):'';
