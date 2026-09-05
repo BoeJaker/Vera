@@ -11613,6 +11613,14 @@ def _editor_obj_from_reply(raw_text: str) -> dict:
         parsed = _edit_blocks.parse(raw_text)
         if parsed.get("edits"):
             return {"edits": parsed["edits"], "note": parsed.get("note", "")}
+        # No edits but a NOTE and no parse error is the editor DECLINING in the
+        # shape we asked for. Returning {} here sent it down the JSON path and
+        # got it reported as a malformed reply - census 33,
+        # build-browser-verified: "No changes needed as the requested 'blur'
+        # event listener is already present". classify turns this into DECLINED,
+        # which is an answer and is not retried.
+        if parsed.get("note") and not parsed.get("error"):
+            return {"edits": [], "note": parsed["note"]}
     return _extract_json(raw_text) or {}
 
 
@@ -11675,6 +11683,17 @@ def _v5_apply_edits(content: str, edits: List[Dict[str, Any]]) -> Dict[str, Any]
             if _f2 and _f2 != find and out.count(_f2) >= 1:
                 find = _f2
                 repl = _v5_strip_gutter(repl) if _V5_GUTTER_RE.search(repl) else repl
+                n = out.count(find)
+        if n == 0 and _edit_anchor_hint is not None:
+            # The anchor differs from the file only in indentation or spacing.
+            # We already DETECTED this and told the model to copy it more
+            # carefully; census 33 shows it then retypes it wrong again. The
+            # file's own text is right there - use it. Still exactly-once:
+            # whitespace_only_span returns None when the normalised anchor
+            # matches more than one region.
+            _span = _edit_anchor_hint.whitespace_only_span(out, find)
+            if _span:
+                find = _span
                 n = out.count(find)
         if n == 0:
             # Naming what IS there turns a dead end into a next move - the same

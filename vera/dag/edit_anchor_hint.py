@@ -78,6 +78,37 @@ def whitespace_only_match(content: str, find: str) -> List[int]:
     return hits[:MAX_LINES]
 
 
+def whitespace_only_span(content: str, find: str):
+    """The file's OWN text for an anchor that differs only in whitespace.
+
+    whitespace_only_match already tells the model "it DOES appear at line N
+    apart from whitespace" - a hint it then usually failed to act on, because
+    re-copying an anchor by hand is exactly what it just got wrong. Census 33:
+    two of six code.edit failures were this, on files the run had itself
+    written moments earlier.
+
+    Returns the verbatim slice of `content` so the caller can anchor on the
+    file's real text - indentation intact - rather than the model's version.
+    None unless there is EXACTLY ONE such region: the one-match invariant is
+    what stops a near-miss silently corrupting the wrong place, and a
+    whitespace-insensitive compare makes collisions MORE likely, not less.
+    """
+    hits = whitespace_only_match(content, find)
+    if len(hits) != 1:
+        return None
+    lines = (content or "").splitlines(keepends=True)
+    start = hits[0] - 1
+    height = len(find.splitlines()) or 1
+    if start < 0 or start + height > len(lines):
+        return None
+    span = "".join(lines[start:start + height])
+    # splitlines(keepends) leaves the trailing newline on the last line; the
+    # anchor the caller replaces must not swallow it unless `find` had one.
+    if span.endswith("\n") and not find.endswith("\n"):
+        span = span[:-1]
+    return span or None
+
+
 def nearest_lines(content: str, find: str, *, limit: int = MAX_LINES,
                   floor: float = FLOOR) -> List[Dict[str, Any]]:
     """The most similar real lines, best first, as {line, text, ratio}.
