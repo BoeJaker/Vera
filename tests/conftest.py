@@ -114,6 +114,7 @@ _CRITICAL_MODULES = {
     "test_emit_event_arity",  # emit_event takes ONE dict; the wrong arity hides until the line first runs (2026-09-05)
     "test_openclaw_stream",  # the same answer arrives twice; reading both halves doubles every token (2026-09-05)
     "test_census34_failures",
+    "test_edit_already_applied",
 }
 
 
