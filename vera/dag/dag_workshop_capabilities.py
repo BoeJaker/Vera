@@ -11796,7 +11796,21 @@ async def cap_code_edit(path: str, task: str = "", session_id: str = "", repo: s
     _prompt, last_err, res = prompt, "", None
     for attempt in range(1, attempts + 1):
         try:
-            raw = await fn(prompt=_prompt, system=sys_prompt, output_format="json",
+            # output_format="json" ONLY when we actually asked for JSON. The
+            # system prompt above says "Do NOT use JSON" when edit_blocks is
+            # available, but this call was still forcing the model into JSON
+            # output mode - so it emitted fenced JSON every time and the block
+            # format was inert from the day it landed. Census 30/31/32: every
+            # sampled failing reply was ```json, never a block, and code.edit
+            # was the single largest failure cause (8 occurrences) with
+            # author-then-edit never once passing.
+            #
+            # The escaping problem the blocks exist to avoid is exactly what
+            # JSON mode reintroduces: a code payload has to survive being a
+            # JSON string value, and one unescaped quote loses the whole edit.
+            raw = await fn(prompt=_prompt, system=sys_prompt,
+                           **({} if _edit_blocks is not None
+                              else {"output_format": "json"}),
                            profile=LOOP_ROUTING_PROFILE, role="coder",
                            options=_edit_gen_options, session_id=session_id,
                            caller="code.edit", trace_id=trace_id)
