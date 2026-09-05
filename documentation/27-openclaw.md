@@ -61,6 +61,31 @@ gateway token.
 
 ---
 
+## Sending a prompt, and reading the answer
+
+`chat.send` requires an `idempotencyKey`; without one the gateway refuses the
+call. `agentId` is accepted by newer gateways and rejected as an unexpected
+property by older ones (2026.4.29), so the bridge retries once without any
+property the gateway names — the agent is selectable through the session key
+regardless, since a bare key like `vera-bridge` resolves to
+`agent:main:vera-bridge`. Vera reports the key you asked for, not the resolved
+one.
+
+The answer comes back on **two** event families carrying the same text:
+
+| Event | Carries | Bridge uses it for |
+|---|---|---|
+| `agent` (`stream: "assistant"`) | `data.delta` increment, `data.text` cumulative | live `openclaw.stream` deltas |
+| `agent` (`stream: "lifecycle"`) | `data.phase` | run lifecycle only |
+| `chat` (`state: "delta"`) | full message snapshot | ignored — appending it doubles every token |
+| `chat` (`state: "final"\|"aborted"\|"error"`) | authoritative final message | `openclaw.response` |
+
+The final `chat` message is authoritative rather than the accumulated buffer, so
+a reconnect mid-run cannot truncate the reply. `sessions.changed` reaches
+subscribers only: the bridge calls `sessions.subscribe` once the reader is live.
+
+---
+
 ## See also
 
 - [Agents & Chat](./19-agents-chat.md) — Vera's native agentic loop (the in-house counterpart)
