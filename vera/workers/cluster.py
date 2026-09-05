@@ -74,6 +74,20 @@ PROXY_MAX_CONCURRENCY = int(os.getenv("PROXY_MAX_CONCURRENCY", "3"))
 PROXY_QUEUE_TIMEOUT   = float(os.getenv("PROXY_QUEUE_TIMEOUT", "120"))
 CLUSTER_POLL_INTERVAL = float(os.getenv("CLUSTER_POLL_INTERVAL", "10"))
 
+# An Ollama version changes when someone upgrades Ollama, and at no other time,
+# so asking every CLUSTER_POLL_INTERVAL is pure waste. Measured 2026-09-05 over
+# an exact 120s window, per node: /api/version 33, /api/ps 34 - identical,
+# because they were issued together. /api/ps stays on the tick (resident models
+# and VRAM are the point of the poller); the version is cached. See poll_cache.
+try:
+    from Vera.vera.workers import poll_cache as _poll_cache
+except ImportError:                                   # pragma: no cover
+    from vera.workers import poll_cache as _poll_cache
+
+_VERSION_TTL = float(os.getenv("OLLAMA_VERSION_TTL", str(_poll_cache.DEFAULT_TTL)))
+#: iid -> (version, fetched_at)
+_VERSION_CACHE: dict = {}
+
 def _redis(): return _orch.REDIS
 
 # Proxy state — PER-NODE queues. A single global queue head-of-line-blocked the
@@ -129,14 +143,21 @@ async def _fetch_instance_detail(iid: str, inst: dict):
     if not url:
         return
 
-    # /api/version
-    try:
-        async with httpx.AsyncClient(timeout=4, verify=_SSL_CTX or True) as c:
-            r = await c.get(f"{url}/api/version")
-            if r.status_code == 200:
-                inst["version"] = r.json().get("version", "")
-    except Exception:
-        inst.setdefault("version", "")
+    # /api/version - cached, not re-asked on every tick.
+    _now = time.time()
+    _entry = _VERSION_CACHE.get(iid)
+    if not _poll_cache.should_fetch(_entry, _now, _VERSION_TTL):
+        inst["version"] = _poll_cache.cached_value(_entry)
+    else:
+        try:
+            async with httpx.AsyncClient(timeout=4, verify=_SSL_CTX or True) as c:
+                r = await c.get(f"{url}/api/version")
+                if r.status_code == 200:
+                    _v = r.json().get("version", "")
+                    inst["version"] = _v
+                    _poll_cache.remember(_VERSION_CACHE, iid, _v, _now)
+        except Exception:
+            inst.setdefault("version", "")
 
     # Detect the model's true context window (POST /api/show) so the cluster
     # panel shows the real number instead of a hand-set default. Detection is
@@ -175,6 +196,11 @@ async def _fetch_instance_detail(iid: str, inst: dict):
                 return
     except Exception:
         pass
+
+    # /api/ps unavailable. Forget the cached version too: the node may be
+    # restarting, and a restart is the one event that changes it - without this
+    # the TTL would hide an upgrade for an hour.
+    _poll_cache.forget(_VERSION_CACHE, iid)
 
     # /api/ps unavailable — clear stale values
     inst.setdefault("running",      [])
