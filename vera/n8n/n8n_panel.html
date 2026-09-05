@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var vf=S.getItem('vera:ui:themeVarsFor');if(t&&vf!==t)return;var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<meta charset="UTF-8">
+<title>Vera · n8n</title>
+<style>
+:root {
+  --bg:#0d0f12; --bg1:#14181d; --bg2:#1a1f26; --bg3:#20262e;
+  --border:#232a33; --border2:#2e3742;
+  --fg:#d8dde3; --fg2:#9aa3ad; --dim:#5f6975;
+  --acc:#4a9eff; --acc2:#28c28a; --warn:#f5b341; --err:#ef5b5b; --purple:#a78bfa;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+* { box-sizing:border-box; }
+html,body{ margin:0;padding:0;background:var(--bg);color:var(--fg);
+  font:12px/1.5 -apple-system,BlinkMacSystemFont,"Inter",system-ui,sans-serif;height:100%;overflow:hidden; }
+#root{ display:flex;flex-direction:column;height:100vh;min-height:0; }
+#topbar{ height:46px;flex-shrink:0;border-bottom:1px solid var(--border);background:var(--bg1);
+  padding:0 18px;display:flex;align-items:center;gap:10px; }
+#topbar .ico{ width:24px;height:24px;background:var(--bg2);border:1px solid var(--border2);
+  border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--acc);font-size:14px; }
+#topbar h1{ margin:0;font-size:13px;font-weight:600; }
+#topbar .sub{ font-size:10px;color:var(--dim); }
+#topbar .right{ margin-left:auto;display:flex;gap:8px;align-items:center; }
+#content{ flex:1;overflow-y:auto;padding:16px 20px;min-height:0; }
+.wrap{ max-width:940px;margin:0 auto; }
+
+.btn{ background:var(--bg2);border:1px solid var(--border2);color:var(--fg);border-radius:5px;
+  padding:7px 13px;font:inherit;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:.12s;white-space:nowrap; }
+.btn:hover{ background:var(--bg3);border-color:var(--acc); }
+.btn.primary{ background:var(--acc);border-color:var(--acc);color:var(--on-acc,#04121f);font-weight:600; }
+.btn.ok{ background:var(--acc2);border-color:var(--acc2);color:var(--on-acc,#04121f);font-weight:600; }
+.btn:disabled{ opacity:.5;cursor:not-allowed; }
+
+.card{ background:var(--bg1);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:14px; }
+.card h2{ margin:0 0 10px;font-size:12px;font-weight:600;letter-spacing:.3px;
+  display:flex;align-items:center;gap:8px; }
+.card h2 .hint{ font-weight:400;color:var(--dim);font-size:10px; }
+
+.grid{ display:grid;grid-template-columns:150px 1fr;gap:8px 12px;align-items:center; }
+label{ color:var(--fg2);font-size:11px; }
+input[type=text],input[type=password]{ width:100%;background:var(--bg);border:1px solid var(--border2);
+  color:var(--fg);border-radius:5px;padding:7px 9px;font:inherit;font-size:11px;font-family:var(--mono); }
+input:focus{ outline:none;border-color:var(--acc); }
+.row{ display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px; }
+
+.pill{ display:inline-block;padding:2px 8px;border-radius:20px;font-size:10px;
+  border:1px solid var(--border2);background:var(--bg2);color:var(--fg2); }
+.pill.on{ color:var(--acc2);border-color:var(--acc2); }
+.pill.off{ color:var(--dim); }
+.pill.err{ color:var(--err);border-color:var(--err); }
+
+table{ width:100%;border-collapse:collapse;font-size:11px; }
+th{ text-align:left;color:var(--dim);font-weight:500;padding:6px 8px;border-bottom:1px solid var(--border); }
+td{ padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top; }
+tr:last-child td{ border-bottom:none; }
+code{ font-family:var(--mono);font-size:10px;color:var(--purple);
+  background:var(--bg2);padding:1px 5px;border-radius:3px;word-break:break-all; }
+.muted{ color:var(--dim);font-size:11px; }
+.empty{ color:var(--dim);text-align:center;padding:22px;font-size:11px; }
+#toast{ position:fixed;bottom:18px;left:50%;transform:translateX(-50%);
+  background:var(--bg3);border:1px solid var(--border2);border-radius:6px;
+  padding:9px 15px;font-size:11px;display:none;z-index:50;max-width:70vw; }
+#toast.err{ border-color:var(--err);color:var(--err); }
+#toast.ok{ border-color:var(--acc2);color:var(--acc2); }
+</style>
+</head>
+<body>
+<div id="root">
+  <div id="topbar">
+    <div class="ico">🔗</div>
+    <div>
+      <h1>n8n</h1>
+      <div class="sub">workflow automation · MCP tools · DAG interop</div>
+    </div>
+    <div class="right">
+      <span id="status" class="pill off">checking…</span>
+      <button class="btn" onclick="loadAll()">Refresh</button>
+    </div>
+  </div>
+
+  <div id="content"><div class="wrap">
+
+    <div class="card">
+      <h2>Connection <span class="hint">secrets are sealed at rest; leave a secret blank to keep the stored one</span></h2>
+      <div class="grid">
+        <label>Base URL</label>
+        <input type="text" id="base_url" placeholder="https://n8n.corp.local">
+        <label>API key</label>
+        <input type="password" id="api_key" placeholder="(unchanged)">
+        <label>MCP trigger path</label>
+        <input type="text" id="mcp_path" placeholder="vera">
+        <label>MCP bearer token</label>
+        <input type="password" id="mcp_token" placeholder="(unchanged — only if the trigger uses Bearer Auth)">
+        <label>Verify TLS</label>
+        <div><input type="checkbox" id="verify_tls"> <span class="muted">off for an internal-CA certificate</span></div>
+        <label>Auto-connect MCP</label>
+        <div><input type="checkbox" id="auto_connect"> <span class="muted">re-register tools after a Vera restart</span></div>
+      </div>
+      <div class="row">
+        <button class="btn primary" onclick="saveCfg()">Save</button>
+        <button class="btn" onclick="probe()">Probe MCP</button>
+        <button class="btn ok" onclick="connect()">Connect &amp; register tools</button>
+        <button class="btn" onclick="disconnect()">Disconnect</button>
+      </div>
+      <div class="row"><span class="muted" id="mcpurl"></span></div>
+    </div>
+
+    <div class="card">
+      <h2>MCP tools <span class="hint">registered as Vera capabilities — usable directly as DAG nodes</span></h2>
+      <div id="tools"><div class="empty">Not connected. Probe or connect above.</div></div>
+    </div>
+
+    <div class="card">
+      <h2>Workflows</h2>
+      <div id="workflows"><div class="empty">—</div></div>
+    </div>
+
+  </div></div>
+</div>
+<div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+function toast(msg, kind){
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = kind || '';
+  t.style.display = 'block';
+  clearTimeout(t._h);
+  t._h = setTimeout(() => t.style.display = 'none', 4200);
+}
+
+// Every panel action goes through Vera's capability call surface, so the panel
+// has no privileged path of its own.
+async function cap(name, args){
+  const r = await fetch('/mcp/call', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name, arguments: args || {}})
+  });
+  const j = await r.json();
+  return (j && j.content !== undefined) ? j.content : j;
+}
+
+function esc(s){
+  return String(s == null ? '' : s).replace(/[&<>"]/g,
+    c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+async function loadCfg(){
+  const c = await cap('n8n.config.get');
+  if (!c || c.error) { toast('config: ' + ((c||{}).error || 'failed'), 'err'); return; }
+  $('base_url').value = c.base_url || '';
+  $('mcp_path').value = c.mcp_path || '';
+  $('verify_tls').checked = !!c.verify_tls;
+  $('auto_connect').checked = c.auto_connect !== false;
+  $('api_key').placeholder  = c.api_key  ? '(stored — leave blank to keep)' : 'not set';
+  $('mcp_token').placeholder = c.mcp_token ? '(stored — leave blank to keep)' : 'not set';
+  $('mcpurl').textContent = c.mcp_url ? ('MCP endpoint: ' + c.mcp_url) : 'MCP endpoint not configured';
+  const s = $('status');
+  if (c.api_configured) { s.className = 'pill on';  s.textContent = 'configured'; }
+  else if (c.configured) { s.className = 'pill';    s.textContent = 'no API key'; }
+  else { s.className = 'pill off'; s.textContent = 'not configured'; }
+}
+
+async function saveCfg(){
+  const args = {
+    base_url: $('base_url').value.trim(),
+    mcp_path: $('mcp_path').value.trim(),
+    verify_tls: $('verify_tls').checked,
+    auto_connect: $('auto_connect').checked
+  };
+  // Only send secrets the operator actually typed — an empty field means keep.
+  if ($('api_key').value)   args.api_key = $('api_key').value;
+  if ($('mcp_token').value) args.mcp_token = $('mcp_token').value;
+  const r = await cap('n8n.config.set', args);
+  if (r && r.error) return toast(r.error, 'err');
+  $('api_key').value = ''; $('mcp_token').value = '';
+  toast('saved', 'ok');
+  loadAll();
+}
+
+function renderTools(list, note){
+  if (!list || !list.length) {
+    $('tools').innerHTML = '<div class="empty">' + esc(note || 'No tools.') + '</div>';
+    return;
+  }
+  let h = '<table><tr><th>Tool</th><th>Capability / DAG node</th><th>Description</th></tr>';
+  for (const t of list) {
+    const cn = t.cap || '';
+    h += '<tr><td><code>' + esc(t.name) + '</code></td>'
+       + '<td>' + (cn ? '<code>["' + esc(cn) + '", "out"]</code>' : '<span class="muted">probe only</span>') + '</td>'
+       + '<td class="muted">' + esc(t.description || '') + '</td></tr>';
+  }
+  $('tools').innerHTML = h + '</table>'
+    + (note ? '<div class="muted" style="margin-top:8px">' + esc(note) + '</div>' : '');
+}
+
+async function probe(){
+  toast('probing…');
+  const r = await cap('n8n.mcp.probe');
+  if (!r || r.error) return toast('probe: ' + ((r||{}).error || 'failed'), 'err');
+  renderTools(r.tools, 'Probed over ' + r.transport + ' (protocol ' + r.protocol
+    + '). Not registered yet — use Connect.');
+  toast('probe ok: ' + r.tool_count + ' tools via ' + r.transport, 'ok');
+}
+
+async function connect(){
+  toast('connecting…');
+  const r = await cap('n8n.mcp.connect');
+  if (!r || r.error) return toast('connect: ' + ((r||{}).error || 'failed'), 'err');
+  renderTools((r.registered || []).map(c => ({name: c.split('.').slice(1).join('.'), cap: c})),
+    r.count + ' capabilities registered via ' + r.transport + ' — usable as DAG nodes now.');
+  toast('registered ' + r.count + ' capabilities', 'ok');
+}
+
+async function disconnect(){
+  const r = await cap('n8n.mcp.disconnect');
+  if (!r || r.error) return toast('disconnect failed', 'err');
+  renderTools([], 'Disconnected. ' + (r.removed || 0) + ' capabilities removed.');
+  toast('removed ' + (r.removed || 0), 'ok');
+}
+
+async function loadWorkflows(){
+  const r = await cap('n8n.workflow.list', {limit: 100});
+  if (!r || r.error) {
+    $('workflows').innerHTML = '<div class="empty">' + esc((r||{}).error || 'unavailable') + '</div>';
+    return;
+  }
+  const ws = r.workflows || [];
+  if (!ws.length) { $('workflows').innerHTML = '<div class="empty">No workflows.</div>'; return; }
+  let h = '<table><tr><th>Name</th><th>State</th><th>Nodes</th><th>Triggers</th></tr>';
+  for (const w of ws) {
+    const trg = (w.triggers || []).map(t => {
+      const u = (t.urls || {}).production || '';
+      return '<div>' + esc(t.kind) + (u ? ' <code>' + esc(u) + '</code>' : '') + '</div>';
+    }).join('') || '<span class="muted">none</span>';
+    h += '<tr><td>' + esc(w.name) + '</td>'
+       + '<td><span class="pill ' + (w.active ? 'on' : 'off') + '">'
+       + (w.active ? 'active' : 'inactive') + '</span></td>'
+       + '<td>' + w.node_count + '</td><td>' + trg + '</td></tr>';
+  }
+  $('workflows').innerHTML = h + '</table>';
+}
+
+async function loadAll(){
+  await loadCfg();
+  await loadWorkflows();
+}
+loadAll();
+</script>
+</body>
+</html>
