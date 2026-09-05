@@ -56,6 +56,9 @@ from Vera.vera.capability_orchestration import (
     schedule,
 )
 from Vera.vera.config import cfg
+from Vera.vera import state_paths as _state_paths
+from Vera.vera.openclaw import openclaw_device_core as _dev
+from Vera.vera.security import secrets as _secrets
 
 log = logging.getLogger("openclaw")
 
@@ -83,6 +86,13 @@ class OpenClawConfig:
     auto_reconnect: bool = True
     reconnect_interval: int = 10          # seconds between reconnect attempts
     session_key: str = "vera-bridge"      # OpenClaw session key to use
+    # Handshake identity. `client_id`/`client_mode` are CLOSED enums on the
+    # gateway (see openclaw_device_core) — Vera presents as the generic CLI
+    # operator client. `role` is separate from `mode`; "operator" is a role.
+    client_id: str = _dev.DEFAULT_CLIENT_ID
+    client_mode: str = _dev.DEFAULT_CLIENT_MODE
+    role: str = _dev.DEFAULT_ROLE
+    scopes: List[str] = field(default_factory=lambda: list(_dev.DEFAULT_SCOPES))
 
 _CONFIG = OpenClawConfig(
     enabled=os.environ.get("OPENCLAW_ENABLED", "0") == "1",
@@ -90,6 +100,8 @@ _CONFIG = OpenClawConfig(
     token=os.environ.get("OPENCLAW_TOKEN", ""),
     agent_id=os.environ.get("OPENCLAW_AGENT_ID", "main"),
     vera_base_url=os.environ.get("OPENCLAW_VERA_BASE_URL", "http://localhost:8000"),
+    client_id=os.environ.get("OPENCLAW_CLIENT_ID", _dev.DEFAULT_CLIENT_ID),
+    client_mode=os.environ.get("OPENCLAW_CLIENT_MODE", _dev.DEFAULT_CLIENT_MODE),
 )
 
 @dataclass
@@ -100,6 +112,12 @@ class OpenClawState:
     last_connected_at: str = ""
     gateway_version: str = ""
     gateway_conn_id: str = ""
+    # Which device-auth payload version this gateway accepted, so reconnects
+    # skip the fallback ladder.
+    payload_version: str = ""
+    # Set when the gateway wants a human to approve this device — retrying the
+    # handshake cannot clear it, so the reconnect loop stops hammering.
+    pairing_required: bool = False
     active_sessions: Dict[str, dict] = field(default_factory=dict)
     # pending responses keyed by request id
     _pending: Dict[str, asyncio.Future] = field(default_factory=dict)
@@ -109,7 +127,86 @@ class OpenClawState:
 _STATE = OpenClawState()
 _WS_CONN = None           # active websocket connection
 _WS_TASK: Optional[asyncio.Task] = None
-_DEVICE_ID = f"vera-bridge-{uuid.uuid4().hex[:8]}"
+_IDENTITY: Optional[_dev.DeviceIdentity] = None   # cached; loaded on first use
+_IDENTITY_UNAVAILABLE = False                     # no crypto backend — stop retrying
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Device identity — one persisted Ed25519 key, approved once by an operator
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _identity_path():
+    """Out-of-tree, next to Vera's other state (never inside the repo)."""
+    return _state_paths.state_dir("openclaw") / "device-identity.json"
+
+
+def _load_identity() -> Optional[_dev.DeviceIdentity]:
+    """Load (or mint, once) this instance's device identity.
+
+    The gateway fingerprints the public key and an operator approves that
+    fingerprint, so the key MUST survive restarts — the previous random
+    per-process device id could never be approved. Returns None when the key
+    can neither be read nor created; the caller reports that as the error.
+    """
+    global _IDENTITY, _IDENTITY_UNAVAILABLE
+    if _IDENTITY is not None:
+        return _IDENTITY
+    if _IDENTITY_UNAVAILABLE:
+        # Deterministic per process (a missing crypto backend). The panel polls
+        # status every 12s — don't re-attempt (and re-log) on every poll.
+        return None
+
+    path = _identity_path()
+    if path.exists():
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+            pem = _secrets.open_secret(record.get("private_key_pem", ""))
+            if pem:
+                _IDENTITY = _dev.identity_from_private_pem(pem)
+                return _IDENTITY
+            log.warning("openclaw: stored device identity could not be "
+                        "decrypted — minting a new one (it needs re-approval)")
+        except Exception as exc:
+            log.warning("openclaw: unreadable device identity at %s (%s) — "
+                        "minting a new one", path, exc)
+
+    try:
+        identity = _dev.generate_identity()
+    except Exception as exc:
+        log.error("openclaw: cannot create a device identity: %s", exc)
+        _IDENTITY_UNAVAILABLE = True
+        return None
+
+    record = {
+        "version": 1,
+        "device_id": identity.device_id,
+        "public_key": identity.public_key,
+        "created_at": now_iso(),
+    }
+    try:
+        record["private_key_pem"] = _secrets.seal(identity.private_key_pem)
+    except Exception as exc:
+        # Fail closed on persistence, not on connecting: an unsealed private
+        # key never gets written, but the in-memory identity still works for
+        # this process (it just needs re-approval after a restart).
+        log.error("openclaw: device key could not be sealed, so it will NOT be "
+                  "persisted — pairing will not survive a restart (%s)", exc)
+        _IDENTITY = identity
+        return _IDENTITY
+
+    try:
+        path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass          # best effort; the value on disk is sealed anyway
+    except Exception as exc:
+        log.error("openclaw: could not write %s (%s) — pairing will not "
+                  "survive a restart", path, exc)
+
+    _IDENTITY = identity
+    log.info("openclaw: device identity %s", identity.device_id)
+    return _IDENTITY
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # OpenClaw WebSocket client
@@ -207,59 +304,61 @@ async def _ws_reader(ws) -> None:
         log.info("openclaw: WS reader exited")
 
 
-async def _do_connect() -> None:
-    """Establish a WS connection and perform the OpenClaw protocol v3 handshake."""
-    global _WS_CONN, _STATE
+class _HandshakeRefused(Exception):
+    """The gateway answered our connect frame with a typed refusal."""
 
-    if not HAS_WS:
-        _STATE.last_error = "websockets package not installed"
-        return
+    def __init__(self, code: str, message: str, description: str):
+        super().__init__(description)
+        self.code = code
+        self.message = message
 
-    _STATE.connecting = True
-    _STATE.last_error = ""
 
+async def _handshake(payload_version: str):
+    """One dial + connect attempt. Returns `(ws, hello)`; closes the socket on
+    any failure so a retry never leaks a connection."""
+    identity = None
+    if not _dev.is_loopback_backend(_CONFIG.client_id, _CONFIG.client_mode):
+        identity = _load_identity()
+        if identity is None:
+            raise RuntimeError(
+                "no OpenClaw device identity available — the gateway requires "
+                "an Ed25519 device proof (is 'cryptography' installed?)"
+            )
+
+    ws = await websockets.connect(
+        _CONFIG.ws_url,
+        open_timeout=10,
+        ping_interval=15,
+        ping_timeout=30,
+    )
     try:
-        log.info("openclaw: connecting to %s", _CONFIG.ws_url)
-        ws = await websockets.connect(
-            _CONFIG.ws_url,
-            open_timeout=10,
-            ping_interval=15,
-            ping_timeout=30,
-        )
-        _WS_CONN = ws
-
         # Wait for the connect.challenge event
         challenge_raw = await asyncio.wait_for(ws.recv(), timeout=10)
         challenge_msg = json.loads(challenge_raw)
-        nonce = challenge_msg.get("payload", {}).get("nonce", "")
+        challenge = challenge_msg.get("payload") or {}
+        nonce = challenge.get("nonce", "")
 
-        # Send connect request — we use the "operator" role with read+write scopes
+        # The proof is bound to the challenge's OWN clock: signing with local
+        # time when the gateway told us its `ts` is how a valid key still gets
+        # DEVICE_AUTH_SIGNATURE_EXPIRED.
+        ts = challenge.get("ts")
+        signed_at = (int(ts) if isinstance(ts, (int, float)) and ts >= 0
+                     else int(time.time() * 1000))
+
+        connect_params = _dev.build_connect_params(
+            identity=identity,
+            nonce=nonce,
+            signed_at_ms=signed_at,
+            client_id=_CONFIG.client_id,
+            client_mode=_CONFIG.client_mode,
+            display_name="Vera",
+            role=_CONFIG.role,
+            scopes=_CONFIG.scopes,
+            token=_CONFIG.token,
+            payload_version=payload_version,
+        )
+
         req_id = uuid.uuid4().hex
-        connect_params = {
-            "minProtocol": 3,
-            "maxProtocol": 3,
-            "client": {
-                "id": "vera-bridge",
-                "version": "1.0.0",
-                "platform": "linux",
-                "mode": "operator",
-            },
-            "role": "operator",
-            "scopes": ["operator.read", "operator.write"],
-            "caps": [],
-            "commands": [],
-            "permissions": {},
-            "auth": {"token": _CONFIG.token},
-            "locale": "en-US",
-            "userAgent": "vera-openclaw-bridge/1.0.0",
-            "device": {
-                "id": _DEVICE_ID,
-                "publicKey": "",
-                "signature": "",
-                "signedAt": int(time.time() * 1000),
-                "nonce": nonce,
-            },
-        }
         await ws.send(json.dumps({"type": "req", "id": req_id, "method": "connect", "params": connect_params}))
 
         # Read hello-ok (or error)
@@ -267,8 +366,75 @@ async def _do_connect() -> None:
         hello = json.loads(hello_raw)
 
         if hello.get("type") != "res" or not hello.get("ok"):
-            err_msg = hello.get("error", {}).get("message", "handshake failed")
-            raise RuntimeError(f"OpenClaw handshake error: {err_msg}")
+            err = hello.get("error") or {}
+            code = _dev.connect_error_code(err)
+            message = err.get("message") or "handshake failed"
+            raise _HandshakeRefused(
+                code, message,
+                _dev.describe_connect_error(
+                    code, message, identity.device_id if identity else ""),
+            )
+        return ws, hello
+    except BaseException:
+        with contextlib.suppress(Exception):
+            await ws.close()
+        raise
+
+
+async def _do_connect() -> None:
+    """Establish a WS connection and perform the OpenClaw connect handshake."""
+    global _WS_CONN, _STATE
+
+    if not HAS_WS:
+        _STATE.last_error = "websockets package not installed"
+        return
+
+    # `client.id`/`client.mode` are closed enums: catch a bad config here, where
+    # it reads as a config error, rather than as a schema rejection mid-dial.
+    ok, why = _dev.validate_client_identity(_CONFIG.client_id, _CONFIG.client_mode)
+    if not ok:
+        if _STATE.last_error != why:
+            await emit_event("openclaw.error", {"error": why, "ts": now_iso()})
+        _STATE.last_error = why
+        _STATE.connecting = False
+        return
+
+    _STATE.connecting = True
+    _STATE.last_error = ""
+
+    # Newest device-auth payload first, but keep whichever this gateway already
+    # accepted so a reconnect doesn't re-walk the ladder. Older gateways verify
+    # only v2/v1, and the refusal is indistinguishable from a bad key.
+    if _dev.is_loopback_backend(_CONFIG.client_id, _CONFIG.client_mode):
+        versions = [_dev.PAYLOAD_VERSIONS[0]]      # no device proof to fall back on
+    elif _STATE.payload_version:
+        versions = ([_STATE.payload_version]
+                    + [v for v in _dev.PAYLOAD_VERSIONS if v != _STATE.payload_version])
+    else:
+        versions = list(_dev.PAYLOAD_VERSIONS)
+
+    try:
+        log.info("openclaw: connecting to %s as %s/%s",
+                 _CONFIG.ws_url, _CONFIG.client_id, _CONFIG.client_mode)
+
+        ws = hello = None
+        for index, version in enumerate(versions):
+            try:
+                ws, hello = await _handshake(version)
+                _STATE.payload_version = version
+                break
+            except _HandshakeRefused as refusal:
+                if (refusal.code in _dev.DEVICE_AUTH_RETRY_CODES
+                        and index + 1 < len(versions)):
+                    log.info("openclaw: gateway rejected the %s device proof "
+                             "(%s) — retrying with %s",
+                             version, refusal.code, versions[index + 1])
+                    continue
+                _STATE.pairing_required = (refusal.code == "PAIRING_REQUIRED")
+                raise RuntimeError(f"OpenClaw handshake error: {refusal}") from None
+
+        _WS_CONN = ws
+        _STATE.pairing_required = False
 
         payload = hello.get("payload", {})
         _STATE.connected = True
@@ -379,6 +545,9 @@ async def _oc_tool_call(capability_name: str, request: _Request):
     http_path="/openclaw/status",
 )
 async def openclaw_status() -> dict:
+    # The fingerprint an operator approves in OpenClaw's Devices UI — surfaced
+    # here so pairing doesn't need a log dive.
+    identity = _load_identity()
     return {
         "enabled": _CONFIG.enabled,
         "connected": _STATE.connected,
@@ -392,6 +561,15 @@ async def openclaw_status() -> dict:
         "session_key": _CONFIG.session_key,
         "active_sessions": list(_STATE.active_sessions.keys()),
         "has_websockets_lib": HAS_WS,
+        "client_id": _CONFIG.client_id,
+        "client_mode": _CONFIG.client_mode,
+        "role": _CONFIG.role,
+        "scopes": list(_CONFIG.scopes),
+        "protocol": {"min": _dev.MIN_PROTOCOL, "max": _dev.MAX_PROTOCOL},
+        "device_id": identity.device_id if identity else "",
+        "device_public_key": identity.public_key if identity else "",
+        "device_payload_version": _STATE.payload_version,
+        "pairing_required": _STATE.pairing_required,
     }
 
 
@@ -422,13 +600,34 @@ async def openclaw_config_get() -> dict:
             "auto_reconnect":    {"type": "boolean"},
             "reconnect_interval":{"type": "integer"},
             "session_key":       {"type": "string"},
+            "client_id":         {"type": "string", "enum": list(_dev.GATEWAY_CLIENT_IDS),
+                                  "description": "Gateway client id (closed enum)"},
+            "client_mode":       {"type": "string", "enum": list(_dev.GATEWAY_CLIENT_MODES),
+                                  "description": "Gateway client mode (closed enum; 'operator' is a role, not a mode)"},
+            "role":              {"type": "string", "description": "Requested role, e.g. operator"},
+            "scopes":            {"type": "array", "items": {"type": "string"},
+                                  "description": "Requested scopes, e.g. operator.read/operator.write"},
         }
     },
 )
 async def openclaw_config_set(**kwargs) -> dict:
+    # Reject an unusable identity here rather than letting every reconnect fail
+    # against the gateway's schema.
+    client_id = kwargs.get("client_id", _CONFIG.client_id)
+    client_mode = kwargs.get("client_mode", _CONFIG.client_mode)
+    ok, why = _dev.validate_client_identity(client_id, client_mode)
+    if not ok:
+        return {"ok": False, "error": why}
+    if "scopes" in kwargs and not isinstance(kwargs["scopes"], list):
+        return {"ok": False, "error": "scopes must be a list of strings"}
+
     for k, v in kwargs.items():
         if hasattr(_CONFIG, k):
             setattr(_CONFIG, k, v)
+    if "client_id" in kwargs or "client_mode" in kwargs or "scopes" in kwargs or "role" in kwargs:
+        # The device proof signs these, so a stale accepted-version memo would
+        # make the next handshake look like a key failure.
+        _STATE.payload_version = ""
     await emit_event("openclaw.config.changed", {"ts": now_iso()})
     return {"ok": True, "config": asdict(_CONFIG) | {"token": "***"}}
 
@@ -1008,7 +1207,9 @@ async def openclaw_install_write(
 @APP.get("/openclaw/status/extended")
 async def _oc_status_extended():
     """Extended status including Ollama proxy routing info."""
-    from Vera.vera.openclaw_capabilities import openclaw_status
+    # openclaw_status is defined in THIS module — the old re-import pointed at
+    # Vera.vera.openclaw_capabilities, a path that has not existed since the
+    # module moved into vera/openclaw/, so this route 500'd on every call.
     base_status = await openclaw_status()
     base_status["use_vera_ollama"]  = getattr(_CONFIG, "use_vera_ollama", False)
     base_status["vera_ollama_base"] = getattr(_CONFIG, "vera_ollama_base", "")

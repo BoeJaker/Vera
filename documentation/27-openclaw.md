@@ -28,6 +28,36 @@ The bridge runs both directions:
 | `OPENCLAW_TOKEN` | — | Shared secret / gateway password |
 | `OPENCLAW_AGENT_ID` | `main` | Default agent to address |
 | `OPENCLAW_VERA_BASE_URL` | `http://localhost:8000` | Vera's own URL for the tool bridge |
+| `OPENCLAW_CLIENT_ID` | `cli` | Gateway client id — a **closed enum** (see below) |
+| `OPENCLAW_CLIENT_MODE` | `cli` | Gateway client mode — a **closed enum**; `operator` is a *role*, not a mode |
+
+---
+
+## The connect handshake
+
+The gateway validates `connect.params` against its published JSON schema
+(`@openclaw/gateway-protocol`) and refuses anything else outright:
+
+- **`client.id` and `client.mode` are closed enums.** An invented id (Vera used
+  to send `vera-bridge`) or a role in the mode slot (`operator`) fails with
+  *"must be equal to one of the allowed values"*. Vera presents as the generic
+  `cli`/`cli` operator client; `openclaw.config.set` rejects a value outside the
+  enum instead of letting every reconnect fail.
+- **A real device proof is required.** Vera keeps one **Ed25519 identity**
+  (`<state dir>/openclaw/device-identity.json`, private key sealed with
+  `security/secrets.py`), derives `device.id` as `sha256(raw public key)`, and
+  signs the challenge-bound payload the gateway expects
+  (`v3|deviceId|clientId|clientMode|role|scopes|signedAt|token|nonce|platform|deviceFamily`,
+  falling back to `v2`/`v1` for older gateways). `signedAt` is the `ts` from the
+  gateway's `connect.challenge`, not local time.
+
+The identity is persisted precisely because an operator approves that
+fingerprint once: `openclaw.status` returns `device_id`, `device_public_key`
+and `pairing_required`, so a `PAIRING_REQUIRED` refusal tells you which device
+to approve in the OpenClaw Control UI (Devices) or via `openclaw devices`. A
+trusted local backend (`client_id: gateway-client`, `client_mode: backend`) may
+skip the proof, but only over a direct loopback connection with the shared
+gateway token.
 
 ---
 
