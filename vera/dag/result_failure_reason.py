@@ -24,6 +24,17 @@ here with the evidence attached rather than inline at the callsite:
 ``summary`` is deliberately last: it is a narrative of what a run DID rather
 than a statement of what went wrong, so it is worth showing when nothing else
 exists and misleading when it displaces a real error.
+
+A third widening, census 34 (2026-09-05), goal ``research-report``::
+
+    exec.bash.run FAILED - failed with no error detail (rc=92, keys=[
+      'elapsed_ms', 'ok', 'rc', 'sandboxed', 'stderr', 'stdout', 'timed_out'])
+
+``timed_out`` is sitting in that key list. A command that was killed for
+running too long HAS a cause, and it is a boolean rather than a string, so
+every text field is legitimately empty and the model is told nothing. The
+fields above answer "what did it say"; FLAG_CAUSES answers "what happened to
+it", which is the only thing a silent kill can report.
 """
 
 from __future__ import annotations
@@ -37,6 +48,17 @@ BODY_FIELDS = ("stderr", "error", "stdout", "body", "text", "message",
 
 #: Only consulted when every BODY_FIELD is empty.
 NARRATIVE_FIELDS = ("summary", "note")
+
+#: Boolean fields that ARE the cause when set. A killed command has no stderr
+#: to offer, so without these it reports as "no error detail" - which reads as
+#: "we have no idea" when in fact we knew exactly what happened.
+FLAG_CAUSES = (
+    ("timed_out", "the command did not finish in time and was killed - it needs "
+                  "to exit on its own, or run in the background"),
+    ("killed", "the command was killed before it finished"),
+    ("cancelled", "the call was cancelled before it finished"),
+    ("truncated", "the output was truncated, so the result is incomplete"),
+)
 
 MAX_BODY = 600
 MAX_HTTP_BODY = 400
@@ -70,5 +92,16 @@ def failure_reason(res: Dict[str, Any], rc: Any) -> str:
     narrative = _first_text(res, NARRATIVE_FIELDS)
     if narrative:
         return narrative[:MAX_NARRATIVE]
-    return (f"failed with no error detail (rc={rc}, "
+
+    # No text anywhere. Before giving up, ask what HAPPENED to the call - a
+    # kill or a timeout is a cause even when nothing was written.
+    for field, explanation in FLAG_CAUSES:
+        if res.get(field):
+            return f"{explanation} (rc={rc})"
+
+    # Genuinely nothing. Name the command if we have it, so the next reader is
+    # not reduced to guessing which call this was.
+    what = _first_text(res, ("command", "cmd", "path", "url"))
+    where = f" [{what[:120]}]" if what else ""
+    return (f"failed with no error detail (rc={rc}{where}, "
             f"keys={sorted(str(k) for k in res.keys())[:8]})")

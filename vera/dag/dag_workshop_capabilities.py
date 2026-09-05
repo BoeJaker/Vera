@@ -14129,6 +14129,12 @@ _V5_INJECTED_PARAMS = {"self", "session_id", "trace_id", "stream_cb", "trace",
                        "caller", "caller_kind", "content", "instance_id"}
 
 
+try:
+    from Vera.vera.dag import missing_arg_hint as _missing_arg_hint
+except ImportError:                                   # pragma: no cover
+    from vera.dag import missing_arg_hint as _missing_arg_hint
+
+
 def _v5_missing_required_args(cap_name: str, args: Any) -> List[str]:
     """Required params of `cap_name` (no default, excluding framework-injected
     ones) that are ABSENT from `args`. Lets the executor skip a call guaranteed
@@ -16929,7 +16935,13 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             # `url`). Synthesise the arg error so the recovery block below
             # re-prompts for the value and retries the SAME cap — no wasted call,
             # no failure leaking to the model.
-            invoke = {"ok": False, "error": "missing required argument: " + ", ".join(_missing_req)}
+            # Name the files this run has written. The executor already refuses
+            # the call and re-prompts; without the candidates the model just
+            # guesses again - census 34 lost four calls that way. It is NOT
+            # filled in automatically: picking a file on the model's behalf can
+            # edit the wrong one.
+            invoke = {"ok": False,
+                      "error": _missing_arg_hint.describe(tool, _missing_req, artifacts)}
         elif _url_cached and "_url_cache_value" in _url_cached:
             invoke = {"ok": True, "result": _url_cached["_url_cache_value"]}
         else:
