@@ -105,6 +105,7 @@ _CRITICAL_MODULES = {
     "test_operator_says_done",
     "test_probe_backoff",
     "test_fabric_boot_storm",
+    "test_editor_format_agreement",
 }
 
 
