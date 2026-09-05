@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import re
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Sequence, Tuple
 
@@ -377,6 +378,130 @@ def build_connect_params(
 
 
 # ── reading the gateway's refusal ────────────────────────────────────────────
+
+def build_chat_send_params(
+    *,
+    session_key: str,
+    message: str,
+    idempotency_key: str,
+    agent_id: str = "",
+    thinking: str = "",
+) -> dict:
+    """`chat.send` params. `idempotencyKey` is REQUIRED — the gateway refuses the
+    call without it, which is why the bridge's prompts never left the building.
+
+    `agentId` is accepted by newer gateways and refused as an unexpected
+    property by older ones (2026.4.29 among them); the caller drops it on that
+    refusal rather than guessing the version. The agent is selectable through
+    the session key regardless — the gateway resolves `foo` to `agent:<id>:foo`.
+    """
+    params = {
+        "sessionKey": session_key,
+        "message": message,
+        "idempotencyKey": idempotency_key,
+    }
+    if agent_id:
+        params["agentId"] = agent_id
+    if thinking:
+        params["thinking"] = thinking
+    return params
+
+
+UNEXPECTED_PROPERTY = re.compile(r"unexpected property '([^']+)'")
+
+
+def unexpected_properties(error_message: str) -> List[str]:
+    """Property names an older gateway rejected, so the caller can retry without
+    them instead of pinning itself to one gateway version."""
+    return UNEXPECTED_PROPERTY.findall(error_message or "")
+
+
+# ── the answer coming back ───────────────────────────────────────────────────
+#
+# Observed against gateway 2026.4.29 (both event families carry the SAME text,
+# so a reader that consumes both doubles every token):
+#
+#   {"event": "agent", "payload": {"runId", "sessionKey", "seq", "ts",
+#                                  "stream": "assistant",
+#                                  "data": {"text": <cumulative>,
+#                                           "delta": <increment>}}}
+#   {"event": "agent", "payload": {"stream": "lifecycle",
+#                                  "data": {"phase": "end", …}}}
+#   {"event": "chat",  "payload": {"runId", "sessionKey", "seq",
+#                                  "state": "delta" | "final" | "aborted" | "error",
+#                                  "message": {"role": "assistant",
+#                                              "content": [{"type": "text",
+#                                                           "text": …}]}}}
+
+STREAM_EVENTS = ("agent", "chat")
+
+
+def message_text(message) -> str:
+    """Text of a gateway message, whose content is blocks or a bare string."""
+    if isinstance(message, str):
+        return message
+    if not isinstance(message, dict):
+        return ""
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts = []
+    for block in content:
+        if isinstance(block, str):
+            parts.append(block)
+        elif isinstance(block, dict) and block.get("type") in (None, "text"):
+            text = block.get("text")
+            if isinstance(text, str):
+                parts.append(text)
+    return "".join(parts)
+
+
+def stream_delta(event: str, payload: dict) -> str:
+    """The INCREMENT to append, taken from the `agent` assistant stream only.
+
+    `chat` deltas repeat the same text, so they are deliberately not a delta
+    source — reading both is how a reply becomes "pongpong".
+    """
+    if event != "agent" or not isinstance(payload, dict):
+        return ""
+    if payload.get("stream") != "assistant":
+        return ""
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return ""
+    delta = data.get("delta")
+    if isinstance(delta, str) and delta:
+        return delta
+    text = data.get("text")
+    return text if isinstance(text, str) else ""
+
+
+def final_answer(event: str, payload: dict):
+    """`(state, text)` when a run reaches a terminal state, else None.
+
+    The final `chat` message is authoritative — it does not depend on having
+    caught every delta, which a reconnect mid-run would break.
+    """
+    if event != "chat" or not isinstance(payload, dict):
+        return None
+    state = payload.get("state")
+    if state not in ("final", "aborted", "error"):
+        return None
+    return state, message_text(payload.get("message"))
+
+
+def resolve_session_key(reported: str, configured: str) -> str:
+    """Report the key the CALLER used. The gateway namespaces a bare key into
+    `agent:<agentId>:<key>`, and subscribers that matched on the key they sent
+    would otherwise never match their own reply."""
+    if not isinstance(reported, str) or not reported:
+        return configured
+    if configured and reported.endswith(":" + configured):
+        return configured
+    return reported
+
 
 def connect_error_code(error: Optional[dict]) -> str:
     """The structured code, which lives in `details.code` and falls back to the

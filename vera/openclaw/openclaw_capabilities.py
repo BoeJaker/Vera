@@ -232,6 +232,28 @@ async def _rpc(method: str, params: dict, timeout: float = 30.0) -> dict:
         _STATE._pending.pop(req_id, None)
 
 
+async def _rpc_tolerant(method: str, params: dict, timeout: float = 30.0) -> dict:
+    """`_rpc`, but drop properties an older gateway calls unexpected.
+
+    The method surface moves between gateway releases (2026.4.29 refuses
+    `chat.send.agentId`; 2026.9.x accepts it). Retrying without the named
+    property beats pinning the bridge to one release.
+    """
+    attempt = dict(params)
+    for _ in range(3):
+        try:
+            return await _rpc(method, attempt, timeout=timeout)
+        except RuntimeError as exc:
+            dropped = [p for p in _dev.unexpected_properties(str(exc)) if p in attempt]
+            if not dropped:
+                raise
+            for prop in dropped:
+                attempt.pop(prop, None)
+            log.info("openclaw: %s does not accept %s on this gateway — retrying "
+                     "without it", method, ", ".join(dropped))
+    return await _rpc(method, attempt, timeout=timeout)
+
+
 async def _ws_reader(ws) -> None:
     """Background task: read frames from OpenClaw and dispatch."""
     global _STATE
@@ -263,29 +285,36 @@ async def _ws_reader(ws) -> None:
                 event = msg.get("event", "")
                 payload = msg.get("payload", {})
 
-                # Stream agent output tokens back into Vera's event bus
-                if event in ("agent", "chat"):
-                    session_key = payload.get("sessionKey", _CONFIG.session_key)
-                    delta = payload.get("delta", "") or payload.get("text", "")
-                    done = payload.get("done", False)
+                # Stream agent output back into Vera's event bus. The gateway
+                # sends the same text twice — once as `agent` increments, once
+                # as `chat` snapshots — so each family has exactly one job here.
+                if event in _dev.STREAM_EVENTS:
+                    session_key = _dev.resolve_session_key(
+                        payload.get("sessionKey", ""), _CONFIG.session_key)
+                    run_id = payload.get("runId", "")
 
-                    if session_key not in _STATE._stream_bufs:
-                        _STATE._stream_bufs[session_key] = []
-
+                    delta = _dev.stream_delta(event, payload)
                     if delta:
-                        _STATE._stream_bufs[session_key].append(delta)
+                        _STATE._stream_bufs.setdefault(session_key, []).append(delta)
                         await emit_event({"type": "openclaw.stream",
                             "session_key": session_key,
+                            "run_id": run_id,
                             "delta": delta,
                             "done": False,
                             "ts": now_iso(),
                         })
 
-                    if done:
-                        full_text = "".join(_STATE._stream_bufs.pop(session_key, []))
+                    terminal = _dev.final_answer(event, payload)
+                    if terminal:
+                        state, text = terminal
+                        streamed = "".join(_STATE._stream_bufs.pop(session_key, []))
+                        # The final message is authoritative: a reconnect
+                        # mid-run leaves the streamed buffer incomplete.
                         await emit_event({"type": "openclaw.response",
                             "session_key": session_key,
-                            "text": full_text,
+                            "run_id": run_id,
+                            "text": text or streamed,
+                            "state": state,
                             "done": True,
                             "ts": now_iso(),
                         })
@@ -450,8 +479,22 @@ async def _do_connect() -> None:
         })
         log.info("openclaw: connected (gateway %s)", _STATE.gateway_version)
 
-        # Start the reader (blocks until disconnected)
-        await _ws_reader(ws)
+        # The reader has to be live before any RPC: it is what resolves the
+        # response futures.
+        reader = asyncio.create_task(_ws_reader(ws), name="openclaw_ws_reader")
+
+        # `sessions.changed` reaches subscribers only, and the bridge forwards
+        # it — without this the session list silently never updates. Agent and
+        # chat streams arrive regardless, so a gateway that lacks the method is
+        # logged, not treated as a failed connection.
+        try:
+            await _rpc("sessions.subscribe", {}, timeout=10)
+            log.info("openclaw: subscribed to session events")
+        except Exception as exc:
+            log.info("openclaw: sessions.subscribe unavailable (%s)", exc)
+
+        # Blocks until the connection drops.
+        await reader
 
     except Exception as exc:
         prev_error = _STATE.last_error
@@ -713,20 +756,19 @@ async def openclaw_prompt(
     session_key = session_key or _CONFIG.session_key
     agent_id = agent_id or _CONFIG.agent_id
 
-    # Build the chat.send params per OpenClaw protocol
-    params: dict = {
-        "sessionKey": session_key,
-        "agentId": agent_id,
-        "message": message,
-    }
-    if thinking:
-        params["thinking"] = thinking
+    params = _dev.build_chat_send_params(
+        session_key=session_key,
+        message=message,
+        idempotency_key=uuid.uuid4().hex,
+        agent_id=agent_id,
+        thinking=thinking or "",
+    )
 
     # Clear any existing stream buffer for this session
     _STATE._stream_bufs[session_key] = []
 
     try:
-        result = await _rpc("chat.send", params, timeout=120)
+        result = await _rpc_tolerant("chat.send", params, timeout=120)
         return {
             "ok": True,
             "session_key": session_key,
