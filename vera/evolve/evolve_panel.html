@@ -447,6 +447,7 @@ html.vpb-nav-hosted body{padding-left:0}
       <button class="btn sm" onclick="loadCensus()">&#8635;</button>
     </div>
     <div id="census-runs"><div class="empty">Loading…</div></div>
+    <div id="census-charts" style="margin-top:10px"></div>
     <div class="hint" style="margin-top:6px">12 goals, run serially against the live instance. <b>trusted</b> is the column to read first: a run whose own step accounting does not reconcile (<code>unaccounted &gt; 0</code>, or one predating the counter) cannot settle whether a goal really improved — a delta drawn from it may be measuring the instrument rather than the loop.</div>
   </div>
   <div class="card">
@@ -2266,16 +2267,92 @@ async function loadCensusLive(){
     clearTimeout(window._cenT);window._cenT=setTimeout(loadCensusLive,5000);
   }
 }
+/* Quality cell: mean of a run's declared checks, with the coverage it is over.
+   A mean across 3 of 12 goals must never look like a mean across all 12, so the
+   denominator is always shown and an unscored run reads as an em dash rather
+   than 0. */
+function _cenQ(mean,scored,goals){
+  if(mean===null||mean===undefined)return '<span class="hint" title="no goal in this run declared quality checks">—</span>';
+  const pct=Math.round(mean*100);
+  const col=pct>=90?'#3cb371':(pct>=70?'#c9a35a':'#c96b6b');
+  return '<span style="color:'+col+';font-weight:600">'+pct+'%</span>'
+        +'<span class="hint"> ('+(scored||0)+'/'+(goals||0)+')</span>';
+}
+/* Inline SVG, no chart library: the panel must render offline and under the
+   artifact CSP, and a dependency for four sparklines is not worth it. */
+function _cenSpark(vals,labels,opt){
+  opt=opt||{};const W=opt.w||360,H=opt.h||46,P=4;
+  const pts=vals.map(v=>(v===null||v===undefined)?null:Number(v));
+  const real=pts.filter(v=>v!==null);
+  if(!real.length)return '<div class="hint">no data yet</div>';
+  const lo=(opt.lo!==undefined)?opt.lo:Math.min.apply(null,real);
+  const hi=(opt.hi!==undefined)?opt.hi:Math.max.apply(null,real);
+  const span=(hi-lo)||1;
+  const x=i=>P+(pts.length<2?0:i*(W-2*P)/(pts.length-1));
+  const y=v=>H-P-((v-lo)/span)*(H-2*P);
+  let d='',started=false;
+  pts.forEach((v,i)=>{ if(v===null){started=false;return;}
+    d+=(started?' L':' M')+x(i).toFixed(1)+' '+y(v).toFixed(1); started=true; });
+  const dots=pts.map((v,i)=>v===null?'':'<circle cx="'+x(i).toFixed(1)+'" cy="'+y(v).toFixed(1)
+      +'" r="2.5" fill="'+(opt.col||'#5b8dd6')+'"><title>'+esc(String(labels[i]||''))+': '+v+'</title></circle>').join('');
+  return '<svg width="'+W+'" height="'+H+'" style="display:block">'
+        +'<path d="'+d+'" fill="none" stroke="'+(opt.col||'#5b8dd6')+'" stroke-width="1.8"/>'
+        +dots+'</svg>';
+}
+/* Horizontal bars for the failure taxonomy - the shape of a run's problems at
+   a glance, instead of reading warnings one at a time. */
+function _cenBars(obj){
+  const ks=Object.keys(obj||{});
+  if(!ks.length)return '<div class="hint">no failures recorded</div>';
+  const max=Math.max.apply(null,ks.map(k=>obj[k]))||1;
+  return '<div style="display:flex;flex-direction:column;gap:3px">'+ks.map(k=>{
+    const w=Math.max(2,Math.round(obj[k]/max*100));
+    const col=k.indexOf('code.')===0?'#c96b6b':(k.indexOf('operator')===0?'#c9a35a':'#5b8dd6');
+    return '<div style="display:flex;align-items:center;gap:6px">'
+      +'<span class="hint" style="min-width:190px;text-align:right">'+esc(k)+'</span>'
+      +'<span style="height:11px;width:'+w+'%;background:'+col+';border-radius:2px"></span>'
+      +'<span class="mono hint">'+obj[k]+'</span></div>';
+  }).join('')+'</div>';
+}
+function renderCensusCharts(runs){
+  const el=$('census-charts');if(!el)return;
+  const full=runs.filter(s=>!s.partial);
+  if(full.length<1){el.innerHTML='';return}
+  const ids=full.map(s=>s.run_id);
+  const pass=full.map(s=>s.goals?Math.round(s.done/s.goals*100):null);
+  const qual=full.map(s=>(s.quality_mean===null||s.quality_mean===undefined)?null:Math.round(s.quality_mean*100));
+  const warn=full.map(s=>s.warnings_total||0);
+  const wall=full.map(s=>Math.round((s.wall_total_s||0)/60));
+  const last=full[full.length-1]||{};
+  const cell=(t,sub,svg)=>'<div style="flex:1;min-width:250px">'
+      +'<div class="hint" style="margin-bottom:2px">'+t+' <b>'+sub+'</b></div>'+svg+'</div>';
+  el.innerHTML='<div class="card"><div class="card-h"><span class="card-t">Trends</span>'
+    +'<span class="hint">'+full.length+' complete run(s)</span></div>'
+    +'<div style="display:flex;flex-wrap:wrap;gap:14px">'
+    +cell('goals done','&nbsp;'+(pass[pass.length-1]!==null?pass[pass.length-1]+'%':'—'),
+          _cenSpark(pass,ids,{lo:0,hi:100,col:'#3cb371'}))
+    +cell('quality (declared checks)','&nbsp;'+(qual[qual.length-1]!==null?qual[qual.length-1]+'%':'—'),
+          _cenSpark(qual,ids,{lo:0,hi:100,col:'#5b8dd6'}))
+    +cell('warnings','&nbsp;'+(warn[warn.length-1]||0),_cenSpark(warn,ids,{lo:0,col:'#c9a35a'}))
+    +cell('wall time (min)','&nbsp;'+(wall[wall.length-1]||0),_cenSpark(wall,ids,{lo:0,col:'#9b7fd6'}))
+    +'</div>'
+    +'<div style="margin-top:12px"><div class="hint" style="margin-bottom:4px">'
+    +'why goals failed &mdash; <b>'+esc(last.run_id||'')+'</b></div>'+_cenBars(last.causes)+'</div>'
+    +'<div class="hint" style="margin-top:8px">Quality is scored from each goal&#39;s DECLARED checks '
+    +'(does clock.html contain a timer, does the report cite a source) &mdash; not from whether the run '
+    +'stopped, and never by asking a model. A goal can wall-cap having built the right thing, and finish '
+    +'having built the wrong one.</div></div>';
+}
 async function loadCensus(){
   loadCensusLive();
   const el=$('census-runs');if(!el)return;
   const r=await api('/census/runs');
   const runs=(r&&r.runs)||[];
   if(!runs.length){el.innerHTML='<div class="empty">No census runs found'+(r&&r.dir?(' in <code>'+esc(r.dir)+'</code>'):'')+'.</div>';return}
-  el.innerHTML='<table><tr><th>run</th><th>goals</th><th>done</th><th>wall-cap</th><th>gate ins.</th><th>unacc.</th><th>warns</th><th>total</th><th>counters</th></tr>'
+  el.innerHTML='<table><tr><th>run</th><th>goals</th><th>done</th><th title="mean of each goal&#39;s declared quality checks - what was BUILT, not whether the run stopped">quality</th><th title="checks passed / declared">checks</th><th>wall-cap</th><th>gate ins.</th><th>unacc.</th><th>warns</th><th>total</th><th>counters</th></tr>'
     +runs.slice().reverse().map(s=>'<tr class="clk" onclick="openCensusRun(\''+esc(s.run_id)+'\')">'
       +'<td class="mono">'+esc(s.run_id)+(s.partial?' <span class="tag" title="fewer goals than a full pass — not comparable, excluded from the trend">partial</span>':'')+'</td><td>'+s.goals+'</td>'
-      +'<td style="color:#3cb371">'+s.done+'</td><td style="color:#c9a35a">'+s.wall_capped+'</td>'
+      +'<td style="color:#3cb371">'+s.done+'</td>'+'<td>'+_cenQ(s.quality_mean,s.quality_scored,s.goals)+'</td>'+'<td class="mono hint">'+((s.checks_total||0)?((s.checks_passed||0)+'/'+s.checks_total):'—')+'</td>'+'<td style="color:#c9a35a">'+s.wall_capped+'</td>'
       +'<td>'+(s.gate_inserted_total||0)+'</td>'
       +'<td'+(s.unaccounted_total?' style="color:#c96b6b;font-weight:600"':'')+'>'+(s.unaccounted_total||0)+'</td>'
       +'<td>'+(s.warnings_total||0)+'</td><td class="mono">'+_cenSec(s.wall_total_s)+'</td>'
@@ -2303,6 +2380,7 @@ async function loadCensus(){
       +(s.partial?(' · partial '+s.goals+'/'+(r.full_goal_count||s.goals)):'')+'</option>').join('');
     sel.value=pick[i===0?Math.max(0,pick.length-2):pick.length-1]||ids[0];
   });
+  renderCensusCharts(runs);
   loadCensusCompare();loadCensusBoard();loadCensusOperator();
 }
 const _OP_OUT={finished:'#3cb371',errored:'#c9a35a',ceiling:'#c96b6b',incomplete:'#8a8a8a'};

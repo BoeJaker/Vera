@@ -131,7 +131,87 @@ def summarise_run(run_id: str, records: Sequence[Dict[str, Any]]) -> Dict[str, A
         # Names exactly what it checks: the step counters add up. It is NOT a
         # claim that the run's goals were achieved — see the module docstring.
         "counters_reconcile": bool(recs) and len(measured) == len(recs) and unacc == 0,
+        # QUALITY — what was built, not whether the run stopped. Scored from
+        # each goal's declared checks (vera/census/quality.py). Kept separate
+        # from `done` on purpose: over census 33 the two disagreed in both
+        # directions - underspecified wall-capped with quality 1.0, having
+        # produced a working timer, while build-multifile finished "done" at
+        # 0.667. A pass/fail count alone reports neither.
+        **quality_rollup(recs),
+        # The failure taxonomy, so a run's shape can be charted rather than
+        # read one warning at a time.
+        "causes": failure_causes(recs),
     }
+
+
+def quality_rollup(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """Aggregate the per-goal quality scores for one run.
+
+    Goals with no declared checks score None and are EXCLUDED from the mean
+    rather than counted as 0 or 1 - an unmeasured goal must not move a number
+    nobody computed. `quality_scored` says how much of the run the mean covers,
+    so a mean over 3 of 12 goals cannot be mistaken for a mean over all 12.
+    """
+    recs = [r for r in (records or []) if isinstance(r, dict)]
+    scores, passed, total = [], 0, 0
+    for r in recs:
+        q = r.get("quality") or {}
+        if not isinstance(q, dict):
+            continue
+        passed += int(q.get("passed") or 0)
+        total += int(q.get("total") or 0)
+        s = q.get("score")
+        if isinstance(s, (int, float)):
+            scores.append(float(s))
+    return {
+        "quality_mean": round(sum(scores) / len(scores), 3) if scores else None,
+        "quality_scored": len(scores),
+        "quality_perfect": sum(1 for s in scores if s >= 1.0),
+        "checks_passed": passed,
+        "checks_total": total,
+    }
+
+
+#: Warning fragments mapped to the cause they represent. Ordered: the first
+#: match wins, so put the specific before the general.
+_CAUSE_PATTERNS = (
+    ("code.edit: anchor missing", ("`find` text not present",)),
+    ("code.edit: reply unusable", ("was not the requested JSON object",
+                                   "no usable `edits`")),
+    ("code.author: would not parse", ("could not produce a file that parses",)),
+    ("operator: repeating action", ("repeating_action",)),
+    ("operator: out of time", ("time_budget",)),
+    ("operator: no progress", ("no_progress",)),
+    ("operator: out of steps", ("max_steps",)),
+    ("operator: too many errors", ("too_many_errors",)),
+    ("exec failed", ("exec.bash.run FAILED", "exec.python.run FAILED")),
+    ("file not found", ("File not found", "No such file")),
+    ("web fetch failed", ("web.fetch FAILED", "http.get FAILED",
+                          "Name or service not known")),
+)
+
+
+def failure_causes(records: Sequence[Dict[str, Any]]) -> Dict[str, int]:
+    """Count the run's warnings by cause, for charting.
+
+    Only warnings that name a FAILURE are counted - "called 3x" is a shape, not
+    a fault, and folding it in would make every run look broken.
+    """
+    out: Dict[str, int] = {}
+    for r in (records or []):
+        if not isinstance(r, dict):
+            continue
+        for w in (r.get("warnings") or []):
+            text = str(w or "")
+            if "FAILED" not in text and "failed" not in text:
+                continue
+            for label, needles in _CAUSE_PATTERNS:
+                if any(n in text for n in needles):
+                    out[label] = out.get(label, 0) + 1
+                    break
+            else:
+                out["other"] = out.get("other", 0) + 1
+    return dict(sorted(out.items(), key=lambda kv: -kv[1]))
 
 
 def goal_evidence(record: Dict[str, Any], trace: Dict[str, Any]) -> Dict[str, Any]:
