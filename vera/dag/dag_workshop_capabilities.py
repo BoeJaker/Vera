@@ -11648,6 +11648,12 @@ except Exception:                                     # pragma: no cover
 
 
 
+try:
+    from Vera.vera.dag import edit_already_applied as _edit_already
+except ImportError:                                   # pragma: no cover
+    from vera.dag import edit_already_applied as _edit_already
+
+
 def _v5_apply_edits(content: str, edits: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Apply anchored find/replace edits. {ok, content, applied, errors}.
 
@@ -11660,7 +11666,7 @@ def _v5_apply_edits(content: str, edits: List[Dict[str, Any]]) -> Dict[str, Any]
     reported rather than guessed at — a wrong guess here silently corrupts a
     working file, which is far worse than a rejected edit the model can retry."""
     out = content or ""
-    applied, errors = [], []
+    applied, errors, already = [], [], []
     for i, e in enumerate(edits or []):
         if not isinstance(e, dict):
             continue
@@ -11684,6 +11690,15 @@ def _v5_apply_edits(content: str, edits: List[Dict[str, Any]]) -> Dict[str, Any]
                 find = _f2
                 repl = _v5_strip_gutter(repl) if _V5_GUTTER_RE.search(repl) else repl
                 n = out.count(find)
+        if n == 0 and _edit_already.already_applied(out, find, repl):
+            # `find` gone and `replace` present: this edit's work is already
+            # done. Census 34, author-then-edit asked to change 60 to 90 in a
+            # file that already said 90 - its own earlier edit had removed the
+            # anchor - and the loop re-ran code.edit four times against a file
+            # that was already correct until the goal wall-capped. Reporting
+            # this as a missing anchor is what invited the retry.
+            already.append({"edit": i + 1, "note": _edit_already.describe(i + 1, repl)})
+            continue
         if n == 0 and _edit_anchor_hint is not None:
             # The anchor differs from the file only in indentation or spacing.
             # We already DETECTED this and told the model to copy it more
@@ -11721,8 +11736,12 @@ def _v5_apply_edits(content: str, edits: List[Dict[str, Any]]) -> Dict[str, Any]
             continue
         out = out.replace(find, repl, 1)
         applied.append({"find_preview": find[:80], "removed": len(find), "added": len(repl)})
-    return {"ok": bool(applied) and not errors, "content": out,
-            "applied": applied, "errors": errors}
+    # An edit that was already in place counts toward success: the file says
+    # what the caller asked for, which is the only thing `ok` is about. A batch
+    # of nothing BUT already-applied edits is still ok - re-running it would
+    # change nothing, and reporting failure is what caused the retry loop.
+    return {"ok": bool(applied or already) and not errors, "content": out,
+            "applied": applied, "already_applied": already, "errors": errors}
 
 
 def _v5_numbered(content: str, max_lines: int = 900) -> str:
@@ -11889,9 +11908,15 @@ async def cap_code_edit(path: str, task: str = "", session_id: str = "", repo: s
         # STAYS: applying a subset of a 6-edit rename would leave a file that parses
         # and is semantically half-renamed, which is worse than a clean retry.
         _kept = "\n".join(
-            "  - KEEP (applied cleanly): %s"
-            % " ".join(str(a.get("find_preview") or "").split())[:70]
-            for a in ((res or {}).get("applied") or []))
+            ["  - KEEP (applied cleanly): %s"
+             % " ".join(str(a.get("find_preview") or "").split())[:70]
+             for a in ((res or {}).get("applied") or [])]
+            # Already-in-place edits are FINE too. Left out, the retry is told
+            # they are missing and re-derives them - which is how a file that
+            # already said what was asked for got edited four times.
+            + ["  - DONE ALREADY (do not resend): edit %s"
+               % a.get("edit")
+               for a in ((res or {}).get("already_applied") or [])])
         _broke = "\n".join("  - FIX: %s" % str(e)[:200]
                             for e in ((res or {}).get("errors") or [])[:6]) or ("  - FIX: %s" % last_err)
         _prompt = (f"{prompt}\n\n─────\n"
@@ -11911,10 +11936,20 @@ async def cap_code_edit(path: str, task: str = "", session_id: str = "", repo: s
             "fs_path": saved.get("fs_path", ""), "version": saved.get("version"),
             "lang": lang, "applied": res["applied"], "errors": res["errors"],
             "syntax_ok": True, "checked_with": _v5_check_syntax(res["content"], lang, path).get("checker", ""),
+            "already_applied": res.get("already_applied", []),
             "diff_summary": f"{len(res['applied'])} edit(s); {before} → {after} lines",
-            "note": (f"Edited surgically and versioned as v{saved.get('version')} — "
-                     f"{len(res['applied'])} targeted change(s), the rest of the file untouched. "
-                     f"code.diff(path='{path}') shows exactly what changed.")}
+            # Say when nothing changed BECAUSE it was already right. Reported as
+            # a plain success the caller cannot tell that from a no-op, and a
+            # verifier looking for evidence of work sends the step round again.
+            "note": ((f"No change was needed - "
+                      f"{len(res['already_applied'])} edit(s) were already in place, "
+                      f"the file already says what was asked for.")
+                     if (res.get("already_applied") and not res["applied"]) else
+                     (f"Edited surgically and versioned as v{saved.get('version')} — "
+                      f"{len(res['applied'])} targeted change(s), the rest of the file untouched. "
+                      + (f"{len(res['already_applied'])} further edit(s) were already in place. "
+                         if res.get("already_applied") else "")
+                      + f"code.diff(path='{path}') shows exactly what changed."))}
 
 
 @capability(
