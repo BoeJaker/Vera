@@ -140,6 +140,12 @@ async def _loop_events(session_id: str) -> List[Dict[str, Any]]:
     return out
 
 
+try:
+    from Vera.vera.census import landed as _landed
+except ImportError:                                   # pragma: no cover
+    from vera.census import landed as _landed
+
+
 def _run_files() -> Dict[str, Path]:
     """run_id -> file, for every census JSONL in the census dir."""
     found: Dict[str, Path] = {}
@@ -547,3 +553,59 @@ async def cap_census_board(run: str = "", trace_id=None) -> Dict[str, Any]:
         by_run = {rid: by_run.get(rid, {"found": [], "fixed": []})}
     return {"by_run": by_run, "found_prefix": cc.FOUND_PREFIX,
             "fixed_prefix": cc.FIXED_PREFIX, "items_scanned": len(items)}
+
+
+@capability(
+    "census.landed", memory="off", silent=True,
+    http_method="GET", http_path="/census/landed", http_tags=["census", "workshop"],
+    description=(
+        "What actually LANDED between consecutive census runs, derived from the "
+        "repository rather than from anybody remembering to label a board item "
+        "- which is why the board-driven view stagnated. A commit is attributed "
+        "to the first census that finished after it; the window is returned so "
+        "a commit that landed mid-run is visible as such rather than presented "
+        "as a tidy fact. Inputs: repo (str=vera), limit (int=300 commits). "
+        "Output: {by_run:{run_id:{window_from,window_to,commits[],count,merges,"
+        "summary}}, runs[], repo}."),
+)
+async def cap_census_landed(repo: str = "vera", limit: int = 300,
+                            trace_id=None) -> Dict[str, Any]:
+    import subprocess
+
+    root = "/home/boejaker/Vera"
+    try:
+        out = subprocess.run(
+            ["git", "-C", root, "log", "main", "-n", str(max(1, int(limit))),
+             "--pretty=format:" + _landed.GIT_FORMAT],
+            capture_output=True, text=True, timeout=30).stdout
+    except Exception as e:
+        return {"error": "git log failed: %s" % e, "by_run": {}, "runs": []}
+
+    commits = _landed.parse_log(out)
+    runs = []
+    records_by_run = await asyncio.gather(
+        *(_read_run(p) for p in _run_files().values()))
+    for (rid, path), recs in zip(_run_files().items(), records_by_run):
+        try:
+            ended = path.stat().st_mtime
+        except Exception:
+            continue
+        # Start is derived, not stored: ended minus the wall time the goals
+        # actually consumed. It underestimates (it ignores the gaps between
+        # goals) and so flags fewer commits as mid-run, which is the safe
+        # direction - see landed.assign.
+        spent = 0.0
+        for r in (recs or []):
+            try:
+                spent += float((r or {}).get("wall_s") or 0)
+            except (TypeError, ValueError):
+                pass
+        runs.append({"run_id": rid, "ended_at": ended,
+                     "started_at": (ended - spent) if spent else None})
+    by_run = _landed.assign(commits, runs)
+    for rid, entry in by_run.items():
+        entry["summary"] = _landed.summarise(entry)
+    return {"by_run": by_run,
+            "runs": sorted((r["run_id"] for r in runs)),
+            "repo": repo, "commits_scanned": len(commits)}
+
