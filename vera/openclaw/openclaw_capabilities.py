@@ -274,7 +274,7 @@ async def _ws_reader(ws) -> None:
 
                     if delta:
                         _STATE._stream_bufs[session_key].append(delta)
-                        await emit_event("openclaw.stream", {
+                        await emit_event({"type": "openclaw.stream",
                             "session_key": session_key,
                             "delta": delta,
                             "done": False,
@@ -283,7 +283,7 @@ async def _ws_reader(ws) -> None:
 
                     if done:
                         full_text = "".join(_STATE._stream_bufs.pop(session_key, []))
-                        await emit_event("openclaw.response", {
+                        await emit_event({"type": "openclaw.response",
                             "session_key": session_key,
                             "text": full_text,
                             "done": True,
@@ -294,13 +294,13 @@ async def _ws_reader(ws) -> None:
 
                 # Forward other notable events to Vera's event bus
                 if event in ("sessions.changed", "health", "presence"):
-                    await emit_event(f"openclaw.gw.{event}", {"payload": payload, "ts": now_iso()})
+                    await emit_event({"type": f"openclaw.gw.{event}", "payload": payload, "ts": now_iso()})
 
     except Exception as exc:
         log.warning("openclaw ws reader: %s", exc)
     finally:
         _STATE.connected = False
-        await emit_event("openclaw.disconnected", {"ts": now_iso()})
+        await emit_event({"type": "openclaw.disconnected", "ts": now_iso()})
         log.info("openclaw: WS reader exited")
 
 
@@ -394,7 +394,7 @@ async def _do_connect() -> None:
     ok, why = _dev.validate_client_identity(_CONFIG.client_id, _CONFIG.client_mode)
     if not ok:
         if _STATE.last_error != why:
-            await emit_event("openclaw.error", {"error": why, "ts": now_iso()})
+            await emit_event({"type": "openclaw.error", "error": why, "ts": now_iso()})
         _STATE.last_error = why
         _STATE.connecting = False
         return
@@ -443,7 +443,7 @@ async def _do_connect() -> None:
         _STATE.gateway_version = payload.get("server", {}).get("version", "")
         _STATE.gateway_conn_id = payload.get("server", {}).get("connId", "")
 
-        await emit_event("openclaw.connected", {
+        await emit_event({"type": "openclaw.connected",
             "gateway_version": _STATE.gateway_version,
             "conn_id": _STATE.gateway_conn_id,
             "ts": now_iso(),
@@ -464,7 +464,7 @@ async def _do_connect() -> None:
         # the same "connection refused" every reconnect cycle — re-emitting it
         # each time spammed the UI's event stream for no new information.
         if str(exc) != prev_error:
-            await emit_event("openclaw.error", {"error": str(exc), "ts": now_iso()})
+            await emit_event({"type": "openclaw.error", "error": str(exc), "ts": now_iso()})
 
 
 async def _reconnect_loop() -> None:
@@ -628,7 +628,7 @@ async def openclaw_config_set(**kwargs) -> dict:
         # The device proof signs these, so a stale accepted-version memo would
         # make the next handshake look like a key failure.
         _STATE.payload_version = ""
-    await emit_event("openclaw.config.changed", {"ts": now_iso()})
+    await emit_event({"type": "openclaw.config.changed", "ts": now_iso()})
     return {"ok": True, "config": asdict(_CONFIG) | {"token": "***"}}
 
 
@@ -682,7 +682,7 @@ async def openclaw_disconnect() -> dict:
             pass
         _WS_CONN = None
 
-    await emit_event("openclaw.disconnected", {"manual": True, "ts": now_iso()})
+    await emit_event({"type": "openclaw.disconnected", "manual": True, "ts": now_iso()})
     return {"ok": True, "status": "disconnected"}
 
 
@@ -1180,7 +1180,7 @@ async def openclaw_install_write(
     if set_tool_bridge:     wrote.append("skill/tool bridge")
     wrote.append("_vera_bridge metadata")
 
-    await emit_event("openclaw.installed", {
+    await emit_event({"type": "openclaw.installed",
         "config_path": str(path),
         "vera_base_url": vera_base,
         "wrote": wrote,
