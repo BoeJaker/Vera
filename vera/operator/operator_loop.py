@@ -361,6 +361,14 @@ async def run_loop(goal: str, session, *,
         rec = {"i": i, "phase": "act", "thought": thought, "action": action,
                "args": {k: (v if k != "text" else str(v)[:60]) for k, v in args.items()},
                "result": result, "url": getattr(obs, "url", ""),
+               # WHAT THE PAGE DISPLAYED. It has always gone into `history` for
+               # the model's next prompt, but never into the STEP record - so it
+               # never reached the caller, and stop_explanation had nothing to
+               # quote. Census 37's author-then-edit turned on exactly this: the
+               # operator kept reporting a display of 01:00 for a timer that was
+               # supposed to read 01:30, which is a real defect in the file, and
+               # the agentic loop only ever saw "repeating_action".
+               "seen": _observed_text(obs),
                "screenshot": getattr(obs, "screenshot_path", ""),
                "ms": int((time.time() - t0) * 1000)}
         steps.append(rec)

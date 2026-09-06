@@ -112,6 +112,49 @@ def _last_text(steps: Optional[List[Dict[str, Any]]]) -> str:
     return ""
 
 
+def last_seen(steps: Optional[List[Dict[str, Any]]] = None) -> str:
+    """The most recent text the PAGE actually displayed, or "".
+
+    Steps recorded before `seen` was carried simply do not have it; those
+    runs get the old explanation, not a wrong one.
+    """
+    for rec in reversed(list(steps or [])):
+        if not isinstance(rec, dict):
+            continue
+        text = " ".join(str(rec.get("seen") or "").split())
+        if text:
+            return text
+    return ""
+
+
+def observed_note(steps: Optional[List[Dict[str, Any]]] = None) -> str:
+    """What the page showed, phrased so the caller can act on it.
+
+    WHY THIS IS THE SENTENCE THAT WAS MISSING. Census 37, author-then-edit: the
+    operator was asked to confirm a countdown started at 01:30, and its own
+    thoughts record reading 01:00, 00:47, 00:31 off the page. 01:00 was the
+    truth - `code.edit` had changed `remainingSeconds` to 90 and left the two
+    DISPLAY strings at 01:00, so the file really was half-edited. The operator
+    found the defect on its first observation and reported it as
+    "repeating_action", because `reason` is the only channel it had.
+
+    So the run was blamed for thrashing while the artifact was wrong, and the
+    loop answered by re-running the browser three more times instead of fixing
+    the file. Naming the observed value turns a stop code into a finding.
+
+    Deliberately NOT a verdict: the text is quoted, not judged. A countdown
+    caught mid-tick legitimately reads 00:47, and asserting that as "wrong"
+    here would invent a defect as confidently as the old silence hid one.
+    """
+    seen = last_seen(steps)
+    if not seen:
+        return ""
+    return (" What the page actually DISPLAYED when it stopped: %r. Compare that "
+            "with what the goal expected: if it does not match, the FILE is "
+            "wrong and re-running the browser will keep reporting the same "
+            "thing - fix the file instead." % seen[:200])
+
+
 def explain(reason: str, steps: Optional[List[Dict[str, Any]]] = None) -> str:
     """One sentence the caller can act on, or "" when the run succeeded.
 
@@ -123,4 +166,5 @@ def explain(reason: str, steps: Optional[List[Dict[str, Any]]] = None) -> str:
     if code not in UNSUCCESSFUL:
         return ""
     text = _last_text(steps) or FALLBACK.get(code, "")
-    return f"{code}: {text}" if text else code
+    out = f"{code}: {text}" if text else code
+    return out + observed_note(steps)

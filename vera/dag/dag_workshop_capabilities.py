@@ -74,6 +74,10 @@ from Vera.vera.capability_orchestration import (
 )
 
 from Vera.vera.dag import chain_deps as _chain_deps
+try:
+    from Vera.vera.dag import loop_prompt_rules as _loop_rules
+except ImportError:                                        # pragma: no cover
+    from vera.dag import loop_prompt_rules as _loop_rules
 # Dual-spelled: Vera.vera.* resolves to the DEPLOYED checkout, which does not
 # have a module until it lands there, so a NEW sibling must fall back to the
 # plain package or this whole module fails to import.
@@ -14914,7 +14918,15 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 "— it drives an ACTUAL headless browser against the live URL and reports what "
                 "it actually observed.\n"
                 "Live preview URL(s) for HTML file(s) already in this working directory:\n"
-                + "\n".join(_preview_lines) + "\n")
+                + "\n".join(_preview_lines) + "\n"
+                # HOW to word the goal, not just which tool to call. Census 37
+                # spent 1803s on four operator.run calls that could not succeed:
+                # one demanded a display of "01:35 (90 seconds)" - 90 seconds is
+                # 01:30 - and the rest asked for the value shown the instant
+                # Start is clicked, a frame that lasts one second against an
+                # observation every ~35s. Single definition in loop_prompt_rules
+                # so the drift check can see it.
+                + _loop_rules.OPERATOR_GOAL_OBSERVABLE.text)
     sys = _v5_compose_executor_system(
         step=step, goal=goal, _success=_success, _chain_help=_chain_help,
         _ask_help=_ask_help, _research_hint=_research_hint, author_note=author_note, code_note=code_note,
