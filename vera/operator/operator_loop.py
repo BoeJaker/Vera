@@ -43,7 +43,9 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 from . import actions as _actions
 from . import perception as _perception
 from . import safety as _safety
+from . import nav_pin as _nav_pin
 from . import operator_progress as _progress
+from . import repeat_guard as _repeat_guard
 from . import thinker as _thinker
 
 log = logging.getLogger("vera.operator.loop")
@@ -129,6 +131,7 @@ async def run_loop(goal: str, session, *,
                    max_seconds: float = _OP_MAX_SECONDS,
                    progress_tolerance: int = _progress.DEFAULT_TOLERANCE,
                    think: Optional[bool] = None,
+                   pin_url: str = "",
                    shots_dir: str = "",
                    on_step: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
                    observe_fn: Optional[Callable] = None,
@@ -170,6 +173,10 @@ async def run_loop(goal: str, session, *,
     # doing real work may take as many turns as it needs; what is worth stopping
     # is one whose actions stop changing anything. See operator_progress.
     prog_state: Optional[Dict[str, Any]] = None
+    # Repeat state keyed on the page's STRUCTURE rather than on adjacency. The
+    # consecutive guard below cannot see e1, e3, e1, e2, e1 - census 35 ran that
+    # shape twice and spent 1069s on it. See repeat_guard.
+    rep_state: Optional[Dict[str, Any]] = None
     reason = "max_steps"
     done = False
     summary = ""
@@ -284,6 +291,29 @@ async def run_loop(goal: str, session, *,
                 break
             continue
 
+        # NAVIGATION PIN. A run aimed at one sandbox-served file has no reason to
+        # go anywhere else, and census 35's b71aa5cb70 spent all twelve of its
+        # steps discovering that: it invented /timer.html on the orchestrator
+        # root and never found its way back. Reported as an act ERROR rather
+        # than a safety block, because a block is terminal and the point is to
+        # let the run recover onto the right page. See nav_pin.
+        _pin_err = _nav_pin.off_pin(pin_url, getattr(obs, "url", ""), action, args)
+        if _pin_err:
+            rec = {"i": i, "phase": "act", "thought": thought, "action": action,
+                   "args": args, "result": {"error": _pin_err},
+                   "url": getattr(obs, "url", ""),
+                   "screenshot": getattr(obs, "screenshot_path", "")}
+            steps.append(rec)
+            history.append({"action": action, "args": args,
+                            "result": {"error": _pin_err}, "thought": thought,
+                            "seen": _observed_text(obs)})
+            await _emit(rec)
+            consecutive_errors += 1
+            if consecutive_errors >= 4:
+                reason = "too_many_errors"
+                break
+            continue
+
         gate = _safety.evaluate(policy, getattr(obs, "url", ""), action, args)
         if not gate["allowed"]:
             reason = "blocked"
@@ -348,6 +378,35 @@ async def run_loop(goal: str, session, *,
                    "reason": ("the same action was repeated %d times on the same "
                               "page with no change — stopping rather than spending "
                               "the rest of the budget on it" % same_sig_count)}
+            steps.append(rec)
+            await _emit(rec)
+            break
+
+        # STRUCTURAL repeat guard — what the counter above cannot see.
+        #
+        # That counter only measures ADJACENCY, so it resets on any alternation:
+        # census 35's author-then-edit went e1, wait, e1, e3, e1, e1, e2, e3, e1
+        # and never reached five in a row. operator_progress could not catch it
+        # either, because since 2026-09-05 the page TEXT is part of its signature
+        # (so a countdown reads as progress, which it is) and this page was a
+        # running clock — its own docstring calls that out and hands the job to
+        # the time budget. The budget did stop it, at 581s and 488s, having
+        # bought nothing. This is the cheaper backstop the budget was standing in
+        # for: same allowance as above, counted per structural epoch (url, title,
+        # refs) instead of per adjacent pair, so a click that reshapes the page
+        # still resets it and legitimate repetition stays safe.
+        rep_state = _repeat_guard.update(
+            rep_state,
+            _repeat_guard.page_key(
+                url=getattr(obs, "url", ""), title=getattr(obs, "title", ""),
+                refs=[getattr(e, "ref", "")
+                      for e in (getattr(obs, "elements", None) or [])]),
+            action, args)
+        if _repeat_guard.should_stop(rep_state):
+            reason = _repeat_guard.STOP_REASON
+            rec = {"i": i, "phase": "repeating", "action": action, "args": args,
+                   "url": getattr(obs, "url", ""),
+                   "reason": _repeat_guard.describe(rep_state)}
             steps.append(rec)
             await _emit(rec)
             break

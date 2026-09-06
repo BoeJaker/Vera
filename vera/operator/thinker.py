@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
@@ -168,6 +169,27 @@ def parse_decision(text: str) -> Dict[str, Any]:
             "args": args, "done": done, "raw": text[:400]}
 
 
+#: Hard ceiling on ONE decision's output, in tokens.
+#:
+#: llm.generate grants a generous window (VERA_LLM_GEN_CTX, 16384) and sizes
+#: num_predict to it whenever the prompt does not STATE a length - which this
+#: prompt does not, because it asks for one small JSON object. `decide` already
+#: had a max_tokens argument but only ever passed it to providers.chat, so the
+#: ollama path - the one the cluster actually uses - ran uncapped.
+#:
+#: Census 35, author-then-edit run 9c81d67747 step 13: one "what do I click
+#: next" decision generated eval_count=3382 in 199.25s. The twelve steps before
+#: it averaged 31s and 545 tokens, and the run's whole budget is 480s, so that
+#: single answer is what turned a run that fitted into one that overran. The
+#: ceiling above it was 16384 - five times worse was available.
+#:
+#: 1024 sits clear of the observed working range (the largest legitimate
+#: decision across all three runs was 816 tokens) while capping the tail. A
+#: truncated answer is not a lost step either: parse_decision's last-resort
+#: regex recovers the action from a cut-off object.
+THINK_MAX_TOKENS = max(64, int(os.getenv("VERA_OPERATOR_THINK_TOKENS", "1024") or 1024))
+
+
 def _split_provider(provider: str) -> tuple:
     p = (provider or "ollama").strip()
     if ":" in p:
@@ -193,6 +215,12 @@ async def decide(goal: str, observation, history: Optional[List[Dict[str, Any]]]
                 "llm.generate", prompt=prompt["user"], system=prompt["system"],
                 model=model or None, job_type="code", caller="operator.think",
                 think=think,
+                # Bounded output. See THINK_MAX_TOKENS - without this the call
+                # inherits llm.generate's full 16384 window for a one-object
+                # answer, and census 35 spent 199s on a single 3382-token
+                # decision. `options` is merged over the profile/role options
+                # inside llm.generate and never reaches a model-facing schema.
+                options={"num_predict": THINK_MAX_TOKENS},
             )
         else:
             res = await call_cap(
