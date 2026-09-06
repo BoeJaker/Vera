@@ -69,6 +69,30 @@ def test_a_caller_may_still_force_a_language():
     assert SE.searxng_params("q", language="fr")["language"] == "fr"
 
 
+def test_the_searxng_api_is_not_asked_as_a_browser():
+    """The SECOND reason web_capabilities' SearXNG engine returned nothing.
+
+    Measured from inside a container, same host, same query, same params,
+    differing only in headers:
+
+        with web_client.BROWSER_HEADERS -> HTTP 200, 0 results
+        with no headers                 -> HTTP 200, 10 results
+
+    SearXNG's bot detection rejects a request that looks like a browser fetching
+    a page when it is being asked for the JSON API. It was masked by the
+    language bug: while language=en zeroed every result, both engines looked
+    equally dead and the headers were never suspected.
+    """
+    keys = {k.lower() for k in SE.SEARXNG_HEADERS}
+    for browserish in SE.BROWSERISH_HEADERS:
+        assert browserish not in keys, (
+            "%s makes SearXNG answer 200 with an empty result list" % browserish)
+
+
+def test_the_searxng_headers_ask_for_json():
+    assert SE.SEARXNG_HEADERS.get("Accept") == "application/json"
+
+
 def test_a_limit_that_fits_one_page_asks_for_one_page():
     assert SE.page_plan(8) == [1]
     assert SE.page_plan(10) == [1]

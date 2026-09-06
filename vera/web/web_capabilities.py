@@ -247,7 +247,14 @@ async def _searxng_pages(host: str, query: str, limit: int) -> List[Dict[str, An
     engine so there is ONE definition of when to stop paging.
     """
     try:
-        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT, headers=HEADERS) as c:
+        # NOT the browser headers. SearXNG's bot detection answers a
+        # browser-looking request with HTTP 200 and an EMPTY result list, so
+        # this engine returned nothing on every call - measured, same host and
+        # query, 0 results with BROWSER_HEADERS against 10 without. See
+        # search_engines.SEARXNG_HEADERS. HEADERS stays right for _search_ddg,
+        # which really is scraping an HTML page.
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT,
+                                     headers=_engines.SEARXNG_HEADERS) as c:
 
             async def _fetch(pageno: int):
                 try:
