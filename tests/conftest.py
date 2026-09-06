@@ -49,6 +49,7 @@ _CRITICAL_MODULES = {
     "test_operator_trace_seen",  # the trace must show what the page displayed (2026-09-06)
     "test_test_target",  # a test file is written against the file it tests (2026-09-06)
     "test_error_excerpt",  # a trace must keep the verdict, not just the banner (2026-09-06)
+    "test_verify_fastpath",  # went stale outside the tier, asserting the opposite of the fix (2026-09-06)
     "test_ambient_dreaming_is_opt_in",  # nothing dreams on a box nobody asked (2026-08-31)
     "test_sandbox_estate_guard",  # a sandbox must not promote to main or reap the estate (2026-08-31)
     "test_sandbox_does_not_reap_the_estate",  # a dev sandbox must not reap the shared estate (2026-08-31)
@@ -185,5 +186,6 @@ def orch():
         return _orch
     except Exception as e:  # pragma: no cover - environment dependent
         pytest.skip(f"orchestrator/app unavailable in this env: {e}")
+
 
 
