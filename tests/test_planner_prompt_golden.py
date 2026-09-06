@@ -48,8 +48,21 @@ def _compose(minimal: bool):
                 '"needs":[]}],"done_when":"d"}')
 
     real = M._safe_ollama_generate_dw
+    # The user prompt embeds ONE LINE PER CAP, rendered from the LIVE capability
+    # registry - so its bytes depend on which capabilities happen to be loaded in
+    # whatever process runs the test, not on the prompt code being guarded.
+    # Measured 2026-09-06: the same commit composed minimal.prompt at 637 chars
+    # in a dev container and 1129 in the merge gate's runner, because the gate
+    # had the real cap descriptions registered and the container did not. The
+    # golden had been captured in the degraded environment, so this file could
+    # never pass in both - which is part of why it sat red rather than being
+    # fixed. Pinning the renderer makes the composed prompt a function of the
+    # prompt code alone, which is the only thing this test is trying to hold
+    # still; cap DESCRIPTIONS are owned by their own caps and tested there.
+    real_cap_line = M._v5_brief_cap_line
     prev = os.environ.get("VERA_LOOP_MINIMAL_PLAN")
     M._safe_ollama_generate_dw = _stub
+    M._v5_brief_cap_line = lambda name: "%s — <description pinned for the golden>" % name
     os.environ["VERA_LOOP_MINIMAL_PLAN"] = "1" if minimal else "0"
     try:
         asyncio.run(M._v5_orchestrate_plan(
@@ -58,6 +71,7 @@ def _compose(minimal: bool):
             model="", instance_id="", prefer_gpu=True))
     finally:
         M._safe_ollama_generate_dw = real
+        M._v5_brief_cap_line = real_cap_line
         if prev is None:
             os.environ.pop("VERA_LOOP_MINIMAL_PLAN", None)
         else:
@@ -99,6 +113,19 @@ def test_shared_rule_texts_are_byte_identical():
     for rid, const in (("cap_routing", "_V7_CAP_ROUTING"),
                        ("criteria_settleable", "_V7_CRITERIA_RULE")):
         assert getattr(M, const) == want[rid], _report(rid, want[rid], getattr(M, const))
+
+
+def test_the_cap_catalog_is_pinned_so_the_golden_is_environment_independent():
+    """The property that lets this file live in the merge gate.
+
+    Without the pin the composed prompt carries live cap descriptions, so the
+    same commit produces different bytes in a dev container and in the gate's
+    runner - green in one, red in the other, and therefore ignored in both.
+    If someone removes the pin, fail HERE with the reason rather than as a
+    mystery byte diff somewhere else."""
+    got = _compose(True)["prompt"]
+    assert "<description pinned for the golden>" in got
+    assert "code.author — <description pinned for the golden>" in got
 
 
 def test_golden_is_present_and_substantial():
