@@ -64,8 +64,38 @@ def test_finalize_short_circuits_authored_code_no_llm():
                                   instance_id="", prefer_gpu=False, session_id=""))
     assert res.get("finalized") is True
     assert res.get("raw_summary") == long_raw          # original preserved
-    assert "build.py" in res["summary"] and "exec.python.run" in res["summary"]
+    assert "build.py" in res["summary"]
     assert res["summary"] != long_raw                   # replaced with the concise line
+    # The summary must say the file is ALREADY verified - that is the whole
+    # point of the fast path, and the wording exists to stop later steps
+    # reading the file back or improvising shell syntax checks.
+    assert "VERIFIED" in res["summary"]
+
+
+def test_the_summary_does_not_name_a_language_specific_runner():
+    """This assertion used to require "exec.python.run" in the summary, and it
+    had been FAILING on main and bleeding-edge for an unknown period.
+
+    The cap name was removed from the wording on purpose: the old text told the
+    caller to run the authored file with exec.python.run whatever its language,
+    which is wrong for a .html, .sh or .js file. dag_workshop says so at the
+    construction site - "Every language is treated the same here."
+
+    So the stale assertion is inverted rather than deleted: it now guards the
+    deliberate change instead of contradicting it. Nothing ran this file (it is
+    outside the critical tier), which is why a test asserting the opposite of
+    the intended behaviour sat red without anyone noticing."""
+    res = {"ok": True, "summary": "x" * 500, "outputs": {},
+           "history": [{"tool": "code.author", "ok": True,
+                        "args": {"path": "page.html"}}]}
+    asyncio.run(_v6_finalize_step({"success": "page.html exists", "goal": "write it"},
+                                  res, goal="g", model="__dummy__",
+                                  instance_id="", prefer_gpu=False, session_id=""))
+    assert "page.html" in res["summary"]
+    for runner in ("exec.python.run", "exec.bash.run", "python3 "):
+        assert runner not in res["summary"], (
+            "the fast-path summary must not tell the caller to run a %s file "
+            "with a language-specific runner" % "page.html".rsplit(".", 1)[-1])
 
 
 def test_finalize_does_not_short_circuit_non_author_terminal():
