@@ -65,6 +65,14 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
+# Dual-spelled: Vera.vera.* resolves to the DEPLOYED checkout, which does not
+# have a module until it lands there, so a NEW sibling must fall back to the
+# plain package or this whole module fails to import.
+try:
+    from Vera.vera.dag import error_excerpt as _error_excerpt
+except ImportError:                                        # pragma: no cover
+    from vera.dag import error_excerpt as _error_excerpt
+
 # Step ids travel as ints in the plan and as ints in the events, but they cross
 # a JSON boundary and are re-parsed by several producers, so compare them as
 # normalised strings rather than trusting the type to survive the round trip.
@@ -153,7 +161,15 @@ def digest_events(events: Sequence[Dict[str, Any]],
                     if e.get("cached"):
                         c["served_from"] = e.get("cached")
                     if not e.get("ok"):
-                        c["error"] = _clip(e.get("error") or e.get("preview"), 160)
+                        # HEAD AND TAIL, not the first 160 characters. pytest,
+                        # tracebacks and compilers all put the diagnosis at the
+                        # END, so a leading clip recorded the banner and dropped
+                        # the verdict - census 39's build-multifile stored
+                        # "test session starts / platform linux …" for every
+                        # failing run and nothing about what failed. See
+                        # error_excerpt.
+                        c["error"] = _error_excerpt.excerpt(
+                            e.get("error") or e.get("preview"))
                     break
         elif t.endswith(".step_start"):
             sid_k = e.get("step_id")
