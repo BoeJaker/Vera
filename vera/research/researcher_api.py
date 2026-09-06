@@ -53,6 +53,13 @@ from pydantic import BaseModel, Field
 # Single source of truth for the internal domain. Imported under an alias because
 # `cfg` is used throughout this module as a local name for per-source config dicts.
 from Vera.vera.config import cfg as _vera_cfg
+# Dual-spelled: Vera.vera.* resolves to the DEPLOYED checkout, which does not
+# have a module until it lands there, so a NEW sibling must fall back to the
+# plain package or this whole module fails to import.
+try:
+    from Vera.vera.web import search_engines as _engines
+except ImportError:                                        # pragma: no cover
+    from vera.web import search_engines as _engines
 _BACKEND_HOST = _vera_cfg.BACKEND_HOST
 
 # Persistence through the data fabric (replaces research_db.py)
@@ -930,8 +937,14 @@ async def search_searxng(query: str, limit: int) -> list[dict]:
     host = cfg.get("host", f"http://{_BACKEND_HOST}:8888")
     try:
         async with httpx.AsyncClient(timeout=10.0) as c:
+            # Params come from the shared core so this engine and
+            # web_capabilities' copy cannot drift again. The `language` default
+            # moved from "en" to "auto" there: naming a specific locale made
+            # THIS call return an empty list on every query, because SearXNG
+            # filters engines by declared language support and none of the
+            # configured engines advertise en. See search_engines.
             r = await c.get(f"{host}/search",
-                params={"q":query,"format":"json","language":"en","safesearch":web_cfg.safe_search})
+                params=_engines.searxng_params(query, web_cfg.safe_search))
             results = r.json().get("results",[])[:limit]
             if not results:
                 log.warning("search_searxng: 0 results from %s for %r (HTTP %s)", host, query[:50], r.status_code)
