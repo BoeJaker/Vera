@@ -64,6 +64,10 @@ try:
     from Vera.vera.operator import session_target as _sess_target   # noqa: E402
 except ImportError:                                                  # pragma: no cover
     from vera.operator import session_target as _sess_target        # noqa: E402
+try:
+    from Vera.vera.operator import nav_pin as _nav_pin              # noqa: E402
+except ImportError:                                                  # pragma: no cover
+    from vera.operator import nav_pin as _nav_pin                   # noqa: E402
 
 
 def _orch_base_url() -> str:
@@ -823,6 +827,12 @@ async def cap_run(goal: str = "", url: str = "", kind: str = "", base_url: str =
         progress_tolerance=(int(progress_tolerance) if progress_tolerance
                             else _progress.DEFAULT_TOLERANCE),
         think=think,
+        # Pin the run to the file it was aimed at, when that is what it was
+        # aimed at. `url` here is whatever survived resolution above - explicit,
+        # path-derived or read out of the goal text - and nav_pin.is_pinnable
+        # accepts only a sandbox preview URL, so a goal that legitimately
+        # browses a site is never pinned. See nav_pin for the run this fixes.
+        pin_url=(url if _nav_pin.is_pinnable(url) else ""),
         should_cancel=lambda: _op_is_cancelled(run_id))
     # Assemble the per-step screenshots into a GIF of the whole run (the frames
     # already exist — this is nearly free).
