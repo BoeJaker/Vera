@@ -104,6 +104,63 @@ def test_a_nonsense_limit_still_asks_for_one_page():
         assert SE.page_plan(bad) == [1]
 
 
+# ── the shared page walk ────────────────────────────────────────────────────
+def _walk(pages, limit, **kw):
+    """Drive the real walk with a scripted fetch. `pages` is what each page
+    returns, in order; None means that attempt failed."""
+    seen = []
+
+    async def fetch(pageno):
+        seen.append(pageno)
+        return pages[pageno - 1] if pageno - 1 < len(pages) else []
+
+    import asyncio
+    return asyncio.run(SE.walk_pages(fetch, limit, **kw)), seen
+
+
+def test_the_walk_gathers_across_pages():
+    """The property that was missing in production: limit=25 must reach past
+    the first page."""
+    got, pages = _walk([[_r("a"), _r("b")], [_r("c"), _r("d")], [_r("e")]], 5)
+    assert [x["url"] for x in got] == ["a", "b", "c", "d", "e"]
+    assert pages == [1, 2, 3]
+
+
+def test_the_walk_stops_as_soon_as_the_limit_is_met():
+    _got, pages = _walk([[_r("a"), _r("b")], [_r("c")], [_r("d")]], 2)
+    assert pages == [1], "no second request once the limit is satisfied"
+
+
+def test_an_empty_page_ends_the_walk():
+    """Nothing further to give - asking again is a wasted upstream hit."""
+    got, pages = _walk([[_r("a")], [], [_r("c")]], 25)
+    assert [x["url"] for x in got] == ["a"]
+    assert pages == [1, 2]
+
+
+def test_a_failed_page_keeps_what_earlier_pages_returned():
+    """None means that attempt failed. A failure on page 2 must not discard
+    page 1."""
+    got, pages = _walk([[_r("a"), _r("b")], None, [_r("c")]], 25)
+    assert [x["url"] for x in got] == ["a", "b"]
+    assert pages == [1, 2]
+
+
+def test_a_failure_on_the_first_page_yields_nothing():
+    got, _pages = _walk([None], 25)
+    assert got == []
+
+
+def test_the_walk_never_exceeds_the_page_cap():
+    _got, pages = _walk([[_r("p%d" % i)] for i in range(20)], 200)
+    assert pages == list(range(1, SE.MAX_PAGES + 1))
+
+
+def test_the_walk_de_duplicates_across_pages():
+    got, _pages = _walk([[_r("http://x/1")], [_r("http://x/1")], [_r("http://x/2")]], 25)
+    assert [x["url"] for x in got] == ["http://x/1", "http://x/2"]
+
+
 # ── merging pages ───────────────────────────────────────────────────────────
 def _r(u):
     return {"url": u, "title": u, "snippet": ""}
@@ -178,6 +235,54 @@ def test_asking_for_ddg_does_not_list_it_twice():
 def test_an_unknown_engine_falls_back_to_the_full_chain():
     assert SE.engine_order("altavista", "searxng") == ["searxng", "brave", "ddg"]
     assert SE.engine_order("", "searxng") == ["searxng", "brave", "ddg"]
+
+
+# ── reaching a service published on the docker host ─────────────────────────
+def test_outside_a_container_nothing_is_rewritten():
+    """The host itself already resolves its own services."""
+    assert SE.host_candidates("http://localhost:8088", inside=False) == \
+        ["http://localhost:8088"]
+
+
+def test_inside_a_container_localhost_means_the_gateway_first():
+    """A container's own localhost can never be the host's, so trying it first
+    is guaranteed waste."""
+    got = SE.host_candidates("http://localhost:8088", inside=True)
+    assert got[0] == "http://host.docker.internal:8088"
+    assert "http://localhost:8088" in got
+
+
+def test_a_host_only_name_is_tried_first_then_the_gateway():
+    """llm.int is the docker host, but it does not resolve on the Linux box or
+    inside a container - so try it (it may resolve elsewhere) and then fall back
+    to the gateway on the SAME port."""
+    got = SE.host_candidates("http://llm.int:8088", inside=True)
+    assert got == ["http://llm.int:8088", "http://host.docker.internal:8088"]
+
+
+def test_the_port_is_preserved_when_falling_back():
+    """The gateway fallback fixes the HOST, never the port - guessing a port
+    would reach whatever else happens to be listening."""
+    assert SE.host_candidates("http://llm.int:9999", inside=True)[1] == \
+        "http://host.docker.internal:9999"
+
+
+def test_a_url_without_a_port_keeps_none():
+    assert SE.host_candidates("http://llm.int", inside=True)[1] == \
+        "http://host.docker.internal"
+
+
+def test_the_gateway_itself_is_not_duplicated():
+    assert SE.host_candidates("http://host.docker.internal:8088", inside=True) == \
+        ["http://host.docker.internal:8088"]
+
+
+def test_an_empty_url_yields_no_candidates():
+    assert SE.host_candidates("", inside=True) == []
+
+
+def test_a_malformed_url_is_returned_untouched():
+    assert SE.host_candidates("not a url", inside=True) == ["not a url"]
 
 
 # ── redirect unwrapping (the union of the two old copies) ───────────────────
