@@ -127,6 +127,38 @@ def last_seen(steps: Optional[List[Dict[str, Any]]] = None) -> str:
     return ""
 
 
+#: How many distinct readings to quote. Enough to show load -> change -> reset,
+#: which is the shape that exposes an inconsistency, without pasting a whole
+#: countdown tick by tick.
+MAX_TRAIL = 6
+
+
+def seen_sequence(steps: Optional[List[Dict[str, Any]]] = None,
+                  limit: int = MAX_TRAIL) -> List[str]:
+    """The DISTINCT values the page showed, in order.
+
+    Consecutive repeats collapse - a page sitting at 01:00 for six steps is one
+    reading, not six - so what survives is the transitions, which is where the
+    evidence is.
+    """
+    out: List[str] = []
+    for rec in (steps or []):
+        if not isinstance(rec, dict):
+            continue
+        text = " ".join(str(rec.get("seen") or "").split())
+        if not text:
+            continue
+        if out and out[-1] == text:
+            continue
+        out.append(text[:120])
+    if len(out) <= limit:
+        return out
+    # Keep the START and the END: the first reading is what it loaded as, the
+    # last is where it ended up, and those two are what get compared.
+    head = max(1, limit // 2)
+    return out[:head] + out[len(out) - (limit - head):]
+
+
 def observed_note(steps: Optional[List[Dict[str, Any]]] = None) -> str:
     """What the page showed, phrased so the caller can act on it.
 
@@ -149,10 +181,23 @@ def observed_note(steps: Optional[List[Dict[str, Any]]] = None) -> str:
     seen = last_seen(steps)
     if not seen:
         return ""
-    return (" What the page actually DISPLAYED when it stopped: %r. Compare that "
-            "with what the goal expected: if it does not match, the FILE is "
-            "wrong and re-running the browser will keep reporting the same "
-            "thing - fix the file instead." % seen[:200])
+    trail = seen_sequence(steps)
+    # The SEQUENCE, not just the final frame. Census 39's operator watched
+    # 01:30 -> 00:57 -> 01:00: it loaded correctly, counted down correctly, and
+    # then Reset put it at 01:00 instead of 01:30 - which is the whole defect,
+    # and is invisible in any single reading. Reporting only the last value said
+    # "01:00" and left the reader to guess whether that was wrong or just a
+    # countdown caught late.
+    trail_note = ""
+    if len(trail) > 1:
+        trail_note = (" It displayed, in order: %s. A value that changes and "
+                      "then returns to something DIFFERENT from where it "
+                      "started is a defect in the file, not a browser problem."
+                      % " -> ".join(repr(t) for t in trail))
+    return (" What the page actually DISPLAYED when it stopped: %r.%s Compare "
+            "that with what the goal expected: if it does not match, the FILE "
+            "is wrong and re-running the browser will keep reporting the same "
+            "thing - fix the file instead." % (seen[:200], trail_note))
 
 
 def explain(reason: str, steps: Optional[List[Dict[str, Any]]] = None) -> str:
