@@ -85,6 +85,13 @@ except ImportError:                                        # pragma: no cover
         from vera.dag import test_target as _test_target
     except ImportError:
         _test_target = None
+try:
+    from Vera.vera.dag import repeat_failure as _repeat_failure
+except ImportError:                                        # pragma: no cover
+    try:
+        from vera.dag import repeat_failure as _repeat_failure
+    except ImportError:
+        _repeat_failure = None
 # Dual-spelled: Vera.vera.* resolves to the DEPLOYED checkout, which does not
 # have a module until it lands there, so a NEW sibling must fall back to the
 # plain package or this whole module fails to import.
@@ -15048,6 +15055,10 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
     code_write_redirects = 0              # times we redirected a hand-written script → code.author
     success_sigs: Dict[str, str] = {}      # call-signature -> cached preview of a SUCCESSFUL identical call
     failed_sigs: Dict[str, str] = {}       # call-signature -> error of a FAILED identical call (never re-run it)
+    # (target, failure-kind) -> how many times, and the error text to quote back.
+    # Catches the reworded repeat the signature above cannot see; see repeat_failure.
+    failed_outcomes: Dict[tuple, int] = {}
+    failed_outcome_text: Dict[tuple, str] = {}
     # Chain hops call `call_tool` directly (see _run_chain below) and never
     # consult `success_sigs` above — this is that same short-circuit, scoped
     # separately since a chain hop's cached value needs the raw `result`
@@ -16648,6 +16659,33 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         # failed and is re-issued VERBATIM fails identically — the reported burn
         # was the same `cat <invented path>` running three times. Serve the
         # earlier error without re-invoking and demand a different approach.
+        # ── Same TARGET, same failure KIND, different wording ────────────────
+        # The signature above keys on args, so it only catches a verbatim
+        # repeat. Census 39's author-then-edit called operator.run three times
+        # against the same url, each reworded, each coming back
+        # "repeating_action" - three identical answers for 1807s, on a goal
+        # whose artifact was already correct after two cycles. This keys on the
+        # target and the failure kind instead. See repeat_failure.
+        if _repeat_failure is not None:
+            _blk = _repeat_failure.blocked_kind(failed_outcomes, tool, args)
+            if _blk:
+                repeat_fail_calls += 1
+                _perturb_next = True
+                tool_calls[tool] = max(0, tool_calls.get(tool, 1) - 1)
+                pending_note = _repeat_failure.describe(
+                    tool, _blk, failed_outcome_text.get(
+                        (_repeat_failure.target_key(tool, args), _blk), ""))
+                await emit_event({"type": "agent_loop_v5.tool_call", "stream_id": stream_id,
+                                  "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                                  "args": args, "repeat": True, "session_id": sid,
+                                  "thought": "(already failed this way twice on this target — not re-run)"})
+                await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
+                                  "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                                  "ok": False, "elapsed_ms": 0, "preview": pending_note,
+                                  "error": "already failed this way twice on this target — not re-run",
+                                  "session_id": sid})
+                continue
+
         _failed_before = failed_sigs.get(_call_sig)
         if _failed_before is not None:
             repeat_fail_calls += 1
@@ -17447,6 +17485,16 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             # Remember the exact failure so a verbatim repeat is answered from
             # here instead of being run again for the same error.
             failed_sigs[_call_sig] = preview[:1200]
+            # Also record it by TARGET + KIND, so the next attempt against the
+            # same target with different wording is recognised as the same
+            # question. See repeat_failure.
+            if _repeat_failure is not None:
+                failed_outcomes = _repeat_failure.record(
+                    failed_outcomes, tool, args, preview)
+                _k = _repeat_failure.failure_kind(preview)
+                if _k:
+                    failed_outcome_text[
+                        (_repeat_failure.target_key(tool, args), _k)] = preview[:1200]
 
         # ── Auto-save generated code: any fenced code a generative cap produced
         #    is versioned into the code store automatically (no ide.fs.write step

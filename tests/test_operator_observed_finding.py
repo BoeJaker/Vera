@@ -59,6 +59,49 @@ def test_the_most_recent_observation_wins():
     assert SE.last_seen(steps) == "00:31"
 
 
+# ── the SEQUENCE, which is where the defect actually shows ──────────────────
+def test_the_reset_inconsistency_is_reported():
+    """Census 39's operator watched 01:30 -> 00:57 -> 01:00: it loaded right,
+    counted down right, and Reset put it at 01:00 instead of 01:30. That is the
+    whole defect, and it is invisible in any single reading - the old note said
+    only "01:00" and left the reader to guess whether that was wrong or just a
+    countdown caught late."""
+    steps = [{"seen": "01:30 Start Pause Reset"},
+             {"seen": "00:57 Start Pause Reset"},
+             {"seen": "01:00 Start Pause Reset"}]
+    out = SE.explain("repeating_action", steps)
+    assert "01:30" in out and "01:00" in out
+    assert "->" in out, "the transitions are what expose it"
+
+
+def test_a_steady_page_reports_no_sequence():
+    """One reading repeated is one reading, not a trail."""
+    steps = [{"seen": "01:00"}, {"seen": "01:00"}, {"seen": "01:00"}]
+    assert SE.seen_sequence(steps) == ["01:00"]
+    assert "->" not in SE.explain("repeating_action", steps)
+
+
+def test_consecutive_repeats_collapse_but_a_return_does_not():
+    """01:30 -> 01:30 -> 01:00 -> 01:00 -> 01:30 is three readings: the return
+    to 01:30 is a real transition, not a duplicate."""
+    steps = [{"seen": "01:30"}, {"seen": "01:30"}, {"seen": "01:00"},
+             {"seen": "01:00"}, {"seen": "01:30"}]
+    assert SE.seen_sequence(steps) == ["01:30", "01:00", "01:30"]
+
+
+def test_the_trail_is_bounded_and_keeps_both_ends():
+    """A long countdown must not paste every tick, but the FIRST reading (what
+    it loaded as) and the LAST (where it ended) are what get compared."""
+    steps = [{"seen": "v%d" % i} for i in range(40)]
+    trail = SE.seen_sequence(steps)
+    assert len(trail) <= SE.MAX_TRAIL
+    assert trail[0] == "v0" and trail[-1] == "v39"
+
+
+def test_steps_without_observations_contribute_nothing():
+    assert SE.seen_sequence([{"phase": "think"}, {"seen": ""}, {"seen": "01:00"}]) == ["01:00"]
+
+
 def test_nothing_is_invented_when_no_observation_was_recorded():
     """Runs recorded before `seen` was carried must get the old explanation,
     not a fabricated one."""
