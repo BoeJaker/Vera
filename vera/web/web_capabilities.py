@@ -229,31 +229,46 @@ async def _search_searxng(query: str, limit: int, host: str = "") -> List[Dict[s
     pagination existed - searxng_params omits `pageno` for page 1.
     """
     host = (host or DEFAULT_SEARXNG).rstrip("/")
-    pages: List[List[Dict[str, Any]]] = []
+    # Inside a container the configured host is written from the HOST's point of
+    # view: "localhost" is this container, and a host-only name may not resolve
+    # at all. Try the configured URL first, then the same port via the docker
+    # gateway. See search_engines.host_candidates.
+    for _cand in _engines.host_candidates(host) or [host]:
+        _res = await _searxng_pages(_cand, query, limit)
+        if _res:
+            return _res
+    return []
+
+
+async def _searxng_pages(host: str, query: str, limit: int) -> List[Dict[str, Any]]:
+    """Walk SearXNG's pages for one host. Returns [] if it cannot be reached.
+
+    The walk itself is search_engines.walk_pages, shared with the researcher's
+    engine so there is ONE definition of when to stop paging.
+    """
     try:
         async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT, headers=HEADERS) as c:
-            for pageno in _engines.page_plan(limit):
-                r = await c.get(f"{host}/search",
-                                params=_engines.searxng_params(query, 0, pageno))
-                r.raise_for_status()
-                items = (r.json().get("results") or [])
-                pages.append([{
+
+            async def _fetch(pageno: int):
+                try:
+                    r = await c.get(f"{host}/search",
+                                    params=_engines.searxng_params(query, 0, pageno))
+                    r.raise_for_status()
+                except Exception as e:
+                    log.debug("_search_searxng [%s] page %d: %s", query[:40], pageno, e)
+                    # None ends the walk but KEEPS earlier pages.
+                    return None
+                return [{
                     "url":     _decode_redirect(item.get("url", "")),
                     "title":   item.get("title", ""),
                     "snippet": item.get("content", "") or item.get("snippet", ""),
                     "engine":  "searxng",
-                } for item in items])
-                # An empty page means the engine has no more to give; asking for
-                # the next one just costs a round trip and an upstream hit.
-                if not items or _engines.enough(
-                        sum(len(p) for p in pages), limit):
-                    break
+                } for item in (r.json().get("results") or [])]
+
+            return await _engines.walk_pages(_fetch, limit)
     except Exception as e:
         log.debug("_search_searxng [%s]: %s", query[:40], e)
-        # Whatever earlier pages returned is still real; a failure on page 3 is
-        # not a reason to discard pages 1 and 2.
-        return _engines.merge_pages(pages, limit)
-    return _engines.merge_pages(pages, limit)
+        return []
 
 
 async def _search_brave(query: str, limit: int, api_key: str = "") -> List[Dict[str, Any]]:

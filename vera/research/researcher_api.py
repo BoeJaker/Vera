@@ -934,25 +934,48 @@ async def search_searxng(query: str, limit: int) -> list[dict]:
     if isinstance(src.config, str):
         try: cfg = json.loads(src.config)
         except Exception: cfg = {}
-    host = cfg.get("host", f"http://{_BACKEND_HOST}:8888")
+    # VERA_SEARXNG_URL is honoured before the built-in default so ONE env var
+    # configures this engine and web_capabilities' copy identically. The old
+    # default names port 8888; on this estate SearXNG publishes on 8088 and
+    # nothing listens on 8888 at all, so a source with no explicit host could
+    # never reach it.
+    host = cfg.get("host") or os.getenv("VERA_SEARXNG_URL", "") or \
+        f"http://{_BACKEND_HOST}:8888"
+    for _cand in (_engines.host_candidates(host) or [host]):
+        _r = await _searxng_once(_cand, query, limit)
+        if _r:
+            return _r
+    return []
+
+
+async def _searxng_once(host: str, query: str, limit: int) -> list[dict]:
+    """One SearXNG host attempt, walking pages until `limit` is met.
+
+    THIS is the copy that runs. web_capabilities prefers the research engines
+    whenever researcher_api imports, so paginating only its own copy left
+    `limit=25` returning 10 - measured on prod the moment SearXNG started
+    working. The walk lives in search_engines so both engines share one
+    definition of when to stop.
+    """
     try:
         async with httpx.AsyncClient(timeout=10.0) as c:
-            # Params come from the shared core so this engine and
-            # web_capabilities' copy cannot drift again. The `language` default
-            # moved from "en" to "auto" there: naming a specific locale made
-            # THIS call return an empty list on every query, because SearXNG
-            # filters engines by declared language support and none of the
-            # configured engines advertise en. See search_engines.
-            r = await c.get(f"{host}/search",
-                params=_engines.searxng_params(query, web_cfg.safe_search))
-            results = r.json().get("results",[])[:limit]
+
+            async def _fetch(pageno: int):
+                r = await c.get(f"{host}/search",
+                                params=_engines.searxng_params(
+                                    query, web_cfg.safe_search, pageno))
+                return r.json().get("results", []) or []
+
+            results = await _engines.walk_pages(_fetch, limit)
             if not results:
-                log.warning("search_searxng: 0 results from %s for %r (HTTP %s)", host, query[:50], r.status_code)
+                log.warning("search_searxng: 0 results from %s for %r", host, query[:50])
             else:
-                log.info("search_searxng: %d results for %r", len(results), query[:50])
+                log.info("search_searxng: %d results for %r (paged)",
+                         len(results), query[:50])
             return results
     except Exception as e:
-        log.warning("search_searxng FAILED: %s (host=%s)", e, host); return []
+        log.warning("search_searxng FAILED: %s (host=%s)", e, host)
+        return []
 
 
 async def search_brave(query: str, limit: int) -> list[dict]:

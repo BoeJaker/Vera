@@ -73,6 +73,64 @@ DEFAULT_LANGUAGE = "auto"
 LAST_RESORT = "ddg"
 
 
+#: Docker's name for the machine the container runs on. Resolves to the bridge
+#: gateway (172.17.0.1 here) and is the ONLY reliable way for a container to
+#: reach a service published on its host.
+HOST_GATEWAY = "host.docker.internal"
+
+#: Hostnames that mean "the machine Vera is running on". Inside a container that
+#: machine is NOT localhost, which is the whole problem below.
+_SELF_HOSTS = ("localhost", "127.0.0.1", "0.0.0.0", "::1")
+
+
+def in_container(marker: str = "/.dockerenv") -> bool:
+    """True when this process is inside a container. Injectable for tests."""
+    import os as _os
+    return _os.path.exists(marker)
+
+
+def host_candidates(url: str, inside: Optional[bool] = None) -> List[str]:
+    """The URLs to try for a host-published service, best first.
+
+    WHY THIS EXISTS. A sandbox container inherits the orchestrator's idea of
+    where SearXNG lives, and that idea is written from the host's point of view.
+    Measured 2026-09-06 on this estate:
+
+      * the research source's fallback host is ``http://<BACKEND_HOST>:8888``,
+        and BACKEND_HOST is ``llm.int`` - which does not resolve on the Linux
+        host either, let alone inside a container;
+      * SearXNG publishes on :8088. Nothing listens on :8888 at all;
+      * from inside a container, ``host.docker.internal`` resolves to 172.17.0.1
+        and reaches it.
+
+    So a container asking for ``localhost`` gets ITSELF, and a container asking
+    for a host-only name gets NXDOMAIN - and either way SearXNG silently
+    contributes nothing and every search falls through to DuckDuckGo. Retrying
+    the same port via the gateway is the fix, and it is a FALLBACK rather than a
+    rewrite: the configured URL is always tried first, so a correctly reachable
+    host is unaffected.
+    """
+    u = str(url or "").strip()
+    if not u:
+        return []
+    inside = in_container() if inside is None else bool(inside)
+    if not inside:
+        return [u]
+    try:
+        p = urlparse(u)
+    except Exception:
+        return [u]
+    host = (p.hostname or "").lower()
+    if not host or host == HOST_GATEWAY:
+        return [u]
+    port = (":%d" % p.port) if p.port else ""
+    alt = "%s://%s%s%s" % (p.scheme or "http", HOST_GATEWAY, port, p.path or "")
+    # A container's own localhost can never be the host's, so the gateway leads.
+    if host in _SELF_HOSTS:
+        return [alt, u]
+    return [u, alt]
+
+
 def decode_redirect(url: str) -> str:
     """Unwrap a search engine's redirect wrapper to the real destination.
 
@@ -195,6 +253,42 @@ def merge_pages(pages: Iterable[Sequence[Dict[str, Any]]], limit: int) -> List[D
             if want > 0 and len(out) >= want:
                 return out
     return out
+
+
+async def walk_pages(fetch, limit: int, per_page: int = DEFAULT_PER_PAGE,
+                     max_pages: int = MAX_PAGES) -> List[Dict[str, Any]]:
+    """Walk an engine's pages until ``limit`` is met, and merge what came back.
+
+    ``fetch(pageno)`` returns that page's raw results, or None to mean "this
+    attempt failed" - which stops the walk while KEEPING the pages already
+    gathered, because a failure on page 3 is not a reason to discard 1 and 2.
+
+    Lives here rather than in either caller because both SearXNG engines need
+    the identical walk, and the first version of this work paginated only
+    web_capabilities' copy. That copy then stopped being the one that runs:
+    once SearXNG actually returned results, the dispatcher preferred the
+    RESEARCH path, so `limit=25` still came back with 10 on prod. One walk,
+    both callers, and the stopping rules testable without a network.
+    """
+    # Walks until it HAS enough rather than to a page count derived from an
+    # assumed page size. page_plan estimates pages as limit/per_page, which is
+    # right for SearXNG's ~10 a page but silently truncates whenever a page
+    # returns fewer: asking for 5 computed a single page, so a page yielding 2
+    # ended the walk two short. The real stopping conditions are "enough",
+    # "the engine gave nothing", and the page cap - none of which need to guess
+    # how big a page is.
+    pages: List[List[Dict[str, Any]]] = []
+    for pageno in range(1, max(1, int(max_pages or MAX_PAGES)) + 1):
+        items = await fetch(pageno)
+        if items is None:
+            break
+        page = list(items)
+        pages.append(page)
+        # An empty page means the engine has nothing further; asking again just
+        # costs a round trip and an upstream hit against a rate limit.
+        if not page or enough(sum(len(p) for p in pages), limit):
+            break
+    return merge_pages(pages, limit)
 
 
 def enough(collected: int, limit: int) -> bool:
