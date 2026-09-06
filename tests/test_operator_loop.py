@@ -86,9 +86,29 @@ def test_blocked_on_external_host():
     assert out["reason"] == "blocked"
 
 
-def test_think_error_stops():
+def test_a_persistent_think_error_stops():
+    """A thinker that keeps failing ends the run - the property this test has
+    always guarded.
+
+    It now takes _THINK_ERROR_LIMIT consecutive failures rather than one.
+    "model down" is persistent, so scripting it repeatedly is what the name
+    always meant; a SINGLE bad reply is a different thing and must not end a run
+    with all its budget left (census 37 lost one to a truncated decision - see
+    test_operator_think_recovery)."""
     async def act(session, action, args):
         return {"ok": True}
     out = _run(observe_fn=_observe(), act_fn=act,
-               think_fn=_script([{"error": "model down"}]))
+               think_fn=_script([{"error": "model down"}] * L._THINK_ERROR_LIMIT))
     assert out["reason"] == "think_error"
+
+
+def test_one_think_error_does_not_stop():
+    """The other side of the pair, so the tolerance cannot silently become
+    unlimited."""
+    async def act(session, action, args):
+        return {"ok": True}
+    out = _run(observe_fn=_observe(), act_fn=act,
+               think_fn=_script([{"error": "cut off mid-reply"},
+                                 {"action": "done", "done": True,
+                                  "args": {"summary": "ok"}}]))
+    assert out["reason"] == "done"
