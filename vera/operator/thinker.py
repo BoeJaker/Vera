@@ -183,11 +183,28 @@ def parse_decision(text: str) -> Dict[str, Any]:
 #: single answer is what turned a run that fitted into one that overran. The
 #: ceiling above it was 16384 - five times worse was available.
 #:
-#: 1024 sits clear of the observed working range (the largest legitimate
-#: decision across all three runs was 816 tokens) while capping the tail. A
-#: truncated answer is not a lost step either: parse_decision's last-resort
-#: regex recovers the action from a cut-off object.
-THINK_MAX_TOKENS = max(64, int(os.getenv("VERA_OPERATOR_THINK_TOKENS", "1024") or 1024))
+#: RAISED to 2048 after census 37 measured the cost of 1024 being wrong.
+#:
+#: The first value was set from census 35, where the largest legitimate decision
+#: was 816 tokens, and 1024 looked like comfortable headroom. It was not: across
+#: 36 think calls in census 37's author-then-edit the working range ran 211-854
+#: and TWO calls landed on exactly eval_count=1024 - the cap, not a natural stop.
+#: 1024 was sitting on top of the distribution, not above it.
+#:
+#: The truncation was not free, and the claim in this note's first version - that
+#: parse_decision's last-resort regex makes a cut-off answer survivable - was
+#: wrong in the case that matters. When the model opens with prose ("The user
+#: wants to verify that timer.html starts a countdown...") and the cap lands
+#: before it reaches the JSON, there is no action anywhere in the text to
+#: recover, so parse_decision fails and operator_loop ends the whole run on
+#: think_error. One truncated step cost an entire operator run.
+#:
+#: 2048 clears the observed range with real headroom and still bounds the tail
+#: this exists for: census 35's runaway was 3382 tokens in 199s, and the ceiling
+#: it would otherwise inherit is 16384. The loop no longer treats a single
+#: unparseable decision as fatal either (see operator_loop), so the cap being
+#: slightly wrong again costs one step rather than one run.
+THINK_MAX_TOKENS = max(64, int(os.getenv("VERA_OPERATOR_THINK_TOKENS", "2048") or 2048))
 
 
 def _split_provider(provider: str) -> tuple:
@@ -234,9 +251,22 @@ async def decide(goal: str, observation, history: Optional[List[Dict[str, Any]]]
     if isinstance(res, dict) and res.get("error"):
         return {"error": res["error"], "provider": provider}
     text = (res or {}).get("text", "") if isinstance(res, dict) else str(res)
+    # llm.generate reports whether the answer stopped because it ran out of
+    # allowance. A parse failure means something different in that case - the
+    # reply was cut off mid-thought, not malformed - and the caller can retry it
+    # rather than treat the run as broken. Census 37 lost an operator run to a
+    # 1024-token truncation that opened with prose and never reached its JSON.
+    truncated = bool(res.get("truncated")) if isinstance(res, dict) else False
     decision = parse_decision(text)
     decision["provider"] = provider
+    if truncated:
+        decision["truncated"] = True
     if decision.get("error"):
+        if truncated:
+            decision["error"] = (
+                "the reply was cut off at the output limit before it produced a "
+                "JSON object (" + str(decision["error"])[:120] + "). Answer with "
+                "ONLY the JSON object and no preamble.")
         return decision
     # structural sanity — surface (don't execute) an illegal action
     decision = finalise_decision(decision)

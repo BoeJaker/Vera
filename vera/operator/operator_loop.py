@@ -92,6 +92,13 @@ async def _default_act(session, action: str, args: Dict[str, Any]):
 # can be accommodated without a code change.
 _REPEAT_LIMIT = max(2, int(os.getenv("VERA_OPERATOR_REPEAT_LIMIT", "5") or 5))
 
+# How many CONSECUTIVE unusable think replies end the run. One was the old
+# behaviour and it threw away runs that had every step and second left (census
+# 37). Three tolerates a truncation or a malformed object without letting a
+# genuinely broken thinker spin: the counter resets on any decision that parses,
+# so this only ever counts a streak.
+_THINK_ERROR_LIMIT = max(1, int(os.getenv("VERA_OPERATOR_THINK_ERROR_LIMIT", "3") or 3))
+
 
 def _repeat_signature(action: str, args: Optional[Dict[str, Any]], url: str) -> str:
     """Identity of an attempt, for the repeat guard.
@@ -165,6 +172,8 @@ async def run_loop(goal: str, session, *,
     steps: List[Dict[str, Any]] = []
     screenshots: List[str] = []
     consecutive_errors = 0
+    # Consecutive unusable think replies. Reset by any decision that parses.
+    think_errors = 0
     # Repeat guard state: the last (action, args, url) and how many times running.
     # See the check below for why the URL is part of the key.
     last_sig: Optional[str] = None
@@ -254,12 +263,32 @@ async def run_loop(goal: str, session, *,
 
         decision = await think(goal, obs, history, canvas)
         if isinstance(decision, dict) and decision.get("error"):
-            reason = "think_error"
-            steps.append({"i": i, "phase": "think", "url": getattr(obs, "url", ""),
-                          "error": decision["error"],
-                          "screenshot": getattr(obs, "screenshot_path", "")})
-            await _emit(steps[-1])
-            break
+            # ONE bad reply is not a broken run. This used to break immediately,
+            # so a single unparseable decision ended the whole operator run with
+            # every step and second of its budget still unspent - and census 37
+            # produced exactly that: the output cap truncated a reply that opened
+            # with prose, it never reached its JSON, and the run stopped there.
+            # The model gets told what was wrong and observes the page again,
+            # which is usually all it takes; a genuinely broken thinker still
+            # stops the run, just after _THINK_ERROR_LIMIT tries rather than one.
+            think_errors += 1
+            rec = {"i": i, "phase": "think", "url": getattr(obs, "url", ""),
+                   "error": decision["error"],
+                   "truncated": bool(decision.get("truncated")),
+                   "screenshot": getattr(obs, "screenshot_path", "")}
+            steps.append(rec)
+            await _emit(rec)
+            if think_errors >= _THINK_ERROR_LIMIT:
+                reason = "think_error"
+                break
+            # Recorded so the NEXT prompt carries the failure: build_prompt
+            # renders history, so this is how the model is told its last reply
+            # was unusable instead of being asked the same question blind.
+            history.append({"action": "(no valid decision)", "args": {},
+                            "result": {"error": decision["error"]},
+                            "seen": _observed_text(obs)})
+            continue
+        think_errors = 0
 
         action = decision.get("action", "")
         args = decision.get("args") or {}
