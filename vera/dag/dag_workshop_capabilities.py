@@ -78,6 +78,13 @@ try:
     from Vera.vera.dag import loop_prompt_rules as _loop_rules
 except ImportError:                                        # pragma: no cover
     from vera.dag import loop_prompt_rules as _loop_rules
+try:
+    from Vera.vera.dag import test_target as _test_target
+except ImportError:                                        # pragma: no cover
+    try:
+        from vera.dag import test_target as _test_target
+    except ImportError:
+        _test_target = None
 # Dual-spelled: Vera.vera.* resolves to the DEPLOYED checkout, which does not
 # have a module until it lands there, so a NEW sibling must fall back to the
 # plain package or this whole module fails to import.
@@ -10770,6 +10777,27 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
         files = [f.strip() for f in re.split(r"[\n,]+", files) if f.strip()]
     files = [str(f) for f in (files or []) if str(f).strip()][:6]
 
+    # GROUND A TEST FILE ON THE FILE IT TESTS, when the caller named nothing.
+    #
+    # The same rule prose.author already applies to its source data. Census 39's
+    # build-multifile wrote test_stats.py BEFORE reading stats.py and guessed the
+    # contract - asserting a list where the implementation returns a scalar - and
+    # then could not converge: seven failures, all that one mismatch, and about
+    # twenty cycles spent re-running pytest against it. See test_target; the
+    # match is by name and only when the file really exists.
+    _under_test: List[str] = []
+    if not files and _test_target is not None and _test_target.is_test_path(path):
+        try:
+            _under_test = _test_target.pick_context(
+                path, await _v5_workdir_files(session_id))
+        except Exception as _te:                       # pragma: no cover
+            log.debug("test-target grounding skipped: %s", _te)
+            _under_test = []
+        if _under_test:
+            files = list(_under_test)
+            log.info("code.author: grounding %s on the file under test: %s",
+                     path, ", ".join(_under_test))
+
     sys_prompt = (
         "You are the IMPLEMENTER of Vera's coding cohort. Write REAL, complete, running code "
         "— never pseudocode, never a sketch, never a partial file with '...' or 'rest of the "
@@ -10879,6 +10907,12 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
               + (f"\nREQUIREMENTS / CONSTRAINTS:\n{requirements}\n" if requirements else "")
               + (f"\nThe code must read these files (their real content is included above as "
                  f"CONTEXT FILES): {', '.join(files)}\n" if files else "")
+              # Says WHY the file under test is attached and what to do with it.
+              # The attachment alone is not enough: the author has to be told to
+              # assert against the real signatures rather than the ones a module
+              # with that name usually has. See test_target.
+              + (_test_target.describe(path, _under_test)
+                 if (_test_target is not None and _under_test) else "")
               + schema_block
               + (f"\nENVIRONMENT — {pkg_block}\n" if pkg_block else "")
               + f"\nWrite the complete {lang} file now.")
