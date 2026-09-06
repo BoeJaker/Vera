@@ -67,6 +67,30 @@ KNOWN_ENGINES = ("searxng", "brave", "ddg")
 #: useless: it was being asked a question none of its engines would answer.
 DEFAULT_LANGUAGE = "auto"
 
+#: Headers for SearXNG's JSON API - deliberately NOT the browser headers used
+#: for scraping HTML endpoints.
+#:
+#: Measured 2026-09-06 from inside a container, same host, same query, same
+#: params, differing only in headers:
+#:
+#:     with web_client.BROWSER_HEADERS -> HTTP 200, 0 results
+#:     with no headers                 -> HTTP 200, 10 results
+#:
+#: SearXNG's bot detection rejects a request that looks like a browser fetching
+#: a page when what it is actually being asked for is the JSON API. This is a
+#: SECOND, independent reason web_capabilities' SearXNG engine returned nothing
+#: - it passes BROWSER_HEADERS - and it was masked by the language bug: while
+#: `language=en` zeroed every SearXNG result, both engines looked equally dead
+#: and the headers never came under suspicion. The researcher's engine sends no
+#: headers at all, which is why the research path worked the moment the language
+#: fix landed and the web path still did not.
+SEARXNG_HEADERS = {"Accept": "application/json"}
+
+#: Header names that mark a request as a browser rather than an API client.
+#: Named so the rule can be asserted rather than trusted.
+BROWSERISH_HEADERS = ("user-agent", "sec-fetch-mode", "sec-fetch-site",
+                      "sec-ch-ua", "upgrade-insecure-requests")
+
 #: The last-resort engine. Both implementations already fell back to it, and
 #: keeping that is what makes this consolidation non-regressive: no call that
 #: used to reach ddg stops reaching it.
