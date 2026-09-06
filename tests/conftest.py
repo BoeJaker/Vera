@@ -46,6 +46,7 @@ _CRITICAL_MODULES = {
     # skips cleanly where the app module is not importable. (2026-09-06)
     "test_planner_prompt_golden",  # the planner prompt must not change by accident
     "test_search_engines",  # one search implementation, and it reaches page 2 (2026-09-06)
+    "test_operator_trace_seen",  # the trace must show what the page displayed (2026-09-06)
     "test_ambient_dreaming_is_opt_in",  # nothing dreams on a box nobody asked (2026-08-31)
     "test_sandbox_estate_guard",  # a sandbox must not promote to main or reap the estate (2026-08-31)
     "test_sandbox_does_not_reap_the_estate",  # a dev sandbox must not reap the shared estate (2026-08-31)
@@ -182,3 +183,4 @@ def orch():
         return _orch
     except Exception as e:  # pragma: no cover - environment dependent
         pytest.skip(f"orchestrator/app unavailable in this env: {e}")
+

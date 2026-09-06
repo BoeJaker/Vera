@@ -804,6 +804,11 @@ async def cap_run(goal: str = "", url: str = "", kind: str = "", base_url: str =
             # run 15's author-then-edit failure hard to read.
             "args": rec.get("args") or {},
             "url": rec.get("url", ""),
+            # The page's own text, forwarded so the PERSISTED trace carries it
+            # too. run_loop has recorded it on every act step since the
+            # observation-as-finding change, but this emitter dropped it, so
+            # operator.trace showed `seen` empty on every step.
+            "seen": rec.get("seen", ""),
             "thought": rec.get("thought", "")[:200],
             "reason": rec.get("reason", ""), "error": rec.get("error", ""),
             "screenshot": f"/operator/artifact?path={_artifact_rel(shot)}" if shot else ""})

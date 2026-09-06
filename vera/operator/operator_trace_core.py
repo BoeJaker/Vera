@@ -108,6 +108,15 @@ def digest_events(events: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
                 "action": _clip(e.get("action"), 200),
                 "args": e.get("args") if isinstance(e.get("args"), dict) else {},
                 "url": e.get("url") or "",
+                # WHAT THE PAGE DISPLAYED. The loop records it on every act step
+                # and stop_explanation quotes it to the caller, but this digest
+                # is built from a fixed whitelist that did not include it - so
+                # the persisted trace showed `seen` empty and the one fact that
+                # settles "did the page do the right thing" was readable only
+                # in-process. Census 38's author-then-edit is why it matters:
+                # the operator read 01:30 on load and 01:00 after Reset, which
+                # is the actual defect, and the trace could not show either.
+                "seen": _clip(e.get("seen"), 200),
                 "thought": _clip(e.get("thought"), 300),
                 "reason": _clip(e.get("reason"), 200),
                 "error": _clip(e.get("error"), 200),
