@@ -30,6 +30,13 @@ _CRITICAL_MODULES = {
     "test_two_tier_switch",  # a feature with no switch is unusable (2026-09-01)
     "test_loop_liveness",  # a busy loop is not a dead loop (2026-09-02)
     "test_progress_content",  # a countdown is progress (2026-09-02)
+    # Census 35/36. Each of these guards a failure that was OBSERVED burning a
+    # goal's whole budget, and none of them was covered by this tier while the
+    # gate reported "2450 passed" on the branches that introduced them.
+    "test_operator_repeat_structural",  # thrash on a page whose text moves (2026-09-06)
+    "test_operator_nav_pin",  # a run aimed at one file must stay on it (2026-09-06)
+    "test_operator_think_budget",  # one decision must not cost 199s (2026-09-06)
+    "test_missing_path_hint",  # name the files that exist (2026-09-06)
     "test_ambient_dreaming_is_opt_in",  # nothing dreams on a box nobody asked (2026-08-31)
     "test_sandbox_estate_guard",  # a sandbox must not promote to main or reap the estate (2026-08-31)
     "test_sandbox_does_not_reap_the_estate",  # a dev sandbox must not reap the shared estate (2026-08-31)
