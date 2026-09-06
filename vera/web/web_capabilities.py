@@ -82,6 +82,13 @@ from Vera.vera.config import cfg
 # fallback and the platform-API switchover all live there now, shared with the
 # research pipeline and fabric web acquisition.
 from Vera.vera.web import web_client as _wc
+# Dual-spelled: Vera.vera.* resolves to the DEPLOYED checkout, which does not
+# have a module until it lands there, so a NEW sibling must fall back to the
+# plain package or this whole module fails to import.
+try:
+    from Vera.vera.web import search_engines as _engines
+except ImportError:                                        # pragma: no cover
+    from vera.web import search_engines as _engines
 
 from Vera.vera.fabric.url_dataset_resolve import (
     auto_dataset_for_url as _auto_web_dataset)
@@ -199,21 +206,9 @@ def _extract_links(html: str, base_url: str, max_links: int = 30) -> List[str]:
     return out
 
 
-def _decode_redirect(url: str) -> str:
-    """Unwrap DDG/Google redirect URLs to the actual destination."""
-    url = _html.unescape(url or "")
-    parsed = urlparse(url)
-    if parsed.netloc in ("duckduckgo.com", "www.duckduckgo.com") and parsed.path.startswith("/l"):
-        qs = parse_qs(parsed.query)
-        target = qs.get("uddg", qs.get("u", [""]))[0]
-        if target:
-            return unquote(target)
-    if "/url?" in url and "google." in parsed.netloc:
-        qs = parse_qs(parsed.query)
-        target = qs.get("q", qs.get("url", [""]))[0]
-        if target:
-            return unquote(target)
-    return url
+# Single definition, shared with the researcher's engines. See search_engines
+# for the two implementations this replaces and how they had drifted.
+_decode_redirect = _engines.decode_redirect
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -228,52 +223,71 @@ _detect_block = _wc.detect_block
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def _search_searxng(query: str, limit: int, host: str = "") -> List[Dict[str, Any]]:
+    """SearXNG, paged when `limit` needs more than one page.
+
+    A limit that fits in one page sends exactly the request this sent before
+    pagination existed - searxng_params omits `pageno` for page 1.
+    """
     host = (host or DEFAULT_SEARXNG).rstrip("/")
+    pages: List[List[Dict[str, Any]]] = []
     try:
         async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT, headers=HEADERS) as c:
-            r = await c.get(f"{host}/search", params={
-                "q": query, "format": "json", "language": "en", "safesearch": 0,
-            })
-            r.raise_for_status()
-            data = r.json()
-            out: List[Dict[str, Any]] = []
-            for item in (data.get("results") or [])[:limit]:
-                out.append({
+            for pageno in _engines.page_plan(limit):
+                r = await c.get(f"{host}/search",
+                                params=_engines.searxng_params(query, 0, pageno))
+                r.raise_for_status()
+                items = (r.json().get("results") or [])
+                pages.append([{
                     "url":     _decode_redirect(item.get("url", "")),
                     "title":   item.get("title", ""),
                     "snippet": item.get("content", "") or item.get("snippet", ""),
                     "engine":  "searxng",
-                })
-            return out
+                } for item in items])
+                # An empty page means the engine has no more to give; asking for
+                # the next one just costs a round trip and an upstream hit.
+                if not items or _engines.enough(
+                        sum(len(p) for p in pages), limit):
+                    break
     except Exception as e:
         log.debug("_search_searxng [%s]: %s", query[:40], e)
-        return []
+        # Whatever earlier pages returned is still real; a failure on page 3 is
+        # not a reason to discard pages 1 and 2.
+        return _engines.merge_pages(pages, limit)
+    return _engines.merge_pages(pages, limit)
 
 
 async def _search_brave(query: str, limit: int, api_key: str = "") -> List[Dict[str, Any]]:
     api_key = api_key or os.getenv("BRAVE_API_KEY", "")
     if not api_key:
         return []
+    pages: List[List[Dict[str, Any]]] = []
     try:
         async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as c:
-            r = await c.get("https://api.search.brave.com/res/v1/web/search",
-                            params={"q": query, "count": limit},
-                            headers={"Accept": "application/json",
-                                     "X-Subscription-Token": api_key})
-            r.raise_for_status()
-            data = r.json()
-            out: List[Dict[str, Any]] = []
-            for item in (data.get("web", {}).get("results", []) or [])[:limit]:
-                out.append({
+            for pageno in _engines.page_plan(limit):
+                params: Dict[str, Any] = {"q": query, "count": limit}
+                # Brave pages by result OFFSET. Omitted on page 1, so the first
+                # request is unchanged from before pagination.
+                off = _engines.brave_offset(pageno)
+                if off:
+                    params["offset"] = off
+                r = await c.get("https://api.search.brave.com/res/v1/web/search",
+                                params=params,
+                                headers={"Accept": "application/json",
+                                         "X-Subscription-Token": api_key})
+                r.raise_for_status()
+                items = (r.json().get("web", {}).get("results", []) or [])
+                pages.append([{
                     "url":     item.get("url", ""),
                     "title":   item.get("title", ""),
                     "snippet": item.get("description", ""),
                     "engine":  "brave",
-                })
-            return out
+                } for item in items])
+                if not items or _engines.enough(sum(len(p) for p in pages), limit):
+                    break
     except Exception as e:
         log.debug("_search_brave [%s]: %s", query[:40], e)
-        return []
+        return _engines.merge_pages(pages, limit)
+    return _engines.merge_pages(pages, limit)
 
 
 async def _search_ddg(query: str, limit: int) -> List[Dict[str, Any]]:
@@ -350,15 +364,22 @@ async def _dispatch_via_research(query: str, limit: int, engine: str
     else:
         cfg_engine = engine
 
+    # ONE order, shared with the local path below. These two used to disagree -
+    # research tried brave -> searxng -> ddg while the local fallback tried
+    # searxng -> brave -> ddg - so the same cap preferred a different engine
+    # depending on whether researcher_api happened to import. See search_engines.
     r: List[Dict[str, Any]] = []
     eng = "none"
+    _fn = {"searxng": "search_searxng", "brave": "search_brave", "ddg": "search_ddg"}
     try:
-        if cfg_engine == "brave" and hasattr(ra, "search_brave"):
-            r = await ra.search_brave(query, limit); eng = "brave"
-        if not r and cfg_engine in ("searxng", "auto") and hasattr(ra, "search_searxng"):
-            r = await ra.search_searxng(query, limit); eng = "searxng"
-        if not r and hasattr(ra, "search_ddg"):
-            r = await ra.search_ddg(query, limit); eng = "ddg"
+        for _e in _engines.engine_order(engine, cfg_engine):
+            _f = getattr(ra, _fn[_e], None)
+            if _f is None:
+                continue
+            r = await _f(query, limit)
+            if r:
+                eng = _e
+                break
     except Exception as e:
         log.debug("_dispatch_via_research [%s]: %s", query[:40], e)
         return [], "none"
@@ -386,15 +407,8 @@ async def _dispatch_search(query: str, limit: int, engine: str = "auto",
         if res:
             return res, used
 
-    order: List[str]
-    if engine == "auto":
-        order = ["searxng", "brave", "ddg"]
-    elif engine in ("searxng", "brave", "ddg"):
-        order = [engine]
-    else:
-        order = ["searxng", "brave", "ddg"]
-
-    for eng in order:
+    # Same decision function as the research path above.
+    for eng in _engines.engine_order(engine, "searxng"):
         if eng == "searxng":
             res = await _search_searxng(query, limit, host=searxng_host)
         elif eng == "brave":
