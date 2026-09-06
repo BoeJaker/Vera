@@ -39,6 +39,8 @@ _CRITICAL_MODULES = {
     "test_missing_path_hint",  # name the files that exist (2026-09-06)
     "test_workdir_note",  # do not tell a step to look at what it was shown (2026-09-06)
     "test_operator_think_recovery",  # one bad reply is not a broken run (2026-09-06)
+    "test_operator_observed_finding",  # what the page showed is the finding (2026-09-06)
+    "test_operator_goal_observable_rule",  # ask for something observable (2026-09-06)
     "test_ambient_dreaming_is_opt_in",  # nothing dreams on a box nobody asked (2026-08-31)
     "test_sandbox_estate_guard",  # a sandbox must not promote to main or reap the estate (2026-08-31)
     "test_sandbox_does_not_reap_the_estate",  # a dev sandbox must not reap the shared estate (2026-08-31)

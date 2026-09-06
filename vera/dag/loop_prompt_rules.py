@@ -51,7 +51,37 @@ CRITERIA_SETTLEABLE = Rule(
     text='FOR A FILE THIS RUN AUTHORS, THE PROOF IS THE AUTHOR\'S OWN VERDICT — NOT A TRIAL RUN OF THE FILE. code.author/code.edit put the file through a real parser and return `syntax_ok`/`checked_with`/`bytes`; that report IS the verification, and it is the only one this run needs or can get. Phrase every criterion so that verdict settles it: the file EXISTS, the author reported it verified, and it CONTAINS the required features — e.g. "index.html is created and verified by code.author, with start/pause/reset controls, a 25-minute work interval and a 5-minute break".\nWANT THE PAGE\'S BEHAVIOUR VERIFIED TOO? That is legitimate — but there is exactly ONE way to do it here: an `operator.run` step. It drives a REAL headless browser (observe→think→act, real clicks, real observed DOM changes, screenshots) against the file served out of this session\'s sandbox. So a criterion like "the timer counts down, pauses and resets" is allowed ONLY when the plan actually contains an operator.run step to settle it — otherwise leave the clause out rather than assert something nothing will check.\nNEVER try to verify a page any OTHER way. exec.bash.run/exec.python.run cannot see a rendered page: starting `python3 -m http.server`, driving Selenium, calling webbrowser.open()/xdg-open, or grepping the file for a function name proves nothing about behaviour. (Observed: a done_when reading "functions correctly in a browser" with no operator.run step sent a run to `python3 -m http.server`, where it hung until it was killed.) Use operator.run, or omit the claim.\n',
 )
 
-RULES: Dict[str, Rule] = {r.id: r for r in (CAP_ROUTING, CRITERIA_SETTLEABLE)}
+OPERATOR_GOAL_OBSERVABLE = Rule(
+    id='operator_goal_observable',
+    stages=('executor:operator',),
+    evidence=(
+        'Census 37 author-then-edit: four operator.run calls, 1803s, wall-cap. One was '
+        'asked to confirm the display read "01:35 (90 seconds)" - 90 seconds is 01:30, so '
+        'the target did not exist. The others asked for the value shown the instant Start '
+        'is clicked; that frame lasts one second and each observation costs a model call, '
+        'so the operator next saw 00:47, then 00:31. Its own thoughts show it reading the '
+        'clock correctly the whole time - the goal was unobservable, not the page.'),
+    text=(
+        "WORDING AN operator.run GOAL SO IT CAN ACTUALLY BE SETTLED. Each observation "
+        "costs a model call, so the operator sees the page roughly every 30-60 SECONDS. "
+        "It can only confirm something that is still true when it looks.\n"
+        "  • Ask for a STATE or a RELATION, never one transient frame. \"confirm the "
+        "displayed value is counting down, reporting two readings a few seconds apart\" "
+        "is settleable; \"confirm it reads 01:30 the instant Start is clicked\" is not - "
+        "that value is gone before the operator's next observation.\n"
+        "  • Do NOT compute a target value and demand an exact match on it. State the "
+        "expectation and ask the operator to REPORT what it actually displays, so a "
+        "mismatch comes back as evidence about the FILE rather than as a failed run.\n"
+        "  • Convert units in the goal text carefully, and prefer not converting at all: "
+        "90 seconds is 01:30, not 01:35. A wrong target makes success impossible and the "
+        "run will keep trying.\n"
+        "  • If the operator reports a displayed value that disagrees with the goal, the "
+        "FILE is the thing to fix - re-running the browser will report the same value "
+        "again.\n"),
+)
+
+RULES: Dict[str, Rule] = {r.id: r for r in (CAP_ROUTING, CRITERIA_SETTLEABLE,
+                                            OPERATOR_GOAL_OBSERVABLE)}
 
 
 def rules_for(stage: str) -> List[Rule]:
