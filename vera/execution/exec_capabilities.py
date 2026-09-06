@@ -73,6 +73,13 @@ import logging
 # "Succeeded and printed nothing" must not read as "no information" — see the
 # module docstring for the census run that made this necessary.
 from Vera.vera.execution import exec_result_note as _exec_result_note
+# Dual-spelled: Vera.vera.* resolves to the DEPLOYED checkout, which does not
+# have a module until it lands there, so a NEW sibling must fall back to the
+# plain package or this whole module fails to import.
+try:
+    from Vera.vera.execution import missing_path_hint as _missing_path_hint
+except ImportError:                                        # pragma: no cover
+    from vera.execution import missing_path_hint as _missing_path_hint
 import os
 import re
 import shlex
@@ -534,11 +541,27 @@ async def _route_session_code(session_id: str, language: str, code: str,
     if sb is None:
         return None
     try:
-        return await sb.route_code(session_id, language, code, path=path,
-                                   stdin=stdin, timeout=timeout, args=args)
+        res = await sb.route_code(session_id, language, code, path=path,
+                                  stdin=stdin, timeout=timeout, args=args)
     except Exception as e:
         log.debug("session sandbox route_code failed (running on host): %s", e)
         return None
+    # A run that named a file the container does not have gets told what the
+    # container DOES have. Census 36's research-web spent four cycles - two
+    # execs, a 132s code.edit and one more exec - on two filenames that never
+    # existed, while the single script it had just written sat in /workspace
+    # under a third name. The listing is already offered up front by the loop
+    # (_v5_workdir_files); attached to the failure it arrives when the model is
+    # actually wrong. Best-effort throughout: a listing that cannot be read
+    # leaves the result exactly as it was.
+    try:
+        if _missing_path_hint.is_missing_path_failure(res):
+            names = _missing_path_hint.workspace_names(
+                await artifact_list_files(session_id=session_id))
+            res = _missing_path_hint.augment(res, names)
+    except Exception as e:                                   # pragma: no cover
+        log.debug("missing-path hint skipped: %s", e)
+    return res
 
 
 async def _route_session_shell_argv(session_id: str, command: str, shell: str = "sh"):
