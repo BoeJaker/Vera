@@ -74,6 +74,13 @@ from Vera.vera.capability_orchestration import (
 )
 
 from Vera.vera.dag import chain_deps as _chain_deps
+# Dual-spelled: Vera.vera.* resolves to the DEPLOYED checkout, which does not
+# have a module until it lands there, so a NEW sibling must fall back to the
+# plain package or this whole module fails to import.
+try:
+    from Vera.vera.dag import workdir_note as _workdir_note
+except ImportError:                                        # pragma: no cover
+    from vera.dag import workdir_note as _workdir_note
 
 log = logging.getLogger("vera.dag_workshop")
 
@@ -10857,10 +10864,12 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
     # also anchors the self-contained rule: never <script src>/<link href> a local
     # file that isn't in this list (it won't exist at runtime).
     _wfiles = await _v5_workdir_files(session_id)
-    _files_block = (("\nFILES ALREADY IN THE WORKSPACE (real): " + ", ".join(_wfiles[:40])
-                     + ". Do not recreate these; reference one by its exact name only if THIS "
-                     "file genuinely needs it, and never reference any OTHER local file that is "
-                     "not in this list (it will not exist).\n") if _wfiles else "")
+    # [] and None are DIFFERENT answers and the producer keeps them apart: []
+    # means the directory really is empty, None means the probe could not tell.
+    # `if _wfiles` collapsed both to silence, so an empty workspace looked
+    # identical to an unknown one — the distinction the controller and verifier
+    # blocks already respect. See workdir_note.
+    _files_block = _workdir_note.author_files_block(_wfiles)
     prompt = (f"TASK — write `{path}`:\n{task}\n"
               + _files_block
               + (f"\nREQUIREMENTS / CONSTRAINTS:\n{requirements}\n" if requirements else "")
@@ -14851,9 +14860,15 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
               "  • NEVER use a path like /mnt/data/…, /content/…, /tmp/…, /home/…, /Users/… or "
               "C:\\… — those are paths from other environments; nothing of yours is there, and the "
               "call will just fail.\n"
-            + ("  • Need to know what's on disk? Run `ls -la` with exec.bash.run — never guess a "
-               "filename.\n" if "exec.bash.run" in allowed else
-               f"  • Never guess a filename — read one of the files above with {_read_cap}.\n"))
+            # The invitation to go LOOK used to be unconditional, and that
+            # contradicted the listing eleven lines earlier: the same block said
+            # "FILES IN IT RIGHT NOW … trust it, do NOT re-read" (or "It is EMPTY
+            # so far") and then "Need to know what's on disk? Run `ls -la`".
+            # Census 36's `underspecified` took the second instruction ten times.
+            # See workdir_note for the run and the three-state rule.
+            + _workdir_note.disk_advice(workdir_files,
+                                        has_bash=("exec.bash.run" in allowed),
+                                        read_cap=_read_cap))
     # A REAL way to verify a UI/HTML deliverable actually works — real browser,
     # real click, real observed DOM change — instead of the doomed
     # `webbrowser.open()`/`xdg-open` calls a specialist otherwise invents
