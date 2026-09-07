@@ -55,6 +55,7 @@ _CRITICAL_MODULES = {
     "test_suite_file_checks",  # a task must assert what it PRODUCED (2026-09-07)
     "test_gate_politeness",  # the suite must yield the box like the census (2026-09-07)
     "test_engine_params",  # a dropped model override is worse than an error (2026-09-07)
+    "test_census_seed",  # a template must not silently rebase the timeline (2026-09-07)
     "test_ambient_dreaming_is_opt_in",  # nothing dreams on a box nobody asked (2026-08-31)
     "test_sandbox_estate_guard",  # a sandbox must not promote to main or reap the estate (2026-08-31)
     "test_sandbox_does_not_reap_the_estate",  # a dev sandbox must not reap the shared estate (2026-08-31)
