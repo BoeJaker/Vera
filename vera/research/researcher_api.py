@@ -9270,6 +9270,10 @@ async def run_job_body(job: ResearchJob, project: Optional[Project]) -> None:
 # In-memory registry of active pipeline runs
 _pipeline_runs:  dict[str, dict]  = {}   # run_id → run state
 _pipeline_stop:  dict[str, bool]  = {}   # run_id → stop flag
+try:
+    from Vera.vera.research import pipeline_run_projection as _pipeline_run_observer
+except ImportError:  # pragma: no cover - linked worktree import fallback
+    from vera.research import pipeline_run_projection as _pipeline_run_observer
 
 
 def _apply_stage_template(template: str, topic: str, prev: str, all_ctx: str) -> str:
@@ -9398,6 +9402,8 @@ async def _run_pipeline(run_id: str) -> None:
         return
     run["status"] = "running"
     run["updated_at"] = time.time()
+    try: _pipeline_run_observer.start(run_id)
+    except Exception: pass
     await broadcast(run_id, {"type": "pl_start", "run_id": run_id,
                              "stages": len(run["stages"])})
 
@@ -9412,8 +9418,16 @@ async def _run_pipeline(run_id: str) -> None:
             if _pipeline_stop.get(run_id):
                 run["status"] = "cancelled"
                 break
+            try: _pipeline_run_observer.stage_start(run_id, idx, stage.get("kind", "research"))
+            except Exception: pass
             result = await _run_pipeline_stage(
                 stage, idx, run_id, topic, prev_output, all_outputs)
+            try:
+                _pipeline_run_observer.stage_done(
+                    run_id, idx, ok=result.get("status") != "error",
+                    citation_count=result.get("citations", 0),
+                    native_job_id=result.get("job_id", ""))
+            except Exception: pass
             stage_results.append(result)
             run["stage_results"] = stage_results
             if result.get("job_id"):
@@ -9448,6 +9462,10 @@ async def _run_pipeline(run_id: str) -> None:
         run["status"] = "error"
         run["error"]  = str(e)
     finally:
+        try:
+            _pipeline_run_observer.finish(
+                run_id, "error" if run.get("error") else run["status"])
+        except Exception: pass
         run["updated_at"] = time.time()
         try:
             await DB.save_pipeline_run({
@@ -9560,6 +9578,17 @@ async def run_pipeline_ep(req: PipelineRunRequest, bg: BackgroundTasks):
     }
     _pipeline_runs[run_id] = run
     _pipeline_stop[run_id] = False
+    try:
+        try:
+            from Vera.vera.research.pipeline_workflow import project_pipeline_workflow
+        except ImportError:  # pragma: no cover - linked worktree import fallback
+            from vera.research.pipeline_workflow import project_pipeline_workflow
+        _workflow = project_pipeline_workflow(pl)
+        _pipeline_run_observer.create(
+            run_id, _workflow["workflow_id"],
+            [step["id"] for step in _workflow["workflow"]["steps"]])
+    except Exception:
+        pass
     bg.add_task(_run_pipeline, run_id)
     return {"run_id": run_id, "status": "queued",
             "pipeline_name": pl["name"], "stages": len(pl["stages"])}
@@ -9592,15 +9621,18 @@ async def list_pipeline_runs(pipeline_id: Optional[str] = None):
 
 
 @app.get("/api/pipelines/runs/{run_id}")
-async def get_pipeline_run(run_id: str):
+async def get_pipeline_run(run_id: str, include_run_protocol: bool = False):
     if run_id in _pipeline_runs:
         r = _pipeline_runs[run_id]
-        return {"id": r["id"], "pipeline_id": r["pipeline_id"],
+        value = {"id": r["id"], "pipeline_id": r["pipeline_id"],
                 "pipeline_name": r["pipeline_name"], "status": r["status"],
                 "stages": r.get("stage_results", []),
                 "final_result": r.get("final_result", ""),
                 "job_ids": r.get("job_ids", []), "error": r.get("error", ""),
                 "created_at": r["created_at"], "updated_at": r["updated_at"]}
+        if include_run_protocol:
+            value["run_protocol"] = _pipeline_run_observer.get(run_id)
+        return value
     run = await DB.load_pipeline_run(run_id)
     if not run:
         raise HTTPException(404, "Pipeline run not found")
@@ -9610,6 +9642,7 @@ async def get_pipeline_run(run_id: str):
 @app.delete("/api/pipelines/runs/{run_id}")
 async def delete_pipeline_run_ep(run_id: str):
     _pipeline_runs.pop(run_id, None)
+    _pipeline_run_observer.drop(run_id)
     await DB.delete_pipeline_run(run_id)
     return {"ok": True}
 
