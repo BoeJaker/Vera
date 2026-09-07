@@ -21,11 +21,53 @@ before pagination existed.
 
 Pure: no network, no SearXNG, no mock client.
 """
+import asyncio
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from vera.web import search_engines as SE                  # noqa: E402
+
+
+@pytest.mark.critical
+def test_dispatch_uses_shared_order_and_survives_one_engine_failure():
+    called = []
+
+    async def failed():
+        called.append("searxng")
+        raise RuntimeError("offline")
+
+    async def empty():
+        called.append("brave")
+        return []
+
+    async def found():
+        called.append("ddg")
+        return [{"url": "https://example.test"}]
+
+    results, used = asyncio.run(SE.dispatch_search(
+        "auto", "searxng", {"searxng": failed, "brave": empty, "ddg": found}))
+    assert called == ["searxng", "brave", "ddg"]
+    assert used == "ddg"
+    assert results == [{"url": "https://example.test"}]
+
+
+@pytest.mark.critical
+def test_dispatch_honours_named_engine_without_calling_unrelated_engines():
+    called = []
+
+    async def found(name):
+        called.append(name)
+        return [{"url": f"https://{name}.test"}]
+
+    results, used = asyncio.run(SE.dispatch_search(
+        "brave", "searxng",
+        {name: (lambda name=name: found(name)) for name in SE.KNOWN_ENGINES}))
+    assert called == ["brave"]
+    assert used == "brave"
+    assert results[0]["url"] == "https://brave.test"
 
 
 # ── page 1 must not change ──────────────────────────────────────────────────

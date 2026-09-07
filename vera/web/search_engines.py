@@ -34,7 +34,7 @@ add reach, not to perturb every existing search.
 from __future__ import annotations
 
 import html as _html
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import parse_qs, unquote, urlparse
 
 #: Results a single SearXNG page returns. Not a setting - an observation of what
@@ -203,6 +203,29 @@ def engine_order(engine: str = "auto", configured_default: str = "searxng") -> L
         head = default if default in KNOWN_ENGINES else "searxng"
         return [head] + [e for e in KNOWN_ENGINES if e != head]
     return [eng] if eng == LAST_RESORT else [eng, LAST_RESORT]
+
+
+async def dispatch_search(
+    engine: str,
+    configured_default: str,
+    searchers: Mapping[str, Callable[[], Awaitable[List[Dict[str, Any]]]]],
+) -> Tuple[List[Dict[str, Any]], str]:
+    """Run available engine transports through the shared fallback policy.
+
+    Transport ownership stays with each caller.  A missing or failed transport
+    contributes no results and cannot prevent the next configured fallback.
+    """
+    for candidate in engine_order(engine, configured_default):
+        search = searchers.get(candidate)
+        if search is None:
+            continue
+        try:
+            results = await search()
+        except Exception:
+            continue
+        if results:
+            return list(results), candidate
+    return [], "none"
 
 
 def page_plan(limit: int, per_page: int = DEFAULT_PER_PAGE,
