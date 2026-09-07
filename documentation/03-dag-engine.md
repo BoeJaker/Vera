@@ -164,6 +164,16 @@ that action; default event payloads are unchanged. The DAG Workshop requests
 this evidence and shows the definition identity and native control mode beside
 the action parameters, result, error, or approval request.
 
+Agent-loop capability calls use this same per-action boundary through an
+embedded Workflow runtime adapter. The adapter exact-round-trips the one-node
+action, then delegates it once to the established native call-tool function.
+The native function remains responsible for capability admission, argument
+handling, streaming callbacks, long-running job awaiting, cancellation, and
+execution. Its result or failure envelope is preserved and receives only a
+content-free runtime/Workflow identity. Set `VERA_AGENT_WORKFLOW_RUNTIME=0`
+before startup to bypass this adapter without changing the native execution
+path.
+
 Executed one-shot and stepwise streams also create a non-authoritative Run
 projection alongside their native SSE lifecycle. Each emitted step becomes a
 child Run; approval pauses and resumptions, rejection, step failure, client

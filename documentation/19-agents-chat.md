@@ -144,6 +144,16 @@ This record is observational: the existing capability remains execution
 authority, and malformed legacy state degrades the projection instead of
 blocking a run.
 
+Individual capability actions now cross an embedded runtime-adapter boundary.
+Each action is represented as an exact one-node Workflow IR definition before
+the existing native tool caller executes it. The adapter does not reinterpret
+arguments, grant authority, duplicate events, or invoke a second tool; it
+retains the native result while attaching graph-free runtime provenance. This
+makes action execution portable to future runtimes without replacing the
+current admission, streaming, awaiting, and cancellation behavior. Operators
+can disable the boundary at process startup with
+`VERA_AGENT_WORKFLOW_RUNTIME=0` for an immediate native-path rollback.
+
 The loop renderer separates model-slot queue time, provider execution time, and
 end-to-end time for controller, quality-check, and completion-check calls.
 Throughput and routing statistics use provider time, so time spent waiting

@@ -99,6 +99,14 @@ try:
     from Vera.vera.dag import workdir_note as _workdir_note
 except ImportError:                                        # pragma: no cover
     from vera.dag import workdir_note as _workdir_note
+try:
+    from Vera.vera.execution.workflow_runtime_adapter import (
+        wrap_call_tool as _wrap_workflow_runtime_call,
+    )
+except ImportError:                                        # pragma: no cover
+    from vera.execution.workflow_runtime_adapter import (
+        wrap_call_tool as _wrap_workflow_runtime_call,
+    )
 
 log = logging.getLogger("vera.dag_workshop")
 
@@ -5740,6 +5748,7 @@ async def cap_dag_agent_loop_v3(
             except Exception as e:
                 return {"ok": False, "error": str(e)}
         _agent_loop_call_tool = _call  # type: ignore
+    _agent_loop_call_tool = _wrap_workflow_runtime_call(_agent_loop_call_tool)
 
     async def _budget_reached() -> bool:
         """Productive/iteration budget reached for the current max_cycles."""
@@ -7396,6 +7405,7 @@ async def cap_dag_agent_loop_v4(
             except Exception as e:
                 return {"ok": False, "error": str(e)}
         _agent_loop_call_tool = _call  # type: ignore
+    _agent_loop_call_tool = _wrap_workflow_runtime_call(_agent_loop_call_tool)
 
     async def _budget_reached() -> bool:
         if count_failed_cycles:
@@ -18589,6 +18599,7 @@ async def cap_dag_agent_loop_v5(
             except Exception as e:
                 return {"ok": False, "error": str(e)}
         _agent_loop_call_tool = _call  # type: ignore
+    _agent_loop_call_tool = _wrap_workflow_runtime_call(_agent_loop_call_tool)
     build_ctx = getattr(ctx, "build_context_prompt", None) if enable_dynamic_skills else None
 
     await emit_event({"type": "agent_loop_v5.triage_start", "goal": goal[:200], "session_id": sid})
@@ -22384,6 +22395,7 @@ async def cap_dag_agent_loop_v6(
             except Exception as e:
                 return {"ok": False, "error": str(e)}
         _agent_loop_call_tool = _call  # type: ignore
+    _agent_loop_call_tool = _wrap_workflow_runtime_call(_agent_loop_call_tool)
     build_ctx = getattr(ctx, "build_context_prompt", None) if enable_dynamic_skills else None
 
     await emit_event({"type": "agent_loop_v6.triage_start", "goal": goal[:200], "session_id": sid})
@@ -25521,6 +25533,7 @@ def _install_tool_wrapper() -> bool:
             session_id=session_id, trace_id=trace_id,
             _orig_call=orig,
         )
+    wrapped = _wrap_workflow_runtime_call(wrapped)
     wrapped._workshop_wrapped = True  # type: ignore
     setattr(ctx, "_agent_loop_call_tool", wrapped)
     _TOOL_WRAPPER_INSTALLED = True
