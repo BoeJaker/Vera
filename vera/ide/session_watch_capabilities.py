@@ -155,8 +155,17 @@ if True:  # capability registration
         order = {"resumable": 0, "finished-unreported": 1, "stalled": 2,
                  "declared-block": 3, "live": 4, "human": 5, "untracked": 6}
         out.sort(key=lambda r: order.get(r["state"], 9))
+        # `total` is how many sessions this call RETURNED, and max_sessions is a
+        # ceiling — so `total` alone reads as "that's all of them". Carry the
+        # ingested count through: measured 2026-09-07, 87 sessions existed and
+        # the panel asked for 60, dropping 27 without a word.
+        summary = {"by_state": by_state, "total": len(out)}
+        if sess_res.get("total_sessions") is not None:
+            summary["ingested_total"] = sess_res["total_sessions"]
+            summary["truncated"] = bool(sess_res.get("truncated"))
+            summary["max_sessions"] = max_sessions
         return {"ok": True, "now": now, "policy": pol,
-                "summary": {"by_state": by_state, "total": len(out)}, "sessions": out}
+                "summary": summary, "sessions": out}
 
     async def _find_watched(sid: str):
         w = await _call("ide.claude_sessions.watch") or {}
