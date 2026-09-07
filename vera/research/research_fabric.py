@@ -429,6 +429,36 @@ async def _query_by_id(dataset_id: str, record_id: str) -> Optional[Dict]:
         return None
 
 
+async def resolve_record_refs(dataset_id: str, logical_ids: List[str]) -> List[Dict[str, str]]:
+    """Resolve research logical IDs to content-free, physical Fabric record IDs.
+
+    Results retain caller order and omit missing or malformed identities.  This
+    is the bridge used by Run projections; record content never crosses it.
+    """
+    wanted = [str(item) for item in logical_ids if isinstance(item, str) and item]
+    if not wanted:
+        return []
+    fab = _fabric()
+    if not fab or not hasattr(fab, "_sqlite_query"):
+        return []
+    try:
+        rows = await fab._sqlite_query(dataset_id=dataset_id, limit=5000)
+    except Exception:
+        return []
+    found: Dict[str, str] = {}
+    for row in rows:
+        try:
+            data = _jload(row.get("data") or "{}")
+            logical_id = str(data.get("id") or "")
+            physical_id = str(row.get("id") or "")
+        except Exception:
+            continue
+        if logical_id in wanted and physical_id:
+            found.setdefault(logical_id, physical_id)
+    return [{"dataset_id": dataset_id, "record_id": found[item], "logical_id": item}
+            for item in wanted if item in found]
+
+
 async def _delete_by_filter(dataset_id: str, filters: Dict[str, Any]) -> int:
     """Delete records matching a filter. Returns count deleted."""
     fab = _fabric()

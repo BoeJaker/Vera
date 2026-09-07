@@ -9385,6 +9385,14 @@ async def _run_pipeline_stage(
     except Exception:
         pass
 
+    evidence_refs: list[dict] = []
+    try:
+        evidence_refs.extend(await DB.resolve_record_refs(DB.DATASET_JOBS, [job.id]))
+        evidence_refs.extend(await DB.resolve_record_refs(
+            DB.DATASET_CITATIONS, [c.id for c in job.citations]))
+    except Exception:
+        pass
+
     await broadcast(run_id, {"type": "pl_stage_done", "stage": stage_idx,
                              "name": name, "job_id": job.id,
                              "chars": len(job.result or ""),
@@ -9392,7 +9400,7 @@ async def _run_pipeline_stage(
 
     return {"name": name, "kind": kind, "output": job.result or "",
             "job_id": job.id, "status": job.status,
-            "citations": len(job.citations)}
+            "citations": len(job.citations), "_evidence_refs": evidence_refs}
 
 
 async def _run_pipeline(run_id: str) -> None:
@@ -9422,11 +9430,13 @@ async def _run_pipeline(run_id: str) -> None:
             except Exception: pass
             result = await _run_pipeline_stage(
                 stage, idx, run_id, topic, prev_output, all_outputs)
+            evidence_refs = result.pop("_evidence_refs", [])
             try:
                 _pipeline_run_observer.stage_done(
                     run_id, idx, ok=result.get("status") != "error",
                     citation_count=result.get("citations", 0),
-                    native_job_id=result.get("job_id", ""))
+                    native_job_id=result.get("job_id", ""),
+                    evidence_refs=evidence_refs)
             except Exception: pass
             stage_results.append(result)
             run["stage_results"] = stage_results

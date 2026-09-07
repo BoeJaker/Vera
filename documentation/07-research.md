@@ -117,6 +117,14 @@ prompts, generated output, citation text, and native error messages are never
 copied into the Run projection. The normal endpoint shape is unchanged unless
 the option is requested.
 
+After a research stage has persisted successfully, its child Run also carries
+content-free `ArtifactRef` entries for the saved job and citation records. Each
+reference contains the physical Fabric record ID and dataset URI, so activity,
+workflow, and external-runtime views can correlate a stage with the same
+evidence held by the Data Fabric without duplicating source text in telemetry.
+Missing records are omitted, malformed identities are rejected, and the native
+research job remains the result authority.
+
 Research projections are recorded in the same bounded shared Run registry used
 by DAG and agent-loop observations. When `VERA_RUN_JOURNAL_PATH` configures its
 checksummed SQLite journal, parent and child events are checkpointed and the
