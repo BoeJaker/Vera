@@ -2824,10 +2824,16 @@ async function loadCSessions(){
   const el=$('csess-body');if(!el)return;
   const sa=$('csess-stalled')?$('csess-stalled').value:'';
   const st=$('csess-status');if(st)st.textContent='loading…';
-  const r=await api('/ide/claude_sessions/watch?max_sessions=60'+(sa?('&stalled_after_s='+sa):''));
+  // 500, not 60: the old ceiling silently cut the list — measured 2026-09-07,
+  // 87 sessions were ingested and 60 were asked for, so 27 never appeared and
+  // nothing said so ("sessions have been ingested but it looks like it missing
+  // quite allot"). The count below now names the ceiling when one still bites.
+  const r=await api('/ide/claude_sessions/watch?max_sessions=500'+(sa?('&stalled_after_s='+sa):''));
   if(!r||!r.ok){el.innerHTML='<div class="empty">Could not load sessions.</div>';if(st)st.textContent='—';return}
   const by=r.summary.by_state||{},tot=r.summary.total||0;
-  if(st)st.textContent=tot+' sessions';
+  if(st)st.textContent=r.summary.truncated
+    ? (tot+' of '+r.summary.ingested_total+' sessions (capped at '+r.summary.max_sessions+')')
+    : (tot+' sessions'+(r.summary.ingested_total!=null?' (all ingested)':''));
   const sum=$('csess-summary');
   if(sum)sum.innerHTML=Object.keys(by).sort().map(k=>'<span class="tag" style="border-left:3px solid '+(_CSESS_COLOR[k]||'#666')+'">'+esc(k)+' '+by[k]+'</span>').join('');
   const rows=r.sessions||[];

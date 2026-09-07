@@ -542,6 +542,29 @@ async def _query_records(limit: int) -> List[dict]:
     return await loop.run_in_executor(None, _query_records_sync, limit)
 
 
+def _count_sessions_sync() -> Optional[int]:
+    """Total distinct ingested sessions, ignoring any display ceiling.
+
+    Same JSON1 dependency as _recent_session_ids_sync, and the same contract:
+    return None rather than raise, so an old SQLite build reports "unknown"
+    instead of a confident zero. A wrong 0 here would render as "nothing is
+    missing", which is the exact impression this counter exists to correct.
+    """
+    conn = _sqlite_conn()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(DISTINCT json_extract(data,'$.claude_session_id')) AS n "
+            "FROM fabric_records WHERE dataset_id=?",
+            ("ide.claude_sessions",),
+        ).fetchone()
+        return int(row["n"]) if row and row["n"] is not None else 0
+    except sqlite3.OperationalError as e:
+        log.debug("claude_sessions: session count unavailable: %s", e)
+        return None
+    finally:
+        conn.close()
+
+
 def _recent_session_ids_sync(max_sessions: int) -> Optional[List[str]]:
     """The N most-recently-active DISTINCT claude_session_ids, by each
     session's OWN most recent turn — not by a flat row-count window.
@@ -704,7 +727,28 @@ async def cap_claude_sessions_list_sessions(scan_limit: int = 3000, max_sessions
                              if lo is not None and hi is not None
                              and lo <= c.get("ts", 0) <= hi]
                             if lo is not None and hi is not None else [])
-    return {"sessions": out}
+    # Say when the list is CUT. max_sessions is a ceiling, not a count, and a
+    # truncated list that looks complete is how "sessions have been ingested but
+    # it looks like it missing quite a lot" happens: measured 2026-09-07, 87
+    # sessions were ingested and the panel asked for 60, silently dropping 27.
+    total = await _count_ingested_sessions()
+    res = {"sessions": out, "returned": len(out), "max_sessions": max_sessions}
+    if total is not None:
+        res["total_sessions"] = total
+        res["truncated"] = total > len(out)
+    return res
+
+
+async def _count_ingested_sessions() -> Optional[int]:
+    """How many distinct sessions exist, regardless of the display ceiling.
+    None when it cannot be determined — an unknown total must not be rendered
+    as "0 more", which would read as "nothing is missing"."""
+    try:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _count_sessions_sync)
+    except Exception as e:                                 # pragma: no cover
+        log.debug("claude_sessions: session count unavailable: %s", e)
+        return None
 
 
 def _derive_session_title(s: dict) -> str:

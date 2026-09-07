@@ -60,6 +60,7 @@ _CRITICAL_MODULES = {
     "test_unittest_history",  # green on fewer tests is not a pass (2026-09-07)
     "test_race_to_green_ui",  # the strip must show a race, not one cell per pipeline (2026-09-07)
     "test_census_setup_ui",  # a census must be startable from the UI (2026-09-07)
+    "test_agent_transcripts",  # codex writes transcripts too (2026-09-07)
     "test_ambient_dreaming_is_opt_in",  # nothing dreams on a box nobody asked (2026-08-31)
     "test_sandbox_estate_guard",  # a sandbox must not promote to main or reap the estate (2026-08-31)
     "test_sandbox_does_not_reap_the_estate",  # a dev sandbox must not reap the shared estate (2026-08-31)
