@@ -556,6 +556,42 @@ def final_answer(event: str, payload: dict):
     return state, message_text(payload.get("message"))
 
 
+class RunBuffers:
+    """Streamed deltas accumulated per RUN, never per session.
+
+    One session can have two runs in flight — ask twice while the model is busy
+    and the answers finalize seconds apart. A session-keyed buffer hands the
+    first run BOTH texts ("alphabeta") and the second run an empty string,
+    which is exactly what happened the first time two prompts overlapped.
+    """
+
+    def __init__(self) -> None:
+        self._buffers: dict = {}
+
+    @staticmethod
+    def key(run_id: str, session_key: str) -> str:
+        """A run is the unit; the session is only a fallback for a gateway
+        frame that carries no runId."""
+        return run_id or session_key or ""
+
+    def append(self, run_id: str, session_key: str, delta: str) -> None:
+        if not delta:
+            return
+        self._buffers.setdefault(self.key(run_id, session_key), []).append(delta)
+
+    def take(self, run_id: str, session_key: str) -> str:
+        """Everything streamed for this run, and forget it."""
+        return "".join(self._buffers.pop(self.key(run_id, session_key), []))
+
+    def pending(self) -> int:
+        """Buffers still open — a run that never finalized leaks one."""
+        return len(self._buffers)
+
+    def clear(self) -> None:
+        """Drop everything: a dropped connection makes every buffer a partial."""
+        self._buffers.clear()
+
+
 def resolve_session_key(reported: str, configured: str) -> str:
     """Report the key the CALLER used. The gateway namespaces a bare key into
     `agent:<agentId>:<key>`, and subscribers that matched on the key they sent

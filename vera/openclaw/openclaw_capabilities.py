@@ -121,8 +121,6 @@ class OpenClawState:
     active_sessions: Dict[str, dict] = field(default_factory=dict)
     # pending responses keyed by request id
     _pending: Dict[str, asyncio.Future] = field(default_factory=dict)
-    # streaming message accumulator keyed by session_key
-    _stream_bufs: Dict[str, list] = field(default_factory=dict)
 
 _STATE = OpenClawState()
 _WS_CONN = None           # active websocket connection
@@ -131,6 +129,8 @@ _IDENTITY: Optional[_dev.DeviceIdentity] = None   # cached; loaded on first use
 _IDENTITY_UNAVAILABLE = False                     # no crypto backend — stop retrying
 # What this gateway version refuses, so a known-bad parameter is sent once, ever.
 _PARAM_SUPPORT = _dev.ParamSupport()
+# Streamed deltas, per RUN — two prompts can be in flight in one session.
+_RUN_BUFFERS = _dev.RunBuffers()
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Device identity — one persisted Ed25519 key, approved once by an operator
@@ -301,7 +301,7 @@ async def _ws_reader(ws) -> None:
 
                     delta = _dev.stream_delta(event, payload)
                     if delta:
-                        _STATE._stream_bufs.setdefault(session_key, []).append(delta)
+                        _RUN_BUFFERS.append(run_id, session_key, delta)
                         await emit_event({"type": "openclaw.stream",
                             "session_key": session_key,
                             "run_id": run_id,
@@ -313,7 +313,7 @@ async def _ws_reader(ws) -> None:
                     terminal = _dev.final_answer(event, payload)
                     if terminal:
                         state, text = terminal
-                        streamed = "".join(_STATE._stream_bufs.pop(session_key, []))
+                        streamed = _RUN_BUFFERS.take(run_id, session_key)
                         # The final message is authoritative: a reconnect
                         # mid-run leaves the streamed buffer incomplete.
                         await emit_event({"type": "openclaw.response",
@@ -335,6 +335,9 @@ async def _ws_reader(ws) -> None:
         log.warning("openclaw ws reader: %s", exc)
     finally:
         _STATE.connected = False
+        # Every open buffer is now a partial answer whose run we will never see
+        # finish — keeping them would splice this run's text onto the next one.
+        _RUN_BUFFERS.clear()
         await emit_event({"type": "openclaw.disconnected", "ts": now_iso()})
         log.info("openclaw: WS reader exited")
 
@@ -628,6 +631,8 @@ async def openclaw_status() -> dict:
         # Parameters this gateway version refused; dropping one silently would
         # otherwise be invisible from the outside.
         "gateway_unsupported_params": _PARAM_SUPPORT.snapshot(),
+        # Runs still streaming; a number that only grows means finals are lost.
+        "open_stream_buffers": _RUN_BUFFERS.pending(),
     }
 
 
@@ -779,8 +784,9 @@ async def openclaw_prompt(
         thinking=thinking or "",
     )
 
-    # Clear any existing stream buffer for this session
-    _STATE._stream_bufs[session_key] = []
+    # Nothing to clear: buffers belong to a run, and this one has no id yet.
+    # Wiping the session's buffer here is what truncated a run that was still
+    # streaming when the next prompt arrived.
 
     try:
         result = await _rpc_tolerant("chat.send", params, timeout=120)
