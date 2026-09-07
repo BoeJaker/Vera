@@ -23945,6 +23945,15 @@ async def cap_dag_agent_loop_v7(goal: str, **kwargs):
     return await v6["func"](goal=goal, **kwargs)
 
 
+# v7's signature is (goal, **kwargs), so the schema derived from it declares ONE
+# property while the v6 runner it forwards to declares 69. Any caller that
+# filters its arguments against the schema — loops.run does, to keep stream-only
+# UI keys away from the engine — therefore dropped model, allowed_caps,
+# max_steps and the whole profile body on every v7 run, without a word. Naming
+# the delegate lets that filter ask the right function what it accepts.
+cap_dag_agent_loop_v7.delegates_to = "dag.agent_loop_v6"
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # UNIFIED SSE WRAPPER FOR ALL THREE LOOP VARIANTS
 # ─────────────────────────────────────────────────────────────────────────────
