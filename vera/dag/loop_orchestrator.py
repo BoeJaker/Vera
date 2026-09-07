@@ -47,6 +47,9 @@ from Vera.vera.capability_orchestration import (
     now_iso,
     schedule,
 )
+from Vera.vera.execution.agent_runtime_dispatch import (
+    safely_select_agent_runtime_dispatch,
+)
 
 log = logging.getLogger("vera.loop_orchestrator")
 
@@ -743,10 +746,17 @@ async def _run_program_loop(prog: Dict[str, Any], lp: Dict[str, Any]) -> None:
     async with _RUN_LOCK:
         lp["state"]["status"] = "running"
         await _prog_save(prog)
+        runtime_dispatch = safely_select_agent_runtime_dispatch(
+            session_id=session_id, profile=str(lp.get("profile") or ""),
+            configured_engine=cfg_engine,
+            loop_engine=str(lp.get("engine") or ""),
+            engine_capabilities=_ENGINE_CAP,
+        )
         await emit_event({"type": "agent_loop_v8.loop_started", "program": pid,
                           "loop": lp["name"], "run": run_n, "session_id": session_id,
                           "profile": lp.get("profile", ""), "engine": lp.get("engine", ""),
-                          "persona": (lp.get("persona") or {}).get("name", "")})
+                          "persona": (lp.get("persona") or {}).get("name", ""),
+                          "runtime_dispatch": runtime_dispatch})
         t0 = time.time()
         try:
             if lp.get("profile"):
@@ -813,7 +823,8 @@ async def _run_program_loop(prog: Dict[str, Any], lp: Dict[str, Any]) -> None:
         final_full = _result_final(result)
         lp["state"]["runs"].append({"ts": now_iso(), "session_id": session_id,
                                     "ok": ok, "elapsed_s": elapsed,
-                                    "summary": summary, "final": final_full})
+                                    "summary": summary, "final": final_full,
+                                    "runtime_dispatch": runtime_dispatch})
         lp["state"]["runs"] = lp["state"]["runs"][-12:]
         cad = lp.get("cadence") or {}
         if cad.get("type") == "recurring":
@@ -825,7 +836,8 @@ async def _run_program_loop(prog: Dict[str, Any], lp: Dict[str, Any]) -> None:
         await emit_event({"type": "agent_loop_v8.loop_done", "program": pid,
                           "loop": lp["name"], "run": run_n, "ok": ok,
                           "elapsed_s": elapsed, "summary": summary[:400],
-                          "session_id": session_id})
+                          "session_id": session_id,
+                          "runtime_dispatch": runtime_dispatch})
     # Deliver this run to the owning project's loop history so the goal/project
     # page shows V8 work as it lands (files are collated once at program close).
     try:
