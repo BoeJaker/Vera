@@ -578,6 +578,17 @@ REDIS = PG_POOL = CHROMA = NEO = None
 COORD_REDIS = None
 COORD_REDIS_DB = int(os.environ.get("VERA_COORD_REDIS_DB", "0") or 0)
 
+# Resolves VERA_COORD_REDIS_URL (explicit endpoint, or the "off" sentinel).
+# Imported defensively: the gate must never fail to start because a helper
+# module is missing — without it the derived behaviour below is unchanged.
+try:
+    from Vera.vera.evolve import sandbox_redis as _sandbox_redis
+except Exception:                                          # pragma: no cover
+    try:
+        from vera.evolve import sandbox_redis as _sandbox_redis
+    except Exception:
+        _sandbox_redis = None
+
 # ─────────────────────────────────────────────────────────────────────────────
 # OLLAMA CLUSTER
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1293,6 +1304,25 @@ async def _ensure_coord_redis():
         return COORD_REDIS
     try:
         scheme, authority, data_db = _split_redis_url(REDIS_URL)
+        # Resolve the OVERRIDE FIRST. A dev sandbox now runs its data on a
+        # private redis sidecar at DB 0, so `data_db == COORD_REDIS_DB` is true
+        # there and the reuse shortcut below would hand it its own capacity-1
+        # gate wearing the shared queue's name — observed live before this
+        # check was moved above the shortcut. Unset (prod) changes nothing.
+        _override = os.environ.get("VERA_COORD_REDIS_URL")
+        if _sandbox_redis is not None and (_override or "").strip():
+            _resolved = _sandbox_redis.coord_url_from(_override, None)
+            if _resolved is None:
+                log.info("Ollama gate coordination disabled "
+                         "(VERA_COORD_REDIS_URL=off) — the gate is a no-op here")
+                return None
+            _cr = aioredis.from_url(_resolved, decode_responses=False,
+                                    socket_connect_timeout=4, socket_timeout=4)
+            await _cr.ping()
+            COORD_REDIS = _cr
+            log.info("✓ Ollama gate coord Redis (explicit): %s", _resolved)
+            await _maybe_sweep_gate_leases()
+            return COORD_REDIS
         if data_db == COORD_REDIS_DB and REDIS is not None:
             COORD_REDIS = REDIS
             log.info("✓ Ollama gate coord Redis = data Redis (DB %d)", COORD_REDIS_DB)
