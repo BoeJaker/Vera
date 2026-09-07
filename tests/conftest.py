@@ -139,6 +139,7 @@ _CRITICAL_MODULES = {
     "test_openclaw_supervisor",  # interval=0 means every tick: one reconnect loop per second, all racing (2026-09-05)
     "test_census34_failures",
     "test_edit_already_applied",
+    "test_printer_wrap",  # paper does not re-flow: an unwrapped line is SILENTLY clipped off the page (2026-09-07)
 }
 
 

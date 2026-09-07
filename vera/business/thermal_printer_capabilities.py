@@ -70,6 +70,15 @@ try:
 except Exception:                                   # pragma: no cover
     _raster_job = None
 
+# Line fitting also lives in escpos_core (pure + unit-tested). Paper does not
+# re-flow: any line not wrapped to the head width here is clipped at the edge.
+try:
+    from Vera.vera.printer.escpos_core import (
+        wrap_measured as _wrap_measured, wrap_cols as _wrap_cols,
+    )
+except Exception:                                   # pragma: no cover
+    _wrap_measured = _wrap_cols = None
+
 _FONT_CANDIDATES = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
@@ -155,18 +164,26 @@ def _qr(data: str, module: int = 6) -> bytes:
 
 def build_text(text: str, *, align: str = "left", bold: bool = False,
                width: int = 1, height: int = 1, cut: bool = True,
-               title: str = "") -> bytes:
+               title: str = "", cols: int = 32) -> bytes:
+    """Built-in-font text. `cols` is the paper's character width (32 for 58 mm,
+    48 for 80 mm); lines are wrapped to it because not every printer soft-wraps
+    an over-long line -- plenty just drop the tail."""
+    body_cols = max(8, int(cols or 32) // max(1, int(width)))
     out = bytearray(_INIT)
     if title:
         out += _ALIGN["center"] + _BOLD_ON + _size(2, 2)
-        out += _text_line(title)
+        # The title prints at 2x magnification, so it fits half the columns.
+        for ln in (_wrap_cols(title, max(4, int(cols or 32) // 2))
+                   if _wrap_cols else [title]):
+            out += _text_line(ln)
         out += _size(1, 1) + _BOLD_OFF + _ALIGN["left"] + b"\n"
     out += _ALIGN.get(align, _ALIGN["left"])
     if bold:
         out += _BOLD_ON
     if width > 1 or height > 1:
         out += _size(width, height)
-    for ln in (text or "").split("\n"):
+    for ln in (_wrap_cols(text, body_cols) if _wrap_cols
+               else (text or "").split("\n")):
         out += _text_line(ln)
     out += _size(1, 1) + _BOLD_OFF + _ALIGN["left"]
     out += _FEED3
@@ -175,14 +192,15 @@ def build_text(text: str, *, align: str = "left", bold: bool = False,
     return bytes(out)
 
 
-def build_receipt(spec: dict) -> bytes:
+def build_receipt(spec: dict, cols: int = 32) -> bytes:
     """spec = {header, subheader, items:[{name, qty, price}], subtotal, tax,
-    total, currency, footer, qr, barcode, order_id}."""
+    total, currency, footer, qr, barcode, order_id}.
+    `cols` is the paper's character width (32 for 58 mm, 48 for 80 mm)."""
     cur = spec.get("currency", "")
     def money(v):
         try: return f"{cur}{float(v):,.2f}"
         except Exception: return str(v)
-    W = 32  # 58 mm ≈ 32 cols at font A
+    W = max(8, int(cols or 32))   # 58 mm ≈ 32 cols at font A, 80 mm ≈ 48
     def row(left, right):
         left = str(left); right = str(right)
         pad = max(1, W - len(left) - len(right))
@@ -224,39 +242,57 @@ def build_receipt(spec: dict) -> bytes:
     return bytes(out)
 
 
-def build_label(spec: dict) -> bytes:
+def _fit(text, cols):
+    """Wrap one string to `cols` columns -> list of lines. A truncated address
+    line is a mis-delivered parcel, so nothing here may run off the paper."""
+    if _wrap_cols is None:
+        return str(text or "").split("\n")
+    return _wrap_cols(str(text or ""), max(8, int(cols))) or [""]
+
+
+def build_label(spec: dict, cols: int = 32) -> bytes:
     """A shipping/address label. spec = {to:[lines], from:[lines], ref,
     barcode, note}."""
-    W = 32
+    W = max(8, int(cols or 32))
     out = bytearray(_INIT)
     if spec.get("from"):
         out += _ALIGN["left"] + _text_line("FROM:")
         for ln in spec["from"]:
-            out += _text_line("  " + str(ln))
+            for w in _fit("  " + str(ln), W):
+                out += _text_line(w)
         out += b"\n"
     out += _ALIGN["left"] + _BOLD_ON + _text_line("SHIP TO:") + _BOLD_OFF
     out += _size(1, 2)
     for ln in spec.get("to", []) or []:
-        out += _text_line(str(ln))
+        for w in _fit(ln, W):            # double height, still full width
+            out += _text_line(w)
     out += _size(1, 1)
     if spec.get("ref"):
-        out += b"\n" + _text_line("Ref: " + str(spec["ref"]))
+        out += b"\n"
+        for w in _fit("Ref: " + str(spec["ref"]), W):
+            out += _text_line(w)
     if spec.get("barcode"):
         out += _ALIGN["center"] + _barcode(str(spec["barcode"])) + _ALIGN["left"]
     if spec.get("note"):
-        out += b"\n" + _text_line(str(spec["note"]))
+        out += b"\n"
+        for w in _fit(spec["note"], W):
+            out += _text_line(w)
     out += _FEED3 + _CUT
     return bytes(out)
 
 
-def build_item_label(spec: dict) -> bytes:
+def build_item_label(spec: dict, cols: int = 32) -> bytes:
     """An INTERNAL inventory label. Two modes:
       • 'sticker' — compact stick-on: title, price@location, CODE128 of the SKU.
+        Deliberately one line per field — it is trimmed to fit, not wrapped.
       • 'slip'    — a fuller insert to pack in the box: title, console/year/edition,
                     condition/grade, price, location, notes, then the barcode.
+                    Wrapped to the paper, so nothing is lost off the edge.
     spec = {sku, title, price, currency, condition, grade, completeness, console,
-            year, edition, region, location, note, store, mode}."""
+            year, edition, region, location, note, store, mode}.
+    `cols` is the paper's character width (32 for 58 mm, 48 for 80 mm)."""
     mode = spec.get("mode", "sticker")
+    W = max(8, int(cols or 32))
     cur = spec.get("currency", "")
     def money(v):
         try: return f"{cur}{float(v):,.2f}"
@@ -265,34 +301,44 @@ def build_item_label(spec: dict) -> bytes:
     out = bytearray(_INIT)
     if mode == "slip":
         if spec.get("store"):
-            out += _ALIGN["center"] + _BOLD_ON + _text_line(str(spec["store"])) + _BOLD_OFF
-        out += (_ALIGN["center"] + _BOLD_ON + _size(1, 2)
-                + _text_line(str(spec.get("title", ""))[:64]) + _size(1, 1) + _BOLD_OFF)
+            out += _ALIGN["center"] + _BOLD_ON
+            for w in _fit(spec["store"], W):
+                out += _text_line(w)
+            out += _BOLD_OFF
+        out += _ALIGN["center"] + _BOLD_ON + _size(1, 2)
+        for w in _fit(str(spec.get("title", ""))[:120], W):
+            out += _text_line(w)
+        out += _size(1, 1) + _BOLD_OFF
         meta = " / ".join(str(x) for x in [spec.get("console"), spec.get("year"),
                           spec.get("edition"), spec.get("region")] if x)
         if meta:
-            out += _ALIGN["center"] + _text_line(meta[:48])
-        out += _ALIGN["left"] + _text_line("-" * 32)
+            out += _ALIGN["center"]
+            for w in _fit(meta, W):
+                out += _text_line(w)
+        out += _ALIGN["left"] + _text_line("-" * W)
         cond = " ".join(str(x) for x in [spec.get("condition"),
                         (f"grade {spec.get('grade')}" if spec.get("grade") else ""),
                         spec.get("completeness")] if x)
         if cond:
-            out += _text_line("Condition: " + cond)
+            for w in _fit("Condition: " + cond, W):
+                out += _text_line(w)
         if spec.get("location"):
-            out += _text_line("Location:  " + str(spec["location"]))
+            for w in _fit("Location:  " + str(spec["location"]), W):
+                out += _text_line(w)
         if spec.get("price") not in (None, ""):
             out += (_BOLD_ON + _size(1, 2) + _text_line("Price: " + money(spec.get("price")))
                     + _size(1, 1) + _BOLD_OFF)
         if spec.get("note"):
-            out += _text_line(str(spec["note"])[:96])
-        out += _text_line("-" * 32)
+            for w in _fit(str(spec["note"])[:200], W):
+                out += _text_line(w)
+        out += _text_line("-" * W)
         if sku:
             out += _ALIGN["center"] + _barcode(sku)
         out += _ALIGN["left"] + _FEED3 + _CUT
     else:  # sticker
         t = str(spec.get("title", ""))
         if t:
-            out += _ALIGN["center"] + _BOLD_ON + _text_line(t[:32]) + _BOLD_OFF
+            out += _ALIGN["center"] + _BOLD_ON + _text_line(t[:W]) + _BOLD_OFF
         line = "   ".join(x for x in [
             (money(spec.get("price")) if spec.get("price") not in (None, "") else ""),
             ("@" + str(spec["location"]) if spec.get("location") else "")] if x)
@@ -343,7 +389,11 @@ def _image_to_rows(img, width):
 
 
 def _render_text_image(lines, width, font_size, align="left", title=None):
-    """Render an optional bold title + body lines to a 1-bpp bitmap for raster."""
+    """Render an optional bold title + body lines to a 1-bpp bitmap for raster.
+
+    Lines are word-wrapped to the head width FIRST. Without that, anything wider
+    than the paper -- a news headline, a chat reply, a calendar entry with a
+    location -- is drawn past the right edge of the bitmap and simply lost."""
     Image, ImageDraw, _ = _pil()
     body_font = _font(font_size, bold=True)
     title_font = _font(int(font_size * 1.6), bold=True) if title else None
@@ -356,9 +406,20 @@ def _render_text_image(lines, width, font_size, align="left", title=None):
             return draw.textsize(text, font=font)
 
     tmp = ImageDraw.Draw(Image.new("L", (width, 10), 255))
+    usable = max(32, int(width) - 2 * pad)
+    title_lines = [title] if title else []
+    if _wrap_measured is not None:
+        lines = _wrap_measured(lines, lambda t: _wh(tmp, t, body_font)[0], usable)
+        if title:
+            # Wrapped at the TITLE's own (larger) metrics, and every resulting
+            # row stays a title row — a long header must not half-demote itself
+            # into body text.
+            title_lines = _wrap_measured([title], lambda t: _wh(tmp, t, title_font)[0],
+                                         usable, hang_indent=False)
+
     total_h, heights = pad, []
-    if title:
-        _, th = _wh(tmp, title, title_font); heights.append(("t", title, th)); total_h += th + 4
+    for tl in title_lines:
+        _, th = _wh(tmp, tl, title_font); heights.append(("t", tl, th)); total_h += th + 4
     for ln in lines:
         _, lh = _wh(tmp, ln or " ", body_font); heights.append(("b", ln, lh)); total_h += lh + 2
     total_h += pad
@@ -379,6 +440,12 @@ def _width_for(printer, width_px=0):
         return int(width_px)
     mm = int((printer or {}).get("width_mm", 58) or 58)
     return 576 if mm >= 80 else 384
+
+
+def _cols_for(printer, width_px=0):
+    """Character columns of the built-in font A (12 dots wide) on this paper:
+    32 for 58 mm, 48 for 80 mm."""
+    return max(8, _width_for(printer, width_px) // 12)
 
 
 def build_image_raster(image_bytes, width_px, cut=True, align="center"):
@@ -695,10 +762,12 @@ if _CAP_AVAILABLE:
         await _ensure_schema()
         if not text and not title:
             return {"error": "text or title required"}
-        data = build_text(text, align=align, bold=bold, width=width, height=height,
-                          cut=cut, title=title)
+        # Resolve the printer first: its paper width decides how many columns
+        # the text is wrapped to.
         printer = await _run(_db_get_printer, printer_id) if printer_id else \
                   await _run(_db_get_printer, "default")
+        data = build_text(text, align=align, bold=bold, width=width, height=height,
+                          cut=cut, title=title, cols=_cols_for(printer))
         res = await _route(printer, data)
         await emit_event({"type": "print.job", "stage": "text",
                           "message": f"printed {len(data)}B via {res.get('transport')}"})
@@ -721,8 +790,8 @@ if _CAP_AVAILABLE:
         spec = {"header": header, "subheader": subheader, "items": items or [],
                 "subtotal": subtotal, "tax": tax, "total": total, "currency": currency,
                 "footer": footer, "order_id": order_id, "barcode": barcode, "qr": qr}
-        data = build_receipt(spec)
         printer = await _run(_db_get_printer, printer_id or "default")
+        data = build_receipt(spec, cols=_cols_for(printer))
         res = await _route(printer, data)
         await emit_event({"type": "print.job", "stage": "receipt",
                           "message": f"receipt {order_id or ''} via {res.get('transport')}"})
@@ -741,9 +810,10 @@ if _CAP_AVAILABLE:
         await _ensure_schema()
         if not to:
             return {"error": "to (address lines) required"}
-        data = build_label({"to": to, "from": from_ or [], "ref": ref,
-                            "barcode": barcode, "note": note})
         printer = await _run(_db_get_printer, printer_id or "default")
+        data = build_label({"to": to, "from": from_ or [], "ref": ref,
+                            "barcode": barcode, "note": note},
+                           cols=_cols_for(printer))
         res = await _route(printer, data)
         await emit_event({"type": "print.job", "stage": "label",
                           "message": f"label via {res.get('transport')}"})
@@ -771,12 +841,13 @@ if _CAP_AVAILABLE:
         await _ensure_schema()
         if not (sku or title):
             return {"error": "sku or title required"}
+        printer = await _run(_db_get_printer, printer_id or "default")
         data = build_item_label({
             "sku": sku, "title": title, "price": price, "currency": currency,
             "condition": condition, "grade": grade, "completeness": completeness,
             "console": console, "year": year, "edition": edition, "region": region,
-            "location": location, "note": note, "store": store, "mode": mode})
-        printer = await _run(_db_get_printer, printer_id or "default")
+            "location": location, "note": note, "store": store, "mode": mode},
+            cols=_cols_for(printer))
         res = await _route(printer, data)
         await emit_event({"type": "print.job", "stage": "item_label",
                           "message": f"{mode} label {sku} via {res.get('transport')}"})
@@ -940,7 +1011,7 @@ if _CAP_AVAILABLE:
             data = await _run(lambda: build_nice_text(text.split(chr(10)), _width_for(printer, 0),
                                                       26, align="left", cut=True))
         except Exception:
-            data = build_text(text, align="left", cut=True)
+            data = build_text(text, align="left", cut=True, cols=_cols_for(printer))
         res = await _route(printer, data)
         await emit_event({"type": "print.job", "stage": stage,
                           "message": f"{stage} via {res.get('transport')}"})
@@ -1196,7 +1267,7 @@ if _CAP_AVAILABLE:
                 title=(title or head), cut=True))
         except Exception:
             data = build_text((title or head) + chr(10) + stamp + chr(10) * 2 + (body or ""),
-                              align="left", cut=True)
+                              align="left", cut=True, cols=_cols_for(printer))
         res = await _route(printer, data)
         await emit_event({"type": "print.job", "stage": "notify",
                           "message": f"notify via {res.get('transport')}"})
