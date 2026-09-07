@@ -89,6 +89,11 @@ class OpenClawConfig:
     # it. Generous: a model run is unbounded, but a stalled one must not
     # strand every prompt behind it.
     run_timeout: int = 900
+    # A session reads `running` for about a second after its run's final frame.
+    # These bound the wait for it to report `done` before the next prompt.
+    settle_timeout: int = 60      # give up waiting and send anyway
+    settle_poll: float = 0.5      # how often to ask
+    settle_fallback: float = 2.0  # blind wait when the status cannot be read
     session_key: str = "vera-bridge"      # OpenClaw session key to use
     # Handshake identity. `client_id`/`client_mode` are CLOSED enums on the
     # gateway (see openclaw_device_core) — Vera presents as the generic CLI
@@ -304,6 +309,10 @@ async def _drain_prompt_queue(session_key: str) -> None:
                 await asyncio.sleep(2)
                 continue
 
+            # The run's final frame is not the end of the turn — ask the
+            # session itself.
+            await _wait_for_session_ready(session_key)
+
             params = _dev.build_chat_send_params(
                 session_key=session_key,
                 message=prompt.message,
@@ -366,6 +375,36 @@ async def _wait_for_session_idle(session_key: str) -> None:
                               "session_key": session_key,
                               "run_id": active.run_id,
                               "ts": now_iso()})
+
+
+async def _wait_for_session_ready(session_key: str) -> None:
+    """Wait until the SESSION says it is done, not just until its run finalized.
+
+    Measured on gateway 2026.4.29: at the `chat` final frame the session still
+    reports `running`, and only reads `done` about a second later. A prompt
+    sent inside that window is accepted — runId, `status: started` — and then
+    answered with nothing at all. So the release condition is the session's own
+    status, polled; the timeout is a floor under a gateway that never settles,
+    not a target.
+    """
+    deadline = time.monotonic() + _CONFIG.settle_timeout
+    while time.monotonic() < deadline:
+        try:
+            result = await _rpc("sessions.list", {}, timeout=15)
+        except Exception as exc:
+            # No answer is not evidence of a busy session; wait a beat and
+            # send rather than stalling the queue on a diagnostic call.
+            log.info("openclaw: could not read session status (%s) — "
+                     "settling briefly instead", exc)
+            await asyncio.sleep(_CONFIG.settle_fallback)
+            return
+        status = _dev.find_session_status(result, session_key)
+        if _dev.session_is_idle(status):
+            return
+        await asyncio.sleep(_CONFIG.settle_poll)
+
+    log.warning("openclaw: session %s still busy after %ss — sending anyway",
+                session_key, _CONFIG.settle_timeout)
 
 
 def _run_finished(session_key: str) -> None:

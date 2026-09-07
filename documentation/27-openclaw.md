@@ -97,6 +97,14 @@ gateway order it server-side. `openclaw.queue.list` shows what is in flight and
 waiting; `openclaw.queue.cancel` drops a prompt that has not been sent yet — one
 already with the gateway cannot be recalled.
 
+**The final frame is not the end of the turn.** At the `chat` final the session
+still reports `running` and only reads `done` about a second later (measured
+0.34s → 1.04s on 2026.4.29); a prompt sent inside that window is accepted and
+answered with nothing. The queue therefore releases the next prompt on the
+session's own status from `sessions.list`, polled every `settle_poll` seconds,
+not on the final frame — bounded by `settle_timeout` (60s) so an unrecognised
+status can never stall the queue.
+
 A run whose terminal frame never arrives is abandoned after
 `OPENCLAW_RUN_TIMEOUT` (default 900s) so the queue behind it is not stranded,
 and a dropped connection loses only what was in flight — queued prompts keep

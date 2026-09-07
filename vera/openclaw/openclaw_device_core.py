@@ -563,6 +563,15 @@ def final_answer(event: str, payload: dict):
 
 QUEUE_MODES: Tuple[str, ...] = ("steer", "followup", "collect", "interrupt")
 
+# A session's own status, as `sessions.list` reports it. The chat final frame
+# is NOT the end of a turn: the session still reads `running` for about a
+# second afterwards (measured 0.34s → 1.04s on 2026.4.29), and a prompt sent in
+# that window is accepted and then answered with nothing.
+IDLE_SESSION_STATUSES = frozenset({
+    "done", "idle", "ready", "complete", "completed", "timeout", "error",
+    "failed", "cancelled", "aborted",
+})
+
 # Terminal states a queued prompt can reach.
 PROMPT_QUEUED = "queued"
 PROMPT_SENT = "sent"
@@ -785,6 +794,35 @@ class RunBuffers:
     def clear(self) -> None:
         """Drop everything: a dropped connection makes every buffer a partial."""
         self._buffers.clear()
+
+
+def find_session_status(payload, session_key: str) -> Optional[str]:
+    """The status `sessions.list` reports for a session, or None if it has none
+    yet. Keys are matched through the gateway's namespacing, so the key the
+    caller used (`vera-bridge`) finds `agent:main:vera-bridge`."""
+    if isinstance(payload, dict):
+        rows = payload.get("sessions")
+    else:
+        rows = payload
+    if not isinstance(rows, list) or not session_key:
+        return None
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        key = row.get("key") or row.get("sessionKey") or ""
+        if key == session_key or key.endswith(":" + session_key):
+            status = row.get("status")
+            return status if isinstance(status, str) else None
+    return None
+
+
+def session_is_idle(status: Optional[str]) -> bool:
+    """True when the session is free to take the next prompt. An unknown status
+    counts as idle: a session the gateway has never heard of cannot be busy,
+    and a status we do not recognise must not stall the queue forever."""
+    if status is None or not str(status).strip():
+        return True
+    return str(status).strip().lower() in IDLE_SESSION_STATUSES
 
 
 def resolve_session_key(reported: str, configured: str) -> str:
