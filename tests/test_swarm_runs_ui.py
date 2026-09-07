@@ -139,6 +139,46 @@ def test_the_commit_filter_still_works(src):
     assert "filterCommit" in _fn(src, "_runsRender")
 
 
+# ── logs belong with the sandboxes they came from ───────────────────────────
+def test_logs_is_not_its_own_rail_entry(src):
+    """Not merged with Activity — those are different subjects (an audit of
+    what CHANGED vs what a process PRINTED). Logs moved to Sandbox, where the
+    containers it reports on already live."""
+    assert 'data-sec="logs"' not in src
+
+
+def test_every_logs_element_survived_the_move(src):
+    """A flatten must not cost an element. Each control is still declared."""
+    ids = set(re.findall(r'id="([a-z0-9-]+)"', src))
+    for want in ("logs-body", "logs-status", "logs-container", "logs-follow",
+                 "logs-perf"):
+        assert want in ids, "lost #%s in the move" % want
+
+
+def test_the_logs_card_is_inside_the_sandbox_section(src):
+    start = src.index('id="sec-sandbox"')
+    end = src.index('<div class="sec" id=', start + 10)
+    for want in ("logs-body", "logs-status", "logs-container"):
+        assert start < src.index('id="%s"' % want) < end
+
+
+def test_opening_sandbox_loads_the_logs(src):
+    assert "loadLogs()" in src
+    assert "sandbox:()=>{loadSandbox();loadLogs()}" in src
+
+
+def test_an_old_logs_deeplink_still_lands_somewhere_real(src):
+    """Injected nav items and bookmarks still say 'logs'; they must not open a
+    blank panel."""
+    assert "logs:()=>nav('sandbox')" in src
+
+
+def test_the_logs_follow_timer_follows_its_new_section(src):
+    """It was keyed to _curSec()==='logs', a section that no longer exists —
+    which would have stopped it following the moment it moved."""
+    assert "_curSec()==='logs'" not in src
+
+
 # ── the panel still parses ──────────────────────────────────────────────────
 def test_the_panel_script_parses(src):
     node = shutil.which("node")

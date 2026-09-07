@@ -381,6 +381,10 @@ async def _ingest_file(instance_id: str, rel: str, state: dict) -> int:
         codex_session, codex_cwd = "", ""
     session_uuid = codex_session
     recorded = 0
+    # A whole conversation arriving at once is a BACKFILL, not a live tail:
+    # take the fabric-only path, or the per-turn graph write and broadcast cap
+    # the rate at ~9 turns a minute and the backlog never clears.
+    _bulk = bool(_AT is not None and _AT.needs_bulk_ingest(len(turns)))
     for turn in turns:
         session_uuid = turn.get("session_id") or session_uuid
         role = turn["role"]
@@ -415,6 +419,7 @@ async def _ingest_file(instance_id: str, rel: str, state: dict) -> int:
                 "text": text_body[:20000], "ts": turn.get("ts", ""),
             },
             dedup_key=f"ccsess:{rel}:{turn.get('uuid') or new_offset}",
+            bulk=_bulk,
         )
         recorded += 1
 

@@ -249,6 +249,34 @@ def test_the_cwd_read_from_a_real_transcript_routes_it():
                               t["cwd"]) == "--llm-int-boejaker-Vera"
 
 
+# ── backfill vs live tail ───────────────────────────────────────────────────
+def test_a_whole_conversation_is_a_backfill():
+    """Measured on prod: the per-turn path (Neo4j node + session + FOLLOWS link
+    + broadcast, each a round trip) recorded ~9 turns a MINUTE. A 49-transcript
+    backlog never catches up at that rate — which is why transcripts synced to
+    disk still never appeared."""
+    assert AT.needs_bulk_ingest(287) is True
+    assert AT.needs_bulk_ingest(51) is True
+
+
+def test_a_live_tail_keeps_the_full_path():
+    """A tail delivers the handful of turns since the last poll, and its
+    broadcast is what drives the live UI. It must not be optimised away."""
+    assert AT.needs_bulk_ingest(1) is False
+    assert AT.needs_bulk_ingest(50) is False
+    assert AT.needs_bulk_ingest(0) is False
+
+
+def test_the_threshold_is_adjustable():
+    assert AT.needs_bulk_ingest(10, threshold=5) is True
+
+
+def test_a_nonsense_count_does_not_trigger_bulk():
+    """Fail toward the SAFE path — the one that records everything."""
+    assert AT.needs_bulk_ingest(None) is False
+    assert AT.needs_bulk_ingest("many") is False
+
+
 # ── content shapes ──────────────────────────────────────────────────────────
 def test_message_content_is_flattened_whatever_shape_it_arrives_in():
     assert AT._text_of("plain") == "plain"
