@@ -107,6 +107,21 @@ stage execution; inspecting the Workflow IR performs none of those actions.
 That boundary provides a stable definition identity for later Run, artifact,
 citation, and external-runtime adapters without changing current jobs.
 
+While a custom pipeline is active, its native lifecycle is also available as a
+non-authoritative shared Run projection. Request
+`GET /api/pipelines/runs/{run_id}?include_run_protocol=true` to inspect the
+parent pipeline Run and one child Run per started stage. Child `task_id` values
+refer to the exact Workflow IR stage identifiers; citation counts and validated
+native job IDs are retained as correlation metadata. Topics, query templates,
+prompts, generated output, citation text, and native error messages are never
+copied into the Run projection. The normal endpoint shape is unchanged unless
+the option is requested.
+
+The projection is currently scoped to live in-process pipeline runs. The
+research database and native WebSocket events remain the durable and execution
+authorities; a later persistence adapter must journal these Run events before
+restart recovery can be claimed.
+
 A typical research run goes through these stages (with variations per output mode):
 
 ### Stage 1 — Directive (THINKER)
