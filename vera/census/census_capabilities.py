@@ -40,6 +40,11 @@ CENSUS_DIR = Path(os.getenv("VERA_CENSUS_DIR", "")
 _MAX_BYTES = 8 * 1024 * 1024
 _MAX_RECORDS = 500
 
+#: The per-goal ceiling the harness cancels at (run_census.py WALL_CAP_S). Read
+#: here so the UI can say "this goal hit the wall" rather than hardcode 1800 in
+#: JavaScript and quietly disagree with the runner if it ever changes.
+CENSUS_WALL_CAP_S = int(os.getenv("VERA_CENSUS_WALL_CAP_S", "1800") or 1800)
+
 
 # Parsed runs, keyed by (path, mtime_ns, size). An ARCHIVED run never changes,
 # so re-parsing every file on every panel refresh is pure waste; only the live
@@ -398,8 +403,16 @@ async def cap_census_live(trace_id=None) -> Dict[str, Any]:
         "progress": cc.live_progress(goal_ids, done, active_goal),
         "counters": counters,
         "steps": steps,
+        # Every goal this run has finished, not the last six: a 12-goal census
+        # was showing half its own progress, which is why the only way to see
+        # how a run was going was to load it into the Compare table.
         "recent": [{"id": r.get("id"), "status": r.get("status"),
-                    "wall_s": r.get("wall_s")} for r in done[-6:]],
+                    "wall_s": r.get("wall_s")} for r in done],
+        # The ceiling the harness cancels at. Returned so the UI can mark a
+        # goal that ran up against it instead of assuming a number — half the
+        # default goal set finishes within a minute of the cap, so "did it hit
+        # the wall" is the difference between a pass and a timeout.
+        "wall_cap_s": CENSUS_WALL_CAP_S,
     }
 
 

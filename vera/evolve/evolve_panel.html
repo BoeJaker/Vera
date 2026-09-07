@@ -468,8 +468,8 @@ html.vpb-nav-hosted body{padding-left:0}
     <div class="card-h"><span class="card-t">Live run</span>
       <span class="hint" id="census-live-status">—</span>
       <span style="flex:1"></span>
-      <label class="hint" style="margin-right:8px"><input type="checkbox" id="census-follow" checked> follow</label>
-      <button class="btn sm" onclick="loadCensusLive()">&#8635;</button>
+      <label class="hint" style="margin-right:8px"><input type="checkbox" id="census-follow" checked onchange="_cenArm()"> follow</label>
+      <button class="btn sm" onclick="censusPoll()">&#8635;</button>
     </div>
     <div id="census-live"><div class="empty">Loading…</div></div>
     <div class="hint" style="margin-top:6px">A goal only lands in the history when it FINISHES, so a census is otherwise invisible for the one to three hours it takes. This is that window — live counters and the steps taken so far.</div>
@@ -2307,20 +2307,29 @@ function _cenStatus(s){
   const c=s==='done'?'#3cb371':(s==='wall-cap'?'#c9a35a':'#c96b6b');
   return '<span class="sc" style="color:'+c+'">'+esc(s||'—')+'</span>';
 }
+/* Returns this run's completed-goal count, or null when it could not be read.
+   The caller uses that to notice a goal LANDING and refresh the heavier tables
+   only then. It no longer arms its own timer — see censusPoll. */
 async function loadCensusLive(){
-  const el=$('census-live');if(!el)return;
+  const el=$('census-live');if(!el)return null;
   const r=await api('/census/live');
-  if(!r){el.innerHTML='<div class="empty">unavailable</div>';return}
+  if(!r){el.innerHTML='<div class="empty">unavailable</div>';return null}
   const p=r.progress||{}, a=r.active, c=r.counters||{};
+  const doneN=(p.completed==null?null:p.completed);
   $('census-live-status').innerHTML=a
     ?('<span style="color:#3cb371">running</span> · goal '+(p.position||'?')+' of '+(p.goals_total||'?')
       +' · '+esc(a.goal_id||'?')+' · '+_cenSec(a.elapsed_s))
     :((p.completed||0)+' of '+(p.goals_total||0)+' recorded · <span class="hint">no loop running</span>');
   if(!a){
-    el.innerHTML='<div class="empty">No census loop is running.'
+    // Between goals there is no active loop for 30-60s, and a census has
+    // eleven such gaps. This used to return before the re-arm at the bottom,
+    // so following died at the FIRST gap and never came back — which is what
+    // "I have to keep refreshing" actually was.
+    el.innerHTML=_cenRecent(r)
+      +'<div class="empty">No census loop is running right now.'
       +((p.remaining||[]).length?(' <span class="hint">'+(p.remaining||[]).length+' goal(s) not yet recorded: '+esc((p.remaining||[]).join(', '))+'</span>'):'')
       +'</div>';
-    return;
+    return doneN;
   }
   // Cycles per step is the live thrash signal — a step climbing while the
   // elapsed clock runs is what "working" vs "stuck" actually looks like.
@@ -2342,10 +2351,67 @@ async function loadCensusLive(){
       +'<span class="hint">'+_cenSec(a.elapsed_s)+' elapsed</span></div>'
     +(steps?('<table><tr><th>step</th><th>title</th><th>cycles</th><th></th></tr>'+steps+'</table>')
            :'<div class="hint">planning…</div>')
-    +((p.remaining||[]).length?('<div class="hint" style="margin-top:6px">then: '+esc((p.remaining||[]).join(', '))+'</div>'):'');
-  if($('census-follow')&&$('census-follow').checked&&typeof _curSec==='function'&&_curSec()==='census'){
-    clearTimeout(window._cenT);window._cenT=setTimeout(loadCensusLive,5000);
-  }
+    +((p.remaining||[]).length?('<div class="hint" style="margin-top:6px">then: '+esc((p.remaining||[]).join(', '))+'</div>'):'')
+    +_cenRecent(r);
+  return doneN;
+}
+
+/* The goals THIS run has already finished — status, wall clock, and how far
+   past the cap each got. /census/live has always returned these; nothing
+   rendered them, so the only way to see how the run was going was to load it
+   into the Compare table. Newest first, because the one that just landed is
+   the one you came to look at. */
+function _cenRecent(r){
+  const rec=(r&&r.recent)||[];
+  if(!rec.length)return '';
+  const cap=(r.wall_cap_s||1800);
+  const cells=rec.map(function(g){
+    const st=String(g.status||'');
+    const col=st==='done'?'#3cb371':(st==='wall-cap'?'#c9a35a':'#c96b6b');
+    const over=(g.wall_s||0)>=cap-30;
+    return '<span class="tag clk" title="'+esc(st+' · '+_cenSec(g.wall_s)
+             +(over?' · hit the '+Math.round(cap/60)+'m cap':''))+'"'
+      +' onclick="openCensusGoal(\'current\',\''+esc(g.id)+'\')"'
+      +' style="border-left:3px solid '+col+';cursor:pointer">'
+      +esc(g.id)+' <span class="mono hint">'+_cenSec(g.wall_s)+'</span></span>';
+  }).join('');
+  return '<div class="row" style="gap:5px;flex-wrap:wrap;margin:6px 0">'+cells+'</div>'
+    +'<div class="hint" style="margin-bottom:4px">this run so far — green done · amber hit the wall cap · red errored. Click one for its steps.</div>';
+}
+
+/* ── ONE poller for the whole section ───────────────────────────────────────
+   Previously only the live card refreshed, and it re-armed itself at the END
+   of its own render path — so any early return (an API hiccup, or the gap
+   between two goals) stopped following permanently, and the run history never
+   updated on its own at all.
+   Now: the timer is re-armed unconditionally in a finally, and the heavy
+   tables refresh when the completed-goal count CHANGES — i.e. exactly when a
+   goal lands, rather than on every tick. */
+let _cenT=null, _cenLastDone=-1, _cenBusy=false;
+
+function _cenFollowing(){
+  const cb=$('census-follow');
+  return !!(cb&&cb.checked)&&typeof _curSec==='function'&&_curSec()==='census';
+}
+
+function _cenArm(){
+  clearTimeout(_cenT); _cenT=null;
+  if(_cenFollowing())_cenT=setTimeout(censusPoll,5000);
+}
+
+async function censusPoll(){
+  if(_cenBusy){_cenArm();return}          // never stack a slow tick on a slower one
+  _cenBusy=true;
+  try{
+    const done=await loadCensusLive();
+    if(done!=null&&done!==_cenLastDone){
+      _cenLastDone=done;
+      loadCensusRuns();                   // a goal landed — the tables have news
+      loadCensusOperator();
+      if(_ctCur)ctTimeline();
+    }
+  }catch(e){ /* a failed tick must not stop the next one */ }
+  finally{ _cenBusy=false; _cenArm(); }
 }
 /* Quality cell: mean of a run's declared checks, with the coverage it is over.
    A mean across 3 of 12 goals must never look like a mean across all 12, so the
@@ -2547,7 +2613,12 @@ async function ctSave(force){
 
 async function loadCensus(){
   loadCensusTemplates();
-  loadCensusLive();
+  _cenLastDone=-1;              // a fresh visit re-syncs the tables once
+  censusPoll();                 // live card + arm the follow timer
+  loadCensusRuns();
+}
+
+async function loadCensusRuns(){
   const el=$('census-runs');if(!el)return;
   const r=await api('/census/runs');
   const runs=(r&&r.runs)||[];
