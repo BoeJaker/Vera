@@ -3446,21 +3446,34 @@ async def evolve_suite_status(trace_id=None):
 
 @capability("evolve.suites", memory="off", silent=True,
             http_method="GET", http_path="/evolve/suites", http_tags=["evolve"],
-            description="Recent suite scoreboards (newest first). Query: limit.")
-async def evolve_suites(limit: int = 12, trace_id=None):
+            description="Recent suite scoreboards (newest first). Query: limit, "
+                        "tag (str — only runs of THAT tag, which is how a census "
+                        "template's own timeline is read: runs of a different "
+                        "question set are not comparable and must not share a "
+                        "chart).")
+async def evolve_suites(limit: int = 12, tag: str = "", trace_id=None):
     r = _redis()
     out = []
     if r:
         try:
-            rows = await r.lrange(KEY_SUITES, 0, max(0, int(limit) - 1))
+            # Filtering happens after the read, so a tag with few runs still
+            # reaches back far enough to show a timeline rather than the last
+            # `limit` runs of every tag.
+            span = max(0, int(limit)) * (8 if tag else 1)
+            rows = await r.lrange(KEY_SUITES, 0, max(0, span) - 1)
             for row in rows or []:
                 try:
-                    out.append(json.loads(row.decode() if isinstance(row, bytes) else row))
+                    rec = json.loads(row.decode() if isinstance(row, bytes) else row)
                 except Exception:
                     continue
+                if tag and str(rec.get("tag", "")) != tag:
+                    continue
+                out.append(rec)
+                if len(out) >= max(1, int(limit)):
+                    break
         except Exception:
             pass
-    return {"suites": out, "count": len(out)}
+    return {"suites": out, "count": len(out), "tag": tag}
 
 
 @capability("evolve.report", memory="off", silent=True,

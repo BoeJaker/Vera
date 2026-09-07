@@ -433,6 +433,37 @@ html.vpb-nav-hosted body{padding-left:0}
 
 <!-- ── CENSUS: the agentic-loop measuring instrument, run over run ── -->
 <div class="sec" id="sec-census" style="display:none">
+  <!-- ── Templates: the question set, and starting a run of it ──────────────
+       A census template is a named set of goals; seeding turns it into suite
+       tasks tagged census-<name>, so its timeline is evolve.suites for THAT
+       tag and only ever contains runs of the same questions. -->
+  <div class="card">
+    <div class="card-h"><span class="card-t">Templates &amp; run</span>
+      <span class="hint" id="ct-status">—</span>
+      <span style="flex:1"></span>
+      <select id="ct-pick" style="min-width:150px" onchange="ctPick()"></select>
+      <input id="ct-model" placeholder="model (blank = live routing)" style="width:190px;margin-left:6px">
+      <button class="btn sm" onclick="ctSeed()" title="write this template's goals as suite tasks tagged census-&lt;name&gt;">Seed</button>
+      <button class="btn sm" onclick="ctRun()" title="run the seeded tasks as a suite">▶ Run census</button>
+      <button class="btn sm" onclick="ctEdit()">Edit</button>
+      <button class="btn sm" onclick="ctNew()">New</button>
+      <button class="btn sm" onclick="loadCensusTemplates()">&#8635;</button>
+    </div>
+    <div id="ct-meta" class="hint" style="margin:4px 0">—</div>
+    <div id="ct-timeline"></div>
+    <div id="ct-editor" style="display:none;margin-top:8px">
+      <div class="hint" style="margin-bottom:4px">Template JSON — <span class="mono">{name, description, model, wall_cap_s, goals:[{id, goal, intent, tier, output, shape, checks:[…]}]}</span>. Saving reports anything that would make its numbers meaningless, and anything that breaks comparability with the version it replaces.</div>
+      <textarea id="ct-json" spellcheck="false" style="width:100%;height:260px;font-family:var(--mono,monospace);font-size:11px"></textarea>
+      <div class="row" style="gap:6px;margin-top:6px;align-items:center">
+        <button class="btn sm" onclick="ctSave(false)">Save</button>
+        <button class="btn sm" onclick="ctSave(true)">Save anyway</button>
+        <button class="btn sm" onclick="$('ct-editor').style.display='none'">Cancel</button>
+        <span class="hint" id="ct-save-msg"></span>
+      </div>
+      <div id="ct-problems" style="margin-top:6px"></div>
+    </div>
+    <div class="hint" style="margin-top:6px">Each template keeps its <b>own</b> timeline from run 0 — a run of a different question set is not a comparable point and never shares this chart. Editing the goals of a live template rebases it, and the save says so.</div>
+  </div>
   <div class="card" id="census-live-card">
     <div class="card-h"><span class="card-t">Live run</span>
       <span class="hint" id="census-live-status">—</span>
@@ -2392,7 +2423,130 @@ function renderCensusCharts(runs){
     +'stopped, and never by asking a model. A goal can wall-cap having built the right thing, and finish '
     +'having built the wrong one.</div></div>';
 }
+/* ═══ CENSUS TEMPLATES — set the questions here, and start the run here ═════
+   A census template is a named set of goals. Seeding turns it into suite tasks
+   tagged census-<name>; running it is evolve.suite.start on that tag; its
+   timeline is evolve.suites for that tag, and ONLY that tag — runs of a
+   different question set are not comparable points and never share the chart.
+   Until this card existed the census could only be started from a shell
+   script that lived outside the repo. */
+let _ctList=[], _ctCur=null;
+
+async function loadCensusTemplates(){
+  const r=await api('/evolve/census/templates');
+  _ctList=(r&&r.templates)||[];
+  const sel=$('ct-pick'); if(!sel)return;
+  const keep=sel.value;
+  sel.innerHTML=_ctList.length
+    ? _ctList.map(t=>'<option value="'+esc(t.name)+'">'+esc(t.name)+' ('+t.goals_n+' goals)</option>').join('')
+    : '<option value="">no templates</option>';
+  if(keep&&_ctList.some(t=>t.name===keep))sel.value=keep;
+  if($('ct-status'))$('ct-status').textContent=_ctList.length+' template(s)';
+  ctPick();
+}
+
+async function ctPick(){
+  const name=(($('ct-pick')||{}).value)||'';
+  const t=_ctList.find(x=>x.name===name);
+  _ctCur=t||null;
+  const meta=$('ct-meta');
+  if(meta)meta.innerHTML=t
+    ? esc(t.description||'')+' <span class="tag mono">'+esc(t.tag)+'</span>'
+      +'<span class="tag">'+t.goals_n+' goals</span>'
+      +'<span class="tag">wall cap '+(t.wall_cap_s||1800)+'s</span>'
+      +'<span class="tag">model '+esc(t.model||'live routing')+'</span>'
+    : '—';
+  ctTimeline();
+}
+
+/* One template's own history. Deliberately not merged with any other tag's:
+   comparing across question sets is the mistake the whole thing guards. */
+async function ctTimeline(){
+  const box=$('ct-timeline'); if(!box)return;
+  if(!_ctCur){box.innerHTML='';return}
+  const r=await api('/evolve/suites?limit=30&tag='+encodeURIComponent(_ctCur.tag));
+  const runs=((r&&r.suites)||[]).slice().reverse();   // oldest first
+  if(!runs.length){box.innerHTML='<div class="empty">No runs of this template yet — Seed, then Run census.</div>';return}
+  box.innerHTML='<table style="width:100%"><tr><th style="text-align:left">#</th><th style="text-align:left">when</th>'
+    +'<th style="text-align:left">tasks</th><th style="text-align:left">pass rate</th><th style="text-align:left">avg combined</th><th style="text-align:left">model</th></tr>'
+    +runs.map(function(s,i){
+      const pr=Math.round((s.pass_rate||0)*100);
+      const contended=(s.results||[]).filter(x=>x.contended).length;
+      return '<tr><td class="mono">'+i+'</td><td class="mono" style="font-size:10.5px">'+esc((s.ts||'').slice(0,19))+'</td>'
+        +'<td class="mono">'+(s.tasks_n||0)+'</td>'
+        +'<td><span class="bar" style="display:inline-block;width:60px;vertical-align:middle"><span style="width:'+pr+'%;background:'+(pr>=90?'var(--ok)':'var(--dim2)')+'"></span></span> <span class="mono">'+pr+'%</span></td>'
+        +'<td class="mono">'+(s.avg_combined!=null?s.avg_combined:'—')+'</td>'
+        +'<td class="hint">'+esc(s.variant||'')+(contended?' <span title="ran with the GPU contended — its timings are not comparable">⚠'+contended+'</span>':'')+'</td></tr>';
+    }).join('')+'</table>'
+    +'<div class="hint" style="margin-top:5px">Run 0 is this template’s first run. Numbering is per template on purpose.</div>';
+}
+
+async function ctSeed(){
+  if(!_ctCur){toast('pick a template');return}
+  const model=(($('ct-model')||{}).value||'').trim();
+  const r=await post('/evolve/census/template/seed',{name:_ctCur.name,model:model});
+  if(!r||r.error){toast('seed failed: '+((r&&r.error)||'?'));if(r&&r.problems)_ctShowProblems(r.problems);return}
+  toast('seeded '+(r.seeded||[]).length+' task(s) as '+r.tag+(r.pruned&&r.pruned.length?(' · pruned '+r.pruned.length):''));
+  loadTasks&&loadTasks();
+}
+
+async function ctRun(){
+  if(!_ctCur){toast('pick a template');return}
+  if(!confirm('Run '+_ctCur.goals_n+' census goals as a suite?\n\nThis takes the GPU for hours — it waits for a free box before each goal and skips nothing.'))return;
+  // assess=false: the census score is its declared checks, not a critic's
+  // opinion. Adding a critic here would change what the number means.
+  const r=await post('/evolve/suite/start',{tag:_ctCur.tag,assess:false});
+  if(!r||r.error){toast('start failed: '+((r&&r.error)||'?'));return}
+  toast('census started — '+_ctCur.tag);
+  nav('test');
+}
+
+function ctEdit(){
+  if(!_ctCur){toast('pick a template');return}
+  api('/evolve/census/templates?name='+encodeURIComponent(_ctCur.name)).then(function(r){
+    if(!r||r.error){toast('could not open template');return}
+    $('ct-json').value=JSON.stringify(r.template,null,2);
+    $('ct-editor').style.display='';
+    _ctShowProblems(r.problems||[]);
+  });
+}
+
+function ctNew(){
+  $('ct-json').value=JSON.stringify({name:'',description:'',model:'',wall_cap_s:1800,
+    goals:[{id:'',goal:'',intent:'build',tier:'simple',output:'code',shape:'one-file',
+            checks:[{file:'',exists:true,why:''}]}]},null,2);
+  $('ct-editor').style.display='';
+  _ctShowProblems([]);
+}
+
+function _ctShowProblems(list){
+  const box=$('ct-problems'); if(!box)return;
+  box.innerHTML=(list&&list.length)
+    ?'<div class="hint" style="color:var(--warn,#d0902a)">These would make the numbers meaningless:</div>'
+      +list.map(p=>'<div class="hint mono" style="font-size:10.5px">• '+esc(p)+'</div>').join('')
+    :'';
+}
+
+async function ctSave(force){
+  let tpl;
+  try{tpl=JSON.parse($('ct-json').value)}catch(e){$('ct-save-msg').textContent='not valid JSON: '+e.message;return}
+  const r=await post('/evolve/census/template/save',{template:tpl,force:!!force});
+  if(!r||r.error){
+    $('ct-save-msg').textContent=(r&&r.error)||'save failed';
+    _ctShowProblems((r&&r.problems)||[]);
+    return;
+  }
+  _ctShowProblems(r.problems||[]);
+  // An edit that changes the question set rebases the timeline. Say it here,
+  // where the person making the edit is looking.
+  $('ct-save-msg').textContent=r.note
+    ? '⚠ saved — '+r.breaks_comparability.join('; ')
+    : 'saved';
+  loadCensusTemplates();
+}
+
 async function loadCensus(){
+  loadCensusTemplates();
   loadCensusLive();
   const el=$('census-runs');if(!el)return;
   const r=await api('/census/runs');
