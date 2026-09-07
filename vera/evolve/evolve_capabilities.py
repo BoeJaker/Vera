@@ -1503,12 +1503,116 @@ async def evolve_unittest_run(path: str = "vera", mode: str = "compile",
 # CHECKS — programmatic ground truth
 # ─────────────────────────────────────────────────────────────────────────────
 
+# The census's evaluator, reused rather than reimplemented. Dual-spelled:
+# Vera.vera.* resolves to the DEPLOYED checkout, so a module that has not landed
+# there yet must fall back to the plain package. Absent = file checks are simply
+# unavailable, never a crash.
+try:
+    from Vera.vera.census import quality as _census_quality
+except ImportError:                                        # pragma: no cover
+    try:
+        from vera.census import quality as _census_quality
+    except ImportError:
+        _census_quality = None
+
+#: The census check kinds, in the order evaluate_one tests them. Used only to
+#: LABEL a result; the evaluation itself belongs to the census module.
+_CENSUS_CHECK_KINDS = ("exists", "min_bytes", "contains", "absent", "any_of",
+                       "all_of", "regex", "answer_contains", "answer_regex",
+                       "answer_min_words")
+
+
+def _census_check_kind(chk: Dict[str, Any]) -> str:
+    for k in _CENSUS_CHECK_KINDS:
+        if k in chk:
+            return k
+    return "file"
+
+
+def _census_check_value(chk: Dict[str, Any]) -> Any:
+    for k in _CENSUS_CHECK_KINDS:
+        if k in chk:
+            return chk[k]
+    return chk.get("file", "")
+
+
+def _files_wanted(task: Dict[str, Any]) -> List[str]:
+    """Every filename this task's checks refer to, so the caller can fetch them."""
+    if _census_quality is None:
+        return []
+    try:
+        return list(_census_quality.files_wanted(task.get("checks") or []))
+    except Exception:                                      # pragma: no cover
+        return []
+
+
+async def _fetch_check_files(task: Dict[str, Any], session_id: str) -> Dict[str, str]:
+    """Read the files a task's checks name, from where the RUN actually wrote
+    them. Missing files are simply absent from the mapping - `exists` then fails
+    with "the run produced no such file", which is the honest result."""
+    wanted = _files_wanted(task)
+    if not wanted:
+        return {}
+    out: Dict[str, str] = {}
+    try:
+        import importlib as _il
+        _ex = _il.import_module("Vera.vera.execution.exec_capabilities")
+        reader = getattr(_ex, "read_artifact_file", None)
+        if reader is None:
+            return {}
+        for name in wanted:
+            try:
+                body = await reader(session_id=session_id, relpath=name)
+            except Exception:
+                body = None
+            if body is not None:
+                out[name] = body
+    except Exception as e:                                 # pragma: no cover
+        log.debug("check-file fetch skipped: %s", e)
+    return out
+
 def _run_checks(task: Dict[str, Any], final: str, steps: List[Dict[str, Any]],
-                elapsed_s: float, error: str = "") -> List[Dict[str, Any]]:
+                elapsed_s: float, error: str = "",
+                files: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
+    """Score a task's checks against its answer, its tool trace and its FILES.
+
+    File-based checks are delegated to `vera.census.quality`, which is the
+    census's evaluator: `{"file": ..., "exists"/"contains"/"absent"/"regex"/
+    "any_of"/"all_of"/"min_bytes": ...}`. That vocabulary is not reimplemented
+    here on purpose - it is already the thing that catches what a suite check
+    cannot. Census 38 is the case in point: `author-then-edit` scored 100% on
+    "the edit landed" while the page still displayed the OLD value, because
+    nothing looked at the artifact; an `absent` check on the file caught it and
+    dropped the score to 75%.
+
+    The checks that read the ANSWER and the TRACE stay here, because the census
+    has no equivalent for `cap_called` / `min_steps` / `json_valid`. Between the
+    two vocabularies a task can now assert what it produced AND how it got
+    there, which neither system could do alone.
+    """
     results: List[Dict[str, Any]] = []
     caps_called = {str(s.get("cap") or s.get("tool") or "") for s in steps}
     blob = final or ""
+    files = files or {}
     for chk in task.get("checks") or []:
+        # A check naming a FILE, or one of the census's answer-level kinds, is
+        # the census's to score. Anything else is a suite check.
+        if _census_quality is not None and (
+                chk.get("file")
+                or any(k in chk for k in ("answer_contains", "answer_regex",
+                                          "answer_min_words"))):
+            try:
+                r = _census_quality.evaluate_one(chk, files, blob)
+                results.append({"type": _census_check_kind(chk),
+                                "value": _census_check_value(chk),
+                                "ok": bool(r.get("ok")),
+                                "note": str(r.get("detail") or ""),
+                                "label": str(r.get("label") or "")})
+                continue
+            except Exception as e:                     # pragma: no cover
+                results.append({"type": "file", "value": chk.get("file", ""),
+                                "ok": False, "note": "check failed: %s" % e})
+                continue
         ctype = str(chk.get("type", ""))
         val = chk.get("value", "")
         ok, note = False, ""
@@ -2157,7 +2261,17 @@ async def _run_task(task: Dict[str, Any], variant: Optional[Dict[str, Any]] = No
                 steps = ev_steps
 
     elapsed = round(time.time() - t0, 1)
-    checks = _run_checks(task, final, steps, elapsed, error=error)
+    # Read the ARTIFACTS the checks name before scoring. Without this a task can
+    # only assert what the run SAID, never what it produced - the gap that let
+    # census 38's author-then-edit report success on a file whose visible value
+    # was still wrong.
+    # The loop was invoked with session_id=f"evolve:{run_id}" (see the engine
+    # call above), and that is the session its artifacts belong to - reading
+    # under the bare run_id would find nothing and quietly fail every file
+    # check as "the run produced no such file".
+    _check_files = await _fetch_check_files(task, "evolve:%s" % run_id)
+    checks = _run_checks(task, final, steps, elapsed, error=error,
+                         files=_check_files)
     n_ok = sum(1 for c in checks if c["ok"])
     pass_rate = round(n_ok / len(checks), 3) if checks else (0.0 if error else 1.0)
     # A sim task's combined score IS the ground-truth sim score (0-100 → 0-10),
