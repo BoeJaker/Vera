@@ -212,16 +212,65 @@ def _parse_turns(raw_lines: List[str]) -> List[dict]:
 # e.g. a sandbox that mounts the repo and runs `claude` with HOME set to it.
 _REPO_ROOT = _HERE.resolve().parents[1]
 
+# Dual-spelled: Vera.vera.* resolves to the DEPLOYED checkout, so a module that
+# has not landed there yet must fall back to the plain package.
+try:
+    from Vera.vera.ide import agent_transcripts as _AT
+except ImportError:                                        # pragma: no cover
+    try:
+        from vera.ide import agent_transcripts as _AT
+    except ImportError:
+        _AT = None
+
+
+def _git_common_dir() -> Path:
+    """This checkout's .git directory — the one shared by every linked worktree.
+
+    A linked worktree's `.git` is a FILE pointing at the real one, so resolving
+    it matters: a per-worktree location would scatter one repo's transcripts
+    across a dozen directories that come and go with their branches.
+    """
+    g = _REPO_ROOT / ".git"
+    try:
+        if g.is_file():
+            txt = g.read_text(encoding="utf-8").strip()
+            if txt.startswith("gitdir:"):
+                p = Path(txt.split(":", 1)[1].strip())
+                # …/.git/worktrees/<name> -> …/.git
+                return p.parents[1] if p.parent.name == "worktrees" else p
+    except Exception as e:                                 # pragma: no cover
+        log.debug("claude_sessions: git-common-dir resolve failed: %s", e)
+    return g
+
 
 def _local_roots() -> Dict[str, Path]:
+    """Every place a transcript might be, labelled.
+
+    A label prefixed `codex-` marks a root whose files are read with the codex
+    parser (see agent_transcripts.detect_kind — the filename decides, so a
+    mixed root still works).
+    """
     roots: Dict[str, Path] = {
         "home":      Path(os.path.expanduser("~")) / ".claude" / "projects",
         "vera-repo": _REPO_ROOT / ".claude" / "projects",
+        # Inside .git, so untracked by construction and visible from main,
+        # bleeding-edge and every linked worktree at once — the same reasoning
+        # that puts shared planning under the git-common dir. Codex has no
+        # per-repo sessions setting of its own (its config.toml carries
+        # service_tier / sandbox / trust / mcp_servers and nothing about
+        # session paths), and CODEX_HOME would move auth and config too, so
+        # this is the drop point rather than a codex-side redirect.
+        "codex-repo": _git_common_dir() / "codex-sessions",
+        "codex-home": Path(os.path.expanduser("~")) / ".codex" / "sessions",
     }
     extra = os.environ.get("VERA_CLAUDE_PROJECTS_ROOTS", "")
     for i, p in enumerate(x.strip() for x in extra.replace(";", ":").split(":")):
         if p:
             roots[f"extra{i}"] = Path(p)
+    codex_extra = os.environ.get("VERA_CODEX_SESSIONS_ROOTS", "")
+    for i, p in enumerate(x.strip() for x in codex_extra.replace(";", ":").split(":")):
+        if p:
+            roots[f"codex-extra{i}"] = Path(p)
     return roots
 
 
@@ -312,22 +361,38 @@ async def _ingest_file(instance_id: str, rel: str, state: dict) -> int:
         return 0
 
     new_offset = offset + len(text.encode("utf-8"))
-    turns = _parse_turns(text.splitlines())
     local_root_label, display_rel = _split_local_rel(rel) if not instance_id else ("", rel)
-    project_dir = display_rel.split("/", 1)[0] if "/" in display_rel else ""
-    session_uuid = ""
+    # Which agent wrote this decides how to read it. The filename settles it,
+    # so a root holding both kinds still works.
+    kind = _AT.detect_kind(display_rel) if _AT is not None else "claude"
+    if kind == _AT.CODEX:
+        parsed = _AT.read_transcript(text.splitlines(), kind=kind, path=display_rel)
+        turns = parsed["turns"]
+        # Codex files under a DATE (2026/08/23/…), so the first path segment is
+        # the year, not the project. Its cwd is what says which checkout it was
+        # working on, and encoding that the way Claude encodes its folder names
+        # files both agents' sessions for one checkout under ONE project.
+        project_dir = _AT.project_dir_for(kind, display_rel, parsed.get("cwd", ""))
+        codex_session = parsed.get("session_id", "")
+        codex_cwd = parsed.get("cwd", "")
+    else:
+        turns = _parse_turns(text.splitlines())
+        project_dir = display_rel.split("/", 1)[0] if "/" in display_rel else ""
+        codex_session, codex_cwd = "", ""
+    session_uuid = codex_session
     recorded = 0
     for turn in turns:
         session_uuid = turn.get("session_id") or session_uuid
         role = turn["role"]
         text_body = turn["text"]
+        agent_label = "Codex" if kind == "codex" else "Claude Code"
         vera_session_id = f"claude-cc:{session_uuid or project_dir}"
         await _record(
             session_id=vera_session_id,
             category="ide.claude_session_user" if role == "user" else "ide.claude_session_assistant",
-            text=f"[Claude Code · {project_dir}] {text_body[:180]}",
+            text=f"[{agent_label} · {project_dir}] {text_body[:180]}",
             full_text=text_body,
-            tags=["claude_code", "external_session", role] + ([project_dir] if project_dir else []),
+            tags=[kind, "external_session", role] + ([project_dir] if project_dir else []),
             importance=0.55 if role == "user" else 0.6,
             source_type="human" if role == "user" else "ai",
             record_type="message",
@@ -336,7 +401,9 @@ async def _ingest_file(instance_id: str, rel: str, state: dict) -> int:
             fabric_dataset="ide.claude_sessions",
             metadata={
                 "instance_id": instance_id, "project_dir": project_dir,
-                "claude_session_id": session_uuid, "cwd": turn.get("cwd", ""),
+                "agent": kind,
+                "claude_session_id": session_uuid,
+                "cwd": turn.get("cwd", "") or codex_cwd,
                 "git_branch": turn.get("git_branch", ""),
                 "tool_uses": turn.get("tool_uses", []),
                 "local_root": local_root_label,
@@ -344,6 +411,7 @@ async def _ingest_file(instance_id: str, rel: str, state: dict) -> int:
             fabric_data={
                 "instance_id": instance_id, "project_dir": project_dir,
                 "claude_session_id": session_uuid, "role": role,
+                "agent": kind,
                 "text": text_body[:20000], "ts": turn.get("ts", ""),
             },
             dedup_key=f"ccsess:{rel}:{turn.get('uuid') or new_offset}",
@@ -679,6 +747,10 @@ async def cap_claude_sessions_list_sessions(scan_limit: int = 3000, max_sessions
                 "claude_session_id": sid,
                 "project_dir": data.get("project_dir", ""),
                 "instance_id": data.get("instance_id", ""),
+                # Which agent produced it. Defaults to claude so the rows
+                # ingested before codex support read correctly rather than as
+                # an empty column.
+                "agent": data.get("agent") or "claude",
                 "turns": 0,
                 "first_ts": ts, "last_ts": ts,
                 "last_role": role,
