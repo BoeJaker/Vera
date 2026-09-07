@@ -9499,10 +9499,16 @@ async def list_pipelines(project_id: Optional[str] = None):
 
 
 @app.get("/api/pipelines/{pl_id}")
-async def get_pipeline(pl_id: str):
+async def get_pipeline(pl_id: str, include_workflow_ir: bool = False):
     pl = await DB.load_pipeline(pl_id)
     if not pl:
         raise HTTPException(404, "Pipeline not found")
+    if include_workflow_ir:
+        try:
+            from Vera.vera.research.pipeline_workflow import project_pipeline_workflow
+        except ImportError:  # pragma: no cover - linked worktree import fallback
+            from vera.research.pipeline_workflow import project_pipeline_workflow
+        return {**pl, "workflow_ir": project_pipeline_workflow(pl)}
     return pl
 
 
