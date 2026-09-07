@@ -422,8 +422,8 @@ html.vpb-nav-hosted body{padding-left:0}
     <div class="card-h"><span class="card-t">Swarm — live activity</span>
       <span class="hint" id="swarm-status">—</span>
       <span style="flex:1"></span>
-      <label class="hint" style="margin-right:8px"><input type="checkbox" id="swarm-follow" checked> follow</label>
-      <button class="btn sm" onclick="loadSwarm()">&#8635;</button>
+      <label class="hint" style="margin-right:8px"><input type="checkbox" id="swarm-follow" checked onchange="_swArm()"> follow</label>
+      <button class="btn sm" onclick="swarmPoll()">&#8635;</button>
     </div>
     <div id="swarm-summary" class="row" style="gap:6px;flex-wrap:wrap;margin:6px 0"></div>
     <div id="swarm-body"><div class="empty">Loading…</div></div>
@@ -744,8 +744,20 @@ html.vpb-nav-hosted body{padding-left:0}
 <!-- ── RUNS ── -->
 <div class="sec" id="sec-runs" style="display:none">
   <div class="card">
-    <div class="card-h"><span class="card-t">Recent runs</span><span style="flex:1"></span>
-      <button class="btn sm" onclick="loadRuns()">&#8635;</button></div>
+    <div class="card-h"><span class="card-t">Runs</span>
+      <span class="hint" id="runs-count">—</span>
+      <span style="flex:1"></span>
+      <select id="runs-src" onchange="_runsRender()" style="min-width:120px">
+        <option value="">every source</option>
+        <option value="suite">suite</option>
+        <option value="run">Test tab</option>
+        <option value="manual">manual</option>
+        <option value="improve">improve session</option>
+      </select>
+      <input id="runs-q" placeholder="filter task…" style="width:140px;margin-left:6px" oninput="_runsRender()">
+      <label class="hint" style="margin-left:8px"><input type="checkbox" id="runs-bad" onchange="_runsRender()"> problems only</label>
+      <button class="btn sm" onclick="loadRuns()" style="margin-left:8px">&#8635;</button></div>
+    <div class="hint" style="margin-bottom:6px">Every task execution, newest first — the raw record the Suite scoreboard, Improve sessions and the Census all summarise. A census goal appears here as a suite run of its <span class="mono">census-*</span> task. Click a row for its steps; <span class="mono">⇄</span> re-scores it with both critics.</div>
     <div id="runs-body"><div class="empty">Loading…</div></div>
   </div>
 </div>
@@ -1174,7 +1186,7 @@ function nav(sec){
   document.querySelectorAll('#nav .btn').forEach(b=>b.classList.toggle('on',b.dataset.sec===sec));
   document.querySelectorAll('.sec').forEach(s=>s.style.display=s.id==='sec-'+sec?'':'none');
   const f={test:loadTest,tasks:loadTasks,runs:loadRuns,unittests:loadUnitTests,master:loadMaster,improve:loadSessions,watch:loadWatch,pipelines:()=>{loadGit();loadPipelines()},
-    review:loadReview,logs:loadLogs,csessions:loadCSessions,board:loadBoardTab,notes:loadNotes,capacity:loadCapacity,swarm:loadSwarm,census:loadCensus,
+    review:loadReview,logs:loadLogs,csessions:loadCSessions,board:loadBoardTab,notes:loadNotes,capacity:loadCapacity,swarm:swarmPoll,census:loadCensus,
     sources:loadSources,sandbox:loadSandbox,activity:loadAudit,variants:loadVariants,settings:fillSettings,overview:loadOverview,errors:loadErrors}[sec];
   if(f)f();
   // Keep the outer shell's injected top-level sub-menu in sync when this
@@ -2269,7 +2281,7 @@ async function loadSwarm(){
     api('/evolve/editq?limit=40').catch(()=>null),
     api('/evolve/pipeline/list?limit=30').catch(()=>null),
     api('/board/items').catch(()=>null),
-    api('/ide/claude_sessions/watch?max_sessions=40').catch(()=>null),
+    api('/ide/claude_sessions/watch?max_sessions=500').catch(()=>null),
     api('/evolve/sandbox/list').catch(()=>null)
   ]);
   // Global context (repo/branch) narrows the branch-scoped rows here; global
@@ -2279,7 +2291,17 @@ async function loadSwarm(){
   const editors=((eq&&eq.queue)||[]).filter(a=>a.status==='running'||a.status==='queued');
   const livePipes=((pl&&pl.pipelines)||[]).filter(p=>p.live&&(!_fB||p.branch===_fB)&&(!_fR||p.repo===_fR));
   const dispatched=((bd&&bd.items)||[]).filter(i=>i.lane==='in_progress'&&(!_fB||i.branch===_fB)&&(!_fR||i.repo===_fR));
-  const liveSess=((cs&&cs.sessions)||[]).filter(s=>['live','resumable','stalled','declared-block'].indexOf(s.state)>=0);
+  // An agent session with no board claim and no pipeline classifies as
+  // "untracked" — and EVERY ingested session on this instance is untracked
+  // (90 of 90, measured 2026-09-07). Excluding that state emptied this list by
+  // construction, which is why the swarm never appeared to show your own
+  // sessions. What this card claims to show is ACTIVE sessions, so recency is
+  // the right test: a tracked session in any live state, or any session that
+  // has spoken within the stalled threshold.
+  const _stale=((cs&&cs.policy&&cs.policy.stalled_after_s)||2700);
+  const liveSess=((cs&&cs.sessions)||[]).filter(s=>
+    ['live','resumable','stalled','declared-block'].indexOf(s.state)>=0
+    || (s.age_s!=null&&s.age_s<_stale));
   const sandboxes=((sb&&(sb.sandboxes||sb.list||sb.containers))||[]).filter(c=>!_fB||c.branch===_fB);
   const active=loops.length+editors.length+livePipes.length+dispatched.length;
   const st=$('swarm-status');if(st)st.textContent=(active?(active+' active'):'idle')+((_fB||_fR)?(' · filtered'+(_fB?(' · '+_fB):'')+(_fR?(' · '+_fR):'')):'');
@@ -2290,10 +2312,33 @@ async function loadSwarm(){
   h+=_swSect('Edit-queue agents',editors,a=>_swRow('#b070d0',(a.status==='running'?'<span class="spin"></span> ':'')+esc((a.id||'').slice(0,8))+' <span class="tag">editor</span>',esc((a.model||'')+(a.instance?(' @'+a.instance):'')+' · '+a.status),''),'watch');
   h+=_swSect('Live CI/CD pipelines',livePipes,p=>_swRow('#4a9ed0','<span class="spin"></span> '+esc(p.id)+' <span class="tag">'+esc(p.kind)+'</span>'+(p.branch?' <span class="tag">'+esc(p.branch)+'</span>':''),esc(p.current||p.status||''),'openPipe(\''+esc(p.id)+'\')'),'pipelines');
   h+=_swSect('Dispatched board work',dispatched,i=>_swRow('#3cb371',esc(i.title||i.id)+(i.executor?' <span class="tag">'+esc(i.executor)+'</span>':''),esc((i.agent?('@'+i.agent):'')+(i.branch?(' · '+i.branch):'')),'openBoardItem(\''+esc(i.id)+'\')'),'board');
-  h+=_swSect('Active Claude sessions',liveSess,s=>_swRow(_CSESS_COLOR[s.state]||'#888',esc(s.title||(s.claude_session_id||'').slice(0,8))+' <span class="tag">'+esc(s.state)+'</span>',esc(_csessAge(s.age_s)+' idle'),'openSessionChat(\''+esc(s.claude_session_id)+'\')'),'csessions');
+  // Named for what it holds now that codex transcripts are ingested too. The
+  // agent badge is per row, because "whose session is this" was the question
+  // this card could not answer.
+  h+=_swSect('Active agent sessions',liveSess,s=>_swRow(_CSESS_COLOR[s.state]||'#888',
+    '<span class="tag" style="border-left:3px solid '+(s.agent==='codex'?'#7bb0e8':'#d0902a')+'">'
+      +esc(s.agent||'claude')+'</span> '
+      +esc(s.title||(s.claude_session_id||'').slice(0,8))+' <span class="tag">'+esc(s.state)+'</span>',
+    esc(_csessAge(s.age_s)+' idle'),'openSessionChat(\''+esc(s.claude_session_id)+'\')'),'csessions');
   h+=_swSect('Dev containers',sandboxes,c=>_swRow('#6a6a6a',esc(c.branch||c.name||c.container||'?'),esc((c.port?(':'+c.port):'')+(c.active?' · active':'')),c.branch?('openBranchSandbox(\''+esc(c.branch)+'\')'):''),'sandbox');
   el.innerHTML=h||'<div class="empty">The swarm is idle — no running loops, pipelines, dispatches or active sessions right now.</div>';
-  if($('swarm-follow')&&$('swarm-follow').checked&&typeof _curSec==='function'&&_curSec()==='swarm'){clearTimeout(window._swarmT);window._swarmT=setTimeout(loadSwarm,4000)}
+}
+
+/* Same lesson as the census follow timer: re-arming at the END of the render
+   path means anything that throws on the way there stops following for good.
+   Armed in a finally instead. */
+let _swT=null,_swBusy=false;
+function _swArm(){
+  clearTimeout(_swT); _swT=null;
+  const cb=$('swarm-follow');
+  if(cb&&cb.checked&&typeof _curSec==='function'&&_curSec()==='swarm')_swT=setTimeout(swarmPoll,4000);
+}
+async function swarmPoll(){
+  if(_swBusy){_swArm();return}
+  _swBusy=true;
+  try{ await loadSwarm() }
+  catch(e){ /* one bad tick must not end the watch */ }
+  finally{ _swBusy=false; _swArm() }
 }
 
 /* ═══ CENSUS: the agentic-loop measuring instrument, run over run ═══
@@ -3423,14 +3468,32 @@ function runCommitTags(commits){
   if(!commits||!commits.length)return'';
   return commits.map(c=>'<span class="tag commit" onclick="event.stopPropagation();crossLinkToDispatch(\''+esc(c.hash)+'\')" title="'+esc(c.message||'')+' — jump to the Dispatch session that made this commit">📌 '+esc(c.hash)+'</span>').join('');
 }
+let _runsAll=[];
 async function loadRuns(){
-  const r=await api('/evolve/runs?limit=60');let runs=(r&&r.runs)||[];
+  const r=await api('/evolve/runs?limit=200');
+  _runsAll=(r&&r.runs)||[];
+  _runsRender();
+}
+
+/* Filters run client-side over one fetch: the point of this view is to SIFT
+   the raw run log, and a round trip per keystroke would make that unpleasant. */
+function _runsRender(){
+  let runs=_runsAll.slice();
+  const src=(($('runs-src')||{}).value)||'';
+  const q=((($('runs-q')||{}).value)||'').toLowerCase().trim();
+  const bad=$('runs-bad')&&$('runs-bad').checked;
+  if(src)runs=runs.filter(r2=>String(r2.source||'')===src);
+  if(q)runs=runs.filter(r2=>String(r2.task||'').toLowerCase().indexOf(q)>=0);
+  // "problems" is errored OR any check failed — a run that returned cleanly
+  // having failed half its checks is exactly what you come here to find.
+  if(bad)runs=runs.filter(r2=>r2.error||((r2.checks_n||0)&&(r2.checks_ok||0)<r2.checks_n));
   const filterCommit=new URLSearchParams(location.search).get('commit');
   if(filterCommit){
     runs=runs.filter(r2=>(r2.commits||[]).some(c=>c.hash===filterCommit||filterCommit.startsWith(c.hash)));
   }
+  if($('runs-count'))$('runs-count').textContent=runs.length+' of '+_runsAll.length+' run(s)';
   const filterBar=filterCommit?'<div class="hint" style="padding:6px 0">Filtered to commit '+esc(filterCommit)+' — <a href="#" onclick="event.preventDefault();history.replaceState(null,\'\',location.pathname);loadRuns()">clear</a></div>':'';
-  if(!runs.length){$('runs-body').innerHTML=filterBar+'<div class="empty">'+(filterCommit?'No run in this window produced commit '+esc(filterCommit)+'.':'No runs yet.')+'</div>';return}
+  if(!runs.length){$('runs-body').innerHTML=filterBar+'<div class="empty">'+(_runsAll.length?'No run matches these filters.':(filterCommit?'No run in this window produced commit '+esc(filterCommit)+'.':'No runs yet.'))+'</div>';return}
   let h=filterBar+'<table><tr><th>time</th><th>task</th><th>where</th><th>src</th><th>checks</th><th>score</th><th>combined</th><th>time</th><th>commits</th><th></th></tr>';
   for(const r2 of runs){
     const wh=r2.where==='sandbox'?'<span class="tag" style="color:var(--ok)">🛡 sandbox</span>':(r2.where?'<span class="tag" style="color:var(--warn)">in-proc</span>':'');
