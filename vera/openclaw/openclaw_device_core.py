@@ -416,6 +416,70 @@ def unexpected_properties(error_message: str) -> List[str]:
     return UNEXPECTED_PROPERTY.findall(error_message or "")
 
 
+class ParamSupport:
+    """What a gateway version refuses, remembered between calls.
+
+    Learning the refusal once is cheap; re-learning it on every call is not —
+    without this, each prompt spent a full round-trip being told `agentId` is
+    unexpected before the retry that worked. The memo is scoped to the gateway
+    version so an upgraded gateway is re-probed rather than permanently
+    deprived of parameters it now supports.
+    """
+
+    def __init__(self) -> None:
+        self.version = ""
+        self._dropped: dict = {}
+
+    def reset_for_version(self, version: str) -> bool:
+        """Point the memo at `version`, clearing it on a change. True if cleared.
+
+        A gateway that does not name its version tells us nothing, so it must
+        not cost us what we already know — silence is not an upgrade.
+        """
+        version = version or ""
+        if not version or version == self.version:
+            return False
+        had = bool(self._dropped)
+        self._dropped = {}
+        self.version = version
+        return had
+
+    def dropped(self, method: str) -> List[str]:
+        """Properties known to be refused for `method`, sorted for stable logs."""
+        return sorted(self._dropped.get(method, ()))
+
+    def record(self, method: str, properties: Iterable[str]) -> List[str]:
+        """Remember refusals; returns only the ones that were news."""
+        known = self._dropped.setdefault(method, set())
+        fresh = [p for p in properties if p and p not in known]
+        known.update(fresh)
+        return fresh
+
+    def snapshot(self) -> dict:
+        """`{method: [properties]}` — what a status endpoint should show, since
+        a silently-dropped parameter is otherwise invisible."""
+        return {method: sorted(props) for method, props in self._dropped.items()
+                if props}
+
+    def strip(self, method: str, params: dict) -> dict:
+        """A copy of `params` without what this gateway has already refused."""
+        known = self._dropped.get(method)
+        if not known:
+            return dict(params)
+        return {k: v for k, v in params.items() if k not in known}
+
+
+def should_start_supervisor(*, enabled: bool, task_alive: bool) -> bool:
+    """Whether the reconnect supervisor needs starting.
+
+    The autostart job is periodic, so it must be a supervisor — start one loop,
+    then confirm it is still alive. Starting unconditionally spawned a fresh
+    reconnect loop on every scheduler tick and orphaned the last, which is how
+    a single bridge ends up racing itself into handshake timeouts.
+    """
+    return bool(enabled) and not task_alive
+
+
 # ── the answer coming back ───────────────────────────────────────────────────
 #
 # Observed against gateway 2026.4.29 (both event families carry the SAME text,

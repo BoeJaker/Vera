@@ -129,6 +129,8 @@ _WS_CONN = None           # active websocket connection
 _WS_TASK: Optional[asyncio.Task] = None
 _IDENTITY: Optional[_dev.DeviceIdentity] = None   # cached; loaded on first use
 _IDENTITY_UNAVAILABLE = False                     # no crypto backend — stop retrying
+# What this gateway version refuses, so a known-bad parameter is sent once, ever.
+_PARAM_SUPPORT = _dev.ParamSupport()
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Device identity — one persisted Ed25519 key, approved once by an operator
@@ -237,9 +239,11 @@ async def _rpc_tolerant(method: str, params: dict, timeout: float = 30.0) -> dic
 
     The method surface moves between gateway releases (2026.4.29 refuses
     `chat.send.agentId`; 2026.9.x accepts it). Retrying without the named
-    property beats pinning the bridge to one release.
+    property beats pinning the bridge to one release — and the refusal is
+    remembered per gateway version, so only the FIRST such call pays for it
+    instead of every prompt burning a round-trip on a known-bad parameter.
     """
-    attempt = dict(params)
+    attempt = _PARAM_SUPPORT.strip(method, params)
     for _ in range(3):
         try:
             return await _rpc(method, attempt, timeout=timeout)
@@ -247,10 +251,12 @@ async def _rpc_tolerant(method: str, params: dict, timeout: float = 30.0) -> dic
             dropped = [p for p in _dev.unexpected_properties(str(exc)) if p in attempt]
             if not dropped:
                 raise
+            _PARAM_SUPPORT.record(method, dropped)
             for prop in dropped:
                 attempt.pop(prop, None)
-            log.info("openclaw: %s does not accept %s on this gateway — retrying "
-                     "without it", method, ", ".join(dropped))
+            log.info("openclaw: %s does not accept %s on gateway %s — retrying "
+                     "without it, and not sending it again",
+                     method, ", ".join(dropped), _STATE.gateway_version or "?")
     return await _rpc(method, attempt, timeout=timeout)
 
 
@@ -472,6 +478,12 @@ async def _do_connect() -> None:
         _STATE.gateway_version = payload.get("server", {}).get("version", "")
         _STATE.gateway_conn_id = payload.get("server", {}).get("connId", "")
 
+        # An upgraded gateway may well accept what the old one refused, so the
+        # memo is re-probed on a version change rather than outliving it.
+        if _PARAM_SUPPORT.reset_for_version(_STATE.gateway_version):
+            log.info("openclaw: gateway is now %s — re-probing which parameters "
+                     "it accepts", _STATE.gateway_version or "?")
+
         await emit_event({"type": "openclaw.connected",
             "gateway_version": _STATE.gateway_version,
             "conn_id": _STATE.gateway_conn_id,
@@ -613,6 +625,9 @@ async def openclaw_status() -> dict:
         "device_public_key": identity.public_key if identity else "",
         "device_payload_version": _STATE.payload_version,
         "pairing_required": _STATE.pairing_required,
+        # Parameters this gateway version refused; dropping one silently would
+        # otherwise be invisible from the outside.
+        "gateway_unsupported_params": _PARAM_SUPPORT.snapshot(),
     }
 
 
@@ -892,14 +907,33 @@ _OPENCLAW_MOUNT_JS = r"""
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def _maybe_autostart():
-    """If OPENCLAW_ENABLED=1, start the reconnect loop at startup."""
-    await asyncio.sleep(3)   # let Vera finish startup
-    if _CONFIG.enabled:
-        log.info("openclaw: auto-starting (OPENCLAW_ENABLED=1)")
-        global _WS_TASK
-        _WS_TASK = asyncio.create_task(_reconnect_loop(), name="openclaw_reconnect")
+    """Supervise ONE reconnect loop while OPENCLAW_ENABLED=1.
 
-schedule(_maybe_autostart, interval=0)
+    This is a periodic job, so it has to check before it starts. It used to
+    start unconditionally on an `interval=0` schedule — which the scheduler
+    reads as "every tick" — so a new reconnect loop was created every second
+    and the previous one orphaned: hundreds of live loops all watching the same
+    state, ready to dial at once the moment a connection dropped. The gateway
+    logged the result as handshake timeouts.
+    """
+    global _WS_TASK
+    await asyncio.sleep(3)   # let Vera finish startup
+    alive = _WS_TASK is not None and not _WS_TASK.done()
+    if not _dev.should_start_supervisor(enabled=_CONFIG.enabled, task_alive=alive):
+        return
+
+    # A loop that died of an exception should say so before it is replaced,
+    # otherwise a crash-restart cycle looks identical to a healthy bridge.
+    if _WS_TASK is not None and _WS_TASK.done() and not _WS_TASK.cancelled():
+        exc = _WS_TASK.exception()
+        if exc is not None:
+            log.warning("openclaw: reconnect loop died (%s) — restarting", exc)
+
+    log.info("openclaw: auto-starting (OPENCLAW_ENABLED=1)")
+    _WS_TASK = asyncio.create_task(_reconnect_loop(), name="openclaw_reconnect")
+
+# Periodic, but as a supervisor: it restarts the loop only if it has died.
+schedule(_maybe_autostart, interval=30)
 
 """
 openclaw_extras.py  —  Extension capabilities for OpenClaw / Vera integration

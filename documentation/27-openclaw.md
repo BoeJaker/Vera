@@ -66,7 +66,10 @@ gateway token.
 `chat.send` requires an `idempotencyKey`; without one the gateway refuses the
 call. `agentId` is accepted by newer gateways and rejected as an unexpected
 property by older ones (2026.4.29), so the bridge retries once without any
-property the gateway names — the agent is selectable through the session key
+property the gateway names — and **remembers the refusal for that gateway
+version**, so only the first such call pays for it rather than every prompt.
+`openclaw.status` reports the memo as `gateway_unsupported_params`, and a
+version change re-probes it. The agent is selectable through the session key
 regardless, since a bare key like `vera-bridge` resolves to
 `agent:main:vera-bridge`. Vera reports the key you asked for, not the resolved
 one.
