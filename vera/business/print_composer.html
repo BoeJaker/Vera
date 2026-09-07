@@ -353,7 +353,7 @@ async function doPrint(){
   animate(dataUrl);
   await printJob('/print/image',{image_b64:b64,width_px:WIDTH,cut:$('c_cut').checked,printer_id:targetId()});
 }
-async function testNotify(){const r=await post('/printer/notify',{title:'Printer wired up',body:'Vera can now send notifications, lists,\nrecipes, graphs and images to paper.',level:'info'});
+async function testNotify(){const r=await post('/print/notify',{title:'Printer wired up',body:'Vera can now send notifications, lists,\nrecipes, graphs and images to paper.',level:'info'});
   if(r&&r.ok)toast('notification sent to printer');else toast((r&&r.error)||'failed',true);}
 
 // ---- feeds (live data into the composer) ----

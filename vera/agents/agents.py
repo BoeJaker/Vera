@@ -1563,7 +1563,11 @@ async def agent_chat_stream_endpoint(request: Request):
     import time as _time
     _stream_t0      = _time.monotonic()
     _resp_chars     = 0
-    _resp_head      = []   # first ~1KB of plain-text content for the recording
+    # Plain-text content accumulated from the token frames. The activity record
+    # only wants a ~800-char preview, but the thermal printer's "chat" feed
+    # (print.push below) prints the reply, so capture a fuller reply than that.
+    _resp_head      = []
+    _CAPTURE_MAX    = 6000
     _audio_chunks   = 0
 
     # Open the activity handle BEFORE the stream starts so the workers
@@ -1884,7 +1888,7 @@ async def agent_chat_stream_endpoint(request: Request):
                     head = bytes(chunk[:80])
                     if b'"type":"token"' in head:
                         _resp_chars += max(0, len(chunk) - 32)
-                        if sum(len(s) for s in _resp_head) < 1024:
+                        if sum(len(s) for s in _resp_head) < _CAPTURE_MAX:
                             try:
                                 s = chunk.decode("utf-8", "ignore")
                                 if '"text":"' in s:
@@ -1971,6 +1975,28 @@ async def agent_chat_stream_endpoint(request: Request):
                          (session_id or "")[:12], _resp_chars, elapsed_ms)
             except Exception as _e:
                 log.warning("end_stream_activity chat.stream FAILED: %s", _e)
+
+            # Paper trail: put the reply on the thermal printer when the operator
+            # has subscribed the "chat" source (Printer panel -> Routing ->
+            # "Chat replies"). This is the ONLY producer of source="chat" for
+            # ordinary replies -- chat.deliver only ever covered delivered
+            # reports, so the toggle previously did nothing for normal chat.
+            # print.push self-checks the subscription and no-ops when it is off,
+            # and the whole thing is fire-and-forget: printing must never delay
+            # the stream or surface an error to the user.
+            try:
+                _reply = "".join(_resp_head).strip()
+                _pp = CAPABILITY_REGISTRY.get("print.push") if _reply else None
+                _pfn = (_pp.get("raw") or _pp.get("func")) if _pp else None
+                if _pfn:
+                    _prompt_line = " ".join((message or "").split())[:60]
+                    asyncio.create_task(_pfn(
+                        source="chat",
+                        title=(_prompt_line or agent.name),
+                        body=_reply,
+                        level="info"))
+            except Exception as _e:
+                log.debug("chat reply -> printer push failed: %s", _e)
 
     _ep_total = _time.monotonic() - _ep_t0
     if _ep_total > 1.5:
