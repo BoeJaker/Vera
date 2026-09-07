@@ -196,9 +196,9 @@ html.vpb-nav-hosted body{padding-left:0}
 <div class="nav rail" id="nav">
   <div class="rail-logo">🧪 LOOP LAB</div>
   <div class="rail-grp">Run</div>
-  <button class="btn on" data-sec="test" onclick="nav('test')"><span class="ic">▶</span>Test</button>
-  <button class="btn" data-sec="improve" onclick="nav('improve')"><span class="ic">✦</span>Improve</button>
-  <button class="btn" data-sec="watch" onclick="nav('watch')"><span class="ic">◉</span>Watch</button>
+  <button class="btn on" data-sec="test" onclick="nav('test')" title="Run something ONCE — a task, a suite, or a census template"><span class="ic">▶</span>Run once</button>
+  <button class="btn" data-sec="improve" onclick="nav('improve')" title="Configure a session that runs, scores, edits and re-runs until it converges"><span class="ic">✦</span>Improve · set up</button>
+  <button class="btn" data-sec="watch" onclick="nav('watch')" title="The session Improve started, live — same session, later moment"><span class="ic">◉</span>Improve · live</button>
   <div class="rail-grp">Insight</div>
   <button class="btn" data-sec="overview" onclick="nav('overview')"><span class="ic">▦</span>Suite</button>
   <button class="btn" data-sec="errors" onclick="nav('errors')"><span class="ic">⚠</span>Errors</button>
@@ -766,7 +766,10 @@ html.vpb-nav-hosted body{padding-left:0}
 <div class="sec" id="sec-improve" style="display:none">
   <div class="card">
     <div class="card-h"><span class="card-t">Start improvement session</span>
-      <span class="hint">run → critic scores → editor proposes a better variant → rerun</span></div>
+      <span class="hint">run → critic scores → editor proposes a better variant → rerun</span>
+      <span style="flex:1"></span>
+      <span class="hint" id="im-live-link"></span></div>
+    <div class="hint" style="margin-bottom:6px">This page CONFIGURES a session; <a href="#" onclick="event.preventDefault();nav('watch')">Improve · live</a> is the same session running. To run something once instead — a task, a suite, or a census template — use <a href="#" onclick="event.preventDefault();nav('test')">Run once</a>.</div>
     <div class="grid">
       <div><label class="fld">Improve (category)</label><select id="im-cat" style="width:100%" onchange="fillTargets('im-cat','im-profile')"></select></div>
       <div><label class="fld">Target</label><select id="im-profile" style="width:100%"></select></div>
@@ -799,6 +802,7 @@ html.vpb-nav-hosted body{padding-left:0}
   <div class="card">
     <div class="card-h"><span class="card-t">Live improvement</span>
       <span class="hint" id="watch-sub">watch a session go test → evaluate → synthesize</span>
+      <span class="hint" style="margin-left:8px">· configured in <a href="#" onclick="event.preventDefault();nav('improve')">Improve · set up</a></span>
       <span style="flex:1"></span>
       <select id="watch-sel" style="min-width:160px" onchange="watchSelect()"></select>
     </div>
@@ -3551,6 +3555,13 @@ async function startImprove(){
 async function loadSessions(quiet){
   const r=await api('/evolve/improve/list?limit=25');const ss=(r&&r.sessions)||[];
   const live=ss.find(s=>s.live||s.status==='running');_liveSession=live||_liveSession;renderLive();
+  // Improve is a form; once a session is running the interesting thing is on
+  // the live page. Say so here rather than leave the form looking inert.
+  const ll=$('im-live-link');
+  if(ll)ll.innerHTML=live
+    ? '<span class="pill" style="color:var(--warn)">● '+esc(live.id)+' running</span> '
+      +'<a href="#" onclick="event.preventDefault();_watchSession=\''+esc(live.id)+'\';nav(\'watch\')">watch it →</a>'
+    : '';
   if($('sec-improve').style.display!=='none'){
     if(!ss.length){$('sessions-body').innerHTML='<div class="empty">No sessions yet.</div>'}
     else{

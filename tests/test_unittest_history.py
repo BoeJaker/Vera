@@ -131,6 +131,30 @@ def test_growing_the_suite_is_never_a_regression():
     assert UH.regressions(RUNS) == []
 
 
+def test_two_branches_are_not_two_points_on_one_timeline():
+    """Found on the REAL history the first time this shipped. Several agents
+    gate branches through one instance and their runs interleave:
+
+        21:26  feat/research-search-policy-convergence   2939 tests
+        21:56  feat/the-suite-must-yield-the-box         2907 tests
+
+    which was reported as "32 tests stopped running". Nothing had — those are
+    two different codebases, not coverage disappearing.
+    """
+    rows = [row("2026-09-07T21:26:14Z", True, 2933, total=2939, branch="feat/a"),
+            row("2026-09-07T21:56:40Z", True, 2900, total=2907, branch="feat/b")]
+    assert UH.regressions(rows) == []
+
+
+def test_a_branch_losing_tests_against_ITSELF_is_still_caught():
+    """The narrowing must not blunt the finding it exists for."""
+    rows = [row("2026-09-07T21:00:00Z", True, 2933, total=2939, branch="feat/a"),
+            row("2026-09-07T21:30:00Z", True, 2900, total=2907, branch="feat/a")]
+    regs = UH.regressions(rows)
+    assert len(regs) == 1 and regs[0]["lost"] == 32
+    assert regs[0]["branch"] == "feat/a"
+
+
 def test_the_critical_tier_is_not_compared_against_the_full_suite():
     """They legitimately have different totals; comparing across them would
     report a regression on every alternating run."""

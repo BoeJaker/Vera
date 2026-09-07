@@ -137,13 +137,20 @@ def regressions(rows: Optional[Iterable[Dict[str, Any]]]) -> List[Dict[str, Any]
 
     A green run with fewer tests than the run before it is not a pass — it is
     coverage that stopped being collected, and the gate reports PASS throughout.
-    Only compared against the previous run on the SAME markers/paths, because
-    the full suite and the critical tier legitimately have different totals.
+
+    Compared only against the previous run of the SAME BRANCH on the same
+    markers/paths. Branch matters as much as scope: this estate gates several
+    agents' branches through one instance, and their runs interleave. On the
+    real history the first time this ran, branch A gated at 2939 tests and
+    branch B at 2907 forty minutes later — reported as "32 tests stopped
+    running" when nothing had. Two branches are two codebases, not two points
+    on one timeline.
     """
     out: List[Dict[str, Any]] = []
     by_scope: Dict[str, Dict[str, Any]] = {}
     for r in reversed(newest_first(rows)):                # oldest first
-        scope = "%s|%s" % (r.get("markers", ""), r.get("paths", ""))
+        scope = "%s|%s|%s" % (r.get("branch", ""), r.get("markers", ""),
+                              r.get("paths", ""))
         prev = by_scope.get(scope)
         if prev is not None:
             lost = int(prev.get("total", 0)) - int(r.get("total", 0))
