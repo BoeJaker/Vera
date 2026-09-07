@@ -386,6 +386,7 @@ def build_chat_send_params(
     idempotency_key: str,
     agent_id: str = "",
     thinking: str = "",
+    queue_mode: str = "",
 ) -> dict:
     """`chat.send` params. `idempotencyKey` is REQUIRED — the gateway refuses the
     call without it, which is why the bridge's prompts never left the building.
@@ -404,6 +405,10 @@ def build_chat_send_params(
         params["agentId"] = agent_id
     if thinking:
         params["thinking"] = thinking
+    if queue_mode:
+        # Gateway-side ordering where it exists. 2026.4.29 refuses the property
+        # outright, which is why Vera keeps its own per-session queue.
+        params["queueMode"] = queue_mode
     return params
 
 
@@ -554,6 +559,196 @@ def final_answer(event: str, payload: dict):
     if state not in ("final", "aborted", "error"):
         return None
     return state, message_text(payload.get("message"))
+
+
+QUEUE_MODES: Tuple[str, ...] = ("steer", "followup", "collect", "interrupt")
+
+# Terminal states a queued prompt can reach.
+PROMPT_QUEUED = "queued"
+PROMPT_SENT = "sent"
+PROMPT_DONE = "done"
+PROMPT_FAILED = "failed"
+PROMPT_CANCELLED = "cancelled"
+PROMPT_INTERRUPTED = "interrupted"
+
+
+@dataclass
+class QueuedPrompt:
+    """One prompt waiting its turn on a session."""
+    queue_id: str
+    session_key: str
+    message: str
+    agent_id: str = ""
+    thinking: str = ""
+    queue_mode: str = ""
+    queued_at: str = ""
+    run_id: str = ""
+    status: str = PROMPT_QUEUED
+    error: str = ""
+
+    def public(self) -> dict:
+        """The shape a status endpoint or a caller polling for its turn wants —
+        never the message body, which can be large."""
+        return {
+            "queue_id": self.queue_id,
+            "session_key": self.session_key,
+            "status": self.status,
+            "run_id": self.run_id,
+            "queued_at": self.queued_at,
+            "chars": len(self.message),
+            "error": self.error,
+        }
+
+
+class PromptQueue:
+    """One prompt at a time per session, in the order they were asked.
+
+    The gateway will accept a second `chat.send` into a busy session and then
+    give it nothing: no deltas, an empty final message. Whether it folds the
+    text into the running answer or drops it, the caller loses a reply it was
+    told had started. Newer gateways expose `queueMode` for this; 2026.4.29
+    refuses the property outright, so the ordering has to live here.
+
+    Pure bookkeeping: what is in flight, what is waiting, and what may be sent
+    next. The caller owns the sending and the waiting.
+    """
+
+    def __init__(self) -> None:
+        self._waiting: dict = {}      # session_key -> [QueuedPrompt]
+        self._active: dict = {}       # session_key -> QueuedPrompt (sent, unfinished)
+        self._by_run: dict = {}       # run_id -> QueuedPrompt
+
+    # ── enqueue / inspect ────────────────────────────────────────────────────
+    def add(self, prompt: QueuedPrompt) -> int:
+        """Queue a prompt; returns its 1-based position behind anything already
+        waiting or in flight."""
+        queue = self._waiting.setdefault(prompt.session_key, [])
+        queue.append(prompt)
+        return len(queue) + (1 if prompt.session_key in self._active else 0)
+
+    def waiting(self, session_key: str) -> int:
+        return len(self._waiting.get(session_key, ()))
+
+    def is_busy(self, session_key: str) -> bool:
+        return session_key in self._active
+
+    def active(self, session_key: str) -> Optional[QueuedPrompt]:
+        return self._active.get(session_key)
+
+    def find(self, queue_id: str) -> Optional[QueuedPrompt]:
+        for prompt in self._by_run.values():
+            if prompt.queue_id == queue_id:
+                return prompt
+        for prompt in self._active.values():
+            if prompt.queue_id == queue_id:
+                return prompt
+        for queue in self._waiting.values():
+            for prompt in queue:
+                if prompt.queue_id == queue_id:
+                    return prompt
+        return None
+
+    def queue_id_for_run(self, run_id: str) -> str:
+        prompt = self._by_run.get(run_id)
+        return prompt.queue_id if prompt else ""
+
+    def sessions(self) -> List[str]:
+        return sorted(set(self._waiting) | set(self._active))
+
+    # ── the turn-taking itself ───────────────────────────────────────────────
+    def next_ready(self, session_key: str) -> Optional[QueuedPrompt]:
+        """The next prompt that may be sent NOW, or None while one is in flight."""
+        if session_key in self._active:
+            return None
+        queue = self._waiting.get(session_key)
+        if not queue:
+            return None
+        return queue[0]
+
+    def mark_sent(self, queue_id: str, run_id: str) -> Optional[QueuedPrompt]:
+        """The gateway accepted it: this session is now busy with `run_id`."""
+        for session_key, queue in self._waiting.items():
+            for index, prompt in enumerate(queue):
+                if prompt.queue_id != queue_id:
+                    continue
+                queue.pop(index)
+                prompt.run_id = run_id
+                prompt.status = PROMPT_SENT
+                self._active[session_key] = prompt
+                if run_id:
+                    self._by_run[run_id] = prompt
+                self._prune(session_key)
+                return prompt
+        return None
+
+    def complete(self, run_id: str, state: str = "final") -> Optional[QueuedPrompt]:
+        """A run reached a terminal frame; its session is free again."""
+        prompt = self._by_run.pop(run_id, None)
+        if prompt is None:
+            # A run nobody queued (sent directly, or from another client) still
+            # frees whatever session it was holding.
+            for session_key, active in list(self._active.items()):
+                if active.run_id == run_id:
+                    prompt = active
+                    break
+            if prompt is None:
+                return None
+        prompt.status = PROMPT_DONE if state == "final" else PROMPT_FAILED
+        if state not in ("final", ""):
+            prompt.error = state
+        self._active.pop(prompt.session_key, None)
+        return prompt
+
+    def fail_active(self, session_key: str, reason: str) -> Optional[QueuedPrompt]:
+        """Give up on the in-flight prompt (timed out, connection dropped) so
+        the ones behind it are not stranded."""
+        prompt = self._active.pop(session_key, None)
+        if prompt is None:
+            return None
+        self._by_run.pop(prompt.run_id, None)
+        prompt.status = PROMPT_INTERRUPTED
+        prompt.error = reason
+        return prompt
+
+    def abandon_all(self, reason: str) -> List[QueuedPrompt]:
+        """Every in-flight prompt is lost when the connection drops; the queued
+        ones keep their place and go out on the next connection."""
+        lost = []
+        for session_key in list(self._active):
+            prompt = self.fail_active(session_key, reason)
+            if prompt is not None:
+                lost.append(prompt)
+        return lost
+
+    def cancel(self, queue_id: str) -> Optional[QueuedPrompt]:
+        """Drop a prompt that has not been sent yet. One already in flight
+        cannot be recalled — the gateway is already answering it."""
+        for session_key, queue in self._waiting.items():
+            for index, prompt in enumerate(queue):
+                if prompt.queue_id == queue_id:
+                    queue.pop(index)
+                    prompt.status = PROMPT_CANCELLED
+                    self._prune(session_key)
+                    return prompt
+        return None
+
+    def snapshot(self) -> dict:
+        """`{session_key: {"active": …, "waiting": [...]}}` for status output."""
+        out: dict = {}
+        for session_key in self.sessions():
+            active = self._active.get(session_key)
+            waiting = self._waiting.get(session_key) or []
+            if not active and not waiting:
+                continue
+            out[session_key] = {
+                "active": active.public() if active else None,
+                "waiting": [p.public() for p in waiting],
+            }
+        return out
+
+    def _prune(self, session_key: str) -> None:
+        if not self._waiting.get(session_key):
+            self._waiting.pop(session_key, None)
 
 
 class RunBuffers:

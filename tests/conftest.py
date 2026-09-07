@@ -138,6 +138,7 @@ _CRITICAL_MODULES = {
     "test_openclaw_stream",  # the same answer arrives twice; reading both halves doubles every token (2026-09-05)
     "test_openclaw_supervisor",  # interval=0 means every tick: one reconnect loop per second, all racing (2026-09-05)
     "test_openclaw_run_buffers",  # two prompts in one session gave one run both answers and the other none (2026-09-07)
+    "test_openclaw_prompt_queue",  # a second prompt into a busy session is accepted and answered with nothing (2026-09-07)
     "test_census34_failures",
     "test_edit_already_applied",
     "test_printer_wrap",  # paper does not re-flow: an unwrapped line is SILENTLY clipped off the page (2026-09-07)

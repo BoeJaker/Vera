@@ -85,6 +85,10 @@ class OpenClawConfig:
     vera_base_url: str = "http://localhost:8000"
     auto_reconnect: bool = True
     reconnect_interval: int = 10          # seconds between reconnect attempts
+    # How long to wait for a run's terminal frame before the queue gives up on
+    # it. Generous: a model run is unbounded, but a stalled one must not
+    # strand every prompt behind it.
+    run_timeout: int = 900
     session_key: str = "vera-bridge"      # OpenClaw session key to use
     # Handshake identity. `client_id`/`client_mode` are CLOSED enums on the
     # gateway (see openclaw_device_core) — Vera presents as the generic CLI
@@ -102,6 +106,7 @@ _CONFIG = OpenClawConfig(
     vera_base_url=os.environ.get("OPENCLAW_VERA_BASE_URL", "http://localhost:8000"),
     client_id=os.environ.get("OPENCLAW_CLIENT_ID", _dev.DEFAULT_CLIENT_ID),
     client_mode=os.environ.get("OPENCLAW_CLIENT_MODE", _dev.DEFAULT_CLIENT_MODE),
+    run_timeout=int(os.environ.get("OPENCLAW_RUN_TIMEOUT", "900") or 900),
 )
 
 @dataclass
@@ -131,6 +136,10 @@ _IDENTITY_UNAVAILABLE = False                     # no crypto backend — stop r
 _PARAM_SUPPORT = _dev.ParamSupport()
 # Streamed deltas, per RUN — two prompts can be in flight in one session.
 _RUN_BUFFERS = _dev.RunBuffers()
+# One prompt at a time per session, in the order they were asked.
+_PROMPT_QUEUE = _dev.PromptQueue()
+_QUEUE_WORKERS: Dict[str, asyncio.Task] = {}      # session_key -> drain task
+_RUN_DONE: Dict[str, asyncio.Event] = {}          # session_key -> "run finished"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Device identity — one persisted Ed25519 key, approved once by an operator
@@ -260,6 +269,112 @@ async def _rpc_tolerant(method: str, params: dict, timeout: float = 30.0) -> dic
     return await _rpc(method, attempt, timeout=timeout)
 
 
+def _ensure_queue_worker(session_key: str) -> None:
+    """One drain task per session, started on demand and left to finish."""
+    task = _QUEUE_WORKERS.get(session_key)
+    if task is not None and not task.done():
+        return
+    _QUEUE_WORKERS[session_key] = asyncio.create_task(
+        _drain_prompt_queue(session_key), name=f"openclaw_queue:{session_key}")
+
+
+async def _drain_prompt_queue(session_key: str) -> None:
+    """Send one prompt at a time, waiting for each run to finish first.
+
+    The gateway accepts a second `chat.send` into a busy session and then gives
+    it nothing — no deltas, an empty final. Waiting for the in-flight run is
+    the whole point; `queueMode` would do it gateway-side, but 2026.4.29
+    refuses the property.
+    """
+    try:
+        while True:
+            prompt = _PROMPT_QUEUE.next_ready(session_key)
+            if prompt is None:
+                if _PROMPT_QUEUE.waiting(session_key) == 0:
+                    return                      # nothing left for this session
+                # Busy: wait for the active run to finish, but never forever —
+                # a run whose terminal frame never arrives would strand every
+                # prompt behind it.
+                await _wait_for_session_idle(session_key)
+                continue
+
+            if not _STATE.connected:
+                # Hold the queue rather than firing into a dead connection;
+                # the reconnect loop is already working on it.
+                await asyncio.sleep(2)
+                continue
+
+            params = _dev.build_chat_send_params(
+                session_key=session_key,
+                message=prompt.message,
+                idempotency_key=uuid.uuid4().hex,
+                agent_id=prompt.agent_id,
+                thinking=prompt.thinking,
+                queue_mode=prompt.queue_mode,
+            )
+            try:
+                result = await _rpc_tolerant("chat.send", params, timeout=120)
+            except Exception as exc:
+                _PROMPT_QUEUE.cancel(prompt.queue_id)
+                prompt.status = _dev.PROMPT_FAILED
+                prompt.error = str(exc)
+                log.warning("openclaw: queued prompt %s failed to send: %s",
+                            prompt.queue_id, exc)
+                await emit_event({"type": "openclaw.prompt.failed",
+                                  "queue_id": prompt.queue_id,
+                                  "session_key": session_key,
+                                  "error": str(exc), "ts": now_iso()})
+                continue
+
+            run_id = result.get("runId", "")
+            _PROMPT_QUEUE.mark_sent(prompt.queue_id, run_id)
+            await emit_event({"type": "openclaw.prompt.sent",
+                              "queue_id": prompt.queue_id,
+                              "session_key": session_key,
+                              "run_id": run_id,
+                              "waiting": _PROMPT_QUEUE.waiting(session_key),
+                              "ts": now_iso()})
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:                      # pragma: no cover - defensive
+        log.warning("openclaw: queue worker for %s died: %s", session_key, exc)
+
+
+async def _wait_for_session_idle(session_key: str) -> None:
+    """Block until the in-flight run finishes, or give up on it.
+
+    `_RUN_DONE` is set by the reader on every terminal frame. The timeout is
+    the escape hatch for a run whose final never arrives — the prompt is marked
+    interrupted so the queue moves on instead of stalling behind it.
+    """
+    event = _RUN_DONE.setdefault(session_key, asyncio.Event())
+    event.clear()
+    # The run can finish between the send and this wait — a short answer often
+    # does. Re-check AFTER clearing, or the flag for a run that is already over
+    # gets thrown away and the queue sits here until the timeout.
+    if not _PROMPT_QUEUE.is_busy(session_key):
+        return
+    try:
+        await asyncio.wait_for(event.wait(), timeout=_CONFIG.run_timeout)
+    except asyncio.TimeoutError:
+        active = _PROMPT_QUEUE.fail_active(session_key, "run timed out")
+        if active is not None:
+            log.warning("openclaw: run %s on %s never finished (%ss) — moving on",
+                        active.run_id or "?", session_key, _CONFIG.run_timeout)
+            await emit_event({"type": "openclaw.prompt.timeout",
+                              "queue_id": active.queue_id,
+                              "session_key": session_key,
+                              "run_id": active.run_id,
+                              "ts": now_iso()})
+
+
+def _run_finished(session_key: str) -> None:
+    """Wake whatever is waiting for this session to go idle."""
+    event = _RUN_DONE.get(session_key)
+    if event is not None:
+        event.set()
+
+
 async def _ws_reader(ws) -> None:
     """Background task: read frames from OpenClaw and dispatch."""
     global _STATE
@@ -298,6 +413,8 @@ async def _ws_reader(ws) -> None:
                     session_key = _dev.resolve_session_key(
                         payload.get("sessionKey", ""), _CONFIG.session_key)
                     run_id = payload.get("runId", "")
+                    # Read before completing the run: completion forgets it.
+                    queue_id = _PROMPT_QUEUE.queue_id_for_run(run_id)
 
                     delta = _dev.stream_delta(event, payload)
                     if delta:
@@ -305,6 +422,7 @@ async def _ws_reader(ws) -> None:
                         await emit_event({"type": "openclaw.stream",
                             "session_key": session_key,
                             "run_id": run_id,
+                            "queue_id": queue_id,
                             "delta": delta,
                             "done": False,
                             "ts": now_iso(),
@@ -314,11 +432,18 @@ async def _ws_reader(ws) -> None:
                     if terminal:
                         state, text = terminal
                         streamed = _RUN_BUFFERS.take(run_id, session_key)
+                        # Free the session before emitting, so the next queued
+                        # prompt goes out the moment this answer is complete.
+                        finished = _PROMPT_QUEUE.complete(run_id, state)
+                        _run_finished(session_key)
+                        if finished is not None:
+                            _run_finished(finished.session_key)
                         # The final message is authoritative: a reconnect
                         # mid-run leaves the streamed buffer incomplete.
                         await emit_event({"type": "openclaw.response",
                             "session_key": session_key,
                             "run_id": run_id,
+                            "queue_id": queue_id,
                             "text": text or streamed,
                             "state": state,
                             "done": True,
@@ -338,6 +463,14 @@ async def _ws_reader(ws) -> None:
         # Every open buffer is now a partial answer whose run we will never see
         # finish — keeping them would splice this run's text onto the next one.
         _RUN_BUFFERS.clear()
+        # In-flight prompts are lost with the connection; queued ones keep
+        # their place and go out once it is back. Wake every waiter, or the
+        # drain tasks sit on a run that can no longer finish.
+        for lost in _PROMPT_QUEUE.abandon_all("connection dropped"):
+            log.info("openclaw: prompt %s was in flight when the connection "
+                     "dropped", lost.queue_id)
+        for waiter in _RUN_DONE.values():
+            waiter.set()
         await emit_event({"type": "openclaw.disconnected", "ts": now_iso()})
         log.info("openclaw: WS reader exited")
 
@@ -633,6 +766,8 @@ async def openclaw_status() -> dict:
         "gateway_unsupported_params": _PARAM_SUPPORT.snapshot(),
         # Runs still streaming; a number that only grows means finals are lost.
         "open_stream_buffers": _RUN_BUFFERS.pending(),
+        # One prompt at a time per session: what is in flight, what is waiting.
+        "queue": _PROMPT_QUEUE.snapshot(),
     }
 
 
@@ -760,6 +895,8 @@ async def openclaw_disconnect() -> dict:
             "session_key": {"type": "string", "description": "OpenClaw session key (default: vera-bridge)"},
             "agent_id":    {"type": "string", "description": "OpenClaw agent ID (default from config)"},
             "thinking":    {"type": "string", "enum": ["low", "medium", "high"], "description": "Thinking level"},
+            "queue":       {"type": "boolean", "description": "Wait for the session to be free (default true). False sends immediately, which a busy session may answer with nothing."},
+            "queue_mode":  {"type": "string", "enum": list(_dev.QUEUE_MODES), "description": "Gateway-side queue behaviour; only newer gateways accept it"},
         },
         "required": ["message"],
     },
@@ -769,6 +906,8 @@ async def openclaw_prompt(
     session_key: str = None,
     agent_id: str = None,
     thinking: str = None,
+    queue: bool = True,
+    queue_mode: str = None,
 ) -> dict:
     if not _STATE.connected:
         return {"ok": False, "error": "Not connected to OpenClaw gateway. Call openclaw.connect first."}
@@ -776,29 +915,99 @@ async def openclaw_prompt(
     session_key = session_key or _CONFIG.session_key
     agent_id = agent_id or _CONFIG.agent_id
 
-    params = _dev.build_chat_send_params(
-        session_key=session_key,
-        message=message,
-        idempotency_key=uuid.uuid4().hex,
-        agent_id=agent_id,
-        thinking=thinking or "",
-    )
+    if queue_mode and queue_mode not in _dev.QUEUE_MODES:
+        return {"ok": False,
+                "error": f"queue_mode must be one of {', '.join(_dev.QUEUE_MODES)}"}
 
-    # Nothing to clear: buffers belong to a run, and this one has no id yet.
-    # Wiping the session's buffer here is what truncated a run that was still
+    # Nothing to clear here: buffers belong to a run, and this one has no id
+    # yet. Wiping the session's buffer is what truncated a run that was still
     # streaming when the next prompt arrived.
 
-    try:
-        result = await _rpc_tolerant("chat.send", params, timeout=120)
-        return {
-            "ok": True,
-            "session_key": session_key,
-            "run_id": result.get("runId"),
-            "status": "streaming",
-            "note": "Response is streaming via openclaw.stream events",
-        }
-    except Exception as exc:
-        return {"ok": False, "error": str(exc)}
+    if not queue:
+        # Explicit opt-out: send into whatever the session is doing. The
+        # gateway may answer a busy session with an empty run.
+        try:
+            result = await _rpc_tolerant("chat.send", _dev.build_chat_send_params(
+                session_key=session_key, message=message,
+                idempotency_key=uuid.uuid4().hex, agent_id=agent_id,
+                thinking=thinking or "", queue_mode=queue_mode or ""), timeout=120)
+            return {
+                "ok": True,
+                "session_key": session_key,
+                "run_id": result.get("runId"),
+                "status": "streaming",
+                "queued": False,
+                "note": "Response is streaming via openclaw.stream events",
+            }
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    prompt = _dev.QueuedPrompt(
+        queue_id=uuid.uuid4().hex[:12],
+        session_key=session_key,
+        message=message,
+        agent_id=agent_id,
+        thinking=thinking or "",
+        queue_mode=queue_mode or "",
+        queued_at=now_iso(),
+    )
+    position = _PROMPT_QUEUE.add(prompt)
+    await emit_event({"type": "openclaw.prompt.queued",
+                      "queue_id": prompt.queue_id,
+                      "session_key": session_key,
+                      "position": position,
+                      "ts": now_iso()})
+    _ensure_queue_worker(session_key)
+
+    return {
+        "ok": True,
+        "session_key": session_key,
+        "queue_id": prompt.queue_id,
+        "position": position,
+        "status": "sending" if position == 1 else "queued",
+        "queued": True,
+        "waiting": _PROMPT_QUEUE.waiting(session_key),
+        "note": ("Sent when the session is free; watch openclaw.prompt.sent for "
+                 "its run id, then openclaw.stream / openclaw.response"),
+    }
+
+
+@capability(
+    name="openclaw.queue.list",
+    description="Show prompts queued for OpenClaw sessions, and what is in flight",
+    http_method="GET",
+    http_path="/openclaw/queue",
+)
+async def openclaw_queue_list() -> dict:
+    return {"ok": True, "queue": _PROMPT_QUEUE.snapshot()}
+
+
+@capability(
+    name="openclaw.queue.cancel",
+    description="Cancel a queued OpenClaw prompt that has not been sent yet",
+    http_method="POST",
+    http_path="/openclaw/queue/cancel",
+    schema={
+        "properties": {
+            "queue_id": {"type": "string", "description": "queue_id from openclaw.prompt"},
+        },
+        "required": ["queue_id"],
+    },
+)
+async def openclaw_queue_cancel(queue_id: str) -> dict:
+    cancelled = _PROMPT_QUEUE.cancel(queue_id)
+    if cancelled is None:
+        existing = _PROMPT_QUEUE.find(queue_id)
+        if existing is None:
+            return {"ok": False, "error": f"no queued prompt {queue_id}"}
+        # Already with the gateway: it is answering, and there is no unsend.
+        return {"ok": False, "error": f"prompt {queue_id} is already {existing.status}",
+                "prompt": existing.public()}
+    await emit_event({"type": "openclaw.prompt.cancelled",
+                      "queue_id": queue_id,
+                      "session_key": cancelled.session_key,
+                      "ts": now_iso()})
+    return {"ok": True, "cancelled": cancelled.public()}
 
 
 @capability(
