@@ -92,6 +92,21 @@ Returns a job ID and initial status; the cap then polls until completion and emi
 
 ## 4. The pipeline stages
 
+Saved custom pipelines can be inspected as Workflow IR without running them.
+Request `GET /api/pipelines/{id}?include_workflow_ir=true` to receive the native
+pipeline plus a deterministic `workflow_ir` projection. Each saved stage becomes
+a typed research, transform, or synthesis task with stable order, state
+bindings, and a content hash. The complete native stage configuration remains
+in a namespaced extension so mode, output mode, source selection, NLP tools,
+query templates, and writer prompts are not silently discarded.
+
+This projection is deliberately non-authoritative and reports the native-stage
+execution gap for every task. The existing researcher still owns models,
+search/crawl behavior, streaming, cancellation, citations, persistence, and
+stage execution; inspecting the Workflow IR performs none of those actions.
+That boundary provides a stable definition identity for later Run, artifact,
+citation, and external-runtime adapters without changing current jobs.
+
 A typical research run goes through these stages (with variations per output mode):
 
 ### Stage 1 — Directive (THINKER)
