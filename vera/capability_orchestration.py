@@ -2549,6 +2549,25 @@ async def _mirror_cap_activity(phase: str, name: str, sid: str, tid: str,
         pass
 
 
+def _generation_phase_timing_ms(submitted: float,
+                                provider_started: Optional[float],
+                                finished: float) -> Dict[str, int]:
+    """Split one call monotonically; a queue failure has no provider phase."""
+    safe_finished = max(float(submitted), float(finished))
+    if provider_started is None:
+        queue_end = safe_finished
+        provider_ms = 0
+    else:
+        queue_end = min(safe_finished, max(float(submitted),
+                                           float(provider_started)))
+        provider_ms = max(0, round((safe_finished - queue_end) * 1000))
+    return {
+        "queue_ms": max(0, round((queue_end - float(submitted)) * 1000)),
+        "provider_ms": provider_ms,
+        "total_ms": max(0, round((safe_finished - float(submitted)) * 1000)),
+    }
+
+
 async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False,
                            model: Optional[str] = None, instance_id: Optional[str] = None,
                            prefer_gpu: bool = False, stream_cb: Optional[Callable] = None,
@@ -2560,6 +2579,7 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                            timeout: Optional[float] = None,
                            profile: Optional[str] = None,
                            role: Optional[str] = None,
+                           request_stage: Optional[str] = None,
                            meta_out: Optional[dict] = None) -> str:
     # ── Identify caller and log the request ──────────────────────────────────
     # caller_override lets an intermediary cap (e.g. llm.generate) pass
@@ -2824,6 +2844,8 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         body["think"] = think
     req_id   = str(uuid.uuid4())[:12]
     t_start  = time.time()
+    _submitted_mono = time.monotonic()
+    _provider_started_mono = None
     prompt_preview = (prompt or "")[:120].replace("\n", " ")
 
     log.info(
@@ -2843,6 +2865,9 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         "prompt_preview": prompt_preview, "ts": now_iso(),
         "status": "running",
         "job_type": eff_job_type, "rule_source": rule_source,
+        "profile": str(profile or "")[:64],
+        "role": str(role or "")[:64],
+        "request_stage": str(request_stage or "")[:64],
         "escalated": escalated, "prompt_chars": prompt_chars,
         "route_reason": "; ".join(routing_info.get("reason") or [])[:400],
         "est_seconds": routing_info.get("est_seconds"),
@@ -2877,6 +2902,9 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                 "prefer_gpu":  prefer_gpu,
                 "streaming":   stream_cb is not None,
                 "routing":     routing_info,
+                "profile":     str(profile or "")[:64],
+                "role":        str(role or "")[:64],
+                "request_stage": str(request_stage or "")[:64],
                 # Submitted but not yet holding the node's generation slot —
                 # the panel shows this as QUEUED until the 'generating' phase
                 # event below (or a queue heartbeat) supersedes it.
@@ -2910,6 +2938,10 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
             # majority) are unaffected — same unbounded-queue-wait default as
             # always, since `timeout` is None there too.
             async with _ollama_slot(chosen, timeout=timeout) as _gate_act:
+                _provider_started_mono = time.monotonic()
+                _queue_ms = _generation_phase_timing_ms(
+                    _submitted_mono, _provider_started_mono,
+                    _provider_started_mono)["queue_ms"]
                 _hb_stop.set()   # slot acquired — the queue heartbeat can stop
                 # Phase transition: queued → generating (panel moves the job
                 # from the Queued tab to Running the moment the node starts).
@@ -2923,6 +2955,10 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                         "cap_name": caller["cap_name"],
                         "prompt_preview": prompt_preview,
                         "queued_s": round(time.time() - t_start, 1),
+                        "queue_ms": _queue_ms,
+                        "profile": str(profile or "")[:64],
+                        "role": str(role or "")[:64],
+                        "request_stage": str(request_stage or "")[:64],
                     })
                 except Exception:
                     pass
@@ -2996,6 +3032,12 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                                     pass
                         result = "".join(buf) or "".join(tbuf)
                         elapsed = round(time.time() - t_start, 2)
+                        _finished_mono = time.monotonic()
+                        _phase_timing = _generation_phase_timing_ms(
+                            _submitted_mono, _provider_started_mono,
+                            _finished_mono)
+                        _provider_ms = _phase_timing["provider_ms"]
+                        _provider_elapsed = _provider_ms / 1000.0
                         eval_count = int(meta.get("eval_count") or len(buf))
                         # Surface truncation to the caller: Ollama sets
                         # done_reason="length" when it stopped because the output
@@ -3006,7 +3048,8 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                             _dr = str(meta.get("done_reason") or "")
                             meta_out.update({"done_reason": _dr,
                                              "eval_count": eval_count,
-                                             "truncated": _dr == "length"})
+                                             "truncated": _dr == "length",
+                                             **_phase_timing})
                         # Residency check — is the model actually ALL on the GPU?
                         # A partial load is invisible in every other signal: the
                         # call succeeds, just ~3x slower. Sampled (a fraction of
@@ -3014,7 +3057,8 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                         # one cheap GET rather than a round trip per generation.
                         _resid = None
                         try:
-                            _tps = eval_count / elapsed if elapsed > 0 else 0
+                            _tps = (eval_count / _provider_elapsed
+                                    if _provider_elapsed > 0 else 0)
                             # Sample without pulling in `random`: the sub-second
                             # part of the clock is an adequate uniform source here.
                             _samp = (time.time() % 1.0) < _SPILL_SAMPLE
@@ -3025,19 +3069,22 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                             _resid = None
                         log.info("ollama_done [%s] %.2fs eval_count=%s tok/s=%.1f%s caller=%s:%s",
                                  req_id, elapsed, eval_count,
-                                 (eval_count / elapsed if elapsed > 0 else 0),
+                                 (eval_count / _provider_elapsed
+                                  if _provider_elapsed > 0 else 0),
                                  (f" GPU={_resid['resident_pct']}%%"
                                   + (" SPILL→CPU" if _resid.get("spilled") else "")
                                   if _resid else ""),
                                  caller["caller_file"], caller["caller_func"])
                         req_entry.update({"status": "done", "elapsed_s": elapsed,
                                           "eval_count": eval_count, "tokens": len(buf),
-                                          "tok_per_s": round(eval_count / elapsed, 2) if elapsed > 0 else 0,
+                                          "tok_per_s": (round(eval_count / _provider_elapsed, 2)
+                                                        if _provider_elapsed > 0 else 0),
+                                          **_phase_timing,
                                           "gpu_resident_pct": (_resid or {}).get("resident_pct"),
                                           "cpu_spill": bool((_resid or {}).get("spilled"))})
                         _ollama_log_append(req_entry)
                         _route_stats_update(mdl, chosen, eff_job_type,
-                                            elapsed, eval_count, prompt_chars)
+                                            _provider_elapsed, eval_count, prompt_chars)
                         try:
                             await emit_event({
                                 "type": "ollama.request_done", "req_id": req_id,
@@ -3047,9 +3094,14 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                                 "elapsed_s": elapsed, "eval_count": eval_count,
                                 "token_count": len(buf),
                                 "job_type": eff_job_type,
+                                "session_id": OLLAMA_EVENT_SESSION.get(""),
+                                "profile": str(profile or "")[:64],
+                                "role": str(role or "")[:64],
+                                "request_stage": str(request_stage or "")[:64],
+                                **_phase_timing,
                                 "est_seconds": routing_info.get("est_seconds"),
-                                "tok_per_s": (round(eval_count / elapsed, 2)
-                                              if elapsed > 0 else 0),
+                                "tok_per_s": (round(eval_count / _provider_elapsed, 2)
+                                              if _provider_elapsed > 0 else 0),
                                 "gpu_resident_pct": (_resid or {}).get("resident_pct"),
                                 "cpu_spill": bool((_resid or {}).get("spilled")),
                                 "num_ctx": _merged_opts.get("num_ctx"),
@@ -3062,6 +3114,9 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
             _hb_task.cancel()
     except Exception as e:
         elapsed = round(time.time() - t_start, 2)
+        _failed_mono = time.monotonic()
+        _failure_timing = _generation_phase_timing_ms(
+            _submitted_mono, _provider_started_mono, _failed_mono)
         err_str = _err_text(e)
         log.error("ollama_generate [%s] FAILED after %.2fs inst=%s caller=%s:%s err=%s",
                   req_id, elapsed, chosen,
@@ -3075,7 +3130,7 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         if inst["errors"] >= 3:
             inst["status"] = "offline"
         req_entry.update({"status": "error", "elapsed_s": elapsed,
-                          "error": err_str})
+                          "error": err_str, **_failure_timing})
         _ollama_log_append(req_entry)
         try:
             await emit_event({
@@ -3085,6 +3140,11 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                 "caller_func": caller["caller_func"],
                 "elapsed_s": elapsed, "error": err_str,
                 "error_type": type(e).__name__,
+                "session_id": OLLAMA_EVENT_SESSION.get(""),
+                "profile": str(profile or "")[:64],
+                "role": str(role or "")[:64],
+                "request_stage": str(request_stage or "")[:64],
+                **_failure_timing,
             })
         except Exception:
             pass

@@ -137,6 +137,19 @@ and cancellation, timeout, failure, completion, and session supersession close
 the projection explicitly. A projection outage never interrupts the native
 loop.
 
+Long-horizon constituent runs also retain an inert runtime-dispatch projection.
+It identifies the selected native engine or specialist profile, Run/workflow
+identity, portable semantics, and the adapter operations that remain deferred.
+This record is observational: the existing capability remains execution
+authority, and malformed legacy state degrades the projection instead of
+blocking a run.
+
+The loop renderer separates model-slot queue time, provider execution time, and
+end-to-end time for controller, quality-check, and completion-check calls.
+Throughput and routing statistics use provider time, so time spent waiting
+behind another request no longer makes the model itself appear slow. These
+values are operational telemetry for the current run, not latency guarantees.
+
 When the native loop confirms that it saved a file, the observer binds a
 content-safe `ArtifactRef` to the parent Run and, when identifiable, the tool
 Run that produced it. The reference retains the portable relative filename,

@@ -2202,9 +2202,23 @@
       }
       // Spill telemetry from the router (ollama.cpu_spill / request_done).
       if(t === 'ollama.cpu_spill'){ this._markSpill(true, ev.resident_pct); }
-      else if(t === 'ollama.request_done' && ev.gpu_resident_pct != null){
-        this._markSpill(!!ev.cpu_spill, ev.gpu_resident_pct);
-        if(ev.num_ctx) this._ctxWindow = ev.num_ctx;
+      else if(t === 'ollama.request_done'){
+        if(ev.gpu_resident_pct != null){
+          this._markSpill(!!ev.cpu_spill, ev.gpu_resident_pct);
+          if(ev.num_ctx) this._ctxWindow = ev.num_ctx;
+        }
+        const timingLabels = {controller:'controller', critic:'quality check', gate:'completion check'};
+        const timingLabel = timingLabels[ev.request_stage];
+        if(timingLabel){
+          const queueMs = Math.max(0, Number(ev.queue_ms)||0);
+          const providerMs = Math.max(0, Number(ev.provider_ms)||0);
+          const totalMs = Math.max(0, Number(ev.total_ms)||0);
+          const fmt = ms => ms >= 1000 ? `${(ms/1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
+          this._cycleEl(`<div class="alo-progress-row">
+            <span class="alo-progress-tag">${timingLabel}</span>
+            <span>queue ${fmt(queueMs)} · provider ${fmt(providerMs)} · total ${fmt(totalMs)}</span>
+          </div>`, 'info');
+        }
       }
 
       if(t.endsWith('.done')){
