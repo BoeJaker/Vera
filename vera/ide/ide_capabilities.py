@@ -219,11 +219,28 @@ async def _record(
     fabric_data:     dict  = None,
     dedup_key:       str   = "",
     extra_link:      tuple = None,
+    bulk:            bool  = False,
 ) -> str:
     """
     Core sequential activity recorder for all IDE operations.
     Stores MemoryRecord, links SESSION_CONTENT + FOLLOWS_ACTIVITY chain,
     broadcasts Redis event, ingests to data fabric with dedup.
+
+    `bulk=True` keeps ONLY the fabric ingest — no graph node, no
+    FOLLOWS_ACTIVITY chain, no broadcast. It exists for BACKFILL: importing a
+    transcript that already happened.
+
+    Measured 2026-09-08 on prod: the full path recorded ~9 turns a MINUTE,
+    because each turn costs a Neo4j node store plus get_or_create_session plus
+    a link write plus a broadcast before the fabric row. At that rate a
+    49-transcript backlog never catches up, which is why sessions that had been
+    synced to disk still did not appear.
+
+    The trade is explicit: a backfilled turn gets its fabric row (which is what
+    the session list, watch and history all read) and no graph node (which is
+    what memory recall would use). For a conversation that already ended, the
+    per-turn FOLLOWS chain is the expensive half and the marginal one. Live
+    tailing does NOT pass this — see needs_bulk_ingest.
     """
     node_id = str(uuid.uuid4())
     ts      = now_iso()
@@ -235,7 +252,7 @@ async def _record(
     # 1. Memory graph
     graph_ok = False
     try:
-        mem_mod = sys.modules.get("memory")
+        mem_mod = None if bulk else sys.modules.get("memory")
         if mem_mod:
             MEMORY, MemRecord = mem_mod.MEMORY, mem_mod.MemoryRecord
             rec = MemRecord(
@@ -281,15 +298,17 @@ async def _record(
     if session_id and node_id:
         _SESSION_CURSOR[session_id] = node_id
 
-    # 3. Redis broadcast
-    try:
-        ev = {"type": broadcast_type, "node_id": node_id, "session_id": session_id,
-              "category": category, "text": text[:200], "tags": tags,
-              "importance": importance, "ts": ts}
-        ev.update({k: v for k, v in meta.items() if isinstance(v, (str, int, float, bool))})
-        await emit_event(ev)
-    except Exception as e:
-        log.debug("ide _record broadcast: %s", e)
+    # 3. Redis broadcast — skipped on backfill: nothing is watching a
+    #    conversation that already ended, and it is a round trip per turn.
+    if not bulk:
+        try:
+            ev = {"type": broadcast_type, "node_id": node_id, "session_id": session_id,
+                  "category": category, "text": text[:200], "tags": tags,
+                  "importance": importance, "ts": ts}
+            ev.update({k: v for k, v in meta.items() if isinstance(v, (str, int, float, bool))})
+            await emit_event(ev)
+        except Exception as e:
+            log.debug("ide _record broadcast: %s", e)
 
     # 4. Fabric ingest with dedup
     dk = dedup_key or (session_id + ":" + ds + ":" + node_id)

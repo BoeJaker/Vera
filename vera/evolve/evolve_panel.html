@@ -209,7 +209,6 @@ html.vpb-nav-hosted body{padding-left:0}
   <button class="btn" data-sec="review" onclick="nav('review')"><span class="ic">✓</span>Review</button>
   <button class="btn" data-sec="sources" onclick="nav('sources')"><span class="ic">⌥</span>Sources</button>
   <button class="btn" data-sec="sandbox" onclick="nav('sandbox')"><span class="ic">▩</span>Sandbox</button>
-  <button class="btn" data-sec="logs" onclick="nav('logs')"><span class="ic">≣</span>Logs</button>
   <button class="btn" data-sec="csessions" onclick="nav('csessions')"><span class="ic">◈</span>Sessions</button>
   <button class="btn" data-sec="board" onclick="nav('board')"><span class="ic">▤</span>Board</button>
   <button class="btn" data-sec="notes" onclick="nav('notes')"><span class="ic">✎</span>Notes</button>
@@ -293,25 +292,6 @@ html.vpb-nav-hosted body{padding-left:0}
 </div>
 
 <!-- ── LOGS: unified sandbox log/error/perf capture ── -->
-<div class="sec" id="sec-logs" style="display:none">
-  <div class="card">
-    <div class="card-h"><span class="card-t">Sandbox logs</span>
-      <span class="hint" id="logs-status">collector —</span>
-      <span style="flex:1"></span>
-      <select id="logs-container" onchange="loadLogs()" style="min-width:150px"></select>
-      <label class="hint" style="margin-left:8px"><input type="checkbox" id="logs-errors" onchange="loadLogs()"> errors only</label>
-      <label class="hint" style="margin-left:8px"><input type="checkbox" id="logs-follow" checked> follow</label>
-      <button class="btn sm" onclick="loadLogs()" style="margin-left:8px">&#8635;</button>
-    </div>
-    <div id="logs-perf" class="hint" style="margin:6px 0"></div>
-    <div id="logs-body" class="mono" style="max-height:60vh;overflow:auto;font-size:11px;background:var(--bg2);border-radius:6px;padding:8px">
-      <div class="empty">Loading…</div>
-    </div>
-    <div class="hint" style="margin-top:6px">Each line is stamped with its sandbox branch + running-code sha; distinct errors also flow to the Errors tab. Live tailing runs where the app has docker (prod).</div>
-  </div>
-</div>
-
-<!-- ── SESSIONS: Claude Code sessions ↔ board claims ↔ pipelines (§6.6) ── -->
 <div class="sec" id="sec-csessions" style="display:none">
   <div class="card">
     <div class="card-h"><span class="card-t">Claude Code sessions</span>
@@ -1033,6 +1013,23 @@ html.vpb-nav-hosted body{padding-left:0}
       </div>
     </div>
   </div>
+  <div class="hint" style="margin:10px 0 4px">Logs from these sandboxes &mdash; moved here from its own tab: they are one subject, and a container&rsquo;s output belongs next to the container it came from.</div>
+
+  <div class="card">
+    <div class="card-h"><span class="card-t">Sandbox logs</span>
+      <span class="hint" id="logs-status">collector —</span>
+      <span style="flex:1"></span>
+      <select id="logs-container" onchange="loadLogs()" style="min-width:150px"></select>
+      <label class="hint" style="margin-left:8px"><input type="checkbox" id="logs-errors" onchange="loadLogs()"> errors only</label>
+      <label class="hint" style="margin-left:8px"><input type="checkbox" id="logs-follow" checked> follow</label>
+      <button class="btn sm" onclick="loadLogs()" style="margin-left:8px">&#8635;</button>
+    </div>
+    <div id="logs-perf" class="hint" style="margin:6px 0"></div>
+    <div id="logs-body" class="mono" style="max-height:60vh;overflow:auto;font-size:11px;background:var(--bg2);border-radius:6px;padding:8px">
+      <div class="empty">Loading…</div>
+    </div>
+    <div class="hint" style="margin-top:6px">Each line is stamped with its sandbox branch + running-code sha; distinct errors also flow to the Errors tab. Live tailing runs where the app has docker (prod).</div>
+  </div>
 </div>
 
 <!-- ── ACTIVITY (audit log) ── -->
@@ -1190,8 +1187,12 @@ function nav(sec){
   document.querySelectorAll('#nav .btn').forEach(b=>b.classList.toggle('on',b.dataset.sec===sec));
   document.querySelectorAll('.sec').forEach(s=>s.style.display=s.id==='sec-'+sec?'':'none');
   const f={test:loadTest,tasks:loadTasks,runs:loadRuns,unittests:loadUnitTests,master:loadMaster,improve:loadSessions,watch:loadWatch,pipelines:()=>{loadGit();loadPipelines()},
-    review:loadReview,logs:loadLogs,csessions:loadCSessions,board:loadBoardTab,notes:loadNotes,capacity:loadCapacity,swarm:swarmPoll,census:loadCensus,
-    sources:loadSources,sandbox:loadSandbox,activity:loadAudit,variants:loadVariants,settings:fillSettings,overview:loadOverview,errors:loadErrors}[sec];
+    review:loadReview,csessions:loadCSessions,board:loadBoardTab,notes:loadNotes,capacity:loadCapacity,swarm:swarmPoll,census:loadCensus,
+    // Logs live inside Sandbox now — one subject, one page. `logs` is kept as
+    // an alias so an old deep-link or an injected nav item still lands
+    // somewhere real instead of on a blank panel.
+    logs:()=>nav('sandbox'),
+    sources:loadSources,sandbox:()=>{loadSandbox();loadLogs()},activity:loadAudit,variants:loadVariants,settings:fillSettings,overview:loadOverview,errors:loadErrors}[sec];
   if(f)f();
   // Keep the outer shell's injected top-level sub-menu in sync when this
   // panel changes section on its own (a direct click here, not one relayed
@@ -1208,7 +1209,7 @@ if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
   {id:'test', label:'Test'}, {id:'improve', label:'Improve'}, {id:'watch', label:'Watch'},
   {id:'overview', label:'Suite'}, {id:'errors', label:'Errors'}, {id:'variants', label:'Variants'},
   {id:'activity', label:'Activity'},
-  {id:'pipelines', label:'CI / CD'}, {id:'review', label:'Review'}, {id:'sources', label:'Sources'}, {id:'sandbox', label:'Sandbox'}, {id:'logs', label:'Logs'}, {id:'csessions', label:'Sessions'}, {id:'board', label:'Board'}, {id:'notes', label:'Notes'}, {id:'capacity', label:'Capacity'}, {id:'swarm', label:'Swarm'}, {id:'census', label:'Census'},
+  {id:'pipelines', label:'CI / CD'}, {id:'review', label:'Review'}, {id:'sources', label:'Sources'}, {id:'sandbox', label:'Sandbox'}, {id:'csessions', label:'Sessions'}, {id:'board', label:'Board'}, {id:'notes', label:'Notes'}, {id:'capacity', label:'Capacity'}, {id:'swarm', label:'Swarm'}, {id:'census', label:'Census'},
   {id:'tasks', label:'Tasks'}, {id:'runs', label:'Runs'}, {id:'unittests', label:'Unit tests'}, {id:'settings', label:'Settings'},
 ]);
 
@@ -4075,7 +4076,7 @@ async function loadLogs(){
   }
   if($('logs-perf'))$('logs-perf').innerHTML=parts.join(' &nbsp;·&nbsp; ')||'<span style="color:var(--dim2)">no perf samples yet</span>';
   clearTimeout(_logsTimer);
-  if($('logs-follow')&&$('logs-follow').checked&&_curSec()==='logs')_logsTimer=setTimeout(loadLogs,4000);
+  if($('logs-follow')&&$('logs-follow').checked&&_curSec()==='sandbox')_logsTimer=setTimeout(loadLogs,4000);
 }
 function renderLogs(logs){
   const body=$('logs-body');if(!body)return;

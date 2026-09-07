@@ -87,6 +87,32 @@ def session_id_from_path(path: str) -> str:
     return stem if re.fullmatch(r"[0-9a-fA-F-]{36}", stem) else ""
 
 
+#: Above this many turns in one pass, an ingest is a BACKFILL rather than a
+#: live tail. A tail delivers the handful of turns since the last poll; a
+#: backfill delivers a whole conversation.
+BULK_TURNS = 50
+
+
+def needs_bulk_ingest(turn_count: int, threshold: int = BULK_TURNS) -> bool:
+    """Should this batch skip the per-turn graph write and broadcast?
+
+    Measured on prod 2026-09-08: the full per-turn path recorded ~9 turns a
+    MINUTE (a Neo4j node store, get_or_create_session, a FOLLOWS_ACTIVITY link
+    and a broadcast, each a round trip). A 49-transcript backlog cannot catch
+    up at that rate, which is why transcripts synced to disk still never
+    appeared in the session list.
+
+    Deliberately a SIZE test, not a flag on the caller: the same ingest call
+    both tails a live session and imports an old one, and only the size tells
+    them apart. A live tail stays on the full path so its broadcast still
+    drives the UI.
+    """
+    try:
+        return int(turn_count) > int(threshold)
+    except (TypeError, ValueError):
+        return False
+
+
 def project_dir_for(kind: str, rel: str, cwd: str = "") -> str:
     """Which project a transcript belongs to.
 
