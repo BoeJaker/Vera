@@ -208,3 +208,62 @@ def test_queue_mode_is_only_sent_when_asked_for():
 
 def test_the_modes_are_the_ones_the_protocol_defines():
     assert dev.QUEUE_MODES == ("steer", "followup", "collect", "interrupt")
+
+
+# ── when the session is actually free ────────────────────────────────────────
+#
+# The chat final frame is not the end of the turn. Measured on 2026.4.29:
+#   t+0.34s  status='running'      <- a prompt sent here is answered with nothing
+#   t+1.04s  status='done'         <- and here it is answered properly
+
+SESSIONS_PAYLOAD = {"sessions": [
+    {"key": "agent:main:vera-bridge", "status": "running"},
+    {"key": "agent:main:other", "status": "done"},
+]}
+
+
+def test_the_status_is_found_through_the_gateways_namespacing():
+    """The caller asked about `vera-bridge`; the gateway calls it
+    `agent:main:vera-bridge`."""
+    assert dev.find_session_status(SESSIONS_PAYLOAD, "vera-bridge") == "running"
+    assert dev.find_session_status(SESSIONS_PAYLOAD, "other") == "done"
+
+
+def test_an_exact_key_matches_too():
+    payload = {"sessions": [{"key": "vera-bridge", "status": "done"}]}
+    assert dev.find_session_status(payload, "vera-bridge") == "done"
+
+
+def test_a_session_the_gateway_has_never_heard_of_has_no_status():
+    assert dev.find_session_status(SESSIONS_PAYLOAD, "nope") is None
+    assert dev.find_session_status({}, "vera-bridge") is None
+    assert dev.find_session_status(None, "vera-bridge") is None
+    assert dev.find_session_status(SESSIONS_PAYLOAD, "") is None
+
+
+def test_a_bare_list_is_accepted_as_well_as_the_wrapper():
+    assert dev.find_session_status(SESSIONS_PAYLOAD["sessions"], "vera-bridge") \
+        == "running"
+
+
+def test_running_is_not_idle():
+    assert dev.session_is_idle("running") is False
+
+
+def test_done_is_idle():
+    assert dev.session_is_idle("done") is True
+    assert dev.session_is_idle("DONE") is True
+    assert dev.session_is_idle(" done ") is True
+
+
+def test_a_finished_session_in_any_terminal_state_is_idle():
+    for status in ("timeout", "error", "cancelled", "aborted", "failed"):
+        assert dev.session_is_idle(status) is True
+
+
+def test_an_unknown_or_missing_status_must_not_stall_the_queue():
+    """A session that does not exist yet cannot be busy, and a status we do not
+    recognise must not hold prompts forever."""
+    assert dev.session_is_idle(None) is True
+    assert dev.session_is_idle("") is True
+    assert dev.session_is_idle("   ") is True
