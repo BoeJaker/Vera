@@ -210,6 +210,45 @@ def test_an_empty_transcript_is_not_an_error():
     assert t["turns"] == [] and t["session_id"] == UUID
 
 
+# ── routing a codex session to the checkout it worked on ────────────────────
+def test_a_codex_session_files_under_the_SAME_project_as_claude_sessions():
+    """The real folder Claude Code created for this checkout, on this host, is
+    `--llm-int-boejaker-Vera`. A codex rollout whose cwd is that same checkout
+    has to land there too, or the two agents' work on one repo shows up as two
+    unrelated projects.
+
+    Two leading dashes for the UNC path's two leading separators: one dash per
+    CHARACTER, never a collapsed run. Collapsing gave `-llm-int-boejaker-Vera`
+    — a project that does not exist.
+    """
+    assert AT.encode_cwd(r"\\llm.int\boejaker\Vera") == "--llm-int-boejaker-Vera"
+
+
+def test_a_posix_checkout_encodes_with_one_leading_dash():
+    assert AT.encode_cwd("/home/boejaker/Vera") == "-home-boejaker-Vera"
+
+
+def test_codex_takes_its_project_from_cwd_not_the_path():
+    """Codex files under a DATE. Using the first path segment would file every
+    codex session on this host under the project "2026"."""
+    assert AT.project_dir_for(AT.CODEX, "2026/08/23/" + ROLLOUT,
+                              r"\\llm.int\boejaker\Vera") == "--llm-int-boejaker-Vera"
+    assert AT.project_dir_for(AT.CODEX, "2026/08/23/" + ROLLOUT, "") == ""
+
+
+def test_claude_still_takes_its_project_from_the_path():
+    assert AT.project_dir_for(
+        AT.CLAUDE, "--llm-int-boejaker-Vera/%s.jsonl" % UUID) == "--llm-int-boejaker-Vera"
+    assert AT.project_dir_for(AT.CLAUDE, "loose.jsonl") == ""
+
+
+def test_the_cwd_read_from_a_real_transcript_routes_it():
+    """End to end on the fixture: metadata cwd -> project dir."""
+    t = AT.read_transcript(CODEX_LINES, kind=AT.CODEX, path=ROLLOUT)
+    assert AT.project_dir_for(AT.CODEX, "2026/08/23/" + ROLLOUT,
+                              t["cwd"]) == "--llm-int-boejaker-Vera"
+
+
 # ── content shapes ──────────────────────────────────────────────────────────
 def test_message_content_is_flattened_whatever_shape_it_arrives_in():
     assert AT._text_of("plain") == "plain"

@@ -87,6 +87,37 @@ def session_id_from_path(path: str) -> str:
     return stem if re.fullmatch(r"[0-9a-fA-F-]{36}", stem) else ""
 
 
+def project_dir_for(kind: str, rel: str, cwd: str = "") -> str:
+    """Which project a transcript belongs to.
+
+    Claude encodes the working directory in its containing folder, so the first
+    path segment IS the project. Codex files up under a DATE — 2026/08/23/… —
+    so the same rule would file every codex session under the year. Codex
+    records its cwd in session_meta instead, and that is the answer.
+    """
+    if kind == CODEX:
+        return encode_cwd(cwd)          # already "" for an absent cwd
+    return rel.split("/", 1)[0] if "/" in rel else ""
+
+
+def encode_cwd(cwd: str) -> str:
+    r"""A working directory as Claude Code encodes it for a folder name, so a
+    codex session on the same checkout files under the SAME project as the
+    Claude sessions on it — the point of routing by cwd at all.
+
+        \\llm.int\boejaker\Vera  ->  --llm-int-boejaker-Vera
+        /home/boejaker/Vera      ->  -home-boejaker-Vera
+
+    ONE dash per character, never a collapsed run: the real folder on this host
+    is `--llm-int-boejaker-Vera`, two leading dashes for the UNC path's two
+    leading separators. Collapsing them produced `-llm-int-boejaker-Vera`,
+    which would have filed every codex session under a project that does not
+    exist, beside the Claude sessions for the same checkout instead of with
+    them.
+    """
+    return re.sub(r"[^A-Za-z0-9]", "-", str(cwd or ""))
+
+
 def _text_of(content: Any) -> str:
     """Flatten a message body to text, whatever shape it arrived in."""
     if isinstance(content, str):
