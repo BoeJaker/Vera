@@ -66,6 +66,41 @@ def test_untrusted_native_job_id_is_not_copied_into_metadata():
     assert "secret payload" not in str(observer.to_dict())
 
 
+def test_persisted_evidence_records_bind_as_content_free_artifacts():
+    observer = projection.ResearchPipelineRunProjection(
+        "run-evidence", "sha256:evidence", ["stage-1-research"])
+    observer.stage_start(0, "research")
+    observer.stage_done(
+        0, ok=True, native_job_id="job-1", citation_count=2,
+        evidence_refs=[
+            {"dataset_id": "research.jobs", "record_id": "row-job-1",
+             "logical_id": "job-1"},
+            {"dataset_id": "research.citations", "record_id": "row-citation-1",
+             "logical_id": "logical-source-a"},
+            {"dataset_id": "research.citations", "record_id": "row-citation-1",
+             "logical_id": "logical-source-a"},
+        ])
+    child = observer.to_dict()["children"][0]
+    assert [item["kind"] for item in child["artifacts"]] == [
+        "research.job", "research.citation"]
+    assert child["artifacts"][1]["uri"] == (
+        "fabric://datasets/research.citations/records/row-citation-1")
+    assert "logical-source-a" not in str(child["artifacts"])
+
+
+def test_untrusted_evidence_metadata_is_rejected():
+    observer = projection.ResearchPipelineRunProjection(
+        "run-bad-evidence", "sha256:evidence", ["stage-1-research"])
+    observer.stage_start(0, "research")
+    observer.stage_done(0, ok=True, evidence_refs=[
+        {"dataset_id": "research.citations", "record_id": "row-1",
+         "logical_id": "secret payload with spaces"},
+        {"dataset_id": "research.citations", "record_id": "../../escape",
+         "logical_id": "citation-2"},
+    ])
+    assert observer.to_dict()["children"][0]["artifacts"] == []
+
+
 def test_native_runner_wires_projection_without_changing_default_run_shape():
     source = (Path(__file__).parents[1] / "vera" / "research" /
               "researcher_api.py").read_text(encoding="utf-8")

@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from urllib.parse import quote
 
-from Vera.vera.execution.run_protocol import Run, RunError, RunStatus
+from Vera.vera.execution.run_protocol import ArtifactRef, Run, RunError, RunStatus
 from Vera.vera.execution.run_projection import SHADOW_RUNS, ShadowRunRegistry
 
 
@@ -56,7 +57,8 @@ class ResearchPipelineRunProjection:
         self._transition(child, RunStatus.RUNNING, event_type="research.stage.started")
 
     def stage_done(self, index: int, *, ok: bool, citation_count: int = 0,
-                   native_job_id: str = "") -> None:
+                   native_job_id: str = "",
+                   evidence_refs: list[dict[str, Any]] | None = None) -> None:
         child = self.children.get(index)
         if not child or child.status != RunStatus.RUNNING:
             raise ValueError("stage is not running")
@@ -65,12 +67,46 @@ class ResearchPipelineRunProjection:
         if isinstance(native_job_id, str) and _OPAQUE_ID.fullmatch(native_job_id):
             payload["native_job_id"] = native_job_id
         if ok:
+            artifact_ids = self._bind_evidence(child, evidence_refs or [])
+            if artifact_ids:
+                payload["artifact_ids"] = artifact_ids
             self._transition(child, RunStatus.COMPLETED,
                              event_type="research.stage.completed", payload=payload)
         else:
             child.error = RunError("native_stage_failed", "Native research stage failed")
             self._transition(child, RunStatus.FAILED,
                              event_type="research.stage.failed", payload=payload)
+
+    @staticmethod
+    def _bind_evidence(child: Run, evidence_refs: list[dict[str, Any]]) -> list[str]:
+        """Bind validated Fabric records without copying their content into a Run."""
+        artifact_ids: list[str] = []
+        seen: set[tuple[str, str]] = set()
+        for value in evidence_refs[:501]:
+            if not isinstance(value, dict):
+                continue
+            dataset_id = value.get("dataset_id")
+            record_id = value.get("record_id")
+            logical_id = value.get("logical_id")
+            if not all(isinstance(item, str) and _OPAQUE_ID.fullmatch(item)
+                       for item in (dataset_id, record_id, logical_id)):
+                continue
+            identity = (dataset_id, record_id)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            artifact_id = f"fabric:{dataset_id}:{record_id}"
+            child.artifacts.append(ArtifactRef(
+                id=artifact_id,
+                kind=("research.citation" if dataset_id == "research.citations"
+                      else "research.job" if dataset_id == "research.jobs"
+                      else "fabric.record"),
+                uri=(f"fabric://datasets/{quote(dataset_id, safe='')}"
+                     f"/records/{quote(record_id, safe='')}"),
+                media_type="application/vnd.vera.fabric-record+json",
+            ))
+            artifact_ids.append(artifact_id)
+        return artifact_ids
 
     def finish(self, status: str) -> None:
         target = {"done": RunStatus.COMPLETED, "cancelled": RunStatus.CANCELLED,
@@ -130,9 +166,11 @@ def stage_start(run_id: str, index: int, kind: str) -> None:
 
 
 def stage_done(run_id: str, index: int, *, ok: bool, citation_count: int = 0,
-               native_job_id: str = "") -> None:
+               native_job_id: str = "",
+               evidence_refs: list[dict[str, Any]] | None = None) -> None:
     _ACTIVE[run_id].stage_done(index, ok=ok, citation_count=citation_count,
-                               native_job_id=native_job_id)
+                               native_job_id=native_job_id,
+                               evidence_refs=evidence_refs)
 
 
 def finish(run_id: str, status: str) -> None:
