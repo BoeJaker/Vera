@@ -1258,6 +1258,215 @@ async def evolve_task_upsert(task: Optional[Dict[str, Any]] = None, trace_id=Non
     return {"ok": True, "task": rec}
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# CENSUS TEMPLATES — a named set of goals, stored here, run as a suite tag
+# ─────────────────────────────────────────────────────────────────────────────
+# The census harness kept its templates as JSON files outside the repo, which
+# is why the census could never be started or edited from the UI: the thing
+# that owned the questions was not reachable from the thing that owned the
+# runner. Storing them beside the tasks closes that, and seeding turns one
+# template into one tagged set of suite tasks — so a template's timeline is
+# `evolve.suites` filtered by its tag, from run 0, and only ever contains runs
+# of the same questions.
+
+try:
+    from Vera.vera.evolve import census_seed as _census_seed
+except ImportError:                                        # pragma: no cover
+    try:
+        from vera.evolve import census_seed as _census_seed
+    except ImportError:
+        _census_seed = None
+
+KEY_CENSUS_TEMPLATES = "vera:evolve:census_templates"   # hash: name -> template
+
+
+async def _import_harness_templates() -> None:
+    """Adopt the harness's on-disk templates, once, if none are stored yet.
+
+    Runs 1-41 were driven by JSON files in the harness directory. Losing them
+    at the migration would orphan every historical number from the questions
+    that produced it, so the first read adopts them rather than starting empty.
+    Idempotent and best-effort: the directory is gone on any host but prod.
+    """
+    r = _redis()
+    if not r:
+        return
+    try:
+        if await r.hlen(KEY_CENSUS_TEMPLATES):
+            return
+        base = Path(os.getenv("VERA_CENSUS_DIR", "")
+                    or (Path.home() / "loop-census")).expanduser() / "templates"
+        if not base.is_dir():
+            return
+        n = 0
+        for path in sorted(base.glob("*.json")):
+            try:
+                tpl = json.loads(path.read_text(encoding="utf-8"))
+            except Exception as e:
+                log.info("census template %s unreadable: %s", path.name, e)
+                continue
+            name = str(tpl.get("name") or path.stem)
+            tpl.setdefault("name", name)
+            await r.hset(KEY_CENSUS_TEMPLATES, name, json.dumps(tpl, default=str))
+            n += 1
+        if n:
+            log.info("evolve: adopted %d census template(s) from %s", n, base)
+    except Exception as e:
+        log.debug("census template import: %s", e)
+
+
+async def _get_census_templates() -> List[Dict[str, Any]]:
+    r = _redis()
+    if not r:
+        return []
+    await _import_harness_templates()
+    out: List[Dict[str, Any]] = []
+    try:
+        raw = await r.hgetall(KEY_CENSUS_TEMPLATES)
+        for v in (raw or {}).values():
+            try:
+                out.append(json.loads(v.decode() if isinstance(v, bytes) else v))
+            except Exception:
+                continue
+    except Exception as e:
+        log.debug("census templates read: %s", e)
+    return sorted(out, key=lambda t: str(t.get("name", "")))
+
+
+@capability("evolve.census.templates", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/census/templates",
+            http_tags=["evolve", "census"],
+            description="List census templates — named goal sets. Each one's "
+                        "tag selects its suite tasks, so its timeline is "
+                        "evolve.suites filtered by that tag. Query: name (str "
+                        "— return just that one, with its goals).")
+async def evolve_census_templates(name: str = "", trace_id=None):
+    tpls = await _get_census_templates()
+    if name:
+        for t in tpls:
+            if str(t.get("name", "")) == name:
+                return {"template": t,
+                        "tag": _census_seed.tag_for(name) if _census_seed else "",
+                        "problems": _census_seed.problems(t) if _census_seed else []}
+        return {"error": "no such template: %s" % name,
+                "known": [t.get("name") for t in tpls]}
+    return {"templates": [{"name": t.get("name", ""),
+                           "description": t.get("description", ""),
+                           "model": t.get("model", ""),
+                           "wall_cap_s": t.get("wall_cap_s",
+                                               getattr(_census_seed, "DEFAULT_WALL_CAP_S", 1800)),
+                           "goals_n": len(t.get("goals") or []),
+                           "tag": _census_seed.tag_for(t.get("name", "")) if _census_seed else ""}
+                          for t in tpls],
+            "count": len(tpls)}
+
+
+@capability("evolve.census.template.save", memory="off",
+            http_method="POST", http_path="/evolve/census/template/save",
+            http_tags=["evolve", "census"],
+            description="Create or replace a census template: "
+                        "{name!, description, model, wall_cap_s, goals:[{id!, "
+                        "goal!, intent, tier, output, shape, checks:[...]}]}. "
+                        "REFUSES a template that would produce meaningless "
+                        "numbers (duplicate goal ids, goals with no checks, "
+                        "checks that assert nothing) — pass force=true to save "
+                        "it anyway. Reports what an edit does to comparability "
+                        "with the version it replaces.")
+async def evolve_census_template_save(template: Optional[Dict[str, Any]] = None,
+                                      force: bool = False, trace_id=None):
+    if _census_seed is None:                               # pragma: no cover
+        return {"error": "census_seed module unavailable"}
+    tpl = dict(template or {})
+    probs = _census_seed.problems(tpl)
+    if probs and not force:
+        return {"error": "template would produce numbers that do not mean "
+                         "anything", "problems": probs,
+                "hint": "fix these, or pass force=true"}
+    name = str(tpl.get("name", ""))
+    r = _redis()
+    if not r:
+        return {"error": "redis unavailable"}
+    # An edit to a LIVE template rebases its timeline. Say so rather than let
+    # the next run's number be compared with the previous one in silence.
+    previous, breaks = None, []
+    try:
+        raw = await r.hget(KEY_CENSUS_TEMPLATES, name)
+        if raw:
+            previous = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+            breaks = _census_seed.comparable(previous, tpl)
+    except Exception as e:                                 # pragma: no cover
+        log.debug("census template compare: %s", e)
+    await r.hset(KEY_CENSUS_TEMPLATES, name, json.dumps(tpl, default=str))
+    await _audit("census.template.save", name,
+                 detail="; ".join(breaks) if breaks else "unchanged question set")
+    return {"ok": True, "name": name, "tag": _census_seed.tag_for(name),
+            "goals_n": len(tpl.get("goals") or []), "problems": probs,
+            "replaced": bool(previous), "breaks_comparability": breaks,
+            "note": ("this edit changes the question set — earlier runs of this "
+                     "template are no longer comparable" if breaks else "")}
+
+
+@capability("evolve.census.template.seed", memory="off",
+            http_method="POST", http_path="/evolve/census/template/seed",
+            http_tags=["evolve", "census"],
+            description="Turn a census template into suite tasks tagged "
+                        "census-<name>, so evolve.suite.run(tag=…) runs it and "
+                        "evolve.suites(tag) is its timeline. Idempotent — "
+                        "re-seeding replaces the same task ids. Inputs: name "
+                        "(str! — a stored template) or template (inline dict), "
+                        "model (str — pin one for every goal), prune (bool=true "
+                        "— delete tasks for goals the template no longer has). "
+                        "dry_run=true reports what it would do.")
+async def evolve_census_template_seed(name: str = "", template: Optional[Dict[str, Any]] = None,
+                                      model: str = "", prune: bool = True,
+                                      dry_run: bool = False, trace_id=None):
+    if _census_seed is None:                               # pragma: no cover
+        return {"error": "census_seed module unavailable"}
+    tpl = dict(template or {})
+    if not tpl and name:
+        got = await evolve_census_templates(name=name)
+        if got.get("error"):
+            return got
+        tpl = got["template"]
+    probs = _census_seed.problems(tpl)
+    if probs:
+        return {"error": "template would produce numbers that do not mean "
+                         "anything", "problems": probs}
+    if model:
+        tpl = dict(tpl, model=model)
+    tname = str(tpl.get("name", ""))
+    tag = _census_seed.tag_for(tname)
+    tasks = _census_seed.template_to_tasks(tpl)
+    wanted = {t["id"] for t in tasks}
+    # Tasks carrying this tag that the template no longer names are stale: they
+    # would keep running, keep scoring, and quietly widen the question set.
+    stale = [t["id"] for t in await _get_tasks()
+             if tag in (t.get("tags") or []) and t["id"] not in wanted]
+    if dry_run:
+        return {"ok": True, "dry_run": True, "tag": tag,
+                "would_seed": sorted(wanted), "would_prune": sorted(stale) if prune else [],
+                "model": tpl.get("model", "") or "live routing default"}
+    for t in tasks:
+        await _save_task(t)
+    pruned: List[str] = []
+    if prune and stale:
+        r = _redis()
+        for sid in stale:
+            try:
+                if r:
+                    await r.hdel(KEY_TASKS, sid)
+                pruned.append(sid)
+            except Exception as e:                         # pragma: no cover
+                log.debug("census seed prune %s: %s", sid, e)
+    await _audit("census.template.seed", tname,
+                 detail="%d task(s) tagged %s%s"
+                        % (len(tasks), tag,
+                           ", %d pruned" % len(pruned) if pruned else ""))
+    return {"ok": True, "tag": tag, "seeded": sorted(wanted), "pruned": pruned,
+            "model": tpl.get("model", "") or "live routing default",
+            "next": "evolve.suite.start(tag=%r, assess=false)" % tag}
+
+
 @capability("evolve.task.delete", memory="off",
             http_method="POST", http_path="/evolve/task/delete", http_tags=["evolve"],
             description="Delete a benchmark task by id.")
