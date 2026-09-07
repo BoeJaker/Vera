@@ -53,6 +53,7 @@ _CRITICAL_MODULES = {
     "test_repeat_failure",  # do not re-buy an answer you already have (2026-09-06)
     "test_safety_non_network",  # a blank page is not a foreign host (2026-09-07)
     "test_suite_file_checks",  # a task must assert what it PRODUCED (2026-09-07)
+    "test_gate_politeness",  # the suite must yield the box like the census (2026-09-07)
     "test_ambient_dreaming_is_opt_in",  # nothing dreams on a box nobody asked (2026-08-31)
     "test_sandbox_estate_guard",  # a sandbox must not promote to main or reap the estate (2026-08-31)
     "test_sandbox_does_not_reap_the_estate",  # a dev sandbox must not reap the shared estate (2026-08-31)

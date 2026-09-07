@@ -3012,6 +3012,83 @@ _SUITE_RUNNING = False
 _SUITE_STATE: Dict[str, Any] = {"running": False}
 _SUITE_TASK: Optional[asyncio.Task] = None
 
+# Dual-spelled: Vera.vera.* resolves to the DEPLOYED checkout, so a module that
+# has not landed there yet must fall back to the plain package.
+try:
+    from Vera.vera.evolve import gate_politeness as _gate_polite
+except ImportError:                                        # pragma: no cover
+    try:
+        from vera.evolve import gate_politeness as _gate_polite
+    except ImportError:
+        _gate_polite = None
+
+
+async def _box_busy_reason() -> str:
+    """Why the box is busy, or "" when it is free.
+
+    Best-effort on purpose: an unreadable gate is not a reason to stall a
+    benchmark, so every failure path reads as free.
+    """
+    if _gate_polite is None:                               # pragma: no cover
+        return ""
+    gate = await _call("ollama.gate.status")
+    if not isinstance(gate, dict) or gate.get("error"):
+        gate = {}
+    # /workshop/agent_loop/sessions is a plain route, not a capability, and the
+    # census reader already corrects for runs orphaned by a restart (a zombie
+    # `running` row would stall every suite forever). Reuse it rather than
+    # re-derive the staleness rule here or reach over HTTP into our own process.
+    running = 0
+    try:
+        try:
+            from Vera.vera.census.census_capabilities import _running_loop
+        except ImportError:                                # pragma: no cover
+            from vera.census.census_capabilities import _running_loop
+        running = 1 if await _running_loop() else 0
+    except Exception as e:                                 # pragma: no cover
+        log.debug("suite: running-loop probe unavailable (%s)", e)
+    return _gate_polite.busy_reason(gate, running)
+
+
+async def _suite_wait_for_free(task: Dict[str, Any], suite_id: str,
+                               done: int, total: int) -> str:
+    """Wait for the GPU before a GPU-bound task, and SAY SO while waiting.
+
+    The wait is written to BOTH channels the UI uses — the progress event feed
+    and ``_SUITE_STATE["current"]``, which the Loop Lab panel polls — because a
+    silent wait is indistinguishable from a hang. The census harness's
+    "waiting: gate held by ..." log line is what made its own waits legible.
+
+    Returns "" normally, or the reason when the ceiling was hit and the task
+    ran anyway — the caller records that on the row, because a contended
+    task's elapsed_s is not comparable with an uncontended one and a
+    scoreboard that doesn't say so invites exactly the wrong conclusion.
+    """
+    if _gate_polite is None or not _gate_polite.needs_free_box(task.get("type", "loop")):
+        return ""
+    t0 = time.time()
+    while True:
+        reason = await _box_busy_reason()
+        if not reason:
+            _SUITE_STATE.pop("waiting", None)
+            return ""
+        waited = time.time() - t0
+        if waited >= _gate_polite.DEFAULT_MAX_WAIT_S:
+            note = _gate_polite.gave_up(waited)
+            log.warning("suite: %s", note)
+            _SUITE_STATE.pop("waiting", None)
+            await emit_event({"type": "evolve.suite.progress", "suite_id": suite_id,
+                              "done": done, "total": total, "task": task.get("id", ""),
+                              "phase": "contended", "note": note})
+            return note
+        note = _gate_polite.describe_wait(reason, waited)
+        _SUITE_STATE["current"] = "waiting for the box: %s" % task.get("id", "")
+        _SUITE_STATE["waiting"] = note
+        await emit_event({"type": "evolve.suite.progress", "suite_id": suite_id,
+                          "done": done, "total": total, "task": task.get("id", ""),
+                          "phase": "waiting", "note": note})
+        await asyncio.sleep(_gate_polite.POLL_SECONDS)
+
 
 @capability("evolve.suite.run", memory="off",
             http_method="POST", http_path="/evolve/suite/run", http_tags=["evolve"],
@@ -3061,6 +3138,14 @@ async def evolve_suite_run(tag: str = "", profile: str = "", assess: bool = True
             variant = None
             if variant_id and t.get("type") == "loop":
                 variant = await _get_variant(t.get("profile", ""), variant_id)
+            # YIELD THE BOX before a GPU-bound task. The ollama gate is
+            # capacity 1, so starting while someone else is mid-generation does
+            # not run in parallel - it queues, and the wait is charged to this
+            # task's own timeout_s, making a healthy task read as slow. The
+            # census harness has done this since its early runs; it is the one
+            # piece of its behaviour the suite cannot do without. Cap
+            # smoke-tests are exempt so the counter still moves immediately.
+            contended = await _suite_wait_for_free(t, suite_id, len(results), len(tasks))
             _SUITE_STATE["current"] = f"{t.get('type','loop')}: {t['id']}"
             _SUITE_STATE["current_started_at"] = now_iso()
             await emit_event({"type": "evolve.suite.progress", "suite_id": suite_id,
@@ -3077,6 +3162,10 @@ async def evolve_suite_run(tag: str = "", profile: str = "", assess: bool = True
                    "elapsed_s": detail["elapsed_s"],
                    "error": detail.get("error", ""),
                    "score": None, "combined": detail["combined"]}
+            if contended:
+                # Ran with someone else on the GPU. elapsed_s includes queueing,
+                # so say so on the row rather than let it be read as a slowdown.
+                row["contended"] = contended
             if assess and t.get("type") == "loop":
                 a = await _assess_run(detail, t, critic, variant)
                 if not a.get("error"):
