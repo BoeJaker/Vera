@@ -116,7 +116,7 @@ Define SLOs per workload and measure them at the caller:
 |---|---|
 | Capability API | success rate and p50/p95/p99 end-to-end latency |
 | Interactive generation | time to first token, tokens/second, cancellation time |
-| Agentic loop | total cycle time, per-capability time, retries, verification time |
+| Agentic loop | total cycle time, model queue/provider time, controller and verification time, per-capability time, retries |
 | Data ingestion | records/second, queue delay, indexing completion |
 | Semantic query | p50/p95 latency at representative collection size |
 | Worker dispatch | queue wait, execution time, lost/retried tasks |
@@ -125,6 +125,12 @@ Define SLOs per workload and measure them at the caller:
 Record the model, quantization, context, prompt size, concurrency, cache state,
 dataset size, and node used with every benchmark. Otherwise results are not
 comparable.
+
+For local Ollama-backed loop calls, `queue_ms` measures time before the selected
+node slot is acquired, `provider_ms` measures the generation inside that slot,
+and `total_ms` covers both. Tokens per second and routing history use
+`provider_ms`; use `total_ms` when assessing the user's wait. The agent-loop UI
+shows the split for controller, quality-check, and completion-check calls.
 
 ## Baseline procedure
 

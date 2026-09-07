@@ -2516,7 +2516,8 @@ from Vera.vera.dag.planner_core import (   # noqa: E402
 async def _safe_ollama_generate_dw(prompt, *, system="", json_mode=True,
                                      model="", instance_id="", prefer_gpu=True,
                                      stream_cb=None, options=None, think=False,
-                                     profile="", role="", job_type="", timeout=0):
+                                     profile="", role="", job_type="", timeout=0,
+                                     request_stage=""):
     """Thinking-model-aware ollama_generate wrapper for dag_workshop callers.
 
     Lazily resolves ollama_generate via the context module so we don't have
@@ -2611,6 +2612,8 @@ async def _safe_ollama_generate_dw(prompt, *, system="", json_mode=True,
         _gen_kwargs["role"] = role
     if job_type:
         _gen_kwargs["job_type"] = job_type
+    if request_stage:
+        _gen_kwargs["request_stage"] = request_stage
     if timeout:
         _gen_kwargs["timeout"] = float(timeout)
     if stream_cb is not None:
@@ -2634,6 +2637,7 @@ async def _safe_ollama_generate_dw(prompt, *, system="", json_mode=True,
                 options=dict(options) if options else None,
                 think=think,
                 profile=profile or None, role=role or None,
+                request_stage=request_stage or None,
                 job_type=job_type or None,
             )
         except Exception:
@@ -13088,7 +13092,8 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
             raw = await _safe_ollama_generate_dw(
                 prompt, system=sys, model=plan_model, instance_id=instance_id,
                 prefer_gpu=prefer_gpu, json_mode=True, options=plan_opts,
-                profile=LOOP_ROUTING_PROFILE, role="planner")
+                profile=LOOP_ROUTING_PROFILE, role="planner",
+                request_stage="planner")
             valid_skill_ids = {s["id"] for s in skills}
             _pp = _v5_parse_plan(raw or "")
             if isinstance(_pp.get("obj"), dict):
@@ -13380,6 +13385,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
             prompt, system=sys, model=plan_model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True, options=plan_opts,
             profile=LOOP_ROUTING_PROFILE, role="planner", timeout=_V5_PLANNER_TIMEOUT_S,
+            request_stage="planner",
             stream_cb=(_plan_stream_cb if stream_id else None))
         _pp = _v5_parse_plan(raw or "")
         parsed = _pp["obj"] if isinstance(_pp.get("obj"), dict) else {}
@@ -15756,6 +15762,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             user_msg, system=sys, model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True, options=_exec_opts,
             profile=LOOP_ROUTING_PROFILE, role="executor",
+            request_stage="executor",
             stream_cb=(_cycle_stream_cb if stream_id else None))
         if stream_id:
             await emit_event({"type": "agent_loop_v5.think_stream_end",
@@ -19311,7 +19318,8 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True, timeout=_V5_UTILITY_TIMEOUT,
-            profile=LOOP_ROUTING_PROFILE, role="controller")
+            profile=LOOP_ROUTING_PROFILE, role="controller",
+            request_stage="controller")
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
     except Exception as e:
         log.debug("v6 control call failed: %s", e)
@@ -19470,7 +19478,7 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
             log.debug("stage-context emit skipped: %s", _ae)
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=True)
+            prefer_gpu=prefer_gpu, json_mode=True, request_stage="gate")
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
     except Exception as e:
         log.debug("v6 final gate failed: %s", e)
@@ -20103,7 +20111,8 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
             log.debug("stage-context emit skipped: %s", _ae)
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=True, timeout=_V5_UTILITY_TIMEOUT)
+            prefer_gpu=prefer_gpu, json_mode=True, timeout=_V5_UTILITY_TIMEOUT,
+            request_stage="critic")
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
         if isinstance(obj, dict) and "met" in obj:
             return {"met": bool(obj.get("met")),
