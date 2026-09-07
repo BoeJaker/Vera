@@ -27,6 +27,35 @@ from .actions import MUTATING_ACTIONS
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1",
                 "host.docker.internal", "vera-dev"}
 
+#: URL schemes that are not a NETWORK LOCATION at all - the browser's own blank
+#: page, an inline document, a browser error page. They have no host to
+#: allowlist, and treating them as external is how the operator ended up
+#: refusing to act on the page it was already sitting on.
+#:
+#: Census 40, author-then-edit (the run's only wall-cap): a session that has not
+#: navigated yet is on `about:blank`, and host_of("about:blank") returns
+#: "about" because the scheme is parsed as a hostname. That is not local and not
+#: in any allowlist, so EVERY mutating action was refused with
+#:
+#:     blocked: host 'about' is not a local/Vera surface and is not in the
+#:     allowlist - add 'about' to the session/run allowlist to operate it
+#:
+#: which is advice nobody can act on, and `blocked` is terminal in run_loop - so
+#: the run ended on the spot. The same parse hits data: URLs and Chrome's own
+#: chrome-error:// page, both of which a real run lands on.
+_NON_NETWORK_SCHEMES = ("about:", "data:", "blob:", "javascript:",
+                        "chrome-error:", "chrome:", "edge:")
+
+
+def is_non_network(url: str) -> bool:
+    """True when ``url`` names no network location at all.
+
+    These are neither local nor remote: there is nothing to allowlist, and
+    nothing to protect. Acting on them is as safe as acting on a blank page,
+    because that is what they are.
+    """
+    return str(url or "").strip().lower().startswith(_NON_NETWORK_SCHEMES)
+
 
 def host_of(url_or_host: str) -> str:
     s = (url_or_host or "").strip()
@@ -135,8 +164,13 @@ def evaluate(policy: SafetyPolicy, url: str, action: str,
         target_url = _resolve_goto(url, str(args.get("url") or ""))
     else:
         target_url = url
-    host = host_of(target_url)
-    local = is_local_host(host, policy.extra_local)
+    # A scheme with no network location is neither local nor remote. Checked
+    # BEFORE host_of, because host_of would read the scheme itself as the
+    # hostname ("about:blank" -> "about") and then refuse it. See
+    # _NON_NETWORK_SCHEMES for the run this cost.
+    local = is_non_network(target_url)
+    host = "" if local else host_of(target_url)
+    local = local or is_local_host(host, policy.extra_local)
     mutating = action in MUTATING_ACTIONS
 
     # Non-mutating acts (observe/scroll/wait/screenshot/hover/done) are always OK.
