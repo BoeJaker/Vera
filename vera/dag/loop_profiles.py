@@ -47,7 +47,25 @@ from Vera.vera.capability_orchestration import (
     capability,
 )
 
+try:
+    from Vera.vera.dag import engine_params
+except ImportError:                                        # pragma: no cover
+    from vera.dag import engine_params
+
 log = logging.getLogger("vera.loop_profiles")
+
+
+def _delegate_props(fn) -> List[str]:
+    """The schema properties of the capability ``fn`` forwards **kwargs to.
+
+    An engine that ends in **kwargs (v7) cannot describe what it accepts; it
+    names its delegate instead, and the delegate's schema is the real answer.
+    """
+    name = engine_params.delegate_of(fn)
+    if not name:
+        return []
+    cap = CAPABILITY_REGISTRY.get(name) or {}
+    return list((cap.get("schema") or {}).get("properties", {}).keys())
 
 # Panel-driving caps — the chat UI panel bridge. A profile with panels=True can
 # READ the panel currently mounted in the user's chat session (panel.query) and
@@ -656,17 +674,29 @@ async def cap_loops_run(profile: str = "", goal: str = "",
 
     # Filter to the engine cap's accepted parameters so unrelated stream-only
     # knobs (loop_profile marker, UI fields, etc.) don't raise TypeError.
-    accepted = set(cap.get("schema", {}).get("properties", {}).keys()) | {"trace_id"}
-    # Every loop engine accepts session_id — v1–v6 as a named parameter, v7/v8
-    # via **kwargs — but v7/v8 don't DECLARE it in their schema, so a schema-only
-    # `accepted` filter silently drops it and the engine mints its own UUID
-    # session. The loop's events then persist under a key nothing maps back to
-    # the caller, so the Loop Lab timeline (which follows evolve:<run_id>) stays
-    # empty for every v7/v8-profile run — the exact "sandbox events aren't
-    # streamed to the UI" symptom (and it bites in-process runs too). Force
-    # session_id through so the caller's session id is always the loop's.
-    accepted.add("session_id")
-    kwargs = {k: v for k, v in body.items() if k in accepted}
+    #
+    # A schema describes a signature, so an engine ending in **kwargs is
+    # described incompletely: v7 is (goal, **kwargs) and forwards the rest to
+    # the v6 runner, so its schema declares ONE property against v6's 69. A
+    # schema-only filter therefore threw away model, allowed_caps, max_steps
+    # and the profile's own body on every v7-profile run — silently. session_id
+    # was the first casualty noticed (the engine minted its own session and the
+    # Loop Lab timeline stayed empty); it was fixed in place, which left the
+    # rest of the class alive. engine_params completes the picture from the
+    # delegate the engine names, and `dropped` makes any remaining loss
+    # loggable rather than silent.
+    _fn = cap["func"]
+    _props = (cap.get("schema") or {}).get("properties", {}).keys()
+    _body_ok = engine_params.body_accepted(_props)
+    _caller_ok = engine_params.caller_accepted(
+        _props,
+        has_var_keyword=engine_params.takes_var_keyword(_fn),
+        delegate_props=_delegate_props(_fn))
+    kwargs = engine_params.merge_call_kwargs(body, caller, _body_ok, _caller_ok)
+    _lost = engine_params.dropped(caller, _caller_ok)
+    if _lost:
+        log.debug("loops.run: %s does not accept caller args %s — dropped",
+                  engine_cap, ", ".join(_lost))
     kwargs["goal"] = goal
     kwargs["trace_id"] = session_id or trace_id
     if session_id:
