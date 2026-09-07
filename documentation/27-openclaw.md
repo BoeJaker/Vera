@@ -74,6 +74,34 @@ regardless, since a bare key like `vera-bridge` resolves to
 `agent:main:vera-bridge`. Vera reports the key you asked for, not the resolved
 one.
 
+### Overlapping prompts
+
+A second `chat.send` into a **busy** session is accepted — runId, `status:
+started` — and then given nothing: no deltas, an empty final message. The
+protocol's `queueMode` (`steer`/`followup`/`collect`/`interrupt`) exists for
+this, but 2026.4.29 refuses the property outright, so the bridge keeps its own
+per-session queue.
+
+`openclaw.prompt` therefore **queues by default** and returns a `queue_id`
+with its position rather than a `run_id`:
+
+```json
+{"ok": true, "queue_id": "8f2c…", "position": 2, "status": "queued", "queued": true}
+```
+
+The prompt goes out when the session is free; `openclaw.prompt.sent` then
+carries its `run_id`, and `openclaw.stream` / `openclaw.response` carry both
+ids so a reply can be traced to the request that asked for it. Pass
+`queue: false` to send immediately anyway, or `queue_mode` to let a newer
+gateway order it server-side. `openclaw.queue.list` shows what is in flight and
+waiting; `openclaw.queue.cancel` drops a prompt that has not been sent yet — one
+already with the gateway cannot be recalled.
+
+A run whose terminal frame never arrives is abandoned after
+`OPENCLAW_RUN_TIMEOUT` (default 900s) so the queue behind it is not stranded,
+and a dropped connection loses only what was in flight — queued prompts keep
+their place and go out on the next connection.
+
 The answer comes back on **two** event families carrying the same text:
 
 | Event | Carries | Bridge uses it for |
