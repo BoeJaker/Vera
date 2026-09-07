@@ -273,9 +273,12 @@ html.vpb-nav-hosted body{padding-left:0}
   </div>
   <div class="card" style="margin-top:10px">
     <div class="card-h"><span class="card-t">Gate race-to-green</span>
-      <span class="hint">recent code-pipeline gate results (newest right) — click a cell to open the run</span>
+      <span class="hint" id="ut-trend">—</span>
+      <span style="flex:1"></span>
+      <span class="hint">one cell per test RUN (newest right) — click to open its pipeline</span>
     </div>
     <div id="ut-lanes"><div class="empty">—</div></div>
+    <div id="ut-regressions" style="margin-top:8px"></div>
   </div>
   <div class="card" style="margin-top:10px">
     <div class="card-h"><span class="card-t">Test generation (M3.4)</span>
@@ -1190,8 +1193,9 @@ function _copyTG(btn){
 let _utMatrix=null;
 async function loadUnitTests(){
   const el=$('ut-matrix-body');if(!el)return;
-  const [m,pl]=await Promise.all([api('/evolve/tests/matrix').catch(()=>null),
-                                  api('/evolve/pipeline/list?limit=40').catch(()=>null)]);
+  const [m,pl,uh]=await Promise.all([api('/evolve/tests/matrix').catch(()=>null),
+                                  api('/evolve/pipeline/list?limit=40').catch(()=>null),
+                                  api('/evolve/unittest/history?limit=200').catch(()=>null)]);
   _utMatrix=(m&&m.ok)?m:null;
   if(_utMatrix){
     if($('ut-matrix-status'))$('ut-matrix-status').textContent=m.total_tests+' tests · '+m.total_modules+' modules';
@@ -1205,16 +1209,61 @@ async function loadUnitTests(){
     el.innerHTML='<div class="empty">Could not load the test matrix — restart prod if evolve.tests.matrix was just deployed.</div>';
   }
   _utRender();
-  const lanes=$('ut-lanes');
-  if(lanes){
+  _utLanes(uh, pl);
+}
+
+/* Race-to-green. Reads evolve.unittest.history — one cell per test RUN.
+   It used to read pipeline.list and draw one cell per PIPELINE coloured by
+   gate_passed, a scalar overwritten on every re-gate, so a branch that went
+   red, got fixed and went green was a single green cell: the race was the one
+   thing it could not show. Falls back to the old per-pipeline view while the
+   history is still empty, so a fresh deploy isn't a blank card. */
+function _utLanes(uh,pl){
+  const lanes=$('ut-lanes'); if(!lanes)return;
+  const cells=(uh&&uh.lanes)||[];
+  const tr=$('ut-trend'), rg=$('ut-regressions');
+  if(!cells.length){
     const pipes=((pl&&pl.pipelines)||[]).filter(p=>p.kind==='code').slice(0,30).reverse();
-    if(!pipes.length){lanes.innerHTML='<div class="empty">No code-pipeline runs yet.</div>';}
-    else lanes.innerHTML='<div class="row" style="gap:3px;flex-wrap:wrap;align-items:flex-end">'+pipes.map(function(p){
+    if(tr)tr.textContent='no test history yet';
+    if(rg)rg.innerHTML='';
+    if(!pipes.length){lanes.innerHTML='<div class="empty">No test runs recorded yet — the next gate will start the history.</div>';return}
+    lanes.innerHTML='<div class="row" style="gap:3px;flex-wrap:wrap;align-items:flex-end">'+pipes.map(function(p){
       const c=p.gate_passed===true?'#3cb371':(p.gate_passed===false?'#dd6a6a':'#6a6a6a');
       const lbl=(p.gate_passed===true?'gate PASS':(p.gate_passed===false?'gate FAIL':'pending'));
       return '<span onclick="openPipe(\''+esc(p.id)+'\')" title="'+esc(lbl+' · '+(p.branch||'')+' · '+p.id)+'" style="width:13px;height:24px;border-radius:3px;background:'+c+';cursor:pointer;display:inline-block"></span>';
-    }).join('')+'</div><div class="hint" style="margin-top:5px">green = gate passed · red = failed (blocked) · grey = pending / no .py. Click to open the run.</div>';
+    }).join('')+'</div><div class="hint" style="margin-top:5px">last gate result per pipeline (history not populated yet).</div>';
+    return;
   }
+  // Height carries the test COUNT, colour carries pass/fail, so a run that goes
+  // green on fewer tests is visible as a shorter green bar rather than reading
+  // as an ordinary success.
+  const totals=cells.map(c=>c.total||0), hi=Math.max.apply(null,totals.concat([1]));
+  lanes.innerHTML='<div class="row" style="gap:3px;flex-wrap:wrap;align-items:flex-end;min-height:38px">'+cells.map(function(c){
+    const col=c.ok?'#3cb371':'#dd6a6a';
+    const h=Math.max(6,Math.round((c.total||0)/hi*34));
+    const d=c.delta>0?('+'+c.delta):(c.delta<0?String(c.delta):'±0');
+    const t=(c.ok?'PASS':'FAIL')+' · '+(c.passed||0)+' passed, '+(c.failed||0)+' failed'
+           +' · '+(c.total||0)+' tests ('+d+') · '+(c.branch||'')+' · '+(c.ts||'');
+    const click=c.pipeline_id?(' onclick="openPipe(\''+esc(c.pipeline_id)+'\')" style="cursor:pointer;'):(' style="');
+    return '<span title="'+esc(t)+'"'+click+'width:11px;height:'+h+'px;border-radius:2px;background:'+col+';display:inline-block"></span>';
+  }).join('')+'</div>'
+   +'<div class="hint" style="margin-top:5px">bar height = test count · green = passed · red = failed. Hover for counts, click to open the pipeline.</div>';
+  const t=(uh&&uh.trend)||{}, race=(uh&&uh.race)||{};
+  if(tr){
+    let s=(t.passed||0)+' passing';
+    if(t.total_delta)s+=' · '+(t.total_delta>0?'+':'')+t.total_delta+' tests over '+(t.runs||0)+' runs';
+    if(race.still_red)s+=' · RED for '+race.red_runs+' run(s)';
+    else if(race.went_green_at)s+=' · green after '+race.red_runs+' red run(s)';
+    else if(t.green_streak)s+=' · '+t.green_streak+' green in a row';
+    tr.textContent=s;
+  }
+  // A green run on FEWER tests is coverage that stopped being collected, and
+  // the gate reports PASS throughout. Say it out loud.
+  const regs=(uh&&uh.regressions)||[];
+  if(rg)rg.innerHTML=regs.length
+    ?'<div class="hint" style="color:var(--warn,#d0902a)">⚠ '+regs.length+' run(s) went GREEN ON FEWER TESTS — coverage stopped being collected:</div>'
+      +regs.slice(-4).map(r=>'<div class="hint mono" style="font-size:10.5px">'+esc((r.ts||'')+' '+(r.branch||'')+' — '+r.was+' → '+r.now+' ('+r.lost+' lost)')+'</div>').join('')
+    :'';
 }
 function _utRender(){
   const el=$('ut-matrix-body');if(!el||!_utMatrix)return;

@@ -5569,7 +5569,8 @@ async def evolve_pipeline_adopt(branch: str = "", to: str = "bleeding-edge", tit
         if wt:
             try:
                 crit = await evolve_unittest_run(branch=branch, paths="tests",
-                                                 markers="critical", timeout=300)
+                                                 markers="critical", timeout=300,
+                                                 pipeline_id=rec["id"])
             except Exception as e:
                 crit = {"error": str(e)}
             if crit.get("error"):
@@ -5817,7 +5818,8 @@ async def evolve_pipeline_test(id: str = "", trace_id=None):
                f"compile-check {len(py_files)} .py file(s): " +
                ("PASS" if compile_ok else "FAIL — " + "; ".join(parse_errors[:3])))
         critical = await evolve_unittest_run(branch=branch, paths="tests",
-                                             markers="critical", timeout=300)
+                                             markers="critical", timeout=300,
+                                             pipeline_id=rec["id"])
         critical_ok = bool(critical.get("ok")) and not critical.get("error")
         failures = critical.get("failure_details") or []
         failure_text = _ut_format_failures(failures)
@@ -7925,7 +7927,7 @@ from Vera.vera.evolve.evolve_unittest_core import (   # noqa: E402
                         "with each failed test's node_id, name, kind, and concise description.")
 async def evolve_unittest_run(branch: str = "", paths: str = "tests", markers: str = "",
                               extra: str = "", timeout: int = 600, repo: str = "",
-                              trace_id=None):
+                              pipeline_id: str = "", trace_id=None):
     # Non-Vera repo: run ITS OWN test_cmd in its checkout (the same gate the code
     # pipeline uses), so the Test tab can exercise ANY registered repo — not just
     # Vera. Vera (repo empty/'vera') keeps the ephemeral-container pytest below.
@@ -7974,11 +7976,96 @@ async def evolve_unittest_run(branch: str = "", paths: str = "tests", markers: s
     parsed = _ut_parse(combined)
     label = branch or tgt.get("container") or "primary"
     await _audit("unittest.run", f"[{label}] {parsed['summary']}", ok=parsed["ok"])
+    await _record_unittest_run(parsed, branch=branch, markers=markers,
+                               paths=paths, label=label, pipeline_id=pipeline_id)
     await emit_event({"type": "evolve.unittest.done", "branch": branch or label,
                       "ok": parsed["ok"], "passed": parsed["passed"],
                       "failed": parsed["failed"], "errors": parsed["errors"]})
     return {**parsed, "code": parsed["rc"], "image": DEV_IMAGE,
             "branch": branch or label, "out": combined[-8000:], "repo": DEFAULT_REPO_ID}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# UNIT-TEST HISTORY — one row per RUN, so "race to green" has a race to show
+# ─────────────────────────────────────────────────────────────────────────────
+# The panel's race-to-green strip drew one cell per PIPELINE, coloured by
+# `gate_passed` — a scalar overwritten on every re-gate, so a branch that went
+# red, got fixed and went green was a single green cell. Meanwhile every gate
+# run parsed its counts and discarded them. This keeps them.
+
+try:
+    from Vera.vera.evolve import unittest_history as _ut_hist
+except ImportError:                                        # pragma: no cover
+    try:
+        from vera.evolve import unittest_history as _ut_hist
+    except ImportError:
+        _ut_hist = None
+
+KEY_UT_HISTORY = "vera:evolve:unittest_history"   # list, newest first
+
+
+async def _record_unittest_run(parsed: Dict[str, Any], *, branch: str = "",
+                               markers: str = "", paths: str = "tests",
+                               label: str = "", pipeline_id: str = "") -> None:
+    """Persist one gate/test run. Best-effort — a history write must never be
+    the reason a test run reports failure."""
+    r = _redis()
+    if r is None or _ut_hist is None:
+        return
+    try:
+        row = _ut_hist.record(parsed, branch=branch, markers=markers, paths=paths,
+                              ts=now_iso(), label=label, pipeline_id=pipeline_id)
+        await r.lpush(KEY_UT_HISTORY, json.dumps(row, default=str))
+        await r.ltrim(KEY_UT_HISTORY, 0, _ut_hist.HISTORY_CAP - 1)
+    except Exception as e:                                 # pragma: no cover
+        log.debug("unittest history write: %s", e)
+
+
+async def _get_unittest_history(limit: int = 200) -> List[Dict[str, Any]]:
+    r = _redis()
+    if r is None:
+        return []
+    out: List[Dict[str, Any]] = []
+    try:
+        raw = await r.lrange(KEY_UT_HISTORY, 0, max(1, int(limit)) - 1)
+        for v in raw or []:
+            try:
+                out.append(json.loads(v.decode() if isinstance(v, bytes) else v))
+            except Exception:
+                continue
+    except Exception as e:                                 # pragma: no cover
+        log.debug("unittest history read: %s", e)
+    return out
+
+
+@capability("evolve.unittest.history", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/unittest/history",
+            http_tags=["evolve"],
+            description="Unit-test results OVER TIME — one row per run, not per "
+                        "pipeline. Feeds the Loop Lab race-to-green strip, which "
+                        "could not previously show a race because a pipeline only "
+                        "kept its last gate result. Returns {runs, lanes (one cell "
+                        "per run, oldest first, with the test-count delta), trend, "
+                        "race (the most recent red→green transition and how many "
+                        "runs it took), regressions (runs that went GREEN ON FEWER "
+                        "TESTS — coverage that stopped being collected, which the "
+                        "gate reports as PASS)}. Query: limit (int=200), branch "
+                        "(str filter), markers (str filter, e.g. 'critical').")
+async def evolve_unittest_history(limit: int = 200, branch: str = "",
+                                  markers: str = "", trace_id=None):
+    if _ut_hist is None:                                   # pragma: no cover
+        return {"error": "unittest_history module unavailable"}
+    rows = await _get_unittest_history(limit)
+    if branch:
+        rows = [r for r in rows if r.get("branch") == branch]
+    if markers:
+        rows = [r for r in rows if r.get("markers") == markers]
+    return {"ok": True, "count": len(rows),
+            "runs": _ut_hist.newest_first(rows),
+            "lanes": _ut_hist.lanes(rows, limit=40),
+            "trend": _ut_hist.trend(rows),
+            "race": _ut_hist.race_to_green(rows),
+            "regressions": _ut_hist.regressions(rows)}
 
 
 @capability("evolve.tests.matrix", memory="off", silent=True,
