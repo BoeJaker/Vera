@@ -9642,7 +9642,7 @@ async def get_pipeline_run(run_id: str, include_run_protocol: bool = False):
 @app.delete("/api/pipelines/runs/{run_id}")
 async def delete_pipeline_run_ep(run_id: str):
     _pipeline_runs.pop(run_id, None)
-    _pipeline_run_observer.drop(run_id)
+    _pipeline_run_observer.drop(run_id, delete_recorded=True)
     await DB.delete_pipeline_run(run_id)
     return {"ok": True}
 
