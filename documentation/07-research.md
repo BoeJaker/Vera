@@ -117,10 +117,15 @@ prompts, generated output, citation text, and native error messages are never
 copied into the Run projection. The normal endpoint shape is unchanged unless
 the option is requested.
 
-The projection is currently scoped to live in-process pipeline runs. The
-research database and native WebSocket events remain the durable and execution
-authorities; a later persistence adapter must journal these Run events before
-restart recovery can be claimed.
+Research projections are recorded in the same bounded shared Run registry used
+by DAG and agent-loop observations. When `VERA_RUN_JOURNAL_PATH` configures its
+checksummed SQLite journal, parent and child events are checkpointed and the
+read-only catalog verifies and rebuilds them after restart; otherwise storage is
+explicitly reported as process-local memory. The research database and native
+WebSocket events remain the execution and result authorities in both modes.
+Deleting a pipeline run also removes its parent and child projections through
+checksum-verified journal deletion, rather than leaving an undisclosed shadow
+record behind.
 
 A typical research run goes through these stages (with variations per output mode):
 

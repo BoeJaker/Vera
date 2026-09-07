@@ -2,6 +2,8 @@ import pytest
 from pathlib import Path
 
 from Vera.vera.research import pipeline_run_projection as projection
+from Vera.vera.execution.run_journal import MemoryRunJournal, SqliteRunJournal
+from Vera.vera.execution.run_projection import ShadowRunRegistry
 
 
 pytestmark = pytest.mark.critical
@@ -51,6 +53,8 @@ def test_registry_snapshot_and_drop_are_explicit():
     projection.create("run-4", "sha256:jkl", ["stage-1-research"])
     assert projection.get("run-4")["run"]["status"] == "queued"
     projection.drop("run-4")
+    assert projection.get("run-4") is not None
+    projection.drop("run-4", delete_recorded=True)
     assert projection.get("run-4") is None
 
 
@@ -69,3 +73,32 @@ def test_native_runner_wires_projection_without_changing_default_run_shape():
     assert "_pipeline_run_observer.stage_start(" in source
     assert "_pipeline_run_observer.stage_done(" in source
     assert "include_run_protocol: bool = False" in source
+
+
+def test_checksummed_journal_recovers_parent_and_children(tmp_path):
+    path = tmp_path / "research-runs.sqlite"
+    registry = ShadowRunRegistry(journal=SqliteRunJournal(path))
+    observer = projection.ResearchPipelineRunProjection(
+        "run-journal", "sha256:pqr", ["stage-1-research"], registry=registry)
+    observer.stage_start(0, "research")
+    observer.stage_done(0, ok=True, citation_count=2)
+    observer.finish("done")
+
+    recovered = ShadowRunRegistry(journal=SqliteRunJournal(path))
+    value = recovered.get("run-journal")
+    assert value["journal"]["ok"] is True
+    assert value["run"]["status"] == "completed"
+    assert value["children"][0]["task_id"] == "stage-1-research"
+    assert recovered.recovery_status()["recovered"] == 2
+
+
+def test_explicit_delete_removes_parent_children_and_verified_journal(tmp_path):
+    registry = ShadowRunRegistry(journal=SqliteRunJournal(tmp_path / "delete.sqlite"))
+    observer = projection.create(
+        "run-delete", "sha256:stu", ["stage-1-research"], registry=registry)
+    observer.stage_start(0, "research")
+    observer.stage_done(0, ok=True)
+    observer.finish("done")
+    projection.drop("run-delete", delete_recorded=True)
+    assert registry.get("run-delete") is None
+    assert registry.journal.run_ids() == []
