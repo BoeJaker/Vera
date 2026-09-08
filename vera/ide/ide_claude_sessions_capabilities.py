@@ -67,6 +67,7 @@ import logging
 import os
 import re
 import sqlite3
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -74,7 +75,8 @@ from typing import Dict, List, Optional
 from fastapi.responses import HTMLResponse
 
 from Vera.vera.capability_orchestration import (
-    capability, emit_event, is_dev_sandbox, now_iso, register_ui, schedule,
+    CAPABILITY_REGISTRY, capability, emit_event, is_dev_sandbox, now_iso,
+    register_ui, schedule,
 )
 from Vera.vera.fabric.data_fabric import _sqlite_conn
 from Vera.vera.ide.ide_capabilities import _record, ide_git_log
@@ -564,7 +566,11 @@ async def cap_claude_sessions_ingest(rel: str = "", instance_id: str = "", trace
                 "~/.claude/projects; a vscode-client instance id otherwise). "
                 "Output: {ok, files_scanned, files_updated, turns_recorded}.",
 )
-async def cap_claude_sessions_ingest_all(instance_id: str = "", trace_id=None) -> dict:
+async def cap_claude_sessions_ingest_all(instance_id: str = "", trace_id=None,
+                                         should_continue=None) -> dict:
+    """`should_continue` is an async callable returning a busy REASON (or "").
+    Polled between files so a long backfill yields the moment the box gets
+    busy — see vera/background_work.py rule 2."""
     key = _source_key(instance_id)
     lock = _ingest_lock(key)
     if lock.locked():
@@ -579,7 +585,21 @@ async def cap_claude_sessions_ingest_all(instance_id: str = "", trace_id=None) -
         src_state = state.get(key, {})
         updated = 0
         total_turns = 0
+        yielded = ""
         for f in files:
+            # YIELD between files. Quiet when this pass started does not mean
+            # quiet throughout: a backfill that begins in a lull and runs for an
+            # hour is the original bug wearing a delay. State is already
+            # persisted per file, so stopping here costs nothing but the file
+            # in flight, and the next pass resumes from the same offset.
+            if should_continue is not None:
+                busy = await should_continue()
+                if busy:
+                    yielded = busy
+                    log.info("claude_sessions: ingest yielding mid-pass — %s "
+                             "(%d file(s) done, resumes from the same offsets)",
+                             busy, updated)
+                    break
             rel = f["rel"]
             known = src_state.get(rel, {})
             if "offset" in known and f.get("size", 0) <= known["offset"]:
@@ -593,6 +613,9 @@ async def cap_claude_sessions_ingest_all(instance_id: str = "", trace_id=None) -
         await emit_event({"type": "ide.claude_sessions.ingest_all", "source": key,
                           "files_scanned": len(files), "files_updated": updated,
                           "turns_recorded": total_turns})
+    if yielded:
+        return {"ok": True, "files_scanned": len(files), "files_updated": updated,
+                "turns_recorded": total_turns, "yielded": yielded}
     return {"ok": True, "files_scanned": len(files), "files_updated": updated,
             "turns_recorded": total_turns}
 
@@ -927,11 +950,112 @@ async def cap_claude_sessions_status(trace_id=None) -> dict:
 _SCHEDULE_INTERVAL_S = int(os.environ.get("VERA_CLAUDE_SESSIONS_INGEST_INTERVAL", "300"))
 
 
-async def _scheduled_ingest_all():
+try:
+    from Vera.vera import background_work as _bg
+except ImportError:                                        # pragma: no cover
     try:
-        await cap_claude_sessions_ingest_all(instance_id="")
+        from vera import background_work as _bg
+    except ImportError:
+        _bg = None
+
+
+async def _system_is_busy() -> str:
+    """Why deferrable work should wait, or "". Best-effort: an unreadable
+    signal reads as not-busy, because a backfill that can never run is a worse
+    failure than one that occasionally overlaps."""
+    if _bg is None:                                        # pragma: no cover
+        return ""
+    gate, loops = {}, 0
+    try:
+        cap = CAPABILITY_REGISTRY.get("ollama.gate.status")
+        if cap and cap.get("func"):
+            gate = await cap["func"]() or {}
     except Exception as e:
+        log.debug("ingest gate probe: %s", e)
+    try:
+        cap = CAPABILITY_REGISTRY.get("census.live")
+        live = (await cap["func"]()) if (cap and cap.get("func")) else {}
+        if (live or {}).get("active"):
+            return "a census is running"
+    except Exception as e:
+        log.debug("ingest census probe: %s", e)
+    try:
+        from Vera.vera.dag.dag_workshop_capabilities import _loop_run_is_stale  # noqa: F401
+        cap = CAPABILITY_REGISTRY.get("dream.scheduler.status")
+        if cap and cap.get("func"):
+            st = await cap["func"]() or {}
+            if st.get("in_cycle"):
+                return "a dream cycle is running"
+    except Exception as e:
+        log.debug("ingest dream probe: %s", e)
+    return _bg.defer_reason(gate, loops)
+
+
+#: The one queue. Bulk transcript ingest is P_BULK — it always yields to
+#: anything else deferrable, and to everything interactive.
+_QUEUE = _bg.BackgroundQueue() if _bg else None
+_JOB = "ide.claude_sessions.ingest"
+if _QUEUE:
+    _QUEUE.register(_JOB, _SCHEDULE_INTERVAL_S, priority=_bg.P_BULK)
+
+
+async def _scheduled_ingest_all():
+    """Bulk transcript ingest, through the secondary queue.
+
+    Two embeds per turn on the CPU node — ~4s each idle, ~11s each while a
+    census runs. This used to fire every 300s regardless and took 3 of census
+    44's first 4 goals to the wall cap.
+    """
+    if _QUEUE is None:                                     # pragma: no cover
+        return
+    now = time.time()
+    _QUEUE.observe(now, await _system_is_busy())
+    name, blocked = _QUEUE.pick(now)
+    if not name:
+        if blocked and blocked != "nothing due":
+            _QUEUE.deferred(_JOB, blocked)
+            log.info("claude_sessions: %s",
+                     _bg.describe_defer("transcript ingest", blocked,
+                                        _SCHEDULE_INTERVAL_S))
+        return
+    _QUEUE.started(name, now)
+    try:
+        res = await cap_claude_sessions_ingest_all(
+            instance_id="", should_continue=_system_is_busy)
+        _QUEUE.finished(name, time.time(), ok=True,
+                        note=res.get("yielded", ""))
+    except Exception as e:
+        _QUEUE.finished(name, time.time(), ok=False, note=str(e)[:120])
         log.warning("claude_sessions: scheduled local ingest failed: %s", e)
+        return
+    for inst in await _load_instances():
+        iid = inst.get("id", "")
+        if inst.get("kind") == "vscode-client" and _client_alive(iid):
+            if await _system_is_busy():
+                break
+            try:
+                await cap_claude_sessions_ingest_all(
+                    instance_id=iid, should_continue=_system_is_busy)
+            except Exception as e:
+                log.warning("claude_sessions: scheduled ingest failed for %s: %s",
+                            iid, e)
+
+
+@capability("background.status", memory="off", silent=True,
+            http_method="GET", http_path="/background/status",
+            http_tags=["obs"],
+            description="The secondary queue: which deferrable background jobs "
+                        "exist, what is running, why anything is deferred, and "
+                        "how long the box has been quiet. Deferrable work "
+                        "(bulk embedding, dreams, narration, source gathering) "
+                        "runs only after MIN_QUIET_SECONDS of continuous quiet "
+                        "and yields mid-job when the box gets busy.")
+async def cap_background_status(trace_id=None) -> dict:
+    if _QUEUE is None:                                     # pragma: no cover
+        return {"error": "background_work module unavailable"}
+    now = time.time()
+    _QUEUE.observe(now, await _system_is_busy())
+    return _QUEUE.status(now)
     for inst in await _load_instances():
         iid = inst.get("id", "")
         if inst.get("kind") == "vscode-client" and _client_alive(iid):
