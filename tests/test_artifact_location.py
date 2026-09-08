@@ -136,3 +136,41 @@ def test_the_module_is_imported_before_it_is_used():
     src = _src()
     assert (src.index("import artifact_location as _artifact_location")
             < src.index("def _v5_route_write_call("))
+
+
+# â”€â”€ one missing file must not become two remediation steps â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Census 45, build-multifile. The goal named the file twice - once with its
+# directory, once bare - so the completion gate probed both, found both
+# missing, and appended "Create the missing file: /workspace/statkit/stats.py"
+# AND "Create the missing file: stats.py". Same file. That goal then spent 17
+# cycles on one step, the worst in the run.
+
+def test_a_bare_name_is_dropped_when_the_located_one_is_present():
+    got = al.dedupe_named_paths(["/workspace/statkit/stats.py", "stats.py"])
+    assert got == ["/workspace/statkit/stats.py"]
+
+
+def test_order_does_not_matter():
+    got = al.dedupe_named_paths(["stats.py", "/workspace/statkit/stats.py"])
+    assert got == ["/workspace/statkit/stats.py"]
+
+
+def test_two_real_files_sharing_a_basename_are_BOTH_kept():
+    """The confusion this module exists to fix. a/stats.py and b/stats.py are
+    two files; collapsing them by basename would lose one."""
+    got = al.dedupe_named_paths(["a/stats.py", "b/stats.py"])
+    assert got == ["a/stats.py", "b/stats.py"]
+
+
+def test_a_bare_name_with_no_located_twin_survives():
+    got = al.dedupe_named_paths(["clock.html", "notes.md"])
+    assert got == ["clock.html", "notes.md"]
+
+
+def test_exact_duplicates_collapse():
+    assert al.dedupe_named_paths(["stats.py", "stats.py"]) == ["stats.py"]
+
+
+def test_empty_input():
+    assert al.dedupe_named_paths([]) == []
+    assert al.dedupe_named_paths(None) == []

@@ -10443,12 +10443,17 @@ except Exception:                                     # pragma: no cover
 try:
     from Vera.vera.dag.code_author_guards import repair_collapsed as _repair_collapsed
     from Vera.vera.dag.code_author_guards import repaired_note as _repaired_note
+    from Vera.vera.dag.artifact_location import dedupe_named_paths as _dedupe_named_paths
 except Exception:                                     # pragma: no cover
     try:
         from vera.dag.code_author_guards import repair_collapsed as _repair_collapsed
         from vera.dag.code_author_guards import repaired_note as _repaired_note
+        from vera.dag.artifact_location import dedupe_named_paths as _dedupe_named_paths
     except Exception:
         log.warning("code_author_guards unavailable — repair collapse guard disabled")
+
+        def _dedupe_named_paths(paths):         # noqa: E306
+            return list(paths or [])
 
         def _repaired_note(passes) -> str:      # noqa: E306
             return ""
@@ -19582,7 +19587,8 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
                 _exist = await _v6_check_paths_exist(session_id, _named)
             except Exception:
                 _exist = {}
-            _missing_named = [p for p in _named if _exist.get(p) is False]
+            _missing_named = _dedupe_named_paths(
+                [p for p in _named if _exist.get(p) is False])
     for p in _missing_named:
         _ext = p.rsplit(".", 1)[-1].lower() if "." in p else ""
         _doc_ext = _ext in ("md", "markdown", "txt", "html", "htm", "rst")
@@ -19748,7 +19754,14 @@ _V6_ARTIFACT_EXT = (r"(?:py|js|ts|jsx|tsx|json|ya?ml|toml|ini|cfg|conf|md|markdo
                     r"java|kt|rb|php|c|h|cpp|hpp)")
 _V6_WORKSPACE_RE = re.compile(r"(/workspace/[\w./\-]+)", re.I)
 _V6_SLASHPATH_RE = re.compile(r"((?:\.{0,2}/)?(?:[\w.\-]+/)+[\w.\-]+\." + _V6_ARTIFACT_EXT + r")\b", re.I)
-_V6_BAREFILE_RE  = re.compile(r"(?<![\w/.\-])([\w\-]{1,80}\." + _V6_ARTIFACT_EXT + r")\b", re.I)
+# `(?!\.\w)` - a candidate followed by another dotted segment is not a
+# filename. `bash` is in the extension list, so `exec.bash.run` (the
+# CAPABILITY) matched as a file called `exec.bash`, and the completion gate
+# duly appended "Create the missing file: exec.bash" - census runs 35, 38
+# and 44, a whole remediation step each time chasing a file that was never
+# a file. Also drops `config.yaml.bak` -> `config.yaml`, which was the
+# wrong name for a real file rather than a missing one.
+_V6_BAREFILE_RE  = re.compile(r"(?<![\w/.\-])([\w\-]{1,80}\." + _V6_ARTIFACT_EXT + r")(?!\.\w)\b", re.I)
 # A criterion that is genuinely about a file EXISTING/being produced (gates the
 # hard auto-fail so merely naming a filename in passing never fails a step).
 _V6_FILE_CRIT_RE = re.compile(
