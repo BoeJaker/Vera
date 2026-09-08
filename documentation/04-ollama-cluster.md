@@ -12,6 +12,25 @@ If an active node goes down mid-request, the call transparently retries on an av
 
 ---
 
+### Portable inference compatibility
+
+`models/ollama_inference_adapter.py` can expose the existing generation seam as
+an `InferenceProvider` without changing current callers. Each adapter is bound
+to one ModelPackage, model selector, and Ollama instance. Portable requests
+therefore cannot silently change their model or route, while the established
+Ollama layer remains the sole owner of its queue, resource gate, telemetry, and
+retry behavior.
+
+The adapter maps prompt plus optional system text, bounded sampling parameters,
+streamed token callbacks, output-token usage, truncation, and cancellation into
+the shared inference event contract. A truncated response is an explicit failed
+terminal outcome rather than a successful partial answer. The legacy runner is
+injected, so importing or testing the adapter performs no network or model call.
+Existing `ollama.*` capabilities are unchanged; migration requires separate
+parity evidence before any traffic is redirected.
+
+---
+
 ## 1. Default cluster
 
 The default `OLLAMA_INSTANCES` dict in `capability_orchestration.py`:
