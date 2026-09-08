@@ -42,6 +42,8 @@ from .inference_deployment import (
     inference_deployment_observation_from_dict)
 from .ml_workshop_inference_adapter import (
     LegacyMLWorkshopInferenceProvider, LegacyMLWorkshopRunner)
+from .native_tensor_inference_adapter import (
+    NativeTensorRunner, PyTorchInferenceProvider, TensorFlowInferenceProvider)
 
 __all__ = ["AdmittedModelActivation", "LegacyModelCapabilityBinding", "ModelActivationReceipt",
            "ModelAdmissionReceipt", "ModelDeploymentTarget",
@@ -65,6 +67,8 @@ __all__ = ["AdmittedModelActivation", "LegacyModelCapabilityBinding", "ModelActi
            "inference_deployment_from_dict",
            "inference_deployment_observation_from_dict",
            "LegacyMLWorkshopInferenceProvider", "LegacyMLWorkshopRunner",
+           "NativeTensorRunner", "PyTorchInferenceProvider",
+           "TensorFlowInferenceProvider",
            "OpenAICompatibleInferenceProvider", "OpenAICompatibleTransport",
            "PromptMessage", "PromptPackage", "ProviderProfile", "TrainingRequest",
            "TrainingRun", "TrainingRuntime",

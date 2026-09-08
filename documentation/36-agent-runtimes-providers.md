@@ -100,6 +100,15 @@ route traffic, retry inference, or change an active compatibility alias. Those
 effects remain owned by a future deployment controller and separately gated
 runtime adapters.
 
+The native tensor compatibility layer provides deployment-bound PyTorch and
+TensorFlow batch adapters without taking over lifecycle ownership. Both reuse
+the same canonical JSON input, prediction/shape output, cancellation, output
+limit, and stable-error boundary as existing batch providers. Construction
+fails when the admitted deployment's package, runtime, provider, or artifact
+evidence does not match the selected framework. Framework imports, weight
+deserialization, device selection, worker discovery, retries, and traffic
+cutover remain outside this layer.
+
 ## Structured generation contract
 
 Structured generation starts with the provider-neutral, non-executing contract in

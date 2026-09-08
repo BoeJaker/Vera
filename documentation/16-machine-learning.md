@@ -77,6 +77,20 @@ the exact health evidence behind provider observations. This separates
 deployment identity and audit history from model loading and traffic routing;
 neither registration nor observation performs either effect.
 
+PyTorch and TensorFlow batch prediction can now enter the same portable seam
+through `PyTorchInferenceProvider` and `TensorFlowInferenceProvider`. Each
+adapter requires a matching deployment, package format/framework, artifact
+digest set, provider identity, and runtime kind before it will call an injected
+runner. The runner receives only the content-derived deployment ID and canonical
+JSON tensor input; arbitrary runtime fields are removed from the portable
+result, and backend failures become stable codes.
+
+These adapters intentionally do not import PyTorch or TensorFlow, deserialize
+weights, choose devices, open artifact URIs, discover workers, or redirect
+existing ML traffic. A runtime controller must verify and load the deployment
+and supply the runner. Live native-runtime parity, cancellation during a real
+kernel, placement, memory pressure, and teardown remain separate gates.
+
 ---
 
 ## 1. Modules as compute graphs (Workshop)
