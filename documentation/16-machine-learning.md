@@ -91,6 +91,15 @@ existing ML traffic. A runtime controller must verify and load the deployment
 and supply the runner. Live native-runtime parity, cancellation during a real
 kernel, placement, memory pressure, and teardown remain separate gates.
 
+An evidence-bound dispatch plan closes the gap between provider discovery and
+deployment state without becoming a router. For one caller-selected provider
+and deployment, it verifies request compatibility, placement, current readiness,
+matching health evidence, desired/observed lifecycle state, available capacity,
+queue policy, and the deployment's single retry owner. The plan is
+content-addressed and includes every source revision used in the decision. It
+does not select an alternative, reserve a slot, invoke inference, retry, or fail
+over.
+
 ---
 
 ## 1. Modules as compute graphs (Workshop)

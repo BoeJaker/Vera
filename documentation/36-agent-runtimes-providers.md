@@ -109,6 +109,21 @@ evidence does not match the selected framework. Framework imports, weight
 deserialization, device selection, worker discovery, retries, and traffic
 cutover remain outside this layer.
 
+Before an execution owner dispatches, `plan_inference_dispatch` can join one
+explicit provider and deployment choice to a portable request. It requires the
+provider to be eligible at a caller-supplied time, the deployment to be desired
+active and observed ready, and both registries to cite the same current health
+record. An explicit policy may refuse saturated providers or excessive queues
+and bounds retry attempts; the immutable deployment supplies the sole retry
+owner. The content-addressed result records the exact provider, deployment,
+health, policy, and registry revisions used for the decision.
+
+Planning does not enumerate or rank alternatives and does not return a provider
+object. It cannot invoke inference, reserve capacity, route traffic, retry, or
+fail over. If evidence changes between planning and execution, the recorded
+revisions make revalidation the execution owner's responsibility rather than a
+silent fallback.
+
 ## Structured generation contract
 
 Structured generation starts with the provider-neutral, non-executing contract in
