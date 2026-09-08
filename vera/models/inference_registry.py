@@ -6,11 +6,12 @@ from typing import Any
 
 from .inference_contracts import (
     InferenceContractConflict, InferenceProvider, InferenceRequest)
+from .inference_health import InferenceProviderHealth
 from .model_package import _identifier
 from .training_contracts import ProviderProfile
 
-INFERENCE_PROVIDER_DESCRIPTOR_SCHEMA = "vera.inference-provider-descriptor/v1"
-_STATES = {"ready", "unavailable", "draining", "unknown"}
+INFERENCE_PROVIDER_DESCRIPTOR_SCHEMA = "vera.inference-provider-descriptor/v2"
+_STATES = {"ready", "degraded", "unavailable", "draining", "unknown"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +21,7 @@ class InferenceProviderDescriptor:
     tasks: tuple[str, ...]
     placements: tuple[str, ...] = ()
     state: str = "unknown"
+    health: InferenceProviderHealth | None = None
     revision: int = 1
     schema: str = INFERENCE_PROVIDER_DESCRIPTOR_SCHEMA
 
@@ -34,6 +36,18 @@ class InferenceProviderDescriptor:
             object.__setattr__(self, name, values)
         if self.state not in _STATES:
             raise ValueError("unsupported inference provider state")
+        if self.health is not None:
+            if not isinstance(self.health, InferenceProviderHealth):
+                raise TypeError("health must be InferenceProviderHealth")
+            if self.health.provider_id != self.provider_id:
+                raise ValueError("health evidence provider does not match descriptor")
+            if self.health.state != self.state:
+                raise ValueError("descriptor state does not match health evidence")
+            if not frozenset(self.health.available_package_ids) <= frozenset(
+                    self.package_ids):
+                raise ValueError("health evidence names an undeclared package")
+        elif self.state != "unknown":
+            raise ValueError("provider readiness requires health evidence")
         if isinstance(self.revision, bool) or not isinstance(self.revision, int) \
                 or self.revision < 1:
             raise ValueError("provider descriptor revision must be positive")
@@ -42,6 +56,7 @@ class InferenceProviderDescriptor:
         return {"schema": self.schema, "provider_id": self.provider_id,
                 "package_ids": list(self.package_ids), "tasks": list(self.tasks),
                 "placements": list(self.placements), "state": self.state,
+                "health": self.health.to_dict() if self.health else None,
                 "revision": self.revision}
 
 
@@ -58,7 +73,8 @@ class InferenceProviderRegistry:
         self._entries: dict[str, _Entry] = {}
 
     def register(self, provider: InferenceProvider, *, package_ids: tuple[str, ...],
-                 placements: tuple[str, ...] = (), state: str = "unknown",
+                 placements: tuple[str, ...] = (),
+                 health: InferenceProviderHealth | None = None,
                  expected_revision: int = 0) -> InferenceProviderDescriptor:
         profile = self._profile(provider)
         current = self._entries.get(profile.provider_id)
@@ -68,7 +84,7 @@ class InferenceProviderRegistry:
                 "inference provider registration revision conflict")
         descriptor = InferenceProviderDescriptor(
             profile.provider_id, package_ids, profile.capabilities, placements,
-            state, current_revision + 1)
+            health.state if health else "unknown", health, current_revision + 1)
         self._entries[profile.provider_id] = _Entry(provider, descriptor)
         return descriptor
 
@@ -92,7 +108,8 @@ class InferenceProviderRegistry:
 
     def candidates(self, request: InferenceRequest, *,
                    placements: tuple[str, ...] = (),
-                   include_unavailable: bool = False
+                   include_unavailable: bool = False,
+                   as_of_ms: int | None = None,
                    ) -> tuple[InferenceProviderDescriptor, ...]:
         if not isinstance(request, InferenceRequest):
             raise TypeError("request must be InferenceRequest")
@@ -104,14 +121,20 @@ class InferenceProviderRegistry:
                     or request.task not in descriptor.tasks \
                     or not required <= frozenset(descriptor.placements):
                 continue
-            if not include_unavailable and descriptor.state != "ready":
-                continue
+            if not include_unavailable:
+                health = descriptor.health
+                if (health is None or descriptor.state != "ready"
+                        or as_of_ms is None or not health.is_current(as_of_ms)
+                        or request.model_package_id not in
+                        health.available_package_ids):
+                    continue
             found.append(descriptor)
         return tuple(found)
 
     def resolve(self, request: InferenceRequest, provider_id: str, *,
                 placements: tuple[str, ...] = (),
-                require_ready: bool = True) -> InferenceProvider:
+                require_ready: bool = True,
+                as_of_ms: int | None = None) -> InferenceProvider:
         """Return only the caller's explicit compatible provider selection."""
         provider_id = _identifier(provider_id, "provider ID")
         entry = self._entries.get(provider_id)
@@ -119,7 +142,7 @@ class InferenceProviderRegistry:
             raise KeyError("inference provider is not registered")
         candidates = self.candidates(
             request, placements=placements,
-            include_unavailable=not require_ready)
+            include_unavailable=not require_ready, as_of_ms=as_of_ms)
         if entry.descriptor not in candidates:
             raise InferenceContractConflict(
                 "selected inference provider is not an eligible candidate")

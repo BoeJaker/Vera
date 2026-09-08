@@ -26,6 +26,11 @@ from .openai_inference_adapter import (
     OpenAICompatibleInferenceProvider, OpenAICompatibleTransport)
 from .inference_registry import (
     InferenceProviderDescriptor, InferenceProviderRegistry)
+from .inference_health import (
+    InferenceProviderHealth, inference_provider_health_from_dict)
+from .inference_conformance import (
+    InferenceConformanceExpectation, InferenceConformanceReport,
+    evaluate_inference_conformance, inference_conformance_expectation_from_dict)
 from .ollama_inference_adapter import (
     LegacyOllamaInferenceProvider, LegacyOllamaRunner)
 from .legacy_prediction_adapter import (
@@ -41,6 +46,10 @@ __all__ = ["AdmittedModelActivation", "LegacyModelCapabilityBinding", "ModelActi
            "InferenceArtifact", "InferenceCancellation", "InferenceContractConflict",
            "InferenceEvent", "InferenceProvider", "InferenceRequest",
            "InferenceProviderDescriptor", "InferenceProviderRegistry",
+           "InferenceProviderHealth", "InferenceConformanceExpectation",
+           "InferenceConformanceReport", "evaluate_inference_conformance",
+           "inference_provider_health_from_dict",
+           "inference_conformance_expectation_from_dict",
            "InferenceTranscript", "InferenceValue",
            "LegacyONNXInferenceProvider", "LegacyONNXRunner",
            "LegacyOllamaInferenceProvider", "LegacyOllamaRunner",

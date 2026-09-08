@@ -56,6 +56,19 @@ core while retaining its execution-provider evidence. Neither adapter redirects
 the existing capabilities, retries failures, loads artifacts, or performs work
 when imported, so live parity and cutover remain separate decisions.
 
+Portable provider readiness is evidence-backed rather than a free-form flag.
+External cluster or runtime probes publish a bounded, expiring health record
+with available ModelPackages and separate load counters. The inference registry
+can replay candidate decisions at an explicit time and rejects stale,
+foreign-provider, or undeclared-package evidence. It still does not probe a
+runtime or select, retry, balance, or fail over providers.
+
+Adapter parity can be checked offline from already-collected inference
+transcripts. Conformance expectations compare content hashes, terminal state,
+stable outage codes, and optional usage counters while keeping output values out
+of reports. This supplies deterministic regression fixtures without treating an
+offline check as proof that a native runtime, placement, or model is healthy.
+
 ---
 
 ## 1. Modules as compute graphs (Workshop)
