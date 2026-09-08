@@ -31,6 +31,18 @@ from . import seeds as _seeds
 log = logging.getLogger("vera.operator.mission.docs")
 
 
+class PanelReadinessError(RuntimeError):
+    """A required, named panel-readiness condition was not satisfied."""
+
+    def __init__(self, condition: str, timeout_ms: int, detail: str = "",
+                 evidence: Optional[List[Dict[str, Any]]] = None) -> None:
+        self.condition = condition
+        self.timeout_ms = int(timeout_ms)
+        self.detail = str(detail or "")
+        self.evidence = list(evidence or [])
+        super().__init__(f"readiness condition '{condition}' was not met within {timeout_ms}ms")
+
+
 def _iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
@@ -192,6 +204,7 @@ async def run_documentation_mission(params: Dict[str, Any],
                                 "domains": dict(manifest_prev.get("domains", {}))}
     gallery_entries: List[Dict[str, Any]] = []
     total_shots = 0
+    capture_failures: List[Dict[str, Any]] = []
 
     try:
         for domain in domains:
@@ -227,11 +240,19 @@ async def run_documentation_mission(params: Dict[str, Any],
                     label = state.get("label") or p.get("label") or pid
                     if do_capture and session is not None:
                         cap_url = panel_capture_url(base_url, p)
-                        ok = await _shoot_panel(
+                        capture = await _shoot_panel(
                             session, cap_url["url"], abspath,
                             settle_ms=max(settle_ms, int(state.get("settle_ms", 0) or 0)),
                             full_page=bool(state.get("full_page", full_page)), state=state)
-                        if not ok:
+                        if not capture["ok"]:
+                            failure = {
+                                "domain": slug, "panel_id": pid, "shot_id": shot_id,
+                                "condition": capture.get("failed_condition", "capture"),
+                                "error": capture.get("error", "capture failed"),
+                            }
+                            capture_failures.append(failure)
+                            await _emit("warn", f"[{slug}] {label}: {failure['error']}",
+                                        **failure)
                             continue
                         total_shots += 1
                         await _emit("shot", f"[{slug}] {label}",
@@ -244,7 +265,9 @@ async def run_documentation_mission(params: Dict[str, Any],
                     shots.append({"panel_id": shot_id, "source_panel_id": pid,
                                   "label": label, "rel_path": rel,
                                   "caption": state.get("caption") or label,
-                                  "mode": mode, "via": (cap_url["via"] if do_capture else "")})
+                                  "mode": mode, "via": (cap_url["via"] if do_capture else ""),
+                                  "readiness": (capture.get("readiness", [])
+                                                if do_capture and session is not None else [])})
 
             # write doc auto-blocks
             number = domain["doc"].split("-")[0]
@@ -269,7 +292,8 @@ async def run_documentation_mission(params: Dict[str, Any],
             for s in shots:
                 prev_panels[s["panel_id"]] = {
                     "id": s["panel_id"], "label": s["label"], "shot": s["rel_path"],
-                    "mode": s["mode"], "via": s.get("via", "")}
+                    "mode": s["mode"], "via": s.get("via", ""),
+                    "readiness": s.get("readiness", [])}
             manifest["domains"][slug] = {
                 "doc": domain["doc"], "title": domain["title"],
                 "panels": list(prev_panels.values()), "cap_count": len(caps),
@@ -304,11 +328,14 @@ async def run_documentation_mission(params: Dict[str, Any],
     with open(os.path.join(assets_dir, "manifest.json"), "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
 
-    await _emit("done", f"documentation built: {total_shots} screenshots across "
-                        f"{len(domains)} domains")
-    return {"ok": True, "base_url": base_url, "target_kind": resolved.get("kind"),
+    outcome = "complete" if not capture_failures else "partial"
+    await _emit("done", f"documentation build {outcome}: {total_shots} screenshots, "
+                        f"{len(capture_failures)} capture failures across {len(domains)} domains")
+    return {"ok": not capture_failures, "partial": bool(capture_failures),
+            "base_url": base_url, "target_kind": resolved.get("kind"),
             "domains": len(domains), "panels_discovered": len(panels),
             "screenshots": total_shots, "capabilities": len(all_caps),
+            "capture_failures": capture_failures,
             "captured": do_capture, "capture_note": capture_note,
             "docs_written": bool(write_docs), "manifest": "documentation/assets/manifest.json"}
 
@@ -357,40 +384,50 @@ def panel_capture_url(base_url: str, panel: Dict[str, Any]) -> Dict[str, str]:
     return {"url": f"{base}/ui/panel/window?id={panel.get('id')}", "via": "window"}
 
 
-async def _wait_ready(page, settle_ms: int, state: Optional[Dict[str, Any]] = None) -> None:
-    """Give a panel time to actually render: best-effort network-idle, then wait
-    for real content, then a settle delay for charts / async fetches / WS data."""
+async def _wait_ready(page, settle_ms: int,
+                      state: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """Wait for declarative panel readiness and return bounded evidence.
+
+    Network-idle and asset settling are observations because WebSocket panels may
+    never become idle. Explicit selectors/text are requirements. When neither is
+    configured, meaningful body content is the required fallback.
+    """
     state = state or {}
-    try:
-        await page.wait_for_load_state("networkidle", timeout=4000)
-    except Exception:
-        pass  # WS-backed panels never go idle — that's fine
-    try:
-        # Wait until the body has meaningful rendered content (not a blank shell).
-        await page.wait_for_function(
+    evidence: List[Dict[str, Any]] = []
+
+    async def _observe(condition: str, required: bool, timeout_ms: int, awaitable) -> None:
+        try:
+            await awaitable
+            evidence.append({"condition": condition, "required": required, "status": "ready"})
+        except Exception as exc:
+            evidence.append({"condition": condition, "required": required, "status": "timeout"})
+            if required:
+                raise PanelReadinessError(condition, timeout_ms, type(exc).__name__,
+                                          evidence) from exc
+
+    await _observe("network_idle", False, 4000,
+                   page.wait_for_load_state("networkidle", timeout=4000))
+    ready_selector = str(state.get("ready_selector") or "")
+    ready_text = str(state.get("ready_text") or "")
+    await _observe(
+        "meaningful_content", not (ready_selector or ready_text), 10000,
+        page.wait_for_function(
             "() => { const b=document.body; if(!b) return false; "
             "const text=(b.innerText||'').replace(/loading[….]*/ig,'').trim(); "
             "return b.scrollHeight > 120 && (text.length > 40 "
             "|| b.querySelector('canvas,svg,img[src],table tbody tr')); }",
-            timeout=10000)
-    except Exception:
-        pass
-    ready_selector = str(state.get("ready_selector") or "")
+            timeout=10000))
     if ready_selector:
-        try:
-            await page.wait_for_selector(ready_selector, state="visible", timeout=15000)
-        except Exception:
-            pass
-    ready_text = str(state.get("ready_text") or "")
+        await _observe(f"selector:{ready_selector}", True, 15000,
+                       page.wait_for_selector(ready_selector, state="visible", timeout=15000))
     if ready_text:
-        try:
-            await page.wait_for_function(
+        await _observe(
+            f"text:{ready_text}", True, 20000,
+            page.wait_for_function(
                 """sel => { const e=document.querySelector(sel);
                 if(!e) return false; const t=(e.innerText||e.textContent||'').trim();
                 return t.length > 2 && !/^(loading|starting|—|[.]{3})/i.test(t); }""",
-                ready_text, timeout=20000)
-        except Exception:
-            pass
+                ready_text, timeout=20000))
     try:
         await page.evaluate("""async () => {
           if (document.fonts && document.fonts.ready) await document.fonts.ready;
@@ -400,29 +437,45 @@ async def _wait_ready(page, settle_ms: int, state: Optional[Dict[str, Any]] = No
             setTimeout(r,3000);
           })));
         }""")
+        evidence.append({"condition": "assets_settled", "required": False, "status": "ready"})
     except Exception:
-        pass
+        evidence.append({"condition": "assets_settled", "required": False, "status": "timeout"})
     try:
         await page.wait_for_timeout(max(300, int(settle_ms)))
     except Exception:
         pass
+    return evidence
 
 
 async def _shoot_panel(session, url: str, abspath: str, *, settle_ms: int = 1400,
                        full_page: bool = False,
-                       state: Optional[Dict[str, Any]] = None) -> bool:
-    """Navigate to a panel's real URL and save a screenshot. Returns success."""
+                       state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Navigate, prove readiness, then capture with diagnostic metadata."""
     page = session.page
     try:
-        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        except Exception as exc:
+            raise PanelReadinessError("navigation:domcontentloaded", 30000,
+                                      type(exc).__name__) from exc
         state = state or {}
         click = str(state.get("click") or "")
         if click:
-            await page.locator(click).first.click(timeout=10000)
-        await _wait_ready(page, settle_ms, state)
+            try:
+                await page.locator(click).first.click(timeout=10000)
+            except Exception as exc:
+                raise PanelReadinessError(f"click:{click}", 10000,
+                                          type(exc).__name__) from exc
+        readiness = await _wait_ready(page, settle_ms, state)
         os.makedirs(os.path.dirname(abspath), exist_ok=True)
         await page.screenshot(path=abspath, full_page=bool(full_page), type="png")
-        return True
+        return {"ok": True, "readiness": readiness}
+    except PanelReadinessError as e:
+        message = str(e)
+        log.warning("operator/docs: shoot %s failed: %s", url, message)
+        return {"ok": False, "failed_condition": e.condition, "error": message,
+                "readiness": e.evidence}
     except Exception as e:
         log.warning("operator/docs: shoot %s failed: %s", url, e)
-        return False
+        return {"ok": False, "failed_condition": "capture", "error": str(e),
+                "readiness": locals().get("readiness", [])}
