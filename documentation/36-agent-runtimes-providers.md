@@ -84,6 +84,22 @@ transcripts. Reports contain only mismatch field names and hashes, never model
 payloads. These checks do not dispatch inference; representative runtime,
 placement, load, and recovery tests remain a separate live gate.
 
+`InferenceDeployment` is the durable join between those pieces. Its stable
+identity binds one admitted ModelPackage to a provider and target, exact runtime
+kind/version, verified artifact digests, placement labels, and a single retry
+owner. The SQLite registry stores definitions idempotently and appends
+compare-and-set observations for desired versus observed lifecycle state.
+Observations may embed the exact health evidence that produced a provider state;
+pending, stopped, and failed states remain explicit even when no probe exists.
+Repeated writes of the same observation are idempotent, while stale competing
+writes fail closed.
+
+Deployment records are evidence and coordination—not an executor. Creating or
+updating one cannot load an artifact, start or stop a runtime, probe health,
+route traffic, retry inference, or change an active compatibility alias. Those
+effects remain owned by a future deployment controller and separately gated
+runtime adapters.
+
 ## Structured generation contract
 
 Structured generation starts with the provider-neutral, non-executing contract in

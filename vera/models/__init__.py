@@ -35,6 +35,11 @@ from .ollama_inference_adapter import (
     LegacyOllamaInferenceProvider, LegacyOllamaRunner)
 from .legacy_prediction_adapter import (
     LegacyBatchPredictionProvider, LegacyPredictionRunner)
+from .inference_deployment import (
+    InferenceDeployment, InferenceDeploymentObservation,
+    InferenceDeploymentStoreCorrupt, SQLiteInferenceDeploymentRegistry,
+    define_inference_deployment, inference_deployment_from_dict,
+    inference_deployment_observation_from_dict)
 from .ml_workshop_inference_adapter import (
     LegacyMLWorkshopInferenceProvider, LegacyMLWorkshopRunner)
 
@@ -54,6 +59,11 @@ __all__ = ["AdmittedModelActivation", "LegacyModelCapabilityBinding", "ModelActi
            "LegacyONNXInferenceProvider", "LegacyONNXRunner",
            "LegacyOllamaInferenceProvider", "LegacyOllamaRunner",
            "LegacyBatchPredictionProvider", "LegacyPredictionRunner",
+           "InferenceDeployment", "InferenceDeploymentObservation",
+           "InferenceDeploymentStoreCorrupt",
+           "SQLiteInferenceDeploymentRegistry", "define_inference_deployment",
+           "inference_deployment_from_dict",
+           "inference_deployment_observation_from_dict",
            "LegacyMLWorkshopInferenceProvider", "LegacyMLWorkshopRunner",
            "OpenAICompatibleInferenceProvider", "OpenAICompatibleTransport",
            "PromptMessage", "PromptPackage", "ProviderProfile", "TrainingRequest",
