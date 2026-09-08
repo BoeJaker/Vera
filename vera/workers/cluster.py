@@ -273,6 +273,12 @@ async def cluster_poll_loop():
 # LOAD-AWARE ROUTING PATCH
 # ─────────────────────────────────────────────────────────────────────────────
 
+
+try:
+    from Vera.vera.workers import route_preference as _routepref
+except ImportError:                                        # pragma: no cover
+    from vera.workers import route_preference as _routepref
+
 def _colocated_worker_load() -> Dict[str, float]:
     """
     For each Ollama instance, sum the extra load from Vera workers
@@ -344,11 +350,23 @@ def _pick_instance_load_aware(
         _note(f"job-type rule '{job_type}' "
               f"(deny_gpu={bool(rule.get('deny_gpu'))}, "
               f"avoid_embed={bool(rule.get('avoid_embed'))}, "
+              f"prefer={rule.get('prefer') or '-'}, "
+              f"gpu_if_free={bool(rule.get('prefer_gpu_if_free'))}, "
               f"pin={rule.get('pin') or '-'})")
         pin = rule.get("pin") or ""
         if pin and pin in online:
             _note(f"rule pin → {pin}")
             return _out(pin)
+        # Take an IDLE GPU before deny_gpu removes it from the running. Not
+        # prefer_gpu: that takes the GPU at in_use=1 too, and the gate is
+        # capacity ONE, so a summarise arriving mid-loop would QUEUE and the
+        # census would wait behind its own condense call.
+        if _routepref.wants_free_gpu(rule):
+            _idle_gpu = _routepref.free_gpu(online)
+            if _idle_gpu:
+                _note(f"prefer_gpu_if_free: GPU '{_idle_gpu}' is idle -> {_idle_gpu}")
+                return _out(_idle_gpu)
+            _note("prefer_gpu_if_free: no idle GPU - falling through to CPU")
         if rule.get("deny_gpu"):
             nong = {iid: i for iid, i in online.items() if not i.get("has_gpu")}
             if nong:
@@ -393,11 +411,17 @@ def _pick_instance_load_aware(
 
     colocated = _colocated_worker_load()
 
+    _prefer = _routepref.preferred_of(rule)
+
     def _score(iid: str, inst: dict) -> float:
         s  = inst.get("in_use", 0)
         s += colocated.get(iid, 0) * 0.5
         s += _proxy_queue_depth(iid) * 0.2   # this node's own proxy backlog
         s += inst.get("priority", 0) * 0.01
+        # A SOFT preference: enough to win a tie, not enough to win when the
+        # preferred node is the busier one. See route_preference for why a hard
+        # exclusion (avoid_embed) could not express "favours, but will yield".
+        s += _routepref.preference_bonus(iid, _prefer)
         return s
 
     def _has_model(inst: dict) -> bool:
