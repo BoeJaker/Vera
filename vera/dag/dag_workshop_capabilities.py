@@ -11939,8 +11939,12 @@ async def cap_code_edit(path: str, task: str = "", session_id: str = "", repo: s
                 # A decline is an ANSWER. Asking the identical question again is
                 # not a retry, it is a repetition - and it costs a generation.
                 return {"ok": False, "path": path, "error": last_err,
-                        "declined": True, "note": _verdict["note"],
-                        "hint": "name a specific change (what to alter, and where)"}
+                        "declined": True, "kind": _verdict["kind"],
+                        "note": _verdict["note"],
+                        "hint": ("the editor described the change instead of "
+                                 "returning it - ask for the exact find/replace"
+                                 if _verdict["kind"] == _editor_reply.CLAIMED
+                                 else "name a specific change (what to alter, and where)")}
         else:
             res = _v5_apply_edits(current, edits)
             if res["ok"]:
