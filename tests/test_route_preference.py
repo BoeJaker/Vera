@@ -64,48 +64,8 @@ def test_an_unpreferred_node_is_never_penalised():
     assert RP.preference_bonus("cpu-246", "cpu-247") == 0.0
 
 
-# ── taking a free GPU, but only a free one ──────────────────────────────────
-def _n(has_gpu, in_use, status="online"):
-    return {"has_gpu": has_gpu, "in_use": in_use, "status": status}
-
-
-def test_an_idle_gpu_is_offered():
-    nodes = {"gpu-250": _n(True, 0), "cpu-246": _n(False, 0)}
-    assert RP.free_gpu(nodes) == "gpu-250"
-
-
-def test_a_BUSY_gpu_is_not_offered():
-    """The gate is capacity ONE. Routing a summarise at the GPU mid-loop does
-    not run it fast, it queues it - and the census waits behind its own
-    condense call."""
-    nodes = {"gpu-250": _n(True, 1), "cpu-246": _n(False, 0)}
-    assert RP.free_gpu(nodes) == ""
-
-
-def test_a_cpu_node_is_never_offered_as_a_gpu():
-    assert RP.free_gpu({"cpu-246": _n(False, 0)}) == ""
-
-
-def test_an_offline_gpu_is_not_offered():
-    assert RP.free_gpu({"gpu-250": _n(True, 0, status="offline")}) == ""
-
-
-def test_an_unreadable_load_is_not_treated_as_idle():
-    """Guessing wrong here queues a background job in front of a loop."""
-    assert RP.free_gpu({"gpu-250": {"has_gpu": True, "in_use": "?"}}) == ""
-
-
-def test_no_nodes_at_all():
-    assert RP.free_gpu({}) == ""
-    assert RP.free_gpu(None) == ""
-
-
 # ── rule reading ────────────────────────────────────────────────────────────
-def test_the_flags_are_read_off_the_rule():
-    assert RP.wants_free_gpu({"prefer_gpu_if_free": True}) is True
-    assert RP.wants_free_gpu({"prefer_gpu_if_free": False}) is False
-    assert RP.wants_free_gpu({}) is False
-    assert RP.wants_free_gpu(None) is False
+def test_the_preference_is_read_off_the_rule():
     assert RP.preferred_of({"prefer": "cpu-246"}) == "cpu-246"
     assert RP.preferred_of({}) == ""
     assert RP.preferred_of(None) == ""
@@ -130,8 +90,8 @@ def test_a_saturated_preferred_node_hands_work_to_the_other_one():
 # â”€â”€ the fields must SURVIVE the config round-trip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Nearly shipped broken: ollama.routing.save normalises every rule through
 # _rule(), which takes a fixed keyword list. A rule carrying `prefer` or
-# `prefer_gpu_if_free` would have been accepted, silently stripped, and the
-# routing would have looked configured while behaving exactly as before.
+# `prefer` would have been accepted, silently stripped, and the routing would
+# have looked configured while behaving exactly as before.
 
 @pytest.fixture(scope="module")
 def orch():
@@ -140,22 +100,21 @@ def orch():
         reason="orchestrator not importable here (needs the app env)")
 
 
-def test_rule_carries_the_new_fields(orch):
-    r = orch._rule("summarize", deny_gpu=True, prefer="cpu-247",
-                   prefer_gpu_if_free=True)
+def test_rule_carries_the_prefer_field(orch):
+    r = orch._rule("naming", deny_gpu=True, prefer="cpu-247")
     assert r["prefer"] == "cpu-247"
-    assert r["prefer_gpu_if_free"] is True
 
 
-def test_rule_defaults_them_off(orch):
+def test_rule_defaults_prefer_off(orch):
     r = orch._rule("chat", prefer_gpu=True)
-    assert r["prefer"] == "" and r["prefer_gpu_if_free"] is False
+    assert r["prefer"] == ""
 
 
 def test_the_defaults_split_the_two_cpu_nodes(orch):
     d = orch.DEFAULT_ROUTING_RULES
     assert d["embedding"]["prefer"] == "cpu-246"
-    for jt in ("naming", "summarize", "dream_director"):
+    # summarize is NOT here: it left the CPU entirely (GPU-only, see below).
+    for jt in ("naming", "dream_director", "research_reader"):
         assert d[jt]["prefer"] == "cpu-247", jt
 
 
@@ -164,12 +123,26 @@ def test_the_hard_exclusion_is_gone_from_the_rebalanced_rules(orch):
     considered. A soft preference replaces it - if this comes back, so does the
     saturation."""
     d = orch.DEFAULT_ROUTING_RULES
-    for jt in ("naming", "summarize", "dream_director"):
+    for jt in ("naming", "dream_director"):
         assert not d[jt]["avoid_embed"], jt
 
 
-def test_only_summarize_reaches_for_an_idle_gpu(orch):
-    d = orch.DEFAULT_ROUTING_RULES
-    assert d["summarize"]["prefer_gpu_if_free"] is True
-    for jt in ("embedding", "naming", "dream_director"):
-        assert not d[jt]["prefer_gpu_if_free"], jt
+def test_summarize_is_GPU_ONLY_and_off_the_cpu_nodes(orch):
+    """It runs INLINE - the caller is blocked awaiting it - so a CPU summarise
+    overlaps nothing: the GPU idles while the slower box works and the caller
+    just waits longer. Safe because the gate lease is per-GENERATION, so an
+    executor's lease is released before its condense begins."""
+    r = orch.DEFAULT_ROUTING_RULES["summarize"]
+    assert r["prefer_gpu"] is True
+    assert r["allow"] == ["gpu-*"]
+    assert r["deny_gpu"] is False
+
+
+def test_the_loop_condense_actually_carries_the_job_type(orch):
+    """Without job_type the condense inherited the EXECUTOR's routing and the
+    summarize rule never applied to it - the one place it matters most."""
+    import pathlib
+    src = pathlib.Path(orch.__file__).parent / "dag" / "dag_workshop_capabilities.py"
+    body = src.read_text(encoding="utf-8")
+    i = body.index("async def _v5_condense_output")
+    assert 'job_type="summarize"' in body[i:i + 4000]

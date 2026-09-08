@@ -9416,9 +9416,14 @@ async def _v5_condense_output(raw_text: str, tool: str, step_goal: str, *,
               f"TOOL: {tool}\n\nOUTPUT TO CONDENSE (may be truncated):\n"
               f"{raw[:16000]}\n\nWrite the condensed brief.")
     try:
+        # job_type is what applies the `summarize` routing rule. Without it this
+        # call inherited the EXECUTOR's routing and the rule never applied to the
+        # loop's condense at all - the one place it matters most, since the loop
+        # is blocked awaiting it. A caller-supplied instance_id still wins, which
+        # is the documented precedence.
         out = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=False)
+            prefer_gpu=prefer_gpu, json_mode=False, job_type="summarize")
         clean = _strip_think(out or "")[0].strip()
         if clean:
             clean = clean[:max_out]

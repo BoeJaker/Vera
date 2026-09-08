@@ -33,16 +33,13 @@ exactly that, because `in_use` moves in whole numbers:
 So the preference decides which node gets the work while there is a choice, and
 gets out of the way the moment the preferred node is the busier one.
 
-GPU-IF-FREE IS NOT prefer_gpu. `prefer_gpu` takes the GPU whatever its load -
-the reason line reads "picked 'gpu-250' (in_use=1)". For a job like summarize
-that is actively harmful: the GPU gate is capacity ONE, so a summarise arriving
-while a loop holds it does not run fast, it QUEUES, and the census waits behind
-its own condense call. `prefer_gpu_if_free` takes the GPU only when nothing is
-on it, and otherwise falls through to the normal CPU path.
-
-That check is a snapshot and the gate can be taken between the decision and the
-call. The exposure is one summarise queued behind one loop call, which is the
-same cost as today's CPU run, so the race is worth the win when the box is idle.
+NOT A GPU CONTROL. An earlier version of this module also carried a
+"use the GPU only while it is idle" flag, for summarize. It was dropped: the
+gate lease is per-GENERATION, not per-step, so an executor's lease is already
+released before its condense begins - which means a summarise cannot queue
+behind the call awaiting it, and the honest answer for an INLINE job is simply
+GPU-only (`prefer_gpu` + `allow: ["gpu-*"]`), not a conditional. Shipping an
+unconfigured mechanism would have been worse than not having one.
 
 Pure: instance dicts in, decision out. No app imports, no clock, no I/O.
 """
@@ -72,30 +69,6 @@ def preference_bonus(instance_id: str, prefer: Any,
     except (TypeError, ValueError):        # pragma: no cover - defensive
         return -PREFER_BONUS
 
-
-def free_gpu(instances: Optional[Dict[str, Dict[str, Any]]]) -> str:
-    """The id of an idle GPU node, or "".
-
-    Idle means `in_use` is zero. A node whose `in_use` cannot be read is NOT
-    treated as idle: an unreadable load is not evidence of a free box, and
-    guessing wrong here means queueing a background job in front of a loop.
-    """
-    for iid, inst in (instances or {}).items():
-        if not isinstance(inst, dict) or not inst.get("has_gpu"):
-            continue
-        if inst.get("status") not in (None, "online"):
-            continue
-        try:
-            if int(inst.get("in_use") or 0) == 0:
-                return str(iid)
-        except (TypeError, ValueError):
-            continue
-    return ""
-
-
-def wants_free_gpu(rule: Optional[Dict[str, Any]]) -> bool:
-    """True when a rule asks for the GPU only while it is idle."""
-    return bool((rule or {}).get("prefer_gpu_if_free"))
 
 
 def preferred_of(rule: Optional[Dict[str, Any]]) -> str:

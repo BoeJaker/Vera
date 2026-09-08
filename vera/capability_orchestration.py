@@ -628,8 +628,7 @@ OLLAMA_JOB_TYPES: List[str] = [
 def _rule(job_type: str, *, prefer_gpu: bool = False, deny_gpu: bool = False,
           pin: str = "", allow: Optional[List[str]] = None,
           deny: Optional[List[str]] = None, model: str = "",
-          avoid_embed: bool = False, prefer: str = "",
-          prefer_gpu_if_free: bool = False) -> dict:
+          avoid_embed: bool = False, prefer: str = "") -> dict:
     # `model` (optional) pins a specific model for this job type — lets light
     # work (naming, summarisation) run a smaller/faster model than chat/code.
     # `avoid_embed` steers this job type OFF whichever node currently serves
@@ -640,14 +639,10 @@ def _rule(job_type: str, *, prefer_gpu: bool = False, deny_gpu: bool = False,
     # has the arithmetic). Use it where `avoid_embed` is too blunt - a hard
     # exclusion collapsed naming/summarize/dream_director onto ONE cpu node,
     # because the excluded node is always whichever one serves embeddings.
-    # `prefer_gpu_if_free` takes the GPU only when nothing is on it. NOT
-    # prefer_gpu, which takes it at any load: the GPU gate is capacity one, so a
-    # light job arriving mid-loop would QUEUE rather than run fast.
     return {"job_type": job_type, "prefer_gpu": prefer_gpu, "deny_gpu": deny_gpu,
             "pin": pin, "allow": list(allow or []), "deny": list(deny or []),
             "model": model or "", "avoid_embed": bool(avoid_embed),
-            "prefer": str(prefer or ""),
-            "prefer_gpu_if_free": bool(prefer_gpu_if_free)}
+            "prefer": str(prefer or "")}
 
 # Built-in default routing — always shown in the UI as the baseline. Embeddings
 # are CPU-only (light, should never tie up a GPU); generative work prefers GPU.
@@ -664,11 +659,15 @@ DEFAULT_ROUTING_RULES: Dict[str, dict] = {
     # node instead of queueing behind embedding traffic — a summarize stuck
     # behind embeds on the same node stalled every message in a long chat.
     "naming":    _rule("naming",    deny_gpu=True, prefer="cpu-247"),
-    # summarize also takes an IDLE GPU: it runs inline in the loop's condense
-    # path, so on a quiet box it should not crawl on CPU. Only when idle -
-    # the gate is capacity one and queueing behind a loop is worse than CPU.
-    "summarize": _rule("summarize", deny_gpu=True, prefer="cpu-247",
-                       prefer_gpu_if_free=True),
+    # summarize is GPU-ONLY. It runs INLINE - the caller is blocked awaiting it -
+    # so a CPU summarise does not overlap anything: the GPU sits idle while the
+    # slower box works, and the caller just waits longer. Verified safe: the gate
+    # lease is per-GENERATION (acquire -> yield -> release in finally), not
+    # per-step, so an executor's lease is already released before its condense
+    # begins - a GPU summarise cannot queue behind the call that is awaiting it.
+    # `allow` fails safe: if no GPU is online the filter keeps the original
+    # candidates rather than emptying them.
+    "summarize": _rule("summarize", prefer_gpu=True, allow=["gpu-*"]),
     "chat":      _rule("chat",      prefer_gpu=True),
     "dream":     _rule("dream",     prefer_gpu=True),
     "vision":    _rule("vision",    prefer_gpu=True),
@@ -679,7 +678,9 @@ DEFAULT_ROUTING_RULES: Dict[str, dict] = {
     "default":   _rule("default",   prefer_gpu=True),
     # Research role defaults (see OLLAMA_JOB_TYPES note).
     "research_planner": _rule("research_planner", prefer_gpu=True),
-    "research_reader":  _rule("research_reader",  deny_gpu=True),
+    # The biggest CPU generation load during a research-heavy run, so it joins
+    # naming/dream_director on cpu-247 and leaves cpu-246 for embeddings.
+    "research_reader":  _rule("research_reader",  deny_gpu=True, prefer="cpu-247"),
     "research_writer":  _rule("research_writer",  prefer_gpu=True),
     # Ambient thought orchestrator — CPU only, so it can run during user
     # activity without touching the GPU pool. avoid_embed keeps its long
@@ -8044,7 +8045,7 @@ async def cap_ollama_routing_get(trace_id=None):
             description="Create or update a routing profile's rules, and optionally set it "
                         "active. A rule overrides the default for one job type. "
                         "Fields: profile (str! — name), label (str), "
-                        "rules (dict job_type->{prefer_gpu,deny_gpu,pin,allow:[],deny:[],model,avoid_embed,prefer,prefer_gpu_if_free}). `prefer` softly favours one node (it yields when busier); `prefer_gpu_if_free` uses the GPU only when idle. "
+                        "rules (dict job_type->{prefer_gpu,deny_gpu,pin,allow:[],deny:[],model,avoid_embed,prefer}). `prefer` softly favours one node - it wins a tie and yields when it is the busier one. "
                         
                         "activate (bool). Omitted job types inherit the DEFAULT. Persists.")
 async def cap_ollama_routing_save(profile: str, label: str = "",
@@ -8069,8 +8070,7 @@ async def cap_ollama_routing_save(profile: str, label: str = "",
                           allow=r.get("allow") or [], deny=r.get("deny") or [],
                           model=r.get("model", "") or "",
                           avoid_embed=bool(r.get("avoid_embed")),
-                          prefer=r.get("prefer", "") or "",
-                          prefer_gpu_if_free=bool(r.get("prefer_gpu_if_free")))
+                          prefer=r.get("prefer", "") or "")
     profs[profile] = {"label": label or existing.get("label", profile), "rules": clean}
     if activate or ROUTING.get("active_profile") not in profs:
         ROUTING["active_profile"] = profile
