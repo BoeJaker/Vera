@@ -169,6 +169,20 @@ policy. Each subsystem retains its configuration-aware HTTP transport, but a
 failed or unavailable engine now advances through one shared deterministic
 dispatcher instead of following a research-only fallback chain.
 
+Configured platform search providers use that shared boundary too. When a
+provider matches a query, its native results lead the list and the ordinary
+search engines fill any remaining places. Provider errors are contained at the
+boundary, so an unavailable integration falls back to normal web search rather
+than failing the research run. Research can still run standalone without any
+platform provider registered.
+
+Search and crawl HTTP attempts also share the web client's request policy. That
+layer owns per-domain throttling and a bounded retry for transport failures and
+temporary `429`, `502`, `503`, or `504` responses. Other status codes return
+immediately, `Retry-After` delays are capped, and callers do not wrap the policy
+in another retry loop. Standalone researcher deployments retain a direct-request
+fallback when Vera's shared web client is unavailable.
+
 The Writer goes through top results and extracts findings, populating the citations list. Citations stream into the panel as they're found.
 
 ### Stage 3 — Analyst Engine (ANALYST, concurrent with Search/Synthesis)

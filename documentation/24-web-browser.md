@@ -19,6 +19,22 @@ The `web/` package gives Vera two tiers of web access: lightweight **search/fetc
 
 **Routing.** All engines share one dispatcher with a fallback chain `searxng → brave → ddg`; force one with `engine="…"`. SearXNG host from `VERA_SEARXNG_URL` (default `http://<BACKEND_HOST>:8888`), Brave key from `BRAVE_API_KEY`. Timeouts are aggressive (8 s default) — these caps are meant to be responsive, not exhaustive. Crawled content can be ingested into the [Data Fabric](./06-data-fabric.md).
 
+Configured platform APIs are resolved through the same web-client boundary for
+both `web.search` and the research subsystem. A matching native provider leads
+the result set, general engines fill the remainder, and normalized URL
+deduplication preserves one stable order. If a provider is absent, malformed,
+or unavailable, the caller continues through ordinary search without exposing
+provider configuration or turning an optional integration into a hard failure.
+
+The web client is also the single retry and per-domain throttle owner for page,
+reader-proxy, and general search requests. By default it makes at most two
+attempts, and retries only transport failures or temporary `429`, `502`, `503`,
+and `504` responses. Numeric `Retry-After` is honored up to a configured cap;
+other responses are not repeated. Tune this boundary with
+`VERA_WEB_REQUEST_ATTEMPTS`, `VERA_WEB_RETRY_BASE_S`,
+`VERA_WEB_RETRY_MAX_S`, `VERA_WEB_DOMAIN_INTERVAL`, and
+`VERA_WEB_DOMAIN_JITTER` rather than adding caller-local retry loops.
+
 ---
 
 ## 2. `browser.*` — Playwright automation
