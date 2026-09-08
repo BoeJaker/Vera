@@ -1,8 +1,11 @@
 import asyncio
+from dataclasses import replace
 
 import pytest
 
-from vera.context_provider import ContextCitation, ContextItem
+from vera.context_provider import (
+    ContextCitation, ContextItem, ContextRankingEvidence,
+)
 from vera.context_registry import ContextRegistry
 
 pytestmark = pytest.mark.critical
@@ -81,8 +84,11 @@ async def test_selection_is_explicit_ordered_and_rejects_unknown_or_duplicate_id
 async def test_ranking_happens_before_the_only_budget_selection():
     values = [item("initial-winner", .9), item("rescued", .4)]
     def rescue(items):
-        return [item(value.item_id, 1 if value.item_id == "rescued" else 0,
-                     provider=value.provider) for value in items]
+        return [replace(
+            value, score=1 if value.item_id == "rescued" else 0,
+            ranking_evidence=value.ranking_evidence + (
+                ContextRankingEvidence("rescue", "r1", 1, 1),))
+                for value in items]
     value = registry(Provider("memory", values),
                      rankers=(Ranker("rescue", rescue),))
     result = await value.compose(
@@ -124,6 +130,26 @@ async def test_ranker_cannot_add_drop_or_rewrite_authoritative_context():
     assert result.assembly.items == (original,)
     assert result.rankers == ()
     assert result.ranker_failures[0].reason == "ValueError"
+
+
+@pytest.mark.asyncio
+async def test_ranker_cannot_strip_evidence_or_change_score_without_evidence():
+    ranked = replace(
+        item("kept", .8),
+        ranking_evidence=(ContextRankingEvidence("first", "r1", .8, .2),))
+    strip = Ranker("strip", lambda values: [replace(
+        value, ranking_evidence=()) for value in values])
+    unsupported = Ranker("unsupported", lambda values: [replace(
+        value, score=1) for value in values])
+    value = registry(Provider("memory", [ranked]), rankers=(strip, unsupported))
+    result = await value.compose(
+        "query", provider_ids=("memory",),
+        ranker_ids=("strip", "unsupported"), limit_per_provider=2,
+        budget_tokens=2)
+    assert result.assembly.items == (ranked,)
+    assert result.rankers == ()
+    assert [failure.reason for failure in result.ranker_failures] == [
+        "ValueError", "ValueError"]
 
 
 @pytest.mark.asyncio

@@ -23,11 +23,14 @@ class ContextRankingEvidence:
     revision: str
     score: float
     weight: float
+    locator: str = ""
 
     def __post_init__(self) -> None:
         if not all(isinstance(value, str) and value.strip()
                    for value in (self.provider, self.revision)):
             raise ValueError("ranking evidence requires provider and revision")
+        if not isinstance(self.locator, str) or self.locator != self.locator.strip():
+            raise ValueError("ranking evidence locator must be canonical")
         for name, value in (("score", self.score), ("weight", self.weight)):
             if isinstance(value, bool) or not isinstance(value, (int, float)) \
                     or not math.isfinite(value) or not 0 <= value <= 1:

@@ -31,6 +31,14 @@ exclude. Provider failures and ranker failures are reported separately using
 bounded exception types, the last valid candidate set survives an ordinary ranker
 failure, and cancellation propagates across every boundary.
 
+Curated ontology knowledge can participate through the same ranker boundary,
+but only as a caller-supplied, named and versioned snapshot. Each assertion has
+a stable ID, source match, concept, relation, confidence and curator. The adapter
+does not read Vera's mutable capability-ontology database, where manual and
+generated relations coexist, and it cannot create context or change citations.
+It records the selected assertion as bounded ranking evidence; generated
+ontology expansion remains outside the trusted context path.
+
 Vera's memory system is a Neo4j-backed knowledge graph augmented with vector search. Every meaningful interaction — a capability call, a chat turn, a research job, a file write, a workspace open — can land on the graph as a node, linked into a per-session activity chain. The graph is what gives the rest of the system long-term, cross-session continuity.
 
 The system has three layers:
