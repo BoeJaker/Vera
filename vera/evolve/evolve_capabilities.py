@@ -8605,6 +8605,191 @@ schedule(_sandbox_idle_sweep, _SANDBOX_IDLE_SWEEP_INTERVAL_S, name="evolve.sandb
          singleton=True)   # pauses/reaps CONTAINERS every instance can see
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# DOCKER DISK HEADROOM — warn before it fills, and reap what fills it
+# ─────────────────────────────────────────────────────────────────────────────
+# 2026-09-08: /mnt/dockerdata reached 0 bytes free and took the estate down.
+# Postgres crashed and could not finish recovery because it could not write;
+# Neo4j refused to start with "No space left on device". Neither said "disk" —
+# they surfaced as "cannot connect to postgres / neo4j", and obs.health called
+# both healthy throughout because it checks that a connection OBJECT exists.
+#
+# What filled it: 490 exited `vera-sbx-*` session sandboxes, oldest 48 days. A
+# loop run leaves one behind; a 12-goal census leaves twelve. Nothing reaped
+# them, so the disk filling was a matter of when, not whether.
+
+try:
+    from Vera.vera.docker import disk_headroom as _disk
+except ImportError:                                        # pragma: no cover
+    try:
+        from vera.docker import disk_headroom as _disk
+    except ImportError:
+        _disk = None
+
+DOCKER_DISK_MOUNT = os.getenv("VERA_DOCKER_DISK_MOUNT", "")
+_DISK_SWEEP_INTERVAL_S = int(os.getenv("VERA_DISK_SWEEP_INTERVAL", "900") or 900)
+_SBX_RETAIN_H = float(os.getenv("VERA_SESSION_SANDBOX_RETAIN_HOURS", "24") or 24)
+
+
+async def _docker_root() -> str:
+    """Where docker actually stores its data — asked, not assumed. This estate
+    moved its data-root to /mnt/dockerdata, and watching the wrong filesystem
+    is the same as not watching."""
+    if DOCKER_DISK_MOUNT:
+        return DOCKER_DISK_MOUNT
+    r = await _sh(["docker", "info", "--format", "{{.DockerRootDir}}"], timeout=30)
+    return (r.get("out") or "/var/lib/docker").strip() or "/var/lib/docker"
+
+
+async def _disk_reading(path: str) -> Optional[Dict[str, Any]]:
+    """The filesystem holding `path`. -P keeps each row on ONE line."""
+    if _disk is None:                                      # pragma: no cover
+        return None
+    r = await _sh(["df", "-PBG", path], timeout=30)
+    for line in (r.get("out") or "").splitlines():
+        row = _disk.parse_df_line(line)
+        if row:
+            return row
+    return None
+
+
+async def _session_containers() -> List[Dict[str, Any]]:
+    """Every session sandbox, with how long ago it finished.
+
+    Two calls, not one per container: `docker ps` for identity and `inspect`
+    in batches for FinishedAt. 500+ inspects one at a time is its own outage.
+    """
+    from datetime import datetime, timezone      # local, as elsewhere in this file
+    out: List[Dict[str, Any]] = []
+    ls = await _sh(["docker", "ps", "-a", "--filter", "name=" + _disk.SESSION_PREFIX,
+                    "--format", "{{.ID}}|{{.Names}}"], timeout=60)
+    rows = [l.split("|", 1) for l in (ls.get("out") or "").splitlines() if "|" in l]
+    ids = [r[0] for r in rows]
+    now = datetime.now(timezone.utc)
+    for i in range(0, len(ids), 50):
+        chunk = ids[i:i + 50]
+        insp = await _sh(["docker", "inspect", "--format",
+                          "{{.Id}}|{{.Name}}|{{.State.Running}}|{{.State.FinishedAt}}"]
+                         + chunk, timeout=120)
+        for line in (insp.get("out") or "").splitlines():
+            parts = line.split("|")
+            if len(parts) < 4:
+                continue
+            cid, name, running, fin = parts[0], parts[1].lstrip("/"), parts[2], parts[3]
+            age = None
+            try:
+                ts = datetime.fromisoformat(
+                    fin.replace("Z", "+00:00").split(".")[0] + "+00:00")
+                age = (now - ts).total_seconds() / 3600.0
+            except Exception:
+                age = None          # unknown age -> reapable() keeps it
+            out.append({"id": cid, "name": name,
+                        "running": running.strip().lower() == "true",
+                        "finished_hours_ago": age})
+    return out
+
+
+@capability("docker.disk.status", memory="off", silent=True,
+            http_method="GET", http_path="/docker/disk/status",
+            http_tags=["docker", "obs"],
+            description="Headroom on the filesystem holding docker's data-root, "
+                        "plus how many exited session sandboxes could be reaped. "
+                        "Returns {level: ok|warn|critical, free_gb, total_gb, "
+                        "pct_used, note, reap:{…}}. Exists because this estate "
+                        "hit 0 bytes free on 2026-09-08 and took Postgres and "
+                        "Neo4j down with it, with no prior warning.")
+async def docker_disk_status(trace_id=None):
+    if _disk is None:                                      # pragma: no cover
+        return {"error": "disk_headroom module unavailable"}
+    mount = await _docker_root()
+    reading = await _disk_reading(mount)
+    if not reading:
+        return {"level": _disk.OK, "readable": False,
+                "note": "could not read the filesystem for %s" % mount}
+    res = _disk.describe(reading["mount"], reading["total_gb"], reading["free_gb"])
+    try:
+        res["reap"] = _disk.reap_summary(await _session_containers(), _SBX_RETAIN_H)
+    except Exception as e:                                 # pragma: no cover
+        log.debug("disk status: session scan failed: %s", e)
+    return res
+
+
+@capability("docker.disk.reap", memory="on",
+            http_method="POST", http_path="/docker/disk/reap",
+            http_tags=["docker", "evolve"],
+            description="Remove EXITED session sandboxes (vera-sbx-*) that "
+                        "finished longer ago than retain_hours (default 24). "
+                        "Never touches a running container, never touches a "
+                        "Loop Lab dev sandbox (vera-dev-*), and keeps any "
+                        "container whose finish time cannot be read. "
+                        "dry_run=true (default) reports what it would remove.")
+async def docker_disk_reap(retain_hours: float = 0, dry_run: bool = True,
+                           trace_id=None):
+    if _disk is None:                                      # pragma: no cover
+        return {"error": "disk_headroom module unavailable"}
+    retain = float(retain_hours or _SBX_RETAIN_H)
+    boxes = await _session_containers()
+    plan = _disk.reap_summary(boxes, retain)
+    doomed = _disk.reapable(boxes, retain)
+    if dry_run or not doomed:
+        return {"ok": True, "dry_run": True, **plan}
+    removed, failed = 0, 0
+    for i in range(0, len(doomed), 40):
+        ids = [d["id"] for d in doomed[i:i + 40] if d.get("id")]
+        if not ids:
+            continue
+        # -v takes each container's own anonymous volumes with it; leaving them
+        # behind is half the leak.
+        r = await _sh(["docker", "rm", "-v"] + ids, timeout=300)
+        removed += len(ids) if r.get("ok") else 0
+        failed += 0 if r.get("ok") else len(ids)
+    after = await _disk_reading(await _docker_root())
+    await _audit("docker.disk.reap",
+                 "removed %d exited session sandbox(es) older than %.0fh"
+                 % (removed, retain))
+    await emit_event({"type": "docker.disk.reaped", "removed": removed,
+                      "failed": failed, "retain_hours": retain})
+    return {"ok": True, "dry_run": False, "removed": removed, "failed": failed,
+            **plan, "free_gb_after": (after or {}).get("free_gb")}
+
+
+_DISK_LAST_LEVEL = {"v": _disk.OK if _disk else "ok"}
+
+
+async def _disk_headroom_sweep():
+    """Warn before the disk fills, and reap when it is already critical.
+
+    Emits only on a CHANGE of level. A warning repeated every 15 minutes is a
+    warning nobody reads, and this one has to still be audible at 03:00.
+    """
+    if _disk is None:                                      # pragma: no cover
+        return
+    try:
+        res = await docker_disk_status()
+        lv = res.get("level", _disk.OK)
+        if lv != _DISK_LAST_LEVEL["v"]:
+            _DISK_LAST_LEVEL["v"] = lv
+            log.warning("docker disk %s — %s", lv.upper(), res.get("note", ""))
+            await emit_event({"type": "docker.disk.headroom", "level": lv,
+                              "note": res.get("note", ""),
+                              "free_gb": res.get("free_gb"),
+                              "pct_used": res.get("pct_used")})
+            await _audit("docker.disk.headroom", res.get("note", ""), level=lv)
+        # At CRITICAL, reaping is not optional — a full disk stops Postgres
+        # recovering and stops Neo4j starting, and neither recovers on its own.
+        if lv == _disk.CRITICAL and (res.get("reap") or {}).get("reapable"):
+            out = await docker_disk_reap(dry_run=False)
+            log.warning("docker disk critical: auto-reaped %d session "
+                        "sandbox(es), free now %sG",
+                        out.get("removed", 0), out.get("free_gb_after"))
+    except Exception as e:
+        log.debug("disk headroom sweep: %s", e)
+
+
+schedule(_disk_headroom_sweep, _DISK_SWEEP_INTERVAL_S,
+         name="docker.disk.headroom", singleton=True)
+
+
 def _fabric_sqlite_path(root: Optional[Path] = None) -> Path:
     """Mirrors data_fabric.py's own SQLITE_PATH resolution (FABRIC_SQLITE env
     override, else <repo>/vera/fabric/vera_fabric.db) so the snapshot targets

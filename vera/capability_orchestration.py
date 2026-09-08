@@ -7076,12 +7076,54 @@ async def cap_sys_env_set(key: str = "", value: str = "", confirm: bool = False,
 
 # ── Observability ─────────────────────────────────────────────────────────────
 
+async def _backend_answers(kind: str) -> bool:
+    """Does the backend ANSWER, not merely have a connection object?
+
+    On 2026-09-08 the docker disk hit 0 bytes free. Postgres crashed and could
+    not finish recovery; Neo4j refused to start. Both pools still existed, so
+    this endpoint reported `postgres: true, neo4j: true` for the whole outage
+    while nothing could write — which is why the fault surfaced as a mystery
+    rather than as a disk. A health check that proves a handle exists is not a
+    health check.
+
+    Falls back to the old presence test if the probe cannot be issued, and
+    treats a timeout as DOWN: a backend too busy to answer a trivial query is
+    not usable, which is exactly the state this missed.
+    """
+    try:
+        if kind == "postgres":
+            if PG_POOL is None:
+                return False
+            async with PG_POOL.acquire() as con:
+                await asyncio.wait_for(con.fetchval("SELECT 1"), timeout=4)
+            return True
+        if kind == "neo4j":
+            if NEO is None:
+                return False
+            await asyncio.wait_for(NEO.verify_connectivity(), timeout=4)
+            return True
+        if kind == "redis":
+            if REDIS is None:
+                return False
+            await asyncio.wait_for(REDIS.ping(), timeout=4)
+            return True
+    except Exception as e:
+        log.debug("obs.health %s probe: %s", kind, e)
+        return False
+    return False
+
+
 @capability("obs.health", memory="off", silent=True,
             http_method="GET", http_path="/health", http_tags=["obs"],
-            description="Overall orchestrator health: backends, workers, caps, Ollama nodes.")
+            description="Overall orchestrator health: backends, workers, caps, "
+                        "Ollama nodes. Each backend is PROBED with a trivial "
+                        "query, not tested for the presence of a connection "
+                        "object — see _backend_answers.")
 async def obs_health(trace_id=None):
-    return {"redis":bool(REDIS),"postgres":bool(PG_POOL),"chroma":bool(CHROMA),
-            "neo4j":bool(NEO),"workers":len(WORKER_REGISTRY),"caps":len(CAPABILITY_REGISTRY),
+    return {"redis":await _backend_answers("redis"),
+            "postgres":await _backend_answers("postgres"),"chroma":bool(CHROMA),
+            "neo4j":await _backend_answers("neo4j"),
+            "workers":len(WORKER_REGISTRY),"caps":len(CAPABILITY_REGISTRY),
             "mcp_servers":len(MCP_SERVERS),
             "ollama":{iid:{"status":i["status"],"latency_ms":i["latency_ms"],"has_gpu":i["has_gpu"]}
                       for iid,i in OLLAMA_INSTANCES.items()},
