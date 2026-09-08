@@ -39,6 +39,7 @@ def store(monkeypatch):
 
     async def save(job):
         rows[job["id"]] = dict(job)
+        return True                     # save_job's verdict: it really stored
 
     async def drop(job_id):
         rows.pop(str(job_id), None)
@@ -301,3 +302,42 @@ def test_embedding_IS_preempted(store):
     left = list(store.values())
     assert left[0]["state"] == IQ.WAITING, "the backfill kept the CPU node"
     assert left[0]["preempts"] == 1
+
+
+# â”€â”€ a queue that cannot store must SAY so â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# background.enqueue returned ok:True while storing nothing, because the write
+# failed into a debug log. Found by enqueueing on a live instance and finding
+# no row. "Queued" that did not queue is worse than a refusal: the work is
+# silently never done and the panel shows an empty, healthy-looking queue.
+
+def test_submit_reports_failure_when_the_store_is_down(monkeypatch, store):
+    async def dead_save(job):
+        return False
+
+    monkeypatch.setattr(SVC, "save_job", dead_save)
+
+    async def go():
+        return await SVC.submit(IQ.KIND_DREAM, "a dream")
+
+    res = run(go())
+    assert res["queued"] is False
+    assert "unavailable" in res["reason"]
+
+
+def test_save_job_is_false_with_no_redis(monkeypatch):
+    monkeypatch.setattr(SVC, "_redis", lambda: None)
+
+    async def go():
+        return await SVC.save_job({"id": "x"})
+
+    assert run(go()) is False
+
+
+def test_load_jobs_is_empty_not_an_error_with_no_redis(monkeypatch):
+    """Reading must degrade quietly - the panel asks every refresh."""
+    monkeypatch.setattr(SVC, "_redis", lambda: None)
+
+    async def go():
+        return await SVC.load_jobs()
+
+    assert run(go()) == []

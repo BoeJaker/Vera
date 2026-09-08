@@ -91,18 +91,30 @@ def has_handler(kind: str) -> bool:
 
 
 # ── durable store ───────────────────────────────────────────────────────────
-async def _redis():
+def _redis():
+    """The live connection, or None.
+
+    `get_redis()` does not exist - that was invented, and every store call
+    failed with ImportError until a live instance proved it. The real accessor
+    is the module-level `REDIS` global, which is None until startup connects
+    it, so this is read fresh each time rather than cached at import.
+    """
     try:
-        from Vera.vera.capability_orchestration import get_redis
+        from Vera.vera import capability_orchestration as _orch
     except ImportError:                                    # pragma: no cover
-        from capability_orchestration import get_redis     # type: ignore
-    return await get_redis()
+        try:
+            from vera import capability_orchestration as _orch   # type: ignore
+        except ImportError:
+            return None
+    return getattr(_orch, "REDIS", None)
 
 
 async def load_jobs() -> List[Dict[str, Any]]:
     """Every job, waiting or running. Bad rows are skipped, never fatal."""
+    r = _redis()
+    if r is None:
+        return []
     try:
-        r = await _redis()
         raw = await r.hgetall(REDIS_KEY)
     except Exception as e:
         log.debug("idle queue load: %s", e)
@@ -116,17 +128,30 @@ async def load_jobs() -> List[Dict[str, Any]]:
     return out
 
 
-async def save_job(job: Dict[str, Any]) -> None:
+async def save_job(job: Dict[str, Any]) -> bool:
+    """True only if it is actually stored.
+
+    Returns a verdict rather than swallowing: `background.enqueue` reported
+    ok:True while storing nothing, because the write failed into a debug log.
+    A queue that says "queued" without queueing is worse than one that refuses.
+    """
+    r = _redis()
+    if r is None:
+        log.warning("idle queue: no redis - %s NOT queued", job.get("id"))
+        return False
     try:
-        r = await _redis()
-        await r.hset(REDIS_KEY, job["id"], json.dumps(job))
+        await r.hset(REDIS_KEY, job["id"], json.dumps(job, default=str))
+        return True
     except Exception as e:
         log.warning("idle queue save %s: %s", job.get("id"), e)
+        return False
 
 
 async def drop_job(job_id: str) -> None:
+    r = _redis()
+    if r is None:
+        return
     try:
-        r = await _redis()
         await r.hdel(REDIS_KEY, str(job_id))
     except Exception as e:
         log.debug("idle queue drop %s: %s", job_id, e)
@@ -155,7 +180,9 @@ async def submit(kind: str, title: str = "", *, dedupe_key: str = "",
     job["dedupe_key"] = key
     if priority is not None:
         job["priority"] = int(priority)
-    await save_job(job)
+    if not await save_job(job):
+        return {"queued": False, "reason": "the queue store is unavailable",
+                "id": job["id"]}
     return {"queued": True, "id": job["id"], "kind": kind}
 
 

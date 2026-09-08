@@ -1137,14 +1137,18 @@ async def _idle_jobs() -> list:
     return out
 
 
-async def _idle_put(job: dict) -> None:
+async def _idle_put(job: dict) -> bool:
+    """True only if it is actually stored - see idle_queue_service.save_job."""
     r = _iq_redis()
     if r is None:
-        return
+        log.warning("idle queue: no redis - %s NOT queued", job.get("id"))
+        return False
     try:
         await r.hset(_IDLE_KEY, job["id"], json.dumps(job, default=str))
+        return True
     except Exception as e:                                 # pragma: no cover
-        log.debug("idle queue write: %s", e)
+        log.warning("idle queue write: %s", e)
+        return False
 
 
 async def _idle_drop(job_id: str) -> None:
@@ -1175,7 +1179,9 @@ async def cap_background_enqueue(kind: str = "", title: str = "",
         return {"error": "kind required"}
     jid = str(id or "").strip() or ("%s:%s" % (kind, uuid.uuid4().hex[:8]))
     job = _iq.make_job(jid, kind, title, payload, enqueued_at=time.time())
-    await _idle_put(job)
+    if not await _idle_put(job):
+        return {"error": "the queue store is unavailable - nothing was queued",
+                "id": jid}
     await emit_event({"type": "background.enqueued", "id": jid, "kind": kind,
                       "title": job["title"]})
     return {"ok": True, "id": jid, "state": job["state"],
