@@ -487,22 +487,15 @@ async def cap_web_search(
     if disc and mode != "off":
         recall_task = _spawn(disc.discover_recall(query=query, limit=limit))
 
-    # Platform-API switchover: if the web_api module is loaded and a configured
-    # provider matches the query (site:<domain>, platform keyword, or explicit
-    # platform=), search through the platform's own API — its results lead and
-    # the general engines fill the remainder.
+    # Platform-API switchover through web_client's shared provider boundary.
+    # A configured provider leads; the general engines fill the remainder.
     api_results: List[Dict[str, Any]] = []
     api_engine = ""
     engine_query = query
-    wapi = sys.modules.get("web_api_capabilities")
-    if wapi and hasattr(wapi, "search_for_query"):
-        try:
-            api_results, api_engine, cleaned = await wapi.search_for_query(
-                query, limit, platform=platform)
-            if api_results and cleaned:
-                engine_query = cleaned
-        except Exception as e:
-            log.debug("web.search platform api [%s]: %s", query[:40], e)
+    api_results, api_engine, cleaned = await _wc.search_via_api(
+        query, limit, platform=platform)
+    if api_results and cleaned:
+        engine_query = cleaned
 
     if len(api_results) >= limit:
         results, used = api_results[:limit], api_engine
@@ -511,10 +504,7 @@ async def cap_web_search(
                                                searxng_host=searxng_host,
                                                brave_api_key=brave_api_key)
         if api_results:
-            seen = {r.get("url", "") for r in api_results}
-            results = api_results + [r for r in results
-                                     if r.get("url", "") not in seen]
-            results = results[:limit]
+            results = _engines.merge_pages((api_results, results), limit)
             used = f"{api_engine}+{used}" if used != "none" else api_engine
     elapsed_ms = int((time.monotonic() - t0) * 1000)
 
