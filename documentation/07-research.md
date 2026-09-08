@@ -163,6 +163,12 @@ Sources are searched in parallel:
 - **GitHub** — repos, issues, code
 - **HackerNews** — discussion threads
 
+Research pipelines and the general `web.search` capability use the same engine
+ordering, failure fallback, pagination, deduplication, and redirect-decoding
+policy. Each subsystem retains its configuration-aware HTTP transport, but a
+failed or unavailable engine now advances through one shared deterministic
+dispatcher instead of following a research-only fallback chain.
+
 The Writer goes through top results and extracts findings, populating the citations list. Citations stream into the panel as they're found.
 
 ### Stage 3 — Analyst Engine (ANALYST, concurrent with Search/Synthesis)

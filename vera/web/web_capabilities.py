@@ -390,21 +390,13 @@ async def _dispatch_via_research(query: str, limit: int, engine: str
     # research tried brave -> searxng -> ddg while the local fallback tried
     # searxng -> brave -> ddg - so the same cap preferred a different engine
     # depending on whether researcher_api happened to import. See search_engines.
-    r: List[Dict[str, Any]] = []
-    eng = "none"
     _fn = {"searxng": "search_searxng", "brave": "search_brave", "ddg": "search_ddg"}
-    try:
-        for _e in _engines.engine_order(engine, cfg_engine):
-            _f = getattr(ra, _fn[_e], None)
-            if _f is None:
-                continue
-            r = await _f(query, limit)
-            if r:
-                eng = _e
-                break
-    except Exception as e:
-        log.debug("_dispatch_via_research [%s]: %s", query[:40], e)
-        return [], "none"
+    searchers = {
+        name: (lambda fn=fn: fn(query, limit))
+        for name, attr in _fn.items()
+        if (fn := getattr(ra, attr, None)) is not None
+    }
+    r, eng = await _engines.dispatch_search(engine, cfg_engine, searchers)
 
     n = _norm(r, eng)
     return (n, eng) if n else ([], "none")
@@ -429,17 +421,15 @@ async def _dispatch_search(query: str, limit: int, engine: str = "auto",
         if res:
             return res, used
 
-    # Same decision function as the research path above.
-    for eng in _engines.engine_order(engine, "searxng"):
-        if eng == "searxng":
-            res = await _search_searxng(query, limit, host=searxng_host)
-        elif eng == "brave":
-            res = await _search_brave(query, limit, api_key=brave_api_key)
-        else:
-            res = await _search_ddg(query, limit)
-        if res:
-            return res, eng
-    return [], "none"
+    return await _engines.dispatch_search(
+        engine,
+        "searxng",
+        {
+            "searxng": lambda: _search_searxng(query, limit, host=searxng_host),
+            "brave": lambda: _search_brave(query, limit, api_key=brave_api_key),
+            "ddg": lambda: _search_ddg(query, limit),
+        },
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

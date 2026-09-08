@@ -1006,37 +1006,8 @@ async def search_brave(query: str, limit: int) -> list[dict]:
 
 
 def _clean_search_url(url: str) -> str:
-    """
-    Decode tracker/redirect wrapper URLs back to the real destination URL.
-
-    Handles:
-      DuckDuckGo  https://duckduckgo.com/l/?uddg=<encoded>&rut=...
-      SearXNG     may pass through similar redirects
-      HTML entity decoded URLs  (& → &amp; etc.)
-    """
-    import html as _html
-    from urllib.parse import urlparse, parse_qs, unquote
-    url = _html.unescape(url)          # &amp; → &, &#x2F; → / etc.
-    parsed = urlparse(url)
-    # DuckDuckGo redirect  /l/ or /l.php
-    if parsed.netloc in ("duckduckgo.com","www.duckduckgo.com") and parsed.path.startswith("/l"):
-        qs = parse_qs(parsed.query)
-        target = qs.get("uddg", qs.get("u", [""]))[0]
-        if target:
-            return unquote(target)
-    # Google AMP/redirect
-    if "/url?" in url:
-        qs = parse_qs(parsed.query)
-        target = qs.get("url", qs.get("q", [""]))[0]
-        if target:
-            return unquote(target)
-    # Bing redirect
-    if parsed.netloc.endswith("bing.com") and parsed.path.startswith("/ck/"):
-        qs = parse_qs(parsed.query)
-        target = qs.get("u", [""])[0]
-        if target:
-            return unquote(target.lstrip("a1"))
-    return url
+    """Compatibility wrapper around the shared search redirect policy."""
+    return _engines.decode_redirect(url)
 
 
 async def search_ddg(query: str, limit: int) -> list[dict]:
@@ -1177,11 +1148,16 @@ async def gather_web_search(query: str, job_id: str) -> list[Citation]:
     fast = await get_instance(ModelTier.WRITER) or await get_instance(ModelTier.THINKER)
 
     async def _do_search(q: str) -> list[dict]:
-        r: list[dict] = []
-        if engine == "brave":             r = await search_brave(q, limit)
-        if not r and engine in ("searxng","auto"): r = await search_searxng(q, limit)
-        if not r:                          r = await search_ddg(q, limit)
-        return r
+        results, _used = await _engines.dispatch_search(
+            engine,
+            web_cfg.engine,
+            {
+                "searxng": lambda: search_searxng(q, limit),
+                "brave": lambda: search_brave(q, limit),
+                "ddg": lambda: search_ddg(q, limit),
+            },
+        )
+        return results
 
     async def _decompose_and_search_angles(primary_results: list[dict]) -> list[list[dict]]:
         """
