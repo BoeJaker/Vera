@@ -72,6 +72,7 @@ Env knobs
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import html as _htmllib
 import logging
 import os
@@ -79,11 +80,72 @@ import random
 import re
 import time
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
 
 log = logging.getLogger("vera.web_client")
+
+
+def canonical_crawl_url(url: str) -> str:
+    """Canonical HTTP(S) identity for crawl budgets and visited sets.
+
+    Fragments never change the fetched representation, host/scheme casing is
+    insignificant, and embedded credentials are not valid crawl targets.
+    Query strings remain because they can select genuinely different content.
+    """
+    try:
+        parsed = urlparse(str(url or "").strip())
+        if parsed.scheme.lower() not in ("http", "https") or not parsed.hostname:
+            return ""
+        if parsed.username is not None or parsed.password is not None:
+            return ""
+        host = parsed.hostname.rstrip(".").lower()
+        if ":" in host:
+            host = f"[{host}]"
+        port = parsed.port
+        if (parsed.scheme.lower(), port) in (("http", 80), ("https", 443)):
+            port = None
+        netloc = f"{host}:{port}" if port is not None else host
+        return urlunparse((parsed.scheme.lower(), netloc, parsed.path or "/",
+                           parsed.params, parsed.query, ""))
+    except (TypeError, ValueError):
+        return ""
+
+
+def crawl_scope(url: str) -> str:
+    """Return the normalized network location that owns a crawl."""
+    canonical = canonical_crawl_url(url)
+    return urlparse(canonical).netloc if canonical else ""
+
+
+def crawl_links(html: str, base_url: str, max_links: int = 30) -> list[str]:
+    """Extract ordered, canonical, same-scope HTTP links from one page."""
+    base = canonical_crawl_url(base_url)
+    scope = crawl_scope(base)
+    limit = max(0, int(max_links))
+    if not base or not scope or limit == 0:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for match in re.finditer(r'href=["\']([^"\']+)["\']', html or "", re.I):
+        href = match.group(1).strip()
+        if not href or href.lower().startswith(("javascript:", "mailto:", "tel:")):
+            continue
+        candidate = canonical_crawl_url(urljoin(base, href))
+        if not candidate or crawl_scope(candidate) != scope or candidate in seen:
+            continue
+        seen.add(candidate)
+        out.append(candidate)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def crawl_content_fingerprint(text: str) -> str:
+    """Stable exact-content identity after insignificant whitespace/case."""
+    normalized = " ".join(str(text or "").lower().split())
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest() if normalized else ""
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HTTP/2 — Chrome always speaks h2; an h1-only client wearing a Chrome UA is a

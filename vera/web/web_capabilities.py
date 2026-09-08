@@ -176,34 +176,8 @@ _extract_title = _wc.extract_title
 
 
 def _extract_links(html: str, base_url: str, max_links: int = 30) -> List[str]:
-    """Pull <a href> URLs, normalise to absolute, dedupe by hostname-aware key."""
-    out: List[str] = []
-    seen: set = set()
-    base_host = urlparse(base_url).netloc
-    for m in re.finditer(r'href=["\']([^"\']+)["\']', html, re.I):
-        href = m.group(1).strip()
-        if not href or href.startswith(("javascript:", "mailto:", "tel:", "#")):
-            continue
-        try:
-            absu = urljoin(base_url, href)
-            p = urlparse(absu)
-            if p.scheme not in ("http", "https"):
-                continue
-            # Skip cross-domain by default (the crawler caller controls this
-            # via crawl_breadth on the SAME domain only). External jumps would
-            # explode the search space.
-            if p.netloc != base_host:
-                continue
-            key = (p.scheme, p.netloc, p.path)
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append(absu)
-            if len(out) >= max_links:
-                break
-        except Exception:
-            continue
-    return out
+    """Compatibility wrapper around the shared crawl-boundary policy."""
+    return _wc.crawl_links(html, base_url, max_links=max_links)
 
 
 # Single definition, shared with the researcher's engines. See search_engines
@@ -802,6 +776,9 @@ async def cap_web_crawl(
 ) -> Dict[str, Any]:
     if not url.strip():
         return {"error": "url required", "pages": []}
+    url = _wc.canonical_crawl_url(url)
+    if not url:
+        return {"error": "valid http(s) url required", "pages": []}
     depth     = max(0, min(3, int(depth)))
     breadth   = max(1, min(10, int(breadth)))
     max_pages = max(1, min(MAX_CRAWL_PAGES, int(max_pages)))
@@ -844,6 +821,7 @@ async def cap_web_crawl(
             log.debug("web.crawl discovery path: %s", e)
 
     visited: set = set()
+    content_seen: set = set()
     pages: List[Dict[str, Any]] = []
     rf = _research_fabric() if ingest_to_fabric else None
     fabric_records: List[Dict[str, Any]] = []
@@ -853,7 +831,9 @@ async def cap_web_crawl(
     session = _wc.new_session(timeout)
 
     async def _fetch_one(u: str, current_depth: int):
-        if u in visited or len(pages) >= max_pages:
+        u = _wc.canonical_crawl_url(u)
+        if (not u or _wc.crawl_scope(u) != _wc.crawl_scope(url)
+                or u in visited or len(visited) >= max_pages):
             return
         visited.add(u)
         fp = await _wc.fetch_page(u, timeout=timeout, client=session)
@@ -873,6 +853,12 @@ async def cap_web_crawl(
         status = fp.get("status", 0)
         text   = fp.get("text", "")
         title  = fp.get("title", "")
+        content_key = _wc.crawl_content_fingerprint(text)
+        if content_key and content_key in content_seen:
+            await emit_event({"type": "web.crawl.duplicate", "url": u})
+            return
+        if content_key:
+            content_seen.add(content_key)
         page = {
             "url":         u,
             "title":       title,

@@ -41,7 +41,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import AsyncIterator, Optional
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urlparse, urljoin, urlunparse
 
 import httpx
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks, Query
@@ -689,18 +689,50 @@ async def _safe_screenshot(url: str) -> str:
 
 def extract_links(html: str, base_url: str) -> list[str]:
     """Extract absolute href links from HTML."""
+    if _webclient:
+        return _webclient.crawl_links(html, base_url)
     links = re.findall(r'href=["\']([^"\']+)["\']', html)
     base = urlparse(base_url)
     out = []
     for l in links:
         if l.startswith("javascript:"): continue
         if l.startswith("#"): continue
-        abs_url = urljoin(base_url, l)
+        abs_url = urljoin(base_url, l).split("#", 1)[0]
         p = urlparse(abs_url)
         # stay on same domain
         if p.netloc == base.netloc and p.scheme in ("http","https"):
             out.append(abs_url)
     return list(dict.fromkeys(out))  # dedupe, preserve order
+
+
+def _canonical_crawl_url(url: str) -> str:
+    if _webclient:
+        return _webclient.canonical_crawl_url(url)
+    try:
+        parsed = urlparse(str(url or "").strip())
+        scheme = parsed.scheme.lower()
+        if scheme not in ("http", "https") or not parsed.hostname:
+            return ""
+        if parsed.username is not None or parsed.password is not None:
+            return ""
+        host = parsed.hostname.rstrip(".").lower()
+        if ":" in host:
+            host = f"[{host}]"
+        port = parsed.port
+        if (scheme, port) in (("http", 80), ("https", 443)):
+            port = None
+        netloc = f"{host}:{port}" if port is not None else host
+        return urlunparse((scheme, netloc, parsed.path or "/", parsed.params,
+                           parsed.query, ""))
+    except (TypeError, ValueError):
+        return ""
+
+
+def _crawl_content_key(text: str) -> str:
+    if _webclient:
+        return _webclient.crawl_content_fingerprint(text)
+    normalized = " ".join(str(text or "").lower().split())
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest() if normalized else ""
 
 
 def _md_to_html(md: str) -> str:
@@ -825,6 +857,10 @@ async def deep_crawl_url(url: str, depth: int, breadth: int, timeout: float,
     Calls on_page(url, text_chars) after each successful page fetch."""
     collected: list[str] = []
     visited: set[str] = set()
+    content_seen: set[str] = set()
+    seed = _canonical_crawl_url(url)
+    if not seed:
+        return ""
 
     # One browser-fingerprinted session for the whole walk (TLS + cookies
     # persist across pages, like a real browser) instead of a bot-flagged
@@ -833,7 +869,8 @@ async def deep_crawl_url(url: str, depth: int, breadth: int, timeout: float,
                else httpx.AsyncClient(timeout=timeout, follow_redirects=True))
 
     async def fetch_one(u: str, remaining_depth: int):
-        if u in visited or len(collected) > 20: return
+        u = _canonical_crawl_url(u)
+        if not u or u in visited or len(visited) >= 20: return
         visited.add(u)
         try:
             if _webclient:
@@ -850,6 +887,11 @@ async def deep_crawl_url(url: str, depth: int, breadth: int, timeout: float,
                 html = r.text
                 text = html_to_text(html)
             if text:
+                content_key = _crawl_content_key(text)
+                if content_key and content_key in content_seen:
+                    return
+                if content_key:
+                    content_seen.add(content_key)
                 collected.append(f"[{u}]\n{text[:3000]}")
                 if on_page:
                     try: await on_page(u, len(text))
@@ -874,7 +916,7 @@ async def deep_crawl_url(url: str, depth: int, breadth: int, timeout: float,
             log.debug("crawl %s: %s", u, e)
 
     try:
-        await fetch_one(url, depth)
+        await fetch_one(seed, depth)
     finally:
         await session.aclose()
     return "\n\n---\n\n".join(collected)
@@ -2127,7 +2169,11 @@ async def _doc_site_crawl(base_url: str, query: str, job_id: str,
     """
     await broadcast(job_id, {"type": "step", "t": time.time(),
                                "label": "Doc crawl", "detail": f"Crawling {base_url[:60]}…"})
+    base_url = _canonical_crawl_url(base_url)
+    if not base_url:
+        return []
     visited: set[str] = set()
+    content_seen: set[str] = set()
     queue: list[str]  = [base_url]
     candidates: list[tuple[float, str, str, str]] = []  # (score, url, title, text)
     query_terms = set(re.sub(r"[^a-z0-9 ]", " ", query.lower()).split()) - {
@@ -2142,6 +2188,7 @@ async def _doc_site_crawl(base_url: str, query: str, job_id: str,
                    else httpx.AsyncClient(timeout=timeout, follow_redirects=True))
 
     async def _fetch_and_score(url: str):
+        url = _canonical_crawl_url(url)
         if url in visited or len(visited) >= max_pages: return
         visited.add(url)
         try:
@@ -2159,6 +2206,11 @@ async def _doc_site_crawl(base_url: str, query: str, job_id: str,
                 title_m = re.search(r"<title[^>]*>([^<]+)</title>", html, re.I)
                 title = title_m.group(1).strip() if title_m else url
             if not text: return
+            content_key = _crawl_content_key(text)
+            if content_key and content_key in content_seen:
+                return
+            if content_key:
+                content_seen.add(content_key)
             # Score relevance
             text_lower = text.lower()
             hits = sum(1 for t in query_terms if t in text_lower)
@@ -2172,12 +2224,8 @@ async def _doc_site_crawl(base_url: str, query: str, job_id: str,
             })
             # Discover links to follow
             if len(visited) < max_pages:
-                links = re.findall(r'href=["\']([^"\'#?]+)["\']', html)
-                for l in links[:30]:
-                    abs_url = urljoin(url, l)
-                    p = urlparse(abs_url)
-                    if (p.netloc == base_domain and p.scheme in ("http","https")
-                            and abs_url not in visited):
+                for abs_url in extract_links(html, url)[:30]:
+                    if abs_url not in visited:
                         queue.append(abs_url)
         except Exception as e:
             log.debug("doc_crawl %s: %s", url, e)
