@@ -78,6 +78,13 @@ try:
 except ImportError:
     _webclient = None
 
+
+async def _request_with_web_policy(request, domain: str):
+    """Use Vera's shared web policy, preserving standalone researcher mode."""
+    if _webclient is None:
+        return await request()
+    return await _webclient.request_with_policy(request, domain=domain)
+
 # Orchestrator primitives — available when loaded as a capability module.
 # When running standalone (legacy), these are no-ops.
 try:
@@ -961,9 +968,12 @@ async def _searxng_once(host: str, query: str, limit: int) -> list[dict]:
         async with httpx.AsyncClient(timeout=10.0) as c:
 
             async def _fetch(pageno: int):
-                r = await c.get(f"{host}/search",
-                                params=_engines.searxng_params(
-                                    query, web_cfg.safe_search, pageno))
+                r = await _request_with_web_policy(
+                    lambda: c.get(f"{host}/search",
+                                  params=_engines.searxng_params(
+                                      query, web_cfg.safe_search, pageno)),
+                    domain=urlparse(host).netloc,
+                )
                 return r.json().get("results", []) or []
 
             results = await _engines.walk_pages(_fetch, limit)
@@ -993,9 +1003,13 @@ async def search_brave(query: str, limit: int) -> list[dict]:
         return []
     try:
         async with httpx.AsyncClient(timeout=10.0) as c:
-            r = await c.get("https://api.search.brave.com/res/v1/web/search",
-                params={"q":query,"count":limit},
-                headers={"Accept":"application/json","X-Subscription-Token":api_key})
+            r = await _request_with_web_policy(
+                lambda: c.get("https://api.search.brave.com/res/v1/web/search",
+                              params={"q":query,"count":limit},
+                              headers={"Accept":"application/json",
+                                       "X-Subscription-Token":api_key}),
+                domain="api.search.brave.com",
+            )
             results = [{"url":w["url"],"title":w["title"],"content":w.get("description","")}
                     for w in r.json().get("web",{}).get("results",[])[:limit]]
             if not results:
@@ -1014,8 +1028,11 @@ async def search_ddg(query: str, limit: int) -> list[dict]:
     try:
         _hdrs = _webclient.BROWSER_HEADERS if _webclient else {"User-Agent": "Mozilla/5.0"}
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as c:
-            r = await c.get("https://html.duckduckgo.com/html/",
-                params={"q":query}, headers=_hdrs)
+            r = await _request_with_web_policy(
+                lambda: c.get("https://html.duckduckgo.com/html/",
+                              params={"q":query}, headers=_hdrs),
+                domain="html.duckduckgo.com",
+            )
         links    = re.findall(r'class="result__a"[^>]+href="([^"]+)"[^>]*>([^<]+)<', r.text)
         snippets = re.findall(r'class="result__snippet"[^>]*>([^<]+)<', r.text)
         results = []

@@ -258,8 +258,11 @@ async def _searxng_pages(host: str, query: str, limit: int) -> List[Dict[str, An
 
             async def _fetch(pageno: int):
                 try:
-                    r = await c.get(f"{host}/search",
-                                    params=_engines.searxng_params(query, 0, pageno))
+                    r = await _wc.request_with_policy(
+                        lambda: c.get(f"{host}/search",
+                                      params=_engines.searxng_params(query, 0, pageno)),
+                        domain=urlparse(host).netloc,
+                    )
                     r.raise_for_status()
                 except Exception as e:
                     log.debug("_search_searxng [%s] page %d: %s", query[:40], pageno, e)
@@ -292,10 +295,13 @@ async def _search_brave(query: str, limit: int, api_key: str = "") -> List[Dict[
                 off = _engines.brave_offset(pageno)
                 if off:
                     params["offset"] = off
-                r = await c.get("https://api.search.brave.com/res/v1/web/search",
-                                params=params,
-                                headers={"Accept": "application/json",
-                                         "X-Subscription-Token": api_key})
+                r = await _wc.request_with_policy(
+                    lambda: c.get("https://api.search.brave.com/res/v1/web/search",
+                                  params=params,
+                                  headers={"Accept": "application/json",
+                                           "X-Subscription-Token": api_key}),
+                    domain="api.search.brave.com",
+                )
                 r.raise_for_status()
                 items = (r.json().get("web", {}).get("results", []) or [])
                 pages.append([{
@@ -317,8 +323,11 @@ async def _search_ddg(query: str, limit: int) -> List[Dict[str, Any]]:
     try:
         async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT, headers=HEADERS,
                                       follow_redirects=True) as c:
-            r = await c.get("https://html.duckduckgo.com/html/",
-                            params={"q": query})
+            r = await _wc.request_with_policy(
+                lambda: c.get("https://html.duckduckgo.com/html/",
+                              params={"q": query}),
+                domain="html.duckduckgo.com",
+            )
             r.raise_for_status()
             html = r.text
         out: List[Dict[str, Any]] = []

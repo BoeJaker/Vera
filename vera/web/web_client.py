@@ -194,6 +194,10 @@ def rewrite_url(url: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 _MIN_INTERVAL = float(os.getenv("VERA_WEB_DOMAIN_INTERVAL", "1.0"))
 _JITTER       = float(os.getenv("VERA_WEB_DOMAIN_JITTER", "0.6"))
+_REQUEST_ATTEMPTS = max(1, min(3, int(os.getenv("VERA_WEB_REQUEST_ATTEMPTS", "2"))))
+_RETRY_BASE_S = max(0.0, float(os.getenv("VERA_WEB_RETRY_BASE_S", "0.25")))
+_RETRY_MAX_S = max(0.0, float(os.getenv("VERA_WEB_RETRY_MAX_S", "5.0")))
+_RETRYABLE_STATUSES = frozenset({429, 502, 503, 504})
 
 _domain_next:  Dict[str, float] = {}
 _domain_locks: Dict[str, asyncio.Lock] = {}
@@ -215,6 +219,51 @@ async def throttle_domain(domain: str) -> None:
         for d in list(_domain_next)[:2000]:
             _domain_next.pop(d, None)
             _domain_locks.pop(d, None)
+
+
+def retry_delay(attempt: int, retry_after: str = "") -> float:
+    """Return a bounded delay before the next request attempt.
+
+    Numeric ``Retry-After`` is authoritative but capped. Invalid or absent
+    headers fall back to deterministic exponential delay; domain jitter remains
+    owned by ``throttle_domain`` rather than being duplicated here.
+    """
+    try:
+        if str(retry_after or "").strip():
+            return min(_RETRY_MAX_S, max(0.0, float(retry_after)))
+    except (TypeError, ValueError):
+        pass
+    exponent = max(0, int(attempt) - 1)
+    return min(_RETRY_MAX_S, _RETRY_BASE_S * (2 ** exponent))
+
+
+async def request_with_policy(request: Callable[[], Awaitable[httpx.Response]], *,
+                              domain: str, throttle: bool = True,
+                              attempts: Optional[int] = None,
+                              sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
+                              ) -> httpx.Response:
+    """Execute one HTTP operation with shared throttle and retry ownership.
+
+    The caller still owns URL, headers, timeout and response parsing. This seam
+    alone owns retries, preventing a search/crawl caller from multiplying an
+    inner transport retry. Non-retryable responses return immediately.
+    """
+    total = max(1, min(3, int(attempts or _REQUEST_ATTEMPTS)))
+    for index in range(total):
+        if throttle:
+            await throttle_domain(domain)
+        try:
+            response = await request()
+        except httpx.TransportError:
+            if index + 1 >= total:
+                raise
+            await sleep(retry_delay(index + 1))
+            continue
+        if response.status_code not in _RETRYABLE_STATUSES or index + 1 >= total:
+            return response
+        await response.aclose()
+        await sleep(retry_delay(index + 1, response.headers.get("Retry-After", "")))
+    raise RuntimeError("request policy exhausted without a response")  # pragma: no cover
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -454,10 +503,10 @@ async def _fetch_via_reader(url: str, timeout: float) -> Tuple[str, int, str]:
     hdrs = {"User-Agent": "Vera/1.0 (+reader-fallback)", "Accept": "*/*"}
     if READER_KEY:
         hdrs["Authorization"] = f"Bearer {READER_KEY}"
-    await throttle_domain(urlparse(READER_PROXY).netloc)
+    proxy_domain = urlparse(READER_PROXY).netloc
     async with httpx.AsyncClient(timeout=max(timeout, READER_TIMEOUT), headers=hdrs,
                                  follow_redirects=True) as c:
-        r = await c.get(proxied)
+        r = await request_with_policy(lambda: c.get(proxied), domain=proxy_domain)
     text = (r.text or "").strip()
     title = ""
     m = re.search(r"^Title:\s*(.+)$", text, re.M)
@@ -521,16 +570,13 @@ async def fetch_page(url: str, *,
     fetch_url = rewrite_url(url) if use_rewrites else url
     fetch_domain = urlparse(fetch_url).netloc
 
-    # 3. Throttle repeats against the same domain.
-    if throttle:
-        await throttle_domain(fetch_domain)
-
-    # 4. Direct fetch with the browser fingerprint.
+    # 3. Direct fetch through the one throttle/retry owner.
     html_body, status, transport_err = "", 0, ""
     own_client = client is None
     c = client or new_session(timeout, url=url)
     try:
-        r = await c.get(fetch_url)
+        r = await request_with_policy(lambda: c.get(fetch_url),
+                                      domain=fetch_domain, throttle=throttle)
         html_body, status = r.text, r.status_code
         out["final_url"] = str(r.url)
     except Exception as e:
