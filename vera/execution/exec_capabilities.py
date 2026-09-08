@@ -669,7 +669,7 @@ async def _run_local(argv: List[str], stdin_data: str = "",
         "stdout":     so,
         "stderr":     se,
         "elapsed_ms": round((time.monotonic() - t0) * 1000),
-    })
+    }, command=" ".join(argv))
 
 
 @capability(
@@ -684,7 +684,7 @@ async def _run_local(argv: List[str], stdin_data: str = "",
                 "directory). Pass a GENEROUS timeout for commands that legitimately take a while "
                 "(network scans like nmap, package installs, builds, big greps) — don't let a slow "
                 "-but-healthy command trip the timeout. "
-                "Output: {ok, rc, stdout, stderr, elapsed_ms}. "
+                "Output: {ok, rc, stdout, stderr, elapsed_ms, command, note?}. `command` echoes what was run so a failure can be identified; `note` appears when the result would otherwise be ambiguous - rc=0 with no output (the check passed, do not re-run it) or rc!=0 with no output (grep/test/diff report NO MATCH that way, so it may be your answer). "
                 "Use exec.bash.stream for live streaming output of long-running commands.",
 )
 async def cap_bash_run(command: str, timeout: int = _EXEC_DEFAULT_TIMEOUT,
@@ -2079,7 +2079,7 @@ async def _ssh_run_on(
                 "stderr":     se,
                 "elapsed_ms": round((time.monotonic() - t0) * 1000),
                 "host":       host,
-            })
+            }, command=command)
     except asyncio.TimeoutError:
         return {"ok": False, "error": f"timeout after {timeout}s",
                 "rc": -1, "stdout": "", "stderr": "", "host": host,

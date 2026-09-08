@@ -87,3 +87,23 @@ def test_unsortable_keys_do_not_crash_the_fallback():
 def test_the_fields_this_bug_was_about_are_all_read(field):
     assert failure_reason({field: "the cause"}, 0) == "the cause"
     assert field in BODY_FIELDS
+
+
+# â”€â”€ an exec failure can now name the call it came from â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# failure_reason has a last-resort branch that names the command, written so the
+# reader is "not reduced to guessing which call this was". Exec results carried
+# no `command` key, so for every exec capability that branch was DEAD CODE and
+# the model got: failed with no error detail (rc=1, keys=[...]).
+
+def test_a_silent_exec_failure_names_its_command():
+    res = {"ok": False, "rc": 1, "stdout": "", "stderr": "",
+           "elapsed_ms": 3, "sandboxed": True, "timed_out": False,
+           "command": "grep needle /workspace/hay.txt"}
+    out = failure_reason(res, 1)
+    assert "grep needle /workspace/hay.txt" in out
+
+
+def test_without_a_command_it_still_degrades_to_the_key_list():
+    res = {"ok": False, "rc": 1, "stdout": "", "stderr": "", "elapsed_ms": 3}
+    out = failure_reason(res, 1)
+    assert "no error detail" in out and "rc=1" in out
