@@ -24,6 +24,8 @@ from .inference_contracts import (
 from .onnx_inference_adapter import LegacyONNXInferenceProvider, LegacyONNXRunner
 from .openai_inference_adapter import (
     OpenAICompatibleInferenceProvider, OpenAICompatibleTransport)
+from .inference_registry import (
+    InferenceProviderDescriptor, InferenceProviderRegistry)
 
 __all__ = ["AdmittedModelActivation", "LegacyModelCapabilityBinding", "ModelActivationReceipt",
            "ModelAdmissionReceipt", "ModelDeploymentTarget",
@@ -32,6 +34,7 @@ __all__ = ["AdmittedModelActivation", "LegacyModelCapabilityBinding", "ModelActi
            "LifecycleContractConflict",
            "InferenceArtifact", "InferenceCancellation", "InferenceContractConflict",
            "InferenceEvent", "InferenceProvider", "InferenceRequest",
+           "InferenceProviderDescriptor", "InferenceProviderRegistry",
            "InferenceTranscript", "InferenceValue",
            "LegacyONNXInferenceProvider", "LegacyONNXRunner",
            "OpenAICompatibleInferenceProvider", "OpenAICompatibleTransport",
