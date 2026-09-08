@@ -1,6 +1,7 @@
 import pytest
 from vera.context_provider import (
     ContextCitation, ContextItem, assemble_context, collect_context,
+    collect_context_candidates,
 )
 pytestmark = pytest.mark.critical
 
@@ -74,3 +75,11 @@ async def test_collection_rejects_ambiguous_provider_ids_before_dispatch():
     with pytest.raises(ValueError, match="unique"):
         await collect_context([Provider("memory"), Provider("memory")], "query",
                               limit_per_provider=1, budget_tokens=1)
+
+
+@pytest.mark.asyncio
+async def test_candidate_collection_does_not_apply_budget_early():
+    result = await collect_context_candidates(
+        [Provider("memory", [make("a", .9, 3), make("b", .4, 3)])],
+        "query", limit_per_provider=3)
+    assert [item.item_id for item in result.items] == ["a", "b"]

@@ -17,6 +17,20 @@ similarity from a named model checkpoint. It cannot contribute cached text
 directly: unmatched neighbours are ignored, citations and source revisions are
 unchanged, and the normalized score and ranking weight are retained as evidence.
 
+`ContextRegistry` makes those components discoverable without exposing their
+payloads. Its stable manifest contains only canonical component IDs and roles;
+duplicate registration, ambiguous selection, and unknown IDs fail before any
+provider runs. Callers explicitly choose providers and the ordered ranker chain,
+so adding an adapter cannot silently alter an existing request.
+
+Composition gathers and validates all provider candidates first, applies each
+optional ranker to the still-complete candidate set, and performs the token-budget
+selection exactly once at the end. This ordering matters: ranking evidence can
+promote a relevant candidate that the original provider score would otherwise
+exclude. Provider failures and ranker failures are reported separately using
+bounded exception types, the last valid candidate set survives an ordinary ranker
+failure, and cancellation propagates across every boundary.
+
 Vera's memory system is a Neo4j-backed knowledge graph augmented with vector search. Every meaningful interaction — a capability call, a chat turn, a research job, a file write, a workspace open — can land on the graph as a node, linked into a per-session activity chain. The graph is what gives the rest of the system long-term, cross-session continuity.
 
 The system has three layers:

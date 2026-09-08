@@ -107,6 +107,13 @@ class ContextCollection:
     failures: tuple[ContextProviderFailure, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class ContextCandidates:
+    """Validated provider results before ranking or budget selection."""
+    items: tuple[ContextItem, ...]
+    failures: tuple[ContextProviderFailure, ...]
+
+
 def assemble_context(items: Sequence[ContextItem], *, budget_tokens: int) -> ContextAssembly:
     if isinstance(budget_tokens, bool) or not isinstance(budget_tokens, int) \
             or budget_tokens < 0:
@@ -127,12 +134,11 @@ def assemble_context(items: Sequence[ContextItem], *, budget_tokens: int) -> Con
         tuple(selected), used, budget_tokens, len(ordered) - len(selected))
 
 
-async def collect_context(providers: Sequence[ContextProvider], query: str, *,
-                          limit_per_provider: int,
-                          budget_tokens: int,
-                          cancellation: ContextCancellation | None = None
-                          ) -> ContextCollection:
-    """Query providers concurrently and isolate ordinary provider failures."""
+async def collect_context_candidates(
+        providers: Sequence[ContextProvider], query: str, *,
+        limit_per_provider: int,
+        cancellation: ContextCancellation | None = None) -> ContextCandidates:
+    """Query providers and validate every candidate before later selection."""
     if not isinstance(query, str) or not query.strip():
         raise ValueError("context query is required")
     if isinstance(limit_per_provider, bool) or not isinstance(limit_per_provider, int) \
@@ -174,5 +180,18 @@ async def collect_context(providers: Sequence[ContextProvider], query: str, *,
             failures.append(ContextProviderFailure(provider_id,
                                                     type(exc).__name__))
     failures.sort(key=lambda failure: failure.provider)
+    return ContextCandidates(tuple(items), tuple(failures))
+
+
+async def collect_context(providers: Sequence[ContextProvider], query: str, *,
+                          limit_per_provider: int,
+                          budget_tokens: int,
+                          cancellation: ContextCancellation | None = None
+                          ) -> ContextCollection:
+    """Query providers concurrently and isolate ordinary provider failures."""
+    candidates = await collect_context_candidates(
+        providers, query, limit_per_provider=limit_per_provider,
+        cancellation=cancellation)
     return ContextCollection(
-        assemble_context(items, budget_tokens=budget_tokens), tuple(failures))
+        assemble_context(candidates.items, budget_tokens=budget_tokens),
+        candidates.failures)
