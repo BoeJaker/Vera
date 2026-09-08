@@ -1,5 +1,14 @@
 # 05 · Memory Graph
 
+Context convergence starts with a provider-neutral assembly contract. Every
+admissible item carries stable identity, source, revision, provider, relevance,
+explicit token count, and a citation. Assembly selects whole items
+deterministically within the caller's budget; it never silently truncates away
+provenance or admits uncited text. Native memory, Worldview, and other sources
+can adopt this contract incrementally. Provider queries run concurrently;
+ordinary failures are reported by provider without discarding healthy context,
+while cancellation remains a control signal rather than a recoverable failure.
+
 Vera's memory system is a Neo4j-backed knowledge graph augmented with vector search. Every meaningful interaction — a capability call, a chat turn, a research job, a file write, a workspace open — can land on the graph as a node, linked into a per-session activity chain. The graph is what gives the rest of the system long-term, cross-session continuity.
 
 The system has three layers:
