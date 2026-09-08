@@ -60,16 +60,29 @@ provider invoices.
 Portable model-serving providers are discoverable through
 `InferenceProviderRegistry`. Each immutable descriptor identifies the provider,
 supported ModelPackage IDs and tasks, placement labels, an externally supplied
-readiness state, and a compare-and-set revision. Candidate queries filter those
-facts deterministically. Resolution always requires the caller to name a
-provider; the registry never silently chooses another candidate.
+health record, and a compare-and-set revision. A health record identifies its
+probe source, observation and expiry times, available packages, concurrency,
+in-flight and queued work, and optional observed latency. Its content-derived
+identity makes altered or stale evidence detectable. Candidate queries require
+the caller's explicit evaluation time and accept `ready` only while that record
+is current and names the requested package. Resolution always requires the
+caller to name a provider; the registry never silently chooses another
+candidate.
 
-This boundary intentionally does not probe health, rank providers, balance
+This boundary intentionally does not run probes, rank providers, balance
 traffic, retry a request, or fail over. Cluster and deployment policy can use
 the descriptors as evidence while retaining one visible owner for routing and
-retry decisions. Updating readiness or replacing a provider requires the
+retry decisions. A saturated provider can remain healthy—available slots,
+queue depth, and readiness are separate facts. Updating health or replacing a provider requires the
 previous descriptor revision, preventing a stale controller from overwriting a
 newer cluster view.
+
+Offline parity and outage checks use `InferenceConformanceExpectation`. The
+fixture hashes output values and compares request/package identity, terminal
+status, stable error code, and—when requested—usage counters across supplied
+transcripts. Reports contain only mismatch field names and hashes, never model
+payloads. These checks do not dispatch inference; representative runtime,
+placement, load, and recovery tests remain a separate live gate.
 
 ## Structured generation contract
 
