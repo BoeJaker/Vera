@@ -665,11 +665,13 @@ async def search_for_query(query: str, limit: int, platform: str = ""
         return [], "", ""
 
 
-# Register the fetch hook with web_client so web.fetch / crawls switch over.
+# Register both provider hooks with web_client so direct web caps, research and
+# crawls resolve configured platform APIs through the same shared boundary.
 try:
     _wc.set_api_hook(fetch_for_url)
+    _wc.set_search_api_hook(search_for_query)
 except Exception as e:  # pragma: no cover
-    log.warning("web_api: could not register fetch hook: %s", e)
+    log.warning("web_api: could not register provider hooks: %s", e)
 
 
 # ═════════════════════════════════════════════════════════════════════════════

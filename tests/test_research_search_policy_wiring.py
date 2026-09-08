@@ -13,3 +13,6 @@ def test_research_and_web_dispatch_through_shared_policy():
     assert "return _engines.decode_redirect(url)" in research
     assert "await _engines.dispatch_search(" in research
     assert web.count("await _engines.dispatch_search(") == 2
+    assert "await _webclient.search_via_api(" in research
+    assert "await _wc.search_via_api(" in web
+    assert "sys.modules.get(\"web_api_capabilities\")" not in web

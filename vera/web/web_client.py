@@ -78,7 +78,7 @@ import os
 import random
 import re
 import time
-from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlparse, urlunparse
 
 import httpx
@@ -348,11 +348,58 @@ def extract_title(html: str) -> str:
 # "no configured API covers this URL; scrape normally".
 # ─────────────────────────────────────────────────────────────────────────────
 _API_HOOK: Optional[Callable[[str], Awaitable[Optional[Dict[str, Any]]]]] = None
+_SEARCH_API_HOOK: Optional[
+    Callable[[str, int, str], Awaitable[Tuple[List[Dict[str, Any]], str, str]]]
+] = None
 
 
 def set_api_hook(fn: Optional[Callable[[str], Awaitable[Optional[Dict[str, Any]]]]]) -> None:
     global _API_HOOK
     _API_HOOK = fn
+
+
+def set_search_api_hook(fn: Optional[
+        Callable[[str, int, str],
+                 Awaitable[Tuple[List[Dict[str, Any]], str, str]]]
+]) -> None:
+    """Register the optional platform-search resolver.
+
+    The hook lives beside the fetch hook so every web consumer resolves
+    configured providers through one boundary. Passing ``None`` restores the
+    standalone, general-search-only behaviour.
+    """
+    global _SEARCH_API_HOOK
+    _SEARCH_API_HOOK = fn
+
+
+async def search_via_api(query: str, limit: int, platform: str = ""
+                         ) -> Tuple[List[Dict[str, Any]], str, str]:
+    """Resolve and call a configured platform search provider, if any.
+
+    Provider failures and malformed responses fail closed to an empty result;
+    callers can then continue through their ordinary search fallback. Results
+    are kept content-free here apart from their existing public search fields.
+    """
+    if _SEARCH_API_HOOK is None or not isinstance(query, str) or not query.strip():
+        return [], "", ""
+    try:
+        bounded_limit = max(1, min(50, int(limit)))
+        response = await _SEARCH_API_HOOK(query, bounded_limit, str(platform or ""))
+        if not isinstance(response, tuple) or len(response) != 3:
+            return [], "", ""
+        raw_results, engine, cleaned = response
+        if not isinstance(raw_results, list):
+            return [], "", ""
+        results = [item for item in raw_results
+                   if isinstance(item, dict)
+                   and isinstance(item.get("url"), str)
+                   and item["url"].strip()][:bounded_limit]
+        if not results:
+            return [], "", ""
+        return results, str(engine or "api"), str(cleaned or query)
+    except Exception as e:
+        log.debug("search api hook [%s]: %s", query[:80], e)
+        return [], "", ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -1148,16 +1148,26 @@ async def gather_web_search(query: str, job_id: str) -> list[Citation]:
     fast = await get_instance(ModelTier.WRITER) or await get_instance(ModelTier.THINKER)
 
     async def _do_search(q: str) -> list[dict]:
-        results, _used = await _engines.dispatch_search(
+        api_results: list[dict] = []
+        cleaned = q
+        if _webclient is not None:
+            api_results, _api_engine, provider_query = (
+                await _webclient.search_via_api(q, limit)
+            )
+            if api_results and provider_query:
+                cleaned = provider_query
+        if len(api_results) >= limit:
+            return api_results[:limit]
+        general_results, _used = await _engines.dispatch_search(
             engine,
             web_cfg.engine,
             {
-                "searxng": lambda: search_searxng(q, limit),
-                "brave": lambda: search_brave(q, limit),
-                "ddg": lambda: search_ddg(q, limit),
+                "searxng": lambda: search_searxng(cleaned, limit),
+                "brave": lambda: search_brave(cleaned, limit),
+                "ddg": lambda: search_ddg(cleaned, limit),
             },
         )
-        return results
+        return _engines.merge_pages((api_results, general_results), limit)
 
     async def _decompose_and_search_angles(primary_results: list[dict]) -> list[list[dict]]:
         """
