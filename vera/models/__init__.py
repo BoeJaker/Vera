@@ -44,6 +44,9 @@ from .ml_workshop_inference_adapter import (
     LegacyMLWorkshopInferenceProvider, LegacyMLWorkshopRunner)
 from .native_tensor_inference_adapter import (
     NativeTensorRunner, PyTorchInferenceProvider, TensorFlowInferenceProvider)
+from .inference_dispatch import (
+    InferenceDispatchPlan, InferenceDispatchPolicy,
+    inference_dispatch_plan_from_dict, plan_inference_dispatch)
 
 __all__ = ["AdmittedModelActivation", "LegacyModelCapabilityBinding", "ModelActivationReceipt",
            "ModelAdmissionReceipt", "ModelDeploymentTarget",
@@ -69,6 +72,8 @@ __all__ = ["AdmittedModelActivation", "LegacyModelCapabilityBinding", "ModelActi
            "LegacyMLWorkshopInferenceProvider", "LegacyMLWorkshopRunner",
            "NativeTensorRunner", "PyTorchInferenceProvider",
            "TensorFlowInferenceProvider",
+           "InferenceDispatchPlan", "InferenceDispatchPolicy",
+           "inference_dispatch_plan_from_dict", "plan_inference_dispatch",
            "OpenAICompatibleInferenceProvider", "OpenAICompatibleTransport",
            "PromptMessage", "PromptPackage", "ProviderProfile", "TrainingRequest",
            "TrainingRun", "TrainingRuntime",
