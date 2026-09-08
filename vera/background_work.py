@@ -109,11 +109,17 @@ def quiet_gate(reason: str, last_busy_epoch: Any, now_epoch: Any,
     """Busy now, or not quiet for long enough. "" only when both are clear."""
     if reason:
         return reason
+    if last_busy_epoch is None:
+        return ("no idle observation yet - a process that has just started "
+                "cannot vouch for quiet it did not witness")
     try:
         quiet_for = float(now_epoch) - float(last_busy_epoch)
         need = float(min_quiet_s)
     except (TypeError, ValueError):
-        return ""                                # unreadable clock -> allow
+        # Fail CLOSED. An unreadable clock is not evidence of an idle system,
+        # and the whole point of this gate is that nothing starts unless idle
+        # has been positively established.
+        return "unreadable clock - refusing to assume the system is idle"
     if quiet_for < need:
         return ("only %ds of quiet so far, need %ds (a census leaves 30-60s "
                 "gaps between goals)" % (int(max(0, quiet_for)), int(need)))
@@ -141,7 +147,10 @@ class BackgroundQueue:
         self.retry_s = float(retry_s)
         self.stale_s = float(stale_s)
         self.jobs: Dict[str, Dict[str, Any]] = {}
-        self.last_busy: float = 0.0
+        # None = never witnessed. NOT 0.0: epoch-zero reads as ~57 years of
+        # quiet, so every fresh process passed the gate on its first tick and
+        # kicked off a bulk backfill mid-restart - observed on prod 2026-09-08.
+        self.last_busy: Optional[float] = None
         self.last_seen: Optional[float] = None
         self.last_reason: str = ""
         self.running: Optional[str] = None
@@ -173,13 +182,17 @@ class BackgroundQueue:
             t = float(now)
         except (TypeError, ValueError):
             return
-        if self.last_seen is not None and (t - self.last_seen) > self.stale_s:
-            self.last_busy = t          # unwitnessed gap — cannot vouch for it
+        if self.last_seen is None or (t - self.last_seen) > self.stale_s:
+            # Never watched, or a gap we did not witness. Either way the quiet
+            # clock restarts here: unobserved time is not evidence of idle.
+            self.last_busy = t
         if reason:
             self.last_busy = t
         self.last_seen = t
 
     def quiet_for(self, now: Any) -> float:
+        if self.last_busy is None:
+            return 0.0
         try:
             return max(0.0, float(now) - self.last_busy)
         except (TypeError, ValueError):
