@@ -7076,9 +7076,6 @@ async def cap_sys_env_set(key: str = "", value: str = "", confirm: bool = False,
 
 # ── Observability ─────────────────────────────────────────────────────────────
 
-@capability("obs.health", memory="off", silent=True,
-            http_method="GET", http_path="/health", http_tags=["obs"],
-            description="Overall orchestrator health: backends, workers, caps, Ollama nodes.")
 async def _backend_answers(kind: str) -> bool:
     """Does the backend ANSWER, not merely have a connection object?
 
@@ -7116,6 +7113,12 @@ async def _backend_answers(kind: str) -> bool:
     return False
 
 
+@capability("obs.health", memory="off", silent=True,
+            http_method="GET", http_path="/health", http_tags=["obs"],
+            description="Overall orchestrator health: backends, workers, caps, "
+                        "Ollama nodes. Each backend is PROBED with a trivial "
+                        "query, not tested for the presence of a connection "
+                        "object — see _backend_answers.")
 async def obs_health(trace_id=None):
     return {"redis":await _backend_answers("redis"),
             "postgres":await _backend_answers("postgres"),"chroma":bool(CHROMA),
