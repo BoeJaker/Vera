@@ -63,6 +63,10 @@ Pure: no Redis, no app imports.
 """
 from __future__ import annotations
 
+import json
+
+import re
+
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
 # Dual-spelled: Vera.vera.* resolves to the DEPLOYED checkout, which does not
@@ -78,6 +82,68 @@ except ImportError:                                        # pragma: no cover
 # normalised strings rather than trusting the type to survive the round trip.
 # An id-type mismatch here would silently make EVERY executed step look
 # unaccounted, which is exactly the class of failure this module exists to stop.
+#: Argument keys whose VALUE must never be recorded.
+_SECRET_KEY_RE = re.compile(r"(pass(word)?|token|secret|api_?key|credential|auth)", re.I)
+
+#: Keys that carry no identifying information and only cost space. `timeout`
+#: and friends are here for the same reason _V5_VOLATILE_ARG_KEYS excludes them
+#: from the call signature: two calls differing only by a timeout are the SAME
+#: call, and rendering the difference would show the model a distinction that
+#: the dup guard exists to tell it does not matter (cat the same file at
+#: timeout 10 -> 30 -> 60 is the documented fixation).
+_NOISE_KEYS = {"trace_id", "session_id", "sid", "stream_id",
+               "timeout", "timeout_s", "timeout_ms", "timeout_secs"}
+
+#: Per-value and whole-summary caps. Small on purpose: this goes into the
+#: model's prompt on every cycle as well as into the stored digest.
+CALL_SUMMARY_VALUE = 120
+CALL_SUMMARY_TOTAL = 200
+
+
+def call_summary(args, value_max: int = CALL_SUMMARY_VALUE,
+                 total_max: int = CALL_SUMMARY_TOTAL) -> str:
+    """A short, masked, single-line rendering of a call's arguments.
+
+    WHY THIS EXISTS, TWICE OVER.
+
+    1. The digest kept `cycle`, `tool` and `repeat` and DROPPED the args, even
+       though the `tool_call` event carries them. So "did this run reissue a
+       cosmetically-different version of a call that already failed?" could not
+       be answered from history at all - the commands were gone. That question
+       came up on census 45 build-multifile and could not be settled.
+
+    2. The executor's own prompt renders `tool=exec.bash.run ok=False` and the
+       error, but never WHICH command. In a step with twelve exec.bash.run
+       calls that is not enough to tell one from another, and the loop rebuilds
+       the prompt each cycle rather than keeping the model's own prior turns -
+       so nothing else carries it either.
+
+    Bounded and masked because it lands in two places that must stay small and
+    must not leak: the stored digest, and every executor prompt.
+    """
+    try:
+        items = []
+        for k, v in (args or {}).items():
+            key = str(k)
+            if key in _NOISE_KEYS:
+                continue
+            if _SECRET_KEY_RE.search(key):
+                items.append(f"{key}=***")
+                continue
+            try:
+                text = v if isinstance(v, str) else json.dumps(v, default=str)
+            except Exception:
+                text = str(v)
+            text = " ".join(str(text).split())
+            if len(text) > value_max:
+                text = text[:value_max] + "..."
+            items.append(f"{key}={text}")
+        out = ", ".join(items)
+        return out[:total_max] + ("..." if len(out) > total_max else "")
+    except Exception:
+        return ""
+
+
 def norm_id(v: Any) -> Optional[str]:
     """Canonical form of a step id, or None if there isn't one."""
     if v is None:
@@ -148,9 +214,15 @@ def digest_events(events: Sequence[Dict[str, Any]],
             if sid_k not in by_step:
                 by_step[sid_k] = {"step_id": sid_k, "calls": [], "title": ""}
                 order.append(sid_k)
-            by_step[sid_k]["calls"].append({"cycle": e.get("cycle"),
-                                            "tool": e.get("tool"),
-                                            "repeat": bool(e.get("repeat"))})
+            _summary = call_summary(e.get("args"))
+            _rec = {"cycle": e.get("cycle"), "tool": e.get("tool"),
+                    "repeat": bool(e.get("repeat"))}
+            if _summary:
+                # The event carries the args and this record used to drop them,
+                # which is why a repeated-but-varied failing call was invisible
+                # in every stored trace. Masked and bounded, see call_summary.
+                _rec["args"] = _summary
+            by_step[sid_k]["calls"].append(_rec)
         elif t.endswith(".tool_done"):
             sid_k = e.get("step_id")
             calls = (by_step.get(sid_k) or {}).get("calls") or []

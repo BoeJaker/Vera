@@ -275,3 +275,76 @@ def test_an_empty_run_does_not_explode():
     assert d["counters"]["executed_steps"] == 0
     assert d["counters"]["unaccounted_steps"] == 0
     assert accounting_is_consistent(d["counters"])
+
+
+from vera.dag import loop_trace_core as M      # noqa: E402
+
+# â”€â”€ the args were in the event and the digest threw them away â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# `tool_call` carries `args`; the call record kept cycle/tool/repeat only. So
+# "did this run reissue a cosmetically-different version of a call that already
+# failed?" was unanswerable from any stored trace - the commands were gone.
+# Census 45 build-multifile raised exactly that question and it could not be
+# settled. The same summary also goes into the executor's prompt, which named
+# the capability but never WHICH command.
+
+def test_call_summary_renders_the_command():
+    got = M.call_summary({"command": "python3 -m pytest tests/ -v"})
+    assert got == "command=python3 -m pytest tests/ -v"
+
+
+def test_secrets_are_masked_not_recorded():
+    got = M.call_summary({"url": "https://x", "api_key": "sk-live-abcdef"})
+    assert "sk-live" not in got and "api_key=***" in got
+
+
+def test_noise_keys_are_dropped():
+    got = M.call_summary({"command": "ls", "session_id": "abc", "trace_id": "t"})
+    assert got == "command=ls"
+
+
+def test_a_long_value_is_truncated_not_dumped():
+    got = M.call_summary({"code": "x" * 5000})
+    assert len(got) <= M.CALL_SUMMARY_TOTAL + 3
+
+
+def test_empty_args_render_as_nothing():
+    assert M.call_summary({}) == ""
+    assert M.call_summary(None) == ""
+
+
+def test_the_digest_keeps_the_args_now():
+    events = [
+        {"type": "agent_loop_v5.tool_call", "step_id": 1, "cycle": 1,
+         "tool": "exec.bash.run", "args": {"command": "python -m pytest"}},
+        {"type": "agent_loop_v5.tool_done", "step_id": 1, "cycle": 1,
+         "tool": "exec.bash.run", "ok": False, "elapsed_ms": 5, "error": "boom"},
+    ]
+    d = digest_events(events)
+    call = d["steps"][0]["calls"][0]
+    assert call["args"] == "command=python -m pytest", call
+    assert call["ok"] is False
+
+
+def test_two_cosmetically_different_failures_are_now_distinguishable():
+    """The whole point: python vs python3 must be visible in the record."""
+    events = []
+    for i, cmd in enumerate(("python -m pytest", "python3 -m pytest"), 1):
+        events += [
+            {"type": "agent_loop_v5.tool_call", "step_id": 1, "cycle": i,
+             "tool": "exec.bash.run", "args": {"command": cmd}},
+            {"type": "agent_loop_v5.tool_done", "step_id": 1, "cycle": i,
+             "tool": "exec.bash.run", "ok": False, "elapsed_ms": 1, "error": "e"},
+        ]
+    calls = digest_events(events)["steps"][0]["calls"]
+    assert calls[0]["args"] != calls[1]["args"]
+    assert "python -m" in calls[0]["args"] and "python3 -m" in calls[1]["args"]
+
+
+def test_a_timeout_difference_is_not_shown_as_a_difference():
+    """Two calls differing only by timeout are the SAME call - _v5_call_sig
+    already excludes it, and showing the difference would present the model with
+    a distinction the dup guard exists to tell it does not matter (the
+    documented `cat` at timeout 10 -> 30 -> 60 fixation)."""
+    a = M.call_summary({"command": "cat x.txt", "timeout": 10})
+    b = M.call_summary({"command": "cat x.txt", "timeout": 60})
+    assert a == b == "command=cat x.txt"
