@@ -38,6 +38,27 @@ Mirrors the Ollama cluster layer so the router treats both uniformly:
 | `vllm_chat()` | OpenAI-compatible `/v1/chat/completions` |
 | `vllm_embed()` | `/v1/embeddings` |
 
+### Portable inference boundary
+
+`models/openai_inference_adapter.py` provides the provider-neutral boundary for
+OpenAI-compatible completion, chat, and embedding servers. A model package,
+backend model selector, and transport are bound when the provider is created;
+callers submit the same content-addressed `InferenceRequest` and consume the
+same ordered `InferenceEvent` stream used by other model runtimes.
+
+The transport is deliberately injected. It owns HTTP, authentication, endpoint
+discovery, and server-sent-event decoding, while the adapter owns deterministic
+request mapping, response validation, output limits, usage accounting, and
+stable failure codes. Routing, retries, and fallback remain above this layer, so
+wrapping a vLLM server does not introduce a second hidden policy loop.
+
+The adapter supports `/v1/completions`, `/v1/chat/completions`, and
+`/v1/embeddings`. Package compatibility fixes the accepted task and input/output
+contracts; the request cannot replace the bound model, endpoint, credentials,
+or transport. This makes the same inference call portable to vLLM and other
+OpenAI-compatible serving products without treating their operational controls
+as part of the model payload.
+
 ---
 
 ## 3. Capabilities
