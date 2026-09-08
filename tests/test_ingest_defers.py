@@ -49,6 +49,7 @@ def idle_store(monkeypatch):
 
     async def save(job):
         rows[job["id"]] = dict(job)
+        return True                     # save_job's verdict: it really stored
 
     async def drop(job_id):
         rows.pop(str(job_id), None)
