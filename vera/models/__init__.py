@@ -16,12 +16,20 @@ from .training_contracts import (
 from .deterministic_evaluation import (
     DeterministicScalarEvalProvider, ScalarCaseObservation,
     ScalarEvaluationFixture, ScalarMetricPolicy)
+from .inference_contracts import (
+    InferenceArtifact, InferenceCancellation, InferenceContractConflict,
+    InferenceEvent, InferenceProvider, InferenceRequest, InferenceTranscript,
+    InferenceValue, consume_inference, inference_event_from_dict,
+    inference_request_from_dict, inference_value_from_dict)
 
 __all__ = ["AdmittedModelActivation", "LegacyModelCapabilityBinding", "ModelActivationReceipt",
            "ModelAdmissionReceipt", "ModelDeploymentTarget",
            "ModelPackageAdmissionRejected", "ModelTrustPolicy", "ONNXImportReceipt",
            "EvalProvider", "EvaluationReport", "EvaluationRequest", "MetricResult",
            "LifecycleContractConflict",
+           "InferenceArtifact", "InferenceCancellation", "InferenceContractConflict",
+           "InferenceEvent", "InferenceProvider", "InferenceRequest",
+           "InferenceTranscript", "InferenceValue",
            "PromptMessage", "PromptPackage", "ProviderProfile", "TrainingRequest",
            "TrainingRun", "TrainingRuntime",
            "DeterministicScalarEvalProvider", "ScalarCaseObservation",
@@ -29,5 +37,7 @@ __all__ = ["AdmittedModelActivation", "LegacyModelCapabilityBinding", "ModelActi
            "SQLiteModelPackageRegistry", "inspect_and_register_onnx",
            "evaluate_model_admission", "evaluation_report_from_dict",
            "evaluation_request_from_dict", "legacy_onnx_bindings",
+           "consume_inference", "inference_event_from_dict",
+           "inference_request_from_dict", "inference_value_from_dict",
            "prompt_package_from_dict", "training_request_from_dict",
            "training_run_from_dict"]
