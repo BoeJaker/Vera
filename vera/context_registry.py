@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections import Counter
 from dataclasses import dataclass
 from typing import Sequence
 
@@ -100,8 +99,23 @@ class ContextRegistry:
     @classmethod
     def _validate_ranked(cls, before: tuple[ContextItem, ...],
                          after: tuple[ContextItem, ...]) -> None:
-        if Counter(map(cls._authority, before)) != Counter(map(cls._authority, after)):
-            raise ValueError("ranker changed authoritative context")
+        remaining: dict[tuple, list[ContextItem]] = {}
+        for item in before:
+            remaining.setdefault(cls._authority(item), []).append(item)
+        for item in after:
+            candidates = remaining.get(cls._authority(item), [])
+            matches = [candidate for candidate in candidates
+                       if item.ranking_evidence[:len(candidate.ranking_evidence)]
+                       == candidate.ranking_evidence
+                       and (item.score == candidate.score or
+                            len(item.ranking_evidence)
+                            > len(candidate.ranking_evidence))]
+            if not matches:
+                raise ValueError("ranker changed authoritative context or evidence lineage")
+            matched = max(matches, key=lambda value: len(value.ranking_evidence))
+            candidates.remove(matched)
+        if any(remaining.values()):
+            raise ValueError("ranker changed authoritative context or evidence lineage")
 
     async def compose(
             self, query: str, *, provider_ids: Sequence[str],
