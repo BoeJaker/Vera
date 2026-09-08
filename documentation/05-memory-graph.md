@@ -12,6 +12,10 @@ The native memory adapter now maps authorized MemoryProvider search hits into
 that boundary without becoming a second store: Fabric record/revision IDs and
 citations remain authoritative, and token counting is supplied explicitly by
 the caller that owns the target model budget.
+Worldview can optionally rerank those authoritative items using bounded cosine
+similarity from a named model checkpoint. It cannot contribute cached text
+directly: unmatched neighbours are ignored, citations and source revisions are
+unchanged, and the normalized score and ranking weight are retained as evidence.
 
 Vera's memory system is a Neo4j-backed knowledge graph augmented with vector search. Every meaningful interaction — a capability call, a chat turn, a research job, a file write, a workspace open — can land on the graph as a node, linked into a per-session activity chain. The graph is what gives the rest of the system long-term, cross-session continuity.
 
