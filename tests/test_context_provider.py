@@ -40,7 +40,9 @@ class Provider:
         self.result = result or []
         self.error = error
 
-    async def search(self, query, *, limit):
+    async def search(self, query, *, limit, cancellation=None):
+        if cancellation is not None:
+            cancellation.checkpoint()
         if self.error:
             raise self.error
         return self.result[:limit]

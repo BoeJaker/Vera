@@ -44,7 +44,13 @@ class ContextItem:
 @runtime_checkable
 class ContextProvider(Protocol):
     provider_id: str
-    async def search(self, query: str, *, limit: int) -> Sequence[ContextItem]: ...
+    async def search(self, query: str, *, limit: int,
+                     cancellation: "ContextCancellation | None" = None
+                     ) -> Sequence[ContextItem]: ...
+
+
+class ContextCancellation(Protocol):
+    def checkpoint(self) -> None: ...
 
 @dataclass(frozen=True, slots=True)
 class ContextAssembly:
@@ -88,9 +94,11 @@ def assemble_context(items: Sequence[ContextItem], *, budget_tokens: int) -> Con
 
 async def collect_context(providers: Sequence[ContextProvider], query: str, *,
                           limit_per_provider: int,
-                          budget_tokens: int) -> ContextCollection:
+                          budget_tokens: int,
+                          cancellation: ContextCancellation | None = None
+                          ) -> ContextCollection:
     """Query providers concurrently and isolate ordinary provider failures."""
-    if not query.strip():
+    if not isinstance(query, str) or not query.strip():
         raise ValueError("context query is required")
     if isinstance(limit_per_provider, bool) or not isinstance(limit_per_provider, int) \
             or limit_per_provider <= 0:
@@ -101,18 +109,25 @@ async def collect_context(providers: Sequence[ContextProvider], query: str, *,
     if len(set(provider_ids)) != len(provider_ids):
         raise ValueError("context provider_id must be unique")
 
+    if cancellation is not None:
+        cancellation.checkpoint()
     results = await asyncio.gather(*(
-        provider.search(query, limit=limit_per_provider) for provider in providers),
+        provider.search(query, limit=limit_per_provider, cancellation=cancellation)
+        for provider in providers),
         return_exceptions=True)
+    if cancellation is not None:
+        cancellation.checkpoint()
     items: list[ContextItem] = []
     failures: list[ContextProviderFailure] = []
     for provider_id, result in zip(provider_ids, results):
         if isinstance(result, asyncio.CancelledError):
             raise result
-        if isinstance(result, BaseException):
+        if isinstance(result, Exception):
             failures.append(ContextProviderFailure(provider_id,
                                                     type(result).__name__))
             continue
+        if isinstance(result, BaseException):
+            raise result
         try:
             batch = tuple(result)
             if any(not isinstance(item, ContextItem) for item in batch):
