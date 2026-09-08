@@ -56,7 +56,12 @@ def _author_prompt_source() -> str:
         body = fh.read()
     start = body.index("FINISH the behaviour")
     end = body.index("This call authors EXACTLY ONE file", start)
-    return body[start:end]
+    seg = body[start:end]
+    # Join adjacent string literals so this reads the PROMPT the model gets, not
+    # the source layout. Without it a phrase that happens to wrap across two
+    # source lines is invisible to a substring check - which is a property of
+    # the formatting, not of the rule.
+    return re.sub(r'"\s*\n\s*"', "", seg)
 
 
 def test_the_render_on_load_rule_is_present():
@@ -65,10 +70,40 @@ def test_the_render_on_load_rule_is_present():
     assert "never typed into the markup as a literal" in src
 
 
-def test_the_accessible_name_rule_is_present():
+def test_the_naming_rule_defines_what_a_control_IS():
+    """The first version said "give every control a real label" and had no
+    effect: the model does not necessarily agree that a bare createElement
+    input IS a control needing one. So the rule now DEFINES the set and gives a
+    test the model can apply to any element."""
     src = _author_prompt_source()
-    assert "ACCESSIBLE NAME" in src
-    assert "accessibility tree" in src
+    assert "A control is ANYTHING you attach a click/change/input handler to" in src
+    assert "THE TEST: does the element contain visible TEXT of" in src
+
+
+def test_the_naming_rule_gives_the_literal_line_to_write():
+    """A1 landed because it named a concrete action in the model's own idiom
+    ("call the render function at the end"). A2 did not, because "give it a
+    label" is not an action - it is a property someone else has to achieve. So
+    it now shows the exact setAttribute call, in the createElement idiom the
+    model actually writes."""
+    src = _author_prompt_source()
+    assert "cb.setAttribute('aria-label'" in src
+    assert "document.createElement('input')" in src
+
+
+def test_it_says_an_unnamed_control_is_ABSENT_not_merely_unlabelled():
+    """The consequence is what motivates the work. 'Unlabelled' sounds
+    cosmetic; the checker cannot see the element at all."""
+    src = _author_prompt_source()
+    assert "ABSENT from what the checker reads" in src
+
+
+def test_an_element_that_already_has_text_is_explicitly_exempt():
+    """Without this the rule reads as 'add aria-label to everything', which is
+    noise on <button>Delete</button> and invites the model to ignore it."""
+    src = _author_prompt_source()
+    assert "<button>Delete</button>" in src
+    assert "already named and needs nothing" in src
 
 
 def test_both_rules_carry_the_concrete_failure_they_came_from():
@@ -91,4 +126,4 @@ def test_the_rule_says_what_to_DO_not_only_what_to_avoid():
     name the fix - call the render function at the end of the script."""
     src = _author_prompt_source()
     assert "Call the render/update function once at the end" in src
-    assert re.search(r"label, aria-label or title", src)
+    assert "set the name ON THE SAME LINES you build the element" in src
