@@ -10444,13 +10444,18 @@ try:
     from Vera.vera.dag.code_author_guards import repair_collapsed as _repair_collapsed
     from Vera.vera.dag.code_author_guards import repaired_note as _repaired_note
     from Vera.vera.dag.artifact_location import dedupe_named_paths as _dedupe_named_paths
+    from Vera.vera.dag.loop_trace_core import call_summary as _call_summary
 except Exception:                                     # pragma: no cover
     try:
         from vera.dag.code_author_guards import repair_collapsed as _repair_collapsed
         from vera.dag.code_author_guards import repaired_note as _repaired_note
         from vera.dag.artifact_location import dedupe_named_paths as _dedupe_named_paths
+        from vera.dag.loop_trace_core import call_summary as _call_summary
     except Exception:
         log.warning("code_author_guards unavailable — repair collapse guard disabled")
+
+        def _call_summary(args):                # noqa: E306
+            return ""
 
         def _dedupe_named_paths(paths):         # noqa: E306
             return list(paths or [])
@@ -15700,10 +15705,20 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         # CancelledError unwinds cleanly; the runner already handles it as a cancel.
         if session_id and await _loop_run_cancelled(session_id):
             raise asyncio.CancelledError(f"loop {session_id} cancelled — stopping cooperatively")
-        obs = "\n\n".join(
-            f"[result {i+1}] tool={h['tool']} ok={h['ok']}\n{h['preview']}"
-            for i, h in enumerate(history[-4:])
-        ) or "(no tool calls yet — make your first call or emit done)"
+        # NAME THE CALL, not just the capability. This rendered
+        # `tool=exec.bash.run ok=False` plus the error and never WHICH command -
+        # useless in a step that made twelve exec.bash.run calls, and nothing
+        # else carries it, because the prompt is REBUILT each cycle rather than
+        # keeping the model's own prior tool_use turns. Census 45
+        # build-multifile re-ran a pytest that had already failed three times.
+        # Masked and bounded by call_summary (~200 chars x 4 entries).
+        def _obs_line(i, h):
+            _a = _call_summary(h.get("args"))
+            return (f"[result {i+1}] tool={h['tool']}" + (f"({_a})" if _a else "")
+                    + f" ok={h['ok']}\n{h['preview']}")
+
+        obs = "\n\n".join(_obs_line(i, h) for i, h in enumerate(history[-4:])) \
+            or "(no tool calls yet — make your first call or emit done)"
         _rep_tool = next((t for t, n in tool_calls.items() if n >= 2), "")
         _rep_hint = (f"\n\nNOTE: you have already called {_rep_tool} {tool_calls.get(_rep_tool,0)}× — "
                      "do NOT call it again with reworded args. Either try a DIFFERENT capability "
