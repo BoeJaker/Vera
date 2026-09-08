@@ -16,6 +16,25 @@ class ContextCitation:
                    for value in (self.source_id, self.locator)):
             raise ValueError("context citations require source_id and locator")
 
+
+@dataclass(frozen=True, slots=True)
+class ContextRankingEvidence:
+    provider: str
+    revision: str
+    score: float
+    weight: float
+
+    def __post_init__(self) -> None:
+        if not all(isinstance(value, str) and value.strip()
+                   for value in (self.provider, self.revision)):
+            raise ValueError("ranking evidence requires provider and revision")
+        for name, value in (("score", self.score), ("weight", self.weight)):
+            if isinstance(value, bool) or not isinstance(value, (int, float)) \
+                    or not math.isfinite(value) or not 0 <= value <= 1:
+                raise ValueError(
+                    f"ranking evidence {name} must be between zero and one")
+
+
 @dataclass(frozen=True, slots=True)
 class ContextItem:
     item_id: str
@@ -26,6 +45,7 @@ class ContextItem:
     score: float
     token_count: int
     citations: tuple[ContextCitation, ...]
+    ranking_evidence: tuple[ContextRankingEvidence, ...] = ()
     def __post_init__(self) -> None:
         identity = (self.item_id, self.text, self.source, self.revision, self.provider)
         if not all(isinstance(value, str) and value.strip() for value in identity):
@@ -33,9 +53,19 @@ class ContextItem:
         if isinstance(self.token_count, bool) or not isinstance(self.token_count, int) \
                 or self.token_count <= 0:
             raise ValueError("context token_count must be positive")
-        if not self.citations or not all(
-                isinstance(citation, ContextCitation) for citation in self.citations):
+        try:
+            citations = tuple(self.citations)
+            ranking_evidence = tuple(self.ranking_evidence)
+        except TypeError as exc:
+            raise ValueError("context citations and ranking evidence must be sequences") from exc
+        if not citations or not all(
+                isinstance(citation, ContextCitation) for citation in citations):
             raise ValueError("uncited context is not admissible")
+        if not all(isinstance(evidence, ContextRankingEvidence)
+                   for evidence in ranking_evidence):
+            raise ValueError("context ranking evidence is invalid")
+        object.__setattr__(self, "citations", citations)
+        object.__setattr__(self, "ranking_evidence", ranking_evidence)
         if isinstance(self.score, bool) or not isinstance(self.score, (int, float)) \
                 or not math.isfinite(self.score) or not 0 <= self.score <= 1:
             raise ValueError("context score must be between zero and one")
@@ -51,6 +81,11 @@ class ContextProvider(Protocol):
 
 class ContextCancellation(Protocol):
     def checkpoint(self) -> None: ...
+
+
+class ContextRanker(Protocol):
+    ranker_id: str
+    def rank(self, items: Sequence[ContextItem]) -> Sequence[ContextItem]: ...
 
 @dataclass(frozen=True, slots=True)
 class ContextAssembly:
