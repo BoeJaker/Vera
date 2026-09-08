@@ -564,9 +564,33 @@ async function buildDocs(){
   startLiveGallery('Building docs');   // Eyes shows each shot live as it lands
   const domains=[...document.querySelectorAll('#domChips .chip.on')].map(c=>c.dataset.slug);
   const res=await api('/docs/build',{target:$('mtarget').value,domains,capture:$('mcapture').checked,settle_ms:1600});
-  setRun(false, res&&res.error?('docs error: '+res.error):('docs done — '+((res&&res.screenshots)||0)+' shots'));
-  $('missionMsg').textContent=res&&res.error?res.error:('captured '+((res&&res.screenshots)||0)+' screenshots across '+((res&&res.domains)||0)+' domains');
-  await loadGallery();
+  const outcome=docsCaptureOutcome(res);
+  setRun(false,outcome.summary); $('missionMsg').textContent=outcome.detail;
+  if(outcome.state==='complete') await loadGallery();
+  else renderDocsCaptureOutcome(outcome);
+}
+
+function docsCaptureOutcome(res){
+  if(!res||res.error) return {state:'error',summary:'docs error',
+    detail:(res&&res.error)||'documentation build returned no result',failures:[]};
+  const failures=Array.isArray(res.capture_failures)?res.capture_failures:[];
+  const shots=Number(res.screenshots||0), domains=Number(res.domains||0);
+  if(res.ok===false||res.partial||failures.length) return {state:'partial',
+    summary:'docs partial — '+shots+' shots · '+failures.length+' failed',
+    detail:'captured '+shots+' screenshots across '+domains+' domains; '+failures.length+' need attention',
+    failures};
+  return {state:'complete',summary:'docs done — '+shots+' shots',
+    detail:'captured '+shots+' screenshots across '+domains+' domains',failures:[]};
+}
+function renderDocsCaptureOutcome(outcome){
+  const rows=outcome.failures.map(f=>'<div class="step err"><div class="step-head"><b>'+esc(f.domain||'panel')+
+    ' · '+esc(f.panel_id||f.shot_id||'capture')+'</b><span>'+esc(f.condition||'capture')+'</span></div><div class="thought">'+
+    esc(f.error||'readiness condition was not met')+'</div></div>').join('');
+  $('stage').innerHTML='<div class="gal"><div class="gal-bar"><span class="t">Documentation capture</span>'+
+    '<span style="color:var(--err)">'+esc(outcome.state)+'</span><span style="flex:1"></span>'+
+    '<button class="ghost" id="docsOutcomeGallery">Open existing gallery</button></div>'+
+    '<div style="padding:12px">'+(rows||'<div class="empty">'+esc(outcome.detail)+'</div>')+'</div></div>';
+  const button=$('docsOutcomeGallery'); if(button) button.onclick=loadGallery;
 }
 
 function setRun(on,msg){ state.running=on; $('spin').classList.toggle('on',on); $('runMsg').textContent=msg||(on?'working…':'idle');
@@ -705,8 +729,8 @@ async function regenSelected(){
   gsel.forEach(k=>{ const i=k.indexOf('|'); domains.add(k.slice(0,i)); panels.add(k.slice(i+1)); });
   setRun(true,'regenerating '+panels.size+' image(s) — longer settle…'); clearStreamHint(); startLiveGallery('Regenerating');
   const r=await api('/docs/build',{target:$('mtarget').value,domains:[...domains],panels:[...panels],settle_ms:2400});
-  setRun(false, r&&r.error?('regen: '+r.error):('regenerated '+((r&&r.screenshots)||0)+' image(s)'));
-  gsel.clear(); await loadGallery();
+  const outcome=docsCaptureOutcome(r); setRun(false,outcome.summary); $('missionMsg').textContent=outcome.detail;
+  gsel.clear(); if(outcome.state==='complete') await loadGallery(); else renderDocsCaptureOutcome(outcome);
 }
 function startLiveGallery(title){
   $('stage').innerHTML='<div class="gal"><div class="gal-bar"><span class="t">'+(title||'Capturing')+'…</span>'+

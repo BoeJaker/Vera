@@ -359,6 +359,9 @@ settling remain diagnostic observations rather than false blockers.
 - The mission result includes `capture_failures` with domain, panel, shot, and
   failed condition, so automation can distinguish an incomplete capture from a
   successfully rendered panel.
+- Operator Studio presents complete, partial, and failed builds separately. A
+  partial build keeps its panel/shot diagnostics visible and offers the existing
+  gallery explicitly instead of immediately replacing the failure report.
 - Authored prose is preserved; only managed image/capability blocks refresh.
 - documentation/README.md is never generated over.
 - The replaceable card index is documentation/GALLERY.md.
