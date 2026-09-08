@@ -99,3 +99,33 @@ def relocation_note(orig: str, real: str) -> str:
             f"filename would have created a SECOND copy at the workspace root, "
             f"which is what the run then spends cycles moving. Use the full "
             f"relative path.)")
+
+
+def dedupe_named_paths(paths):
+    """Drop a BARE filename when a located one with the same basename is present.
+
+    The completion gate extracts candidate files from the goal text, probes
+    which are missing, and appends a "Create the missing file" step for each.
+    A goal that says "save it at /workspace/statkit/stats.py" and later just
+    "stats.py" yields BOTH, neither exists, and the run gets two remediation
+    steps for one file. Census 45, build-multifile: the gate appended steps 2,
+    3, 4 AND 5 - steps 4 and 5 being "Create the missing file:
+    /workspace/statkit/stats.py" and "Create the missing file: stats.py".
+    That goal then spent 17 cycles on one step.
+
+    NOT a blanket basename dedupe, which is the very confusion this module
+    exists to fix: `a/stats.py` and `b/stats.py` really are two files and both
+    are kept. Only a candidate with NO directory part is dropped, and only when
+    something that does name a directory shares its basename.
+    """
+    kept = []
+    located = {posixpath.basename(_norm(str(p)))
+               for p in (paths or []) if "/" in str(p)}
+    for p in (paths or []):
+        text = str(p)
+        if "/" not in text and posixpath.basename(_norm(text)) in located:
+            continue                       # the same file, named loosely
+        if text not in kept:
+            kept.append(text)
+    return kept
+
