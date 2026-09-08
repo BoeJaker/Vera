@@ -60,6 +60,10 @@ try:
     from Vera.vera.web import search_engines as _engines
 except ImportError:                                        # pragma: no cover
     from vera.web import search_engines as _engines
+try:
+    from Vera.vera.research.alias_compatibility import research_alias
+except ImportError:                                        # pragma: no cover
+    from vera.research.alias_compatibility import research_alias
 _BACKEND_HOST = _vera_cfg.BACKEND_HOST
 
 # Persistence through the data fabric (replaces research_db.py)
@@ -10303,6 +10307,14 @@ if _VERA_MODE:
         "context_mode": {"type": "string", "default": "fresh"},
     }}
 
+    async def _run_research_alias(name: str, *, query: str, project_id: str = "",
+                                  context: str = "", context_mode: str = "fresh",
+                                  trace_id=None):
+        request = research_alias(name).request(
+            query=query, project_id=project_id, context=context,
+            context_mode=context_mode)
+        return await cap_research_run(**request, trace_id=trace_id)
+
     @capability("research.report", http_method="POST", http_path="/research/report",
                 http_tags=["research", "pipeline"], memory="on",
                 description="Fast web research that produces a markdown report. "
@@ -10315,9 +10327,9 @@ if _VERA_MODE:
                 schema=_ALIAS_SCHEMA)
     async def cap_report(query: str, project_id: str = "", context: str = "",
                          context_mode: str = "fresh", trace_id=None):
-        return await cap_research_run(query=query, mode="single", output_mode="report",
-                                      project_id=project_id, context=context,
-                                      context_mode=context_mode, trace_id=trace_id)
+        return await _run_research_alias(
+            "research.report", query=query, project_id=project_id,
+            context=context, context_mode=context_mode, trace_id=trace_id)
 
     @capability("research.parallel", http_method="POST", http_path="/research/parallel",
                 http_tags=["research", "pipeline"], memory="on",
@@ -10329,9 +10341,9 @@ if _VERA_MODE:
                 schema=_ALIAS_SCHEMA)
     async def cap_parallel(query: str, project_id: str = "", context: str = "",
                            context_mode: str = "fresh", trace_id=None):
-        return await cap_research_run(query=query, mode="parallel", output_mode="report",
-                                      project_id=project_id, context=context,
-                                      context_mode=context_mode, trace_id=trace_id)
+        return await _run_research_alias(
+            "research.parallel", query=query, project_id=project_id,
+            context=context, context_mode=context_mode, trace_id=trace_id)
 
     @capability("research.deep", http_method="POST", http_path="/research/deep",
                 http_tags=["research", "pipeline"], memory="on",
@@ -10343,9 +10355,9 @@ if _VERA_MODE:
                 schema=_ALIAS_SCHEMA)
     async def cap_deep(query: str, project_id: str = "", context: str = "",
                        context_mode: str = "fresh", trace_id=None):
-        return await cap_research_run(query=query, mode="deep", output_mode="report",
-                                      project_id=project_id, context=context,
-                                      context_mode=context_mode, trace_id=trace_id)
+        return await _run_research_alias(
+            "research.deep", query=query, project_id=project_id,
+            context=context, context_mode=context_mode, trace_id=trace_id)
 
     @capability("research.code", http_method="POST", http_path="/research/code",
                 http_tags=["research", "pipeline"], memory="on",
@@ -10357,9 +10369,9 @@ if _VERA_MODE:
                 schema=_ALIAS_SCHEMA)
     async def cap_code(query: str, project_id: str = "", context: str = "",
                        context_mode: str = "fresh", trace_id=None):
-        return await cap_research_run(query=query, mode="deep", output_mode="code",
-                                      project_id=project_id, context=context,
-                                      context_mode=context_mode, trace_id=trace_id)
+        return await _run_research_alias(
+            "research.code", query=query, project_id=project_id,
+            context=context, context_mode=context_mode, trace_id=trace_id)
 
     @capability("research.guide", http_method="POST", http_path="/research/guide",
                 http_tags=["research", "pipeline"], memory="on",
@@ -10371,9 +10383,9 @@ if _VERA_MODE:
                 schema=_ALIAS_SCHEMA)
     async def cap_guide(query: str, project_id: str = "", context: str = "",
                         context_mode: str = "fresh", trace_id=None):
-        return await cap_research_run(query=query, mode="single", output_mode="guide",
-                                      project_id=project_id, context=context,
-                                      context_mode=context_mode, trace_id=trace_id)
+        return await _run_research_alias(
+            "research.guide", query=query, project_id=project_id,
+            context=context, context_mode=context_mode, trace_id=trace_id)
 
     @capability("research.filestore", http_method="POST", http_path="/research/filestore",
                 http_tags=["research", "pipeline"], memory="on",
@@ -10385,24 +10397,23 @@ if _VERA_MODE:
                 schema=_ALIAS_SCHEMA)
     async def cap_filestore(query: str, project_id: str = "", context: str = "",
                             context_mode: str = "fresh", trace_id=None):
-        return await cap_research_run(query=query, mode="deep", output_mode="filestore",
-                                      project_id=project_id, context=context,
-                                      context_mode=context_mode, trace_id=trace_id)
+        return await _run_research_alias(
+            "research.filestore", query=query, project_id=project_id,
+            context=context, context_mode=context_mode, trace_id=trace_id)
 
     @capability("research.quick_search", http_method="POST", http_path="/research/quick_search",
                 http_tags=["research", "pipeline"], memory="on",
-                description="Lightweight single-query web search that returns a concise answer quickly. "
-                            "WHEN TO USE: quick factual lookups, 'what is X', 'current value of Y', 'latest version of Z', "
-                            "'who is' — prefer over research.run when you need a fast result, not an exhaustive report. "
-                            "Faster than research.report. "
+                description="Compatibility name for a single-agent synthesized research report. "
+                            "It has the same long-running job behavior as research.report; use web.search "
+                            "for direct search results without report synthesis. "
                             "LONG-RUNNING: returns {job_id, status}; poll research.job.status until done, then read research.job.result. "
                             "Input: query (str!), project_id, context, context_mode.",
                 schema=_ALIAS_SCHEMA)
     async def cap_quick_search(query: str, project_id: str = "", context: str = "",
                                context_mode: str = "fresh", trace_id=None):
-        return await cap_research_run(query=query, mode="single", output_mode="report",
-                                      project_id=project_id, context=context,
-                                      context_mode=context_mode, trace_id=trace_id)
+        return await _run_research_alias(
+            "research.quick_search", query=query, project_id=project_id,
+            context=context, context_mode=context_mode, trace_id=trace_id)
 
     @capability(
         "research.chain.continue",

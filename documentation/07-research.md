@@ -76,15 +76,20 @@ Each pipeline is a `research.<name>` capability that hits a `researcher_api` end
 | `research.parallel` | parallel | report | Writer decomposes query into 3–5 sub-questions, gathers and extracts findings concurrently, Thinker synthesises. |
 | `research.deep` | deep | report | Recursive research: directive → recursive crawl → Thinker synthesises knowledge base → Writer drafts → expansion pass. |
 | `research.guide` | single | guide | Section-by-section long-form guide. Thinker outlines, Writer fills each section with sources. |
-| `research.code` | single | code | Architect → implement → review chain. Thinker designs file structure, Writer implements file-by-file, Analyst reviews. |
-| `research.filestore` | single | filestore | Generate a full file tree with content. Used for project scaffolding. |
-| `research.quick_search` | single | report | Fast gather + entity extraction, no deep synthesis. Single search round. |
+| `research.code` | deep | code | Architect → implement → review chain. Thinker designs file structure, Writer implements file-by-file, Analyst reviews. |
+| `research.filestore` | deep | filestore | Generate a full file tree with content. Used for project scaffolding. |
+| `research.quick_search` | single | report | Compatibility name for `research.report`; it queues the same long-running synthesized report. Use `web.search` for direct result lists. |
 | `research.analysis` | single | report | Analyse provided citations without external sources. Optional rerun of an existing job's citations. |
 | `research.security` | parallel | report | NVD + GitHub + web. Optimised for CVEs and vulnerability research. |
 | `research.academic` | deep | report | arXiv + web in deep mode. For research papers, scientific surveys. |
 | `research.nlp_addon` | single | report | Triggers the standalone NLP server (`:8766`) for specialised analysis. |
 
 All pipelines accept a `query` (and `session_id`, `project_id` for tracking). Pipelines with iteration support also accept `context` and `context_mode="fresh|continue"`.
+
+The convenience capabilities above use one compatibility matrix for their
+`mode` and `output_mode` projection. Unknown aliases fail closed instead of
+silently selecting a pipeline. This keeps older callers working while making
+the direct-search boundary unambiguous.
 
 Returns a job ID and initial status; the cap then polls until completion and emits progress events.
 
