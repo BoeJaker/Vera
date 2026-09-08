@@ -12,10 +12,26 @@ ordering produces a stable `mpkg_…` identity.
 The first registry is deliberately in-memory and non-executing. Registration is
 immutable and idempotent, aliases use compare-and-set semantics, and registering
 a URI never opens, moves, deletes, verifies, or activates its file. Durable
-storage, read-only verification, safe ONNX import, and audited activation and
-rollback now build on that boundary. Signature policy, legacy capability aliases,
-and inference parity remain later slices. No model or external runtime tests are
-enabled by this contract.
+storage, read-only verification, safe ONNX import, admission policy, legacy
+capability bindings, and audited activation and rollback now build on that
+boundary. Inference parity remains a separate adapter concern. No model or
+external runtime tests are enabled by these contracts.
+
+`vera.models.inference_contracts` adds the portable execution seam without
+redirecting an existing model call. Every request names an immutable
+ModelPackage, task, input/output contracts, canonical bounded inputs and scalar
+parameters, streaming intent, and an output-byte ceiling. Large or binary values
+travel as URI, SHA-256, size and media-type artifact references rather than
+unbounded inline objects. Request identity is derived from the complete canonical
+request.
+
+An `InferenceProvider` emits a contiguous asynchronous event stream tied to the
+request, package and provider identities. The shared consumer validates provider
+task claims, event order, exactly one terminal outcome, output budgets, bounded
+usage counters, and cancellation. It does not retry, interpret model payloads,
+load artifacts, or choose a provider. Strict reconstruction verifies serialized
+request identity, giving ONNX Runtime, vLLM and cluster adapters one comparable
+contract before any traffic is moved.
 
 The second W2-06 slice adds `SQLiteModelPackageRegistry`. Canonical package JSON
 and aliases survive restart in transactional tables; package content is
@@ -81,8 +97,7 @@ and a cross-encoder reranker.
 
 Everything here is **additive and optional**: `onnx`, `onnxruntime`, and
 `fastembed` are guarded imports. If they are not installed, the relevant caps
-report it and the rest of Vera is unaffected. The working roadmap and status
-live in `ONNX_TODO.md` at the repo root.
+report it and the rest of Vera is unaffected.
 
 ---
 

@@ -320,8 +320,8 @@ class ProviderProfile:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "provider_id", _identifier(self.provider_id, "provider ID"))
-        if self.kind not in {"evaluation", "training"}:
-            raise ValueError("provider kind must be evaluation or training")
+        if self.kind not in {"evaluation", "training", "inference"}:
+            raise ValueError("provider kind must be evaluation, training or inference")
         capabilities = tuple(sorted({_identifier(item, "provider capability")
                                      for item in self.capabilities}))
         if not capabilities:
