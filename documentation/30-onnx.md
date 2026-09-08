@@ -45,7 +45,9 @@ portable output and a terminal event. Backend messages and unexpected fields do
 not cross the boundary; malformed responses and backend failures become stable
 error codes, while cancellation remains cancellation. This is an offline-tested
 adapter seam only: `ml.onnx.run` and dynamic model capabilities do not yet route
-through it.
+through it. The request and result validation is shared with ML Workshop batch
+inference through `models/legacy_prediction_adapter.py`, preventing the two
+legacy paths from becoming separate portable prediction dialects.
 
 The second W2-06 slice adds `SQLiteModelPackageRegistry`. Canonical package JSON
 and aliases survive restart in transactional tables; package content is

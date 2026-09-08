@@ -9,7 +9,7 @@ Everything is pure-Python + NumPy by default, so it runs anywhere; PyTorch/JAX a
 
 ## Portable training, evaluation, and prompt boundary
 
-W2-07 begins with immutable contracts in
+The portable lifecycle begins with immutable contracts in
 [`vera/models/training_contracts.py`](../vera/models/training_contracts.py). A
 `PromptPackage` gives ordered role/template messages, declared variables,
 output contract, metadata, and a canonical `ppkg_…` identity. A
@@ -38,6 +38,23 @@ network, or external-provider call.
 The current ML Workshop remains unchanged. DeepEval/Promptfoo adapters,
 Accelerate, PEFT, MLflow, DSPy, live judges, and training execution are
 subsequent gated slices.
+
+### Portable batch inference
+
+The legacy `ml.train.predict` and `ml.onnx.run` result shapes now share the
+validation and normalization boundary in
+`models/legacy_prediction_adapter.py`. Both adapters bind a ModelPackage and a
+legacy module/model selector, accept only the package's declared task and
+input/output contracts, and emit the same bounded prediction/shape result and
+terminal events. Runtime-specific metadata is included only through an explicit
+field projection; arbitrary legacy response fields do not leak into the
+portable result.
+
+`LegacyMLWorkshopInferenceProvider` injects the existing Workshop runner rather
+than importing NumPy, PyTorch, or a saved model. The ONNX adapter uses the same
+core while retaining its execution-provider evidence. Neither adapter redirects
+the existing capabilities, retries failures, loads artifacts, or performs work
+when imported, so live parity and cutover remain separate decisions.
 
 ---
 

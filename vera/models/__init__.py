@@ -28,6 +28,10 @@ from .inference_registry import (
     InferenceProviderDescriptor, InferenceProviderRegistry)
 from .ollama_inference_adapter import (
     LegacyOllamaInferenceProvider, LegacyOllamaRunner)
+from .legacy_prediction_adapter import (
+    LegacyBatchPredictionProvider, LegacyPredictionRunner)
+from .ml_workshop_inference_adapter import (
+    LegacyMLWorkshopInferenceProvider, LegacyMLWorkshopRunner)
 
 __all__ = ["AdmittedModelActivation", "LegacyModelCapabilityBinding", "ModelActivationReceipt",
            "ModelAdmissionReceipt", "ModelDeploymentTarget",
@@ -40,6 +44,8 @@ __all__ = ["AdmittedModelActivation", "LegacyModelCapabilityBinding", "ModelActi
            "InferenceTranscript", "InferenceValue",
            "LegacyONNXInferenceProvider", "LegacyONNXRunner",
            "LegacyOllamaInferenceProvider", "LegacyOllamaRunner",
+           "LegacyBatchPredictionProvider", "LegacyPredictionRunner",
+           "LegacyMLWorkshopInferenceProvider", "LegacyMLWorkshopRunner",
            "OpenAICompatibleInferenceProvider", "OpenAICompatibleTransport",
            "PromptMessage", "PromptPackage", "ProviderProfile", "TrainingRequest",
            "TrainingRun", "TrainingRuntime",
