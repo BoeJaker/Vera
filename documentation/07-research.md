@@ -183,6 +183,13 @@ immediately, `Retry-After` delays are capped, and callers do not wrap the policy
 in another retry loop. Standalone researcher deployments retain a direct-request
 fallback when Vera's shared web client is unavailable.
 
+Recursive research and quick web crawls use the same crawl identity rules.
+HTTP(S) links are canonicalized before consuming the visit budget, fragments
+and explicit default ports cannot create duplicate work, embedded credentials
+and cross-scope links are rejected, and normalized repeated content is emitted
+only once. Failed pages remain isolated, so successful earlier pages are still
+available as partial evidence.
+
 The Writer goes through top results and extracts findings, populating the citations list. Citations stream into the panel as they're found.
 
 ### Stage 3 — Analyst Engine (ANALYST, concurrent with Search/Synthesis)

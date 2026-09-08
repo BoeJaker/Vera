@@ -35,6 +35,14 @@ other responses are not repeated. Tune this boundary with
 `VERA_WEB_RETRY_MAX_S`, `VERA_WEB_DOMAIN_INTERVAL`, and
 `VERA_WEB_DOMAIN_JITTER` rather than adding caller-local retry loops.
 
+**Crawl boundaries.** The shared web client defines canonical crawl URL,
+same-scope link, and normalized content identities. Fragments and explicit
+default ports do not consume extra page budget; embedded credentials,
+non-HTTP(S) targets, and cross-host or cross-port links are excluded. A URL is
+claimed before its fetch starts, so concurrent children cannot overshoot the
+page ceiling. Repeated page content is skipped while successfully fetched
+earlier pages remain available after a later failure.
+
 ---
 
 ## 2. `browser.*` — Playwright automation
