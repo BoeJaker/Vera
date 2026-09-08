@@ -68,12 +68,14 @@ import os
 import re
 import sqlite3
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi.responses import HTMLResponse
 
+import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import (
     CAPABILITY_REGISTRY, capability, emit_event, is_dev_sandbox, now_iso,
     register_ui, schedule,
@@ -1044,18 +1046,119 @@ async def _scheduled_ingest_all():
 @capability("background.status", memory="off", silent=True,
             http_method="GET", http_path="/background/status",
             http_tags=["obs"],
-            description="The secondary queue: which deferrable background jobs "
-                        "exist, what is running, why anything is deferred, and "
-                        "how long the box has been quiet. Deferrable work "
-                        "(bulk embedding, dreams, narration, source gathering) "
-                        "runs only after MIN_QUIET_SECONDS of continuous quiet "
-                        "and yields mid-job when the box gets busy.")
+            description="The awaiting-idle queue: jobs waiting for the box to "
+                        "be idle, what is running, why anything is waiting, and "
+                        "how long the box has been quiet. Producers — session "
+                        "and source embedding, dream, narrator — enqueue here "
+                        "instead of running themselves. Nothing starts during "
+                        "active use, and a running job is PRE-EMPTED (returned "
+                        "to the queue) the moment Vera is used again.")
 async def cap_background_status(trace_id=None) -> dict:
     if _QUEUE is None:                                     # pragma: no cover
         return {"error": "background_work module unavailable"}
     now = time.time()
-    _QUEUE.observe(now, await _system_is_busy())
-    return _QUEUE.status(now)
+    busy = await _system_is_busy()
+    _QUEUE.observe(now, busy)
+    st = _QUEUE.status(now)
+    if _iq is not None:
+        blocked = _bg.quiet_gate(busy, _QUEUE.last_busy, now, _QUEUE.min_quiet_s)
+        st["queue"] = _iq.summary(await _idle_jobs(), blocked, now)
+    return st
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE AWAITING-IDLE QUEUE — durable, inspectable, pre-emptible
+# ─────────────────────────────────────────────────────────────────────────────
+try:
+    from Vera.vera import idle_queue as _iq
+except ImportError:                                        # pragma: no cover
+    try:
+        from vera import idle_queue as _iq
+    except ImportError:
+        _iq = None
+
+_IDLE_KEY = "vera:idle_queue:jobs"      # Redis hash: id -> job JSON
+
+
+def _iq_redis():
+    return getattr(_orch, "REDIS", None)
+
+
+async def _idle_jobs() -> list:
+    """Every queued job. Durable so a restart does not lose the backlog, and so
+    the panel can show what has been waiting and for how long."""
+    r = _iq_redis()
+    if r is None or _iq is None:
+        return []
+    out = []
+    try:
+        raw = await r.hgetall(_IDLE_KEY)
+        for v in (raw or {}).values():
+            try:
+                out.append(json.loads(v.decode() if isinstance(v, bytes) else v))
+            except Exception:
+                continue
+    except Exception as e:
+        log.debug("idle queue read: %s", e)
+    return out
+
+
+async def _idle_put(job: dict) -> None:
+    r = _iq_redis()
+    if r is None:
+        return
+    try:
+        await r.hset(_IDLE_KEY, job["id"], json.dumps(job, default=str))
+    except Exception as e:                                 # pragma: no cover
+        log.debug("idle queue write: %s", e)
+
+
+async def _idle_drop(job_id: str) -> None:
+    r = _iq_redis()
+    if r is None:
+        return
+    try:
+        await r.hdel(_IDLE_KEY, job_id)
+    except Exception as e:                                 # pragma: no cover
+        log.debug("idle queue delete: %s", e)
+
+
+@capability("background.enqueue", memory="on",
+            http_method="POST", http_path="/background/enqueue",
+            http_tags=["obs"],
+            description="Queue deferrable work to run when Vera is idle. "
+                        "Inputs: kind (embed.sessions|embed.sources|dream|"
+                        "narrator|…), title, payload, id (optional — reusing an "
+                        "id replaces that job rather than queueing a duplicate). "
+                        "The job waits until the box has been continuously quiet "
+                        "and is pre-empted if Vera is used while it runs.")
+async def cap_background_enqueue(kind: str = "", title: str = "",
+                                 payload: Any = None, id: str = "",
+                                 trace_id=None) -> dict:
+    if _iq is None:                                        # pragma: no cover
+        return {"error": "idle_queue module unavailable"}
+    if not str(kind or "").strip():
+        return {"error": "kind required"}
+    jid = str(id or "").strip() or ("%s:%s" % (kind, uuid.uuid4().hex[:8]))
+    job = _iq.make_job(jid, kind, title, payload, enqueued_at=time.time())
+    await _idle_put(job)
+    await emit_event({"type": "background.enqueued", "id": jid, "kind": kind,
+                      "title": job["title"]})
+    return {"ok": True, "id": jid, "state": job["state"],
+            "note": "queued — runs when the box has been idle for %ds"
+                    % int(_QUEUE.min_quiet_s if _QUEUE else 600)}
+
+
+@capability("background.cancel", memory="on",
+            http_method="POST", http_path="/background/cancel",
+            http_tags=["obs"],
+            description="Remove a queued background job by id.")
+async def cap_background_cancel(id: str = "", trace_id=None) -> dict:
+    if not str(id or "").strip():
+        return {"error": "id required"}
+    await _idle_drop(str(id))
+    await emit_event({"type": "background.cancelled", "id": str(id)})
+    return {"ok": True, "id": str(id)}
     for inst in await _load_instances():
         iid = inst.get("id", "")
         if inst.get("kind") == "vscode-client" and _client_alive(iid):
