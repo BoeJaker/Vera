@@ -143,6 +143,50 @@ if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
       </div>
     </div>
   </div>
+
+  <!-- SD cards / Raspberry Pi -->
+  <div class="card" style="margin-top:14px">
+    <h2>SD card / Raspberry Pi <span class="r"><a href="#" onclick="sdDetect();return false" style="color:var(--acc)">detect cards</a></span></h2>
+    <div class="muted" style="font-size:11px;margin:-4px 0 10px">Provisions a Pi from its card: SPI <b>TFT + XPT2046 touch</b>, SSH, wifi, and a first-boot join to Vera. <b>Adapts in place</b> — existing data is kept, <code>config.txt</code> is merged not replaced, and HDMI stays on so a wrong panel guess is recoverable. Services inherited from the card's previous life (DHCP, access points, cluster daemons) are masked before they can disrupt the LAN.</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
+      <div>
+        <div style="font-size:11px;color:var(--acc);font-weight:600;margin-bottom:4px">1 · Card</div>
+        <label>Proxmox cluster</label><select id="sdCluster"></select>
+        <label style="margin-top:4px">Detected cards</label>
+        <div id="sdCards" style="max-height:96px;overflow:auto;margin-bottom:6px"><span class="muted">none — click “detect cards”</span></div>
+        <button class="btn gho" style="margin-top:4px" onclick="sdInspect()">Inspect (read-only)</button>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--acc);font-weight:600;margin-bottom:4px">2 · Display &amp; identity</div>
+        <div class="row"><div><label>Panel</label><select id="sdPanel">
+          <option value="ili9341">ili9341 — 3.2"</option>
+          <option value="ili9486">ili9486 — 3.5"</option>
+          <option value="ili9488">ili9488 — 3.5" alt</option>
+          <option value="st7735r">st7735r — 1.8"</option>
+          <option value="hx8357d">hx8357d — PiTFT 3.5"</option>
+          <option value="">none (no TFT)</option>
+        </select></div>
+        <div><label>Rotate</label><select id="sdRotate">
+          <option>0</option><option>90</option><option>180</option><option selected>270</option>
+        </select></div></div>
+        <label style="margin-top:4px">Node label</label><input id="sdLabel" placeholder="frame-01">
+        <div class="row"><div><label>Wifi SSID</label><input id="sdSsid" placeholder="optional"></div>
+          <div><label>Wifi password</label><input id="sdPsk" type="password" placeholder="optional"></div></div>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--acc);font-weight:600;margin-bottom:4px">3 · Review &amp; apply</div>
+        <div id="sdFindings" style="max-height:150px;overflow:auto;font-size:11px"><span class="muted">inspect a card to see what is on it</span></div>
+        <div style="display:flex;gap:6px;margin-top:6px">
+          <button class="btn gho" onclick="sdPlan()">Dry-run</button>
+          <button class="btn" onclick="sdProvision()" id="sdGo">Provision →</button>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:12px;border-top:1px solid var(--bd,#243);padding-top:10px">
+      <div style="font-size:11px;color:var(--acc);font-weight:600;margin-bottom:4px">Provisioned nodes <span class="r"><a href="#" onclick="sdNodes();return false" style="color:var(--acc)">refresh</a></span></div>
+      <div id="sdNodeList"><span class="muted">none</span></div>
+    </div>
+  </div>
 </div>
 <div class="toast" id="toast"></div>
 <script>
@@ -162,8 +206,100 @@ async function boot(){
   renderCatalog();
   const cs=(cl&&cl.clusters)||[];
   $('cluster').innerHTML=cs.map(c=>`<option value="${c.id}">${esc(c.label)}</option>`).join('')||'<option value="">(none)</option>';
-  onTarget(); loadJobs(); loadBlueprints(); loadPxe();
+  $('sdCluster').innerHTML=cs.map(c=>`<option value="${c.id}">${esc(c.label)}</option>`).join('')||'<option value="">(none)</option>';
+  onTarget(); loadJobs(); loadBlueprints(); loadPxe(); sdNodes();
   if(!IMAGES.length) toast('catalog empty — click “seed defaults”');
+}
+// ── SD card / Raspberry Pi ──────────────────────────────────────────────────
+// SD_CARD holds the selected card; SD_STATE the last read-only inspection, so
+// the provision step merges into the card's REAL config.txt rather than a blank.
+let SD_CARDS=[], SD_CARD=null, SD_STATE=null;
+function sdSel(){return {cluster_id:$('sdCluster').value||''};}
+async function sdDetect(){
+  toast('scanning for cards…');
+  const r=await post('/foundry/sdcard/detect',sdSel());
+  SD_CARDS=(r&&r.cards)||[];
+  $('sdCards').innerHTML=SD_CARDS.length?SD_CARDS.map((c,i)=>
+    `<label style="display:block;font-size:11px;padding:3px 0;border-bottom:1px solid var(--border);cursor:pointer">
+       <input type="radio" name="sdc" value="${i}" ${i===0?'checked':''} onchange="SD_CARD=SD_CARDS[${i}];SD_STATE=null">
+       <code>${esc(c.dev)}</code> · ${esc(c.size_gb)} GB <span class="muted">${esc(c.model||'')}</span></label>`).join('')
+    :'<span class="muted">no Pi-shaped cards found (need a FAT boot + Linux root pair)</span>';
+  SD_CARD=SD_CARDS[0]||null; SD_STATE=null;
+  toast(SD_CARDS.length?`${SD_CARDS.length} card(s)`:'no cards found',!SD_CARDS.length);
+}
+async function sdInspect(){
+  if(!SD_CARD) return toast('detect and select a card first',true);
+  toast('mounting read-only…');
+  const r=await post('/foundry/sdcard/inspect',{...sdSel(),boot:SD_CARD.boot,root:SD_CARD.root});
+  if(!r||r.error) return toast((r&&r.error)||'inspect failed',true);
+  SD_STATE=r;
+  if(r.hostname&&!$('sdLabel').value) $('sdLabel').value=r.hostname;
+  const hz=(r.hazards||[]);
+  $('sdFindings').innerHTML=
+    `<div><b>${esc(r.os||'unknown OS')}</b></div>
+     <div class="muted">${esc(r.hostname||'')} · ${esc(r.free||'')}</div>
+     <div class="muted">SSH ${r.ssh_enabled?'already on':'off — will be enabled'}</div>`+
+    (hz.length?`<div style="margin-top:6px;color:var(--warn)"><b>${hz.length} inherited service(s) would disrupt the LAN:</b></div>`+
+      hz.map(h=>`<div style="font-size:10px"><code>${esc(h.name)}</code> <span class="muted">${esc(h.reason)}</span></div>`).join('')
+      +`<div class="muted" style="font-size:10px;margin-top:3px">These will be masked on first boot.</div>`
+     :'<div style="margin-top:6px;color:var(--ok)">no LAN-disrupting services inherited</div>');
+}
+function sdArgs(){
+  return {...sdSel(),boot:SD_CARD&&SD_CARD.boot,root:SD_CARD&&SD_CARD.root,
+    display:$('sdPanel').value?'xpt2046':'none',panel:$('sdPanel').value||'ili9341',
+    rotate:parseInt($('sdRotate').value||'270',10),node_label:$('sdLabel').value.trim(),
+    wifi_ssid:$('sdSsid').value.trim(),wifi_psk:$('sdPsk').value};
+}
+async function sdPlan(){
+  if(!SD_STATE) return toast('inspect the card first',true);
+  const r=await post('/foundry/sdcard/plan',{
+    config_txt:SD_STATE.config_txt||'',enabled:SD_STATE.enabled||[],
+    display:$('sdPanel').value?'xpt2046':'none',panel:$('sdPanel').value||'ili9341',
+    rotate:parseInt($('sdRotate').value||'270',10),node_label:$('sdLabel').value.trim()});
+  if(!r||r.error) return toast((r&&r.error)||'plan failed',true);
+  $('sdFindings').innerHTML=
+    `<div style="color:var(--acc)"><b>Dry-run — nothing written</b></div>
+     <div class="muted" style="font-size:10px;margin:4px 0">${(r.notes||[]).map(esc).join('<br>')}</div>
+     <div style="font-size:10px"><b>boot:</b> ${(r.boot_files||[]).map(esc).join(', ')}</div>
+     <div style="font-size:10px"><b>root:</b> ${(r.root_files||[]).length} file(s)</div>
+     ${(r.mask||[]).length?`<div style="font-size:10px;color:var(--warn)"><b>mask:</b> ${r.mask.map(m=>esc(m.name)).join(', ')}</div>`:''}
+     <details style="margin-top:6px"><summary class="muted" style="font-size:10px;cursor:pointer">resulting config.txt</summary>
+       <pre style="font-size:9px;white-space:pre-wrap;max-height:160px;overflow:auto">${esc(r.config_txt||'')}</pre></details>`;
+}
+async function sdProvision(){
+  if(!SD_CARD) return toast('detect and select a card first',true);
+  if(!SD_STATE) return toast('inspect the card first',true);
+  const hz=(SD_STATE.hazards||[]).length;
+  if(!confirm(`Provision ${SD_CARD.dev}?\n\nThe card is ADAPTED in place — existing files are kept and config.txt is merged (a backup is written alongside it).`+
+              (hz?`\n\n${hz} inherited service(s) will be masked on first boot.`:'')))
+    return;
+  $('sdGo').disabled=true; toast('writing to card…');
+  const r=await post('/foundry/sdcard/provision',{...sdArgs(),confirm:true});
+  $('sdGo').disabled=false;
+  if(!r||r.error) return toast((r&&r.error)||'provision failed',true);
+  $('sdFindings').innerHTML=
+    `<div style="color:var(--ok)"><b>Provisioned — ${esc(r.label||'')}</b></div>
+     <div class="muted" style="font-size:10px">${(r.written||[]).length} file(s) written${(r.masked||[]).length?`, masking ${r.masked.map(esc).join(', ')}`:''}</div>
+     <div class="muted" style="font-size:10px;margin-top:4px">${(r.notes||[]).map(esc).join('<br>')}</div>
+     <div style="font-size:10px;margin-top:4px">Eject the card, boot the Pi, and it will appear below.</div>`;
+  toast('card provisioned'); sdNodes();
+}
+async function sdNodes(){
+  const r=await j('/foundry/node/list'); const ns=(r&&r.nodes)||[];
+  $('sdNodeList').innerHTML=ns.length?ns.map(n=>{
+    const col=n.status==='online'&&!n.stale?'var(--ok)':(n.stale?'var(--warn)':'var(--dim)');
+    const seen=n.last_seen?new Date(n.last_seen*1000).toLocaleTimeString():'never';
+    return `<div style="font-size:11px;padding:3px 0;border-bottom:1px solid var(--border)">
+      <b>${esc(n.label)}</b> <span style="color:${col}">${esc(n.stale?'stale':(n.status||'—'))}</span>
+      <span class="muted">${esc(n.role||'')} · ${esc(n.ip||'no ip')} · seen ${esc(seen)}</span>
+      <a href="#" onclick="sdFrameText('${esc(n.label)}');return false" class="muted" style="float:right;text-decoration:none">set text</a></div>`;
+  }).join(''):'<span class="muted">none — provision a card above</span>';
+}
+async function sdFrameText(label){
+  const t=prompt('Text to show on '+label+' (one line per row):','');
+  if(t===null) return;
+  const r=await post('/foundry/node/frame/set',{label,mode:t?'text':'blank',lines:t.split('\n')});
+  toast((r&&r.ok)?'display updated':'failed',!(r&&r.ok));
 }
 // ── Physical / PXE ──────────────────────────────────────────────────────────
 async function loadPxe(){

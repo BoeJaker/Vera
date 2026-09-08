@@ -48,7 +48,7 @@ from fastapi.responses import HTMLResponse
 
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import (
-    APP, capability, emit_event, register_ui, CAPABILITY_REGISTRY,
+    APP, capability, emit_event, enum_schema, register_ui, CAPABILITY_REGISTRY,
 )
 
 # Pure netboot render + hardening logic lives in an app-free core module so it's
@@ -1962,6 +1962,370 @@ async def cap_pxe_server_teardown(cluster_id: str = "", node: str = "", subnet: 
     return {"ok": ok, "note": "dnsmasq/HTTP stopped, config + NAT removed; TFTP/HTTP files kept"}
 
 
+# ---------------------------------------------------------------------------
+# SD-card provisioning — the third target
+# ---------------------------------------------------------------------------
+# PXE covers machines that can netboot and CT/VM covers Proxmox guests, but a
+# Raspberry Pi with a card in a reader was previously unreachable from Foundry.
+# These capabilities close that: inspect a card, plan the change, apply it.
+#
+# The default mode is ADAPT, not flash. Cards are rarely blank — they usually
+# hold someone's earlier project — so wiping is opt-in and the plan is always
+# reviewable before it runs.
+
+K_NODES = "vera:foundry:nodes"       # nodes that have checked in
+K_FRAMES = "vera:foundry:frames"     # what each display node should show
+
+
+def _sd_script(body: str) -> str:
+    """Wrap card-side shell in guards. Every mount is read-only unless the
+    caller has explicitly asked to write, and we always unmount on exit so a
+    failed run never leaves the card held open."""
+    return ("set -u\n"
+            "MB=/run/foundry-sd-boot; MR=/run/foundry-sd-root\n"
+            "cleanup(){ umount \"$MB\" 2>/dev/null; umount \"$MR\" 2>/dev/null; }\n"
+            "trap cleanup EXIT\n"
+            "mkdir -p \"$MB\" \"$MR\"\n" + body)
+
+
+@capability(
+    "foundry.sdcard.detect",
+    http_method="POST", http_path="/foundry/sdcard/detect", http_tags=["foundry"],
+    memory="off", silent=True,
+    description="List removable block devices on a Proxmox node that look like a "
+                "Raspberry Pi card (a FAT boot partition + a Linux rootfs). Read-only. "
+                "Inputs: cluster_id (str!), node (str). Output: {cards:[{dev,size,"
+                "boot,root,label}]}.",
+)
+async def cap_sdcard_detect(cluster_id: str = "", node: str = "", trace_id=None) -> Dict:
+    cmd = (
+        "for d in /sys/block/*; do n=$(basename $d); "
+        "case \"$n\" in loop*|zram*|zd*|dm-*|nvme*|sr*) continue;; esac; "
+        "[ \"$(cat $d/removable 2>/dev/null)\" = 1 ] || "
+        "  { echo \"$n\" | grep -q '^mmcblk' || continue; }; "
+        "sz=$(( $(cat $d/size 2>/dev/null || echo 0) / 2097152 )); "
+        "b=''; r=''; "
+        "for p in /dev/${n}*[0-9]; do [ -b \"$p\" ] || continue; "
+        "  t=$(blkid -o value -s TYPE $p 2>/dev/null); "
+        "  case \"$t\" in vfat) b=$p;; ext4|ext3|btrfs) r=$p;; esac; done; "
+        "[ -n \"$b\" ] && [ -n \"$r\" ] && "
+        "  echo \"CARD|/dev/$n|${sz}|$b|$r|$(cat $d/device/model 2>/dev/null | xargs)\"; "
+        "done")
+    res = await _call("proxmox.node.exec", cluster_id=cluster_id, node=node,
+                      command=cmd, timeout=45)
+    if res.get("error"):
+        return {"error": res["error"], "cards": []}
+    cards = []
+    for line in (res.get("stdout", "") or "").splitlines():
+        if not line.startswith("CARD|"):
+            continue
+        p = line.split("|")
+        if len(p) >= 6:
+            cards.append({"dev": p[1], "size_gb": p[2], "boot": p[3],
+                          "root": p[4], "model": p[5]})
+    return {"cards": cards, "count": len(cards)}
+
+
+@capability(
+    "foundry.sdcard.inspect",
+    http_method="POST", http_path="/foundry/sdcard/inspect", http_tags=["foundry"],
+    memory="off",
+    description="Mount a card READ-ONLY and report what is on it: OS, free space, "
+                "enabled services, existing config.txt, and which inherited services "
+                "would disrupt a live LAN if it booted. Writes nothing. Inputs: "
+                "cluster_id (str!), node, boot (str! e.g. /dev/sdk1), root (str!). "
+                "Output: {os, free, config_txt, enabled:[...], hazards:[...]}.",
+)
+async def cap_sdcard_inspect(cluster_id: str = "", node: str = "", boot: str = "",
+                             root: str = "", trace_id=None) -> Dict:
+    if not (boot and root):
+        return {"error": "boot and root partition devices are required"}
+    from Vera.vera.foundry.sdcard_core import hazard_services
+    body = (
+        f"mount -o ro {boot} \"$MB\" 2>/dev/null || {{ echo 'ERR boot mount'; exit 1; }}\n"
+        f"mount -o ro {root} \"$MR\" 2>/dev/null || {{ echo 'ERR root mount'; exit 1; }}\n"
+        "echo '---OS---'; grep -h PRETTY_NAME \"$MR/etc/os-release\" 2>/dev/null\n"
+        "echo '---FREE---'; df -h \"$MR\" | tail -1\n"
+        "echo '---HOSTNAME---'; cat \"$MR/etc/hostname\" 2>/dev/null\n"
+        "echo '---ENABLED---'\n"
+        "ls \"$MR/etc/systemd/system/multi-user.target.wants/\" 2>/dev/null\n"
+        "echo '---CONFIG---'\n"
+        "cat \"$MB/config.txt\" 2>/dev/null || cat \"$MB/firmware/config.txt\" 2>/dev/null\n"
+        "echo '---SSH---'; [ -e \"$MB/ssh\" ] && echo yes || echo no\n"
+        "echo '---END---'\n")
+    res = await _call("proxmox.node.exec", cluster_id=cluster_id, node=node,
+                      command=_sd_script(body), timeout=90)
+    if res.get("error"):
+        return {"error": res["error"]}
+    out = res.get("stdout", "") or ""
+    if "ERR boot mount" in out or "ERR root mount" in out:
+        return {"error": "could not mount the card read-only; is it in use?"}
+
+    def _sec(name: str) -> str:
+        try:
+            return out.split(f"---{name}---", 1)[1].split("---", 1)[0].strip("\n")
+        except Exception:
+            return ""
+
+    enabled = [u.strip() for u in _sec("ENABLED").splitlines() if u.strip()]
+    return {
+        "ok": True,
+        "os": _sec("OS").replace("PRETTY_NAME=", "").strip('"'),
+        "free": _sec("FREE"),
+        "hostname": _sec("HOSTNAME").strip(),
+        "ssh_enabled": _sec("SSH").strip() == "yes",
+        "config_txt": _sec("CONFIG"),
+        "enabled": enabled,
+        "hazards": hazard_services(enabled),
+    }
+
+
+@capability(
+    "foundry.sdcard.plan",
+    http_method="POST", http_path="/foundry/sdcard/plan", http_tags=["foundry"],
+    memory="off",
+    description="Dry-run: show exactly which files would be written to a card and "
+                "which inherited services would be masked, without touching it. "
+                "Inputs: config_txt (str — from inspect), enabled (list), display "
+                "(xpt2046|none), panel (str), rotate (int), vera_url, node_label. "
+                "Output: {boot:{...}, root:[...], mask:[...], notes:[...]}.",
+    schema=enum_schema(display=["xpt2046", "none"],
+                       panel=["ili9341", "ili9486", "ili9488", "st7735r", "hx8357d"]),
+)
+async def cap_sdcard_plan(config_txt: str = "", enabled: List[str] = None,
+                          display: str = "xpt2046", panel: str = "ili9341",
+                          rotate: int = 270, vera_url: str = "",
+                          node_label: str = "", role: str = "frame",
+                          mask_hazards: bool = True, trace_id=None) -> Dict:
+    from Vera.vera.foundry.sdcard_core import plan_adapt
+    plan = plan_adapt(config_txt, enabled or [], display=display,
+                      display_opts={"panel": panel, "rotate": int(rotate)},
+                      vera_url=vera_url or _vera_url(), node_label=node_label,
+                      role=role, mask_hazards=mask_hazards)
+    # Return the config.txt in full (it is the reviewable part) but only the
+    # names of the agent files — they are long and generated.
+    return {"mode": plan["mode"], "config_txt": plan["boot"].get("config.txt", ""),
+            "boot_files": sorted(plan["boot"]), "root_files": sorted(plan["root"]),
+            "mask": plan["mask"], "notes": plan["notes"]}
+
+
+def _vera_url() -> str:
+    """The LAN-reachable Vera base URL a provisioned node should call home on —
+    same derivation the feature bundles use (`_features_ctx`)."""
+    ip = _vera_host_ip()
+    return "https://%s:8999" % ip if ip else ""
+
+
+@capability(
+    "foundry.sdcard.provision",
+    http_method="POST", http_path="/foundry/sdcard/provision", http_tags=["foundry"],
+    memory="on",
+    description="Apply a provisioning plan to a card: merge the TFT overlay into "
+                "config.txt, enable SSH, install the first-boot join + display/button "
+                "agents, and mask inherited services that would disrupt the LAN. "
+                "ADAPTS in place — existing data is preserved. Set confirm=true to "
+                "write. Inputs: cluster_id (str!), node, boot (str!), root (str!), "
+                "display, panel, rotate, node_label, wifi_ssid, wifi_psk, confirm "
+                "(bool=false). Output: {ok, written:[...], masked:[...]}.",
+    schema=enum_schema(display=["xpt2046", "none"],
+                       panel=["ili9341", "ili9486", "ili9488", "st7735r", "hx8357d"]),
+)
+async def cap_sdcard_provision(cluster_id: str = "", node: str = "", boot: str = "",
+                               root: str = "", display: str = "xpt2046",
+                               panel: str = "ili9341", rotate: int = 270,
+                               node_label: str = "", role: str = "frame",
+                               wifi_ssid: str = "", wifi_psk: str = "",
+                               mask_hazards: bool = True, confirm: bool = False,
+                               trace_id=None) -> Dict:
+    if not (boot and root):
+        return {"error": "boot and root partition devices are required"}
+    if not confirm:
+        return {"error": "refusing to write without confirm=true",
+                "hint": "run foundry.sdcard.plan first to review the change"}
+    from Vera.vera.foundry.sdcard_core import plan_adapt
+
+    # Read the card's current state first — the plan must merge into the real
+    # config.txt, not a blank one, or we silently drop the settings that make
+    # this particular board boot.
+    cur = await cap_sdcard_inspect(cluster_id=cluster_id, node=node,
+                                   boot=boot, root=root)
+    if cur.get("error"):
+        return cur
+
+    label = node_label or (cur.get("hostname") or "rpi-node")
+    token = uuid.uuid4().hex
+    wifi = [(wifi_ssid, wifi_psk)] if wifi_ssid else None
+    plan = plan_adapt(cur.get("config_txt", ""), cur.get("enabled", []),
+                      display=display,
+                      display_opts={"panel": panel, "rotate": int(rotate)},
+                      vera_url=_vera_url(), enroll_token=token, node_label=label,
+                      role=role, wifi=wifi, mask_hazards=mask_hazards)
+
+    # Ship every file as base64 so shell quoting can never corrupt a payload —
+    # these include python sources with quotes, braces and newlines.
+    writes = []
+    for part, files in (("$MB", plan["boot"]), ("$MR", plan["root"])):
+        for rel, content in files.items():
+            b64 = base64.b64encode(content.encode("utf-8")).decode()
+            writes.append(
+                f"mkdir -p \"$(dirname {part}/{rel})\" 2>/dev/null; "
+                f"printf %s '{b64}' | base64 -d > \"{part}/{rel}\" && "
+                f"echo 'WROTE {rel}'")
+    chmods = "; ".join(
+        f"chmod +x \"$MR/{p}\"" for p in plan["root"] if p.endswith((".sh", ".py")))
+    # Enable the first-boot unit the way systemd would have: the wants/ symlink.
+    # `systemctl enable` cannot run against an unbooted rootfs.
+    enable = ("mkdir -p \"$MR/etc/systemd/system/multi-user.target.wants\"; "
+              "ln -sf /etc/systemd/system/foundry-firstboot.service "
+              "\"$MR/etc/systemd/system/multi-user.target.wants/"
+              "foundry-firstboot.service\" && echo 'ENABLED firstboot'")
+    body = (
+        f"mount {boot} \"$MB\" 2>/dev/null || {{ echo 'ERR boot mount'; exit 1; }}\n"
+        f"mount {root} \"$MR\" 2>/dev/null || {{ echo 'ERR root mount'; exit 1; }}\n"
+        # Keep a copy of the file we are about to edit. It is the one file whose
+        # loss stops the board booting at all.
+        "cp -n \"$MB/config.txt\" \"$MB/config.txt.foundry-backup\" 2>/dev/null || true\n"
+        + "\n".join(writes) + "\n" + chmods + "\n" + enable + "\nsync\necho DONE\n")
+
+    res = await _call("proxmox.node.exec", cluster_id=cluster_id, node=node,
+                      command=_sd_script(body), timeout=180)
+    if res.get("error"):
+        return {"error": res["error"]}
+    out = res.get("stdout", "") or ""
+    if "ERR boot mount" in out or "ERR root mount" in out:
+        return {"error": "could not mount the card read-write; is it in use?"}
+    written = [l.split(" ", 1)[1] for l in out.splitlines() if l.startswith("WROTE ")]
+
+    r = _redis()
+    if r:
+        await r.hset(K_NODES, label, json.dumps(
+            {"label": label, "role": role, "token": token, "kind": "rpi",
+             "provisioned": time.time(), "panel": panel, "status": "awaiting-first-boot"}))
+    await emit_event({"type": "foundry.sdcard.provisioned", "label": label,
+                      "files": len(written)})
+    return {"ok": "DONE" in out, "label": label, "written": written,
+            "masked": [h["name"] for h in plan["mask"]],
+            "notes": plan["notes"] + [
+                "config.txt backed up on the card as config.txt.foundry-backup",
+                "First boot masks the inherited services, then checks in to Vera."]}
+
+
+@capability(
+    "foundry.node.checkin",
+    http_method="POST", http_path="/foundry/node/checkin", http_tags=["foundry"],
+    memory="off", silent=True,
+    description="Called BY a provisioned node on first boot to register itself. "
+                "Inputs: label, role, ip, mac, token, kind. Output: {ok}.",
+)
+async def cap_node_checkin(label: str = "", role: str = "frame", ip: str = "",
+                           mac: str = "", token: str = "", kind: str = "rpi",
+                           trace_id=None) -> Dict:
+    r = _redis()
+    if not r or not label:
+        return {"error": "label required"}
+    raw = await r.hget(K_NODES, label)
+    rec = json.loads(raw) if raw else {"label": label}
+    # The token proves this is the node we provisioned rather than anything else
+    # that found the endpoint. Unknown nodes are recorded, not trusted.
+    rec.update({"role": role, "ip": ip, "mac": mac, "kind": kind,
+                "last_seen": time.time(),
+                "status": "online" if token and token == rec.get("token") else "unverified"})
+    await r.hset(K_NODES, label, json.dumps(rec))
+    await emit_event({"type": "foundry.node.checkin", "label": label, "ip": ip})
+    return {"ok": True, "label": label, "status": rec["status"]}
+
+
+@capability(
+    "foundry.node.list",
+    http_method="GET", http_path="/foundry/node/list", http_tags=["foundry"],
+    memory="off", silent=True,
+    description="List provisioned nodes (photoframes, macro pads, status displays) "
+                "and when each last checked in. Output: {nodes:[...]}.",
+)
+async def cap_node_list(trace_id=None) -> Dict:
+    r = _redis()
+    if not r:
+        return {"nodes": []}
+    rows = await r.hgetall(K_NODES) or {}
+    nodes = []
+    for v in rows.values():
+        try:
+            rec = json.loads(v)
+        except Exception:
+            continue
+        rec.pop("token", None)          # never hand the enrolment token back out
+        seen = rec.get("last_seen", 0)
+        rec["stale"] = bool(seen) and (time.time() - seen > 300)
+        nodes.append(rec)
+    nodes.sort(key=lambda e: e.get("label", ""))
+    return {"nodes": nodes, "count": len(nodes)}
+
+
+@capability(
+    "foundry.node.frame",
+    http_method="GET", http_path="/foundry/node/frame", http_tags=["foundry"],
+    memory="off", silent=True,
+    description="Called BY a display node to ask what it should show. Returns "
+                "{mode:image|text|blank, url|lines}. Input: label (str!).",
+)
+async def cap_node_frame(label: str = "", trace_id=None) -> Dict:
+    r = _redis()
+    if not r or not label:
+        return {"mode": "blank"}
+    raw = await r.hget(K_FRAMES, label)
+    if not raw:
+        return {"mode": "text", "lines": [label, "idle", "no content assigned"]}
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {"mode": "blank"}
+
+
+@capability(
+    "foundry.node.frame.set",
+    http_method="POST", http_path="/foundry/node/frame/set", http_tags=["foundry"],
+    memory="on",
+    description="Set what a display node shows. Inputs: label (str!), mode "
+                "(image|text|blank), url (str — for image), lines (list — for text). "
+                "Use label='*' to set every node at once. Output: {ok, applied:[...]}.",
+    schema=enum_schema(mode=["image", "text", "blank"]),
+)
+async def cap_node_frame_set(label: str = "", mode: str = "blank", url: str = "",
+                             lines: List[str] = None, trace_id=None) -> Dict:
+    r = _redis()
+    if not r or not label:
+        return {"error": "label required"}
+    spec = {"mode": mode}
+    if mode == "image":
+        if not url:
+            return {"error": "url required for mode=image"}
+        spec["url"] = url
+    elif mode == "text":
+        spec["lines"] = lines or []
+    targets = [label]
+    if label == "*":
+        targets = [json.loads(v).get("label") for v in
+                   (await r.hgetall(K_NODES) or {}).values()]
+        targets = [t for t in targets if t]
+    for t in targets:
+        await r.hset(K_FRAMES, t, json.dumps(spec))
+    return {"ok": True, "applied": targets, "spec": spec}
+
+
+@capability(
+    "foundry.node.action",
+    http_method="POST", http_path="/foundry/node/action", http_tags=["foundry"],
+    memory="off", silent=True,
+    description="Called BY a node when one of its buttons is pressed. Emits a "
+                "foundry.node.action event that any Vera automation can react to, "
+                "which is what makes these nodes macro pads. Inputs: label, action.",
+)
+async def cap_node_action(label: str = "", action: str = "", trace_id=None) -> Dict:
+    await emit_event({"type": "foundry.node.action", "label": label,
+                      "action": action, "ts": time.time()})
+    return {"ok": True}
+
+
 @APP.get("/foundry/panel", include_in_schema=False)
 async def _foundry_panel():
     p = _HERE / "foundry_panel.html"
@@ -1986,6 +2350,9 @@ register_ui(
              "foundry.blueprint.apply", "foundry.blueprint.export",
              "foundry.pxe.status", "foundry.pxe.config", "foundry.pxe.config.save",
              "foundry.pxe.profile.list", "foundry.pxe.profile.save",
-             "foundry.pxe.mac.add", "foundry.pxe.macs"],
+             "foundry.pxe.mac.add", "foundry.pxe.macs",
+             "foundry.sdcard.detect", "foundry.sdcard.inspect",
+             "foundry.sdcard.plan", "foundry.sdcard.provision",
+             "foundry.node.list", "foundry.node.frame.set"],
     mode="element",     # embedded as a Workers & Ollama sub-tab
 )
