@@ -1044,7 +1044,7 @@ if _svc is not None and _iq is not None:
     _svc.register_handler(_iq.KIND_EMBED_SESSIONS, _ingest_job)
 
 
-async def _scheduled_ingest_all():
+async def _idle_queue_tick():
     """The queue's TICK - and the transcript backfill's producer.
 
     Two jobs in one because they share the same clock. Every interval this:
@@ -1195,8 +1195,17 @@ async def cap_background_cancel(id: str = "", trace_id=None) -> dict:
     return {"ok": True, "id": str(id)}
 
 
+#: Back-compat alias - the tests and older callers know this name.
+_scheduled_ingest_all = _idle_queue_tick
+
 if _SCHEDULE_INTERVAL_S > 0 and not is_dev_sandbox():
-    schedule(_scheduled_ingest_all, _SCHEDULE_INTERVAL_S, name="ide.claude_sessions.autoingest")
+    # 60s, not _SCHEDULE_INTERVAL_S (300). This tick is now the QUEUE's tick as
+    # well as the backfill's producer, and it drives every producer's latency:
+    # a narrator quick take is on a 3-minute cadence, so draining every 5
+    # minutes would make it chronically late. It also keeps the quiet clock's
+    # observations well inside STALE_OBSERVATION_S (420s) - at 300s a single
+    # missed tick counted as an unwitnessed gap and reset the clock.
+    schedule(_idle_queue_tick, 60, name="vera.idle_queue.tick")
 elif is_dev_sandbox():
     log.info("claude_sessions: auto-ingest skipped (dev sandbox — would just "
              "re-scan the same transcripts into a throwaway DB nobody reads)")

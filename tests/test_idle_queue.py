@@ -147,3 +147,30 @@ def test_a_bad_timestamp_does_not_break_the_summary():
     j = Q.make_job("a", Q.KIND_DREAM)
     j["enqueued_at"] = "nonsense"
     assert Q.summary([j], "", now=1000)["depth"] == 1
+
+
+# â”€â”€ what the Ollama panel renders â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+def test_summary_carries_the_rows_the_panel_needs():
+    """The panel shows a LIST, not just a count - "3 waiting" with no way to
+    see what, since when, or why is the opacity this queue exists to remove."""
+    now = 1000.0
+    jobs = [
+        Q.make_job("a", Q.KIND_EMBED_SESSIONS, "backfill", enqueued_at=now - 90),
+        Q.make_job("b", Q.KIND_NARRATOR, "quick take", enqueued_at=now - 30),
+    ]
+    s = Q.summary(jobs, "a census is running", now)
+    assert s["depth"] == 2
+    kinds = [r["kind"] for r in s["waiting"]]
+    assert kinds == [Q.KIND_NARRATOR, Q.KIND_EMBED_SESSIONS], \
+        "waiting rows must be in the order they will run (narrator first)"
+    assert s["waiting"][1]["waiting_for_s"] == 90
+    assert s["blocked_reason"] == "a census is running"
+
+
+def test_summary_rows_do_not_leak_payloads():
+    """A status view is read by anything that can see the panel; job payloads
+    are not part of that contract."""
+    j = Q.make_job("a", Q.KIND_DREAM, "d", payload={"secret": "x"},
+                    enqueued_at=1.0)
+    row = Q.summary([j], "", 2.0)["waiting"][0]
+    assert "payload" not in row

@@ -12552,6 +12552,59 @@ async def _narrator_quick_take_inner(cfg: Dict[str, Any], gen,
     return {"ok": True, "take": take}
 
 
+# â”€â”€ the awaiting-idle queue â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Ambient thinking is exactly the kind of work that should wait for a quiet
+# box: nobody is blocked on it, and it competes for the same Ollama nodes as
+# whatever a person is actually doing. A LIVE CONVERSATION is not ambient and
+# is never queued - see _director_loop.
+try:
+    from Vera.vera import idle_queue as _iq
+    from Vera.vera import idle_queue_service as _svc
+except ImportError:                                        # pragma: no cover
+    try:
+        from vera import idle_queue as _iq
+        from vera import idle_queue_service as _svc
+    except ImportError:
+        _iq = _svc = None
+
+
+async def _narrator_job(job, should_continue):
+    """Run whichever narrator pass the job names, when the box is free."""
+    cfg = await _director_cfg()
+    which = (job.get("payload") or {}).get("pass") or "deep"
+    if which == "quick":
+        await _narrator_quick_take(cfg)
+        _LAST_NARRATOR_QUICK[0] = time.time()
+    else:
+        await _narrator_think_once(cfg)
+        _LAST_NARRATOR_THINK[0] = time.time()
+    return {"ok": True, "pass": which}
+
+
+async def _dream_job(job, should_continue):
+    cfg = await _director_cfg()
+    res = await _director_think_once(cfg)
+    if not (isinstance(res, dict) and res.get("backoff")):
+        _LAST_DIRECTOR_THINK[0] = time.time()
+    return {"ok": True}
+
+
+if _svc is not None and _iq is not None:
+    _svc.register_handler(_iq.KIND_NARRATOR, _narrator_job)
+    _svc.register_handler(_iq.KIND_DREAM, _dream_job)
+
+
+async def _queue_or_run(kind, title, runner, *, dedupe_key, payload=None):
+    """Queue it if the queue is available, otherwise do it inline.
+
+    The fallback matters: if the queue module fails to import, ambient thinking
+    should degrade to the old behaviour rather than stop happening entirely.
+    """
+    if _svc is None or _iq is None:                        # pragma: no cover
+        return await runner()
+    return await _svc.submit(kind, title, dedupe_key=dedupe_key, payload=payload)
+
+
 async def _director_loop():
     global _DIRECTOR_RUN
     log.info("dream director started")
@@ -12595,23 +12648,45 @@ async def _director_loop():
                     q_gap = float(cfg.get("narrator_quick_gap_min", 3.0) or 0)
                     if q_gap <= 0 or (time.time() - _LAST_NARRATOR_QUICK[0]) >= q_gap * 60.0:
                         try:
-                            await _narrator_quick_take(cfg)
+                            # Queued, not run: it waits for a quiet box. The
+                            # timestamp is stamped by the handler when it
+                            # actually runs, so a long busy spell does not
+                            # silently skip the pass.
+                            await _queue_or_run(
+                                _iq.KIND_NARRATOR if _iq else "narrator",
+                                "narrator quick take",
+                                lambda: _narrator_quick_take(cfg),
+                                dedupe_key="narrator:quick",
+                                payload={"pass": "quick"})
                         except Exception as e:
                             log.warning("narrator quick: %s", e)
-                        _LAST_NARRATOR_QUICK[0] = time.time()
                 # Slow tier: the MoE deep narrative on its own (longer) cadence.
                 n_gap = float(cfg.get("narrator_gap_min", 12.0) or 0)
                 if n_gap <= 0 or (time.time() - _LAST_NARRATOR_THINK[0]) >= n_gap * 60.0:
                     try:
-                        await _narrator_think_once(cfg)
+                        await _queue_or_run(
+                            _iq.KIND_NARRATOR if _iq else "narrator",
+                            "narrator deep narrative",
+                            lambda: _narrator_think_once(cfg),
+                            dedupe_key="narrator:deep",
+                            payload={"pass": "deep"})
                     except Exception as e:
                         log.warning("system narrator: %s", e)
-                    _LAST_NARRATOR_THINK[0] = time.time()
             # ── PA director pass (dream-feeding) ─────────────────────────────────
             if d_enabled and (conv or gap_min <= 0 or due):
-                res = await _director_think_once(cfg)
-                if not (isinstance(res, dict) and res.get("backoff")):
-                    _LAST_DIRECTOR_THINK[0] = time.time()
+                if conv:
+                    # A live conversation is a dialogue, not ambient musing.
+                    # Someone is waiting on this reply, so it must NOT be
+                    # queued behind a quiet-box gate.
+                    res = await _director_think_once(cfg)
+                    if not (isinstance(res, dict) and res.get("backoff")):
+                        _LAST_DIRECTOR_THINK[0] = time.time()
+                else:
+                    await _queue_or_run(
+                        _iq.KIND_DREAM if _iq else "dream",
+                        "director ambient think",
+                        lambda: _director_think_once(cfg),
+                        dedupe_key="dream:director")
             if d_enabled:
                 try:
                     await _director_auto_drain(cfg)

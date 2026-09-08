@@ -649,6 +649,18 @@ html.vpb-nav-hosted #secNav{display:none}
         </div>
 
         <!-- Embedding Configuration -->
+        <!-- Background queue: work waiting for an idle box. Producers (session
+             + source embedding, dream, narrator) enqueue here instead of
+             running themselves, so this is where you see what ambient load is
+             pending and WHY it has not run. -->
+        <div class="widget w-w6 w-h3" data-wid="ol-bgqueue">
+          <div class="w-head"><span class="w-grip">&#10303;</span><span class="w-dot"></span><span class="w-title">Background Queue <span style="font-weight:400;color:var(--dim2)">&mdash; waiting for an idle box</span></span><span class="w-actions"><button class="w-iconbtn" onclick="P.bgqRefresh()" title="Refresh">&#8635;</button><button class="w-iconbtn" onclick="P.gridHide('ollama','ol-bgqueue')">&times;</button></span></div>
+          <div class="w-body">
+            <div id="ol-bgq-head" style="font-size:10px;color:var(--dim2);margin-bottom:6px">&hellip;</div>
+            <div id="ol-bgq-body"></div>
+          </div>
+        </div>
+
         <div class="widget w-w6 w-h3" data-wid="ol-embed-cfg">
           <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Embedding Config</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('ollama','ol-embed-cfg')">×</button></span></div>
           <div class="w-body">
@@ -2126,6 +2138,7 @@ let _jobPage = 0;        // current page for completed jobs list
 const _JOB_PAGE_SIZE = 100;
 
 async function refresh(){
+  renderBgQueue();          // cheap, no GPU - safe on every refresh
   const [cluster, jobs] = await Promise.all([api('/cluster'), api('/cluster/jobs?limit=500')]);
   if(cluster && !cluster.error) _cluster = cluster;
   if(jobs && !jobs.error){
@@ -2442,6 +2455,66 @@ async function wkRemoveStale(){
 }
 
 // ── Ollama pane ──────────────────────────────────────────────────────────────
+// â”€â”€ Background queue â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Reads /background/status (capability background.status). Two structures come
+// back: the quiet CLOCK (how long the box has been continuously idle, and why
+// it is not) and the QUEUE itself.
+async function renderBgQueue(){
+  const head=$('ol-bgq-head'), body=$('ol-bgq-body');
+  if(!head||!body) return;
+  const r = await api('/background/status');
+  if(!r || r.error){ head.textContent = r&&r.error ? ('\u2717 '+r.error) : 'unavailable'; body.innerHTML=''; return; }
+  const q = r.queue || {depth:0, note:'no queue'};
+  const blocked = q.blocked_reason || r.busy_reason || '';
+  const quiet = Math.max(0, parseInt(r.quiet_for_s||0,10));
+  const need  = Math.max(1, parseInt(r.min_quiet_s||600,10));
+  setDot('ol-bgqueue', q.running ? 'ok' : (blocked ? 'warn' : (q.depth ? 'warn' : 'ok')));
+
+  const pct = Math.min(100, Math.round(quiet*100/need));
+  head.innerHTML =
+    '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+    + '<b style="color:var(--text)">'+q.depth+'</b> waiting'
+    + (q.running ? ' &middot; <span style="color:var(--gpu)">running '+esc(q.running.title||q.running.kind||'')+'</span>' : '')
+    + '<span style="flex:1"></span>'
+    + '<span title="The queue only starts work after this much CONTINUOUSLY OBSERVED quiet. A census leaves 30-60s gaps between goals, which is why a snapshot check is not enough.">idle '+quiet+'s / '+need+'s</span>'
+    + '</div>'
+    + '<div style="height:3px;background:var(--border);border-radius:2px;margin-top:4px;overflow:hidden">'
+    +   '<div style="height:100%;width:'+pct+'%;background:'+(pct>=100?'var(--ok,#6fd68b)':'var(--acc)')+'"></div>'
+    + '</div>'
+    + (blocked ? '<div style="margin-top:4px;color:var(--warn,#dec37e)">\u23f8 '+esc(blocked)+'</div>' : '');
+
+  const rows = (q.waiting||[]);
+  if(!rows.length && !q.running){
+    body.innerHTML='<div style="font-size:9.5px;color:var(--dim)">'+esc(q.note||'nothing queued')+'</div>';
+    return;
+  }
+  const one=(j,isRun)=>{
+    const kind=esc(j.kind||'?'), title=esc(j.title||j.id||'');
+    const waited=parseInt(j.waiting_for_s||0,10);
+    const pre=parseInt(j.preempts||0,10);
+    return '<div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid var(--border)">'
+      + '<span style="font-size:8px;padding:1px 5px;border-radius:7px;background:var(--bg2);color:var(--dim2)">'+kind+'</span>'
+      + '<span style="flex:1;font-size:9.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+title+'</span>'
+      + (pre>0 ? '<span title="times this job was stopped to give the box back" style="font-size:8px;color:var(--warn,#dec37e)">\u21ba'+pre+'</span>' : '')
+      + (isRun ? '<span style="font-size:8.5px;color:var(--gpu)">running</span>'
+               : '<span style="font-size:8.5px;color:var(--dim)">'+(waited?age(Date.now()/1000-waited):'queued')+'</span>')
+      + (isRun ? '' : '<button class="w-iconbtn" title="Remove from the queue" onclick="P.bgqCancel('+sq(j.id)+')">&times;</button>')
+      + '</div>';
+  };
+  body.innerHTML = (q.running?one(q.running,true):'') + rows.map(j=>one(j,false)).join('')
+    + ((q.struggling||[]).length
+        ? '<div style="margin-top:6px;font-size:9px;color:var(--warn,#dec37e)" title="Pre-empted repeatedly - it may never finish in the gaps, and the answer is to split it.">\u26a0 '
+          + (q.struggling||[]).length+' job(s) keep getting pre-empted</div>'
+        : '');
+}
+
+async function bgqCancel(id){
+  if(!confirm('Remove queued job "'+id+'"?')) return;
+  await api('/background/cancel','POST',{id});
+  renderBgQueue();
+}
+function bgqRefresh(){ renderBgQueue(); }
+
 function renderOllama(){
   if(!_cluster) return;
   const nodes = Object.entries(_cluster.ollama||{});
@@ -7470,6 +7543,7 @@ return {
   loadRouting, routeSave, routeActivate, routeNewProfile, routeDelProfile,
   loadCapRouting, capRouteSave, capRouteDelete, capRouteEdit, loadRouteActivity,
   loadModelTags, modelTagSave, modelTagEdit,
+  renderBgQueue, bgqCancel, bgqRefresh,
   nodeToggle, workerToggle,
   jTab, jRecoverOrphans, jToggleDetail, jCopyRow, jCopyPrompt, jStopRow,
   jPagePrev, jPageNext,

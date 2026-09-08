@@ -191,9 +191,26 @@ def summary(jobs: Optional[Iterable[Dict[str, Any]]],
         note = "%d job(s) waiting — %s" % (len(q), blocked_reason)
     else:
         note = "%d job(s) waiting — starting shortly" % len(q)
+    def _row(j: Dict[str, Any]) -> Dict[str, Any]:
+        """What the Ollama panel shows per job. Deliberately not the whole job:
+        payloads can be large and are nobody's business in a status view."""
+        try:
+            waited = max(0.0, float(now) - float(j.get("enqueued_at", 0)))
+        except (TypeError, ValueError):
+            waited = 0.0
+        return {
+            "id": j.get("id", ""), "kind": j.get("kind", ""),
+            "title": j.get("title", ""), "state": j.get("state", ""),
+            "waiting_for_s": int(waited),
+            "preempts": int(j.get("preempts", 0)),
+            "attempts": int(j.get("attempts", 0)),
+            "last_note": j.get("last_note", ""),
+        }
+
     return {
         "depth": len(q),
-        "running": run,
+        "running": _row(run) if run else None,
+        "waiting": [_row(j) for j in q],
         "by_kind": by_kind,
         "blocked_reason": blocked_reason,
         "oldest_wait_s": int(oldest),
