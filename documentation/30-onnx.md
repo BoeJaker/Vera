@@ -33,6 +33,20 @@ load artifacts, or choose a provider. Strict reconstruction verifies serialized
 request identity, giving ONNX Runtime, vLLM and cluster adapters one comparable
 contract before any traffic is moved.
 
+The legacy ONNX compatibility adapter binds exactly one ONNX ModelPackage and
+legacy artifact identity to that provider contract. It accepts only the
+package's declared task and input/output contracts, one inline JSON `X` input,
+no portable parameters, and non-streaming execution. The legacy runner is
+injected, so importing or discovering the adapter does not import ONNX Runtime,
+load a model, or initialize the older ML subsystem.
+
+Successful legacy `{predictions, shape, provider}` results become one bounded
+portable output and a terminal event. Backend messages and unexpected fields do
+not cross the boundary; malformed responses and backend failures become stable
+error codes, while cancellation remains cancellation. This is an offline-tested
+adapter seam only: `ml.onnx.run` and dynamic model capabilities do not yet route
+through it.
+
 The second W2-06 slice adds `SQLiteModelPackageRegistry`. Canonical package JSON
 and aliases survive restart in transactional tables; package content is
 revalidated and its identity recomputed on every read, so malformed or forged

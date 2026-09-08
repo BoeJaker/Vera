@@ -21,6 +21,7 @@ from .inference_contracts import (
     InferenceEvent, InferenceProvider, InferenceRequest, InferenceTranscript,
     InferenceValue, consume_inference, inference_event_from_dict,
     inference_request_from_dict, inference_value_from_dict)
+from .onnx_inference_adapter import LegacyONNXInferenceProvider, LegacyONNXRunner
 
 __all__ = ["AdmittedModelActivation", "LegacyModelCapabilityBinding", "ModelActivationReceipt",
            "ModelAdmissionReceipt", "ModelDeploymentTarget",
@@ -30,6 +31,7 @@ __all__ = ["AdmittedModelActivation", "LegacyModelCapabilityBinding", "ModelActi
            "InferenceArtifact", "InferenceCancellation", "InferenceContractConflict",
            "InferenceEvent", "InferenceProvider", "InferenceRequest",
            "InferenceTranscript", "InferenceValue",
+           "LegacyONNXInferenceProvider", "LegacyONNXRunner",
            "PromptMessage", "PromptPackage", "ProviderProfile", "TrainingRequest",
            "TrainingRun", "TrainingRuntime",
            "DeterministicScalarEvalProvider", "ScalarCaseObservation",
