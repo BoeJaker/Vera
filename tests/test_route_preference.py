@@ -125,3 +125,51 @@ def test_a_saturated_preferred_node_hands_work_to_the_other_one():
     load = {"cpu-246": 0, "cpu-247": 2}
     chosen = min(load, key=lambda i: _score(i, load[i], "cpu-247"))
     assert chosen == "cpu-246"
+
+
+# â”€â”€ the fields must SURVIVE the config round-trip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Nearly shipped broken: ollama.routing.save normalises every rule through
+# _rule(), which takes a fixed keyword list. A rule carrying `prefer` or
+# `prefer_gpu_if_free` would have been accepted, silently stripped, and the
+# routing would have looked configured while behaving exactly as before.
+
+@pytest.fixture(scope="module")
+def orch():
+    return pytest.importorskip(
+        "vera.capability_orchestration",
+        reason="orchestrator not importable here (needs the app env)")
+
+
+def test_rule_carries_the_new_fields(orch):
+    r = orch._rule("summarize", deny_gpu=True, prefer="cpu-247",
+                   prefer_gpu_if_free=True)
+    assert r["prefer"] == "cpu-247"
+    assert r["prefer_gpu_if_free"] is True
+
+
+def test_rule_defaults_them_off(orch):
+    r = orch._rule("chat", prefer_gpu=True)
+    assert r["prefer"] == "" and r["prefer_gpu_if_free"] is False
+
+
+def test_the_defaults_split_the_two_cpu_nodes(orch):
+    d = orch.DEFAULT_ROUTING_RULES
+    assert d["embedding"]["prefer"] == "cpu-246"
+    for jt in ("naming", "summarize", "dream_director"):
+        assert d[jt]["prefer"] == "cpu-247", jt
+
+
+def test_the_hard_exclusion_is_gone_from_the_rebalanced_rules(orch):
+    """avoid_embed collapsed the candidate list to one node before load was
+    considered. A soft preference replaces it - if this comes back, so does the
+    saturation."""
+    d = orch.DEFAULT_ROUTING_RULES
+    for jt in ("naming", "summarize", "dream_director"):
+        assert not d[jt]["avoid_embed"], jt
+
+
+def test_only_summarize_reaches_for_an_idle_gpu(orch):
+    d = orch.DEFAULT_ROUTING_RULES
+    assert d["summarize"]["prefer_gpu_if_free"] is True
+    for jt in ("embedding", "naming", "dream_director"):
+        assert not d[jt]["prefer_gpu_if_free"], jt
