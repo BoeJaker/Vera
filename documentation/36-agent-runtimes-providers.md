@@ -57,6 +57,20 @@ Provider usage should retain provider, model, token counts, price revision, and
 request identity. Updating a pricing table changes estimates, not historical
 provider invoices.
 
+Portable model-serving providers are discoverable through
+`InferenceProviderRegistry`. Each immutable descriptor identifies the provider,
+supported ModelPackage IDs and tasks, placement labels, an externally supplied
+readiness state, and a compare-and-set revision. Candidate queries filter those
+facts deterministically. Resolution always requires the caller to name a
+provider; the registry never silently chooses another candidate.
+
+This boundary intentionally does not probe health, rank providers, balance
+traffic, retry a request, or fail over. Cluster and deployment policy can use
+the descriptors as evidence while retaining one visible owner for routing and
+retry decisions. Updating readiness or replacing a provider requires the
+previous descriptor revision, preventing a stale controller from overwriting a
+newer cluster view.
+
 ## Structured generation contract
 
 Structured generation starts with the provider-neutral, non-executing contract in
@@ -185,6 +199,8 @@ needed to fix it.
 - `vera/smolagents/`, `vera/langgraph/`, `vera/pydanticai/` — adapters.
 - `vera/providers/` — credentials, models, chat, pricing, usage, and the neutral
   structured-generation and document-parser contracts.
+- `vera/models/` — ModelPackage lifecycle, portable inference contracts,
+  runtime adapters, and the inference provider registry.
 - `vera/catalog/` — discovery and hardware-fit estimates.
 - `vera/ide/` and `vera/board/` — coding-agent execution and work ownership.
 
