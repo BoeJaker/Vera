@@ -10,6 +10,7 @@ if someone unhooks the queue — which is the regression that matters.
 """
 import asyncio
 import os
+import time
 import sys
 
 import pytest
@@ -32,6 +33,23 @@ def fresh_queue(monkeypatch):
     q.register(CS._JOB, 300, BG.P_BULK)
     monkeypatch.setattr(CS, "_QUEUE", q)
     return q
+
+
+def _witnessed_quiet(q, seconds=700.0, step=60.0):
+    """Simulate a system OBSERVED idle for `seconds`.
+
+    Deliberately not `last_busy = 0.0` - that was the prod bug (epoch-zero
+    reads as decades of quiet), and using it as a fixture is what let the bug
+    sit behind four green tests. Real quiet has to be watched tick by tick,
+    with no gap longer than stale_s.
+    """
+    now = time.time()
+    t = now - seconds
+    while t < now:
+        q.observe(t, "")
+        t += step
+    q.observe(now, "")
+    return now
 
 
 def _never_called(**kw):
@@ -75,8 +93,7 @@ def test_the_ingest_runs_after_sustained_quiet(monkeypatch, fresh_queue):
     monkeypatch.setattr(CS, "_system_is_busy", free)
     monkeypatch.setattr(CS, "cap_claude_sessions_ingest_all", fake_ingest)
     monkeypatch.setattr(CS, "_load_instances", lambda: _empty())
-    fresh_queue.last_busy = 0.0                # long since quiet
-    fresh_queue.last_seen = None
+    _witnessed_quiet(fresh_queue)
     run(CS._scheduled_ingest_all())
     assert calls["n"] == 1
     assert fresh_queue.running is None, "the queue was left marked busy"
@@ -102,8 +119,7 @@ def test_the_ingest_is_given_a_should_continue_callback(monkeypatch, fresh_queue
     monkeypatch.setattr(CS, "_system_is_busy", free)
     monkeypatch.setattr(CS, "cap_claude_sessions_ingest_all", fake_ingest)
     monkeypatch.setattr(CS, "_load_instances", lambda: _empty())
-    fresh_queue.last_busy = 0.0
-    fresh_queue.last_seen = None
+    _witnessed_quiet(fresh_queue)
     run(CS._scheduled_ingest_all())
     assert callable(seen.get("cb")), "the ingest was given no way to yield"
 
@@ -119,8 +135,7 @@ def test_a_failed_ingest_frees_the_queue(monkeypatch, fresh_queue):
 
     monkeypatch.setattr(CS, "_system_is_busy", free)
     monkeypatch.setattr(CS, "cap_claude_sessions_ingest_all", boom)
-    fresh_queue.last_busy = 0.0
-    fresh_queue.last_seen = None
+    _witnessed_quiet(fresh_queue)
     run(CS._scheduled_ingest_all())
     assert fresh_queue.running is None
     assert fresh_queue.jobs[CS._JOB]["last_ok"] is False

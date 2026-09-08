@@ -211,6 +211,69 @@ def test_the_quiet_window_exceeds_a_census_inter_goal_gap():
     assert BG.MIN_QUIET_SECONDS >= 300
 
 
-def test_an_unreadable_clock_does_not_wedge_the_queue():
-    assert BG.quiet_gate("", None, None) == ""
-    assert BG.quiet_gate("", "x", "y") == ""
+def test_an_unreadable_clock_blocks_but_does_not_wedge_the_queue():
+    """This test used to assert the opposite - that an unknown clock ALLOWS -
+    and that is exactly how the epoch-zero bug reached prod. Fail closed: an
+    unreadable clock is not evidence of an idle system. It must not wedge
+    either, so a readable observation has to clear it again."""
+    assert BG.quiet_gate("", None, None) != ""
+    assert BG.quiet_gate("", "x", "y") != ""
+    q = BG.BackgroundQueue(min_quiet_s=600)
+    q.register("j", 300, BG.P_BULK)
+    t = 1_000.0
+    for _ in range(14):                      # 14 x 60s of witnessed quiet
+        q.observe(t, "")
+        t += 60
+    assert q.pick(t)[0] == "j", "a readable clock did not clear the block"
+
+
+# â”€â”€ a fresh process must not assume the quiet it never witnessed â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Observed on prod 2026-09-08: last_busy initialised to 0.0, so quiet_for read
+# as ~1.79e9 seconds and the FIRST tick after every restart passed the gate and
+# launched the bulk transcript backfill - during the restart, which is the
+# single worst moment for it. The gate was live and passing its own tests; none
+# of them ever exercised a queue that had not observed anything yet.
+
+NOW = 1_788_868_000.0
+
+
+def _fresh():
+    q = BG.BackgroundQueue()
+    q.register("embed.sessions", interval_s=300, priority=BG.P_BULK)
+    return q
+
+
+def test_a_brand_new_queue_starts_nothing():
+    q = _fresh()
+    job, why = q.pick(NOW)
+    assert job is None
+    assert "no idle observation yet" in why
+
+
+def test_quiet_is_counted_from_the_first_observation_not_the_epoch():
+    q = _fresh()
+    q.observe(NOW, "")                      # first sighting: system is free
+    assert q.quiet_for(NOW) == 0.0
+    job, why = q.pick(NOW + 1)
+    assert job is None, "one free reading is not ten minutes of quiet"
+    assert "only" in why and "of quiet so far" in why
+
+
+def test_it_runs_once_the_quiet_has_actually_been_witnessed():
+    q = _fresh()
+    t = NOW
+    for _ in range(int(BG.MIN_QUIET_SECONDS // 60) + 2):
+        q.observe(t, "")                    # keep watching, stay under stale_s
+        t += 60
+    job, why = q.pick(t)
+    assert job == "embed.sessions", why
+
+
+def test_an_unreadable_clock_blocks_rather_than_allows():
+    q = _fresh()
+    q.observe(NOW, "")
+    assert "refusing to assume" in BG.quiet_gate("", "not-a-number", NOW)
+
+
+def test_quiet_gate_treats_never_observed_as_blocked():
+    assert BG.quiet_gate("", None, NOW) != ""
