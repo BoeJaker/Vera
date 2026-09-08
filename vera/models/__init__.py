@@ -26,6 +26,8 @@ from .openai_inference_adapter import (
     OpenAICompatibleInferenceProvider, OpenAICompatibleTransport)
 from .inference_registry import (
     InferenceProviderDescriptor, InferenceProviderRegistry)
+from .ollama_inference_adapter import (
+    LegacyOllamaInferenceProvider, LegacyOllamaRunner)
 
 __all__ = ["AdmittedModelActivation", "LegacyModelCapabilityBinding", "ModelActivationReceipt",
            "ModelAdmissionReceipt", "ModelDeploymentTarget",
@@ -37,6 +39,7 @@ __all__ = ["AdmittedModelActivation", "LegacyModelCapabilityBinding", "ModelActi
            "InferenceProviderDescriptor", "InferenceProviderRegistry",
            "InferenceTranscript", "InferenceValue",
            "LegacyONNXInferenceProvider", "LegacyONNXRunner",
+           "LegacyOllamaInferenceProvider", "LegacyOllamaRunner",
            "OpenAICompatibleInferenceProvider", "OpenAICompatibleTransport",
            "PromptMessage", "PromptPackage", "ProviderProfile", "TrainingRequest",
            "TrainingRun", "TrainingRuntime",
