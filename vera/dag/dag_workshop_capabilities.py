@@ -10442,11 +10442,16 @@ except Exception:                                     # pragma: no cover
 # back to the previous (unguarded) behaviour rather than failing to boot.
 try:
     from Vera.vera.dag.code_author_guards import repair_collapsed as _repair_collapsed
+    from Vera.vera.dag.code_author_guards import repaired_note as _repaired_note
 except Exception:                                     # pragma: no cover
     try:
         from vera.dag.code_author_guards import repair_collapsed as _repair_collapsed
+        from vera.dag.code_author_guards import repaired_note as _repaired_note
     except Exception:
         log.warning("code_author_guards unavailable — repair collapse guard disabled")
+
+        def _repaired_note(passes) -> str:      # noqa: E306
+            return ""
 
         def _repair_collapsed(before: str, after: str, **_kw) -> bool:
             return False
@@ -11258,6 +11263,11 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
             # "verified" as the same thing.
             "syntax_ok": bool(check.get("ok")),
             "checked_with": check.get("checker") or "",
+            # How many REPAIR passes rewrote the file after it was generated.
+            # >0 means what is on disk is NOT byte-identical to what the model
+            # produced, which is the difference between an anchor that matches
+            # and one that does not. See the note clause below.
+            "repaired": int(_timing_counts.get("syntax_repairs", 0)),
             "syntax_error": check.get("error", "") if _syntax_bad else "",
             "runtime_ok": (not _runtime_bad) if smoke_ran else None,
             "runtime_error": (runtime_err[-600:] if _runtime_bad else ""),
@@ -11280,6 +11290,15 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
                        f"with code.edit before use. " if _runtime_bad
                        else ("✓ ran clean on a smoke-run. " if smoke_ran else ""))
                     + "Written and versioned. "
+                    # An anchor typed from memory misses when the file was
+                    # repaired. Census 40, author-then-edit: code.edit anchored
+                    # `let countdown = 60 * 60;` and the file held
+                    # `countdown = 60 * 60;` - exactly the edit a repair pass
+                    # makes for "Identifier 'countdown' has already been
+                    # declared". The model was never told the file had changed
+                    # under it, and the note below tells it not to read the file
+                    # back, so it had nothing to anchor on but its own memory.
+                    + _repaired_note(_timing_counts.get("syntax_repairs", 0))
                     # Say plainly that the checking is DONE. Without this the loop
                     # spends whole cycles re-proving it — reading the file back with
                     # ide.fs.read, `cat`-ing it, or improvising a shell syntax check —

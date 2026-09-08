@@ -22,6 +22,7 @@ caller's actual intent.
 """
 
 import os
+from typing import Any
 
 # A repair that shrinks the file below this fraction of its pre-repair size is a
 # collapse. A real minimal fix (adding `</html>`, closing a brace) only ever grows
@@ -47,3 +48,38 @@ def repair_collapsed(before: str, after: str,
     if b < _m:
         return False
     return a < int(b * _r)
+
+
+def repaired_note(passes: Any) -> str:
+    """What to tell the caller when the file changed after it was generated.
+
+    Census 40, author-then-edit. `code.edit` anchored on
+
+        let countdown = 60 * 60;
+
+    and the file on disk held
+
+        countdown = 60 * 60;
+
+    which is exactly the edit a repair pass makes for "Identifier 'countdown'
+    has already been declared". code.author returns `path`, `bytes`,
+    `syntax_ok`, `checked_with` - and NEVER the saved content - so the model had
+    no way to know the file had changed under it. Worse, the same note tells it
+    "do NOT read it back", which is right for verification and wrong for
+    anchoring: it was instructed into editing from memory.
+
+    So the note is conditional on a repair having actually happened. Saying it
+    every time would be the same mistake in reverse - telling every caller to
+    re-read a file that is byte-identical to what it just wrote is what the
+    do-not-read-it-back clause exists to prevent.
+    """
+    try:
+        n = int(passes or 0)
+    except (TypeError, ValueError):
+        return ""
+    if n <= 0:
+        return ""
+    return ("\u26a0 THIS FILE WAS REPAIRED after you generated it (%d pass(es)), so "
+            "what is on disk is NOT what you wrote. Before any code.edit on it, read "
+            "it and anchor `find` on text COPIED FROM THE FILE - an anchor typed from "
+            "memory will not match. " % n)

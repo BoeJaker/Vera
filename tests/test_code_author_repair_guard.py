@@ -81,3 +81,34 @@ def test_thresholds_are_overridable():
     before = "x" * 1000
     assert G.repair_collapsed(before, "x" * 800, ratio=0.9, min_before=400) is True
     assert G.repair_collapsed(before, "x" * 800, ratio=0.5, min_before=400) is False
+
+
+# â”€â”€ the file changed under the model, and nobody told it â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Census 40, author-then-edit. code.edit anchored `let countdown = 60 * 60;`;
+# the file held `countdown = 60 * 60;` - exactly the edit a repair pass makes
+# for "Identifier 'countdown' has already been declared". code.author returns
+# path/bytes/syntax_ok/checked_with and NEVER the saved content, and its own
+# note tells the caller "do NOT read it back" - so the run was instructed into
+# editing from memory, and the anchor missed.
+
+def test_a_repaired_file_says_the_content_changed():
+    note = G.repaired_note(1)
+    assert "REPAIRED" in note
+    assert "NOT what you wrote" in note
+    assert "COPIED FROM THE FILE" in note
+
+
+def test_the_pass_count_is_reported():
+    assert "2 pass(es)" in G.repaired_note(2)
+
+
+def test_a_file_that_was_never_repaired_says_nothing():
+    """Telling every caller to re-read a file byte-identical to what it just
+    wrote is the mistake the do-not-read-it-back clause exists to prevent."""
+    assert G.repaired_note(0) == ""
+    assert G.repaired_note(None) == ""
+
+
+def test_an_unreadable_count_says_nothing_rather_than_guessing():
+    assert G.repaired_note("banana") == ""
+    assert G.repaired_note(-1) == ""
