@@ -1282,15 +1282,37 @@ def _agent_knowledge_block(rec: AgentRecord, snippets: List[Dict[str, Any]]) -> 
     return "\n".join(lines)
 
 
-async def _agent_rag_refresh_tick():
-    """Hourly sweep: re-index agents whose web knowledge is stale (keeps e.g.
-    the azure-expert current without manual runs)."""
+# â”€â”€ the awaiting-idle queue â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Re-indexing an agent's web knowledge fetches pages and embeds them: bulk work
+# on the CPU embed nodes that nobody is waiting on. It gets queued and is
+# stopped mid-sweep if Vera is used, resuming on the next pass (the per-agent
+# rag_last_indexed stamp IS the checkpoint, so no work is repeated).
+try:
+    from Vera.vera import idle_queue as _iq
+    from Vera.vera import idle_queue_service as _idle_svc
+except ImportError:                                        # pragma: no cover
+    try:
+        from vera import idle_queue as _iq
+        from vera import idle_queue_service as _idle_svc
+    except ImportError:
+        _iq = _idle_svc = None
+
+
+async def _agent_rag_refresh_job(job=None, should_continue=None):
+    """Re-index agents whose web knowledge is stale, yielding between agents."""
     try:
         agents = await AGENT_REGISTRY.list_all()
     except Exception:
-        return
+        return {"ok": False}
     now_ts = time.time()
+    done = 0
     for rec in agents:
+        if should_continue is not None:
+            why = await should_continue()
+            if why:
+                # Stop here. Agents already refreshed keep their new stamp, so
+                # the next pass picks up exactly where this one left off.
+                return {"ok": True, "indexed": done, "yielded": why}
         try:
             if rec.archived or not rec.knowledge_sources:
                 continue
@@ -1308,8 +1330,27 @@ async def _agent_rag_refresh_tick():
                 continue
             log.info("agent rag: refreshing stale knowledge for '%s'", rec.name)
             await agent_rag_index(rec)
+            done += 1
         except Exception as e:
             log.debug("agent rag refresh (%s): %s", getattr(rec, "name", "?"), e)
+    return {"ok": True, "indexed": done}
+
+
+if _idle_svc is not None and _iq is not None:
+    _idle_svc.register_handler(_iq.KIND_EMBED_SOURCES, _agent_rag_refresh_job)
+
+
+async def _agent_rag_refresh_tick():
+    """Producer: queue the sweep, do not run it here."""
+    if _idle_svc is None or _iq is None:                   # pragma: no cover
+        await _agent_rag_refresh_job()
+        return
+    try:
+        await _idle_svc.submit(_iq.KIND_EMBED_SOURCES,
+                               "agent knowledge re-index",
+                               dedupe_key="embed:agent_rag")
+    except Exception as e:
+        log.debug("agent rag: could not queue the sweep: %s", e)
 
 
 schedule(_agent_rag_refresh_tick, interval=3600, name="agent_rag_refresh")

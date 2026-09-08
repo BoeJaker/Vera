@@ -67,6 +67,25 @@ KIND_PRIORITY = {
 }
 DEFAULT_PRIORITY = 50
 
+#: Which kinds may be STOPPED mid-flight, and which may only be GATED at start.
+#:
+#: Not a policy preference - a correctness constraint. A dream or a narration
+#: runs an agent loop and holds the GPU gate, so every signal that says "the box
+#: is in use" is true BECAUSE OF the queue's own job. Pre-empting on that reads
+#: our own work as somebody else's and cancels it milliseconds after starting:
+#: a livelock that presents as "the queue does nothing".
+#:
+#: Embedding is different and is the case that actually motivated all this: it
+#: runs on the CPU nodes, starts no loop, takes no GPU gate slot, and yields
+#: between records. Nothing it does can be mistaken for foreign activity, so it
+#: can be stopped the instant Vera is used again.
+PREEMPTIBLE_KINDS = (KIND_EMBED_SESSIONS, KIND_EMBED_SOURCES)
+
+
+def is_preemptible(kind: Any) -> bool:
+    return str(kind) in PREEMPTIBLE_KINDS
+
+
 #: A job pre-empted this many times running is probably too big to finish in
 #: the gaps. Surfaced rather than hidden: the answer is to split it, and nobody
 #: can decide that if the queue silently retries forever.
@@ -172,9 +191,26 @@ def summary(jobs: Optional[Iterable[Dict[str, Any]]],
         note = "%d job(s) waiting — %s" % (len(q), blocked_reason)
     else:
         note = "%d job(s) waiting — starting shortly" % len(q)
+    def _row(j: Dict[str, Any]) -> Dict[str, Any]:
+        """What the Ollama panel shows per job. Deliberately not the whole job:
+        payloads can be large and are nobody's business in a status view."""
+        try:
+            waited = max(0.0, float(now) - float(j.get("enqueued_at", 0)))
+        except (TypeError, ValueError):
+            waited = 0.0
+        return {
+            "id": j.get("id", ""), "kind": j.get("kind", ""),
+            "title": j.get("title", ""), "state": j.get("state", ""),
+            "waiting_for_s": int(waited),
+            "preempts": int(j.get("preempts", 0)),
+            "attempts": int(j.get("attempts", 0)),
+            "last_note": j.get("last_note", ""),
+        }
+
     return {
         "depth": len(q),
-        "running": run,
+        "running": _row(run) if run else None,
+        "waiting": [_row(j) for j in q],
         "by_kind": by_kind,
         "blocked_reason": blocked_reason,
         "oldest_wait_s": int(oldest),

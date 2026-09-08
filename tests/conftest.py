@@ -65,7 +65,8 @@ _CRITICAL_MODULES = {
     "test_swarm_runs_ui",  # the swarm's session list was empty by construction (2026-09-07)
     "test_sandbox_redis",  # a db number is not isolation (2026-09-07)
     "test_disk_headroom",  # a full docker disk took both databases down (2026-09-08)
-    "test_idle_queue",  # nothing may start during active use (2026-09-08)
+    "test_idle_queue",
+    "test_idle_queue_service",  # the runner: dispatch + pre-emption (2026-09-08)  # nothing may start during active use (2026-09-08)
     "test_background_work",  # background work must not run during a census (2026-09-08)
     "test_ingest_defers",  # ...and the ingest must actually go through the queue (2026-09-08)
     "test_run_health",  # a contended run must not read as a regression (2026-09-08)

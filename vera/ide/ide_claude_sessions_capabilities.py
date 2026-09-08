@@ -960,6 +960,22 @@ except ImportError:                                        # pragma: no cover
     except ImportError:
         _bg = None
 
+try:
+    from Vera.vera import idle_queue_service as _svc
+except ImportError:                                        # pragma: no cover
+    try:
+        from vera import idle_queue_service as _svc
+    except ImportError:
+        _svc = None
+
+try:
+    from Vera.vera import idle_queue as _iq
+except ImportError:                                        # pragma: no cover
+    try:
+        from vera import idle_queue as _iq
+    except ImportError:
+        _iq = None
+
 
 async def _system_is_busy() -> str:
     """Why deferrable work should wait, or "". Best-effort: an unreadable
@@ -1001,46 +1017,71 @@ if _QUEUE:
     _QUEUE.register(_JOB, _SCHEDULE_INTERVAL_S, priority=_bg.P_BULK)
 
 
-async def _scheduled_ingest_all():
-    """Bulk transcript ingest, through the secondary queue.
+async def _ingest_job(job, should_continue):
+    """The queue's handler for a transcript backfill.
 
-    Two embeds per turn on the CPU node — ~4s each idle, ~11s each while a
-    census runs. This used to fire every 300s regardless and took 3 of census
-    44's first 4 goals to the wall cap.
+    `should_continue` is the runner's: it returns a reason when the box is
+    wanted back, and the ingest checkpoints per file, so a pre-empted pass
+    resumes at the same offsets rather than restarting.
     """
-    if _QUEUE is None:                                     # pragma: no cover
-        return
-    now = time.time()
-    _QUEUE.observe(now, await _system_is_busy())
-    name, blocked = _QUEUE.pick(now)
-    if not name:
-        if blocked and blocked != "nothing due":
-            _QUEUE.deferred(_JOB, blocked)
-            log.info("claude_sessions: %s",
-                     _bg.describe_defer("transcript ingest", blocked,
-                                        _SCHEDULE_INTERVAL_S))
-        return
-    _QUEUE.started(name, now)
-    try:
-        res = await cap_claude_sessions_ingest_all(
-            instance_id="", should_continue=_system_is_busy)
-        _QUEUE.finished(name, time.time(), ok=True,
-                        note=res.get("yielded", ""))
-    except Exception as e:
-        _QUEUE.finished(name, time.time(), ok=False, note=str(e)[:120])
-        log.warning("claude_sessions: scheduled local ingest failed: %s", e)
-        return
+    res = await cap_claude_sessions_ingest_all(
+        instance_id="", should_continue=should_continue)
     for inst in await _load_instances():
         iid = inst.get("id", "")
         if inst.get("kind") == "vscode-client" and _client_alive(iid):
-            if await _system_is_busy():
+            if await should_continue():
                 break
             try:
                 await cap_claude_sessions_ingest_all(
-                    instance_id=iid, should_continue=_system_is_busy)
+                    instance_id=iid, should_continue=should_continue)
             except Exception as e:
                 log.warning("claude_sessions: scheduled ingest failed for %s: %s",
                             iid, e)
+    return res
+
+
+if _svc is not None and _iq is not None:
+    _svc.register_handler(_iq.KIND_EMBED_SESSIONS, _ingest_job)
+
+
+async def _idle_queue_tick():
+    """The queue's TICK - and the transcript backfill's producer.
+
+    Two jobs in one because they share the same clock. Every interval this:
+
+      1. records the current busy reading (the quiet clock only counts time it
+         actually witnessed - see background_work.observe);
+      2. queues a backfill if one is not already queued or running;
+      3. drains: starts one job if the box has been quiet long enough, or takes
+         it back if it has not.
+
+    It no longer runs the ingest itself. That is what made the backfill
+    unstoppable once started - it ran to completion regardless of what began
+    after it, and took 3 of census 44's first 4 goals to the wall cap.
+    """
+    if _QUEUE is None or _svc is None or _iq is None:       # pragma: no cover
+        return
+    now = time.time()
+    busy = await _system_is_busy()
+    _QUEUE.observe(now, busy)
+    blocked = _bg.quiet_gate(busy, _QUEUE.last_busy, now, _QUEUE.min_quiet_s)
+
+    try:
+        await _svc.submit(_iq.KIND_EMBED_SESSIONS, "Claude transcript backfill",
+                          dedupe_key="ingest:local")
+    except Exception as e:
+        log.warning("claude_sessions: could not queue the backfill: %s", e)
+
+    try:
+        res = await _svc.drain_once(blocked, _system_is_busy, now)
+    except Exception as e:
+        log.warning("idle queue drain: %s", e)
+        return
+    if res.get("action") == "started":
+        _QUEUE.started(_JOB, now)
+    elif blocked and res.get("action") == "idle":
+        _QUEUE.deferred(_JOB, blocked)
+
 
 
 @capability("background.status", memory="off", silent=True,
@@ -1069,13 +1110,6 @@ async def cap_background_status(trace_id=None) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 # THE AWAITING-IDLE QUEUE — durable, inspectable, pre-emptible
 # ─────────────────────────────────────────────────────────────────────────────
-try:
-    from Vera.vera import idle_queue as _iq
-except ImportError:                                        # pragma: no cover
-    try:
-        from vera import idle_queue as _iq
-    except ImportError:
-        _iq = None
 
 _IDLE_KEY = "vera:idle_queue:jobs"      # Redis hash: id -> job JSON
 
@@ -1159,17 +1193,19 @@ async def cap_background_cancel(id: str = "", trace_id=None) -> dict:
     await _idle_drop(str(id))
     await emit_event({"type": "background.cancelled", "id": str(id)})
     return {"ok": True, "id": str(id)}
-    for inst in await _load_instances():
-        iid = inst.get("id", "")
-        if inst.get("kind") == "vscode-client" and _client_alive(iid):
-            try:
-                await cap_claude_sessions_ingest_all(instance_id=iid)
-            except Exception as e:
-                log.warning("claude_sessions: scheduled ingest failed for %s: %s", iid, e)
 
+
+#: Back-compat alias - the tests and older callers know this name.
+_scheduled_ingest_all = _idle_queue_tick
 
 if _SCHEDULE_INTERVAL_S > 0 and not is_dev_sandbox():
-    schedule(_scheduled_ingest_all, _SCHEDULE_INTERVAL_S, name="ide.claude_sessions.autoingest")
+    # 60s, not _SCHEDULE_INTERVAL_S (300). This tick is now the QUEUE's tick as
+    # well as the backfill's producer, and it drives every producer's latency:
+    # a narrator quick take is on a 3-minute cadence, so draining every 5
+    # minutes would make it chronically late. It also keeps the quiet clock's
+    # observations well inside STALE_OBSERVATION_S (420s) - at 300s a single
+    # missed tick counted as an unwitnessed gap and reset the clock.
+    schedule(_idle_queue_tick, 60, name="vera.idle_queue.tick")
 elif is_dev_sandbox():
     log.info("claude_sessions: auto-ingest skipped (dev sandbox — would just "
              "re-scan the same transcripts into a throwaway DB nobody reads)")
