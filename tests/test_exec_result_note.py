@@ -148,3 +148,81 @@ def test_the_loop_annotates_at_its_result_chokepoint():
     assert "annotate(result)" in body, (
         "_result_preview must annotate, so this holds for exec caps reached by "
         "any route rather than only the ones patched by hand")
+
+
+# â”€â”€ the mirror image: rc=1 with no output â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# grep, test, diff and pgrep all exit 1 while printing NOTHING, and for them
+# that is how a NEGATIVE ANSWER is reported. Census 41 and 43 produced three
+# failures of exactly that shape - rc=1, stdout and stderr both empty - and the
+# loop retried. Same ambiguity as the silent success above, inverted.
+
+import vera.execution.exec_result_note as N                # noqa: E402
+
+
+def _res(rc, out="", err="", **kw):
+    d = {"ok": rc == 0, "rc": rc, "stdout": out, "stderr": err}
+    d.update(kw)
+    return d
+
+
+def test_a_silent_nonzero_exit_is_flagged():
+    assert N.is_silent_failure(_res(1))
+    note = N.annotate(_res(1))["note"]
+    assert "NO MATCH" in note and "exited 1" in note
+
+
+def test_the_note_does_not_claim_the_command_succeeded():
+    """It explains what rc=1-with-no-output usually MEANS. It must not flip the
+    verdict: the exit code is real and ok stays False."""
+    out = N.annotate(_res(1))
+    assert out["ok"] is False and out["rc"] == 1
+    assert "succeeded" not in out["note"].lower()
+
+
+def test_a_failure_that_explained_itself_is_left_alone():
+    assert not N.is_silent_failure(_res(1, err="grep: /nope: No such file"))
+    assert "note" not in N.annotate(_res(1, err="boom"))
+
+
+def test_a_timeout_is_not_a_negative_answer():
+    """It has a real cause and result_failure_reason already reports it."""
+    assert not N.is_silent_failure(_res(124, timed_out=True))
+
+
+def test_a_negative_rc_is_a_genuine_fault_not_a_no_match():
+    """rc<0 means the process never ran - executable missing, killed by a
+    signal. Telling the model that might be the answer it wanted would be
+    actively wrong."""
+    assert not N.is_silent_failure(_res(-1))
+
+
+def test_a_silent_success_is_still_a_success_not_a_failure():
+    r = _res(0)
+    assert N.is_silent_success(r) and not N.is_silent_failure(r)
+    assert "NO MATCH" not in N.annotate(r)["note"]
+
+
+# â”€â”€ the command comes back, so a failure can name itself â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+def test_the_command_is_attached():
+    out = N.annotate(_res(1), command="grep needle /workspace/hay.txt")
+    assert out["command"] == "grep needle /workspace/hay.txt"
+
+
+def test_a_long_command_is_truncated():
+    out = N.annotate(_res(0), command="x" * 5000)
+    assert len(out["command"]) == N.MAX_COMMAND
+
+
+def test_an_existing_command_is_never_overwritten():
+    out = N.annotate(_res(1, command="the real one"), command="mine")
+    assert out["command"] == "the real one"
+
+
+def test_no_command_means_no_key():
+    assert "command" not in N.annotate(_res(0, out="hi"))
+
+
+def test_annotate_never_mutates_the_caller_dict():
+    src = _res(1)
+    N.annotate(src, command="grep x y")
+    assert "note" not in src and "command" not in src

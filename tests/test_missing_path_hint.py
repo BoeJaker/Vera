@@ -144,3 +144,36 @@ def test_workspace_names_passes_none_through():
     is bypassed before it can apply."""
     assert MP.workspace_names(None) is None
     assert MP.workspace_names(["a", "b"]) == ["a", "b"]
+
+
+# â”€â”€ the path that was never given â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Sibling of hint(): same remedy, different mistake. Census 40-43 had
+# sandbox.session.fs.read as the SECOND most-failing capability (12), 6 of them
+# a bare "path required" plus 4 repeat-guard hits - a two-word error gives the
+# model nothing to change, so it reissued the same argument-less call.
+
+def test_no_path_names_what_is_actually_there():
+    msg = MP.no_path_given(["timer.html", "notes.md"], cap="sandbox.session.fs.read")
+    assert "timer.html" in msg and "notes.md" in msg
+    assert "sandbox.session.fs.read" in msg
+
+
+def test_no_path_with_an_empty_directory_says_so():
+    msg = MP.no_path_given([])
+    assert "empty" in msg and "nothing to" in msg
+
+
+def test_no_path_with_an_unknown_listing_does_not_invent_one():
+    """None means the listing could not be determined. Claiming the directory
+    is empty would be a lie - the same contract hint() keeps."""
+    msg = MP.no_path_given(None)
+    assert "empty" not in msg
+    assert "path is required" in msg
+
+
+def test_no_path_message_is_actionable_not_a_restatement():
+    """The cap description already says path is required. Repeating that is
+    what produced the retries."""
+    msg = MP.no_path_given(["a.py"])
+    assert msg.strip() != "path required"
+    assert "a.py" in msg

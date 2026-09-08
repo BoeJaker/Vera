@@ -139,6 +139,33 @@ def hint(path: str, names: Optional[Sequence[str]]) -> str:
     return out
 
 
+def no_path_given(names: Optional[Sequence[str]], cap: str = "the read") -> str:
+    """The error for a file read called with NO path at all.
+
+    Sibling of hint(): same remedy, different mistake. `hint` answers "that file
+    is not there"; this answers "you did not say which file".
+
+    Census 40-43: sandbox.session.fs.read was the SECOND most-failing capability
+    (12 failures), and 6 of them were a bare `path required` - with 4 more caught
+    by the repeat guard, because a two-word error gives the model nothing to
+    change, so it reissued the same argument-less call. The cap description
+    already marks path as required; restating that is not the fix. Naming what is
+    actually there is, and it is the same listing the missing-path case already
+    attaches.
+    """
+    if names is None:                       # listing unavailable - do not invent
+        return ("path is required and none was given. Name the file you want to "
+                "read.")
+    listed = [str(n) for n in names if str(n).strip()]
+    if not listed:
+        return ("path is required and none was given, and the working directory "
+                "is empty - nothing has been written yet, so there is nothing to "
+                "read. Create the file first.")
+    return ("path is required and none was given. The working directory "
+            "contains: %s. Call %s again with path set to one of those exact "
+            "names." % (", ".join(listed[:40]), cap))
+
+
 def is_missing_path_failure(result: Any) -> bool:
     """True when ``result`` is a FAILURE about a path that is not there.
 

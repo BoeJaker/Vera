@@ -482,7 +482,7 @@ async def _exec_local(command: str, *, workdir: str = "", timeout: int = 120,
         "ok": proc.returncode == 0, "rc": proc.returncode,
         "stdout": (out or b"").decode("utf-8", "replace"),
         "stderr": (err or b"").decode("utf-8", "replace"),
-        "sandboxed": True, "backend": _LOCAL_BACKEND})
+        "sandboxed": True, "backend": _LOCAL_BACKEND}, command=command)
 
 
 async def _get_rec(session_id: str) -> Optional[Dict]:
@@ -713,6 +713,11 @@ async def _ensure_routable(session_id: str, *, create: bool = True) -> Optional[
 # ═════════════════════════════════════════════════════════════════════════════
 #  LIFECYCLE
 # ═════════════════════════════════════════════════════════════════════════════
+try:
+    from Vera.vera.execution import missing_path_hint as _missing_path_hint
+except ImportError:                                        # pragma: no cover
+    from vera.execution import missing_path_hint as _missing_path_hint
+
 @capability(
     "sandbox.session.start",
     http_method="POST", http_path="/remote/sandbox/start", http_tags=["remote", "sandbox"],
@@ -1078,7 +1083,7 @@ async def _exec_in(session_id: str, command: str, *, workdir: str = "",
         "ok": res.get("ok", False), "rc": _rc,
         "stdout": res.get("stdout", ""), "stderr": _err,
         "timed_out": _rc == _TIMEOUT_RC,
-        "sandboxed": True})
+        "sandboxed": True}, command=command)
 
 
 @capability(
@@ -1238,9 +1243,22 @@ async def cap_sbx_fs_read(session_id: str = "", path: str = "",
     (its long-standing key) and `content` (the router's / ide.fs.read's key) so
     either name works.
     """
-    if not path:
-        return {"ok": False, "error": "path required"}
     sid = session_id or _default_session_id()
+    if not path:
+        # Do not just restate the contract - say what IS there. See
+        # missing_path_hint.no_path_given for the runs this comes from.
+        names = None
+        if sid:
+            try:
+                listing = await route_fs_list(sid, "")
+                if listing and not listing.get("error"):
+                    names = [e.get("name", "") for e in (listing.get("entries") or [])
+                             if e.get("kind") != "dir"]
+            except Exception as e:
+                log.debug("fs.read no-path listing: %s", e)
+        return {"ok": False,
+                "error": _missing_path_hint.no_path_given(
+                    names, cap="sandbox.session.fs.read")}
     if not sid:
         return {"ok": False, "error": "no session for this read"}
     res = await route_fs_read(sid, path, max_bytes=max_bytes)

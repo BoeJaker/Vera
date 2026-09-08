@@ -50,6 +50,25 @@ NOTE = ("the command SUCCEEDED (rc=0) and produced NO output — an empty stdout
         "it explicitly (print, ls, echo); if the command's purpose was to "
         "succeed or to verify, it did.")
 
+#: The mirror image, and the reason it needed its own note: `grep`, `test`,
+#: `diff` and `pgrep` all exit 1 while printing NOTHING, and for them that is
+#: how a NEGATIVE ANSWER is reported - not a fault. Census 41 and 43 produced
+#: three of these, and the loop retried. The note deliberately does not tell the
+#: model the call succeeded (ok stays False, the exit code is real); it tells it
+#: what an empty rc=1 usually MEANS so it stops reading it as a broken call.
+FAILURE_NOTE = (
+    "the command exited {rc} and printed NOTHING to stdout or stderr. For "
+    "grep, test, diff and pgrep that is exactly how they report NO MATCH / NOT "
+    "TRUE - so this may be the ANSWER to what you asked, not a broken call. "
+    "Re-running it unchanged will return the same thing. If you need the "
+    "distinction, ask for it explicitly (`grep -c`, `... || echo NO-MATCH`, or "
+    "check the exit code yourself); if you need the command to have produced "
+    "output, the problem is upstream of this call.")
+
+#: How much of the command to carry back. Enough to identify the call, not
+#: enough to bloat every result.
+MAX_COMMAND = 300
+
 
 def _txt(v: Any) -> str:
     return v if isinstance(v, str) else ("" if v is None else str(v))
@@ -92,15 +111,62 @@ def is_silent_success(res: Any) -> bool:
     return not (_txt(res.get("stdout")).strip() or _txt(res.get("stderr")).strip())
 
 
-def annotate(res: Any) -> Any:
-    """Return `res` with the note attached when it is a silent success.
+def is_silent_failure(res: Any) -> bool:
+    """A command that exited NON-ZERO and wrote nothing to stdout OR stderr.
 
-    Never mutates the caller's dict, and never overwrites an existing `note` —
-    a caller that already explained itself knows more about the specific command
-    than this does.
+    Strict for the same reasons as its twin: a timeout is not a silent failure
+    (it has its own cause, and `result_failure_reason` reports it), and a
+    negative rc means the process never ran - executable missing, killed by a
+    signal - which is a genuine fault rather than a negative answer.
     """
-    if not is_silent_success(res) or _txt(res.get("note")).strip():
+    if not looks_like_exec_result(res):
+        return False
+    if res.get("timed_out"):
+        return False
+    rc = _rc_of(res)
+    if rc is None or rc <= 0:
+        return False
+    return not (_txt(res.get("stdout")).strip() or _txt(res.get("stderr")).strip())
+
+
+def annotate(res: Any, command: Any = "") -> Any:
+    """Return `res` with the command and any applicable note attached.
+
+    Three things can be added: the COMMAND (so a failure can name the call it
+    came from), the silent-SUCCESS note, and the silent-FAILURE note. Never
+    mutates the caller's dict, and never overwrites an existing `note` or
+    `command` - a caller that already explained itself knows more about the
+    specific command than this does.
+    """
+    # Anything that is not an exec result dict passes straight through. The
+    # previous version got this for free because is_silent_success() was the
+    # first thing it called; doing work before that check reintroduced it, and
+    # test_a_non_exec_result_is_never_touched caught it with a list.
+    if not looks_like_exec_result(res):
+        return res
+
+    add: Dict[str, Any] = {}
+
+    # The command, so a failure can name the call it came from. Without this
+    # `result_failure_reason` has nothing to identify an exec failure by, and
+    # its "name the command" branch - written precisely so the reader is "not
+    # reduced to guessing which call this was" - is dead code for every exec
+    # capability. Attached on success too: it costs one field and makes a
+    # result readable on its own.
+    cmd = _txt(command).strip()
+    if cmd and not _txt(res.get("command")).strip():
+        add["command"] = cmd[:MAX_COMMAND]
+
+    # Never overwrite an existing note - a caller that already explained itself
+    # knows more about the specific command than this does.
+    if not _txt(res.get("note")).strip():
+        if is_silent_success(res):
+            add["note"] = NOTE
+        elif is_silent_failure(res):
+            add["note"] = FAILURE_NOTE.format(rc=_rc_of(res))
+
+    if not add:
         return res
     out = dict(res)
-    out["note"] = NOTE
+    out.update(add)
     return out
