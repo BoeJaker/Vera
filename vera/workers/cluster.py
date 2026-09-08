@@ -351,22 +351,11 @@ def _pick_instance_load_aware(
               f"(deny_gpu={bool(rule.get('deny_gpu'))}, "
               f"avoid_embed={bool(rule.get('avoid_embed'))}, "
               f"prefer={rule.get('prefer') or '-'}, "
-              f"gpu_if_free={bool(rule.get('prefer_gpu_if_free'))}, "
               f"pin={rule.get('pin') or '-'})")
         pin = rule.get("pin") or ""
         if pin and pin in online:
             _note(f"rule pin → {pin}")
             return _out(pin)
-        # Take an IDLE GPU before deny_gpu removes it from the running. Not
-        # prefer_gpu: that takes the GPU at in_use=1 too, and the gate is
-        # capacity ONE, so a summarise arriving mid-loop would QUEUE and the
-        # census would wait behind its own condense call.
-        if _routepref.wants_free_gpu(rule):
-            _idle_gpu = _routepref.free_gpu(online)
-            if _idle_gpu:
-                _note(f"prefer_gpu_if_free: GPU '{_idle_gpu}' is idle -> {_idle_gpu}")
-                return _out(_idle_gpu)
-            _note("prefer_gpu_if_free: no idle GPU - falling through to CPU")
         if rule.get("deny_gpu"):
             nong = {iid: i for iid, i in online.items() if not i.get("has_gpu")}
             if nong:
