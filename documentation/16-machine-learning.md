@@ -69,6 +69,14 @@ stable outage codes, and optional usage counters while keeping output values out
 of reports. This supplies deterministic regression fixtures without treating an
 offline check as proof that a native runtime, placement, or model is healthy.
 
+An admitted package can also be described as an `InferenceDeployment` without
+executing it. The record pins the admission receipt, target and provider,
+runtime version, artifact content digests, placements, and retry owner. Its
+SQLite lifecycle journal records revision-guarded desired/observed state and
+the exact health evidence behind provider observations. This separates
+deployment identity and audit history from model loading and traffic routing;
+neither registration nor observation performs either effect.
+
 ---
 
 ## 1. Modules as compute graphs (Workshop)
