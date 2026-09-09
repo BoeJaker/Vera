@@ -282,6 +282,23 @@ async def drain_once(busy_reason: str,
     """
     t = float(now if now is not None else time.time())
 
+    # 0. RECONCILE FIRST. The store is durable; the asyncio task is not. A
+    #    restart, or a cancellation that never reached the re-queue, leaves a
+    #    job marked `running` with nothing running it - and next_job refuses to
+    #    start anything while ANY job is running, so one stale record stops the
+    #    queue permanently. Observed on prod 2026-09-09: embed.sessions
+    #    stranded, runs=0, embed.sources waiting 17.6h behind it.
+    #
+    #    Every tick, not just at startup: the same thing happens whenever a
+    #    runner dies, and a self-healing queue should not need a restart to
+    #    notice. This only moves records BACK to waiting - it never starts
+    #    anything, so the gate below still decides whether the box is free.
+    _live = {_RUNNING["id"]} if (_still_running() and _RUNNING.get("id")) else set()
+    for _orphan in _iq.stranded(await load_jobs(), _live):
+        await save_job(_iq.requeue_stranded(_orphan, t))
+        log.warning("idle queue: requeued %s (%s) - it was marked running with "
+                    "no live runner", _orphan.get("id"), _orphan.get("kind"))
+
     # 1. Activity wins - take the node back before considering anything new.
     #    But only for kinds that CAN be pre-empted: a dream or a narration is
     #    itself the reason the box looks busy, so stopping it on that signal
