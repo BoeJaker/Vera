@@ -9626,6 +9626,10 @@ async def lifespan(app: FastAPI):
         # inventory and after skills/loop_profiles/agents, for the same reason -
         # it projects onto the live registries and must see all of them.
         os.path.join(_here, "registry/registry_capabilities.py"),
+        # Planning styles: additive alternatives to the loop's own planner
+        # (plan.styles / plan.detailed). Loaded late so plan.detailed's default
+        # capability catalogue is the complete registry, not a partial one.
+        os.path.join(_here, "planning/planning_capabilities.py"),
         # W0-01: canonical, read-only system inventory. Loaded late so its live
         # snapshot sees the complete registries while remaining order-stable.
         os.path.join(_here, "inventory/system_inventory.py"),
