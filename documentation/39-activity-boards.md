@@ -36,6 +36,13 @@ parking decisions such as done/dropped when automatic synchronization runs.
 
 ## Operational use
 
+The Activity sidebar reads its available scopes independently from the timeline.
+Its first load, empty result, and request failure are distinct accessible states.
+Failures remain visible with a retry action instead of being silently replaced
+by a healthy-looking “Everything” scope, while an empty response is reported as
+an empty work plane rather than an outage. Periodic refresh retains the existing
+scope-selection and timeline semantics.
+
 The Activity panel can stop loops, inspect sandboxes, flatten nested activity,
 and correlate files/events. Destructive controls need exact IDs. A stale event
 stream should be removed only after confirming no live producer depends on it.
