@@ -91,7 +91,12 @@ def _clip(s: Any, n: int) -> str:
 # ═════════════════════════════════════════════════════════════════════════════
 
 def from_telegram(messages: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Telegram traffic — what Vera told you, and what you replied."""
+    """Telegram traffic — what Vera told you, and what you replied.
+
+    tg.history returns {ts, from, text, ok} where `from` is "bot" for outbound.
+    The other key names are accepted too so a shape change degrades to a
+    mislabelled direction rather than an empty section.
+    """
     out = []
     for m in messages or []:
         if not isinstance(m, dict):
@@ -99,12 +104,14 @@ def from_telegram(messages: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
         text = m.get("text") or m.get("message") or ""
         if not text:
             continue
-        direction = m.get("direction") or ("out" if m.get("from_bot") else "in")
+        sender = str(m.get("from") or "").strip().lower()
+        outbound = (sender == "bot") or bool(m.get("from_bot"))             or m.get("direction") == "out"
         out.append(entry(
             m.get("ts") or m.get("date") or m.get("created"),
-            "telegram", "sent" if direction == "out" else "received",
+            "telegram", "sent" if outbound else "received",
             text.splitlines()[0] if text else "",
-            text, ref=str(m.get("chat_id") or m.get("message_id") or "")))
+            text, severity="info",
+            ref=str(m.get("chat_id") or m.get("message_id") or "")))
     return out
 
 

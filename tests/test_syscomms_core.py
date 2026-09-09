@@ -58,13 +58,26 @@ def test_content_wins_when_no_explicit_level():
 
 
 # ── per-source normalisers ──────────────────────────────────────────────────
-def test_from_telegram_marks_direction():
+def test_from_telegram_marks_direction_from_the_real_shape():
+    # tg.history returns {ts, from, text, ok}; "bot" means outbound.
     got = sc.from_telegram([
-        {"text": "Daily brief", "date": 1788614074, "from_bot": True},
-        {"text": "ok thanks", "date": 1788614080, "direction": "in"},
+        {"text": "Daily brief", "ts": "2026-09-09T08:00:00Z", "from": "bot"},
+        {"text": "ok thanks", "ts": "2026-09-09T08:01:00Z", "from": "joe"},
     ])
     assert [e["kind"] for e in got] == ["sent", "received"]
     assert got[0]["source"] == "telegram"
+    assert got[0]["ts"] == "2026-09-09T08:00:00Z"
+
+
+def test_from_telegram_still_reads_legacy_keys():
+    got = sc.from_telegram([{"text": "x", "date": 1788614074, "from_bot": True}])
+    assert got[0]["kind"] == "sent"
+
+
+def test_from_telegram_content_does_not_escalate_severity():
+    # Chat quoting the word "failed" is not itself an incident.
+    got = sc.from_telegram([{"text": "the build failed earlier", "from": "joe"}])
+    assert got[0]["severity"] == "info"
 
 
 def test_from_telegram_skips_empty_messages():

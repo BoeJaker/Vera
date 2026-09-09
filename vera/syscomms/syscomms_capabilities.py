@@ -80,12 +80,20 @@ async def cap_feed(limit: int = 80, sources: str = "", min_severity: str = "",
         return not want or name in want
 
     if _maybe("telegram"):
-        res = await _call("tg.messages", limit=60)
-        if res.get("__unavailable"):
-            unavailable.append(res["__unavailable"])
+        # tg.history is per-chat and requires a chat_id, so resolve the admin
+        # chat from the bot config rather than assuming one.
+        cfg = await _call("tg.config.get")
+        chat = ((cfg.get("config") or {}).get("admin_chat_id") or "").strip()
+        if cfg.get("__unavailable"):
+            unavailable.append(cfg["__unavailable"])
+        elif not chat:
+            unavailable.append("telegram: no admin_chat_id configured")
         else:
-            msgs = res.get("messages") or res.get("history") or []
-            streams.append(sc.from_telegram(msgs))
+            res = await _call("tg.history", chat_id=chat, limit=60)
+            if res.get("__unavailable"):
+                unavailable.append(res["__unavailable"])
+            else:
+                streams.append(sc.from_telegram(res.get("messages") or []))
 
     if _maybe("actions"):
         res = await _call("fabric.browse", dataset_id="vera.action_items",
