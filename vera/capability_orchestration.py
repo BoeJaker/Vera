@@ -9621,6 +9621,11 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "business/business_capabilities.py"),
         os.path.join(_here, "business/business_sim.py"),
         os.path.join(_here, "business/thermal_printer_capabilities.py"),
+        # The agent registry: what EXTERNAL agents drive Vera with (their skills,
+        # tools, loops, techniques and harnesses). Loaded here, beside the system
+        # inventory and after skills/loop_profiles/agents, for the same reason -
+        # it projects onto the live registries and must see all of them.
+        os.path.join(_here, "registry/registry_capabilities.py"),
         # W0-01: canonical, read-only system inventory. Loaded late so its live
         # snapshot sees the complete registries while remaining order-stable.
         os.path.join(_here, "inventory/system_inventory.py"),
