@@ -61,6 +61,9 @@ LENSES: Tuple[Tuple[str, str], ...] = (
 )
 
 _BULLET_ORDER = ("decompose", "artifacts", "criteria", "risks", "caps")
+#: Lenses whose lines describe what must exist or be observed, and so may carry
+#: a planner-computed RESULT. Their lines are checked against the goal.
+_GROUNDED_LENSES = ("criteria", "artifacts")
 _LINE_SPLIT = re.compile(r"[\r\n]+")
 _BULLET_STRIP = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s*")
 _WORD_RE = re.compile(r"[a-z0-9_.]{3,}")
@@ -222,10 +225,18 @@ def merge_brief(results: Dict[str, Any], *, goal: Any = "",
         if lines:
             per_lens[name] = lines
     rejected: List[str] = []
-    if per_lens.get("criteria"):
-        per_lens["criteria"], rejected = drop_invented_criteria(per_lens["criteria"], goal)
-        if not per_lens["criteria"]:
-            per_lens.pop("criteria")
+    # Both lenses that describe what must EXIST are checked: observed live, the
+    # artifacts lens wrote "stdout - the integer result (42925)" - right, as it
+    # happens, but a value the planner worked out is a value the planner worked
+    # out, and the next one will be 207085.
+    for name in _GROUNDED_LENSES:
+        if per_lens.get(name):
+            kept, dropped = drop_invented_criteria(per_lens[name], goal)
+            rejected.extend(dropped)
+            if kept:
+                per_lens[name] = kept
+            else:
+                per_lens.pop(name)
     errs: Dict[str, str] = {k: str(v) for k, v in (errors or {}).items() if v}
     for name, _q in LENSES:
         if name in per_lens or name in errs or name not in (results or {}):
@@ -233,8 +244,8 @@ def merge_brief(results: Dict[str, Any], *, goal: Any = "",
         raw = str((results or {}).get(name) or "").strip()
         if not raw:
             errs[name] = "empty reply"
-        elif name == "criteria" and rejected:
-            errs[name] = "every criterion asserted a value the goal never gave"
+        elif name in _GROUNDED_LENSES and rejected:
+            errs[name] = "every line asserted a value the goal never gave"
         elif raw.lower() not in ("none", "n/a", "nothing"):
             errs[name] = "no usable lines"
     return {
@@ -338,12 +349,14 @@ async def plan_detailed(goal: str, generate: Callable[..., Awaitable[str]], *,
     """Run every lens concurrently, merge host-locally, return a plan.
 
     `generate(prompt, system=...)` is injected, not imported: it keeps the style
-    testable with no model, and it lets the CALLER choose the routing role. Point
-    it at a CPU-pinned role — the GPU gate is capacity 1, so a fan-out aimed at
-    the GPU does not parallelise, it queues.
+    testable with no model, and it lets the CALLER choose the routing role. The
+    GPU gate is capacity 1, so a fan-out aimed at the GPU queues rather than
+    parallelising — accepted (2026-09-09): the CPU nodes, where five lenses
+    could have run side by side, are a hard throughput limit (16 tokens in
+    329 s), so the lenses go to the GPU one after another and stay short.
 
-    A lens that fails or times out contributes nothing and is named in
-    `missing`. One dead node must not cost the whole plan.
+    A lens that fails or times out contributes nothing, is named in `missing`,
+    and says why in `errors`. One dead node must not cost the whole plan.
     """
     cat = list(catalog or [])
     cat_block = ("\n\nAVAILABLE CAPABILITIES:\n"
@@ -391,11 +404,11 @@ STYLES: Dict[str, Dict[str, Any]] = {
         "id": "detailed",
         "label": "Detailed (multi-lens)",
         "description": ("Five short lenses — decompose, artifacts, risks, "
-                        "criteria, caps — asked concurrently and merged on the "
-                        "host with no second model call. Modelled on the "
-                        "research brief, but gated: the lenses run on a "
-                        "CPU-pinned role so they parallelise instead of queuing "
-                        "behind the capacity-1 GPU slot."),
+                        "criteria, caps — each a no-think GPU call through the "
+                        "gate, merged on the host with no second model call. "
+                        "Modelled on the research brief, but gated, and a "
+                        "criterion or artifact asserting a number the goal "
+                        "never gave is rejected."),
         "owner": "vera.planning.planner_styles",
         "plan": plan_detailed,
     },

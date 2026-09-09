@@ -6,10 +6,14 @@ what it was — which is the property that makes a style a style rather than a
 fork of the planner.
 
 Its routing profile is its own (`planning_style`), for the same reason: the
-loop's profile belongs to the loop. The one role here is CPU-pinned on purpose,
-mirroring the research profile's analyst — the GPU gate is capacity 1, so a
-fan-out aimed at the GPU does not run in parallel, it QUEUES. On the CPU nodes,
-which hold their own per-instance slots, the lenses genuinely run side by side.
+loop's profile belongs to the loop. The one role, `lens`, prefers the GPU. The
+design first pinned it to the CPU nodes so five lenses could run side by side
+instead of queuing behind the capacity-1 GPU gate; measured live (2026-09-09)
+the CPU nodes are a hard limit - the default 7.4 GB model produced 16 tokens in
+329 s under the fan-out, and four of five lenses timed out at 900 s. On the GPU
+the five lenses queue back-to-back through the gate; with think=False each is a
+few short lines, so the queue is short. Override the role on the Model Routing
+page if the estate changes.
 """
 
 from __future__ import annotations
@@ -35,9 +39,11 @@ try:
     register_routing_profile(
         PROFILE, label="Planning Styles", owner="planning",
         roles={
-            # deny_gpu is the whole point - see the module docstring.
-            "lens": {"job_type": "planning_lens", "deny_gpu": True,
-                     "options": {"temperature": 0.3, "num_ctx": 8192}},
+            # GPU, not CPU - see the module docstring. No num_ctx: a lens must
+            # never make the GPU reload its model with a different context
+            # between two of the loop planner's own calls; the prompts are tiny.
+            "lens": {"job_type": "planning_lens", "prefer_gpu": True,
+                     "options": {"temperature": 0.3}},
         })
 except Exception as e:                       # pragma: no cover - never block load
     log.debug("register planning_style profile: %s", e)
@@ -49,14 +55,14 @@ async def _lens_generate(prompt: str, system: str = "") -> str:
     Research reaches its nodes directly and holds no lease, which is how it puts
     several generations on one GPU node at once. This does not: every lens goes
     through ollama_generate, so the gate and the per-instance semaphore both
-    still apply and a lens can never jump the queue in front of real work.
+    still apply and a lens can never jump the queue in front of real work - the
+    five lenses take the GPU slot one after another.
     """
-    # think=False: a lens answers with a few short lines. On a CPU node a
-    # reasoning model's thinking pass is minutes per call, and with five lenses
-    # sharing two nodes it was the whole budget - the first live run produced
-    # five timeouts and an empty brief.
+    # think=False: a lens answers with a few short lines; a reasoning model's
+    # thinking pass would multiply every lens's cost for nothing (on the CPU
+    # nodes it was minutes per call and the whole budget).
     return await ollama_generate(prompt, system=system, json_mode=False,
-                                 prefer_gpu=False, profile=PROFILE, role="lens",
+                                 prefer_gpu=True, profile=PROFILE, role="lens",
                                  think=False)
 
 
@@ -83,15 +89,17 @@ async def plan_styles(trace_id=None):
 @capability("plan.detailed", memory="off",
             http_method="POST", http_path="/plan/detailed", http_tags=["planning"],
             description="Plan a goal with the DETAILED style: five short lenses "
-                        "(decompose, artifacts, risks, criteria, caps) asked "
-                        "concurrently on CPU nodes and merged host-locally with "
-                        "no second model call. Returns a plan in the loop's own "
-                        "plan shape plus the brief it was built from, so it can "
-                        "be read, stored, or compared against the single-pass "
-                        "plan for the same goal. Does NOT run the goal. "
-                        "Inputs: goal (str!), max_steps (int=8), catalog (list "
-                        "of cap names the plan may use), timeout_s (int=900, per "
-                        "lens; CPU nodes are slow). Output: {ok, style, "
+                        "(decompose, artifacts, risks, criteria, caps), each a "
+                        "short no-think GPU call through the gate, merged "
+                        "host-locally with no second model call. A criterion or "
+                        "artifact asserting a number the goal never gave is "
+                        "rejected. Returns a plan in the loop's own plan shape "
+                        "plus the brief it was built from, so it can be read, "
+                        "stored, or compared against the single-pass plan for "
+                        "the same goal. Does NOT run the goal. Inputs: goal "
+                        "(str!), max_steps (int=8), catalog (list of cap names "
+                        "the plan may use), timeout_s (int=900, per lens, "
+                        "including time queued for the GPU). Output: {ok, style, "
                         "plan:{steps,reason,done_when,brief}, brief_text}. "
                         "brief.missing names lenses that did not answer and "
                         "brief.errors says why.")

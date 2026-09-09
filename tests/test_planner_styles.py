@@ -231,6 +231,18 @@ def test_five_timeouts_read_as_timeouts_not_as_an_empty_goal():
     assert all(v.startswith("TimeoutError") for v in plan["brief"]["errors"].values())
 
 
+def test_the_artifacts_lens_may_not_assert_a_computed_value_either():
+    # Live, run 2 on the o49 goal: the artifacts lens answered
+    # "stdout - The integer result (42925) printed as text". Correct, this
+    # time; still a value the planner worked out, and not the goal's to give.
+    b = ps.merge_brief({"artifacts": "stdout - The integer result (42925) printed as text",
+                        "criteria": "stdout is a single integer"}, goal=GOAL)
+    assert b["rejected_criteria"] == ["stdout - The integer result (42925) printed as text"]
+    assert "artifacts" in b["missing"]
+    assert "never gave" in b["errors"]["artifacts"]
+    assert b["lenses"]["criteria"] == ["stdout is a single integer"]
+
+
 def test_an_empty_reply_is_named_as_such():
     b = ps.merge_brief({"decompose": "", "risks": "   ", "criteria": "stdout is 207085"},
                        goal=GOAL)
