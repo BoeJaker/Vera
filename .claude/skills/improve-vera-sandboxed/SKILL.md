@@ -612,3 +612,32 @@ in between — use `limit >= 20`.
 For anything that must survive a client timeout (a goal re-run, a restart
 sequence), write a small script to `/tmp` and `nohup` it from the host shell,
 then read its log on the next tick.
+
+### 11.7 Say who you are, and declare the tooling you wrote
+
+A census used to attribute itself to a hardcoded session id, so every run that
+had ever happened looked like the same actor and Loop Lab could not tell them
+apart. Both runners now take provenance, and record it on **every row**:
+
+    --operator claude --skill improve-vera-sandboxed --tool /loop \
+    --session-id <YOUR REAL session id>
+
+(or `VERA_CENSUS_OPERATOR` / `_SKILL` / `_TOOL` / `_SESSION_ID`.)
+
+`caller_session` is the one that matters: it is the key that joins a run to the
+transcript **already ingested** by `ide.claude_sessions.*`, whose Dispatch panel
+renders the turn history. Set it to your real session id and the reasoning
+behind a run becomes readable next to its numbers, from a browser, without an
+IDE. Leave a field blank rather than guessing — an unattributed run should look
+unattributed, not be credited to whoever last edited the harness.
+
+**Declare helper scripts in `loop-census/helpers.json`.** The tooling written to
+drive a measurement is part of how the numbers were produced — these scripts
+restart prod, cancel runs and launch goals — and they are written to `/tmp`, run
+once, and vanish. Each entry is a name, a path, who wrote it, and a plain
+sentence on what it did and why it had to exist; the runner stamps name and
+purpose onto every row and logs them at census start. Keep it to name and
+purpose on the row: it should say WHAT ran and WHY, not carry the script.
+
+Loading is best-effort by design — a missing or malformed manifest yields no
+helpers rather than failing a census over bookkeeping.
