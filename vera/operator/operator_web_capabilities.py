@@ -121,6 +121,44 @@ def _safe_seg(s: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", str(s or "")).strip("-") or "capture"
 
 
+def _operator_contract(
+        canonical_task: str, *, effects: List[str],
+        approval: str = "not_required",
+        trust: str = "untrusted_browser_content",
+        secrets: str = "not_required",
+        filesystem: str = "not_required",
+        network: str = "not_required",
+        tenant: str = "session_scoped",
+        idempotency: str = "idempotent",
+        cancellation: str = "not_required",
+        pagination: str = "not_applicable",
+        resources: Optional[List[str]] = None,
+        owner: str = "vera.operator") -> Dict[str, Any]:
+    """Return a complete Capability Contract v2 declaration for Operator.
+
+    This metadata makes the existing Operator safety boundary visible to the
+    resolver, policy shadow, and audit tooling. It does not replace session
+    allowlists, dry-run, destructive-action confirmation, or Redis cancellation.
+    """
+    return {
+        "canonical_task": canonical_task,
+        "lifecycle": "active",
+        "effects": list(effects),
+        "output_schema": {"type": "object"},
+        "approval": {"status": approval},
+        "trust": {"status": trust},
+        "secrets": {"status": secrets},
+        "filesystem": {"status": filesystem},
+        "network": {"status": network},
+        "tenant": {"status": tenant},
+        "idempotency": {"status": idempotency},
+        "cancellation": {"status": cancellation},
+        "pagination": {"status": pagination},
+        "resources": {"status": "declared", "classes": resources or ["cpu"]},
+        "owner": owner,
+    }
+
+
 # ── run history (O13) ────────────────────────────────────────────────────────
 # The operator emitted its events and forgot them. A finished run could not be
 # re-examined at all, which is why every census goal with a browser step could
@@ -401,6 +439,12 @@ async def _open_session(url: str = "", kind: str = "", base_url: str = "",
 # ─────────────────────────────────────────────────────────────────────────────
 @capability("operator.session.start", memory="on",
             http_method="POST", http_path="/operator/session/start", http_tags=["operator"],
+            contract=_operator_contract(
+                "browser.session.start", effects=["execute", "network"],
+                approval="session_policy", network="target_selected_by_caller",
+                secrets="browser_session_may_contain_sensitive_content",
+                idempotency="non_idempotent", cancellation="bounded_timeout",
+                resources=["cpu", "network", "browser"]),
             description="Open a browser session on a target and navigate to it. "
                         "Inputs: url (any web page) OR kind (url|live|sandbox|panel|"
                         "codeserver|vm) + base_url + panel_id/id, session_id (reuse), "
@@ -433,6 +477,9 @@ async def cap_session_start(url: str = "", kind: str = "", base_url: str = "",
 
 @capability("operator.session.status", memory="off", silent=True,
             http_method="GET", http_path="/operator/session/status", http_tags=["operator"],
+            contract=_operator_contract(
+                "browser.session.inspect", effects=["read"],
+                trust="session_metadata_only", pagination="bounded_in_memory"),
             description="Status of one session (session_id) or all sessions. "
                         "Output: {session_id,url,refs,steps,alive,...} or {sessions:[...]}.")
 async def cap_session_status(session_id: str = "", trace_id=None) -> Dict[str, Any]:
@@ -444,6 +491,10 @@ async def cap_session_status(session_id: str = "", trace_id=None) -> Dict[str, A
 
 @capability("operator.session.close", memory="on",
             http_method="POST", http_path="/operator/session/close", http_tags=["operator"],
+            contract=_operator_contract(
+                "browser.session.close", effects=["execute"],
+                trust="session_identifier", idempotency="idempotent",
+                resources=["cpu", "browser"]),
             description="Close a browser session and free its page/context. "
                         "Input: session_id (str!). Output: {ok}.")
 async def cap_session_close(session_id: str = "", trace_id=None) -> Dict[str, Any]:
@@ -458,6 +509,10 @@ async def cap_session_close(session_id: str = "", trace_id=None) -> Dict[str, An
 # ─────────────────────────────────────────────────────────────────────────────
 @capability("operator.connect.list", memory="off", silent=True,
             http_method="GET", http_path="/operator/connect/list", http_tags=["operator"],
+            contract=_operator_contract(
+                "browser.connection.list", effects=["read"],
+                trust="registry_metadata_only", tenant="request_scoped",
+                pagination="bounded_registry", resources=["cpu"]),
             description="List everything the operator can connect to across Vera's "
                         "registries — Integrations Hub apps, Ollama instances, "
                         "worker/nodes, Docker containers (published ports), Proxmox "
@@ -472,6 +527,14 @@ async def cap_connect_list(sources: str = "", trace_id=None) -> Dict[str, Any]:
 
 @capability("operator.connect", memory="on",
             http_method="POST", http_path="/operator/connect", http_tags=["operator"],
+            contract=_operator_contract(
+                "browser.connection.open",
+                effects=["execute", "network", "model", "external_side_effect"],
+                approval="session_policy", network="registered_target_only",
+                secrets="browser_session_may_contain_sensitive_content",
+                idempotency="non_idempotent", cancellation="cooperative_between_steps",
+                filesystem="conditional_screenshot_artifacts",
+                resources=["cpu", "network", "browser", "model"]),
             description="Open a browser session on a REGISTERED connectable (from "
                         "operator.connect.list) and, optionally, drive it. Inputs: "
                         "source (integration|ollama|node|docker|proxmox), ref (str! — "
@@ -531,6 +594,11 @@ async def cap_connect(source: str = "", ref: str = "", goal: str = "",
 # ─────────────────────────────────────────────────────────────────────────────
 @capability("operator.observe", memory="off", silent=True,
             http_method="POST", http_path="/operator/observe", http_tags=["operator"],
+            contract=_operator_contract(
+                "browser.page.observe", effects=["read", "filesystem"],
+                secrets="browser_session_may_contain_sensitive_content",
+                filesystem="conditional_screenshot_artifact",
+                idempotency="snapshot_at_call_time", resources=["cpu", "browser"]),
             description="Hybrid observation of the session's current page: a "
                         "screenshot PLUS interactive elements with stable refs "
                         "(e1,e2,…) + visible text. Inputs: session_id (str!), "
@@ -560,6 +628,10 @@ async def cap_observe(session_id: str = "", max_elements: int = 120,
 
 @capability("operator.read", memory="off", silent=True,
             http_method="POST", http_path="/operator/read", http_tags=["operator"],
+            contract=_operator_contract(
+                "browser.page.read", effects=["read"],
+                secrets="browser_session_may_contain_sensitive_content",
+                idempotency="snapshot_at_call_time", resources=["cpu", "browser"]),
             description="Read text from the current page (whole body, or a CSS "
                         "selector). Inputs: session_id (str!), selector (str). "
                         "Output: {text, chars}.")
@@ -580,6 +652,11 @@ async def cap_read(session_id: str = "", selector: str = "", trace_id=None) -> D
 
 @capability("operator.screenshot", memory="off", silent=True,
             http_method="POST", http_path="/operator/screenshot", http_tags=["operator"],
+            contract=_operator_contract(
+                "browser.page.capture", effects=["read", "filesystem"],
+                secrets="browser_session_may_contain_sensitive_content",
+                filesystem="writes_operator_artifact",
+                idempotency="non_idempotent", resources=["cpu", "browser"]),
             description="Capture a screenshot of the session's current page. "
                         "Inputs: session_id (str!), full_page (bool). "
                         "Output: {screenshot, screenshot_url}.")
@@ -604,6 +681,14 @@ async def cap_screenshot(session_id: str = "", full_page: bool = False,
 # ─────────────────────────────────────────────────────────────────────────────
 @capability("operator.act", memory="on",
             http_method="POST", http_path="/operator/act", http_tags=["operator"],
+            contract=_operator_contract(
+                "browser.action.perform",
+                effects=["execute", "network", "filesystem", "external_side_effect"],
+                approval="session_policy_and_destructive_confirmation",
+                secrets="browser_session_may_contain_sensitive_content",
+                network="session_allowlist", filesystem="conditional_screenshot_artifact",
+                idempotency="non_idempotent", cancellation="action_timeout",
+                resources=["cpu", "network", "browser"]),
             description="Perform one action on the session's page. Inputs: "
                         "session_id (str!), action (click|type|press|scroll|goto|"
                         "select|hover|wait|nav|screenshot), and per-action args: "
@@ -673,6 +758,12 @@ async def cap_act(session_id: str = "", action: str = "", ref: str = "",
 # ─────────────────────────────────────────────────────────────────────────────
 @capability("operator.think", memory="off",
             http_method="POST", http_path="/operator/think", http_tags=["operator"],
+            contract=_operator_contract(
+                "browser.action.propose", effects=["read", "model"],
+                secrets="browser_session_may_contain_sensitive_content",
+                network="internal_model_or_configured_provider",
+                idempotency="non_idempotent", cancellation="provider_timeout",
+                resources=["cpu", "browser", "model"]),
             description="Observe once and let the LLM pick the next action WITHOUT "
                         "performing it. Inputs: session_id (str!), goal (str!), "
                         "provider (ollama|anthropic:model|openai:model|<id>), model. "
@@ -694,6 +785,14 @@ async def cap_think(session_id: str = "", goal: str = "", provider: str = "ollam
 
 @capability("operator.step", memory="on",
             http_method="POST", http_path="/operator/step", http_tags=["operator"],
+            contract=_operator_contract(
+                "browser.run.step",
+                effects=["execute", "network", "filesystem", "model", "external_side_effect"],
+                approval="session_policy_and_destructive_confirmation",
+                secrets="browser_session_may_contain_sensitive_content",
+                network="session_allowlist", filesystem="writes_operator_artifacts",
+                idempotency="non_idempotent", cancellation="between_actions_best_effort",
+                resources=["cpu", "network", "browser", "model"]),
             description="Run ONE observe→think→act tick against a session. Inputs: "
                         "session_id (str!), goal (str!), provider, model. "
                         "Output: {steps:[one record], done, reason}.")
@@ -711,6 +810,14 @@ async def cap_step(session_id: str = "", goal: str = "", provider: str = "ollama
 
 @capability("operator.run", memory="on",
             http_method="POST", http_path="/operator/run", http_tags=["operator"],
+            contract=_operator_contract(
+                "browser.run.execute",
+                effects=["execute", "network", "filesystem", "model", "external_side_effect"],
+                approval="session_policy_and_destructive_confirmation",
+                secrets="browser_session_may_contain_sensitive_content",
+                network="session_allowlist", filesystem="writes_operator_artifacts",
+                idempotency="non_idempotent", cancellation="cooperative_between_steps",
+                resources=["cpu", "network", "browser", "model", "redis"]),
             description="Drive a REAL browser session to a goal via observe→think→act — a "
                         "general-purpose web operator, not just a verification tool. WHEN TO "
                         "USE: any goal that means actually operating a real page — click a "
@@ -936,6 +1043,9 @@ def _mission_ctx() -> Dict[str, Any]:
 
 @capability("operator.mission.list", memory="off", silent=True,
             http_method="GET", http_path="/operator/mission/list", http_tags=["operator"],
+            contract=_operator_contract(
+                "browser.mission.list", effects=["read"],
+                trust="internal_mission_registry", tenant="global_read_only"),
             description="List available operator missions. Output: {missions:{name:desc}}.")
 async def cap_mission_list(trace_id=None) -> Dict[str, Any]:
     return {"missions": list_missions()}
@@ -943,6 +1053,13 @@ async def cap_mission_list(trace_id=None) -> Dict[str, Any]:
 
 @capability("operator.mission.run", memory="on",
             http_method="POST", http_path="/operator/mission/run", http_tags=["operator"],
+            contract=_operator_contract(
+                "browser.mission.execute",
+                effects=["execute", "network", "filesystem", "external_side_effect"],
+                approval="target_and_write_policy", network="selected_target",
+                filesystem="conditional_repository_and_artifact_writes",
+                idempotency="mission_defined", cancellation="between_steps_best_effort",
+                resources=["cpu", "network", "browser"]),
             description="Run a named operator mission. Inputs: mission (str!, e.g. "
                         "'documentation'), target (sandbox|live|{...}), domains "
                         "(list of doc slugs, empty=all), base_url, capture (bool), "
@@ -960,6 +1077,13 @@ async def cap_mission_run(mission: str = "", target: str = "sandbox",
 
 @capability("docs.build", memory="on",
             http_method="POST", http_path="/docs/build", http_tags=["docs", "operator"],
+            contract=_operator_contract(
+                "documentation.capture.build",
+                effects=["execute", "network", "filesystem"],
+                approval="target_and_write_policy", network="selected_vera_target",
+                filesystem="writes_documentation_assets_and_managed_blocks",
+                idempotency="replace_managed_outputs", cancellation="between_panels_best_effort",
+                resources=["cpu", "network", "browser"], owner="vera.documentation"),
             description="Build/refresh Vera's documentation: screenshot every UI "
                         "panel (seeded) on a target Vera and regenerate the doc "
                         "auto-blocks + gallery. Alias for the 'documentation' "
@@ -982,6 +1106,11 @@ async def cap_docs_build(target: str = "sandbox", domains: Optional[List[str]] =
 
 @capability("docs.assets", memory="off", silent=True,
             http_method="GET", http_path="/docs/assets", http_tags=["docs", "operator"],
+            contract=_operator_contract(
+                "documentation.assets.list", effects=["read", "filesystem"],
+                trust="repository_metadata", filesystem="read_documentation_assets",
+                tenant="repository_scoped", pagination="bounded_repository_scan",
+                owner="vera.documentation"),
             description="List captured documentation images for the gallery. Scans "
                         "documentation/assets/ on DISK (the source of truth, so a "
                         "stale/empty manifest never hides real images) and enriches "
@@ -1027,6 +1156,13 @@ async def cap_docs_assets(trace_id=None) -> Dict[str, Any]:
 
 @capability("docs.capture", memory="on",
             http_method="POST", http_path="/docs/capture", http_tags=["docs", "operator"],
+            contract=_operator_contract(
+                "documentation.directive.capture",
+                effects=["execute", "network", "filesystem"],
+                approval="target_and_write_policy", network="selected_vera_target",
+                filesystem="writes_documentation_assets_and_managed_blocks",
+                idempotency="replace_managed_outputs", cancellation="between_captures_best_effort",
+                resources=["cpu", "network", "browser"], owner="vera.documentation"),
             description="Fulfil <!-- VERA:CAPTURE panel=... steps=... gif=... --> "
                         "directives in the docs: navigate to each panel, run the "
                         "deterministic steps, capture a still/GIF, and insert it in a "
@@ -1106,6 +1242,11 @@ async def cap_docs_capture(doc: str = "", target: str = "sandbox", base_url: str
 
 @capability("docs.gallery", memory="on",
             http_method="POST", http_path="/docs/gallery", http_tags=["docs", "operator"],
+            contract=_operator_contract(
+                "documentation.gallery.rebuild", effects=["read", "write", "filesystem"],
+                trust="repository_metadata", filesystem="reads_manifest_writes_gallery",
+                tenant="repository_scoped", idempotency="replace_generated_output",
+                owner="vera.documentation"),
             description="Rebuild documentation/GALLERY.md from the last "
                         "capture manifest (no screenshots taken). Output: {ok, domains}.")
 async def cap_docs_gallery(trace_id=None) -> Dict[str, Any]:
@@ -1136,6 +1277,10 @@ async def cap_docs_gallery(trace_id=None) -> Dict[str, Any]:
 # ─────────────────────────────────────────────────────────────────────────────
 @capability("operator.capture.start", memory="on",
             http_method="POST", http_path="/operator/capture/start", http_tags=["operator"],
+            contract=_operator_contract(
+                "browser.capture.start", effects=["execute", "filesystem"],
+                filesystem="writes_operator_capture_frames", idempotency="non_idempotent",
+                cancellation="explicit_stop_or_frame_limit", resources=["cpu", "browser"]),
             description="Start a time-lapse: screenshot the session's page every "
                         "interval_ms while a long task runs (a dream cycle, a "
                         "backtest, a loop). Stop with operator.capture.stop to get "
@@ -1166,6 +1311,9 @@ async def cap_capture_start(session_id: str = "", interval_ms: int = 1000,
 
 @capability("operator.capture.status", memory="off", silent=True,
             http_method="GET", http_path="/operator/capture/status", http_tags=["operator"],
+            contract=_operator_contract(
+                "browser.capture.inspect", effects=["read"],
+                trust="capture_metadata_only", pagination="bounded_in_memory"),
             description="Status of one capture (capture_id) or all. Output: "
                         "{capture_id, frames, running, ...} or {captures:[...]}.")
 async def cap_capture_status(capture_id: str = "", trace_id=None) -> Dict[str, Any]:
@@ -1177,6 +1325,11 @@ async def cap_capture_status(capture_id: str = "", trace_id=None) -> Dict[str, A
 
 @capability("operator.capture.stop", memory="on",
             http_method="POST", http_path="/operator/capture/stop", http_tags=["operator"],
+            contract=_operator_contract(
+                "browser.capture.stop", effects=["execute", "filesystem"],
+                filesystem="writes_gif_and_removes_temporary_frames",
+                idempotency="idempotent_after_success", cancellation="bounded_encoding",
+                resources=["cpu", "browser"]),
             description="Stop a time-lapse and assemble its frames into a GIF. "
                         "Inputs: capture_id (str!), domain (docs domain slug → the "
                         "GIF lands in documentation/assets/<domain>/<name>.gif; blank "
@@ -1211,6 +1364,9 @@ async def cap_capture_stop(capture_id: str = "", domain: str = "", name: str = "
 # ─────────────────────────────────────────────────────────────────────────────
 @capability("operator.tour.list", memory="off", silent=True,
             http_method="GET", http_path="/operator/tour/list", http_tags=["operator"],
+            contract=_operator_contract(
+                "browser.tour.list", effects=["read"],
+                trust="internal_tour_registry", tenant="global_read_only"),
             description="List available scripted tours. Output: {tours:[slug,...]}.")
 async def cap_tour_list(trace_id=None) -> Dict[str, Any]:
     return {"tours": _tours.list_tours()}
@@ -1218,6 +1374,12 @@ async def cap_tour_list(trace_id=None) -> Dict[str, Any]:
 
 @capability("operator.tour.run", memory="on",
             http_method="POST", http_path="/operator/tour/run", http_tags=["operator"],
+            contract=_operator_contract(
+                "browser.tour.execute", effects=["execute", "network", "filesystem"],
+                approval="target_and_write_policy", network="selected_vera_target",
+                filesystem="writes_documentation_assets",
+                idempotency="replace_named_outputs", cancellation="between_steps_best_effort",
+                resources=["cpu", "network", "browser"], owner="vera.documentation"),
             description="Run a deterministic scripted tour of a domain's UI and "
                         "capture stills + GIF clips into documentation/assets/<slug>/. "
                         "Reproducible 'in-action' docs without the LLM. Inputs: slug "
@@ -1276,6 +1438,12 @@ async def cap_tour_run(slug: str = "", target: str = "sandbox", base_url: str = 
 # ─────────────────────────────────────────────────────────────────────────────
 @capability("operator.test.run", memory="on",
             http_method="POST", http_path="/operator/test/run", http_tags=["operator"],
+            contract=_operator_contract(
+                "test.pytest.execute", effects=["execute", "filesystem"],
+                approval="repository_execution_policy", trust="repository_test_code",
+                filesystem="test_process_may_read_and_write_repository",
+                tenant="repository_scoped", idempotency="test_suite_defined",
+                cancellation="hard_timeout", resources=["cpu"], owner="vera.testing"),
             description="Run the project's pytest unit suite. Inputs: path (default "
                         "'tests'), k (pytest -k expression). Output: {ok, code, out}.")
 async def cap_test_run(path: str = "tests", k: str = "", trace_id=None) -> Dict[str, Any]:
@@ -1349,6 +1517,10 @@ async def _operator_panel():
 # ─────────────────────────────────────────────────────────────────────────────
 @capability("operator.trace", memory="off", silent=True,
             http_method="GET", http_path="/operator/trace", http_tags=["operator", "obs"],
+            contract=_operator_contract(
+                "browser.run.trace", effects=["read"],
+                trust="persisted_operator_events", tenant="run_scoped",
+                pagination="bounded_event_history", resources=["cpu", "redis"]),
             description=(
                 "READ-ONLY diagnostic digest of ONE operator (browser) run — the "
                 "operator's answer to workshop.agent_loop.trace. Returns what it "
@@ -1377,6 +1549,10 @@ async def cap_operator_trace(run_id: str = "", trace_id=None) -> Dict[str, Any]:
 
 @capability("operator.cancel", memory="on",
             http_method="POST", http_path="/operator/cancel", http_tags=["operator"],
+            contract=_operator_contract(
+                "browser.run.cancel", effects=["write", "execute"],
+                trust="run_identifier", tenant="run_scoped", idempotency="idempotent",
+                cancellation="cooperative_between_steps", resources=["cpu", "redis"]),
             description=(
                 "STOP a running operator (browser) run. Sets a cooperative cancel "
                 "flag the run checks BEFORE each step, so it stops without buying "
@@ -1405,6 +1581,10 @@ async def cap_operator_cancel(run_id: str = "", trace_id=None) -> Dict[str, Any]
 
 @capability("operator.runs", memory="off", silent=True,
             http_method="GET", http_path="/operator/runs", http_tags=["operator", "obs"],
+            contract=_operator_contract(
+                "browser.run.list", effects=["read"],
+                trust="persisted_operator_events", tenant="global_aggregate",
+                pagination="bounded_limit", resources=["cpu", "redis"]),
             description=(
                 "LIST recent operator (browser) runs, newest first — goal, target, "
                 "steps, errors, repeated actions, whether it hit its step ceiling, "

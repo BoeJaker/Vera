@@ -168,6 +168,13 @@ content, absolute host/container paths, repository URLs, or an unverified
 checksum into Run history. The native artifact store remains authoritative;
 the Run record is correlation evidence, not another file store.
 
+The loop's **Files produced** card reads the authoritative session artifact
+inventory independently of the Run projection. It renders loading, a confirmed
+empty directory, and an unavailable or malformed inventory as distinct states;
+failures retain a safe retry instead of making the card disappear. A populated
+inventory keeps the existing preview, source, and download actions. Concurrent
+refreshes are ordered so an older response cannot overwrite newer evidence.
+
 Successful review, test, and commit capabilities are also linked to the parent
 agent-loop Run as evidence. Each link names the evidence kind and capability and
 points to the authoritative child Run that performed the work. It does not copy
