@@ -2475,6 +2475,13 @@ class TextExtractionStage(PipelineStage):
 class EmbedStage(PipelineStage):
     name = "embed"
     async def process(self, record: DataRecord, ctx: Dict) -> DataRecord:
+        # Deferred: the record is stored WITHOUT a vector and a fabric backfill
+        # is queued to add it during the next quiet window. This is a real
+        # change to what an ingest guarantees - the record is not vector-
+        # searchable until that backfill runs - so it is opt-in per call and
+        # never inferred from load.
+        if ctx.get("defer_embedding"):
+            return record
         if not record.embedding and record.text.strip():
             emb = await _embed(record.text)
             if emb:
@@ -2563,6 +2570,7 @@ async def ingest_dataset(
     source:     str = "api",
     tags:       List[str] = None,
     source_id:  str = "",
+    defer_embedding: bool = False,
 ) -> Dict:
     recs: List[DataRecord] = []
     for item in (data if isinstance(data, list) else [data]):
@@ -2597,7 +2605,34 @@ async def ingest_dataset(
     # Batch pre-embed: one /api/embed call per ~64 records instead of one HTTP
     # roundtrip per record inside EmbedStage (which then no-ops on records that
     # already carry a vector). This is the dominant cost of bulk ingests.
-    if len(recs) > 1:
+    # Deferring is only safe because something finishes the job. Queue the
+    # repair FIRST: if it cannot be queued we embed inline as usual rather than
+    # storing records that nothing will ever come back for. Deciding here and
+    # not after the pipeline matters - by then the rows are already written
+    # without vectors and the choice cannot be taken back.
+    if defer_embedding:
+        queued = False
+        if _IDLE_SVC is not None and _IDLE_IQ is not None:
+            try:
+                res = await _IDLE_SVC.submit(
+                    _IDLE_IQ.KIND_EMBED_FABRIC,
+                    "fabric vector backfill (deferred ingest)",
+                    dedupe_key="embed:fabric:%s" % (dataset_id or "all"),
+                    payload={"dataset_id": dataset_id, "limit": 0, "batch": 64})
+                # `already queued` counts: an existing backfill for this dataset
+                # will pick these rows up too, since it re-derives what is
+                # missing when it runs rather than working from a fixed list.
+                queued = bool(res.get("queued")) or res.get("reason") == "already queued"
+            except Exception as _e:
+                log.warning("fabric: could not queue the deferred backfill for "
+                            "%s: %s", dataset_id, _e)
+        if not queued:
+            log.warning("fabric: embedding %s inline - the deferred backfill "
+                        "could not be queued, and storing records nothing will "
+                        "come back for is worse than the wait", dataset_id)
+            defer_embedding = False
+
+    if len(recs) > 1 and not defer_embedding:
         for i in range(0, len(recs), 64):
             chunk = recs[i:i + 64]
             vecs = await _embed_many([r.text for r in chunk])
@@ -2616,7 +2651,8 @@ async def ingest_dataset(
         nonlocal ingested, errors
         async with sem:
             try:
-                await DEFAULT_PIPELINE.run(rec)
+                await DEFAULT_PIPELINE.run(
+                    rec, {"defer_embedding": bool(defer_embedding)})
                 ingested += 1
                 if len(ingested_ids) < 200:
                     ingested_ids.append(rec.id)
@@ -5760,6 +5796,8 @@ async def cap_fabric_chroma_reset(confirm: bool = False, trace_id=None) -> Dict:
 )
 async def cap_fabric_backfill_vectors(confirm: bool = False, dataset_id: str = "",
                                       limit: int = 0, batch: int = 64,
+                                      background: bool = False,
+                                      should_continue=None, on_progress=None,
                                       trace_id=None) -> Dict:
     pool = getattr(FABRIC_PG, "_pool", None)
     if pool is None:
@@ -5767,6 +5805,19 @@ async def cap_fabric_backfill_vectors(confirm: bool = False, dataset_id: str = "
     if not FABRIC_CHROMA.available:
         return {"error": "Chroma is not connected"}
     col = FABRIC_CHROMA._col
+
+    # Hand it to the idle queue instead of running it here. Checked AFTER the
+    # connectivity guards above so a misconfigured fabric still fails now
+    # rather than queueing a job that cannot succeed.
+    if background and _IDLE_SVC is not None and _IDLE_IQ is not None:
+        res = await _IDLE_SVC.submit(
+            _IDLE_IQ.KIND_EMBED_FABRIC, "fabric vector backfill",
+            dedupe_key="embed:fabric:%s" % (dataset_id or "all"),
+            payload={"dataset_id": dataset_id, "limit": limit, "batch": batch})
+        return {"ok": True, "queued": True, **res,
+                "note": ("queued for the next quiet window - it will be "
+                         "pre-empted if Vera is used, and resumes from what is "
+                         "still missing rather than restarting")}
 
     probe = await _embed("vector space probe")
     if probe is None:
@@ -5837,7 +5888,26 @@ async def cap_fabric_backfill_vectors(confirm: bool = False, dataset_id: str = "
     await emit_event({"type": "fabric.backfill", "stage": "start",
                       "missing": len(target), "dim": dim})
     done = errors = 0
+    yielded = ""
+    if on_progress is not None:
+        try:
+            await on_progress(0, len(target))
+        except Exception as _e:                            # pragma: no cover
+            log.debug("fabric backfill: progress report failed: %s", _e)
     for i in range(0, len(target), max(1, int(batch))):
+        # YIELD BETWEEN BATCHES. A backfill of tens of thousands of records
+        # would otherwise run to completion through whatever started after it -
+        # the exact failure the idle queue exists for. Records already written
+        # keep their vectors, and the next pass re-derives `target` from what
+        # is still missing, so stopping here costs one batch and never repeats
+        # finished work.
+        if should_continue is not None:
+            _busy = await should_continue()
+            if _busy:
+                yielded = _busy
+                log.info("fabric backfill yielding after %d record(s) - %s",
+                         done, _busy)
+                break
         chunk = target[i:i + max(1, int(batch))]
         async with pool.acquire() as conn:
             # tags can be pathologically huge on some rows (hundreds of MB) —
@@ -5878,11 +5948,19 @@ async def cap_fabric_backfill_vectors(confirm: bool = False, dataset_id: str = "
                 errors += 1
         await emit_event({"type": "fabric.backfill", "stage": "progress",
                           "done": done, "of": len(target), "errors": errors})
+        if on_progress is not None:
+            try:
+                await on_progress(done, len(target))
+            except Exception as _e:                        # pragma: no cover
+                log.debug("fabric backfill: progress report failed: %s", _e)
 
     await emit_event({"type": "fabric.backfill", "stage": "done",
-                      "backfilled": done, "errors": errors})
+                      "backfilled": done, "errors": errors, "yielded": yielded})
     return {"ok": True, "dry_run": False, **base,
-            "backfilled": done, "errors": errors}
+            "backfilled": done, "errors": errors,
+            # `items` names the unit for the queue's rate-learner: RECORDS,
+            # matching what on_progress reported.
+            "items": done, **({"yielded": yielded} if yielded else {})}
 
 
 @capability(
@@ -10236,3 +10314,41 @@ _reg_ui(
 )
 
 log.info("fabric panel registered at /fabric/panel")
+
+
+# â”€â”€ the idle queue: a fabric backfill is deferrable, pre-emptible bulk work â”€â”€â”€
+# It embeds tens of thousands of records on the CPU nodes and takes no GPU gate
+# slot, so it is exactly the shape the queue was built for - and exactly the
+# shape that used to run straight through a census.
+# `except Exception`, not ImportError: these names are referenced inside a
+# capability, so if the import fails for ANY other reason they would be unbound
+# and the cap would raise NameError instead of degrading to running inline.
+try:                                                       # pragma: no cover
+    from Vera.vera import idle_queue as _IDLE_IQ
+    from Vera.vera import idle_queue_service as _IDLE_SVC
+except Exception:                                          # pragma: no cover
+    try:
+        from vera import idle_queue as _IDLE_IQ
+        from vera import idle_queue_service as _IDLE_SVC
+    except Exception:
+        _IDLE_IQ = _IDLE_SVC = None                        # type: ignore
+
+
+async def _fabric_backfill_job(job=None, should_continue=None):
+    """The queue's handler for a fabric vector backfill."""
+    payload = (job or {}).get("payload") or {}
+
+    async def _progress(done, total):
+        if job is not None and _IDLE_SVC is not None:
+            await _IDLE_SVC.report_progress(job["id"], done=done, total=total)
+
+    return await cap_fabric_backfill_vectors(
+        confirm=True,
+        dataset_id=str(payload.get("dataset_id") or ""),
+        limit=int(payload.get("limit") or 0),
+        batch=int(payload.get("batch") or 64),
+        should_continue=should_continue, on_progress=_progress)
+
+
+if _IDLE_SVC is not None and _IDLE_IQ is not None:          # pragma: no cover
+    _IDLE_SVC.register_handler(_IDLE_IQ.KIND_EMBED_FABRIC, _fabric_backfill_job)

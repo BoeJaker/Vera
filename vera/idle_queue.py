@@ -54,6 +54,11 @@ WAITING, RUNNING, DONE, FAILED, PREEMPTED = (
 #: obvious rather than silently lumped in with the rest.
 KIND_EMBED_SESSIONS = "embed.sessions"
 KIND_EMBED_SOURCES = "embed.sources"
+#: Fabric vector backfill. Its OWN kind rather than reusing embed.sources,
+#: which the agent knowledge sweep already owns: register_handler is a plain
+#: dict assignment, so a second producer claiming the same kind would silently
+#: replace the first and its jobs would run the wrong work.
+KIND_EMBED_FABRIC = "embed.fabric"
 KIND_DREAM = "dream"
 KIND_NARRATOR = "narrator"
 
@@ -63,6 +68,11 @@ KIND_PRIORITY = {
     KIND_NARRATOR: 10,
     KIND_DREAM: 20,
     KIND_EMBED_SOURCES: 80,
+    # Between the agent sweep and the transcript backfill: a fabric backfill is
+    # usually larger than the former and smaller than the latter, and the queue
+    # runs one at a time, so ordering by expected length is what stops a long
+    # job holding up a short one that would have finished in the same window.
+    KIND_EMBED_FABRIC: 85,
     KIND_EMBED_SESSIONS: 90,
 }
 DEFAULT_PRIORITY = 50
@@ -79,7 +89,8 @@ DEFAULT_PRIORITY = 50
 #: runs on the CPU nodes, starts no loop, takes no GPU gate slot, and yields
 #: between records. Nothing it does can be mistaken for foreign activity, so it
 #: can be stopped the instant Vera is used again.
-PREEMPTIBLE_KINDS = (KIND_EMBED_SESSIONS, KIND_EMBED_SOURCES)
+PREEMPTIBLE_KINDS = (KIND_EMBED_SESSIONS, KIND_EMBED_SOURCES,
+                     KIND_EMBED_FABRIC)
 
 
 def is_preemptible(kind: Any) -> bool:
