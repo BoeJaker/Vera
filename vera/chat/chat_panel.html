@@ -1036,7 +1036,7 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
   <!-- Audio -->
   <div class="tb-group" title="Audio I/O">
     <button class="tb-btn" id="ttsBtn" onclick="CH.toggleTts()" title="Text-to-speech — agent responses are spoken aloud">TTS</button>
-    <button class="tb-btn" id="micBtn" onclick="CH.toggleMic()" title="Voice input — press Space to record">Mic</button>
+    <button class="tb-btn" id="micBtn" onclick="CH.toggleMic()" title="Voice input — click to start. Text appears as you speak; a pause submits. Click again to stop early.">Mic</button>
   </div>
 
   <!-- Special modes -->
@@ -1159,6 +1159,7 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
     <div class="row"><label style="min-width:56px">TTS</label><input type="checkbox" id="cfgTts"></div>
     <div class="row"><label style="min-width:56px">STT</label><input type="checkbox" id="cfgStt" checked></div>
     <div class="row"><label style="min-width:56px">Auto-play</label><input type="checkbox" id="cfgAutoPlay" checked></div>
+    <div class="row"><label style="min-width:56px" title="Silence that ends your turn and submits">Mic pause</label><input type="number" id="cfgVadPause" value="2.0" min="0.8" max="10" step="0.1" style="width:58px" title="Seconds of silence before the mic stops and submits"></div>
     <div class="sec" style="margin-top:5px">Media &amp; rendering</div>
     <div class="row"><label style="min-width:70px">Illustrate</label><input type="checkbox" id="cfgIllustrate" onchange="CH._persistMediaCfg()" title="Vera may generate demonstrative/illustrative images with Stable Diffusion (media.illustrate) and show them in the chat"></div>
     <div class="row"><label style="min-width:70px">Ref images</label><input type="checkbox" id="cfgRefImages" onchange="CH._persistMediaCfg()" title="Vera may search the web for reference images (media.image.search) and show them in the chat"></div>
@@ -2390,7 +2391,7 @@ const CH = (() => {
   // user edited the input and sent before the live fetch caught up) so the
   // previous message's context is never leaked into the new one.
   let _ctxQuery='';
-  let DAG_MODE=false, TTS_ON=false, MIC_ACTIVE=false, MIC_REC=null;
+  let DAG_MODE=false, TTS_ON=false, MIC_ACTIVE=false;
   let COUNCIL_MODE=false, COUNCIL_INSTS=new Set();
   // Stepwise mode (Step button): when on, a sent goal is run STEPWISE by the
   // SELECTED agent loop variant, or by the legacy DAG planner when Legacy DAG is on.
@@ -13352,57 +13353,192 @@ Your task: decide what to do next to advance toward the goal.
     if(popup)popup.style.display='none';
   }
 
+  /* ═══ MIC — phrase-streaming transcription ═════════════════════════════
+     Whisper exposes no interim/partial API and the server offers only a batch
+     /stt endpoint, so "streaming" here is PHRASE-level: voice-activity
+     detection cuts at natural pauses, each phrase is transcribed the moment it
+     ends and its text lands in the input while you keep talking. A longer
+     pause ends the turn and submits.
+
+     Audio is captured as raw PCM through Web Audio rather than MediaRecorder.
+     A MediaRecorder webm stream carries its header only in the FIRST chunk, so
+     later chunks cannot be decoded on their own — fine for one upload at the
+     end, useless for streaming. Raw PCM lets every phrase be wrapped as a
+     standalone WAV, which is also the format the server decodes without going
+     anywhere near ffmpeg.
+  ═══════════════════════════════════════════════════════════════════════ */
+  let MIC_STOPFN=null, _micT0=0, _micTimer=null;
+
   function _micUi(on){
     MIC_ACTIVE=!!on;
     try{document.getElementById('micDot')?.classList.toggle('on',MIC_ACTIVE);}catch(_){}
     try{document.getElementById('micBtn')?.classList.toggle('on',MIC_ACTIVE);}catch(_){}
-  }
-  async function toggleMic(){
-    // Stop path — never let a dead recorder wedge the toggle: stop() throws
-    // InvalidStateError on an inactive recorder, which used to leave
-    // MIC_ACTIVE stuck true so every later click silently did nothing.
+    const btn=document.getElementById('micBtn');
+    if(_micTimer){clearInterval(_micTimer);_micTimer=null;}
+    if(!btn)return;
     if(MIC_ACTIVE){
-      try{ if(MIC_REC&&MIC_REC.state!=='inactive')MIC_REC.stop(); else _micUi(false); }
-      catch(_){ _micUi(false); }
-      return;
+      // A recording with no visible state is how a mic gets left running.
+      _micT0=Date.now();
+      const paint=()=>{const s=Math.floor((Date.now()-_micT0)/1000);
+        btn.textContent='● '+Math.floor(s/60)+':'+String(s%60).padStart(2,'0');};
+      paint(); _micTimer=setInterval(paint,500);
+    } else { btn.textContent='Mic'; }
+  }
+
+  function _pcmToWav(samples,rate){
+    const n=samples.length,buf=new ArrayBuffer(44+n*2),v=new DataView(buf);
+    const wr=(o,s)=>{for(let i=0;i<s.length;i++)v.setUint8(o+i,s.charCodeAt(i));};
+    wr(0,'RIFF');v.setUint32(4,36+n*2,true);wr(8,'WAVE');wr(12,'fmt ');
+    v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);
+    v.setUint32(24,rate,true);v.setUint32(28,rate*2,true);
+    v.setUint16(32,2,true);v.setUint16(34,16,true);wr(36,'data');
+    v.setUint32(40,n*2,true);
+    for(let i=0;i<n;i++){const s=Math.max(-1,Math.min(1,samples[i]));
+      v.setInt16(44+i*2,s<0?s*0x8000:s*0x7FFF,true);}
+    return new Uint8Array(buf);
+  }
+
+  // 16 kHz is Whisper's native rate; sending 48 kHz triples the payload for no
+  // accuracy gain.
+  function _downsample(buf,from,to){
+    if(to>=from)return buf;
+    const ratio=from/to,out=new Float32Array(Math.floor(buf.length/ratio));
+    for(let i=0;i<out.length;i++){
+      const a=Math.floor(i*ratio),b=Math.min(buf.length,Math.floor((i+1)*ratio));
+      let s=0,c=0;for(let j=a;j<b;j++){s+=buf[j];c++;}
+      out[i]=c?s/c:0;
+    }
+    return out;
+  }
+
+  async function _sttSegment(samples,rate){
+    if(!samples||!samples.length)return '';
+    const wav=_pcmToWav(samples,rate);
+    let bin='';const CH=0x8000;
+    for(let i=0;i<wav.length;i+=CH)bin+=String.fromCharCode.apply(null,wav.subarray(i,i+CH));
+    try{
+      const r=await fetch(BASE+'/stt/transcribe',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({audio_b64:btoa(bin),mime_type:'audio/wav'})});
+      if(!r.ok){appendSys('Speech-to-text failed (HTTP '+r.status+')');return '';}
+      const d=await r.json();
+      if(d.error){appendSys('Speech-to-text failed: '+esc(String(d.error)));return '';}
+      return String(d.text||'').trim();
+    }catch(e){appendSys('Speech-to-text error: '+esc(String(e&&e.message||e)));return '';}
+  }
+
+  function _startMicCapture(stream,onPhrase,onTurnEnd){
+    const AC=window.AudioContext||window.webkitAudioContext;
+    const ctx=new AC();
+    const src=ctx.createMediaStreamSource(stream);
+    // ScriptProcessor is deprecated but universally available and needs no
+    // separate worklet module, which matters in a single-file panel.
+    const proc=ctx.createScriptProcessor(4096,1,1);
+    // It only fires while connected to the graph, so route it into a silent
+    // gain node — connecting straight to the destination echoes the mic.
+    const sink=ctx.createGain(); sink.gain.value=0;
+    src.connect(proc); proc.connect(sink); sink.connect(ctx.destination);
+
+    const RATE=ctx.sampleRate, TARGET=16000;
+    const PHRASE_GAP=700;    // pause that closes a phrase
+    const MAX_SEG=15000;     // force a flush so long speech still streams
+    const MIN_SPEECH=250;    // ignore coughs and clicks
+    const CAL_MS=400;        // calibrate to the room before judging silence
+    const turnGap=Math.max(800,
+      (parseFloat(document.getElementById('cfgVadPause')?.value)||2.0)*1000);
+
+    let chunks=[],nSamples=0,base=0,calN=0,thr=0.012;
+    let sawSpeech=false,segStart=Date.now(),lastLoud=Date.now();
+    const t0=Date.now(); let stopped=false;
+
+    function take(){
+      if(!nSamples)return null;
+      const out=new Float32Array(nSamples);
+      let o=0;for(const c of chunks){out.set(c,o);o+=c.length;}
+      chunks=[];nSamples=0;return out;
+    }
+    function cleanup(){
+      try{proc.disconnect();}catch(_){}
+      try{src.disconnect();}catch(_){}
+      try{sink.disconnect();}catch(_){}
+      try{stream.getTracks().forEach(t=>t.stop());}catch(_){}
+      try{ctx.close();}catch(_){}
+    }
+    function emit(seg){ if(seg&&seg.length)onPhrase(_downsample(seg,RATE,TARGET),TARGET); }
+
+    proc.onaudioprocess=(e)=>{
+      if(stopped)return;
+      const inp=e.inputBuffer.getChannelData(0);
+      chunks.push(new Float32Array(inp)); nSamples+=inp.length;
+      let s=0;for(let i=0;i<inp.length;i++)s+=inp[i]*inp[i];
+      const v=Math.sqrt(s/inp.length), now=Date.now();
+
+      // A fixed threshold fails in a noisy room; measure the room first.
+      if(now-t0<CAL_MS){
+        base=(base*calN+v)/(++calN); thr=Math.max(base*2.5,0.010);
+        lastLoud=now; chunks=[]; nSamples=0; return;
+      }
+      if(v>thr){ if(!sawSpeech)segStart=now; sawSpeech=true; lastLoud=now; return; }
+
+      const quiet=now-lastLoud;
+      if(sawSpeech&&quiet>PHRASE_GAP){
+        const seg=take(); sawSpeech=false;
+        if((now-segStart)>MIN_SPEECH)emit(seg);
+        if(quiet>turnGap){stopped=true;cleanup();onTurnEnd();}
+        return;
+      }
+      if(sawSpeech&&(now-segStart)>MAX_SEG){ emit(take()); segStart=now; return; }
+      if(!sawSpeech&&quiet>turnGap&&(now-t0)>turnGap){
+        stopped=true;cleanup();onTurnEnd();return;
+      }
+      // Do not accumulate silence indefinitely while waiting for speech.
+      if(!sawSpeech&&nSamples>RATE*3){chunks=[];nSamples=0;}
+    };
+
+    return ()=>{                       // manual stop
+      if(stopped)return; stopped=true;
+      const seg=take(); cleanup(); emit(seg); onTurnEnd();
+    };
+  }
+
+  async function toggleMic(){
+    if(MIC_ACTIVE){
+      try{MIC_STOPFN&&MIC_STOPFN();}catch(_){ _micUi(false); }
+      MIC_STOPFN=null; return;
     }
     if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
       appendSys('<span style="color:var(--err)">Mic unavailable: this page is not a secure context (HTTPS required), or the browser blocks media devices here.</span>');
       return;
     }
     try{
-      const stream=await navigator.mediaDevices.getUserMedia({audio:true});
-      // Pick a container the browser actually supports (Safari has no webm).
-      let mime='';
-      try{
-        for(const c of ['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg;codecs=opus']){
-          if(window.MediaRecorder&&MediaRecorder.isTypeSupported&&MediaRecorder.isTypeSupported(c)){mime=c;break;}
-        }
-      }catch(_){}
-      MIC_REC=mime?new MediaRecorder(stream,{mimeType:mime}):new MediaRecorder(stream);
-      const chunks=[];MIC_REC.ondataavailable=e=>{if(e.data&&e.data.size>0)chunks.push(e.data);};
-      MIC_REC.onerror=e=>{appendSys('<span style="color:var(--err)">Mic recorder error: '+esc(String(e&&e.error&&e.error.message||e.error||'unknown'))+'</span>');};
-      MIC_REC.onstop=async()=>{
-        try{stream.getTracks().forEach(t=>t.stop());}catch(_){}
-        _micUi(false);
-        try{
-          const sendMime=(MIC_REC&&MIC_REC.mimeType)||mime||'audio/webm';
-          const blob=new Blob(chunks,{type:sendMime});
-          if(!blob.size){appendSys('No audio captured (0 bytes from the recorder)');return;}
-          // Whisper STT lives on the stt.transcribe capability (/stt/transcribe),
-          // which takes base64 JSON — NOT a multipart upload to /gpu/stt.
-          const b64=await new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(String(fr.result).split(',',2)[1]||'');fr.onerror=rej;fr.readAsDataURL(blob);});
-          const resp=await fetch(BASE+'/stt/transcribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({audio_b64:b64,mime_type:sendMime})});
-          if(!resp.ok){appendSys('Speech-to-text failed (HTTP '+resp.status+')');return;}
-          const d=await resp.json();
-          if(d.error){appendSys('Speech-to-text failed: '+esc(String(d.error)));return;}
+      const stream=await navigator.mediaDevices.getUserMedia(
+        {audio:{echoCancellation:true,noiseSuppression:true}});
+      let pending=Promise.resolve(), heard=false;
+
+      const onPhrase=(samples,rate)=>{
+        // Chain the requests: phrases must land in the order they were spoken,
+        // and Whisper answers out of order if they overlap.
+        pending=pending.then(async()=>{
+          const txt=await _sttSegment(samples,rate);
+          if(!txt)return;
+          heard=true;
           const inp=document.getElementById('chatInput');
-          if(inp&&d.text){inp.value+=d.text;inp.dispatchEvent(new Event('input'));if(document.getElementById('cfgStt')?.checked)send();}
-          else if(!d.text)appendSys('No speech detected (audio reached the server but Whisper heard nothing)');
-        }catch(e){appendSys('Speech-to-text error: '+esc(String(e&&e.message||e)));}
+          if(inp){
+            inp.value=(inp.value?inp.value.replace(/\s+$/,'')+' ':'')+txt;
+            inp.dispatchEvent(new Event('input'));
+            try{inp.scrollTop=inp.scrollHeight;}catch(_){}
+          }
+        });
       };
-      // timeslice keeps chunks flowing even if onstop is delayed by the browser
-      MIC_REC.start(500);
+      const onTurnEnd=()=>{
+        MIC_STOPFN=null; _micUi(false);
+        pending.then(()=>{
+          if(!heard){appendSys('No speech detected');return;}
+          if(document.getElementById('cfgStt')?.checked)send();
+        });
+      };
+
+      MIC_STOPFN=_startMicCapture(stream,onPhrase,onTurnEnd);
       _micUi(true);
     }catch(e){
       const nm=(e&&e.name)||'';
@@ -13414,6 +13550,7 @@ Your task: decide what to do next to advance toward the goal.
       _micUi(false);
     }
   }
+
 
   /* ═══════════════════════════════════════════════════════════════════
      SLASH COMMANDS — type "/" in the chat input to open panels, switch
