@@ -456,3 +456,159 @@ and now runs on a **scheduled poll** (`board.sync.poll`, every
 `VERA_BOARD_SYNC_INTERVAL_S`, toggle `VERA_BOARD_SYNC_ENABLED`), so the board
 tracks pipeline movement without a human call — idempotent via each item's
 `sync_sig`. Planning Markdown is not a parallel source of truth.
+
+**The narrative half lives at** `<git-common-dir>/vera-work/shared-planning/
+<work-unit>/PLAN.md` (§3) — visible from main, bleeding-edge and every linked
+sandbox, never in `documentation/`, never in the tree. The board holds items;
+PLAN.md holds what the board cannot: what the numbers mean, what was decided and
+must not be reopened, and which runs are comparable at all.
+
+---
+
+## 11. OPTIONAL MODE — the census-driven improvement loop
+
+For a change whose effect is **behavioural rather than unit-testable**: the
+agentic loop got faster, the operator stopped thrashing, a guard stopped firing
+on correct pages. The gate cannot see any of that. This mode exists to measure
+it, and — more often — to stop you claiming it.
+
+**Use it when** you are improving the loop/operator themselves. **Do not** use it
+for ordinary code changes: it costs hours of GPU and answers a question those
+changes do not raise.
+
+### 11.1 The harness
+
+Two runners, both in `/home/boejaker/loop-census`, both OUTSIDE the git repo —
+so they are not pipeline-gated and carry no tests. Treat edits there with the
+care that absence implies.
+
+    run_census.py           --template <name> [--model M] [--list]
+    run_operator_census.py  --template <name> [--list]
+
+Each is a named TEMPLATE (`templates/*.json`, `operator-templates/*.json`) of
+goals with declared `checks`, run strictly serially, waiting for a free box
+before each goal so it never competes with a person or another agent.
+
+**Wall caps are per goal**, resolved most-specific first:
+
+    goal["wall_cap_s"]  ->  template["wall_cap_s"]  ->  WALL_CAP_S (1800)
+
+and **the cap that applied is recorded on every row**. This matters: one global
+cap was wrong in both directions — the research family routinely spent its whole
+budget gathering and was recorded as a timeout with a finished deliverable on
+disk (run 21, research-web capped at 1512.5s), while `trivial-chat` finishes in
+~100s and never needed 1800. Without `wall_cap_s` on the row, 1805s is a timeout
+under one template and a healthy finish under another, and a cross-template
+comparison silently measures the harness.
+
+Templates as of 2026-09-09: `default` (12 goals, the comparison baseline —
+**do not edit it**, its history is the series), `exec-family` (1200s),
+`code-family`, `prose-family`, `data-family` (1800s), `research-family` (3600s).
+Operator: `default`, `regressions`.
+
+**The operator census is the cheap counterpart.** Every goal in
+`operator-templates/regressions.json` reproduces a failure the LOOP census
+actually paid for, in minutes instead of 1800s a time — the run that drove
+Vera's own dashboard having been given no url, the page that answered while the
+run repeated itself, the preview that could not serve a file it had written.
+Run it FIRST when touching the operator; it finds browser-layer defects before a
+loop run inherits them.
+
+### 11.2 ⚠ THE NOISE FLOOR — read this before claiming anything
+
+Runs 49 and 50 were run **on the same commit, deliberately**, to measure the
+instrument:
+
+    done/capped   11/1  vs  10/2          one goal flipped pass<->cap
+    total wall    9873s vs  8632s         12.6% apart
+    per goal      median 1.44x, worst 1.71x among goals done in BOTH
+
+**So ±1 capped goal and ±13% total wall is NOISE.** Against that bar, the
+earlier 48→49 "improvement" (2 goals, −18%) barely clears it and was never the
+evidence it appeared to be — a log check independently confirmed neither commit
+had executed a line during that census.
+
+Binding consequences:
+
+1. **No single pair of censuses can establish an improvement of this size.** A
+   change must move a goal's outcome REPEATEDLY, or be argued from a mechanism
+   whose code path is shown to run.
+2. **"Best run yet" is not a result.** Run 50 followed run 49 with worse numbers
+   on identical code.
+3. **A single-goal re-run can FALSIFY a narrow mechanical claim** ("no
+   operator.run observed the dashboard") **but can never ESTABLISH a timing
+   improvement.** Prefer claims of the first shape: they are falsifiable in one
+   run, and cheap.
+
+### 11.3 PROVE THE CODE PATH RAN
+
+The rule that caught four false attributions in one session. Before crediting
+any change, show the mechanism executed — a log line, or arguments that force
+the branch. Twice a fix looked vindicated by a much better run and had in fact
+never executed: every `operator.run` was being handed an explicit `url`, so the
+new fallback was dead code, and `grep -c "operator.run target from"` over the
+whole census returned **0**.
+
+Check the scope of that evidence too. `logs/vera.log` **rotates**
+(`vera.log.1`…`vera.log.5`) — grep them all and print each file's first and last
+timestamp before saying "for the whole census". `vera_start.log` is the
+launcher's stdout, NOT the app logger; searching it for app log lines returns
+0 regardless and proves nothing.
+
+### 11.4 Analyse from ARTIFACTS, never from counters
+
+`quality: 4/4` does **not** mean the artifact is correct — the checks are static
+content greps. Census 47's `author-then-edit` scored 4/4 including "the
+DISPLAYED value was updated too" on a file that loads showing a hardcoded `60`.
+
+So, for every capped goal: read the authored file out of the run's own session
+sandbox (`sandbox.session.fs.read` with the record's `session_id`), read the FULL
+operator observation strings in the record's `warnings`, and pull
+`workshop.agent_loop.trace` (which returns `steps[].calls` — there is no
+top-level `calls`). Only then name a cause.
+
+And **match a stop message to its exact template before naming the guard that
+produced it.** `operator_loop` has TWO repeating-action guards with different
+messages: the ADJACENCY counter (`_repeat_signature(action, args, obs.url)`,
+which never inspects page content) and `repeat_guard` (structural). Conflating
+them merged two unrelated failures into one wrong board item.
+
+### 11.5 Archiving
+
+Archive a finished run as `census.run<N>.jsonl/.log` — refuse if the target
+exists. A run from a NON-default template goes to
+`census.<template>-run<N>.jsonl` instead: mixing templates into the numbered
+series destroys the only comparison baseline there is.
+
+Mark a run that is not usable history by NAMING it — `-partial`, `-failed-*`,
+`-stalled`, `-aborted-*`, `-interrupted`, `-invalid-*`, `-wedged`. `census.runs`
+reads those markers and excludes such runs by default (`include_partial=true`
+returns everything). This is not cosmetic: four runs went the full twelve goals
+under contention or a full disk and are worthless as data points, and no count
+can see that.
+
+### 11.6 Long-running work: self-paced loop, one GPU call at a time
+
+A census takes ~3h. Drive it with `/loop` (dynamic mode) and `ScheduleWakeup`,
+doing ONE step of the cycle per wake-up:
+
+    census running?  -> report one line, reschedule. NO GPU work, NO prod
+                        restart (a restart kills the census).
+    census finished? -> archive, root-cause from artifacts, update PLAN.md and
+                        the board, pick ONE improvement, land it, re-test the
+                        real goal, then a fresh census.
+
+Do not poll with `ps | grep run_census` — it matches your own shell's command
+line and reports a census that finished hours ago. Use the `census.log` tail and
+the `census.jsonl` row count.
+
+Long calls time out CLIENT-side while succeeding SERVER-side —
+`evolve.unittest.run` and `evolve.pipeline.adopt` both do (adopt takes ~10 min to
+appear). Never re-fire; check `evolve.unittest.history` / `evolve.pipeline.list`.
+Note `evolve.unittest.history(branch=…, limit=N)` fetches N runs and THEN
+filters, so a small limit silently returns nothing while other agents' runs land
+in between — use `limit >= 20`.
+
+For anything that must survive a client timeout (a goal re-run, a restart
+sequence), write a small script to `/tmp` and `nohup` it from the host shell,
+then read its log on the next tick.
