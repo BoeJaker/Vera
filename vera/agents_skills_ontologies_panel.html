@@ -41,6 +41,7 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
 .snav[data-pane="agents"].on{color:var(--acc3)}
 .snav[data-pane="skills"].on{color:var(--acc)}
 .snav[data-pane="ontologies"].on{color:var(--acc2)}
+.snav[data-pane="registry"].on{color:var(--acc4)}
 .navdiv{width:24px;height:1px;background:var(--border);margin:3px 0;flex-shrink:0}
 #panes{flex:1;overflow:hidden;position:relative}
 .pane{position:absolute;inset:0;display:none}
@@ -61,6 +62,11 @@ html.vpb-nav-hosted #secNav{display:none}
     <div class="snav"    data-pane="skills"     onclick="show('skills',this)">Skills</div>
     <div class="navdiv"></div>
     <div class="snav"    data-pane="ontologies" onclick="show('ontologies',this)">Ontologies</div>
+    <div class="navdiv"></div>
+    <!-- The agent registry: what an EXTERNAL agent drives Vera with. It sits
+         here rather than in a tab of its own because it is a skills surface -
+         it projects into and out of the two stores either side of it. -->
+    <div class="snav"    data-pane="registry"   onclick="show('registry',this)">Registry</div>
   </div>
   <div id="panes">
     <div class="pane on" id="pane-agents">
@@ -72,6 +78,9 @@ html.vpb-nav-hosted #secNav{display:none}
     <div class="pane" id="pane-ontologies">
       <iframe id="frame-ontologies" src="about:blank" allow="clipboard-read; clipboard-write"></iframe>
     </div>
+    <div class="pane" id="pane-registry">
+      <iframe id="frame-registry"   src="about:blank" allow="clipboard-read; clipboard-write"></iframe>
+    </div>
   </div>
 </div>
 <script src="/ui/vera-panel-bridge.js"></script>
@@ -79,13 +88,14 @@ html.vpb-nav-hosted #secNav{display:none}
 'use strict';
 // KEY FIX: base URL is always the origin of THIS page since it's served by the backend
 const BASE = window.location.origin || (window.__VERA_BASE__||('http://'+location.hostname+':8999'));
-const LOADED = { agents:false, skills:false, ontologies:false };
+const LOADED = { agents:false, skills:false, ontologies:false, registry:false };
 let _lastThemeVars = null;
 
 const PATHS = {
   agents:     '/ui/panels/agents-panel',
   skills:     '/ui/panels/skills-panel',
   ontologies: '/ui/panels/ontologies-panel',
+  registry:   '/ui/panels/registry-panel',
 };
 
 function loadFrame(name) {
@@ -117,7 +127,8 @@ function show(name, el) {
 // data-pane, matched directly by VeraPanelBridge's generic nav_select
 // fallback, so no selectFn is needed.
 if (window.VeraPanelBridge) VeraPanelBridge.registerNav([
-  {id:'agents', label:'Agents'}, {id:'skills', label:'Skills'}, {id:'ontologies', label:'Ontologies'},
+  {id:'agents', label:'Agents'}, {id:'skills', label:'Skills'},
+  {id:'ontologies', label:'Ontologies'}, {id:'registry', label:'Registry'},
 ]);
 
 function broadcast(msg) {

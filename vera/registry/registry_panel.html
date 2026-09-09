@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script>/* vera theme boot - paint cached theme before CSS parses */
+(function(){try{var d=document.documentElement,S=window.localStorage;
+var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<meta charset="UTF-8">
+<title>Vera - Agent Registry</title>
+<style>
+:root{
+  --bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;
+  --border:#3a3530;--border2:#4a4540;
+  --acc:#5a9e8f;--acc2:#8fb87a;--acc3:#c9955a;--acc4:#9e8fa0;
+  --ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;
+  --text:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;
+  --mono:'JetBrains Mono','Fira Mono',monospace;
+  --sans:'Inter','IBM Plex Sans',system-ui,sans-serif;
+  color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg0);color:var(--text);
+  font-family:var(--sans);font-size:12px}
+body{display:flex;flex-direction:column;overflow:hidden}
+header{padding:8px 10px;border-bottom:1px solid var(--border);background:var(--bg1);
+  display:flex;gap:8px;align-items:center;flex-wrap:wrap;flex-shrink:0}
+input,select,textarea,button{font-family:inherit;font-size:12px;color:var(--text);
+  background:var(--bg2);border:1px solid var(--border);border-radius:3px;padding:4px 6px}
+input:focus,select:focus,textarea:focus{outline:1px solid var(--acc)}
+button{cursor:pointer}
+button:hover{border-color:var(--border2)}
+button.primary{background:var(--acc);color:var(--bg0);border-color:var(--acc);font-weight:600}
+#wrap{flex:1;display:flex;min-height:0}
+#list{width:300px;flex-shrink:0;overflow:auto;border-right:1px solid var(--border);padding:6px}
+#detail{flex:1;overflow:auto;padding:12px 14px}
+.card{border:1px solid var(--border);border-radius:4px;padding:6px 8px;margin-bottom:5px;cursor:pointer}
+.card:hover{border-color:var(--border2);background:var(--bg1)}
+.card.on{border-color:var(--acc);background:var(--bg2)}
+.k{display:inline-block;font-size:9px;padding:1px 5px;border-radius:8px;
+  border:1px solid var(--border2);color:var(--dim2);margin-right:5px}
+.nm{font-weight:600}
+.sm{color:var(--dim2);margin-top:2px;font-size:11px}
+.mt{color:var(--dim);margin-top:3px;font-size:10px}
+h2{font-size:15px;margin-bottom:2px}
+h3{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--dim2);
+  margin:14px 0 5px;font-family:var(--mono)}
+pre{background:var(--bg1);border:1px solid var(--border);border-radius:4px;
+  padding:9px;overflow:auto;white-space:pre-wrap;word-break:break-word;
+  font-family:var(--mono);font-size:11px;line-height:1.5}
+.empty{color:var(--dim);padding:18px}
+.row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+table{width:100%;border-collapse:collapse;font-size:11px}
+td{padding:3px 6px;border-bottom:1px solid var(--border);vertical-align:top}
+td.lbl{color:var(--dim2);width:110px;font-family:var(--mono);font-size:10px}
+#ed{display:none;padding:12px 14px}
+#ed textarea{width:100%;min-height:150px;font-family:var(--mono);line-height:1.5}
+#ed input,#ed select{width:100%}
+#ed label{display:block;margin:8px 0 3px;font-size:10px;text-transform:uppercase;
+  letter-spacing:1px;color:var(--dim2);font-family:var(--mono)}
+.toast{position:fixed;bottom:12px;right:12px;background:var(--bg3);
+  border:1px solid var(--border2);border-radius:4px;padding:7px 11px;display:none}
+</style>
+</head>
+<body>
+<header>
+  <b style="color:var(--acc)">Registry</b>
+  <input id="q" placeholder="search" style="flex:1;min-width:120px" oninput="load()">
+  <select id="kind" onchange="load()" style="width:auto">
+    <option value="">all kinds</option>
+    <option value="skill">skills</option>
+    <option value="tool">tools</option>
+    <option value="loop">loops</option>
+    <option value="technique">techniques</option>
+    <option value="os">operating systems</option>
+  </select>
+  <span id="count" style="color:var(--dim2)"></span>
+  <button onclick="newEntry()">+ new</button>
+</header>
+<div id="wrap">
+  <div id="list"><div class="empty">Loading...</div></div>
+  <div id="detail"><div class="empty">Select an entry.</div></div>
+  <div id="ed"></div>
+</div>
+<div class="toast" id="toast"></div>
+<script src="/ui/vera-panel-bridge.js"></script>
+<script>
+'use strict';
+const BASE = window.location.origin;
+let ENTRIES=[], CUR=null;
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function toast(m){const t=$('toast');t.textContent=m;t.style.display='block';
+  setTimeout(()=>t.style.display='none',2600);}
+async function api(p,o){try{const r=await fetch(BASE+p,Object.assign(
+  {headers:{'Content-Type':'application/json'}},o||{}));return await r.json()}
+  catch(e){toast('err: '+e.message);return null}}
+
+async function load(){
+  const q=$('q').value||'', k=$('kind').value||'';
+  const r=await api('/registry?q='+encodeURIComponent(q)+'&kind='+encodeURIComponent(k)+'&limit=200');
+  ENTRIES=(r&&r.entries)||[];
+  $('count').textContent=ENTRIES.length+' of '+((r&&r.count!=null)?r.count:ENTRIES.length);
+  const el=$('list');
+  if(!ENTRIES.length){el.innerHTML='<div class="empty">Nothing matches.</div>';return}
+  el.innerHTML=ENTRIES.map(e=>{
+    const h=(e.helpers||[]).length;
+    return '<div class="card'+(CUR&&CUR.id===e.id?' on':'')+'" onclick="open_('+JSON.stringify(e.id).replace(/"/g,'&quot;')+')">'
+      +'<span class="k">'+esc(e.kind)+'</span><span class="nm">'+esc(e.name)+'</span>'
+      +'<div class="sm">'+esc(e.summary||'')+'</div>'
+      +'<div class="mt">'+esc((e.owner&&e.owner.agent)||'unattributed')
+      +' &middot; '+esc((e.source&&e.source.origin)||'unknown')
+      +(h?(' &middot; '+h+' helper'+(h===1?'':'s')):'')+'</div></div>';
+  }).join('');
+}
+
+async function open_(id){
+  $('ed').style.display='none'; $('detail').style.display='block';
+  const r=await api('/registry/entry?id='+encodeURIComponent(id));
+  if(!r||!r.ok){$('detail').innerHTML='<div class="empty">Could not load that entry.</div>';return}
+  CUR=r.entry; const e=r.entry, io=r.interop||{};
+  load();
+  let h='<div class="row" style="justify-content:space-between">'
+    +'<div><h2>'+esc(e.name)+' <span class="k">'+esc(e.kind)+'</span></h2>'
+    +'<div class="sm">'+esc(e.summary)+'</div></div>'
+    +'<div class="row"><button onclick="editEntry()">edit</button>'
+    +'<button onclick="syncSkill()">to skills</button></div></div>';
+  // THE FULL BODY, verbatim. A registry that shows only a summary is a list of
+  // names, and a technique you cannot read is a technique you cannot apply.
+  h+='<h3>Full content</h3>';
+  h+=e.body ? '<pre>'+esc(e.body)+'</pre>'
+            : '<div class="empty" style="padding:6px">No body recorded. An entry '
+              +'without its content is a title - add one with edit.</div>';
+  if((e.helpers||[]).length){
+    h+='<h3>Helper scripts ('+e.helpers.length+')</h3><table>';
+    e.helpers.forEach(x=>{ h+='<tr><td class="lbl">'+esc(x.name)+'</td><td>'
+      +esc(x.purpose||'(no purpose recorded)')
+      +(x.path?('<div class="mt">'+esc(x.path)+'</div>'):'')+'</td></tr>'; });
+    h+='</table>';
+  }
+  h+='<h3>Provenance</h3><table>'
+    +'<tr><td class="lbl">owner</td><td>'+esc((e.owner&&e.owner.agent)||'unattributed')+'</td></tr>'
+    +'<tr><td class="lbl">session</td><td>'+esc((e.owner&&e.owner.session)||'-')+'</td></tr>'
+    +'<tr><td class="lbl">origin</td><td>'+esc((e.source&&e.source.origin)||'unknown')+'</td></tr>'
+    +'<tr><td class="lbl">source</td><td>'+esc((e.source&&e.source.path)||'-')+'</td></tr>'
+    +'<tr><td class="lbl">version</td><td>'+esc(e.version||'unversioned')+'</td></tr>'
+    +'<tr><td class="lbl">tags</td><td>'+esc((e.tags||[]).join(', ')||'-')+'</td></tr>'
+    +'<tr><td class="lbl">reach</td><td>'
+    +((io.resolution&&io.resolution.external_only)
+        ? 'external only - nothing inside Vera invokes this'
+        : esc(((io.resolution||{}).reachable_as||[]).join(', ')))+'</td></tr>'
+    +'<tr><td class="lbl">created</td><td>'+esc(e.created_at||'-')+'</td></tr>'
+    +'<tr><td class="lbl">updated</td><td>'+esc(e.updated_at||'-')+'</td></tr>'
+    +'</table>';
+  $('detail').innerHTML=h;
+}
+
+function field(l,id,v,ta){return '<label>'+l+'</label>'+(ta
+  ?'<textarea id="'+id+'">'+esc(v||'')+'</textarea>'
+  :'<input id="'+id+'" value="'+esc(v||'')+'">');}
+
+function newEntry(){ CUR=null; editEntry(true); }
+function editEntry(isNew){
+  const e=isNew?{kind:'technique',source:{origin:'claude-code'},owner:{}}:(CUR||{});
+  $('detail').style.display='none'; $('ed').style.display='block';
+  $('ed').innerHTML='<h2>'+(isNew?'New entry':'Edit '+esc(e.name||''))+'</h2>'
+    +'<label>kind</label><select id="f-kind">'
+    +['skill','tool','loop','technique','os'].map(k=>'<option'+((e.kind||'')===k?' selected':'')+'>'+k+'</option>').join('')
+    +'</select>'
+    +field('name','f-name',e.name)
+    +field('summary (one line - what it IS)','f-summary',e.summary)
+    +field('FULL CONTENT - the actual technique, prompt or instructions','f-body',e.body,true)
+    +field('source.origin (claude-code | codex | vera | user | other)','f-origin',(e.source||{}).origin||'claude-code')
+    +field('source.path','f-path',(e.source||{}).path)
+    +field('owner.agent','f-agent',(e.owner||{}).agent||'claude')
+    +field('owner.session','f-session',(e.owner||{}).session)
+    +field('tags (comma separated)','f-tags',(e.tags||[]).join(', '))
+    +field('helpers - one per line as  name | purpose | path','f-helpers',
+        (e.helpers||[]).map(h=>[h.name,h.purpose,h.path||''].join(' | ')).join('\n'),true)
+    +'<div class="row" style="margin-top:12px"><button class="primary" onclick="saveEntry()">save</button>'
+    +'<button onclick="cancelEdit()">cancel</button>'
+    +(isNew?'':'<button onclick="delEntry()" style="margin-left:auto;color:var(--err)">delete</button>')
+    +'</div>';
+}
+function cancelEdit(){ $('ed').style.display='none'; $('detail').style.display='block'; }
+
+async function saveEntry(){
+  const helpers=($('f-helpers').value||'').split('\n').map(l=>l.trim()).filter(Boolean)
+    .map(l=>{const p=l.split('|').map(x=>x.trim());
+             return {name:p[0]||'', purpose:p[1]||'', path:p[2]||''};});
+  const entry={ kind:$('f-kind').value, name:$('f-name').value,
+    summary:$('f-summary').value, body:$('f-body').value,
+    source:{origin:$('f-origin').value, path:$('f-path').value},
+    owner:{agent:$('f-agent').value, session:$('f-session').value},
+    tags:($('f-tags').value||'').split(',').map(s=>s.trim()).filter(Boolean),
+    helpers:helpers };
+  if(CUR&&CUR.id) entry.id=CUR.id;
+  const res=await fetch(BASE+'/registry/upsert',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({entry:entry})})
+    .then(x=>x.json()).catch(()=>null);
+  if(!res||!res.ok){
+    // The refusal names what is missing - show it rather than a generic failure.
+    toast('refused: '+(((res||{}).problems||[]).join('; ')||'unknown'));return;
+  }
+  toast(res.created?'created':'updated'); cancelEdit(); await load(); open_(res.entry.id);
+}
+async function delEntry(){
+  if(!CUR||!confirm('Delete "'+CUR.name+'"?'))return;
+  await fetch(BASE+'/registry/delete',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({id:CUR.id})});
+  CUR=null; cancelEdit(); $('detail').innerHTML='<div class="empty">Deleted.</div>'; load();
+}
+async function syncSkill(){
+  if(!CUR)return;
+  const r=await fetch(BASE+'/registry/sync_skill',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({id:CUR.id})})
+    .then(x=>x.json()).catch(()=>null);
+  toast(r&&r.ok?('skills: '+(r.created?'created ':'updated ')+r.skill_id):'sync failed');
+}
+window.addEventListener('message',e=>{
+  if(e.data&&e.data.type==='vera:theme'&&e.data.vars){
+    const root=document.documentElement, m={'--bg':'--bg0','--s1':'--bg1','--s2':'--bg2',
+      '--s3':'--bg3','--bd':'--border','--bd2':'--border2','--t1':'--text','--t2':'--dim2',
+      '--t3':'--dim','--ac':'--acc','--ac2':'--acc2','--ac3':'--acc3','--ac5':'--acc4'};
+    for(const [k,v] of Object.entries(m)) if(e.data.vars[k]) root.style.setProperty(v,e.data.vars[k]);
+  }
+});
+load();
+</script>
+</body>
+</html>
