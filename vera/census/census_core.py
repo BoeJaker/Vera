@@ -451,6 +451,80 @@ def board_links_by_run(items: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, L
     return by_run
 
 
+#: Markers the harness writes INTO A RUN'S FILENAME when the run is not usable
+#: history. This is the only place that verdict is recorded, and a goal-count
+#: cannot see it: run41 (network contended), run43 (disk full) and run6
+#: (stalled) each completed a full twelve goals and are each worthless as
+#: history. The archive convention is `census.run41-failed-network-contention
+#: .jsonl`, so the marker is a substring of the run id.
+EXCLUDE_MARKERS = ("partial", "failed", "stalled", "aborted", "interrupted",
+                   "invalid", "wedged", "abandoned")
+
+
+def truthy(value: Any) -> bool:
+    """Is this flag on? Tolerates the string a query parameter really is.
+
+    `/census/runs?include_partial=true` delivers the STRING "true", and a
+    bare `if value:` would then read "false" as on — the filter would look
+    implemented and never filter. Annotating the parameter `bool` does not
+    convert anything; Python does not enforce annotations.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def name_marks_unusable(run_id: str) -> str:
+    """The marker in a run's NAME saying it is not usable history, or "".
+
+    Deliberately a name check and nothing cleverer. Whoever archived the run
+    knew why it was bad and wrote it down; inferring it from the numbers
+    afterwards would be guessing at something already recorded.
+    """
+    rid = str(run_id or "").lower()
+    for marker in EXCLUDE_MARKERS:
+        if marker in rid:
+            return marker
+    return ""
+
+
+def exclude_reason(run_id: str, goals: int, full_goal_count: int) -> str:
+    """Why this run should be left out of history, or "" to keep it.
+
+    Two independent reasons, because they catch different runs:
+      * SHORT - fewer goals than the fullest pass present. Catches the live
+        `census.jsonl` while a run is in flight, and truncated archives.
+      * NAMED - a marker in the filename. Catches runs that went the full
+        distance under conditions that make them meaningless.
+    """
+    n, full = int(goals or 0), int(full_goal_count or 0)
+    if full and n < full:
+        return "only %d of %d goals" % (n, full)
+    marker = name_marks_unusable(run_id)
+    if marker:
+        return "the run is named '%s'" % marker
+    return ""
+
+
+def _mark_usability(summary: Dict[str, Any], full_goal_count: int) -> Dict[str, Any]:
+    """Attach `partial`, `excluded` and `exclude_reason` to one run summary.
+
+    `partial` keeps its original narrow meaning - FEWER GOALS - because the
+    panel and its tests already read it that way. `excluded` is the broader
+    question the caller actually wants answered: should this run be in the
+    history at all.
+    """
+    rid = str(summary.get("run_id") or "")
+    goals = int(summary.get("goals") or 0)
+    reason = exclude_reason(rid, goals, full_goal_count)
+    return dict(summary,
+                partial=bool(full_goal_count and goals < full_goal_count),
+                excluded=bool(reason),
+                exclude_reason=reason)
+
+
 def history(summaries: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     """The coarse 'are we getting better' view: done-count across runs.
 
@@ -466,6 +540,13 @@ def history(summaries: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     worse" — while run 12 was simply three goals into twelve. A run is treated
     as complete only if it covers as many goals as the fullest run present.
 
+    **A RUN THE ARCHIVE NAMED AS BAD IS ALSO EXCLUDED**, however many goals it
+    covered. run41 ran all twelve under network contention, run43 filled the
+    disk, run6 stalled — a goal-count cannot see any of that, and each would
+    otherwise sit in the trend as an ordinary data point. See EXCLUDE_MARKERS.
+    `partial` still means exactly "fewer goals"; `excluded` is the union, and
+    `exclude_reason` says which applied.
+
     The trend over runs whose counters also reconcile is reported SEPARATELY: an
     improvement measured across a run whose own accounting did not add up is not
     evidence, and averaging the two would launder it into one number.
@@ -474,8 +555,8 @@ def history(summaries: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     # The goal set is defined by the harness, not by us, so the fullest run
     # present is the only available definition of "a complete pass".
     full = max((int(s.get("goals") or 0) for s in ordered), default=0)
-    ordered = [dict(s, partial=(int(s.get("goals") or 0) < full)) for s in ordered]
-    complete = [s for s in ordered if not s["partial"]]
+    ordered = [_mark_usability(s, full) for s in ordered]
+    complete = [s for s in ordered if not s["excluded"]]
     trusted = [s for s in complete if s.get("counters_reconcile")]
 
     def _span(rows):
@@ -487,7 +568,16 @@ def history(summaries: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
                 "of_goals": full}
     return {"runs": ordered, "count": len(ordered),
             "full_goal_count": full,
-            "complete_count": len(complete), "partial_count": len(ordered) - len(complete),
+            "complete_count": len(complete),
+            # Kept as the count of EXCLUDED runs, which is what every existing
+            # caller displays it as ("N complete of M"). It is now wider than
+            # "short", so `short_count` reports that half on its own rather
+            # than leaving the two indistinguishable.
+            "partial_count": len(ordered) - len(complete),
+            "excluded_count": len(ordered) - len(complete),
+            "short_count": sum(1 for s in ordered if s.get("partial")),
+            "named_bad_count": sum(1 for s in ordered
+                                   if s.get("excluded") and not s.get("partial")),
             "trusted_count": len(trusted),
             # Named for what it actually spans. There is deliberately NO trend
             # over every run: that number could only ever mislead.

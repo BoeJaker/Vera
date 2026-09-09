@@ -196,16 +196,33 @@ def _op_run_files() -> Dict[str, Path]:
         "not add up, meaning a number drawn from it may be measuring the "
         "instrument rather than the loop. These are counts, NOT a verdict on "
         "whether goals were achieved; use census.goal to judge a goal by its "
-        "progression and output. Output: {runs[], count, trend_all, "
-        "trend_trusted, dir}."),
+        "progression and output. "
+        "PARTIAL AND FAILED RUNS ARE LEFT OUT BY DEFAULT — a run covering fewer "
+        "goals than a full pass, or whose filename marks it partial/failed/"
+        "stalled/aborted/interrupted/invalid/wedged, is not usable history and "
+        "would sit in a trend as an ordinary point. Pass include_partial=true "
+        "to get every run, each carrying `excluded` and `exclude_reason`. "
+        "Inputs: include_partial (bool=false). Output: {runs[], count, "
+        "shown_count, excluded_count, short_count, named_bad_count, "
+        "full_goal_count, trend_complete, trend_trusted, dir}."),
 )
-async def cap_census_runs(trace_id=None) -> Dict[str, Any]:
+async def cap_census_runs(include_partial: bool = False, trace_id=None) -> Dict[str, Any]:
     files = _run_files()
     # Concurrently, not one after another: this is the panel's first call and it
     # touches every run, so serialising the reads is the whole latency.
     records = await asyncio.gather(*(_read_run(p) for p in files.values()))
     summaries = [cc.summarise_run(rid, recs) for rid, recs in zip(files, records)]
     hist = cc.history(summaries)
+    # The counts and both trends are computed over EVERY run and stay as they
+    # were, so filtering the rows can never move a number. Only the rows the
+    # caller reads are dropped, and `excluded_count` says how many, so a
+    # shrunken list is never mistaken for a shrunken archive.
+    rows = hist.get("runs") or []
+    show_all = cc.truthy(include_partial)
+    if not show_all:
+        hist["runs"] = [r for r in rows if not r.get("excluded")]
+    hist["shown_count"] = len(hist.get("runs") or [])
+    hist["include_partial"] = show_all
     hist["dir"] = str(CENSUS_DIR)
     return hist
 
