@@ -131,86 +131,407 @@ async def _drop(item_id: str):
 _BUILTIN_ENTRIES: List[Dict[str, Any]] = [
     {
         "kind": "os", "name": "Claude Code",
+        "version": "opus-5",
         "summary": "Agent harness driving Vera from outside over /mcp/call; "
                    "attributes its work as controller=claude_code.",
-        "body": "Sessions live as JSONL under ~/.claude/projects/. Vera ingests "
-                "them via ide.claude_sessions.* - that is where the prompts and "
-                "conversation log behind a census row can be read back.",
+        "body": (
+            "WHAT IT IS\n"
+            "An agent harness running outside Vera (on a Windows host, over SMB "
+            "and HTTPS). It edits files, runs shell commands on the Vera host "
+            "through evolve.sandbox.exec, and calls Vera capabilities.\n\n"
+            "HOW IT REACHES VERA\n"
+            "Its MCP tool list is fixed at session start, so a capability "
+            "deployed mid-session will NOT appear as a tool. Any cap is still "
+            "reachable over HTTP:\n\n"
+            "    POST https://llm.int:8999/mcp/call\n"
+            "    {\"name\":\"<cap.name>\",\"arguments\":{...},\n"
+            "     \"caller_kind\":\"claude\",\"session_id\":\"<session uuid>\"}\n\n"
+            "The payload comes back under `content`. caller_kind:\"claude\" "
+            "stamps the pipeline/commit as controller=claude_code and links it "
+            "to the chat; a bare curl tags `user` instead.\n\n"
+            "WHERE ITS TRANSCRIPTS LIVE\n"
+            "~/.claude/projects/*.jsonl on the operator's machine. Vera ingests "
+            "them via ide.claude_sessions.* - that is where the prompts and "
+            "conversation behind a census row can be read back, and it is why a "
+            "census row's session id is worth recording.\n\n"
+            "CONSTRAINTS THAT SHAPE ITS WORK HERE\n"
+            "- All code lands via bleeding-edge; main only on explicit "
+            "go-ahead.\n"
+            "- Never edits prod's live checkout.\n"
+            "- One GPU call at a time: the ollama gate is capacity 1.\n"
+            "- Git author is always the human; no AI attribution trailer (a "
+            "commit-msg hook rejects it)."),
         "source": {"origin": "claude-code"},
         "interop": {"cap": "ide.claude_sessions.list", "protocol": "mcp"},
-        "tags": ["harness", "operator"],
+        "tags": ["harness", "operator", "how-to"],
     },
     {
         "kind": "tool", "name": "/loop",
         "summary": "Self-paced recurring prompt: runs a task, then schedules its "
                    "own next wake-up rather than polling on a fixed interval.",
-        "body": "Dynamic mode picks the delay from what it is waiting on. This is "
-                "the tool that drives a census programme across many hours "
-                "without a human re-triggering each step.",
+        "body": (
+            "WHAT IT DOES\n"
+            "Takes `[interval] <prompt>`. With an interval it schedules a cron "
+            "job and runs the prompt immediately. WITHOUT one it enters DYNAMIC "
+            "mode: it runs the task now, then decides for itself when the next "
+            "iteration is worth running and schedules a single wake-up.\n\n"
+            "WHY DYNAMIC MODE IS THE ONE THAT MATTERS HERE\n"
+            "A census goal takes minutes to half an hour and its duration is "
+            "UNBOUNDED - an LLM call can run seconds or tens of minutes. A "
+            "fixed poll either wastes wake-ups on a run that has not moved, or "
+            "sleeps through the finish. Dynamic mode picks the delay from what "
+            "is actually being waited on.\n\n"
+            "HOW TO DRIVE A LONG PROGRAMME WITH IT\n"
+            "1. Put the WHOLE state in the loop prompt - what is running, what "
+            "was confirmed, what to do next, and the traps. Each firing is a "
+            "fresh turn; anything not in the prompt is gone.\n"
+            "2. Do the NEXT step and nothing else, then reschedule.\n"
+            "3. Say what you are waiting on in the `reason` - the operator "
+            "reads that to understand the cadence.\n"
+            "4. Fallback heartbeat 1200-1800s when something else (a monitor, a "
+            "task notification) is the real wake signal. Idle ticks more "
+            "frequent than the task needs are pure overhead.\n"
+            "5. Stop with ScheduleWakeup(stop:true) when the task is done or "
+            "cannot progress. Re-arming is a per-turn choice, not a default.\n\n"
+            "TRAP\n"
+            "Do NOT schedule a short wake-up to poll work the harness already "
+            "tracks - you are re-invoked when it finishes. Poll only external "
+            "state nothing will notify you about."),
         "source": {"origin": "claude-code", "path": "bundled:loop"},
-        "tags": ["loop", "scheduling", "operator"],
+        "tags": ["loop", "scheduling", "operator", "how-to"],
     },
     {
         "kind": "skill", "name": "improve-vera-sandboxed",
         "summary": "Land changes through the sandboxed, adversarially-reviewed, "
                    "gated pipeline rather than editing prod's checkout.",
-        "body": "pipeline.begin -> edit the worktree -> commit via "
-                "sandbox.exec(where=worktree) -> unittest.run(markers=critical) "
-                "-> pipeline.adopt(to=bleeding-edge) -> promote. Section 11 is "
-                "the census-driven improvement loop.",
+        "body": (
+            "THE PIPELINE, IN ORDER\n"
+            "  evolve.pipeline.begin(title, spawn=true, session_id)\n"
+            "      one call: typed branch off bleeding-edge, worktree, dev\n"
+            "      container, and the CI/CD record\n"
+            "  edit ONLY inside the returned worktree\n"
+            "  evolve.sandbox.exec(where='worktree', branch=..., cmd='git ...')\n"
+            "      git over SMB does NOT work; commit through the host\n"
+            "  review your OWN diff as a skeptic before landing\n"
+            "  evolve.unittest.run(markers='critical')\n"
+            "  evolve.pipeline.adopt(branch, to='bleeding-edge')\n"
+            "  evolve.pipeline.promote(id, to='bleeding-edge')\n"
+            "  evolve.bleeding_edge.promote_to_main(confirm=true)   [ASK FIRST]\n"
+            "  sys.dev.restart(confirm=true)\n\n"
+            "NON-NEGOTIABLES\n"
+            "- bleeding-edge is always a superset of main. main only ever "
+            "advances by promoting bleeding-edge as a whole.\n"
+            "- One branch, ONE concern. A mixed branch cannot be reviewed, "
+            "promoted or reverted as a unit.\n"
+            "- Claim a hand-made worktree (evolve.worktree.claim) or the "
+            "cleanup sweep deletes it under you.\n"
+            "- Never run repo-wide worktree/branch commands; other agents share "
+            "this repo.\n"
+            "- Internal plans go in <git-common-dir>/vera-work/shared-planning/, "
+            "never in documentation/.\n\n"
+            "SECTION 11 is the census-driven improvement loop: the harness, the "
+            "noise floor, prove-the-code-path-ran, artifacts-not-counters, "
+            "archiving, the self-paced loop, and provenance."),
         "source": {"origin": "claude-code",
                    "path": ".claude/skills/improve-vera-sandboxed/SKILL.md"},
         "interop": {"cap": "evolve.pipeline.begin"},
-        "tags": ["pipeline", "review", "census"],
+        "tags": ["pipeline", "review", "census", "how-to"],
+    },
+    {
+        "kind": "skill", "name": "Using this registry",
+        "summary": "How to record a skill, tool, loop, technique or harness "
+                   "here - and what a usable entry has to contain.",
+        "body": (
+            "WHY BOTHER\n"
+            "A census row records what ran. Without this it cannot say who ran "
+            "it, under which skill, with which tool, or what throwaway scripts "
+            "were written on the way - so a run becomes an orphan the moment "
+            "its chat log scrolls away.\n\n"
+            "THE FIVE KINDS\n"
+            "  skill      instructions an agent FOLLOWS (a SKILL.md, a prompt)\n"
+            "  tool       something an agent INVOKES (a slash command, an MCP\n"
+            "             tool, a script)\n"
+            "  loop       a repeating operating pattern (/loop, a census\n"
+            "             programme, a Vera loop profile)\n"
+            "  technique  a way of working that is not itself executable\n"
+            "  os         a whole harness that hosts agents\n\n"
+            "HOW TO ADD ONE\n"
+            "  registry.upsert {entry: {\n"
+            "     kind, name, summary,\n"
+            "     body,                       <- THE FULL CONTENT\n"
+            "     source: {origin, path},\n"
+            "     owner:  {agent, session},\n"
+            "     tags: [], helpers: [{name, purpose, path}] }}\n\n"
+            "THE RULE THAT MAKES IT WORTH HAVING\n"
+            "`summary` is one line saying what the thing IS. `body` is the "
+            "ACTUAL CONTENT - the technique in full, the prompt in full, the "
+            "operating procedure in full. An entry whose body is a paraphrase "
+            "is a title, and a registry of titles is what the estate already "
+            "had. If someone cannot APPLY the thing from what you wrote, you "
+            "have not recorded it.\n\n"
+            "HELPER SCRIPTS\n"
+            "Record every throwaway script with what it was FOR. A helper with "
+            "no purpose is dropped on write - the file alone never says why it "
+            "existed, and a half-recorded helper reads as coverage.\n\n"
+            "WHAT IT REFUSES\n"
+            "No summary, no kind, or no source.origin. Pass force=true only "
+            "when you have read the refusal and disagree with it.\n\n"
+            "PROJECTING INTO VERA'S OWN SKILLS\n"
+            "registry.sync_skill projects an entry into skills.* so chat and "
+            "loops can attach it. It is idempotent - it joins on a "
+            "registry:<id> tag, so a re-sync updates rather than duplicating - "
+            "and the provenance tags survive, so a round trip cannot launder a "
+            "Claude Code skill into a Vera-native one."),
+        "source": {"origin": "claude-code"},
+        "interop": {"cap": "registry.upsert"},
+        "tags": ["registry", "how-to", "meta"],
     },
     {
         "kind": "loop", "name": "census programme",
         "summary": "Back-to-back Loop Lab tests with no improvement or review "
                    "step, run against one commit to measure the loop itself.",
-        "body": "A census IS a sequence of suite tasks sharing a tag "
-                "(vera/evolve/census_seed.py). Templates: default, model-compare, "
-                "and the per-family sets exec/code/prose/data/research.",
+        "body": (
+            "WHAT A CENSUS IS\n"
+            "A fixed set of goals with declared checks, run back-to-back "
+            "against ONE commit. It is a measuring instrument, not a feature.\n\n"
+            "HOW TO RUN ONE (from the UI, since the flattening)\n"
+            "  Loop Lab -> Census -> 'Templates & run': pick, Seed, Run.\n"
+            "  evolve.census.templates            what exists\n"
+            "  evolve.census.template.seed name=  template -> suite tasks\n"
+            "  evolve.suite.run tag=census-<name> run it\n"
+            "  evolve.suites tag=census-<name>    that template's timeline\n"
+            "A template SAVED but not SEEDED shows in the picker and runs "
+            "NOTHING - check evolve.tasks(tag=...) is non-empty.\n"
+            "ALWAYS pass a tag: untagged runs every enabled task.\n\n"
+            "GOAL == TASK == ONE RUNNABLE TEST\n"
+            "A seeded goal is an ordinary benchmark task, and "
+            "evolve.task.run(id=...) runs exactly one and returns its checks. "
+            "Anything true of a suite task is true of a census goal.\n\n"
+            "PARITY, WHICH IS THE WHOLE VALUE\n"
+            "`planning` is the only profile whose engine is v7, and every "
+            "historical number came from a bare v7 call. Only default, "
+            "model-compare and the exec/code/prose/data families share a "
+            "comparable history. A different profile is a different ENGINE.\n"
+            "`default` is the baseline: DO NOT EDIT IT.\n"
+            "Archive a non-default template as census.<template>-run<N>.jsonl, "
+            "never census.runNN.\n\n"
+            "JUDGING A RUN\n"
+            "From ARTIFACTS, never from scores. quality N/N does not prove an "
+            "artifact is correct - run 47 scored 4/4 on a file with a hardcoded "
+            "60. Read the file out of the session sandbox."),
         "source": {"origin": "claude-code",
                    "path": "/home/boejaker/loop-census/run_census.py"},
         "interop": {"cap": "evolve.suite.run"},
-        "tags": ["census", "benchmark", "loop"],
+        "tags": ["census", "benchmark", "loop", "how-to"],
         "helpers": [
-            {"name": "run_census.py",
-             "purpose": "runs one template's goals back to back against v7, "
-                        "applying per-goal wall caps and writing one JSONL row "
-                        "per goal",
-             "path": "/home/boejaker/loop-census/run_census.py"},
-            {"name": "run_operator_census.py",
-             "purpose": "the same, for operator/browser goals, as a counterpart "
-                        "that pre-empts operator regressions the loop census paid "
-                        "for",
-             "path": "/home/boejaker/loop-census/run_operator_census.py"},
+            {"name": "helpers.json",
+             "purpose": "the manifest of throwaway scripts an operator wrote, "
+                        "stamped onto every census row so a run can be traced "
+                        "to the tooling that drove it",
+             "path": "/home/boejaker/loop-census/helpers.json"},
         ],
+    },
+    {
+        "kind": "tool", "name": "run_census.py",
+        "summary": "The loop census runner: one template's goals back to back "
+                   "against v7, one JSONL row per goal.",
+        "body": (
+            "USAGE\n"
+            "  python3 -B run_census.py --template <name> [--model M] [--list]\n"
+            "        [--operator claude] [--skill improve-vera-sandboxed]\n"
+            "        [--tool /loop] [--session-id <uuid>]\n"
+            "  (or the VERA_CENSUS_* environment variables)\n\n"
+            "WHAT IT DOES\n"
+            "Reads templates/<name>.json, runs each goal through "
+            "dag.agent_loop_v7 with the goal and nothing else - which is how "
+            "every historical census number was produced - waiting for a free "
+            "box before each goal so it never competes with a person or another "
+            "agent. Writes census.jsonl (one row per goal) and census.log.\n\n"
+            "WALL CAPS resolve most-specific-first:\n"
+            "  goal['wall_cap_s'] -> template['wall_cap_s'] -> WALL_CAP_S (1800)\n"
+            "and THE CAP THAT APPLIED IS RECORDED ON EVERY ROW. Without that, "
+            "1805s is a timeout under one template and a healthy finish under "
+            "another, and a cross-template comparison silently measures the "
+            "harness instead of the loop.\n\n"
+            "PROVENANCE is stamped on every row: caller_session, operator, "
+            "skill, tool, and the helper manifest. Blank fields are left blank "
+            "rather than guessed - an unattributed run should look "
+            "unattributed, not be credited to whoever edited the harness last.\n\n"
+            "AFTERWARDS\n"
+            "Archive as census.<template>-run<N>.jsonl. NEVER census.runNN "
+            "unless it is the default template - that numbering is the only "
+            "comparison baseline there is.\n\n"
+            "CAVEAT\n"
+            "This file lives OUTSIDE the git repo, so it is not pipeline-gated "
+            "and has no tests. Prefer the seeded suite path "
+            "(evolve.suite.run tag=census-<name>) for anything new."),
+        "source": {"origin": "claude-code",
+                   "path": "/home/boejaker/loop-census/run_census.py"},
+        "interop": {"cap": "dag.agent_loop_v7"},
+        "tags": ["census", "harness", "tool", "how-to"],
+    },
+    {
+        "kind": "tool", "name": "run_operator_census.py",
+        "summary": "The operator census runner: browser/operator goals, minutes "
+                   "each instead of 1800s.",
+        "body": (
+            "USAGE\n"
+            "  python3 -B run_operator_census.py --template <name> [--list]\n"
+            "        [--operator ...] [--skill ...] [--tool ...] [--session-id ...]\n\n"
+            "WHAT IT IS FOR\n"
+            "The cheap counterpart to the loop census. Every goal in "
+            "operator-templates/regressions.json reproduces a failure the LOOP "
+            "census actually paid for, in minutes rather than 1800s a time:\n"
+            "  target-with-no-url            O44 - operator.run given no url "
+            "drove Vera's own dashboard for 504s while the target file sat in "
+            "the workspace\n"
+            "  page-answers-in-text-only     census 49 - the answer was on the "
+            "page as text and the run kept clicking instead of reading it\n"
+            "  value-changes-without-returning  census 48 / O45 / O46\n"
+            "  preview-served-file           census 50 - the preview could not "
+            "serve a file the run had just written\n"
+            "  unreachable-target-fails-fast a CONTROL: it must fail FAST, "
+            "which is why it carries its own 300s cap\n\n"
+            "RUN IT FIRST when touching the operator - it finds browser-layer "
+            "defects before a loop run inherits them.\n\n"
+            "SCHEMA NOTE\n"
+            "Its goals use kind/panel_id/max_steps and carry no `checks`, so "
+            "the census template store rightly refuses them - a goal with no "
+            "assertable check inflates the denominator and reads as coverage. "
+            "The `operator-family` template in the store is a REWRITE of these "
+            "goals into the census schema; it is not the same artifact.\n\n"
+            "CAVEAT\n"
+            "Outside the git repo: not gated, no tests."),
+        "source": {"origin": "claude-code",
+                   "path": "/home/boejaker/loop-census/run_operator_census.py"},
+        "interop": {"cap": "operator.run"},
+        "tags": ["census", "operator", "harness", "tool", "how-to"],
     },
     {
         "kind": "technique", "name": "prove the code path ran",
         "summary": "Before crediting a fix for a better run, show mechanically "
                    "that the changed code executed at all.",
-        "body": "Four improvement claims were withdrawn in one session; every "
-                "one of them was caught by this and by nothing else. Two commits "
-                "looked vindicated by better numbers and had never executed - one "
-                "was gated on a session id that appears nowhere, the other guards "
-                "a case every real call already avoids.",
+        "body": (
+            "THE RULE\n"
+            "A better number after a change is not evidence the change caused "
+            "it. Before claiming anything, show the changed code EXECUTED - a "
+            "log line it emits, a counter it writes, a field only it sets, or a "
+            "trace entry only it produces.\n\n"
+            "WHY IT EARNS ITS KEEP\n"
+            "FIVE would-be improvement claims were withdrawn in a single "
+            "session. Every one was caught by this rule and by nothing else:\n"
+            "  - two commits looked vindicated by better censuses and had NEVER "
+            "executed. One was gated on a session id that appears nowhere in "
+            "the calling module; the other guards a case every real call "
+            "already avoids (every operator.run gets an explicit url).\n"
+            "  - one 'improvement' (2 goals, 18%) sat inside the measured noise "
+            "floor and was never evidence.\n"
+            "  - one attribution matched a stop message to the WRONG guard: two "
+            "repeating-action guards exist and were conflated.\n"
+            "  - one scope overclaim: grep -c on ONE vera.log while saying 'the "
+            "whole census'. vera.log rotates.\n\n"
+            "HOW TO APPLY IT\n"
+            "1. Name the observable the change produces.\n"
+            "2. Find it in a real run's output.\n"
+            "3. Only then discuss whether the numbers moved.\n"
+            "If you cannot name an observable, the change is not yet "
+            "falsifiable - add one before landing it."),
         "source": {"origin": "claude-code"},
-        "tags": ["evidence", "census", "discipline"],
+        "tags": ["evidence", "census", "discipline", "technique"],
     },
     {
         "kind": "technique", "name": "the noise floor",
         "summary": "Two censuses of the SAME commit differed by one capped goal "
                    "and 12.6% wall, so a result smaller than that is not a result.",
-        "body": "Runs 49 and 50 ran the same commit: 11/1 vs 10/2 done/capped, "
-                "9873s vs 8632s, one goal flipping pass<->cap with no code change, "
-                "median per-goal ratio 1.44x and worst 1.71x. The earlier 48->49 "
-                "'improvement' (2 goals, 18%) barely clears that and was never "
-                "evidence. No single pair of censuses can establish a change this "
-                "size; the cheap honest evidence is mechanical, not statistical.",
+        "body": (
+            "THE MEASUREMENT\n"
+            "Censuses 49 and 50 ran the SAME COMMIT, deliberately, to measure "
+            "the instrument:\n\n"
+            "    done/capped   11/1  vs  10/2\n"
+            "    total wall    9873s vs  8632s      (12.6% apart)\n"
+            "    one goal flipped pass<->cap with NO code change\n"
+            "    median per-goal time ratio 1.44x, worst 1.71x\n\n"
+            "SO: plus or minus one capped goal, and plus or minus 13% wall, is "
+            "NOISE.\n\n"
+            "WHAT FOLLOWS, AND IT BINDS\n"
+            "- No single pair of censuses can establish a change of that size.\n"
+            "- 'Best run yet' is not a result.\n"
+            "- The earlier 48->49 improvement (2 goals, 18%) barely clears the "
+            "floor and was withdrawn as evidence.\n\n"
+            "WHAT TO DO INSTEAD\n"
+            "Prefer MECHANICAL claims, which are falsifiable in one run: show "
+            "the code path executed, and show the specific behaviour it was "
+            "written to change. A statistical claim about the loop needs more "
+            "runs than anyone has time for; a mechanical one needs one."),
         "source": {"origin": "claude-code"},
-        "tags": ["evidence", "census", "measurement"],
+        "tags": ["evidence", "census", "measurement", "technique"],
+    },
+    {
+        "kind": "technique", "name": "one branch, one concern",
+        "summary": "A branch carrying unrelated changes cannot be reviewed, "
+                   "promoted or reverted as a unit - and gets binned wholesale.",
+        "body": (
+            "WHAT HAPPENED\n"
+            "A single branch accumulated five unrelated things: an agent "
+            "registry, census per-goal wall caps, census run provenance, a "
+            "loop-profile fix, and a planner change. When the planner part "
+            "turned out to be the wrong approach, there was no way to drop just "
+            "that - the whole branch was binned and the surviving work re-cut "
+            "into four single-purpose branches.\n\n"
+            "WHY IT MATTERS BEYOND TIDINESS\n"
+            "A mixed branch makes the gate result meaningless: 'the branch is "
+            "green' says nothing about which change the green belongs to. And "
+            "when one part is wrong the only options are surgery, or throwing "
+            "away good work with the bad.\n\n"
+            "HOW TO APPLY IT\n"
+            "- Before the FIRST edit of a new piece of work, ask whether it is "
+            "the same concern as what is already on this branch. If not, cut a "
+            "new one. Cutting is cheap; unpicking is not.\n"
+            "- A fix noticed in passing is its OWN branch, even at two lines. "
+            "Especially then - small unrelated commits are the ones that "
+            "quietly ride along.\n"
+            "- Verify before landing: git diff --name-only bleeding-edge..<br> "
+            "should read as one coherent change, and no file should appear on "
+            "two of your branches."),
+        "source": {"origin": "claude-code"},
+        "tags": ["discipline", "git", "technique"],
+    },
+    {
+        "kind": "technique", "name": "add a style, do not amend the system",
+        "summary": "'Add an optional mode' means a new self-contained component "
+                   "beside the existing one, not a flag threaded through it.",
+        "body": (
+            "WHAT HAPPENED\n"
+            "Asked for an optional 'detailed planner' MODE, the work added a "
+            "planner_mode parameter to cap_dag_agent_loop_v6, a branch at the "
+            "plan call site, a role on LOOP_ROUTING_PROFILE and an edit to the "
+            "minimal prompt body. All of it was thrown away.\n\n"
+            "TWO SEPARATE FAILURES, AND BOTH ARE THE LESSON\n"
+            "1. A critical system was changed without the plan being put to the "
+            "user first. dag_workshop_capabilities.py IS the agentic loop; work "
+            "on it gets proposed and agreed BEFORE it is written.\n"
+            "2. It amended when the instruction was to ADD. That puts the new "
+            "idea's risk onto the working system's blast radius - exactly what "
+            "an 'optional mode' is supposed to avoid.\n\n"
+            "NOTE WHAT IS *NOT* THE LESSON\n"
+            "The idea itself was never assessed on its merits and may well be "
+            "sound. Do not read this as a verdict on the approach.\n\n"
+            "HOW TO APPLY IT\n"
+            "- New module, its own capability, its own routing profile if it "
+            "needs one. DELETING the files must return the estate to exactly "
+            "what it was.\n"
+            "- Test the additive property mechanically:\n"
+            "      git diff --stat <base>..HEAD -- <the existing system's files>\n"
+            "      # must be EMPTY\n"
+            "- A registry of styles beats a branch in the caller: the next "
+            "style is another entry, not another `if`.\n"
+            "- Inject the dependency (pass the generate/execute function in) so "
+            "the new component is testable without the system it sits beside, "
+            "and can never import it back.\n"
+            "- If the new thing genuinely cannot work without one hook, SAY SO "
+            "AND ASK before writing that hook."),
+        "source": {"origin": "claude-code"},
+        "tags": ["discipline", "design", "technique"],
     },
 ]
 
@@ -500,7 +821,26 @@ async function regOpen(id){
 regLoad();
 """
 
+@APP.get("/ui/panels/registry-panel", include_in_schema=False)
+async def _registry_panel():
+    """The registry's own page, served for the Agents/Skills/Ontologies shell.
+
+    A standalone document rather than injected markup because that shell mounts
+    its sections as IFRAMES - the same way agents, skills and ontologies are
+    already served. Registering this as a top-level tab was wrong: the registry
+    IS a skills surface, and it belongs beside the two stores it projects into
+    and out of, not in a fourth place a reader has to know about separately.
+    """
+    from fastapi.responses import HTMLResponse
+    p = Path(__file__).parent / "registry_panel.html"
+    return HTMLResponse(p.read_text(encoding="utf-8") if p.exists()
+                        else "<p style='color:#c96b6b'>registry_panel.html not found</p>")
+
+
+# mode="element": registered and listed so it is discoverable, but NOT a
+# top-level tab - it is rendered inside the Agents/Skills/Ontologies panel.
 register_ui("agent-registry", "Registry", "🧰", _PANEL_HTML, js=_PANEL_JS,
             ui_caps=["registry.list", "registry.get", "registry.interop",
-                     "registry.upsert", "registry.sync_skill"],
-            mode="tab", tab_order=62)
+                     "registry.upsert", "registry.delete", "registry.sync_skill",
+                     "registry.import_skill"],
+            mode="element", tab_order=62)
