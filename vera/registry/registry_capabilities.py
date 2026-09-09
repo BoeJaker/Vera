@@ -405,3 +405,102 @@ try:
         _loop.create_task(_startup_load())
 except Exception:                                          # pragma: no cover
     pass
+
+
+# â”€â”€ panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+_PANEL_HTML = """
+<div class="reg-wrap">
+  <div class="reg-bar">
+    <input id="reg-q" placeholder="search skills, tools, loops, techniquesâ€¦"
+           oninput="regLoad()">
+    <select id="reg-kind" onchange="regLoad()">
+      <option value="">all kinds</option>
+      <option value="skill">skills</option>
+      <option value="tool">tools</option>
+      <option value="loop">loops</option>
+      <option value="technique">techniques</option>
+      <option value="os">operating systems</option>
+    </select>
+    <span id="reg-count" class="reg-hint"></span>
+  </div>
+  <div id="reg-list" class="reg-list"></div>
+  <div id="reg-detail" class="reg-detail"></div>
+</div>
+<style>
+ .reg-wrap{padding:10px;font:13px/1.5 system-ui,sans-serif}
+ .reg-bar{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+ .reg-bar input{flex:1;min-width:180px;padding:6px 8px}
+ .reg-hint{opacity:.6;font-size:12px}
+ .reg-list{display:grid;gap:6px}
+ .reg-card{border:1px solid rgba(128,128,128,.3);border-radius:6px;padding:8px 10px;cursor:pointer}
+ .reg-card:hover{border-color:rgba(128,128,128,.65)}
+ .reg-k{display:inline-block;font-size:11px;padding:1px 6px;border-radius:10px;
+        border:1px solid rgba(128,128,128,.4);margin-right:6px;opacity:.85}
+ .reg-name{font-weight:600}
+ .reg-sum{opacity:.8;margin-top:2px}
+ .reg-meta{font-size:11px;opacity:.6;margin-top:4px}
+ .reg-detail{margin-top:12px;white-space:pre-wrap}
+ .reg-detail h4{margin:.6em 0 .2em}
+ .reg-empty{opacity:.6;padding:14px}
+</style>
+"""
+
+_PANEL_JS = """
+async function regLoad(){
+  const q=(document.getElementById('reg-q')||{}).value||'';
+  const k=(document.getElementById('reg-kind')||{}).value||'';
+  const r=await fetch('/registry?q='+encodeURIComponent(q)+'&kind='+encodeURIComponent(k))
+              .then(x=>x.json()).catch(()=>({entries:[]}));
+  const es=r.entries||[];
+  const c=document.getElementById('reg-count');
+  if(c) c.textContent=es.length+' of '+((r.count!=null)?r.count:es.length)+' entries';
+  const el=document.getElementById('reg-list');
+  if(!el) return;
+  if(!es.length){ el.innerHTML='<div class="reg-empty">Nothing registered matches that.</div>'; return }
+  el.innerHTML=es.map(e=>{
+    const h=(e.helpers||[]).length;
+    const own=(e.owner&&e.owner.agent)||'unattributed';
+    const org=(e.source&&e.source.origin)||'unknown';
+    return '<div class="reg-card" onclick="regOpen(\\''+encodeURIComponent(e.id)+'\\')">'
+      +'<span class="reg-k">'+regEsc(e.kind||'?')+'</span>'
+      +'<span class="reg-name">'+regEsc(e.name||e.id)+'</span>'
+      +'<div class="reg-sum">'+regEsc(e.summary||'')+'</div>'
+      +'<div class="reg-meta">'+regEsc(own)+' Â· '+regEsc(org)
+      +(h?(' Â· '+h+' helper'+(h===1?'':'s')):'')
+      +((e.tags||[]).length?(' Â· '+regEsc((e.tags||[]).join(', '))):'')+'</div></div>';
+  }).join('');
+}
+function regEsc(s){return String(s==null?'':s).replace(/[&<>"]/g,
+  c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+async function regOpen(id){
+  const r=await fetch('/registry/entry?id='+id).then(x=>x.json()).catch(()=>null);
+  const el=document.getElementById('reg-detail'); if(!el) return;
+  if(!r||!r.ok){ el.innerHTML='<div class="reg-empty">Could not load that entry.</div>'; return }
+  const e=r.entry, io=r.interop||{};
+  let h='<h4>'+regEsc(e.name)+' <span class="reg-k">'+regEsc(e.kind)+'</span></h4>';
+  h+='<div class="reg-sum">'+regEsc(e.summary)+'</div>';
+  if(e.body) h+='<h4>Detail</h4><div>'+regEsc(e.body)+'</div>';
+  if((e.helpers||[]).length){
+    h+='<h4>Helper scripts</h4>';
+    h+=e.helpers.map(x=>'Â· '+regEsc(x.name)+' â€” '+regEsc(x.purpose||'(no purpose recorded)')
+        +(x.path?('\\n  '+regEsc(x.path)):'')).join('\\n');
+  }
+  h+='<h4>Reach</h4>';
+  // Named, not implied: an entry Vera cannot invoke is an external technique,
+  // not a broken registration.
+  h+=(io.resolution&&io.resolution.external_only)
+      ? 'external only â€” nothing inside Vera invokes this'
+      : regEsc(((io.resolution||{}).reachable_as||[]).join(', '));
+  h+='\\n\\nowner: '+regEsc(((io.policy||{}).owner)||'unattributed')
+    +'\\norigin: '+regEsc(((io.policy||{}).origin)||'unknown');
+  if(e.source&&e.source.path) h+='\\nsource: '+regEsc(e.source.path);
+  el.innerHTML=h;
+}
+regLoad();
+"""
+
+register_ui("agent-registry", "Registry", "🧰", _PANEL_HTML, js=_PANEL_JS,
+            ui_caps=["registry.list", "registry.get", "registry.interop",
+                     "registry.upsert", "registry.sync_skill"],
+            mode="tab", tab_order=62)
