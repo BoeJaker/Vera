@@ -277,3 +277,60 @@ def test_an_unreadable_clock_blocks_rather_than_allows():
 
 def test_quiet_gate_treats_never_observed_as_blocked():
     assert BG.quiet_gate("", None, NOW) != ""
+
+
+# â”€â”€ the gate is bursty, so "held right now" is not the question â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Interactive work takes the GPU for a generation, releases it while it parses
+# the reply and picks a tool, then takes it again. A 60s probe lands in one of
+# those gaps most of the time, so an actively-used box kept reading as idle and
+# background work started straight into a chat turn or an agent loop.
+_HELD = {"nodes": [{"gated": True, "held": 1, "owners": "chat"}]}
+_FREE = {"nodes": [{"gated": True, "held": 0, "owners": ""}]}
+
+
+def test_a_held_gate_is_reported_as_held():
+    assert BG.gate_is_held(_HELD) is True
+    assert BG.gate_is_held(_FREE) is False
+    assert BG.gate_is_held(None) is False
+
+
+def test_an_ungated_node_is_not_a_reason_to_wait():
+    """Ungated nodes have no capacity to contend for."""
+    assert BG.gate_is_held({"nodes": [{"gated": False, "held": 3}]}) is False
+
+
+def test_the_box_stays_busy_for_a_while_after_the_gate_is_released():
+    assert BG.gate_cooldown_reason(1000, 1010, window_s=180)
+    assert "held 10s ago" in BG.gate_cooldown_reason(1000, 1010, window_s=180)
+
+
+def test_the_cooldown_expires():
+    assert BG.gate_cooldown_reason(1000, 1000 + 181, window_s=180) == ""
+
+
+def test_never_observed_means_no_block():
+    """A process that has never seen the gate held must not invent a reason."""
+    assert BG.gate_cooldown_reason(None, 5000) == ""
+
+
+def test_a_clock_that_went_backwards_is_not_evidence():
+    assert BG.gate_cooldown_reason(1000, 900) == ""
+
+
+def test_an_unreadable_timestamp_does_not_block_forever():
+    """Failing closed here would stop background work permanently on one bad
+    value; the caller's own quiet gate already fails closed on that question."""
+    assert BG.gate_cooldown_reason("nonsense", 100) == ""
+    assert BG.gate_cooldown_reason(100, "nonsense") == ""
+
+
+def test_a_running_loop_defers_background_work():
+    """running_loops was hardcoded to 0 at the call site, so this branch could
+    never fire and a running loop only blocked background work if the probe
+    happened to catch it mid-generation."""
+    assert BG.defer_reason({}, 1) == "an agent loop is running"
+    assert BG.defer_reason({}, 0) == ""
+
+
+def test_the_gate_still_outranks_everything():
+    assert "GPU gate is held" in BG.defer_reason(_HELD, 0)

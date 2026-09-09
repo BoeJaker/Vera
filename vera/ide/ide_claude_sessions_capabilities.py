@@ -977,19 +977,84 @@ except ImportError:                                        # pragma: no cover
         _iq = None
 
 
+#: Last time the GPU gate was OBSERVED held. Module state on purpose: the
+#: cooldown is about what this process has witnessed, and a value restored from
+#: elsewhere would be quiet it never saw - the same rule background_work.observe
+#: applies to the idle clock.
+_GATE_SEEN: Dict[str, float] = {}
+
+
+async def _running_loop_count() -> int:
+    """How many agent loops are genuinely live.
+
+    Reads the same run records `/workshop/agent_loop/sessions` serves and
+    applies the SAME staleness correction, because a run orphaned by a restart
+    claims to be "running" forever - nothing is left alive to write a terminal
+    status. Counting those would block background work permanently, which is
+    the mirror image of the bug that had the queue itself deadlocked.
+
+    Best-effort: an unreadable signal counts as zero, because background work
+    that can never run is a worse failure than one that occasionally overlaps.
+    """
+    r = _orch.REDIS
+    if r is None:
+        return 0
+    try:
+        from Vera.vera.dag.dag_workshop_capabilities import _loop_run_is_stale
+    except Exception:                                      # pragma: no cover
+        try:
+            from vera.dag.dag_workshop_capabilities import _loop_run_is_stale
+        except Exception:
+            return 0
+    try:
+        ids = await r.zrevrange("vera:loop:history:index", 0, 40)
+        if not ids:
+            ids = await r.zrevrange("vera:loop:sessions", 0, 40)
+        live = 0
+        for raw in (ids or []):
+            sid = raw.decode() if isinstance(raw, (bytes, bytearray)) else str(raw)
+            rec = await r.hgetall("vera:loop:run:%s" % sid)
+            if not rec:
+                continue
+            run = {(k.decode() if isinstance(k, (bytes, bytearray)) else str(k)):
+                   (v.decode() if isinstance(v, (bytes, bytearray)) else str(v))
+                   for k, v in rec.items()}
+            if run.get("status") != "running":
+                continue
+            if await _loop_run_is_stale(r, sid, run):
+                continue
+            live += 1
+        return live
+    except Exception as e:
+        log.debug("running-loop probe: %s", e)
+        return 0
+
+
 async def _system_is_busy() -> str:
     """Why deferrable work should wait, or "". Best-effort: an unreadable
     signal reads as not-busy, because a backfill that can never run is a worse
     failure than one that occasionally overlaps."""
     if _bg is None:                                        # pragma: no cover
         return ""
-    gate, loops = {}, 0
+    gate = {}
+    now = time.time()
     try:
         cap = CAPABILITY_REGISTRY.get("ollama.gate.status")
         if cap and cap.get("func"):
             gate = await cap["func"]() or {}
     except Exception as e:
         log.debug("ingest gate probe: %s", e)
+    # Remember WHEN the gate was last seen held. The gate is a point-in-time
+    # reading and interactive work is bursty - a chat turn or a loop takes it
+    # for a generation, drops it while it parses the reply and picks a tool,
+    # then takes it again. A 60s probe lands in one of those gaps most of the
+    # time, which is why an actively-used box kept reading as idle.
+    if _bg.gate_is_held(gate):
+        _GATE_SEEN["last_held"] = now
+    # Agent loops. `loops` was hardcoded to 0 here, so defer_reason's
+    # running_loops branch could never fire and a running loop only blocked
+    # background work if the probe happened to catch it mid-generation.
+    loops = await _running_loop_count()
     try:
         cap = CAPABILITY_REGISTRY.get("census.live")
         live = (await cap["func"]()) if (cap and cap.get("func")) else {}
@@ -1006,7 +1071,13 @@ async def _system_is_busy() -> str:
                 return "a dream cycle is running"
     except Exception as e:
         log.debug("ingest dream probe: %s", e)
-    return _bg.defer_reason(gate, loops)
+    reason = _bg.defer_reason(gate, loops)
+    if reason:
+        return reason
+    # Nothing in flight this instant - but recent use still counts. This can
+    # only ADD a reason to wait; it never reports idle, so it cannot become a
+    # route by which the queue talks itself into starting during active use.
+    return _bg.gate_cooldown_reason(_GATE_SEEN.get("last_held"), now)
 
 
 #: The one queue. Bulk transcript ingest is P_BULK — it always yields to

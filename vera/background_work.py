@@ -84,6 +84,51 @@ def _held(gate: Optional[Dict[str, Any]]) -> Optional[str]:
     return None
 
 
+#: How long after the GPU gate was last SEEN held the box still counts as busy.
+#:
+#: The gate is a point-in-time reading and interactive work is bursty: a chat
+#: turn or an agent loop holds it for a generation, releases it while it parses
+#: the reply, picks a tool and writes a file, then takes it again. A 60s probe
+#: lands in one of those gaps most of the time, so "is the gate held right now"
+#: reported an idle box in the middle of active use - which is precisely the
+#: back-off that was missing.
+GATE_COOLDOWN_S = 180
+
+
+def gate_cooldown_reason(last_held_epoch: Any, now_epoch: Any,
+                         window_s: Any = GATE_COOLDOWN_S) -> str:
+    """Busy because the gate was held RECENTLY, even if it is free this instant.
+
+    Deliberately one-directional: this can only ever ADD a reason to wait. It
+    never reports idle, so it cannot become a route by which the queue talks
+    itself into starting during active use.
+
+    An unreadable clock returns "" rather than a block. Failing closed here
+    would mean a single bad timestamp stops background work forever, and the
+    caller's own quiet gate already fails closed on the same question.
+    """
+    if last_held_epoch is None:
+        return ""
+    try:
+        since = float(now_epoch) - float(last_held_epoch)
+        window = float(window_s)
+    except (TypeError, ValueError):
+        return ""
+    if since < 0:
+        return ""                      # clock went backwards; not evidence
+    if since < window:
+        return ("the GPU gate was held %ds ago (interactive work is bursty - "
+                "waiting %ds after the last use)" % (int(since), int(window)))
+    return ""
+
+
+def gate_is_held(gate: Optional[Dict[str, Any]] = None) -> bool:
+    """True when a GATED node's lease is held. Public because the cooldown
+    above needs the same reading and reaching into a private helper for it
+    would make this module's contract a matter of guesswork."""
+    return _held(gate) is not None
+
+
 def defer_reason(gate: Optional[Dict[str, Any]] = None,
                  running_loops: Any = 0,
                  dream_active: Any = False,
