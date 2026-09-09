@@ -43,11 +43,23 @@ try:                                                       # pragma: no cover
 except ImportError:                                        # pragma: no cover
     import idle_queue as _iq                               # type: ignore
 
+try:                                                       # pragma: no cover
+    from Vera.vera import idle_queue_eta as _eta
+except ImportError:                                        # pragma: no cover
+    try:
+        import idle_queue_eta as _eta                      # type: ignore
+    except ImportError:
+        _eta = None                                        # type: ignore
+
 log = logging.getLogger("vera.idle_queue_service")
 
 #: Redis hash: job id -> job JSON. Shared by every instance on the box, which
 #: is the point - one queue, not one per process.
 REDIS_KEY = "vera:idle_queue:jobs"
+#: Measured cost per kind, learned from completed runs. Beside the jobs rather
+#: than inside them: a rate is a property of the KIND, and storing it per job
+#: would throw the measurement away with the job that produced it.
+RATES_KEY = "vera:idle_queue:rates"
 
 #: How long a pre-empted handler gets to stop politely before it is cancelled.
 #: Long enough for the ingest to finish the file it is on (checkpointed), short
@@ -126,6 +138,31 @@ async def load_jobs() -> List[Dict[str, Any]]:
         except Exception:
             continue
     return out
+
+
+async def load_rates() -> Dict[str, Any]:
+    """Measured cost per kind. Empty is the correct answer before anything has
+    completed - the estimator returns None on an empty rate rather than
+    inventing one."""
+    r = _redis()
+    if r is None:
+        return {}
+    try:
+        raw = await r.get(RATES_KEY)
+        return json.loads(raw) if raw else {}
+    except Exception as e:
+        log.debug("idle queue rates load: %s", e)
+        return {}
+
+
+async def save_rates(rates: Dict[str, Any]) -> None:
+    r = _redis()
+    if r is None or not rates:
+        return
+    try:
+        await r.set(RATES_KEY, json.dumps(rates))
+    except Exception as e:                                 # pragma: no cover
+        log.debug("idle queue rates save: %s", e)
 
 
 async def save_job(job: Dict[str, Any]) -> bool:
@@ -265,6 +302,28 @@ async def _run_job(job: Dict[str, Any],
                 await save_job(_iq.preempt(j, note, now))
                 break
     else:
+        # Learn what it actually cost, but only from a run that FINISHED. A
+        # pre-empted or failed run's elapsed time measures the interruption,
+        # not the work, and folding it in would teach the estimator that a
+        # backfill takes however long the box happened to stay quiet.
+        if ok and _eta is not None:
+            started = job.get("started_at")
+            try:
+                elapsed = float(now) - float(started)
+            except (TypeError, ValueError):
+                elapsed = 0.0
+            items = 1
+            if isinstance(res, dict):
+                for key in ("items", "records", "processed"):
+                    if res.get(key):
+                        items = res[key]
+                        break
+            if elapsed > 0:
+                try:
+                    await save_rates(_eta.observe(await load_rates(), kind,
+                                                  elapsed, items))
+                except Exception as e:                     # pragma: no cover
+                    log.debug("idle queue rate observe: %s", e)
         await drop_job(job["id"])
         log.info("idle queue: %s (%s) %s%s", job["id"], kind,
                  "done" if ok else "FAILED", " - " + note if note else "")

@@ -1174,7 +1174,29 @@ async def cap_background_status(trace_id=None) -> dict:
     st = _QUEUE.status(now)
     if _iq is not None:
         blocked = _bg.quiet_gate(busy, _QUEUE.last_busy, now, _QUEUE.min_quiet_s)
-        st["queue"] = _iq.summary(await _idle_jobs(), blocked, now)
+        jobs = await _idle_jobs()
+        st["queue"] = _iq.summary(jobs, blocked, now)
+        # How long the queue will take, from rates LEARNED FROM COMPLETED RUNS.
+        # Empty until something finishes, and a job whose kind has never been
+        # measured ends the timeline rather than being given a guessed length -
+        # "2 jobs waiting" is equally consistent with ninety seconds and with
+        # six hours, and only one of those fits in the gap before a census.
+        try:
+            from Vera.vera import idle_queue_eta as _eta
+        except ImportError:                                # pragma: no cover
+            try:
+                from vera import idle_queue_eta as _eta    # type: ignore
+            except ImportError:
+                _eta = None                                # type: ignore
+        if _eta is not None and _svc is not None:
+            try:
+                rates = await _svc.load_rates()
+                rows = _eta.timeline(_iq.pending(jobs), rates)
+                st["timeline"] = rows
+                st["eta_total_s"] = _eta.total_seconds(rows)
+                st["rates"] = rates
+            except Exception as e:                         # pragma: no cover
+                log.debug("idle queue timeline: %s", e)
     return st
 
 
