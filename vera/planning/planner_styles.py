@@ -208,8 +208,14 @@ def drop_invented_criteria(lines: Sequence[str], goal: Any) -> Tuple[List[str], 
 # ── the brief ────────────────────────────────────────────────────────────────
 
 def merge_brief(results: Dict[str, Any], *, goal: Any = "",
-                known_caps: Optional[Iterable[str]] = None) -> Dict[str, Any]:
-    """Every lens's reply, merged host-locally. No LLM, no embeddings, no GPU."""
+                known_caps: Optional[Iterable[str]] = None,
+                errors: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """Every lens's reply, merged host-locally. No LLM, no embeddings, no GPU.
+
+    `errors` names WHY a lens is missing (timeout, exception). A lens that
+    replied but yielded no usable line is named too, so an all-missing brief
+    can be told apart from a goal that had nothing to say.
+    """
     per_lens: Dict[str, List[str]] = {}
     for name, _q in LENSES:
         lines = clean_lines((results or {}).get(name))
@@ -220,12 +226,24 @@ def merge_brief(results: Dict[str, Any], *, goal: Any = "",
         per_lens["criteria"], rejected = drop_invented_criteria(per_lens["criteria"], goal)
         if not per_lens["criteria"]:
             per_lens.pop("criteria")
+    errs: Dict[str, str] = {k: str(v) for k, v in (errors or {}).items() if v}
+    for name, _q in LENSES:
+        if name in per_lens or name in errs or name not in (results or {}):
+            continue
+        raw = str((results or {}).get(name) or "").strip()
+        if not raw:
+            errs[name] = "empty reply"
+        elif name == "criteria" and rejected:
+            errs[name] = "every criterion asserted a value the goal never gave"
+        elif raw.lower() not in ("none", "n/a", "nothing"):
+            errs[name] = "no usable lines"
     return {
         "lenses": per_lens,
         "answered": sorted(per_lens),
         # Named, so a thin brief is visibly thin rather than being mistaken for
         # a goal that had little to say.
         "missing": [n for n, _ in LENSES if n not in per_lens],
+        "errors": errs,
         "caps": caps_mentioned(per_lens.get("caps", []), known_caps),
         "agreed": agreements(per_lens),
         "rejected_criteria": rejected,
@@ -256,8 +274,10 @@ def render_brief(brief: Dict[str, Any], *, max_chars: int = 4000) -> str:
         parts.append("\nRejected — asserted a value the goal never gave:")
         parts.extend("  - %s" % ln for ln in b["rejected_criteria"][:5])
     if b.get("missing"):
+        errs = b.get("errors") or {}
+        named = ["%s (%s)" % (n, errs[n]) if errs.get(n) else n for n in b["missing"]]
         parts.append("\nNot answered: %s. Absence here is a lost look, not "
-                     "'nothing to do there'." % ", ".join(b["missing"]))
+                     "'nothing to do there'." % ", ".join(named))
     text = "\n".join(parts)
     if len(text) > max_chars:
         text = text[:max_chars].rsplit("\n", 1)[0] + "\n  ... (brief truncated)"
@@ -314,7 +334,7 @@ async def plan_detailed(goal: str, generate: Callable[..., Awaitable[str]], *,
                         catalog: Optional[Sequence[str]] = None,
                         max_steps: int = 8,
                         lenses: Sequence[Tuple[str, str]] = LENSES,
-                        timeout_s: float = 180.0) -> Dict[str, Any]:
+                        timeout_s: float = 900.0) -> Dict[str, Any]:
     """Run every lens concurrently, merge host-locally, return a plan.
 
     `generate(prompt, system=...)` is injected, not imported: it keeps the style
@@ -329,7 +349,7 @@ async def plan_detailed(goal: str, generate: Callable[..., Awaitable[str]], *,
     cat_block = ("\n\nAVAILABLE CAPABILITIES:\n"
                  + "\n".join("- %s" % c for c in cat[:120])) if cat else ""
 
-    async def one(name: str, question: str) -> Tuple[str, str]:
+    async def one(name: str, question: str) -> Tuple[str, str, str]:
         sys_p = ("You are helping plan an automated agent's work. Answer ONLY "
                  "the question asked, as short lines. No preamble, no "
                  "explanation, no markdown headings.\n\n" + question)
@@ -338,12 +358,19 @@ async def plan_detailed(goal: str, generate: Callable[..., Awaitable[str]], *,
                 generate("GOAL: %s%s" % (goal, cat_block if name == "caps" else ""),
                          system=sys_p),
                 timeout=timeout_s)
-            return name, str(out or "")
-        except Exception:
-            return name, ""
+            return name, str(out or ""), ""
+        except asyncio.TimeoutError:
+            # Named, so a brief with every lens missing reads as "the nodes
+            # were too slow for this budget", not as "the goal had nothing to
+            # say". Observed live: five CPU lenses, 180s, nothing answered.
+            return name, "", "TimeoutError: no answer within %.0fs" % timeout_s
+        except Exception as e:
+            return name, "", "%s: %s" % (type(e).__name__, str(e)[:160])
 
-    pairs = await asyncio.gather(*(one(n, q) for n, q in lenses))
-    brief = merge_brief(dict(pairs), goal=goal, known_caps=cat)
+    triples = await asyncio.gather(*(one(n, q) for n, q in lenses))
+    results = {n: text for n, text, _err in triples}
+    errors = {n: err for n, _text, err in triples if err}
+    brief = merge_brief(results, goal=goal, known_caps=cat, errors=errors)
     return brief_to_plan(brief, max_steps=max_steps)
 
 

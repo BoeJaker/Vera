@@ -201,6 +201,10 @@ def test_a_dead_lens_costs_nothing_but_its_own_answer():
     plan = run(ps.plan_detailed(GOAL, gen))
     assert plan["steps"] and plan["steps"][0]["title"] == "do the thing"
     assert "risks" in plan["brief"]["missing"]
+    # ...and WHY it is missing is recorded, not swallowed.
+    assert plan["brief"]["errors"]["risks"].startswith("RuntimeError: node down")
+    # A lens that answered 'none' is absent by its own account, not an error.
+    assert "artifacts" not in plan["brief"]["errors"]
 
 
 def test_a_slow_lens_times_out_and_is_named_missing():
@@ -212,6 +216,29 @@ def test_a_slow_lens_times_out_and_is_named_missing():
     plan = run(ps.plan_detailed(GOAL, gen, timeout_s=0.05))
     assert plan["steps"]
     assert "risks" in plan["brief"]["missing"]
+    assert plan["brief"]["errors"]["risks"].startswith("TimeoutError")
+    assert "(TimeoutError" in ps.render_brief(plan["brief"])
+
+
+def test_five_timeouts_read_as_timeouts_not_as_an_empty_goal():
+    # The first live run: every lens missing, brief empty, cause invisible.
+    async def gen(prompt, system=""):
+        await asyncio.sleep(5)
+
+    plan = run(ps.plan_detailed(GOAL, gen, timeout_s=0.05))
+    assert plan["steps"] == []
+    assert sorted(plan["brief"]["errors"]) == sorted(n for n, _ in ps.LENSES)
+    assert all(v.startswith("TimeoutError") for v in plan["brief"]["errors"].values())
+
+
+def test_an_empty_reply_is_named_as_such():
+    b = ps.merge_brief({"decompose": "", "risks": "   ", "criteria": "stdout is 207085"},
+                       goal=GOAL)
+    assert b["errors"]["decompose"] == "empty reply"
+    assert b["errors"]["risks"] == "empty reply"
+    assert "never gave" in b["errors"]["criteria"]
+    # Lenses that were never asked at all carry no error.
+    assert "artifacts" not in b["errors"] and "caps" not in b["errors"]
 
 
 def test_lenses_run_concurrently_not_serially():

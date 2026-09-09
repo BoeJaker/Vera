@@ -51,8 +51,13 @@ async def _lens_generate(prompt: str, system: str = "") -> str:
     through ollama_generate, so the gate and the per-instance semaphore both
     still apply and a lens can never jump the queue in front of real work.
     """
+    # think=False: a lens answers with a few short lines. On a CPU node a
+    # reasoning model's thinking pass is minutes per call, and with five lenses
+    # sharing two nodes it was the whole budget - the first live run produced
+    # five timeouts and an empty brief.
     return await ollama_generate(prompt, system=system, json_mode=False,
-                                 prefer_gpu=False, profile=PROFILE, role="lens")
+                                 prefer_gpu=False, profile=PROFILE, role="lens",
+                                 think=False)
 
 
 @capability("plan.styles", memory="off", silent=True,
@@ -85,11 +90,14 @@ async def plan_styles(trace_id=None):
                         "be read, stored, or compared against the single-pass "
                         "plan for the same goal. Does NOT run the goal. "
                         "Inputs: goal (str!), max_steps (int=8), catalog (list "
-                        "of cap names the plan may use), timeout_s (int=180). "
-                        "Output: {ok, style, plan:{steps,reason,done_when,brief}}.")
+                        "of cap names the plan may use), timeout_s (int=900, per "
+                        "lens; CPU nodes are slow). Output: {ok, style, "
+                        "plan:{steps,reason,done_when,brief}, brief_text}. "
+                        "brief.missing names lenses that did not answer and "
+                        "brief.errors says why.")
 async def plan_detailed(goal: str = "", max_steps: int = 8,
                         catalog: Optional[List[str]] = None,
-                        timeout_s: int = 180, trace_id=None):
+                        timeout_s: int = 900, trace_id=None):
     goal = str(goal or "").strip()
     if not goal:
         return {"ok": False, "error": "goal is required"}
@@ -103,8 +111,12 @@ async def plan_detailed(goal: str = "", max_steps: int = 8,
             cat = []
     plan = await PS.plan_detailed(goal, _lens_generate, catalog=cat,
                                   max_steps=int(max_steps or 8),
-                                  timeout_s=float(timeout_s or 180))
+                                  timeout_s=float(timeout_s or 900))
     brief = plan.get("brief") or {}
+    if brief.get("missing"):
+        log.warning("plan.detailed: %d/%d lenses missing for %r: %s",
+                    len(brief["missing"]), len(PS.LENSES), goal[:80],
+                    brief.get("errors") or {})
     # emit_event is a coroutine: un-awaited it emits nothing and warns.
     await emit_event({"type": "plan.detailed", "goal": goal[:200],
                       "steps": len(plan.get("steps") or []),
