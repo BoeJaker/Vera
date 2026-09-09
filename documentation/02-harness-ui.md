@@ -158,6 +158,20 @@ Posted into the harness; provides postMessage helpers for iframe ↔ parent comm
 
 The reusable graph web component. Mounts as `window.veraUI.Graph` and is used wherever a panel needs to render a node-edge graph (memory, fabric, entities, network topology). See [Galaxy Graph](./09-galaxy-graph.md) for full details.
 
+### Shared read states
+
+`vera-ui.js` exposes additive `readState` and `renderReadState` helpers for
+read-only panel data. They keep four states distinct: `loading`, `ready`,
+`empty`, and `error`. The renderer uses text nodes for service messages, bounded
+labels, accessible status/alert roles, and an optional retry action. It does not
+own fetching, caching, domain data, or workflow state; each panel retains those
+responsibilities.
+
+Agent Bridges is the first consumer. Its bridge catalog and interoperability
+summary load independently, so one can remain usable when the other fails, and
+a rejected request becomes a visible retryable error instead of a permanent
+loading placeholder.
+
 ### `vera-ui.js`
 
 Other shared primitives — buttons, panels, modals, the toast helper. Smaller surface than `vera_graph.js`.
