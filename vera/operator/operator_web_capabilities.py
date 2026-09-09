@@ -72,6 +72,10 @@ try:
     from Vera.vera.operator import nav_fallback as _nav_fallback    # noqa: E402
 except ImportError:                                                  # pragma: no cover
     from vera.operator import nav_fallback as _nav_fallback         # noqa: E402
+try:
+    from Vera.vera.operator import operator_run_projection as _run_projection  # noqa: E402
+except ImportError:                                                  # pragma: no cover
+    from vera.operator import operator_run_projection as _run_projection       # noqa: E402
 
 
 def _orch_base_url() -> str:
@@ -137,6 +141,12 @@ async def _op_record(run_id: str, ev: Dict[str, Any]) -> None:
         await emit_event(ev)
     except Exception as e:                                   # pragma: no cover
         log.debug("operator emit failed: %s", e)
+    try:
+        _run_projection.observe(run_id, ev)
+    except Exception as e:                                   # pragma: no cover
+        # The shared Run view is observational. Projection failure must never
+        # alter browser execution or its authoritative Redis cancellation path.
+        log.debug("operator shared Run projection failed for %s: %s", run_id, e)
     r = getattr(_orch, "REDIS", None)
     if r is None or not run_id:
         return
@@ -501,7 +511,7 @@ async def cap_connect(source: str = "", ref: str = "", goal: str = "",
 
     await _op_record(run_id, {"type": "operator.run", "stage": "start", "run_id": run_id,
                               "goal": goal[:200], "target": resolved.get("kind"),
-                              "source": source, "ref": ref})
+                              "source": source, "ref": ref, "session_id": sid})
     await _op_clear_cancel(run_id)
     result = await _loop.run_loop(goal, s, call_cap=_call, policy=policy, provider=provider,
                                   max_steps=int(max_steps), canvas=resolved.get("canvas", False),
@@ -861,7 +871,8 @@ async def cap_run(goal: str = "", url: str = "", kind: str = "", base_url: str =
             "screenshot": f"/operator/artifact?path={_artifact_rel(shot)}" if shot else ""})
 
     await _op_record(run_id, {"type": "operator.run", "stage": "start", "run_id": run_id,
-                              "goal": goal[:200], "target": resolved.get("kind")})
+                              "goal": goal[:200], "target": resolved.get("kind"),
+                              "session_id": s.session_id})
     # A stale flag from a previous run of the same id would cancel this one
     # instantly; ids are random, but clearing is cheap and removes the class.
     await _op_clear_cancel(run_id)

@@ -135,6 +135,12 @@ Every act passes a policy check ([`safety.py`](../vera/operator/safety.py)):
 Every step is emitted (`operator.step`, `operator.act`) so the Operator Studio
 timeline — and the audit trail — show exactly what happened.
 
+Operator runs also appear in Vera's shared, read-only Run catalog. The native
+browser loop and Redis cancellation/history records remain authoritative; the
+portable projection contributes parent/step status and screenshot artifact
+references for Activity, graph, and telemetry consumers. It intentionally omits
+the goal, page text, model thoughts, and action arguments.
+
 ---
 
 ## 6. The loop, layered two ways
