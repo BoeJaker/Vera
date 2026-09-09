@@ -38,6 +38,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import re
+import shlex
 import json
 import time
 import uuid
@@ -2326,6 +2328,360 @@ async def cap_node_action(label: str = "", action: str = "", trace_id=None) -> D
     return {"ok": True}
 
 
+# ---------------------------------------------------------------------------
+# VM import / export, and salvaging a machine before it is wiped
+# ---------------------------------------------------------------------------
+# Two jobs that turned out to be the same shape: point Foundry at a disk that
+# lives somewhere else, and decide what to do with what is on it.
+#
+# The wipe is deliberately gated behind a *verified* backup. A job that exited
+# zero is not proof the bytes are readable, and a wipe cannot be undone.
+
+K_SALVAGE = "vera:foundry:salvage"     # per-device salvage records
+
+
+def _sal_dir(label: str) -> str:
+    safe = "".join(c if (c.isalnum() or c in "-_") else "-" for c in (label or "device"))
+    return "/var/lib/vz/dump/salvage-%s" % (safe or "device")
+
+
+@capability(
+    "foundry.vm.import",
+    http_method="POST", http_path="/foundry/vm/import", http_tags=["foundry"],
+    memory="on",
+    description="Import a disk image (vdi/vmdk/vhd/vhdx/qcow2/raw) as a Proxmox "
+                "VM: create the shell, importdisk, ATTACH it and set the boot "
+                "order — an import that stops after importdisk leaves a VM with "
+                "no disk. Inputs: cluster_id (str!), source (str! path on the "
+                "node), storage (str!), vmid (int, 0 = next free), name, memory "
+                "(int=2048), cores (int=2), bridge (str=vmbr0), os_hint (str — "
+                "drives BIOS/bus choice), confirm (bool=false). Output: {ok, "
+                "vmid, steps, notes}.",
+)
+async def cap_vm_import(cluster_id: str = "", source: str = "", storage: str = "",
+                        vmid: int = 0, name: str = "", memory: int = 2048,
+                        cores: int = 2, bridge: str = "vmbr0",
+                        os_hint: str = "", confirm: bool = False,
+                        trace_id=None) -> Dict:
+    from Vera.vera.foundry.vmport_core import import_plan
+    if not (source and storage):
+        return {"error": "source and storage are required"}
+
+    # Ask the node about the file before planning: the virtual size is what
+    # Proxmox will allocate, and it is routinely 20x the file size.
+    probe = await _call("proxmox.node.exec", cluster_id=cluster_id, timeout=60,
+                        command="qemu-img info --output=json %s 2>/dev/null; "
+                                "stat -c %%s %s 2>/dev/null"
+                                % (shlex.quote(source), shlex.quote(source)))
+    virtual = actual = 0
+    fmt_hint = ""
+    out = (probe.get("stdout") or "")
+    try:
+        j = json.loads(out[out.index("{"):out.rindex("}") + 1])
+        virtual = int(j.get("virtual-size") or 0)
+        actual = int(j.get("actual-size") or 0)
+        fmt_hint = j.get("format") or ""
+    except Exception:
+        pass
+    tail = out.strip().splitlines()[-1] if out.strip() else ""
+    if tail.isdigit():
+        actual = actual or int(tail)
+    if not virtual and not actual:
+        return {"error": "could not read %s on the node — is the path right?" % source}
+
+    if not vmid:
+        nid = await _call("proxmox.nextid", cluster_id=cluster_id)
+        vmid = int(nid.get("vmid") or nid.get("nextid") or 0)
+        if not vmid:
+            return {"error": "could not allocate a vmid"}
+
+    plan = import_plan(vmid, source, storage, name=name, memory=memory,
+                       cores=cores, bridge=bridge, os_hint=os_hint,
+                       virtual_bytes=virtual, actual_bytes=actual,
+                       description="Imported by Vera Foundry from %s" % source)
+    if plan.get("error"):
+        return plan
+    plan["source_format"] = fmt_hint
+    if not confirm:
+        plan["dry_run"] = True
+        plan["hint"] = "re-run with confirm=true to execute these steps"
+        return plan
+
+    results = []
+    for step in plan["steps"]:
+        cmd = " ".join(shlex.quote(c) for c in step["cmd"])
+        res = await _call("proxmox.node.exec", cluster_id=cluster_id,
+                          command=cmd, timeout=7200 if step.get("slow") else 120)
+        ok = not res.get("error") and int(res.get("exit_code", 0) or 0) == 0
+        results.append({"stage": step["stage"], "ok": ok,
+                        "out": (res.get("stdout") or "")[-300:],
+                        "err": (res.get("stderr") or res.get("error") or "")[-300:]})
+        if not ok:
+            # Stop rather than press on: a failed create makes every later
+            # step meaningless and the errors misleading.
+            break
+    await emit_event({"type": "foundry.vm.imported", "vmid": vmid,
+                      "ok": all(r["ok"] for r in results)})
+    return {"ok": all(r["ok"] for r in results), "vmid": vmid,
+            "results": results, "notes": plan["notes"], "guest": plan["guest"]}
+
+
+@capability(
+    "foundry.vm.export",
+    http_method="POST", http_path="/foundry/vm/export", http_tags=["foundry"],
+    memory="on",
+    description="Export a stopped VM's disk to a portable image. qcow2 keeps "
+                "sparseness; raw does not. Inputs: cluster_id (str!), vmid "
+                "(int!), disk (str — storage ref, default scsi0's), out_dir "
+                "(str=/var/lib/vz/dump), format (qcow2|vmdk|vdi|vhdx|raw), "
+                "confirm (bool=false). Output: {ok, target, steps}.",
+    schema=enum_schema(format=["qcow2", "vmdk", "vdi", "vhdx", "raw"]),
+)
+async def cap_vm_export(cluster_id: str = "", vmid: int = 0, disk: str = "",
+                        out_dir: str = "/var/lib/vz/dump", format: str = "qcow2",
+                        confirm: bool = False, trace_id=None) -> Dict:
+    from Vera.vera.foundry.vmport_core import export_plan
+    if not vmid:
+        return {"error": "vmid is required"}
+
+    cfg = await _call("proxmox.node.exec", cluster_id=cluster_id, timeout=60,
+                      command="qm config %d" % vmid)
+    conf = cfg.get("stdout") or ""
+    if not disk:
+        m = re.search(r"^scsi0:\s*([^,\s]+)", conf, re.M) or \
+            re.search(r"^(?:sata0|virtio0|ide0):\s*([^,\s]+)", conf, re.M)
+        disk = m.group(1) if m else ""
+    if not disk:
+        return {"error": "could not find a disk on VM %d" % vmid, "config": conf[:400]}
+
+    running = await _call("proxmox.node.exec", cluster_id=cluster_id, timeout=60,
+                          command="qm status %d" % vmid)
+    if "running" in (running.get("stdout") or ""):
+        return {"error": "VM %d is running — exporting a live disk copies a "
+                         "torn filesystem. Stop it first." % vmid}
+
+    plan = export_plan(vmid, disk, out_dir, fmt=format)
+    if plan.get("error") or not confirm:
+        plan.setdefault("dry_run", not confirm)
+        return plan
+
+    path = await _call("proxmox.node.exec", cluster_id=cluster_id, timeout=60,
+                       command="pvesm path %s" % shlex.quote(disk))
+    src = (path.get("stdout") or "").strip().splitlines()[-1:] or [""]
+    if not src[0].startswith("/"):
+        return {"error": "could not resolve %s to a path" % disk}
+
+    cmd = "qemu-img convert -O %s %s %s" % (
+        format, shlex.quote(src[0]), shlex.quote(plan["target"]))
+    res = await _call("proxmox.node.exec", cluster_id=cluster_id,
+                      command=cmd, timeout=14400)
+    ok = not res.get("error")
+    chk = await _call("proxmox.node.exec", cluster_id=cluster_id, timeout=600,
+                      command="qemu-img check %s 2>&1 | tail -3"
+                              % shlex.quote(plan["target"]))
+    await emit_event({"type": "foundry.vm.exported", "vmid": vmid, "ok": ok})
+    return {"ok": ok, "target": plan["target"], "notes": plan["notes"],
+            "verify": (chk.get("stdout") or "")[-400:],
+            "error": res.get("error") or ""}
+
+
+@capability(
+    "foundry.salvage.inspect",
+    http_method="POST", http_path="/foundry/salvage/inspect", http_tags=["foundry"],
+    memory="off",
+    description="Mount a plugged-in disk READ-ONLY and report what is on it: "
+                "which OS, which users, how much data each harvest profile "
+                "would take. Writes nothing. Inputs: cluster_id (str!), device "
+                "(str! e.g. /dev/sdl2). Output: {os, users, sizes, profiles}.",
+)
+async def cap_salvage_inspect(cluster_id: str = "", device: str = "",
+                              trace_id=None) -> Dict:
+    from Vera.vera.foundry.salvage_core import detect_os, PROFILE_ORDER
+    if not device:
+        return {"error": "device is required"}
+    mp = "/run/foundry-salvage"
+    script = (
+        "set -u; mkdir -p %s; umount %s 2>/dev/null; "
+        "mount -o ro %s %s 2>/dev/null || { echo ERR_MOUNT; exit 1; }; "
+        "echo '---MARKERS---'; "
+        "for f in etc/os-release etc/fstab etc/passwd Windows/explorer.exe "
+        "Windows/System32/config/SYSTEM pagefile.sys "
+        "System/Library/CoreServices/SystemVersion.plist; do "
+        "  [ -e %s/$f ] && echo $f; done; "
+        "echo '---RELEASE---'; cat %s/etc/os-release 2>/dev/null | head -3; "
+        "echo '---USERS---'; ls %s/home 2>/dev/null; ls %s/Users 2>/dev/null; "
+        "echo '---SIZES---'; du -sh %s/home/* %s/Users/* 2>/dev/null | head -20; "
+        "echo '---FREE---'; df -h %s | tail -1; "
+        "umount %s 2>/dev/null; echo '---END---'"
+        % (mp, mp, shlex.quote(device), mp, mp, mp, mp, mp, mp, mp, mp, mp))
+    res = await _call("proxmox.node.exec", cluster_id=cluster_id,
+                      command=script, timeout=180)
+    out = res.get("stdout") or ""
+    if "ERR_MOUNT" in out:
+        return {"error": "could not mount %s read-only" % device}
+
+    def sec(name):
+        try:
+            return out.split("---%s---" % name, 1)[1].split("---", 1)[0].strip("\n")
+        except Exception:
+            return ""
+
+    markers = [l.strip() for l in sec("MARKERS").splitlines() if l.strip()]
+    det = detect_os(markers)
+    users = [u.strip() for u in sec("USERS").splitlines() if u.strip()]
+    return {"ok": True, "device": device, **det, "users": users,
+            "release": sec("RELEASE"), "sizes": sec("SIZES"),
+            "free": sec("FREE"), "profiles_available": PROFILE_ORDER}
+
+
+@capability(
+    "foundry.salvage.plan",
+    http_method="POST", http_path="/foundry/salvage/plan", http_tags=["foundry"],
+    memory="off",
+    description="Dry run: exactly which paths would be harvested off a device "
+                "and which skipped, without touching it. Inputs: os (linux|"
+                "windows|macos), profiles (list — documents/code/editor/"
+                "dotfiles/credentials/browser/services/databases). Output: "
+                "{includes, excludes, profiles}.",
+    schema=enum_schema(os=["linux", "windows", "macos"]),
+)
+async def cap_salvage_plan(os: str = "linux", profiles: List[str] = None,
+                           trace_id=None) -> Dict:
+    from Vera.vera.foundry.salvage_core import harvest_plan
+    return harvest_plan(os, profiles)
+
+
+@capability(
+    "foundry.salvage.run",
+    http_method="POST", http_path="/foundry/salvage/run", http_tags=["foundry"],
+    memory="on",
+    description="Back a device up before it is wiped. Takes a file-level "
+                "HARVEST (the part you will actually browse) and optionally a "
+                "full IMAGE (the safety net), then VERIFIES both by reading "
+                "them back. Inputs: cluster_id (str!), device (str! partition "
+                "for the harvest), label (str!), os (linux|windows|macos), "
+                "profiles (list), image_device (str — whole disk, e.g. /dev/sdl, "
+                "for the full image), confirm (bool=false). Output: {ok, "
+                "artifacts:[{artifact,exists,verified,bytes}]}.",
+    schema=enum_schema(os=["linux", "windows", "macos"]),
+)
+async def cap_salvage_run(cluster_id: str = "", device: str = "", label: str = "",
+                          os: str = "linux", profiles: List[str] = None,
+                          image_device: str = "", confirm: bool = False,
+                          trace_id=None) -> Dict:
+    from Vera.vera.foundry.salvage_core import harvest_plan
+    if not (device and label):
+        return {"error": "device and label are required"}
+    plan = harvest_plan(os, profiles)
+    if plan.get("error"):
+        return plan
+    dest = _sal_dir(label)
+    if not confirm:
+        return {"dry_run": True, "dest": dest, "includes": plan["includes"],
+                "excludes": plan["excludes"],
+                "hint": "re-run with confirm=true to actually copy"}
+
+    mp = "/run/foundry-salvage"
+    inc = " ".join("--include=%s" % shlex.quote(p) for p in plan["includes"])
+    exc = " ".join("--exclude=%s" % shlex.quote(p) for p in plan["excludes"])
+    # tar over a find selection rather than rsync: no assumption that rsync is
+    # installed on a hypervisor, and the exclusion list is long.
+    harvest = "%s/harvest.tar.gz" % dest
+    script = (
+        "set -u; mkdir -p %s %s; umount %s 2>/dev/null; "
+        "mount -o ro %s %s || { echo ERR_MOUNT; exit 1; }; "
+        "cd %s && tar -czf %s %s %s . 2>/dev/null; echo TAR_RC=$?; "
+        "cd /; umount %s 2>/dev/null; "
+        "ls -l %s 2>/dev/null; "
+        "echo '---VERIFY---'; tar -tzf %s >/dev/null 2>&1 && echo HARVEST_OK || echo HARVEST_BAD"
+        % (dest, mp, mp, shlex.quote(device), mp, mp,
+           shlex.quote(harvest), exc, inc, mp, shlex.quote(harvest),
+           shlex.quote(harvest)))
+    res = await _call("proxmox.node.exec", cluster_id=cluster_id,
+                      command=script, timeout=14400)
+    out = res.get("stdout") or ""
+    artifacts = [{
+        "artifact": harvest, "kind": "harvest",
+        "exists": "harvest.tar.gz" in out,
+        "verified": "HARVEST_OK" in out,
+    }]
+
+    if image_device:
+        img = "%s/disk.img.gz" % dest
+        iscript = (
+            "set -u; sfdisk -d %s > %s/partition-table.sfdisk 2>/dev/null; "
+            "dd if=%s bs=4M 2>/dev/null | gzip -1 > %s; echo DD_RC=$?; "
+            "echo '---VERIFY---'; gzip -t %s && echo IMAGE_OK || echo IMAGE_BAD"
+            % (shlex.quote(image_device), dest, shlex.quote(image_device),
+               shlex.quote(img), shlex.quote(img)))
+        ires = await _call("proxmox.node.exec", cluster_id=cluster_id,
+                           command=iscript, timeout=28800)
+        iout = ires.get("stdout") or ""
+        artifacts.append({"artifact": img, "kind": "image",
+                          "exists": "DD_RC=0" in iout,
+                          "verified": "IMAGE_OK" in iout})
+
+    r = _redis()
+    if r:
+        await r.hset(K_SALVAGE, label, json.dumps(
+            {"label": label, "device": device, "dest": dest,
+             "artifacts": artifacts, "at": time.time()}))
+    await emit_event({"type": "foundry.salvage.done", "label": label,
+                      "verified": all(a["verified"] for a in artifacts)})
+    return {"ok": all(a["verified"] for a in artifacts), "dest": dest,
+            "artifacts": artifacts,
+            "note": "a wipe is only authorised once every artifact is verified"}
+
+
+@capability(
+    "foundry.salvage.list",
+    http_method="GET", http_path="/foundry/salvage/list", http_tags=["foundry"],
+    memory="off", silent=True,
+    description="Devices salvaged so far and whether each backup was verified. "
+                "Output: {salvages:[...]}.",
+)
+async def cap_salvage_list(trace_id=None) -> Dict:
+    r = _redis()
+    if not r:
+        return {"salvages": []}
+    rows = await r.hgetall(K_SALVAGE) or {}
+    out = []
+    for v in rows.values():
+        try:
+            out.append(json.loads(v))
+        except Exception:
+            continue
+    out.sort(key=lambda e: -(e.get("at") or 0))
+    return {"salvages": out, "count": len(out)}
+
+
+@capability(
+    "foundry.salvage.wipe_check",
+    http_method="POST", http_path="/foundry/salvage/wipe_check", http_tags=["foundry"],
+    memory="off",
+    description="Is it safe to wipe this device yet? Answers only from what has "
+                "actually been backed up AND read back — a finished job is not a "
+                "verified backup. Inputs: label (str!), force (bool=false). "
+                "Output: {allowed, reason}.",
+)
+async def cap_salvage_wipe_check(label: str = "", force: bool = False,
+                                 trace_id=None) -> Dict:
+    from Vera.vera.foundry.salvage_core import wipe_authorisation
+    r = _redis()
+    rec = None
+    if r and label:
+        raw = await r.hget(K_SALVAGE, label)
+        rec = json.loads(raw) if raw else None
+    if not rec:
+        return {"allowed": False,
+                "reason": "no salvage record for %r — nothing has been backed "
+                          "up from it" % label}
+    verdict = wipe_authorisation(rec.get("artifacts") or [], force=force)
+    verdict["label"] = label
+    verdict["dest"] = rec.get("dest")
+    return verdict
+
+
 @APP.get("/foundry/panel", include_in_schema=False)
 async def _foundry_panel():
     p = _HERE / "foundry_panel.html"
@@ -2353,6 +2709,10 @@ register_ui(
              "foundry.pxe.mac.add", "foundry.pxe.macs",
              "foundry.sdcard.detect", "foundry.sdcard.inspect",
              "foundry.sdcard.plan", "foundry.sdcard.provision",
-             "foundry.node.list", "foundry.node.frame.set"],
+             "foundry.node.list", "foundry.node.frame.set",
+             "foundry.vm.import", "foundry.vm.export",
+             "foundry.salvage.inspect", "foundry.salvage.plan",
+             "foundry.salvage.run", "foundry.salvage.list",
+             "foundry.salvage.wipe_check"],
     mode="element",     # embedded as a Workers & Ollama sub-tab
 )
