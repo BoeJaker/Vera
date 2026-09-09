@@ -335,15 +335,19 @@ vera/operator/docs/domain_map.py.
 | name | Stable filename suffix, allowing several views of one panel |
 | label / caption | Human-readable heading and explanation in the guide |
 | click | Trusted CSS selector for the subview to open |
+| capture_path | Same-origin route for an injected panel whose wrapper has no UI |
 | ready_selector | Element that must be visible before capture |
 | ready_text | Element whose non-placeholder text proves data arrived |
 | settle_ms | Extra time for charts, graph layout, and streamed state |
 | full_page | Override the mission-wide viewport policy |
 
-Data Fabric is captured in Graph, Sources, and Statistics states. The Graph
-recipe opens #fnav-graph, waits for the rendered graph canvas and its node/edge
-summary, then allows the force layout to settle. Recipes are structured rather
-than arbitrary JavaScript, so they remain reviewable and deterministic.
+Data Fabric is captured in Graph, Sources, and Statistics states. Memory Graph,
+Galaxy, WorldView, and Vector Browser also declare representative views rather
+than relying on their landing state. The Graph recipe opens `#fnav-graph`, waits
+for the rendered canvas and its node/edge summary, then allows the force layout
+to settle. A `capture_path` must be an absolute same-origin path; external URLs
+are rejected. Recipes are structured rather than arbitrary JavaScript, so they
+remain reviewable and deterministic.
 
 ### Readiness contract
 

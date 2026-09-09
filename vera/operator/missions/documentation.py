@@ -239,7 +239,7 @@ async def run_documentation_mission(params: Dict[str, Any],
                     abspath = os.path.join(docs_dir, rel)
                     label = state.get("label") or p.get("label") or pid
                     if do_capture and session is not None:
-                        cap_url = panel_capture_url(base_url, p)
+                        cap_url = panel_capture_url(base_url, p, state)
                         capture = await _shoot_panel(
                             session, cap_url["url"], abspath,
                             settle_ms=max(settle_ms, int(state.get("settle_ms", 0) or 0)),
@@ -365,7 +365,8 @@ def _normalise_panels(raw: Any) -> List[Dict[str, Any]]:
 _IFRAME_SRC = re.compile(r"""<iframe[^>]*\bsrc=["']([^"']+)["']""", re.IGNORECASE)
 
 
-def panel_capture_url(base_url: str, panel: Dict[str, Any]) -> Dict[str, str]:
+def panel_capture_url(base_url: str, panel: Dict[str, Any],
+                      state: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
     """Where to actually screenshot a panel.
 
     Most tab panels register an ``<iframe src="/xxx/panel">`` — that src is the
@@ -374,6 +375,11 @@ def panel_capture_url(base_url: str, panel: Dict[str, Any]) -> Dict[str, str]:
     several panels came out wrong). Inline/element panels have no iframe, so we
     fall back to the panel window. Returns {url, via}."""
     base = base_url.rstrip("/")
+    capture_path = str((state or {}).get("capture_path") or "").strip()
+    if capture_path:
+        if not capture_path.startswith("/") or capture_path.startswith("//"):
+            raise ValueError("capture_path must be a same-origin absolute path")
+        return {"url": base + capture_path, "via": "route"}
     html = panel.get("html") or ""
     m = _IFRAME_SRC.search(html)
     if m:

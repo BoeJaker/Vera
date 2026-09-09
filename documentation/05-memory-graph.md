@@ -331,6 +331,10 @@ The panel reads theme variables from the parent harness via the postMessage brid
 
 ## Screenshots
 
+Documentation capture switches the panel to **Recent** after seeding representative
+memory records. It waits for both the canvas and the populated node/edge status
+line, so an empty session landing view cannot be mistaken for a useful graph.
+
 <!-- VERA:AUTO:screenshots START -->
 _No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
 <!-- VERA:AUTO:screenshots END -->

@@ -334,6 +334,11 @@ const graph = window.veraUI.Graph.create(container, {
 
 ## Screenshots
 
+Documentation capture addresses the registered Galaxy panel directly and records
+both the spatial galaxy and its 2D physics view. Each view has a named readiness
+condition and a layout-settling interval; a missing canvas is reported instead of
+publishing a blank frame.
+
 <!-- VERA:AUTO:screenshots START -->
 _No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
 <!-- VERA:AUTO:screenshots END -->
