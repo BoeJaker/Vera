@@ -119,6 +119,7 @@
   .empty{color:var(--dim2);text-align:center;margin:auto;max-width:340px;padding:30px}
   .empty .big{font-size:32px;margin-bottom:10px;opacity:.6}
   .empty b{color:var(--dim)}
+  #connReadState .vera-read-state{min-height:54px;padding:9px 6px;font-size:10px}
 
   /* ── composer ───────────────────────────────────────── */
   .composer{flex:0 0 auto;border-top:1px solid var(--border);background:var(--bg1);padding:9px 12px}
@@ -226,6 +227,7 @@
             <label style="display:flex;align-items:center;gap:6px">Registered connectable
               <span style="flex:1"></span><span id="connRefresh" title="reload" style="cursor:pointer;color:var(--acc2)">↻</span></label>
             <select id="connSelect"><option value="">loading…</option></select>
+            <div id="connReadState"></div>
             <div class="hint" id="connHint">Anything registered in Integrations, Ollama, Nodes, Docker or Proxmox. Web UIs drive; API/SSH open for reference.</div>
           </div>
           <label id="tgtLbl" style="display:none">URL / base_url</label>
@@ -492,10 +494,24 @@ function targetBody(){
   return b;
 }
 async function loadConnectables(){
-  const sel=$('connSelect'); sel.innerHTML='<option value="">loading…</option>';
+  const sel=$('connSelect');
+  const showState=(kind,detail)=>{
+    sel.disabled=true;
+    sel.innerHTML='<option value="">'+(kind==='loading'?'loading…':kind==='empty'?'none registered':'unavailable')+'</option>';
+    const label=kind==='loading'?'Loading registered connections…'
+      :kind==='empty'?'No registered connections yet.'
+      :'Connection inventory unavailable: '+(detail||'request failed');
+    const rs=window.veraUI.readState({loading:kind==='loading',error:kind==='error',
+      hasData:kind!=='empty',label:label});
+    window.veraUI.renderReadState($('connReadState'),rs,{onRetry:loadConnectables});
+  };
+  showState('loading');
   const d=await api('/operator/connect/list');
-  const items=(d&&d.connectables)||[];
-  if(!items.length){ sel.innerHTML='<option value="">(none registered — add in Integrations/Workers/Proxmox)</option>'; return; }
+  if(!d||d.error||!Array.isArray(d.connectables)){
+    showState('error',(d&&d.error)||'unreadable response'); return;
+  }
+  const items=d.connectables;
+  if(!items.length){ showState('empty'); return; }
   const groups={};
   items.forEach(it=>{ (groups[it.group]=groups[it.group]||[]).push(it); });
   let html='';
@@ -506,6 +522,8 @@ async function loadConnectables(){
     html+='</optgroup>';
   });
   sel.innerHTML=html;
+  sel.disabled=false;
+  $('connReadState').replaceChildren();
   $('connHint').textContent=d.count+' connectable(s) across '+Object.keys(groups).length+' systems. Web UIs drive; api/ssh open for reference.';
 }
 function allowList(){ return $('allowlist').value.split(',').map(s=>s.trim()).filter(Boolean); }
