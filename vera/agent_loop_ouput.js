@@ -447,6 +447,10 @@
 .alo-file-vh{font-size:9.5px;color:var(--dim2,#8a7e70);margin-bottom:4px}
 .alo-file-src{margin:0;max-height:340px;overflow:auto;background:var(--bg2,#252220);border:1px solid var(--border,#3a3530);border-radius:4px;padding:6px;font-size:10px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
 .alo-file-more{font-size:9px;color:var(--dim2,#8a7e70);margin-top:3px}
+.alo-file-state{min-height:58px}
+.alo-file-state .vera-read-state{min-height:58px;padding:10px;font-size:10px}
+.alo-file-state .vera-read-state__retry{border:1px solid var(--border2,#4a4540);border-radius:3px;background:var(--bg2,#252220);color:var(--text,#ddd5c8);padding:3px 7px;font:inherit;cursor:pointer}
+.alo-file-state .vera-read-state__retry:focus-visible{outline:2px solid var(--acc,#5a9e8f);outline-offset:2px}
 /* Timeline card: header bar (outside the scroll region) above the cycles list */
 .alo-cycles-card{display:flex;flex-direction:column;min-height:0;background:var(--bg1,#1f1d1a);border:1px solid var(--border,#3a3530);border-radius:3px;overflow:hidden}
 .alo-cycles-h{display:flex;align-items:center;gap:8px;padding:6px 9px;border-bottom:1px solid var(--border,#3a3530);background:var(--bg1,#1f1d1a);flex:0 0 auto}
@@ -706,6 +710,7 @@
       this._startCardEl = null;           // the single "Starting" card — re-used if `start` fires twice
       this._gapTimer = null;              // pending "still working…" card timeout
       this._gapCard = null;               // the shown gap card, if any
+      this._filesLoadToken = 0;           // stale refreshes cannot overwrite newer state
     }
 
     connectedCallback(){
@@ -2406,22 +2411,62 @@
       return '/remote/sandbox/preview/' + encodeURIComponent(this._sessionId||'')
            + '/' + encodeURIComponent(name);
     }
-    async _renderFilesCard(){
-      if(!this._sessionId) return;
-      let data;
-      try{
-        const r = await fetch('/exec/artifacts/list?session_id='
-                              + encodeURIComponent(this._sessionId));
-        data = await r.json();
-      }catch(e){ return; }
-      const files = (data && data.files || []).filter(f => !f.is_dir);
-      if(!files.length) return;
-      // Reuse one card across refreshes so a re-render doesn't stack copies.
+    _filesCardShell(status, refreshDisabled){
       let card = this._filesCard;
       if(!card || !card.isConnected){
         card = this._cycleEl('', 'files');
         this._filesCard = card;
       }
+      card.innerHTML = `<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">📁 Files produced</span>
+          <span class="alo-cycle-status">${_esc(status||'')}</span>
+          <button class="alo-card-expand" data-act="files-refresh" title="Refresh"
+                  ${refreshDisabled?'disabled aria-disabled="true"':''}>⟳</button>
+        </div>
+        <div class="alo-file-state"></div>
+        <div class="alo-file-view" hidden></div>`;
+      return card;
+    }
+    _renderFilesReadState(kind, label){
+      const card = this._filesCardShell(kind === 'loading' ? 'loading' : '', kind === 'loading');
+      const target = card.querySelector('.alo-file-state');
+      if(window.veraUI && window.veraUI.readState && window.veraUI.renderReadState){
+        const state = window.veraUI.readState({
+          loading:kind === 'loading', error:kind === 'error',
+          hasData:kind !== 'empty', label:label,
+        });
+        window.veraUI.renderReadState(target,state,{onRetry:()=>this._renderFilesCard()});
+      }else{
+        target.textContent = label;
+        target.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+        target.setAttribute('data-vera-read-state', kind);
+      }
+    }
+    async _renderFilesCard(){
+      if(!this._sessionId) return;
+      const token = ++this._filesLoadToken;
+      this._renderFilesReadState('loading','Loading produced files…');
+      let data;
+      try{
+        const r = await fetch('/exec/artifacts/list?session_id='
+                              + encodeURIComponent(this._sessionId));
+        if(!r.ok) throw new Error('Artifact inventory returned HTTP ' + r.status);
+        data = await r.json();
+        if(!data || data.ok === false) throw new Error((data && data.error) || 'Artifact inventory unavailable');
+        if(!Array.isArray(data.files)) throw new Error('Artifact inventory response is malformed');
+      }catch(e){
+        if(token !== this._filesLoadToken) return;
+        this._renderFilesReadState('error', e && e.message ? e.message : 'Unable to load produced files.');
+        return;
+      }
+      if(token !== this._filesLoadToken) return;
+      const files = data.files.filter(f => f && !f.is_dir);
+      if(!files.length){
+        this._renderFilesReadState('empty','This run produced no files.');
+        return;
+      }
+      const card = this._filesCardShell(
+        `${files.length} file${files.length===1?'':'s'}`, false);
       const rows = files.map(f => `
         <div class="alo-file-row" data-file="${_esc(f.name)}">
           <span class="alo-file-name">${_esc(f.name)}</span>
@@ -2430,13 +2475,8 @@
           <button class="alo-file-btn" data-act="source">source</button>
           <a class="alo-file-btn" href="${this._fileUrl(f.name)}" download>download</a>
         </div>`).join('');
-      card.innerHTML = `<div class="alo-cycle-h">
-          <span class="alo-cycle-tool">📁 Files produced</span>
-          <span class="alo-cycle-status">${files.length} file${files.length===1?'':'s'}</span>
-          <button class="alo-card-expand" data-act="files-refresh" title="Refresh">⟳</button>
-        </div>
-        <div class="alo-file-list">${rows}</div>
-        <div class="alo-file-view" hidden></div>`;
+      card.querySelector('.alo-file-state').outerHTML =
+        `<div class="alo-file-list">${rows}</div>`;
     }
     // Plain JSON POST against the same API base the stream uses. (bindStream is
     // for SSE; these are one-shot control calls.)
