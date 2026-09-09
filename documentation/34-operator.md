@@ -135,6 +135,16 @@ Every act passes a policy check ([`safety.py`](../vera/operator/safety.py)):
 Every step is emitted (`operator.step`, `operator.act`) so the Operator Studio
 timeline — and the audit trail — show exactly what happened.
 
+The complete Operator-facing capability family also declares Capability
+Contract v2 metadata. The contract distinguishes observation and inventory
+reads from browser execution, external side effects, model use, repository or
+artifact writes, and subprocess execution. It exposes the applicable session,
+target, destructive-action, write, and repository-execution policy boundary to
+the resolver and audit tools. These declarations describe risk; they do not
+replace the native allowlist, `dry_run`, destructive confirmation, action
+timeouts, or cooperative cancellation checks that authorize and control the
+actual browser run.
+
 Operator runs also appear in Vera's shared, read-only Run catalog. The native
 browser loop and Redis cancellation/history records remain authoritative; the
 portable projection contributes parent/step status and screenshot artifact
@@ -376,6 +386,16 @@ settling remain diagnostic observations rather than false blockers.
 - documentation/README.md is never generated over.
 - The replaceable card index is documentation/GALLERY.md.
 - Selective runs merge manifest entries rather than dropping unrelated captures.
+
+### Connection inventory states
+
+Operator Studio treats its registered connection list as an independent read
+model. The selector stays disabled while the inventory is loading or unavailable.
+A request or response-shape failure is shown as an accessible, retryable error;
+an authoritative empty list is shown separately as “no registered connections”.
+Only a valid non-empty inventory enables selection. This prevents an integration
+outage from looking like a legitimately empty configuration and does not change
+session policy or connection authority.
 
 ### Screenshot troubleshooting
 

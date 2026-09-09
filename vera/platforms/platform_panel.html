@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var vf=S.getItem('vera:ui:themeVarsFor');if(t&&vf!==t)return;var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<meta charset="UTF-8">
+<title>Vera · Platforms</title>
+<style>
+:root{
+  --bg:#0d0f12; --bg1:#14181d; --bg2:#1a1f26; --bg3:#20262e;
+  --border:#232a33; --border2:#2e3742;
+  --fg:#d8dde3; --fg2:#9aa3ad; --dim:#5f6975;
+  --acc:#4a9eff; --ok:#28c28a; --warn:#f5b341; --err:#ef5b5b; --purple:#a78bfa;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);
+  font:12px/1.55 -apple-system,BlinkMacSystemFont,Inter,system-ui,sans-serif;height:100%;overflow:hidden}
+#root{display:flex;flex-direction:column;height:100vh;min-height:0}
+#topbar{height:46px;flex-shrink:0;border-bottom:1px solid var(--border);background:var(--bg1);
+  padding:0 18px;display:flex;align-items:center;gap:10px}
+#topbar .ico{width:24px;height:24px;background:var(--bg2);border:1px solid var(--border2);
+  border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--acc)}
+#topbar h1{margin:0;font-size:13px;font-weight:600}
+#topbar .sub{font-size:10px;color:var(--dim)}
+.right{margin-left:auto;display:flex;gap:8px}
+#content{flex:1;overflow-y:auto;padding:16px 20px;min-height:0}
+.wrap{max-width:1000px;margin:0 auto}
+.card{background:var(--bg1);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:14px}
+.card h2{margin:0 0 4px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:8px}
+.card .why{color:var(--dim);font-size:11px;margin:0 0 12px}
+.btn{background:var(--bg2);border:1px solid var(--border2);color:var(--fg);border-radius:5px;
+  padding:6px 12px;font:inherit;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{background:var(--bg3);border-color:var(--acc)}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:#04121f;font-weight:600}
+.btn.ok{background:var(--ok);border-color:var(--ok);color:#04121f;font-weight:600}
+.btn.sm{padding:3px 9px;font-size:10px}
+input[type=text],input[type=password],select{width:100%;background:var(--bg);border:1px solid var(--border2);
+  color:var(--fg);border-radius:5px;padding:6px 9px;font:inherit;font-size:11px;font-family:var(--mono)}
+input:focus,select:focus{outline:none;border-color:var(--acc)}
+table{width:100%;border-collapse:collapse;font-size:11px}
+th{text-align:left;color:var(--dim);font-weight:500;padding:6px 8px;border-bottom:1px solid var(--border)}
+td{padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:middle}
+tr:last-child td{border-bottom:none}
+code{font-family:var(--mono);font-size:10px;color:var(--purple);background:var(--bg2);
+  padding:1px 5px;border-radius:3px}
+.pill{display:inline-block;padding:1px 7px;border-radius:20px;font-size:10px;
+  border:1px solid var(--border2);background:var(--bg2);color:var(--fg2)}
+.pill.ok{color:var(--ok);border-color:var(--ok)}
+.pill.warn{color:var(--warn);border-color:var(--warn)}
+.pill.err{color:var(--err);border-color:var(--err)}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}
+.grid2{display:grid;grid-template-columns:160px 1fr;gap:7px 12px;align-items:center}
+label{color:var(--fg2);font-size:11px}
+.muted{color:var(--dim);font-size:11px}
+.empty{color:var(--dim);text-align:center;padding:20px;font-size:11px}
+pre{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:10px;
+  font-family:var(--mono);font-size:10px;overflow:auto;max-height:280px;margin:10px 0 0}
+#toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--bg3);
+  border:1px solid var(--border2);border-radius:6px;padding:9px 15px;font-size:11px;
+  display:none;z-index:50;max-width:72vw}
+#toast.err{border-color:var(--err);color:var(--err)}
+#toast.ok{border-color:var(--ok);color:var(--ok)}
+</style>
+</head>
+<body>
+<div id="root">
+  <div id="topbar">
+    <div class="ico">🎛</div>
+    <div>
+      <h1>Platforms</h1>
+      <div class="sub">set a fact once — push it everywhere</div>
+    </div>
+    <div class="right">
+      <button class="btn" onclick="seed()">Add missing platforms</button>
+      <button class="btn" onclick="loadAll()">Refresh</button>
+    </div>
+  </div>
+  <div id="content"><div class="wrap">
+
+    <div class="card">
+      <h2>Shared values</h2>
+      <p class="why">Non-secret facts each platform would otherwise keep its own
+        copy of. Reference one from any field with <code>@value:key</code> —
+        change it here and every platform bound to it follows.</p>
+      <div id="values"><div class="empty">loading…</div></div>
+      <div class="grid2" style="margin-top:12px">
+        <label>Key</label><input type="text" id="vkey" placeholder="home_coords">
+        <label>Value</label><input type="text" id="vval" placeholder="52.234091,0.123136">
+      </div>
+      <div class="row"><button class="btn primary" onclick="setValue()">Save value</button>
+        <span class="muted">keys ending <code>_coords</code> are validated as lat,lon</span></div>
+    </div>
+
+    <div class="card">
+      <h2>Shared credentials</h2>
+      <p class="why">Sealed at rest and never shown again. Reference with
+        <code>@secret:key</code>. Platforms can share one record or hold separate ones.</p>
+      <div id="secrets"><div class="empty">loading…</div></div>
+      <div class="grid2" style="margin-top:12px">
+        <label>Key</label><input type="text" id="skey" placeholder="ha_token">
+        <label>Value</label><input type="password" id="sval" placeholder="paste the token">
+      </div>
+      <div class="row"><button class="btn primary" onclick="setSecret()">Save credential</button></div>
+    </div>
+
+    <div class="card">
+      <h2>Platforms</h2>
+      <p class="why">Each field is a literal or a reference. Apply is a dry run
+        until you tick Actually apply.</p>
+      <div id="platforms"><div class="empty">loading…</div></div>
+    </div>
+
+    <div class="card" id="editcard" style="display:none">
+      <h2 id="edittitle">Edit</h2>
+      <div class="grid2" id="editfields"></div>
+      <div class="row">
+        <button class="btn primary" onclick="savePlatform()">Save</button>
+        <select id="action" style="width:auto"></select>
+        <label style="display:flex;gap:5px;align-items:center">
+          <input type="checkbox" id="live" style="width:auto"> Actually apply
+        </label>
+        <button class="btn ok" onclick="applyAction()">Run</button>
+        <button class="btn" onclick="closeEdit()">Close</button>
+      </div>
+      <pre id="applyout" style="display:none"></pre>
+    </div>
+
+  </div></div>
+</div>
+<div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let KINDS = {}, PLATFORMS = [], EDITING = null;
+
+function toast(m, k){ const t=$('toast'); t.textContent=m; t.className=k||'';
+  t.style.display='block'; clearTimeout(t._h); t._h=setTimeout(()=>t.style.display='none',4500); }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,
+  c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+// Every action goes through Vera's capability surface — the panel has no
+// privileged path of its own.
+async function cap(name, args){
+  const r = await fetch('/mcp/call', {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name, arguments: args||{}})});
+  const j = await r.json();
+  return (j && j.content !== undefined) ? j.content : j;
+}
+
+async function loadValues(){
+  const c = await cap('platform.values.list');
+  const vs = c.values || [];
+  $('values').innerHTML = vs.length ? '<table><tr><th>Key</th><th>Value</th><th>Reference</th><th>Used by</th><th></th></tr>'
+    + vs.map(v => `<tr><td>${esc(v.label||v.key)}</td><td><code>${esc(v.value)}</code></td>
+      <td><code>${esc(v.ref)}</code></td>
+      <td class="muted">${(v.used_by||[]).map(esc).join(', ')||'—'}</td>
+      <td><button class="btn sm" onclick="delValue('${esc(v.key)}')">delete</button></td></tr>`).join('')
+    + '</table>' : '<div class="empty">No shared values yet.</div>';
+}
+
+async function loadSecrets(){
+  const c = await cap('platform.secrets.list');
+  const ss = c.secrets || [];
+  $('secrets').innerHTML = ss.length ? '<table><tr><th>Key</th><th>Status</th><th>Reference</th><th>Used by</th><th></th></tr>'
+    + ss.map(s => `<tr><td>${esc(s.label||s.key)}</td>
+      <td><span class="pill ${s.set?'ok':'err'}">${s.set?'set':'empty'}</span></td>
+      <td><code>${esc(s.ref)}</code></td>
+      <td class="muted">${(s.used_by||[]).map(esc).join(', ')||'—'}</td>
+      <td><button class="btn sm" onclick="delSecret('${esc(s.key)}')">delete</button></td></tr>`).join('')
+    + '</table>' : '<div class="empty">No credentials yet.</div>';
+}
+
+async function loadPlatforms(){
+  const k = await cap('platform.kinds');
+  KINDS = {}; (k.kinds||[]).forEach(x => KINDS[x.kind] = x);
+  const c = await cap('platform.list');
+  PLATFORMS = c.platforms || [];
+  $('platforms').innerHTML = PLATFORMS.length
+    ? '<table><tr><th>Platform</th><th>State</th><th>Needs</th><th></th></tr>'
+      + PLATFORMS.map(p => {
+          const bad = (p.missing_required||[]).concat(
+            (p.unresolved_refs||[]).map(m => m.field+' → @'+m.kind+':'+m.key));
+          return `<tr><td>${esc(p.label)} <span class="muted">${esc(p.kind)}</span></td>
+            <td><span class="pill ${p.configured?'ok':'warn'}">${p.configured?'ready':'incomplete'}</span></td>
+            <td class="muted">${bad.map(esc).join(', ')||'—'}</td>
+            <td><button class="btn sm" onclick="edit('${esc(p.id)}')">configure</button></td></tr>`;
+        }).join('') + '</table>'
+    : '<div class="empty">None yet — press “Add missing platforms”.</div>';
+}
+
+function edit(id){
+  const p = PLATFORMS.find(x => x.id === id);
+  if (!p) return;
+  EDITING = p;
+  const spec = KINDS[p.kind] || {fields:[], actions:[]};
+  $('edittitle').textContent = p.label + ' — ' + p.kind;
+  $('editfields').innerHTML = (spec.fields||[]).map(f => {
+    const v = (p.fields||{})[f.key] || '';
+    // A redacted secret must not be re-submitted as its own bullets.
+    const shown = v === '••••••••' ? '' : v;
+    const ph = v === '••••••••' ? '(stored — leave blank to keep)' : (f.hint||'');
+    return `<label title="${esc(f.hint||'')}">${esc(f.label)}${f.required?' *':''}</label>
+      <input type="${f.secret?'password':'text'}" id="f_${esc(f.key)}"
+             value="${esc(shown)}" placeholder="${esc(ph)}">`;
+  }).join('');
+  $('action').innerHTML = (spec.actions||[]).map(a =>
+    `<option value="${esc(a)}">${esc(a)}</option>`).join('')
+    || '<option value="">no actions</option>';
+  $('applyout').style.display='none';
+  $('editcard').style.display='';
+  $('editcard').scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+function closeEdit(){ $('editcard').style.display='none'; EDITING=null; }
+
+async function savePlatform(){
+  if (!EDITING) return;
+  const spec = KINDS[EDITING.kind] || {fields:[]};
+  const fields = {};
+  (spec.fields||[]).forEach(f => {
+    const el = $('f_'+f.key);
+    if (el && el.value !== '') fields[f.key] = el.value;
+  });
+  const r = await cap('platform.upsert', {id: EDITING.id, kind: EDITING.kind, fields});
+  if (r.error) return toast(r.error, 'err');
+  toast('saved', 'ok');
+  await loadPlatforms();
+  edit(EDITING.id);
+}
+
+async function applyAction(){
+  if (!EDITING) return;
+  const action = $('action').value;
+  if (!action) return toast('no action for this platform', 'err');
+  const live = $('live').checked;
+  toast(live ? 'applying…' : 'dry run…');
+  const r = await cap('platform.apply',
+    {id: EDITING.id, action, dry_run: !live});
+  $('applyout').style.display='';
+  $('applyout').textContent = JSON.stringify(r, null, 2);
+  if (r.error) toast(r.error, 'err');
+  else toast(live ? 'applied' : 'dry run — nothing changed', 'ok');
+}
+
+async function setValue(){
+  const key = $('vkey').value.trim(), value = $('vval').value.trim();
+  if (!key || !value) return toast('key and value are required', 'err');
+  const r = await cap('platform.values.set', {key, value});
+  if (r.error) return toast(r.error, 'err');
+  $('vkey').value=''; $('vval').value='';
+  toast('saved ' + r.key, 'ok'); loadAll();
+}
+async function delValue(key){
+  const r = await cap('platform.values.delete', {key});
+  if (r.error) return toast(r.error, 'err');
+  toast('deleted', 'ok'); loadAll();
+}
+async function setSecret(){
+  const key = $('skey').value.trim(), value = $('sval').value;
+  if (!key || !value) return toast('key and value are required', 'err');
+  const r = await cap('platform.secrets.set', {key, value});
+  if (r.error) return toast(r.error, 'err');
+  $('skey').value=''; $('sval').value='';
+  toast('sealed ' + r.key, 'ok'); loadAll();
+}
+async function delSecret(key){
+  const r = await cap('platform.secrets.delete', {key});
+  if (r.error) return toast(r.error, 'err');
+  toast('deleted', 'ok'); loadAll();
+}
+async function seed(){
+  const r = await cap('platform.seed');
+  toast((r.created||[]).length ? 'added: ' + r.created.join(', ') : 'nothing to add', 'ok');
+  loadAll();
+}
+
+async function loadAll(){
+  await loadValues(); await loadSecrets(); await loadPlatforms();
+}
+loadAll();
+</script>
+</body>
+</html>
