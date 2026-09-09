@@ -174,3 +174,76 @@ def test_summary_rows_do_not_leak_payloads():
                     enqueued_at=1.0)
     row = Q.summary([j], "", 2.0)["waiting"][0]
     assert "payload" not in row
+
+
+# â”€â”€ stranded records â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# The store is durable; the asyncio task is not. Observed on prod 2026-09-09:
+# embed.sessions marked `running` with nothing running it, runs=0, and
+# embed.sources waiting 17.6 HOURS behind it having never been offered the box
+# once. next_job refuses to start anything while any job is running, so a
+# single stale record is a permanent, silent deadlock.
+def _running_job(jid="embed.sessions:abc"):
+    return {"id": jid, "kind": Q.KIND_EMBED_SESSIONS, "title": "backfill",
+            "state": Q.RUNNING, "enqueued_at": 0, "attempts": 1}
+
+
+def test_a_running_record_with_no_live_runner_is_stranded():
+    assert [j["id"] for j in Q.stranded([_running_job()], live_ids=[])] \
+        == ["embed.sessions:abc"]
+
+
+def test_a_running_record_the_caller_vouches_for_is_not_stranded():
+    assert Q.stranded([_running_job()], live_ids=["embed.sessions:abc"]) == []
+
+
+def test_waiting_jobs_are_never_stranded():
+    waiting = dict(_running_job(), state=Q.WAITING)
+    assert Q.stranded([waiting], live_ids=[]) == []
+
+
+def test_stranded_survives_rubbish():
+    for junk in (None, [], [None], ["nope"], [{}]):
+        assert Q.stranded(junk, live_ids=[]) == []
+
+
+def test_requeueing_puts_it_back_in_the_queue():
+    back = Q.requeue_stranded(_running_job(), now=100)
+    assert back["state"] == Q.WAITING
+    assert back["started_at"] is None
+
+
+def test_a_strand_is_counted_apart_from_a_preemption():
+    """A rising preempt count means the box is busy; a rising strand count
+    means runners are dying. Summed, they look like one problem."""
+    back = Q.requeue_stranded(_running_job(), now=100)
+    assert back["stranded"] == 1
+    assert back.get("preempts", 0) == 0
+    assert Q.requeue_stranded(back, now=200)["stranded"] == 2
+
+
+def test_the_note_says_what_happened():
+    assert "no live runner" in Q.requeue_stranded(_running_job(), now=1)["note"]
+
+
+def test_a_requeued_job_is_selectable_again_and_unblocks_the_queue():
+    """THE regression. Before: one stale record and next_job returned None for
+    every job, forever."""
+    other = {"id": "embed.sources:x", "kind": Q.KIND_EMBED_SOURCES,
+             "state": Q.WAITING, "enqueued_at": 0}
+    jobs = [_running_job(), other]
+    assert Q.next_job(jobs, "") is None          # deadlocked
+    fixed = [Q.requeue_stranded(j, 1) if j["state"] == Q.RUNNING else j
+             for j in jobs]
+    assert Q.next_job(fixed, "") is not None     # unblocked
+
+
+def test_reconciling_does_not_start_anything_while_blocked():
+    """Reconciliation must only move records back to waiting - the gate still
+    decides whether the box is free."""
+    fixed = [Q.requeue_stranded(_running_job(), 1)]
+    assert Q.next_job(fixed, "a census is running") is None
+
+
+def test_the_row_reports_the_strand_count():
+    row = Q.summary([Q.requeue_stranded(_running_job(), 1)], "", 10)
+    assert row["waiting"][0]["stranded"] == 1

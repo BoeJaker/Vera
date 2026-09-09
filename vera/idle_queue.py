@@ -125,6 +125,48 @@ def running(jobs: Optional[Iterable[Dict[str, Any]]]) -> Optional[Dict[str, Any]
     return None
 
 
+def stranded(jobs: Optional[Iterable[Dict[str, Any]]],
+             live_ids: Optional[Iterable[str]] = None) -> List[Dict[str, Any]]:
+    """Jobs the store believes are RUNNING that nothing is actually running.
+
+    The store is durable and the task is not. A restart - or a cancellation
+    that never reached the re-queue - leaves a job marked `running` with no
+    task behind it, and because `next_job` refuses to start anything while a
+    job is running, ONE stranded record stops the whole queue forever.
+
+    Observed on prod 2026-09-09: `embed.sessions` stranded in `running`,
+    `runs: 0`, and `embed.sources` waiting 17.6 hours behind it having never
+    once been offered the box.
+
+    `live_ids` is what the caller can actually vouch for - the ids it holds a
+    live task for. Anything else claiming to run is stranded.
+    """
+    live = {str(i) for i in (live_ids or [])}
+    return [j for j in (jobs or [])
+            if isinstance(j, dict) and j.get("state") == RUNNING
+            and str(j.get("id")) not in live]
+
+
+def requeue_stranded(job: Optional[Dict[str, Any]], now: Any = 0) -> Dict[str, Any]:
+    """A stranded job, back on the queue.
+
+    Counted as an ATTEMPT, not a pre-emption: nothing pre-empted it, its
+    runner disappeared. Keeping those apart matters because a rising preempt
+    count means the box is busy, while a rising strand count means something
+    is killing runners - two different problems that would otherwise look
+    identical in the panel.
+    """
+    j = dict(job or {})
+    j["state"] = WAITING
+    j["started_at"] = None
+    j["stranded"] = int(j.get("stranded", 0)) + 1
+    j["note"] = ("requeued: marked running with no live runner (a restart, or "
+                 "a cancellation that never completed)")
+    if now:
+        j["updated_at"] = now
+    return j
+
+
 def next_job(jobs: Optional[Iterable[Dict[str, Any]]],
              blocked_reason: str) -> Optional[Dict[str, Any]]:
     """The one job that may start now, or None.
@@ -204,6 +246,10 @@ def summary(jobs: Optional[Iterable[Dict[str, Any]]],
             "waiting_for_s": int(waited),
             "preempts": int(j.get("preempts", 0)),
             "attempts": int(j.get("attempts", 0)),
+            # Kept apart from preempts on purpose: a rising preempt count means
+            # the box is busy, a rising strand count means runners are dying.
+            # Summed together they would look like the same problem.
+            "stranded": int(j.get("stranded", 0)),
             "last_note": j.get("last_note", ""),
         }
 
