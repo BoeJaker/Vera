@@ -5,6 +5,12 @@ agent frameworks. The Agent Bridges layer normalizes those runtimes; Providers
 manage hosted-model connections and usage; Catalog helps choose models that fit
 available hardware.
 
+The Agent Bridges panel treats its runtime catalog and interoperability summary
+as separate read models. Each reports loading, empty, ready, or failed state
+independently and offers a retry after transport or response failure. This keeps
+an available catalog usable when its summary is unavailable, and prevents a
+failed request from looking like an indefinitely loading service.
+
 ## Supported layers
 
 | Layer | Examples | Contract |

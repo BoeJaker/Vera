@@ -8,6 +8,7 @@
   if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
 <title>Vera · Agent Bridges</title>
+<script src="/ui/vera-ui.js"></script>
 <style>
 :root {
   --bg:#0d0f12; --bg1:#14181d; --bg2:#1a1f26; --bg3:#20262e;
@@ -101,24 +102,39 @@ html,body{ margin:0;padding:0;background:var(--bg);color:var(--fg);
 
 <script>
 const api = async (path, method='GET', body=null) => {
-  const opt = { method, headers:{'Content-Type':'application/json'} };
-  if (body) opt.body = JSON.stringify(body);
-  const r = await fetch(path, opt);
-  const j = await r.json().catch(()=>({error:'bad response'}));
-  return j;
+  try {
+    const opt = { method, headers:{'Content-Type':'application/json'} };
+    if (body) opt.body = JSON.stringify(body);
+    const r = await fetch(path, opt);
+    const j = await r.json().catch(()=>({error:'The service returned an unreadable response.'}));
+    if(!r.ok && !j.error) j.error='Request failed ('+r.status+').';
+    return j;
+  } catch(e) { return {error:'The service could not be reached.'}; }
 };
 const esc = s => String(s??'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
 let BRIDGES = [];
 let DRIFT = {};   // bridge id -> [{package, pinned, latest, drift}]
 let INTEROP = null;
+let CATALOG_ERROR = '';
+let INTEROP_ERROR = '';
+
+function showReadState(target, input, retry){
+  const state=window.veraUI.readState(input);
+  return window.veraUI.renderReadState(target,state,{onRetry:retry});
+}
 
 async function load(){
+  CATALOG_ERROR=''; INTEROP_ERROR='';
+  showReadState('#list',{loading:true,label:'Loading agent bridges…'});
+  showReadState('#interop',{loading:true,label:'Loading interoperability status…'});
   const [j, interop] = await Promise.all([
     api('/agentbridge/catalog'), api('/agentbridge/interoperability')
   ]);
-  BRIDGES = j.bridges || [];
-  INTEROP = interop && !interop.error ? interop : null;
+  CATALOG_ERROR=j&&j.error||'';
+  INTEROP_ERROR=interop&&interop.error||'';
+  BRIDGES = CATALOG_ERROR ? [] : ((j&&j.bridges) || []);
+  INTEROP = INTEROP_ERROR ? null : interop;
   document.getElementById('subtitle').textContent =
     BRIDGES.length + ' bridge' + (BRIDGES.length===1?'':'s') + ' registered';
   renderInterop();
@@ -127,7 +143,8 @@ async function load(){
 
 function renderInterop(){
   const el = document.getElementById('interop');
-  if (!INTEROP){ el.innerHTML='<div class="hint-box">Interoperability status unavailable.</div>'; return; }
+  if (INTEROP_ERROR){ showReadState(el,{error:true,label:INTEROP_ERROR},load); return; }
+  if (!INTEROP){ showReadState(el,{hasData:false,label:'No interoperability status is available.'}); return; }
   const a=INTEROP.a2a||{}, m=INTEROP.runtime_matrix||{}, adapters=INTEROP.runtime_adapters||[], intake=INTEROP.source_intake||{}, structured=INTEROP.structured_generation||{}, documents=INTEROP.document_parser||{}, contracts=INTEROP.shared_contracts||[];
   const registered=contracts.filter(x=>x.registered).length;
   el.innerHTML=`
@@ -171,7 +188,8 @@ function renderInterop(){
 
 function render(){
   const el = document.getElementById('list');
-  if (!BRIDGES.length){ el.innerHTML = '<div class="empty">no bridges registered.</div>'; return; }
+  if (CATALOG_ERROR){ showReadState(el,{error:true,label:CATALOG_ERROR},load); return; }
+  if (!BRIDGES.length){ showReadState(el,{hasData:false,label:'No agent bridges are registered.'}); return; }
   let html = '<div class="grid">';
   BRIDGES.forEach(b => {
     const st = !b.enabled ? 'disabled' : (b.image_present ? 'ready' : 'needs-build');

@@ -598,6 +598,62 @@
     (document.body || document.documentElement).appendChild(wrap);
   }
 
+  // ── Shared read states ─────────────────────────────────────────────────────
+  // A panel read has four mutually exclusive states. Keeping this primitive in
+  // the universal additive script lets panels share semantics without sharing
+  // data ownership, fetch policy, or workflow state.
+  function readState(input){
+    input = input || {};
+    var kind = input.loading ? 'loading'
+      : input.error ? 'error'
+      : input.hasData === false ? 'empty' : 'ready';
+    var defaults = {
+      loading: 'Loading…', error: 'Unable to load data.',
+      empty: 'No data available.', ready: 'Ready'
+    };
+    var label = input.label == null ? defaults[kind] : String(input.label);
+    return Object.freeze({
+      kind: kind,
+      label: label.slice(0, 500),
+      retryable: kind === 'error' && input.retryable !== false
+    });
+  }
+
+  function _ensureReadStateStyles(){
+    if(document.getElementById('vera-read-state-style')) return;
+    var style = document.createElement('style');
+    style.id = 'vera-read-state-style';
+    style.textContent = '.vera-read-state{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;min-height:90px;padding:24px;text-align:center;color:var(--dim,var(--t3,#777));font:12px/1.45 system-ui,sans-serif}.vera-read-state--error{color:var(--err,#d95757)}.vera-read-state__retry{border:1px solid var(--border2,var(--bd2,#555));border-radius:5px;background:var(--bg2,var(--s2,#222));color:var(--fg,var(--t1,#eee));padding:5px 10px;font:inherit;cursor:pointer}.vera-read-state__retry:focus-visible{outline:2px solid var(--acc,var(--ac,#4a9eff));outline-offset:2px}';
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  function renderReadState(target, state, options){
+    var el = typeof target === 'string' ? document.querySelector(target) : target;
+    if(!el) return null;
+    state = state && state.kind ? state : readState(state);
+    options = options || {};
+    _ensureReadStateStyles();
+    var box = document.createElement('div');
+    box.className = 'vera-read-state vera-read-state--' + state.kind;
+    box.setAttribute('data-vera-read-state', state.kind);
+    box.setAttribute('role', state.kind === 'error' ? 'alert' : 'status');
+    box.setAttribute('aria-live', state.kind === 'error' ? 'assertive' : 'polite');
+    var message = document.createElement('span');
+    message.className = 'vera-read-state__message';
+    message.textContent = state.label;
+    box.appendChild(message);
+    if(state.retryable && typeof options.onRetry === 'function'){
+      var retry = document.createElement('button');
+      retry.type = 'button'; retry.className = 'vera-read-state__retry';
+      retry.textContent = options.retryLabel || 'Try again';
+      retry.addEventListener('click', options.onRetry);
+      box.appendChild(retry);
+    }
+    while(el.firstChild) el.removeChild(el.firstChild);
+    el.appendChild(box);
+    return box;
+  }
+
   // ── Public API ─────────────────────────────────────────────────────────────
   window.veraUI = {
     setTheme: function(id){
@@ -637,6 +693,8 @@
     // Truthful-animation primitive — see §0c. Every new infographic element
     // uses this instead of rolling its own CSS animation loop.
     pulseOnce: pulseOnce,
+    readState: readState,
+    renderReadState: renderReadState,
   };
 
   // ── Auto-init ──────────────────────────────────────────────────────────────
