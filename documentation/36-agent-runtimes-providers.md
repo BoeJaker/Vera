@@ -11,6 +11,16 @@ independently and offers a retry after transport or response failure. This keeps
 an available catalog usable when its summary is unavailable, and prevents a
 failed request from looking like an indefinitely loading service.
 
+The API Providers panel applies the same rule independently to provider
+inventory, structured-generation status, document-parser status, model lists,
+and usage. An HTTP, application, or malformed-response failure is visible and
+retryable without suppressing healthy sibling reads. Failed model discovery
+disables the affected selector and playground action instead of presenting a
+fallback as verified inventory; failed usage reads replace plausible zeroes with
+unknown values. A confirmed empty response remains distinct from an unavailable
+service. Configuration, credential storage, provider execution, and usage
+accounting retain their existing authority.
+
 ## Supported layers
 
 | Layer | Examples | Contract |

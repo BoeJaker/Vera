@@ -72,6 +72,8 @@ tr:hover td{background:rgba(158,143,160,.05)}
 @media(max-width:820px){.two-col{grid-template-columns:1fr}.kpi-row{grid-template-columns:repeat(2,1fr)}}
 .play-out{background:var(--bg0);border:1px solid var(--border);border-radius:var(--radius-sm);padding:9px;font-family:var(--mono);font-size:10px;white-space:pre-wrap;min-height:60px;max-height:220px;overflow-y:auto;color:var(--text);margin-top:7px}
 .empty{padding:18px;text-align:center;color:var(--dim);font-size:11px}
+.test-out .vera-read-state{min-height:42px;padding:6px;font-size:9px}
+#usage-state .vera-read-state{min-height:58px;padding:10px}
 ::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-thumb{background:var(--bg3);border-radius:3px}
 </style>
 </head>
@@ -89,14 +91,14 @@ tr:hover td{background:rgba(158,143,160,.05)}
 
 <div class="card" id="structured-status" style="margin-bottom:12px">
   <div class="card-h"><span class="dot" id="structured-dot"></span>
-    <span class="card-t">Structured generation · LIB04</span>
+    <span class="card-t">Structured generation</span>
     <span class="kind-badge">inspection only</span></div>
   <div class="test-out" id="structured-detail">Loading contract status…</div>
 </div>
 
 <div class="card" id="document-status" style="margin-bottom:12px">
   <div class="card-h"><span class="dot" id="document-dot"></span>
-    <span class="card-t">Document parser · LIB06</span>
+    <span class="card-t">Document parser</span>
     <span class="kind-badge">inspection only</span></div>
   <div class="test-out" id="document-detail">Loading contract status…</div>
 </div>
@@ -108,6 +110,7 @@ tr:hover td{background:rgba(158,143,160,.05)}
   <div class="kpi"><div class="kpi-val" id="k-in">0</div><div class="kpi-sub">input tokens</div></div>
   <div class="kpi"><div class="kpi-val" id="k-out">0</div><div class="kpi-sub">output tokens</div></div>
 </div>
+<div id="usage-state" hidden></div>
 
 <div class="sec-title">Providers</div>
 <div class="grid" id="providers"><div class="empty">Loading…</div></div>
@@ -158,6 +161,7 @@ tr:hover td{background:rgba(158,143,160,.05)}
   </div>
 </div>
 
+<script src="/ui/vera-ui.js"></script>
 <script>
 'use strict';
 const P = (function(){
@@ -169,10 +173,27 @@ async function api(path, method='GET', body=null){
   const opts = {method, headers:{'Content-Type':'application/json'}};
   if(body) opts.body = JSON.stringify(body);
   const r = await fetch(path, opts);
-  return r.json();
+  if(!r.ok) throw new Error('HTTP '+r.status);
+  let data;
+  try{ data=await r.json(); }
+  catch(_){ throw new Error('Unreadable response'); }
+  if(!data || typeof data!=='object') throw new Error('Malformed response');
+  return data;
 }
 
 let _providers = [];
+
+function showReadState(id, input, retry){
+  const el=$(id); if(!el) return;
+  el.hidden=false;
+  const state=window.veraUI.readState(input);
+  window.veraUI.renderReadState(el,state,{onRetry:retry});
+}
+
+function clearReadState(id){
+  const el=$(id); if(!el) return;
+  el.replaceChildren(); el.hidden=true;
+}
 
 function kindLabel(k){ return k==='anthropic' ? 'anthropic' : 'openai'; }
 
@@ -216,32 +237,55 @@ async function loadModels(id, selected){
   sel.innerHTML='<option>…</option>';
   try{
     const j = await api('/providers/models?provider='+encodeURIComponent(id));
-    const models = j.models||[];
+    if(j.error) throw new Error(j.error);
+    if(!Array.isArray(j.models)) throw new Error('Malformed model inventory');
+    const models = j.models;
     sel.innerHTML = models.map(m=>`<option value="${esc(m)}" ${m===selected?'selected':''}>${esc(m)}</option>`).join('')
-       || `<option value="${esc(selected||'')}">${esc(selected||'(none)')}</option>`;
-  }catch(e){ sel.innerHTML=`<option value="${esc(selected||'')}">${esc(selected||'(none)')}</option>`; }
+       || `<option value="${esc(selected||'')}">${esc(selected||'(no models reported)')}</option>`;
+    sel.disabled=false; sel.title='';
+  }catch(e){
+    sel.innerHTML=`<option value="${esc(selected||'')}">${esc(selected ? selected+' (inventory unavailable)' : '(models unavailable)')}</option>`;
+    sel.disabled=true; sel.title=e&&e.message?e.message:'Model inventory unavailable';
+  }
 }
 
-async function reload(){
-  $('ts').textContent='loading…';
+async function loadProviders(){
+  showReadState('providers',{loading:true,label:'Loading providers…'});
   try{
-    const [j,structured,documents] = await Promise.all([
-      api('/providers/list'), api('/providers/structured/status'),
-      api('/providers/document/status')
-    ]);
-    _providers = j.providers||[];
-    renderStructured(structured);
-    renderDocuments(documents);
-    renderProviders();
+    const j=await api('/providers/list');
+    if(j.error) throw new Error(j.error);
+    if(!Array.isArray(j.providers)) throw new Error('Malformed provider inventory');
+    _providers=j.providers;
+    if(!_providers.length){
+      showReadState('providers',{hasData:false,label:'No API providers are configured.'});
+    }else{ renderProviders(); }
     fillPlayground();
-    $('ts').textContent='updated '+new Date().toLocaleTimeString();
-  }catch(e){ $('ts').textContent='error: '+e.message; }
-  loadUsage();
+    return true;
+  }catch(e){
+    _providers=[]; fillPlayground();
+    showReadState('providers',{error:true,label:'Provider inventory unavailable: '+(e&&e.message?e.message:e)},loadProviders);
+    return false;
+  }
+}
+
+async function loadStructured(){
+  showReadState('structured-detail',{loading:true,label:'Loading contract status…'});
+  try{
+    const s=await api('/providers/structured/status');
+    if(s.error) throw new Error(s.error);
+    if(!Array.isArray(s.provider_profiles)) throw new Error('Malformed structured-generation status');
+    renderStructured(s); return true;
+  }catch(e){
+    $('structured-dot').className='dot err';
+    showReadState('structured-detail',{error:true,label:'Structured-generation status unavailable: '+(e&&e.message?e.message:e)},loadStructured);
+    return false;
+  }
 }
 
 function renderStructured(s){
-  const profiles=s&&s.provider_profiles||[];
+  const profiles=s.provider_profiles;
   $('structured-dot').className='dot '+(s&&s.contract==='implemented'?'ok':'err');
+  clearReadState('structured-detail'); $('structured-detail').hidden=false;
   $('structured-detail').textContent = s&&s.contract
     ? profiles.map(p=>p.id+': '+p.availability).join(' · ')
       +' · deterministic validation '+s.deterministic_validation
@@ -249,15 +293,39 @@ function renderStructured(s){
     : 'Structured-generation contract unavailable';
 }
 
+async function loadDocuments(){
+  showReadState('document-detail',{loading:true,label:'Loading contract status…'});
+  try{
+    const s=await api('/providers/document/status');
+    if(s.error) throw new Error(s.error);
+    if(!Array.isArray(s.provider_profiles)) throw new Error('Malformed document-parser status');
+    renderDocuments(s); return true;
+  }catch(e){
+    $('document-dot').className='dot err';
+    showReadState('document-detail',{error:true,label:'Document-parser status unavailable: '+(e&&e.message?e.message:e)},loadDocuments);
+    return false;
+  }
+}
+
 function renderDocuments(s){
-  const profiles=s&&s.provider_profiles||[];
+  const profiles=s.provider_profiles;
   $('document-dot').className='dot '+(s&&s.contract==='implemented'?'ok':'err');
+  clearReadState('document-detail'); $('document-detail').hidden=false;
   $('document-detail').textContent = s&&s.contract
     ? profiles.map(p=>p.id+': '+p.availability).join(' · ')
       +' · frozen corpus '+s.frozen_corpus_contract
       +' · stable IDs '+s.stable_element_ids
       +' · parser/OCR '+s.parser_execution+'/'+s.ocr_execution
     : 'Document-parser contract unavailable';
+}
+
+async function reload(){
+  $('ts').textContent='loading…';
+  const results=await Promise.all([loadProviders(),loadStructured(),loadDocuments(),loadUsage()]);
+  const unavailable=results.filter(ok=>!ok).length;
+  $('ts').textContent=unavailable
+    ? 'updated with '+unavailable+' unavailable read'+(unavailable===1?'':'s')
+    : 'updated '+new Date().toLocaleTimeString();
 }
 
 async function test(id){
@@ -320,17 +388,29 @@ function fillPlayground(){
   const cur=sel.value;
   sel.innerHTML=_providers.map(p=>`<option value="${esc(p.id)}">${esc(p.label||p.id)}</option>`).join('');
   if(cur) sel.value=cur;
+  $('pg-send').disabled=!_providers.length;
+  if(!_providers.length) $('pg-meta').textContent='Provider inventory unavailable or empty.';
   pgModels();
 }
 async function pgModels(){
   const id=$('pg-prov').value; const sel=$('pg-model');
-  if(!id){ sel.innerHTML=''; return; }
+  if(!id){ sel.innerHTML=''; sel.disabled=true; $('pg-send').disabled=true; return; }
   sel.innerHTML='<option>…</option>';
+  sel.disabled=true; $('pg-send').disabled=true;
   try{
     const j=await api('/providers/models?provider='+encodeURIComponent(id));
+    if(j.error) throw new Error(j.error);
+    if(!Array.isArray(j.models)) throw new Error('Malformed model inventory');
     const def=(_providers.find(p=>p.id===id)||{}).default_model;
-    sel.innerHTML=(j.models||[]).map(m=>`<option value="${esc(m)}" ${m===def?'selected':''}>${esc(m)}</option>`).join('');
-  }catch(e){ sel.innerHTML='<option>(error)</option>'; }
+    sel.innerHTML=j.models.map(m=>`<option value="${esc(m)}" ${m===def?'selected':''}>${esc(m)}</option>`).join('')
+      || '<option>(no models reported)</option>';
+    sel.disabled=!j.models.length; $('pg-send').disabled=!j.models.length;
+    $('pg-meta').textContent=j.models.length?'':'This provider reported no models.';
+  }catch(e){
+    sel.innerHTML='<option>(models unavailable)</option>';
+    sel.disabled=true; $('pg-send').disabled=true;
+    $('pg-meta').textContent='Model inventory unavailable: '+(e&&e.message?e.message:e);
+  }
 }
 async function send(){
   const btn=$('pg-send'); btn.disabled=true;
@@ -354,22 +434,28 @@ async function send(){
 
 // ── Usage ────────────────────────────────────────────────────────────────────
 async function loadUsage(){
+  showReadState('usage-state',{loading:true,label:'Loading provider usage…'});
   try{
     const j=await api('/providers/usage?limit=100');
-    const s=j.summary||{};
+    if(j.error) throw new Error(j.error);
+    if(!j.summary || typeof j.summary!=='object'
+       || !Array.isArray(j.totals) || !Array.isArray(j.recent)){
+      throw new Error('Malformed provider usage response');
+    }
+    const s=j.summary;
     $('k-cost').textContent='$'+(s.total_cost_usd||0).toFixed(4);
     $('k-reqs').textContent=fmt(s.total_requests);
     $('k-in').textContent=fmt(s.total_input_tokens);
     $('k-out').textContent=fmt(s.total_output_tokens);
 
-    const totals=(j.totals||[]).sort((a,b)=>(b.cost_usd||0)-(a.cost_usd||0));
+    const totals=j.totals.sort((a,b)=>(b.cost_usd||0)-(a.cost_usd||0));
     $('totals-tbody').innerHTML=totals.map(t=>`<tr>
       <td>${esc(t.provider)}</td><td>${esc(t.model)}</td><td>${fmt(t.requests)}</td>
       <td>${fmt(t.input_tokens)}</td><td>${fmt(t.output_tokens)}</td>
       <td style="color:var(--acc3)">$${(t.cost_usd||0).toFixed(4)}</td></tr>`).join('');
     $('totals-empty').style.display=totals.length?'none':'block';
 
-    const recent=j.recent||[];
+    const recent=j.recent;
     $('recent-tbody').innerHTML=recent.map(r=>`<tr>
       <td>${esc((r.ts||'').replace('T',' ').slice(0,19))}</td>
       <td>${esc(r.provider)}</td><td>${esc(r.model)}</td>
@@ -378,7 +464,15 @@ async function loadUsage(){
       <td>${r.ok?'<span class="badge b-ok">ok</span>':'<span class="badge b-err" title="'+esc(r.error)+'">err</span>'}</td>
     </tr>`).join('');
     $('recent-empty').style.display=recent.length?'none':'block';
-  }catch(e){ /* leave */ }
+    clearReadState('usage-state');
+    return true;
+  }catch(e){
+    ['k-cost','k-reqs','k-in','k-out'].forEach(id=>$(id).textContent='—');
+    $('totals-tbody').replaceChildren(); $('recent-tbody').replaceChildren();
+    $('totals-empty').style.display='none'; $('recent-empty').style.display='none';
+    showReadState('usage-state',{error:true,label:'Provider usage unavailable: '+(e&&e.message?e.message:e)},loadUsage);
+    return false;
+  }
 }
 
 async function clearUsage(){
@@ -391,6 +485,5 @@ window.addEventListener('DOMContentLoaded', reload);
 return { reload, test, save, del, addCustom, pgModels, send, clearUsage };
 })();
 </script>
-<script src="/ui/vera-ui.js"></script>
 </body>
 </html>
