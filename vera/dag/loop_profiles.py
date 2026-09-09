@@ -247,7 +247,12 @@ LOOP_PROFILES: List[Dict[str, Any]] = [
         "defaults": {"long_running_force_hitl": True, "enable_phases": True},
     },
     {
-        "id": "operator",
+        # Was also "operator", which the Web Operator below (declared later)
+        # shadowed in _BY_ID - so list_profiles() showed 17 profiles while only
+        # 16 could be reached, and loops.run(profile="operator") has always got
+        # the WEB one. Renaming THIS one keeps that resolution exactly as it is
+        # and makes the container/VM profile addressable for the first time.
+        "id": "operator-infra",
         "label": "Operator (container/VM)",
         "icon": "⎈",
         "engine": "v6",
@@ -437,7 +442,31 @@ LOOP_PROFILES: List[Dict[str, Any]] = [
     },
 ]
 
+def duplicate_profile_ids(profiles: Optional[List[Dict[str, Any]]] = None) -> List[str]:
+    """Ids declared more than once, sorted.
+
+    A dict comprehension keyed on id silently keeps the LAST declaration, so a
+    duplicate does not raise - it removes a profile while leaving it in every
+    listing. That went unnoticed for the whole life of the two `operator`
+    profiles. Pure, so a test can assert the set stays unique.
+    """
+    seen, dupes = set(), set()
+    for pr in (profiles if profiles is not None else LOOP_PROFILES):
+        pid = str((pr or {}).get("id") or "")
+        if pid in seen:
+            dupes.add(pid)
+        seen.add(pid)
+    return sorted(dupes)
+
+
 _BY_ID: Dict[str, Dict[str, Any]] = {p["id"]: p for p in LOOP_PROFILES}
+
+_DUPES = duplicate_profile_ids()
+if _DUPES:                                                 # pragma: no cover
+    # Loud, because the symptom (a profile that lists but cannot be run) looks
+    # like a routing fault rather than a duplicate id.
+    log.warning("loop_profiles: duplicate profile id(s) %s - each is listed but "
+                "only the LAST declaration can be reached", ", ".join(_DUPES))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
