@@ -144,6 +144,10 @@ def summarise_run(run_id: str, records: Sequence[Dict[str, Any]]) -> Dict[str, A
         # Who drove it. Carried on the summary so the panel's run list can show
         # it without re-reading every row.
         "provenance": run_provenance(recs),
+        # Which question set this run answers. On the summary so the panel can
+        # FILTER by it - runs of different templates are not comparable points
+        # and must never share a chart.
+        "template": run_template(recs),
     }
 
 
@@ -616,6 +620,31 @@ def _prov_from_record(record: Any) -> Dict[str, Any]:
         "helpers": [h for h in (p.get("helpers") or []) if isinstance(h, dict)],
     }
     return out if any(out[k] for k in ("operator", "session", "skill", "tool")) else {}
+
+
+def run_template(records: Sequence[Dict[str, Any]]) -> str:
+    """Which template produced this run, read off its own rows.
+
+    Every row the harness writes carries `template`, and nothing surfaced it -
+    so the panel had thirteen templates to choose from and no way to say which
+    one a given RUN belonged to. Comparing across templates is the one thing
+    the census must never do silently, which makes this the field the filter
+    needs most.
+
+    "" for runs written before the field existed. Those are all default-template
+    runs in practice, but saying so here would be a guess dressed as data - the
+    panel labels them `unlabelled` and lets a human decide.
+
+    Rows that disagree return "mixed:a+b". A file holding two templates is not
+    a run of either, and averaging it would be worse than refusing.
+    """
+    seen = sorted({str((r or {}).get("template") or "").strip()
+                   for r in (records or []) if isinstance(r, dict)} - {""})
+    if not seen:
+        return ""
+    if len(seen) > 1:
+        return "mixed:" + "+".join(seen)
+    return seen[0]
 
 
 def run_provenance(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
