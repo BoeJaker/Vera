@@ -535,7 +535,7 @@ async def cap_seed(trace_id=None):
     http_tags=["platform", "ui"], memory="off", silent=True,
     description="Serve the platform configuration panel HTML.",
 )
-async def cap_panel(trace_id=None):
+async def cap_panel_html(trace_id=None):
     try:
         return HTMLResponse(_PANEL.read_text(encoding="utf-8"))
     except FileNotFoundError:
