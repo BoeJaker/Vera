@@ -184,3 +184,53 @@ def test_reordering_goals_is_still_comparable():
     a = {"name": "d", "goals": [GOAL, g2]}
     b = {"name": "d", "goals": [g2, GOAL]}
     assert CS.comparable(a, b) == []
+
+
+# â”€â”€ the profile a goal runs under â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Every seeded task pinned profile=planning regardless of the template, so a
+# SPECIALIST census - one goal per specialist, each run by the profile that
+# specialist actually uses - could not be expressed at all.
+def test_the_default_is_unchanged_so_every_existing_template_is_untouched():
+    """The parity guarantee. planning is the only v7 profile and every
+    historical number came from a bare v7 call."""
+    assert CS.goal_to_task(GOAL, "default")["profile"] == "planning"
+    assert CS.profile_for({}, "") == CS.CENSUS_PROFILE
+
+
+def test_a_template_may_declare_a_profile():
+    tmpl = {"name": "specialists", "profile": "coding", "goals": [GOAL]}
+    assert CS.template_to_tasks(tmpl)[0]["profile"] == "coding"
+
+
+def test_a_goal_may_override_its_template():
+    """The specialist case: one template, one goal per specialist."""
+    tmpl = {"name": "specialists", "profile": "coding",
+            "goals": [GOAL, dict(GOAL, id="g2", profile="devops")]}
+    got = {t["census"]["goal_id"]: t["profile"] for t in CS.template_to_tasks(tmpl)}
+    assert got == {"build-simple-code": "coding", "g2": "devops"}
+
+
+def test_a_blank_profile_is_not_a_choice():
+    for blank in ({}, {"profile": ""}, {"profile": "   "}, {"profile": None}):
+        assert CS.profile_for(blank, "") == CS.CENSUS_PROFILE, blank
+    assert CS.profile_for({"profile": ""}, "devops") == "devops"
+
+
+def test_profile_for_survives_rubbish():
+    assert CS.profile_for(None, "") == CS.CENSUS_PROFILE
+    assert CS.profile_for("not a dict", "") == CS.CENSUS_PROFILE
+
+
+def test_changing_the_profile_breaks_comparability():
+    """A different profile is a different ENGINE, so the runs are not points on
+    one timeline however similar the goals look."""
+    a = {"name": "t", "goals": [GOAL]}
+    b = {"name": "t", "profile": "coding", "goals": [GOAL]}
+    rs = CS.comparable(a, b)
+    assert any("different loop profile" in r for r in rs), rs
+    assert any("not the same experiment" in r for r in rs), rs
+
+
+def test_identical_profiles_still_compare_clean():
+    a = {"name": "t", "profile": "coding", "goals": [GOAL]}
+    assert CS.comparable(a, dict(a)) == []
