@@ -2,12 +2,12 @@
 
 This module REGISTERS a new way to plan. It does not modify, wrap or re-enter
 the loop's own planner, and removing this file returns the estate to exactly
-what it was â€” which is the property that makes a style a style rather than a
+what it was — which is the property that makes a style a style rather than a
 fork of the planner.
 
 Its routing profile is its own (`planning_style`), for the same reason: the
 loop's profile belongs to the loop. The one role here is CPU-pinned on purpose,
-mirroring the research profile's analyst â€” the GPU gate is capacity 1, so a
+mirroring the research profile's analyst — the GPU gate is capacity 1, so a
 fan-out aimed at the GPU does not run in parallel, it QUEUES. On the CPU nodes,
 which hold their own per-instance slots, the lenses genuinely run side by side.
 """

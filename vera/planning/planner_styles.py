@@ -1,8 +1,8 @@
-"""Planning STYLES â€” additive. The existing planner is not touched by any of this.
+"""Planning STYLES — additive. The existing planner is not touched by any of this.
 
 Vera's loop has exactly one way of producing a plan: one prompt, one model, one
 shot, and whatever comes back is the plan. That is a style, not a law, and it is
-a different style from the one the RESEARCH pipeline uses for briefs â€” which
+a different style from the one the RESEARCH pipeline uses for briefs — which
 fans several questions across nodes at once and merges the answers host-locally
 before anything downstream sees them.
 
@@ -23,7 +23,7 @@ simply read:
      "reason": str, "complexity": str, "recon": [], "done_when": str}
 
 Pure except `plan_detailed`, which takes its generate function as an argument
-rather than importing one â€” so styles are testable with no model, and this
+rather than importing one — so styles are testable with no model, and this
 module can never import the loop module back.
 """
 
@@ -37,7 +37,7 @@ from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Seq
 #:
 #: Deliberately NOT "plan it five times and vote". Asking one question five
 #: times returns the same blind spot five times; asking five different questions
-#: is what surfaces what a single pass misses â€” most often the artifact nobody
+#: is what surfaces what a single pass misses — most often the artifact nobody
 #: named and the criterion nothing can settle.
 LENSES: Tuple[Tuple[str, str], ...] = (
     ("decompose",
@@ -53,7 +53,7 @@ LENSES: Tuple[Tuple[str, str], ...] = (
     ("criteria",
      "List what would prove the GOAL was actually achieved. One per line. Each "
      "must be checkable by looking at a file or at a command's output. NEVER "
-     "state an expected numeric RESULT you worked out yourself â€” say what to "
+     "state an expected numeric RESULT you worked out yourself — say what to "
      "look at, not what the answer will be."),
     ("caps",
      "Which of the listed CAPABILITIES does this goal need, and for what? One "
@@ -62,7 +62,7 @@ LENSES: Tuple[Tuple[str, str], ...] = (
 
 _BULLET_ORDER = ("decompose", "artifacts", "criteria", "risks", "caps")
 _LINE_SPLIT = re.compile(r"[\r\n]+")
-_BULLET_STRIP = re.compile(r"^\s*(?:[-*â€¢]|\d+[.)])\s*")
+_BULLET_STRIP = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s*")
 _WORD_RE = re.compile(r"[a-z0-9_.]{3,}")
 _CAP_RE = re.compile(r"\b([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+)\b")
 _NUM_RE = re.compile(r"\d[\d,_]*(?:\.\d+)?")
@@ -74,13 +74,13 @@ MAX_BULLET_CHARS = 240
 MAX_BULLETS_PER_LENS = 12
 
 #: Numeric literals with at least this many digits are treated as possible
-#: COMPUTED results. Below it a number is nearly always shape â€” "exit code 0",
-#: "5 lines", "200 words", "HTTP 200" â€” and flagging those would caveat most
+#: COMPUTED results. Below it a number is nearly always shape — "exit code 0",
+#: "5 lines", "200 words", "HTTP 200" — and flagging those would caveat most
 #: well-written criteria.
 MIN_RESULT_DIGITS = 4
 
 
-# â”€â”€ line handling â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── line handling ────────────────────────────────────────────────────────────
 
 def clean_lines(text: Any) -> List[str]:
     """A lens's raw reply as bullet lines, in order, deduped.
@@ -133,7 +133,7 @@ def agreements(per_lens: Dict[str, List[str]], *, min_lenses: int = 2) -> List[s
     """Points more than one lens reached independently.
 
     Word co-occurrence, the same cheap trick the research analyst's clustering
-    uses â€” not embeddings, which would need a model call and a GPU slot to tell
+    uses — not embeddings, which would need a model call and a GPU slot to tell
     us two lines are about the same file.
     """
     items: List[Tuple[str, str, set]] = []
@@ -160,7 +160,7 @@ def agreements(per_lens: Dict[str, List[str]], *, min_lenses: int = 2) -> List[s
     return out
 
 
-# â”€â”€ success criteria the planner did not invent â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── success criteria the planner did not invent ──────────────────────────────
 
 def _canon(tok: str) -> str:
     return re.sub(r"[,_]", "", str(tok or "")).rstrip(".")
@@ -175,7 +175,7 @@ def invented_values(criterion: Any, *grounds: Any) -> List[str]:
 
     Observed live (census exec-family run 1, session 4a524636): for a goal whose
     answer is 42925, a plan asserted "returns the integer 207085". The loop then
-    computed 42925 â€” correctly â€” and threw it away three times for not matching,
+    computed 42925 — correctly — and threw it away three times for not matching,
     burning the whole wall cap. A criterion may describe SHAPE; it may not
     smuggle in a RESULT its author worked out in its head.
     """
@@ -205,7 +205,7 @@ def drop_invented_criteria(lines: Sequence[str], goal: Any) -> Tuple[List[str], 
     return keep, drop
 
 
-# â”€â”€ the brief â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── the brief ────────────────────────────────────────────────────────────────
 
 def merge_brief(results: Dict[str, Any], *, goal: Any = "",
                 known_caps: Optional[Iterable[str]] = None) -> Dict[str, Any]:
@@ -253,7 +253,7 @@ def render_brief(brief: Dict[str, Any], *, max_chars: int = 4000) -> str:
         parts.append("\nReached by more than one look (weigh highest):")
         parts.extend("  - %s" % ln for ln in b["agreed"][:8])
     if b.get("rejected_criteria"):
-        parts.append("\nRejected â€” asserted a value the goal never gave:")
+        parts.append("\nRejected — asserted a value the goal never gave:")
         parts.extend("  - %s" % ln for ln in b["rejected_criteria"][:5])
     if b.get("missing"):
         parts.append("\nNot answered: %s. Absence here is a lost look, not "
@@ -268,7 +268,7 @@ def brief_to_plan(brief: Dict[str, Any], *, max_steps: int = 8) -> Dict[str, Any
     """The merged brief as a plan, in the loop's own plan shape.
 
     Steps come from the `decompose` lens because that is the only lens that
-    produces an ORDER. The other lenses are not thrown away â€” the artifacts and
+    produces an ORDER. The other lenses are not thrown away — the artifacts and
     criteria they found become the steps' success criteria and the plan's
     done_when, which is the whole reason for asking them separately.
     """
@@ -319,7 +319,7 @@ async def plan_detailed(goal: str, generate: Callable[..., Awaitable[str]], *,
 
     `generate(prompt, system=...)` is injected, not imported: it keeps the style
     testable with no model, and it lets the CALLER choose the routing role. Point
-    it at a CPU-pinned role â€” the GPU gate is capacity 1, so a fan-out aimed at
+    it at a CPU-pinned role — the GPU gate is capacity 1, so a fan-out aimed at
     the GPU does not parallelise, it queues.
 
     A lens that fails or times out contributes nothing and is named in
@@ -349,7 +349,7 @@ async def plan_detailed(goal: str, generate: Callable[..., Awaitable[str]], *,
 
 #: The registry. A style is {id, label, description, plan}. `single` is the
 #: loop's existing behaviour, present so the set is honest about what already
-#: exists â€” it has no `plan` here because the loop owns it and this module does
+#: exists — it has no `plan` here because the loop owns it and this module does
 #: not reimplement, wrap or replace it.
 STYLES: Dict[str, Dict[str, Any]] = {
     "single": {
@@ -363,8 +363,8 @@ STYLES: Dict[str, Dict[str, Any]] = {
     "detailed": {
         "id": "detailed",
         "label": "Detailed (multi-lens)",
-        "description": ("Five short lenses â€” decompose, artifacts, risks, "
-                        "criteria, caps â€” asked concurrently and merged on the "
+        "description": ("Five short lenses — decompose, artifacts, risks, "
+                        "criteria, caps — asked concurrently and merged on the "
                         "host with no second model call. Modelled on the "
                         "research brief, but gated: the lenses run on a "
                         "CPU-pinned role so they parallelise instead of queuing "
