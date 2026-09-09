@@ -133,6 +133,7 @@ _CRITICAL_MODULES = {
     "test_log_setup",           # prod's file log: out-of-tree (dirty tree blocks promote) + swept off the event loop (2026-08-29)
     "test_plan_cap_routing",    # an edit step must not be a code.author re-emit - re-emits drop earlier steps' work (2026-08-30)
     "test_census_core",         # the census history must never present step counts as a verdict on a goal (2026-08-30)
+    "test_census_partial_filter",  # a run the archive named bad is not history (2026-09-09)
     "test_gate_pause_release",  # a PAUSED container holding the capacity-1 GPU lease starves everyone (2026-08-30)
     "test_operator_trace_core",  # O13 - a browser run must be readable back, and never trusted on its own word
     "test_operator_census_core",  # the operator census must not launder a run's self-report into success
