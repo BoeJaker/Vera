@@ -1994,10 +1994,10 @@ def _sd_script(body: str) -> str:
     memory="off", silent=True,
     description="List removable block devices on a Proxmox node that look like a "
                 "Raspberry Pi card (a FAT boot partition + a Linux rootfs). Read-only. "
-                "Inputs: cluster_id (str!), node (str). Output: {cards:[{dev,size,"
+                "Inputs: cluster_id (str!). Output: {cards:[{dev,size,"
                 "boot,root,label}]}.",
 )
-async def cap_sdcard_detect(cluster_id: str = "", node: str = "", trace_id=None) -> Dict:
+async def cap_sdcard_detect(cluster_id: str = "", trace_id=None) -> Dict:
     cmd = (
         "for d in /sys/block/*; do n=$(basename $d); "
         "case \"$n\" in loop*|zram*|zd*|dm-*|nvme*|sr*) continue;; esac; "
@@ -2011,7 +2011,7 @@ async def cap_sdcard_detect(cluster_id: str = "", node: str = "", trace_id=None)
         "[ -n \"$b\" ] && [ -n \"$r\" ] && "
         "  echo \"CARD|/dev/$n|${sz}|$b|$r|$(cat $d/device/model 2>/dev/null | xargs)\"; "
         "done")
-    res = await _call("proxmox.node.exec", cluster_id=cluster_id, node=node,
+    res = await _call("proxmox.node.exec", cluster_id=cluster_id,
                       command=cmd, timeout=45)
     if res.get("error"):
         return {"error": res["error"], "cards": []}
@@ -2033,10 +2033,10 @@ async def cap_sdcard_detect(cluster_id: str = "", node: str = "", trace_id=None)
     description="Mount a card READ-ONLY and report what is on it: OS, free space, "
                 "enabled services, existing config.txt, and which inherited services "
                 "would disrupt a live LAN if it booted. Writes nothing. Inputs: "
-                "cluster_id (str!), node, boot (str! e.g. /dev/sdk1), root (str!). "
+                "cluster_id (str!), boot (str! e.g. /dev/sdk1), root (str!). "
                 "Output: {os, free, config_txt, enabled:[...], hazards:[...]}.",
 )
-async def cap_sdcard_inspect(cluster_id: str = "", node: str = "", boot: str = "",
+async def cap_sdcard_inspect(cluster_id: str = "", boot: str = "",
                              root: str = "", trace_id=None) -> Dict:
     if not (boot and root):
         return {"error": "boot and root partition devices are required"}
@@ -2053,7 +2053,7 @@ async def cap_sdcard_inspect(cluster_id: str = "", node: str = "", boot: str = "
         "cat \"$MB/config.txt\" 2>/dev/null || cat \"$MB/firmware/config.txt\" 2>/dev/null\n"
         "echo '---SSH---'; [ -e \"$MB/ssh\" ] && echo yes || echo no\n"
         "echo '---END---'\n")
-    res = await _call("proxmox.node.exec", cluster_id=cluster_id, node=node,
+    res = await _call("proxmox.node.exec", cluster_id=cluster_id,
                       command=_sd_script(body), timeout=90)
     if res.get("error"):
         return {"error": res["error"]}
@@ -2124,13 +2124,13 @@ def _vera_url() -> str:
                 "config.txt, enable SSH, install the first-boot join + display/button "
                 "agents, and mask inherited services that would disrupt the LAN. "
                 "ADAPTS in place — existing data is preserved. Set confirm=true to "
-                "write. Inputs: cluster_id (str!), node, boot (str!), root (str!), "
+                "write. Inputs: cluster_id (str!), boot (str!), root (str!), "
                 "display, panel, rotate, node_label, wifi_ssid, wifi_psk, confirm "
                 "(bool=false). Output: {ok, written:[...], masked:[...]}.",
     schema=enum_schema(display=["xpt2046", "none"],
                        panel=["ili9341", "ili9486", "ili9488", "st7735r", "hx8357d"]),
 )
-async def cap_sdcard_provision(cluster_id: str = "", node: str = "", boot: str = "",
+async def cap_sdcard_provision(cluster_id: str = "", boot: str = "",
                                root: str = "", display: str = "xpt2046",
                                panel: str = "ili9341", rotate: int = 270,
                                node_label: str = "", role: str = "frame",
@@ -2147,7 +2147,7 @@ async def cap_sdcard_provision(cluster_id: str = "", node: str = "", boot: str =
     # Read the card's current state first — the plan must merge into the real
     # config.txt, not a blank one, or we silently drop the settings that make
     # this particular board boot.
-    cur = await cap_sdcard_inspect(cluster_id=cluster_id, node=node,
+    cur = await cap_sdcard_inspect(cluster_id=cluster_id,
                                    boot=boot, root=root)
     if cur.get("error"):
         return cur
@@ -2187,7 +2187,7 @@ async def cap_sdcard_provision(cluster_id: str = "", node: str = "", boot: str =
         "cp -n \"$MB/config.txt\" \"$MB/config.txt.foundry-backup\" 2>/dev/null || true\n"
         + "\n".join(writes) + "\n" + chmods + "\n" + enable + "\nsync\necho DONE\n")
 
-    res = await _call("proxmox.node.exec", cluster_id=cluster_id, node=node,
+    res = await _call("proxmox.node.exec", cluster_id=cluster_id,
                       command=_sd_script(body), timeout=180)
     if res.get("error"):
         return {"error": res["error"]}
