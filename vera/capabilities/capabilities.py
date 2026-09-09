@@ -1792,6 +1792,19 @@ except Exception:                                     # pragma: no cover
         _output_budget = None
 
 
+def _normalize_generation_think(value):
+    """Recover booleans transported through an untyped capability argument."""
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ("true", "false"):
+            return normalized == "true"
+        if normalized in ("high", "medium", "low", "max"):
+            return normalized
+    raise ValueError("think must be a boolean or high, medium, low, max")
+
+
 @capability(
     "llm.generate",
     http_method="POST", http_path="/llm/generate", http_tags=["llm", "generate"],
@@ -1879,6 +1892,8 @@ async def llm_generate(
         _ollama_caller_info,
         effective_num_ctx,
     )
+
+    think = _normalize_generation_think(think)
 
     # Optional FILE CONTEXT: read the given file(s)/portions and prepend them so the
     # caller can ground the generation on source files (a script to refactor, fetched
@@ -2002,6 +2017,11 @@ async def llm_generate(
         think=think,
         options=_gen_opts, meta_out=_meta,
     )
+    if not isinstance(text, str) or not text.strip():
+        return {"error": "Generation returned no usable text; inspect the provider request log.",
+                "error_code": "empty_generation", "text": "", "backend": "ollama",
+                "model": model or OLLAMA_MODEL, "tokens": len(tokens_collected),
+                "truncated": bool(_meta.get("truncated"))}
     chosen = pick_instance(prefer_gpu=prefer_gpu, instance_id=instance_id or None,
                            model=model, job_type=job_type or None)
     inst   = OLLAMA_INSTANCES.get(chosen or "", {})
