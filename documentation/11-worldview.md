@@ -116,6 +116,13 @@ dangling edges merely to obtain a green report.
 [Machine learning](16-machine-learning.md) · [ONNX](30-onnx.md) ·
 [Interoperability foundations](46-interoperability-foundations.md)
 
+## Documentation capture
+
+WorldView is registered as an injected Data Fabric section, while its full UI is
+served by a dedicated same-origin panel route. Documentation capture uses that
+route directly and waits for the latent-map canvas and initialized view
+description. This avoids photographing the otherwise empty injection wrapper.
+
 <!-- VERA:AUTO:screenshots START -->
 <!-- VERA:AUTO:screenshots END -->
 

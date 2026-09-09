@@ -48,6 +48,11 @@ For deletion or reset, start from the owning dataset in
 [Data Fabric](06-data-fabric.md); avoid deleting raw vector rows without also
 repairing the fabric's record and index state.
 
+Documentation capture records the storage overview and the Chroma record table
+as separate states. The overview must contain rendered store statistics; the
+record view must finish pagination and report either a range or an explicit empty
+result before a screenshot is accepted.
+
 <!-- VERA:AUTO:screenshots START -->
 _No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
 <!-- VERA:AUTO:screenshots END -->

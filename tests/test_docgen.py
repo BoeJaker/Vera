@@ -1,5 +1,9 @@
 """Documentation generation: domain map, scaffold round-trip, gallery (no browser)."""
 
+from pathlib import Path
+
+import pytest
+
 from vera.operator.docs import doc_scaffold as DS
 from vera.operator.docs import domain_map as DM
 from vera.operator.docs import gallery as G
@@ -83,6 +87,17 @@ def test_panel_capture_url_window_fallback_for_element_panels():
     assert "ui/panel/window?id=live-event-stream" in r["url"]
 
 
+def test_panel_capture_url_supports_trusted_same_origin_state_route():
+    from vera.operator.missions import documentation as M
+    panel = {"id": "worldview", "html": ""}
+    state = {"capture_path": "/ui/panels/worldview-panel"}
+    assert M.panel_capture_url("http://h:8998", panel, state) == {
+        "url": "http://h:8998/ui/panels/worldview-panel", "via": "route"}
+    with pytest.raises(ValueError, match="same-origin"):
+        M.panel_capture_url("http://h:8998", panel,
+                            {"capture_path": "https://elsewhere.invalid/panel"})
+
+
 def test_normalise_panels_keeps_html_and_mode():
     from vera.operator.missions import documentation as M
     n = M._normalise_panels([{"id": "a", "label": "A", "mode": "tab",
@@ -107,6 +122,31 @@ def test_data_fabric_capture_recipe_is_representative():
     states = fabric["capture_states"]["fabric-panel"]
     assert states[0]["name"] == "graph"
     assert states[0]["ready_selector"] and states[0]["ready_text"]
+
+
+def test_graph_and_vector_capture_recipes_target_real_panel_markup():
+    root = Path(__file__).resolve().parents[1]
+    cases = {
+        "memory-graph": ("memory-graph", root / "vera/fabric/memory_graph_panel.html"),
+        "galaxy-graph": ("memory-galaxy-panel", root / "vera/fabric/memory_map.html"),
+        "worldview": ("worldview", root / "vera/worldview/worldview_panel.html"),
+        "vector-browser": ("vector-browser-panel",
+                           root / "vera/vector browser/vector_browser_panel.html"),
+    }
+    for slug, (panel_id, markup_path) in cases.items():
+        domain = DM.by_slug(slug)
+        assert panel_id in domain["panel_ids"]
+        markup = markup_path.read_text(encoding="utf-8")
+        states = domain["capture_states"][panel_id]
+        assert states
+        assert len({state["name"] for state in states}) == len(states)
+        for state in states:
+            assert state.get("ready_selector") and state.get("ready_text")
+            for selector_key in ("click", "ready_selector", "ready_text"):
+                selector = state.get(selector_key, "")
+                if selector.startswith("#"):
+                    element_id = selector[1:].split()[0].split(".")[0]
+                    assert f'id="{element_id}"' in markup
 
 
 def test_gallery_build():
