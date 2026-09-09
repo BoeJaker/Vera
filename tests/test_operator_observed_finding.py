@@ -179,6 +179,70 @@ def test_a_single_reading_never_carries_the_verdict():
     assert "DIFFERENT" not in out
 
 
+# ── a RETURN is a specific claim: away, and back to something else ──────────
+def test_two_readings_cannot_contain_a_return():
+    """Census 49, build-browser-verified (wall-cap 1809s, artifact 4/4). The
+    operator typed an invalid address and the page answered:
+
+        'Email Validation Form Email:'
+        -> 'Email Validation Form Email: Invalid email address'
+
+    That is the behaviour the goal asked to verify, and it was still on screen
+    when the run stopped. Two readings: it changed once and stayed. You cannot
+    go away and come back in two, so the verdict was not merely unproven, it
+    was inexpressible - and the loop was told a correct form was broken."""
+    trail = ["Email Validation Form Email:",
+             "Email Validation Form Email: Invalid email address"]
+    assert SE.looks_like_a_return(trail) is False
+    out = SE.explain("repeating_action", [{"seen": t} for t in trail])
+    assert "DIFFERENT" not in out and "defect in the file" not in out
+    # the evidence is still handed over, only the judgement is dropped
+    assert "Invalid email address" in out and "->" in out
+
+
+def test_a_countdown_that_only_descends_never_returned():
+    """author-then-edit re-test: '01:30' -> '01:06' -> '00:32' -> '00:00'. It
+    ends below where it started and turns around nowhere. observed_note's own
+    comment predicted this case before it was fixed."""
+    assert SE.looks_like_a_return(["01:30 x", "01:06 x", "00:32 x", "00:00 x"]) is False
+
+
+def test_a_value_that_only_climbs_never_returned_either():
+    assert SE.looks_like_a_return(["00:01", "00:20", "01:00"]) is False
+
+
+def test_a_timer_that_runs_past_zero_and_resets_did_return():
+    """Census 47's genuinely broken page: it loads on the UNEDITED '60', runs
+    past zero into '-1:-1', then Reset jumps it to '01:30'. It turns around, so
+    the sentence is earned. '-1:-1' must parse as BELOW zero, not fail."""
+    trail = ["60 x", "01:05 x", "00:38 x", "-1:-1 x", "-1:-2 x", "01:30 x"]
+    assert SE.looks_like_a_return(trail) is True
+    assert "DIFFERENT" in SE.explain("repeating_action", [{"seen": t} for t in trail])
+
+
+def test_a_reset_that_lands_on_the_wrong_value_did_return():
+    """Census 39: 01:30 -> 00:57 -> 01:00. Reset put it at 01:00 instead of
+    01:30 - it came back, to the wrong place. That IS the defect."""
+    assert SE.looks_like_a_return(["01:30", "00:57", "01:00"]) is True
+
+
+def test_readings_that_are_not_numbers_are_not_judged_as_monotonic():
+    """The direction test only applies when every reading yields a number, so
+    prose is never guessed about - three distinct text states keep the old
+    behaviour."""
+    assert SE.looks_like_a_return(["alpha", "beta", "gamma"]) is True
+
+
+def test_the_leading_value_is_read_off_the_whole_page_text():
+    """A reading is the entire page ('01:30 Start Pause Reset'), so the value
+    is whatever it leads with."""
+    assert SE.leading_value("01:30 Start Pause Reset") == 90
+    assert SE.leading_value("-1:-1 Start") == -61
+    assert SE.leading_value("60 Start") == 60
+    assert SE.leading_value("Email Validation Form") is None
+    assert SE.leading_value("") is None
+
+
 # ── the loop records it ─────────────────────────────────────────────────────
 class _Obs:
     def __init__(self, text):

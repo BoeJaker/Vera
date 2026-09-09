@@ -33,6 +33,7 @@ and tests switch on it. This adds the sentence beside it.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional
 
 # Stops that mean "this run did not reach the goal". `done` and `cancelled` are
@@ -159,6 +160,77 @@ def seen_sequence(steps: Optional[List[Dict[str, Any]]] = None,
     return out[:head] + out[len(out) - (limit - head):]
 
 
+#: A reading is the whole page text ('01:30 Start Pause Reset'), so the value
+#: under discussion is whatever it LEADS with. Negative parts are matched on
+#: purpose: '-1:-1' is what a countdown that decrements before testing shows,
+#: and it must compare as below zero rather than fail to parse.
+_CLOCK_RE = re.compile(r"^\s*(-?\d+):(-?\d+)\b")
+_NUM_RE = re.compile(r"^\s*(-?\d+)\b")
+
+
+def leading_value(text: Any) -> Optional[int]:
+    """The number a reading starts with, in seconds for mm:ss, else None."""
+    s = str(text or "")
+    m = _CLOCK_RE.match(s)
+    if m:
+        return int(m.group(1)) * 60 + int(m.group(2))
+    m = _NUM_RE.match(s)
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def _monotonic(values: List[int]) -> bool:
+    """Did it only ever go one way? Then it never came back."""
+    ups = any(b > a for a, b in zip(values, values[1:]))
+    downs = any(b < a for a, b in zip(values, values[1:]))
+    return not (ups and downs)
+
+
+def looks_like_a_return(trail: Optional[List[str]] = None) -> bool:
+    """Did the value go away and come back to something ELSE?
+
+    That is the whole claim the verdict sentence makes, and it was being
+    asserted from "there is more than one reading". Three recorded cases where
+    that was wrong, each on a CORRECT artifact:
+
+      census 48 author-then-edit  '01:30' -> '00:00' -> '01:30'
+          It came back to exactly where it started - the timer working.
+      census 49 build-browser-verified
+          'Email Validation Form Email:'
+          -> 'Email Validation Form Email: Invalid email address'
+          TWO readings. It changed once and stayed. You cannot go away and come
+          back in two readings, so no return is even expressible here - and the
+          run was told a 4/4 form was broken moments after the form displayed
+          the exact behaviour its goal asked to verify.
+      author-then-edit re-test     '01:30' -> '01:06' -> '00:32' -> '00:00'
+          A countdown descending. It ends below where it started and never
+          returns to anything. observed_note's own note predicted this one.
+
+    So a return needs THREE things, and all three are checked here:
+      * at least three readings - away, and back;
+      * an end DIFFERENT from the start (a trail ending where it began refutes
+        the claim outright);
+      * a change of direction. A sequence that only ever descends (or only ever
+        climbs) never came back, whatever its endpoints. Only applied when
+        every reading yields a number, so this never guesses about prose.
+
+    Kept true for the cases that ARE defects: census 47's
+    '60' -> '01:05' -> ... -> '-1:-1' -> '01:30' turns around, and census 39's
+    '01:30' -> '00:57' -> '01:00' - Reset landing on 01:00 instead of 01:30 -
+    turns around too. Both still earn the sentence.
+    """
+    t = [x for x in (trail or [])]
+    if len(t) < 3:
+        return False
+    if t[0] == t[-1]:
+        return False
+    values = [leading_value(x) for x in t]
+    if all(v is not None for v in values) and _monotonic([v for v in values if v is not None]):
+        return False
+    return True
+
+
 def observed_note(steps: Optional[List[Dict[str, Any]]] = None) -> str:
     """What the page showed, phrased so the caller can act on it.
 
@@ -198,18 +270,13 @@ def observed_note(steps: Optional[List[Dict[str, Any]]] = None) -> str:
     # four of that goal's checks. The loop believed it and spent the rest of a
     # 1806s budget editing a correct file.
     #
-    # Ending on the value it started with is the one case that REFUTES the
-    # claim outright, so it is the one case suppressed here. A trail that never
-    # returns at all (a plain countdown 01:30 -> 00:47 -> 00:20) still reads as
-    # "different from where it started"; telling those apart needs the values
-    # parsed rather than compared, which is not done here.
+    # The verdict now requires an actual RETURN - see looks_like_a_return.
     trail_note = ""
     if len(trail) > 1:
-        returned_to_start = trail[0] == trail[-1]
-        verdict = "" if returned_to_start else (
+        verdict = (
             " A value that changes and then returns to something DIFFERENT "
             "from where it started is a defect in the file, not a browser "
-            "problem.")
+            "problem.") if looks_like_a_return(trail) else ""
         trail_note = (" It displayed, in order: %s.%s"
                       % (" -> ".join(repr(t) for t in trail), verdict))
     return (" What the page actually DISPLAYED when it stopped: %r.%s Compare "
