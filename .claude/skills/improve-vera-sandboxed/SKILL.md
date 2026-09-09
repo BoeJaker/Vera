@@ -123,6 +123,27 @@ When registering the stdio bridge, pass `--caller-kind claude`. Codex uses
 `--caller-kind codex`; never reuse another agent's identity merely to obtain an
 attribution badge.
 
+**⚠ Non-ASCII through the bridge (root-caused 2026-09-09).** Everything an
+`mcp__vera__*` tool sends — `evolve.sandbox.exec` commands, `fs.write` bodies,
+board text — passes through `vera/ide/vera_mcp_bridge.py` on the Windows host.
+Windows Python decodes a PIPED stdin with cp1252 unless told otherwise, so every
+non-ASCII character arrived as its mojibake: a `•` became three code points, and
+files written that way landed on disk double-encoded while `file` still said
+"UTF-8 text". Symptoms: a heredoc with a bullet or dash dies with
+`SyntaxError: Non-UTF-8 code starting with '\x9d'`; a regex containing `•`
+never matches a bullet; docstrings read as `â€”`. The bridge now forces UTF-8
+on its own streams (`_force_utf8_stdio`, test `test_mcp_bridge_utf8`) and the
+local `.mcp.json` sets `PYTHONUTF8=1` — but a running bridge is the copy from
+`main` at the time the editor started it, so until that copy carries the fix:
+- **Probe first:** `evolve.sandbox.exec(cmd="printf '%s' 'é' | od -An -tx1")`
+  must print `c3 a9`. If it prints `c3 83 c2 a9`, the bridge is mangling.
+- **Keep MCP-tool payloads ASCII** while it is: spell characters as
+  `chr(0x2022)` / `"•"` in Python, `$'\xe2\x80\xa2'` in shell.
+- **Write files over SMB with the Write tool**, which does not use the bridge.
+- **Repair a double-encoded file** on the host: decode UTF-8, re-encode each
+  character cp1252 (latin-1 for the five bytes cp1252 leaves undefined), decode
+  UTF-8 — then grep for `chr(0xE2)+chr(0x20AC)` to prove none remain.
+
 **If a POST from Windows (PowerShell `Invoke-RestMethod`) fails with `EOF`/`SSL`
 errors while `GET` works fine**, don't assume the cap is broken — it's sometimes
 a client-side TLS quirk specific to POST from that host at that moment. Retry
