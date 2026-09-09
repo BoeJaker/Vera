@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from vera.census.census_core import (          # noqa: E402
     CURRENT, FIXED_PREFIX, FOUND_PREFIX, board_links_by_run, compare_runs,
     goal_evidence, history, live_progress, provenance_line, run_id_from_filename,
-    run_outputs, run_provenance, run_sort_key, summarise_run,
+    run_outputs, run_provenance, run_sort_key, run_template, summarise_run,
 )
 
 
@@ -489,3 +489,50 @@ def test_the_summary_carries_provenance_so_the_list_need_not_reread_rows():
 def test_provenance_survives_rubbish_rows():
     for junk in (None, [], [None], [{"provenance": "not a dict"}], [{"provenance": []}]):
         assert run_provenance(junk)["attributed"] is False
+
+
+# â”€â”€ which template a run belongs to â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Every row the harness writes carries `template` and nothing surfaced it, so
+# the panel had thirteen templates to choose from and no way to say which one a
+# RUN came from. Comparing across templates is the one thing the census must
+# never do silently.
+def test_a_runs_template_is_read_off_its_rows():
+    recs = [{"template": "exec-family"}, {"template": "exec-family"}]
+    assert run_template(recs) == "exec-family"
+
+
+def test_a_run_from_before_the_field_existed_is_unlabelled_not_guessed():
+    """They are all default-template runs in practice, but saying so here would
+    be a guess dressed as data."""
+    assert run_template([{"status": "done"}, {"status": "done"}]) == ""
+    assert run_template([]) == ""
+    assert run_template(None) == ""
+
+
+def test_rows_that_disagree_are_reported_as_mixed_not_averaged():
+    """A file holding two templates is not a run of either."""
+    got = run_template([{"template": "exec-family"}, {"template": "code-family"}])
+    assert got == "mixed:code-family+exec-family"
+
+
+def test_a_partly_labelled_run_takes_the_label_it_has():
+    assert run_template([{"template": "exec-family"}, {"status": "done"}]) \
+        == "exec-family"
+
+
+def test_blank_templates_do_not_count_as_a_label():
+    assert run_template([{"template": ""}, {"template": "   "}]) == ""
+
+
+def test_rubbish_rows_do_not_raise():
+    for junk in ([None], ["nope"], [{"template": None}], [{}]):
+        assert run_template(junk) == "", junk
+
+
+def test_the_summary_carries_the_template_so_the_panel_can_filter():
+    s = summarise_run("run50", [{"status": "done", "template": "exec-family"}])
+    assert s["template"] == "exec-family"
+
+
+def test_an_unlabelled_run_still_summarises():
+    assert summarise_run("run1", [{"status": "done"}])["template"] == ""
