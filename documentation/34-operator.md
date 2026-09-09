@@ -377,6 +377,16 @@ settling remain diagnostic observations rather than false blockers.
 - The replaceable card index is documentation/GALLERY.md.
 - Selective runs merge manifest entries rather than dropping unrelated captures.
 
+### Connection inventory states
+
+Operator Studio treats its registered connection list as an independent read
+model. The selector stays disabled while the inventory is loading or unavailable.
+A request or response-shape failure is shown as an accessible, retryable error;
+an authoritative empty list is shown separately as “no registered connections”.
+Only a valid non-empty inventory enables selection. This prevents an integration
+outage from looking like a legitimately empty configuration and does not change
+session policy or connection authority.
+
 ### Screenshot troubleshooting
 
 | Symptom | Check |
