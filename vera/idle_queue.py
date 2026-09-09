@@ -54,6 +54,11 @@ WAITING, RUNNING, DONE, FAILED, PREEMPTED = (
 #: obvious rather than silently lumped in with the rest.
 KIND_EMBED_SESSIONS = "embed.sessions"
 KIND_EMBED_SOURCES = "embed.sources"
+#: Fabric vector backfill. Its OWN kind rather than reusing embed.sources,
+#: which the agent knowledge sweep already owns: register_handler is a plain
+#: dict assignment, so a second producer claiming the same kind would silently
+#: replace the first and its jobs would run the wrong work.
+KIND_EMBED_FABRIC = "embed.fabric"
 KIND_DREAM = "dream"
 KIND_NARRATOR = "narrator"
 
@@ -63,6 +68,11 @@ KIND_PRIORITY = {
     KIND_NARRATOR: 10,
     KIND_DREAM: 20,
     KIND_EMBED_SOURCES: 80,
+    # Between the agent sweep and the transcript backfill: a fabric backfill is
+    # usually larger than the former and smaller than the latter, and the queue
+    # runs one at a time, so ordering by expected length is what stops a long
+    # job holding up a short one that would have finished in the same window.
+    KIND_EMBED_FABRIC: 85,
     KIND_EMBED_SESSIONS: 90,
 }
 DEFAULT_PRIORITY = 50
@@ -79,7 +89,8 @@ DEFAULT_PRIORITY = 50
 #: runs on the CPU nodes, starts no loop, takes no GPU gate slot, and yields
 #: between records. Nothing it does can be mistaken for foreign activity, so it
 #: can be stopped the instant Vera is used again.
-PREEMPTIBLE_KINDS = (KIND_EMBED_SESSIONS, KIND_EMBED_SOURCES)
+PREEMPTIBLE_KINDS = (KIND_EMBED_SESSIONS, KIND_EMBED_SOURCES,
+                     KIND_EMBED_FABRIC)
 
 
 def is_preemptible(kind: Any) -> bool:
@@ -109,6 +120,57 @@ def make_job(job_id: str, kind: str, title: str = "", payload: Any = None,
     }
 
 
+def _whole(v: Any) -> Optional[int]:
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return None
+    return n if n >= 0 else None
+
+
+def remaining(job: Optional[Dict[str, Any]]) -> Optional[int]:
+    """How many items of this job are left, or None if nobody said.
+
+    `make_job` has always put `progress: {done, total}` on EVERY job and
+    nothing ever read it, so no producer had a reason to fill it in and no
+    estimate could be made for any kind. Reading it here is what makes the
+    gap close once for every producer, present and future, rather than one
+    subsystem at a time.
+
+    None, never 0, when the total is unset: "we do not know how much is left"
+    and "there is nothing left" are opposite facts, and an estimator handed 0
+    would confidently report no work to do.
+    """
+    j = job or {}
+    explicit = _whole(j.get("items_remaining"))
+    if explicit is not None:
+        return explicit                     # a producer that knows better wins
+    p = j.get("progress")
+    if not isinstance(p, dict):
+        return None                         # came out of Redis; trust nothing
+    total = _whole(p.get("total"))
+    if not total:
+        return None
+    done = _whole(p.get("done")) or 0
+    return max(0, total - done)
+
+
+def with_progress(job: Optional[Dict[str, Any]], done: Any = None,
+                  total: Any = None) -> Dict[str, Any]:
+    """A copy of the job with its progress updated. Absent means unchanged."""
+    j = dict(job or {})
+    _p = j.get("progress")
+    p = dict(_p) if isinstance(_p, dict) else {}
+    d, t = _whole(done), _whole(total)
+    if d is not None:
+        p["done"] = d
+    if t is not None:
+        p["total"] = t
+    j["progress"] = {"done": _whole(p.get("done")) or 0,
+                     "total": _whole(p.get("total")) or 0}
+    return j
+
+
 def pending(jobs: Optional[Iterable[Dict[str, Any]]]) -> List[Dict[str, Any]]:
     """Everything still waiting, in the order it will run."""
     out = [j for j in (jobs or [])
@@ -123,6 +185,48 @@ def running(jobs: Optional[Iterable[Dict[str, Any]]]) -> Optional[Dict[str, Any]
         if isinstance(j, dict) and j.get("state") == RUNNING:
             return j
     return None
+
+
+def stranded(jobs: Optional[Iterable[Dict[str, Any]]],
+             live_ids: Optional[Iterable[str]] = None) -> List[Dict[str, Any]]:
+    """Jobs the store believes are RUNNING that nothing is actually running.
+
+    The store is durable and the task is not. A restart - or a cancellation
+    that never reached the re-queue - leaves a job marked `running` with no
+    task behind it, and because `next_job` refuses to start anything while a
+    job is running, ONE stranded record stops the whole queue forever.
+
+    Observed on prod 2026-09-09: `embed.sessions` stranded in `running`,
+    `runs: 0`, and `embed.sources` waiting 17.6 hours behind it having never
+    once been offered the box.
+
+    `live_ids` is what the caller can actually vouch for - the ids it holds a
+    live task for. Anything else claiming to run is stranded.
+    """
+    live = {str(i) for i in (live_ids or [])}
+    return [j for j in (jobs or [])
+            if isinstance(j, dict) and j.get("state") == RUNNING
+            and str(j.get("id")) not in live]
+
+
+def requeue_stranded(job: Optional[Dict[str, Any]], now: Any = 0) -> Dict[str, Any]:
+    """A stranded job, back on the queue.
+
+    Counted as an ATTEMPT, not a pre-emption: nothing pre-empted it, its
+    runner disappeared. Keeping those apart matters because a rising preempt
+    count means the box is busy, while a rising strand count means something
+    is killing runners - two different problems that would otherwise look
+    identical in the panel.
+    """
+    j = dict(job or {})
+    j["state"] = WAITING
+    j["started_at"] = None
+    j["stranded"] = int(j.get("stranded", 0)) + 1
+    j["note"] = ("requeued: marked running with no live runner (a restart, or "
+                 "a cancellation that never completed)")
+    if now:
+        j["updated_at"] = now
+    return j
 
 
 def next_job(jobs: Optional[Iterable[Dict[str, Any]]],
@@ -204,6 +308,15 @@ def summary(jobs: Optional[Iterable[Dict[str, Any]]],
             "waiting_for_s": int(waited),
             "preempts": int(j.get("preempts", 0)),
             "attempts": int(j.get("attempts", 0)),
+            # Kept apart from preempts on purpose: a rising preempt count means
+            # the box is busy, a rising strand count means runners are dying.
+            # Summed together they would look like the same problem.
+            "stranded": int(j.get("stranded", 0)),
+            # done/total as the producer reported it, plus what is left. The
+            # panel needs all three: a job 900 of 1000 through is a different
+            # thing to schedule from one that has not started.
+            "progress": dict(j.get("progress") or {"done": 0, "total": 0}),
+            "remaining": remaining(j),
             "last_note": j.get("last_note", ""),
         }
 

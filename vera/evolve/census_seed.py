@@ -78,16 +78,39 @@ def check_is_assertable(check: Dict[str, Any]) -> bool:
     return any(k in (check or {}) for k in ASSERTABLE)
 
 
+def profile_for(goal: Dict[str, Any], template_profile: Any = "") -> str:
+    """Which loop profile runs this goal. Goal, then template, then planning.
+
+    Same precedence shape as a wall cap, and the same reason: the most specific
+    declaration wins. A SPECIALIST census is the case that needs it - one goal
+    per specialist, each run by the profile that specialist actually uses, which
+    a single template-wide profile cannot express.
+
+    PARITY WARNING, and it is the whole reason this defaulted to a constant:
+    `planning` is the only profile whose engine is v7, and every historical
+    census number came from a bare v7 call. A template that sets anything else
+    is measuring a DIFFERENT ENGINE and its numbers are not points on the
+    default series' timeline. comparable() says so; this function does not stop
+    you, because measuring the specialists is a legitimate thing to want.
+    """
+    for v in ((goal or {}).get("profile") if isinstance(goal, dict) else None,
+              template_profile, CENSUS_PROFILE):
+        name = str(v or "").strip()
+        if name:
+            return name
+    return CENSUS_PROFILE
+
+
 def goal_to_task(goal: Dict[str, Any], template_name: str,
                  wall_cap_s: int = DEFAULT_WALL_CAP_S,
-                 model: str = "") -> Dict[str, Any]:
+                 model: str = "", profile: str = "") -> Dict[str, Any]:
     """One census goal as one suite task record."""
     gid = str(goal.get("id") or "")
     task: Dict[str, Any] = {
         "id": task_id_for(template_name, gid),
         "label": "Census — %s" % (goal.get("label") or gid),
         "type": "loop",
-        "profile": CENSUS_PROFILE,
+        "profile": profile_for(goal, profile),
         "goal": str(goal.get("goal") or ""),
         # Empty on purpose: the harness restricts nothing, and a restriction
         # here would be an extra variable in a comparison that exists to have
@@ -117,7 +140,8 @@ def template_to_tasks(template: Dict[str, Any]) -> List[Dict[str, Any]]:
     name = str((template or {}).get("name") or "")
     cap = int((template or {}).get("wall_cap_s") or DEFAULT_WALL_CAP_S)
     model = str((template or {}).get("model") or "")
-    return [goal_to_task(g, name, cap, model)
+    prof = str((template or {}).get("profile") or "")
+    return [goal_to_task(g, name, cap, model, prof)
             for g in ((template or {}).get("goals") or [])]
 
 
@@ -190,6 +214,17 @@ def comparable(a: Optional[Dict[str, Any]], b: Optional[Dict[str, Any]]) -> List
         out.append("goals added: %s" % ", ".join(added))
     if gone:
         out.append("goals removed: %s" % ", ".join(gone))
+    # A different profile is a different ENGINE (planning is the only v7), so
+    # the runs are not points on one timeline however similar the goals look.
+    for gid in sorted(x for x in (set(ga) & set(gb)) if x):
+        ja = next(g for g in a["goals"] if str(g.get("id") or "") == gid)
+        jb = next(g for g in b["goals"] if str(g.get("id") or "") == gid)
+        pa = profile_for(ja, str(a.get("profile") or ""))
+        pb = profile_for(jb, str(b.get("profile") or ""))
+        if pa != pb:
+            out.append("%s runs under a different loop profile (%s vs %s) - a "
+                       "different engine, so these are not the same experiment"
+                       % (gid, pa, pb))
     if str(a.get("model") or "") != str(b.get("model") or ""):
         out.append("different model (%s vs %s)"
                    % (a.get("model") or "routing default",

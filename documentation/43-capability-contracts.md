@@ -148,6 +148,23 @@ Secret-bearing inputs should use `format: secret-ref` or
 `x-vera-secret-ref: true` in their schema. The reference is opaque; later policy
 work resolves it only inside the authorized execution boundary.
 
+## Operator capability family
+
+Operator's browser, documentation-capture, tour, trace, cancellation, and test
+capabilities carry complete v2 declarations. Their canonical tasks separate
+page observation, proposed actions, performed actions, browser runs, capture
+artifacts, documentation writes, and test-process execution. Contracts declare
+potential network, filesystem, model, and external-side-effect risk rather than
+assuming that an HTTP `POST` is harmless.
+
+The declarations are an interoperable description and policy input, not a new
+browser authority. Operator's session allowlist, dry-run mode, destructive-action
+confirmation, target resolution, per-action safety evaluation, and Redis-backed
+cooperative cancellation remain authoritative. Its shared Run projection remains
+metadata-only: capability contracts must not cause goals, page content, model
+thoughts, action arguments, credentials, or result bodies to enter general
+activity and resolver views.
+
 ## Resolver shadow mode
 
 `cap.resolve.shadow` is the first consumer of v2 manifests. It accepts a

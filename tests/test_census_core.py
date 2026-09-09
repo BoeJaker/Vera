@@ -20,8 +20,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from vera.census.census_core import (          # noqa: E402
     CURRENT, FIXED_PREFIX, FOUND_PREFIX, board_links_by_run, compare_runs,
-    goal_evidence, history, live_progress, run_id_from_filename, run_outputs,
-    run_sort_key, summarise_run,
+    goal_evidence, history, live_progress, provenance_line, run_id_from_filename,
+    run_outputs, run_provenance, run_sort_key, run_template, summarise_run,
 )
 
 
@@ -398,3 +398,141 @@ def test_malformed_items_and_labels_do_not_explode():
     assert board_links_by_run([None, {}, {"labels": None},
                                {"labels": [FOUND_PREFIX]}]) == {}
     assert board_links_by_run([]) == {}
+
+
+# â”€â”€ who operated the run â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# A run in the archive was an orphan the moment its chat log scrolled away. The
+# risk in fixing that is not that the field is missing; it is that a run gets
+# credited to somebody who did not drive it.
+def _row(op="claude", skill="improve-vera-sandboxed", tool="/loop",
+         session="22e34f10", helpers=None, **extra):
+    return dict({"status": "done",
+                 "provenance": {"operator": op, "skill": skill, "tool": tool,
+                                "caller_session": session,
+                                "helpers": helpers or []}}, **extra)
+
+
+def test_a_run_with_no_provenance_reads_as_unattributed_not_as_someone():
+    """exec-family run 1 has provenance on no row at all - the field was added
+    while it was running. That must read as unattributed, not be credited to
+    whoever edited the harness last."""
+    p = run_provenance([{"status": "done"}, {"status": "wall-cap"}])
+    assert p["attributed"] is False
+    assert p["operator"] == ""
+    assert provenance_line(p) == "unattributed"
+
+
+def test_the_operator_is_read_off_the_rows():
+    p = run_provenance([_row(), _row()])
+    assert p["attributed"] is True
+    assert (p["operator"], p["skill"], p["tool"]) == \
+           ("claude", "improve-vera-sandboxed", "/loop")
+    assert p["session"] == "22e34f10"
+
+
+def test_the_harness_spelling_of_session_is_translated_once():
+    """The harness writes caller_session; everything here says session. If that
+    difference leaks, the panel shows a blank session for every real run."""
+    assert run_provenance([_row()])["session"] == "22e34f10"
+
+
+def test_disagreeing_rows_are_reported_not_silently_resolved():
+    """A run half-driven by somebody else is not a run driven by whoever
+    happened to start it."""
+    p = run_provenance([_row(op="claude"), _row(op="codex")])
+    assert "operator" in p["mixed"]
+    assert p["operator"] == "claude / codex"
+    assert "mixed operator" in provenance_line(p)
+
+
+def test_agreeing_rows_are_not_reported_as_mixed():
+    assert run_provenance([_row(), _row(), _row()])["mixed"] == []
+
+
+def test_helpers_are_a_union_across_rows_deduped_by_name():
+    """A script written halfway through a run is still part of what drove it."""
+    a = _row(helpers=[{"name": "a.py", "purpose": "counts rows"}])
+    b = _row(helpers=[{"name": "a.py", "purpose": "counts rows"},
+                      {"name": "b.py", "purpose": "restarts prod"}])
+    assert [h["name"] for h in run_provenance([a, b])["helpers"]] == ["a.py", "b.py"]
+
+
+def test_partial_attribution_still_counts_as_attributed():
+    """An operator with no skill recorded is still a named operator."""
+    p = run_provenance([_row(skill="", tool="")])
+    assert p["attributed"] is True
+    assert provenance_line(p) == "claude"
+
+
+def test_a_provenance_block_of_only_blanks_is_not_attribution():
+    p = run_provenance([_row(op="", skill="", tool="", session="")])
+    assert p["attributed"] is False
+
+
+def test_the_line_counts_helpers_rather_than_listing_them():
+    p = run_provenance([_row(helpers=[{"name": "a.py"}, {"name": "b.py"}])])
+    assert "2 helpers" in provenance_line(p)
+    assert "1 helper" in provenance_line(
+        run_provenance([_row(helpers=[{"name": "a.py"}])]))
+
+
+def test_rows_counted_so_a_partly_stamped_run_is_visible():
+    p = run_provenance([_row(), {"status": "done"}])
+    assert (p["rows_with"], p["rows_total"]) == (1, 2)
+
+
+def test_the_summary_carries_provenance_so_the_list_need_not_reread_rows():
+    s = summarise_run("run50", [_row(), _row()])
+    assert s["provenance"]["operator"] == "claude"
+
+
+def test_provenance_survives_rubbish_rows():
+    for junk in (None, [], [None], [{"provenance": "not a dict"}], [{"provenance": []}]):
+        assert run_provenance(junk)["attributed"] is False
+
+
+# â”€â”€ which template a run belongs to â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Every row the harness writes carries `template` and nothing surfaced it, so
+# the panel had thirteen templates to choose from and no way to say which one a
+# RUN came from. Comparing across templates is the one thing the census must
+# never do silently.
+def test_a_runs_template_is_read_off_its_rows():
+    recs = [{"template": "exec-family"}, {"template": "exec-family"}]
+    assert run_template(recs) == "exec-family"
+
+
+def test_a_run_from_before_the_field_existed_is_unlabelled_not_guessed():
+    """They are all default-template runs in practice, but saying so here would
+    be a guess dressed as data."""
+    assert run_template([{"status": "done"}, {"status": "done"}]) == ""
+    assert run_template([]) == ""
+    assert run_template(None) == ""
+
+
+def test_rows_that_disagree_are_reported_as_mixed_not_averaged():
+    """A file holding two templates is not a run of either."""
+    got = run_template([{"template": "exec-family"}, {"template": "code-family"}])
+    assert got == "mixed:code-family+exec-family"
+
+
+def test_a_partly_labelled_run_takes_the_label_it_has():
+    assert run_template([{"template": "exec-family"}, {"status": "done"}]) \
+        == "exec-family"
+
+
+def test_blank_templates_do_not_count_as_a_label():
+    assert run_template([{"template": ""}, {"template": "   "}]) == ""
+
+
+def test_rubbish_rows_do_not_raise():
+    for junk in ([None], ["nope"], [{"template": None}], [{}]):
+        assert run_template(junk) == "", junk
+
+
+def test_the_summary_carries_the_template_so_the_panel_can_filter():
+    s = summarise_run("run50", [{"status": "done", "template": "exec-family"}])
+    assert s["template"] == "exec-family"
+
+
+def test_an_unlabelled_run_still_summarises():
+    assert summarise_run("run1", [{"status": "done"}])["template"] == ""

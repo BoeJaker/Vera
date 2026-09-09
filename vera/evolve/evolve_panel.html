@@ -2673,7 +2673,30 @@ async function loadCensus(){
 // distance under contention or with a full disk — and every one of them reads
 // as an ordinary data point in a table. The toggle brings them back for the
 // times you are asking what went wrong rather than how things are trending.
+// Who drove a run. "unattributed" is a real answer and is shown as one - a
+// blank cell reads as a UI fault rather than as a fact about the run.
+function _cenProv(p){
+  if(!p||!p.attributed) return '<span class="hint" title="no operator was recorded on any row of this run">unattributed</span>';
+  var bits=[];
+  if(p.skill) bits.push('skill '+p.skill);
+  if(p.tool)  bits.push('tool '+p.tool);
+  if(p.session) bits.push('session '+p.session);
+  (p.helpers||[]).forEach(function(h){
+    bits.push('helper '+(h.name||'?')+(h.purpose?(' - '+h.purpose):''));
+  });
+  if(p.rows_with!=null&&p.rows_total&&p.rows_with<p.rows_total)
+    bits.push('stamped on '+p.rows_with+' of '+p.rows_total+' rows');
+  var tag=(p.mixed&&p.mixed.length)?(' <span class="tag" title="rows disagree on '+esc(p.mixed.join(', '))+' - this run was not driven by one operator throughout">mixed</span>'):'';
+  var hn=(p.helpers||[]).length;
+  return '<span title="'+esc(bits.join('\n'))+'">'+esc(p.operator||'unknown')
+    +(hn?(' <span class="hint">+'+hn+'h</span>'):'')+'</span>'+tag;
+}
 var _cenShowPartial=false;
+// Which template's runs are on screen. "" is every template - the only honest
+// default for an archive that predates the field - but runs of different
+// templates are NOT comparable points, which is why the filter exists.
+var _cenTemplate='';
+function setCensusTemplate(v){ _cenTemplate=String(v||''); loadCensusRuns(); }
 function toggleCensusPartial(on){ _cenShowPartial=!!on; loadCensusRuns(); }
 
 async function loadCensusRuns(){
@@ -2683,20 +2706,43 @@ async function loadCensusRuns(){
   const hidden=(r&&r.excluded_count)||0;
   // Say what is not on screen, always. A filtered list that does not admit it
   // is filtered is indistinguishable from an archive that lost runs.
-  const bar='<label class="hint" style="display:block;margin:0 0 6px">'
-    +'<input type="checkbox" onchange="toggleCensusPartial(this.checked)"'+(_cenShowPartial?' checked':'')+'> '
-    +'show partial / failed runs'
-    +(hidden&&!_cenShowPartial?(' <span class="tag" title="fewer goals than a full pass, or a filename marking the run partial/failed/stalled/aborted/interrupted/invalid/wedged">'+hidden+' hidden</span>'):'')
-    +'</label>';
-  if(!runs.length){el.innerHTML=bar+'<div class="empty">No census runs'+(hidden?' to show — '+hidden+' excluded as partial or failed':' found')+(r&&r.dir?(' in <code>'+esc(r.dir)+'</code>'):'')+'.</div>';return}
-  el.innerHTML=bar+'<table><tr><th>run</th><th>goals</th><th>done</th><th title="mean of each goal&#39;s declared quality checks - what was BUILT, not whether the run stopped">quality</th><th title="checks passed / declared">checks</th><th>wall-cap</th><th>gate ins.</th><th>unacc.</th><th>warns</th><th>total</th><th>counters</th></tr>'
-    +runs.slice().reverse().map(s=>'<tr class="clk" onclick="openCensusRun(\''+esc(s.run_id)+'\')">'
-      +'<td class="mono">'+esc(s.run_id)+(s.excluded?' <span class="tag" title="'+esc(s.exclude_reason||'not usable history')+' — excluded from the trend">'+(s.partial?'partial':'not usable')+'</span>':'')+'</td><td>'+s.goals+'</td>'
+  // Templates present IN THE ARCHIVE, taken from the runs rather than the
+  // template store: a template can be deleted and its runs remain.
+  const tmpls=[...new Set(runs.map(x=>x.template||'').filter(Boolean))].sort();
+  const shown=runs.filter(x=>!_cenTemplate
+      || (_cenTemplate===' unlabelled' ? !x.template : (x.template||'')===_cenTemplate));
+  const bar='<div class="hint" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 6px">'
+    +'<label style="display:flex;gap:4px;align-items:center">template '
+    +'<select onchange="setCensusTemplate(this.value)" style="width:auto">'
+    +'<option value="">all ('+runs.length+')</option>'
+    +tmpls.map(t=>'<option value="'+esc(t)+'"'+(_cenTemplate===t?' selected':'')+'>'
+        +esc(t)+' ('+runs.filter(x=>(x.template||'')===t).length+')</option>').join('')
+    +(runs.some(x=>!x.template)
+        ?('<option value=" unlabelled"'+(_cenTemplate===' unlabelled'?' selected':'')
+          +'>unlabelled ('+runs.filter(x=>!x.template).length+')</option>'):'')
+    +'</select></label>'
+    +'<label style="display:flex;gap:4px;align-items:center" title="Runs excluded as partial, failed, stalled, aborted, interrupted, invalid or wedged - or simply shorter than a full pass.">'
+    +'<input type="checkbox" id="cen-partial" onchange="toggleCensusPartial(this.checked)"'+(_cenShowPartial?' checked':'')+'> '
+    +'show partial / failed</label>'
+    // Say the numbers out loud. A toggle whose effect you cannot see reads as a
+    // broken toggle, and this one turns 27 rows into 51 scattered down a long
+    // reverse-ordered table where the newly-shown ones are the OLD runs.
+    +'<span class="mono" style="opacity:.75">showing '+shown.length+' of '+(r.count||runs.length)+'</span>'
+    +(hidden&&!_cenShowPartial?('<span class="tag">'+hidden+' hidden</span>'):'')
+    +'</div>';
+  if(!shown.length){el.innerHTML=bar+'<div class="empty">No census runs'
+    +(_cenTemplate?(' for template '+esc(_cenTemplate.trim()||'unlabelled')):'')+(hidden?' to show — '+hidden+' excluded as partial or failed':' found')+(r&&r.dir?(' in <code>'+esc(r.dir)+'</code>'):'')+'.</div>';return}
+  el.innerHTML=bar+'<table><tr><th>run</th><th title="the question set this run answers - runs of different templates are not comparable and never share a chart">template</th><th>goals</th><th>done</th><th title="mean of each goal&#39;s declared quality checks - what was BUILT, not whether the run stopped">quality</th><th title="checks passed / declared">checks</th><th>wall-cap</th><th>gate ins.</th><th>unacc.</th><th>warns</th><th>total</th><th>counters</th><th title="the operator that drove this run, the skill and tool they used, and any helper scripts they wrote - hover for the detail">operated by</th></tr>'
+    +shown.slice().reverse().map(s=>'<tr class="clk" onclick="openCensusRun(\''+esc(s.run_id)+'\')">'
+      +'<td class="mono">'+esc(s.run_id)+(s.excluded?' <span class="tag" title="'+esc(s.exclude_reason||'not usable history')+' — excluded from the trend">'+(s.partial?'partial':'not usable')+'</span>':'')+'</td>'
+      +'<td class="mono hint">'+esc(s.template||'unlabelled')+'</td>'
+      +'<td>'+s.goals+'</td>'
       +'<td style="color:#3cb371">'+s.done+'</td>'+'<td>'+_cenQ(s.quality_mean,s.quality_scored,s.goals)+'</td>'+'<td class="mono hint">'+((s.checks_total||0)?((s.checks_passed||0)+'/'+s.checks_total):'—')+'</td>'+'<td style="color:#c9a35a">'+s.wall_capped+'</td>'
       +'<td>'+(s.gate_inserted_total||0)+'</td>'
       +'<td'+(s.unaccounted_total?' style="color:#c96b6b;font-weight:600"':'')+'>'+(s.unaccounted_total||0)+'</td>'
       +'<td>'+(s.warnings_total||0)+'</td><td class="mono">'+_cenSec(s.wall_total_s)+'</td>'
       +'<td>'+(s.counters_reconcile?'<span style="color:#3cb371">reconcile</span>':'<span style="color:#c96b6b" title="this run\'s step accounting does not add up — numbers from it may be measuring the instrument">suspect</span>')+'</td>'
+      +'<td class="hint">'+_cenProv(s.provenance)+'</td>'
       +'</tr>').join('')+'</table>';
   // Only ever a trend over COMPLETE runs — a partial run's done-count against a
   // full one is a confident wrong answer (it once read "delta -1" while the run

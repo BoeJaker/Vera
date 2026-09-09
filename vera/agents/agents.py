@@ -1305,35 +1305,60 @@ async def _agent_rag_refresh_job(job=None, should_continue=None):
     except Exception:
         return {"ok": False}
     now_ts = time.time()
+
+    def _is_stale(rec) -> bool:
+        """Exactly the skip conditions this loop used to apply inline, hoisted
+        so the pass can be COUNTED before it starts. Same predicate - moving it
+        must not change which agents get re-indexed, only when we learn how
+        many there are."""
+        try:
+            if rec.archived or not rec.knowledge_sources:
+                return False
+            hrs = float(rec.rag_refresh_hours or 0)
+            if hrs <= 0:
+                return False
+            last = 0.0
+            if rec.rag_last_indexed:
+                try:
+                    from datetime import datetime as _dt
+                    last = _dt.fromisoformat(
+                        rec.rag_last_indexed.replace("Z", "+00:00")).timestamp()
+                except Exception:
+                    last = 0.0
+            return (now_ts - last) >= hrs * 3600
+        except Exception:
+            return False
+
+    # The real size of this pass. Declared to the queue so it can be estimated
+    # like any other job rather than sitting at "no est." forever - the unit is
+    # AGENTS, the same thing the rate below is learned per.
+    stale = [rec for rec in agents if _is_stale(rec)]
+    if job is not None and _idle_svc is not None:
+        try:
+            await _idle_svc.report_progress(job["id"], done=0, total=len(stale))
+        except Exception as e:                             # pragma: no cover
+            log.debug("agent rag: progress report failed: %s", e)
     done = 0
-    for rec in agents:
+    for rec in stale:
         if should_continue is not None:
             why = await should_continue()
             if why:
                 # Stop here. Agents already refreshed keep their new stamp, so
                 # the next pass picks up exactly where this one left off.
-                return {"ok": True, "indexed": done, "yielded": why}
+                return {"ok": True, "indexed": done, "items": done, "yielded": why}
         try:
-            if rec.archived or not rec.knowledge_sources:
-                continue
-            hrs = float(rec.rag_refresh_hours or 0)
-            if hrs <= 0:
-                continue
-            last = 0.0
-            if rec.rag_last_indexed:
-                try:
-                    from datetime import datetime as _dt
-                    last = _dt.fromisoformat(rec.rag_last_indexed.replace("Z", "+00:00")).timestamp()
-                except Exception:
-                    last = 0.0
-            if (now_ts - last) < hrs * 3600:
-                continue
             log.info("agent rag: refreshing stale knowledge for '%s'", rec.name)
             await agent_rag_index(rec)
             done += 1
+            if job is not None and _idle_svc is not None:
+                try:
+                    await _idle_svc.report_progress(job["id"], done=done,
+                                                    total=len(stale))
+                except Exception as e:                     # pragma: no cover
+                    log.debug("agent rag: progress report failed: %s", e)
         except Exception as e:
             log.debug("agent rag refresh (%s): %s", getattr(rec, "name", "?"), e)
-    return {"ok": True, "indexed": done}
+    return {"ok": True, "indexed": done, "items": done}
 
 
 if _idle_svc is not None and _iq is not None:

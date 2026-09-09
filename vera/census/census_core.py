@@ -141,6 +141,13 @@ def summarise_run(run_id: str, records: Sequence[Dict[str, Any]]) -> Dict[str, A
         # The failure taxonomy, so a run's shape can be charted rather than
         # read one warning at a time.
         "causes": failure_causes(recs),
+        # Who drove it. Carried on the summary so the panel's run list can show
+        # it without re-reading every row.
+        "provenance": run_provenance(recs),
+        # Which question set this run answers. On the summary so the panel can
+        # FILTER by it - runs of different templates are not comparable points
+        # and must never share a chart.
+        "template": run_template(recs),
     }
 
 
@@ -582,3 +589,127 @@ def history(summaries: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
             # Named for what it actually spans. There is deliberately NO trend
             # over every run: that number could only ever mislead.
             "trend_complete": _span(complete), "trend_trusted": _span(trusted)}
+
+
+# â”€â”€ who operated the run â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# A census row has always said what ran. It could not say WHO ran it, under
+# which skill, with which tool, or what throwaway scripts were written on the
+# way - so a run in the archive was an orphan the moment its chat log scrolled
+# away. The harness stamps `provenance` onto every row it writes
+# (run_census.py::provenance); this reads it back.
+
+#: The fields a display line is built from, in the order it reads them.
+PROVENANCE_KEYS = ("operator", "skill", "tool")
+
+
+def _prov_from_record(record: Any) -> Dict[str, Any]:
+    """One row's provenance, in this module's spelling.
+
+    The harness calls the session `caller_session`; everything here calls a
+    session `session`. Translating once, here, keeps that difference from
+    leaking into the panel.
+    """
+    p = (record or {}).get("provenance") if isinstance(record, dict) else None
+    if not isinstance(p, dict):
+        return {}
+    out = {
+        "operator": str(p.get("operator") or "").strip(),
+        "session": str(p.get("caller_session") or p.get("session") or "").strip(),
+        "skill": str(p.get("skill") or "").strip(),
+        "tool": str(p.get("tool") or "").strip(),
+        "helpers": [h for h in (p.get("helpers") or []) if isinstance(h, dict)],
+    }
+    return out if any(out[k] for k in ("operator", "session", "skill", "tool")) else {}
+
+
+def run_template(records: Sequence[Dict[str, Any]]) -> str:
+    """Which template produced this run, read off its own rows.
+
+    Every row the harness writes carries `template`, and nothing surfaced it -
+    so the panel had thirteen templates to choose from and no way to say which
+    one a given RUN belonged to. Comparing across templates is the one thing
+    the census must never do silently, which makes this the field the filter
+    needs most.
+
+    "" for runs written before the field existed. Those are all default-template
+    runs in practice, but saying so here would be a guess dressed as data - the
+    panel labels them `unlabelled` and lets a human decide.
+
+    Rows that disagree return "mixed:a+b". A file holding two templates is not
+    a run of either, and averaging it would be worse than refusing.
+    """
+    seen = sorted({str((r or {}).get("template") or "").strip()
+                   for r in (records or []) if isinstance(r, dict)} - {""})
+    if not seen:
+        return ""
+    if len(seen) > 1:
+        return "mixed:" + "+".join(seen)
+    return seen[0]
+
+
+def run_provenance(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """Who operated this run, read from its own rows.
+
+    Rows CAN disagree - a run resumed by a different operator, or a harness
+    upgraded while the run was in flight. Disagreement is reported in `mixed`
+    and never resolved by taking the first row: a run half-driven by somebody
+    else is not a run driven by whoever happened to start it.
+
+    `attributed` is the one to read first. False means nobody was recorded, and
+    that is reported as unattributed rather than credited to whoever edited the
+    harness last - the same rule the harness itself applies when it writes the
+    field.
+    """
+    recs = [r for r in (records or []) if isinstance(r, dict)]
+    provs = [p for p in (_prov_from_record(r) for r in recs) if p]
+    out: Dict[str, Any] = {"operator": "", "session": "", "skill": "", "tool": "",
+                           "helpers": [], "mixed": [], "attributed": False,
+                           "rows_with": len(provs), "rows_total": len(recs)}
+    if not provs:
+        return out
+    for key in ("operator", "session", "skill", "tool"):
+        seen = sorted({p.get(key, "") for p in provs if p.get(key)})
+        if len(seen) > 1:
+            out["mixed"].append(key)
+            # Say all of them. Picking one would be the guess this whole
+            # function exists to avoid.
+            out[key] = " / ".join(seen)
+        elif seen:
+            out[key] = seen[0]
+    # Helpers are a union across rows, deduped on name: a script written
+    # halfway through a run is still part of what drove it.
+    by_name: Dict[str, Dict[str, Any]] = {}
+    for p in provs:
+        for h in p.get("helpers") or []:
+            name = str(h.get("name") or "").strip()
+            if name and name not in by_name:
+                by_name[name] = h
+    out["helpers"] = [by_name[n] for n in sorted(by_name)]
+    out["attributed"] = bool(out["operator"] or out["skill"] or out["tool"])
+    return out
+
+
+def provenance_line(prov: Any) -> str:
+    """One human line for a run's provenance, or a plain statement of absence.
+
+    'unattributed' is a real answer and reads as one. A blank string here would
+    render as an empty cell, which looks like a UI fault rather than a fact
+    about the run.
+    """
+    p = prov if isinstance(prov, dict) else {}
+    if not p.get("attributed"):
+        return "unattributed"
+    bits = [p.get("operator") or "unknown operator"]
+    if p.get("skill"):
+        bits.append("skill %s" % p["skill"])
+    if p.get("tool"):
+        bits.append("tool %s" % p["tool"])
+    helpers = p.get("helpers") or []
+    if helpers:
+        bits.append("%d helper%s" % (len(helpers), "" if len(helpers) == 1 else "s"))
+    line = " Â· ".join(bits)
+    if p.get("mixed"):
+        # Named, not hidden behind a tooltip: a run with two operators is a
+        # different object from a run with one.
+        line += " (mixed %s)" % ", ".join(p["mixed"])
+    return line

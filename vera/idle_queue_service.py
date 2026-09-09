@@ -43,11 +43,23 @@ try:                                                       # pragma: no cover
 except ImportError:                                        # pragma: no cover
     import idle_queue as _iq                               # type: ignore
 
+try:                                                       # pragma: no cover
+    from Vera.vera import idle_queue_eta as _eta
+except ImportError:                                        # pragma: no cover
+    try:
+        import idle_queue_eta as _eta                      # type: ignore
+    except ImportError:
+        _eta = None                                        # type: ignore
+
 log = logging.getLogger("vera.idle_queue_service")
 
 #: Redis hash: job id -> job JSON. Shared by every instance on the box, which
 #: is the point - one queue, not one per process.
 REDIS_KEY = "vera:idle_queue:jobs"
+#: Measured cost per kind, learned from completed runs. Beside the jobs rather
+#: than inside them: a rate is a property of the KIND, and storing it per job
+#: would throw the measurement away with the job that produced it.
+RATES_KEY = "vera:idle_queue:rates"
 
 #: How long a pre-empted handler gets to stop politely before it is cancelled.
 #: Long enough for the ingest to finish the file it is on (checkpointed), short
@@ -78,7 +90,21 @@ _RUNNING: Dict[str, Any] = _shared.RUNNING
 
 # ── handler registry ────────────────────────────────────────────────────────
 def register_handler(kind: str, fn: Callable[..., Awaitable[Any]]) -> None:
-    """Producers register once at import; the runner dispatches by kind."""
+    """Producers register once at import; the runner dispatches by kind.
+
+    A second producer claiming a kind that is already taken REPLACES the first
+    silently - this is a plain dict - and its queued jobs then run the other
+    producer's work under their own name. Nothing would look wrong until the
+    output did. Registration still wins (refusing could leave a kind with no
+    handler at all, which drops jobs), but it says so loudly.
+    """
+    prev = _HANDLERS.get(str(kind))
+    if prev is not None and prev is not fn:
+        log.warning("idle queue: handler for %r replaced (%s -> %s) - two "
+                    "producers claim this kind, and jobs of it will now run "
+                    "the SECOND one's work", kind,
+                    getattr(prev, "__name__", prev),
+                    getattr(fn, "__name__", fn))
     _HANDLERS[str(kind)] = fn
 
 
@@ -128,6 +154,31 @@ async def load_jobs() -> List[Dict[str, Any]]:
     return out
 
 
+async def load_rates() -> Dict[str, Any]:
+    """Measured cost per kind. Empty is the correct answer before anything has
+    completed - the estimator returns None on an empty rate rather than
+    inventing one."""
+    r = _redis()
+    if r is None:
+        return {}
+    try:
+        raw = await r.get(RATES_KEY)
+        return json.loads(raw) if raw else {}
+    except Exception as e:
+        log.debug("idle queue rates load: %s", e)
+        return {}
+
+
+async def save_rates(rates: Dict[str, Any]) -> None:
+    r = _redis()
+    if r is None or not rates:
+        return
+    try:
+        await r.set(RATES_KEY, json.dumps(rates))
+    except Exception as e:                                 # pragma: no cover
+        log.debug("idle queue rates save: %s", e)
+
+
 async def save_job(job: Dict[str, Any]) -> bool:
     """True only if it is actually stored.
 
@@ -161,6 +212,7 @@ async def drop_job(job_id: str) -> None:
 async def submit(kind: str, title: str = "", *, dedupe_key: str = "",
                  priority: Optional[int] = None,
                  payload: Optional[Dict[str, Any]] = None,
+                 total: Optional[int] = None,
                  jobs: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """Enqueue work, unless an equivalent job is already waiting.
 
@@ -180,6 +232,12 @@ async def submit(kind: str, title: str = "", *, dedupe_key: str = "",
     job["dedupe_key"] = key
     if priority is not None:
         job["priority"] = int(priority)
+    # How much work this is. Optional, and an absent total means "unknown"
+    # rather than "none" - the estimator then reports no estimate instead of
+    # confidently reporting no work. A producer that can count cheaply should
+    # pass it; one that cannot should not invent a number.
+    if total is not None:
+        job = _iq.with_progress(job, total=total)
     if not await save_job(job):
         return {"queued": False, "reason": "the queue store is unavailable",
                 "id": job["id"]}
@@ -187,6 +245,28 @@ async def submit(kind: str, title: str = "", *, dedupe_key: str = "",
 
 
 # ── the runner ──────────────────────────────────────────────────────────────
+async def report_progress(job_id: str, done: Optional[int] = None,
+                          total: Optional[int] = None) -> bool:
+    """A running handler says how far it has got.
+
+    This is what turns an estimate from a one-shot guess made at enqueue time
+    into something that sharpens as the job runs, and it is what lets the panel
+    show a half-finished backfill as half-finished rather than as pending.
+    Handlers already checkpoint; this asks them to write the number down.
+
+    Best-effort: a failed progress write must never take down the work it was
+    describing.
+    """
+    try:
+        for j in await load_jobs():
+            if j.get("id") == job_id:
+                await save_job(_iq.with_progress(j, done=done, total=total))
+                return True
+    except Exception as e:                                 # pragma: no cover
+        log.debug("idle queue progress %s: %s", job_id, e)
+    return False
+
+
 def _still_running() -> bool:
     t = _RUNNING.get("task")
     return bool(t) and not t.done()
@@ -265,6 +345,38 @@ async def _run_job(job: Dict[str, Any],
                 await save_job(_iq.preempt(j, note, now))
                 break
     else:
+        # Learn what it actually cost, but only from a run that FINISHED. A
+        # pre-empted or failed run's elapsed time measures the interruption,
+        # not the work, and folding it in would teach the estimator that a
+        # backfill takes however long the box happened to stay quiet.
+        if ok and _eta is not None:
+            started = job.get("started_at")
+            try:
+                elapsed = float(now) - float(started)
+            except (TypeError, ValueError):
+                elapsed = 0.0
+            # What the job actually got through. The handler's own report wins;
+            # progress.done is the fallback, and only then 1 - so a rate learned
+            # from a large backfill is per RECORD rather than per run, and stays
+            # comparable with the next job of a different size.
+            items = 1
+            if isinstance(res, dict):
+                for key in ("items", "records", "processed"):
+                    if res.get(key):
+                        items = res[key]
+                        break
+            if items == 1:
+                fresh = next((j for j in await load_jobs()
+                              if j.get("id") == job["id"]), None)
+                done = ((fresh or {}).get("progress") or {}).get("done")
+                if done:
+                    items = done
+            if elapsed > 0:
+                try:
+                    await save_rates(_eta.observe(await load_rates(), kind,
+                                                  elapsed, items))
+                except Exception as e:                     # pragma: no cover
+                    log.debug("idle queue rate observe: %s", e)
         await drop_job(job["id"])
         log.info("idle queue: %s (%s) %s%s", job["id"], kind,
                  "done" if ok else "FAILED", " - " + note if note else "")
@@ -281,6 +393,23 @@ async def drain_once(busy_reason: str,
     because the queue must not fire at all during active use.
     """
     t = float(now if now is not None else time.time())
+
+    # 0. RECONCILE FIRST. The store is durable; the asyncio task is not. A
+    #    restart, or a cancellation that never reached the re-queue, leaves a
+    #    job marked `running` with nothing running it - and next_job refuses to
+    #    start anything while ANY job is running, so one stale record stops the
+    #    queue permanently. Observed on prod 2026-09-09: embed.sessions
+    #    stranded, runs=0, embed.sources waiting 17.6h behind it.
+    #
+    #    Every tick, not just at startup: the same thing happens whenever a
+    #    runner dies, and a self-healing queue should not need a restart to
+    #    notice. This only moves records BACK to waiting - it never starts
+    #    anything, so the gate below still decides whether the box is free.
+    _live = {_RUNNING["id"]} if (_still_running() and _RUNNING.get("id")) else set()
+    for _orphan in _iq.stranded(await load_jobs(), _live):
+        await save_job(_iq.requeue_stranded(_orphan, t))
+        log.warning("idle queue: requeued %s (%s) - it was marked running with "
+                    "no live runner", _orphan.get("id"), _orphan.get("kind"))
 
     # 1. Activity wins - take the node back before considering anything new.
     #    But only for kinds that CAN be pre-empted: a dream or a narration is

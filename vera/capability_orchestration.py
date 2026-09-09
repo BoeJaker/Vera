@@ -9621,6 +9621,11 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "business/business_capabilities.py"),
         os.path.join(_here, "business/business_sim.py"),
         os.path.join(_here, "business/thermal_printer_capabilities.py"),
+        # The agent registry: what EXTERNAL agents drive Vera with (their skills,
+        # tools, loops, techniques and harnesses). Loaded here, beside the system
+        # inventory and after skills/loop_profiles/agents, for the same reason -
+        # it projects onto the live registries and must see all of them.
+        os.path.join(_here, "registry/registry_capabilities.py"),
         # W0-01: canonical, read-only system inventory. Loaded late so its live
         # snapshot sees the complete registries while remaining order-stable.
         os.path.join(_here, "inventory/system_inventory.py"),
@@ -9631,6 +9636,13 @@ async def lifespan(app: FastAPI):
         # Server Trigger consumed through the real MCP client in vera/mcp/ —
         # after the catalog, whose connect path reuses that same client.
         os.path.join(_here, "n8n/n8n_capabilities.py"),
+        # Platform configuration controller: one place to set shared
+        # facts (coordinates, timezone) and credentials, and push them
+        # into n8n / Home Assistant. After n8n so both are registered.
+        os.path.join(_here, "platforms/platform_capabilities.py"),
+        # System Comms: one ordered stream of what the system has said
+        # or flagged. After the sources it aggregates.
+        os.path.join(_here, "syscomms/syscomms_capabilities.py"),
         os.path.join(_here, "evolve/evolve_capabilities.py"),
         # Closed-loop orchestrator (M7 Phase B) — part of Loop Lab; dedicated module.
         os.path.join(_here, "evolve/orchestrator_capabilities.py"),

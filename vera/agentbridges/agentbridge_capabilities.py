@@ -105,6 +105,10 @@ async def agentbridge_interoperability(trace_id=None) -> Dict[str, Any]:
         ("document_validate", "providers.document.validate"),
         ("document_corpus", "providers.document.corpus.evaluate"),
         ("document_teardown", "providers.document.teardown.plan"),
+        # The other half of the estate: what external agents drive Vera
+        # WITH. Everything above describes how Vera reaches out; this is
+        # the only row that describes what is reaching in.
+        ("agent_registry", "registry.interop"),
     )
     return {
         "schema": "vera.agentbridge-interoperability/v1",

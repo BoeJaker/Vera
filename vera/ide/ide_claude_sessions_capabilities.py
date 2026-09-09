@@ -569,10 +569,17 @@ async def cap_claude_sessions_ingest(rel: str = "", instance_id: str = "", trace
                 "Output: {ok, files_scanned, files_updated, turns_recorded}.",
 )
 async def cap_claude_sessions_ingest_all(instance_id: str = "", trace_id=None,
-                                         should_continue=None) -> dict:
+                                         should_continue=None,
+                                         on_progress=None) -> dict:
     """`should_continue` is an async callable returning a busy REASON (or "").
     Polled between files so a long backfill yields the moment the box gets
-    busy — see vera/background_work.py rule 2."""
+    busy — see vera/background_work.py rule 2.
+
+    `on_progress(done, total)` is optional and reports in FILES-THAT-NEED-WORK,
+    the same unit the loop below iterates and checkpoints on. One unit for the
+    total, the progress and the learned rate: mixing them (a total in files
+    against a rate per turn) would give a confident estimate wrong by whatever
+    the average turns-per-file happens to be."""
     key = _source_key(instance_id)
     lock = _ingest_lock(key)
     if lock.locked():
@@ -588,6 +595,21 @@ async def cap_claude_sessions_ingest_all(instance_id: str = "", trace_id=None,
         updated = 0
         total_turns = 0
         yielded = ""
+
+        def _needs_work(entry) -> bool:
+            known = src_state.get(entry["rel"], {})
+            return not ("offset" in known and entry.get("size", 0) <= known["offset"])
+
+        # The real size of this pass, from data the scan already returned - no
+        # extra I/O. Reported once so the queue can estimate the job instead of
+        # showing it as an unknown quantity forever.
+        pending = [f for f in files if _needs_work(f)]
+        if on_progress is not None:
+            try:
+                await on_progress(0, len(pending))
+            except Exception as e:                         # pragma: no cover
+                log.debug("claude_sessions: progress report failed: %s", e)
+        processed = 0
         for f in files:
             # YIELD between files. Quiet when this pass started does not mean
             # quiet throughout: a backfill that begins in a lull and runs for an
@@ -611,6 +633,14 @@ async def cap_claude_sessions_ingest_all(instance_id: str = "", trace_id=None,
             if n:
                 updated += 1
                 total_turns += n
+            processed += 1
+            if on_progress is not None:
+                # Per file, not per record: a file takes far longer than a Redis
+                # write, so this cannot become the cost it is measuring.
+                try:
+                    await on_progress(processed, len(pending))
+                except Exception as e:                     # pragma: no cover
+                    log.debug("claude_sessions: progress report failed: %s", e)
     if updated:
         await emit_event({"type": "ide.claude_sessions.ingest_all", "source": key,
                           "files_scanned": len(files), "files_updated": updated,
@@ -977,19 +1007,84 @@ except ImportError:                                        # pragma: no cover
         _iq = None
 
 
+#: Last time the GPU gate was OBSERVED held. Module state on purpose: the
+#: cooldown is about what this process has witnessed, and a value restored from
+#: elsewhere would be quiet it never saw - the same rule background_work.observe
+#: applies to the idle clock.
+_GATE_SEEN: Dict[str, float] = {}
+
+
+async def _running_loop_count() -> int:
+    """How many agent loops are genuinely live.
+
+    Reads the same run records `/workshop/agent_loop/sessions` serves and
+    applies the SAME staleness correction, because a run orphaned by a restart
+    claims to be "running" forever - nothing is left alive to write a terminal
+    status. Counting those would block background work permanently, which is
+    the mirror image of the bug that had the queue itself deadlocked.
+
+    Best-effort: an unreadable signal counts as zero, because background work
+    that can never run is a worse failure than one that occasionally overlaps.
+    """
+    r = _orch.REDIS
+    if r is None:
+        return 0
+    try:
+        from Vera.vera.dag.dag_workshop_capabilities import _loop_run_is_stale
+    except Exception:                                      # pragma: no cover
+        try:
+            from vera.dag.dag_workshop_capabilities import _loop_run_is_stale
+        except Exception:
+            return 0
+    try:
+        ids = await r.zrevrange("vera:loop:history:index", 0, 40)
+        if not ids:
+            ids = await r.zrevrange("vera:loop:sessions", 0, 40)
+        live = 0
+        for raw in (ids or []):
+            sid = raw.decode() if isinstance(raw, (bytes, bytearray)) else str(raw)
+            rec = await r.hgetall("vera:loop:run:%s" % sid)
+            if not rec:
+                continue
+            run = {(k.decode() if isinstance(k, (bytes, bytearray)) else str(k)):
+                   (v.decode() if isinstance(v, (bytes, bytearray)) else str(v))
+                   for k, v in rec.items()}
+            if run.get("status") != "running":
+                continue
+            if await _loop_run_is_stale(r, sid, run):
+                continue
+            live += 1
+        return live
+    except Exception as e:
+        log.debug("running-loop probe: %s", e)
+        return 0
+
+
 async def _system_is_busy() -> str:
     """Why deferrable work should wait, or "". Best-effort: an unreadable
     signal reads as not-busy, because a backfill that can never run is a worse
     failure than one that occasionally overlaps."""
     if _bg is None:                                        # pragma: no cover
         return ""
-    gate, loops = {}, 0
+    gate = {}
+    now = time.time()
     try:
         cap = CAPABILITY_REGISTRY.get("ollama.gate.status")
         if cap and cap.get("func"):
             gate = await cap["func"]() or {}
     except Exception as e:
         log.debug("ingest gate probe: %s", e)
+    # Remember WHEN the gate was last seen held. The gate is a point-in-time
+    # reading and interactive work is bursty - a chat turn or a loop takes it
+    # for a generation, drops it while it parses the reply and picks a tool,
+    # then takes it again. A 60s probe lands in one of those gaps most of the
+    # time, which is why an actively-used box kept reading as idle.
+    if _bg.gate_is_held(gate):
+        _GATE_SEEN["last_held"] = now
+    # Agent loops. `loops` was hardcoded to 0 here, so defer_reason's
+    # running_loops branch could never fire and a running loop only blocked
+    # background work if the probe happened to catch it mid-generation.
+    loops = await _running_loop_count()
     try:
         cap = CAPABILITY_REGISTRY.get("census.live")
         live = (await cap["func"]()) if (cap and cap.get("func")) else {}
@@ -1006,7 +1101,13 @@ async def _system_is_busy() -> str:
                 return "a dream cycle is running"
     except Exception as e:
         log.debug("ingest dream probe: %s", e)
-    return _bg.defer_reason(gate, loops)
+    reason = _bg.defer_reason(gate, loops)
+    if reason:
+        return reason
+    # Nothing in flight this instant - but recent use still counts. This can
+    # only ADD a reason to wait; it never reports idle, so it cannot become a
+    # route by which the queue talks itself into starting during active use.
+    return _bg.gate_cooldown_reason(_GATE_SEEN.get("last_held"), now)
 
 
 #: The one queue. Bulk transcript ingest is P_BULK — it always yields to
@@ -1024,8 +1125,18 @@ async def _ingest_job(job, should_continue):
     wanted back, and the ingest checkpoints per file, so a pre-empted pass
     resumes at the same offsets rather than restarting.
     """
+    async def _progress(done, total):
+        if _svc is not None:
+            await _svc.report_progress(job["id"], done=done, total=total)
+
     res = await cap_claude_sessions_ingest_all(
-        instance_id="", should_continue=should_continue)
+        instance_id="", should_continue=should_continue, on_progress=_progress)
+    # Name the unit the rate-learner should use: files that needed work, the
+    # same thing _progress reported. It would otherwise fall back to
+    # progress.done - the same number today, but saying it explicitly stops the
+    # two drifting apart if either changes.
+    if isinstance(res, dict):
+        res = dict(res, items=res.get("files_updated") or 0)
     for inst in await _load_instances():
         iid = inst.get("id", "")
         if inst.get("kind") == "vscode-client" and _client_alive(iid):
@@ -1103,7 +1214,29 @@ async def cap_background_status(trace_id=None) -> dict:
     st = _QUEUE.status(now)
     if _iq is not None:
         blocked = _bg.quiet_gate(busy, _QUEUE.last_busy, now, _QUEUE.min_quiet_s)
-        st["queue"] = _iq.summary(await _idle_jobs(), blocked, now)
+        jobs = await _idle_jobs()
+        st["queue"] = _iq.summary(jobs, blocked, now)
+        # How long the queue will take, from rates LEARNED FROM COMPLETED RUNS.
+        # Empty until something finishes, and a job whose kind has never been
+        # measured ends the timeline rather than being given a guessed length -
+        # "2 jobs waiting" is equally consistent with ninety seconds and with
+        # six hours, and only one of those fits in the gap before a census.
+        try:
+            from Vera.vera import idle_queue_eta as _eta
+        except ImportError:                                # pragma: no cover
+            try:
+                from vera import idle_queue_eta as _eta    # type: ignore
+            except ImportError:
+                _eta = None                                # type: ignore
+        if _eta is not None and _svc is not None:
+            try:
+                rates = await _svc.load_rates()
+                rows = _eta.timeline(_iq.pending(jobs), rates)
+                st["timeline"] = rows
+                st["eta_total_s"] = _eta.total_seconds(rows)
+                st["rates"] = rates
+            except Exception as e:                         # pragma: no cover
+                log.debug("idle queue timeline: %s", e)
     return st
 
 

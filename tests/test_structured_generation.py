@@ -190,5 +190,6 @@ def test_status_capabilities_and_provider_ui_are_inspection_only():
     assert checked["valid"] is True and checked["value_returned"] is False
     panel = caps._PANEL_PATH.read_text(encoding="utf-8")
     assert "/providers/structured/status" in panel
-    assert "Structured generation · LIB04" in panel
+    assert "Structured generation" in panel
+    assert "LIB04" not in panel
     assert "inspection only" in panel

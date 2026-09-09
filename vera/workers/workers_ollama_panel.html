@@ -2476,6 +2476,9 @@ async function renderBgQueue(){
     + '<b style="color:var(--text)">'+q.depth+'</b> waiting'
     + (q.running ? ' &middot; <span style="color:var(--gpu)">running '+esc(q.running.title||q.running.kind||'')+'</span>' : '')
     + '<span style="flex:1"></span>'
+    + (r.eta_total_s!=null
+        ? ' &middot; <span title="Total, from rates measured on completed runs">~'+etaTxt(r.eta_total_s)+' of work</span>'
+        : ((r.timeline||[]).length ? ' &middot; <span style="color:var(--dim)" title="At least one queued kind has never completed, so nothing has been measured for it and a total would be a guess.">part-estimated</span>' : ''))
     + '<span title="The queue only starts work after this much CONTINUOUSLY OBSERVED quiet. A census leaves 30-60s gaps between goals, which is why a snapshot check is not enough.">idle '+quiet+'s / '+need+'s</span>'
     + '</div>'
     + '<div style="height:3px;background:var(--border);border-radius:2px;margin-top:4px;overflow:hidden">'
@@ -2483,6 +2486,13 @@ async function renderBgQueue(){
     + '</div>'
     + (blocked ? '<div style="margin-top:4px;color:var(--warn,#dec37e)">\u23f8 '+esc(blocked)+'</div>' : '');
 
+  // Estimates come from rates LEARNED FROM COMPLETED RUNS. A kind that has
+  // never finished has no rate, so it gets no bar and says so - a guessed
+  // duration would be indistinguishable from a measured one here.
+  const eta = {}; (r.timeline||[]).forEach(t=>{ eta[t.id]=t; });
+  const etaTxt = v => { if(v==null) return ''; v=Math.round(v);
+    if(v<90) return v+'s'; if(v<5400) return Math.round(v/60)+'m';
+    return (v/3600).toFixed(1)+'h'; };
   const rows = (q.waiting||[]);
   if(!rows.length && !q.running){
     body.innerHTML='<div style="font-size:9.5px;color:var(--dim)">'+esc(q.note||'nothing queued')+'</div>';
@@ -2496,12 +2506,39 @@ async function renderBgQueue(){
       + '<span style="font-size:8px;padding:1px 5px;border-radius:7px;background:var(--bg2);color:var(--dim2)">'+kind+'</span>'
       + '<span style="flex:1;font-size:9.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+title+'</span>'
       + (pre>0 ? '<span title="times this job was stopped to give the box back" style="font-size:8px;color:var(--warn,#dec37e)">\u21ba'+pre+'</span>' : '')
+      + (parseInt(j.stranded||0,10)>0 ? '<span title="times this job was found marked running with nothing running it - a restart, or a runner that died. Counted apart from pre-emptions: that means the box was busy, this means runners are dying." style="font-size:8px;color:var(--bad,#e08585)">!'+j.stranded+'</span>' : '')
+      + (eta[j.id] && eta[j.id].seconds!=null
+          ? '<span title="'+esc(eta[j.id].basis||'')+(eta[j.id].provisional?' (provisional - too few samples yet)':'')+'" style="font-size:8.5px;color:'+(eta[j.id].provisional?'var(--dim2)':'var(--acc)')+'">~'+etaTxt(eta[j.id].seconds)+'</span>'
+          : (eta[j.id] ? '<span title="no completed run of this kind yet, so nothing has been measured" style="font-size:8.5px;color:var(--dim)">no est.</span>' : ''))
+      + (function(){
+          // done/total, when the producer declared a size. A job 900 of 1000
+          // through is a different thing to schedule from one not started.
+          const pr=j.progress||{}, tot=parseInt(pr.total||0,10), dn=parseInt(pr.done||0,10);
+          if(!tot) return '';
+          const pc=Math.min(100,Math.round(dn*100/tot));
+          return '<span title="'+dn+' of '+tot+' done'+(j.remaining!=null?(' - '+j.remaining+' left'):'')+'" style="display:inline-flex;align-items:center;gap:3px">'
+            + '<span style="width:26px;height:3px;background:var(--border);border-radius:2px;overflow:hidden;display:inline-block">'
+            +   '<span style="display:block;height:100%;width:'+pc+'%;background:var(--acc)"></span>'
+            + '</span><span style="font-size:8px;color:var(--dim2)">'+pc+'%</span></span>';
+        })()
       + (isRun ? '<span style="font-size:8.5px;color:var(--gpu)">running</span>'
                : '<span style="font-size:8.5px;color:var(--dim)">'+(waited?age(Date.now()/1000-waited):'queued')+'</span>')
       + (isRun ? '' : '<button class="w-iconbtn" title="Remove from the queue" onclick="P.bgqCancel('+sq(j.id)+')">&times;</button>')
       + '</div>';
   };
-  body.innerHTML = (q.running?one(q.running,true):'') + rows.map(j=>one(j,false)).join('')
+  // The queue runs ONE job at a time, so the timeline is a running sum rather
+  // than a packing problem - and it stops where the measurements stop.
+  const tl=(r.timeline||[]).filter(t=>t.seconds!=null);
+  const tlSpan=tl.length?tl[tl.length-1].ends_in_s:0;
+  const tlBar = (tl.length && tlSpan>0)
+    ? '<div style="margin-top:6px">'
+      + '<div style="font-size:8.5px;color:var(--dim2);margin-bottom:2px">projected order &mdash; one at a time'
+      + ((r.timeline||[]).some(t=>t.seconds==null) ? ', truncated where nothing has been measured' : '')+'</div>'
+      + '<div style="display:flex;height:8px;border-radius:3px;overflow:hidden;background:var(--border)">'
+      + tl.map((t,i)=>'<div title="'+esc((t.title||t.id)+' - '+etaTxt(t.seconds)+' ('+(t.basis||'')+')')+'" style="width:'+Math.max(2,Math.round(t.seconds*100/tlSpan))+'%;background:'+(i%2?'var(--acc)':'var(--gpu,#7fb4e0)')+';opacity:'+(t.provisional?0.55:1)+'"></div>').join('')
+      + '</div></div>'
+    : '';
+  body.innerHTML = (q.running?one(q.running,true):'') + rows.map(j=>one(j,false)).join('') + tlBar
     + ((q.struggling||[]).length
         ? '<div style="margin-top:6px;font-size:9px;color:var(--warn,#dec37e)" title="Pre-empted repeatedly - it may never finish in the gaps, and the answer is to split it.">\u26a0 '
           + (q.struggling||[]).length+' job(s) keep getting pre-empted</div>'
