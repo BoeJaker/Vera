@@ -1,0 +1,41 @@
+# /etc/systemd/system/gpu-inference.service
+#
+# GPU inference server — Whisper STT, TTS (kokoro) and Stable Diffusion,
+# served on :8765. Vera reaches it via GPU_INFER_URL / the media-node router
+# (media.nodes), and every tts.* / stt.* / imagegen call resolves through it.
+#
+# Install:
+#   sudo cp gpu_inference_start.sh /home/Servers/StableDiffustionWhisper/start.sh
+#   sudo cp vera-inference.env.example /etc/default/vera-inference   # then edit
+#   sudo cp gpu-inference.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now gpu-inference
+#
+# This unit exists because the server was previously started by hand, so it
+# stayed down after every reboot — and a media node that is merely down looks
+# identical to one that is misconfigured: Vera just logs probe failures and
+# every TTS call returns "All connection attempts failed".
+
+[Unit]
+Description=Vera GPU inference server (Whisper / TTS / Stable Diffusion)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+EnvironmentFile=-/etc/default/vera-inference
+ExecStart=/home/Servers/StableDiffustionWhisper/start.sh
+WorkingDirectory=/home/Servers/StableDiffustionWhisper
+
+# Model loading (and a first-run download) happens before the port opens, so
+# the start timeout must be generous or systemd kills a healthy cold start.
+TimeoutStartSec=900
+TimeoutStopSec=60
+Restart=always
+RestartSec=10
+
+StandardOutput=append:/var/log/gpu_inference.log
+StandardError=append:/var/log/gpu_inference.log
+
+[Install]
+WantedBy=multi-user.target

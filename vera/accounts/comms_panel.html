@@ -53,6 +53,7 @@ html,body{ margin:0;padding:0;height:100%;background:var(--bg);color:var(--fg);o
       <div><h1>Comms</h1><div class="sub">Accounts &amp; Messaging</div></div>
     </div>
     <nav id="lhm-nav">
+      <div class="subtab" data-k="system"><span class="gl">📡</span> System</div>
       <div class="subtab" data-k="accounts"><span class="gl">👤</span> Accounts</div>
       <div class="subtab" data-k="calendar"><span class="gl">🗓</span> Calendar</div>
       <div class="subtab" data-k="email"><span class="gl">✉</span> Email</div>
@@ -61,6 +62,7 @@ html,body{ margin:0;padding:0;height:100%;background:var(--bg);color:var(--fg);o
     </nav>
   </aside>
   <div id="frames">
+    <iframe data-k="system" data-src="/syscomms/panel" allow="clipboard-read; clipboard-write"></iframe>
     <iframe data-k="accounts" data-src="/accounts/panel" allow="clipboard-read; clipboard-write"></iframe>
     <iframe data-k="calendar" data-src="/cal/panel" allow="clipboard-read; clipboard-write"></iframe>
     <iframe data-k="email" data-src="/mail/panel" allow="clipboard-read; clipboard-write"></iframe>
