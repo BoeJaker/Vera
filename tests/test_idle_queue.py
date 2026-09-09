@@ -247,3 +247,67 @@ def test_reconciling_does_not_start_anything_while_blocked():
 def test_the_row_reports_the_strand_count():
     row = Q.summary([Q.requeue_stranded(_running_job(), 1)], "", 10)
     assert row["waiting"][0]["stranded"] == 1
+
+
+# â”€â”€ progress, the field nothing read â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# make_job has always put progress {done,total} on EVERY job and nothing ever
+# read it, so no producer had a reason to fill it in and no kind could be
+# estimated. Reading it is what closes that gap once for every producer rather
+# than one subsystem at a time.
+def test_an_unset_total_means_unknown_not_nothing_left():
+    """THE distinction. 'we do not know how much is left' and 'there is nothing
+    left' are opposite facts, and an estimator handed 0 would confidently
+    report no work to do."""
+    assert Q.remaining({"progress": {"done": 0, "total": 0}}) is None
+    assert Q.remaining({}) is None
+    assert Q.remaining(None) is None
+
+
+def test_remaining_is_total_minus_done():
+    assert Q.remaining({"progress": {"done": 30, "total": 100}}) == 70
+
+
+def test_a_finished_job_has_nothing_remaining_which_is_not_unknown():
+    assert Q.remaining({"progress": {"done": 100, "total": 100}}) == 0
+
+
+def test_overshoot_does_not_go_negative():
+    assert Q.remaining({"progress": {"done": 140, "total": 100}}) == 0
+
+
+def test_a_producer_that_knows_better_wins():
+    j = {"items_remaining": 5, "progress": {"done": 0, "total": 100}}
+    assert Q.remaining(j) == 5
+
+
+def test_rubbish_progress_reads_as_unknown_rather_than_raising():
+    for bad in ({"progress": "nope"}, {"progress": {"total": "x"}},
+                {"progress": {"total": -3}}, {"items_remaining": "soon"}):
+        assert Q.remaining(bad) is None, bad
+
+
+def test_with_progress_leaves_the_caller_dict_alone():
+    j = {"id": "a", "progress": {"done": 1, "total": 10}}
+    Q.with_progress(j, done=5)
+    assert j["progress"]["done"] == 1
+
+
+def test_with_progress_only_changes_what_it_was_given():
+    j = {"progress": {"done": 1, "total": 10}}
+    assert Q.with_progress(j, done=4)["progress"] == {"done": 4, "total": 10}
+    assert Q.with_progress(j, total=20)["progress"] == {"done": 1, "total": 20}
+
+
+def test_with_progress_works_on_a_job_that_never_had_any():
+    assert Q.with_progress({"id": "a"}, done=2, total=9)["progress"] \
+        == {"done": 2, "total": 9}
+
+
+def test_the_row_carries_progress_and_remaining_for_the_panel():
+    """A job 900 of 1000 through is a different thing to schedule from one
+    that has not started."""
+    j = {"id": "a", "kind": Q.KIND_EMBED_SESSIONS, "state": Q.WAITING,
+         "enqueued_at": 0, "progress": {"done": 900, "total": 1000}}
+    row = Q.summary([j], "", 10)["waiting"][0]
+    assert row["progress"] == {"done": 900, "total": 1000}
+    assert row["remaining"] == 100

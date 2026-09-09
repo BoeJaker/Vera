@@ -131,3 +131,24 @@ def test_an_empty_queue_is_an_empty_timeline():
     assert E.timeline([], RATES) == []
     assert E.timeline(None, RATES) == []
     assert E.total_seconds([]) == 0.0
+
+
+# â”€â”€ the universal path: progress drives the estimate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+def test_an_estimate_comes_from_progress_without_any_bespoke_field():
+    """The point of the change: a producer sets the total the queue already
+    carries, and every kind becomes estimable at once."""
+    j = {"id": "p", "kind": "embed.sessions", "progress": {"done": 20, "total": 120}}
+    assert E.estimate(j, RATES)["seconds"] == 400.0        # 100 left x 4.0s
+
+
+def test_progress_sharpens_the_estimate_as_the_job_runs():
+    mk = lambda d: {"id": "p", "kind": "embed.sessions",
+                    "progress": {"done": d, "total": 100}}
+    assert E.estimate(mk(0), RATES)["seconds"] == 400.0
+    assert E.estimate(mk(50), RATES)["seconds"] == 200.0
+    assert E.estimate(mk(100), RATES)["seconds"] == 0.0
+
+
+def test_a_job_whose_producer_never_declared_a_total_still_gets_no_estimate():
+    j = {"id": "p", "kind": "embed.sessions", "progress": {"done": 0, "total": 0}}
+    assert E.estimate(j, RATES) is None

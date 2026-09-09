@@ -198,6 +198,7 @@ async def drop_job(job_id: str) -> None:
 async def submit(kind: str, title: str = "", *, dedupe_key: str = "",
                  priority: Optional[int] = None,
                  payload: Optional[Dict[str, Any]] = None,
+                 total: Optional[int] = None,
                  jobs: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """Enqueue work, unless an equivalent job is already waiting.
 
@@ -217,6 +218,12 @@ async def submit(kind: str, title: str = "", *, dedupe_key: str = "",
     job["dedupe_key"] = key
     if priority is not None:
         job["priority"] = int(priority)
+    # How much work this is. Optional, and an absent total means "unknown"
+    # rather than "none" - the estimator then reports no estimate instead of
+    # confidently reporting no work. A producer that can count cheaply should
+    # pass it; one that cannot should not invent a number.
+    if total is not None:
+        job = _iq.with_progress(job, total=total)
     if not await save_job(job):
         return {"queued": False, "reason": "the queue store is unavailable",
                 "id": job["id"]}
@@ -224,6 +231,28 @@ async def submit(kind: str, title: str = "", *, dedupe_key: str = "",
 
 
 # ── the runner ──────────────────────────────────────────────────────────────
+async def report_progress(job_id: str, done: Optional[int] = None,
+                          total: Optional[int] = None) -> bool:
+    """A running handler says how far it has got.
+
+    This is what turns an estimate from a one-shot guess made at enqueue time
+    into something that sharpens as the job runs, and it is what lets the panel
+    show a half-finished backfill as half-finished rather than as pending.
+    Handlers already checkpoint; this asks them to write the number down.
+
+    Best-effort: a failed progress write must never take down the work it was
+    describing.
+    """
+    try:
+        for j in await load_jobs():
+            if j.get("id") == job_id:
+                await save_job(_iq.with_progress(j, done=done, total=total))
+                return True
+    except Exception as e:                                 # pragma: no cover
+        log.debug("idle queue progress %s: %s", job_id, e)
+    return False
+
+
 def _still_running() -> bool:
     t = _RUNNING.get("task")
     return bool(t) and not t.done()
@@ -312,12 +341,22 @@ async def _run_job(job: Dict[str, Any],
                 elapsed = float(now) - float(started)
             except (TypeError, ValueError):
                 elapsed = 0.0
+            # What the job actually got through. The handler's own report wins;
+            # progress.done is the fallback, and only then 1 - so a rate learned
+            # from a large backfill is per RECORD rather than per run, and stays
+            # comparable with the next job of a different size.
             items = 1
             if isinstance(res, dict):
                 for key in ("items", "records", "processed"):
                     if res.get(key):
                         items = res[key]
                         break
+            if items == 1:
+                fresh = next((j for j in await load_jobs()
+                              if j.get("id") == job["id"]), None)
+                done = ((fresh or {}).get("progress") or {}).get("done")
+                if done:
+                    items = done
             if elapsed > 0:
                 try:
                     await save_rates(_eta.observe(await load_rates(), kind,

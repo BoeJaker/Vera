@@ -569,10 +569,17 @@ async def cap_claude_sessions_ingest(rel: str = "", instance_id: str = "", trace
                 "Output: {ok, files_scanned, files_updated, turns_recorded}.",
 )
 async def cap_claude_sessions_ingest_all(instance_id: str = "", trace_id=None,
-                                         should_continue=None) -> dict:
+                                         should_continue=None,
+                                         on_progress=None) -> dict:
     """`should_continue` is an async callable returning a busy REASON (or "").
     Polled between files so a long backfill yields the moment the box gets
-    busy — see vera/background_work.py rule 2."""
+    busy — see vera/background_work.py rule 2.
+
+    `on_progress(done, total)` is optional and reports in FILES-THAT-NEED-WORK,
+    the same unit the loop below iterates and checkpoints on. One unit for the
+    total, the progress and the learned rate: mixing them (a total in files
+    against a rate per turn) would give a confident estimate wrong by whatever
+    the average turns-per-file happens to be."""
     key = _source_key(instance_id)
     lock = _ingest_lock(key)
     if lock.locked():
@@ -588,6 +595,21 @@ async def cap_claude_sessions_ingest_all(instance_id: str = "", trace_id=None,
         updated = 0
         total_turns = 0
         yielded = ""
+
+        def _needs_work(entry) -> bool:
+            known = src_state.get(entry["rel"], {})
+            return not ("offset" in known and entry.get("size", 0) <= known["offset"])
+
+        # The real size of this pass, from data the scan already returned - no
+        # extra I/O. Reported once so the queue can estimate the job instead of
+        # showing it as an unknown quantity forever.
+        pending = [f for f in files if _needs_work(f)]
+        if on_progress is not None:
+            try:
+                await on_progress(0, len(pending))
+            except Exception as e:                         # pragma: no cover
+                log.debug("claude_sessions: progress report failed: %s", e)
+        processed = 0
         for f in files:
             # YIELD between files. Quiet when this pass started does not mean
             # quiet throughout: a backfill that begins in a lull and runs for an
@@ -611,6 +633,14 @@ async def cap_claude_sessions_ingest_all(instance_id: str = "", trace_id=None,
             if n:
                 updated += 1
                 total_turns += n
+            processed += 1
+            if on_progress is not None:
+                # Per file, not per record: a file takes far longer than a Redis
+                # write, so this cannot become the cost it is measuring.
+                try:
+                    await on_progress(processed, len(pending))
+                except Exception as e:                     # pragma: no cover
+                    log.debug("claude_sessions: progress report failed: %s", e)
     if updated:
         await emit_event({"type": "ide.claude_sessions.ingest_all", "source": key,
                           "files_scanned": len(files), "files_updated": updated,
@@ -1095,8 +1125,18 @@ async def _ingest_job(job, should_continue):
     wanted back, and the ingest checkpoints per file, so a pre-empted pass
     resumes at the same offsets rather than restarting.
     """
+    async def _progress(done, total):
+        if _svc is not None:
+            await _svc.report_progress(job["id"], done=done, total=total)
+
     res = await cap_claude_sessions_ingest_all(
-        instance_id="", should_continue=should_continue)
+        instance_id="", should_continue=should_continue, on_progress=_progress)
+    # Name the unit the rate-learner should use: files that needed work, the
+    # same thing _progress reported. It would otherwise fall back to
+    # progress.done - the same number today, but saying it explicitly stops the
+    # two drifting apart if either changes.
+    if isinstance(res, dict):
+        res = dict(res, items=res.get("files_updated") or 0)
     for inst in await _load_instances():
         iid = inst.get("id", "")
         if inst.get("kind") == "vscode-client" and _client_alive(iid):

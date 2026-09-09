@@ -109,6 +109,57 @@ def make_job(job_id: str, kind: str, title: str = "", payload: Any = None,
     }
 
 
+def _whole(v: Any) -> Optional[int]:
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return None
+    return n if n >= 0 else None
+
+
+def remaining(job: Optional[Dict[str, Any]]) -> Optional[int]:
+    """How many items of this job are left, or None if nobody said.
+
+    `make_job` has always put `progress: {done, total}` on EVERY job and
+    nothing ever read it, so no producer had a reason to fill it in and no
+    estimate could be made for any kind. Reading it here is what makes the
+    gap close once for every producer, present and future, rather than one
+    subsystem at a time.
+
+    None, never 0, when the total is unset: "we do not know how much is left"
+    and "there is nothing left" are opposite facts, and an estimator handed 0
+    would confidently report no work to do.
+    """
+    j = job or {}
+    explicit = _whole(j.get("items_remaining"))
+    if explicit is not None:
+        return explicit                     # a producer that knows better wins
+    p = j.get("progress")
+    if not isinstance(p, dict):
+        return None                         # came out of Redis; trust nothing
+    total = _whole(p.get("total"))
+    if not total:
+        return None
+    done = _whole(p.get("done")) or 0
+    return max(0, total - done)
+
+
+def with_progress(job: Optional[Dict[str, Any]], done: Any = None,
+                  total: Any = None) -> Dict[str, Any]:
+    """A copy of the job with its progress updated. Absent means unchanged."""
+    j = dict(job or {})
+    _p = j.get("progress")
+    p = dict(_p) if isinstance(_p, dict) else {}
+    d, t = _whole(done), _whole(total)
+    if d is not None:
+        p["done"] = d
+    if t is not None:
+        p["total"] = t
+    j["progress"] = {"done": _whole(p.get("done")) or 0,
+                     "total": _whole(p.get("total")) or 0}
+    return j
+
+
 def pending(jobs: Optional[Iterable[Dict[str, Any]]]) -> List[Dict[str, Any]]:
     """Everything still waiting, in the order it will run."""
     out = [j for j in (jobs or [])
@@ -250,6 +301,11 @@ def summary(jobs: Optional[Iterable[Dict[str, Any]]],
             # the box is busy, a rising strand count means runners are dying.
             # Summed together they would look like the same problem.
             "stranded": int(j.get("stranded", 0)),
+            # done/total as the producer reported it, plus what is left. The
+            # panel needs all three: a job 900 of 1000 through is a different
+            # thing to schedule from one that has not started.
+            "progress": dict(j.get("progress") or {"done": 0, "total": 0}),
+            "remaining": remaining(j),
             "last_note": j.get("last_note", ""),
         }
 

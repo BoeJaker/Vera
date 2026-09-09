@@ -31,6 +31,26 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional
 
+# idle_queue owns the job record, so it owns what "remaining" means. One
+# definition, imported.
+#
+# RELATIVE, deliberately. The absolute spelling `Vera.vera.idle_queue` binds to
+# whichever copy of the tree is on sys.path FIRST, which inside a worktree is
+# the MAIN checkout - so this module would have loaded main's idle_queue while
+# being itself the worktree's, giving a process half of one version and half of
+# another. Caught exactly that way here: remaining() existed in the worktree and
+# the import could not see it. A relative import always resolves inside the
+# package this module actually belongs to.
+try:                                                       # pragma: no cover
+    from . import idle_queue as _iq
+except (ImportError, ValueError):                          # pragma: no cover
+    # Loaded by bare filename (the _module_files loader gives no package), so
+    # there is no relative context to resolve against.
+    try:
+        import idle_queue as _iq                           # type: ignore
+    except ImportError:
+        _iq = None                                         # type: ignore
+
 #: Cost shape per job kind. A kind absent from here has no shape and therefore
 #: no estimate - deliberately, so a new producer cannot silently inherit an
 #: estimator that does not describe it.
@@ -113,12 +133,19 @@ def estimate(job: Optional[Dict[str, Any]],
     shape = shape_of(kind)
     if not shape:
         return None
-    items = _num(j.get("items_remaining"))
+    # progress.total - progress.done, which make_job has always carried and
+    # nothing read. That is what makes an estimate possible for EVERY producer
+    # rather than only ones that learned to set a bespoke field.
+    items = _num(_iq.remaining(j)) if _iq is not None else _num(j.get("items_remaining"))
     if shape == PER_ITEM:
         row = (rates or {}).get(kind) or {}
         rate = _num(row.get("per_item_s"))
-        if rate is None or rate <= 0 or items is None or items <= 0:
+        if rate is None or rate <= 0 or items is None or items < 0:
             return None
+        # items == 0 is a MEASURED zero: the job has nothing left to do, which
+        # is a different answer from "nobody said how much is left" (None). If
+        # this collapsed them, remaining() returning None rather than 0 for an
+        # undeclared total would buy nothing.
         samples = int(row.get("samples", 0) or 0)
         return {"seconds": round(items * rate, 1),
                 "basis": "%s items x %.2fs measured (%d sample%s)"
