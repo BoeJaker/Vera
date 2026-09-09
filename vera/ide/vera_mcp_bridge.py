@@ -142,6 +142,26 @@ class Vera:
 # ─────────────────────────────────────────────────────────────────────────────
 # JSON-RPC / MCP stdio server (newline-delimited messages)
 # ─────────────────────────────────────────────────────────────────────────────
+def _force_utf8_stdio():
+    """MCP over stdio is UTF-8 by spec; the launcher's locale is not ours.
+
+    Left alone, Windows Python decodes a PIPED stdin with the ANSI code page
+    (cp1252) unless PYTHONUTF8 / PYTHONIOENCODING happen to be set in the
+    environment that launched the bridge. Every non-ASCII character in a tool
+    argument then arrived as its mojibake and was forwarded to Vera that way:
+    files written through the bridge landed on disk double-encoded (U+2022
+    stored as three code points) and a heredoc carrying a bullet failed to
+    parse on the host (2026-09-09). Forcing both streams here removes the
+    dependence on the environment. surrogateescape on the way in so one bad
+    byte cannot end the whole session.
+    """
+    for stream in (sys.stdin, sys.stdout):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="surrogateescape")
+        except Exception:          # not a TextIOWrapper (tests, captured stdio)
+            pass
+
+
 def _send(msg):
     sys.stdout.write(json.dumps(msg) + "\n")
     sys.stdout.flush()
@@ -169,6 +189,7 @@ def _as_text_content(value):
 
 
 def serve(vera):
+    _force_utf8_stdio()
     for line in sys.stdin:
         line = line.strip()
         if not line:
