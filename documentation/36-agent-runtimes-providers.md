@@ -251,6 +251,19 @@ materialisation and conformance remain queued.
 
 ## Troubleshooting
 
+For `llm.generate`, boolean thinking settings retain their boolean meaning even
+when a tool transport supplies strings such as `"False"`. An Ollama response
+without usable text returns `error_code: empty_generation` and does not save an
+empty output artifact. Inspect the provider request log for the underlying
+failure; an empty result alone does not identify its cause.
+
+The opt-in `vera.models.live_inference_validation` module exercises the portable
+Ollama adapter with sequential streaming and non-streaming requests. It requires
+shared coordination, caps each case at 60 seconds, and records output hashes and
+metrics. The registry manifest digest identifies the selected model declaration;
+it is not an independent checksum of downloaded weights. These smoke checks do
+not establish model quality, load tolerance, recovery, or cross-runtime parity.
+
 Separate dependency/image failure, provider authentication, model lookup,
 framework initialization, tool-schema incompatibility, runtime exception, and
 result-normalization failure. Preserve the native trace alongside Vera's
