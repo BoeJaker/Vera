@@ -9640,6 +9640,9 @@ async def lifespan(app: FastAPI):
         # facts (coordinates, timezone) and credentials, and push them
         # into n8n / Home Assistant. After n8n so both are registered.
         os.path.join(_here, "platforms/platform_capabilities.py"),
+        # System Comms: one ordered stream of what the system has said
+        # or flagged. After the sources it aggregates.
+        os.path.join(_here, "syscomms/syscomms_capabilities.py"),
         os.path.join(_here, "evolve/evolve_capabilities.py"),
         # Closed-loop orchestrator (M7 Phase B) — part of Loop Lab; dedicated module.
         os.path.join(_here, "evolve/orchestrator_capabilities.py"),
