@@ -2673,6 +2673,24 @@ async function loadCensus(){
 // distance under contention or with a full disk — and every one of them reads
 // as an ordinary data point in a table. The toggle brings them back for the
 // times you are asking what went wrong rather than how things are trending.
+// Who drove a run. "unattributed" is a real answer and is shown as one - a
+// blank cell reads as a UI fault rather than as a fact about the run.
+function _cenProv(p){
+  if(!p||!p.attributed) return '<span class="hint" title="no operator was recorded on any row of this run">unattributed</span>';
+  var bits=[];
+  if(p.skill) bits.push('skill '+p.skill);
+  if(p.tool)  bits.push('tool '+p.tool);
+  if(p.session) bits.push('session '+p.session);
+  (p.helpers||[]).forEach(function(h){
+    bits.push('helper '+(h.name||'?')+(h.purpose?(' - '+h.purpose):''));
+  });
+  if(p.rows_with!=null&&p.rows_total&&p.rows_with<p.rows_total)
+    bits.push('stamped on '+p.rows_with+' of '+p.rows_total+' rows');
+  var tag=(p.mixed&&p.mixed.length)?(' <span class="tag" title="rows disagree on '+esc(p.mixed.join(', '))+' - this run was not driven by one operator throughout">mixed</span>'):'';
+  var hn=(p.helpers||[]).length;
+  return '<span title="'+esc(bits.join('\n'))+'">'+esc(p.operator||'unknown')
+    +(hn?(' <span class="hint">+'+hn+'h</span>'):'')+'</span>'+tag;
+}
 var _cenShowPartial=false;
 function toggleCensusPartial(on){ _cenShowPartial=!!on; loadCensusRuns(); }
 
@@ -2689,7 +2707,7 @@ async function loadCensusRuns(){
     +(hidden&&!_cenShowPartial?(' <span class="tag" title="fewer goals than a full pass, or a filename marking the run partial/failed/stalled/aborted/interrupted/invalid/wedged">'+hidden+' hidden</span>'):'')
     +'</label>';
   if(!runs.length){el.innerHTML=bar+'<div class="empty">No census runs'+(hidden?' to show — '+hidden+' excluded as partial or failed':' found')+(r&&r.dir?(' in <code>'+esc(r.dir)+'</code>'):'')+'.</div>';return}
-  el.innerHTML=bar+'<table><tr><th>run</th><th>goals</th><th>done</th><th title="mean of each goal&#39;s declared quality checks - what was BUILT, not whether the run stopped">quality</th><th title="checks passed / declared">checks</th><th>wall-cap</th><th>gate ins.</th><th>unacc.</th><th>warns</th><th>total</th><th>counters</th></tr>'
+  el.innerHTML=bar+'<table><tr><th>run</th><th>goals</th><th>done</th><th title="mean of each goal&#39;s declared quality checks - what was BUILT, not whether the run stopped">quality</th><th title="checks passed / declared">checks</th><th>wall-cap</th><th>gate ins.</th><th>unacc.</th><th>warns</th><th>total</th><th>counters</th><th title="the operator that drove this run, the skill and tool they used, and any helper scripts they wrote - hover for the detail">operated by</th></tr>'
     +runs.slice().reverse().map(s=>'<tr class="clk" onclick="openCensusRun(\''+esc(s.run_id)+'\')">'
       +'<td class="mono">'+esc(s.run_id)+(s.excluded?' <span class="tag" title="'+esc(s.exclude_reason||'not usable history')+' — excluded from the trend">'+(s.partial?'partial':'not usable')+'</span>':'')+'</td><td>'+s.goals+'</td>'
       +'<td style="color:#3cb371">'+s.done+'</td>'+'<td>'+_cenQ(s.quality_mean,s.quality_scored,s.goals)+'</td>'+'<td class="mono hint">'+((s.checks_total||0)?((s.checks_passed||0)+'/'+s.checks_total):'—')+'</td>'+'<td style="color:#c9a35a">'+s.wall_capped+'</td>'
@@ -2697,6 +2715,7 @@ async function loadCensusRuns(){
       +'<td'+(s.unaccounted_total?' style="color:#c96b6b;font-weight:600"':'')+'>'+(s.unaccounted_total||0)+'</td>'
       +'<td>'+(s.warnings_total||0)+'</td><td class="mono">'+_cenSec(s.wall_total_s)+'</td>'
       +'<td>'+(s.counters_reconcile?'<span style="color:#3cb371">reconcile</span>':'<span style="color:#c96b6b" title="this run\'s step accounting does not add up — numbers from it may be measuring the instrument">suspect</span>')+'</td>'
+      +'<td class="hint">'+_cenProv(s.provenance)+'</td>'
       +'</tr>').join('')+'</table>';
   // Only ever a trend over COMPLETE runs — a partial run's done-count against a
   // full one is a confident wrong answer (it once read "delta -1" while the run
