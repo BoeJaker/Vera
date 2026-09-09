@@ -2510,6 +2510,17 @@ async function renderBgQueue(){
       + (eta[j.id] && eta[j.id].seconds!=null
           ? '<span title="'+esc(eta[j.id].basis||'')+(eta[j.id].provisional?' (provisional - too few samples yet)':'')+'" style="font-size:8.5px;color:'+(eta[j.id].provisional?'var(--dim2)':'var(--acc)')+'">~'+etaTxt(eta[j.id].seconds)+'</span>'
           : (eta[j.id] ? '<span title="no completed run of this kind yet, so nothing has been measured" style="font-size:8.5px;color:var(--dim)">no est.</span>' : ''))
+      + (function(){
+          // done/total, when the producer declared a size. A job 900 of 1000
+          // through is a different thing to schedule from one not started.
+          const pr=j.progress||{}, tot=parseInt(pr.total||0,10), dn=parseInt(pr.done||0,10);
+          if(!tot) return '';
+          const pc=Math.min(100,Math.round(dn*100/tot));
+          return '<span title="'+dn+' of '+tot+' done'+(j.remaining!=null?(' - '+j.remaining+' left'):'')+'" style="display:inline-flex;align-items:center;gap:3px">'
+            + '<span style="width:26px;height:3px;background:var(--border);border-radius:2px;overflow:hidden;display:inline-block">'
+            +   '<span style="display:block;height:100%;width:'+pc+'%;background:var(--acc)"></span>'
+            + '</span><span style="font-size:8px;color:var(--dim2)">'+pc+'%</span></span>';
+        })()
       + (isRun ? '<span style="font-size:8.5px;color:var(--gpu)">running</span>'
                : '<span style="font-size:8.5px;color:var(--dim)">'+(waited?age(Date.now()/1000-waited):'queued')+'</span>')
       + (isRun ? '' : '<button class="w-iconbtn" title="Remove from the queue" onclick="P.bgqCancel('+sq(j.id)+')">&times;</button>')
