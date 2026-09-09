@@ -1322,6 +1322,115 @@ async def cap_bench_node_gpu(instance_id: str = "", trace_id=None):
     return {"ok": True, "instance_id": instance_id, "host_id": host, "gpus": gpus}
 
 
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TRACED LOAD — sample the GPU *while* it generates.
+#
+# bench.node_gpu takes ONE nvidia-smi snapshot, which structurally cannot see
+# throttling: a card boosts to its rated clock and only decays after seconds of
+# sustained load, so every isolated sample looks healthy. Parsing + verdict are
+# pure and live in gpu_trace_core so they are unit-testable without the app.
+# ─────────────────────────────────────────────────────────────────────────────
+try:
+    from Vera.vera.catalog.gpu_trace_core import (
+        GPU_TRACE_QUERY, parse_gpu_trace, trace_summary)
+except Exception:                                    # worktree / app-free import
+    from vera.catalog.gpu_trace_core import (
+        GPU_TRACE_QUERY, parse_gpu_trace, trace_summary)
+
+
+@capability("bench.node_trace", memory="off",
+            http_method="POST", http_path="/bench/node_trace", http_tags=["bench"],
+            description="Trace a GPU node's CLOCKS, TEMPERATURE, POWER and THROTTLE "
+                        "REASONS *while it runs a real generation* — the sustained "
+                        "behaviour bench.node_gpu's single snapshot cannot see, because a "
+                        "card boosts first and only decays after seconds of load. Answers "
+                        "'is this node actually holding its rated clock, or is it "
+                        "thermally/power throttling?'. Inputs: instance_id (str! — an "
+                        "Ollama node mapped to an SSH host), model (str!), num_predict "
+                        "(int, default 512 — keep it LONG; a short generation finishes "
+                        "before a hot card decays and reports a clean bill of health), "
+                        "num_ctx (int, default 8192), prompt (str, optional), trace_seconds "
+                        "(int, default 0 = derive from num_predict — the sampler runs for "
+                        "this many seconds and the call takes about that long). Output: "
+                        "{ok, tokens_per_s, prefill_tokens_per_s, clock:{start_mhz,"
+                        "end_mhz,min_mhz,max_mhz,droop_pct}, peak_temp_c, peak_power_w, "
+                        "throttled_pct, throttle_reasons, verdict}.")
+async def cap_bench_node_trace(instance_id: str = "", model: str = "",
+                               num_predict: int = 512, num_ctx: int = 8192,
+                               prompt: str = "", trace_seconds: int = 0,
+                               trace_id=None):
+    if not instance_id or not model:
+        return {"error": "instance_id and model are both required"}
+    url = _instance_url(instance_id)
+    if not url:
+        return {"error": "unknown instance_id %r" % instance_id}
+    host = await _ssh_host_for(instance_id)
+    if not host:
+        return {"error": "no SSH host mapped for this node — map one in the "
+                         "Catalog › Nodes & Hardware tab first"}
+    run = _rawcap("exec.ssh.run")
+    if not run:
+        return {"error": "exec.ssh.run unavailable"}
+
+    prompt = prompt or ("Write a detailed technical essay on memory bandwidth in GPU "
+                        "inference. Be specific, thorough and well structured.")
+    # The sampler self-terminates after `budget_s` one-second samples. Both
+    # halves are awaited together, so THIS IS ALSO ROUGHLY HOW LONG THE CALL
+    # TAKES — an over-generous budget just idles after generation finishes.
+    # Default assumes >=15 tok/s (a GPU node floor) plus load headroom; pass
+    # trace_seconds explicitly for a slow node or a deliberately long window.
+    budget_s = (int(trace_seconds) if trace_seconds and int(trace_seconds) > 0
+                else int(num_predict / 15) + 15)
+    budget_s = max(15, min(budget_s, 300))
+
+    body = {"model": model, "prompt": prompt, "stream": False,
+            "options": {"num_ctx": int(num_ctx), "num_predict": int(num_predict),
+                        "temperature": 0.0, "seed": 42}}
+
+    async def _generate():
+        async with httpx.AsyncClient(verify=_ssl(), timeout=budget_s + 120) as c:
+            r = await c.post(url.rstrip("/") + "/api/generate", json=body)
+            r.raise_for_status()
+            return r.json()
+
+    async def _sample():
+        return await run(command=GPU_TRACE_QUERY.format(count=budget_s),
+                         host_id=host, timeout=budget_s + 30) or {}
+
+    # Concurrently: the trace only means anything while the card is under the
+    # load we are attributing it to.
+    gen, smp = await asyncio.gather(_generate(), _sample(), return_exceptions=True)
+    if isinstance(gen, BaseException):
+        return {"error": "generation failed: %s" % gen, "instance_id": instance_id}
+
+    ns = 1e9
+    ev = gen.get("eval_count", 0) or 0
+    evd = gen.get("eval_duration", 0) or 1
+    pe = gen.get("prompt_eval_count", 0) or 0
+    ped = gen.get("prompt_eval_duration", 0) or 1
+    out: Dict[str, Any] = {
+        "ok": True, "instance_id": instance_id, "host_id": host, "model": model,
+        "num_ctx": int(num_ctx), "num_predict": int(num_predict), "tokens": ev,
+        "tokens_per_s": round(ev / (evd / ns), 1),
+        "prefill_tokens_per_s": round(pe / (ped / ns), 1),
+        "load_s": round((gen.get("load_duration", 0) or 0) / ns, 2),
+    }
+    if isinstance(smp, BaseException):
+        out["trace_error"] = "gpu sampling failed: %s" % smp
+        return out
+
+    stdout = (smp.get("stdout", "") if isinstance(smp, dict) else "") or ""
+    summary = trace_summary(parse_gpu_trace(stdout))
+    if not summary:
+        out["trace_error"] = (((smp.get("error") or smp.get("stderr", "")) or "")[:200]
+                              or "no nvidia-smi samples (missing binary or no GPU)")
+        return out
+    out.update(summary)
+    return out
+
+
 # Opt-out-able background sampler for the per-node monitor.
 try:
     schedule(_node_perf_tick, NODE_PERF_SAMPLE_SEC, name="bench_node_perf")
