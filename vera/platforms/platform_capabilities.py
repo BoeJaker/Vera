@@ -78,6 +78,17 @@ async def _hset(key: str, field: str, rec: Dict[str, Any]) -> None:
         await r.hset(key, field, json.dumps(rec))
 
 
+def _no_store() -> Dict[str, Any]:
+    """Every write goes through this check.
+
+    Without it `_hset` silently does nothing when Redis is absent and the cap
+    still answers {"ok": true} — a configuration controller that cheerfully
+    reports saving settings it has thrown away is worse than one that refuses.
+    """
+    return {"error": "configuration store unavailable (Redis is not reachable) "
+                     "— nothing was saved"}
+
+
 async def _values_plain() -> Dict[str, Any]:
     return {k: v.get("value", "") for k, v in (await _hgetall(KEY_VALUES)).items()}
 
@@ -113,7 +124,8 @@ async def cap_values_list(trace_id=None):
         out.append({**rec, "key": k,
                     "used_by": pc.referencing_platforms(targets, "value", k),
                     "ref": pc.VALUE_REF + k})
-    return {"values": out, "count": len(out)}
+    return {"values": out, "count": len(out),
+            "store_ok": bool(_redis())}
 
 
 @capability(
@@ -126,6 +138,8 @@ async def cap_values_list(trace_id=None):
 )
 async def cap_values_set(key: str = "", value: str = "", label: str = "",
                          trace_id=None):
+    if not _redis():
+        return _no_store()
     k = pc.normalise_key(key)
     if not pc.valid_key(k):
         return {"error": "key must be lowercase letters, digits or underscores"}
@@ -156,6 +170,8 @@ async def cap_values_set(key: str = "", value: str = "", label: str = "",
                 "Output: {ok, deleted} or {error, used_by}.",
 )
 async def cap_values_delete(key: str = "", force: bool = False, trace_id=None):
+    if not _redis():
+        return _no_store()
     k = pc.normalise_key(key)
     targets = list((await _hgetall(KEY_TARGETS)).values())
     used = pc.referencing_platforms(targets, "value", k)
@@ -190,7 +206,8 @@ async def cap_secrets_list(trace_id=None):
                     "updated": rec.get("updated", ""),
                     "used_by": pc.referencing_platforms(targets, "secret", k),
                     "ref": pc.SECRET_REF + k})
-    return {"secrets": out, "count": len(out)}
+    return {"secrets": out, "count": len(out),
+            "store_ok": bool(_redis())}
 
 
 @capability(
@@ -203,6 +220,8 @@ async def cap_secrets_list(trace_id=None):
 )
 async def cap_secrets_set(key: str = "", value: str = "", label: str = "",
                           trace_id=None):
+    if not _redis():
+        return _no_store()
     k = pc.normalise_key(key)
     if not pc.valid_key(k):
         return {"error": "key must be lowercase letters, digits or underscores"}
@@ -223,6 +242,8 @@ async def cap_secrets_set(key: str = "", value: str = "", label: str = "",
                 "unless force=true. Input: key (str!), force (bool).",
 )
 async def cap_secrets_delete(key: str = "", force: bool = False, trace_id=None):
+    if not _redis():
+        return _no_store()
     k = pc.normalise_key(key)
     targets = list((await _hgetall(KEY_TARGETS)).values())
     used = pc.referencing_platforms(targets, "secret", k)
@@ -283,7 +304,8 @@ async def cap_list(trace_id=None):
                     "fields": pc.redact_fields(rec.get("fields") or {},
                                                res["secret_fields"]),
                     "unresolved_refs": res["missing"], **comp})
-    return {"platforms": out, "count": len(out)}
+    return {"platforms": out, "count": len(out),
+            "store_ok": bool(_redis())}
 
 
 @capability(
@@ -298,6 +320,8 @@ async def cap_list(trace_id=None):
 async def cap_upsert(kind: str = "", id: str = "", label: str = "",
                      fields: Optional[Dict[str, Any]] = None,
                      enabled: Optional[bool] = None, trace_id=None):
+    if not _redis():
+        return _no_store()
     targets = await _hgetall(KEY_TARGETS)
     pid = pc.normalise_key(id or kind)
     rec = targets.get(pid)
@@ -339,6 +363,8 @@ async def cap_upsert(kind: str = "", id: str = "", label: str = "",
                 "alone. Input: id (str!). Output: {ok, deleted}.",
 )
 async def cap_delete(id: str = "", trace_id=None):
+    if not _redis():
+        return _no_store()
     r = _redis()
     if r:
         await r.hdel(KEY_TARGETS, pc.normalise_key(id))
@@ -487,6 +513,8 @@ async def cap_apply(id: str = "", action: str = "", dry_run: bool = True,
                 "records are left untouched. Output: {ok, created[]}.",
 )
 async def cap_seed(trace_id=None):
+    if not _redis():
+        return _no_store()
     targets = await _hgetall(KEY_TARGETS)
     created = []
     for kind in pc.PLATFORM_SPECS:
