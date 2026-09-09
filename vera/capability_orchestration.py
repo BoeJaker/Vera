@@ -9643,6 +9643,9 @@ async def lifespan(app: FastAPI):
         # System Comms: one ordered stream of what the system has said
         # or flagged. After the sources it aggregates.
         os.path.join(_here, "syscomms/syscomms_capabilities.py"),
+        # Automations hub: one page over DAGs, n8n, OpenClaw and the
+        # action list. After the surfaces it aggregates.
+        os.path.join(_here, "automations/automations_capabilities.py"),
         os.path.join(_here, "evolve/evolve_capabilities.py"),
         # Closed-loop orchestrator (M7 Phase B) — part of Loop Lab; dedicated module.
         os.path.join(_here, "evolve/orchestrator_capabilities.py"),
