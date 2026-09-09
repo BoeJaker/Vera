@@ -15,7 +15,7 @@ policy.
 | Pipeline link | Loop Lab pipeline identity | Derive implementation/review state |
 | Claim/heartbeat | agent/session updates | Avoid duplicate work and detect abandonment |
 | Interaction signal | recent human activity | Prioritize interactive workloads |
-| Run shadow | native DAG lifecycle projected into versioned, content-free evidence | Correlate execution across Activity, Chat/LHM, Memory Graph, and the harness |
+| Run shadow | native DAG, research, agent-loop, and Operator lifecycle projected into versioned, content-free evidence | Correlate execution across Activity, Chat/LHM, Memory Graph, and the harness |
 | Sandbox work plan | `.vera-work/work-plan.json` in one worktree | Describe branch purpose, current step, blockers, and durable board/notes links |
 
 Files and Git history outrank board claims about implementation. Board state
@@ -58,8 +58,8 @@ source of work ownership.
 
 ## Run evidence in the Activity UI
 
-The W1-01 UI projects the native DAG lifecycle without taking authority from
-it. Run cards expose parent/child task lineage, progress, failures, retries,
+The shared UI projects native execution lifecycles without taking authority from
+them. Run cards expose parent/child task lineage, progress, failures, retries,
 performance spans, checksummed journal reconciliation, partial artifact
 references, structured approval/control evidence, and workflow/trace identity.
 The same compact evidence appears in the harness top-bar overlay; full detail is
@@ -69,7 +69,9 @@ the native DAG Workshop.
 These distinctions are deliberate:
 
 - Run state is observed and non-authoritative; execution and control remain with
-  the native DAG runtime.
+  the native runtime. Operator projections expose step status, action name, and
+  screenshot references while excluding goals, arguments, thoughts, and page
+  content.
 - Artifact checksums are recorded metadata, not proof that content is currently
   available or verified.
 - With the opt-in SQLite journal, recovery verifies each checksum chain and
@@ -97,10 +99,10 @@ revision guards, rejects duplicate step IDs, requires `current_step` to name a
 real step, and refuses `complete` while unfinished steps remain. The Sandbox tab
 shows the linked board records directly from the plan editor.
 
-For W1-01 the durable coordination records are board item `ab35e45c` and
-`notes:workspace:w1-01-run-protocol`. The worktree-local plan remains the most
-specific description of the current sandbox; the board communicates ownership
-and lane, while the note provides a compact cross-session handoff.
+The worktree-local plan remains the most specific description of the current
+sandbox; the board communicates ownership and lane, while notes provide compact
+cross-session handoff context. Delivery identifiers stay in those internal
+coordination surfaces rather than product documentation or UI labels.
 
 ## Source map
 
