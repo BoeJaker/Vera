@@ -58,17 +58,40 @@ vera-activity-timeline{flex:1;min-height:0}
 <script src="/ui/elements/vera_markdown.js"></script>
 <script src="/ui/elements/agent_loop_output.js"></script>
 <script src="/ui/elements/activity_timeline.js"></script>
+<script src="/ui/vera-ui.js"></script>
 <script>
 const API=(()=>{try{if(window.parent!==window&&window.parent._veraBase)return window.parent._veraBase}catch(e){}return window.__VERA_BASE__||window.location.origin||''})();
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const ICON={all:'✦',project:'▣',goal:'🎯',program:'❖',dream:'☾'};
 let _scope='all';
+let _pipelinesLoaded=false;
+
+function renderPipelineState(input){
+  const kind=input.loading?'loading':input.error?'error':input.empty?'empty':'ready';
+  const label=kind==='loading'?'Loading activity scopes…'
+    :kind==='empty'?'No activity scopes yet.'
+    :kind==='error'?'Activity scopes unavailable: '+input.error:'Ready';
+  const state=window.veraUI.readState({loading:kind==='loading',error:kind==='error',
+    hasData:kind!=='empty',label:label});
+  return window.veraUI.renderReadState($('side'),state,{onRetry:loadPipelines});
+}
 
 async function loadPipelines(){
-  let r=null;
-  try{const res=await fetch(API+'/activity/pipelines');if(res.ok)r=await res.json();}catch(e){}
-  const pls=(r&&r.pipelines)||[{scope:'all',label:'Everything',kind:'all'}];
+  if(!_pipelinesLoaded)renderPipelineState({loading:true});
+  let r;
+  try{
+    const res=await fetch(API+'/activity/pipelines');
+    if(!res.ok)throw new Error('HTTP '+res.status);
+    r=await res.json();
+    if(!r||!Array.isArray(r.pipelines))throw new Error('Unreadable activity scope response');
+  }catch(e){
+    renderPipelineState({error:e&&e.message?e.message:'Activity scope request failed'});
+    return;
+  }
+  const pls=r.pipelines;
+  _pipelinesLoaded=true;
+  if(!pls.length){renderPipelineState({empty:true});return;}
   const groups={all:[],project:[],goal:[],program:[],dream:[]};
   pls.forEach(p=>{(groups[p.kind]||(groups[p.kind]=[])).push(p)});
   const side=$('side');
@@ -87,7 +110,7 @@ async function loadPipelines(){
   html+=section('Projects',groups.project);
   html+=section('V8 Programs',groups.program);
   html+=section('Dream pipelines',groups.dream);
-  side.innerHTML=html||'<div style="color:var(--dim);font-size:10px;padding:8px">No pipelines yet.</div>';
+  side.innerHTML=html;
   side.querySelectorAll('.pl').forEach(el=>el.addEventListener('click',()=>{
     _scope=el.getAttribute('data-scope');
     side.querySelectorAll('.pl').forEach(x=>x.classList.toggle('on',x===el));
@@ -104,6 +127,5 @@ $('tl').setAutoRefresh(15);
 // refresh the pipeline list periodically so new goals/programs appear
 setInterval(loadPipelines,60000);
 </script>
-<script src="/ui/vera-ui.js"></script>
 </body>
 </html>
