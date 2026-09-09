@@ -2682,6 +2682,309 @@ async def cap_salvage_wipe_check(label: str = "", force: bool = False,
     return verdict
 
 
+# ---------------------------------------------------------------------------
+# Security baselines: apply, verify, and watch for drift
+# ---------------------------------------------------------------------------
+# Hardening used to be a script that ran and said "done". Nothing recorded
+# which hosts it had touched, nothing re-checked whether the settings survived,
+# and the definition of "hardened" existed only inside the script.
+#
+# The registry below is the missing half: every apply and every verify is
+# recorded per host, so "is this estate actually hardened" is a question with
+# an answer rather than an assumption.
+
+K_SECHOSTS = "vera:foundry:security:hosts"    # per-host state + history
+K_SECFIM = "vera:foundry:security:fim"        # per-host file manifests
+
+
+async def _sec_exec(cluster_id: str, target: str, script: str,
+                    timeout: int = 300) -> Dict:
+    """Run a generated script on a host.
+
+    `target` is "node" for the Proxmox host itself, or "ct:<vmid>" / "vm:<vmid>"
+    for a guest, so one code path covers the hypervisor and the things running
+    on it.
+    """
+    b64 = base64.b64encode(script.encode("utf-8")).decode()
+    runner = "printf %s '" + b64 + "' | base64 -d | sh"
+    if target.startswith(("ct:", "lxc:")):
+        vmid = target.split(":", 1)[1]
+        cmd = "pct exec %s -- sh -c %s" % (vmid, shlex.quote(runner))
+    elif target.startswith(("vm:", "qemu:")):
+        vmid = target.split(":", 1)[1]
+        return await _call("proxmox.guest.exec", cluster_id=cluster_id,
+                           vmid=int(vmid), guest_type="qemu",
+                           command=runner, timeout=timeout)
+    else:
+        cmd = runner
+    return await _call("proxmox.node.exec", cluster_id=cluster_id,
+                       command=cmd, timeout=timeout)
+
+
+@capability(
+    "foundry.security.standards",
+    http_method="GET", http_path="/foundry/security/standards", http_tags=["foundry"],
+    memory="off", silent=True,
+    description="The security standard Foundry applies, in full: every control, "
+                "why it matters, which CIS section it maps to, its severity, and "
+                "how to remediate it — plus the named profiles (baseline, "
+                "exposed, minimal). This is the answer to 'what does hardened "
+                "mean here'. Output: {profiles, controls, severities}.",
+)
+async def cap_security_standards(trace_id=None) -> Dict:
+    from Vera.vera.foundry.security_core import catalogue
+    return catalogue()
+
+
+@capability(
+    "foundry.security.apply",
+    http_method="POST", http_path="/foundry/security/apply", http_tags=["foundry"],
+    memory="on",
+    description="Apply a security profile to a host and record it in the "
+                "registry. Guard controls run first: a host with no working SSH "
+                "key will NOT have password auth disabled — it aborts instead of "
+                "stranding the host. Inputs: cluster_id (str!), target (str! "
+                "'node' | 'ct:<vmid>' | 'vm:<vmid>'), profile (baseline|exposed|"
+                "minimal), dry_run (bool=false). Output: {ok, results, aborted}.",
+    schema=enum_schema(profile=["baseline", "exposed", "minimal"]),
+)
+async def cap_security_apply(cluster_id: str = "", target: str = "",
+                             profile: str = "baseline", dry_run: bool = False,
+                             trace_id=None) -> Dict:
+    from Vera.vera.foundry.security_core import (
+        profile as sec_profile, render_apply, parse_results)
+    if not target:
+        return {"error": "target is required (node | ct:<vmid> | vm:<vmid>)"}
+    p = sec_profile(profile)
+    if p.get("error"):
+        return p
+
+    script = render_apply(p["controls"], dry_run=dry_run)
+    if dry_run:
+        return {"dry_run": True, "profile": profile, "target": target,
+                "controls": [{"id": c["id"], "title": c["title"],
+                              "severity": c["severity"], "standard": c["standard"]}
+                             for c in p["controls"]],
+                "script": script}
+
+    res = await _sec_exec(cluster_id, target, script, timeout=900)
+    if res.get("error"):
+        return {"error": res["error"], "target": target}
+    out = res.get("stdout") or ""
+    parsed = parse_results(out, p["controls"])
+
+    if parsed["aborted"]:
+        # Deliberately not a silent partial success: the host is untouched and
+        # the reason is the guard.
+        await emit_event({"type": "foundry.security.aborted", "target": target})
+        return {"ok": False, "aborted": True, "target": target,
+                "profile": profile, **parsed,
+                "reason": "a guard control failed; nothing was changed"}
+
+    r = _redis()
+    if r:
+        raw = await r.hget(K_SECHOSTS, target)
+        rec = json.loads(raw) if raw else {"target": target, "history": []}
+        rec.update({"profile": profile, "last_applied": time.time(),
+                    "last_result": parsed, "last_verified": time.time()})
+        rec["history"] = (rec.get("history") or [])[-19:] + [
+            {"at": time.time(), "action": "apply", "profile": profile,
+             "passed": parsed["passed"], "failed": parsed["failed"]}]
+        await r.hset(K_SECHOSTS, target, json.dumps(rec))
+
+    await emit_event({"type": "foundry.security.applied", "target": target,
+                      "profile": profile, "failed": parsed["failed"]})
+    return {"ok": parsed["failed"] == 0, "target": target, "profile": profile,
+            **parsed}
+
+
+@capability(
+    "foundry.security.verify",
+    http_method="POST", http_path="/foundry/security/verify", http_tags=["foundry"],
+    memory="on",
+    description="Re-check a host against its profile WITHOUT changing anything, "
+                "and report drift against the last result. A control that used "
+                "to pass and now fails is reported separately from one that "
+                "never passed. Inputs: cluster_id (str!), target (str!), profile "
+                "(str — defaults to whatever was applied). Output: {results, "
+                "drift, passed, failed, unknown}.",
+)
+async def cap_security_verify(cluster_id: str = "", target: str = "",
+                              profile: str = "", trace_id=None) -> Dict:
+    from Vera.vera.foundry.security_core import (
+        profile as sec_profile, render_verify, parse_results, drift)
+    if not target:
+        return {"error": "target is required"}
+
+    r = _redis()
+    rec = None
+    if r:
+        raw = await r.hget(K_SECHOSTS, target)
+        rec = json.loads(raw) if raw else None
+    prof = profile or (rec or {}).get("profile") or "baseline"
+    p = sec_profile(prof)
+    if p.get("error"):
+        return p
+
+    res = await _sec_exec(cluster_id, target, render_verify(p["controls"]),
+                          timeout=300)
+    if res.get("error"):
+        return {"error": res["error"], "target": target}
+    parsed = parse_results(res.get("stdout") or "", p["controls"])
+    d = drift((rec or {}).get("last_result") or {}, parsed)
+
+    if r:
+        rec = rec or {"target": target, "history": []}
+        rec.update({"profile": prof, "last_verified": time.time(),
+                    "last_result": parsed, "last_drift": d})
+        rec["history"] = (rec.get("history") or [])[-19:] + [
+            {"at": time.time(), "action": "verify", "profile": prof,
+             "passed": parsed["passed"], "failed": parsed["failed"],
+             "regressed": len(d["regressed"])}]
+        await r.hset(K_SECHOSTS, target, json.dumps(rec))
+
+    if d["drifted"]:
+        await emit_event({"type": "foundry.security.drift", "target": target,
+                          "regressed": d["regressed"],
+                          "severity": d["worst_regression"]})
+    return {"ok": parsed["failed"] == 0 and not d["drifted"],
+            "target": target, "profile": prof, **parsed, "drift": d}
+
+
+@capability(
+    "foundry.security.registry",
+    http_method="GET", http_path="/foundry/security/registry", http_tags=["foundry"],
+    memory="off", silent=True,
+    description="Every host Foundry has hardened: which profile, when it was "
+                "applied, when it was last verified, how many controls pass now, "
+                "and whether it has drifted. Hosts not verified recently are "
+                "flagged as stale — an old pass is not evidence about today. "
+                "Output: {hosts:[...], summary}.",
+)
+async def cap_security_registry(trace_id=None) -> Dict:
+    r = _redis()
+    if not r:
+        return {"hosts": [], "summary": {}}
+    rows = await r.hgetall(K_SECHOSTS) or {}
+    now = time.time()
+    hosts = []
+    for v in rows.values():
+        try:
+            rec = json.loads(v)
+        except Exception:
+            continue
+        last = rec.get("last_result") or {}
+        seen = rec.get("last_verified") or 0
+        hosts.append({
+            "target": rec.get("target"),
+            "profile": rec.get("profile"),
+            "applied": rec.get("last_applied"),
+            "verified": seen,
+            "passed": last.get("passed", 0),
+            "failed": last.get("failed", 0),
+            "unknown": last.get("unknown", 0),
+            "worst": last.get("worst"),
+            "drifted": bool((rec.get("last_drift") or {}).get("drifted")),
+            # A verification from a fortnight ago says nothing about now.
+            "stale": bool(seen) and (now - seen > 7 * 86400),
+            "history": (rec.get("history") or [])[-5:],
+        })
+    hosts.sort(key=lambda h: (not h["drifted"], h["failed"] == 0,
+                              str(h["target"])))
+    return {"hosts": hosts, "count": len(hosts),
+            "summary": {
+                "total": len(hosts),
+                "clean": sum(1 for h in hosts if not h["failed"] and not h["drifted"]),
+                "failing": sum(1 for h in hosts if h["failed"]),
+                "drifted": sum(1 for h in hosts if h["drifted"]),
+                "stale": sum(1 for h in hosts if h["stale"]),
+            }}
+
+
+@capability(
+    "foundry.security.fim.baseline",
+    http_method="POST", http_path="/foundry/security/fim/baseline", http_tags=["foundry"],
+    memory="on",
+    description="Record a file-integrity baseline for a host: SHA-256 of the "
+                "files where interference shows up (authorized_keys, sudoers, "
+                "systemd units, cron, resolv.conf). Hashes only — never file "
+                "contents. Inputs: cluster_id (str!), target (str!), areas (list "
+                "— access/persistence/network/binaries). Output: {ok, files}.",
+)
+async def cap_security_fim_baseline(cluster_id: str = "", target: str = "",
+                                    areas: List[str] = None, trace_id=None) -> Dict:
+    from Vera.vera.foundry.security_core import fim_scan_script, fim_parse
+    if not target:
+        return {"error": "target is required"}
+    res = await _sec_exec(cluster_id, target, fim_scan_script(areas), timeout=600)
+    if res.get("error"):
+        return {"error": res["error"]}
+    out = res.get("stdout") or ""
+    manifest = fim_parse(out)
+    if not manifest:
+        return {"error": "no files hashed — is the target reachable?",
+                "raw": out[:300]}
+    r = _redis()
+    if r:
+        await r.hset(K_SECFIM, target, json.dumps(
+            {"target": target, "at": time.time(),
+             "areas": areas or None, "manifest": manifest}))
+    return {"ok": True, "target": target, "files": len(manifest),
+            "complete": "FIM_COMPLETE" in out,
+            "areas": areas or "default"}
+
+
+@capability(
+    "foundry.security.fim.check",
+    http_method="POST", http_path="/foundry/security/fim/check", http_tags=["foundry"],
+    memory="on",
+    description="Compare a host's watched files against its baseline. Reports "
+                "added, modified AND removed — deleting an audit rule is as much "
+                "a signal as adding a key — grouped by what each change would "
+                "mean. A new authorized_keys entry is flagged urgent. Inputs: "
+                "cluster_id (str!), target (str!), update (bool=false — adopt "
+                "the current state as the new baseline). Output: {clean, events, "
+                "urgent, summary}.",
+)
+async def cap_security_fim_check(cluster_id: str = "", target: str = "",
+                                 update: bool = False, trace_id=None) -> Dict:
+    from Vera.vera.foundry.security_core import (
+        fim_scan_script, fim_parse, fim_diff)
+    if not target:
+        return {"error": "target is required"}
+    r = _redis()
+    raw = await r.hget(K_SECFIM, target) if r else None
+    if not raw:
+        return {"error": "no baseline for %r — run foundry.security.fim.baseline "
+                         "first" % target}
+    prev = json.loads(raw)
+
+    res = await _sec_exec(cluster_id, target,
+                          fim_scan_script(prev.get("areas")), timeout=600)
+    if res.get("error"):
+        return {"error": res["error"]}
+    cur = fim_parse(res.get("stdout") or "")
+    if not cur:
+        return {"error": "scan returned nothing; not treating that as 'no "
+                         "changes' — the host may be unreachable"}
+
+    d = fim_diff(prev.get("manifest") or {}, cur)
+    if d["urgent"]:
+        await emit_event({"type": "foundry.security.fim.urgent",
+                          "target": target,
+                          "paths": [e["path"] for e in d["urgent"]]})
+    elif not d["clean"]:
+        await emit_event({"type": "foundry.security.fim.changed",
+                          "target": target, "count": len(d["events"])})
+
+    if update and r:
+        await r.hset(K_SECFIM, target, json.dumps(
+            {"target": target, "at": time.time(),
+             "areas": prev.get("areas"), "manifest": cur}))
+    return {"target": target, "baseline_at": prev.get("at"),
+            "files": len(cur), "baseline_updated": bool(update), **d}
+
+
 @APP.get("/foundry/panel", include_in_schema=False)
 async def _foundry_panel():
     p = _HERE / "foundry_panel.html"
@@ -2713,6 +3016,10 @@ register_ui(
              "foundry.vm.import", "foundry.vm.export",
              "foundry.salvage.inspect", "foundry.salvage.plan",
              "foundry.salvage.run", "foundry.salvage.list",
-             "foundry.salvage.wipe_check"],
+             "foundry.salvage.wipe_check",
+             "foundry.security.standards", "foundry.security.apply",
+             "foundry.security.verify", "foundry.security.registry",
+             "foundry.security.fim.baseline",
+             "foundry.security.fim.check"],
     mode="element",     # embedded as a Workers & Ollama sub-tab
 )
