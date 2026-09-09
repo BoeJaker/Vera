@@ -13440,15 +13440,23 @@ Your task: decide what to do next to advance toward the goal.
     src.connect(proc); proc.connect(sink); sink.connect(ctx.destination);
 
     const RATE=ctx.sampleRate, TARGET=16000;
-    const PHRASE_GAP=700;    // pause that closes a phrase
-    const MAX_SEG=15000;     // force a flush so long speech still streams
-    const MIN_SPEECH=250;    // ignore coughs and clicks
-    const CAL_MS=400;        // calibrate to the room before judging silence
+    const PHRASE_GAP=700;      // pause that closes a phrase
+    const MAX_SEG=15000;       // force a flush so long speech still streams
+    const MIN_SPEECH=250;      // ignore coughs and clicks
+    const NO_SPEECH_MS=12000;  // give up only if NOTHING is ever heard
+    const PREROLL=0.4;         // seconds of lead-in kept before speech starts
     const turnGap=Math.max(800,
       (parseFloat(document.getElementById('cfgVadPause')?.value)||2.0)*1000);
 
-    let chunks=[],nSamples=0,base=0,calN=0,thr=0.012;
-    let sawSpeech=false,segStart=Date.now(),lastLoud=Date.now();
+    // The noise floor adapts from QUIET FRAMES ONLY. Measuring it over a fixed
+    // opening window fails the obvious way: you press the button and start
+    // talking, so it calibrates on your voice, sets the threshold above it,
+    // and never hears you again — the louder you speak the worse it gets.
+    let floor=0.006;
+    const FLOOR_MIN=0.0005, FLOOR_MAX=0.05, MULT=3.0, ABS_MIN=0.012;
+
+    let chunks=[],nSamples=0;
+    let everSpoke=false,sawSpeech=false,segStart=0,lastLoud=0,peak=0,thr=ABS_MIN;
     const t0=Date.now(); let stopped=false;
 
     function take(){
@@ -13456,6 +13464,15 @@ Your task: decide what to do next to advance toward the goal.
       const out=new Float32Array(nSamples);
       let o=0;for(const c of chunks){out.set(c,o);o+=c.length;}
       chunks=[];nSamples=0;return out;
+    }
+    // Before speech starts, keep only a short tail. Discarding everything
+    // clips the first syllable of whatever comes next.
+    function trimPreroll(){
+      const keep=Math.floor(RATE*PREROLL);
+      if(nSamples<=keep*2)return;
+      const all=take();
+      const tail=all.slice(all.length-keep);
+      chunks=[tail];nSamples=tail.length;
     }
     function cleanup(){
       try{proc.disconnect();}catch(_){}
@@ -13465,6 +13482,13 @@ Your task: decide what to do next to advance toward the goal.
       try{ctx.close();}catch(_){}
     }
     function emit(seg){ if(seg&&seg.length)onPhrase(_downsample(seg,RATE,TARGET),TARGET); }
+    function finish(reason,flush){
+      if(stopped)return; stopped=true;
+      const seg=flush?take():null;
+      cleanup();
+      if(seg)emit(seg);
+      onTurnEnd({reason,peak,thr,everSpoke});
+    }
 
     proc.onaudioprocess=(e)=>{
       if(stopped)return;
@@ -13472,33 +13496,35 @@ Your task: decide what to do next to advance toward the goal.
       chunks.push(new Float32Array(inp)); nSamples+=inp.length;
       let s=0;for(let i=0;i<inp.length;i++)s+=inp[i]*inp[i];
       const v=Math.sqrt(s/inp.length), now=Date.now();
+      if(v>peak)peak=v;
 
-      // A fixed threshold fails in a noisy room; measure the room first.
-      if(now-t0<CAL_MS){
-        base=(base*calN+v)/(++calN); thr=Math.max(base*2.5,0.010);
-        lastLoud=now; chunks=[]; nSamples=0; return;
+      thr=Math.max(floor*MULT,ABS_MIN);
+      if(v>thr){
+        if(!sawSpeech)segStart=now;
+        everSpoke=true; sawSpeech=true; lastLoud=now;
+        return;
       }
-      if(v>thr){ if(!sawSpeech)segStart=now; sawSpeech=true; lastLoud=now; return; }
+      // Quiet frame — the only kind it is safe to learn the room from.
+      floor=Math.min(FLOOR_MAX,Math.max(FLOOR_MIN,floor*0.95+v*0.05));
+
+      if(!everSpoke){
+        trimPreroll();
+        // Only the long timeout applies before anything has been heard; the
+        // short inter-phrase pause must not end a turn that never began.
+        if(now-t0>NO_SPEECH_MS)finish('no-speech',false);
+        return;
+      }
 
       const quiet=now-lastLoud;
       if(sawSpeech&&quiet>PHRASE_GAP){
         const seg=take(); sawSpeech=false;
         if((now-segStart)>MIN_SPEECH)emit(seg);
-        if(quiet>turnGap){stopped=true;cleanup();onTurnEnd();}
-        return;
       }
-      if(sawSpeech&&(now-segStart)>MAX_SEG){ emit(take()); segStart=now; return; }
-      if(!sawSpeech&&quiet>turnGap&&(now-t0)>turnGap){
-        stopped=true;cleanup();onTurnEnd();return;
-      }
-      // Do not accumulate silence indefinitely while waiting for speech.
-      if(!sawSpeech&&nSamples>RATE*3){chunks=[];nSamples=0;}
+      if(quiet>turnGap){ finish('pause',false); return; }
+      if(sawSpeech&&(now-segStart)>MAX_SEG){ emit(take()); segStart=now; }
     };
 
-    return ()=>{                       // manual stop
-      if(stopped)return; stopped=true;
-      const seg=take(); cleanup(); emit(seg); onTurnEnd();
-    };
+    return ()=>finish('manual',true);   // button pressed again mid-sentence
   }
 
   async function toggleMic(){
@@ -13530,10 +13556,22 @@ Your task: decide what to do next to advance toward the goal.
           }
         });
       };
-      const onTurnEnd=()=>{
+      const onTurnEnd=(info)=>{
         MIC_STOPFN=null; _micUi(false);
         pending.then(()=>{
-          if(!heard){appendSys('No speech detected');return;}
+          if(!heard){
+            // Say WHY nothing was heard. "No speech detected" alone is
+            // indistinguishable from a broken threshold, which is exactly the
+            // failure this replaced.
+            const p=(info&&typeof info.peak==='number')?info.peak.toFixed(4):'?';
+            const t=(info&&typeof info.thr==='number')?info.thr.toFixed(4):'?';
+            const why=(info&&info.everSpoke)
+              ? 'speech was detected but Whisper returned no text'
+              : 'loudest input '+p+' never crossed the threshold '+t;
+            appendSys('No speech detected — '+esc(why)
+              +'. Check the input device if the level looks low.');
+            return;
+          }
           if(document.getElementById('cfgStt')?.checked)send();
         });
       };
@@ -13550,6 +13588,7 @@ Your task: decide what to do next to advance toward the goal.
       _micUi(false);
     }
   }
+
 
 
   /* ═══════════════════════════════════════════════════════════════════
