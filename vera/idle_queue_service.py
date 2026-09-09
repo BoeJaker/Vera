@@ -90,7 +90,21 @@ _RUNNING: Dict[str, Any] = _shared.RUNNING
 
 # ── handler registry ────────────────────────────────────────────────────────
 def register_handler(kind: str, fn: Callable[..., Awaitable[Any]]) -> None:
-    """Producers register once at import; the runner dispatches by kind."""
+    """Producers register once at import; the runner dispatches by kind.
+
+    A second producer claiming a kind that is already taken REPLACES the first
+    silently - this is a plain dict - and its queued jobs then run the other
+    producer's work under their own name. Nothing would look wrong until the
+    output did. Registration still wins (refusing could leave a kind with no
+    handler at all, which drops jobs), but it says so loudly.
+    """
+    prev = _HANDLERS.get(str(kind))
+    if prev is not None and prev is not fn:
+        log.warning("idle queue: handler for %r replaced (%s -> %s) - two "
+                    "producers claim this kind, and jobs of it will now run "
+                    "the SECOND one's work", kind,
+                    getattr(prev, "__name__", prev),
+                    getattr(fn, "__name__", fn))
     _HANDLERS[str(kind)] = fn
 
 

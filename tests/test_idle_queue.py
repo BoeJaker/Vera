@@ -311,3 +311,43 @@ def test_the_row_carries_progress_and_remaining_for_the_panel():
     row = Q.summary([j], "", 10)["waiting"][0]
     assert row["progress"] == {"done": 900, "total": 1000}
     assert row["remaining"] == 100
+
+
+# â”€â”€ fabric backfill gets its own kind â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# register_handler is a plain dict assignment, so a second producer claiming
+# embed.sources (which the agent knowledge sweep owns) would silently replace
+# it, and queued agent-sweep jobs would then run the fabric backfill under
+# their own name. Nothing would look wrong until the output did.
+def test_the_fabric_backfill_has_a_kind_of_its_own():
+    assert Q.KIND_EMBED_FABRIC == "embed.fabric"
+    assert Q.KIND_EMBED_FABRIC != Q.KIND_EMBED_SOURCES
+
+
+def test_it_is_preemptible_like_the_other_embedding_work():
+    """CPU embedding, no GPU gate slot, yields between batches - nothing it
+    does can be mistaken for foreign activity."""
+    assert Q.is_preemptible(Q.KIND_EMBED_FABRIC)
+
+
+def test_it_sits_between_the_agent_sweep_and_the_transcript_backfill():
+    """The queue runs one job at a time, so ordering by expected length is what
+    stops a long job holding up a short one."""
+    assert Q.KIND_PRIORITY[Q.KIND_EMBED_SOURCES] \
+        < Q.KIND_PRIORITY[Q.KIND_EMBED_FABRIC] \
+        < Q.KIND_PRIORITY[Q.KIND_EMBED_SESSIONS]
+
+
+def test_a_shorter_job_is_offered_the_box_first():
+    jobs = [{"id": "f", "kind": Q.KIND_EMBED_FABRIC, "state": Q.WAITING,
+             "enqueued_at": 0, "priority": Q.KIND_PRIORITY[Q.KIND_EMBED_FABRIC]},
+            {"id": "a", "kind": Q.KIND_EMBED_SOURCES, "state": Q.WAITING,
+             "enqueued_at": 0, "priority": Q.KIND_PRIORITY[Q.KIND_EMBED_SOURCES]}]
+    assert Q.next_job(jobs, "")["id"] == "a"
+
+
+def test_every_declared_kind_has_a_priority():
+    """A kind missing from KIND_PRIORITY silently takes DEFAULT_PRIORITY, which
+    would put a bulk embed ahead of a narration."""
+    for kind in (Q.KIND_EMBED_SESSIONS, Q.KIND_EMBED_SOURCES,
+                 Q.KIND_EMBED_FABRIC, Q.KIND_DREAM, Q.KIND_NARRATOR):
+        assert kind in Q.KIND_PRIORITY, kind
