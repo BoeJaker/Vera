@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<meta charset="UTF-8">
+<title>Vera Automations</title>
+<style>
+:root{
+  --bg:#0d0f12; --bg1:#14181d; --bg2:#1a1f26; --bg3:#20262e;
+  --border:#232a33; --border2:#2e3742;
+  --fg:#d8dde3; --fg2:#9aa3ad; --dim:#5f6975;
+  --acc:#4a9eff; --ok:#28c28a; --warn:#f5b341; --err:#ef5b5b;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;height:100%;background:var(--bg);color:var(--fg);
+  overflow:hidden;font:12px/1.5 -apple-system,BlinkMacSystemFont,"Inter",system-ui,sans-serif}
+#root{display:flex;height:100vh;min-height:0}
+
+#lhm{width:184px;flex-shrink:0;background:var(--bg1);border-right:1px solid var(--border);
+  display:flex;flex-direction:column}
+#lhm-head{padding:14px 14px 10px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:8px}
+#lhm-head .ico{width:24px;height:24px;background:var(--bg2);border:1px solid var(--border2);
+  border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--acc);font-size:14px}
+#lhm-head h1{margin:0;font-size:12px;font-weight:600;letter-spacing:.04em}
+#lhm-head .sub{font-size:9px;color:var(--dim);letter-spacing:.12em;text-transform:uppercase;margin-top:1px}
+#lhm-nav{flex:1;padding:8px 6px;overflow-y:auto}
+.subtab{display:flex;align-items:center;gap:10px;width:100%;padding:9px 11px;border-radius:6px;
+  cursor:pointer;color:var(--fg2);font-size:12px;font-weight:500;border:1px solid transparent;
+  transition:.12s;margin-bottom:2px}
+.subtab:hover{background:var(--bg2);color:var(--fg)}
+.subtab.active{background:var(--bg2);border-color:var(--border2);color:var(--fg)}
+.subtab .gl{width:18px;text-align:center;font-size:15px;opacity:.9}
+.subtab .badge{margin-left:auto;font-size:10px;font-family:var(--mono);color:var(--dim)}
+.subtab .badge.warn{color:var(--warn)}
+
+#frames{flex:1;position:relative;min-height:0}
+#frames iframe,#frames .native{position:absolute;inset:0;width:100%;height:100%;border:none;
+  background:var(--bg);opacity:0;pointer-events:none;overflow:auto}
+#frames iframe.active,#frames .native.active{opacity:1;pointer-events:auto}
+.native{padding:18px 22px}
+.wrap{max-width:900px}
+
+h2{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--dim);
+  margin:0 0 12px;font-weight:600}
+.cards{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));margin-bottom:22px}
+.card{background:var(--bg1);border:1px solid var(--border);border-radius:10px;padding:14px;cursor:pointer;transition:.12s}
+.card:hover{border-color:var(--acc);transform:translateY(-1px)}
+.card .n{font-size:26px;font-weight:600;line-height:1.1}
+.card .l{font-size:12px;margin-top:3px}
+.card .d{font-size:11px;color:var(--dim);margin-top:2px}
+.card.warning .n{color:var(--warn)}
+.card.info .n{color:var(--acc)}
+
+table{width:100%;border-collapse:collapse;font-size:11px}
+th{text-align:left;color:var(--dim);font-weight:500;padding:6px 8px;border-bottom:1px solid var(--border)}
+td{padding:7px 8px;border-bottom:1px solid var(--border);vertical-align:top}
+tr:last-child td{border-bottom:none}
+.pri{display:inline-block;padding:1px 7px;border-radius:20px;font-size:10px;border:1px solid var(--border2)}
+.pri.high,.pri.critical{color:var(--err);border-color:var(--err)}
+.pri.medium,.pri.warning{color:var(--warn);border-color:var(--warn)}
+.pri.low{color:var(--dim)}
+.muted{color:var(--dim);font-size:11px}
+.empty{color:var(--dim);padding:24px;text-align:center;font-size:11px}
+.warnbar{background:var(--bg2);border:1px solid var(--border2);border-radius:6px;
+  padding:8px 11px;margin-bottom:12px;color:var(--warn);font-size:10px}
+.btn{background:var(--bg2);border:1px solid var(--border2);color:var(--fg);border-radius:5px;
+  padding:6px 12px;font:inherit;font-size:11px;cursor:pointer;text-decoration:none;display:inline-block}
+.btn:hover{border-color:var(--acc)}
+.blocked{padding:28px;max-width:560px}
+.blocked h3{margin:0 0 8px;font-size:13px}
+</style>
+<link rel="stylesheet" href="/ui/vera-panel.css">
+</head>
+<body>
+<div id="root">
+  <aside id="lhm" data-vera-lhm>
+    <div id="lhm-head">
+      <div class="ico">⚙</div>
+      <div><h1>Automations</h1><div class="sub">Flows &amp; Runners</div></div>
+    </div>
+    <nav id="lhm-nav">
+      <div class="subtab" data-k="overview"><span class="gl">▦</span> Overview</div>
+      <div class="subtab" data-k="flows"><span class="gl">◈</span> DAG flows</div>
+      <div class="subtab" data-k="n8n"><span class="gl">⬡</span> n8n</div>
+      <div class="subtab" data-k="editor"><span class="gl">✎</span> n8n editor</div>
+      <div class="subtab" data-k="openclaw"><span class="gl">◎</span> OpenClaw</div>
+      <div class="subtab" data-k="actions"><span class="gl">☑</span> Actions
+        <span class="badge" id="actBadge"></span></div>
+    </nav>
+  </aside>
+
+  <div id="frames">
+    <!-- Native panes: rendered here rather than embedded, so they work even
+         when the subsystem that normally serves them is down. -->
+    <div class="native" data-k="overview"><div class="wrap">
+      <h2>What is running</h2>
+      <div id="ovWarn"></div>
+      <div class="cards" id="ovCards"><div class="empty">loading…</div></div>
+      <div class="muted">Each figure is read from that subsystem's own
+        capability. A source that is unavailable is named above rather than
+        silently counted as zero.</div>
+    </div></div>
+
+    <div class="native" data-k="actions"><div class="wrap">
+      <h2>Open actions</h2>
+      <div id="actList"><div class="empty">loading…</div></div>
+    </div></div>
+
+    <!-- Embedded surfaces, lazy-loaded on first view. -->
+    <iframe data-k="flows"    data-src="/workshop/panel" allow="clipboard-read; clipboard-write"></iframe>
+    <iframe data-k="n8n"      data-src="/n8n/panel"      allow="clipboard-read; clipboard-write"></iframe>
+    <iframe data-k="openclaw" data-src="/openclaw/panel" allow="clipboard-read; clipboard-write"></iframe>
+    <iframe data-k="editor"   data-src="" allow="clipboard-read; clipboard-write"></iframe>
+  </div>
+</div>
+
+<script>
+const LS='vera.automations.tab';
+const $=s=>document.querySelector(s);
+const tabs=[...document.querySelectorAll('.subtab')];
+const panes=[...document.querySelectorAll('#frames iframe,#frames .native')];
+
+// n8n lives on its own origin and sends X-Frame-Options: SAMEORIGIN, so the
+// browser refuses to embed it unless that host explicitly allows this origin.
+// Resolved at runtime rather than hard-coded, because the address moves.
+let N8N_BASE='';
+
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,
+  c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+async function cap(name,args){
+  const r=await fetch('/mcp/call',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name,arguments:args||{}})});
+  const j=await r.json();
+  return (j&&j.content!==undefined)?j.content:j;
+}
+
+function show(k){
+  tabs.forEach(t=>t.classList.toggle('active',t.dataset.k===k));
+  panes.forEach(p=>{
+    const on=p.dataset.k===k;
+    if(on&&p.tagName==='IFRAME'&&!p.src&&p.dataset.src)p.src=p.dataset.src;
+    p.classList.toggle('active',on);
+  });
+  try{localStorage.setItem(LS,k);}catch(e){}
+  if(k==='overview')loadOverview();
+  if(k==='actions')loadActions();
+  if(k==='editor')openEditor();
+}
+
+function openEditor(){
+  const f=document.querySelector('iframe[data-k="editor"]');
+  if(f.dataset.done)return;
+  f.dataset.done='1';
+  if(!N8N_BASE){
+    f.outerHTML='<div class="native active" data-k="editor"><div class="blocked">'
+      +'<h3>n8n base URL not configured</h3>'
+      +'<p class="muted">Set it in the n8n panel, then reopen this tab.</p></div></div>';
+    return;
+  }
+  f.src=N8N_BASE;
+  // If the host still refuses to be framed the iframe stays blank with no
+  // error event, so offer the way out rather than leaving a dead panel.
+  setTimeout(()=>{
+    let blank=false;
+    try{ blank=!f.contentWindow || f.contentWindow.length===0 &&
+                !f.contentDocument?.body?.childElementCount; }catch(_){ blank=false; }
+    if(blank){
+      const host=esc(N8N_BASE);
+      f.insertAdjacentHTML('afterend',
+        '<div class="native active" data-k="editor"><div class="blocked">'
+        +'<h3>n8n would not embed</h3>'
+        +'<p class="muted">n8n sends <code>X-Frame-Options: SAMEORIGIN</code>, which '
+        +'tells the browser to refuse embedding from another origin. Allow this '
+        +'origin in n8n\'s reverse proxy, or open it directly.</p>'
+        +'<p><a class="btn" href="'+host+'" target="_blank" rel="noopener">Open n8n in a new tab</a></p>'
+        +'</div></div>');
+      f.remove();
+    }
+  },2500);
+}
+
+async function loadOverview(){
+  const c=await cap('automations.overview');
+  const secs=(c&&c.sections)||[];
+  $('#ovWarn').innerHTML=((c&&c.unavailable)||[])
+    .map(u=>'<div class="warnbar">unavailable — '+esc(u)+'</div>').join('');
+  $('#ovCards').innerHTML = secs.length ? secs.map(s=>
+    '<div class="card '+esc(s.severity)+'" onclick="show(\''+esc(s.href)+'\')">'
+    +'<div class="n">'+esc(s.stat)+'</div>'
+    +'<div class="l">'+esc(s.label)+'</div>'
+    +'<div class="d">'+esc(s.detail)+'</div></div>').join('')
+    : '<div class="empty">No subsystems reported.</div>';
+  const b=$('#actBadge');
+  if(b){ b.textContent=c&&c.open_actions?c.open_actions:'';
+         b.className='badge'+(c&&c.open_actions?' warn':''); }
+}
+
+async function loadActions(){
+  const c=await cap('automations.actions');
+  if(c&&c.error){$('#actList').innerHTML='<div class="empty">'+esc(c.error)+'</div>';return;}
+  const items=(c&&c.items)||[];
+  if(!items.length){$('#actList').innerHTML='<div class="empty">Nothing open.</div>';return;}
+  $('#actList').innerHTML='<table><tr><th style="width:80px">Priority</th><th>Item</th></tr>'
+    +items.map(i=>'<tr><td><span class="pri '+esc(String(i.priority||'normal').toLowerCase())
+      +'">'+esc(i.priority||'normal')+'</span></td><td>'+esc(i.text)+'</td></tr>').join('')
+    +'</table><div class="muted" style="margin-top:10px">'+esc(c.open)
+    +' open · '+esc(c.closed)+' closed</div>';
+}
+
+(async()=>{
+  // The n8n address comes from Vera's own config so this page never hard-codes it.
+  try{ const cfg=await cap('n8n.config.get'); N8N_BASE=(cfg&&cfg.base_url)||''; }catch(_){}
+  tabs.forEach(t=>t.addEventListener('click',()=>show(t.dataset.k)));
+  let start='overview';
+  try{const s=localStorage.getItem(LS); if(s&&tabs.some(t=>t.dataset.k===s))start=s;}catch(e){}
+  show(start);
+  loadOverview();
+  setInterval(()=>{ if(document.querySelector('.subtab.active')?.dataset.k==='overview')
+    loadOverview(); },60000);
+})();
+</script>
+<script src="/ui/vera-panel.js"></script>
+<script src="/ui/vera-panel-bridge.js"></script>
+</body>
+</html>
