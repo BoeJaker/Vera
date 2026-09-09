@@ -68,6 +68,10 @@ try:
     from Vera.vera.operator import nav_pin as _nav_pin              # noqa: E402
 except ImportError:                                                  # pragma: no cover
     from vera.operator import nav_pin as _nav_pin                   # noqa: E402
+try:
+    from Vera.vera.operator import nav_fallback as _nav_fallback    # noqa: E402
+except ImportError:                                                  # pragma: no cover
+    from vera.operator import nav_fallback as _nav_fallback         # noqa: E402
 
 
 def _orch_base_url() -> str:
@@ -734,6 +738,9 @@ async def cap_run(goal: str = "", url: str = "", kind: str = "", base_url: str =
     # Census run 18: two runs spent 21 minutes clicking Vera's own dashboard
     # hunting for a timer that lived in timer.html, because no URL was passed.
     _target_note = ""
+    # True only when the target was picked out of the workspace rather than
+    # given or named. It changes what may be ENFORCED, not where we start.
+    _target_inferred = False
     # Neither a url nor a path was given - the planner just wrote a sentence.
     # Before falling back to the orchestrator root (never the right place to
     # verify a file this run wrote), see whether the goal NAMES the file.
@@ -744,6 +751,46 @@ async def cap_run(goal: str = "", url: str = "", kind: str = "", base_url: str =
         if _named:
             path = _named
             log.info("operator.run target from the goal text: %s", _named)
+        else:
+            # The sentence names no file either. goal_file's docstring stops
+            # here and says why: "that needs the run's artifact registry, which
+            # the capability boundary does not have." It does now -- the
+            # missing-path hint already reaches artifact_list_files across the
+            # same boundary. Ask what this run actually WROTE rather than
+            # falling back to the orchestrator root.
+            #
+            # 2026-09-09 author-then-edit re-test, third operator.run: goal
+            # "Verify 90-second countdown behavior", no url, no path, no
+            # filename. 504s spent observing Vera's own dashboard while
+            # timer.html sat in the workspace -- and the two operator.run calls
+            # before it had both been handed the correct preview URL.
+            #
+            # NOT gated on a session id being passed in. The agentic loop calls
+            # operator.run with a goal and nothing else -- `sandbox_session`
+            # appears nowhere in dag_workshop_capabilities -- so requiring one
+            # here would make this branch dead code in exactly the case it
+            # exists for. artifact_list_files falls back to _trigger_session_id()
+            # ("set by chat.stream / the agentic loop ... the safety net"),
+            # which is how exec's own missing-path hint reaches the workspace.
+            #
+            # Best-effort throughout: it returns None when the listing cannot be
+            # determined, and any failure leaves the target exactly as it was.
+            # The old behaviour is the fallback, not an error.
+            try:
+                from Vera.vera.execution import exec_capabilities as _exec
+            except ImportError:                                  # pragma: no cover
+                from vera.execution import exec_capabilities as _exec
+            try:
+                _wrote = _nav_fallback.sole_page(
+                    await _exec.artifact_list_files(
+                        session_id=str(sandbox_session or session_id or "").strip()))
+                if _wrote:
+                    path = _wrote
+                    _target_inferred = True
+                    log.info("operator.run target from the run's own files: %s",
+                             _nav_fallback.target_note(_wrote))
+            except Exception as e:                               # pragma: no cover
+                log.debug("operator.run: workspace target probe skipped: %s", e)
     if path and not url:
         _sbx = str(sandbox_session or session_id or "").strip()
         _res = _sfile.resolve(url, path, base_url=_orch_base_url(), session_id=_sbx)
@@ -837,7 +884,14 @@ async def cap_run(goal: str = "", url: str = "", kind: str = "", base_url: str =
         # path-derived or read out of the goal text - and nav_pin.is_pinnable
         # accepts only a sandbox preview URL, so a goal that legitimately
         # browses a site is never pinned. See nav_pin for the run this fixes.
-        pin_url=(url if _nav_pin.is_pinnable(url) else ""),
+        #
+        # An INFERRED target is deliberately not pinned. The pin holds a run to
+        # a target it was TOLD to use; a page picked out of the workspace was
+        # never told, and pinning it would trap a goal that really did mean to
+        # go to the open web on a local file it never asked for - worse than
+        # the dashboard this fallback exists to avoid. Starting in the right
+        # place is the whole benefit; enforcing it is not ours to claim.
+        pin_url=_nav_fallback.pin_for(url, _target_inferred, _nav_pin.is_pinnable),
         should_cancel=lambda: _op_is_cancelled(run_id))
     # Assemble the per-step screenshots into a GIF of the whole run (the frames
     # already exist — this is nearly free).

@@ -38,6 +38,7 @@ _CRITICAL_MODULES = {
     # gate reported "2450 passed" on the branches that introduced them.
     "test_operator_repeat_structural",  # thrash on a page whose text moves (2026-09-06)
     "test_operator_nav_pin",  # a run aimed at one file must stay on it (2026-09-06)
+    "test_operator_nav_fallback",  # aim it at the page the run wrote (2026-09-09)
     "test_operator_think_budget",  # one decision must not cost 199s (2026-09-06)
     "test_missing_path_hint",  # name the files that exist (2026-09-06)
     "test_workdir_note",  # do not tell a step to look at what it was shown (2026-09-06)
