@@ -135,6 +135,50 @@ def test_the_observation_is_quoted_not_judged():
         assert verdict not in out.lower()
 
 
+def test_a_page_that_ends_where_it_started_is_not_called_a_defect():
+    """Census 48, author-then-edit: '01:30' -> '00:00' -> '01:30'. It loaded at
+    the edited value, ran down to zero and Reset put it back exactly where it
+    started - the timer working. The note called that "a defect in the file"
+    anyway, because the verdict was attached to "more than one reading" rather
+    than to the comparison it states. The file went on to pass all four of that
+    goal's checks while the loop, told it was broken, spent the rest of a 1806s
+    budget editing it."""
+    steps = [{"seen": "01:30 Start Pause Reset"},
+             {"seen": "00:00 Start Pause Reset"},
+             {"seen": "01:30 Start Pause Reset"}]
+    out = SE.explain("repeating_action", steps)
+    assert "DIFFERENT" not in out, "it came back to exactly where it started"
+    assert "defect in the file" not in out
+    # The evidence itself is still handed over - only the verdict is dropped.
+    assert "01:30" in out and "00:00" in out and "->" in out
+
+
+def test_a_page_that_ends_somewhere_else_still_is():
+    """Census 47, same goal, genuinely broken: it loaded at the hardcoded '60'
+    instead of the edited value and ran past zero into '-1:-1'. Suppressing the
+    verdict for census 48 must not suppress it here."""
+    steps = [{"seen": "60 Start Pause Reset"},
+             {"seen": "00:38 Start Pause Reset"},
+             {"seen": "-1:-1 Start Pause Reset"},
+             {"seen": "01:30 Start Pause Reset"}]
+    out = SE.explain("repeating_action", steps)
+    assert "DIFFERENT" in out and "defect in the file" in out
+
+
+def test_the_reset_that_lands_on_the_wrong_value_is_still_a_defect():
+    """Census 39: 01:30 -> 00:57 -> 01:00. Reset put it at 01:00 instead of
+    01:30, so it did NOT end where it started and the verdict is earned."""
+    out = SE.explain("repeating_action", [{"seen": "01:30"}, {"seen": "00:57"},
+                                          {"seen": "01:00"}])
+    assert "DIFFERENT" in out
+
+
+def test_a_single_reading_never_carries_the_verdict():
+    """One reading is not a trail, so there is no return to judge."""
+    out = SE.explain("repeating_action", [{"seen": "01:00"}, {"seen": "01:00"}])
+    assert "DIFFERENT" not in out
+
+
 # ── the loop records it ─────────────────────────────────────────────────────
 class _Obs:
     def __init__(self, text):

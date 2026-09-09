@@ -188,12 +188,30 @@ def observed_note(steps: Optional[List[Dict[str, Any]]] = None) -> str:
     # and is invisible in any single reading. Reporting only the last value said
     # "01:00" and left the reader to guess whether that was wrong or just a
     # countdown caught late.
+    # The verdict is only earned when the comparison it describes actually
+    # holds. Census 48, author-then-edit: the page displayed
+    # '01:30' -> '00:00' -> '01:30' - it loaded at the edited value, ran down to
+    # zero and Reset put it back exactly where it started, which is the timer
+    # WORKING. The sentence fired anyway, because it was attached to "there is
+    # more than one reading" rather than to "it came back to something else",
+    # and told the loop the FILE was wrong about a file that then passed all
+    # four of that goal's checks. The loop believed it and spent the rest of a
+    # 1806s budget editing a correct file.
+    #
+    # Ending on the value it started with is the one case that REFUTES the
+    # claim outright, so it is the one case suppressed here. A trail that never
+    # returns at all (a plain countdown 01:30 -> 00:47 -> 00:20) still reads as
+    # "different from where it started"; telling those apart needs the values
+    # parsed rather than compared, which is not done here.
     trail_note = ""
     if len(trail) > 1:
-        trail_note = (" It displayed, in order: %s. A value that changes and "
-                      "then returns to something DIFFERENT from where it "
-                      "started is a defect in the file, not a browser problem."
-                      % " -> ".join(repr(t) for t in trail))
+        returned_to_start = trail[0] == trail[-1]
+        verdict = "" if returned_to_start else (
+            " A value that changes and then returns to something DIFFERENT "
+            "from where it started is a defect in the file, not a browser "
+            "problem.")
+        trail_note = (" It displayed, in order: %s.%s"
+                      % (" -> ".join(repr(t) for t in trail), verdict))
     return (" What the page actually DISPLAYED when it stopped: %r.%s Compare "
             "that with what the goal expected: if it does not match, the FILE "
             "is wrong and re-running the browser will keep reporting the same "
