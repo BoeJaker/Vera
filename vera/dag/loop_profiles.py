@@ -440,6 +440,99 @@ LOOP_PROFILES: List[Dict[str, Any]] = [
         "defaults": {"prefer_terminal_tools": False, "enable_phases": False,
                      "max_steps": 16},
     },
+
+    # â”€â”€ Feature-set specialists â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # One per subsystem that had none. Business and Markets already had theirs;
+    # these are the rest, and they exist so a specialist CENSUS can measure each
+    # subsystem under the loop that would really drive it rather than under the
+    # generic planner.
+    #
+    # Every cap below was validated against the live registry before being
+    # written down - two invented ones (netmap.scan, ping.host) were caught and
+    # dropped that way. A profile advertising a cap that does not exist teaches
+    # the planner to plan a step nothing can run.
+    #
+    # READ-SHAPED on purpose. These toolkits list, inspect and report; they do
+    # not flash firmware, wipe disks, install packages or rotate credentials. A
+    # specialist census repeats, and a repeating destructive goal is a bad day.
+    {
+        "id": "mesh-edge",
+        "label": "Mesh & Edge",
+        "icon": "\U0001F4E1",
+        "engine": "v6",
+        "agent": "network-engineer",
+        "family": ["mesh", "networking", "monitor"],
+        "description": "Inspects the mesh estate: which nodes are up, what they report, what boards and apps are stored, and what the radios can see. Read-only - no flashing, OTA or GPIO writes, because a census repeats.",
+        "caps": ["mesh.nodes", "mesh.activity", "mesh.settings.get", "mesh.boards.list", "mesh.app.list", "mesh.wifi.scan", "mesh.ble.scan", "mesh.node.position.list"],
+        "skills": "",
+        "panels": True,
+        "defaults": {"enable_phases": true},
+    },
+    {
+        "id": "foundry-provisioning",
+        "label": "Foundry / Provisioning",
+        "icon": "\U0001F3ED",
+        "engine": "v6",
+        "agent": "infra-operator",
+        "family": ["foundry", "proxmox", "docker", "execution"],
+        "description": "Reads the provisioning estate: nodes, images, blueprints, clusters and PXE state. Inspection only - building and wiping machines stays a deliberate human action.",
+        "caps": ["foundry.node.list", "foundry.image.list", "foundry.blueprint.list", "foundry.cluster.list", "foundry.cluster.ps", "foundry.features", "foundry.pxe.status", "foundry.salvage.list", "nodes.list", "proxmox.status", "docker.ps"],
+        "skills": "",
+        "panels": True,
+        "defaults": {"long_running_force_hitl": true},
+    },
+    {
+        "id": "model-catalog",
+        "label": "Model Catalog",
+        "icon": "\U0001F5C2",
+        "engine": "v6",
+        "agent": "infra-operator",
+        "family": ["catalog", "monitor"],
+        "description": "Answers questions about the model estate: what is installed where, what a node can hold, what the router has observed. Planning and comparison only - it does not pull or delete models.",
+        "caps": ["catalog.installed", "catalog.nodes", "catalog.browse", "catalog.search", "catalog.model", "catalog.install.plan", "catalog.autoopt.get", "bench.node_perf", "ollama.gate.status"],
+        "skills": "",
+        "panels": True,
+        "defaults": {},
+    },
+    {
+        "id": "storage-fabric",
+        "label": "Storage Fabric",
+        "icon": "\U0001F4BE",
+        "engine": "v6",
+        "agent": "infra-operator",
+        "family": ["pxstore", "execution", "monitor"],
+        "description": "Reports on the pxstore storage fabric: what exists, how it is configured and whether the backend is healthy. No resize, no destroy.",
+        "caps": ["pxstore.inventory", "pxstore.backend.status", "pxstore.fs.status", "pxstore.settings.get", "docker.ps", "exec.bash.run"],
+        "skills": "",
+        "panels": True,
+        "defaults": {},
+    },
+    {
+        "id": "identity-security",
+        "label": "Identity & Security",
+        "icon": "\U0001F510",
+        "engine": "v6",
+        "agent": "infra-operator",
+        "family": ["identity", "security"],
+        "description": "Reports the state of identity and secrets: users, groups, hosts, and whether the directory and vault are reachable and unsealed. Strictly read-only - it never creates a principal or unseals anything.",
+        "caps": ["identity.status", "identity.user.list", "identity.group.list", "identity.host.list", "identity.config.get", "identity.openbao.status", "identity.lldap.status"],
+        "skills": "",
+        "panels": True,
+        "defaults": {},
+    },
+    {
+        "id": "research-brief",
+        "label": "Research",
+        "icon": "\U0001F50E",
+        "engine": "v7",
+        "agent": "researcher-scout",
+        "family": ["research", "web"],
+        "description": "Runs Vera's research pipeline toward a question and writes up what came back with its sources. The one profile whose work is genuinely long-running, which is why its census carries a 3600s cap.",
+        "caps": ["research.run", "research.job.status", "research.job.result", "research.history", "web.search", "web.fetch", "nlp.rerank", "nlp.ner", "prose.author"],
+        "skills": "",
+        "panels": True,
+        "defaults": {"enable_tiering": true},
+    },
 ]
 
 def duplicate_profile_ids(profiles: Optional[List[Dict[str, Any]]] = None) -> List[str]:
