@@ -109,3 +109,80 @@ def test_the_cap_takes_the_archives_time_and_keeps_only_the_window(monkeypatch):
     stored.clear()
     out = asyncio.run(TH.cap_evolve_result_ingest(template="default", census_run="run53", rows=rows[:1]))
     assert out["added"] == 1 and stored[0]["ts"][:13] == time.strftime("%Y-%m-%dT%H", time.gmtime()), "no fallback given: now"
+
+
+# ── an ingested record takes its place by time ───────────────────────────────
+def test_insert_position_keeps_the_list_newest_first():
+    TH = _app()
+    if TH is None:
+        pytest.skip("app module not importable from THIS checkout here")
+    rows = [{"ts": "2026-09-10T15:00:00Z"}, {"ts": "2026-09-09T12:00:00Z"}, {"ts": "2026-09-08T08:00:00Z"}]
+    assert TH.insert_position(rows, "2026-09-11T00:00:00Z", 400) == 0, "newest: the head"
+    assert TH.insert_position(rows, "2026-09-09T20:00:00Z", 400) == 1, "between: before the first no-newer entry"
+    assert TH.insert_position(rows, "2026-09-09T12:00:00Z", 400) == 1, "equal time: before its equal (later insert reads as newer)"
+    assert TH.insert_position(rows, "2026-09-01T00:00:00Z", 400) == 3, "oldest: the tail"
+    assert TH.insert_position(rows, "2026-09-01T00:00:00Z", 3) is None, "full list, every entry newer: beyond the window"
+    assert TH.insert_position([], "2026-09-01T00:00:00Z", 400) == 0
+    assert TH.insert_position([{"ts": ""}], "2026-09-01T00:00:00Z", 400) == 0, "an entry with no time counts as oldest"
+
+
+def test_the_store_keeps_records_in_time_order_and_drops_the_beyond_window(monkeypatch):
+    """Against a real Redis when one is reachable (REDIS_URL, not db 0);
+    skipped otherwise - test_result_ingest_boot explains the setup."""
+    TH = _app()
+    if TH is None:
+        pytest.skip("app module not importable from THIS checkout here")
+    import json
+    import uuid
+    from Vera.vera.evolve import evolve_capabilities as EV
+
+    async def _go():
+        url = os.getenv("REDIS_URL") or ""
+        if not url:
+            pytest.skip("no REDIS_URL")
+        import redis.asyncio as aioredis
+        r = aioredis.from_url(url, decode_responses=False, socket_connect_timeout=3, socket_timeout=5)
+        if int(r.connection_pool.connection_kwargs.get("db") or 0) == 0:
+            pytest.skip("database 0 is prod's")
+        try:
+            await r.ping()
+        except Exception:
+            pytest.skip("Redis unreachable")
+        monkeypatch.setitem(sys.modules, "evolve_capabilities", EV)
+        monkeypatch.setattr(EV, "_redis", lambda: r)
+        monkeypatch.setattr(EV, "RUNS_CAP", 4)
+        tag = uuid.uuid4().hex[:6]
+        key = EV.KEY_RUNS
+        saved = await r.lrange(key, 0, -1)
+        await r.delete(key)
+        try:
+            def row(gid, ended):
+                return {"id": gid, "session_id": gid + "-" + tag, "status": "done", "wall_s": 1, "ended_at": ended}
+            async def ingest(rows, run):
+                return await TH.cap_evolve_result_ingest(template="default", census_run=run, rows=rows)
+            out = await ingest([row("b", "2026-09-09T00:00:00Z"), row("d", "2026-09-07T00:00:00Z")], "run2")
+            assert out["added"] == 2
+            out = await ingest([row("a", "2026-09-10T00:00:00Z"), row("c", "2026-09-08T00:00:00Z")], "run3")
+            assert out["added"] == 2
+            order = [json.loads(x)["label"] for x in await r.lrange(key, 0, -1)]
+            assert order == ["a", "b", "c", "d"], order
+            # full list (cap 4): a record older than everything is not added
+            out = await ingest([row("e", "2026-09-01T00:00:00Z")], "run1")
+            assert out["added"] == 0 and out["skipped_old"] == 1 and out["run_ids"] == []
+            assert [json.loads(x)["label"] for x in await r.lrange(key, 0, -1)] == ["a", "b", "c", "d"]
+            # a newer one goes to the head and the oldest falls off
+            out = await ingest([row("f", "2026-09-11T00:00:00Z")], "run4")
+            assert out["added"] == 1
+            assert [json.loads(x)["label"] for x in await r.lrange(key, 0, -1)] == ["f", "a", "b", "c"]
+            # re-posting keeps the place
+            out = await ingest([row("b", "2026-09-09T00:00:00Z")], "run2")
+            assert out["replaced"] == 1
+            assert [json.loads(x)["label"] for x in await r.lrange(key, 0, -1)] == ["f", "a", "b", "c"]
+        finally:
+            await r.delete(key)
+            for x in reversed(saved):
+                await r.lpush(key, x)
+            for gid in "abcdef":
+                await r.delete(EV.KEY_RUN + gid + "-" + tag)
+            await r.aclose()
+    asyncio.run(_go())
