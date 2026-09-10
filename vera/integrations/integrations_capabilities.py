@@ -977,6 +977,20 @@ async def integration_effect_receipts(limit: int = 50, plan_id: str = "",
 
 
 @capability(
+    "integration.effect.retry.policy", http_method="GET",
+    http_path="/integrations/effect/retry/policy",
+    http_tags=["integration", "policy"], memory="off", silent=True,
+    description="Describe the bounded retry decision vocabulary used for external "
+                "effects. Returns transient outcome classes, refusal explanations, "
+                "requirements, and hard bounds; it never executes, sleeps, retries, "
+                "opens secrets, records receipts, or retains payloads.",
+)
+async def integration_effect_retry_policy(trace_id=None):
+    from Vera.vera.integrations.effect_retry import describe_retry_policy
+    return describe_retry_policy()
+
+
+@capability(
     "integration.effect.retry.plan", http_method="POST",
     http_path="/integrations/effect/retry/plan",
     http_tags=["integration", "policy"], memory="off",
@@ -1130,7 +1144,8 @@ register_ui(
         "integration.source.transition.plan",
         "integration.source.build.status", "integration.source.build.plan",
         "integration.effect.plan", "integration.effect.replay.status",
-        "integration.effect.retry.plan", "integration.effect.receipts",
+        "integration.effect.retry.plan", "integration.effect.retry.policy",
+        "integration.effect.receipts",
         # the one-click "register & secure everything" button drives autoenroll
         "autoenroll.scan", "autoenroll.run", "autoenroll.pending",
     ],

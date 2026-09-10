@@ -70,6 +70,9 @@ def test_integrations_ui_explains_empty_evidence_without_mutation_controls():
               "integrations_panel.html").read_text(encoding="utf-8")
     assert "Effect evidence" in source
     assert "/integrations/effect/receipts?limit=50" in source
+    assert "/integrations/effect/retry/policy" in source
+    assert "Vera does not automatically retry" in source
+    assert "policy.reason_descriptions" in source
     assert "No external-effect receipts have been recorded yet" in source
     assert "no retries or external calls" in source
     assert "record receipt" not in source.lower()
