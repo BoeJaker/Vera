@@ -131,8 +131,19 @@ ws.onmsgOuter = ws.onmsg;
 // the shot always lands in DIR
 const url = /^https?:\/\//.test(FILE) ? FILE : "file:///" + path.join(DIR, FILE).replace(/\\/g, "/");
 if (process.env.THROTTLE) await cmd("Emulation.setCPUThrottlingRate", { rate: Number(process.env.THROTTLE) });
+/* VIEW="w,h" — the viewport the page lays out in, exact, whatever the window: a live page shot at the design board's
+   own size (1440x1000) is the only pair pairdiff.mjs can compare pixel for pixel. */
+if (process.env.VIEW) { const [w, h] = process.env.VIEW.split(",").map(Number); await cmd("Emulation.setDeviceMetricsOverride", { width: w, height: h, deviceScaleFactor: 1, mobile: false }); }
 await cmd("Page.navigate", { url });
 await sleep(WAIT);
+/* EVAL="<js>" — run an expression in the page after it has loaded and wait EVAL_WAIT ms (default 8000) before the
+   interactions and the shot: the way to put a live page into the state a design board shows (load a session,
+   set the tier, open a pane) without a click path for it. The value is printed. */
+if (process.env.EVAL) {
+  await cmd("Runtime.evaluate", { expression: process.env.EVAL, awaitPromise: true, returnByValue: true })
+    .then(x => console.log("eval: " + JSON.stringify(x.result?.result?.value ?? x.result?.exceptionDetails?.text ?? null)));
+  await sleep(Number(process.env.EVAL_WAIT || 8000));
+}
 if (process.env.CLICK) {
   await cmd("Runtime.evaluate", { expression: `(()=>{const t=${JSON.stringify(process.env.CLICK)};
     const el=[...document.querySelectorAll("button,[role=button],a")].find(e=>(e.innerText||"").trim().includes(t));
