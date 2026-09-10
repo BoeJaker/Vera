@@ -173,6 +173,16 @@ def routing_of(record: Dict[str, Any]) -> Dict[str, Any]:
     planner = roles.get("planner") or {}
     return {
         "recorded": True,
+        # EVERY role the profile declared, with the model in force for each -
+        # a census is run by planner, controller, tier, executor, writer and
+        # coder together, and showing only the coder hid five of them.
+        "roles": {r: {"model": (v or {}).get("model") or "",
+                      "overridden": bool((v or {}).get("overridden")),
+                      "declared_model": (v or {}).get("declared_model") or ""}
+                  for r, v in roles.items()},
+        # What actually ran, by role: {role: {model: calls}}. Calls with no
+        # role (embeddings, chat) are keyed by their job type.
+        "by_role": calls_by_role(calls.get("calls") or []),
         "coder": coder.get("model") or "",
         "coder_overridden": bool(coder.get("overridden")),
         "coder_declared": coder.get("declared_model") or "",
@@ -188,6 +198,24 @@ def routing_of(record: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def calls_by_role(calls: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, int]]:
+    """{role: {model: n}} over recorded calls. Role first, then the job type
+    (chat, embed...), then 'other' - never a blank key."""
+    out: Dict[str, Dict[str, int]] = {}
+    for c in calls or []:
+        if not isinstance(c, dict):
+            continue
+        role = str(c.get("role") or "").strip() or str(c.get("job") or "").strip() or "other"
+        if role.startswith("loop_"):
+            role = role[5:]
+        model = str(c.get("model") or "?")
+        if "embed" in model and role == "other":
+            role = "embed"
+        out.setdefault(role, {})
+        out[role][model] = out[role].get(model, 0) + 1
+    return out
+
+
 def routing_rollup(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     """A run's routing in one line: which coder/planner it ran on, whether that
     changed mid-run, how many calls hit which node, and how many were re-routed
@@ -195,6 +223,8 @@ def routing_rollup(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     instruments in one file."""
     coders: List[str] = []
     planners: List[str] = []
+    roles: Dict[str, List[str]] = {}          # role -> models seen in force, in order
+    by_role: Dict[str, Dict[str, int]] = {}   # role -> {model: calls}
     nodes: Dict[str, int] = {}
     models: Dict[str, int] = {}
     calls = reroutes = spill = recorded = 0
@@ -207,6 +237,15 @@ def routing_rollup(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
             coders.append(ro["coder"])
         if ro["planner"] and ro["planner"] not in planners:
             planners.append(ro["planner"])
+        for r, v in (ro.get("roles") or {}).items():
+            m = (v or {}).get("model") or "(default)"
+            roles.setdefault(r, [])
+            if m not in roles[r]:
+                roles[r].append(m)
+        for r, mm in (ro.get("by_role") or {}).items():
+            by_role.setdefault(r, {})
+            for m, n in (mm or {}).items():
+                by_role[r][m] = by_role[r].get(m, 0) + int(n or 0)
         for k, v in (ro.get("nodes") or {}).items():
             nodes[str(k)] = nodes.get(str(k), 0) + int(v or 0)
         for k, v in (ro.get("models") or {}).items():
@@ -218,6 +257,9 @@ def routing_rollup(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         "recorded_goals": recorded,
         "coders": coders, "planners": planners,
         "coder_changed": len(coders) > 1,
+        "roles": roles,
+        "roles_changed": sorted(r for r, ms in roles.items() if len(ms) > 1),
+        "by_role": by_role,
         "nodes": nodes, "models": models,
         "calls": calls, "reroutes": reroutes, "spill_calls": spill,
     }

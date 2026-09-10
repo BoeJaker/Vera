@@ -151,8 +151,13 @@
     }
 
     setMode(m) { this._mode = m; this.refresh(); }
-    setBranch(name) { this._branch = name; this._pipelineId = ''; this.refresh(); }
-    setPipelineId(id) { this._pipelineId = id; this.refresh(); }
+    // Called every 4 s by the Loop Lab's active-run refresh with the same
+    // branch; an unchanged branch must not start another fetch (2026-09-10).
+    setBranch(name) {
+      if ((name || '') === (this._branch || '') && !this._pipelineId) return;
+      this._branch = name; this._pipelineId = ''; this.refresh();
+    }
+    setPipelineId(id) { if (id === this._pipelineId) return; this._pipelineId = id; this.refresh(); }
 
     _connectWs() {
       try {
@@ -180,8 +185,12 @@
     }
 
     async refresh(fromLiveEvent) {
-      if (this._mode === 'detail') await this._refreshDetail(fromLiveEvent);
-      else await this._refreshLanes(fromLiveEvent);
+      if (this._inflight) return;            // never stack a refresh on a slower one
+      this._inflight = true;
+      try {
+        if (this._mode === 'detail') await this._refreshDetail(fromLiveEvent);
+        else await this._refreshLanes(fromLiveEvent);
+      } finally { this._inflight = false; }
     }
 
     // ── detail mode ──────────────────────────────────────────────────────

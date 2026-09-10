@@ -2638,7 +2638,27 @@ async def _runs_window_commits_batch(recs: List[Dict[str, Any]]) -> None:
                         "overlapped that commit's timestamp — never guessed. "
                         "Query: hours (int, default 72), branch (str, optional — "
                         "log this branch instead of the checked-out HEAD).")
-async def evolve_authors(hours: int = 72, branch: str = "", trace_id=None):
+async def evolve_authors(hours: int = 72, branch: str = "", fresh: bool = False,
+                         trace_id=None):
+    # Polled by the author-map element every 20 s and by the Loop Lab's
+    # active-run refresh every 4 s, at 20-35 s a call: the calls overlapped,
+    # filled the browser's connection pool, and every other fetch on the page
+    # waited behind them (census table 36 s after the click, 2026-09-10).
+    # Cached for a minute and coalesced, so pollers share one computation.
+    key = (int(hours), str(branch or ""))
+    _fresh = str(fresh).strip().lower() in ("1", "true", "yes", "on")
+    return await _AUTHORS_CACHE.get(
+        key, lambda: _evolve_authors_uncached(int(hours), str(branch or "")), fresh=_fresh)
+
+
+try:
+    from Vera.vera.evolve.ttl_cache import TTLCache as _TTLCache
+except Exception:                                          # pragma: no cover
+    from vera.evolve.ttl_cache import TTLCache as _TTLCache
+_AUTHORS_CACHE = _TTLCache(60.0)
+
+
+async def _evolve_authors_uncached(hours: int, branch: str):
     from datetime import datetime, timedelta, timezone
     since_dt = datetime.now(timezone.utc) - timedelta(hours=max(1, int(hours)))
     since = since_dt.isoformat()

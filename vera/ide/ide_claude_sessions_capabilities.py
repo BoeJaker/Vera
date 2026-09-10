@@ -781,9 +781,28 @@ async def _query_records_for_recent_sessions(max_sessions: int, per_session_limi
                 "last_preview, commits: [{hash, author, date, ts, message}]}]}.",
 )
 async def cap_claude_sessions_list_sessions(scan_limit: int = 3000, max_sessions: int = 60,
-                                            trace_id=None) -> dict:
-    scan_limit = max(1, min(20000, scan_limit))
-    max_sessions = max(1, min(500, max_sessions))
+                                            fresh: bool = False, trace_id=None) -> dict:
+    scan_limit = max(1, min(20000, int(scan_limit)))
+    max_sessions = max(1, min(500, int(max_sessions)))
+    # 20-40 s a call (a SQLite scan of every ingested turn plus a git log over
+    # the union window), and polled: by the sessions watch, by evolve.authors,
+    # by the Dispatch panel. Cached for 45 s and coalesced so overlapping
+    # callers share one scan instead of each starting their own. `fresh=true`
+    # bypasses it. (Measured 2026-09-10: 36-42 s per call, three callers.)
+    _fresh = str(fresh).strip().lower() in ("1", "true", "yes", "on")
+    return await _LIST_SESSIONS_CACHE.get(
+        (scan_limit, max_sessions),
+        lambda: _list_sessions_uncached(scan_limit, max_sessions), fresh=_fresh)
+
+
+try:
+    from Vera.vera.evolve.ttl_cache import TTLCache as _TTLCache
+except Exception:                                          # pragma: no cover
+    from vera.evolve.ttl_cache import TTLCache as _TTLCache
+_LIST_SESSIONS_CACHE = _TTLCache(45.0)
+
+
+async def _list_sessions_uncached(scan_limit: int, max_sessions: int) -> dict:
     rows = await _query_records_for_recent_sessions(max_sessions, scan_limit)
     if rows is None:
         # JSON1 not available on this SQLite build — fall back to the old
