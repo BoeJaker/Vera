@@ -63,6 +63,7 @@ from Vera.vera.integrations.source_build_plan import (
     build_plan_contract as _source_build_plan_contract,
     plan_source_build as _plan_source_build,
 )
+from Vera.vera.integrations.external_effects import plan_external_effect as _plan_external_effect
 
 try:
     from Vera.vera.security import secrets as vsecrets
@@ -830,6 +831,33 @@ async def integration_embed_proxy(iid: str, request: Request, path: str = ""):
 #  PANEL
 # ═════════════════════════════════════════════════════════════════════════════
 @capability(
+    "integration.effect.plan", http_method="POST",
+    http_path="/integrations/effect/plan", http_tags=["integration", "policy"],
+    memory="off",
+    description="Plan admission for one outbound integration operation without "
+                "executing it. Classifies reads, idempotent writes, and non-idempotent "
+                "writes; requires opaque approval-receipt and idempotency references "
+                "where appropriate and returns only their SHA-256 digests. Inputs: "
+                "connection_id, operation, method, idempotency_key, "
+                "approval_receipt_ref, retry.",
+)
+async def integration_effect_plan(connection_id: str = "", operation: str = "",
+                                  method: str = "GET", idempotency_key: str = "",
+                                  approval_receipt_ref: str = "", retry: bool = False,
+                                  trace_id=None):
+    try:
+        return _plan_external_effect(
+            connection_id=connection_id, operation=operation, method=method,
+            idempotency_key=idempotency_key,
+            approval_receipt_ref=approval_receipt_ref, retry=retry)
+    except (TypeError, ValueError) as exc:
+        return {"schema": "vera.external-effect-plan/v1", "error": str(exc),
+                "admission": {"allowed": False, "reasons": ["invalid_request"]},
+                "executes": False, "resolves_secrets": False,
+                "retains_payload": False}
+
+
+@capability(
     "integration.source.lifecycle", http_method="GET",
     http_path="/integrations/source/lifecycle", http_tags=["integration", "intake"],
     memory="off", silent=True,
@@ -943,6 +971,7 @@ register_ui(
         "integration.source.lifecycle", "integration.source.inspect",
         "integration.source.transition.plan",
         "integration.source.build.status", "integration.source.build.plan",
+        "integration.effect.plan",
         # the one-click "register & secure everything" button drives autoenroll
         "autoenroll.scan", "autoenroll.run", "autoenroll.pending",
     ],
