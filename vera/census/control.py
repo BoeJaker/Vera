@@ -330,11 +330,15 @@ def live_routing(entries: Sequence[Dict[str, Any]], since_iso: str, *, session_i
             toks.append(float(t))
     toks.sort()
     median = (toks[len(toks) // 2] if toks else None)
+    # The last few GENERATION calls (the ones with a token rate): a burst of
+    # embedding calls after a memory write would otherwise be all one sees.
+    gen = [e for e in mine if isinstance(e.get("tok_per_s"), (int, float)) and not isinstance(e.get("tok_per_s"), bool)]
+    tail = (gen or mine)[-max(0, int(last_n)):]
     last = [{"ts": str(e.get("ts") or "")[11:19], "job": e.get("job_type") or "", "role": e.get("role") or "",
              "model": str(e.get("model") or ""), "node": str(e.get("instance") or e.get("fallback_instance") or ""),
              "tok_s": e.get("tok_per_s"), "gpu_pct": e.get("gpu_resident_pct"), "s": e.get("elapsed_s"),
              "status": str(e.get("status") or ""), "spill": bool(e.get("cpu_spill"))}
-            for e in mine[-max(0, int(last_n)):]]
+            for e in tail]
     return {"calls": len(mine), "by_node": by_node, "by_model": by_model, "spill_calls": spill,
             "reroutes": reroutes, "tok_s_median": (round(median, 1) if median is not None else None),
             "last": last, "since": lo}
