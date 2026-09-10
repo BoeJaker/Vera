@@ -71,6 +71,8 @@ def test_integrations_ui_explains_empty_evidence_without_mutation_controls():
     assert "Effect evidence" in source
     assert "/integrations/effect/receipts?limit=50" in source
     assert "/integrations/effect/retry/policy" in source
+    assert "/integrations/effect/shadow/evidence?limit=50" in source
+    assert "Current calls are not blocked" in source
     assert "Vera does not automatically retry" in source
     assert "policy.reason_descriptions" in source
     assert "No external-effect receipts have been recorded yet" in source

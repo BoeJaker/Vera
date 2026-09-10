@@ -178,8 +178,9 @@ function shortHash(value){const s=String(value||'');return s?s.slice(0,10)+'…'
 async function openEffects(){$('#effectOv').classList.add('on');await loadEffects();}
 async function loadEffects(){
   const el=$('#effectBody');el.innerHTML='<div class="hint">Loading durable receipt evidence…</div>';
-  const [r,policy]=await Promise.all([api('/integrations/effect/receipts?limit=50'),
-    api('/integrations/effect/retry/policy')]);
+  const [r,policy,shadow]=await Promise.all([api('/integrations/effect/receipts?limit=50'),
+    api('/integrations/effect/retry/policy'),
+    api('/integrations/effect/shadow/evidence?limit=50')]);
   if(r.error){el.innerHTML='<div class="hint">'+esc(r.error)+'</div>';return;}
   const t=r.totals||{}, recent=r.recent||[], outcomes=r.outcomes||{};
   const outcome=Object.entries(outcomes).filter(([,v])=>v&&v.receipts)
@@ -199,12 +200,20 @@ async function loadEffects(){
     +'<div class="badges"><span class="bdg">HTTP '+esc((policy.retryable_http_statuses||[]).join(', '))+'</span> '
     +'<span class="bdg">errors '+esc((policy.retryable_error_codes||[]).join(', '))+'</span> '
     +'<span class="bdg">max '+esc(bounds.maximum_attempts||0)+' attempts</span></div>'+reasons;
+  const st=shadow.totals||{}, shadowReasons=Object.entries(shadow.reasons_in_window||{})
+    .map(([k,v])=>'<span class="bdg">'+esc(k)+' '+esc(v)+'</span>').join(' ');
+  const shadowInfo=shadow.error?'<div class="hint">Decision evidence unavailable: '+esc(shadow.error)+'</div>':
+    '<div class="sec">Observe-only decisions</div><div class="hint">What policy would have done at the generic API boundary. Current calls are not blocked; these counts are evidence for a later enforcement decision, not proof of safety.</div>'
+    +'<div class="metrics"><div class="metric"><b>'+esc(st.observations||0)+'</b><span>observed</span></div>'
+    +'<div class="metric"><b>'+esc(st.would_admit||0)+'</b><span>would admit</span></div>'
+    +'<div class="metric"><b>'+esc(st.would_suppress||0)+'</b><span>would suppress</span></div></div>'
+    +'<div class="badges">'+shadowReasons+'</div>';
   el.innerHTML='<div class="hint">Durable outcomes and replay evidence. Request/response bodies, credentials, and raw approval or idempotency references are never shown.</div>'
     +'<div class="metrics"><div class="metric"><b>'+esc(t.plans||0)+'</b><span>effect plans</span></div>'
     +'<div class="metric"><b>'+esc(t.receipts||0)+'</b><span>receipts</span></div>'
     +'<div class="metric"><b>'+esc(t.observations||0)+'</b><span>observations</span></div></div>'
     +'<div class="badges">'+outcome+'</div><div class="sec">Recent evidence</div>'
-    +(rows||'<div class="hint">No external-effect receipts have been recorded yet.</div>')+retryInfo;
+    +(rows||'<div class="hint">No external-effect receipts have been recorded yet.</div>')+shadowInfo+retryInfo;
 }
 
 async function load(){
