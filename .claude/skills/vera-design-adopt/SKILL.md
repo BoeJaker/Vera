@@ -204,6 +204,15 @@ each run in its own Chrome profile on its own CDP port, cleaned up afterwards.
 Give every concurrent probe a different `CDP_OFFSET` — two probes on one port
 is the single most common way to lose an hour.
 
+Two env knobs make a live page comparable to a board: `VIEW="1440,1000"` lays
+the page out in exactly the board's viewport (the only pair `pairdiff.mjs` can
+compare pixel for pixel), and `EVAL="<js>"` runs after load (then waits
+`EVAL_WAIT` ms, default 8000) to put the page in the state the board shows —
+`CH.loadSession('<id>')` for a real transcript, `CH.setDensity('zen')`,
+`veraUI.setAppearance({style:'terminal'})`. For the design side, `CLIP` with a
+`scale` crops the focused artboard out of the editor at 1:1
+(`{"x":293,"y":48,"width":1298,"height":900,"scale":1.109}` for a 1440×1000
+board fit into the 1900×1100 window).
 Judge the pair against the board's acceptance lines, and against the checklist
 rows for that slice — then put a number on it: `pairdiff.mjs` (pure JS, no
 dependencies) reports the share of pixels that differ beyond a threshold, the

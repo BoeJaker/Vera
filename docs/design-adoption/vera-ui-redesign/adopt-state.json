@@ -9,7 +9,7 @@
  ],
  "edge": "bleeding-edge-design",
  "created": "2026-09-10T23:02:57.695Z",
- "updated": "2026-09-10T23:02:58.251Z",
+ "updated": "2026-09-10T23:52:47.463Z",
  "sources": {
   "slices": "slices.json",
   "map": "adopt-map.json"
@@ -53,15 +53,21 @@
     "pairDir": "Notes/adopt-shots/adoption-helpers"
    },
    "prerequisites": [],
-   "status": "in-progress",
-   "pipelines": [],
-   "commits": [],
+   "status": "landed",
+   "pipelines": [
+    "136d09f3"
+   ],
+   "commits": [
+    "ff2202d",
+    "ef31d93"
+   ],
    "pairs": [],
    "parked": [],
    "notes": [
-    "estate · design-index · map · slices · state · pairdiff written and run against the 28-board canvas"
+    "estate · design-index · map · slices · state · pairdiff written and run against the 28-board canvas",
+    "merged to bleeding-edge-design 2026-09-11; standing container refreshed"
    ],
-   "updated": "2026-09-10T23:02:58.067Z"
+   "updated": "2026-09-10T23:12:24.284Z"
   },
   {
    "id": "m1a-tokens-packs",
@@ -95,20 +101,29 @@
     "pairDir": "Notes/adopt-shots/m1a-tokens-packs"
    },
    "prerequisites": [],
-   "status": "landed",
+   "status": "verified",
    "pipelines": [
-    "e5066bc1"
+    "e5066bc1",
+    "5a699f07"
    ],
    "commits": [
     "5e543b1",
-    "5199321"
+    "5199321",
+    "44bd479",
+    "d7a9e67"
    ],
-   "pairs": [],
+   "pairs": [
+    "Notes/adopt-shots/m1a/pair-standard.png",
+    "Notes/adopt-shots/m1a/pair-newspaper.png",
+    "Notes/adopt-shots/m1a/pair-terminal.png",
+    "Notes/adopt-shots/m1a/pair-pixel.png"
+   ],
    "parked": [],
    "notes": [
-    "merged to bleeding-edge-design 2026-09-10; pair not yet taken"
+    "merged to bleeding-edge-design 2026-09-10; pair not yet taken",
+    "the first pair showed a pack switch changing nothing on the chat (its --sans/--mono and radii were its own); M1a-surfaces made the chat read the tokens — live pack vs standard now moves 3-4% of the chat's pixels (fonts, casing, radii); design-vs-live 14.5-15% (different content)"
    ],
-   "updated": "2026-09-10T23:02:57.865Z"
+   "updated": "2026-09-10T23:52:47.251Z"
   },
   {
    "id": "m1b-tiers-blocks",
@@ -140,15 +155,29 @@
     "pairDir": "Notes/adopt-shots/m1b-tiers-blocks"
    },
    "prerequisites": [],
-   "status": "in-progress",
-   "pipelines": [],
-   "commits": [],
-   "pairs": [],
+   "status": "verified",
+   "pipelines": [
+    "fb6f5f42",
+    "a7e59465"
+   ],
+   "commits": [
+    "c669885",
+    "ac19f94",
+    "d9537b8",
+    "770dc23"
+   ],
+   "pairs": [
+    "Notes/adopt-shots/m1b/pair-full.png",
+    "Notes/adopt-shots/m1b/pair-hover.png",
+    "Notes/adopt-shots/m1b/pair-zen.png",
+    "Notes/adopt-shots/m1b/pair-blocks-off.png"
+   ],
    "parked": [],
    "notes": [
-    "chat_panel.html patch built in scratchpad w5-m1b; test + pair pending"
+    "chat_panel.html patch built in scratchpad w5-m1b; test + pair pending",
+    "the pair caught Blocks off not reaching the minimal view's question (fixed a7e59465); tiers verified live: full chrome at rest, hover chrome at the foot of the pointed turn, zen 820px column without chrome, blocks off flat on every surface; 15 tests. Not in this slice: the LHM quick menu, the chip rows and the composer modes the board also shows (lhm-library, chat-modes)"
    ],
-   "updated": "2026-09-10T23:02:58.251Z"
+   "updated": "2026-09-10T23:52:47.463Z"
   },
   {
    "id": "lhm-library",
@@ -527,6 +556,77 @@
    "commit": "",
    "pair": "",
    "note": "chat_panel.html patch built in scratchpad w5-m1b; test + pair pending"
+  },
+  {
+   "at": "2026-09-10T23:12:24.285Z",
+   "event": "set",
+   "slice": "adoption-helpers",
+   "from": "in-progress",
+   "to": "landed",
+   "pipeline": "136d09f3",
+   "commit": [
+    "ff2202d",
+    "ef31d93"
+   ],
+   "pair": "",
+   "note": "merged to bleeding-edge-design 2026-09-11; standing container refreshed"
+  },
+  {
+   "at": "2026-09-10T23:12:24.910Z",
+   "event": "push",
+   "registry": "https://llm.int:8999",
+   "entry": "technique:design-adoption-vera-ui-redesign-chat-canvas-widgets-system",
+   "ok": false
+  },
+  {
+   "at": "2026-09-10T23:12:47.478Z",
+   "event": "push",
+   "registry": "https://llm.int:8999",
+   "entry": "technique:design-adoption-vera-ui-redesign-chat-canvas-widgets-system",
+   "ok": true
+  },
+  {
+   "at": "2026-09-10T23:52:47.251Z",
+   "event": "set",
+   "slice": "m1a-tokens-packs",
+   "from": "landed",
+   "to": "verified",
+   "pipeline": "5a699f07",
+   "commit": [
+    "44bd479",
+    "d7a9e67"
+   ],
+   "pair": [
+    "Notes/adopt-shots/m1a/pair-standard.png",
+    "Notes/adopt-shots/m1a/pair-newspaper.png",
+    "Notes/adopt-shots/m1a/pair-terminal.png",
+    "Notes/adopt-shots/m1a/pair-pixel.png"
+   ],
+   "note": "the first pair showed a pack switch changing nothing on the chat (its --sans/--mono and radii were its own); M1a-surfaces made the chat read the tokens — live pack vs standard now moves 3-4% of the chat's pixels (fonts, casing, radii); design-vs-live 14.5-15% (different content)"
+  },
+  {
+   "at": "2026-09-10T23:52:47.463Z",
+   "event": "set",
+   "slice": "m1b-tiers-blocks",
+   "from": "in-progress",
+   "to": "verified",
+   "pipeline": [
+    "fb6f5f42",
+    "a7e59465"
+   ],
+   "commit": [
+    "c669885",
+    "ac19f94",
+    "d9537b8",
+    "770dc23"
+   ],
+   "pair": [
+    "Notes/adopt-shots/m1b/pair-full.png",
+    "Notes/adopt-shots/m1b/pair-hover.png",
+    "Notes/adopt-shots/m1b/pair-zen.png",
+    "Notes/adopt-shots/m1b/pair-blocks-off.png"
+   ],
+   "note": "the pair caught Blocks off not reaching the minimal view's question (fixed a7e59465); tiers verified live: full chrome at rest, hover chrome at the foot of the pointed turn, zen 820px column without chrome, blocks off flat on every surface; 15 tests. Not in this slice: the LHM quick menu, the chip rows and the composer modes the board also shows (lhm-library, chat-modes)"
   }
  ]
 }
