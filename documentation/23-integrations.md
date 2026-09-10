@@ -262,6 +262,13 @@ approval receipts, raw idempotency keys, and mutation controls are absent. An
 empty view means no migrated adapter has recorded durable evidence yet; it is
 not presented as proof that external effects did not occur.
 
+The same drawer reads `integration.effect.retry.policy` to explain the exact
+transient HTTP/error vocabulary, refusal reasons, hard attempt/delay bounds, and
+the evidence required before a scheduler may consider another attempt. This is
+a policy legend, not a retry control: receipt rows alone do not contain enough
+context to authorize a retry, and the view cannot execute, sleep, select jitter,
+open a secret, replay an operation, or record evidence.
+
 ---
 
 ## 8. Common threads

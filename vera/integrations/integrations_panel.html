@@ -178,7 +178,8 @@ function shortHash(value){const s=String(value||'');return s?s.slice(0,10)+'…'
 async function openEffects(){$('#effectOv').classList.add('on');await loadEffects();}
 async function loadEffects(){
   const el=$('#effectBody');el.innerHTML='<div class="hint">Loading durable receipt evidence…</div>';
-  const r=await api('/integrations/effect/receipts?limit=50');
+  const [r,policy]=await Promise.all([api('/integrations/effect/receipts?limit=50'),
+    api('/integrations/effect/retry/policy')]);
   if(r.error){el.innerHTML='<div class="hint">'+esc(r.error)+'</div>';return;}
   const t=r.totals||{}, recent=r.recent||[], outcomes=r.outcomes||{};
   const outcome=Object.entries(outcomes).filter(([,v])=>v&&v.receipts)
@@ -190,12 +191,20 @@ async function loadEffects(){
       +' · '+esc(x.operation||'unknown operation')+'</div>'
       +'<code>plan '+esc(shortHash(x.plan_id))+' · receipt '+esc(shortHash(x.receipt_id))
       +' · observations '+esc(x.observation_count||0)+'</code></div>').join('');
+  const reasons=Object.entries(policy.reason_descriptions||{})
+    .map(([k,v])=>'<div class="receipt"><code>'+esc(k)+'</code><div class="sub">'+esc(v)+'</div></div>').join('');
+  const bounds=policy.bounds||{};
+  const retryInfo=policy.error?'<div class="hint">Retry policy unavailable: '+esc(policy.error)+'</div>':
+    '<div class="sec">Retry decision policy</div><div class="hint">Planning only — Vera does not automatically retry, sleep, or choose a delay. A retry requires the original admitted plan, remaining attempt budget, a transient outcome, explicit retry intent, and no durable success receipt.</div>'
+    +'<div class="badges"><span class="bdg">HTTP '+esc((policy.retryable_http_statuses||[]).join(', '))+'</span> '
+    +'<span class="bdg">errors '+esc((policy.retryable_error_codes||[]).join(', '))+'</span> '
+    +'<span class="bdg">max '+esc(bounds.maximum_attempts||0)+' attempts</span></div>'+reasons;
   el.innerHTML='<div class="hint">Durable outcomes and replay evidence. Request/response bodies, credentials, and raw approval or idempotency references are never shown.</div>'
     +'<div class="metrics"><div class="metric"><b>'+esc(t.plans||0)+'</b><span>effect plans</span></div>'
     +'<div class="metric"><b>'+esc(t.receipts||0)+'</b><span>receipts</span></div>'
     +'<div class="metric"><b>'+esc(t.observations||0)+'</b><span>observations</span></div></div>'
     +'<div class="badges">'+outcome+'</div><div class="sec">Recent evidence</div>'
-    +(rows||'<div class="hint">No external-effect receipts have been recorded yet.</div>');
+    +(rows||'<div class="hint">No external-effect receipts have been recorded yet.</div>')+retryInfo;
 }
 
 async function load(){

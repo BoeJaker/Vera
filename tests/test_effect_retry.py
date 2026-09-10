@@ -1,6 +1,6 @@
 import pytest
 
-from vera.integrations.effect_retry import plan_effect_retry
+from vera.integrations.effect_retry import describe_retry_policy, plan_effect_retry
 from vera.integrations.external_effects import plan_external_effect
 
 
@@ -12,6 +12,20 @@ def effect(method="POST", retry=True, approval="approval:1", key="effect:1"):
         connection_id="integration:demo", operation="orders.create",
         method=method, idempotency_key=key,
         approval_receipt_ref=approval, retry=retry)
+
+
+def test_retry_policy_description_is_bounded_and_non_executing():
+    policy = describe_retry_policy()
+    assert policy["retryable_http_statuses"] == [408, 425, 429, 500, 502, 503, 504]
+    assert policy["bounds"] == {"maximum_attempts": 20,
+                                "maximum_delay_ms": 86_400_000}
+    assert set(policy["reason_descriptions"]) == {
+        "effect_not_admitted", "successful_receipt_exists",
+        "retry_not_requested", "attempt_budget_exhausted",
+        "outcome_not_retryable"}
+    assert all(policy[key] is False for key in (
+        "executes", "sleeps", "records_receipt", "resolves_secrets",
+        "retains_payload"))
 
 
 def test_retryable_mutation_produces_bounded_window_without_executing():
