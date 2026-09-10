@@ -41,7 +41,7 @@ def test_the_five_pages_are_gone_and_ship_is_there(src):
         assert 'id="sec-%s"' % sec not in src, "section %s still in the DOM" % sec
     assert '<div class="sec" id="sec-ship" style="display:none">' in src
     secs = re.findall(r'<div class="sec" id="sec-([a-z]+)"', src)
-    assert "ship" in secs and len(secs) == 13, secs
+    assert "ship" in secs and len(secs) == 9, secs   # 13 after slice 5; 9 once Agents absorbed five (slice 6)
     rail = re.findall(r'data-sec="([a-z]+)"', src)
     assert rail.index("ship") == rail.index("activity") + 1, "Ship follows Insight, where CI/CD was"
     nav = src[src.index("VeraPanelBridge.registerNav(["):]

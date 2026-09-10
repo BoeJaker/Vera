@@ -213,11 +213,7 @@ html.vpb-nav-hosted body{padding-left:0}
   <button class="btn" data-sec="activity" onclick="nav('activity')"><span class="ic">≣</span>Activity</button>
   <div class="rail-grp">Ship</div>
   <button class="btn" data-sec="ship" onclick="nav('ship')" title="Every branch &mdash; its pipeline, review, sandbox and tests &mdash; in one table, the commit graph, race lanes, authorship and gate strip below it"><span class="ic">&#8599;</span>Ship</button>
-  <button class="btn" data-sec="csessions" onclick="nav('csessions')"><span class="ic">◈</span>Sessions</button>
-  <button class="btn" data-sec="board" onclick="nav('board')"><span class="ic">▤</span>Board</button>
-  <button class="btn" data-sec="notes" onclick="nav('notes')"><span class="ic">✎</span>Notes</button>
-  <button class="btn" data-sec="capacity" onclick="nav('capacity')"><span class="ic">▰</span>Capacity</button>
-  <button class="btn" data-sec="swarm" onclick="nav('swarm')"><span class="ic">◇</span>Swarm</button>
+  <button class="btn" data-sec="agents" onclick="nav(\'agents\')" title="Every agent session &mdash; Claude Code, Codex, a Vera loop, an edit-queue agent &mdash; with its board items, pipelines and sandboxes; the board by lane, notes and seats fold up under it"><span class="ic">&#9737;</span>Agents</button>
   <button class="btn" data-sec="master" onclick="nav('master')"><span class="ic">◉</span>Master</button>
   <button class="btn" data-sec="settings" onclick="nav('settings')"><span class="ic">⚙</span>Settings</button>
 </div>
@@ -255,29 +251,43 @@ html.vpb-nav-hosted body{padding-left:0}
   </div>
 </div>
 
-<!-- ── LOGS: unified sandbox log/error/perf capture ── -->
-<div class="sec" id="sec-csessions" style="display:none">
-  <div class="card">
-    <div class="card-h"><span class="card-t">Claude Code sessions</span>
-      <span class="hint" id="csess-status">—</span>
+<!-- == AGENTS: one table of agent sessions - items x pipelines x sandboxes x seats ==
+     Sessions, Board, Notes, Capacity and Swarm were five pages showing the
+     agents' work from five stores. A row is an agent session (evolve.agents.rows):
+     a Claude Code / Codex session, a session the board names, a live Vera loop, an
+     edit-queue agent - with its board items, pipelines, sandboxes and branches;
+     expand it for them, an id opens its record. The other mode is every board item.
+     What the Swarm counted is the strip of pills above the table; the board's lanes
+     view, the notes editor and the seats card fold up under it. -->
+<div class="sec" id="sec-agents" style="display:none">
+  <div class="card" id="agents-card">
+    <div class="card-h"><span class="card-t">Agents</span><div class="seg" id="agents-mode" style="margin-left:10px"><button class="on" data-mode="sessions" onclick="setAgentsMode('sessions')" title="every agent session - Claude Code, Codex, a Vera loop, an edit-queue agent - with its items, pipelines and sandboxes">sessions</button><button data-mode="items" onclick="setAgentsMode('items')" title="every board item, live lanes first, naming its session">board items</button></div>
+      <span class="hint" id="agents-status">&hellip;</span>
       <span style="flex:1"></span>
-      <span class="hint">stalled after</span>
-      <select id="csess-stalled" onchange="loadCSessions()" style="min-width:70px">
+      <label class="hint" style="margin-right:8px" title="refresh every 6s while an agent is live"><input type="checkbox" id="agents-follow" checked onchange="_agArm()"> follow</label>
+      <button class="btn sm" onclick="$('agents-board').open=true;boardToggleNew()" title="a new board item">+ item</button>
+      <button class="btn sm" onclick="$('agents-capacity').open=true;capToggleNew()" title="register a subscription seat">+ seat</button>
+      <button class="btn sm" onclick="agentsPoll()">&#8635;</button>
+    </div>
+    <div id="agents-swarm" class="row" style="gap:6px;flex-wrap:wrap;margin:6px 0"></div>
+    <div class="row" style="gap:6px;flex-wrap:wrap;margin:8px 0 6px;align-items:center">
+      <input id="ag-q" placeholder="filter: title, id, branch, label&hellip;" oninput="agentsOnChange()" style="min-width:220px">
+      <select id="ag-agent" onchange="agentsOnChange()"><option value="">every agent</option></select>
+      <select id="ag-state" onchange="agentsOnChange()"><option value="">every state</option></select>
+      <select id="ag-lane" onchange="agentsOnChange()" style="display:none"><option value="">every lane</option></select>
+      <select id="ag-plan" onchange="agentsOnChange()" style="display:none"><option value="">every plan</option></select>
+      <label class="hint"><input type="checkbox" id="ag-hide" onchange="agentsOnChange()"> hide idle &amp; done</label>
+      <span class="hint" style="margin-left:6px">stalled after</span>
+      <select id="csess-stalled" onchange="loadAgents()" style="min-width:70px" title="the session watch's silence window: past it an undeclared session is stalled, past twice it resumable">
         <option value="">45m</option><option value="900">15m</option>
         <option value="1800">30m</option><option value="3600">60m</option>
       </select>
-      <button class="btn sm" onclick="loadCSessions()" style="margin-left:8px">&#8635;</button>
+      <span class="hint" id="agents-count"></span>
     </div>
-    <div id="csess-summary" class="row" style="gap:6px;flex-wrap:wrap;margin:6px 0"></div>
-    <div id="csess-body">
-      <div class="empty">Loading…</div>
-    </div>
-    <div class="hint" style="margin-top:6px">Each session is joined to its board claims (items whose board-meta <code>session</code> matches) and its pipelines, then classified (§6.6): <b>resumable</b>/<b>stalled</b> = undeclared silence past 90m/45m; <b>declared-block</b> = <code>blocked:quota</code>, held not reclaimed; <b>finished-unreported</b> = a promoted pipeline with a still-open claim → reconcile, never re-run. Resume/release actions land next.</div>
+    <div id="agents-table"><div class="empty">Loading&hellip;</div></div>
+    <div class="hint" style="margin-top:6px">In <b>sessions</b> a row is an agent session &mdash; a Claude Code or Codex session (the watch classifies it), a session the board names, a live Vera loop, an edit-queue agent &mdash; with its items by lane, its pipelines, sandboxes and branches; <b>&#9656;</b> expands them, a chat id opens the transcript. In <b>board items</b> a row is one item, live lanes first, naming its session; <b>&#9656;</b> expands its body and last comments; move, dispatch and open are in the row. The pills are what the Swarm page counted &mdash; click one to filter. States: live &rarr; working / recent / queued &rarr; resumable / stalled &rarr; declared-block / finished-unreported &rarr; human &rarr; done / idle. <b>untracked</b> means no board claim, not &ldquo;not running&rdquo; &mdash; a session that spoke within the stalled window is <b>recent</b>.</div>
   </div>
-</div>
-
-<!-- ── BOARD: the work plane (board.* caps) — create / edit / move / claim / comment ── -->
-<div class="sec" id="sec-board" style="display:none">
+  <details class="fold" id="agents-board" ontoggle="if(this.open)loadBoardTab()"><summary>Board &mdash; the work plane by lane: create, edit, move, claim, comment, dispatch</summary>
   <div class="card">
     <div class="card-h"><span class="card-t">Board</span>
       <span class="hint" id="board-status">—</span>
@@ -312,10 +322,8 @@ html.vpb-nav-hosted body{padding-left:0}
     </div>
     <div class="hint" style="margin-top:6px">The work plane (<code>board.*</code>). Items carry <code>repo</code>/<code>project</code> so the board is repo-agnostic (§0.2 #2). Claim is a lease (lowest comment-id wins, §3.3); comments run a secret scan on the write path.</div>
   </div>
-</div>
-
-<!-- ── NOTES: the capture plane — reuse the vera-session-notes editor ── -->
-<div class="sec" id="sec-notes" style="display:none">
+  </details>
+  <details class="fold" id="agents-notes" ontoggle="if(this.open)loadNotes()"><summary>Notes &mdash; the capture plane (the same editor as chat, dream and the IDE)</summary>
   <div class="card">
     <div class="card-h"><span class="card-t">Notes</span>
       <span style="flex:1"></span>
@@ -332,10 +340,8 @@ html.vpb-nav-hosted body{padding-left:0}
     </div>
     <div class="hint" style="margin-top:6px">The capture plane (§1) — cheap, messy, human-editable; structure begins at promotion into a board item. Backed by <code>notes.*</code>; the same editor used across chat/dream/IDE.</div>
   </div>
-</div>
-
-<!-- ── CAPACITY: seats (subscription, pinned to targets) + Ollama nodes (§6.5) ── -->
-<div class="sec" id="sec-capacity" style="display:none">
+  </details>
+  <details class="fold" id="agents-capacity" ontoggle="if(this.open)loadCapacity()"><summary>Capacity &mdash; subscription seats, pinned to targets, and the Ollama gate</summary>
   <div class="card">
     <div class="card-h"><span class="card-t">Capacity</span>
       <span class="hint" id="cap-status">—</span>
@@ -358,21 +364,7 @@ html.vpb-nav-hosted body{padding-left:0}
     <div id="cap-ollama" class="hint" style="margin-top:8px"></div>
     <div class="hint" style="margin-top:6px">Seat spend joins onto the providers-usage view (Workers &amp; Ollama UI); subscription seats have no per-token signal, only inferred state. Ollama occupancy is read live from the GPU/CPU gate.</div>
   </div>
-</div>
-
-<!-- ── SWARM: live activity across the whole system (loops / agents / dispatches) ── -->
-<div class="sec" id="sec-swarm" style="display:none">
-  <div class="card">
-    <div class="card-h"><span class="card-t">Swarm — live activity</span>
-      <span class="hint" id="swarm-status">—</span>
-      <span style="flex:1"></span>
-      <label class="hint" style="margin-right:8px"><input type="checkbox" id="swarm-follow" checked onchange="_swArm()"> follow</label>
-      <button class="btn sm" onclick="swarmPoll()">&#8635;</button>
-    </div>
-    <div id="swarm-summary" class="row" style="gap:6px;flex-wrap:wrap;margin:6px 0"></div>
-    <div id="swarm-body"><div class="empty">Loading…</div></div>
-    <div class="hint" style="margin-top:6px">A live cross-section of what the swarm is doing right now — running Loop Lab loops, edit-queue agents, live CI/CD pipelines, dispatched board work, active Claude sessions and dev containers — aggregated from their own feeds. Click through to the relevant tab / drill-down.</div>
-  </div>
+  </details>
 </div>
 
 <!-- ── WORK: one table — every task, or every driver run — with what is live on top ── -->
@@ -1056,11 +1048,13 @@ function scChip(v){return '<span class="sc" style="color:'+scColor(v)+';backgrou
 function nav(sec){
   document.querySelectorAll('#nav .btn').forEach(b=>b.classList.toggle('on',b.dataset.sec===sec));
   document.querySelectorAll('.sec').forEach(s=>s.style.display=s.id==='sec-'+sec?'':'none');
-  const f={work:loadWork,test:loadTest,master:loadMaster,watch:loadWatch,ship:loadShip,
+  const f={work:loadWork,test:loadTest,master:loadMaster,watch:loadWatch,ship:loadShip,agents:agentsPoll,
     // Pages the Work page absorbed (flattening slice 3): an old deep-link
     // or injected nav item still lands on the table that holds their data.
     tasks:()=>nav('work'),runs:()=>nav('work'),census:()=>nav('work'),overview:()=>nav('work'),variants:()=>nav('work'),improve:()=>nav('work'),
-    csessions:loadCSessions,board:loadBoardTab,notes:loadNotes,capacity:loadCapacity,swarm:swarmPoll,
+    // Pages the Agents page absorbed (slice 6): an old deep-link or injected
+    // nav item still lands on the table that holds their data.
+    csessions:()=>nav('agents'),board:()=>nav('agents'),notes:()=>nav('agents'),capacity:()=>nav('agents'),swarm:()=>nav('agents'),
     // Pages the Ship page absorbed (slice 5) - and `logs`, which Sandbox had
     // absorbed before it: an old deep-link or injected nav item still lands
     // on the table that holds their data.
@@ -1088,7 +1082,7 @@ function nav(sec){
 if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
   {id:'work', label:'Work'}, {id:'test', label:'Test'}, {id:'watch', label:'Watch'},
   {id:'errors', label:'Errors'}, {id:'activity', label:'Activity'},
-  {id:'ship', label:'Ship'}, {id:'csessions', label:'Sessions'}, {id:'board', label:'Board'}, {id:'notes', label:'Notes'}, {id:'capacity', label:'Capacity'}, {id:'swarm', label:'Swarm'},
+  {id:'ship', label:'Ship'}, {id:'agents', label:'Agents'},
   {id:'master', label:'Master'}, {id:'settings', label:'Settings'},
 ]);
 
@@ -1804,8 +1798,7 @@ function _ctxBroadcast(){
   if(bb)bb.value=LLCtx.branch();
   if($('ut-repo-hint'))$('ut-repo-hint').textContent='repo: '+(LLCtx.repo()||'vera');
   const s=_curSec&&_curSec();
-  if(s==='board')loadBoardTab();
-  else if(s==='swarm')loadSwarm();
+  if(s==='agents'){agentsPoll();if($('agents-board')&&$('agents-board').open)loadBoardTab()}
   else if(s==='ship')loadShip();
 }
 async function ctxMakeActive(){
@@ -1968,20 +1961,20 @@ async function boardSave(){
     labels:($('bn-labels').value||'').split(',').map(x=>x.trim()).filter(Boolean),
     repo:$('bn-repo').value.trim(),project:$('bn-project').value.trim(),body:$('bn-body').value};
   const r=await post('/board/item/upsert',body);
-  if(r&&r.ok){toast('saved');$('bn-id').value='';boardToggleNew(true);loadBoardTab()}else toast((r&&r.error)||'failed')}
+  if(r&&r.ok){toast('saved');$('bn-id').value='';boardToggleNew(true);loadBoardTab();agentsRefresh()}else toast((r&&r.error)||'failed')}
 async function boardEdit(id){
   const r=await api('/board/item?id='+encodeURIComponent(id));const it=r&&r.item;if(!it)return;
   _boardFillLanes();
   $('bn-id').value=it.id;$('bn-title').value=it.title||'';$('bn-lane').value=it.lane;
   $('bn-labels').value=(it.labels||[]).join(', ');$('bn-repo').value=it.repo||'';$('bn-project').value=it.project||'';$('bn-body').value=it.body||'';
   $('board-new').style.display='block';$('bn-title').focus()}
-async function boardMove(id,lane){const r=await post('/board/item/move',{id,lane});if(r&&r.ok)loadBoardTab();else toast((r&&r.error)||'failed')}
-async function boardClaim(id){const a=prompt('claim as agent:',_boardAgent());if(!a)return;localStorage.setItem('vera_board_agent',a);const r=await post('/board/claim',{id,agent:a});toast(r&&r.ok?'claimed':(r&&r.held_by?('lost → '+r.held_by):(r&&r.error)||'failed'));loadBoardTab()}
-async function boardComment(id){const b=prompt('comment (point at file:line, not a dump):');if(!b)return;const r=await post('/board/comment',{id,frm:_boardAgent(),kind:'progress',body:b});toast(r&&r.ok?'commented':(r&&r.error)||'failed');loadBoardTab()}
+async function boardMove(id,lane){const r=await post('/board/item/move',{id,lane});if(r&&r.ok){loadBoardTab();agentsRefresh()}else toast((r&&r.error)||'failed')}
+async function boardClaim(id){const a=prompt('claim as agent:',_boardAgent());if(!a)return;localStorage.setItem('vera_board_agent',a);const r=await post('/board/claim',{id,agent:a});toast(r&&r.ok?'claimed':(r&&r.held_by?('lost → '+r.held_by):(r&&r.error)||'failed'));loadBoardTab();agentsRefresh()}
+async function boardComment(id){const b=prompt('comment (point at file:line, not a dump):');if(!b)return;const r=await post('/board/comment',{id,frm:_boardAgent(),kind:'progress',body:b});toast(r&&r.ok?'commented':(r&&r.error)||'failed');loadBoardTab();agentsRefresh()}
 async function boardDispatch(id){
   const ex=prompt('dispatch executor: deterministic | vera | capable','deterministic');if(!ex)return;
   const r=await post('/board/dispatch',{id,executor:ex.trim(),agent:_boardAgent()});
-  toast(r&&r.ok?('dispatched ('+(r.status||'running')+')'):(r&&r.error)||'failed');setTimeout(loadBoardTab,1200)}
+  toast(r&&r.ok?('dispatched ('+(r.status||'running')+')'):(r&&r.error)||'failed');setTimeout(()=>{loadBoardTab();agentsRefresh()},1200)}
 // NOTE: named loadBoardTab (not loadBoard) — a pre-existing loadBoard() renders the
 // overview SVG board into #ov-board; sharing the name shadowed this one and the tab
 // stayed blank.
@@ -2146,83 +2139,6 @@ async function loadCapacity(){
   if(ol)ol.innerHTML='<b>Ollama gate:</b> '+(o.enabled?'<span style="color:var(--ok)">enabled</span>':'<span class="hint">disabled</span>')+(o.coord_connected!=null?(' · coord '+(o.coord_connected?'connected':'<span style="color:var(--warn)">down</span>')):'')+(o.gpu_cap!=null?(' · GPU cap '+esc(String(o.gpu_cap))):'');
 }
 
-/* ═══ SWARM: live cross-section of everything running now (client aggregation) ═══ */
-function _swRow(dot,main,sub,onclick){
-  return '<div class="row" style="gap:8px;padding:4px 0;border-bottom:1px solid var(--border)'+(onclick?';cursor:pointer':'')+'"'+(onclick?' onclick="'+onclick+'"':'')
-    +'><span style="width:8px;height:8px;border-radius:50%;background:'+dot+';flex-shrink:0;margin-top:4px"></span>'
-    +'<div style="flex:1;min-width:0"><div style="font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+main+'</div>'
-    +(sub?'<div class="hint" style="font-size:9px">'+sub+'</div>':'')+'</div></div>';
-}
-function _swSect(title,items,render,navTo){
-  if(!items.length)return '';
-  return '<div style="margin-top:10px"><label class="fld"'+(navTo?' style="cursor:pointer" onclick="nav(\''+navTo+'\')"':'')+'>'+title+' ('+items.length+')'+(navTo?' ▸':'')+'</label>'+items.map(render).join('')+'</div>';
-}
-async function loadSwarm(){
-  const el=$('swarm-body');if(!el)return;
-  const [imp,eq,pl,bd,cs,sb]=await Promise.all([
-    api('/evolve/improve/list?limit=20').catch(()=>null),
-    api('/evolve/editq?limit=40').catch(()=>null),
-    api('/evolve/pipeline/list?limit=30').catch(()=>null),
-    api('/board/items').catch(()=>null),
-    api('/ide/claude_sessions/watch?max_sessions=500').catch(()=>null),
-    api('/evolve/sandbox/list').catch(()=>null)
-  ]);
-  // Global context (repo/branch) narrows the branch-scoped rows here; global
-  // agents/sessions (no branch attribution) stay visible.
-  const _fB=(window.LLCtx&&LLCtx.branch())||'', _fR=(window.LLCtx&&LLCtx.repo())||'';
-  const loops=((imp&&imp.sessions)||[]).filter(s=>s.live||s.status==='running');
-  const editors=((eq&&eq.queue)||[]).filter(a=>a.status==='running'||a.status==='queued');
-  const livePipes=((pl&&pl.pipelines)||[]).filter(p=>p.live&&(!_fB||p.branch===_fB)&&(!_fR||p.repo===_fR));
-  const dispatched=((bd&&bd.items)||[]).filter(i=>i.lane==='in_progress'&&(!_fB||i.branch===_fB)&&(!_fR||i.repo===_fR));
-  // An agent session with no board claim and no pipeline classifies as
-  // "untracked" — and EVERY ingested session on this instance is untracked
-  // (90 of 90, measured 2026-09-07). Excluding that state emptied this list by
-  // construction, which is why the swarm never appeared to show your own
-  // sessions. What this card claims to show is ACTIVE sessions, so recency is
-  // the right test: a tracked session in any live state, or any session that
-  // has spoken within the stalled threshold.
-  const _stale=((cs&&cs.policy&&cs.policy.stalled_after_s)||2700);
-  const liveSess=((cs&&cs.sessions)||[]).filter(s=>
-    ['live','resumable','stalled','declared-block'].indexOf(s.state)>=0
-    || (s.age_s!=null&&s.age_s<_stale));
-  const sandboxes=((sb&&(sb.sandboxes||sb.list||sb.containers))||[]).filter(c=>!_fB||c.branch===_fB);
-  const active=loops.length+editors.length+livePipes.length+dispatched.length;
-  const st=$('swarm-status');if(st)st.textContent=(active?(active+' active'):'idle')+((_fB||_fR)?(' · filtered'+(_fB?(' · '+_fB):'')+(_fR?(' · '+_fR):'')):'');
-  const sum=$('swarm-summary');
-  if(sum)sum.innerHTML=[['loops',loops.length,'#e0a030'],['editors',editors.length,'#b070d0'],['pipelines',livePipes.length,'#4a9ed0'],['dispatches',dispatched.length,'#3cb371'],['sessions',liveSess.length,'#8a8a8a'],['containers',sandboxes.length,'#6a6a6a']].map(a=>'<span class="tag" style="border-left:3px solid '+a[2]+'">'+a[0]+' '+a[1]+'</span>').join('');
-  let h='';
-  h+=_swSect('Loop Lab loops running',loops,s=>_swRow('#e0a030','<span class="spin"></span> '+esc(s.id)+' <span class="tag">'+esc(s.profile||'')+'</span>',esc((s.phase||s.status||'')+' · r'+(s.rounds_done||0)+'/'+(s.max_rounds||'?')),''),'watch');
-  h+=_swSect('Edit-queue agents',editors,a=>_swRow('#b070d0',(a.status==='running'?'<span class="spin"></span> ':'')+esc((a.id||'').slice(0,8))+' <span class="tag">editor</span>',esc((a.model||'')+(a.instance?(' @'+a.instance):'')+' · '+a.status),''),'watch');
-  h+=_swSect('Live CI/CD pipelines',livePipes,p=>_swRow('#4a9ed0','<span class="spin"></span> '+esc(p.id)+' <span class="tag">'+esc(p.kind)+'</span>'+(p.branch?' <span class="tag">'+esc(p.branch)+'</span>':''),esc(p.current||p.status||''),'openPipe(\''+esc(p.id)+'\')'),'pipelines');
-  h+=_swSect('Dispatched board work',dispatched,i=>_swRow('#3cb371',esc(i.title||i.id)+(i.executor?' <span class="tag">'+esc(i.executor)+'</span>':''),esc((i.agent?('@'+i.agent):'')+(i.branch?(' · '+i.branch):'')),'openBoardItem(\''+esc(i.id)+'\')'),'board');
-  // Named for what it holds now that codex transcripts are ingested too. The
-  // agent badge is per row, because "whose session is this" was the question
-  // this card could not answer.
-  h+=_swSect('Active agent sessions',liveSess,s=>_swRow(_CSESS_COLOR[s.state]||'#888',
-    '<span class="tag" style="border-left:3px solid '+(s.agent==='codex'?'#7bb0e8':'#d0902a')+'">'
-      +esc(s.agent||'claude')+'</span> '
-      +esc(s.title||(s.claude_session_id||'').slice(0,8))+' <span class="tag">'+esc(s.state)+'</span>',
-    esc(_csessAge(s.age_s)+' idle'),'openSessionChat(\''+esc(s.claude_session_id)+'\')'),'csessions');
-  h+=_swSect('Dev containers',sandboxes,c=>_swRow('#6a6a6a',esc(c.branch||c.name||c.container||'?'),esc((c.port?(':'+c.port):'')+(c.active?' · active':'')),c.branch?('openBranchSandbox(\''+esc(c.branch)+'\')'):''),'sandbox');
-  el.innerHTML=h||'<div class="empty">The swarm is idle — no running loops, pipelines, dispatches or active sessions right now.</div>';
-}
-
-/* Same lesson as the census follow timer: re-arming at the END of the render
-   path means anything that throws on the way there stops following for good.
-   Armed in a finally instead. */
-let _swT=null,_swBusy=false;
-function _swArm(){
-  clearTimeout(_swT); _swT=null;
-  const cb=$('swarm-follow');
-  if(cb&&cb.checked&&typeof _curSec==='function'&&_curSec()==='swarm')_swT=setTimeout(swarmPoll,4000);
-}
-async function swarmPoll(){
-  if(_swBusy){_swArm();return}
-  _swBusy=true;
-  try{ await loadSwarm() }
-  catch(e){ /* one bad tick must not end the watch */ }
-  finally{ _swBusy=false; _swArm() }
-}
 
 /* ═══ CENSUS: the agentic-loop measuring instrument, run over run ═══
    Deliberately does NOT rank runs by step count. Counts say how much happened,
@@ -3559,8 +3475,8 @@ const ENTITY={
   loop:    {label:'agent loop',          open:(id,x)=>openCensusLiveLoop(id,(x&&x.goal)||''),              page:'work'},
   pipeline:{label:'pipeline',            open:(id)=>openPipe(id),                                          page:'ship'},
   branch:  {label:'branch',              open:(id)=>openBranch(id),                                        page:'ship'},
-  item:    {label:'board item',          open:(id)=>openBoardItem(id),                                     page:'board'},
-  chat:    {label:'chat session',        open:(id)=>openSessionChat(id),                                   page:'csessions'},
+  item:    {label:'board item',          open:(id)=>openBoardItem(id),                                     page:'agents'},
+  chat:    {label:'chat session',        open:(id)=>openSessionChat(id),                                   page:'agents'},
   commit:  {label:'commit',              open:(id)=>crossLinkToDispatch(id),                               page:'ship'},
 };
 function entityHref(kind,id,extra){
@@ -3706,44 +3622,211 @@ function _thTaskIdFor(run,goal){
 }
 
 /* ═══ SESSIONS: Claude Code session watch (§6.6) — read-only classify ═══ */
-function _csessAge(s){if(s==null)return '—';s=Math.round(s);if(s<90)return s+'s';if(s<5400)return Math.round(s/60)+'m';if(s<172800)return Math.round(s/3600)+'h';return Math.round(s/86400)+'d'}
-const _CSESS_COLOR={resumable:'#e0a030',stalled:'#d0902a','finished-unreported':'#4a9ed0','declared-block':'#8a8a8a',live:'#3cb371',human:'#b070d0',untracked:'#6a6a6a'};
-async function loadCSessions(){
-  const el=$('csess-body');if(!el)return;
+/* === AGENTS - one table of agent sessions =================================
+   Sessions, Board, Notes, Capacity and Swarm were five pages showing the
+   agents' work from five stores. A row is an agent session (evolve.agents.rows,
+   ONE call, mode=both): a Claude Code / Codex session as the watch classifies
+   it, a session the board names, a live Vera loop, an edit-queue agent - with
+   its board items, pipelines, sandboxes and branches. The other mode is every
+   board item. What the Swarm counted is the strip of pills above the table. */
+let _agRows=[],_agItems=[],_agMeta={},_agOpen={},_agMode='sessions';
+const _AG_STATE={live:'#3cb371',working:'#e0a030',recent:'#8fb87a',queued:'#b070d0',resumable:'#e0a030',stalled:'#d0902a','declared-block':'#8a8a8a','finished-unreported':'#4a9ed0',human:'#b070d0',done:'#3a7a4a',idle:'#6a6a6a'};
+const _AG_AGENT={claude:'#d0902a',codex:'#7bb0e8',vera:'#3cb371',editor:'#b070d0',orchestrator:'#4a9ed0',other:'#8a8a8a'};
+function _csessAge(s){if(s==null)return '?';s=Math.round(s);if(s<90)return s+'s';if(s<5400)return Math.round(s/60)+'m';if(s<172800)return Math.round(s/3600)+'h';return Math.round(s/86400)+'d'}
+async function loadAgents(){
+  const el=$('agents-table');if(!el)return;
   const sa=$('csess-stalled')?$('csess-stalled').value:'';
-  const st=$('csess-status');if(st)st.textContent='loading…';
-  // 500, not 60: the old ceiling silently cut the list — measured 2026-09-07,
-  // 87 sessions were ingested and 60 were asked for, so 27 never appeared and
-  // nothing said so ("sessions have been ingested but it looks like it missing
-  // quite allot"). The count below now names the ceiling when one still bites.
-  const r=await api('/ide/claude_sessions/watch?max_sessions=500'+(sa?('&stalled_after_s='+sa):''));
-  if(!r||!r.ok){el.innerHTML='<div class="empty">Could not load sessions.</div>';if(st)st.textContent='—';return}
-  const by=r.summary.by_state||{},tot=r.summary.total||0;
-  if(st)st.textContent=r.summary.truncated
-    ? (tot+' of '+r.summary.ingested_total+' sessions (capped at '+r.summary.max_sessions+')')
-    : (tot+' sessions'+(r.summary.ingested_total!=null?' (all ingested)':''));
-  const sum=$('csess-summary');
-  if(sum)sum.innerHTML=Object.keys(by).sort().map(k=>'<span class="tag" style="border-left:3px solid '+(_CSESS_COLOR[k]||'#666')+'">'+esc(k)+' '+by[k]+'</span>').join('');
-  const rows=r.sessions||[];
-  if(!rows.length){el.innerHTML='<div class="empty">No ingested Claude Code sessions.</div>';return}
-  let h='<table style="width:100%;border-collapse:collapse;font-size:12px"><tr style="text-align:left;color:var(--muted)"><th>state</th><th>session</th><th>turns</th><th>idle</th><th>claims</th><th>pipelines</th><th>why</th><th>act</th></tr>';
-  for(const s of rows){
-    const c=_CSESS_COLOR[s.state]||'#666';
-    const claims=(s.claims||[]).map(x=>eid('item',x.id,esc((x.title||x.id||'').slice(0,28)))).join(', ')||'—';
-    const pipes=(s.pipelines||[]).map(p=>(p.branch?eid('branch',p.branch,esc(String(p.branch).slice(0,28))):eid('pipeline',p.id,esc(p.id||'')))+' ('+esc(p.decision||'?')+')').join(', ')||'—';
-    h+='<tr style="border-top:1px solid var(--border)">'
-      +'<td style="white-space:nowrap"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+c+';margin-right:5px"></span>'+esc(s.state)+(s.action&&s.action!=='none'?' <span class="hint">→'+esc(s.action)+'</span>':'')+'</td>'
-      +'<td style="cursor:pointer;max-width:230px" onclick="openSessionChat(\''+esc(s.claude_session_id)+'\')" title="open chat · '+esc(s.claude_session_id)+'">'
-        +'<div style="font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(s.title||('session '+(s.claude_session_id||'').slice(0,8)))+'</div>'
-        +'<div class="hint mono" style="font-size:8.5px">'+eid('chat',s.claude_session_id,esc((s.claude_session_id||'').slice(0,8)))+(s.project_dir?(' · '+esc((s.project_dir||'').replace(/\/+$/,'').split('/').pop())):'')+'</div></td>'
-      +'<td>'+(s.turns||0)+'</td>'
-      +'<td>'+_csessAge(s.age_s)+'</td>'
-      +'<td>'+claims+'</td>'
-      +'<td class="mono" style="font-size:10px">'+pipes+'</td>'
-      +'<td class="hint" style="max-width:240px">'+esc(s.reason||'')+'</td>'
-      +'<td style="white-space:nowrap">'+_csessActions(s)+'</td></tr>';
+  const r=await api('/evolve/agents/rows?mode=both&limit=500'+(sa?('&stalled_after_s='+sa):''));
+  if(!r||r.error){el.innerHTML='<div class="empty">'+esc((r&&r.error)||'agents table unavailable — restart prod if evolve.agents.rows was just deployed')+'</div>';return}
+  _agRows=r.sessions||[];_agItems=r.items||[];_agMeta=r;
+  // mode=both carries the items once: a session's own are those that name it.
+  const byS={};_agItems.forEach(i=>{if(i.session)(byS[i.session]=byS[i.session]||[]).push(i)});
+  _agRows.forEach(x=>{if(!(x.items||[]).length)x.items=byS[x.id]||[]});
+  renderAgentsHead(r);
+  _agFillFilters(r);
+  renderAgentsTable();
+}
+/* After an action (move, claim, comment, dispatch, save, resume, release):
+   the table - only while Agents is on screen. */
+function agentsRefresh(){if(_curSec()==='agents')loadAgents()}
+function setAgentsMode(m){
+  _agMode=m;
+  document.querySelectorAll('#agents-mode button').forEach(b=>b.classList.toggle('on',b.dataset.mode===m));
+  const items=(m==='items');
+  ['ag-lane','ag-plan'].forEach(i=>{if($(i))$(i).style.display=items?'':'none'});
+  if($('ag-state'))$('ag-state').style.display=items?'none':'';
+  renderAgentsTable();
+}
+function agentsOnChange(){renderAgentsTable()}
+function _agFillFilters(r){
+  const fill=(id,vals,label)=>{const s=$(id);if(!s)return;const cur=s.value;s.innerHTML='<option value="">'+label+'</option>'+vals.map(v=>'<option value="'+esc(v)+'">'+esc(v)+'</option>').join('');if(vals.indexOf(cur)>=0)s.value=cur};
+  fill('ag-agent',r.agents||[],'every agent');
+  fill('ag-state',Object.keys((r.summary||{}).states||{}).sort(),'every state');
+  fill('ag-lane',r.lanes||[],'every lane');
+  fill('ag-plan',r.plans||[],'every plan');
+}
+/* The Swarm page's numbers, from the same call: each pill filters the table
+   (or leads to the Ship page, whose rows those are). */
+function renderAgentsHead(r){
+  const sw=r.swarm||{},cap=r.capacity||{},o=cap.ollama||{},cs=cap.summary||{};
+  const pill=(label,n,c,click,title)=>'<span class="tag" style="border-left:3px solid '+c+(click?';cursor:pointer':'')+'"'+(click?' onclick="'+click+'"':'')+(title?' title="'+esc(title)+'"':'')+'>'+label+' '+n+'</span>';
+  const gated=(o.nodes||[]).filter(n=>n.gated);
+  const gate=o.enabled?('gate '+(gated.length?gated.map(n=>esc(n.node)+' '+(n.held||0)+'/'+(n.capacity||0)).join(', '):'on')):'gate off';
+  const sp=$('agents-swarm');
+  if(sp)sp.innerHTML=[
+    pill('loops',sw.loops||0,'#e0a030',"agFilter('sessions','agent','vera')",'Loop Lab improvement loops running now'),
+    pill('editors',sw.editors||0,'#b070d0',"agFilter('sessions','agent','editor')",'edit-queue agents running or queued'),
+    pill('live pipelines',sw.pipelines_live||0,'#4a9ed0',"nav('ship')",'CI/CD pipelines running now - rows of the Ship page'),
+    pill('dispatches',sw.dispatched||0,'#3cb371',"agFilter('items','lane','in_progress')",'board items in progress'),
+    pill('active agent sessions',sw.sessions_active||0,'#8a8a8a',"agFilter('sessions','hide','1')",'sessions live, working, recent, queued, resumable, stalled or declared-blocked, of '+(sw.sessions||0)),
+    pill('containers',(sw.containers_running||0)+'/'+(sw.containers||0),'#6a6a6a',"nav('ship')",'dev containers running / known - rows of the Ship page'),
+    pill('open items',(sw.items_open||0)+'/'+(sw.items||0),'#e0a030',"agFilter('items','hide','1')",'board items not done or dropped / all'),
+    pill('seats',(cs.available||0)+'/'+(cs.seats||0),'#3cb371',"$('agents-capacity').open=true",'subscription seats available / registered'),
+    '<span class="tag" style="border-left:3px solid '+(o.enabled?'#3cb371':'#6a6a6a')+'" title="the Ollama GPU/CPU gate: held / capacity per gated node">'+gate+'</span>'
+  ].join('');
+  const s=r.summary||{},st=s.states||{},w=(r.watch||{}).summary||{};
+  const parts=[(s.count||0)+' sessions'+(w.truncated?(' (watch capped at '+w.max_sessions+')'):'')];
+  if(st.live)parts.push('<span style="color:#3cb371">'+st.live+' live</span>');
+  if(st.working)parts.push('<span style="color:#e0a030">'+st.working+' working</span>');
+  if(st.recent)parts.push('<span style="color:#8fb87a">'+st.recent+' recent</span>');
+  if(st.stalled||st.resumable)parts.push('<span style="color:#d0902a">'+((st.stalled||0)+(st.resumable||0))+' stalled / resumable</span>');
+  parts.push((r.items_total||0)+' board items'+(r.board_provider?(' · '+esc(r.board_provider)):''));
+  if($('agents-status'))$('agents-status').innerHTML=parts.join(' · ');
+}
+function agFilter(mode,key,val){
+  if(_agMode!==mode)setAgentsMode(mode);
+  if(key==='hide'){if($('ag-hide'))$('ag-hide').checked=true}
+  else{const s=$('ag-'+key);if(s){s.value=val;if(s.value!==val)s.value=''}}
+  renderAgentsTable();
+}
+function _agFiltered(){
+  const q=(($('ag-q')||{}).value||'').trim().toLowerCase(),agent=($('ag-agent')||{}).value||'',state=($('ag-state')||{}).value||'',lane=($('ag-lane')||{}).value||'',plan=($('ag-plan')||{}).value||'',hide=!!($('ag-hide')&&$('ag-hide').checked);
+  if(_agMode==='items')return _agItems.filter(i=>{
+    if(lane&&i.lane!==lane)return false;
+    if(hide&&(i.lane==='done'||i.lane==='dropped'))return false;
+    if(agent&&i.agent!==agent)return false;
+    if(plan&&i.plan!==plan)return false;
+    if(q){const hay=[i.id,i.title,(i.labels||[]).join(' '),i.session,i.branch,i.pipeline,i.plan].join(' ').toLowerCase();if(hay.indexOf(q)<0)return false}
+    return true;
+  });
+  return _agRows.filter(r=>{
+    if(agent&&r.agent!==agent)return false;
+    if(state&&r.state!==state)return false;
+    if(hide&&(r.state==='idle'||r.state==='done'))return false;
+    if(q){const hay=[r.id,r.title,r.project_dir,r.status,(r.branches||[]).join(' ')].concat((r.items||[]).map(i=>i.title)).join(' ').toLowerCase();if(hay.indexOf(q)<0)return false}
+    return true;
+  });
+}
+function renderAgentsTable(){
+  const el=$('agents-table');if(!el)return;
+  const rows=_agFiltered(),total=(_agMode==='items')?_agItems.length:_agRows.length;
+  if($('agents-count'))$('agents-count').textContent=rows.length+' of '+total;
+  if(!rows.length){el.innerHTML='<div class="empty">'+(total?'Nothing matches the filter.':'Nothing here yet.')+'</div>';return}
+  if(_agMode==='items')el.innerHTML='<table id="agents-tbl"><tr><th>item</th><th>title</th><th>lane</th><th>agent</th><th>session</th><th>branch</th><th>pipeline</th><th>plan</th><th>updated</th><th></th></tr>'+rows.map(_agItemRow).join('')+'</table>';
+  else el.innerHTML='<table id="agents-tbl"><tr><th>agent</th><th>session</th><th>state</th><th>items</th><th>pipelines</th><th>sandboxes</th><th>branches</th><th>turns</th><th>last activity</th><th></th></tr>'+rows.map(_agRow).join('')+'</table>';
+}
+function _agId(s){return String(s).replace(/[^a-z0-9]/gi,'_')}
+function _agState(st,live){return '<span class="pill" style="color:'+(_AG_STATE[st]||'var(--dim2)')+'">'+(live?'<span class="spin"></span> ':'')+esc(st||'')+'</span>'}
+function _agAgent(a){return '<span class="tag" style="border-left:3px solid '+(_AG_AGENT[a]||'#8a8a8a')+'">'+esc(a||'?')+'</span>'}
+function _agRow(r){
+  const open=!!_agOpen[r.id],lanes=r.by_lane||{};
+  const laneStr=Object.keys(lanes).sort().map(l=>'<span class="tag" style="border-left:2px solid '+(_LANE_COLOR[l]||'#666')+'" title="'+esc(l)+'">'+lanes[l]+' '+esc(l.replace('_',' ').slice(0,11))+'</span>').join(' ');
+  const p=(r.pipelines||[])[0];
+  const pipes=p?(eid('pipeline',p.id)+' '+pipeDecision(p.decision)+(p.live?' <span class="spin"></span>':'')+(r.pipelines_n>1?' <span class="hint">+'+(r.pipelines_n-1)+'</span>':'')):'<span class="hint">—</span>';
+  const sb=(r.sandboxes||[]);
+  const sbx=sb.length?sb.map(s=>'<span class="pill" style="color:'+(s.paused?'var(--warn)':(s.running?'var(--ok)':'var(--dim2)'))+'" title="'+esc(s.name||'')+'">'+(s.paused?'‖':(s.running?'●':'○'))+' '+esc(String(s.branch||s.name||'').slice(0,22))+'</span>').join(' '):'<span class="hint">—</span>';
+  const br=(r.branches||[]);
+  const branches=br.length?(eid('branch',br[0],esc(br[0].slice(0,30)))+(br.length>1?' <span class="hint">+'+(br.length-1)+'</span>':'')):'<span class="hint">—</span>';
+  const title=esc((r.title||'').slice(0,60))||'<span class="hint">(untitled)</span>';
+  const ident=r.chat?eid('chat',r.id,esc(r.id.slice(0,8)),null,'chat session '+r.id):'<span class="mono hint" title="'+esc(r.id)+'">'+esc(r.id.slice(0,24))+'</span>';
+  const acts=(r.chat?_csessActions({claude_session_id:r.id,state:r.watch_state,claims:r.claims}):'')
+    +(r.kind==='loop'?' <button class="btn sm" onclick="event.stopPropagation();_watchSession=\''+esc(r.id)+'\';nav(\'watch\')">watch</button>':'');
+  return '<tr class="clk ag-row" data-id="'+esc(r.id)+'" onclick="toggleAgent(\''+esc(r.id)+'\')">'
+    +'<td>'+(open?'▾':'▸')+' '+_agAgent(r.agent)+(r.kind!=='session'?' <span class="tag">'+esc(r.kind)+'</span>':'')+'</td>'
+    +'<td style="max-width:280px"><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+title+'</div><div class="hint" style="font-size:9px">'+ident+(r.project_dir?' · '+esc(String(r.project_dir).replace(/\/+$/,'').split('/').pop()):'')+(r.status?' · '+esc(r.status):'')+'</div></td>'
+    +'<td>'+_agState(r.state,r.live)+(r.action&&r.action!=='none'?' <span class="hint">→'+esc(r.action)+'</span>':'')+'</td>'
+    +'<td>'+(r.items_n?('<span class="mono">'+r.items_open+'/'+r.items_n+'</span> '+laneStr):'<span class="hint">—</span>')+'</td>'
+    +'<td class="mono">'+pipes+'</td>'
+    +'<td>'+sbx+'</td>'
+    +'<td class="mono">'+branches+'</td>'
+    +'<td class="mono hint">'+(r.chat?(r.turns+(r.commit_count?' · '+r.commit_count+'c':'')):'')+'</td>'
+    +'<td class="mono hint">'+esc((r.last_activity||'').slice(5,16).replace('T',' '))+(r.age_s!=null?' <span title="idle for">('+_csessAge(r.age_s)+')</span>':'')+'</td>'
+    +'<td class="row" style="gap:3px">'+acts+'</td></tr>'
+    +'<tr class="ag-detail" data-id="'+esc(r.id)+'"'+(open?'':' style="display:none"')+'><td colspan="10" style="padding:0 6px 8px 18px;background:var(--bg2)"><div id="ag-det-'+_agId(r.id)+'">'+(open?_agDetail(r):'')+'</div></td></tr>';
+}
+function toggleAgent(id){
+  _agOpen[id]=!_agOpen[id];
+  const det=document.querySelector('tr.ag-detail[data-id="'+id+'"]'),row=document.querySelector('tr.ag-row[data-id="'+id+'"] td');
+  if(det)det.style.display=_agOpen[id]?'':'none';
+  if(row)row.innerHTML=row.innerHTML.replace(_agOpen[id]?'▸':'▾',_agOpen[id]?'▾':'▸');
+  if(_agOpen[id]){
+    const el=$('ag-det-'+_agId(id));if(!el)return;
+    if(_agMode==='items'){el.innerHTML='<span class="spin"></span>';_agItemDetail(id,el)}
+    else{const r=_agRows.find(x=>x.id===id);if(r)el.innerHTML=_agDetail(r)}
   }
-  el.innerHTML=h+'</table>';
+}
+/* Expand a session: what the Sessions page said about it (the watch's
+   reason), its claims, its board items, its pipelines, its sandboxes. */
+function _agDetail(r){
+  let h='';
+  if(r.reason)h+='<div class="hint" style="margin:6px 0">'+esc(r.reason)+'</div>';
+  if(r.claims&&r.claims.length)h+='<div class="row" style="gap:6px;flex-wrap:wrap;margin:4px 0"><span class="hint">claims</span>'+r.claims.map(c=>eid('item',c.id,esc((c.title||c.id).slice(0,40)))).join(' ')+'</div>';
+  if((r.items||[]).length)h+='<label class="fld">Board items</label><table><tr><th>item</th><th>title</th><th>lane</th><th>branch</th><th>pipeline</th><th>plan</th><th>updated</th></tr>'
+    +r.items.map(i=>'<tr><td class="mono">'+eid('item',i.id)+'</td><td>'+esc(String(i.title||'').slice(0,70))+'</td><td><span class="pill" style="color:'+(_LANE_COLOR[i.lane]||'#666')+'">'+esc(i.lane)+'</span></td>'
+      +'<td class="mono">'+(i.branch?eid('branch',i.branch,esc(i.branch.slice(0,30))):'')+'</td><td class="mono">'+(i.pipeline?eid('pipeline',i.pipeline):'')+'</td><td class="hint">'+esc(i.plan||'')+'</td><td class="hint mono">'+esc((i.updated_at||'').slice(0,16).replace('T',' '))+'</td></tr>').join('')+'</table>';
+  if((r.pipelines||[]).length)h+='<label class="fld" style="margin-top:6px">Pipelines</label><table><tr><th>pipeline</th><th>branch</th><th>kind</th><th>gate</th><th>decision</th><th>when</th></tr>'
+    +r.pipelines.map(p=>'<tr><td class="mono">'+eid('pipeline',p.id)+(p.live?' <span class="spin"></span>':'')+'</td><td class="mono">'+(p.branch?eid('branch',p.branch,esc(p.branch.slice(0,36))):'')+'</td><td><span class="tag">'+esc(p.kind||'')+'</span></td>'
+      +'<td>'+(p.gate_passed==null?'':(p.gate_passed?'<span style="color:var(--ok)">PASS</span>':'<span style="color:var(--err)">FAIL</span>'))+'</td><td>'+pipeDecision(p.decision)+'</td><td class="hint mono">'+esc((p.created_at||'').slice(0,16).replace('T',' '))+'</td></tr>').join('')+'</table>';
+  if((r.sandboxes||[]).length)h+='<label class="fld" style="margin-top:6px">Sandboxes</label><div class="row" style="gap:6px;flex-wrap:wrap;align-items:center">'
+    +r.sandboxes.map(s=>'<span class="pill" style="color:'+(s.running?'var(--ok)':'var(--dim2)')+'">'+esc(s.name||'')+(s.port?' :'+esc(String(s.port)):'')+'</span>'+(s.branch?'<button class="btn sm" onclick="event.stopPropagation();shipReveal(\''+esc(s.branch)+'\')" title="the Ship page with this branch open">ship ›</button>':'')).join(' ')+'</div>';
+  if(!h)h='<div class="hint" style="margin:6px 0">Nothing joined to this session yet: no board item, pipeline or sandbox names it.</div>';
+  if(r.chat)h+='<div class="row" style="gap:6px;margin-top:8px"><button class="btn sm" onclick="event.stopPropagation();openSessionChat(\''+esc(r.id)+'\')">chat ›</button></div>';
+  return h;
+}
+function _agItemRow(i){
+  const open=!!_agOpen[i.id];
+  const moves=_LANES.map(l=>'<option value="'+l+'"'+(l===i.lane?' selected':'')+'>'+l+'</option>').join('');
+  const canDispatch=(i.lane==='ready'||i.lane==='inbox');
+  const sess=i.session?((/^[0-9a-f]{8}-/.test(i.session)?eid('chat',i.session,esc(i.session.slice(0,8))):'<span class="mono hint" title="'+esc(i.session)+'">'+esc(i.session.slice(0,20))+'</span>')+(i.session_state?' '+_agState(i.session_state,false):'')):'<span class="hint">—</span>';
+  return '<tr class="clk ag-row" data-id="'+esc(i.id)+'" onclick="toggleAgent(\''+esc(i.id)+'\')">'
+    +'<td class="mono">'+(open?'▾':'▸')+' '+eid('item',i.id)+'</td>'
+    +'<td style="max-width:320px"><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+esc(i.title||'')+'">'+esc(i.title||'(untitled)')+'</div>'+((i.labels||[]).length?'<div>'+i.labels.map(l=>'<span class="tag" style="font-size:9px">'+esc(l)+'</span>').join(' ')+'</div>':'')+'</td>'
+    +'<td><span class="pill" style="color:'+(_LANE_COLOR[i.lane]||'#666')+'">'+esc(i.lane)+'</span>'+(i.executor?' <span class="tag">'+esc(i.executor)+'</span>':'')+'</td>'
+    +'<td>'+(i.agent?_agAgent(i.agent):'')+'</td>'
+    +'<td>'+sess+'</td>'
+    +'<td class="mono">'+(i.branch?eid('branch',i.branch,esc(i.branch.slice(0,30))):'')+'</td>'
+    +'<td class="mono">'+(i.pipeline?eid('pipeline',i.pipeline):'')+'</td>'
+    +'<td class="hint">'+esc(i.plan||'')+'</td>'
+    +'<td class="hint mono">'+esc((i.updated_at||'').slice(5,16).replace('T',' '))+(i.comment_count?' <span title="comments">✉'+i.comment_count+'</span>':'')+'</td>'
+    +'<td class="row" style="gap:3px"><select onchange="event.stopPropagation();boardMove(\''+esc(i.id)+'\',this.value)" onclick="event.stopPropagation()" style="font-size:9px">'+moves+'</select>'
+      +(canDispatch?'<button class="btn sm" onclick="event.stopPropagation();boardDispatch(\''+esc(i.id)+'\')" title="orchestrate: begin → work → gate">▶</button>':'')
+      +'<button class="btn sm" onclick="event.stopPropagation();openBoardItem(\''+esc(i.id)+'\')" title="details / comments / drill-down">open</button></td></tr>'
+    +'<tr class="ag-detail" data-id="'+esc(i.id)+'"'+(open?'':' style="display:none"')+'><td colspan="10" style="padding:0 6px 8px 18px;background:var(--bg2)"><div id="ag-det-'+_agId(i.id)+'">'+(open?'<span class="spin"></span>':'')+'</div></td></tr>';
+}
+/* Expand an item: its body and its last comments, from the record. */
+async function _agItemDetail(id,el){
+  const r=await api('/board/item?id='+encodeURIComponent(id));const it=r&&r.item;
+  if(!it){el.innerHTML='<div class="empty">item not found</div>';return}
+  const cs=(it.comments||[]).slice(-5);
+  el.innerHTML=(it.body?'<pre style="margin:6px 0;max-height:220px;overflow:auto">'+esc(it.body)+'</pre>':'<div class="hint" style="margin:6px 0">no body</div>')
+    +(cs.length?'<label class="fld">Last comments</label>'+cs.map(c=>'<div style="padding:3px 0;border-top:1px solid var(--border)"><span class="tag">'+esc(c.kind||'')+'</span> <b>'+esc(c.frm||c.from||'')+'</b> <span class="hint mono">'+esc(String(c.ts||'').slice(0,16).replace('T',' '))+'</span><div style="white-space:pre-wrap">'+esc(String(c.body||'').slice(0,600))+'</div></div>').join(''):'')
+    +'<div class="row" style="gap:6px;margin-top:8px"><button class="btn sm" onclick="event.stopPropagation();openBoardItem(\''+esc(id)+'\')">full record</button><button class="btn sm" onclick="event.stopPropagation();boardComment(\''+esc(id)+'\')">comment</button><button class="btn sm" onclick="event.stopPropagation();boardClaim(\''+esc(id)+'\')">claim</button><button class="btn sm" onclick="event.stopPropagation();$(\'agents-board\').open=true;boardEdit(\''+esc(id)+'\')">edit</button></div>';
+}
+/* Same lesson as the census follow timer: re-arming at the END of the render
+   path means anything that throws on the way there stops following for good.
+   Armed in a finally instead; ticks do not stack; only while something is live. */
+let _agT=null,_agBusy=false;
+function _agArm(){
+  clearTimeout(_agT);_agT=null;
+  const cb=$('agents-follow'),sw=_agMeta.swarm||{};
+  if(cb&&cb.checked&&_curSec()==='agents'&&(_agMeta.any_live||(sw.loops||0)+(sw.editors||0)>0))_agT=setTimeout(agentsPoll,6000);
+}
+async function agentsPoll(){
+  if(_agBusy){_agArm();return}
+  _agBusy=true;
+  try{await loadAgents()}
+  catch(e){/* one bad tick must not end the watch */}
+  finally{_agBusy=false;_agArm()}
 }
 function _csessActions(s){
   const st=s.state,sid=s.claude_session_id,hasClaims=(s.claims&&s.claims.length);
@@ -3756,12 +3839,12 @@ async function csessResume(sid){
   const inst=prompt('Resume on which instance_id? (auto-dispatch is not built yet — pick the target to run --resume on)',localStorage.getItem('vera_resume_instance')||'');
   if(!inst)return;localStorage.setItem('vera_resume_instance',inst);
   const r=await post('/ide/claude_sessions/resume',{claude_session_id:sid,instance_id:inst});
-  toast(r&&r.ok?('resumed (attempt '+r.attempt+')'):(r&&r.error)||'failed');loadCSessions();
+  toast(r&&r.ok?('resumed (attempt '+r.attempt+')'):(r&&r.error)||'failed');agentsRefresh();
 }
 async function csessRelease(sid){
   if(!confirm('Release this session’s board claims back to the pool?'))return;
   const r=await post('/ide/claude_sessions/release',{claude_session_id:sid});
-  toast(r&&r.ok?('released '+r.count+' claim(s)'):(r&&r.error)||'failed');loadCSessions();
+  toast(r&&r.ok?('released '+r.count+' claim(s)'):(r&&r.error)||'failed');agentsRefresh();
 }
 
 async function loadWatch(){
