@@ -16,7 +16,15 @@ try:
 except Exception:                                    # pragma: no cover
     ORCH = CC = None
 
-pytestmark = pytest.mark.skipif(CC is None, reason="app module not importable here")
+# `Vera` is a namespace package: on the HOST it resolves to the main checkout,
+# not to the worktree this test sits in, so a host run would test the wrong
+# code (and did, once). Only trust an import that came from THIS tree.
+_HERE_ROOT = os.path.realpath(os.path.join(os.path.dirname(__file__), ".."))
+_SAME_TREE = bool(CC is not None and
+                  os.path.realpath(getattr(CC, "__file__", "")).startswith(_HERE_ROOT))
+
+pytestmark = pytest.mark.skipif(
+    not _SAME_TREE, reason="app module not importable from THIS checkout here")
 
 
 def run(coro):
