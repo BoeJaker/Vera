@@ -47,6 +47,26 @@ def test_the_branch_element_asks_the_post_capability_the_post_way():
     assert "fetch(this._getBase() + '/ide/git/branches', {\n          method: 'POST'" in src
 
 
+def _fn(src, name):
+    start = src.index("function " + name + "(")
+    return src[start:src.index("\n}\n", start)]
+
+
+def test_the_run_once_theatres_clocks_tick_only_while_its_fold_is_on_screen():
+    """setInterval(refreshActiveRun,4000) polled /evolve/run/status on every
+    page for as long as a run id was remembered, and the 8 s adopt timer
+    re-read it too (2026-09-10). Both live inside the Run-once fold now."""
+    with open(os.path.join(ROOT, "evolve", "evolve_panel.html"), encoding="utf-8") as fh:
+        src = fh.read()
+    assert "setInterval(refreshActiveRun,4000)" not in src
+    assert "function _theatreOnScreen(){const d=$('mc-test');return _curSec()==='mission'&&!!d&&d.open}" in src
+    assert "setInterval(()=>{if(_theatreOnScreen())refreshActiveRun()},4000);" in src
+    assert "_testAdoptTimer=setInterval(()=>{if(!_implTimer&&_theatreOnScreen())restoreTestRun()},8000);" in src
+    assert "_mcRefreshT=setTimeout(missionPoll,4000)" in src, "a burst of bus events is one refresh"
+    assert "if(typeof el.checkVisibility==='function'&&!el.checkVisibility()){s.timer=setTimeout(()=>cenAloPoll(id),3000);return}" in _fn(src, "cenAloPoll"), \
+        "the live dash's follow reads nothing while its page is off screen"
+
+
 def test_the_panel_refreshes_a_pages_elements_when_it_opens():
     with open(os.path.join(ROOT, "evolve", "evolve_panel.html"), encoding="utf-8") as fh:
         src = fh.read()
