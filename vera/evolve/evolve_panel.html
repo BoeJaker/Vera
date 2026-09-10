@@ -78,6 +78,13 @@ tr.clk:hover td{background:var(--bg2)}
 pre{white-space:pre-wrap;background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:8px;font-size:10px;overflow-x:auto}
 .toast{position:fixed;bottom:14px;left:14px;background:var(--bg2);border:1px solid var(--border2);border-left:3px solid var(--acc);border-radius:6px;padding:8px 12px;font-size:10.5px;z-index:950;box-shadow:0 6px 20px rgba(0,0,0,.45)}
 details>summary{cursor:pointer;font-size:10.5px;color:var(--acc);font-family:var(--mono)}
+/* Ship page folds: a page's secondary cards, closed until asked for. */
+.fold{margin-top:10px}
+.fold>summary{padding:6px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;list-style:none;display:flex;align-items:center;gap:6px}
+.fold>summary::before{content:'\25b8';font-size:9px;color:var(--dim2)}
+.fold[open]>summary::before{content:'\25be'}
+.fold[open]>summary{border-radius:6px 6px 0 0}
+.fold>.card{margin-top:0;border-radius:0 0 6px 6px}
 /* phase stepper */
 .phase-step{flex:1;display:flex;gap:8px;align-items:center;padding:8px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;opacity:.55;transition:all .2s}
 .phase-step.active{opacity:1;border-color:var(--acc);background:rgba(90,158,143,.08);box-shadow:0 0 0 1px var(--acc) inset}
@@ -163,7 +170,7 @@ html.vpb-nav-hosted body{padding-left:0}
   <span class="tb-title">🧪 LOOP LAB</span>
   <span class="hint">CI/CD for the agent loops — test · evaluate · edit-on-a-branch · re-test · promote / rollback</span>
   <span style="flex:1"></span>
-  <span class="pill" id="safe-pill" title="Where tests run — sandbox-first keeps them off real Vera" style="cursor:pointer" onclick="nav('sandbox')">🛡 —</span>
+  <span class="pill" id="safe-pill" title="Where tests run — sandbox-first keeps them off real Vera" style="cursor:pointer" onclick="nav('ship')">🛡 —</span>
   <span class="hint" id="cfg-line">—</span>
   <vera-error-radar id="err-radar"></vera-error-radar>
   <button class="btn sm" onclick="selftest()" title="Pre-flight redis · tasks · loops.run · critic · editor — and show which runner (active sandbox / in-process) they ran against">✓ Self-test</button>
@@ -205,17 +212,13 @@ html.vpb-nav-hosted body{padding-left:0}
   <button class="btn" data-sec="errors" onclick="nav('errors')"><span class="ic">⚠</span>Errors</button>
   <button class="btn" data-sec="activity" onclick="nav('activity')"><span class="ic">≣</span>Activity</button>
   <div class="rail-grp">Ship</div>
-  <button class="btn" data-sec="pipelines" onclick="nav('pipelines')"><span class="ic">⎇</span>CI / CD</button>
-  <button class="btn" data-sec="review" onclick="nav('review')"><span class="ic">✓</span>Review</button>
-  <button class="btn" data-sec="sources" onclick="nav('sources')"><span class="ic">⌥</span>Sources</button>
-  <button class="btn" data-sec="sandbox" onclick="nav('sandbox')"><span class="ic">▩</span>Sandbox</button>
+  <button class="btn" data-sec="ship" onclick="nav('ship')" title="Every branch &mdash; its pipeline, review, sandbox and tests &mdash; in one table, the commit graph, race lanes, authorship and gate strip below it"><span class="ic">&#8599;</span>Ship</button>
   <button class="btn" data-sec="csessions" onclick="nav('csessions')"><span class="ic">◈</span>Sessions</button>
   <button class="btn" data-sec="board" onclick="nav('board')"><span class="ic">▤</span>Board</button>
   <button class="btn" data-sec="notes" onclick="nav('notes')"><span class="ic">✎</span>Notes</button>
   <button class="btn" data-sec="capacity" onclick="nav('capacity')"><span class="ic">▰</span>Capacity</button>
   <button class="btn" data-sec="swarm" onclick="nav('swarm')"><span class="ic">◇</span>Swarm</button>
   <button class="btn" data-sec="master" onclick="nav('master')"><span class="ic">◉</span>Master</button>
-  <button class="btn" data-sec="unittests" onclick="nav('unittests')"><span class="ic">◫</span>Unit tests</button>
   <button class="btn" data-sec="settings" onclick="nav('settings')"><span class="ic">⚙</span>Settings</button>
 </div>
 
@@ -249,57 +252,6 @@ html.vpb-nav-hosted body{padding-left:0}
         <span style="flex:1"></span><span class="hint">every Loop Lab action, newest first</span></div>
       <div id="m-activity"><div class="empty">…</div></div>
     </div>
-  </div>
-</div>
-
-<!-- ── UNIT TESTS: coverage matrix + gate race-to-green ── -->
-<div class="sec" id="sec-unittests" style="display:none">
-  <div class="card">
-    <div class="card-h"><span class="card-t">Quick tests</span>
-      <span class="hint">test any capability · unit-test any part of Vera</span>
-    </div>
-    <div class="row">
-      <input id="ct-cap" placeholder="cap name, e.g. fabric.datasets" style="min-width:190px">
-      <input id="ct-args" placeholder='args JSON (optional)' style="flex:1;min-width:150px">
-      <button class="btn" onclick="capTest()">▶ Test cap</button>
-    </div>
-    <div class="row" style="margin-top:6px">
-      <input id="ut-path" placeholder="pytest path (Vera only, e.g. tests)" value="tests" style="min-width:180px">
-      <span class="hint" id="ut-repo-hint" title="Which repo the Unit test runs against — set by the CONTEXT bar. Vera runs pytest in an ephemeral container; a registered repo runs its own test_cmd in its checkout.">repo: vera</span>
-      <button class="btn" onclick="unitTest()">▶ Unit test</button>
-      <div id="qt-out" class="hint" style="flex:1"></div>
-    </div>
-  </div>
-  <div class="card">
-    <div class="card-h"><span class="card-t">Unit tests — coverage &amp; gate tier</span>
-      <span class="hint" id="ut-matrix-status">—</span>
-      <span style="flex:1"></span>
-      <input id="ut-filter" placeholder="filter module…" style="width:150px" oninput="_utRender()">
-      <label class="hint" style="margin:0 6px"><input type="checkbox" id="ut-only-gated" onchange="_utRender()"> gated only</label>
-      <button class="btn sm" onclick="loadUnitTests()">&#8635;</button>
-    </div>
-    <div id="ut-matrix-summary" class="row" style="gap:6px;flex-wrap:wrap;margin:4px 0"></div>
-    <div class="hint" style="margin-bottom:6px">Only the <b>critical</b> tier gates a merge (M3.1). Non-critical modules run but don't block — promote them into the tier (tests/conftest.py <span class="mono">_CRITICAL_MODULES</span>) as they harden.</div>
-    <div id="ut-matrix-body"><div class="empty">Loading…</div></div>
-  </div>
-  <div class="card" style="margin-top:10px">
-    <div class="card-h"><span class="card-t">Gate race-to-green</span>
-      <span class="hint" id="ut-trend">—</span>
-      <span style="flex:1"></span>
-      <span class="hint">one cell per test RUN (newest right) — click to open its pipeline</span>
-    </div>
-    <div id="ut-lanes"><div class="empty">—</div></div>
-    <div id="ut-regressions" style="margin-top:8px"></div>
-  </div>
-  <div class="card" style="margin-top:10px">
-    <div class="card-h"><span class="card-t">Test generation (M3.4)</span>
-      <span class="hint">LLM-propose pytest for a branch's changed pure modules — review, then save</span>
-      <span style="flex:1"></span>
-      <input id="tg-branch" placeholder="branch, e.g. feat/x" style="width:170px">
-      <button class="btn sm" onclick="genTests()">Generate</button>
-    </div>
-    <div class="hint" style="margin-bottom:6px">Proposals are drafts — nothing is written to the branch. Review, copy into <span class="mono">tests/</span> and commit; promote the module into <span class="mono">_CRITICAL_MODULES</span> once it's solid. LLM-backed, so it can take a while.</div>
-    <div id="tg-body"><div class="empty">Enter a branch and click Generate.</div></div>
   </div>
 </div>
 
@@ -493,7 +445,7 @@ html.vpb-nav-hosted body{padding-left:0}
       <span class="pill" id="arh-profile" style="display:none" title="The loop profile actually executing this run — engine + bound specialist agent, if any"></span>
       <span class="hint" id="arh-trigger" title=""></span>
       <span class="hint" id="arh-branch"></span>
-      <span class="pill" id="arh-sbx" style="display:none;cursor:pointer" onclick="nav('sandbox')" title="Sandbox this run is routed to">🛡 sandbox</span>
+      <span class="pill" id="arh-sbx" style="display:none;cursor:pointer" onclick="nav('ship')" title="Sandbox this run is routed to">🛡 sandbox</span>
       <span style="flex:1"></span>
       <span class="hint" id="arh-elapsed"></span>
     </div>
@@ -684,138 +636,36 @@ html.vpb-nav-hosted body{padding-left:0}
   </div>
 </div>
 
-<!-- ── CI / CD ── -->
-<div class="sec" id="sec-pipelines" style="display:none">
-  <div class="card">
-    <div class="card-h"><span class="card-t">Repository</span>
-      <select id="git-repo" style="margin-left:8px" onchange="loadGit()"></select>
+<!-- == SHIP: one table of branches - pipelines x review x sandboxes x tests ==
+     CI/CD, Review, Sources, Sandbox and Unit tests were five pages listing
+     the same branches from five stores. A row is a branch (evolve.ship.branches);
+     expand it for its pipelines (a pending one as its review card), its sandbox
+     with every control, its test story; an id opens the record. The infographics
+     those pages drew are the same elements below the table; their forms and long
+     lists fold up under it. -->
+<div class="sec" id="sec-ship" style="display:none">
+  <div class="card" id="ship-card">
+    <div class="card-h"><span class="card-t">Ship</span>
+      <span class="hint" id="ship-status">&hellip;</span>
       <span style="flex:1"></span>
-      <button class="btn sm" onclick="toggleAddRepo()">+ add repo</button>
-      <button class="btn sm" onclick="loadGit()">&#8635;</button>
+      <label class="hint" style="margin-right:8px" title="refresh every 6s while a pipeline is live"><input type="checkbox" id="ship-follow" checked onchange="loadShip()"> follow</label>
+      <button class="btn sm" onclick="sbxReap()" title="Pause idle spawned containers so they stop sharing the Ollama nodes (previews first; pinned + actively-dispatched are exempt)">&#10074;&#10074; reap idle</button>
+      <button class="btn sm" onclick="loadShip()">&#8635;</button>
     </div>
-    <div id="add-repo-body" style="display:none;margin-bottom:8px">
-      <div class="row" style="gap:6px;flex-wrap:wrap">
-        <input id="ar-id" placeholder="id (slug)" style="width:110px">
-        <input id="ar-label" placeholder="label" style="width:130px">
-        <input id="ar-path" placeholder="absolute path on the Vera host" style="width:260px">
-        <input id="ar-test" placeholder="test_cmd (default: pytest -q --tb=no)" style="width:220px">
-        <button class="btn sm primary" onclick="addRepo()">Register</button>
-      </div>
-    </div>
-    <div id="git-body"><div class="empty">Loading…</div></div>
-  </div>
-  <div class="card">
-    <div class="card-h"><span class="card-t">Commit graph</span>
-      <span class="hint">the repo's real history — branches, merges, loop-lab/* highlighted</span></div>
-    <vera-git-graph id="git-graph" repo="vera" limit="150"></vera-git-graph>
-  </div>
-  <div class="card">
-    <div class="card-h"><span class="card-t">Pipeline runs</span>
-      <span class="hint">baseline → apply → test → gate → promote / rollback</span>
-      <span style="flex:1"></span>
-      <button class="btn" onclick="loadPipelines()">&#8635;</button>
-    </div>
-    <div id="pipes-body"><div class="empty">No pipelines yet. Promote a variant through CI from the Variants tab, or run a code pipeline from a session's code suggestion.</div></div>
-  </div>
-  <div class="card">
-    <div class="card-h"><span class="card-t">⎇ Branch race lanes</span>
-      <span class="hint">every branch with a real Loop Lab pipeline — click a run to open it</span></div>
-    <vera-branch-pipeline id="pipe-lanes" mode="lanes"></vera-branch-pipeline>
-  </div>
-  <div class="card">
-    <div class="card-h"><span class="card-t">🗺 Authorship map</span>
-      <span class="hint">real commits, tagged with who/what actually produced them — Claude Code, a Vera agent run, or direct</span></div>
-    <vera-author-map id="author-map" hours="72"></vera-author-map>
-  </div>
-  <div class="card">
-    <div class="card-h"><span class="card-t">git log · loop-lab</span><span class="hint">every change, promote, merge-to-source &amp; rollback</span></div>
-    <div id="gitlog-body"><div class="empty">—</div></div>
-  </div>
-</div>
-
-<!-- ── REVIEW: everything awaiting a decision, diff + verdict in one place ── -->
-<div class="sec" id="sec-review" style="display:none">
-  <div class="card">
-    <div class="card-h"><span class="card-t">Awaiting review / decision</span>
-      <span class="hint">pipelines flagged for review, or gated and holding on a promote/rollback call</span>
-      <span style="flex:1"></span>
-      <button class="btn" onclick="loadReview()">&#8635;</button>
-    </div>
-    <div id="review-body"><div class="empty">Loading…</div></div>
-  </div>
-</div>
-
-<!-- ── SOURCES (improvements from review + observability) ── -->
-<div class="sec" id="sec-sources" style="display:none">
-  <div class="card">
-    <div class="card-h"><span class="card-t">From dream source review</span>
-      <span class="hint">turn technical recommendations for a subsystem into a gated code pipeline</span>
-    </div>
-    <div class="row">
-      <select id="src-area" style="min-width:200px"><option value="">— review area —</option></select>
-      <select id="src-profile" style="width:130px"></select>
-      <button class="btn primary" onclick="fromReview()">Distil → code pipeline</button>
-      <button class="btn sm" onclick="loadReviewAreas()">&#8635;</button>
-    </div>
-    <div id="src-review-out" class="hint" style="margin-top:8px">Pick an area that has a dream source-review report (Dream → Dream Review).</div>
-  </div>
-  <div class="card">
-    <div class="card-h"><span class="card-t">From performance &amp; observability</span>
-      <span class="hint">perf findings · event-loop stalls · errors → suggested fixes (self-improve the platform)</span>
-      <span style="flex:1"></span>
-      <button class="btn" onclick="observeScan(false)">Scan &amp; suggest</button>
-      <button class="btn warn-btn" onclick="observeScan(true)" title="Also launch gated code pipelines for the suggestions">Scan &amp; launch</button>
-    </div>
-    <div id="src-obs-out"><div class="empty">Run a scan to surface fixable perf/error patterns.</div></div>
-  </div>
-</div>
-
-<!-- ── SANDBOX ── -->
-<div class="sec" id="sec-sandbox" style="display:none">
-  <div class="card">
-    <div class="card-h"><span class="card-t">Dev sandboxes</span>
-      <span class="hint">isolated Vera instances, each on its own port + Redis DB, running a branch's code with a data snapshot</span>
-      <span style="flex:1"></span><button class="btn sm" onclick="loadSandbox()">&#8635;</button>
-    </div>
-    <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
-      <label class="fld" style="margin:0">Test execution</label>
-      <select id="sb-mode" onchange="saveMode()" title="Where benchmark loops run">
-        <option value="prefer">prefer sandbox</option>
-        <option value="require">require sandbox</option>
-        <option value="off">off (in-process)</option>
-      </select>
-      <button class="btn primary sm" onclick="sandboxEnsure()" title="Bring up an isolation sandbox so tests run safely">&#128737; Ensure</button>
-      <span style="flex:1"></span>
-      <input id="sbx-spawn-branch" placeholder="branch &#8594; its own container" style="min-width:190px">
-      <button class="btn sm" onclick="sandboxSpawn()">&#65291; Spawn</button>
-      <input id="sb-port" type="number" min="1024" max="65535" style="width:84px" placeholder="port" title="Host port for a NEW sandbox — must differ from prod's">
-      <button class="btn sm" onclick="savePort()">save port</button>
-    </div>
-    <div class="hint" id="sb-status-line" style="margin-top:6px">—</div>
+    <div class="hint" id="sb-status-line" style="margin-top:2px">&hellip;</div>
     <div id="sbx-capacity" class="row" style="gap:6px;flex-wrap:wrap;margin-top:6px"></div>
-    <div class="hint" style="margin-top:2px">Default posture is <b>sandbox-first</b>: agent-loop tests run in an isolated Vera (isolated Redis DB) so they can't act on real Vera; write/exec/comms/deploy caps are stripped from test loops. Requires docker on the host; prod's tree stays on main (branches run in worktrees).</div>
-  </div>
-
-  <div class="card" style="margin-top:10px">
-    <div class="card-h"><span class="card-t">Sandboxes &amp; connections</span>
-      <span class="hint">click <b>connect</b> on a sandbox to open its web UI, VS Code, terminal, files, diff or shell</span>
-      <span style="flex:1"></span>
-      <button class="btn sm" onclick="sbxReap()" title="Pause idle spawned containers so they stop sharing the Ollama nodes (previews first; pinned + actively-dispatched are exempt)">⏸ Reap idle</button>
-      <span class="hint" id="sbx-count" style="margin-left:8px">—</span>
+    <div id="ship-proposals"></div>
+    <div class="row" style="gap:6px;flex-wrap:wrap;margin:8px 0 6px;align-items:center">
+      <input id="ship-q" placeholder="filter: branch, pipeline id, owner, sandbox&hellip;" oninput="shipOnChange()" style="min-width:220px">
+      <select id="ship-role" onchange="shipOnChange()"><option value="">every role</option><option value="main">main</option><option value="edge">edge</option><option value="feature">feature</option><option value="mirror">mirror</option></select>
+      <select id="ship-stage" onchange="shipOnChange()"><option value="">every stage</option><option value="live">live</option><option value="review">awaiting a decision</option><option value="red">red</option><option value="merged">merged</option><option value="idle">idle</option></select>
+      <label class="hint"><input type="checkbox" id="ship-merged" onchange="shipOnChange()"> hide merged</label>
+      <span class="hint" id="ship-count"></span>
     </div>
-    <div id="sbx-list"><div class="empty">Loading…</div></div>
+    <div id="ship-table"><div class="empty">Loading&hellip;</div></div>
+    <div class="hint" style="margin-top:6px">A row is a <b>branch</b>: its latest pipeline, gate and decision, its sandbox, its last test run. <b>&#9656;</b> expands it &mdash; a pipeline awaiting a decision shows as its review card (diff, verdict, promote / rollback), the sandbox with every control, the test story; an id opens the record. <b>stage</b> is one word: live &rarr; awaiting a decision &rarr; red &rarr; merged / idle; the trunk (main, then the edges) leads.</div>
   </div>
 
-  <div class="card" id="edges-card" style="margin-top:10px">
-    <div class="card-h"><span class="card-t">Integration branches (bleeding edges)</span>
-      <span class="hint">every change lands on one of these; <b>main</b> advances only by a deliberate release of an edge</span>
-      <span style="flex:1"></span>
-      <button class="btn sm" onclick="loadEdges()" title="refresh">&#8635;</button>
-    </div>
-    <div id="edges-list"><div class="empty">Loading…</div></div>
-  </div>
-
-  <!-- ONE contextual connection panel, bound to the sandbox you clicked -->
   <div class="card" id="sbx-tools" style="margin-top:10px;display:none">
     <div class="card-h"><span class="card-t">Connection</span>
       <span class="tag" id="sbx-tools-tgt">—</span>
@@ -876,8 +726,33 @@ html.vpb-nav-hosted body{padding-left:0}
       </div>
     </div>
   </div>
-  <div class="hint" style="margin:10px 0 4px">Logs from these sandboxes &mdash; moved here from its own tab: they are one subject, and a container&rsquo;s output belongs next to the container it came from.</div>
 
+  <div class="card">
+    <div class="card-h"><span class="card-t">Commit graph</span>
+      <span class="hint">the repo's real history — branches, merges, loop-lab/* highlighted</span></div>
+    <vera-git-graph id="git-graph" repo="vera" limit="150"></vera-git-graph>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">⎇ Branch race lanes</span>
+      <span class="hint">every branch with a real Loop Lab pipeline — click a run to open it</span></div>
+    <vera-branch-pipeline id="pipe-lanes" mode="lanes"></vera-branch-pipeline>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">🗺 Authorship map</span>
+      <span class="hint">real commits, tagged with who/what actually produced them — Claude Code, a Vera agent run, or direct</span></div>
+    <vera-author-map id="author-map" hours="72"></vera-author-map>
+  </div>
+  <div class="card" style="margin-top:10px">
+    <div class="card-h"><span class="card-t">Gate race-to-green</span>
+      <span class="hint" id="ut-trend">—</span>
+      <span style="flex:1"></span>
+      <span class="hint">one cell per test RUN (newest right) — click to open its pipeline</span>
+    </div>
+    <div id="ut-lanes"><div class="empty">—</div></div>
+    <div id="ut-regressions" style="margin-top:8px"></div>
+  </div>
+
+  <details class="fold" id="ship-logs" ontoggle="if(this.open)loadLogs()"><summary>Sandbox logs &mdash; what the containers print, with perf samples</summary>
   <div class="card">
     <div class="card-h"><span class="card-t">Sandbox logs</span>
       <span class="hint" id="logs-status">collector —</span>
@@ -893,6 +768,141 @@ html.vpb-nav-hosted body{padding-left:0}
     </div>
     <div class="hint" style="margin-top:6px">Each line is stamped with its sandbox branch + running-code sha; distinct errors also flow to the Errors tab. Live tailing runs where the app has docker (prod).</div>
   </div>
+  </details>
+  <details class="fold" id="ship-pipes" ontoggle="if(this.open)loadPipelines()"><summary>All pipeline runs &mdash; every run, and who drove what</summary>
+  <div class="card">
+    <div class="card-h"><span class="card-t">Pipeline runs</span>
+      <span class="hint">baseline → apply → test → gate → promote / rollback</span>
+      <span style="flex:1"></span>
+      <button class="btn" onclick="loadPipelines()">&#8635;</button>
+    </div>
+    <div id="pipes-body"><div class="empty">No pipelines yet. Promote a variant through CI from the Variants tab, or run a code pipeline from a session's code suggestion.</div></div>
+  </div>
+  </details>
+  <details class="fold" id="ship-gitlog" ontoggle="if(this.open)loadGitLog()"><summary>git log &middot; loop-lab &mdash; every change, promote, merge-to-source &amp; rollback</summary>
+  <div class="card">
+    <div class="card-h"><span class="card-t">git log · loop-lab</span><span class="hint">every change, promote, merge-to-source &amp; rollback</span></div>
+    <div id="gitlog-body"><div class="empty">—</div></div>
+  </div>
+  </details>
+  <details class="fold" id="ship-edges"><summary>Integration branches (bleeding edges) &mdash; where changes land; main advances by a deliberate release</summary>
+  <div class="card" id="edges-card" style="margin-top:10px">
+    <div class="card-h"><span class="card-t">Integration branches (bleeding edges)</span>
+      <span class="hint">every change lands on one of these; <b>main</b> advances only by a deliberate release of an edge</span>
+      <span style="flex:1"></span>
+      <button class="btn sm" onclick="loadEdges()" title="refresh">&#8635;</button>
+    </div>
+    <div id="edges-list"><div class="empty">Loading…</div></div>
+  </div>
+  </details>
+  <details class="fold" id="ship-coverage" ontoggle="if(this.open&&!_utMatrix)loadUnitTests()"><summary>Unit tests &mdash; coverage matrix &amp; gate tier (collects the test tree: takes a moment)</summary>
+  <div class="card">
+    <div class="card-h"><span class="card-t">Unit tests — coverage &amp; gate tier</span>
+      <span class="hint" id="ut-matrix-status">—</span>
+      <span style="flex:1"></span>
+      <input id="ut-filter" placeholder="filter module…" style="width:150px" oninput="_utRender()">
+      <label class="hint" style="margin:0 6px"><input type="checkbox" id="ut-only-gated" onchange="_utRender()"> gated only</label>
+      <button class="btn sm" onclick="loadUnitTests()">&#8635;</button>
+    </div>
+    <div id="ut-matrix-summary" class="row" style="gap:6px;flex-wrap:wrap;margin:4px 0"></div>
+    <div class="hint" style="margin-bottom:6px">Only the <b>critical</b> tier gates a merge (M3.1). Non-critical modules run but don't block — promote them into the tier (tests/conftest.py <span class="mono">_CRITICAL_MODULES</span>) as they harden.</div>
+    <div id="ut-matrix-body"><div class="empty">Loading…</div></div>
+  </div>
+  </details>
+  <details class="fold" id="ship-tgen"><summary>Test generation &mdash; LLM-propose pytest for a branch's changed modules</summary>
+  <div class="card" style="margin-top:10px">
+    <div class="card-h"><span class="card-t">Test generation (M3.4)</span>
+      <span class="hint">LLM-propose pytest for a branch's changed pure modules — review, then save</span>
+      <span style="flex:1"></span>
+      <input id="tg-branch" placeholder="branch, e.g. feat/x" style="width:170px">
+      <button class="btn sm" onclick="genTests()">Generate</button>
+    </div>
+    <div class="hint" style="margin-bottom:6px">Proposals are drafts — nothing is written to the branch. Review, copy into <span class="mono">tests/</span> and commit; promote the module into <span class="mono">_CRITICAL_MODULES</span> once it's solid. LLM-backed, so it can take a while.</div>
+    <div id="tg-body"><div class="empty">Enter a branch and click Generate.</div></div>
+  </div>
+  </details>
+  <details class="fold" id="ship-quick"><summary>Quick tests &mdash; test a capability, run pytest</summary>
+  <div class="card">
+    <div class="card-h"><span class="card-t">Quick tests</span>
+      <span class="hint">test any capability · unit-test any part of Vera</span>
+    </div>
+    <div class="row">
+      <input id="ct-cap" placeholder="cap name, e.g. fabric.datasets" style="min-width:190px">
+      <input id="ct-args" placeholder='args JSON (optional)' style="flex:1;min-width:150px">
+      <button class="btn" onclick="capTest()">▶ Test cap</button>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <input id="ut-path" placeholder="pytest path (Vera only, e.g. tests)" value="tests" style="min-width:180px">
+      <span class="hint" id="ut-repo-hint" title="Which repo the Unit test runs against — set by the CONTEXT bar. Vera runs pytest in an ephemeral container; a registered repo runs its own test_cmd in its checkout.">repo: vera</span>
+      <button class="btn" onclick="unitTest()">▶ Unit test</button>
+      <div id="qt-out" class="hint" style="flex:1"></div>
+    </div>
+  </div>
+  </details>
+  <details class="fold" id="ship-sources" ontoggle="if(this.open)loadSources()"><summary>Sources &mdash; pipelines from a dream source review, or from perf &amp; observability</summary>
+  <div class="card">
+    <div class="card-h"><span class="card-t">From dream source review</span>
+      <span class="hint">turn technical recommendations for a subsystem into a gated code pipeline</span>
+    </div>
+    <div class="row">
+      <select id="src-area" style="min-width:200px"><option value="">— review area —</option></select>
+      <select id="src-profile" style="width:130px"></select>
+      <button class="btn primary" onclick="fromReview()">Distil → code pipeline</button>
+      <button class="btn sm" onclick="loadReviewAreas()">&#8635;</button>
+    </div>
+    <div id="src-review-out" class="hint" style="margin-top:8px">Pick an area that has a dream source-review report (Dream → Dream Review).</div>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">From performance &amp; observability</span>
+      <span class="hint">perf findings · event-loop stalls · errors → suggested fixes (self-improve the platform)</span>
+      <span style="flex:1"></span>
+      <button class="btn" onclick="observeScan(false)">Scan &amp; suggest</button>
+      <button class="btn warn-btn" onclick="observeScan(true)" title="Also launch gated code pipelines for the suggestions">Scan &amp; launch</button>
+    </div>
+    <div id="src-obs-out"><div class="empty">Run a scan to surface fixable perf/error patterns.</div></div>
+  </div>
+  </details>
+  <details class="fold" id="ship-repo"><summary>Repository &amp; runner &mdash; repos, where tests execute, spawn a sandbox</summary>
+  <div class="card">
+    <div class="card-h"><span class="card-t">Repository</span>
+      <select id="git-repo" style="margin-left:8px" onchange="loadGit()"></select>
+      <span style="flex:1"></span>
+      <button class="btn sm" onclick="toggleAddRepo()">+ add repo</button>
+      <button class="btn sm" onclick="loadGit()">&#8635;</button>
+    </div>
+    <div id="add-repo-body" style="display:none;margin-bottom:8px">
+      <div class="row" style="gap:6px;flex-wrap:wrap">
+        <input id="ar-id" placeholder="id (slug)" style="width:110px">
+        <input id="ar-label" placeholder="label" style="width:130px">
+        <input id="ar-path" placeholder="absolute path on the Vera host" style="width:260px">
+        <input id="ar-test" placeholder="test_cmd (default: pytest -q --tb=no)" style="width:220px">
+        <button class="btn sm primary" onclick="addRepo()">Register</button>
+      </div>
+    </div>
+    <div id="git-body"><div class="empty">Loading…</div></div>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">Dev sandboxes</span>
+      <span class="hint">isolated Vera instances, each on its own port + Redis DB, running a branch's code with a data snapshot</span>
+      <span style="flex:1"></span><button class="btn sm" onclick="loadSandbox()">&#8635;</button>
+    </div>
+    <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+      <label class="fld" style="margin:0">Test execution</label>
+      <select id="sb-mode" onchange="saveMode()" title="Where benchmark loops run">
+        <option value="prefer">prefer sandbox</option>
+        <option value="require">require sandbox</option>
+        <option value="off">off (in-process)</option>
+      </select>
+      <button class="btn primary sm" onclick="sandboxEnsure()" title="Bring up an isolation sandbox so tests run safely">&#128737; Ensure</button>
+      <span style="flex:1"></span>
+      <input id="sbx-spawn-branch" placeholder="branch &#8594; its own container" style="min-width:190px">
+      <button class="btn sm" onclick="sandboxSpawn()">&#65291; Spawn</button>
+      <input id="sb-port" type="number" min="1024" max="65535" style="width:84px" placeholder="port" title="Host port for a NEW sandbox — must differ from prod's">
+      <button class="btn sm" onclick="savePort()">save port</button>
+    </div>
+    <div class="hint" style="margin-top:2px">Default posture is <b>sandbox-first</b>: agent-loop tests run in an isolated Vera (isolated Redis DB) so they can't act on real Vera; write/exec/comms/deploy caps are stripped from test loops. Requires docker on the host; prod's tree stays on main (branches run in worktrees).</div>
+  </div>
+  </details>
 </div>
 
 <!-- ── ACTIVITY (audit log) ── -->
@@ -1046,16 +1056,16 @@ function scChip(v){return '<span class="sc" style="color:'+scColor(v)+';backgrou
 function nav(sec){
   document.querySelectorAll('#nav .btn').forEach(b=>b.classList.toggle('on',b.dataset.sec===sec));
   document.querySelectorAll('.sec').forEach(s=>s.style.display=s.id==='sec-'+sec?'':'none');
-  const f={work:loadWork,test:loadTest,unittests:loadUnitTests,master:loadMaster,watch:loadWatch,pipelines:()=>{loadGit();loadPipelines()},
+  const f={work:loadWork,test:loadTest,master:loadMaster,watch:loadWatch,ship:loadShip,
     // Pages the Work page absorbed (flattening slice 3): an old deep-link
     // or injected nav item still lands on the table that holds their data.
     tasks:()=>nav('work'),runs:()=>nav('work'),census:()=>nav('work'),overview:()=>nav('work'),variants:()=>nav('work'),improve:()=>nav('work'),
-    review:loadReview,csessions:loadCSessions,board:loadBoardTab,notes:loadNotes,capacity:loadCapacity,swarm:swarmPoll,
-    // Logs live inside Sandbox now — one subject, one page. `logs` is kept as
-    // an alias so an old deep-link or an injected nav item still lands
-    // somewhere real instead of on a blank panel.
-    logs:()=>nav('sandbox'),
-    sources:loadSources,sandbox:()=>{loadSandbox();loadLogs()},activity:loadAudit,settings:fillSettings,errors:loadErrors}[sec];
+    csessions:loadCSessions,board:loadBoardTab,notes:loadNotes,capacity:loadCapacity,swarm:swarmPoll,
+    // Pages the Ship page absorbed (slice 5) - and `logs`, which Sandbox had
+    // absorbed before it: an old deep-link or injected nav item still lands
+    // on the table that holds their data.
+    pipelines:()=>nav('ship'),review:()=>nav('ship'),sources:()=>nav('ship'),sandbox:()=>nav('ship'),unittests:()=>nav('ship'),logs:()=>nav('ship'),
+    activity:loadAudit,settings:fillSettings,errors:loadErrors}[sec];
   if(f)f();
   // The address bar says which page is open (a deep link says more).
   try{const cur=(location.hash||'').replace(/^#/,'');if(cur.split('?')[0]!==sec)history.replaceState(null,'',location.pathname+location.search+'#'+sec)}catch(_){}
@@ -1078,8 +1088,8 @@ function nav(sec){
 if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
   {id:'work', label:'Work'}, {id:'test', label:'Test'}, {id:'watch', label:'Watch'},
   {id:'errors', label:'Errors'}, {id:'activity', label:'Activity'},
-  {id:'pipelines', label:'CI / CD'}, {id:'review', label:'Review'}, {id:'sources', label:'Sources'}, {id:'sandbox', label:'Sandbox'}, {id:'csessions', label:'Sessions'}, {id:'board', label:'Board'}, {id:'notes', label:'Notes'}, {id:'capacity', label:'Capacity'}, {id:'swarm', label:'Swarm'},
-  {id:'master', label:'Master'}, {id:'unittests', label:'Unit tests'}, {id:'settings', label:'Settings'},
+  {id:'ship', label:'Ship'}, {id:'csessions', label:'Sessions'}, {id:'board', label:'Board'}, {id:'notes', label:'Notes'}, {id:'capacity', label:'Capacity'}, {id:'swarm', label:'Swarm'},
+  {id:'master', label:'Master'}, {id:'settings', label:'Settings'},
 ]);
 
 /* ═══ TEST GENERATION — LLM-propose pytest for a branch (route-forward M3.4) ═══ */
@@ -1667,7 +1677,7 @@ function _renderTestResult(d,run_id){
   let h='<div class="row" style="margin-bottom:6px">'+scChip(d.combined)+' <span class="hint">combined</span>'+(d.where?' <span class="tag">'+(d.where==='sandbox'?'🛡 sandbox':d.where)+'</span>':'')+' <span class="tag">'+(d.elapsed_s||0)+'s</span></div>';
   for(const c of d.checks||[])h+='<div class="mono" style="font-size:10px;color:'+(c.ok?'var(--ok)':'var(--err)')+'">'+(c.ok?'✓':'✗')+' '+esc(c.type)+'</div>';
   if(d.blocked)h+='<div class="pill" style="color:var(--warn);margin-top:6px">🛡 '+esc(d.error)+'</div>'
-    +'<div class="hint" style="margin-top:4px">environment not ready — not a defect in the thing under test. <a class="clk" onclick="nav(\'sandbox\')">bring up the sandbox →</a></div>';
+    +'<div class="hint" style="margin-top:4px">environment not ready — not a defect in the thing under test. <a class="clk" onclick="nav(\'ship\')">bring up the sandbox →</a></div>';
   else if(d.error)h+='<div class="pill" style="color:var(--err);margin-top:6px">'+esc(d.error)+'</div>'
     +'<div style="margin-top:5px"><a class="clk" style="color:var(--warn)" onclick="nav(\'errors\')" title="This failure is tracked in the errors work-queue — suggest a fix there and approve it into a remediation pipeline">⚠ tracked in Errors → suggest fix</a></div>';
   h+='<button class="btn sm" style="margin-top:8px" onclick="openRun(\''+esc(run_id)+'\')">full detail</button>';
@@ -1796,7 +1806,7 @@ function _ctxBroadcast(){
   const s=_curSec&&_curSec();
   if(s==='board')loadBoardTab();
   else if(s==='swarm')loadSwarm();
-  else if(s==='pipelines')loadPipelines();
+  else if(s==='ship')loadShip();
 }
 async function ctxMakeActive(){
   const br=LLCtx.branch();
@@ -1903,8 +1913,8 @@ function onEvent(ev){
     workOnChange();
     if(_curSec()==='watch')watchRefresh();
   }
-  if(t.startsWith('evolve.pipeline.')){if(_curSec()==='pipelines')loadPipelines();if(_curSec()==='review')loadReview();pollPipeLive(ev.id)}
-  if(t.startsWith('ide.workspace.changes.')||t==='evolve.sandbox.review'){if(_curSec()==='review')loadReview()}
+  if(t.startsWith('evolve.pipeline.')){shipRefresh();pollPipeLive(ev.id)}
+  if(t.startsWith('ide.workspace.changes.')||t==='evolve.sandbox.review'){shipRefresh()}
 }
 
 /* ═══ WATCH — live test → evaluate → synthesize ═══ */
@@ -2086,7 +2096,7 @@ async function boardPostComment(id){
 async function openBranchSandbox(branch){
   toast('opening dev container for '+branch+'… (may take a moment)');
   const r=await post('/evolve/sandbox/up',{branch});
-  if(r&&(r.ok||r.healthy)){closeModal();nav('sandbox');const sb=r.sandbox||{};try{embedSandbox(branch,sb.port)}catch(e){toast('sandbox up; open it from the Sandbox tab')}}
+  if(r&&(r.ok||r.healthy)){closeModal();nav('ship');const sb=r.sandbox||{};try{embedSandbox(branch,sb.port)}catch(e){toast('sandbox up; open it from the Sandbox tab')}}
   else toast((r&&r.error)||'could not bring up the dev container')}
 async function boardShowContext(id){
   const r=await api('/board/context?id='+encodeURIComponent(id));
@@ -3547,11 +3557,11 @@ const ENTITY={
   suite:   {label:'suite',               open:(id)=>openSuite(id),                                         page:'work'},
   session: {label:'improvement session', open:(id)=>openSession(id),                                       page:'work'},
   loop:    {label:'agent loop',          open:(id,x)=>openCensusLiveLoop(id,(x&&x.goal)||''),              page:'work'},
-  pipeline:{label:'pipeline',            open:(id)=>openPipe(id),                                          page:'pipelines'},
-  branch:  {label:'branch',              open:(id)=>openBranch(id),                                        page:'pipelines'},
+  pipeline:{label:'pipeline',            open:(id)=>openPipe(id),                                          page:'ship'},
+  branch:  {label:'branch',              open:(id)=>openBranch(id),                                        page:'ship'},
   item:    {label:'board item',          open:(id)=>openBoardItem(id),                                     page:'board'},
   chat:    {label:'chat session',        open:(id)=>openSessionChat(id),                                   page:'csessions'},
-  commit:  {label:'commit',              open:(id)=>crossLinkToDispatch(id),                               page:'pipelines'},
+  commit:  {label:'commit',              open:(id)=>crossLinkToDispatch(id),                               page:'ship'},
 };
 function entityHref(kind,id,extra){
   const q=new URLSearchParams();q.set(kind,String(id));
@@ -3626,10 +3636,10 @@ async function openBranch(name){
     +'<td>'+pipeDecision(p.decision)+'</td><td class="hint mono">'+esc((p.created_at||'').slice(0,16))+'</td></tr>').join('');
   modalFill(tok,'<div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:6px">'
     +(sb?('<span class="pill" title="'+esc(sb.name||'')+'">sandbox '+(sb.running?'<span style="color:var(--ok)">up</span>':(sb.paused?'paused':'down'))+(sb.port?(' · :'+sb.port):'')+'</span>'
-        +'<button class="btn sm" onclick="closeModal();nav(\'sandbox\')">sandbox page</button>')
+        +'<button class="btn sm" onclick="closeModal();shipReveal(\''+esc(name)+'\');sbxConnect(\''+esc(sb.name||'')+'\',\''+esc(name)+'\','+(sb.role==='primary')+',\'term\')" title="the Ship page, this branch open, a terminal in its container">terminal</button>')
         :'<span class="hint">no sandbox for this branch</span> <button class="btn sm" onclick="openBranchSandbox(\''+esc(name)+'\')" title="bring up a dev container for it">bring one up</button>')
     +'<span class="hint">'+ps.length+' pipeline'+(ps.length===1?'':'s')+'</span><span style="flex:1"></span>'
-    +'<button class="btn sm" onclick="closeModal();nav(\'pipelines\')">CI / CD</button></div>'
+    +'<button class="btn sm" onclick="closeModal();shipReveal(\''+esc(name)+'\')" title="the Ship page with this branch open">ship page</button></div>'
     +(rows?('<table><tr><th>pipeline</th><th>kind</th><th>status</th><th>gate</th><th>decision</th><th>when</th></tr>'+rows+'</table>'):'<div class="empty">No pipeline has run on this branch.</div>'));
 }
 
@@ -3896,7 +3906,7 @@ function errCard(it,isEnter,staggerIdx){
   let acts='';
   if(it.state==='new')acts='<button class="btn sm" onclick="errSuggest(\''+esc(it.id)+'\')">suggest fix</button><button class="btn sm" onclick="errDismiss(\''+esc(it.id)+'\')">dismiss</button>';
   else if(it.state==='suggested')acts='<button class="btn sm primary" onclick="errApprove(\''+esc(it.id)+'\')" title="'+approveTitle+'">'+approveLbl+'</button><button class="btn sm" onclick="errDismiss(\''+esc(it.id)+'\')">dismiss</button>';
-  else if(it.state==='approved')acts='<button class="btn sm" onclick="nav(\'pipelines\')">view pipeline '+esc(it.pipeline_id||'')+'</button>';
+  else if(it.state==='approved')acts='<button class="btn sm" onclick="nav(\'ship\')">view pipeline '+esc(it.pipeline_id||'')+'</button>';
   else if(it.state==='applied'&&it.remediation_result)acts='<span class="hint">'+esc(String(it.remediation_result).slice(0,120))+'</span>';
   const sevChip=sev?('<span class="err-src" style="color:'+(sev==='crit'?'var(--err)':'var(--warn)')+'">'+esc(sev)+'</span>'):'';
   const runChip=(it.meta&&it.meta.run_id)?'<span class="err-src clk" style="color:var(--acc)" onclick="openRun(\''+esc(it.meta.run_id)+'\')" title="open the test run this error came from">run '+esc(String(it.meta.run_id).slice(0,8))+'</span>':'';
@@ -3969,7 +3979,7 @@ async function selftest(){
     ?'<span style="color:var(--warn)">in-process (can touch real Vera)</span>'
     :(up?('sandbox <span class="tag">'+esc(sb.branch||'?')+'</span> :'+esc(String((sbx&&sbx.dev_port)||'')))
         :('<span style="color:var(--warn)">no sandbox up — '+(mode==='require'?'runs will REFUSE':'falls back in-process')+'</span>'
-          +' <button class="btn sm" onclick="closeModal();nav(\'sandbox\')">open Sandbox tab</button>'));
+          +' <button class="btn sm" onclick="closeModal();nav(\'ship\')">open Sandbox tab</button>'));
   let h='<div class="row" style="margin-bottom:6px;gap:8px;align-items:center;flex-wrap:wrap">'
     +(r.ok?'<span class="pill" style="color:var(--ok)">ALL GREEN</span>':'<span class="pill" style="color:var(--err)">problems found</span>')
     +'<span class="hint">runner: '+runner+' · mode <b>'+esc(mode)+'</b></span></div><table>';
@@ -4452,7 +4462,7 @@ async function loadPipelines(){
       +'<td class="row" style="gap:3px">'+pipeActions(p)+'</td></tr>';
   }
   h+='</table>'+renderSessionGroups(ps);$('pipes-body').innerHTML=h;
-  if(ps.some(p=>p.live)&&_curSec()==='pipelines'){clearTimeout(window._pipeT);window._pipeT=setTimeout(loadPipelines,3500)}
+  if(ps.some(p=>p.live)&&_curSec()==='ship'&&$('ship-pipes')&&$('ship-pipes').open){clearTimeout(window._pipeT);window._pipeT=setTimeout(loadPipelines,3500)}
 }
 // Layered session→commits view (§8.2 #6): group pipeline runs by their driving
 // session/agent, so you can see which branches a session drove and drill into
@@ -4514,7 +4524,7 @@ async function openPipe(id){
     h+='<div style="background:var(--bg2);border:1px solid var(--border);border-left:3px solid var(--acc3);border-radius:6px;padding:10px 12px;margin:6px 0">'
       +'<div style="font-weight:600;font-size:12px;color:var(--acc3)">Awaiting edits — nothing to gate yet</div>'
       +'<div class="hint" style="margin-top:3px;line-height:1.5">Branch + worktree are ready, but this run has no commits, so there is no diff or gate result to load. Make edits in the sandbox and commit, then Test / Promote from here. <b>This is a settled state, not a loading screen.</b></div>'
-      +(p.branch?'<div class="row" style="gap:6px;margin-top:8px"><button class="btn sm" onclick="openBranchSandbox(\''+esc(p.branch)+'\')">open sandbox ▸</button><button class="btn sm" onclick="closeModal();nav(\'sandbox\')">all sandboxes</button></div>':'')
+      +(p.branch?'<div class="row" style="gap:6px;margin-top:8px"><button class="btn sm" onclick="openBranchSandbox(\''+esc(p.branch)+'\')">open sandbox ▸</button><button class="btn sm" onclick="closeModal();nav(\'ship\')">all sandboxes</button></div>':'')
       +'</div>';
   }
   // p.current = the pipeline's current stage text. Only SPIN when it's actually
@@ -4575,8 +4585,8 @@ async function pipeInlineDiff(id){
   el.innerHTML=(d&&d.diff!=null)?_renderDiff(d.diff||'(no changes)'):'<div class="hint">'+esc((d&&d.error)||'no diff for this pipeline')+'</div>';
   el.dataset.loaded='1';
 }
-async function pipePromote(id,to){const body=to?{id,to}:{id};const r=await post('/evolve/pipeline/promote',body);toast(r&&r.ok?('Promoted'+(r.into?' \u2192 '+r.into:'')):(r&&r.error)||'failed');closeModal();loadPipelines();if($('review-body'))loadReview()}
-async function pipeRollback(id){const r=await post('/evolve/pipeline/rollback',{id});toast(r&&r.ok?'Rolled back':(r&&r.error)||'failed');closeModal();loadPipelines();if($('review-body'))loadReview()}
+async function pipePromote(id,to){const body=to?{id,to}:{id};const r=await post('/evolve/pipeline/promote',body);toast(r&&r.ok?('Promoted'+(r.into?' \u2192 '+r.into:'')):(r&&r.error)||'failed');closeModal();shipRefresh()}
+async function pipeRollback(id){const r=await post('/evolve/pipeline/rollback',{id});toast(r&&r.ok?'Rolled back':(r&&r.error)||'failed');closeModal();shipRefresh()}
 async function pipeTest(id){const r=await post('/evolve/pipeline/test',{id});toast(r&&r.ok?('Gate '+(r.gate_passed?'PASSED':'FAILED')):(r&&r.error)||'failed');closeModal();openPipe(id)}
 /* Drill from a pipeline's driving session into the chat that produced it.
    Resolves against ide.claude_sessions.history — empty until that session is
@@ -4623,47 +4633,6 @@ async function confirmRollback(id){
 }
 
 /* ═══ REVIEW — everything awaiting a decision, diff + verdict in one place ═══ */
-async function loadReview(){
-  const body=$('review-body');
-  // Which dev sandbox / branch is this review context? (was silently pinned to prod)
-  let sbLine='';
-  try{
-    const s=await api('/evolve/sandbox/status');const sb=(s&&s.sandbox)||{};
-    if(sb.branch){
-      const reach=s&&s.probe&&s.probe.reachable;
-      sbLine='<div class="hint" style="margin-bottom:10px">active dev sandbox: <b>'+esc(sb.branch)+'</b>'
-        +' · '+(reach?'<span style="color:var(--ok)">reachable</span>':'<span style="color:var(--warn)">down</span>')
-        +(sb.port?' · :'+esc(String(sb.port)):'')
-        +(sb.worktree?' · <span class="mono" style="font-size:10px">'+esc(sb.worktree)+'</span>':'')+'</div>';
-    }
-  }catch(e){}
-  // Sandbox → Workspace Changes proposals (from evolve.sandbox.review). These live
-  // in the shared changes store, NOT the pipeline queue, so surface them here too.
-  let wsCards='';
-  try{
-    const wr=await api('/ide/workspace/changes/list?status=pending');
-    const wps=((wr&&wr.proposals)||[]).filter(p=>/^loop-lab:/.test(p.source||'')||/^Loop Lab/.test(p.workspace||''));
-    if(wps.length)wsCards=wps.map(wsReviewCard).join('');
-  }catch(e){}
-  // Pipelines awaiting a decision — but a pipeline that was review-requested and
-  // then PROMOTED/rolled_back keeps review_requested=true, so it would linger here
-  // as a "stale/stuck pending" forever. Exclude anything already decided (those go
-  // in the Decided log below).
-  const r=await api('/evolve/pipeline/list?limit=50');const ps=(r&&r.pipelines)||[];
-  const _terminal=d=>d==='promoted'||d==='rolled_back';
-  const queue=ps.filter(p=>(p.review_requested||p.decision==='pending'||p.decision==='held')&&!_terminal(p.decision));
-  const pipeCards=queue.length?queue.map(reviewCard).join(''):'';
-  // Decided reviews — the auditable accept/reject LOG, not just the queue (§8.2).
-  const decided=ps.filter(p=>p.decision==='promoted'||p.decision==='rolled_back').slice(0,20);
-  const decidedCards=decided.length?decided.map(decidedCard).join(''):'';
-  if(!wsCards&&!pipeCards&&!decidedCards){body.innerHTML=sbLine+'<div class="empty">Nothing awaiting review right now.</div>';return}
-  let h=sbLine;
-  if(wsCards)h+='<label class="fld">Sandbox changes — awaiting accept / reject</label>'+wsCards;
-  if(pipeCards)h+='<label class="fld"'+(wsCards?' style="margin-top:12px"':'')+'>Pipelines — awaiting a decision</label>'+pipeCards;
-  if(decidedCards)h+='<label class="fld" style="margin-top:14px">Decided — accepted / rejected</label>'+decidedCards;
-  body.innerHTML=h;
-  if(queue.some(p=>p.live)&&_curSec()==='review'){clearTimeout(window._reviewT);window._reviewT=setTimeout(loadReview,3500)}
-}
 // Compact, read-only card for a DECIDED pipeline (the review audit log): accept/
 // reject verdict, attribution, driving-session chat drill-down, decided-at.
 function decidedCard(p){
@@ -4763,7 +4732,7 @@ async function reviewVerdict(id,verdict){
   if(findings===null)return;
   const r=await post('/evolve/pipeline/review',{id,verdict,findings:findings||(verdict+' via Review tab')});
   toast(r&&r.ok?('Reviewed as '+r.reviewer):(r&&r.error)||'failed');
-  loadReview();loadPipelines();
+  shipRefresh();
 }
 
 /* ── Sandbox Workspace-Changes proposals (evolve.sandbox.review → ide.workspace.changes.*) ── */
@@ -4813,19 +4782,19 @@ async function wsAccept(id,branch){
   if(r&&r.ok){toast('Merged '+branch+' → '+r.into+' @ '+String(r.commit||'').slice(0,8));}
   else if(r&&r.conflicts&&r.conflicts.length){toast('Merge conflict: '+r.conflicts.slice(0,3).join(', '));}
   else{toast((r&&r.error)||'failed');}
-  loadReview();
+  shipRefresh();
 }
 async function wsReject(id){
   if(!confirm('Reject and discard this whole proposal?'))return;
   const r=await post('/ide/workspace/changes/reject',{id,reject_all:true});
   toast(r&&r.ok?'Rejected':(r&&r.error)||'failed');
-  loadReview();
+  shipRefresh();
 }
 
 async function pollPipeLive(id){if(!id)return;const r=await api('/evolve/pipeline/get?id='+encodeURIComponent(id));if(r&&r.pipeline){_livePipe=r.pipeline;renderLive();if(r.pipeline.live){clearTimeout(window._pipeLiveT);window._pipeLiveT=setTimeout(()=>pollPipeLive(id),3000)}}}
 let _sessSug=[],_sessProfile='';
-async function ciVariant(profile,vid){const r=await post('/evolve/pipeline/run',{kind:'variant',profile,variant_id:vid});if(r&&r.ok){toast('CI pipeline '+r.id+' started');closeModal();nav('pipelines');pollPipeLive(r.id)}else toast((r&&r.error)||'failed')}
-async function ciCode(i){const cs=_sessSug[i];if(!cs){toast('suggestion not found');return}const r=await post('/evolve/pipeline/run',{kind:'code',profile:_sessProfile,edits:[cs]});if(r&&r.ok){toast('Code pipeline '+r.id+' started (branch)');closeModal();nav('pipelines');pollPipeLive(r.id)}else toast((r&&r.error)||'failed')}
+async function ciVariant(profile,vid){const r=await post('/evolve/pipeline/run',{kind:'variant',profile,variant_id:vid});if(r&&r.ok){toast('CI pipeline '+r.id+' started');closeModal();nav('ship');pollPipeLive(r.id)}else toast((r&&r.error)||'failed')}
+async function ciCode(i){const cs=_sessSug[i];if(!cs){toast('suggestion not found');return}const r=await post('/evolve/pipeline/run',{kind:'code',profile:_sessProfile,edits:[cs]});if(r&&r.ok){toast('Code pipeline '+r.id+' started (branch)');closeModal();nav('ship');pollPipeLive(r.id)}else toast((r&&r.error)||'failed')}
 
 /* ═══ LOGS — unified sandbox log/error/perf capture ═══ */
 let _logsTimer=null;
@@ -4851,7 +4820,153 @@ async function loadLogs(){
   }
   if($('logs-perf'))$('logs-perf').innerHTML=parts.join(' &nbsp;·&nbsp; ')||'<span style="color:var(--dim2)">no perf samples yet</span>';
   clearTimeout(_logsTimer);
-  if($('logs-follow')&&$('logs-follow').checked&&_curSec()==='sandbox')_logsTimer=setTimeout(loadLogs,4000);
+  if($('logs-follow')&&$('logs-follow').checked&&_curSec()==='ship'&&$('ship-logs')&&$('ship-logs').open)_logsTimer=setTimeout(loadLogs,4000);
+}
+/* === SHIP - one table of branches ==========================================
+   CI/CD, Review, Sources, Sandbox and Unit tests were five pages listing the
+   same branches from five stores. A row is a branch; its pipelines, review
+   state, sandbox and test runs are its columns (evolve.ship.branches, ONE
+   call); expand it, an id opens the record. The infographics those pages
+   drew - commit graph, branch race lanes, authorship map, gate race-to-green
+   - are the same elements, below the table. */
+let _shipRows=[],_shipMeta={},_shipOpen={},_shipReveal='';
+const _SHIP_STAGE={live:'var(--acc)',review:'var(--warn)',red:'var(--err)',merged:'var(--ok)',idle:'var(--dim2)'};
+async function loadShip(){
+  loadGit();
+  const el=$('ship-table');if(!el)return;
+  const r=await api('/evolve/ship/branches?limit=300');
+  if(!r||r.error){el.innerHTML='<div class="empty">'+esc((r&&r.error)||'ship table unavailable \u2014 restart prod if evolve.ship.branches was just deployed')+'</div>';return}
+  _shipRows=r.branches||[];_shipMeta=r;
+  if($('sb-mode')&&_cfg.sandbox_mode)$('sb-mode').value=_cfg.sandbox_mode;
+  renderSbxStatusLine(r.runner||{});
+  renderSbxCapacity(r.capacity);
+  renderEdges({edges:r.edges||[],main:r.main,default:r.edges_default});
+  _utLanes(r.tests||{},{pipelines:[].concat.apply([],_shipRows.map(b=>b.pipelines||[]))});
+  renderShipHead(r);
+  renderShipTable();
+  clearTimeout(window._shipT);
+  if(r.any_live&&$('ship-follow')&&$('ship-follow').checked&&_curSec()==='ship')window._shipT=setTimeout(loadShip,6000);
+}
+/* After an action (promote, rollback, verdict, a bus event): the table, and
+   the full pipeline list if it is unfolded - only while Ship is on screen. */
+function shipRefresh(){
+  if(_curSec()!=='ship')return;
+  loadShip();
+  const d=$('ship-pipes');if(d&&d.open)loadPipelines();
+}
+function renderShipHead(r){
+  const s=r.summary||{},st=s.stages||{},g=r.git||{};
+  const parts=[(s.count||0)+' branches'];
+  if(st.live)parts.push('<span style="color:var(--acc)">'+st.live+' live</span>');
+  if(st.review)parts.push('<span style="color:var(--warn)">'+st.review+' awaiting a decision</span>');
+  if(st.red)parts.push('<span style="color:var(--err)">'+st.red+' red</span>');
+  parts.push((s.sandboxes||0)+' sandbox'+(s.sandboxes===1?'':'es')+' ('+(s.sandboxes_running||0)+' running)');
+  if(g.branch)parts.push('prod on <b>'+esc(g.branch)+'</b> '+(g.dirty?'<span style="color:var(--warn)">'+g.dirty_files+' uncommitted</span>':'<span style="color:var(--ok)">clean</span>'));
+  if($('ship-status'))$('ship-status').innerHTML=parts.join(' \u00b7 ');
+  const pr=$('ship-proposals');
+  if(pr){const ps=r.proposals||[];pr.innerHTML=ps.length?('<label class="fld">Sandbox changes \u2014 awaiting accept / reject</label>'+ps.map(wsReviewCard).join('')):''}
+}
+function shipOnChange(){renderShipTable()}
+function _shipFiltered(){
+  const q=(($('ship-q')||{}).value||'').trim().toLowerCase(),role=($('ship-role')||{}).value||'',stage=($('ship-stage')||{}).value||'',hide=!!($('ship-merged')&&$('ship-merged').checked);
+  return _shipRows.filter(r=>{
+    if(role&&r.role!==role)return false;
+    if(stage&&r.stage!==stage)return false;
+    if(hide&&r.stage==='merged')return false;
+    if(q){const hay=[r.branch,r.owner,r.session_id,(r.sandbox||{}).name,r.head].concat((r.pipelines||[]).map(p=>p.id)).join(' ').toLowerCase();if(hay.indexOf(q)<0)return false}
+    return true;
+  });
+}
+function renderShipTable(){
+  const el=$('ship-table');if(!el)return;
+  const rows=_shipFiltered();
+  if($('ship-count'))$('ship-count').textContent=rows.length+' of '+_shipRows.length;
+  if(!rows.length){el.innerHTML='<div class="empty">'+(_shipRows.length?'No branch matches the filter.':'No branches yet \u2014 adopt a branch or spawn a sandbox.')+'</div>';return}
+  el.innerHTML='<table id="ship-tbl"><tr><th>branch</th><th>role</th><th>stage</th><th>pipeline</th><th>gate</th><th>decision</th><th>sandbox</th><th>tests</th><th>who</th><th>last activity</th><th></th></tr>'+rows.map(_shipRow).join('')+'</table>';
+  if(_shipReveal){const tr=document.querySelector('tr.ship-row[data-branch="'+_shipReveal+'"]');_shipReveal='';if(tr){try{tr.scrollIntoView({behavior:'smooth',block:'center'})}catch(_){}}}
+}
+function _shipId(b){return String(b).replace(/[^a-z0-9]/gi,'_')}
+/* One word for where the branch stands; an edge says where it stands
+   against main instead (released, ahead-of-main, behind-main, diverged). */
+function _shipStage(r){
+  const c=_SHIP_STAGE[r.stage]||'var(--dim2)';
+  const t=(r.role==='edge'&&r.edge&&r.edge.main_state)?r.edge.main_state:(r.stage||'');
+  return '<span class="pill" style="color:'+c+'">'+(r.live?'<span class="spin"></span> ':'')+esc(t)+(r.pending_n>1?' \u00d7'+r.pending_n:'')+'</span>';
+}
+function _shipRow(r){
+  const open=!!_shipOpen[r.branch],p=r.pipeline||null,s=r.sandbox||null,t=r.tests||null;
+  const gate=!p?'':(p.gate_passed==null?'<span class="hint">\u2014</span>':(p.gate_passed
+    ?'<span style="color:var(--ok)">PASS'+(p.gate_delta!=null?' '+(p.gate_delta>0?'+':'')+p.gate_delta:'')+'</span>'
+    :'<span style="color:var(--err)">FAIL'+(p.gate_delta!=null?' '+p.gate_delta:'')+'</span>'));
+  const sbx=!s?'<span class="hint">\u2014</span>':('<span class="pill" style="color:'+(s.paused?'var(--warn)':(s.running?'var(--ok)':'var(--dim2)'))+'" title="'+esc(s.name||'')+'">'+(s.paused?'\u2016 paused':(s.running?'\u25cf up':'\u25cb down'))+(s.port?' :'+esc(String(s.port)):'')+'</span>'
+    +(s.role==='primary'?' <span class="tag" style="background:var(--acc3);color:#111" title="the primary runner">active</span>':'')
+    +(s.dirty===true?' <span class="pill" style="color:var(--warn)">dirty</span>':'')
+    +((s.running||s.paused)?' <button class="btn sm" onclick="event.stopPropagation();sbxConnect(\''+esc(s.name||'')+'\',\''+esc(r.branch)+'\','+(s.role==='primary')+',\'term\')" title="terminal in this container">&#9646;</button>':''));
+  const tests=!t?'<span class="hint">\u2014</span>':('<span style="color:'+(t.ok?'var(--ok)':'var(--err)')+'" title="'+esc(t.summary||'')+'">'+(t.ok?'\u2713 '+t.passed:'\u2717 '+t.failed+' failed')+'</span>'
+    +(t.fewer?' <span class="pill" style="color:var(--warn)" title="green on fewer tests than the run before: coverage stopped being collected">'+t.delta+' tests</span>':(t.delta?' <span class="hint">'+(t.delta>0?'+':'')+t.delta+'</span>':''))
+    +(t.runs_n>1?' <span class="hint">'+t.runs_n+' runs'+(t.red_runs?', '+t.red_runs+' red':'')+'</span>':''));
+  const who=(r.owner?ctrlBadge(r.owner):'')+(r.session_id?' '+eid('chat',r.session_id,'\u2315',null,'chat session '+r.session_id):'');
+  const acts=(p&&!p.superseded?pipeActions(p):'')
+    +(!s&&r.role==='feature'?'<button class="btn sm" onclick="event.stopPropagation();openBranchSandbox(\''+esc(r.branch)+'\')" title="bring up a dev container for this branch">&#9641; sandbox</button>':'');
+  return '<tr class="clk ship-row" data-branch="'+esc(r.branch)+'" onclick="toggleShipBranch(\''+esc(r.branch)+'\')">'
+    +'<td class="mono">'+(open?'\u25be':'\u25b8')+' '+eid('branch',r.branch,esc(r.branch.length>44?r.branch.slice(0,42)+'\u2026':r.branch),null,r.branch)
+      +(r.main?' <span class="tag" title="the branch prod serves">prod</span>':'')+(r.main&&r.dirty?' <span class="pill" style="color:var(--warn)">dirty</span>':'')+'</td>'
+    +'<td><span class="tag">'+esc(r.role)+'</span></td>'
+    +'<td>'+_shipStage(r)+'</td>'
+    +'<td class="mono">'+(p?(eid('pipeline',p.id)+' <span class="tag">'+esc(p.kind)+'</span>'+(p.adopted?' <span class="tag" title="hand-authored branch adopted into CI/CD">adopted</span>':'')+(r.pipelines_n>1?' <span class="hint" title="earlier pipelines on this branch">+'+(r.pipelines_n-1)+'</span>':'')):'<span class="hint">\u2014</span>')+'</td>'
+    +'<td>'+gate+'</td>'
+    +'<td>'+(p?pipeDecision(p.decision):'')+(p&&p.review_requested&&!p.superseded?' <span class="pill" style="color:var(--warn)">review requested</span>':'')+'</td>'
+    +'<td>'+sbx+'</td>'
+    +'<td>'+tests+'</td>'
+    +'<td>'+who+'</td>'
+    +'<td class="mono hint">'+esc((r.last_activity||'').slice(5,16).replace('T',' '))+'</td>'
+    +'<td class="row" style="gap:3px">'+acts+'</td></tr>'
+    +'<tr class="ship-detail" data-branch="'+esc(r.branch)+'"'+(open?'':' style="display:none"')+'><td colspan="11" style="padding:0 6px 8px 18px;background:var(--bg2)"><div id="ship-det-'+_shipId(r.branch)+'">'+(open?_shipDetail(r):'')+'</div></td></tr>';
+}
+function toggleShipBranch(branch){
+  _shipOpen[branch]=!_shipOpen[branch];
+  const det=document.querySelector('tr.ship-detail[data-branch="'+branch+'"]');
+  const row=document.querySelector('tr.ship-row[data-branch="'+branch+'"] td');
+  if(det)det.style.display=_shipOpen[branch]?'':'none';
+  if(row)row.innerHTML=row.innerHTML.replace(_shipOpen[branch]?'\u25b8':'\u25be',_shipOpen[branch]?'\u25be':'\u25b8');
+  if(_shipOpen[branch]){const el=$('ship-det-'+_shipId(branch)),r=_shipRows.find(x=>x.branch===branch);if(el&&r)el.innerHTML=_shipDetail(r)}
+}
+/* Expand a branch: its pipelines (one awaiting a decision as the review
+   card it was on the Review page - diff, verdict, promote / rollback), its
+   sandbox with every control the Sandbox page had, its test story, and for
+   an edge its standing against main with the release action. */
+function _shipDetail(r){
+  const ps=r.pipelines||[];
+  let h='';
+  if(r.edge)h+=_edgeRowHtml(r.edge,_shipMeta.main||'main');
+  const pending=ps.filter(p=>!p.superseded&&(p.decision==='pending'||p.decision==='held'||(p.review_requested&&p.decision!=='promoted'&&p.decision!=='rolled_back')));
+  if(pending.length)h+='<label class="fld">Awaiting a decision</label>'+pending.map(reviewCard).join('');
+  if(ps.length){
+    h+='<label class="fld" style="margin-top:6px">Pipelines</label><table><tr><th>pipeline</th><th>kind</th><th>status</th><th>gate</th><th>decision</th><th>who</th><th>when</th><th></th></tr>'
+      +ps.map(p=>'<tr class="clk"'+(p.superseded?' style="opacity:.55" title="superseded by a later pipeline on this branch"':'')+' onclick="event.stopPropagation();openPipe(\''+esc(p.id)+'\')"><td class="mono">'+eid('pipeline',p.id)+(p.live?' <span class="spin"></span>':'')+'</td>'
+        +'<td><span class="tag">'+esc(p.kind)+'</span>'+(p.adopted?' <span class="tag">adopted</span>':'')+'</td><td>'+esc(p.status||'')+'</td>'
+        +'<td>'+(p.gate_passed==null?'':(p.gate_passed?'<span style="color:var(--ok)">PASS</span>':'<span style="color:var(--err)">FAIL</span>'))+'</td>'
+        +'<td>'+pipeDecision(p.decision)+(p.superseded?' <span class="tag">superseded</span>':'')+'</td><td>'+ctrlBadge(p.controller)+'</td>'
+        +'<td class="hint mono">'+esc((p.created_at||'').slice(0,16).replace('T',' '))+'</td><td class="row" style="gap:3px">'+(p.superseded?'':pipeActions(p))+'</td></tr>').join('')+'</table>';
+  } else if(r.role==='feature')h+='<div class="hint" style="margin:6px 0">No pipeline has run on this branch.</div>';
+  h+='<label class="fld" style="margin-top:6px">Sandbox</label>';
+  h+=r.sandbox?_sbxItemHtml(r.sandbox):('<div class="row" style="gap:6px;align-items:center"><span class="hint">no dev container for this branch</span>'
+    +((r.role==='feature'||r.role==='edge')?'<button class="btn sm" onclick="event.stopPropagation();openBranchSandbox(\''+esc(r.branch)+'\')">bring one up</button>':'')+'</div>');
+  if(r.tests){const t=r.tests;
+    h+='<label class="fld" style="margin-top:6px">Tests</label><div class="row" style="gap:8px;flex-wrap:wrap;align-items:center"><span style="color:'+(t.ok?'var(--ok)':'var(--err)')+'">'+esc(t.summary||'')+'</span><span class="tag">'+esc(t.markers||'')+'</span>'
+      +(t.pipeline_id?eid('pipeline',t.pipeline_id,'pipeline '+esc(t.pipeline_id)):'')+'<span class="hint mono">'+esc((t.ts||'').slice(0,19).replace('T',' '))+'</span>'
+      +'<span class="hint">'+t.runs_n+' run'+(t.runs_n===1?'':'s')+(t.red_runs?' \u00b7 '+t.red_runs+' red':'')+'</span>'
+      +(t.fewer?'<span class="pill" style="color:var(--warn)">green on '+(-t.delta)+' fewer tests</span>':'')+'</div>';
+  }
+  h+='<div class="row" style="gap:6px;margin-top:8px"><button class="btn sm" onclick="event.stopPropagation();openBranch(\''+esc(r.branch)+'\')">full record</button>'
+    +(r.role==='feature'?'<button class="btn sm" onclick="event.stopPropagation();$(\'tg-branch\').value=\''+esc(r.branch)+'\';$(\'ship-tgen\').open=true;genTests()" title="LLM-propose pytest for this branch\'s changed modules">generate tests</button>':'')+'</div>';
+  return h;
+}
+/* Land on Ship with one branch open and in view - a record's way in. */
+function shipReveal(branch){
+  _shipOpen[branch]=true;_shipReveal=branch;
+  nav('ship');
+  if(_shipRows.length)renderShipTable();
 }
 function renderLogs(logs){
   const body=$('logs-body');if(!body)return;
@@ -4888,7 +5003,7 @@ async function fromReview(){
   if(!r||r.error){$('src-review-out').innerHTML='<span style="color:var(--err)">'+esc((r&&r.error)||'failed')+'</span>';return}
   $('src-review-out').innerHTML='<div class="pill" style="color:var(--ok)">'+(r.edits||[]).length+' edit(s)'+(r.pipeline_id?(' → pipeline '+esc(r.pipeline_id)):'')+'</div>'
     +(r.edits||[]).map(e=>'<div style="background:var(--bg2);border-radius:5px;padding:6px 9px;margin-top:5px;font-size:10.5px"><b class="mono">'+esc(e.area||'')+'</b><div>'+esc(e.suggestion||'')+'</div></div>').join('');
-  if(r.pipeline_id){setTimeout(()=>{nav('pipelines');pollPipeLive(r.pipeline_id)},1200)}
+  if(r.pipeline_id){setTimeout(()=>{nav('ship');pollPipeLive(r.pipeline_id)},1200)}
 }
 async function observeScan(launch){
   $('src-obs-out').innerHTML='<span class="spin"></span> scanning perf findings · stalls · errors…';
@@ -4901,7 +5016,7 @@ async function observeScan(launch){
   if(!(r.edits||[]).length)h+='<div class="hint">'+esc(r.note||'No actionable code fixes suggested.')+'</div>';
   else h+=(r.edits||[]).map((e,i)=>'<div style="background:var(--bg2);border-radius:5px;padding:6px 9px;margin-bottom:5px;font-size:10.5px"><b class="mono">'+esc(e.area||'')+'</b><div>'+esc(e.suggestion||'')+'</div></div>').join('');
   $('src-obs-out').innerHTML=h;
-  if(r.pipeline_id){setTimeout(()=>{nav('pipelines');pollPipeLive(r.pipeline_id)},1200)}
+  if(r.pipeline_id){setTimeout(()=>{nav('ship');pollPipeLive(r.pipeline_id)},1200)}
 }
 
 /* ═══ SAFE-MODE / QUICK TESTS / AUDIT ═══ */
@@ -4971,18 +5086,25 @@ function _edgeOptions(sel){
   return names.map(function(n){return '<option value="'+esc(n)+'"'+(n===cur?' selected':'')+'>'+esc(n)+'</option>'}).join('');
 }
 async function loadEdges(){
-  const el=$('edges-list');
   const r=await api('/evolve/bleeding_edge/list');
-  if(!r||!r.edges){if(el)el.innerHTML='<div class="hint">'+esc((r&&r.error)||'unavailable')+'</div>';return}
-  _EDGES=r.edges;_EDGE_DEFAULT=r.default||'bleeding-edge';
-  if(!el)return;
-  el.innerHTML=r.edges.map(function(e){
+  if(!r||!r.edges){const el=$('edges-list');if(el)el.innerHTML='<div class="hint">'+esc((r&&r.error)||'unavailable')+'</div>';return}
+  renderEdges(r);
+}
+/* The edges list - from its own call, or from the Ship table's read. */
+function renderEdges(r){
+  _EDGES=r.edges||[];_EDGE_DEFAULT=r.default||'bleeding-edge';
+  const el=$('edges-list');if(!el)return;
+  el.innerHTML=(r.edges||[]).map(function(e){return _edgeRowHtml(e,r.main||'main')}).join('');
+}
+/* One edge: its standing against main, its container, the three actions.
+   The Ship table's edge rows expand to this. */
+function _edgeRowHtml(e,main){
     const c=e.container||{};const st=e.main_state||'';
     const stc={released:'var(--ok)','ahead-of-main':'var(--acc3)','behind-main':'var(--warn)',diverged:'var(--err)'}[st]||'var(--dim2)';
     return '<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;padding:5px 0;border-bottom:1px solid var(--border)">'
       +'<span class="tag" style="font-weight:600">'+esc(e.name)+(e.default?' \u2605':'')+'</span>'
       +(e.exists?'<span class="mono" style="font-size:10px">'+esc(e.head||'')+'</span>':'<span class="pill" style="color:var(--warn)">branch missing</span>')
-      +(st?'<span class="pill" style="color:'+stc+'" title="standing against '+esc(r.main||'main')+'">'+esc(st)+'</span>':'')
+      +(st?'<span class="pill" style="color:'+stc+'" title="standing against '+esc(main)+'">'+esc(st)+'</span>':'')
       +(c.name?'<span class="pill" style="color:'+(c.running?'var(--ok)':'var(--dim2)')+'">'+(c.running?'\u25cf container':'\u25cb container down')+'</span><span class="hint">:'+esc(String(c.port||''))+' \u00b7 db '+esc(String(c.redis_db||''))+(c.pinned?' \u00b7 pinned':'')+'</span>':'<span class="hint">no standing container</span>')
       +'<span class="hint" style="flex-basis:100%">'+esc(e.description||'')+(e.mirror_head?' \u00b7 mirror '+esc(e.mirror_head):'')+'</span>'
       +'<span style="flex:1"></span>'
@@ -4990,7 +5112,6 @@ async function loadEdges(){
       +'<button class="btn sm" onclick="edgeMirror(\''+esc(e.name)+'\')" title="point the primary sandbox at this edge (sandbox.up target)">sandbox &rarr; edge</button>'
       +'<button class="btn sm ok-btn" onclick="edgeRelease(\''+esc(e.name)+'\',\''+esc(e.branch)+'\')" title="fast-forward main to this edge (the release) \u2014 asks for confirmation">promote to main</button>'
       +'</div>';
-  }).join('');
 }
 async function edgeEnsure(name){toast('ensuring '+name+' container\u2026');const r=await post('/evolve/bleeding_edge/container/ensure',{edge:name});toast(r&&r.ok?('up: '+(r.name||'')+' :'+(r.port||'')):(r&&r.error)||'failed');loadEdges();loadSandboxPool()}
 async function edgeMirror(name){const r=await post('/evolve/sandbox/up',{target:name});toast(r&&(r.ok||r.healthy)?('primary sandbox on '+name):(r&&r.error)||'failed');loadSandboxPool()}
@@ -5077,12 +5198,13 @@ async function sandboxDownNamed(name){
 let _sbxTarget=null; // {name,branch,active} the Connection panel is bound to
 // GET query suffix that routes fs/diff to the bound container (backend name= param).
 function _sbxQ(){return (_sbxTarget&&_sbxTarget.name)?('&name='+encodeURIComponent(_sbxTarget.name)):''}
-async function loadSandbox(){
-  if($('sb-mode')&&_cfg.sandbox_mode)$('sb-mode').value=_cfg.sandbox_mode;
-  loadGit();
-  const [r,ls]=await Promise.all([api('/evolve/sandbox/status'),api('/evolve/sandbox/list?detail=true')]);
-  // ── primary-runner status line (where sandbox-first runs execute) ──
-  if(r){
+/* The Sandbox page's loader: the Ship table carries what it drew, so
+   every control that refreshed the sandbox list refreshes the table. */
+async function loadSandbox(){return loadShip()}
+/* The primary-runner line (where sandbox-first runs execute), from
+   evolve.sandbox.status - the Ship read carries it as `runner`. */
+function renderSbxStatusLine(r){
+  if(!r||!Object.keys(r).length){if($('sb-status-line'))$('sb-status-line').textContent='primary runner: unknown (evolve.sandbox.status failed)';return}
     const sb=r.sandbox||{},up=r.up,stale=!!(r.probe&&r.probe.stale);
     if($('sb-port')&&document.activeElement!==$('sb-port')&&r.dev_port!=null)$('sb-port').value=r.dev_port;
     let sl='<b>primary runner:</b> '+(up?'<span style="color:var(--ok)">● up</span>':(stale?'<span style="color:var(--warn)">▲ stale</span>':'<span style="color:var(--dim2)">○ down</span>'));
@@ -5101,9 +5223,6 @@ async function loadSandbox(){
       sl+=' · <span style="color:var(--warn)">probe: '+esc(r.probe.error)+'</span>';
     }
     if($('sb-status-line'))$('sb-status-line').innerHTML=sl;
-  }
-  renderSbxCapacity(ls&&ls.capacity);
-  renderSbxList((ls&&ls.sandboxes)||[]);
 }
 function renderSbxCapacity(c){
   const el=$('sbx-capacity');if(!el)return;
@@ -5115,11 +5234,9 @@ function renderSbxCapacity(c){
     +'<span class="hint">'+esc(c.scope||'')+'</span>'
     +(auth?'':'<span class="pill" style="color:var(--warn)" title="'+esc(c.warning||'This sandbox cannot see controller-wide occupancy')+'">non-authoritative</span>');
 }
-function renderSbxList(items){
-  const el=$('sbx-list');if(!el)return;
-  if($('sbx-count'))$('sbx-count').textContent=items.length+' sandbox'+(items.length===1?'':'es');
-  if(!items.length){el.innerHTML='<div class="empty">No dev sandboxes. Spawn one for a branch, or Ensure an isolation sandbox.</div>';return}
-  el.innerHTML=items.map(function(s){
+/* One sandbox with every control the Sandbox page gave it - the Ship
+   table's row detail draws this for the branch's container. */
+function _sbxItemHtml(s){
     const on=s.running, active=(s.role==='primary'), paused=!!s.paused, pinned=!!s.pinned;
     const sc=s.scheme||'http', https=(sc==='https'), web=sc+'://'+location.hostname+':'+s.port+'/';
     const nm=esc(s.name||''), br=esc(s.branch||''), a=(active?'true':'false');
@@ -5181,7 +5298,6 @@ function renderSbxList(items){
         +(wp.current_step?'<div class="mono hint" style="margin-top:3px">current: '+esc(wp.current_step)+'</div>':'')+'</div>':'')
       +'<div class="row" style="gap:4px;flex-wrap:wrap;margin-top:5px">'+btns+'</div>'
     +'</div>';
-  }).join('');
 }
 async function sbxPlan(name){
   const r=await api('/evolve/sandbox/workplan?name='+encodeURIComponent(name));

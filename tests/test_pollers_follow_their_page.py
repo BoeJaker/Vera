@@ -52,8 +52,11 @@ def test_the_panel_refreshes_a_pages_elements_when_it_opens():
     nav = src[i:src.index("\n}\n", i)]
     assert "el.tagName.startsWith('VERA-')&&typeof el.refresh==='function'&&el._pollTimer" in nav
     assert "if((ss.length||eq.length)&&_curSec()==='watch'){clearTimeout(window._fleetT)" in src
-    assert "if(ps.some(p=>p.live)&&_curSec()==='pipelines'){clearTimeout(window._pipeT)" in src
-    assert "if(queue.some(p=>p.live)&&_curSec()==='review'){clearTimeout(window._reviewT)" in src
+    # CI/CD and Review are the Ship page since slice 5: one poller for the
+    # table, the full pipeline list's own only while its fold is open.
+    assert "if(r.any_live&&$('ship-follow')&&$('ship-follow').checked&&_curSec()==='ship')window._shipT=setTimeout(loadShip,6000)" in src
+    assert "if(ps.some(p=>p.live)&&_curSec()==='ship'&&$('ship-pipes')&&$('ship-pipes').open){clearTimeout(window._pipeT)" in src
+    assert "_reviewT" not in src
 
 
 # ── a sandbox's private Redis actually comes up ──────────────────────────────

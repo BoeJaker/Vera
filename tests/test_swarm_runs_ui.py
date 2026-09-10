@@ -165,7 +165,8 @@ def test_every_logs_element_survived_the_move(src):
 
 
 def test_the_logs_card_is_inside_the_sandbox_section(src):
-    start = src.index('id="sec-sandbox"')
+    # The Sandbox page is the Ship page since slice 5; the logs went with it.
+    start = src.index('id="sec-ship"')
     end = src.index('<div class="sec" id=', start + 10)
     for want in ("logs-body", "logs-status", "logs-container"):
         assert start < src.index('id="%s"' % want) < end
@@ -173,13 +174,13 @@ def test_the_logs_card_is_inside_the_sandbox_section(src):
 
 def test_opening_sandbox_loads_the_logs(src):
     assert "loadLogs()" in src
-    assert "sandbox:()=>{loadSandbox();loadLogs()}" in src
+    assert 'id="ship-logs" ontoggle="if(this.open)loadLogs()"' in src, "the logs fold loads when opened"
 
 
 def test_an_old_logs_deeplink_still_lands_somewhere_real(src):
     """Injected nav items and bookmarks still say 'logs'; they must not open a
     blank panel."""
-    assert "logs:()=>nav('sandbox')" in src
+    assert "logs:()=>nav('ship')" in src
 
 
 def test_the_logs_follow_timer_follows_its_new_section(src):
