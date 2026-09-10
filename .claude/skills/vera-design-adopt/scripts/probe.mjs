@@ -164,6 +164,23 @@ if (process.env.CLICKXY) {
   }
   await sleep(1100);
 }
+/* DRAG="x1,y1,x2,y2[,steps]" — press at (x1,y1), move in steps to (x2,y2), release. The way to
+   test pan by mouse: compare the shot against an undragged one. */
+if (process.env.DRAG) {
+  const [x1, y1, x2, y2, st] = process.env.DRAG.split(",").map(Number);
+  const steps = st || 12;
+  await cmd("Input.dispatchMouseEvent", { type: "mouseMoved", x: x1, y: y1 });
+  await sleep(80);
+  await cmd("Input.dispatchMouseEvent", { type: "mousePressed", x: x1, y: y1, button: "left", clickCount: 1, buttons: 1 });
+  await sleep(80);
+  for (let i = 1; i <= steps; i++) {
+    await cmd("Input.dispatchMouseEvent", { type: "mouseMoved", x: x1 + (x2 - x1) * i / steps, y: y1 + (y2 - y1) * i / steps, button: "left", buttons: 1 });
+    await sleep(40);
+  }
+  await cmd("Input.dispatchMouseEvent", { type: "mouseReleased", x: x2, y: y2, button: "left", clickCount: 1, buttons: 0 });
+  await sleep(900);
+  console.log("dragged " + x1 + "," + y1 + " -> " + x2 + "," + y2);
+}
 if (process.env.RCLICK) {
   const [rx, ry] = process.env.RCLICK.split(",").map(Number);
   for (const type of ["mousePressed", "mouseReleased"])
@@ -219,7 +236,7 @@ console.log("=== logs (" + logs.length + ") ===");
 /* WHEEL={"x":900,"y":500,"dy":120,"n":4} — scroll whatever is under the point
    before the shot. Input events hit-test through the sandboxed artboard iframe,
    which Runtime.evaluate cannot reach into. */
-if (process.env.WHEEL) {
+if (process.env.WHEEL && process.env.WHEEL.trim().startsWith("{")) {
   const w = JSON.parse(process.env.WHEEL);
   for (let i = 0; i < (w.n || 1); i++) {
     await cmd("Input.dispatchMouseEvent", { type: "mouseWheel", x: w.x, y: w.y,
