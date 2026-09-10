@@ -45,7 +45,7 @@ def test_the_absorbed_pages_are_gone_from_rail_and_dom(src):
         assert 'data-sec="%s"' % sec not in src, "rail still has %s" % sec
         assert 'id="sec-%s"' % sec not in src, "section %s still in the DOM" % sec
     secs = re.findall(r'<div class="sec" id="sec-([a-z]+)"', src)
-    assert "work" in secs and len(secs) == 17, secs
+    assert "work" in secs and len(secs) == 13, secs   # 17 after slice 3; 13 once Ship absorbed five (slice 5)
 
 
 def test_work_is_first_and_the_home(src):
@@ -151,7 +151,8 @@ def test_the_absorbed_controls_are_reachable_as_modals(src):
 
 
 def test_the_quick_tests_card_moved_to_unit_tests(src):
-    ut = _section(src, "unittests")
+    # ...and with Unit tests into the Ship page (slice 5), folded.
+    ut = _section(src, "ship")
     assert 'id="ut-path"' in ut and "capTest()" in ut
 
 
