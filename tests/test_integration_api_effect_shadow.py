@@ -74,6 +74,12 @@ async def test_api_call_observes_policy_without_forwarding_or_enforcing(monkeypa
         def replay_status(self, plan):
             return {"already_succeeded": False, "successful_receipt_id": ""}
 
+    recorded = {}
+
+    class ShadowEvidence:
+        def record(self, value):
+            recorded.update(value)
+
     class Response:
         status_code = 200
         text = '{"ok":true}'
@@ -102,6 +108,8 @@ async def test_api_call_observes_policy_without_forwarding_or_enforcing(monkeypa
     monkeypatch.setattr(integrations, "_audit", capture_audit)
     monkeypatch.setattr(integrations, "default_external_effect_receipt_ledger",
                         lambda: Ledger())
+    monkeypatch.setattr(integrations, "default_external_effect_shadow_evidence",
+                        lambda: ShadowEvidence())
     monkeypatch.setattr(integrations.httpx, "AsyncClient", Client)
 
     result = await integrations.cap_api_call(
@@ -111,6 +119,7 @@ async def test_api_call_observes_policy_without_forwarding_or_enforcing(monkeypa
 
     assert result["ok"] is True
     assert result["effect_shadow"]["decision"]["would_execute"] is True
+    assert recorded["decision"]["would_execute"] is True
     assert captured["url"].endswith("/orders?private=secret")
     assert "idempotency_key" not in captured
     assert "approval_receipt_ref" not in captured
@@ -152,6 +161,12 @@ async def test_denied_shadow_does_not_block_current_compatibility_call(monkeypat
 
     monkeypatch.setattr(integrations, "_get", get_record)
     monkeypatch.setattr(integrations, "_audit", no_audit)
+    class BrokenEvidence:
+        def record(self, _value):
+            raise OSError("evidence store unavailable")
+
+    monkeypatch.setattr(integrations, "default_external_effect_shadow_evidence",
+                        lambda: BrokenEvidence())
     monkeypatch.setattr(integrations.httpx, "AsyncClient", Client)
     result = await integrations.cap_api_call(
         id="service-1", method="POST", path="/legacy-write")

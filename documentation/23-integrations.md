@@ -269,6 +269,14 @@ a policy legend, not a retry control: receipt rows alone do not contain enough
 context to authorize a retry, and the view cannot execute, sleep, select jitter,
 open a secret, replay an operation, or record evidence.
 
+Observe-only decisions are accumulated separately as bounded, payload-free
+evidence. The drawer reports how many generic API calls policy would admit,
+execute, or suppress as replays, alongside refusal-reason counts from the recent
+window. Stored observations contain only policy fields, digests, classifications,
+methods, and timestamps—not paths, queries, bodies, headers, credentials, or raw
+approval/idempotency references. These measurements do not block current calls
+and are not themselves sufficient evidence to enable enforcement.
+
 ---
 
 ## 8. Common threads
