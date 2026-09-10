@@ -1,7 +1,10 @@
+from types import SimpleNamespace
+
 import pytest
 
 import Vera.vera.integrations.integrations_capabilities as integrations
 from Vera.vera import capability_orchestration as orchestration
+from Vera.vera.capabilities import cap_tracking
 
 
 pytestmark = pytest.mark.critical
@@ -26,6 +29,33 @@ def test_api_call_declares_payload_redaction_for_all_activity_channels():
     assert compact["path"] == "***"
     assert stored["path"] == "[redacted]"
     assert stored["body"] == "[redacted]"
+
+
+def test_tracking_gate_forwards_redaction_metadata_to_activity_enqueue(monkeypatch):
+    """Exercise the installed tracking wrapper, not just either side in isolation."""
+    forwarded = {}
+
+    def enqueue(*args, **kwargs):
+        forwarded.update({"args": args, "kwargs": kwargs})
+
+    orch = SimpleNamespace(
+        _act_enqueue=enqueue,
+        _ACT_QUEUE=object(),
+        _ACT_SESSION_CURSOR={},
+        _cap_tracking_installed=False,
+    )
+    monkeypatch.setattr(cap_tracking, "is_tracked", lambda *_args: True)
+    monkeypatch.setattr(cap_tracking, "_INSTALLED_ORCH", None)
+
+    cap_tracking.install(orch)
+    orch._act_enqueue(
+        "integration.api.call", "integrations", "session-1", "trace-1",
+        {"path": "/private"}, {"token": "private"}, 12.5,
+        redact_args=frozenset({"path"}), redact_result=True,
+    )
+
+    assert forwarded["kwargs"]["redact_args"] == frozenset({"path"})
+    assert forwarded["kwargs"]["redact_result"] is True
 
 
 @pytest.mark.asyncio
