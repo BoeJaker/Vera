@@ -186,3 +186,60 @@ def test_the_store_keeps_records_in_time_order_and_drops_the_beyond_window(monke
                 await r.delete(EV.KEY_RUN + gid + "-" + tag)
             await r.aclose()
     asyncio.run(_go())
+
+
+def test_the_suite_list_keeps_scoreboards_in_time_order_too(monkeypatch):
+    """Seen 2026-09-10 after the backfill: a smoke run from the 9th sat above
+    run52 of the 10th as 'the latest suite', and a tagged lookup that scans
+    limit*8 entries from the head missed a template's older runs entirely."""
+    TH = _app()
+    if TH is None:
+        pytest.skip("app module not importable from THIS checkout here")
+    import json
+    import uuid
+    from Vera.vera.evolve import evolve_capabilities as EV
+
+    async def _go():
+        url = os.getenv("REDIS_URL") or ""
+        if not url:
+            pytest.skip("no REDIS_URL")
+        import redis.asyncio as aioredis
+        r = aioredis.from_url(url, decode_responses=False, socket_connect_timeout=3, socket_timeout=5)
+        if int(r.connection_pool.connection_kwargs.get("db") or 0) == 0:
+            pytest.skip("database 0 is prod's")
+        try:
+            await r.ping()
+        except Exception:
+            pytest.skip("Redis unreachable")
+        monkeypatch.setitem(sys.modules, "evolve_capabilities", EV)
+        monkeypatch.setattr(EV, "_redis", lambda: r)
+        monkeypatch.setattr(EV, "SUITES_CAP", 3)
+        tag = uuid.uuid4().hex[:6]
+        key = EV.KEY_SUITES
+        saved = await r.lrange(key, 0, -1)
+        await r.delete(key)
+        try:
+            async def suite(run, ended):
+                row = {"id": "g", "session_id": run + "-" + tag, "status": "done", "wall_s": 1, "ended_at": ended}
+                return await TH.cap_evolve_result_ingest(template="default", census_run=run + tag, rows=[row], suite=True)
+            assert (await suite("run2", "2026-09-09T00:00:00Z"))["suite"] == "added"
+            assert (await suite("run3", "2026-09-10T00:00:00Z"))["suite"] == "added"
+            assert (await suite("run1", "2026-09-08T00:00:00Z"))["suite"] == "added", "older: takes its place, not the head"
+            assert [json.loads(x)["suite_id"] for x in await r.lrange(key, 0, -1)] == ["run3" + tag, "run2" + tag, "run1" + tag]
+            assert (await suite("run0", "2026-09-07T00:00:00Z"))["suite"] == "beyond_window"
+            assert (await suite("run2", "2026-09-09T00:00:00Z"))["suite"] == "replaced"
+            assert [json.loads(x)["suite_id"] for x in await r.lrange(key, 0, -1)] == ["run3" + tag, "run2" + tag, "run1" + tag]
+        finally:
+            await r.delete(key)
+            for x in reversed(saved):
+                await r.lpush(key, x)
+            for run in ("run0", "run1", "run2", "run3"):
+                await r.delete(EV.KEY_RUN + run + "-" + tag)
+                for raw in await r.lrange(EV.KEY_RUNS, 0, -1) or []:
+                    try:
+                        if json.loads(raw)["run_id"] == run + "-" + tag:
+                            await r.lrem(EV.KEY_RUNS, 0, raw)
+                    except Exception:
+                        pass
+            await r.aclose()
+    asyncio.run(_go())

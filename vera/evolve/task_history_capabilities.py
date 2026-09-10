@@ -249,20 +249,35 @@ async def _upsert_run(ev, compact: Dict[str, Any], detail: Dict[str, Any]) -> st
 
 
 async def _upsert_suite(ev, summary: Dict[str, Any]) -> str:
+    """Store a census run's scoreboard: replaced in place when the list holds
+    its suite_id, otherwise at its place by time (the same rule as the run
+    list - a backfilled archive is not the latest suite). Returns 'added' |
+    'replaced' | 'beyond_window' | ''."""
     r = ev._redis()
     if not r:
         return ""
     sid = summary["suite_id"]
-    rows = await r.lrange(ev.KEY_SUITES, 0, ev.SUITES_CAP - 1)
-    for i, raw in enumerate(rows or []):
+    raws = await r.lrange(ev.KEY_SUITES, 0, ev.SUITES_CAP - 1) or []
+    recs: List[Dict[str, Any]] = []
+    for raw in raws:
         try:
-            rec = json.loads(_rd(raw))
+            recs.append(json.loads(_rd(raw)))
         except Exception:
-            continue
+            recs.append({})
+    body = json.dumps(summary, default=str)
+    for i, rec in enumerate(recs):
         if rec.get("suite_id") == sid:
-            await r.lset(ev.KEY_SUITES, i, json.dumps(summary, default=str))
+            await r.lset(ev.KEY_SUITES, i, body)
             return "replaced"
-    await r.lpush(ev.KEY_SUITES, json.dumps(summary, default=str))
+    pos = insert_position(recs, str(summary.get("ts") or ""), ev.SUITES_CAP)
+    if pos is None:
+        return "beyond_window"
+    if pos == 0:
+        await r.lpush(ev.KEY_SUITES, body)
+    elif pos >= len(recs):
+        await r.rpush(ev.KEY_SUITES, body)
+    else:
+        await r.linsert(ev.KEY_SUITES, "BEFORE", raws[pos], body)
     await r.ltrim(ev.KEY_SUITES, 0, ev.SUITES_CAP - 1)
     return "added"
 
