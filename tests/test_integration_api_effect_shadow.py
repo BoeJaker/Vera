@@ -10,9 +10,31 @@ from Vera.vera.capabilities import cap_tracking
 pytestmark = pytest.mark.critical
 
 
+def inactive_enforcement(monkeypatch):
+    class Decisions:
+        def current(self):
+            return {"revision": 0, "decision": "continue_observing"}
+
+    class Activations:
+        def current(self, _decision, *, runtime_gate, history_limit=20):
+            return {"enforcement_enabled": False, "effective_mode": "observe_only",
+                    "runtime_gate": runtime_gate, "revision": 0}
+
+    monkeypatch.setattr(integrations, "default_external_effect_enforcement_decisions",
+                        lambda: Decisions())
+    monkeypatch.setattr(integrations, "default_external_effect_enforcement_activations",
+                        lambda: Activations())
+    monkeypatch.setattr(integrations, "_effect_enforcement_runtime_gate", lambda: False)
+
+
 def test_enforcement_decision_redacts_operator_and_approval_references():
     cap = orchestration.CAPABILITY_REGISTRY["integration.effect.enforcement.decide"]
     assert set(cap["redact_args"]) == {"actor_ref", "approval_receipt_ref"}
+
+
+def test_enforcement_activation_redacts_operator_and_receipt_references():
+    cap = orchestration.CAPABILITY_REGISTRY["integration.effect.enforcement.activate"]
+    assert set(cap["redact_args"]) == {"actor_ref", "activation_receipt_ref"}
 
 
 @pytest.mark.asyncio
@@ -88,6 +110,7 @@ def test_tracking_gate_forwards_redaction_metadata_to_activity_enqueue(monkeypat
 
 @pytest.mark.asyncio
 async def test_api_call_observes_policy_without_forwarding_or_enforcing(monkeypatch):
+    inactive_enforcement(monkeypatch)
     async def get_record(_id):
         return {"id": _id, "label": "Test", "kind": "generic",
                 "base_url": "https://service.test", "scheme": "https",
@@ -147,6 +170,7 @@ async def test_api_call_observes_policy_without_forwarding_or_enforcing(monkeypa
 
     assert result["ok"] is True
     assert result["effect_shadow"]["decision"]["would_execute"] is True
+    assert result["effect_enforcement"]["effective_mode"] == "observe_only"
     assert recorded["decision"]["would_execute"] is True
     assert captured["url"].endswith("/orders?private=secret")
     assert "idempotency_key" not in captured
@@ -158,6 +182,7 @@ async def test_api_call_observes_policy_without_forwarding_or_enforcing(monkeypa
 
 @pytest.mark.asyncio
 async def test_denied_shadow_does_not_block_current_compatibility_call(monkeypatch):
+    inactive_enforcement(monkeypatch)
     async def get_record(_id):
         return {"id": _id, "label": "Test", "kind": "generic",
                 "base_url": "https://service.test", "scheme": "https",
@@ -201,3 +226,79 @@ async def test_denied_shadow_does_not_block_current_compatibility_call(monkeypat
     assert result["status"] == 204
     assert result["effect_shadow"]["decision"]["would_admit"] is False
     assert result["effect_shadow"]["blocks_current_call"] is False
+
+
+@pytest.mark.asyncio
+async def test_active_enforcement_blocks_before_auth_or_http(monkeypatch):
+    async def get_record(_id):
+        return {"id": _id, "label": "Test", "kind": "generic",
+                "base_url": "https://service.test", "scheme": "https",
+                "verify_tls": True, "access": {"api": True}, "api": {}}
+
+    async def no_audit(*_args, **_kwargs):
+        return None
+
+    class Evidence:
+        def record(self, _value):
+            return None
+
+    class Decisions:
+        def current(self):
+            return {"revision": 4, "decision": "approve_future_enforcement"}
+
+    class Activations:
+        def current(self, _decision, *, runtime_gate, history_limit=20):
+            assert runtime_gate is True
+            return {"enforcement_enabled": True, "effective_mode": "enforce",
+                    "runtime_gate": True, "revision": 2}
+
+    monkeypatch.setattr(integrations, "_get", get_record)
+    monkeypatch.setattr(integrations, "_audit", no_audit)
+    monkeypatch.setattr(integrations, "default_external_effect_shadow_evidence",
+                        lambda: Evidence())
+    monkeypatch.setattr(integrations, "default_external_effect_enforcement_decisions",
+                        lambda: Decisions())
+    monkeypatch.setattr(integrations, "default_external_effect_enforcement_activations",
+                        lambda: Activations())
+    monkeypatch.setattr(integrations, "_effect_enforcement_runtime_gate", lambda: True)
+    monkeypatch.setattr(
+        integrations, "_apply_api_auth",
+        lambda *_args: pytest.fail("credentials must not open for a rejected effect"))
+    monkeypatch.setattr(
+        integrations.httpx, "AsyncClient",
+        lambda **_kwargs: pytest.fail("HTTP must not start for a rejected effect"))
+
+    result = await integrations.cap_api_call(
+        id="service-1", method="POST", path="/orders")
+    assert result["code"] == 403
+    assert result["effect_enforcement"]["effective_mode"] == "enforce"
+
+
+@pytest.mark.asyncio
+async def test_mutation_fails_closed_if_enabled_gate_cannot_read_activation(monkeypatch):
+    async def get_record(_id):
+        return {"id": _id, "label": "Test", "kind": "generic",
+                "base_url": "https://service.test", "scheme": "https",
+                "verify_tls": True, "access": {"api": True}, "api": {}}
+
+    class Evidence:
+        def record(self, _value):
+            return None
+
+    monkeypatch.setattr(integrations, "_get", get_record)
+    monkeypatch.setattr(integrations, "default_external_effect_shadow_evidence",
+                        lambda: Evidence())
+    monkeypatch.setattr(integrations, "_effect_enforcement_runtime_gate", lambda: True)
+    monkeypatch.setattr(
+        integrations, "default_external_effect_enforcement_decisions",
+        lambda: (_ for _ in ()).throw(OSError("private database detail")))
+    monkeypatch.setattr(
+        integrations, "_apply_api_auth",
+        lambda *_args: pytest.fail("credentials must not open when state is unavailable"))
+
+    result = await integrations.cap_api_call(
+        id="service-1", method="POST", path="/orders",
+        idempotency_key="order:42", approval_receipt_ref="approval:42")
+    assert result["code"] == 503
+    assert result["effect_enforcement"]["error"] == "activation_state_unavailable"
+    assert "private database detail" not in str(result)

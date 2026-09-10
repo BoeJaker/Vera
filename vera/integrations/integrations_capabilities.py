@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -71,6 +72,8 @@ from Vera.vera.integrations.effect_receipts import default_external_effect_recei
 from Vera.vera.integrations.effect_shadow_evidence import default_external_effect_shadow_evidence
 from Vera.vera.integrations.effect_enforcement_decision import (
     DecisionConflict, default_external_effect_enforcement_decisions)
+from Vera.vera.integrations.effect_enforcement_activation import (
+    ActivationConflict, default_external_effect_enforcement_activations)
 from Vera.vera.integrations.effect_retry import plan_effect_retry as _plan_effect_retry
 from Vera.vera.integrations.connection_projection import project_connections
 
@@ -83,6 +86,11 @@ log = logging.getLogger("vera.integrations")
 
 _HERE = Path(__file__).parent
 KEY_INTEGRATIONS = "vera:integrations"
+
+
+def _effect_enforcement_runtime_gate() -> bool:
+    return os.getenv("VERA_INTEGRATION_API_EFFECT_ENFORCEMENT", "").strip().lower() \
+        in {"1", "true", "yes", "on"}
 
 # Aliases onto the pure policy module (single source of truth, shared with tests).
 ACCESS_MODES = _policy.ACCESS_MODES
@@ -422,8 +430,10 @@ async def cap_operate(id: str = "", goal: str = "", max_steps: int = 15,
                 "method (GET|POST|PUT|DELETE|PATCH), path (str — appended to the "
                 "kind's api_base, e.g. '/repos'), query (dict), body (dict/str), "
                 "headers (dict — extra), idempotency_key, approval_receipt_ref, "
-                "retry (optional observe-only policy evidence; not forwarded). Output: "
-                "{ok, status, body, json?, effect_shadow} or "
+                "retry (policy evidence only; not forwarded). Mutating calls are "
+                "blocked only when the deployment gate, current approval, and "
+                "contract-bound activation all agree. Output: "
+                "{ok, status, body, json?, effect_shadow, effect_enforcement} or "
                 "{error, code:403}.",
     schema={"properties": {"method": {"enum": ["GET", "POST", "PUT", "DELETE", "PATCH"]}}},
 )
@@ -463,6 +473,24 @@ async def cap_api_call(id: str = "", method: str = "GET", path: str = "",
         default_external_effect_shadow_evidence().record(shadow)
     except Exception:
         log.exception("external-effect shadow evidence record failed")
+    runtime_gate = _effect_enforcement_runtime_gate()
+    try:
+        operator_decision = default_external_effect_enforcement_decisions().current()
+        activation = default_external_effect_enforcement_activations().current(
+            operator_decision, runtime_gate=runtime_gate)
+    except Exception:
+        activation = {"enforcement_enabled": False, "effective_mode": "observe_only",
+                      "error": "activation_state_unavailable"}
+        if runtime_gate and (shadow.get("plan") or {}).get("mutating"):
+            return {"error": "effect enforcement state unavailable", "code": 503,
+                    "effect_shadow": shadow, "effect_enforcement": activation}
+    shadow["enforcement"] = activation["effective_mode"]
+    if activation["enforcement_enabled"] and not shadow["decision"]["would_execute"]:
+        await _audit("api_call_blocked", rec, method=method,
+                     effect_plan_id=(shadow.get("plan") or {}).get("plan_id", ""),
+                     effect_reasons=shadow["decision"]["reasons"])
+        return {"error": "external effect rejected by policy", "code": 403,
+                "effect_shadow": shadow, "effect_enforcement": activation}
     spec = KIND_SPECS.get(rec.get("kind", "generic"), {})
     api_base = (rec.get("api") or {}).get("api_base", spec.get("api_base", ""))
     url = base + api_base + ("/" + path.lstrip("/") if path else "")
@@ -483,7 +511,7 @@ async def cap_api_call(id: str = "", method: str = "GET", path: str = "",
                                 headers=hdrs)
     except Exception as e:
         return {"error": f"upstream {type(e).__name__}: {e}",
-                "effect_shadow": shadow}
+                "effect_shadow": shadow, "effect_enforcement": activation}
     out: Dict[str, Any] = {"ok": r.status_code < 400, "status": r.status_code,
                            "url": url}
     try:
@@ -491,6 +519,7 @@ async def cap_api_call(id: str = "", method: str = "GET", path: str = "",
     except Exception:
         out["body"] = r.text[:20000]
     out["effect_shadow"] = shadow
+    out["effect_enforcement"] = activation
     return out
 
 
@@ -961,6 +990,66 @@ async def integration_effect_replay_status(plan: Optional[Dict] = None, trace_id
 
 
 @capability(
+    "integration.effect.enforcement.activation", http_method="GET",
+    http_path="/integrations/effect/enforcement/activation",
+    http_tags=["integration", "policy"], memory="off", silent=True,
+    description="Read contract-bound generic API enforcement activation and bounded history. "
+                "Effective enforcement requires the deployment gate, a matching current "
+                "operator approval, and a fresh activation record.",
+)
+async def integration_effect_enforcement_activation(history_limit: int = 20, trace_id=None):
+    try:
+        decision = default_external_effect_enforcement_decisions().current()
+        return default_external_effect_enforcement_activations().current(
+            decision, runtime_gate=_effect_enforcement_runtime_gate(),
+            history_limit=history_limit)
+    except (TypeError, ValueError) as exc:
+        return {"schema": "vera.external-effect-enforcement-activation/v1",
+                "error": str(exc), "code": "invalid_request",
+                "effective_mode": "observe_only", "enforcement_enabled": False}
+    except Exception:
+        log.exception("effect enforcement activation read failed")
+        return {"schema": "vera.external-effect-enforcement-activation/v1",
+                "error": "activation_state_unavailable",
+                "code": "activation_state_unavailable",
+                "effective_mode": "observe_only", "enforcement_enabled": False}
+
+
+@capability(
+    "integration.effect.enforcement.activate", http_method="POST",
+    http_path="/integrations/effect/enforcement/activation",
+    http_tags=["integration", "policy"], memory="on",
+    redact_args=["actor_ref", "activation_receipt_ref"],
+    description="Activate or deactivate generic Integration API effect enforcement. Inputs: "
+                "action, expected_revision, actor_ref, and activation_receipt_ref for activation. "
+                "Activation requires the deployment gate and matching current approval; "
+                "deactivation is always available. It never retries an operation.",
+)
+async def integration_effect_enforcement_activate(
+        action: str = "deactivate", expected_revision: int = 0,
+        actor_ref: str = "", activation_receipt_ref: str = "", trace_id=None):
+    try:
+        decision = default_external_effect_enforcement_decisions().current()
+        ledger = default_external_effect_enforcement_activations()
+    except Exception:
+        log.exception("effect enforcement activation state unavailable")
+        return {"error": "activation_state_unavailable",
+                "code": "activation_state_unavailable",
+                "effective_mode": "observe_only", "enforcement_enabled": False}
+    try:
+        return ledger.apply(action=action, expected_revision=expected_revision,
+                            decision=decision, actor_ref=actor_ref,
+                            activation_receipt_ref=activation_receipt_ref,
+                            runtime_gate=_effect_enforcement_runtime_gate())
+    except ActivationConflict as exc:
+        return {"error": str(exc), "code": "revision_conflict",
+                "current": ledger.current(decision, runtime_gate=_effect_enforcement_runtime_gate())}
+    except (TypeError, ValueError) as exc:
+        return {"error": str(exc), "code": "invalid_activation",
+                "current": ledger.current(decision, runtime_gate=_effect_enforcement_runtime_gate())}
+
+
+@capability(
     "integration.effect.enforcement.decision", http_method="GET",
     http_path="/integrations/effect/enforcement/decision",
     http_tags=["integration", "policy"], memory="off", silent=True,
@@ -1249,6 +1338,8 @@ register_ui(
         "integration.effect.enforcement.readiness",
         "integration.effect.enforcement.decision",
         "integration.effect.enforcement.decide",
+        "integration.effect.enforcement.activation",
+        "integration.effect.enforcement.activate",
         "integration.effect.shadow.evidence",
         "integration.effect.receipts",
         # the one-click "register & secure everything" button drives autoenroll
