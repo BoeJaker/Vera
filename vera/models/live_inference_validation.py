@@ -22,7 +22,7 @@ from .model_package import ModelArtifact, ModelCompatibility, ModelPackage
 from .ollama_inference_adapter import LegacyOllamaInferenceProvider
 
 
-LIVE_INFERENCE_REPORT_SCHEMA = "vera.live-inference-validation/v1"
+LIVE_INFERENCE_REPORT_SCHEMA = "vera.live-inference-validation/v2"
 _IDENT = re.compile(r"[^A-Za-z0-9._:+/-]+")
 Runner = Callable[..., Awaitable[str]]
 
@@ -32,7 +32,7 @@ def _identifier(value: str, fallback: str) -> str:
     return (cleaned or fallback)[:128]
 
 
-def _output_evidence(result: Any) -> dict[str, Any]:
+def _output_evidence(result: Any, expected_sha256: str) -> dict[str, Any]:
     chunks: list[str] = []
     for value in result.outputs:
         decoded = json.loads(value.json_data)
@@ -40,12 +40,17 @@ def _output_evidence(result: Any) -> dict[str, Any]:
             raise ValueError("portable Ollama output was not text")
         chunks.append(decoded)
     text = "".join(chunks)
+    output_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    transport_passed = bool(result.status == "completed" and text)
     return {
         "status": result.status,
         "error_code": result.error_code,
         "output_chunks": len(chunks),
         "output_bytes": len(text.encode("utf-8")),
-        "output_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "output_sha256": output_sha256,
+        "expected_output_sha256": expected_sha256,
+        "transport_passed": transport_passed,
+        "content_conformant": bool(transport_passed and output_sha256 == expected_sha256),
         "usage": dict(result.usage),
     }
 
@@ -81,11 +86,16 @@ def require_shared_gate(gate: Any, instance_id: str) -> str:
 async def validate_ollama_provider(*, model: str, instance_id: str,
                                    artifact_sha256: str, artifact_size: int,
                                    runner: Runner, prompt: str = "Reply with VERA_OK only.",
+                                   expected_output: str = "VERA_OK",
                                    case_timeout_seconds: float = 60
                                    ) -> dict[str, Any]:
     """Run bounded non-stream and stream cases through one portable binding."""
     if isinstance(case_timeout_seconds, bool) or not 0 < case_timeout_seconds <= 120:
         raise ValueError("case timeout must be within 120 seconds")
+    if not isinstance(expected_output, str) or not expected_output \
+            or len(expected_output.encode("utf-8")) > 16_384:
+        raise ValueError("expected output must be non-empty and at most 16384 bytes")
+    expected_sha256 = hashlib.sha256(expected_output.encode("utf-8")).hexdigest()
     package = ModelPackage(
         _identifier(model, "ollama-model"), artifact_sha256[:12], "transformer", "gguf",
         (ModelArtifact("registry_manifest", f"ollama://{instance_id}/{model}",
@@ -110,14 +120,15 @@ async def validate_ollama_provider(*, model: str, instance_id: str,
         except asyncio.TimeoutError:
             cases.append({"case": "stream" if stream else "non_stream",
                           "status": "failed", "error_code": "case_timeout",
-                          "passed": False,
+                          "transport_passed": False, "content_conformant": False,
+                          "passed": False, "expected_output_sha256": expected_sha256,
                           "elapsed_ms": round((time.monotonic() - started) * 1000)})
             break
-        evidence = _output_evidence(result)
+        evidence = _output_evidence(result, expected_sha256)
         evidence.update({"case": "stream" if stream else "non_stream",
                          "elapsed_ms": round((time.monotonic() - started) * 1000)})
-        evidence["passed"] = bool(
-            result.status == "completed" and evidence["output_bytes"] > 0)
+        evidence["passed"] = bool(evidence["transport_passed"]
+                                  and evidence["content_conformant"])
         cases.append(evidence)
     return {
         "schema": LIVE_INFERENCE_REPORT_SCHEMA,
@@ -128,6 +139,8 @@ async def validate_ollama_provider(*, model: str, instance_id: str,
         "artifact_sha256": artifact_sha256,
         "artifact_size": artifact_size,
         "cases": cases,
+        "transport_passed": all(case["transport_passed"] for case in cases),
+        "content_conformant": all(case["content_conformant"] for case in cases),
         "passed": all(case["passed"] for case in cases),
         "privacy": "prompt_and_output_omitted",
     }

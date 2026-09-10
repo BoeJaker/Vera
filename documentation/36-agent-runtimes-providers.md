@@ -260,9 +260,13 @@ failure; an empty result alone does not identify its cause.
 The opt-in `vera.models.live_inference_validation` module exercises the portable
 Ollama adapter with sequential streaming and non-streaming requests. It requires
 shared coordination, caps each case at 60 seconds, and records output hashes and
-metrics. The registry manifest digest identifies the selected model declaration;
+metrics. Transport success (completed, non-empty output) is separate from exact
+expected-output conformance; a non-empty but incorrect answer cannot pass the
+case. Prompt, output, and expected text remain omitted while their digests make
+the verdict reproducible. The registry manifest digest identifies the selected
+model declaration;
 it is not an independent checksum of downloaded weights. These smoke checks do
-not establish model quality, load tolerance, recovery, or cross-runtime parity.
+not establish broader model quality, load tolerance, recovery, or cross-runtime parity.
 
 Loop Lab sandboxes join the same GPU capacity queue through a narrow controller
 broker. Each sandbox receives a rotated credential and can request, renew, or
