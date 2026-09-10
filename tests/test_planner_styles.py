@@ -91,6 +91,35 @@ def test_caps_mentioned_unfiltered_when_no_catalogue():
         ["file.write", "exec.bash.run"]
 
 
+def test_select_catalog_returns_a_small_catalogue_whole_and_in_order():
+    cat = ["web.search", "exec.python.run", "agent.chat"]
+    assert ps.select_catalog(cat, GOAL) == cat
+
+
+def test_select_catalog_ranks_a_large_catalogue_by_the_goal_not_the_alphabet():
+    # 2000 alphabetically-early names must not crowd out the relevant ones.
+    filler = ["aaa.thing%04d" % i for i in range(300)] + ["bench.loop", "agent.chat"]
+    cat = filler + ["exec.python.run", "python.eval", "shell.compute.sum"]
+    shown = ps.select_catalog(cat, "Run a python snippet to compute the sum of squares", limit=50)
+    assert len(shown) == 50
+    assert shown[0] in ("python.eval", "exec.python.run", "shell.compute.sum")
+    assert {"exec.python.run", "python.eval", "shell.compute.sum"} <= set(shown)
+
+
+def test_plan_detailed_tells_the_caps_lens_how_much_of_the_catalogue_it_sees():
+    seen = {}
+
+    async def gen(prompt, system=""):
+        if "AVAILABLE CAPABILITIES" in prompt:
+            seen["prompt"] = prompt
+        return "none"
+
+    big = ["cap.number%04d" % i for i in range(400)] + ["exec.python.run"]
+    run(ps.plan_detailed("run python", gen, catalog=big))
+    assert "(%d of %d" % (ps.MAX_CATALOG_SHOWN, len(big)) in seen["prompt"]
+    assert "exec.python.run" in seen["prompt"]
+
+
 # ── agreement: word overlap, no model ───────────────────────────────────────
 def test_agreements_finds_points_two_lenses_reached():
     per = {"decompose": ["write primes.py that prints every prime below 100"],

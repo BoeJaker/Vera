@@ -132,6 +132,41 @@ def _words(line: str) -> set:
     return set(_WORD_RE.findall(str(line or "").lower()))
 
 
+#: How many capability names the caps lens is shown. A real registry holds
+#: two thousand; a prompt cannot, and the first live run proved what a naive
+#: cut does: `cat[:120]` of a SORTED registry is every cap from `agent.*` to
+#: `bench.*` and nothing else, so the lens chose `bench.loop` for arithmetic
+#: because `exec.python.run` was never on the page.
+MAX_CATALOG_SHOWN = 150
+
+_CAP_SPLIT = re.compile(r"[._]")
+
+
+def select_catalog(catalog: Sequence[str], goal: Any,
+                   limit: int = MAX_CATALOG_SHOWN) -> List[str]:
+    """The slice of a large catalogue worth showing the caps lens.
+
+    Ranked host-locally by word overlap between the goal and the cap name's
+    segments, ties broken by name so the output is stable. A catalogue that
+    already fits is returned whole, in order: a caller who curated it (a
+    profile's allowed caps) said exactly what they meant.
+    """
+    cat = [str(c) for c in (catalog or []) if str(c or "").strip()]
+    if len(cat) <= limit:
+        return cat
+    gw = {w for w in _words(goal) if len(w) >= 4}
+    stems = {w[:5] for w in gw}
+
+    def score(name: str) -> int:
+        segs = {s for s in _CAP_SPLIT.split(name.lower()) if s}
+        hit = sum(1 for s in segs if s in gw)
+        near = sum(1 for s in segs if len(s) >= 4 and s[:5] in stems)
+        return hit * 3 + near
+
+    ranked = sorted(cat, key=lambda n: (-score(n), n))
+    return ranked[:limit]
+
+
 def agreements(per_lens: Dict[str, List[str]], *, min_lenses: int = 2) -> List[str]:
     """Points more than one lens reached independently.
 
@@ -359,8 +394,10 @@ async def plan_detailed(goal: str, generate: Callable[..., Awaitable[str]], *,
     and says why in `errors`. One dead node must not cost the whole plan.
     """
     cat = list(catalog or [])
-    cat_block = ("\n\nAVAILABLE CAPABILITIES:\n"
-                 + "\n".join("- %s" % c for c in cat[:120])) if cat else ""
+    shown = select_catalog(cat, goal)
+    cat_block = ("\n\nAVAILABLE CAPABILITIES (%d of %d, the ones nearest this goal):\n"
+                 % (len(shown), len(cat))
+                 + "\n".join("- %s" % c for c in shown)) if shown else ""
 
     async def one(name: str, question: str) -> Tuple[str, str, str]:
         sys_p = ("You are helping plan an automated agent's work. Answer ONLY "
