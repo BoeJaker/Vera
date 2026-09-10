@@ -1035,6 +1035,13 @@ html[data-blocks="off"] #inputBar,html[data-blocks="off"] #docChips,html[data-bl
 html[data-blocks="off"] #topBar{background:transparent;border-bottom-color:transparent}
 html[data-blocks="off"] #rightRail{background:transparent;border-right-color:transparent}
 html[data-blocks="off"] .ctx-tab-bar{border-bottom-color:transparent}
+/* the minimal view (the default once a message exists) paints the question with its own, more specific rules —
+   a gradient wash and a 2px accent bar — and boxes the input bar; Blocks off has to outrank those too. A PINNED
+   question keeps an opaque ground (the answer would scroll through it otherwise) but loses the wash and the bar. */
+html[data-blocks="off"] body[data-view="minimal"].has-msgs #msgs > .mwrap.u{background:transparent;border-left-color:transparent}
+html[data-blocks="off"] body[data-view="minimal"].has-msgs #msgs > .mwrap.u.pin{background-color:var(--bg0);background-image:none;border-left-color:transparent}
+html[data-blocks="off"] body[data-view="minimal"].has-msgs:not(.has-panel) #inputBar,html[data-blocks="off"] body[data-view="minimal"].has-msgs.has-panel #inputBar,html[data-blocks="off"] body[data-view="minimal"]:not(.has-msgs):not(.has-panel) #inputBar{background:transparent;border-color:transparent;box-shadow:none}
+html[data-blocks="off"] body[data-view="minimal"]:not(.has-msgs) #ctxStrip{background:transparent}
 </style>
 </head>
 <body data-view="minimal">

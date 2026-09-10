@@ -122,6 +122,17 @@ def test_blocks_off_strips_backgrounds_from_every_surface():
         assert f'html[data-blocks="off"] {sel}' in css or f',html[data-blocks="off"] {sel}' in css, f"Blocks off misses {sel}"
 
 
+def test_blocks_off_outranks_the_minimal_views_own_question_rules():
+    """The minimal view paints the question with body[data-view]...#msgs > .mwrap.u — more specific than a
+    plain html[data-blocks] .mwrap.u — so Blocks off must say it again at that specificity. A pinned question
+    keeps an opaque ground (the answer would scroll through it) but loses the wash and the accent bar."""
+    css = _appearance_css()
+    base = HTML[:HTML.index("Density tiers and Blocks")]
+    assert 'body[data-view="minimal"].has-msgs #msgs > .mwrap.u{' in base, "the minimal view moved; re-check the override"
+    assert 'html[data-blocks="off"] body[data-view="minimal"].has-msgs #msgs > .mwrap.u{background:transparent;border-left-color:transparent}' in css
+    assert 'html[data-blocks="off"] body[data-view="minimal"].has-msgs #msgs > .mwrap.u.pin{background-color:var(--bg0);background-image:none;border-left-color:transparent}' in css
+    assert 'html[data-blocks="off"] body[data-view="minimal"].has-msgs:not(.has-panel) #inputBar' in css
+
 # ── the stylesheet the panel ships still parses as one ───────────────────────
 
 def test_the_appearance_block_is_balanced_and_inside_the_head():
