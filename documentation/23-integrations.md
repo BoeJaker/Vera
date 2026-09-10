@@ -219,6 +219,20 @@ is idempotent, while different evidence for that attempt fails as a conflict.
 cannot execute or retry an operation, and there is intentionally no general
 capability that lets an untrusted caller manufacture completion receipts.
 
+`integration.connections.project` provides a separate, deterministic read model
+over Integration, Account, and model-provider records. Every projected
+connection retains its source system and record identity; explicit references
+are resolved only when unique, and shared endpoint origins are reported as
+collisions rather than automatically merged. Endpoint userinfo, path, query,
+and fragment data are discarded, which prevents private calendar URLs and API
+credentials from entering the projection. Credential state is presence-only.
+
+The projection reports unavailable source registries and malformed endpoints as
+gaps. It never opens a secret, probes a service, changes access, establishes a
+connection, or becomes the authority for the underlying records. This gives UI
+and tool-using models one bounded inventory while preserving the existing
+registries as owners during migration.
+
 ---
 
 ## 8. Common threads

@@ -65,6 +65,7 @@ from Vera.vera.integrations.source_build_plan import (
 )
 from Vera.vera.integrations.external_effects import plan_external_effect as _plan_external_effect
 from Vera.vera.integrations.effect_receipts import default_external_effect_receipt_ledger
+from Vera.vera.integrations.connection_projection import project_connections
 
 try:
     from Vera.vera.security import secrets as vsecrets
@@ -542,6 +543,43 @@ async def cap_connections(id: str = "", trace_id=None) -> Dict:
     return {"graph": {"nodes": nodes, "edges": edges}, "count": len(recs)}
 
 
+@capability(
+    "integration.connections.project", http_method="GET",
+    http_path="/integrations/connections/project",
+    http_tags=["integration", "accounts", "providers"], memory="off", silent=True,
+    description="Build a deterministic read-only connection projection across "
+                "the integration, account, and model-provider registries. Reports "
+                "source authority, sanitized endpoint origins, credential presence, "
+                "explicit references, unresolved links, and collisions. It never "
+                "opens secrets, probes endpoints, merges records, grants access, or "
+                "activates a connection.",
+)
+async def cap_connections_project(trace_id=None) -> Dict:
+    available_sources = {"integration"}
+    integrations = [_redact(record) for record in await _all()]
+    accounts: List[Dict] = []
+    providers: List[Dict] = []
+    account_list = _cap_raw("acct.list")
+    if account_list:
+        try:
+            result = await account_list()
+            accounts = list((result or {}).get("accounts") or [])
+            available_sources.add("account")
+        except Exception:
+            pass
+    provider_list = _cap_raw("providers.list")
+    if provider_list:
+        try:
+            result = await provider_list()
+            providers = list((result or {}).get("providers") or [])
+            available_sources.add("provider")
+        except Exception:
+            pass
+    return project_connections(
+        integrations=integrations, accounts=accounts, providers=providers,
+        available_sources=available_sources)
+
+
 async def _connections_for(rec: Dict) -> List[Dict]:
     acc = rec.get("access") or {}
     conns: List[Dict] = []
@@ -987,6 +1025,7 @@ register_ui(
         "integration.list", "integration.get", "integration.save",
         "integration.delete", "integration.access.set", "integration.operate",
         "integration.api.call", "integration.mcp.call", "integration.connections",
+        "integration.connections.project",
         "integration.discover", "integration.identity.register",
         "integration.import_apps", "identity.resolve.status",
         "integration.source.lifecycle", "integration.source.inspect",
