@@ -229,7 +229,19 @@ async def cap_census_runs(include_partial: bool = False, trace_id=None) -> Dict[
         s["routing"] = _ctl.routing_rollup(recs)
         s["reruns"] = sum(len(r.get("reruns") or []) for r in recs if isinstance(r, dict))
         try:
-            s["ended_at"] = files[s["run_id"]].stat().st_mtime
+            # When the run ended: the harness's .log beside the archive is
+            # written as the run goes and never rewritten; the .jsonl is
+            # rewritten by the backfill tools (code_version, reroutes) and its
+            # mtime is whenever that last happened. Rows carry ended_at
+            # themselves since 2026-09-10; the newest such row wins outright.
+            p = files[s["run_id"]]
+            lg = p.with_suffix(".log")
+            ended = max((str(r.get("ended_at") or "") for r in recs if isinstance(r, dict)), default="")
+            if ended:
+                import calendar as _cal
+                s["ended_at"] = float(_cal.timegm(time.strptime(ended[:19], "%Y-%m-%dT%H:%M:%S")))
+            else:
+                s["ended_at"] = (lg.stat() if lg.exists() else p.stat()).st_mtime
         except Exception:
             s["ended_at"] = None
     hist = cc.history(summaries)

@@ -35,7 +35,7 @@ def _fn(src, name):
 
 
 def _section(src):
-    i = src.index('id="sec-census"')
+    i = src.index('id="sec-work"')
     return src[i:src.index("<!-- ── TEST (home)", i)]
 
 

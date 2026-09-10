@@ -112,7 +112,7 @@ def test_a_contended_run_is_flagged_in_the_timeline(src):
 
 # ── the wiring ──────────────────────────────────────────────────────────────
 def test_the_card_loads_with_the_census_section(src):
-    assert "loadCensusTemplates()" in _fn(src, "loadCensus")
+    assert "loadCensusTemplates" in _fn(src, "loadWork")
 
 
 def test_every_element_the_script_touches_exists(src):
