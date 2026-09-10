@@ -50,6 +50,34 @@ def _output_evidence(result: Any) -> dict[str, Any]:
     }
 
 
+def require_shared_gate(gate: Any, instance_id: str) -> str:
+    """Require authoritative coordination for the exact inference node.
+
+    The transport may be a local coordinator or the sandbox's restricted
+    controller broker. Callers must not infer connectivity from Redis access.
+    """
+    if not isinstance(gate, dict) or not gate.get("enabled") \
+            or not gate.get("coord_connected"):
+        raise RuntimeError(
+            "shared Ollama coordination gate unavailable; live validation refused")
+    nodes = gate.get("nodes")
+    selected = next((node for node in nodes if isinstance(node, dict)
+                     and node.get("node") == instance_id), None) \
+        if isinstance(nodes, list) else None
+    capacity = (selected or {}).get("capacity")
+    if not selected or not selected.get("gated") \
+            or isinstance(capacity, bool) or not isinstance(capacity, int) \
+            or capacity < 1:
+        raise RuntimeError(
+            "selected Ollama node is not shared-gated; live validation refused")
+    raw_mode = gate.get("coordination_mode")
+    mode = "direct" if raw_mode is None else str(raw_mode).strip()
+    if mode not in {"direct", "controller_broker"}:
+        raise RuntimeError(
+            "unknown Ollama coordination mode; live validation refused")
+    return mode
+
+
 async def validate_ollama_provider(*, model: str, instance_id: str,
                                    artifact_sha256: str, artifact_size: int,
                                    runner: Runner, prompt: str = "Reply with VERA_OK only.",
@@ -133,16 +161,10 @@ async def discover_ollama_artifact(instance_id: str, model: str) -> dict[str, An
 
 
 async def _run(model: str, instance_id: str) -> dict[str, Any]:
-    from ..capability_orchestration import (
-        _ensure_coord_redis, ollama_generate, ollama_gate_status)
-
-    if await _ensure_coord_redis() is None:
-        raise RuntimeError(
-            "shared Ollama coordination gate unavailable; live validation refused")
+    from ..capability_orchestration import ollama_generate, ollama_gate_status
 
     gate = await ollama_gate_status()
-    if not gate.get("enabled") or not gate.get("coord_connected"):
-        raise RuntimeError("shared Ollama coordination gate unavailable; live validation refused")
+    require_shared_gate(gate, instance_id)
 
     artifact = await discover_ollama_artifact(instance_id, model)
     return await validate_ollama_provider(
