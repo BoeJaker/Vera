@@ -8,11 +8,15 @@ BOTH, gives every result the same shape keyed by the task id (a seeded census
 goal's id is `census-<template>-<goal>`), and answers the question neither
 store could: how has THIS task done across runs.
 
-Read-only by design. The archive is the census baseline and is never
-rewritten here; a result derived from it says `source: census` and names the
-archive run it came from. Loaded after the census and evolve modules so it
-can reach their readers through sys.modules (the loader registers modules by
-bare filename).
+The archive is the census baseline and is never rewritten here; a result
+derived from it says `source: census` and names the archive run it came from.
+The one write is `evolve.result.ingest`, which goes the OTHER way: the census
+harness posts each finished goal and it becomes a run record in the suite
+store, a finished census run a suite scoreboard tagged census-<template>
+(result_ingest_core) - so the suite's own views see census results natively
+and a census run is a driver run like any other. Loaded after the census and
+evolve modules so it can reach their readers through sys.modules (the loader
+registers modules by bare filename).
 """
 
 from __future__ import annotations
@@ -28,10 +32,14 @@ from Vera.vera.capability_orchestration import capability
 
 try:
     from Vera.vera.evolve import task_history_core as th
+    from Vera.vera.evolve import result_ingest_core as ric
 except ImportError:                                   # pragma: no cover
     from vera.evolve import task_history_core as th
+    from vera.evolve import result_ingest_core as ric
 
 log = logging.getLogger("vera.evolve.task_history")
+
+_DETAIL_TTL_S = 14 * 86400   # evolve_capabilities._push_run's own detail lifetime
 
 
 def _mods():
@@ -71,14 +79,35 @@ async def _census_results(cc, only_run: str = "") -> List[Dict[str, Any]]:
     return out
 
 
-async def _suite_results(ev, templates: List[str]) -> List[Dict[str, Any]]:
-    """Run records and suite scoreboard rows as results."""
+def _archive_marks(cc) -> Dict[str, str]:
+    """census run -> exclusion marker, from the archive names on disk."""
+    if cc is None:
+        return {}
+    try:
+        return th.archive_marks(cc._run_files().keys(), cc.cc.name_marks_unusable)
+    except Exception:
+        return {}
+
+
+async def _suite_results(ev, templates: List[str], marks: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
+    """Run records and suite scoreboard rows as results. An ingested census
+    record is excluded when its archive was later marked unusable (`marks`)
+    or when it was ingested from an archive already carrying a marker."""
     if ev is None:
         return []
     r = ev._redis()
     if not r:
         return []
+    marks = marks or {}
     out: List[Dict[str, Any]] = []
+
+    def _take(res: Optional[Dict[str, Any]]):
+        if not res:
+            return
+        if res.get("ingested"):
+            res["excluded"] = res.get("excluded") or marks.get((res.get("driver") or {}).get("id") or "", "")
+        out.append(res)
+
     try:
         rows = await r.lrange(ev.KEY_RUNS, 0, ev.RUNS_CAP - 1)
         for raw in rows or []:
@@ -86,9 +115,7 @@ async def _suite_results(ev, templates: List[str]) -> List[Dict[str, Any]]:
                 rec = json.loads(_rd(raw))
             except Exception:
                 continue
-            res = th.result_from_run_record(rec, templates=templates)
-            if res:
-                out.append(res)
+            _take(th.result_from_run_record(rec, templates=templates))
     except Exception as e:
         log.info("task history: run records unavailable: %s", e)
     try:
@@ -98,14 +125,20 @@ async def _suite_results(ev, templates: List[str]) -> List[Dict[str, Any]]:
                 s = json.loads(_rd(raw))
             except Exception:
                 continue
+            census_suite = str(s.get("source") or "") == "census"
             for row in s.get("results") or []:
                 rec = dict(row)
                 rec.setdefault("ts", s.get("ts"))
                 rec.setdefault("variant", s.get("variant"))
-                res = th.result_from_run_record(rec, suite_id=str(s.get("suite_id") or ""),
-                                                suite_tag=str(s.get("tag") or ""), templates=templates)
-                if res:
-                    out.append(res)
+                if census_suite:
+                    # The scoreboard's rows are the run records in brief; the
+                    # facts that make them census results sit on the suite.
+                    rec.setdefault("source", "census")
+                    rec.setdefault("census_run", s.get("census_run") or s.get("suite_id"))
+                    rec.setdefault("template", s.get("template"))
+                    rec.setdefault("excluded", s.get("excluded"))
+                _take(th.result_from_run_record(rec, suite_id=str(s.get("suite_id") or ""),
+                                                suite_tag=str(s.get("tag") or ""), templates=templates))
     except Exception as e:
         log.info("task history: suites unavailable: %s", e)
     return out
@@ -134,10 +167,161 @@ async def all_results(*, only_run: str = "") -> Dict[str, Any]:
     cc, ev = _mods()
     tasks = await _tasks(ev)
     templates = _template_names(tasks)
-    census, suite = await asyncio.gather(_census_results(cc, only_run), _suite_results(ev, templates))
+    census, suite = await asyncio.gather(_census_results(cc, only_run),
+                                         _suite_results(ev, templates, _archive_marks(cc)))
     merged = th.merge_results(suite, census)
     return {"results": merged, "tasks": tasks, "templates": templates,
-            "sources": {"census": len(census), "suite_and_runs": len(suite), "merged": len(merged)}}
+            "sources": {"census": len(census), "suite_and_runs": len(suite), "merged": len(merged),
+                        "ingested": sum(1 for r in suite if r.get("ingested"))}}
+
+
+# ── the write side: a census goal becomes a run record ───────────────────────
+
+async def _upsert_run(ev, compact: Dict[str, Any], detail: Dict[str, Any]) -> str:
+    """Store a run record, replacing the one with the same run_id if the list
+    already holds it (the harness may post a goal twice: once live, again from
+    the archive). Returns 'added' | 'replaced' | '' (no store)."""
+    r = ev._redis()
+    if not r:
+        return ""
+    rid = compact["run_id"]
+    rows = await r.lrange(ev.KEY_RUNS, 0, ev.RUNS_CAP - 1)
+    for i, raw in enumerate(rows or []):
+        try:
+            rec = json.loads(_rd(raw))
+        except Exception:
+            continue
+        if rec.get("run_id") == rid:
+            await r.lset(ev.KEY_RUNS, i, json.dumps(compact, default=str))
+            await r.set(ev.KEY_RUN + rid, json.dumps(detail, default=str))
+            await r.expire(ev.KEY_RUN + rid, _DETAIL_TTL_S)
+            return "replaced"
+    await ev._push_run(compact, detail)
+    return "added"
+
+
+async def _upsert_suite(ev, summary: Dict[str, Any]) -> str:
+    r = ev._redis()
+    if not r:
+        return ""
+    sid = summary["suite_id"]
+    rows = await r.lrange(ev.KEY_SUITES, 0, ev.SUITES_CAP - 1)
+    for i, raw in enumerate(rows or []):
+        try:
+            rec = json.loads(_rd(raw))
+        except Exception:
+            continue
+        if rec.get("suite_id") == sid:
+            await r.lset(ev.KEY_SUITES, i, json.dumps(summary, default=str))
+            return "replaced"
+    await r.lpush(ev.KEY_SUITES, json.dumps(summary, default=str))
+    await r.ltrim(ev.KEY_SUITES, 0, ev.SUITES_CAP - 1)
+    return "added"
+
+
+def _as_rows(row: Any, rows: Any) -> List[Dict[str, Any]]:
+    """The goal rows an ingest call carries: `rows` (a list, or a JSON string
+    of one) and/or `row` (one, or its JSON string)."""
+    out: List[Dict[str, Any]] = []
+    for v in (rows, row):
+        if isinstance(v, str) and v.strip():
+            try:
+                v = json.loads(v)
+            except Exception:
+                continue
+        if isinstance(v, dict):
+            out.append(v)
+        elif isinstance(v, list):
+            out.extend(x for x in v if isinstance(x, dict))
+    return out
+
+
+@capability(
+    "evolve.result.ingest", memory="off", silent=True,
+    http_method="POST", http_path="/evolve/result/ingest", http_tags=["evolve", "census"],
+    description=(
+        "Record census goal results in the suite store, so a census run is a driver "
+        "run like a suite: each goal row becomes a run record (source=census, "
+        "run_id=its loop session, task=census-<template>-<goal>) that evolve.runs, "
+        "evolve.run.get, evolve.activity and the task-through-time index read; with "
+        "suite=true the rows also become a suite scoreboard (suite_id=census_run, "
+        "tag=census-<template>) that evolve.suites, evolve.report and evolve.board "
+        "read. Idempotent: a record with the same run_id / suite_id is replaced. The "
+        "census harness (loop-census/run_census.py) posts each goal as it finishes; "
+        "loop-census/ingest_census.py posts an archived run whole. Inputs: template "
+        "(str!), census_run (str! - the archive id: run52, exec-family-run3), row "
+        "(dict - one goal row) and/or rows (list), suite (bool=false), archive (str - "
+        "the archive file name once known), excluded (str - the marker the archive "
+        "name carries, e.g. failed), profile (str), source (str=census; nothing else "
+        "is accepted). Output: {ok, ingested, added, replaced, run_ids, suite_id, tag}."),
+)
+async def cap_evolve_result_ingest(template: str = "", census_run: str = "", row: Any = None,
+                                   rows: Any = None, suite: Any = False, archive: str = "",
+                                   excluded: str = "", profile: str = "", source: str = "census",
+                                   trace_id=None) -> Dict[str, Any]:
+    if str(source or "census") != "census":
+        return {"error": "only source=census is ingested here; suite and task runs record themselves"}
+    template = str(template or "").strip()
+    census_run = str(census_run or "").strip()
+    if not template or not census_run:
+        return {"error": "template and census_run are required (e.g. default / run52)"}
+    goal_rows = _as_rows(row, rows)
+    if not goal_rows:
+        return {"error": "no goal rows: pass row (one) or rows (a list)"}
+    cc, ev = _mods()
+    if ev is None:
+        return {"error": "the suite store (evolve_capabilities) is not loaded"}
+    if not ev._redis():
+        # Say so rather than answer ok with nothing kept: the harness reads ok
+        # as "recorded" and would stop trying.
+        return {"error": "the suite store has no Redis here; nothing recorded"}
+    tasks = await _tasks(ev)
+    by_id = {t.get("id"): t for t in tasks}
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    want_suite = str(suite).strip().lower() in ("1", "true", "yes", "on")
+    added = replaced = 0
+    run_ids: List[str] = []
+    for gr in goal_rows:
+        tid = th.census_task_id(template, gr.get("id"))
+        task = by_id.get(tid) or {}
+        built = ric.run_record_from_census_row(
+            gr, template=template, census_run=census_run, ts_fallback=now,
+            goal_text=str(task.get("goal") or ""), profile=str(profile or task.get("profile") or ""),
+            ingested_at=now)
+        if not built:
+            continue
+        compact, detail = built
+        if excluded:
+            compact["excluded"] = detail["excluded"] = str(excluded)
+        outcome = await _upsert_run(ev, compact, detail)
+        if outcome == "added":
+            added += 1
+        elif outcome == "replaced":
+            replaced += 1
+        run_ids.append(compact["run_id"])
+        if outcome == "added":
+            try:
+                await ev.emit_event({"type": "evolve.run.done", "run_id": compact["run_id"],
+                                     "task": compact["task"], "pass_rate": compact["pass_rate"],
+                                     "combined": compact["combined"], "elapsed_s": compact["elapsed_s"],
+                                     "where": compact["where"], "error": compact["error"][:120],
+                                     "source": "census", "census_run": census_run})
+            except Exception:
+                pass
+    out: Dict[str, Any] = {"ok": True, "ingested": added + replaced, "added": added, "replaced": replaced,
+                           "run_ids": run_ids, "template": template, "census_run": census_run,
+                           "tag": ric.census_tag(template), "suite_id": ""}
+    if want_suite:
+        summary = ric.suite_record_from_rows(goal_rows, template=template, census_run=census_run,
+                                             archive=archive, excluded=excluded, profile=profile,
+                                             ts_fallback=now, ingested_at=now)
+        if summary:
+            out["suite"] = await _upsert_suite(ev, summary)
+            out["suite_id"] = summary["suite_id"]
+            out["tasks_n"] = summary["tasks_n"]
+    log.info("census ingest: %s/%s %d row(s) (%d added, %d replaced)%s", template, census_run,
+             len(run_ids), added, replaced, (" + suite %s" % out.get("suite")) if want_suite else "")
+    return out
 
 
 @capability(

@@ -33,18 +33,26 @@ it came from, so the two provenances are never confused.
 
 from __future__ import annotations
 
+import re
 import statistics
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
 CENSUS_PREFIX = "census-"
+# census_seed.slug, repeated here so this module stays import-free: the id a
+# result is keyed by must be the id the task store holds.
+_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _slug(name: Any) -> str:
+    return _SLUG_RE.sub("-", str(name or "").strip().lower()).strip("-")
 
 
 def census_task_id(template: str, goal_id: str) -> str:
-    """The seeded task id for a census goal. An unlabelled row (before
-    templates existed) belongs to `default`, which is what the archive's
-    numbered series always was."""
-    t = str(template or "").strip() or "default"
-    return "%s%s-%s" % (CENSUS_PREFIX, t, str(goal_id or "").strip())
+    """The seeded task id for a census goal (census_seed.task_id_for's rule).
+    An unlabelled row (before templates existed) belongs to `default`, which
+    is what the archive's numbered series always was."""
+    t = _slug(template) or "default"
+    return "%s%s-%s" % (CENSUS_PREFIX, t, _slug(goal_id) or "goal")
 
 
 def split_task_id(task_id: str, templates: Optional[Iterable[str]] = None) -> Dict[str, str]:
@@ -129,9 +137,13 @@ def result_from_run_record(rec: Dict[str, Any], *, suite_id: str = "",
                            suite_tag: str = "",
                            templates: Optional[Iterable[str]] = None) -> Optional[Dict[str, Any]]:
     """A suite / task-run record (evolve.runs, or a suite scoreboard's result
-    row) as a RESULT."""
+    row) as a RESULT. A record the census harness ingested (source=census,
+    result_ingest_core) reads as a census result - same driver, same facts as
+    its archive row - and says `ingested` so the archive row can outrank it."""
     if not isinstance(rec, dict) or not rec.get("task"):
         return None
+    if str(rec.get("source") or "") == "census" and rec.get("census_run") is not None:
+        return _result_from_ingested(rec, suite_tag=suite_tag)
     err = str(rec.get("error") or "")
     pr = _num(rec.get("pass_rate"))
     checks_n = int(rec.get("checks_n") or 0)
@@ -173,10 +185,79 @@ def result_from_run_record(rec: Dict[str, Any], *, suite_id: str = "",
     }
 
 
+def _result_from_ingested(rec: Dict[str, Any], *, suite_tag: str = "") -> Dict[str, Any]:
+    """An ingested census run record (or a census suite scoreboard's row) as
+    the census result its archive row would be. The run_id is the loop
+    session in both, so merge_results sees them as one."""
+    status = str(rec.get("status") or "unknown")
+    # The record's error is the status when the row had no error text of its
+    # own (the suite's readers need a non-empty error to see a problem); the
+    # archive row's result keeps error and status apart, so undo that here.
+    err = str(rec.get("error") or "")
+    if err == status:
+        err = ""
+    checks_n = int(rec.get("checks_n") or 0)
+    checks_ok = int(rec.get("checks_ok") or 0)
+    wall = _num(rec.get("elapsed_s"))
+    code = rec.get("code") if isinstance(rec.get("code"), dict) else None
+    routing = rec.get("routing") if isinstance(rec.get("routing"), dict) else None
+    goal = str(rec.get("goal_id") or rec.get("label") or "")
+    template = str(rec.get("template") or "")
+    if not goal or not template:
+        parts = split_task_id(str(rec.get("task")), [template] if template else None)
+        goal = goal or parts.get("goal") or ""
+        template = template or parts.get("template") or ""
+    return {
+        "task_id": str(rec.get("task")),
+        "goal": goal,
+        "template": template,
+        "run_id": str(rec.get("run_id") or ""),
+        "source": "census",
+        "driver": {"kind": "census", "id": str(rec.get("census_run") or "")},
+        "ts": str(rec.get("ts") or ""),
+        "status": status,
+        "ok": bool(rec.get("ok", status == "done")),
+        "wall_s": wall,
+        "elapsed_s": wall,
+        "checks_ok": checks_ok, "checks_n": checks_n,
+        "pass_rate": (round(checks_ok / checks_n, 3) if checks_n else None),
+        "wall_cap_s": _num(rec.get("wall_cap_s")),
+        "hit_cap": bool(rec.get("hit_cap", status == "wall-cap")),
+        "code": ({"sha_short": str(code.get("sha_short") or "")[:10], "branch": str(code.get("branch") or ""),
+                  "changed": bool(code.get("changed"))} if code and code.get("sha_short") else None),
+        "routing": ({"coder": str(routing.get("coder") or ""), "nodes": routing.get("nodes") or {},
+                     "spill_calls": int(routing.get("spill_calls") or 0),
+                     "reroutes": int(routing.get("reroutes") or 0)} if routing else None),
+        "session": str(rec.get("loop_session") or ""),
+        "error": err[:300],
+        "reruns": int(rec.get("reruns") or 0),
+        "planned": rec.get("planned"), "executed": rec.get("executed"),
+        "tool_calls": rec.get("tool_calls"),
+        "warnings": rec.get("warnings"),
+        "model": str(rec.get("model") or ""),
+        "combined": _num(rec.get("combined")),
+        "tag": suite_tag,
+        "ingested": True,
+        "excluded": str(rec.get("excluded") or ""),
+    }
+
+
+def _outranks(new: Dict[str, Any], cur: Dict[str, Any]) -> bool:
+    """Of two results for one (task, run): the census ARCHIVE row beats an
+    ingested copy of itself, which beats a suite/task record for the same
+    loop session - each carries more than the next."""
+    if new["source"] != "census":
+        return False
+    if cur["source"] != "census":
+        return True
+    return bool(cur.get("ingested")) and not new.get("ingested")
+
+
 def merge_results(*groups: Iterable[Optional[Dict[str, Any]]]) -> List[Dict[str, Any]]:
     """All results, deduplicated on (task_id, run_id) - a census row and a
     suite record for the same loop session are one result, and the census one
-    wins because it carries more (wall cap, code, routing, quality detail)."""
+    wins because it carries more (wall cap, code, routing, quality detail);
+    the archive row wins over its own ingested copy."""
     seen: Dict[tuple, Dict[str, Any]] = {}
     order: List[tuple] = []
     for g in groups:
@@ -185,12 +266,30 @@ def merge_results(*groups: Iterable[Optional[Dict[str, Any]]]) -> List[Dict[str,
                 continue
             k = (r["task_id"], r["run_id"])
             if k in seen:
-                if seen[k]["source"] != "census" and r["source"] == "census":
+                if _outranks(r, seen[k]):
                     seen[k] = r
                 continue
             seen[k] = r
             order.append(k)
     return [seen[k] for k in order]
+
+
+def archive_marks(run_ids: Iterable[str], marker_of: Callable[[str], str]) -> Dict[str, str]:
+    """census run -> the exclusion marker its archive's NAME carries, for the
+    archives that carry one: `run51-failed-coder-cpu-spill` -> {run51:
+    "failed"}. An ingested record names its run by the bare id the harness
+    reserved at start, so this is how it learns the archive was later marked
+    unusable."""
+    out: Dict[str, str] = {}
+    for rid in run_ids or []:
+        rid = str(rid or "")
+        m = marker_of(rid) or ""
+        if not m:
+            continue
+        i = rid.lower().find(m.lower())
+        base = rid[:i].rstrip("-") if i > 0 else rid
+        out[base] = m
+    return out
 
 
 def task_history(results: Sequence[Dict[str, Any]], task_id: str) -> Dict[str, Any]:

@@ -704,11 +704,15 @@ html.vpb-nav-hosted body{padding-left:0}
         <option value="run">Test tab</option>
         <option value="manual">manual</option>
         <option value="improve">improve session</option>
+        <option value="census">census</option>
+        <option value="goal">goal</option>
+        <option value="captest">cap test</option>
+        <option value="ide">IDE</option>
       </select>
       <input id="runs-q" placeholder="filter task…" style="width:140px;margin-left:6px" oninput="_runsRender()">
       <label class="hint" style="margin-left:8px"><input type="checkbox" id="runs-bad" onchange="_runsRender()"> problems only</label>
       <button class="btn sm" onclick="loadRuns()" style="margin-left:8px">&#8635;</button></div>
-    <div class="hint" style="margin-bottom:6px">Every task execution, newest first — the raw record the Suite scoreboard, Improve sessions and the Census all summarise. A census goal appears here as a suite run of its <span class="mono">census-*</span> task. Click a row for its steps; <span class="mono">⇄</span> re-scores it with both critics.</div>
+    <div class="hint" style="margin-bottom:6px">Every task execution, newest first — the raw record the Suite scoreboard, Improve sessions and the Census all summarise. A census goal is here as source <span class="mono">census</span> under its <span class="mono">census-*</span> task, posted by the harness as it finishes (its session is the census run: <span class="mono">run52</span>, <span class="mono">exec-family-run3</span>). Click a row for its checks; <span class="mono">⌁</span> opens the task through time; <span class="mono">⇄</span> re-scores a suite run with both critics.</div>
     <div id="runs-body"><div class="empty">Loading…</div></div>
   </div>
 </div>
@@ -3662,7 +3666,8 @@ function renderScoreboard(cur,prev){
     +'<div class="kv"><span class="k">avg combined</span><span class="v" style="color:'+scColor(cur.avg_combined)+'">'+(cur.avg_combined||0).toFixed(1)+'</span></div>'
     +'<div class="kv"><span class="k">check pass</span><span class="v">'+Math.round((cur.pass_rate||0)*100)+'%</span></div>'
     +'<div class="kv"><span class="k">tasks</span><span class="v">'+(cur.tasks_n||0)+'</span></div>'
-    +'<span class="hint">critic: '+esc(cur.critic||'checks only')+' · '+esc((cur.ts||'').slice(0,16))+'</span></div>';
+    +'<span class="hint">critic: '+esc(cur.critic||'checks only')+' · '+esc((cur.ts||'').slice(0,16))
+    +(cur.source==='census'?' · <span class="tag" title="a census run the harness ran on prod\'s own loop and posted here; the archive is '+esc(cur.archive||cur.census_run||'')+'">census '+esc(cur.census_run||cur.suite_id||'')+'</span>':'')+'</span></div>';
   h+=svgTaskBars(cur.results);
   h+='<table style="margin-top:8px"><tr><th>task</th><th>type</th><th>checks</th><th>score</th><th>combined</th><th>Δ</th><th>time</th></tr>';
   for(const row of cur.results||[]){
@@ -3835,14 +3840,21 @@ function _runsRender(){
   if(!runs.length){$('runs-body').innerHTML=filterBar+'<div class="empty">'+(_runsAll.length?'No run matches these filters.':(filterCommit?'No run in this window produced commit '+esc(filterCommit)+'.':'No runs yet.'))+'</div>';return}
   let h=filterBar+'<table><tr><th>time</th><th>task</th><th>where</th><th>src</th><th>checks</th><th>score</th><th>combined</th><th>time</th><th>commits</th><th></th></tr>';
   for(const r2 of runs){
-    const wh=r2.where==='sandbox'?'<span class="tag" style="color:var(--ok)">🛡 sandbox</span>':(r2.where?'<span class="tag" style="color:var(--warn)">in-proc</span>':'');
+    const isCensus=r2.source==='census';
+    // A census goal ran on prod's own loop (the harness), which is neither the
+    // sandbox nor in-process: say which census run it belongs to instead.
+    const wh=isCensus?'<span class="tag" title="ran on prod\'s own loop, driven by the census harness">'+esc(r2.census_run||r2.session||'census')+'</span>'
+      :(r2.where==='sandbox'?'<span class="tag" style="color:var(--ok)">🛡 sandbox</span>':(r2.where?'<span class="tag" style="color:var(--warn)">in-proc</span>':''));
+    const err=isCensus?(r2.hit_cap?' <span class="tag" style="color:var(--warn)" title="hit the wall cap">cap</span>':(r2.error?' <span class="tag" style="color:var(--err)">'+esc(r2.status||'err')+'</span>':''))
+      :(r2.error?' <span class="tag" style="color:var(--err)">err</span>':'');
     h+='<tr class="clk" onclick="openRun(\''+esc(r2.run_id)+'\')"><td class="mono">'+esc((r2.ts||'').slice(11,19))+'</td>'
-      +'<td>'+esc(r2.task)+(r2.error?' <span class="tag" style="color:var(--err)">err</span>':'')+(r2.variant?' <span class="tag">'+esc(r2.variant)+'</span>':'')+'</td>'
+      +'<td>'+esc(r2.task)+err+(r2.variant?' <span class="tag">'+esc(r2.variant)+'</span>':'')+'</td>'
       +'<td>'+wh+'</td>'
       +'<td><span class="tag">'+esc(r2.source||'')+'</span></td><td class="mono">'+esc(r2.checks_ok)+'/'+esc(r2.checks_n)+'</td>'
       +'<td>'+scChip(r2.score)+'</td><td>'+scChip(r2.combined)+'</td><td class="mono">'+(r2.elapsed_s||0)+'s</td>'
       +'<td>'+runCommitTags(r2.commits)+'</td>'
-      +'<td><button class="btn sm" onclick="event.stopPropagation();compareRun(\''+esc(r2.run_id)+'\')" title="Score with both critics">⇄</button></td></tr>';
+      +'<td><button class="btn sm" onclick="event.stopPropagation();openTaskHistory(\''+esc(r2.task)+'\')" title="this task through time">⌁</button>'
+      +(isCensus?'':'<button class="btn sm" onclick="event.stopPropagation();compareRun(\''+esc(r2.run_id)+'\')" title="Score with both critics">⇄</button>')+'</td></tr>';
   }
   h+='</table>';$('runs-body').innerHTML=h;
 }
@@ -3855,11 +3867,27 @@ function openRunDetail(d){
     +' <span class="pill">checks '+esc(d.checks_ok)+'/'+esc(d.checks_n)+'</span>'
     +(d.error?' <span class="pill" style="color:var(--err)">'+esc(d.error)+'</span>':'')+'</div>';
   if(a.critique)h+='<div style="background:var(--bg2);border-left:3px solid '+scColor(a.score)+';border-radius:5px;padding:8px 10px;margin-bottom:8px;font-size:11px;line-height:1.5">'+esc(a.critique)+(a.failures&&a.failures.length?('<ul style="margin:6px 0 0 16px;color:var(--warn)">'+a.failures.map(f=>'<li>'+esc(f)+'</li>').join('')+'</ul>'):'')+'</div>';
+  const isCensus=d.source==='census';
+  if(isCensus){
+    // An ingested census goal: the record IS the archive row in brief. Name
+    // the census run and goal, the wall cap, the code and coder it ran on,
+    // and hand off to the census record for the loop replay and outputs.
+    const c=d.code||{}, ro=d.routing||{};
+    h+='<div class="row" style="margin-bottom:8px;gap:6px;flex-wrap:wrap">'
+      +'<span class="pill">census '+esc(d.census_run||d.session||'?')+' · '+esc(d.goal_id||d.label||'')+'</span>'
+      +'<span class="pill">'+esc(d.status||'')+(d.wall_cap_s?' · cap '+esc(d.wall_cap_s)+'s':'')+(d.reruns?' · '+esc(d.reruns)+' rerun(s)':'')+'</span>'
+      +(c.sha_short?'<span class="pill mono" title="the code prod ran this goal on'+(c.changed?' (it changed during the goal)':'')+'">'+esc(c.sha_short)+'@'+esc(c.branch||'?')+(c.changed?' ⚠':'')+'</span>':'')
+      +(ro.coder?'<span class="pill" title="coder model; '+esc(String(ro.spill_calls||0))+' spilled call(s), '+esc(String(ro.reroutes||0))+' re-route(s)">coder '+esc(ro.coder)+(ro.spill_calls?' ⚠spill':'')+'</span>':'')
+      +'<a href="#" onclick="event.preventDefault();openCensusGoal(\''+esc(d.census_run||d.session||'')+'\',\''+esc(d.goal_id||d.label||'')+'\')" title="the census record: loop replay, outputs, routing">census record →</a>'
+      +' <a href="#" onclick="event.preventDefault();openTaskHistory(\''+esc(d.task)+'\')" title="this task through time">⌁ task history</a></div>';
+  }
   h+='<label class="fld">goal</label><pre>'+esc(d.goal||'')+'</pre>';
   if((d.checks||[]).length){h+='<label class="fld" style="margin-top:8px">checks</label>';for(const c of d.checks)h+='<div class="mono" style="font-size:10px;color:'+(c.ok?'var(--ok)':'var(--err)')+'">'+(c.ok?'✓':'✗')+' '+esc(c.type)+'('+esc(String(c.value||'').slice(0,40))+')'+(c.note?' — '+esc(c.note):'')+'</div>'}
   if((d.steps||[]).length){h+='<details style="margin-top:8px"><summary>tool trace ('+d.steps.length+' steps)</summary><div style="margin-top:6px">';for(const s of d.steps)h+='<div class="mono" style="font-size:10px;padding:2px 0;border-bottom:1px solid var(--border)"><span style="color:'+(s.ok?'var(--ok)':'var(--err)')+'">'+(s.ok?'✓':'✗')+'</span> <span style="color:var(--acc)">'+esc(s.cap)+'</span> '+esc((s.preview||'').slice(0,140))+'</div>';h+='</div></details>'}
-  h+='<label class="fld" style="margin-top:8px">final output</label><pre>'+esc((d.final||'(empty)').slice(0,4000))+'</pre>';
-  h+='<div class="row" style="margin-top:10px"><button class="btn" onclick="assessRun(\''+esc(d.run_id)+'\')">Re-assess</button><button class="btn" onclick="compareRun(\''+esc(d.run_id)+'\')">Compare critics</button><span style="flex:1"></span><button class="btn" onclick="closeModal()">Close</button></div>';
+  if(!isCensus)h+='<label class="fld" style="margin-top:8px">final output</label><pre>'+esc((d.final||'(empty)').slice(0,4000))+'</pre>';
+  // The critics score a run's final output; a census record keeps its outputs
+  // in the census record (the link above), so there is nothing here to score.
+  h+='<div class="row" style="margin-top:10px">'+(isCensus?'':'<button class="btn" onclick="assessRun(\''+esc(d.run_id)+'\')">Re-assess</button><button class="btn" onclick="compareRun(\''+esc(d.run_id)+'\')">Compare critics</button>')+'<span style="flex:1"></span><button class="btn" onclick="closeModal()">Close</button></div>';
   openModal(h);
 }
 async function assessRun(id){toast('Assessing…');const r=await post('/evolve/assess',{run_id:id});if(r&&!r.error){openRun(id);loadRuns()}else toast((r&&r.error)||'failed')}
