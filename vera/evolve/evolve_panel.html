@@ -603,6 +603,7 @@ html.vpb-nav-hosted body{padding-left:0}
     <div class="card-h"><span class="card-t">⛨ Regression guard</span>
       <span class="hint">every task × its own recent runs — a persistent, live-updating matrix</span></div>
     <vera-task-matrix id="task-matrix" cols="8"></vera-task-matrix>
+    <script>document.getElementById('task-matrix').addEventListener('taskmatrix:opencell',e=>{const d=(e&&e.detail)||{};if(d.task&&typeof openTaskHistory==='function')openTaskHistory(d.task)});</script>
   </div>
   <div class="card">
     <div class="card-h"><span class="card-t">Recent runs</span><span style="flex:1"></span><button class="btn sm" onclick="refreshTestRuns()">&#8635;</button></div>
@@ -932,6 +933,16 @@ html.vpb-nav-hosted body{padding-left:0}
 
 <div class="modal-bg" id="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" id="modal"></div></div>
 
+<script>
+// The page's event bus, declared BEFORE the element scripts: an element's
+// connectedCallback runs the moment its script defines it, and it subscribes
+// here (veraSharedEvents) instead of opening a socket of its own - seven
+// sockets per panel before 2026-09-10, one now. The socket that feeds
+// _busSubs is opened at the end of the main script.
+const _busSubs=new Set();
+window.__veraEventsBusOwner=true;
+window._veraSubscribe=fn=>{_busSubs.add(fn);return ()=>_busSubs.delete(fn)};
+</script>
 <script src="/ui/elements/agent_loop_output.js"></script>
 <script src="/ui/elements/error_radar.js"></script>
 <script src="/ui/elements/branch_pipeline.js"></script>
@@ -3721,11 +3732,14 @@ async function editqSave(id){const r=await post('/evolve/editq/update',{id,promp
 async function editqCancel(id){const r=await post('/evolve/editq/cancel',{id});toast(r&&r.ok?'Cancelled':(r&&r.error)||'failed');closeModal&&closeModal();loadEditq()}
 function _curSec(){const b=document.querySelector('#nav .btn.on');return b?b.dataset.sec:'work'}
 // subscribe: parent bus if available, else own WS to /ws/mcp
+// ONE socket for the page: the panel's dispatcher AND every element in it
+// (window._veraSubscribe is declared before the element scripts load, above).
+function _busDispatch(ev){onEvent(ev);_busSubs.forEach(fn=>{try{fn(ev)}catch(_){}})}
 (function subscribe(){
-  try{const par=window.parent;if(par&&par!==window&&typeof par._veraSubscribe==='function'){par._veraSubscribe(onEvent);return}}catch(e){}
+  try{const par=window.parent;if(par&&par!==window&&typeof par._veraSubscribe==='function'){par._veraSubscribe(_busDispatch);return}}catch(e){}
   try{const pr=location.protocol==='https:'?'wss:':'ws:';const u=pr+'//'+location.host+'/ws/mcp';
     const ws=new WebSocket(u);
-    ws.onmessage=e=>{try{const m=JSON.parse(e.data);if(m.type==='event'&&m.data)onEvent(m.data)}catch(_){}};
+    ws.onmessage=e=>{try{const m=JSON.parse(e.data);if(m.type==='event'&&m.data)_busDispatch(m.data)}catch(_){}};
     ws.onopen=()=>{try{ws.send(JSON.stringify({action:'subscribe',stream:'__events__'}))}catch(_){}};
     ws.onclose=()=>setTimeout(subscribe,5000);
   }catch(e){}

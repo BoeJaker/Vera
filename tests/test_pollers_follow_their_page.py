@@ -68,3 +68,34 @@ def test_the_compose_brings_the_sidecar_up_with_the_app():
     assert "{_depends}{_redis_sidecar}networks:" in src
     assert '"--force-recreate"] + _services, timeout=300)' in src, "spawn names the sidecar service"
     assert '"--force-recreate", "vera-dev"] + (\n        [_sbx_redis.sidecar_name("vera-dev")] if _sbx_redis is not None else [])' in src, "the primary too"
+
+
+# ── one event socket per page ────────────────────────────────────────────────
+SOCKET_ELEMENTS = ("task_matrix_element.js", "test_activity_timeline_element.js", "branch_pipeline_element.js",
+                   "git_graph_element.js", "error_radar_element.js", "ollama_routing_map_element.js")
+
+
+@pytest.mark.parametrize("name", SOCKET_ELEMENTS)
+def test_the_element_rides_the_pages_bus_instead_of_its_own_socket(name):
+    src = _read(name)
+    assert "function veraSharedEvents(base, fn)" in src
+    assert src.count("new WebSocket(") == 1, "only the shared fallback opens a socket"
+    assert "this._unsubEvents = veraSharedEvents(this._getBase(), ev =>" in src
+    assert "this._unsubEvents && this._unsubEvents(); this._unsubEvents = null;" in src, "disconnect unsubscribes"
+    assert "typeof window._veraSubscribe === 'function'" in src, "the page's own bus first"
+
+
+def test_the_panel_declares_its_bus_before_the_elements_load():
+    with open(os.path.join(ROOT, "evolve", "evolve_panel.html"), encoding="utf-8") as fh:
+        src = fh.read()
+    bus = src.index("window._veraSubscribe=fn=>{_busSubs.add(fn)")
+    assert bus < src.index('<script src="/ui/elements/error_radar.js">'), "an element subscribes the moment it upgrades"
+    assert "function _busDispatch(ev){onEvent(ev);_busSubs.forEach(" in src
+    assert "_busDispatch(m.data)" in src and "par._veraSubscribe(_busDispatch)" in src
+    assert "window.__veraEventsBusOwner=true;" in src
+
+
+def test_the_task_matrix_open_cell_opens_the_task_through_time():
+    with open(os.path.join(ROOT, "evolve", "evolve_panel.html"), encoding="utf-8") as fh:
+        src = fh.read()
+    assert "addEventListener('taskmatrix:opencell'" in src and "openTaskHistory(d.task)" in src
