@@ -1,6 +1,8 @@
 import pytest
 
-from Vera.vera.integrations.external_effects import plan_external_effect
+from Vera.vera.integrations.external_effects import (
+    plan_api_effect_shadow, plan_external_effect,
+)
 
 
 pytestmark = pytest.mark.critical
@@ -50,3 +52,34 @@ def test_invalid_or_unsafe_identifiers_fail_closed(field, value):
     kwargs[field] = value
     with pytest.raises(ValueError):
         plan_external_effect(**kwargs)
+
+
+def test_api_shadow_reports_legacy_write_gap_without_blocking():
+    shadow = plan_api_effect_shadow(
+        integration_id="service-1", method="POST", path="/orders?token=secret")
+    assert shadow["enforcement"] == "observe_only"
+    assert shadow["decision"]["would_admit"] is False
+    assert shadow["blocks_current_call"] is False
+    assert shadow["decision"]["reasons"] == [
+        "approval_receipt_required", "idempotency_key_required"]
+    assert "/orders" not in str(shadow)
+    assert "token=secret" not in str(shadow)
+
+
+def test_api_shadow_would_suppress_a_successful_replay():
+    shadow = plan_api_effect_shadow(
+        integration_id="service-1", method="POST", path="/orders",
+        idempotency_key="order:42", approval_receipt_ref="approval:42",
+        retry=True, prior_success=True)
+    assert shadow["decision"]["would_admit"] is True
+    assert shadow["decision"]["would_execute"] is False
+    assert shadow["replay"]["would_suppress"] is True
+    assert shadow["records_completion"] is False
+
+
+def test_api_operation_identity_ignores_query_and_fragment():
+    first = plan_api_effect_shadow(
+        integration_id="service-1", method="GET", path="/items?page=1#top")
+    second = plan_api_effect_shadow(
+        integration_id="service-1", method="GET", path="/items?page=2#bottom")
+    assert first["plan"]["plan_id"] == second["plan"]["plan_id"]

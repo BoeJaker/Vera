@@ -233,6 +233,16 @@ connection, or becomes the authority for the underlying records. This gives UI
 and tool-using models one bounded inventory while preserving the existing
 registries as owners during migration.
 
+The generic `integration.api.call` boundary now emits the same policy decision
+as `effect_shadow` while remaining in `observe_only` mode. Existing calls are
+not blocked and Vera does not add retries. Optional idempotency and approval
+references are evaluated but never forwarded to the remote API; the request
+path is represented only by an operation digest in audit events. If a durable
+success receipt already exists, telemetry reports that enforcement would
+suppress the replay, but the compatibility phase still preserves current
+behavior. This makes the migration gap measurable before an explicit decision
+turns enforcement on.
+
 ---
 
 ## 8. Common threads

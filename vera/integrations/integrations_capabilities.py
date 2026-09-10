@@ -63,7 +63,10 @@ from Vera.vera.integrations.source_build_plan import (
     build_plan_contract as _source_build_plan_contract,
     plan_source_build as _plan_source_build,
 )
-from Vera.vera.integrations.external_effects import plan_external_effect as _plan_external_effect
+from Vera.vera.integrations.external_effects import (
+    plan_api_effect_shadow as _plan_api_effect_shadow,
+    plan_external_effect as _plan_external_effect,
+)
 from Vera.vera.integrations.effect_receipts import default_external_effect_receipt_ledger
 from Vera.vera.integrations.connection_projection import project_connections
 
@@ -406,18 +409,25 @@ async def cap_operate(id: str = "", goal: str = "", max_steps: int = 15,
     "integration.api.call",
     http_method="POST", http_path="/integrations/api/call", http_tags=["integration"],
     memory="on",
+    redact_args=["path", "query", "body", "headers", "idempotency_key",
+                 "approval_receipt_ref"],
+    redact_result=True,
     description="Call an integration's HTTP API through an authenticated "
                 "passthrough (the sealed token is injected server-side and never "
                 "reaches the browser). REQUIRES access.api. Inputs: id (str!), "
                 "method (GET|POST|PUT|DELETE|PATCH), path (str — appended to the "
                 "kind's api_base, e.g. '/repos'), query (dict), body (dict/str), "
-                "headers (dict — extra). Output: {ok, status, body, json?} or "
+                "headers (dict — extra), idempotency_key, approval_receipt_ref, "
+                "retry (optional observe-only policy evidence; not forwarded). Output: "
+                "{ok, status, body, json?, effect_shadow} or "
                 "{error, code:403}.",
     schema={"properties": {"method": {"enum": ["GET", "POST", "PUT", "DELETE", "PATCH"]}}},
 )
 async def cap_api_call(id: str = "", method: str = "GET", path: str = "",
                        query: Optional[Dict] = None, body: Any = None,
-                       headers: Optional[Dict] = None, trace_id=None) -> Dict:
+                       headers: Optional[Dict] = None, idempotency_key: str = "",
+                       approval_receipt_ref: str = "", retry: bool = False,
+                       trace_id=None) -> Dict:
     rec = await _get(id)
     gate = _require_access(rec, "api")
     if gate:
@@ -425,13 +435,37 @@ async def cap_api_call(id: str = "", method: str = "GET", path: str = "",
     base = _base_url(rec)
     if not base:
         return {"error": "integration has no resolvable URL"}
+    try:
+        shadow = _plan_api_effect_shadow(
+            integration_id=id, method=method, path=path,
+            idempotency_key=idempotency_key,
+            approval_receipt_ref=approval_receipt_ref, retry=retry)
+        if (shadow["plan"]["mutating"] and
+                shadow["plan"]["admission"]["allowed"]):
+            replay = default_external_effect_receipt_ledger().replay_status(shadow["plan"])
+            already = bool(replay["already_succeeded"])
+            shadow["replay"] = {
+                "already_succeeded": already, "would_suppress": already,
+                "successful_receipt_id": replay["successful_receipt_id"]}
+            shadow["decision"]["would_execute"] = not already
+    except Exception:
+        shadow = {"schema": "vera.external-effect-shadow/v1",
+                  "enforcement": "observe_only", "error": "shadow_unavailable",
+                  "decision": {"would_admit": False, "would_execute": False,
+                               "reasons": ["invalid_policy_evidence"]},
+                  "blocks_current_call": False, "forwards_control_references": False,
+                  "records_completion": False, "executes": False}
     spec = KIND_SPECS.get(rec.get("kind", "generic"), {})
     api_base = (rec.get("api") or {}).get("api_base", spec.get("api_base", ""))
     url = base + api_base + ("/" + path.lstrip("/") if path else "")
     hdrs = dict(headers or {})
     _apply_api_auth(rec, hdrs)
     verify = rec.get("scheme") == "https" and rec.get("verify_tls", False)
-    await _audit("api_call", rec, method=method, path=path)
+    await _audit("api_call", rec, method=method,
+                 effect_plan_id=(shadow.get("plan") or {}).get("plan_id", ""),
+                 effect_would_admit=shadow["decision"]["would_admit"],
+                 effect_would_execute=shadow["decision"]["would_execute"],
+                 effect_reasons=shadow["decision"]["reasons"])
     try:
         async with httpx.AsyncClient(timeout=30, verify=verify,
                                      follow_redirects=True) as c:
@@ -440,13 +474,15 @@ async def cap_api_call(id: str = "", method: str = "GET", path: str = "",
                                 content=body if isinstance(body, str) else None,
                                 headers=hdrs)
     except Exception as e:
-        return {"error": f"upstream {type(e).__name__}: {e}"}
+        return {"error": f"upstream {type(e).__name__}: {e}",
+                "effect_shadow": shadow}
     out: Dict[str, Any] = {"ok": r.status_code < 400, "status": r.status_code,
                            "url": url}
     try:
         out["json"] = r.json()
     except Exception:
         out["body"] = r.text[:20000]
+    out["effect_shadow"] = shadow
     return out
 
 
