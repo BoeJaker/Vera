@@ -77,8 +77,8 @@ def test_the_table_reads_the_five_stores_in_one_call(monkeypatch):
     assert {"sessions", "count", "total", "summary", "swarm", "capacity", "watch", "any_live", "lanes", "agents",
             "plans", "repos", "projects", "board_provider"} <= set(out)
     ids = [s["id"] for s in out["sessions"]]
-    assert ids[:3] == ["imp-1", "codex-run", "s-live"] or ids[:3] == ["codex-run", "imp-1", "s-live"], ids
-    assert "s-idle" in ids and out["total"] == 4
+    assert ids == ["s-live", "imp-1", "codex-run", "s-idle"], "the live band, newest activity first; idle last"
+    assert out["total"] == 4
     codex = next(s for s in out["sessions"] if s["id"] == "codex-run")
     assert codex["agent"] == "codex" and codex["state"] == "live" and codex["items_n"] == 1 and codex["pipelines_n"] == 1
     assert codex["sandboxes"][0]["name"] == "vera-dev-feat-x" and codex["title"] == "Do x"
