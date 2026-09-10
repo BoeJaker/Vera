@@ -9586,6 +9586,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "execution/exec_capabilities.py"),
         os.path.join(_here, "proxmox/proxmox_capabilities.py"),
         os.path.join(_here, "proxmox/pxstore_capabilities.py"),
+        os.path.join(_here, "vfs/vfs_capabilities.py"),
         os.path.join(_here, "monitor/monitor_capabilities.py"),
         os.path.join(_here, "monitor/perf_capabilities.py"),
         os.path.join(_here, "babblefish/babblefish_capabilities.py"),
