@@ -959,6 +959,25 @@ async def integration_effect_replay_status(plan: Optional[Dict] = None, trace_id
 
 
 @capability(
+    "integration.effect.enforcement.readiness", http_method="GET",
+    http_path="/integrations/effect/enforcement/readiness",
+    http_tags=["integration", "policy"], memory="off", silent=True,
+    description="Assess whether observe-only external-effect evidence is sufficiently "
+                "representative for operator review. This fail-closed assessment does not "
+                "prove safety, authorize enforcement, change policy, execute, or retain payloads.",
+)
+async def integration_effect_enforcement_readiness(trace_id=None):
+    from Vera.vera.integrations.effect_shadow_evidence import evaluate_enforcement_readiness
+    try:
+        evidence = default_external_effect_shadow_evidence().summary(limit=200)
+        return evaluate_enforcement_readiness(evidence)
+    except Exception:
+        result = evaluate_enforcement_readiness({"totals": {}, "classifications": {}})
+        result["error"] = "evidence_unavailable"
+        return result
+
+
+@capability(
     "integration.effect.shadow.evidence", http_method="GET",
     http_path="/integrations/effect/shadow/evidence",
     http_tags=["integration", "policy"], memory="off", silent=True,
@@ -1171,6 +1190,7 @@ register_ui(
         "integration.source.build.status", "integration.source.build.plan",
         "integration.effect.plan", "integration.effect.replay.status",
         "integration.effect.retry.plan", "integration.effect.retry.policy",
+        "integration.effect.enforcement.readiness",
         "integration.effect.shadow.evidence",
         "integration.effect.receipts",
         # the one-click "register & secure everything" button drives autoenroll

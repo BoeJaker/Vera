@@ -277,6 +277,13 @@ methods, and timestamps—not paths, queries, bodies, headers, credentials, or r
 approval/idempotency references. These measurements do not block current calls
 and are not themselves sufficient evidence to enable enforcement.
 
+Vera also applies fixed, fail-closed coverage thresholds before describing the
+evidence as ready for operator review: total observations, read and mutation
+coverage, admitted and denied decisions, and at least one replay-suppression
+example. Passing every check means only that the shadow sample is representative
+enough to review. It does not prove safety, authorize a rollout, or enable
+enforcement; the generic API remains observe-only.
+
 ---
 
 ## 8. Common threads
