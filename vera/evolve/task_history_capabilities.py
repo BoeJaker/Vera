@@ -26,6 +26,7 @@ import json
 import logging
 import sys
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from Vera.vera.capability_orchestration import capability
@@ -52,9 +53,26 @@ def _rd(v: Any) -> str:
     return v.decode() if isinstance(v, (bytes, bytearray)) else str(v)
 
 
+def archive_time(path) -> str:
+    """When an archive's run ended, as ISO UTC, for rows written before rows
+    carried their own time. The harness's `.log` beside the archive is
+    written as the run goes and never touched again, so its mtime is the
+    end of the run; the `.jsonl` is rewritten by the backfill tools
+    (code_version, reroutes) and its mtime is whenever that last happened.
+    Prefer the log; fall back to the archive itself."""
+    try:
+        p = path if hasattr(path, "with_suffix") else Path(str(path))
+        lg = p.with_suffix(".log")
+        st = lg.stat() if lg.exists() else p.stat()
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(st.st_mtime))
+    except Exception:
+        return ""
+
+
 async def _census_results(cc, only_run: str = "") -> List[Dict[str, Any]]:
-    """Every census archive row as a result. The archive's mtime is the
-    timestamp fallback for rows written before rows carried one."""
+    """Every census archive row as a result. The archive's end time (its
+    log's mtime) is the timestamp fallback for rows written before rows
+    carried one."""
     if cc is None:
         return []
     files = cc._run_files()
@@ -62,10 +80,7 @@ async def _census_results(cc, only_run: str = "") -> List[Dict[str, Any]]:
     items = [(rid, p) for rid, p in files.items() if not only_run or rid == only_run]
     recs = await asyncio.gather(*(cc._read_run(p) for _, p in items))
     for (rid, path), rows in zip(items, recs):
-        try:
-            fallback = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(path.stat().st_mtime))
-        except Exception:
-            fallback = ""
+        fallback = archive_time(path)
         excluded = ""
         try:
             excluded = cc.cc.name_marks_unusable(rid)
@@ -252,13 +267,18 @@ def _as_rows(row: Any, rows: Any) -> List[Dict[str, Any]]:
         "(str!), census_run (str! - the archive id: run52, exec-family-run3), row "
         "(dict - one goal row) and/or rows (list), suite (bool=false), archive (str - "
         "the archive file name once known), excluded (str - the marker the archive "
-        "name carries, e.g. failed), profile (str), source (str=census; nothing else "
-        "is accepted). Output: {ok, ingested, added, replaced, run_ids, suite_id, tag}."),
+        "name carries, e.g. failed), profile (str), ts_fallback (str - ISO UTC time "
+        "for rows that carry none, e.g. the archive's end time; else now), source "
+        "(str=census; nothing else is accepted). Run records are kept only for rows "
+        "inside the store's detail window (14 days): an older row would sit in the "
+        "run list with no detail and push a live record out, for a history the "
+        "archive already holds; its suite scoreboard is still written. Output: {ok, "
+        "ingested, added, replaced, skipped_old, run_ids, suite_id, tag}."),
 )
 async def cap_evolve_result_ingest(template: str = "", census_run: str = "", row: Any = None,
                                    rows: Any = None, suite: Any = False, archive: str = "",
-                                   excluded: str = "", profile: str = "", source: str = "census",
-                                   trace_id=None) -> Dict[str, Any]:
+                                   excluded: str = "", profile: str = "", ts_fallback: str = "",
+                                   source: str = "census", trace_id=None) -> Dict[str, Any]:
     if str(source or "census") != "census":
         return {"error": "only source=census is ingested here; suite and task runs record themselves"}
     template = str(template or "").strip()
@@ -278,14 +298,16 @@ async def cap_evolve_result_ingest(template: str = "", census_run: str = "", row
     tasks = await _tasks(ev)
     by_id = {t.get("id"): t for t in tasks}
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    fallback = str(ts_fallback or "").strip() or now
+    horizon = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - _DETAIL_TTL_S))
     want_suite = str(suite).strip().lower() in ("1", "true", "yes", "on")
-    added = replaced = 0
+    added = replaced = skipped_old = 0
     run_ids: List[str] = []
     for gr in goal_rows:
         tid = th.census_task_id(template, gr.get("id"))
         task = by_id.get(tid) or {}
         built = ric.run_record_from_census_row(
-            gr, template=template, census_run=census_run, ts_fallback=now,
+            gr, template=template, census_run=census_run, ts_fallback=fallback,
             goal_text=str(task.get("goal") or ""), profile=str(profile or task.get("profile") or ""),
             ingested_at=now)
         if not built:
@@ -293,6 +315,9 @@ async def cap_evolve_result_ingest(template: str = "", census_run: str = "", row
         compact, detail = built
         if excluded:
             compact["excluded"] = detail["excluded"] = str(excluded)
+        if compact["ts"] and compact["ts"] < horizon:
+            skipped_old += 1
+            continue
         outcome = await _upsert_run(ev, compact, detail)
         if outcome == "added":
             added += 1
@@ -309,18 +334,19 @@ async def cap_evolve_result_ingest(template: str = "", census_run: str = "", row
             except Exception:
                 pass
     out: Dict[str, Any] = {"ok": True, "ingested": added + replaced, "added": added, "replaced": replaced,
-                           "run_ids": run_ids, "template": template, "census_run": census_run,
-                           "tag": ric.census_tag(template), "suite_id": ""}
+                           "skipped_old": skipped_old, "run_ids": run_ids, "template": template,
+                           "census_run": census_run, "tag": ric.census_tag(template), "suite_id": ""}
     if want_suite:
         summary = ric.suite_record_from_rows(goal_rows, template=template, census_run=census_run,
                                              archive=archive, excluded=excluded, profile=profile,
-                                             ts_fallback=now, ingested_at=now)
+                                             ts_fallback=fallback, ingested_at=now)
         if summary:
             out["suite"] = await _upsert_suite(ev, summary)
             out["suite_id"] = summary["suite_id"]
             out["tasks_n"] = summary["tasks_n"]
-    log.info("census ingest: %s/%s %d row(s) (%d added, %d replaced)%s", template, census_run,
-             len(run_ids), added, replaced, (" + suite %s" % out.get("suite")) if want_suite else "")
+    log.info("census ingest: %s/%s %d row(s) (%d added, %d replaced, %d older than the window)%s",
+             template, census_run, len(run_ids), added, replaced, skipped_old,
+             (" + suite %s" % out.get("suite")) if want_suite else "")
     return out
 
 
@@ -358,7 +384,7 @@ async def cap_evolve_results(task: str = "", template: str = "", tag: str = "", 
                 or (tag.startswith("census-") and r.get("template") == tag[len("census-"):])]
     if source:
         rows = [r for r in rows if r.get("source") == source]
-    rows.sort(key=lambda r: (r.get("ts") or "", r.get("run_id") or ""), reverse=True)
+    rows.sort(key=th.order_key, reverse=True)
     return {"results": rows[:max(1, int(limit))], "count": len(rows),
             "sources": data["sources"], "templates": data["templates"]}
 
