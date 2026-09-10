@@ -9787,6 +9787,9 @@ async def lifespan(app: FastAPI):
         # One task through time: reads the census archive AND the suite's run
         # records, so it must come after both census/ and evolve/ above.
         os.path.join(_here, "evolve/task_history_capabilities.py"),
+        # The Ship page's one table: a row per branch from the pipeline list,
+        # the sandbox registry, the test history and the edges - after evolve/.
+        os.path.join(_here, "evolve/ship_capabilities.py"),
         # Closed-loop orchestrator (M7 Phase B) — part of Loop Lab; dedicated module.
         os.path.join(_here, "evolve/orchestrator_capabilities.py"),
         # Operator: general observe→think→act web/computer operator (drives any
