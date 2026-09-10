@@ -134,10 +134,14 @@
       this._branch = this.getAttribute('branch') || '';
       this._pipelineId = this.getAttribute('pipeline-id') || '';
       this._connectWs();
-      this.refresh();
-      this._pollTimer = setInterval(() => this.refresh(), 10000);
+      if (this._onScreen()) this.refresh();
+      this._pollTimer = setInterval(() => { if (this._onScreen()) this.refresh(); }, 10000);
     }
 
+    /* Poll only while on screen. offsetParent is null inside a hidden
+       section (display:none), so an element on a page that is not showing
+       costs nothing; the panel's nav() refreshes it when its page opens. */
+    _onScreen() { return this.offsetParent !== null; }
     disconnectedCallback() {
       if (this._pollTimer) clearInterval(this._pollTimer);
       if (this._playRaf) cancelAnimationFrame(this._playRaf);
@@ -321,21 +325,16 @@
 
     // ── lanes mode ───────────────────────────────────────────────────────
     async _refreshLanes() {
+      // ide.git.branches is a POST capability: ask it that way the first time.
+      // (A GET first, "falling back" to POST, was a 405 in the console and a
+      // wasted request on every 10s tick.)
       const [branchesD, pipesD] = await Promise.all([
-        this._fetchJson('/ide/git/branches').then(d => d), // GET-ish but capability is POST; fall back below
+        fetch(this._getBase() + '/ide/git/branches', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+        }).then(r => r.json()).catch(() => null),
         this._fetchJson('/evolve/pipeline/list?limit=100'),
       ]);
       let branches = (branchesD && branchesD.branches) || [];
-      if (!branches.length) {
-        // ide.git.branches is a POST capability — retry properly if the GET above 404'd.
-        try {
-          const r = await fetch(this._getBase() + '/ide/git/branches', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
-          });
-          const d = await r.json();
-          branches = (d && d.branches) || [];
-        } catch (_) {}
-      }
       const pipelines = (pipesD && pipesD.pipelines) || [];
       const byBranch = {};
       pipelines.forEach(p => { (byBranch[p.branch] = byBranch[p.branch] || []).unshift(p); }); // chronological

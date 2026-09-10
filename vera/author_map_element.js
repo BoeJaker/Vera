@@ -97,10 +97,14 @@
       const sel = this.shadowRoot.getElementById('hoursSel');
       sel.value = String(this._hours);
       sel.addEventListener('change', () => { this._hours = parseInt(sel.value, 10); this.refresh(); });
-      this.refresh();
-      this._pollTimer = setInterval(() => this.refresh(), 20000);
+      if (this._onScreen()) this.refresh();
+      this._pollTimer = setInterval(() => { if (this._onScreen()) this.refresh(); }, 20000);
     }
 
+    /* Poll only while on screen. offsetParent is null inside a hidden
+       section (display:none), so an element on a page that is not showing
+       costs nothing; the panel's nav() refreshes it when its page opens. */
+    _onScreen() { return this.offsetParent !== null; }
     disconnectedCallback() { if (this._pollTimer) clearInterval(this._pollTimer); }
 
     setApiBase(url) { this._base = (url || '').replace(/\/$/, ''); }
