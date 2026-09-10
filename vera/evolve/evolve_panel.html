@@ -1043,6 +1043,11 @@ function nav(sec){
     logs:()=>nav('sandbox'),
     sources:loadSources,sandbox:()=>{loadSandbox();loadLogs()},activity:loadAudit,settings:fillSettings,errors:loadErrors}[sec];
   if(f)f();
+  // Elements on the page just opened refresh now: they poll only while on
+  // screen (offsetParent), so the first fresh read is this, not the next tick.
+  document.querySelectorAll('#sec-'+sec+' *').forEach(el=>{
+    if(el.tagName&&el.tagName.startsWith('VERA-')&&typeof el.refresh==='function'&&el._pollTimer){try{el.refresh()}catch(_){}}
+  });
   // Keep the outer shell's injected top-level sub-menu in sync when this
   // panel changes section on its own (a direct click here, not one relayed
   // from an injected item) — see registerNav() below.
@@ -3572,7 +3577,7 @@ async function loadFleet(){
       +'<span class="hint">'+esc(a.model||'')+(a.instance?(' @'+esc(a.instance)):'')+' · '+esc(a.status)+'</span></div>';
   }
   el.innerHTML=h;
-  if(ss.length||eq.length){clearTimeout(window._fleetT);window._fleetT=setTimeout(loadFleet,4000)}
+  if((ss.length||eq.length)&&_curSec()==='watch'){clearTimeout(window._fleetT);window._fleetT=setTimeout(loadFleet,4000)}
 }
 function watchSelect(){_watchSession=$('watch-sel').value;document.querySelectorAll('vera-agent-loop-output').forEach(a=>{if(a.reset)try{a.reset()}catch(_){}});watchRefresh()}
 async function watchRefresh(){
@@ -4231,7 +4236,7 @@ async function loadPipelines(){
       +'<td class="row" style="gap:3px">'+pipeActions(p)+'</td></tr>';
   }
   h+='</table>'+renderSessionGroups(ps);$('pipes-body').innerHTML=h;
-  if(ps.some(p=>p.live)){clearTimeout(window._pipeT);window._pipeT=setTimeout(loadPipelines,3500)}
+  if(ps.some(p=>p.live)&&_curSec()==='pipelines'){clearTimeout(window._pipeT);window._pipeT=setTimeout(loadPipelines,3500)}
 }
 // Layered session→commits view (§8.2 #6): group pipeline runs by their driving
 // session/agent, so you can see which branches a session drove and drill into
@@ -4441,7 +4446,7 @@ async function loadReview(){
   if(pipeCards)h+='<label class="fld"'+(wsCards?' style="margin-top:12px"':'')+'>Pipelines — awaiting a decision</label>'+pipeCards;
   if(decidedCards)h+='<label class="fld" style="margin-top:14px">Decided — accepted / rejected</label>'+decidedCards;
   body.innerHTML=h;
-  if(queue.some(p=>p.live)){clearTimeout(window._reviewT);window._reviewT=setTimeout(loadReview,3500)}
+  if(queue.some(p=>p.live)&&_curSec()==='review'){clearTimeout(window._reviewT);window._reviewT=setTimeout(loadReview,3500)}
 }
 // Compact, read-only card for a DECIDED pipeline (the review audit log): accept/
 // reject verdict, attribution, driving-session chat drill-down, decided-at.

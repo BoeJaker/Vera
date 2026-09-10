@@ -124,8 +124,8 @@ svg.chart{width:100%;height:120px;display:block;cursor:crosshair}
       this._autoplay = this.getAttribute('autoplay') || 'scroll';
       this._wire();
       this._connectWs();
-      this.refresh();
-      this._pollTimer = setInterval(() => this.refresh(), parseInt(this.getAttribute('poll-ms') || '20000', 10));
+      if (this._onScreen()) this.refresh();
+      this._pollTimer = setInterval(() => { if (this._onScreen()) this.refresh(); }, parseInt(this.getAttribute('poll-ms') || '20000', 10));
       if (this._autoplay === 'scroll' && !reducedMotion()) {
         this._io = new IntersectionObserver(entries => {
           entries.forEach(e => {
@@ -139,6 +139,10 @@ svg.chart{width:100%;height:120px;display:block;cursor:crosshair}
       }
     }
 
+    /* Poll only while on screen. offsetParent is null inside a hidden
+       section (display:none), so an element on a page that is not showing
+       costs nothing; the panel's nav() refreshes it when its page opens. */
+    _onScreen() { return this.offsetParent !== null; }
     disconnectedCallback() {
       if (this._pollTimer) clearInterval(this._pollTimer);
       if (this._playRaf) cancelAnimationFrame(this._playRaf);

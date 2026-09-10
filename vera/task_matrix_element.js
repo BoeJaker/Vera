@@ -73,10 +73,14 @@ td.rowhead{text-align:left;font-family:var(--mono,monospace);font-size:9.5px;
       this._cols = parseInt(this.getAttribute('cols') || '8', 10);
       this._tag = this.getAttribute('tag') || '';
       this._connectWs();
-      this.refresh();
-      this._pollTimer = setInterval(() => this.refresh(), 10000);
+      if (this._onScreen()) this.refresh();
+      this._pollTimer = setInterval(() => { if (this._onScreen()) this.refresh(); }, 10000);
     }
 
+    /* Poll only while on screen. offsetParent is null inside a hidden
+       section (display:none), so an element on a page that is not showing
+       costs nothing; the panel's nav() refreshes it when its page opens. */
+    _onScreen() { return this.offsetParent !== null; }
     disconnectedCallback() {
       if (this._pollTimer) clearInterval(this._pollTimer);
       try { this._ws && this._ws.close(); } catch (_) {}
