@@ -45,7 +45,7 @@ from __future__ import annotations
 import json
 import logging
 import shlex
-from pathlib import Path
+import string
 from typing import Any, Dict, List, Optional
 
 import Vera.vera.capability_orchestration as _orch
@@ -55,7 +55,6 @@ from Vera.vera.capability_orchestration import (
 
 log = logging.getLogger("vera.vfs")
 
-_HERE = Path(__file__).parent
 KEY_CFG = "vera:vfs:cfg"
 
 DEFAULTS = {
@@ -434,7 +433,7 @@ async def cap_estate_list(refresh: bool = False, trace_id=None) -> Dict:
 # ═════════════════════════════════════════════════════════════════════════════
 #  WIREGUARD DOOR
 # ═════════════════════════════════════════════════════════════════════════════
-_PEER_NAME_OK = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
+_PEER_NAME_OK = set(string.ascii_letters + string.digits + "-_")
 
 
 def _valid_peer(name: str) -> bool:
@@ -444,6 +443,9 @@ def _valid_peer(name: str) -> bool:
 @capability(
     "vfs.peer.add",
     http_method="POST", http_path="/vfs/peer/add", http_tags=["vfs"],
+    # The result carries the device's PRIVATE KEY. Never let it into the
+    # memory/fabric stores, and keep it out of the activity transcript.
+    memory="off", silent=True,
     description="Enrol a device on the VFS-02 WireGuard door and return its "
                 "client config. Each device gets its own keypair, so losing one "
                 "phone is one revocation rather than a rotation across every "
