@@ -192,9 +192,26 @@ Real materialisation, scans, builders, approval consumption, activation, and
 rollback evidence remain `queued_live`; this contract does not call Vera's
 existing image builders or repository tooling.
 
+## 7. External-effect admission
+
+`integration.effect.plan` is the non-executing policy boundary for outbound
+operations. It classifies HTTP-shaped operations as reads, idempotent writes,
+or non-idempotent writes and produces a stable `vera.external-effect-plan/v1`
+record. Mutations require an opaque approval-receipt reference; POST and PATCH
+also require an idempotency key. A retry is admitted only when those conditions
+remain satisfied.
+
+The plan contains connection and operation identity plus SHA-256 digests of the
+opaque references. It never contains request payloads, credential values, raw
+receipt references, or raw idempotency keys, and it neither resolves secrets nor
+executes the operation. This is a shared contract for gradual adoption by Email,
+Telegram, Calendar, commerce, generic API/MCP connectors, provisioning, and
+other external-effect adapters; those existing paths are not silently treated
+as migrated until they enforce and retain corresponding receipts.
+
 ---
 
-## 7. Common threads
+## 8. Common threads
 
 - **Sealed secrets** — every credential is Fernet-sealed at rest and redacted from the UI ([Security & Secrets](./29-security.md)).
 - **Event bridges** — Email and Telegram can both forward `vera:events` outward, turning Vera's internal stream into notifications.
