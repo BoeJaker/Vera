@@ -2430,6 +2430,7 @@ function _cenRecent(r){
              +(over?' · hit the '+Math.round(gcap/60)+'m cap':'')
              +(q.total?(' · quality '+q.passed+'/'+q.total):'')
              +(ro.recorded?(' · coder '+(ro.coder||'?')+(ro.reroutes?(' · '+ro.reroutes+' reroute(s)'):'')+(ro.spill_calls?(' · '+ro.spill_calls+' CPU spill(s)'):'')):'')
+             +(g.code&&g.code.sha?(' · code '+(g.code.sha_short||'').slice(0,7)+'@'+(g.code.branch||'?')+(g.code.changed_during_goal?' (restarted during)':'')):'')
              +(g.reruns?(' · re-run '+g.reruns+'x'):''))+'"'
       +' onclick="openCensusGoal(\'current\',\''+esc(g.id)+'\')"'
       +' style="border-left:3px solid '+col+';cursor:pointer">'
@@ -2736,6 +2737,38 @@ function _cenRoute(ro){
     +'</span>';
 }
 function _cenByRole(calls){const o={};(calls||[]).forEach(c=>{let r=c.role||c.job||'other';if(r.indexOf('loop_')===0)r=r.slice(5);const m=c.model||'?';if(r==='other'&&m.indexOf('embed')>=0)r='embed';o[r]=o[r]||{};o[r][m]=(o[r][m]||0)+1});return o}
+/* Which CODE a run (or goal) ran on: sha@branch, and where it changed. A
+   run that crossed a prod restart is two instruments in one file; the goal at
+   which the sha moved is the boundary, and it is named here rather than left
+   to be inferred from timestamps. */
+function _cenCode(c,goalId){
+  if(!c)return '<span class="hint">—</span>';
+  if(c.segments!==undefined){            // a run rollup
+    if(!(c.codes||[]).length)return '<span class="hint" title="no row of this run recorded its code (rows before 2026-09-10)">not recorded</span>';
+    const segs=(c.segments||[]).map(s=>s.code+' from '+s.first_goal+' ('+s.goals+' goal'+(s.goals===1?'':'s')+')').join('\n');
+    const chg=(c.changes||[]).map(x=>x.goal+': '+x.from+' → '+x.to+(x.kind==='during_goal'?' (restart DURING the goal)':'')).join('\n');
+    const first=c.codes[0].split('@');
+    return '<span title="'+esc('ran on:\n'+segs+(chg?('\n\ncode changed at:\n'+chg):'')+(c.unknown_goals?('\n'+c.unknown_goals+' goal(s) recorded no code'):''))+'">'
+      +'<span class="mono">'+esc(first[0].slice(0,7))+'</span><span class="hint">@'+esc(first[1]||'?')+'</span>'
+      +(c.changed?' <span style="color:#c96b6b" title="the code changed mid-run — see the goal rows for where">≠'+(c.codes.length>1?(' '+c.codes.length):'')+'</span>':'')
+      +(c.unknown_goals&&c.recorded_goals?' <span class="hint" title="some goals recorded no code">?</span>':'')
+      +'</span>';
+  }
+  if(!c.sha)return '<span class="hint" title="this row recorded no code">—</span>';
+  const b=c.boundary;
+  const end=c.at_end||{};
+  return '<span title="'+esc(c.sha+'@'+(c.branch||'?')+(c.dirty?' (dirty tree)':'')+(c.source==='events'?' (from the loop\'s event stamps)':'')
+      +(c.changed_during_goal?('\nRESTARTED during this goal → '+((end.sha_short||end.sha||'')+'@'+(end.branch||'?'))):'')
+      +(b&&b.kind==='between_goals'?('\nfirst goal on this code; the goal before ran on '+b.from):''))+'">'
+    +'<span class="mono">'+esc((c.sha_short||c.sha).slice(0,7))+'</span><span class="hint">@'+esc(c.branch||'?')+'</span>'
+    +(c.changed_during_goal?' <span style="color:#c96b6b" title="prod restarted during this goal">↻≠</span>':(b?' <span style="color:#c96b6b" title="code changed here">≠</span>':''))
+    +'</span>';
+}
+function _cenCodeOf(rec){
+  const c=rec&&rec.code; if(c&&c.sha)return {sha:c.sha,sha_short:c.sha_short||c.sha,branch:c.branch,dirty:!!c.dirty,changed_during_goal:!!c.changed_during_goal,at_end:c.at_end||null,source:'provenance'};
+  const cv=rec&&rec.code_version; if(Array.isArray(cv)&&cv.length){const p=String(cv[0]).split('@');return {sha:p[0],sha_short:p[0],branch:p[1]||'',dirty:false,changed_during_goal:new Set(cv.map(String)).size>1,at_end:null,source:'events'}}
+  return null;
+}
 function _cenWhen(ts){
   if(!ts)return '—';
   const d=new Date(ts*1000);
@@ -2812,6 +2845,7 @@ function _cenRow(s){
   return '<tr class="clk cen-run" data-run="'+esc(s.run_id)+'" onclick="toggleCensusRun(\''+esc(s.run_id)+'\')">'
     +'<td class="mono">'+(open?'▾':'▸')+' '+name+excl+(s.reruns?(' <span class="tag" title="goals re-run after a pause or interruption">↻'+s.reruns+'</span>'):'')+'</td>'
     +'<td class="mono hint">'+esc(s.template||(live&&hz.template)||'unlabelled')+'</td>'
+    +'<td>'+_cenCode(live&&!(s.code&&(s.code.codes||[]).length)&&hz.code?{codes:[(hz.code.sha_short||'')+'@'+(hz.code.branch||'')],segments:[{code:(hz.code.sha_short||'')+'@'+(hz.code.branch||''),first_goal:'(live)',goals:0}],changed:false,unknown_goals:0,recorded_goals:0}:s.code)+'</td>'
     +'<td class="mono hint">'+_cenWhen(s.ended_at)+'</td>'
     +'<td>'+s.goals+(live&&hz.goals_total?('<span class="hint">/'+hz.goals_total+'</span>'):'')+'</td>'
     +'<td style="color:#3cb371">'+s.done+'</td>'
@@ -2825,21 +2859,21 @@ function _cenRow(s){
     +'<td>'+(s.counters_reconcile?'<span style="color:#3cb371" title="step accounting adds up">ok</span>':'<span style="color:#c96b6b" title="this run\'s step accounting does not add up — numbers from it may be measuring the instrument">suspect</span>')+'</td>'
     +'<td class="hint">'+_cenProv(s.provenance)+'</td>'
     +'</tr>'
-    +'<tr class="cen-detail" data-run="'+esc(s.run_id)+'"'+(open?'':' style="display:none"')+'><td colspan="14" style="padding:0 6px 8px 18px;background:var(--bg2)">'
+    +'<tr class="cen-detail" data-run="'+esc(s.run_id)+'"'+(open?'':' style="display:none"')+'><td colspan="15" style="padding:0 6px 8px 18px;background:var(--bg2)">'
     +'<div id="cen-ctx-'+_cenId(s.run_id)+'"></div><div id="cen-goals-'+_cenId(s.run_id)+'">'+(open?'<span class="spin"></span>':'')+'</div></td></tr>';
 }
 function _cenOpRow(s){
   const open=!!_cenOpen[s.run_id];
   return '<tr class="clk cen-run" data-run="'+esc(s.run_id)+'" onclick="toggleCensusRun(\''+esc(s.run_id)+'\',true)">'
     +'<td class="mono">'+(open?'▾':'▸')+' '+esc(s.run_id)+' <span class="tag" title="operator (browser) census — a different instrument from the loop census">operator</span></td>'
-    +'<td class="mono hint">operator</td><td class="mono hint">—</td>'
+    +'<td class="mono hint">operator</td><td class="hint">—</td><td class="mono hint">—</td>'
     +'<td>'+s.goals+'</td><td style="color:#3cb371" title="finished — reached a clean stop, not necessarily achieved">'+s.finished+'</td>'
     +'<td style="color:#c96b6b" title="hit the step ceiling">'+s.ceiling+'</td>'
     +'<td class="hint" title="errored / incomplete">'+s.errored+' err · '+s.incomplete+' inc</td><td class="hint">—</td>'
     +'<td class="mono">'+_cenSec(s.duration_total_s)+'</td><td class="hint">—</td>'
     +'<td'+(s.thrashing_goals?' style="color:#c96b6b"':'')+' title="goals with an action attempted 3+ times">'+(s.thrashing_goals||0)+' thrash</td>'
     +'<td class="hint">—</td><td class="hint">—</td><td class="hint">—</td></tr>'
-    +'<tr class="cen-detail" data-run="'+esc(s.run_id)+'"'+(open?'':' style="display:none"')+'><td colspan="14" style="padding:0 6px 8px 18px;background:var(--bg2)">'
+    +'<tr class="cen-detail" data-run="'+esc(s.run_id)+'"'+(open?'':' style="display:none"')+'><td colspan="15" style="padding:0 6px 8px 18px;background:var(--bg2)">'
     +'<div id="cen-goals-'+_cenId(s.run_id)+'">'+(open?'<span class="spin"></span>':'')+'</div></td></tr>';
 }
 function _cenId(run){return String(run).replace(/[^a-z0-9]/gi,'_')}
@@ -2878,7 +2912,7 @@ function renderCensusTable(){
     +'</div>';
   if(!shown.length&&!ops.length){el.innerHTML=bar+'<div class="empty">No census runs match'+(r.dir?(' in <code>'+esc(r.dir)+'</code>'):'')+'.</div>';return}
   el.innerHTML=bar+'<div style="overflow-x:auto"><table id="census-table"><tr>'
-    +'<th>run</th><th title="the question set this run answers - runs of different templates are not comparable">template</th><th>when</th><th>goals</th><th>done</th><th title="goals that hit their wall cap">capped</th>'
+    +'<th>run</th><th title="the question set this run answers - runs of different templates are not comparable">template</th><th title="the git sha@branch prod ran; ≠ when it changed mid-run (a restart) - hover for where">code</th><th>when</th><th>goals</th><th>done</th><th title="goals that hit their wall cap">capped</th>'
     +'<th title="mean of each goal&#39;s declared quality checks - what was BUILT, not whether the run stopped">quality</th><th title="checks passed / declared">checks</th><th>wall</th>'
     +'<th title="the model in force for every loop role (planner, controller, tier, executor, writer, coder), the nodes the calls hit, and any re-route or CPU spill - hover for calls by role">models · nodes</th>'
     +'<th>warns</th><th title="steps no producer claims">unacc.</th><th>counters</th><th title="who drove this run, with the skill, tool and helpers - hover">operated by</th></tr>'
@@ -2941,6 +2975,7 @@ async function loadCensusGoals(run){
     return '<tr class="clk" onclick="event.stopPropagation();openCensusGoal(\''+esc(run)+'\',\''+esc(g.id)+'\')">'
       +'<td class="mono">'+esc(g.id)+(g.reruns&&g.reruns.length?(' <span class="tag" title="'+esc(g.reruns.map(x=>x.why).join('; '))+'">↻'+g.reruns.length+'</span>'):'')+'</td>'
       +'<td>'+_cenStatus(st)+'</td>'
+      +'<td>'+_cenCode(g.code_summary)+'</td>'
       +'<td class="mono"'+(hit?' style="color:#c9a35a" title="hit the '+Math.round(cap(g)/60)+'m cap"':'')+'>'+_cenSec(g.wall_s)+'<span class="hint">/'+_cenSec(cap(g))+'</span></td>'
       +'<td class="mono">'+(q.total?((q.passed||0)+'/'+q.total):'—')+((q.files_missing||[]).length?(' <span style="color:#c96b6b" title="declared files never produced: '+esc(q.files_missing.join(', '))+'">✗'+q.files_missing.length+'</span>'):'')+'</td>'
       +'<td class="mono">'+(g.planned==null?'—':(g.planned+'/'+g.executed+(g.inserted?('+'+g.inserted):'')))+(g.unaccounted?' <span style="color:#c96b6b" title="a step no producer claims">⚠</span>':'')+'</td>'
@@ -2956,7 +2991,7 @@ async function loadCensusGoals(run){
     +'<label class="hint" style="display:flex;gap:4px;align-items:center" onclick="event.stopPropagation()">Δ vs <select onchange="event.stopPropagation();_cenBase[\''+esc(run)+'\']=this.value;loadCensusCompare(\''+esc(run)+'\')" style="width:auto">'
     +'<option value="">—</option>'+bases.map(b=>'<option value="'+esc(b.run_id)+'"'+(_cenBase[run]===b.run_id?' selected':'')+'>'+esc(b.run_id)+((b.template||'')!==(s.template||'')?' (other template)':'')+(b.excluded?' · not usable':'')+'</option>').join('')
     +'</select></label></div>'
-    +'<table><tr><th>goal</th><th>status</th><th>wall / cap</th><th title="declared checks passed / total; ✗ files never produced">quality</th><th title="planned / executed (+inserted)">steps</th><th>tools</th><th>cycles</th><th>warns</th><th title="the model in force for every role of this goal, the nodes its calls hit, re-routes and CPU spills - hover for calls by role">models · nodes</th><th title="this goal in the base run, and the wall-time change - click a base cell to open that run\'s record">Δ vs base</th></tr>'
+    +'<table><tr><th>goal</th><th>status</th><th title="the code this goal ran on; ≠ marks where it changed">code</th><th>wall / cap</th><th title="declared checks passed / total; ✗ files never produced">quality</th><th title="planned / executed (+inserted)">steps</th><th>tools</th><th>cycles</th><th>warns</th><th title="the model in force for every role of this goal, the nodes its calls hit, re-routes and CPU spills - hover for calls by role">models · nodes</th><th title="this goal in the base run, and the wall-time change - click a base cell to open that run\'s record">Δ vs base</th></tr>'
     +rows+'</table>';
   if(_cenBase[run])loadCensusCompare(run);
 }
@@ -3145,7 +3180,8 @@ async function openCensusGoal(run,goal){
     '<div class="hint" style="margin-bottom:6px">'+esc(e.how_to_read||'')+'</div>'
     +'<div style="margin-bottom:6px"><b>done_when</b><div class="mono" style="white-space:pre-wrap">'+esc(e.done_when||'(not recorded)')+'</div></div>'
     +'<div class="row" style="gap:10px;margin-bottom:6px"><span>status '+_cenStatus(e.goal_status)+'</span>'
-      +'<span class="hint">tier '+esc(e.tier||'—')+' · intent '+esc(e.intent||'—')+' · '+_cenSec(e.wall_s)+'</span></div>'
+      +'<span class="hint">tier '+esc(e.tier||'—')+' · intent '+esc(e.intent||'—')+' · '+_cenSec(e.wall_s)+'</span>'
+      +'<span>code '+_cenCode((r.record&&r.record.code_summary)||_cenCodeOf(r.record))+'</span></div>'
     +outputHtml
     +(e.gate_complete===false?('<div style="color:#c96b6b;margin-bottom:6px"><b>gate said INCOMPLETE:</b> '+esc((e.gate_missing||[]).join('; '))+'</div>'):'')
     +(steps?('<table><tr><th>step</th><th>title</th><th>planned caps</th><th>tools used</th><th>cycles</th><th></th></tr>'+steps+'</table>'):'<div class="empty">No step detail — the run\'s event log has aged out.</div>')

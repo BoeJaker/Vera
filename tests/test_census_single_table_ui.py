@@ -114,6 +114,22 @@ def test_the_goal_modal_shows_the_calls(src):
         assert col in body
 
 
+# ── which code a run ran on, and where it changed ───────────────────────────
+def test_code_is_a_column_on_runs_and_goals(src):
+    assert "function _cenCode(" in src
+    assert "_cenCode(" in _fn(src, "_cenRow")
+    assert "_cenCode(g.code_summary)" in _fn(src, "loadCensusGoals")
+    cell = _fn(src, "_cenCode")
+    for signal in ("changed_during_goal", "boundary", "segments", "changes"):
+        assert signal in cell, "code cell must show %s" % signal
+    assert "restart" in cell.lower()
+
+
+def test_the_goal_modal_names_the_code(src):
+    body = _fn(src, "openCensusGoal")
+    assert "code_summary" in body and "_cenCodeOf(" in body
+
+
 # ── the live run can be paused, resumed and dropped from here ───────────────
 def test_the_live_strip_carries_the_controls(src):
     body = _fn(src, "loadCensusLive")
