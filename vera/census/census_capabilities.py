@@ -53,10 +53,12 @@ CENSUS_WALL_CAP_S = int(os.getenv("VERA_CENSUS_WALL_CAP_S", "1800") or 1800)
 
 # Parsed runs, keyed by (path, mtime_ns, size). An ARCHIVED run never changes,
 # so re-parsing every file on every panel refresh is pure waste; only the live
-# census.jsonl moves, and its stat changes when it does. Bounded because the
-# census dir only ever holds a few dozen files.
+# census.jsonl moves, and its stat changes when it does. Bounded, and evicted
+# one entry at a time: it used to hold 64 and CLEAR itself when full, and the
+# archive passed 64 files on 2026-09-10 - so every panel poll re-parsed every
+# run, which is what "the census is very slow to update" was.
 _CACHE: Dict[str, Tuple[Tuple[int, int], List[Dict[str, Any]]]] = {}
-_CACHE_MAX = 64
+_CACHE_MAX = 512
 
 
 def _stat_key(path: Path) -> Optional[Tuple[int, int]]:
@@ -98,8 +100,8 @@ def _read_run_sync(path: Path) -> List[Dict[str, Any]]:
         log.warning("census: reading %s failed: %s", path, e)
         return out
     if key is not None:
-        if len(_CACHE) >= _CACHE_MAX:
-            _CACHE.clear()
+        while len(_CACHE) >= _CACHE_MAX:
+            _CACHE.pop(next(iter(_CACHE)), None)   # oldest insertion first
         _CACHE[str(path)] = (key, out)
     return out
 
@@ -219,6 +221,16 @@ async def cap_census_runs(include_partial: bool = False, trace_id=None) -> Dict[
     # touches every run, so serialising the reads is the whole latency.
     records = await asyncio.gather(*(_read_run(p) for p in files.values()))
     summaries = [cc.summarise_run(rid, recs) for rid, recs in zip(files, records)]
+    for s, recs in zip(summaries, records):
+        # Which node and model served the run, and whether that changed mid-run
+        # (two instruments in one file). Rows from before routing was recorded
+        # report recorded_goals=0 rather than zeros that look like an answer.
+        s["routing"] = _ctl.routing_rollup(recs)
+        s["reruns"] = sum(len(r.get("reruns") or []) for r in recs if isinstance(r, dict))
+        try:
+            s["ended_at"] = files[s["run_id"]].stat().st_mtime
+        except Exception:
+            s["ended_at"] = None
     hist = cc.history(summaries)
     # The counts and both trends are computed over EVERY run and stay as they
     # were, so filtering the rows can never move a number. Only the rows the
@@ -250,8 +262,12 @@ async def cap_census_run(run: str = "", trace_id=None) -> Dict[str, Any]:
     if rid not in files:
         return {"error": f"unknown run '{rid}'", "available": sorted(files)}
     records = await _read_run(files[rid])
-    return {"run_id": rid, "summary": cc.summarise_run(rid, records),
-            "records": records}
+    summary = cc.summarise_run(rid, records)
+    summary["routing"] = _ctl.routing_rollup(records)
+    for r in records:
+        if isinstance(r, dict):
+            r["routing_summary"] = _ctl.routing_of(r)
+    return {"run_id": rid, "summary": summary, "records": records}
 
 
 @capability(
@@ -380,7 +396,13 @@ def _goal_ids_sync() -> List[str]:
 async def cap_census_live(trace_id=None) -> Dict[str, Any]:
     files = _run_files()
     done = await _read_run(files[cc.CURRENT]) if cc.CURRENT in files else []
-    goal_ids = await asyncio.to_thread(_goal_ids_sync)
+    # The harness says exactly which template and goal it is on; goals.json is
+    # the fallback for a harness from before it wrote the active file.
+    harness = await asyncio.to_thread(_read_active_sync)
+    control = await asyncio.to_thread(_read_control_sync)
+    goal_ids = list(harness.get("goal_ids") or []) if harness.get("live") else []
+    if not goal_ids:
+        goal_ids = await asyncio.to_thread(_goal_ids_sync)
     run = await _running_loop()
 
     counters: Dict[str, Any] = {}
@@ -398,10 +420,13 @@ async def cap_census_live(trace_id=None) -> Dict[str, Any]:
                                   "ok": s.get("ok"), "cycles": len(s.get("calls") or [])})
         except Exception as e:
             log.info("census.live: trace for %s unavailable: %s", sid, e)
-    # Match the running loop back to a census goal by its goal text, since the
-    # harness does not stamp the goal id onto the loop session.
+    # The harness names the goal in flight; before it did, the running loop was
+    # matched back to a goal by its goal text against goals.json.
     gtext = str(run.get("goal") or "")
-    if gtext:
+    if harness.get("live") and harness.get("current_goal") and (
+            not sid or harness.get("session_id") in ("", sid)):
+        active_goal = str(harness.get("current_goal"))
+    elif gtext:
         try:
             with (CENSUS_DIR / "goals.json").open(encoding="utf-8") as fh:
                 for g in json.load(fh):
@@ -431,13 +456,29 @@ async def cap_census_live(trace_id=None) -> Dict[str, Any]:
         # was showing half its own progress, which is why the only way to see
         # how a run was going was to load it into the Compare table.
         "recent": [{"id": r.get("id"), "status": r.get("status"),
-                    "wall_s": r.get("wall_s")} for r in done],
+                    "wall_s": r.get("wall_s"), "wall_cap_s": r.get("wall_cap_s"),
+                    "quality": _q_brief(r.get("quality")),
+                    "routing": _ctl.routing_of(r),
+                    "reruns": len(r.get("reruns") or [])} for r in done],
         # The ceiling the harness cancels at. Returned so the UI can mark a
         # goal that ran up against it instead of assuming a number — half the
         # default goal set finishes within a minute of the cap, so "did it hit
         # the wall" is the difference between a pass and a timeout.
-        "wall_cap_s": CENSUS_WALL_CAP_S,
+        "wall_cap_s": CENSUS_WALL_CAP_S if not harness.get("wall_cap_s")
+                      else int(harness["wall_cap_s"]),
+        # What the harness itself reports (template, goal, paused, done/total,
+        # liveness) and what it is currently being asked (run / pause / drop).
+        "harness": harness,
+        "control": {"state": _ctl.control_state(control), "reason": control.get("reason") or "",
+                    "by": control.get("by") or "", "ts": control.get("ts") or ""},
     }
+
+
+def _q_brief(q: Any) -> Dict[str, Any]:
+    if not isinstance(q, dict):
+        return {}
+    return {"passed": q.get("passed"), "total": q.get("total"),
+            "files_missing": q.get("files_missing") or []}
 
 
 @capability(
