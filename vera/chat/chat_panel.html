@@ -2435,6 +2435,9 @@ const CH = (() => {
     // _messageRunningLoop and claiming it reached a loop that already died.
     _serverLoopActive = false;
     document.getElementById('stopBtn')?.classList.remove('vis');
+    // A turn spoken while Vera was still answering was held rather than
+    // dropped; this is the moment it can be delivered.
+    if(_micPending){ setTimeout(()=>{ try{_micTrySubmit();}catch(_){} }, 400); }
   }
   function stopAll(){
     _GLOBAL_ABORT.abort('user_stop');
@@ -13368,6 +13371,9 @@ Your task: decide what to do next to advance toward the goal.
      anywhere near ffmpeg.
   ═══════════════════════════════════════════════════════════════════════ */
   let MIC_STOPFN=null, _micT0=0, _micTimer=null;
+  // Continuous mode: one press opens a conversation that survives
+  // across turns, instead of one press per utterance.
+  let MIC_CONTINUOUS=false, _micPending=false;
 
   function _micUi(on){
     MIC_ACTIVE=!!on;
@@ -13380,7 +13386,9 @@ Your task: decide what to do next to advance toward the goal.
       // A recording with no visible state is how a mic gets left running.
       _micT0=Date.now();
       const paint=()=>{const s=Math.floor((Date.now()-_micT0)/1000);
-        btn.textContent='● '+Math.floor(s/60)+':'+String(s%60).padStart(2,'0');};
+        const busy=(typeof _STREAMING!=='undefined'&&_STREAMING)||_audioPlaying;
+        btn.textContent=(busy?'◌ ':'● ')+(MIC_CONTINUOUS?'live ':'')
+          +Math.floor(s/60)+':'+String(s%60).padStart(2,'0');};
       paint(); _micTimer=setInterval(paint,500);
     } else { btn.textContent='Mic'; }
   }
@@ -13427,7 +13435,7 @@ Your task: decide what to do next to advance toward the goal.
     }catch(e){appendSys('Speech-to-text error: '+esc(String(e&&e.message||e)));return '';}
   }
 
-  function _startMicCapture(stream,onPhrase,onTurnEnd){
+  function _startMicCapture(stream,onPhrase,onTurn,onEnd){
     const AC=window.AudioContext||window.webkitAudioContext;
     const ctx=new AC();
     const src=ctx.createMediaStreamSource(stream);
@@ -13443,8 +13451,9 @@ Your task: decide what to do next to advance toward the goal.
     const PHRASE_GAP=700;      // pause that closes a phrase
     const MAX_SEG=15000;       // force a flush so long speech still streams
     const MIN_SPEECH=250;      // ignore coughs and clicks
-    const NO_SPEECH_MS=12000;  // give up only if NOTHING is ever heard
     const PREROLL=0.4;         // seconds of lead-in kept before speech starts
+    const SETTLE=500;          // quiet needed after Vera stops before listening
+    const IDLE_STOP=600000;    // a hot mic should not live forever
     const turnGap=Math.max(800,
       (parseFloat(document.getElementById('cfgVadPause')?.value)||2.0)*1000);
 
@@ -13457,6 +13466,7 @@ Your task: decide what to do next to advance toward the goal.
 
     let chunks=[],nSamples=0;
     let everSpoke=false,sawSpeech=false,segStart=0,lastLoud=0,peak=0,thr=ABS_MIN;
+    let busyUntil=0, lastVoice=Date.now();
     const t0=Date.now(); let stopped=false;
 
     function take(){
@@ -13465,6 +13475,7 @@ Your task: decide what to do next to advance toward the goal.
       let o=0;for(const c of chunks){out.set(c,o);o+=c.length;}
       chunks=[];nSamples=0;return out;
     }
+    function drop(){ chunks=[];nSamples=0;sawSpeech=false;everSpoke=false; }
     // Before speech starts, keep only a short tail. Discarding everything
     // clips the first syllable of whatever comes next.
     function trimPreroll(){
@@ -13487,21 +13498,31 @@ Your task: decide what to do next to advance toward the goal.
       const seg=flush?take():null;
       cleanup();
       if(seg)emit(seg);
-      onTurnEnd({reason,peak,thr,everSpoke});
+      onEnd({reason,peak,thr,everSpoke});
     }
 
     proc.onaudioprocess=(e)=>{
       if(stopped)return;
+      const now=Date.now();
+
+      // While Vera is answering or speaking, hear nothing. Without this the
+      // mic transcribes Vera's own voice straight back into the input, and in
+      // continuous mode that is a feedback loop that never ends.
+      const busy=(typeof _STREAMING!=='undefined'&&_STREAMING)||_audioPlaying;
+      if(busy){ drop(); busyUntil=now; lastLoud=now; lastVoice=now; return; }
+      // Give the tail of the last utterance time to die away.
+      if(now-busyUntil<SETTLE){ drop(); lastLoud=now; return; }
+
       const inp=e.inputBuffer.getChannelData(0);
       chunks.push(new Float32Array(inp)); nSamples+=inp.length;
       let s=0;for(let i=0;i<inp.length;i++)s+=inp[i]*inp[i];
-      const v=Math.sqrt(s/inp.length), now=Date.now();
+      const v=Math.sqrt(s/inp.length);
       if(v>peak)peak=v;
 
       thr=Math.max(floor*MULT,ABS_MIN);
       if(v>thr){
         if(!sawSpeech)segStart=now;
-        everSpoke=true; sawSpeech=true; lastLoud=now;
+        everSpoke=true; sawSpeech=true; lastLoud=now; lastVoice=now;
         return;
       }
       // Quiet frame — the only kind it is safe to learn the room from.
@@ -13509,9 +13530,10 @@ Your task: decide what to do next to advance toward the goal.
 
       if(!everSpoke){
         trimPreroll();
-        // Only the long timeout applies before anything has been heard; the
-        // short inter-phrase pause must not end a turn that never began.
-        if(now-t0>NO_SPEECH_MS)finish('no-speech',false);
+        // A continuous session waits indefinitely for you to start; a one-shot
+        // press should not hang, and neither should sit hot forever.
+        if(!MIC_CONTINUOUS&&now-t0>12000)finish('no-speech',false);
+        else if(now-lastVoice>IDLE_STOP)finish('idle',false);
         return;
       }
 
@@ -13520,15 +13542,35 @@ Your task: decide what to do next to advance toward the goal.
         const seg=take(); sawSpeech=false;
         if((now-segStart)>MIN_SPEECH)emit(seg);
       }
-      if(quiet>turnGap){ finish('pause',false); return; }
+      if(quiet>turnGap){
+        if(MIC_CONTINUOUS){
+          // The turn is over, but the session is not. Hand it off and keep
+          // listening for the next one.
+          drop(); lastLoud=now; onTurn();
+          return;
+        }
+        finish('pause',false); return;
+      }
       if(sawSpeech&&(now-segStart)>MAX_SEG){ emit(take()); segStart=now; }
     };
 
     return ()=>finish('manual',true);   // button pressed again mid-sentence
   }
 
+  // Submit whatever the mic has transcribed, once Vera is free to receive it.
+  // Held rather than dropped: a turn spoken while Vera is still answering is
+  // still something you meant to say.
+  function _micTrySubmit(){
+    const inp=document.getElementById('chatInput');
+    if(!inp||!inp.value.trim()){ _micPending=false; return; }
+    if(typeof _STREAMING!=='undefined'&&_STREAMING){ _micPending=true; return; }
+    _micPending=false;
+    send();
+  }
+
   async function toggleMic(){
     if(MIC_ACTIVE){
+      MIC_CONTINUOUS=false; _micPending=false;
       try{MIC_STOPFN&&MIC_STOPFN();}catch(_){ _micUi(false); }
       MIC_STOPFN=null; return;
     }
@@ -13538,8 +13580,10 @@ Your task: decide what to do next to advance toward the goal.
     }
     try{
       const stream=await navigator.mediaDevices.getUserMedia(
-        {audio:{echoCancellation:true,noiseSuppression:true}});
+        {audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
       let pending=Promise.resolve(), heard=false;
+      // One press starts a conversation, not a single dictation.
+      MIC_CONTINUOUS=true; _micPending=false;
 
       const onPhrase=(samples,rate)=>{
         // Chain the requests: phrases must land in the order they were spoken,
@@ -13556,13 +13600,19 @@ Your task: decide what to do next to advance toward the goal.
           }
         });
       };
-      const onTurnEnd=(info)=>{
-        MIC_STOPFN=null; _micUi(false);
+      // A turn ended. Wait for its transcription to land before submitting,
+      // or an empty input would be sent and the words arrive after.
+      const onTurn=()=>{ pending.then(()=>_micTrySubmit()); };
+
+      const onEnd=(info)=>{
+        MIC_STOPFN=null; MIC_CONTINUOUS=false; _micUi(false);
         pending.then(()=>{
+          if(info&&info.reason==='idle'){
+            appendSys('Mic switched off after 10 minutes idle.'); return;
+          }
           if(!heard){
             // Say WHY nothing was heard. "No speech detected" alone is
-            // indistinguishable from a broken threshold, which is exactly the
-            // failure this replaced.
+            // indistinguishable from a broken threshold.
             const p=(info&&typeof info.peak==='number')?info.peak.toFixed(4):'?';
             const t=(info&&typeof info.thr==='number')?info.thr.toFixed(4):'?';
             const why=(info&&info.everSpoke)
@@ -13572,11 +13622,11 @@ Your task: decide what to do next to advance toward the goal.
               +'. Check the input device if the level looks low.');
             return;
           }
-          if(document.getElementById('cfgStt')?.checked)send();
+          _micTrySubmit();
         });
       };
 
-      MIC_STOPFN=_startMicCapture(stream,onPhrase,onTurnEnd);
+      MIC_STOPFN=_startMicCapture(stream,onPhrase,onTurn,onEnd);
       _micUi(true);
     }catch(e){
       const nm=(e&&e.name)||'';
@@ -13585,9 +13635,10 @@ Your task: decide what to do next to advance toward the goal.
                 : nm==='NotReadableError'? 'Microphone is in use by another application.'
                 : 'Mic error: '+String(e&&e.message||e);
       appendSys('<span style="color:var(--err)">'+esc(msg)+'</span>');
-      _micUi(false);
+      MIC_CONTINUOUS=false; _micUi(false);
     }
   }
+
 
 
 
