@@ -170,3 +170,37 @@ def test_pause_acked_means_paused_since_the_control_was_written():
     assert ct.pause_acked({"state": "dropped", "updated_at": "2026-09-10T17:11:46Z"}, written, "drop")
     assert not ct.pause_acked({"state": "paused", "updated_at": "2026-09-10T17:11:46Z"}, written, "drop")
     assert 10 <= ct.PAUSE_ACK_MAX_S <= 120, "bounded: a silent harness must not hang the restart"
+
+
+# ── the running goal's routing, live ─────────────────────────────────────────
+def test_live_routing_summarises_the_goals_own_calls():
+    entries = [
+        {"ts": "2026-09-10T16:20:00Z", "instance": "gpu-250", "model": "q", "tok_per_s": 20.0, "status": "done"},   # before the goal
+        {"ts": "2026-09-10T16:21:30Z", "instance": "cpu-246", "model": "nomic-embed-text", "status": "done"},
+        {"ts": "2026-09-10T16:22:00Z", "instance": "gpu-250", "model": "q", "tok_per_s": 24.0, "gpu_resident_pct": 100,
+         "elapsed_s": 5.2, "job_type": "loop_coder", "status": "done"},
+        {"ts": "2026-09-10T16:23:00Z", "instance": "gpu-250", "model": "q", "tok_per_s": 2.0, "gpu_resident_pct": 80,
+         "cpu_spill": True, "status": "done"},
+        {"ts": "2026-09-10T16:24:00Z", "instance": "cpu-247", "model": "q", "tok_per_s": 1.0, "escalated": True, "status": "done"},
+        {"ts": "2026-09-10T16:25:00Z", "instance": "gpu-250", "model": "q", "tok_per_s": 30.0, "status": "done",
+         "session_id": "other-session"},                                                                              # someone else's
+    ]
+    r = ct.live_routing(entries, "2026-09-10T16:21:00Z", session_id="sid-1", last_n=3)
+    assert r["calls"] == 4 and r["since"] == "2026-09-10T16:21:00"
+    assert r["by_node"] == {"cpu-246": 1, "gpu-250": 2, "cpu-247": 1}
+    assert r["by_model"] == {"nomic-embed-text": 1, "q": 3}
+    assert r["spill_calls"] == 1 and r["reroutes"] == 1
+    assert r["tok_s_median"] == 2.0, "median of 24, 2, 1"
+    assert [x["node"] for x in r["last"]] == ["gpu-250", "gpu-250", "cpu-247"] and r["last"][1]["spill"] is True
+    assert r["last"][0]["ts"] == "16:22:00" and r["last"][0]["job"] == "loop_coder"
+    # the last calls are GENERATION calls; an embedding burst does not hide them
+    r3 = ct.live_routing(entries + [{"ts": "2026-09-10T16:26:0%dZ" % k, "instance": "cpu-246", "model": "nomic-embed-text"} for k in range(5)],
+                         "2026-09-10T16:21:00Z", session_id="sid-1", last_n=3)
+    assert r3["calls"] == 9 and [x["model"] for x in r3["last"]] == ["q", "q", "q"]
+    only_embed = ct.live_routing([{"ts": "2026-09-10T16:26:00Z", "instance": "cpu-246", "model": "nomic-embed-text"}], "2026-09-10T16:21:00Z")
+    assert [x["model"] for x in only_embed["last"]] == ["nomic-embed-text"], "nothing else: show what there is"
+    # a call stamped with the goal's own session counts even from before the window
+    r2 = ct.live_routing([{"ts": "2026-09-10T16:00:00Z", "instance": "gpu-250", "model": "q", "session_id": "sid-1"}],
+                         "2026-09-10T16:21:00Z", session_id="sid-1")
+    assert r2["calls"] == 1
+    assert ct.live_routing([], "", session_id="")["calls"] == 0
