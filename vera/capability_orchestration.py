@@ -2549,7 +2549,7 @@ def _err_text(e: Exception, limit: int = 300) -> str:
 _ARGS_SECRET_RE = None  # compiled lazily
 
 
-def _args_preview(kw: dict, limit: int = 600) -> str:
+def _args_preview(kw: dict, limit: int = 600, *, redact=()) -> str:
     """Compact single-line `k=v` preview of a capability's arguments for the
     jobs/observe panels. Values are truncated per-key, secrets masked, and the
     whole string capped so events stay small."""
@@ -2559,10 +2559,11 @@ def _args_preview(kw: dict, limit: int = 600) -> str:
         _ARGS_SECRET_RE = _re.compile(r"(pass(word)?|token|secret|api_?key|credential|auth)", _re.I)
     try:
         parts = []
+        redacted = {str(key) for key in (redact or ())}
         for k, v in kw.items():
             if k in ("trace_id",):
                 continue
-            if _ARGS_SECRET_RE.search(str(k)):
+            if str(k) in redacted or _ARGS_SECRET_RE.search(str(k)):
                 parts.append(f"{k}=***")
                 continue
             try:
@@ -2579,7 +2580,7 @@ def _args_preview(kw: dict, limit: int = 600) -> str:
         return ""
 
 
-def _args_compact(kw: dict, max_keys: int = 10, max_val: int = 160) -> dict:
+def _args_compact(kw: dict, max_keys: int = 10, max_val: int = 160, *, redact=()) -> dict:
     """Structured (masked, truncated) argument snapshot of a capability call.
     Same masking rules as _args_preview but returned as a dict so panel-side
     consumers (the live cap-activity mirror) can map args onto UI fields."""
@@ -2588,12 +2589,13 @@ def _args_compact(kw: dict, max_keys: int = 10, max_val: int = 160) -> dict:
         _args_preview({})  # compiles the shared secret-mask regex
     out: dict = {}
     try:
+        redacted = {str(key) for key in (redact or ())}
         for k, v in kw.items():
             if k in ("trace_id",):
                 continue
             if len(out) >= max_keys:
                 break
-            if _ARGS_SECRET_RE.search(str(k)):
+            if str(k) in redacted or _ARGS_SECRET_RE.search(str(k)):
                 out[k] = "***"
                 continue
             try:
@@ -4900,7 +4902,7 @@ _ACT_RESULT_MAX_BYTES   = 8192    # serialised result cap
 _ACT_PREVIEW_MAX_CHARS  = 400     # human-readable preview line
 
 
-def _act_safe_params(kw: dict) -> dict:
+def _act_safe_params(kw: dict, *, redact=()) -> dict:
     """
     Return a sanitised copy of cap params suitable for storage.
 
@@ -4911,11 +4913,12 @@ def _act_safe_params(kw: dict) -> dict:
     SECRETY = ("password", "secret", "token", "api_key", "apikey",
                "auth", "credential", "ssh_key", "private_key")
     out: dict = {}
+    redacted = {str(key) for key in (redact or ())}
     for k, v in kw.items():
         if k == "trace_id":
             continue
         kl = k.lower()
-        if any(s in kl for s in SECRETY):
+        if str(k) in redacted or any(s in kl for s in SECRETY):
             out[k] = "[redacted]"
             continue
         if isinstance(v, str):
@@ -4954,7 +4957,8 @@ def _act_extract_text(result):
 def _act_enqueue(cap_name: str, group: str, session_id: str,
                  trace_id: str, kw: dict, result: object,
                  elapsed_ms: int,
-                 trigger_id: str = "", trigger_cap: str = ""):
+                 trigger_id: str = "", trigger_cap: str = "",
+                 redact_args=(), redact_result: bool = False):
     """
     Non-blocking enqueue of a capability call for background recording.
 
@@ -5001,7 +5005,7 @@ def _act_enqueue(cap_name: str, group: str, session_id: str,
             except RuntimeError:
                 return  # no running loop yet — skip
 
-        safe_params = _act_safe_params(kw or {})
+        safe_params = _act_safe_params(kw or {}, redact=redact_args)
         # Truncate the JSON repr to keep the queue item compact even for
         # chatty caps. We store both a human preview and the full structured
         # result so downstream queries can drill in.
@@ -5010,14 +5014,17 @@ def _act_enqueue(cap_name: str, group: str, session_id: str,
         except Exception:
             params_json = str(safe_params)[:_ACT_PARAMS_MAX_BYTES]
         try:
-            if isinstance(result, (dict, list)):
+            if redact_result:
+                result_json = json.dumps({"redacted": True})
+            elif isinstance(result, (dict, list)):
                 result_json = json.dumps(result, default=str)[:_ACT_RESULT_MAX_BYTES]
             else:
                 result_json = str(result)[:_ACT_RESULT_MAX_BYTES]
         except Exception:
             result_json = str(result)[:_ACT_RESULT_MAX_BYTES]
 
-        preview_text = _act_extract_text(result)[:_ACT_PREVIEW_MAX_CHARS]
+        preview_text = ("[redacted]" if redact_result else
+                        _act_extract_text(result)[:_ACT_PREVIEW_MAX_CHARS])
 
         _ACT_QUEUE.put_nowait({
             "cap_name":    cap_name,
@@ -5397,6 +5404,11 @@ def capability(
     # The legacy "auto" value is accepted for compatibility and treated as "on".
     memory:      str            = "on",
     silent:      bool           = False,   # suppress cap.call/cap.ok events (polling caps)
+    # Explicit activity/event redaction for capabilities whose ordinary field
+    # names are sensitive (for example API paths, request bodies, and returned
+    # payloads). This is enforced before data reaches events, Redis, or memory.
+    redact_args: List[str]      = None,
+    redact_result: bool         = False,
     # ── Schema override ─────────────────────────────────────────────────────
     # Optional JSON-Schema fragment to enrich the auto-generated schema.
     # The decorator always runs generate_schema(func) to derive types and the
@@ -5443,6 +5455,7 @@ def capability(
         _auto_schema   = generate_schema(func)
         _final_schema  = _merge_schema(_auto_schema, schema) if schema else _auto_schema
         group  = name.split(".")[0]
+        _redact_args = frozenset(str(key) for key in (redact_args or ()))
 
         @functools.wraps(func)
         async def wrap(**kw):
@@ -5498,11 +5511,11 @@ def capability(
                             "trigger_id":  chain.get("trigger_id",""),
                             "trigger_cap": chain.get("trigger_cap",""),
                             "group":       group,
-                            "args_preview": _args_preview(kw),
+                            "args_preview": _args_preview(kw, redact=_redact_args),
                             "policy":      _policy_shadow,
                         })
                         await _mirror_cap_activity("call", name, _sid, tid, group,
-                                                   args=_args_compact(kw))
+                                                   args=_args_compact(kw, redact=_redact_args))
                         if _enforcement["blocked"]:
                             await emit_event({
                                 "type": "cap.denied", "name": name,
@@ -5537,8 +5550,8 @@ def capability(
                         await emit_stream(s,tid,result,name)
                     _elapsed_ms = round((time.monotonic()-_t0)*1000)
                     # Build result preview regardless of silent
-                    _preview = ""
-                    if isinstance(result, dict):
+                    _preview = "[redacted]" if redact_result else ""
+                    if not redact_result and isinstance(result, dict):
                         for _k in ("text","response","content","summary","result",
                                    "status","job_id","error","path","name"):
                             _v = result.get(_k)
@@ -5551,8 +5564,11 @@ def capability(
                             _cache = {"name": name, "trace_id": tid,
                                       "session_id": _sid, "elapsed_ms": _elapsed_ms,
                                       "ts": now_iso(), "preview": _preview,
-                                      "result": json.dumps(result)[:4096]
-                                               if isinstance(result, (dict,list)) else str(result)[:4096]}
+                                      "result": (json.dumps({"redacted": True})
+                                                 if redact_result else
+                                                 (json.dumps(result)[:4096]
+                                                  if isinstance(result, (dict,list))
+                                                  else str(result)[:4096]))}
                             await REDIS.setex(
                                 f"vera:cap:result:{name}",
                                 300,  # 5 min TTL — recent state always inspectable
@@ -5598,6 +5614,8 @@ def capability(
                             elapsed_ms=_elapsed_ms,
                             trigger_id=chain.get("trigger_id", ""),
                             trigger_cap=chain.get("trigger_cap", ""),
+                            redact_args=_redact_args,
+                            redact_result=redact_result,
                         )
                     return result
                 except PolicyEnforcementDenied:
@@ -5632,7 +5650,7 @@ def capability(
                         "name":        name,
                         "error":       _err_str,
                         "error_type":  type(e).__name__,
-                        "args_preview": _args_preview(kw),
+                        "args_preview": _args_preview(kw, redact=_redact_args),
                         "traceback":   _err_tb,
                         "attempt":     attempt,
                         "trace_id":    tid,
@@ -5662,6 +5680,8 @@ def capability(
             "mcp_expose":  mcp_expose,
             "memory":      memory,
             "silent":      silent,
+            "redact_args": sorted(_redact_args),
+            "redact_result": bool(redact_result),
             "contract":    copy.deepcopy(contract) if isinstance(contract, dict) else {},
             # HTTP route metadata — used at lifespan mount time
             "http_method": http_method,

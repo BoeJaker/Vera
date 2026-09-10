@@ -10,6 +10,7 @@ import hashlib
 import json
 import re
 from typing import Any, Dict, Mapping
+from urllib.parse import urlsplit
 
 
 SCHEMA = "vera.external-effect-plan/v1"
@@ -178,3 +179,34 @@ def validate_external_effect_plan(value: Mapping[str, Any]) -> Dict[str, Any]:
     if value.get("plan_id") != expected_id:
         raise ValueError("plan_id does not match effect identity")
     return json.loads(json.dumps(value, sort_keys=True))
+
+
+def plan_api_effect_shadow(*, integration_id: str, method: str, path: str = "",
+                           idempotency_key: str = "",
+                           approval_receipt_ref: str = "", retry: bool = False,
+                           prior_success: bool = False) -> Dict[str, Any]:
+    """Describe API-call policy compatibility without enforcing or executing it."""
+    method = str(method or "GET").strip().upper()
+    path_only = urlsplit(str(path or "")).path or "/"
+    operation_digest = hashlib.sha256(
+        f"{method}\n{path_only}".encode("utf-8")).hexdigest()
+    plan = plan_external_effect(
+        connection_id=f"integration:{integration_id}",
+        operation=f"api.call:{operation_digest}", method=method,
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
+    would_admit = bool(plan["admission"]["allowed"])
+    return {
+        "schema": "vera.external-effect-shadow/v1",
+        "enforcement": "observe_only",
+        "plan": plan,
+        "replay": {"already_succeeded": bool(prior_success),
+                   "would_suppress": bool(prior_success)},
+        "decision": {"would_admit": would_admit,
+                     "would_execute": would_admit and not prior_success,
+                     "reasons": list(plan["admission"]["reasons"])},
+        "blocks_current_call": False,
+        "forwards_control_references": False,
+        "records_completion": False,
+        "executes": False,
+    }
