@@ -795,8 +795,12 @@ async def census_before_restart(resume: bool, by: str = "sys.dev.restart") -> Di
     on the way back up) or a drop, but ONLY when a census is genuinely live —
     a pause left on file with nothing running would stop the next census cold."""
     active = await asyncio.to_thread(lambda: _ctl.read_json(_active_path()))
-    plan = _ctl.restart_plan(active, resume)
+    control = await asyncio.to_thread(lambda: _ctl.read_json(_control_path()))
+    plan = _ctl.restart_plan(active, resume, control)
     if plan["action"] == "none":
+        if plan.get("kept"):
+            log.warning("census: a person's pause is on file (%s) - the restart leaves it; "
+                        "the harness stays paused after the restart", plan["why"])
         return plan
     data = _ctl.make_control(plan["action"], reason=_ctl.RESTART_REASON, by=by,
                              resume_on_start=(plan["action"] == "pause"))
