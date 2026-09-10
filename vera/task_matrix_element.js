@@ -25,6 +25,37 @@
  * Events dispatched: taskmatrix:opencell {detail:{task, run_id}}
  */
 (function () {
+
+  /* ONE event socket per page. Every element used to open its own /ws
+     (seven on the Loop Lab panel, 2026-09-10) and reconnect on its own clock.
+     Now: the page's own bus if it has one (window._veraSubscribe, which the
+     panel exposes), else the parent frame's, else one shared socket on
+     window.__veraEventsBus that every element subscribes to. Returns an
+     unsubscribe function. */
+  function veraSharedEvents(base, fn) {
+    try {
+      if (typeof window._veraSubscribe === 'function' && !window.__veraEventsBusOwner) { window._veraSubscribe(fn); return () => {}; }
+      const par = window.parent;
+      if (par && par !== window && typeof par._veraSubscribe === 'function') { par._veraSubscribe(fn); return () => {}; }
+    } catch (_) {}
+    const w = window;
+    if (!w.__veraEventsBus) {
+      const bus = { subs: new Set(), ws: null, base: base };
+      const connect = () => {
+        try {
+          const ws = new WebSocket(bus.base.replace(/^http/, 'ws') + '/ws');
+          ws.onopen = () => { try { ws.send(JSON.stringify({ action: 'subscribe', stream: 'vera:events' })); } catch (_) {} };
+          ws.onmessage = e => { let ev; try { ev = JSON.parse(e.data); } catch (_) { return; } bus.subs.forEach(s => { try { s(ev); } catch (_) {} }); };
+          ws.onclose = () => { bus.ws = null; setTimeout(connect, 3000); };
+          ws.onerror = () => { try { ws.close(); } catch (_) {} };
+          bus.ws = ws;
+        } catch (_) { setTimeout(connect, 5000); }
+      };
+      bus.subscribe = s => { bus.subs.add(s); if (!bus.ws) connect(); return () => bus.subs.delete(s); };
+      w.__veraEventsBus = bus;
+    }
+    return w.__veraEventsBus.subscribe(fn);
+  }
   if (customElements.get('vera-task-matrix')) return;
 
   const TMPL = document.createElement('template');
@@ -83,7 +114,7 @@ td.rowhead{text-align:left;font-family:var(--mono,monospace);font-size:9.5px;
     _onScreen() { return this.offsetParent !== null; }
     disconnectedCallback() {
       if (this._pollTimer) clearInterval(this._pollTimer);
-      try { this._ws && this._ws.close(); } catch (_) {}
+      try { this._unsubEvents && this._unsubEvents(); this._unsubEvents = null; } catch (_) {}
     }
 
     setApiBase(url) { this._base = (url || '').replace(/\/$/, ''); }
@@ -93,14 +124,8 @@ td.rowhead{text-align:left;font-family:var(--mono,monospace);font-size:9.5px;
     }
 
     _connectWs() {
-      try {
-        const wsUrl = this._getBase().replace(/^http/, 'ws') + '/ws';
-        this._ws = new WebSocket(wsUrl);
-        this._ws.onopen = () => { try { this._ws.send(JSON.stringify({ action: 'subscribe', stream: 'vera:events' })); } catch (_) {} };
-        this._ws.onmessage = e => { try { this._onEvent(JSON.parse(e.data)); } catch (_) {} };
-        this._ws.onclose = () => { setTimeout(() => this._connectWs(), 3000); };
-        this._ws.onerror = () => { try { this._ws.close(); } catch (_) {} };
-      } catch (_) { setTimeout(() => this._connectWs(), 5000); }
+      if (this._unsubEvents) return;
+      this._unsubEvents = veraSharedEvents(this._getBase(), ev => { try { this._onEvent(ev); } catch (_) {} });
     }
 
     _onEvent(ev) {
