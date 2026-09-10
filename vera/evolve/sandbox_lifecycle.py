@@ -6,7 +6,15 @@ from collections.abc import Mapping
 from typing import Any
 
 
-PROTECTED_BRANCHES = {"bleeding-edge", "loop-lab/bleeding-edge-mirror"}
+# Every registered bleeding edge and its mirror (edge_registry.py); the literal
+# pair is the fallback for a runner that loads this module by file path.
+try:
+    from .edge_registry import edges as _edges
+    PROTECTED_BRANCHES = {name for rec in _edges().values()
+                          for name in (rec["branch"], rec["mirror"])}
+except ImportError:  # pragma: no cover - module loaded outside its package
+    PROTECTED_BRANCHES = {"bleeding-edge", "loop-lab/bleeding-edge-mirror",
+                          "bleeding-edge-design", "loop-lab/bleeding-edge-design-mirror"}
 
 
 def git_worktree_diagnosis(*, worktree_exists: bool, git_ok: bool,

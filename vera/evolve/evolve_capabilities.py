@@ -4744,7 +4744,7 @@ async def _default_branch(repo_root: Optional[Path] = None) -> str:
     return "main"
 
 
-async def _default_pipeline_base(repo_root: Optional[Path] = None) -> str:
+async def _default_pipeline_base(repo_root: Optional[Path] = None, edge: str = "") -> str:
     """Where new Loop Lab branches fork from, and where evolve.pipeline.promote
     merges back to, by default (2026-08-16 bleeding-edge-trunk-workflow):
     'bleeding-edge' — the staging trunk — when it exists for this repo,
@@ -4753,10 +4753,13 @@ async def _default_pipeline_base(repo_root: Optional[Path] = None) -> str:
     mainline is a separate, deliberate action
     (evolve.bleeding_edge.promote_to_main), never automatic."""
     root = repo_root or _repo_root()
-    have = await _git("rev-parse", "--verify", f"refs/heads/{BLEEDING_EDGE_BRANCH}",
-                      repo_root=root)
+    try:
+        e = _edge(edge)
+    except ValueError:
+        return await _default_branch(repo_root=root)
+    have = await _git("rev-parse", "--verify", f"refs/heads/{e['branch']}", repo_root=root)
     if have["ok"]:
-        return BLEEDING_EDGE_BRANCH
+        return e["branch"]
     return await _default_branch(repo_root=root)
 
 
@@ -4880,18 +4883,48 @@ async def _refresh_mainline_mirror(repo_root: Optional[Path] = None) -> Dict[str
 # Once the standing bleeding-edge container (below) permanently holds a
 # worktree, "bleeding-edge" is encumbered the same way "main" always was —
 # hence its own mirror, same reasoning as MAINLINE_MIRROR_BRANCH above.
-BLEEDING_EDGE_BRANCH = "bleeding-edge"
-BLEEDING_EDGE_MIRROR_BRANCH = "loop-lab/bleeding-edge-mirror"
+# 2026-09-10 multiple bleeding edges: the integration branches are a REGISTRY
+# (vera/evolve/edge_registry.py). `bleeding-edge` is the DEFAULT edge and these
+# two constants stay its branch + mirror for every caller that still spells them;
+# a second edge (e.g. `bleeding-edge-design`, the UI redesign programme's own
+# trunk) is the same machinery under another name, resolved by _edge(name).
+try:
+    from Vera.vera.evolve import edge_registry as _edges  # noqa: E402
+except ImportError:  # pragma: no cover - lowercase package path
+    from vera.evolve import edge_registry as _edges  # type: ignore  # noqa: E402
+
+BLEEDING_EDGE_BRANCH = _edges.resolve_edge("")["branch"]
+BLEEDING_EDGE_MIRROR_BRANCH = _edges.resolve_edge("")["mirror"]
 
 
-async def _refresh_bleeding_edge_mirror(repo_root: Optional[Path] = None) -> Dict[str, Any]:
+def _edge(name: str = "") -> Dict[str, Any]:
+    """The edge record a caller means (registry name, branch, mirror or slug;
+    blank = the default edge). Raises ValueError for an unknown edge so a caller
+    returns a clear error instead of silently landing on the wrong trunk."""
+    rec = _edges.resolve_edge(name)
+    if not rec:
+        raise ValueError(f"unknown bleeding edge '{name}' - registered: "
+                         + ", ".join(_edges.edge_names()))
+    return rec
+
+
+async def _refresh_bleeding_edge_mirror(repo_root: Optional[Path] = None,
+                                        edge: str = "") -> Dict[str, Any]:
+    """Create or fast-forward an edge's mirror branch to the edge's tip. The
+    default edge is `bleeding-edge`; pass edge= for any other registered edge."""
     root = repo_root or _repo_root()
-    have_be = await _git("rev-parse", "--verify", f"refs/heads/{BLEEDING_EDGE_BRANCH}",
+    try:
+        e = _edge(edge)
+    except ValueError as err:
+        return {"error": str(err)}
+    have_be = await _git("rev-parse", "--verify", f"refs/heads/{e['branch']}",
                          repo_root=root)
     if not have_be["ok"]:
-        return {"error": f"'{BLEEDING_EDGE_BRANCH}' branch does not exist in this repo"}
-    return await _refresh_loop_lab_mirror(BLEEDING_EDGE_MIRROR_BRANCH, BLEEDING_EDGE_BRANCH,
-                                          repo_root=root)
+        return {"error": f"'{e['branch']}' branch does not exist in this repo"}
+    return await _refresh_loop_lab_mirror(e["mirror"], e["branch"], repo_root=root)
+
+
+_refresh_edge_mirror = _refresh_bleeding_edge_mirror
 
 
 _MAINLINE_MIRROR_REFRESH_INTERVAL_S = int(
@@ -4907,14 +4940,15 @@ async def _scheduled_mainline_mirror_refresh() -> None:
             log.warning("evolve: mainline mirror refresh failed: %s", res["error"])
     except Exception as e:
         log.debug("mainline mirror refresh: %s", e)
-    try:
-        res2 = await _refresh_bleeding_edge_mirror()
-        if res2.get("ok"):
-            log.info("evolve: bleeding-edge mirror refreshed (%s)", res2.get("action"))
-        elif res2.get("error"):
-            log.debug("evolve: bleeding-edge mirror refresh skipped: %s", res2["error"])
-    except Exception as e:
-        log.debug("bleeding-edge mirror refresh: %s", e)
+    for _name in _edges.edge_names():
+        try:
+            res2 = await _refresh_bleeding_edge_mirror(edge=_name)
+            if res2.get("ok"):
+                log.info("evolve: %s mirror refreshed (%s)", _name, res2.get("action"))
+            elif res2.get("error"):
+                log.debug("evolve: %s mirror refresh skipped: %s", _name, res2["error"])
+        except Exception as e:
+            log.debug("%s mirror refresh: %s", _name, e)
 
 
 schedule(_scheduled_mainline_mirror_refresh, _MAINLINE_MIRROR_REFRESH_INTERVAL_S,
@@ -5480,11 +5514,19 @@ async def evolve_pipeline_run(kind: str = "variant", profile: str = "",
                         "Output: {ok, id, ahead_by, changed_files, gate_passed}.")
 async def evolve_pipeline_adopt(branch: str = "", to: str = "bleeding-edge", title: str = "",
                                 summary: str = "", repo: str = DEFAULT_REPO_ID,
-                                session_id: str = "", authorize_main: str = "", trace_id=None):
+                                session_id: str = "", authorize_main: str = "",
+                                edge: str = "", trace_id=None):
     branch = (branch or "").strip()
     if not branch:
         return {"error": "branch required"}
-    to = (to or "bleeding-edge").strip()
+    to = (to or "").strip()
+    if edge:
+        # edge= is the friendlier spelling of to=: a registry name resolves to its branch
+        try:
+            to = _edge(edge)["branch"]
+        except ValueError as err:
+            return {"error": str(err)}
+    to = to or BLEEDING_EDGE_BRANCH
     if repo != DEFAULT_REPO_ID and not (await evolve_repo_get(id=repo)).get("repo"):
         return {"error": f"repo not registered: {repo}"}
     root = await _resolve_repo_root(repo)
@@ -5640,14 +5682,19 @@ async def evolve_pipeline_adopt(branch: str = "", to: str = "bleeding-edge", tit
                         "Output: {ok, id, branch, worktree, url, base, next[]}.")
 async def evolve_pipeline_begin(title: str = "", branch: str = "", spawn: bool = False,
                                 session_id: str = "", repo: str = DEFAULT_REPO_ID,
-                                base: str = "", trace_id=None):
+                                base: str = "", edge: str = "", trace_id=None):
     title = (title or "").strip()
     if not title and not branch:
         return {"error": "title (or branch) required"}
     if repo != DEFAULT_REPO_ID and not (await evolve_repo_get(id=repo)).get("repo"):
         return {"error": f"repo not registered: {repo}"}
     root = await _resolve_repo_root(repo)
-    base = (base or "").strip() or await _default_pipeline_base(repo_root=root)
+    if edge:
+        try:
+            _edge(edge)
+        except ValueError as err:
+            return {"error": str(err)}
+    base = (base or "").strip() or await _default_pipeline_base(repo_root=root, edge=edge)
     if not (await _git("rev-parse", "--verify", f"refs/heads/{base}", repo_root=root))["ok"]:
         return {"error": f"unknown base branch: {base}"}
     br = (branch or "").strip()
@@ -5671,7 +5718,8 @@ async def evolve_pipeline_begin(title: str = "", branch: str = "", spawn: bool =
         "gate_threshold": 0.0, "auto_promote": False, "auto_test": False, "critic": "",
         "repo": repo, "controller": _triggered_by(), "adopted": True, "began": True,
         "session_id": (session_id or "").strip(), "via": (CALLER_KIND.get() or ""),
-        "to": base, "status": "drafting", "decision": "pending",
+        "to": base, "edge": (_edges.edge_for_branch(base) or {}).get("name", ""),
+        "status": "drafting", "decision": "pending",
         "current": "branch + worktree ready — edit, commit, then promote",
         "created_at": now_iso(), "ended_at": "", "steps": [],
         "baseline_score": None, "candidate_score": None, "gate_delta": None,
@@ -5815,7 +5863,7 @@ async def evolve_pipeline_test(id: str = "", trace_id=None):
         return {"error": "no worktree for this pipeline (branch step may have failed)"}
     if repo == DEFAULT_REPO_ID:
         branch = str(rec.get("branch") or "")
-        target = str(rec.get("to") or "bleeding-edge")
+        target = str(rec.get("to") or BLEEDING_EDGE_BRANCH)
         changed_res = await _git("diff", "--name-only", f"{target}...{branch}",
                                  repo_root=await _resolve_repo_root(repo))
         if not changed_res.get("ok"):
@@ -6061,7 +6109,7 @@ async def _release_fast_forward_isolated(root: str, branch: str, into: str,
                         "action — evolve.bleeding_edge.promote_to_main — not this. "
                         "Input: id (str!), to (str — default bleeding-edge).")
 async def evolve_pipeline_promote(id: str = "", to: str = "bleeding-edge", force: bool = False,
-                                  authorize_main: str = "", trace_id=None):
+                                  authorize_main: str = "", edge: str = "", trace_id=None):
     got = await evolve_pipeline_get(id=id)
     if got.get("error"):
         return got
@@ -6081,7 +6129,14 @@ async def evolve_pipeline_promote(id: str = "", to: str = "bleeding-edge", force
     branch = rec.get("branch")
     if not branch:
         return {"error": "pipeline has no branch"}
-    to = (to or "bleeding-edge").strip()
+    to = (to or "").strip()
+    if edge:
+        # edge= is the friendlier spelling of to=: a registry name resolves to its branch
+        try:
+            to = _edge(edge)["branch"]
+        except ValueError as err:
+            return {"error": str(err)}
+    to = to or BLEEDING_EDGE_BRANCH
     root = await _resolve_repo_root(rec.get("repo") or DEFAULT_REPO_ID)
     if not (await _git("rev-parse", "--verify", f"refs/heads/{branch}", repo_root=root))["ok"]:
         return {"error": f"unknown branch: {branch}"}
@@ -6202,12 +6257,14 @@ async def evolve_pipeline_promote(id: str = "", to: str = "bleeding-edge", force
     # current tip (2026-08-16 bleeding-edge-trunk-workflow). Best-effort —
     # never blocks or fails the promote itself if the standing container
     # isn't up (it's opt-in via evolve.bleeding_edge.container.ensure).
-    if ok and to == BLEEDING_EDGE_BRANCH:
+    _landed = _edges.edge_for_branch(to)
+    if ok and _landed:
+        out["edge"] = _landed["name"]
         try:
-            refresh = await _refresh_standing_bleeding_edge_container()
+            refresh = await _refresh_standing_bleeding_edge_container(edge=_landed["name"])
             out["standing_container_refresh"] = refresh
         except Exception as e:
-            log.debug("standing bleeding-edge container refresh: %s", e)
+            log.debug("standing %s container refresh: %s", _landed["name"], e)
     return out
 
 
@@ -6222,18 +6279,26 @@ async def evolve_pipeline_promote(id: str = "", to: str = "bleeding-edge", force
                         "other capability. Requires confirm=true and permits only "
                         "an ancestry-checked, expected-tip-checked fast-forward; "
                         "main-ahead or diverged history is preserved and refused for "
-                        "reviewed reconciliation into bleeding-edge. Input: repo "
-                        "(str=vera), confirm (bool=false). "
-                        "Output: {ok, into, commit, conflicts, restart_required}.")
+                        "reviewed reconciliation into the edge. Input: repo "
+                        "(str=vera), confirm (bool=false), edge (str - a registered "
+                        "bleeding edge by name, default bleeding-edge; see "
+                        "evolve.bleeding_edge.list). "
+                        "Output: {ok, edge, branch, into, commit, conflicts, restart_required}.")
 async def evolve_bleeding_edge_promote_to_main(repo: str = DEFAULT_REPO_ID,
-                                               confirm: bool = False, trace_id=None):
+                                               confirm: bool = False, edge: str = "",
+                                               trace_id=None):
     if not confirm:
         return {"ok": False, "error": "release requires confirm=true after explicit user authorization",
                 "refused": "confirmation-required"}
     root = await _resolve_repo_root(repo)
-    if not (await _git("rev-parse", "--verify", f"refs/heads/{BLEEDING_EDGE_BRANCH}",
+    try:
+        _e = _edge(edge)
+    except ValueError as err:
+        return {"error": str(err)}
+    EDGE_BRANCH = _e["branch"]
+    if not (await _git("rev-parse", "--verify", f"refs/heads/{EDGE_BRANCH}",
                        repo_root=root))["ok"]:
-        return {"error": f"'{BLEEDING_EDGE_BRANCH}' branch does not exist in this repo"}
+        return {"error": f"'{EDGE_BRANCH}' branch does not exist in this repo"}
     to = await _default_branch(repo_root=root)
     if not (await _git("rev-parse", "--verify", f"refs/heads/{to}", repo_root=root))["ok"]:
         return {"error": f"unknown target branch: {to}"}
@@ -6244,20 +6309,21 @@ async def evolve_bleeding_edge_promote_to_main(repo: str = DEFAULT_REPO_ID,
     if _alock["locked"]:
         await _audit("bleeding_edge.promote_to_main",
                      f"REFUSED release -> {to}: autonomous lock", kind="release",
-                     branch=BLEEDING_EDGE_BRANCH, ok=False, repo=repo)
+                     branch=EDGE_BRANCH, ok=False, repo=repo)
         return {"ok": False, "into": to, "commit": "", "conflicts": [],
                 "error": _alock["reason"], "refused": "autonomous-lock"}
     main_sha = (await _git("rev-parse", to, repo_root=root)).get("out", "")
-    bleeding_sha = (await _git("rev-parse", BLEEDING_EDGE_BRANCH, repo_root=root)).get("out", "")
-    main_anc = (await _git("merge-base", "--is-ancestor", to, BLEEDING_EDGE_BRANCH,
+    bleeding_sha = (await _git("rev-parse", EDGE_BRANCH, repo_root=root)).get("out", "")
+    main_anc = (await _git("merge-base", "--is-ancestor", to, EDGE_BRANCH,
                            repo_root=root)).get("ok", False)
-    bleeding_anc = (await _git("merge-base", "--is-ancestor", BLEEDING_EDGE_BRANCH, to,
+    bleeding_anc = (await _git("merge-base", "--is-ancestor", EDGE_BRANCH, to,
                                repo_root=root)).get("ok", False)
     from Vera.vera.evolve.evolve_git_core import release_preflight as _release_preflight  # noqa: E402
-    preflight = _release_preflight(main_sha, bleeding_sha, main_anc, bleeding_anc)
+    preflight = _release_preflight(main_sha, bleeding_sha, main_anc, bleeding_anc,
+                                   edge_name=EDGE_BRANCH)
     if not preflight["ok"]:
         await _audit("bleeding_edge.promote_to_main", preflight["error"], kind="release",
-                     branch=BLEEDING_EDGE_BRANCH, ok=False, repo=repo)
+                     branch=EDGE_BRANCH, ok=False, repo=repo)
         return {"ok": False, "into": to, "commit": "", "conflicts": [],
                 "error": preflight["error"], "refused": "non-fast-forward"}
     if preflight["action"] == "already-up-to-date":
@@ -6267,19 +6333,21 @@ async def evolve_bleeding_edge_promote_to_main(repo: str = DEFAULT_REPO_ID,
     wt_of = _worktree_paths_by_branch(wl.get("out", ""))
     if to in wt_of:
         res = await _release_fast_forward_in_checkout(
-            str(root), BLEEDING_EDGE_BRANCH, to, wt_of[to], bleeding_sha, main_sha)
+            str(root), EDGE_BRANCH, to, wt_of[to], bleeding_sha, main_sha)
     else:
         res = await _release_fast_forward_isolated(
-            str(root), BLEEDING_EDGE_BRANCH, to, bleeding_sha, main_sha)
+            str(root), EDGE_BRANCH, to, bleeding_sha, main_sha)
     ok = res["ok"]
     await _audit("bleeding_edge.promote_to_main",
-                 f"FAST-FORWARDED {BLEEDING_EDGE_BRANCH} → {to} @ {(res.get('commit') or '')[:10]}"
-                 if ok else f"release {BLEEDING_EDGE_BRANCH} → {to} REFUSED: "
+                 f"FAST-FORWARDED {EDGE_BRANCH} → {to} @ {(res.get('commit') or '')[:10]}"
+                 if ok else f"release {EDGE_BRANCH} → {to} REFUSED: "
                             f"{(res.get('error') or '')[:120]}",
-                 kind="release", branch=BLEEDING_EDGE_BRANCH, ok=ok, repo=repo)
+                 kind="release", branch=EDGE_BRANCH, ok=ok, repo=repo)
     await emit_event({"type": "evolve.bleeding_edge.promoted_to_main", "ok": ok,
+                      "edge": _e["name"], "branch": EDGE_BRANCH,
                       "into": to, "commit": res.get("commit", "")})
-    out = {"ok": ok, "into": to, "commit": res.get("commit", ""),
+    out = {"ok": ok, "edge": _e["name"], "branch": EDGE_BRANCH, "into": to,
+           "commit": res.get("commit", ""),
            "conflicts": res.get("conflicts", []), "error": "" if ok else res.get("error", "")}
     if res.get("restart_required"):
         out["restart_required"] = True
@@ -7366,7 +7434,8 @@ async def _sandbox_pool() -> Dict[str, Dict[str, Any]]:
                         "branch (str!), rebuild_image (bool). Output: {ok, name, port, "
                         "redis_db, branch, url, reachable}.")
 async def evolve_sandbox_spawn(branch: str = "", rebuild_image: bool = False,
-                               owner: str = "", session_id: str = "", trace_id=None):
+                               owner: str = "", session_id: str = "",
+                               port: int = 0, redis_db: int = 0, trace_id=None):
     branch = (branch or "").strip()
     if not branch:
         return {"error": "branch required"}
@@ -7375,13 +7444,18 @@ async def evolve_sandbox_spawn(branch: str = "", rebuild_image: bool = False,
     wt_rel = f"{_WORKTREE_DIR}/{safe}"
     wt_abs = _repo_root() / _WORKTREE_DIR / safe
     # allocate a free host port (skip anything LISTENing) + a free Redis DB
-    port = _pool_alloc_port(await _host_bound_ports())
+    _bound = await _host_bound_ports()
+    port = int(port or 0)
+    if port and port in {int(p) for p in (_bound or [])}:
+        port = 0                        # the preferred port is busy: allocate like any spawn
+    port = port or _pool_alloc_port(_bound)
     if not port:
         return {"error": "no free dev port in the pool (8980–8998)"}
     pool = await _sandbox_pool()
     used_dbs = {DEV_REDIS_DB} | {int(d["redis_db"]) for d in pool.values()
                                 if d.get("redis_db") is not None and d.get("slug") != safe}
-    db = _pool_alloc_db(used_dbs)
+    redis_db = int(redis_db or 0)
+    db = redis_db if (redis_db and redis_db not in used_dbs) else _pool_alloc_db(used_dbs)
     if db is None:
         return {"error": "no free Redis DB in the pool (3–15)"}
     wt = await _ensure_worktree(branch)
@@ -7448,13 +7522,20 @@ async def evolve_sandbox_spawn(branch: str = "", rebuild_image: bool = False,
                         "successful evolve.pipeline.promote into bleeding-edge — this "
                         "call is for bringing it up the first time (or after a manual "
                         "teardown), not routine refresh. Idempotent. Input: "
-                        "rebuild_image (bool). Output: same shape as evolve.sandbox.spawn.")
-async def evolve_bleeding_edge_container_ensure(rebuild_image: bool = False, trace_id=None):
-    mirror = await _refresh_bleeding_edge_mirror()
+                        "rebuild_image (bool), edge (str - which registered bleeding edge, "
+                        "default bleeding-edge; see evolve.bleeding_edge.list). "
+                        "Output: same shape as evolve.sandbox.spawn.")
+async def evolve_bleeding_edge_container_ensure(rebuild_image: bool = False, edge: str = "",
+                                                trace_id=None):
+    try:
+        e = _edge(edge)
+    except ValueError as err:
+        return {"error": str(err)}
+    mirror = await _refresh_bleeding_edge_mirror(edge=e["name"])
     if mirror.get("error"):
         return {"error": mirror["error"]}
-    up = await evolve_sandbox_spawn(branch=BLEEDING_EDGE_MIRROR_BRANCH,
-                                    rebuild_image=rebuild_image)
+    up = await evolve_sandbox_spawn(branch=e["mirror"], rebuild_image=rebuild_image,
+                                    port=e["port"], redis_db=e["redis_db"])
     if up.get("error"):
         return up
     name = up.get("name", "")
@@ -7463,7 +7544,7 @@ async def evolve_bleeding_edge_container_ensure(rebuild_image: bool = False, tra
     return up
 
 
-async def _refresh_standing_bleeding_edge_container() -> Dict[str, Any]:
+async def _refresh_standing_bleeding_edge_container(edge: str = "") -> Dict[str, Any]:
     """Fast-forward the bleeding-edge mirror, then restart the standing
     bleeding-edge container if it's currently up, so it actually picks up
     the new tip — matching the mirror-branch pattern used everywhere else in
@@ -7471,11 +7552,15 @@ async def _refresh_standing_bleeding_edge_container() -> Dict[str, Any]:
     brought up: evolve.bleeding_edge.container.ensure is opt-in, not implied
     by every promote. Called from evolve.pipeline.promote right after a
     successful merge into bleeding-edge; never raises."""
-    mirror = await _refresh_bleeding_edge_mirror()
+    try:
+        e = _edge(edge)
+    except ValueError as err:
+        return {"ok": False, "error": str(err)}
+    mirror = await _refresh_bleeding_edge_mirror(edge=e["name"])
     if mirror.get("error"):
         return {"ok": False, "error": mirror["error"]}
     pool = await _sandbox_pool()
-    entry = pool.get(_safe_branch(BLEEDING_EDGE_MIRROR_BRANCH))
+    entry = pool.get(e["slug"])
     if not entry or not entry.get("name"):
         return {"ok": True, "action": "mirror refreshed; standing container not up"}
     name = entry["name"]
@@ -7483,6 +7568,55 @@ async def _refresh_standing_bleeding_edge_container() -> Dict[str, Any]:
     if not r.get("ok"):
         return {"ok": False, "error": f"container restart failed: {r.get('err') or r.get('out')}"}
     return {"ok": True, "action": "mirror refreshed + container restarted", "name": name}
+
+
+@capability("evolve.bleeding_edge.list", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/bleeding_edge/list", http_tags=["evolve"],
+            description="The registered bleeding edges (integration branches) with their live "
+                        "state: whether the branch exists, its tip, its standing against main "
+                        "(released / ahead-of-main / behind-main / diverged), the mirror head, "
+                        "and the standing container (name, port, redis_db, running, pinned) "
+                        "when one is up. The default edge is first. Any of them is a valid "
+                        "to=/edge= for evolve.pipeline.adopt/promote and edge= for "
+                        "evolve.bleeding_edge.container.ensure / promote_to_main. Query: repo "
+                        "(str=vera). Output: {edges:[...], default, main}.")
+async def evolve_bleeding_edge_list(repo: str = DEFAULT_REPO_ID, trace_id=None):
+    root = await _resolve_repo_root(repo)
+    pool = await _sandbox_pool()
+    pinned = await _sandbox_pinned()
+    main = await _default_branch(repo_root=root)
+    main_sha = (await _git("rev-parse", main, repo_root=root)).get("out", "")
+    out = []
+    for name, e in _edges.edges().items():
+        have = (await _git("rev-parse", "--verify", f"refs/heads/{e['branch']}",
+                           repo_root=root))["ok"]
+        sha = (await _git("rev-parse", e["branch"], repo_root=root)).get("out", "") if have else ""
+        state = ""
+        if have:
+            m_anc = (await _git("merge-base", "--is-ancestor", main, e["branch"],
+                                repo_root=root)).get("ok", False)
+            e_anc = (await _git("merge-base", "--is-ancestor", e["branch"], main,
+                                repo_root=root)).get("ok", False)
+            state = ("released" if sha == main_sha else "ahead-of-main" if m_anc
+                     else "behind-main" if e_anc else "diverged")
+        mirror_sha = (await _git("rev-parse", e["mirror"], repo_root=root)).get("out", "")
+        entry = pool.get(e["slug"]) or {}
+        container = None
+        if entry.get("name"):
+            pr = await _sh(["docker", "inspect", "-f", "{{.State.Status}}", entry["name"]],
+                           timeout=15)
+            container = {"name": entry.get("name", ""), "port": entry.get("port"),
+                         "redis_db": entry.get("redis_db"),
+                         "running": (pr.get("out") or "").strip().lower() == "running",
+                         "pinned": entry.get("name", "") in pinned}
+        out.append({"name": name, "branch": e["branch"], "base": e["base"],
+                    "default": e["default"], "description": e["description"],
+                    "exists": have, "head": sha[:12], "main_state": state,
+                    "mirror": e["mirror"], "mirror_head": mirror_sha[:12],
+                    "preferred_port": e["port"] or None,
+                    "preferred_redis_db": e["redis_db"] or None,
+                    "container": container})
+    return {"edges": out, "default": _edges.DEFAULT_EDGE, "main": main}
 
 
 # The cap Loop Lab actually routes into the sandbox (loop tasks). If the
@@ -8947,9 +9081,9 @@ async def evolve_sandbox_snapshot(prefixes: str = "", sqlite: bool = True, trace
                         "vera:latest from source first; use when the sandbox is "
                         "running a STALE image missing newer caps like loops.run), "
                         "target (str default 'bleeding-edge' — which mirror to use "
-                        "when branch is omitted: 'bleeding-edge' or 'main'. Falls "
-                        "back to 'main' automatically if this repo has no "
-                        "bleeding-edge branch.).")
+                        "when branch is omitted: 'main' or any registered bleeding "
+                        "edge by name (evolve.bleeding_edge.list). Falls back to "
+                        "'main' automatically if this repo has no such edge branch.).")
 async def evolve_sandbox_up(branch: str = "", snapshot: bool = True,
                             rebuild_image: bool = False, target: str = "bleeding-edge",
                             replace_primary: bool = False,
@@ -8978,25 +9112,26 @@ async def evolve_sandbox_up(branch: str = "", snapshot: bool = True,
     _mirror_branch_used = None
     if not branch:
         target = (target or "bleeding-edge").strip().lower()
-        if target not in ("main", "bleeding-edge"):
-            return {"error": f"unknown target '{target}' — expected 'main' or 'bleeding-edge'"}
+        _tedge = None if target == "main" else _edges.resolve_edge(target)
+        if target != "main" and not _tedge:
+            return {"error": f"unknown target '{target}' — expected 'main' or a registered "
+                             f"bleeding edge ({', '.join(_edges.edge_names())})"}
         # A dry run must not refresh mirror refs/worktrees. Resolve only the
         # stable mirror name that a real invocation would prepare.
         if dry_run:
-            _mirror_branch_used = (BLEEDING_EDGE_MIRROR_BRANCH
-                                   if target == "bleeding-edge" else MAINLINE_MIRROR_BRANCH)
-        elif target == "bleeding-edge":
-            _mirror_refresh = await _refresh_bleeding_edge_mirror()
+            _mirror_branch_used = (_tedge["mirror"] if _tedge else MAINLINE_MIRROR_BRANCH)
+        elif _tedge:
+            _mirror_refresh = await _refresh_bleeding_edge_mirror(edge=_tedge["name"])
             if _mirror_refresh.get("error"):
-                # No bleeding-edge branch in this repo (yet) — degrade to the
+                # No such edge branch in this repo (yet) — degrade to the
                 # mainline mirror rather than hard-failing every sandbox.up.
-                log.debug("evolve: bleeding-edge mirror unavailable (%s) — "
-                         "falling back to mainline mirror",
+                log.debug("evolve: %s mirror unavailable (%s) — "
+                         "falling back to mainline mirror", _tedge["name"],
                          _mirror_refresh["error"])
                 target = "main"
                 _mirror_refresh = None
             else:
-                _mirror_branch_used = BLEEDING_EDGE_MIRROR_BRANCH
+                _mirror_branch_used = _tedge["mirror"]
         if target == "main" and not dry_run:
             _mirror_refresh = await _refresh_mainline_mirror()
             if _mirror_refresh.get("error"):
@@ -9068,7 +9203,7 @@ async def evolve_sandbox_up(branch: str = "", snapshot: bool = True,
         # REMOTE (origin/<branch>), which the mirror never has, so calling it
         # here too would just fail harmlessly but pointlessly. Reuse that
         # result instead of re-deriving it.
-        refreshed = _mirror_refresh if branch in (MAINLINE_MIRROR_BRANCH, BLEEDING_EDGE_MIRROR_BRANCH) \
+        refreshed = _mirror_refresh if (branch == MAINLINE_MIRROR_BRANCH or _edges.is_edge_mirror(branch)) \
             else await _refresh_worktree(str(wt_abs), branch)
         await emit_event({"type": "evolve.sandbox.refresh", "branch": branch,
                           "ok": bool(refreshed.get("ok")),
@@ -9291,6 +9426,8 @@ async def _sandbox_observation(descriptor: Dict[str, Any]) -> Dict[str, Any]:
     dirty: Optional[bool] = None
     merged: Optional[bool] = None
     bleeding_edge_commit = ""
+    edge_commits: Dict[str, str] = {}
+    merged_to_edges: Dict[str, Optional[bool]] = {}
     git_probe: Dict[str, Any] = {"ok": False, "err": "worktree missing"}
     if worktree_exists:
         head_probe = await _git("rev-parse", "HEAD", repo_root=Path(worktree))
@@ -9300,13 +9437,18 @@ async def _sandbox_observation(descriptor: Dict[str, Any]) -> Dict[str, Any]:
         status_probe = await _git("status", "--porcelain", repo_root=Path(worktree))
         if status_probe.get("ok"):
             dirty = bool(status_probe.get("out"))
-        merge_probe = await _git("merge-base", "--is-ancestor", "HEAD", "bleeding-edge",
-                                 repo_root=Path(worktree))
-        if merge_probe.get("code") in (0, 1):
-            merged = merge_probe.get("code") == 0
-        be_probe = await _git("rev-parse", "bleeding-edge", repo_root=Path(worktree))
-        if be_probe.get("ok"):
-            bleeding_edge_commit = be_probe.get("out", "")
+        # one probe per registered edge; the two legacy fields keep reporting the
+        # DEFAULT edge, so older panels and tests read exactly what they always did
+        for _ename, _erec in _edges.edges().items():
+            _mp = await _git("merge-base", "--is-ancestor", "HEAD", _erec["branch"],
+                             repo_root=Path(worktree))
+            if _mp.get("code") in (0, 1):
+                merged_to_edges[_ename] = _mp.get("code") == 0
+            _cp = await _git("rev-parse", _erec["branch"], repo_root=Path(worktree))
+            if _cp.get("ok"):
+                edge_commits[_ename] = _cp.get("out", "")
+        merged = merged_to_edges.get(_edges.DEFAULT_EDGE)
+        bleeding_edge_commit = edge_commits.get(_edges.DEFAULT_EDGE, "")
     git_link = _git_worktree_diagnosis(
         worktree_exists=worktree_exists,
         git_ok=bool(git_probe.get("ok")),
@@ -9319,6 +9461,8 @@ async def _sandbox_observation(descriptor: Dict[str, Any]) -> Dict[str, Any]:
         "head_commit": head,
         "bleeding_edge_commit": bleeding_edge_commit,
         "merged_to_bleeding_edge": merged,
+        "edge_commits": edge_commits,
+        "merged_to_edges": merged_to_edges,
         "dirty": dirty,
         "git_worktree": git_link,
         "state": _classify_sandbox(
@@ -9525,8 +9669,7 @@ async def evolve_sandbox_preflight(name: str = "", branch: str = "",
 async def evolve_sandbox_worktree_repair(branch: str, dry_run: bool = True,
                                          trace_id=None):
     branch = str(branch or "").strip()
-    if branch in {BLEEDING_EDGE_BRANCH, BLEEDING_EDGE_MIRROR_BRANCH,
-            MAINLINE_MIRROR_BRANCH, "main"}:
+    if branch in _edges.edge_protected_branches():
         return {"error": "protected branch cannot be repaired by this capability",
                 "refused": "protected_branch"}
     try:

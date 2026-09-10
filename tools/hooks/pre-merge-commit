@@ -25,9 +25,10 @@ case "$branch" in
     main|master)
         if [ "${VERA_ALLOW_MAIN_COMMIT:-}" != "1" ]; then
             echo "pre-merge-commit: merging onto '$branch' by hand is blocked (M3.6)." >&2
-            echo "  ALL new code lands on bleeding-edge; main advances ONLY via the" >&2
-            echo "  sanctioned deploy step evolve.bleeding_edge.promote_to_main, on the" >&2
-            echo "  user's explicit, unambiguous go-ahead." >&2
+            echo "  ALL new code lands on a bleeding edge (bleeding-edge, or another" >&2
+            echo "  registered edge such as bleeding-edge-design); main advances ONLY via" >&2
+            echo "  the sanctioned release step evolve.bleeding_edge.promote_to_main(edge=...)," >&2
+            echo "  on the user's explicit, unambiguous go-ahead." >&2
             echo "  Sanctioned deploy only:  VERA_ALLOW_MAIN_COMMIT=1 git merge …" >&2
             exit 1
         fi

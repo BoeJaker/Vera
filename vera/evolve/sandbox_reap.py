@@ -30,10 +30,23 @@ WORKTREE_MARK = ".loop-lab-worktrees"
 # back to `main` when refs/heads/bleeding-edge is gone. These are infrastructure
 # refs, not disposable feature worktrees; protect them unconditionally, here in the
 # pure core, so the guarantee holds no matter what the caller passes.
-TRUNK_PROTECTED_BRANCHES = frozenset({
-    "bleeding-edge", "main", "master",
-    "loop-lab/bleeding-edge-mirror", "loop-lab/mainline-mirror",
+#
+# 2026-09-10: the edges are a registry now (edge_registry.py), so a SECOND edge
+# (bleeding-edge-design, the redesign programme's trunk) is protected the moment it
+# is registered — never by remembering to add another literal here. The literal
+# set below is only the fallback for a runner that loads this module by file path.
+try:
+    from .edge_registry import edge_protected_branches as _edge_protected_branches
+except ImportError:  # pragma: no cover - module loaded outside its package
+    _edge_protected_branches = None
+
+_TRUNK_FALLBACK = frozenset({
+    "bleeding-edge", "bleeding-edge-design", "main", "master",
+    "loop-lab/bleeding-edge-mirror", "loop-lab/bleeding-edge-design-mirror",
+    "loop-lab/mainline-mirror",
 })
+TRUNK_PROTECTED_BRANCHES = (frozenset(_edge_protected_branches()) | _TRUNK_FALLBACK
+                            if _edge_protected_branches else _TRUNK_FALLBACK)
 
 
 def is_trunk_protected(branch: str) -> bool:

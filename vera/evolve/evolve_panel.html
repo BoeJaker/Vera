@@ -952,6 +952,15 @@ html.vpb-nav-hosted body{padding-left:0}
     <div id="sbx-list"><div class="empty">Loading…</div></div>
   </div>
 
+  <div class="card" id="edges-card" style="margin-top:10px">
+    <div class="card-h"><span class="card-t">Integration branches (bleeding edges)</span>
+      <span class="hint">every change lands on one of these; <b>main</b> advances only by a deliberate release of an edge</span>
+      <span style="flex:1"></span>
+      <button class="btn sm" onclick="loadEdges()" title="refresh">&#8635;</button>
+    </div>
+    <div id="edges-list"><div class="empty">Loading…</div></div>
+  </div>
+
   <!-- ONE contextual connection panel, bound to the sandbox you clicked -->
   <div class="card" id="sbx-tools" style="margin-top:10px;display:none">
     <div class="card-h"><span class="card-t">Connection</span>
@@ -3797,7 +3806,7 @@ async function openPipe(id){
     +(p.candidate_score!=null?' <span class="pill">candidate '+p.candidate_score+'</span>':'')
     +(p.gate_delta!=null?' <span class="pill" style="color:'+(p.gate_passed?'var(--ok)':'var(--err)')+'">Δ '+(p.gate_delta>0?'+':'')+p.gate_delta+'</span>':'')
     +(p.branch?' <span class="tag">'+esc(p.branch)+'</span>':'')
-    +(p.adopted?' <span class="tag" style="background:var(--acc3);color:#111" title="hand-authored branch adopted into CI/CD">adopted → '+esc(p.to||'main')+'</span>':'')+'</div>';
+    +(p.adopted?' <span class="tag" style="background:var(--acc3);color:#111" title="hand-authored branch adopted into CI/CD">adopted → '+esc(p.to||_defaultEdge())+'</span>':'')+'</div>';
   // A begun-but-never-edited run (status 'drafting', no commits) has a branch +
   // worktree ready but nothing to gate. Its old "branch + worktree ready" line +
   // spinner read as a loading screen that never resolves — it is actually a settled,
@@ -3825,7 +3834,7 @@ async function openPipe(id){
   }
   // Provenance for an adopted (hand-authored) branch: the actual commits + files.
   if(p.commits&&p.commits.length){
-    h+='<label class="fld" style="margin-top:8px">commits ('+p.commits.length+' ahead of '+esc(p.to||'main')+')</label>';
+    h+='<label class="fld" style="margin-top:8px">commits ('+p.commits.length+' ahead of '+esc(p.to||_defaultEdge())+')</label>';
     for(const c of p.commits)h+='<div class="mono" style="font-size:10px;padding:1px 0;color:var(--dim2)">'+esc(c)+'</div>';
   }
   if(p.changed_files&&p.changed_files.length){
@@ -3853,7 +3862,8 @@ async function openPipe(id){
     h+='<button class="btn" onclick="pipeTest(\''+esc(id)+'\')">Test branch (run '+esc(p.test_cmd||'test_cmd')+')</button>';
   }
   if(p.decision==='pending'||p.decision==='held'){
-    h+='<button class="btn primary" onclick="pipePromote(\''+esc(id)+'\')">Promote'+(p.kind==='code'?' (merge branch)':' (set overlay)')+'</button>';
+    if(p.kind==='code')h+='<label class="hint" style="align-self:center;margin-right:4px">into</label><select id="pipe-to-'+esc(id)+'" style="font-size:11px;margin-right:6px" title="integration branch (bleeding edge) to merge into">'+_edgeOptions(p.to)+'</select>';
+    h+='<button class="btn primary" onclick="pipePromote(\''+esc(id)+'\',(($(\'pipe-to-'+esc(id)+'\')||{}).value||\'\'))">Promote'+(p.kind==='code'?' (merge branch)':' (set overlay)')+'</button>';
     h+='<button class="btn err-btn" onclick="confirmRollback(\''+esc(id)+'\')">Rollback'+(p.kind==='code'?' (delete branch)':' (clear overlay)')+'</button>';
   }
   h+='<span style="flex:1"></span><button class="btn" onclick="closeModal()">Close</button></div>';
@@ -3867,7 +3877,7 @@ async function pipeInlineDiff(id){
   el.innerHTML=(d&&d.diff!=null)?_renderDiff(d.diff||'(no changes)'):'<div class="hint">'+esc((d&&d.error)||'no diff for this pipeline')+'</div>';
   el.dataset.loaded='1';
 }
-async function pipePromote(id){const r=await post('/evolve/pipeline/promote',{id});toast(r&&r.ok?'Promoted':(r&&r.error)||'failed');closeModal();loadPipelines();if($('review-body'))loadReview()}
+async function pipePromote(id,to){const body=to?{id,to}:{id};const r=await post('/evolve/pipeline/promote',body);toast(r&&r.ok?('Promoted'+(r.into?' \u2192 '+r.into:'')):(r&&r.error)||'failed');closeModal();loadPipelines();if($('review-body'))loadReview()}
 async function pipeRollback(id){const r=await post('/evolve/pipeline/rollback',{id});toast(r&&r.ok?'Rolled back':(r&&r.error)||'failed');closeModal();loadPipelines();if($('review-body'))loadReview()}
 async function pipeTest(id){const r=await post('/evolve/pipeline/test',{id});toast(r&&r.ok?('Gate '+(r.gate_passed?'PASSED':'FAILED')):(r&&r.error)||'failed');closeModal();openPipe(id)}
 /* Drill from a pipeline's driving session into the chat that produced it.
@@ -4097,11 +4107,11 @@ async function toggleWsDiff(id){
 }
 async function wsAccept(id,branch){
   const into=prompt('Approve by MERGING  '+branch+'  into which integration branch?\n\n'
-    +'Leave blank for the repo default (main). This merges via git in an isolated '
+    +'Leave blank for the default bleeding edge ('+_defaultEdge()+'). This merges via git in an isolated '
     +'worktree — prod\'s live checkout is NOT touched, and it refuses rather than '
     +'clobber if the target is checked out or the merge conflicts.','');
   if(into===null)return;
-  const r=await post('/evolve/sandbox/approve',{branch,proposal_id:id,into:(into||'').trim()});
+  const r=await post('/evolve/sandbox/approve',{branch,proposal_id:id,into:((into||'').trim()||_defaultEdge())});
   if(r&&r.ok){toast('Merged '+branch+' → '+r.into+' @ '+String(r.commit||'').slice(0,8));}
   else if(r&&r.conflicts&&r.conflicts.length){toast('Merge conflict: '+r.conflicts.slice(0,3).join(', '));}
   else{toast((r&&r.error)||'failed');}
@@ -4253,9 +4263,51 @@ async function loadAudit(){
     +'<td>'+esc(a.summary||'')+'</td></tr>').join('')+'</table>';
 }
 
+/* ═══ Integration branches (bleeding edges) — evolve.bleeding_edge.list ═══ */
+let _EDGES=[],_EDGE_DEFAULT='bleeding-edge';
+function _defaultEdge(){return _EDGE_DEFAULT||'bleeding-edge'}
+function _edgeOptions(sel){
+  const names=(_EDGES.length?_EDGES.map(function(e){return e.branch}):[_defaultEdge()]);
+  const cur=sel||_defaultEdge();
+  if(cur&&names.indexOf(cur)<0)names.unshift(cur);
+  return names.map(function(n){return '<option value="'+esc(n)+'"'+(n===cur?' selected':'')+'>'+esc(n)+'</option>'}).join('');
+}
+async function loadEdges(){
+  const el=$('edges-list');
+  const r=await api('/evolve/bleeding_edge/list');
+  if(!r||!r.edges){if(el)el.innerHTML='<div class="hint">'+esc((r&&r.error)||'unavailable')+'</div>';return}
+  _EDGES=r.edges;_EDGE_DEFAULT=r.default||'bleeding-edge';
+  if(!el)return;
+  el.innerHTML=r.edges.map(function(e){
+    const c=e.container||{};const st=e.main_state||'';
+    const stc={released:'var(--ok)','ahead-of-main':'var(--acc3)','behind-main':'var(--warn)',diverged:'var(--err)'}[st]||'var(--dim2)';
+    return '<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;padding:5px 0;border-bottom:1px solid var(--border)">'
+      +'<span class="tag" style="font-weight:600">'+esc(e.name)+(e.default?' \u2605':'')+'</span>'
+      +(e.exists?'<span class="mono" style="font-size:10px">'+esc(e.head||'')+'</span>':'<span class="pill" style="color:var(--warn)">branch missing</span>')
+      +(st?'<span class="pill" style="color:'+stc+'" title="standing against '+esc(r.main||'main')+'">'+esc(st)+'</span>':'')
+      +(c.name?'<span class="pill" style="color:'+(c.running?'var(--ok)':'var(--dim2)')+'">'+(c.running?'\u25cf container':'\u25cb container down')+'</span><span class="hint">:'+esc(String(c.port||''))+' \u00b7 db '+esc(String(c.redis_db||''))+(c.pinned?' \u00b7 pinned':'')+'</span>':'<span class="hint">no standing container</span>')
+      +'<span class="hint" style="flex-basis:100%">'+esc(e.description||'')+(e.mirror_head?' \u00b7 mirror '+esc(e.mirror_head):'')+'</span>'
+      +'<span style="flex:1"></span>'
+      +'<button class="btn sm" onclick="edgeEnsure(\''+esc(e.name)+'\')" title="bring up / refresh the standing container for this edge (needs a free pool slot)">container</button>'
+      +'<button class="btn sm" onclick="edgeMirror(\''+esc(e.name)+'\')" title="point the primary sandbox at this edge (sandbox.up target)">sandbox &rarr; edge</button>'
+      +'<button class="btn sm ok-btn" onclick="edgeRelease(\''+esc(e.name)+'\',\''+esc(e.branch)+'\')" title="fast-forward main to this edge (the release) \u2014 asks for confirmation">promote to main</button>'
+      +'</div>';
+  }).join('');
+}
+async function edgeEnsure(name){toast('ensuring '+name+' container\u2026');const r=await post('/evolve/bleeding_edge/container/ensure',{edge:name});toast(r&&r.ok?('up: '+(r.name||'')+' :'+(r.port||'')):(r&&r.error)||'failed');loadEdges();loadSandboxPool()}
+async function edgeMirror(name){const r=await post('/evolve/sandbox/up',{target:name});toast(r&&(r.ok||r.healthy)?('primary sandbox on '+name):(r&&r.error)||'failed');loadSandboxPool()}
+async function edgeRelease(name,branch){
+  const ok=confirm('RELEASE: fast-forward main to '+branch+' ('+name+')?\n\nThis is the deliberate step that moves the branch prod serves. Only proceed on the user\'s explicit, unambiguous go-ahead. It refuses unless main is an ancestor of the edge (no merge commit, no guessing).');
+  if(!ok)return;
+  const r=await post('/evolve/bleeding_edge/promote_to_main',{edge:name,confirm:true});
+  toast(r&&r.ok?('main @ '+String(r.commit||'').slice(0,8)+(r.restart_required?' \u2014 restart required':'')):(r&&r.error)||'refused');
+  loadEdges();
+}
+
 /* ═══ SANDBOX ═══ */
 /* ═══ Per-branch sandbox pool (C2 selector — evolve.sandbox.list/spawn/down) ═══ */
 async function loadSandboxPool(){
+  loadEdges();
   const el=$('sandbox-pool'); if(!el)return;
   const r=await api('/evolve/sandbox/list?detail=true');
   const list=(r&&r.sandboxes)||[];
@@ -4419,6 +4471,7 @@ function renderSbxList(items){
         +(s.state?'<span class="pill" style="color:'+(s.state==='healthy'?'var(--ok)':'var(--warn)')+'">'+esc(s.state)+'</span>':'')
         +(s.dirty===true?'<span class="pill" style="color:var(--warn)">dirty</span>':(s.dirty===false?'<span class="tag">clean</span>':'<span class="tag">cleanliness unknown</span>'))
         +(s.merged_to_bleeding_edge===true?'<span class="tag" style="color:var(--ok)">merged</span>':(s.merged_to_bleeding_edge===false?'<span class="tag" style="color:var(--warn)">unmerged</span>':''))
+        +Object.entries(s.merged_to_edges||{}).filter(function(kv){return kv[0]!==_defaultEdge()}).map(function(kv){return kv[1]===true?'<span class="tag" style="color:var(--ok)" title="merged into '+esc(kv[0])+'">in '+esc(kv[0])+'</span>':(kv[1]===false?'<span class="tag" style="color:var(--dim2)" title="not merged into '+esc(kv[0])+'">not in '+esc(kv[0])+'</span>':'')}).join('')
         +(s.git_worktree&&s.git_worktree.valid===false?'<span class="pill" style="color:var(--err)">git '+esc(s.git_worktree.state||'invalid')+'</span>':'')
         +(s.head_commit?'<span class="mono hint" title="sandbox head">head '+esc(String(s.head_commit).slice(0,8))+'</span>':'')
         +(s.bleeding_edge_commit?'<span class="mono hint" title="bleeding-edge head">BE '+esc(String(s.bleeding_edge_commit).slice(0,8))+'</span>':'')

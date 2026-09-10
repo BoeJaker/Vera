@@ -673,3 +673,38 @@ Git therefore preserves intervening target commits (or reports a conflict)
 without creating sync commits or requiring the feature branch to remain checked
 out. A stopped sandbox or severed, preserved checkout cannot by itself block a
 valid committed branch from promotion.
+
+# Multiple bleeding edges (the edge registry)
+
+A programme that must land on its own trunk — the UI redesign (Notes/41) is the
+first — gets a second integration branch, not a second copy of the machinery.
+`vera/evolve/edge_registry.py` is the registry of edges; `bleeding-edge` is the
+default edge and `bleeding-edge-design` the second. Every site that used to spell
+the literal asks the registry instead:
+
+| site | before | now |
+|---|---|---|
+| fork point / merge target (`pipeline.begin`, `adopt`, `promote`) | literal `bleeding-edge` | `edge=<name>` resolves to the edge's branch; `to=` still accepts any branch |
+| standing container (`bleeding_edge.container.ensure`) | one container | `edge=<name>`; each edge has its own mirror `loop-lab/<branch>-mirror`, pool slug and (preferred) port + Redis DB |
+| refresh after promote | `to == "bleeding-edge"` | whichever registered edge was merged into is refreshed |
+| release (`bleeding_edge.promote_to_main`) | bleeding-edge only | `edge=<name>`; fast-forward-only, per edge, still `confirm=true` |
+| primary sandbox (`sandbox.up target=`) | `main` or `bleeding-edge` | `main` or any edge name |
+| reaper / lifecycle guard / worktree repair | literal protected sets | `edge_protected_branches()` — an edge is protected the moment it is registered |
+| git hooks (`pre-push`) | literal list | `tools/hooks/protected-branches`, one name per line; `tests/test_edge_registry.py` keeps it equal to the registry |
+| panel | no selector | an **Integration branches** card (state against main, container, ensure / sandbox → edge / promote to main) and an *into* selector on Promote |
+
+`evolve.bleeding_edge.list` returns the registry with live state (branch tip,
+standing against `main` — released / ahead-of-main / behind-main / diverged —
+mirror head, container). Sandbox observations carry `edge_commits` and
+`merged_to_edges` per edge; the two older fields keep reporting the default edge.
+
+Two edges are two independent release paths to `main`. Each release is a
+fast-forward or nothing, so the second edge to release after the first will be
+refused as diverged until it reconciles the other's release (merge `main` into
+it through a normal reviewed pipeline, then retry). An edge can be declared
+without a code change with `VERA_EDGES="name=branch[:base],..."`; add its name
+to `tools/hooks/protected-branches` as well, or the registry test fails.
+
+Capacity: a standing container per edge needs a free pool slot (port + Redis
+DB). Landing on an edge never needs a container — adopt, gate and promote work
+from worktrees — so an edge without a standing container is still a valid trunk.
