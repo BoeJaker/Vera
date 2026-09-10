@@ -264,9 +264,15 @@ async def cap_census_run(run: str = "", trace_id=None) -> Dict[str, Any]:
     records = await _read_run(files[rid])
     summary = cc.summarise_run(rid, records)
     summary["routing"] = _ctl.routing_rollup(records)
+    boundary = {c.get("goal"): c for c in (summary.get("code") or {}).get("changes") or []}
     for r in records:
         if isinstance(r, dict):
             r["routing_summary"] = _ctl.routing_of(r)
+            r["code_summary"] = cc.code_of(r)
+            # The goal at which the code changed, so a row can be marked as the
+            # boundary between two instruments without re-deriving it.
+            if r.get("id") in boundary:
+                r["code_summary"]["boundary"] = boundary[r.get("id")]
     return {"run_id": rid, "summary": summary, "records": records}
 
 
@@ -459,6 +465,7 @@ async def cap_census_live(trace_id=None) -> Dict[str, Any]:
                     "wall_s": r.get("wall_s"), "wall_cap_s": r.get("wall_cap_s"),
                     "quality": _q_brief(r.get("quality")),
                     "routing": _ctl.routing_of(r),
+                    "code": cc.code_of(r),
                     "reruns": len(r.get("reruns") or [])} for r in done],
         # The ceiling the harness cancels at. Returned so the UI can mark a
         # goal that ran up against it instead of assuming a number — half the

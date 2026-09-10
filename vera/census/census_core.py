@@ -148,6 +148,83 @@ def summarise_run(run_id: str, records: Sequence[Dict[str, Any]]) -> Dict[str, A
         # FILTER by it - runs of different templates are not comparable points
         # and must never share a chart.
         "template": run_template(recs),
+        # Which CODE it ran on, and where that changed if it did. A run that
+        # crossed a prod restart is two instruments in one file; the goal at
+        # which the sha moved is the boundary between them.
+        "code": code_rollup(recs),
+    }
+
+
+# ── which code a run ran on ──────────────────────────────────────────────────
+
+def code_of(record: Dict[str, Any]) -> Dict[str, Any]:
+    """One row's code as {sha, sha_short, branch, dirty, changed_during_goal,
+    at_end}. The harness writes `code` from obs.provenance (2026-09-10); older
+    rows may carry `code_version` (['<sha10>@<branch>', ...]) from the loop's
+    own event stamps, which is the fallback; a row with neither is unknown."""
+    c = (record or {}).get("code")
+    if isinstance(c, dict) and c.get("sha"):
+        return {"sha": str(c.get("sha") or ""), "sha_short": str(c.get("sha_short") or c.get("sha") or "")[:10],
+                "branch": str(c.get("branch") or ""), "dirty": bool(c.get("dirty")),
+                "changed_during_goal": bool(c.get("changed_during_goal")),
+                "at_end": (c.get("at_end") if isinstance(c.get("at_end"), dict) else None),
+                "source": "provenance"}
+    cv = (record or {}).get("code_version")
+    if isinstance(cv, list) and cv:
+        first = str(cv[0] or "")
+        sha, _, branch = first.partition("@")
+        return {"sha": sha, "sha_short": sha[:10], "branch": branch, "dirty": False,
+                "changed_during_goal": len(set(map(str, cv))) > 1,
+                "at_end": None, "source": "events", "versions": [str(v) for v in cv]}
+    return {"sha": "", "sha_short": "", "branch": "", "dirty": False,
+            "changed_during_goal": False, "at_end": None, "source": "none"}
+
+
+def code_rollup(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """Every distinct sha@branch a run ran on, in row order, and the goals at
+    which it changed.
+
+    `changes` names the boundary: {goal, from, to} for the first goal that ran
+    on a different sha than the goal before it, and for a goal whose code moved
+    while it ran (a restart mid-goal). `changed` is the one-bit verdict the
+    table shows. Rows with no code recorded are counted, not guessed.
+    """
+    segments: List[Dict[str, Any]] = []
+    changes: List[Dict[str, Any]] = []
+    unknown = 0
+    prev = ""
+    for r in records or []:
+        if not isinstance(r, dict):
+            continue
+        c = code_of(r)
+        tag = ("%s@%s" % (c["sha_short"], c["branch"])) if c["sha"] else ""
+        if not tag:
+            unknown += 1
+            continue
+        if not segments or segments[-1]["code"] != tag:
+            if segments:
+                changes.append({"goal": r.get("id"), "from": segments[-1]["code"], "to": tag,
+                                "kind": "between_goals"})
+            segments.append({"code": tag, "sha": c["sha"], "branch": c["branch"],
+                             "first_goal": r.get("id"), "goals": 0})
+        segments[-1]["goals"] += 1
+        if c.get("changed_during_goal"):
+            end = c.get("at_end") or {}
+            end_tag = ("%s@%s" % (str(end.get("sha_short") or end.get("sha") or "")[:10],
+                                  end.get("branch") or "")) if end.get("sha") else "(restarted)"
+            changes.append({"goal": r.get("id"), "from": tag, "to": end_tag, "kind": "during_goal"})
+            if end.get("sha") and end_tag != tag:
+                segments.append({"code": end_tag, "sha": str(end.get("sha")), "branch": end.get("branch") or "",
+                                 "first_goal": r.get("id"), "goals": 0})
+        prev = tag
+    return {
+        "segments": segments,
+        "codes": [s["code"] for s in segments],
+        "branches": sorted({s["branch"] for s in segments if s["branch"]}),
+        "changed": len(segments) > 1 or any(c["kind"] == "during_goal" for c in changes),
+        "changes": changes,
+        "unknown_goals": unknown,
+        "recorded_goals": sum(s["goals"] for s in segments),
     }
 
 
