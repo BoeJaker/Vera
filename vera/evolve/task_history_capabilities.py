@@ -192,26 +192,59 @@ async def all_results(*, only_run: str = "") -> Dict[str, Any]:
 
 # ── the write side: a census goal becomes a run record ───────────────────────
 
+def insert_position(rows: List[Dict[str, Any]], ts: str, cap: int) -> Optional[int]:
+    """Where a record with time `ts` belongs in the newest-first run list:
+    the index of the first entry no newer than it (insert before that one),
+    len(rows) to append at the tail, or None when the list is full and every
+    entry is newer - the record is beyond the window and adding it would only
+    evict something more recent.
+
+    The suite's own records are pushed as they finish, so the list was always
+    in time order; a backfilled census archive is not "now" and must take its
+    place by time, or the Runs view interleaves days (seen 2026-09-10: the
+    first backfill put every archive at the head, dated by ingest time)."""
+    for i, rec in enumerate(rows):
+        if str(rec.get("ts") or "") <= ts:
+            return i
+    return None if len(rows) >= cap else len(rows)
+
+
 async def _upsert_run(ev, compact: Dict[str, Any], detail: Dict[str, Any]) -> str:
-    """Store a run record, replacing the one with the same run_id if the list
-    already holds it (the harness may post a goal twice: once live, again from
-    the archive). Returns 'added' | 'replaced' | '' (no store)."""
+    """Store a run record: replaced in place when the list already holds its
+    run_id (the harness may post a goal twice: once live, again from the
+    archive), otherwise inserted at its place by time. Returns 'added' |
+    'replaced' | 'beyond_window' | '' (no store)."""
     r = ev._redis()
     if not r:
         return ""
     rid = compact["run_id"]
-    rows = await r.lrange(ev.KEY_RUNS, 0, ev.RUNS_CAP - 1)
-    for i, raw in enumerate(rows or []):
+    raws = await r.lrange(ev.KEY_RUNS, 0, ev.RUNS_CAP - 1) or []
+    recs: List[Dict[str, Any]] = []
+    for raw in raws:
         try:
-            rec = json.loads(_rd(raw))
+            recs.append(json.loads(_rd(raw)))
         except Exception:
-            continue
+            recs.append({})
+    body = json.dumps(compact, default=str)
+    for i, rec in enumerate(recs):
         if rec.get("run_id") == rid:
-            await r.lset(ev.KEY_RUNS, i, json.dumps(compact, default=str))
+            await r.lset(ev.KEY_RUNS, i, body)
             await r.set(ev.KEY_RUN + rid, json.dumps(detail, default=str))
             await r.expire(ev.KEY_RUN + rid, _DETAIL_TTL_S)
             return "replaced"
-    await ev._push_run(compact, detail)
+    pos = insert_position(recs, str(compact.get("ts") or ""), ev.RUNS_CAP)
+    if pos is None:
+        return "beyond_window"
+    if pos == 0:
+        await ev._push_run(compact, detail)          # the newest: the suite's own path
+        return "added"
+    if pos >= len(recs):
+        await r.rpush(ev.KEY_RUNS, body)
+    else:
+        await r.linsert(ev.KEY_RUNS, "BEFORE", raws[pos], body)
+    await r.ltrim(ev.KEY_RUNS, 0, ev.RUNS_CAP - 1)
+    await r.set(ev.KEY_RUN + rid, json.dumps(detail, default=str))
+    await r.expire(ev.KEY_RUN + rid, _DETAIL_TTL_S)
     return "added"
 
 
@@ -319,6 +352,11 @@ async def cap_evolve_result_ingest(template: str = "", census_run: str = "", row
             skipped_old += 1
             continue
         outcome = await _upsert_run(ev, compact, detail)
+        if outcome == "beyond_window":
+            # The list is full of newer records: this one belongs to the
+            # archive's history, not the store's window.
+            skipped_old += 1
+            continue
         if outcome == "added":
             added += 1
         elif outcome == "replaced":
