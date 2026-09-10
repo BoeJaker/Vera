@@ -1241,25 +1241,40 @@ async def evolve_tasks(tag: str = "", trace_id=None):
 
 @capability("evolve.task.upsert", memory="off",
             http_method="POST", http_path="/evolve/task/upsert", http_tags=["evolve"],
-            description="Create/update a benchmark task. Pass the full task record "
+            description="Create/update a benchmark task. Pass the task record "
                         "(id!, label, type: loop|cap, goal/profile/allowed_caps or "
                         "cap/args, checks:[{type,value}], rubric, tags, max_steps, "
-                        "timeout_s, enabled).")
-async def evolve_task_upsert(task: Optional[Dict[str, Any]] = None, trace_id=None):
+                        "timeout_s, enabled). By default the record is MERGED over "
+                        "the stored one, so a field you do not send is kept (a seeded "
+                        "census goal keeps its census{} link, overrides{model}, "
+                        "scenario/seed/agent_name, target); send merge=false with the "
+                        "full record to replace it outright. A field sent as null is "
+                        "removed.")
+async def evolve_task_upsert(task: Optional[Dict[str, Any]] = None, merge: bool = True,
+                             trace_id=None):
     # The full task record arrives via `task` (both the evolve panel and the
     # markets seeder call with task=<dict>). A previous `**fields` catch-all was
     # mis-rendered by the MCP bridge as a spurious REQUIRED `fields` string,
     # which then leaked a junk "fields" key into the saved task and mangled
     # non-ASCII labels (em-dash → mojibake). Take only the task dict.
-    rec = dict(task or {})
-    if not rec.get("id"):
+    incoming = dict(task or {})
+    if not incoming.get("id"):
         return {"error": "task id required"}
+    # Merge over what is stored: the Tasks editor rebuilds a record from its
+    # form fields, and a full replace silently dropped everything the form did
+    # not show - a seeded census task lost its template link and model override
+    # on its first edit (found 2026-09-10, Loop Lab flattening 6a).
+    _merge = str(merge).strip().lower() not in ("0", "false", "no", "off")
+    existing = await _get_task(str(incoming["id"])) if _merge else None
+    rec = dict(existing or {})
+    rec.update(incoming)
+    rec = {k: v for k, v in rec.items() if v is not None}
     rec.setdefault("type", "loop")
     rec.setdefault("enabled", True)
     rec.setdefault("tags", [])
     rec.setdefault("checks", [])
     await _save_task(rec)
-    return {"ok": True, "task": rec}
+    return {"ok": True, "task": rec, "merged": bool(existing)}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

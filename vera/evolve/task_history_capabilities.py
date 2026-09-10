@@ -34,9 +34,11 @@ from Vera.vera.capability_orchestration import capability
 try:
     from Vera.vera.evolve import task_history_core as th
     from Vera.vera.evolve import result_ingest_core as ric
+    from Vera.vera.evolve import work_core as wc
 except ImportError:                                   # pragma: no cover
     from vera.evolve import task_history_core as th
     from vera.evolve import result_ingest_core as ric
+    from vera.evolve import work_core as wc
 
 log = logging.getLogger("vera.evolve.task_history")
 
@@ -514,5 +516,92 @@ async def cap_evolve_tasks_overview(tag: str = "", template: str = "", include_e
         o["tags"] = (t or {}).get("tags") or []
         o["template"] = ((t or {}).get("census") or {}).get("template") or th.split_task_id(o["task_id"], data["templates"]).get("template", "")
         o["registered"] = t is not None
+        # The definition's own facts, so the Work table's tasks view is one
+        # call: type, profile/cap, enabled, how many checks, a seeded goal's
+        # template link and model override (the fields the old editor lost).
+        if t is not None:
+            o["type"] = str(t.get("type") or "loop")
+            o["profile"] = str(t.get("profile") or "")
+            o["cap"] = str(t.get("cap") or "")
+            o["enabled"] = t.get("enabled") is not False
+            o["checks_n"] = len(t.get("checks") or [])
+            o["seeded"] = isinstance(t.get("census"), dict) and bool(t.get("census"))
+            o["overrides"] = t.get("overrides") if isinstance(t.get("overrides"), dict) else None
+            o["goal"] = str(t.get("goal") or "")[:200]
     ov.sort(key=lambda o: (o["template"] or "~", o["task_id"]))
     return {"tasks": ov[:max(1, int(limit))], "count": len(ov)}
+
+
+# ── the Work page: one table of driver runs, one poll of what is live ────────
+
+async def _safe(coro, default):
+    try:
+        return await coro
+    except Exception as e:
+        log.info("work: a reader failed: %s", e)
+        return default
+
+
+@capability(
+    "evolve.work.drivers", memory="off", silent=True,
+    http_method="GET", http_path="/evolve/work/drivers", http_tags=["evolve", "census"],
+    description=(
+        "Every DRIVER RUN Loop Lab knows, in one shape, newest first, the live one "
+        "first: census runs (the archive, with routing/code/provenance rollups), suite "
+        "scoreboards, improvement sessions and single runs (run/manual/goal/captest/ide "
+        "- a run that belongs to a suite, session or census run is not a row). A census "
+        "run the harness also posted as a scoreboard is ONE row (also_in_store=true). "
+        "This is the Work page's runs view. Filters: kind (census|suite|improve|run), "
+        "template, source, text, include_excluded (bool=true), limit (int=400). "
+        "Output: {drivers[], count, kinds{}, templates[], census_meta}."),
+)
+async def cap_evolve_work_drivers(kind: str = "", template: str = "", source: str = "", text: str = "",
+                                  include_excluded: Any = True, limit: int = 400,
+                                  trace_id=None) -> Dict[str, Any]:
+    cc, ev = _mods()
+    census = await _safe(cc.cap_census_runs(include_partial=True), {}) if cc is not None else {}
+    suites = await _safe(ev.evolve_suites(limit=ev.SUITES_CAP), {}) if ev is not None else {}
+    sessions = await _safe(ev.evolve_improve_list(limit=ev.SESSIONS_CAP), {}) if ev is not None else {}
+    runs = await _safe(ev.evolve_runs(limit=ev.RUNS_CAP), {}) if ev is not None else {}
+    live = False
+    if cc is not None:
+        try:
+            active = await asyncio.to_thread(cc._read_active_sync)
+            live = bool((active or {}).get("live"))
+        except Exception:
+            live = False
+    rows = wc.driver_rows(census.get("runs") or [], suites.get("suites") or [],
+                          sessions.get("sessions") or [], runs.get("runs") or [], live_census=live)
+    inc = str(include_excluded).strip().lower() not in ("0", "false", "no", "off")
+    shown = wc.filter_rows(rows, kind=kind, template=template, text=text, include_excluded=inc, source=source)
+    kinds: Dict[str, int] = {}
+    for r in rows:
+        kinds[r["kind"]] = kinds.get(r["kind"], 0) + 1
+    templates = sorted({r["template"] for r in rows if r.get("template")})
+    meta = {k: v for k, v in census.items() if k != "runs"}
+    return {"drivers": shown[:max(1, int(limit))], "count": len(shown), "total": len(rows),
+            "kinds": kinds, "templates": templates, "census_meta": meta}
+
+
+@capability(
+    "evolve.work.live", memory="off", silent=True,
+    http_method="GET", http_path="/evolve/work/live", http_tags=["evolve", "census"],
+    description=(
+        "What is running NOW, in one call, for the Work page's single poller: the "
+        "census (census.live: harness, control, the goal in flight, recent goals), the "
+        "suite in progress (evolve.suite.status), the live improvement session, and "
+        "the active single run (evolve.run.status). Output: {census, suite, improve, "
+        "run, any_live}."),
+)
+async def cap_evolve_work_live(trace_id=None) -> Dict[str, Any]:
+    cc, ev = _mods()
+    census = await _safe(cc.cap_census_live(), {}) if cc is not None else {}
+    suite = await _safe(ev.evolve_suite_status(), {}) if ev is not None else {}
+    sessions = await _safe(ev.evolve_improve_list(limit=5), {}) if ev is not None else {}
+    run = await _safe(ev.evolve_run_status(), {}) if ev is not None else {}
+    improve = next((s for s in (sessions.get("sessions") or [])
+                    if s.get("live") or str(s.get("status") or "") == "running"), None)
+    hz = census.get("harness") if isinstance(census.get("harness"), dict) else {}
+    any_live = bool(census.get("active") or hz.get("live") or (suite.get("status") or {}).get("running")
+                    or suite.get("running") or improve or run.get("live") or run.get("running"))
+    return {"census": census, "suite": suite, "improve": improve, "run": run, "any_live": any_live}
