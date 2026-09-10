@@ -9741,6 +9741,9 @@ async def lifespan(app: FastAPI):
         # action list. After the surfaces it aggregates.
         os.path.join(_here, "automations/automations_capabilities.py"),
         os.path.join(_here, "evolve/evolve_capabilities.py"),
+        # One task through time: reads the census archive AND the suite's run
+        # records, so it must come after both census/ and evolve/ above.
+        os.path.join(_here, "evolve/task_history_capabilities.py"),
         # Closed-loop orchestrator (M7 Phase B) — part of Loop Lab; dedicated module.
         os.path.join(_here, "evolve/orchestrator_capabilities.py"),
         # Operator: general observe→think→act web/computer operator (drives any

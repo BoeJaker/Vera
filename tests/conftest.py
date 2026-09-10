@@ -65,6 +65,8 @@ _CRITICAL_MODULES = {
     "test_census_single_table_ui",  # one table: expand a run, click a goal (2026-09-10)
     "test_ttl_cache",  # a polled 30s endpoint must not be recomputed per poll (2026-09-10)
     "test_census_code_version",  # a row must say which code it ran on; a restart mid-run names its goal (2026-09-10)
+    "test_task_history_core",  # a census goal is a task; one task through time (2026-09-10)
+    "test_task_history_boot",  # the history caps must load with the app and read the archive (2026-09-10)
     "test_census_template_store",  # a dropped goal must lose its task (2026-09-07)
     "test_unittest_history",  # green on fewer tests is not a pass (2026-09-07)
     "test_race_to_green_ui",  # the strip must show a race, not one cell per pipeline (2026-09-07)

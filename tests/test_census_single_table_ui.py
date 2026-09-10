@@ -130,6 +130,26 @@ def test_the_goal_modal_names_the_code(src):
     assert "code_summary" in body and "_cenCodeOf(" in body
 
 
+# ── one task through time ───────────────────────────────────────────────────
+def test_a_goal_opens_its_task_history(src):
+    assert "async function openTaskHistory(" in src
+    assert "openTaskHistory(_thTaskIdFor(" in _fn(src, "loadCensusGoals")
+    body = _fn(src, "openTaskHistory")
+    assert "/evolve/task/history?id=" in body
+    assert "openModalLoading(" in body and body.index("openModalLoading(") < body.index("await api(")
+    assert "census_stats" in body and "code_changes" in body
+    # A census result opens the census record; a suite result opens the run.
+    assert "openCensusGoal(" in body and "openRun(" in body
+
+
+def test_the_tasks_page_shows_history_beside_the_definition(src):
+    body = _fn(src, "loadTasks")
+    assert "/evolve/tasks/overview" in body
+    assert "openTaskHistory(" in body
+    for col in ("runs", "ok", "wall median", "last"):
+        assert col in body
+
+
 # ── the live run can be paused, resumed and dropped from here ───────────────
 def test_the_live_strip_carries_the_controls(src):
     body = _fn(src, "loadCensusLive")

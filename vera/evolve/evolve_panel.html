@@ -2973,7 +2973,7 @@ async function loadCensusGoals(run){
     const hit=(g.wall_s||0)>=cap(g)-30&&st!=='done';
     const cyc=Object.values(g.cycles_per_step||{}).reduce((a,b)=>a+(+b||0),0);
     return '<tr class="clk" onclick="event.stopPropagation();openCensusGoal(\''+esc(run)+'\',\''+esc(g.id)+'\')">'
-      +'<td class="mono">'+esc(g.id)+(g.reruns&&g.reruns.length?(' <span class="tag" title="'+esc(g.reruns.map(x=>x.why).join('; '))+'">↻'+g.reruns.length+'</span>'):'')+'</td>'
+      +'<td class="mono"><span class="clk" title="this task through time — every run of it, from every driver" onclick="event.stopPropagation();openTaskHistory(_thTaskIdFor(\''+esc(run)+'\',\''+esc(g.id)+'\'))">⌁</span> '+esc(g.id)+(g.reruns&&g.reruns.length?(' <span class="tag" title="'+esc(g.reruns.map(x=>x.why).join('; '))+'">↻'+g.reruns.length+'</span>'):'')+'</td>'
       +'<td>'+_cenStatus(st)+'</td>'
       +'<td>'+_cenCode(g.code_summary)+'</td>'
       +'<td class="mono"'+(hit?' style="color:#c9a35a" title="hit the '+Math.round(cap(g)/60)+'m cap"':'')+'>'+_cenSec(g.wall_s)+'<span class="hint">/'+_cenSec(cap(g))+'</span></td>'
@@ -3195,6 +3195,68 @@ async function openCensusGoal(run,goal){
     +cenAloBlock(_sid)+'</details>');
   // The loop replay starts when its section is opened (ontoggle above), not on
   // every modal open: a finished goal's record is judged from the summary.
+}
+
+/* ═══ ONE TASK THROUGH TIME ═════════════════════════════════════════════════
+   A census goal is a task; a task is one runnable test. Its results used to
+   live in two stores (the census archive, the suite's run records) and no
+   view could ask how ONE task had done across runs. evolve.task.history joins
+   them under the task id; this modal is the dashboard: stats, the wall-time
+   series, where the code changed, and every result with its driver. */
+function _thPct(v){return v==null?'—':(Math.round(v*100)+'%')}
+function _thStats(st,label){
+  if(!st||!st.runs)return '<div class="hint">'+esc(label)+': no results</div>';
+  const cells=[['runs',st.runs],['ok',_thPct(st.ok_rate)+' <span class="hint">('+st.ok+')</span>'],['capped',st.capped],['failed',st.failed],
+    ['wall median',_cenSec(st.wall_median_s)],['wall min–max',_cenSec(st.wall_min_s)+'–'+_cenSec(st.wall_max_s)+(st.wall_spread?(' <span class="hint">×'+st.wall_spread+'</span>'):'')],
+    ['quality',_thPct(st.quality_mean)],['streak',(st.streak&&st.streak.n?(st.streak.n+' '+(st.streak.ok?'ok':'not ok')):'—')],
+    ['trend',(st.trend_ok_rate==null?'<span class="hint" title="needs ten results">—</span>':((st.trend_ok_rate>0?'+':'')+Math.round(st.trend_ok_rate*100)+'pt'))]];
+  return '<div style="margin:4px 0"><span class="hint">'+esc(label)+'</span> <span class="row" style="gap:12px;flex-wrap:wrap;display:inline-flex">'
+    +cells.map(c=>'<span>'+c[0]+' <b>'+c[1]+'</b></span>').join('')+'</span></div>';
+}
+async function openTaskHistory(taskId){
+  const tok=openModalLoading('Task through time',taskId);
+  const r=await api('/evolve/task/history?id='+encodeURIComponent(taskId));
+  if(!r||r.error){modalFail(tok,(r&&r.error)||'no history');return}
+  const rows=r.results||[], t=r.task||{};
+  const oldest=rows.slice().reverse();
+  const walls=oldest.map(x=>x.wall_s==null?null:Math.round(x.wall_s/60));
+  const labels=oldest.map(x=>((x.driver||{}).id||'')+' '+(x.status||''));
+  const okDots=oldest.map(x=>x.ok?1:0);
+  const changes=(r.code_changes||[]).map(c=>'<span class="tag" title="'+esc((c.ts||'')+' · '+c.from+' → '+c.to)+'">'+esc(String((c.driver||c.at||'')).slice(0,12))+': '+esc(c.from.split('@')[0].slice(0,7))+' → '+esc(c.to.split('@')[0].slice(0,7))+'</span>').join(' ');
+  const trs=rows.map(x=>{
+    const d=x.driver||{};
+    const isCensus=x.source==='census';
+    const open=isCensus?('openCensusGoal(\''+esc(d.id)+'\',\''+esc(x.goal||'')+'\')'):(x.run_id?('openRun(\''+esc(x.run_id)+'\')'):'');
+    const cap=x.wall_cap_s;
+    return '<tr class="clk" onclick="'+open+'">'
+      +'<td class="mono hint">'+esc(String(x.ts||'').slice(0,16).replace('T',' '))+'</td>'
+      +'<td><span class="tag" title="'+esc(x.source)+'">'+esc(d.kind||x.source)+'</span> <span class="mono">'+esc(String(d.id||'').slice(0,18))+'</span></td>'
+      +'<td>'+_cenStatus(x.status)+(x.reruns?(' <span class="tag" title="re-run after a pause or interruption">↻'+x.reruns+'</span>'):'')+'</td>'
+      +'<td class="mono"'+(x.hit_cap?' style="color:#c9a35a"':'')+'>'+_cenSec(x.wall_s)+(cap?('<span class="hint">/'+_cenSec(cap)+'</span>'):'')+'</td>'
+      +'<td class="mono">'+(x.checks_n?(x.checks_ok+'/'+x.checks_n):'—')+'</td>'
+      +'<td class="mono">'+(x.planned==null?'—':(x.planned+'/'+x.executed))+'</td>'
+      +'<td>'+(x.code?('<span class="mono">'+esc(x.code.sha_short.slice(0,7))+'</span><span class="hint">@'+esc(x.code.branch||'?')+'</span>'+(x.code.changed?' <span style="color:#c96b6b" title="restarted during this goal">↻≠</span>':'')):'<span class="hint">—</span>')+'</td>'
+      +'<td>'+(x.routing?('<span class="mono">'+esc(String(x.routing.coder||'').replace(/^jaahas\//,''))+'</span>'+(x.routing.spill_calls?' <span style="color:#c96b6b">⚠'+x.routing.spill_calls+'</span>':'')+(x.routing.reroutes?' <span style="color:#c9a35a">↷'+x.routing.reroutes+'</span>':'')):'<span class="hint">—</span>')+'</td>'
+      +'<td class="hint">'+esc((x.error||'').slice(0,60))+'</td></tr>';
+  }).join('');
+  modalFill(tok,
+    '<div style="margin-bottom:6px"><b>'+esc(t.label||taskId)+'</b>'+(t.unregistered?' <span class="tag" title="results exist but the task store no longer holds this task">unregistered</span>':'')
+      +(t.census?(' <span class="tag">'+esc(t.census.template||'')+'</span>'):'')+(t.profile?(' <span class="tag">'+esc(t.profile)+'</span>'):'')
+      +(t.goal?('<div class="hint" style="margin-top:2px">'+esc(String(t.goal).slice(0,300))+'</div>'):'')+'</div>'
+    +_thStats(r.stats,'all drivers')
+    +(r.census_stats&&r.census_stats.runs&&r.census_stats.runs!==(r.stats||{}).runs?_thStats(r.census_stats,'census only (the comparable series)'):'')
+    +'<div style="margin:6px 0"><div class="hint">wall time per run, oldest first — green ok, amber capped, red failed</div>'
+    +(walls.some(v=>v!=null)?_cenSpark(walls,labels,{lo:0,col:'#9b7fd6'}):'<div class="hint">no wall times</div>')
+    +'<div style="display:flex;gap:2px;flex-wrap:wrap;margin-top:2px">'+oldest.map(x=>'<span title="'+esc(labels[oldest.indexOf(x)])+'" style="width:9px;height:9px;border-radius:2px;display:inline-block;background:'+(x.ok?'#3cb371':(x.hit_cap?'#c9a35a':'#c96b6b'))+'"></span>').join('')+'</div></div>'
+    +(changes?('<div class="hint" style="margin:4px 0">code changed at: '+changes+'</div>'):'<div class="hint" style="margin:4px 0">no code change recorded across these results</div>')
+    +'<div style="max-height:360px;overflow:auto"><table><tr><th>when</th><th>driver</th><th>status</th><th>wall / cap</th><th>checks</th><th title="planned / executed steps">steps</th><th>code</th><th>coder</th><th>error</th></tr>'+trs+'</table></div>'
+    +'<div class="hint" style="margin-top:6px">Every row is a result of this task from whichever driver ran it: a census archive run, a suite scoreboard, a single run, an improvement round. Click a row for its record. Stats mix drivers; the census-only line is the comparable series.</div>');
+}
+function _thTaskIdFor(run,goal){
+  const s=(_cenRunsAll||[]).find(x=>x.run_id===run)||{};
+  const hz=(_cenLiveData&&_cenLiveData.harness)||{};
+  const tpl=s.template||(run==='current'?(hz.template||'default'):'default');
+  return 'census-'+tpl+'-'+goal;
 }
 
 /* ═══ SESSIONS: Claude Code session watch (§6.6) — read-only classify ═══ */
@@ -3659,16 +3721,29 @@ async function pollSuite(){
 
 /* ═══ TASKS ═══ */
 async function loadTasks(){
-  const r=await api('/evolve/tasks');const tasks=(r&&r.tasks)||[];
+  const [r,ov]=await Promise.all([api('/evolve/tasks'),api('/evolve/tasks/overview').catch(()=>null)]);
+  const tasks=(r&&r.tasks)||[];
   if(!tasks.length){$('tasks-body').innerHTML='<div class="empty">No tasks.</div>';return}
-  let h='<table><tr><th>id</th><th>type</th><th>profile / cap</th><th>checks</th><th>tags</th><th></th></tr>';
+  // Each task's history from every driver (census archive, suite, single
+  // runs, improvement rounds) beside its definition — a task is one runnable
+  // test, and a census goal is a task, so this is where "how has this test
+  // done over time" lives.
+  const hist={};((ov&&ov.tasks)||[]).forEach(o=>{hist[o.task_id]=o});
+  let h='<table><tr><th>id</th><th>type</th><th>profile / cap</th><th>checks</th><th>tags</th><th title="results from every driver">runs</th><th title="share of runs the harness or suite called ok">ok</th><th>wall median</th><th title="newest result">last</th><th></th></tr>';
   for(const t of tasks){
-    h+='<tr><td><b>'+esc(t.id)+'</b><div class="hint">'+esc(t.label||'')+'</div></td>'
+    const o=hist[t.id]||{}, st=o.stats||{}, last=o.last||null;
+    const dots=(o.series||[]).map(p=>'<span title="'+esc((p.driver||'')+' '+(p.status||''))+'" style="width:7px;height:7px;border-radius:2px;display:inline-block;margin-right:1px;background:'+(p.ok?'#3cb371':(p.status==='wall-cap'?'#c9a35a':'#c96b6b'))+'"></span>').join('');
+    h+='<tr><td><span class="clk" title="this task through time" onclick="openTaskHistory(\''+esc(t.id)+'\')">⌁</span> <b>'+esc(t.id)+'</b><div class="hint">'+esc(t.label||'')+'</div></td>'
       +'<td><span class="tag">'+esc(t.type||'loop')+'</span>'+(t.enabled===false?' <span class="tag" style="color:var(--dim)">off</span>':'')+'</td>'
       +'<td class="mono">'+esc(t.type==='cap'?(t.cap||''):(t.profile||''))+'</td>'
       +'<td class="mono">'+((t.checks||[]).length)+'</td>'
       +'<td>'+((t.tags||[]).map(x=>'<span class="tag">'+esc(x)+'</span>').join(' '))+'</td>'
+      +'<td class="mono">'+(o.runs||0)+(dots?('<div>'+dots+'</div>'):'')+'</td>'
+      +'<td class="mono">'+(st.runs?(Math.round(st.ok_rate*100)+'%'):'—')+'</td>'
+      +'<td class="mono">'+(st.runs?_cenSec(st.wall_median_s):'—')+'</td>'
+      +'<td>'+(last?(_cenStatus(last.status)+' <span class="hint mono">'+esc(String(last.ts||'').slice(0,10))+'</span>'):'<span class="hint">never</span>')+'</td>'
       +'<td class="row" style="gap:4px"><button class="btn sm" onclick="runTask(\''+esc(t.id)+'\')">&#9654;</button>'
+      +'<button class="btn sm" onclick="openTaskHistory(\''+esc(t.id)+'\')" title="every run of this task, from every driver">history</button>'
       +'<button class="btn sm" onclick=\'openTask('+JSON.stringify(t).replace(/'/g,"&#39;")+')\'>edit</button></td></tr>';
   }
   h+='</table>';$('tasks-body').innerHTML=h;
