@@ -7761,6 +7761,9 @@ async def _refresh_standing_bleeding_edge_container(edge: str = "") -> Dict[str,
     if not entry or not entry.get("name"):
         return {"ok": True, "action": "mirror refreshed; standing container not up"}
     name = entry["name"]
+    # Its redis sidecar may have been frozen (an idle sweep before this fix);
+    # a restarted app must find its store, or it comes up Redis-less.
+    await _sidecar_set_paused(name, False)
     r = await _sh(["docker", "restart", name])
     if not r.get("ok"):
         return {"ok": False, "error": f"container restart failed: {r.get('err') or r.get('out')}"}
@@ -7949,13 +7952,34 @@ async def _release_container_gate_leases(name: str) -> int:
         return 0
 
 
+async def _sidecar_set_paused(name: str, paused: bool) -> bool:
+    """Pause / unpause the redis sidecar paired with a sandbox container, when
+    it exists and is in the other state. The sidecar follows its app: frozen
+    with it, woken with it, never on its own - a sidecar frozen alone leaves a
+    running sandbox Redis-less (its app loops on 'Timeout connecting to
+    server'; seen on the pinned standing mirror 2026-09-10). Returns whether
+    the sidecar's state changed."""
+    if _sbx_redis is None or not name:
+        return False
+    sc = _sbx_redis.sidecar_name(name)
+    st = await _sh(["docker", "inspect", "-f", "{{.State.Status}}", sc], timeout=10)
+    cur = (st.get("out") or "").strip() if st.get("ok") else ""
+    if paused and cur == "running":
+        return bool((await _sh(["docker", "pause", sc], timeout=15)).get("ok"))
+    if not paused and cur == "paused":
+        return bool((await _sh(["docker", "unpause", sc], timeout=15)).get("ok"))
+    return False
+
+
 async def _sandbox_unpause_if_paused(name: str) -> bool:
     """Auto-resume a paused container before docker-exec'ing into it. The idle
     reaper may have frozen it; this makes over-pausing HARMLESS — the next real
     use transparently wakes it. (fs/diff read the host worktree and never need
-    the container running, so exec is the only path that must unpause.)"""
+    the container running, so exec is the only path that must unpause.) Its
+    redis sidecar wakes first, so the app finds its store the moment it runs."""
     if not name:
         return False
+    await _sidecar_set_paused(name, False)
     st = await _sh(["docker", "inspect", "-f", "{{.State.Status}}", name], timeout=10)
     if (st.get("out") or "").strip() == "paused":
         await _sh(["docker", "unpause", name], timeout=15)
@@ -7991,6 +8015,7 @@ async def _sandbox_ensure_unpaused() -> bool:
     to resume serving before the caller's own health probe runs. No-op (True)
     if it's already running or doesn't exist — the normal up/down paths handle
     those. Returns False only on a genuine unpause failure."""
+    await _sidecar_set_paused(_SANDBOX_CONTAINER, False)
     if await _sandbox_container_status() != "paused":
         return True
     r = await _sh(["docker", "unpause", _SANDBOX_CONTAINER], timeout=15)
@@ -8855,6 +8880,11 @@ async def _sandbox_reap(dry_run: bool = False) -> Dict[str, Any]:
     for name in names:
         if name == primary or name in _SANDBOX_KEEP_ALWAYS or name in pinned:
             continue
+        # A redis sidecar is not a sandbox: it follows its app (paused with it
+        # below, woken with it in _sandbox_unpause_if_paused). Picked on its own
+        # it left the PINNED standing mirror running Redis-less (2026-09-10).
+        if _sbx_redis is not None and _sbx_redis.is_sidecar(name):
+            continue
         insp = await _sh(["docker", "inspect", "-f",
                           "{{.State.Status}}|{{.State.StartedAt}}", name], timeout=10)
         status, _sep, started = (insp.get("out") or "").strip().partition("|")
@@ -8884,6 +8914,7 @@ async def _sandbox_reap(dry_run: bool = False) -> Dict[str, Any]:
             rr = await _sh(["docker", "pause", p["name"]], timeout=15)
             p["paused"] = bool(rr["ok"])
             if rr["ok"]:
+                p["sidecar_paused"] = await _sidecar_set_paused(p["name"], True)
                 await _audit("sandbox.reap", f"idle-paused {p['name']} ({p['idle_s']}s idle)")
         n = sum(1 for p in plan if p.get("paused"))
         if n:

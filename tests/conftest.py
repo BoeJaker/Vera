@@ -81,6 +81,7 @@ _CRITICAL_MODULES = {
     "test_ship_core",  # the Ship table: a row per branch from five stores; a stale pending is superseded (2026-09-10)
     "test_ship_page_boot",  # evolve.ship.branches must load with the app and read the five stores in one call (2026-09-10)
     "test_ship_page_ui",  # CI/CD, Review, Sources, Sandbox, Unit tests are one page; the infographics survived (2026-09-10)
+    "test_reaper_follows_the_sidecar",  # a redis sidecar is frozen with its app, never on its own (2026-09-10)
     "test_census_template_store",  # a dropped goal must lose its task (2026-09-07)
     "test_unittest_history",  # green on fewer tests is not a pass (2026-09-07)
     "test_race_to_green_ui",  # the strip must show a race, not one cell per pipeline (2026-09-07)
