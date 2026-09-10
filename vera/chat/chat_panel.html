@@ -988,6 +988,53 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
   max-width:760px;
   margin:0 auto 14px;
 }
+
+/* ═══ Density tiers and Blocks — the design's three levels of detail (Notes/40 §1, the Main/Canvas board) ═══
+   The tier is data-den on <html>: FULL shows everything; HOVER shows nothing at rest and opens space at a turn's
+   foot for its chrome when you point at it (never over the words, never a permanent gap), tool-call records fold
+   to their one-line peek until clicked; ZEN keeps the words, the rendered output and the time — tool-call records
+   and chrome go, the column narrows. Rendered output (images, a research report, tables) is the answer, never
+   chrome: it is never hidden. Blocks is data-blocks: off strips the per-turn backgrounds and rules from every
+   surface for a flat, quiet transcript. vera-ui.js paints both attributes; the top-bar controls only ask. */
+/* FULL — the chrome is always there, not only on hover */
+html[data-den="full"] .msg-actions{opacity:1}
+/* HOVER */
+html[data-den="hover"] .mwrap{position:relative;transition:padding-bottom .17s ease}
+html[data-den="hover"] .mwrap:hover{padding-bottom:34px}
+html[data-den="hover"] .msg-actions{position:absolute;left:62px;right:16px;bottom:6px;margin:0;opacity:0;pointer-events:none;transition:opacity .15s}
+html[data-den="hover"] .mwrap:hover .msg-actions{opacity:1;pointer-events:auto}
+html[data-den="hover"] .msg-gutter,html[data-den="hover"] .mtime{opacity:0;transition:opacity .15s}
+html[data-den="hover"] .mwrap:hover .msg-gutter,html[data-den="hover"] .mwrap:hover .mtime{opacity:1}
+html[data-den="hover"] .cap-inline:not(.open) .cap-result{display:none!important}
+html[data-den="hover"] .cap-inline:not(.open) .cap-peek{display:block!important}
+html[data-den="hover"] .cap-inline.open .cap-result{display:block!important}
+html[data-den="hover"] .cap-inline.open .cap-peek{display:none!important}
+html[data-den="hover"] .cap-inline-header{cursor:pointer}
+/* ZEN */
+html[data-den="zen"] .msg-actions,html[data-den="zen"] .think-box{display:none!important}
+html[data-den="zen"] .cap-inline:not(:has(.cap-md)) > :not(.cap-imgs){display:none!important}
+html[data-den="zen"] .cap-inline:has(.cap-md) > .cap-inline-header,html[data-den="zen"] .cap-inline:has(.cap-md) > .cap-peek{display:none!important}
+html[data-den="zen"] .cap-inline:has(.cap-md) > .cap-result{display:block!important}
+html[data-den="zen"] .cap-inline{border:none;background:transparent;padding:0;margin:4px 0}
+html[data-den="zen"] .cap-inline:not(:has(.cap-imgs)):not(:has(.cap-md)){display:none!important}
+html[data-den="zen"] .mwrap{max-width:820px;width:100%;box-sizing:border-box;margin:0 auto;padding:14px 24px}
+html[data-den="zen"] .msg-gutter{opacity:.65}
+html[data-den="zen"] .msg-body{font-size:12.5px;line-height:1.65}
+html[data-den="zen"] .msg-body.u{font-size:13.5px}
+/* BLOCKS OFF — no tinted question, no closing rule, no boxed record: just the conversation */
+html[data-blocks="off"] .mwrap{border-bottom:none}
+html[data-blocks="off"] .mwrap.u{background:transparent}
+html[data-blocks="off"] .mwrap.u.pin{box-shadow:none;background:var(--bg0)}
+html[data-blocks="off"] .sys-msg{border-bottom:none}
+html[data-blocks="off"] .cap-inline{background:transparent;border-color:transparent;border-left-color:var(--acc2)}
+html[data-blocks="off"] .cap-inline.error{border-left-color:var(--err)}
+html[data-blocks="off"] .cap-result{background:transparent!important}
+html[data-blocks="off"] .think-box{background:transparent}
+html[data-blocks="off"] .council-resp,html[data-blocks="off"] .council-resp.best{border-color:transparent}
+html[data-blocks="off"] #inputBar,html[data-blocks="off"] #docChips,html[data-blocks="off"] #ctxStrip,html[data-blocks="off"] #podcastBar,html[data-blocks="off"] #councilPanel,html[data-blocks="off"] #sdPanel{background:transparent;border-color:transparent}
+html[data-blocks="off"] #topBar{background:transparent;border-bottom-color:transparent}
+html[data-blocks="off"] #rightRail{background:transparent;border-right-color:transparent}
+html[data-blocks="off"] .ctx-tab-bar{border-bottom-color:transparent}
 </style>
 </head>
 <body data-view="minimal">
@@ -1054,6 +1101,14 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
   </div>
 
   <div class="tb-sep"></div>
+
+  <!-- Level of detail and Blocks — the appearance the whole UI shares (data-den / data-blocks on <html>) -->
+  <div class="tb-group" id="denGroup" title="Level of detail — Full shows everything; Hover shows a turn's chrome when you point at it; Zen keeps the words, the output and the time">
+    <button class="tb-btn" data-den="full"  onclick="CH.setDensity('full')">Full</button>
+    <button class="tb-btn" data-den="hover" onclick="CH.setDensity('hover')">Hover</button>
+    <button class="tb-btn" data-den="zen"   onclick="CH.setDensity('zen')">Zen</button>
+  </div>
+  <button class="tb-btn" id="blocksBtn" onclick="CH.toggleBlocks()" title="Blocks — the per-turn backgrounds and rules; off is a flatter, quieter transcript">Blocks</button>
 
   <!-- Layout toggles -->
   <div class="tb-group" title="Panel layout">
@@ -14845,6 +14900,8 @@ Your task: decide what to do next to advance toward the goal.
     let savedMode='minimal';
     try{savedMode=localStorage.getItem('vera_view_mode')||'minimal';}catch(_){}
     setViewMode(savedMode);
+    // The tier and Blocks buttons mirror <html>'s data-den / data-blocks (painted by vera-ui.js) from the start
+    _appearanceInit();
     // Fold the legacy left-rail panes into the unified rail before any
     // rail-visibility / tab state is applied.
     _unifyRails();
@@ -14995,6 +15052,39 @@ Your task: decide what to do next to advance toward the goal.
     setTimeout(()=>{ try{ send(); }catch(e){ console.warn('resend failed',e); } }, 30);
   }
 
+  /* ═══ APPEARANCE — density tier + Blocks (design M1b) ═══
+     The attributes live on <html>: vera-ui.js paints them from localStorage / the server and relays a change to
+     every frame. This panel only asks for the change and mirrors the current state on its buttons — so a change
+     made in the harness, the floating picker or another panel shows here too. Without vera-ui.js (an old shell)
+     it paints and stores the attributes itself under the same keys. */
+  function _appearanceApply(patch){
+    const d=document.documentElement;
+    if(window.veraUI&&veraUI.setAppearance){ veraUI.setAppearance(patch); }
+    else {
+      if(patch.den){ d.setAttribute('data-den',patch.den); try{localStorage.setItem('vera:ui:den',patch.den);}catch(_){} }
+      if(patch.blocks!=null){ d.setAttribute('data-blocks',patch.blocks?'on':'off'); try{localStorage.setItem('vera:ui:blocks',patch.blocks?'on':'off');}catch(_){} }
+    }
+    _appearanceSync();
+  }
+  function setDensity(id){ _appearanceApply({den:String(id||'full')}); }
+  function toggleBlocks(){ _appearanceApply({blocks:document.documentElement.getAttribute('data-blocks')==='off'}); }
+  function _appearanceSync(){
+    const d=document.documentElement, den=d.getAttribute('data-den')||'full', blocks=d.getAttribute('data-blocks')!=='off';
+    document.querySelectorAll('#denGroup .tb-btn').forEach(b=>b.classList.toggle('active',b.dataset.den===den));
+    const bb=document.getElementById('blocksBtn'); if(bb) bb.classList.toggle('active',blocks);
+  }
+  function _appearanceInit(){
+    _appearanceSync();
+    try{ new MutationObserver(_appearanceSync).observe(document.documentElement,{attributes:true,attributeFilter:['data-den','data-blocks']}); }catch(_){}
+    // Hover tier: a folded tool-call record opens on a click of its header (its own buttons keep their jobs)
+    document.addEventListener('click',e=>{
+      if(document.documentElement.getAttribute('data-den')!=='hover') return;
+      if(e.target.closest('button,a,input,select,textarea')) return;
+      const h=e.target.closest('.cap-inline-header'); if(!h) return;
+      const card=h.closest('.cap-inline'); if(card) card.classList.toggle('open');
+    });
+  }
+
   return{
     init,send,agentBarChanged,cfgAgentSync,_setDefaultAgent,_refreshAgentList,restoreAgentsFromFabric,histLoad,histFilter,loadSession,newSession,clearChat,recall,autoName,autoNameAll,promptRename,
     toggleLeft,toggleRight,railTab,ctxTab,loadChatGoals,watchGoalLoopChat,openGoalDetail,loadChatLoops,pickUpLoop,ctxViewMode,setLayer,srcToggle,ctxFetch,saveFrame,loadFrame,updateFrameUI,nodeClick,resetGraph,renderCtxGraph,renderCtxList,
@@ -15030,6 +15120,7 @@ Your task: decide what to do next to advance toward the goal.
     cycleTheme,onKD,onInput,_slashBlur,_execCapConfirmed,loadAllCaps,
     cmdOpen,cmdClose,
     toggleViewMode,setViewMode,
+    setDensity,toggleBlocks,
     _persistMediaCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},
     setContext:txt=>{_parentCtx=txt;},
