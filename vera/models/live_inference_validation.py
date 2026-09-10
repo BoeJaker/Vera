@@ -87,7 +87,9 @@ async def validate_ollama_provider(*, model: str, instance_id: str,
                                    artifact_sha256: str, artifact_size: int,
                                    runner: Runner, prompt: str = "Reply with VERA_OK only.",
                                    expected_output: str = "VERA_OK",
-                                   case_timeout_seconds: float = 60
+                                   case_timeout_seconds: float = 60,
+                                   validate_cancellation: bool = False,
+                                   cancellation_delay_seconds: float = 0.1,
                                    ) -> dict[str, Any]:
     """Run bounded non-stream and stream cases through one portable binding."""
     if isinstance(case_timeout_seconds, bool) or not 0 < case_timeout_seconds <= 120:
@@ -95,6 +97,9 @@ async def validate_ollama_provider(*, model: str, instance_id: str,
     if not isinstance(expected_output, str) or not expected_output \
             or len(expected_output.encode("utf-8")) > 16_384:
         raise ValueError("expected output must be non-empty and at most 16384 bytes")
+    if (isinstance(cancellation_delay_seconds, bool) or
+            not 0 < cancellation_delay_seconds <= 5):
+        raise ValueError("cancellation delay must be within 5 seconds")
     expected_sha256 = hashlib.sha256(expected_output.encode("utf-8")).hexdigest()
     package = ModelPackage(
         _identifier(model, "ollama-model"), artifact_sha256[:12], "transformer", "gguf",
@@ -130,7 +135,42 @@ async def validate_ollama_provider(*, model: str, instance_id: str,
         evidence["passed"] = bool(evidence["transport_passed"]
                                   and evidence["content_conformant"])
         cases.append(evidence)
-    return {
+    cancellation = None
+    if validate_cancellation:
+        request = InferenceRequest(
+            package.package_id, "generate", "prompt/v1", "text/v1",
+            (InferenceValue.from_json("prompt", prompt),),
+            parameters=(("max_tokens", 32), ("temperature", 0), ("think", False)),
+            stream=True, max_output_bytes=16_384)
+        started = time.monotonic()
+        task = asyncio.create_task(consume_inference(provider, request))
+        await asyncio.sleep(cancellation_delay_seconds)
+        completed_before_cancel = task.done()
+        if not completed_before_cancel:
+            task.cancel()
+        cancellation_observed = False
+        try:
+            await asyncio.wait_for(task, timeout=case_timeout_seconds)
+        except asyncio.CancelledError:
+            cancellation_observed = True
+        except asyncio.TimeoutError:
+            task.cancel()
+            try:
+                await task
+            except BaseException:
+                pass
+        cancellation = {
+            "case": "cancellation",
+            "status": ("completed_before_cancel" if completed_before_cancel else
+                       "cancelled" if cancellation_observed else "failed"),
+            "cancellation_observed": cancellation_observed,
+            "task_reaped": task.done(),
+            "passed": bool(not completed_before_cancel and
+                           cancellation_observed and task.done()),
+            "elapsed_ms": round((time.monotonic() - started) * 1000),
+        }
+
+    report = {
         "schema": LIVE_INFERENCE_REPORT_SCHEMA,
         "provider": provider.profile().provider_id,
         "model_package_id": package.package_id,
@@ -144,6 +184,10 @@ async def validate_ollama_provider(*, model: str, instance_id: str,
         "passed": all(case["passed"] for case in cases),
         "privacy": "prompt_and_output_omitted",
     }
+    if cancellation is not None:
+        report["cancellation"] = cancellation
+        report["passed"] = bool(report["passed"] and cancellation["passed"])
+    return report
 
 
 async def discover_ollama_artifact(instance_id: str, model: str) -> dict[str, Any]:
@@ -183,7 +227,7 @@ async def _run(model: str, instance_id: str) -> dict[str, Any]:
     return await validate_ollama_provider(
         model=model, instance_id=instance_id,
         artifact_sha256=artifact["sha256"], artifact_size=artifact["size_bytes"],
-        runner=ollama_generate)
+        runner=ollama_generate, validate_cancellation=True)
 
 
 def main() -> int:

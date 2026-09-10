@@ -69,6 +69,19 @@ async def test_failed_terminal_is_reported_without_backend_detail():
 
 
 @pytest.mark.asyncio
+async def test_empty_runner_result_is_an_explicit_transport_failure():
+    async def empty(_prompt, **_kwargs):
+        return ""
+
+    report = await validate_ollama_provider(
+        model="model", instance_id="node", artifact_sha256="b" * 64,
+        artifact_size=1, runner=empty)
+    assert report["transport_passed"] is False
+    assert {case["status"] for case in report["cases"]} == {"failed"}
+    assert {case["error_code"] for case in report["cases"]} == {"empty_response"}
+
+
+@pytest.mark.asyncio
 async def test_nonempty_wrong_content_is_transport_success_not_conformance():
     async def wrong(_prompt, **kwargs):
         callback = kwargs.get("stream_cb")
@@ -152,3 +165,38 @@ async def test_timeout_reaps_runner_and_stops_additional_cases():
     assert report["transport_passed"] is False
     assert report["content_conformant"] is False
     assert reaped.is_set()
+
+
+@pytest.mark.asyncio
+async def test_optional_cancellation_case_reaps_owned_runner():
+    calls = 0
+    cancelled = asyncio.Event()
+
+    async def cancellable(_prompt, **kwargs):
+        nonlocal calls
+        calls += 1
+        callback = kwargs.get("stream_cb")
+        if calls <= 2:
+            if callback:
+                await callback("VERA_OK")
+            kwargs["meta_out"].update({"eval_count": 1})
+            return "VERA_OK"
+        try:
+            await asyncio.Future()
+        finally:
+            cancelled.set()
+
+    report = await validate_ollama_provider(
+        model="model", instance_id="node", artifact_sha256="b" * 64,
+        artifact_size=1, runner=cancellable, validate_cancellation=True,
+        cancellation_delay_seconds=0.01)
+
+    assert report["passed"] is True
+    evidence = report["cancellation"]
+    assert evidence["case"] == "cancellation"
+    assert evidence["status"] == "cancelled"
+    assert evidence["cancellation_observed"] is True
+    assert evidence["task_reaped"] is True
+    assert evidence["passed"] is True
+    assert 0 <= evidence["elapsed_ms"] < 1_000
+    assert cancelled.is_set()
