@@ -62,6 +62,19 @@ def sidecar_name(container_name: str) -> str:
     return "%s-redis" % str(container_name or "vera-dev").strip()
 
 
+def is_sidecar(container_name: str) -> bool:
+    """Whether a container is a sandbox's redis sidecar (named by sidecar_name).
+    A sidecar follows its app - frozen with it, woken with it - and is never
+    a sandbox in its own right: the idle reaper must not pick it on its own."""
+    return str(container_name or "").strip().endswith("-redis")
+
+
+def app_of(sidecar: str) -> str:
+    """The sandbox container a sidecar belongs to ('' if not a sidecar)."""
+    s = str(sidecar or "").strip()
+    return s[:-len("-redis")] if s.endswith("-redis") else ""
+
+
 def data_url(container_name: str) -> str:
     """What the sandbox should use as REDIS_URL.
 
