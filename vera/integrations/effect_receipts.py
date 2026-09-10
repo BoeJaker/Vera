@@ -143,6 +143,47 @@ class ExternalEffectReceiptLedger:
                 "successful_receipt_id": succeeded["receipt_id"] if succeeded else "",
                 "executes": False, "retries": False, "retains_payload": False}
 
+    def summary(self, *, limit: int = 50, plan_id: str = "") -> dict[str, Any]:
+        """Return bounded, payload-free evidence for operator inspection."""
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
+            raise ValueError("limit must be between 1 and 200")
+        plan_id = str(plan_id or "").strip().lower()
+        if plan_id and not _SHA256.fullmatch(plan_id):
+            raise ValueError("plan_id must be a SHA-256 digest")
+        where = " WHERE plan_id=?" if plan_id else ""
+        params = (plan_id,) if plan_id else ()
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM external_effect_receipts" + where +
+                " ORDER BY latest_observed_at DESC, receipt_id ASC LIMIT ?",
+                (*params, limit)).fetchall()
+            aggregates = conn.execute(
+                "SELECT json_extract(evidence_json, '$.outcome') AS outcome, "
+                "COUNT(*) AS receipts, "
+                "COALESCE(SUM(observation_count), 0) AS observations "
+                "FROM external_effect_receipts" + where +
+                " GROUP BY json_extract(evidence_json, '$.outcome')",
+                params).fetchall()
+            totals = conn.execute(
+                "SELECT COUNT(*) AS receipts, COUNT(DISTINCT plan_id) AS plans, "
+                "COALESCE(SUM(observation_count), 0) AS observations "
+                "FROM external_effect_receipts" + where, params).fetchone()
+        outcomes = {name: {"receipts": 0, "observations": 0}
+                    for name in sorted(OUTCOMES)}
+        for row in aggregates:
+            outcomes[row["outcome"]] = {
+                "receipts": row["receipts"], "observations": row["observations"]}
+        return {
+            "schema": "vera.external-effect-receipt-summary/v1",
+            "filter": {"plan_id": plan_id},
+            "totals": {"plans": totals["plans"], "receipts": totals["receipts"],
+                       "observations": totals["observations"]},
+            "outcomes": outcomes,
+            "recent": [self._public(row) for row in rows],
+            "window": {"requested": limit, "returned": len(rows)},
+            "executes": False, "retries": False, "retains_payload": False,
+        }
+
 
 @lru_cache(maxsize=1)
 def default_external_effect_receipt_ledger() -> ExternalEffectReceiptLedger:

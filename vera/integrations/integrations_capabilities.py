@@ -954,6 +954,29 @@ async def integration_effect_replay_status(plan: Optional[Dict] = None, trace_id
 
 
 @capability(
+    "integration.effect.receipts", http_method="GET",
+    http_path="/integrations/effect/receipts",
+    http_tags=["integration", "policy"], memory="off", silent=True,
+    description="Inspect a bounded payload-free summary of durable external-effect "
+                "receipts. Inputs: limit and optional SHA-256 plan_id. Returns "
+                "counts plus recent hashed identities and outcome evidence; it "
+                "cannot execute, retry, open secrets, or record a receipt.",
+)
+async def integration_effect_receipts(limit: int = 50, plan_id: str = "",
+                                      trace_id=None):
+    try:
+        return default_external_effect_receipt_ledger().summary(
+            limit=limit, plan_id=plan_id)
+    except (TypeError, ValueError) as exc:
+        return {"schema": "vera.external-effect-receipt-summary/v1",
+                "error": str(exc), "totals": {"plans": 0, "receipts": 0,
+                                               "observations": 0},
+                "outcomes": {}, "recent": [],
+                "window": {"requested": 0, "returned": 0},
+                "executes": False, "retries": False, "retains_payload": False}
+
+
+@capability(
     "integration.effect.retry.plan", http_method="POST",
     http_path="/integrations/effect/retry/plan",
     http_tags=["integration", "policy"], memory="off",
@@ -1107,7 +1130,7 @@ register_ui(
         "integration.source.transition.plan",
         "integration.source.build.status", "integration.source.build.plan",
         "integration.effect.plan", "integration.effect.replay.status",
-        "integration.effect.retry.plan",
+        "integration.effect.retry.plan", "integration.effect.receipts",
         # the one-click "register & secure everything" button drives autoenroll
         "autoenroll.scan", "autoenroll.run", "autoenroll.pending",
     ],

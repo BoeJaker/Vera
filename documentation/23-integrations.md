@@ -253,6 +253,15 @@ delay that local backoff cannot shorten. Vera returns a jitter window for a
 scheduler to use later; the capability itself never sleeps, chooses random
 timing, executes the operation, opens credentials, or records a receipt.
 
+The Integrations header includes an **Effect evidence** drawer backed by
+`integration.effect.receipts`. It shows aggregate plan, receipt, observation,
+and outcome counts plus a bounded recent window. Entries contain effect
+classification, method, connection/operation identity, shortened plan/receipt
+digests, and observation counts. Request and response bodies, credentials, raw
+approval receipts, raw idempotency keys, and mutation controls are absent. An
+empty view means no migrated adapter has recorded durable evidence yet; it is
+not presented as proof that external effects did not occur.
+
 ---
 
 ## 8. Common threads

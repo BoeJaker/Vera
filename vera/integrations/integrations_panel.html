@@ -70,6 +70,11 @@
     background:var(--bg1);color:var(--t2);font-size:11px;flex-wrap:wrap}
   #intake.on{display:flex} #intake .arr{color:var(--t3)}
   #intake .queued{color:var(--warn)} #intake .ready{color:var(--run)}
+  .metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0}
+  .metric{background:var(--bg0);border:1px solid var(--line);border-radius:8px;padding:10px}
+  .metric b{display:block;font-size:18px}.metric span{color:var(--t3);font-size:10px;text-transform:uppercase}
+  .receipt{padding:9px 0;border-bottom:1px solid var(--line)}.receipt:last-child{border-bottom:none}
+  .receipt code{font-size:10px;color:var(--t2)}
 </style>
 </head>
 <body>
@@ -81,10 +86,26 @@
     <button class="btn sm" onclick="load()">↻</button>
     <button class="btn sm" onclick="openNew()">+ Add</button>
     <button class="btn sm" onclick="openDiscover()">⌕ Discover</button>
+    <button class="btn sm" onclick="openEffects()">Effect evidence</button>
     <button class="btn sm pri" onclick="openRegister()">⚿ Register &amp; secure</button>
   </header>
   <div id="intake" role="status" aria-live="polite"></div>
   <div id="grid"></div>
+</div>
+
+<!-- payload-free external-effect evidence -->
+<div class="ov" id="effectOv" onclick="if(event.target===this)closeEffects()">
+  <div class="drw" style="width:620px">
+    <h3>External-effect evidence<span class="sp" style="flex:1"></span>
+      <button class="btn sm" onclick="closeEffects()">✕</button></h3>
+    <div class="bd" id="effectBody">
+      <div class="hint">Loading durable receipt evidence…</div>
+    </div>
+    <div class="ft"><span class="hint">Inspection only — no retries or external calls</span>
+      <span class="sp" style="flex:1"></span>
+      <button class="btn" onclick="loadEffects()">↻ Refresh</button>
+      <button class="btn" onclick="closeEffects()">Close</button></div>
+  </div>
 </div>
 
 <!-- detail / edit drawer -->
@@ -151,6 +172,31 @@ const MODES=['embed','interact','api','mcp','ssh'];
 function toast(m,e){const t=$('#toast');t.textContent=m;t.className='on'+(e?' err':'');clearTimeout(t._h);t._h=setTimeout(()=>t.className='',2600);}
 async function api(path,method='GET',body){const o={method,headers:{'Content-Type':'application/json'}};if(body)o.body=JSON.stringify(body);
   const r=await fetch(path,o);let j={};try{j=await r.json();}catch(e){} if(!r.ok&&!j.error)j.error='HTTP '+r.status; return j;}
+
+function closeEffects(){$('#effectOv').classList.remove('on');}
+function shortHash(value){const s=String(value||'');return s?s.slice(0,10)+'…':'—';}
+async function openEffects(){$('#effectOv').classList.add('on');await loadEffects();}
+async function loadEffects(){
+  const el=$('#effectBody');el.innerHTML='<div class="hint">Loading durable receipt evidence…</div>';
+  const r=await api('/integrations/effect/receipts?limit=50');
+  if(r.error){el.innerHTML='<div class="hint">'+esc(r.error)+'</div>';return;}
+  const t=r.totals||{}, recent=r.recent||[], outcomes=r.outcomes||{};
+  const outcome=Object.entries(outcomes).filter(([,v])=>v&&v.receipts)
+    .map(([k,v])=>'<span class="bdg '+(k==='succeeded'?'ok':k==='failed'?'warn':'')+'">'
+      +esc(k)+' '+esc(v.receipts)+'</span>').join(' ');
+  const rows=recent.map(x=>'<div class="receipt"><div><b>'+esc(x.outcome||'unknown')+'</b> · '
+      +esc(x.effect_classification||'effect')+' · '+esc(x.method||'')+'</div>'
+      +'<div class="sub">'+esc(x.connection&&x.connection.id||'unknown connection')
+      +' · '+esc(x.operation||'unknown operation')+'</div>'
+      +'<code>plan '+esc(shortHash(x.plan_id))+' · receipt '+esc(shortHash(x.receipt_id))
+      +' · observations '+esc(x.observation_count||0)+'</code></div>').join('');
+  el.innerHTML='<div class="hint">Durable outcomes and replay evidence. Request/response bodies, credentials, and raw approval or idempotency references are never shown.</div>'
+    +'<div class="metrics"><div class="metric"><b>'+esc(t.plans||0)+'</b><span>effect plans</span></div>'
+    +'<div class="metric"><b>'+esc(t.receipts||0)+'</b><span>receipts</span></div>'
+    +'<div class="metric"><b>'+esc(t.observations||0)+'</b><span>observations</span></div></div>'
+    +'<div class="badges">'+outcome+'</div><div class="sec">Recent evidence</div>'
+    +(rows||'<div class="hint">No external-effect receipts have been recorded yet.</div>');
+}
 
 async function load(){
   const [r,life,build]=await Promise.all([
