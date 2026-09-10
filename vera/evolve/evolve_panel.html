@@ -444,52 +444,23 @@ html.vpb-nav-hosted body{padding-left:0}
     </div>
     <div class="hint" style="margin-top:6px">Each template keeps its <b>own</b> timeline from run 0 — a run of a different question set is not a comparable point and never shares this chart. Editing the goals of a live template rebases it, and the save says so.</div>
   </div>
+  <!-- ── ONE table: every census, the live one first ──────────────────────────
+       A row is a run. Expand it for its goals and their stats; click a goal
+       for the full record. What used to be five cards (live run, run over
+       run, compare, operator runs, fixes per run) plus a modal chain is this
+       one table with the same data reachable in one or two clicks. -->
   <div class="card" id="census-live-card">
-    <div class="card-h"><span class="card-t">Live run</span>
+    <div class="card-h"><span class="card-t">Census</span>
       <span class="hint" id="census-live-status">—</span>
       <span style="flex:1"></span>
-      <label class="hint" style="margin-right:8px"><input type="checkbox" id="census-follow" checked onchange="_cenArm()"> follow</label>
-      <button class="btn sm" onclick="censusPoll()">&#8635;</button>
-    </div>
-    <div id="census-live"><div class="empty">Loading…</div></div>
-    <div class="hint" style="margin-top:6px">A goal only lands in the history when it FINISHES, so a census is otherwise invisible for the one to three hours it takes. This is that window — live counters and the steps taken so far.</div>
-  </div>
-  <div class="card">
-    <div class="card-h"><span class="card-t">Census — agentic loop, run over run</span>
-      <span class="hint" id="census-trend">—</span>
-      <span style="flex:1"></span>
+      <span class="hint" id="census-trend" style="margin-right:8px">—</span>
+      <label class="hint" style="margin-right:8px" title="refresh the live run every 5s while this section is open"><input type="checkbox" id="census-follow" checked onchange="_cenArm()"> follow</label>
       <button class="btn sm" onclick="loadCensus()">&#8635;</button>
     </div>
+    <div id="census-live"></div>
     <div id="census-runs"><div class="empty">Loading…</div></div>
-    <div id="census-charts" style="margin-top:10px"></div>
-    <div class="hint" style="margin-top:6px">12 goals, run serially against the live instance. <b>trusted</b> is the column to read first: a run whose own step accounting does not reconcile (<code>unaccounted &gt; 0</code>, or one predating the counter) cannot settle whether a goal really improved — a delta drawn from it may be measuring the instrument rather than the loop.</div>
-  </div>
-  <div class="card">
-    <div class="card-h"><span class="card-t">Compare</span>
-      <select id="census-base" style="min-width:110px" onchange="loadCensusCompare()"></select>
-      <span class="hint" style="margin:0 6px">&rarr;</span>
-      <select id="census-head" style="min-width:110px" onchange="loadCensusCompare()"></select>
-      <span style="flex:1"></span>
-      <span class="hint" id="census-cmp-counts"></span>
-    </div>
-    <div id="census-compare"><div class="empty">Pick two runs.</div></div>
-    <div class="hint" style="margin-top:6px">Always per goal, never averaged — the goals differ by two orders of magnitude in cost, so a run-level mean says nothing. Worst news first.</div>
-  </div>
-  <div class="card">
-    <div class="card-h"><span class="card-t">Operator (browser) runs</span>
-      <span class="hint" id="census-op-status">—</span>
-      <span style="flex:1"></span>
-      <button class="btn sm" onclick="loadCensusOperator()">&#8635;</button>
-    </div>
-    <div id="census-operator"><div class="empty">Loading…</div></div>
-    <div class="hint" style="margin-top:6px"><b>finished</b> means the run reached a clean stop, <b>not</b> that the browser achieved the goal — nothing here decides that. A run at its step <b>ceiling</b> ranks BELOW one that <b>errored</b>: its own reason can still read like success while it merely ran out of steps. Click a run for its step-by-step.</div>
-  </div>
-  <div class="card">
-    <div class="card-h"><span class="card-t">Fixes per run</span>
-      <span class="hint">board items mapped to the run that found / verified them</span>
-    </div>
-    <div id="census-board"><div class="empty">Loading…</div></div>
-    <div class="hint" style="margin-top:6px">Label a board item <code>census:found:&lt;run&gt;</code> or <code>census:fixed:&lt;run&gt;</code> to place it here.</div>
+    <details style="margin-top:8px"><summary class="clk hint">Trends over usable runs</summary><div id="census-charts" style="margin-top:6px"></div></details>
+    <div class="hint" style="margin-top:6px">A row is one census. <b>▸</b> expands its goals; a goal opens its full record — output, steps, routing, the loop's own log. <b>coder</b> / <b>nodes</b> are the routing that actually served the run: a coder that changed mid-run, a re-route or a CPU spill is a different instrument, not a different loop. Partial and failed runs are hidden unless asked for; the trend only ever counts usable runs.</div>
   </div>
 </div>
 
@@ -2366,76 +2337,107 @@ function _cenStatus(s){
   const c=s==='done'?'#3cb371':(s==='wall-cap'?'#c9a35a':'#c96b6b');
   return '<span class="sc" style="color:'+c+'">'+esc(s||'—')+'</span>';
 }
-/* Returns this run's completed-goal count, or null when it could not be read.
-   The caller uses that to notice a goal LANDING and refresh the heavier tables
-   only then. It no longer arms its own timer — see censusPoll. */
+/* The live strip above the table: the goal in flight (or the gap between
+   goals), the harness's own state (running / paused / stopped), the control
+   buttons, and the goals this run has finished so far.
+   Returns this run's completed-goal count, or null when it could not be read.
+   The caller uses that to notice a goal LANDING and refresh the table only
+   then. It does not arm its own timer — see censusPoll. */
 async function loadCensusLive(){
   const el=$('census-live');if(!el)return null;
   const r=await api('/census/live');
   if(!r){el.innerHTML='<div class="empty">unavailable</div>';return null}
-  const p=r.progress||{}, a=r.active, c=r.counters||{};
+  const p=r.progress||{}, a=r.active, c=r.counters||{}, hz=r.harness||{}, ctl=r.control||{};
+  _cenLiveData=r;
   const doneN=(p.completed==null?null:p.completed);
-  $('census-live-status').innerHTML=a
-    ?('<span style="color:#3cb371">running</span> · goal '+(p.position||'?')+' of '+(p.goals_total||'?')
-      +' · '+esc(a.goal_id||'?')+' · '+_cenSec(a.elapsed_s))
-    :((p.completed||0)+' of '+(p.goals_total||0)+' recorded · <span class="hint">no loop running</span>');
+  const hzLive=!!hz.live, paused=hz.state==='paused'||ctl.state==='pause';
+  const ctlTag=ctl.state==='drop'?'<span class="tag" style="color:#c96b6b">drop requested</span>'
+    :(ctl.state==='pause'?'<span class="tag" style="color:#c9a35a">pause requested'+(ctl.reason?(' · '+esc(ctl.reason)):'')+'</span>':'');
+  $('census-live-status').innerHTML=(a||hzLive)
+    ?('<span style="color:'+(paused?'#c9a35a':'#3cb371')+'">'+(paused?'paused':'running')+'</span>'
+      +(hz.template?(' · <span class="mono">'+esc(hz.template)+'</span>'):'')
+      +' · goal '+(p.position||((hz.progress||{}).done+1)||'?')+' of '+(p.goals_total||(hz.progress||{}).total||'?')
+      +(a?(' · '+esc(a.goal_id||'?')+' · '+_cenSec(a.elapsed_s)):(hz.current_goal?(' · '+esc(hz.current_goal)):'')))
+    :((p.completed||0)+' of '+(p.goals_total||0)+' recorded · <span class="hint">no loop running</span>'
+      +(hz.stale?' · <span style="color:#c96b6b" title="the harness stopped reporting '+esc(String(hz.age_s||'?'))+'s ago without saying it finished">harness silent</span>':''));
+  // Controls: ask the harness, never touch the run. Pause re-runs the goal
+  // in flight after prod comes back; drop ends the set.
+  const ctrl=(hzLive||a)?('<span class="row" style="gap:4px;margin-left:8px">'
+      +(paused?'<button class="btn sm" onclick="censusControl(\'resume\')" title="lift the pause — the harness re-runs the goal it was on">▶ resume</button>'
+              :'<button class="btn sm" onclick="censusControl(\'pause\')" title="cancel the goal in flight; the harness re-runs it once resumed">⏸ pause</button>')
+      +'<button class="btn sm" onclick="censusControl(\'drop\')" title="cancel the goal in flight and end the whole set (archived as -dropped)">✕ drop</button>'
+      +'</span>'):'';
   if(!a){
-    // Between goals there is no active loop for 30-60s, and a census has
-    // eleven such gaps. This used to return before the re-arm at the bottom,
-    // so following died at the FIRST gap and never came back — which is what
-    // "I have to keep refreshing" actually was.
+    // Between goals there is no active loop for 30-60s; this branch must
+    // still render and still return, or following dies at the first gap.
     el.innerHTML=_cenRecent(r)
-      +'<div class="empty">No census loop is running right now.'
+      +'<div class="empty" style="padding:8px">'+(paused?'Census paused — the harness will re-run <b>'+esc(hz.current_goal||'the goal it was on')+'</b> once resumed.'
+        :(hzLive?'Between goals — the harness is starting <b>'+esc(hz.current_goal||'the next goal')+'</b>.':'No census loop is running right now.'))
+      +' '+ctlTag+ctrl
       +((p.remaining||[]).length?(' <span class="hint">'+(p.remaining||[]).length+' goal(s) not yet recorded: '+esc((p.remaining||[]).join(', '))+'</span>'):'')
       +'</div>';
     return doneN;
   }
   // Cycles per step is the live thrash signal — a step climbing while the
   // elapsed clock runs is what "working" vs "stuck" actually looks like.
-  const steps=(r.steps||[]).map(s=>'<tr><td class="mono">'+esc(String(s.id))+'</td>'
-    +'<td>'+esc(s.title||'')+'</td><td class="mono">'+(s.cycles||0)+'</td>'
-    +'<td>'+(s.ok===false?'<span style="color:#c96b6b">failed</span>':(s.ok?'<span style="color:#3cb371">ok</span>':'<span class="hint">running</span>'))+'</td></tr>').join('');
-  el.innerHTML='<div style="margin-bottom:6px"><b>'+esc(a.goal_id||'(unmatched goal)')+'</b>'
-      +' <span class="hint mono">'+esc((a.session_id||'').slice(0,8))+'</span>'
-      +(a.session_id?(' <button class="btn sm" title="watch the agent loop\'s own output, live"'
-        +' onclick="openCensusLiveLoop(\''+esc(a.session_id)+'\',\''+esc(a.goal_id||'')+'\')">'
-        +'\u25f7 loop output</button>'):'')
-      +'<div class="hint" style="margin-top:2px">'+esc((a.goal||'').slice(0,240))+'</div></div>'
-    +'<div class="row" style="gap:12px;flex-wrap:wrap;margin-bottom:6px">'
+  const steps=(r.steps||[]).map(s=>'<span class="tag" title="'+esc(s.title||'')+'">'+esc(String(s.id))+' · '+(s.cycles||0)+'c'
+    +(s.ok===false?' <span style="color:#c96b6b">✗</span>':(s.ok?' <span style="color:#3cb371">✓</span>':''))+'</span>').join(' ');
+  el.innerHTML='<div class="row" style="gap:10px;flex-wrap:wrap;align-items:center;margin:4px 0 6px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2)">'
+      +'<span style="color:#3cb371">●</span> <b>'+esc(a.goal_id||'(unmatched goal)')+'</b>'
+      +'<span class="hint mono">'+esc((a.session_id||'').slice(0,8))+'</span>'
+      +'<span class="hint">'+_cenSec(a.elapsed_s)+' / cap '+_cenSec(r.wall_cap_s)+'</span>'
       +'<span>planned <b>'+(c.planned_steps==null?'—':c.planned_steps)+'</b></span>'
       +'<span>executed <b>'+(c.executed_steps==null?'—':c.executed_steps)+'</b></span>'
       +'<span>tools <b>'+(c.tool_calls==null?'—':c.tool_calls)+'</b></span>'
       +(c.gate_inserted_steps?'<span style="color:#c9a35a">gate +'+c.gate_inserted_steps+'</span>':'')
       +(c.unaccounted_steps?'<span style="color:#c96b6b;font-weight:600">unaccounted '+c.unaccounted_steps+'</span>':'')
-      +'<span class="hint">'+_cenSec(a.elapsed_s)+' elapsed</span></div>'
-    +(steps?('<table><tr><th>step</th><th>title</th><th>cycles</th><th></th></tr>'+steps+'</table>')
-           :'<div class="hint">planning…</div>')
-    +((p.remaining||[]).length?('<div class="hint" style="margin-top:6px">then: '+esc((p.remaining||[]).join(', '))+'</div>'):'')
+      +(steps?('<span>'+steps+'</span>'):'<span class="hint">planning…</span>')
+      +ctlTag
+      +(a.session_id?(' <button class="btn sm" title="watch the agent loop\'s own output, live"'
+        +' onclick="openCensusLiveLoop(\''+esc(a.session_id)+'\',\''+esc(a.goal_id||'')+'\')">'
+        +'◷ loop output</button>'):'')
+      +ctrl
+      +'<span class="hint" style="flex-basis:100%">'+esc((a.goal||'').slice(0,240))+'</span>'
+    +'</div>'
     +_cenRecent(r);
   return doneN;
 }
 
-/* The goals THIS run has already finished — status, wall clock, and how far
-   past the cap each got. /census/live has always returned these; nothing
-   rendered them, so the only way to see how the run was going was to load it
-   into the Compare table. Newest first, because the one that just landed is
-   the one you came to look at. */
+/* Ask the harness to pause / resume / drop. A drop ends the whole set. */
+async function censusControl(action){
+  if(action==='drop'&&!confirm('Drop the running census?\n\nThe goal in flight is cancelled, nothing more runs, and what finished is archived as -dropped.'))return;
+  const r=await post('/census/control/set',{action:action,by:'loop-lab'});
+  if(!r||!r.ok){toast('census '+action+' failed: '+((r&&r.error)||'?'));return}
+  toast('census: '+action+' requested — the harness acts within ~15s');
+  censusPoll();
+}
+
+/* The goals THIS run has already finished — status, wall clock vs its cap,
+   quality, routing — newest first, because the one that just landed is the
+   one you came to look at. Each chip opens the goal's record. */
 function _cenRecent(r){
   const rec=(r&&r.recent)||[];
   if(!rec.length)return '';
   const cap=(r.wall_cap_s||1800);
-  const cells=rec.map(function(g){
+  const cells=rec.slice().reverse().map(function(g){
     const st=String(g.status||'');
     const col=st==='done'?'#3cb371':(st==='wall-cap'?'#c9a35a':'#c96b6b');
-    const over=(g.wall_s||0)>=cap-30;
+    const gcap=g.wall_cap_s||cap;
+    const over=(g.wall_s||0)>=gcap-30;
+    const q=g.quality||{};
+    const ro=g.routing||{};
     return '<span class="tag clk" title="'+esc(st+' · '+_cenSec(g.wall_s)
-             +(over?' · hit the '+Math.round(cap/60)+'m cap':''))+'"'
+             +(over?' · hit the '+Math.round(gcap/60)+'m cap':'')
+             +(q.total?(' · quality '+q.passed+'/'+q.total):'')
+             +(ro.recorded?(' · coder '+(ro.coder||'?')+(ro.reroutes?(' · '+ro.reroutes+' reroute(s)'):'')+(ro.spill_calls?(' · '+ro.spill_calls+' CPU spill(s)'):'')):'')
+             +(g.reruns?(' · re-run '+g.reruns+'x'):''))+'"'
       +' onclick="openCensusGoal(\'current\',\''+esc(g.id)+'\')"'
       +' style="border-left:3px solid '+col+';cursor:pointer">'
-      +esc(g.id)+' <span class="mono hint">'+_cenSec(g.wall_s)+'</span></span>';
+      +esc(g.id)+' <span class="mono hint">'+_cenSec(g.wall_s)+'</span>'
+      +(ro.spill_calls?' <span style="color:#c96b6b" title="CPU spill">⚠</span>':(ro.reroutes?' <span style="color:#c9a35a" title="re-routed">↷</span>':''))
+      +'</span>';
   }).join('');
-  return '<div class="row" style="gap:5px;flex-wrap:wrap;margin:6px 0">'+cells+'</div>'
-    +'<div class="hint" style="margin-bottom:4px">this run so far — green done · amber hit the wall cap · red errored. Click one for its steps.</div>';
+  return '<div class="row" style="gap:5px;flex-wrap:wrap;margin:6px 0">'+cells+'</div>';
 }
 
 /* ── ONE poller for the whole section ───────────────────────────────────────
@@ -2677,11 +2679,6 @@ async function loadCensus(){
   loadCensusRuns();
 }
 
-// Partial and failed runs are hidden by DEFAULT. Most of the archive is not
-// usable history — runs that were cut short, and runs that went the full
-// distance under contention or with a full disk — and every one of them reads
-// as an ordinary data point in a table. The toggle brings them back for the
-// times you are asking what went wrong rather than how things are trending.
 // Who drove a run. "unattributed" is a real answer and is shown as one - a
 // blank cell reads as a UI fault rather than as a fact about the run.
 function _cenProv(p){
@@ -2700,125 +2697,302 @@ function _cenProv(p){
   return '<span title="'+esc(bits.join('\n'))+'">'+esc(p.operator||'unknown')
     +(hn?(' <span class="hint">+'+hn+'h</span>'):'')+'</span>'+tag;
 }
+/* The routing a run (or goal) actually ran on, in one cell. A row from
+   before routing was recorded says so; a coder that changed mid-run, a
+   re-route or a CPU spill is called out - each is a different instrument. */
+function _cenRoute(ro){
+  if(!ro)return '<span class="hint">—</span>';
+  if(ro.recorded===false||ro.recorded_goals===0)return '<span class="hint" title="this run predates routing capture (2026-09-10)">not recorded</span>';
+  const coder=ro.coder||((ro.coders||[]).join(' → '))||'?';
+  const short=s=>String(s||'').replace(/^jaahas\//,'').replace(/^hf\.co\//,'');
+  const warn=[];
+  if(ro.coder_changed)warn.push('coder changed mid-run: '+(ro.coders||[]).join(' then '));
+  if(ro.coder_overridden)warn.push('coder is a Model Routing override (declared '+(ro.coder_declared||'?')+')');
+  if(ro.spill_calls)warn.push(ro.spill_calls+' call(s) ran partly on CPU (VRAM spill)');
+  if(ro.reroutes)warn.push(ro.reroutes+' call(s) re-routed');
+  if(ro.truncated)warn.push('request log was truncated; some calls unrecorded');
+  const nodes=Object.entries(ro.nodes||{}).sort((a,b)=>b[1]-a[1]).map(([n,c])=>esc(n)+':'+c).join(' ');
+  return '<span title="'+esc('coder '+coder+(ro.planner?(' · planner '+ro.planner):'')+(nodes?(' · '+nodes):'')+(warn.length?('\n'+warn.join('\n')):''))+'">'
+    +'<span class="mono">'+esc(short(coder))+'</span>'
+    +(ro.coder_changed?' <span style="color:#c96b6b">≠</span>':'')
+    +(ro.coder_overridden?' <span class="hint" title="Model Routing override">ovr</span>':'')
+    +(nodes?(' <span class="hint mono">'+nodes+'</span>'):'')
+    +(ro.spill_calls?(' <span style="color:#c96b6b" title="CPU spill">⚠'+ro.spill_calls+'</span>'):'')
+    +(ro.reroutes&&!ro.spill_calls?(' <span style="color:#c9a35a" title="re-routed">↷'+ro.reroutes+'</span>'):(ro.reroutes?(' <span style="color:#c9a35a">↷'+ro.reroutes+'</span>'):''))
+    +'</span>';
+}
+function _cenWhen(ts){
+  if(!ts)return '—';
+  const d=new Date(ts*1000);
+  if(isNaN(d.getTime()))return '—';
+  return d.toISOString().slice(0,16).replace('T',' ');
+}
+// Filters. The archive holds many kinds of run; the toggles say out loud what
+// they hide, because a filtered list that does not admit it is filtered is
+// indistinguishable from an archive that lost runs.
 var _cenShowPartial=false;
-// Which template's runs are on screen. "" is every template - the only honest
-// default for an archive that predates the field - but runs of different
-// templates are NOT comparable points, which is why the filter exists.
 var _cenTemplate='';
-function setCensusTemplate(v){ _cenTemplate=String(v||''); loadCensusRuns(); }
-function toggleCensusPartial(on){ _cenShowPartial=!!on; loadCensusRuns(); }
+var _cenText='';
+var _cenStatusF='';
+var _cenLiveData=null;
+var _cenRunsAll=[];          // every loop-census run summary, from the server
+var _cenOpRuns=[];           // operator-census batches
+var _cenOpen={};             // run_id -> true when expanded
+var _cenBase={};             // run_id -> compare-base run_id
+var _cenLanded=null;         // /census/landed by_run, fetched once per load
+var _cenBoard=null;          // /census/board by_run, fetched once per load
+var _cenRecCache={};         // run_id -> records (invalidated for 'current' when a goal lands)
+function setCensusTemplate(v){ _cenTemplate=String(v||''); renderCensusTable(); }
+function toggleCensusPartial(on){ _cenShowPartial=!!on; renderCensusTable(); }
+function setCensusText(v){ _cenText=String(v||'').trim().toLowerCase(); renderCensusTable(); }
+function setCensusStatus(v){ _cenStatusF=String(v||''); renderCensusTable(); }
 
+/* Fetch everything the table needs, once, then render. Called on load and
+   when a goal lands. include_partial is always requested and filtered here:
+   the live run IS partial while it runs, and it is the row you came for. */
 async function loadCensusRuns(){
   const el=$('census-runs');if(!el)return;
-  const r=await api('/census/runs'+(_cenShowPartial?'?include_partial=true':''));
-  const runs=(r&&r.runs)||[];
-  const hidden=(r&&r.excluded_count)||0;
-  // Say what is not on screen, always. A filtered list that does not admit it
-  // is filtered is indistinguishable from an archive that lost runs.
-  // Templates present IN THE ARCHIVE, taken from the runs rather than the
-  // template store: a template can be deleted and its runs remain.
-  const tmpls=[...new Set(runs.map(x=>x.template||'').filter(Boolean))].sort();
-  const shown=runs.filter(x=>!_cenTemplate
-      || (_cenTemplate===' unlabelled' ? !x.template : (x.template||'')===_cenTemplate));
-  const bar='<div class="hint" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 6px">'
-    +'<label style="display:flex;gap:4px;align-items:center">template '
-    +'<select onchange="setCensusTemplate(this.value)" style="width:auto">'
-    +'<option value="">all ('+runs.length+')</option>'
-    +tmpls.map(t=>'<option value="'+esc(t)+'"'+(_cenTemplate===t?' selected':'')+'>'
-        +esc(t)+' ('+runs.filter(x=>(x.template||'')===t).length+')</option>').join('')
-    +(runs.some(x=>!x.template)
-        ?('<option value=" unlabelled"'+(_cenTemplate===' unlabelled'?' selected':'')
-          +'>unlabelled ('+runs.filter(x=>!x.template).length+')</option>'):'')
-    +'</select></label>'
-    +'<label style="display:flex;gap:4px;align-items:center" title="Runs excluded as partial, failed, stalled, aborted, interrupted, invalid or wedged - or simply shorter than a full pass.">'
-    +'<input type="checkbox" id="cen-partial" onchange="toggleCensusPartial(this.checked)"'+(_cenShowPartial?' checked':'')+'> '
-    +'show partial / failed</label>'
-    // Say the numbers out loud. A toggle whose effect you cannot see reads as a
-    // broken toggle, and this one turns 27 rows into 51 scattered down a long
-    // reverse-ordered table where the newly-shown ones are the OLD runs.
-    +'<span class="mono" style="opacity:.75">showing '+shown.length+' of '+(r.count||runs.length)+'</span>'
-    +(hidden&&!_cenShowPartial?('<span class="tag">'+hidden+' hidden</span>'):'')
-    +'</div>';
-  if(!shown.length){el.innerHTML=bar+'<div class="empty">No census runs'
-    +(_cenTemplate?(' for template '+esc(_cenTemplate.trim()||'unlabelled')):'')+(hidden?' to show — '+hidden+' excluded as partial or failed':' found')+(r&&r.dir?(' in <code>'+esc(r.dir)+'</code>'):'')+'.</div>';return}
-  el.innerHTML=bar+'<table><tr><th>run</th><th title="the question set this run answers - runs of different templates are not comparable and never share a chart">template</th><th>goals</th><th>done</th><th title="mean of each goal&#39;s declared quality checks - what was BUILT, not whether the run stopped">quality</th><th title="checks passed / declared">checks</th><th>wall-cap</th><th>gate ins.</th><th>unacc.</th><th>warns</th><th>total</th><th>counters</th><th title="the operator that drove this run, the skill and tool they used, and any helper scripts they wrote - hover for the detail">operated by</th></tr>'
-    +shown.slice().reverse().map(s=>'<tr class="clk" onclick="openCensusRun(\''+esc(s.run_id)+'\')">'
-      +'<td class="mono">'+esc(s.run_id)+(s.excluded?' <span class="tag" title="'+esc(s.exclude_reason||'not usable history')+' — excluded from the trend">'+(s.partial?'partial':'not usable')+'</span>':'')+'</td>'
-      +'<td class="mono hint">'+esc(s.template||'unlabelled')+'</td>'
-      +'<td>'+s.goals+'</td>'
-      +'<td style="color:#3cb371">'+s.done+'</td>'+'<td>'+_cenQ(s.quality_mean,s.quality_scored,s.goals)+'</td>'+'<td class="mono hint">'+((s.checks_total||0)?((s.checks_passed||0)+'/'+s.checks_total):'—')+'</td>'+'<td style="color:#c9a35a">'+s.wall_capped+'</td>'
-      +'<td>'+(s.gate_inserted_total||0)+'</td>'
-      +'<td'+(s.unaccounted_total?' style="color:#c96b6b;font-weight:600"':'')+'>'+(s.unaccounted_total||0)+'</td>'
-      +'<td>'+(s.warnings_total||0)+'</td><td class="mono">'+_cenSec(s.wall_total_s)+'</td>'
-      +'<td>'+(s.counters_reconcile?'<span style="color:#3cb371">reconcile</span>':'<span style="color:#c96b6b" title="this run\'s step accounting does not add up — numbers from it may be measuring the instrument">suspect</span>')+'</td>'
-      +'<td class="hint">'+_cenProv(s.provenance)+'</td>'
-      +'</tr>').join('')+'</table>';
-  // Only ever a trend over COMPLETE runs — a partial run's done-count against a
-  // full one is a confident wrong answer (it once read "delta -1" while the run
-  // was 3 goals into 12).
-  const t=r.trend_trusted||r.trend_complete, tr=!!r.trend_trusted;
+  const [r,op]=await Promise.all([api('/census/runs?include_partial=true'),api('/census/operator/runs')]);
+  _cenRunsAll=(r&&r.runs)||[];
+  _cenRunsMeta=r||{};
+  _cenOpRuns=(op&&op.runs)||[];
+  delete _cenRecCache['current'];
+  renderCensusTable();
+  // A goal landing changes what 'current' contains; an expanded live row must
+  // re-read its goals.
+  if(_cenOpen['current'])loadCensusGoals('current');
+  // Trend header: only ever over usable runs.
+  const t=r&&(r.trend_trusted||r.trend_complete), tr=!!(r&&r.trend_trusted);
   $('census-trend').innerHTML=t
     ?(esc(t.from)+' → '+esc(t.to)+': '+t.done_from+' → '+t.done_to+'/'+t.of_goals+' done <b>('+(t.delta>=0?'+':'')+t.delta+')</b>'
       +' <span class="hint">'+(tr?'counters reconcile':'counters suspect')+'</span>')
-    // r.count is EVERY run in the archive; runs.length is only what survived
-    // the filter, so quoting the latter here would under-report the archive.
-    :((r.count||runs.length)+' run(s) · '+(r.complete_count||0)+' usable — need 2 usable runs for a trend');
-  // Default to the two most recent COMPLETE runs. Defaulting to the newest run
-  // picks the partial/in-flight one, and comparing against a run that has only
-  // reached 4 of 12 goals renders 8 rows of "missing" with an empty column —
-  // which reads as "the run I picked didn't load" rather than "that run hasn't
-  // got there yet". Partial runs stay selectable; they just aren't the default.
-  const ids=runs.map(s=>s.run_id);
-  // `excluded`, not `partial`: a run that went the full distance under
-  // contention is just as wrong to default a comparison to as a truncated one.
-  const doneIds=runs.filter(s=>!s.excluded).map(s=>s.run_id);
-  const pick=(doneIds.length>=2?doneIds:ids);
-  ['census-base','census-head'].forEach((id,i)=>{
-    const sel=$(id);if(!sel)return;
-    sel.innerHTML=runs.slice().reverse().map(s=>'<option value="'+esc(s.run_id)+'">'+esc(s.run_id)
-      +(s.partial?(' · partial '+s.goals+'/'+(r.full_goal_count||s.goals))
-        :(s.excluded?' · not usable':''))+'</option>').join('');
-    sel.value=pick[i===0?Math.max(0,pick.length-2):pick.length-1]||ids[0];
+    :(((r&&r.count)||_cenRunsAll.length)+' run(s) · '+((r&&r.complete_count)||0)+' usable — need 2 usable runs for a trend');
+  renderCensusCharts(_cenRunsAll.filter(s=>!s.excluded));
+  // Context per run (what landed before it, what the board says it found or
+  // fixed) — fetched once and shown inside the expanded row.
+  Promise.all([api('/census/landed').catch(()=>null),api('/census/board').catch(()=>null)]).then(([L,B])=>{
+    _cenLanded=(L&&L.by_run)||{}; _cenBoard=(B&&B.by_run)||{};
+    Object.keys(_cenOpen).forEach(k=>{ if(_cenOpen[k])_cenRenderCtx(k); });
   });
-  renderCensusCharts(runs);
-  loadCensusCompare();loadCensusBoard();loadCensusOperator();
 }
-const _OP_OUT={finished:'#3cb371',errored:'#c9a35a',ceiling:'#c96b6b',incomplete:'#8a8a8a'};
-async function loadCensusOperator(){
-  const el=$('census-operator');if(!el)return;
-  // Two sources: the operator CENSUS (labelled batches) if any exist, and the
-  // raw recent runs, which exist as soon as any browser run happens.
-  const [cen,recent]=await Promise.all([api('/census/operator/runs'),api('/operator/runs?limit=12')]);
+var _cenRunsMeta={};
+
+/* The previous USABLE run of the same template - the honest default base for
+   a comparison. Runs of a different template are never compared. */
+function _cenDefaultBase(run){
+  const same=_cenRunsAll.filter(s=>s.run_id!==run.run_id&&!s.excluded&&(s.template||'')===(run.template||''));
+  if(!same.length)return '';
+  same.sort((a,b)=>(b.ended_at||0)-(a.ended_at||0));
+  const older=same.filter(s=>(s.ended_at||0)<=(run.ended_at||Infinity));
+  return (older[0]||same[0]).run_id;
+}
+
+function _cenRow(s){
+  const live=s.run_id==='current';
+  const hz=(_cenLiveData&&_cenLiveData.harness)||{};
+  const isLive=live&&(hz.live||(_cenLiveData&&_cenLiveData.active));
+  const open=!!_cenOpen[s.run_id];
+  const excl=s.excluded?(' <span class="tag" title="'+esc(s.exclude_reason||'not usable history')+' — excluded from the trend">'+(s.partial?'partial':'not usable')+'</span>'):'';
+  const name=live?('<span style="color:'+(isLive?'#3cb371':'#8a8a8a')+'">●</span> current'+(hz.template?(' <span class="hint">→ '+esc(hz.template)+' run</span>'):'')):esc(s.run_id);
+  return '<tr class="clk cen-run" data-run="'+esc(s.run_id)+'" onclick="toggleCensusRun(\''+esc(s.run_id)+'\')">'
+    +'<td class="mono">'+(open?'▾':'▸')+' '+name+excl+(s.reruns?(' <span class="tag" title="goals re-run after a pause or interruption">↻'+s.reruns+'</span>'):'')+'</td>'
+    +'<td class="mono hint">'+esc(s.template||(live&&hz.template)||'unlabelled')+'</td>'
+    +'<td class="mono hint">'+_cenWhen(s.ended_at)+'</td>'
+    +'<td>'+s.goals+(live&&hz.goals_total?('<span class="hint">/'+hz.goals_total+'</span>'):'')+'</td>'
+    +'<td style="color:#3cb371">'+s.done+'</td>'
+    +'<td style="color:#c9a35a">'+s.wall_capped+'</td>'
+    +'<td>'+_cenQ(s.quality_mean,s.quality_scored,s.goals)+'</td>'
+    +'<td class="mono hint">'+((s.checks_total||0)?((s.checks_passed||0)+'/'+s.checks_total):'—')+'</td>'
+    +'<td class="mono">'+_cenSec(s.wall_total_s)+'</td>'
+    +'<td>'+_cenRoute(s.routing)+'</td>'
+    +'<td>'+(s.warnings_total||0)+'</td>'
+    +'<td'+(s.unaccounted_total?' style="color:#c96b6b;font-weight:600"':'')+'>'+(s.unaccounted_total||0)+'</td>'
+    +'<td>'+(s.counters_reconcile?'<span style="color:#3cb371" title="step accounting adds up">ok</span>':'<span style="color:#c96b6b" title="this run\'s step accounting does not add up — numbers from it may be measuring the instrument">suspect</span>')+'</td>'
+    +'<td class="hint">'+_cenProv(s.provenance)+'</td>'
+    +'</tr>'
+    +'<tr class="cen-detail" data-run="'+esc(s.run_id)+'"'+(open?'':' style="display:none"')+'><td colspan="14" style="padding:0 6px 8px 18px;background:var(--bg2)">'
+    +'<div id="cen-ctx-'+_cenId(s.run_id)+'"></div><div id="cen-goals-'+_cenId(s.run_id)+'">'+(open?'<span class="spin"></span>':'')+'</div></td></tr>';
+}
+function _cenOpRow(s){
+  const open=!!_cenOpen[s.run_id];
+  return '<tr class="clk cen-run" data-run="'+esc(s.run_id)+'" onclick="toggleCensusRun(\''+esc(s.run_id)+'\',true)">'
+    +'<td class="mono">'+(open?'▾':'▸')+' '+esc(s.run_id)+' <span class="tag" title="operator (browser) census — a different instrument from the loop census">operator</span></td>'
+    +'<td class="mono hint">operator</td><td class="mono hint">—</td>'
+    +'<td>'+s.goals+'</td><td style="color:#3cb371" title="finished — reached a clean stop, not necessarily achieved">'+s.finished+'</td>'
+    +'<td style="color:#c96b6b" title="hit the step ceiling">'+s.ceiling+'</td>'
+    +'<td class="hint" title="errored / incomplete">'+s.errored+' err · '+s.incomplete+' inc</td><td class="hint">—</td>'
+    +'<td class="mono">'+_cenSec(s.duration_total_s)+'</td><td class="hint">—</td>'
+    +'<td'+(s.thrashing_goals?' style="color:#c96b6b"':'')+' title="goals with an action attempted 3+ times">'+(s.thrashing_goals||0)+' thrash</td>'
+    +'<td class="hint">—</td><td class="hint">—</td><td class="hint">—</td></tr>'
+    +'<tr class="cen-detail" data-run="'+esc(s.run_id)+'"'+(open?'':' style="display:none"')+'><td colspan="14" style="padding:0 6px 8px 18px;background:var(--bg2)">'
+    +'<div id="cen-goals-'+_cenId(s.run_id)+'">'+(open?'<span class="spin"></span>':'')+'</div></td></tr>';
+}
+function _cenId(run){return String(run).replace(/[^a-z0-9]/gi,'_')}
+
+function renderCensusTable(){
+  const el=$('census-runs');if(!el)return;
+  const runs=_cenRunsAll, r=_cenRunsMeta||{};
+  const tmpls=[...new Set(runs.map(x=>x.template||'').filter(Boolean))].sort();
+  const q=_cenText;
+  const match=s=>{
+    if(_cenTemplate&&(_cenTemplate===' unlabelled'?!!s.template:(s.template||'')!==_cenTemplate))return false;
+    if(!_cenShowPartial&&s.excluded&&s.run_id!=='current')return false;
+    if(_cenStatusF==='usable'&&s.excluded)return false;
+    if(_cenStatusF==='excluded'&&!s.excluded)return false;
+    if(_cenStatusF==='live'&&s.run_id!=='current')return false;
+    if(q){const hay=[s.run_id,s.template,(s.provenance||{}).operator,(s.provenance||{}).tool,((s.routing||{}).coders||[]).join(' '),Object.keys((s.routing||{}).nodes||{}).join(' ')].join(' ').toLowerCase(); if(hay.indexOf(q)<0)return false}
+    return true;
+  };
+  const shown=runs.filter(match).sort((a,b)=>(a.run_id==='current')?-1:((b.run_id==='current')?1:((b.ended_at||0)-(a.ended_at||0))));
+  const ops=(_cenStatusF===''||_cenStatusF==='operator')&&!_cenTemplate&&(!q||'operator'.indexOf(q)>=0)?_cenOpRuns.slice().reverse():[];
+  const hidden=_cenShowPartial?0:runs.filter(s=>s.excluded&&s.run_id!=='current').length;
+  const bar='<div class="hint" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 6px">'
+    +'<input id="cen-text" placeholder="filter: run, template, operator, model, node" value="'+esc(_cenText)+'" oninput="setCensusText(this.value)" style="width:230px">'
+    +'<label style="display:flex;gap:4px;align-items:center">template <select onchange="setCensusTemplate(this.value)" style="width:auto">'
+    +'<option value="">all ('+runs.length+')</option>'
+    +tmpls.map(t=>'<option value="'+esc(t)+'"'+(_cenTemplate===t?' selected':'')+'>'+esc(t)+' ('+runs.filter(x=>(x.template||'')===t).length+')</option>').join('')
+    +(runs.some(x=>!x.template)?('<option value=" unlabelled"'+(_cenTemplate===' unlabelled'?' selected':'')+'>unlabelled ('+runs.filter(x=>!x.template).length+')</option>'):'')
+    +'</select></label>'
+    +'<label style="display:flex;gap:4px;align-items:center">show <select onchange="setCensusStatus(this.value)" style="width:auto">'
+    +['','usable','excluded','live','operator'].map(v=>'<option value="'+v+'"'+(_cenStatusF===v?' selected':'')+'>'+(v||'everything')+'</option>').join('')
+    +'</select></label>'
+    +'<label style="display:flex;gap:4px;align-items:center" title="Runs excluded as partial, failed, stalled, aborted, interrupted, invalid or wedged - or simply shorter than a full pass.">'
+    +'<input type="checkbox" id="cen-partial" onchange="toggleCensusPartial(this.checked)"'+(_cenShowPartial?' checked':'')+'> partial / failed</label>'
+    +'<span class="mono" style="opacity:.75">showing '+shown.length+(ops.length?('+'+ops.length+' operator'):'')+' of '+(r.count||runs.length)+'</span>'
+    +(hidden>0&&!_cenShowPartial?('<span class="tag">'+hidden+' hidden</span>'):'')
+    +'</div>';
+  if(!shown.length&&!ops.length){el.innerHTML=bar+'<div class="empty">No census runs match'+(r.dir?(' in <code>'+esc(r.dir)+'</code>'):'')+'.</div>';return}
+  el.innerHTML=bar+'<div style="overflow-x:auto"><table id="census-table"><tr>'
+    +'<th>run</th><th title="the question set this run answers - runs of different templates are not comparable">template</th><th>when</th><th>goals</th><th>done</th><th title="goals that hit their wall cap">capped</th>'
+    +'<th title="mean of each goal&#39;s declared quality checks - what was BUILT, not whether the run stopped">quality</th><th title="checks passed / declared">checks</th><th>wall</th>'
+    +'<th title="the coder model that actually served the run, the nodes its calls hit, and any re-route or CPU spill">coder · nodes</th>'
+    +'<th>warns</th><th title="steps no producer claims">unacc.</th><th>counters</th><th title="who drove this run, with the skill, tool and helpers - hover">operated by</th></tr>'
+    +shown.map(_cenRow).join('')+ops.map(_cenOpRow).join('')+'</table></div>';
+  Object.keys(_cenOpen).forEach(k=>{ if(_cenOpen[k]&&document.getElementById('cen-goals-'+_cenId(k)))loadCensusGoals(k); });
+}
+
+function toggleCensusRun(run,isOp){
+  _cenOpen[run]=!_cenOpen[run];
+  const det=document.querySelector('tr.cen-detail[data-run="'+run+'"]');
+  const row=document.querySelector('tr.cen-run[data-run="'+run+'"] td');
+  if(det)det.style.display=_cenOpen[run]?'':'none';
+  if(row)row.innerHTML=row.innerHTML.replace(_cenOpen[run]?'▸':'▾',_cenOpen[run]?'▾':'▸');
+  if(_cenOpen[run]){ if(isOp)loadOperatorGoals(run); else {loadCensusGoals(run);_cenRenderCtx(run);} }
+}
+function openCensusRun(run){
+  if(!_cenOpen[run])toggleCensusRun(run);
+  const row=document.querySelector('tr.cen-run[data-run="'+run+'"]');
+  if(row&&row.scrollIntoView)row.scrollIntoView({block:'nearest'});
+}
+
+/* What landed before this run and what the board says it found or fixed -
+   context for reading a change in its numbers. */
+function _cenRenderCtx(run){
+  const el=document.getElementById('cen-ctx-'+_cenId(run));if(!el)return;
+  const L=(_cenLanded||{})[run]||{}, B=(_cenBoard||{})[run]||{};
   let h='';
-  const cr=(cen&&cen.runs)||[];
-  if(cr.length){
-    h+='<table><tr><th>run</th><th>goals</th><th>finished</th><th>errored</th><th>ceiling</th><th>incomplete</th><th>thrash</th><th>total</th></tr>'
-      +cr.slice().reverse().map(s=>'<tr>'
-        +'<td class="mono">'+esc(s.run_id)+'</td><td>'+s.goals+'</td>'
-        +'<td style="color:'+_OP_OUT.finished+'">'+s.finished+'</td>'
-        +'<td style="color:'+_OP_OUT.errored+'">'+s.errored+'</td>'
-        +'<td style="color:'+_OP_OUT.ceiling+'">'+s.ceiling+'</td>'
-        +'<td style="color:'+_OP_OUT.incomplete+'">'+s.incomplete+'</td>'
-        +'<td'+(s.thrashing_goals?' style="color:#c96b6b"':'')+'>'+s.thrashing_goals+'</td>'
-        +'<td class="mono">'+_cenSec(s.duration_total_s)+'</td></tr>').join('')+'</table>';
+  if(L.count){
+    const items=(L.commits||[]).filter(c=>c.is_merge).slice(0,8).map(c=>'<span class="tag" title="'+esc(c.subject||'')+'">'+esc(c.branch||c.sha)+'</span>').join(' ');
+    h+='<div class="hint" style="margin:6px 0 2px"><b>landed before this run</b> '+esc(L.summary||'')+' '+items+(((L.count||0)-(L.merges||0))?(' <span class="hint">+'+((L.count||0)-(L.merges||0))+' non-merge</span>'):'')+'</div>';
   }
-  const rr=(recent&&recent.runs)||[];
-  h+='<div class="hint" style="margin:8px 0 4px">Recent browser runs'+(cr.length?'':' (no operator census batches recorded yet)')+'</div>';
-  h+=rr.length
-    ?('<table><tr><th>run</th><th>goal</th><th>outcome</th><th>steps</th><th>err</th><th>thrash</th><th>took</th></tr>'
-      +rr.map(r=>{
-        const out=!r.completed?'incomplete':(r.ceiling_hit?'ceiling':(r.errors?'errored':'finished'));
-        return '<tr class="clk" onclick="openOperatorTrace(\''+esc(r.run_id)+'\')">'
-          +'<td class="mono">'+esc(r.run_id)+'</td>'
-          +'<td>'+esc((r.goal||'').slice(0,60))+'</td>'
-          +'<td style="color:'+(_OP_OUT[out])+'">'+out+'</td>'
-          +'<td class="mono">'+(r.steps||0)+'</td>'
-          +'<td'+(r.errors?' style="color:#c96b6b"':'')+'>'+(r.errors||0)+'</td>'
-          +'<td'+(r.repeated_actions?' style="color:#c96b6b"':'')+'>'+(r.repeated_actions||0)+'</td>'
-          +'<td class="mono">'+_cenSec(r.duration_s)+'</td></tr>';}).join('')+'</table>')
-    :'<div class="empty">No browser runs recorded yet. Recording started when operator observability landed — earlier runs were never persisted.</div>';
+  const list=(arr,lbl,col)=>(arr&&arr.length)?('<span style="color:'+col+'">'+lbl+'</span> '+arr.map(i=>'<span class="tag clk" onclick="event.stopPropagation();openBoardItem(\''+esc(i.id)+'\')" title="'+esc(i.title||'')+'">'+esc(i.id)+'</span>').join(' ')+' '):'';
+  const b=list(B.fixed,'fixed','#3cb371')+list(B.found,'found','#c96b6b');
+  if(b)h+='<div class="hint" style="margin:2px 0"><b>board</b> '+b+'</div>';
   el.innerHTML=h;
-  $('census-op-status').textContent=(cr.length?(cr.length+' batch(es) · '):'')+rr.length+' recent run(s)';
+}
+
+/* The goals of one run, with their stats, routing, and a delta against the
+   base run chosen for comparison. Records come from census.run; the compare
+   cells from census.compare (loadCensusCompare) once the base is known. */
+async function loadCensusGoals(run){
+  const el=document.getElementById('cen-goals-'+_cenId(run));if(!el)return;
+  let recs=_cenRecCache[run];
+  if(!recs){
+    const r=await api('/census/run?run='+encodeURIComponent(run));
+    if(!r||r.error){el.innerHTML='<div class="empty">'+esc((r&&r.error)||'could not read this run')+'</div>';return}
+    recs=r.records||[]; _cenRecCache[run]=recs;
+    if(r.summary&&r.summary.routing){const s=_cenRunsAll.find(x=>x.run_id===run); if(s)s.routing=r.summary.routing;}
+  }
+  const s=_cenRunsAll.find(x=>x.run_id===run)||{};
+  if(_cenBase[run]===undefined)_cenBase[run]=_cenDefaultBase(s);
+  const bases=_cenRunsAll.filter(x=>x.run_id!==run).sort((a,b)=>(b.ended_at||0)-(a.ended_at||0));
+  const cap=(x)=>x.wall_cap_s||((_cenLiveData||{}).wall_cap_s)||1800;
+  const rows=recs.map(function(g){
+    const ro=g.routing_summary||{};
+    const q=g.quality||{};
+    const st=String(g.status||(g.skipped?'skipped':(g.no_session?'no session':'?')));
+    const hit=(g.wall_s||0)>=cap(g)-30&&st!=='done';
+    const cyc=Object.values(g.cycles_per_step||{}).reduce((a,b)=>a+(+b||0),0);
+    return '<tr class="clk" onclick="event.stopPropagation();openCensusGoal(\''+esc(run)+'\',\''+esc(g.id)+'\')">'
+      +'<td class="mono">'+esc(g.id)+(g.reruns&&g.reruns.length?(' <span class="tag" title="'+esc(g.reruns.map(x=>x.why).join('; '))+'">↻'+g.reruns.length+'</span>'):'')+'</td>'
+      +'<td>'+_cenStatus(st)+'</td>'
+      +'<td class="mono"'+(hit?' style="color:#c9a35a" title="hit the '+Math.round(cap(g)/60)+'m cap"':'')+'>'+_cenSec(g.wall_s)+'<span class="hint">/'+_cenSec(cap(g))+'</span></td>'
+      +'<td class="mono">'+(q.total?((q.passed||0)+'/'+q.total):'—')+((q.files_missing||[]).length?(' <span style="color:#c96b6b" title="declared files never produced: '+esc(q.files_missing.join(', '))+'">✗'+q.files_missing.length+'</span>'):'')+'</td>'
+      +'<td class="mono">'+(g.planned==null?'—':(g.planned+'/'+g.executed+(g.inserted?('+'+g.inserted):'')))+(g.unaccounted?' <span style="color:#c96b6b" title="a step no producer claims">⚠</span>':'')+'</td>'
+      +'<td class="mono">'+(g.tool_calls==null?'—':g.tool_calls)+'</td>'
+      +'<td class="mono">'+(cyc||'—')+'</td>'
+      +'<td>'+((g.warnings||[]).length||0)+'</td>'
+      +'<td>'+_cenRoute(ro.recorded?ro:null)+'</td>'
+      +'<td class="mono hint cen-cmp" data-goal="'+esc(g.id)+'">'+(_cenBase[run]?'…':'—')+'</td>'
+      +'</tr>';
+  }).join('');
+  el.innerHTML='<div class="row" style="gap:8px;align-items:center;margin:6px 0 4px">'
+    +'<span class="hint">'+recs.length+' goal(s) · click one for its record</span><span style="flex:1"></span>'
+    +'<label class="hint" style="display:flex;gap:4px;align-items:center" onclick="event.stopPropagation()">Δ vs <select onchange="event.stopPropagation();_cenBase[\''+esc(run)+'\']=this.value;loadCensusCompare(\''+esc(run)+'\')" style="width:auto">'
+    +'<option value="">—</option>'+bases.map(b=>'<option value="'+esc(b.run_id)+'"'+(_cenBase[run]===b.run_id?' selected':'')+'>'+esc(b.run_id)+((b.template||'')!==(s.template||'')?' (other template)':'')+(b.excluded?' · not usable':'')+'</option>').join('')
+    +'</select></label></div>'
+    +'<table><tr><th>goal</th><th>status</th><th>wall / cap</th><th title="declared checks passed / total; ✗ files never produced">quality</th><th title="planned / executed (+inserted)">steps</th><th>tools</th><th>cycles</th><th>warns</th><th title="the coder that served this goal, the nodes its calls hit, re-routes and CPU spills">coder · nodes</th><th title="this goal in the base run, and the wall-time change - click a base cell to open that run\'s record">Δ vs base</th></tr>'
+    +rows+'</table>';
+  if(_cenBase[run])loadCensusCompare(run);
+}
+
+/* Fill the Δ column of an expanded run from census.compare. Each base cell
+   opens the BASE record and each head cell the head one - a compare row
+   describes two runs and cannot have one click target. */
+async function loadCensusCompare(run){
+  const h=run||'', b=_cenBase[h]||'';
+  const el=document.getElementById('cen-goals-'+_cenId(h));
+  if(!el)return;
+  if(!b||b===h){el.querySelectorAll('td.cen-cmp').forEach(td=>{td.innerHTML='—'});return}
+  const r=await api('/census/compare?base='+encodeURIComponent(b)+'&head='+encodeURIComponent(h));
+  if(!r||r.error){el.querySelectorAll('td.cen-cmp').forEach(td=>{td.innerHTML='<span class="hint">'+esc((r&&r.error)||'compare failed')+'</span>'});return}
+  const by={};(r.goals||[]).forEach(g=>{by[g.id]=g});
+  el.querySelectorAll('td.cen-cmp').forEach(td=>{
+    const g=by[td.getAttribute('data-goal')];
+    if(!g){td.innerHTML='<span class="hint">not in '+esc(b)+'</span>';return}
+    td.innerHTML='<span style="color:'+(_CEN_CHG[g.outcome_change]||'#888')+'">'+esc(g.outcome_change)+'</span> '
+      +'<span class="clk" title="open the '+esc(b)+' record for '+esc(g.id)+'"'
+        +' onclick="event.stopPropagation();openCensusGoal(\''+esc(b)+'\',\''+esc(g.id)+'\')">'
+        +_cenStatus(g.base_status)+' <span class="hint">↗</span></span>'
+      +' <span class="mono">'+(g.wall_delta_s==null?'':((g.wall_delta_s>0?'+':'')+Math.round(g.wall_delta_s)+'s'))+'</span>'
+      +'<span class="clk hint" title="open the '+esc(h)+' record for '+esc(g.id)+'"'
+        +' onclick="event.stopPropagation();openCensusGoal(\''+esc(h)+'\',\''+esc(g.id)+'\')"> · '+esc(h)+' ↗</span>'
+      +(g.head_unaccounted?' <span style="color:#c96b6b" title="a step no producer claims">⚠</span>':'');
+  });
+  const counts=r.counts||{};
+  const sum=Object.keys(_CEN_CHG).filter(k=>counts[k]).map(k=>'<span style="color:'+_CEN_CHG[k]+';margin-left:6px">'+counts[k]+' '+k+'</span>').join('')
+    +((!r.base_trusted||!r.head_trusted)?' <span style="color:#c96b6b;margin-left:6px" title="a run whose counters do not reconcile">⚠ suspect counters</span>':'');
+  const lab=el.querySelector('label.hint');
+  if(lab){let s=lab.nextSibling; if(!(s&&s.className==='cen-cmp-sum')){s=document.createElement('span');s.className='cen-cmp-sum';lab.parentNode.appendChild(s)} s.innerHTML=sum;}
+}
+
+/* An operator (browser) census batch's goals. */
+const _OP_OUT={finished:'#3cb371',errored:'#c9a35a',ceiling:'#c96b6b',incomplete:'#8a8a8a'};
+async function loadOperatorGoals(run){
+  const el=document.getElementById('cen-goals-'+_cenId(run));if(!el)return;
+  const r=await api('/census/operator/run?run='+encodeURIComponent(run));
+  if(!r||r.error){el.innerHTML='<div class="empty">'+esc((r&&r.error)||'could not read this batch')+'</div>';return}
+  const recs=r.records||[];
+  el.innerHTML='<table><tr><th>goal</th><th>outcome</th><th>steps</th><th>err</th><th>thrash</th><th>took</th><th>reason</th></tr>'
+    +recs.map(x=>{
+      const out=!x.completed?'incomplete':(x.ceiling_hit?'ceiling':((x.errors||0)>0?'errored':'finished'));
+      return '<tr class="clk" onclick="event.stopPropagation();'+(x.run_id?('openOperatorTrace(\''+esc(x.run_id)+'\')'):'')+'">'
+        +'<td class="mono">'+esc(x.id||'')+'</td><td style="color:'+(_OP_OUT[out])+'">'+out+'</td>'
+        +'<td class="mono">'+(x.steps||0)+'</td><td'+(x.errors?' style="color:#c96b6b"':'')+'>'+(x.errors||0)+'</td>'
+        +'<td'+(x.repeated_actions?' style="color:#c96b6b"':'')+'>'+(x.repeated_actions||0)+'</td>'
+        +'<td class="mono">'+_cenSec(x.duration_s)+'</td><td class="hint">'+esc(String(x.reason||'')).slice(0,80)+'</td></tr>';
+    }).join('')+'</table>'
+    +'<div class="hint" style="margin-top:4px"><b>finished</b> means a clean stop, not that the browser achieved the goal; a run at its step <b>ceiling</b> ranks below one that errored.</div>';
 }
 async function openOperatorTrace(runId){
   const tok=openModalLoading('Operator run',runId);
@@ -2843,79 +3017,8 @@ async function openOperatorTrace(runId){
            :'<div class="empty">No steps recorded.</div>')
     +((t.warnings||[]).length?('<div class="hint" style="margin-top:6px">'+(t.warnings||[]).map(w=>'• '+esc(w)).join('<br>')+'</div>'):''));
 }
-async function loadCensusCompare(){
-  const el=$('census-compare');if(!el)return;
-  const b=$('census-base')&&$('census-base').value,h=$('census-head')&&$('census-head').value;
-  if(!b||!h||b===h){el.innerHTML='<div class="empty">Pick two different runs.</div>';$('census-cmp-counts').textContent='';return}
-  const r=await api('/census/compare?base='+encodeURIComponent(b)+'&head='+encodeURIComponent(h));
-  if(!r||r.error){el.innerHTML='<div class="empty">'+esc((r&&r.error)||'compare failed')+'</div>';return}
-  const c=r.counts||{};
-  $('census-cmp-counts').innerHTML=Object.keys(_CEN_CHG).filter(k=>c[k]).map(k=>'<span style="color:'+_CEN_CHG[k]+';margin-left:8px">'+c[k]+' '+k+'</span>').join('')
-    +((!r.base_trusted||!r.head_trusted)?' <span style="color:#c96b6b;margin-left:8px" title="a run whose counters do not reconcile">⚠ suspect counters</span>':'');
-  el.innerHTML='<table><tr><th>goal</th><th>outcome</th><th>'+esc(b)+'</th><th>'+esc(h)+'</th><th>wall Δ</th><th>steps</th><th></th></tr>'
-    // A compare row describes TWO runs, so it cannot have one click target.
-    // The whole line used to open the HEAD record silently - there was no way
-    // to reach the base run's evidence, and nothing said which of the two you
-    // were about to get. Each run's own cell is now the button for its own
-    // record.
-    +(r.goals||[]).map(g=>'<tr>'
-      +'<td>'+esc(g.id)+'</td>'
-      +'<td style="color:'+(_CEN_CHG[g.outcome_change]||'#888')+'">'+esc(g.outcome_change)+'</td>'
-      +'<td class="clk" title="open the '+esc(b)+' record for '+esc(g.id)+'"'
-        +' onclick="openCensusGoal(\''+esc(b)+'\',\''+esc(g.id)+'\')">'
-        +_cenStatus(g.base_status)+' <span class="hint">\u2197</span></td>'
-      +'<td class="clk" title="open the '+esc(h)+' record for '+esc(g.id)+'"'
-        +' onclick="openCensusGoal(\''+esc(h)+'\',\''+esc(g.id)+'\')">'
-        +_cenStatus(g.head_status)+' <span class="hint">\u2197</span></td>'
-      +'<td class="mono">'+(g.wall_delta_s==null?'—':((g.wall_delta_s>0?'+':'')+Math.round(g.wall_delta_s)+'s'))+'</td>'
-      +'<td class="mono">'+(g.base_planned==null?'—':(g.base_planned+'/'+g.base_executed))+' → '+(g.head_planned==null?'—':(g.head_planned+'/'+g.head_executed))+'</td>'
-      +'<td>'+(g.head_unaccounted?'<span style="color:#c96b6b" title="a step no producer claims">⚠</span>':'')+'</td>'
-      +'</tr>').join('')+'</table>'
-    +'<div class="hint" style="margin-top:6px">planned/executed is context, not a score — click a run\'s own cell (\u2197) to read what it actually did in THAT run.</div>';
-}
-async function loadCensusBoard(){
-  const el=$('census-board');if(!el)return;
-  /* Derived first, labels second. The label-driven list depends on somebody
-     remembering to apply census:fixed:<run>, which is exactly why it went
-     stale; what the repository says needs no discipline at all. */
-  let head='';
-  try{
-    const L=await api('/census/landed');
-    const lb=(L&&L.by_run)||{};
-    const lk=Object.keys(lb).sort().reverse().filter(k=>(lb[k]||{}).count);
-    if(lk.length){
-      head='<div style="margin-bottom:10px">'
-        +'<div class="hint" style="margin-bottom:4px">Landed before each run &mdash; derived from the repository</div>'
-        +lk.slice(0,8).map(k=>{
-          const g=lb[k]||{};
-          const items=(g.commits||[]).filter(c=>c.is_merge).slice(0,6).map(c=>
-            '<span class="tag" title="'+esc(c.subject||'')+'">'+esc(c.branch||c.sha)+'</span>').join(' ');
-          const plain=(g.count||0)-(g.merges||0);
-          return '<div style="margin:3px 0"><b class="mono">'+esc(k)+'</b> '
-            +'<span class="hint">'+esc(g.summary||'')+'</span>'
-            +(items?('<div style="margin:2px 0 0 10px">'+items
-              +(plain?(' <span class="hint">+'+plain+' non-merge</span>'):'')+'</div>'):'');
-        }).join('')
-        +'<div class="hint" style="margin-top:6px">A commit is attributed to the first census that '
-        +'finished after it, so one that landed mid-run is counted against that run even though only '
-        +'its later goals could have used it.</div></div>';
-    }
-  }catch(_){}
-  const r=await api('/census/board');
-  const by=(r&&r.by_run)||{};const keys=Object.keys(by);
-  if(!keys.length){el.innerHTML=head+'<div class="empty">No board items are labelled to a census run '
-    +'(the list above needs no labels).</div>';return}
-  el.innerHTML=head;
-  el.innerHTML=head+keys.sort().reverse().map(k=>{
-    const g=by[k]||{};
-    const list=(arr,lbl,col)=>(arr&&arr.length)?('<div style="margin:2px 0 2px 10px"><span style="color:'+col+'">'+lbl+'</span> '
-      +arr.map(i=>'<span class="tag clk" onclick="openBoardItem(\''+esc(i.id)+'\')" title="'+esc(i.title||'')+'">'+esc(i.id)+'</span>').join(' ')+'</div>'):'';
-    return '<div style="margin-bottom:6px"><b class="mono">'+esc(k)+'</b>'+list(g.fixed,'fixed','#3cb371')+list(g.found,'found','#c96b6b')+'</div>';
-  }).join('');
-}
-function openCensusRun(run){
-  const sel=$('census-head');if(sel){sel.value=run;loadCensusCompare()}
-}
+/* Kept for callers that only ever wanted the two operator lists refreshed. */
+async function loadCensusOperator(){ const op=await api('/census/operator/runs'); _cenOpRuns=(op&&op.runs)||[]; renderCensusTable(); }
 /* The actual agent-loop output for a census goal, live.
    Same transport the Test section settled on: POLL
    /workshop/agent_loop/session_state?since=N (plain JSON, index-exact, full
@@ -2996,6 +3099,33 @@ async function openCensusGoal(run,goal){
     +'<td>'+(s.ok===false?'<span style="color:#c96b6b">failed</span>':(s.ok?'<span style="color:#3cb371">ok</span>':'—'))+'</td>'
     +'</tr>').join('');
   const _sid=String((r.record&&r.record.session_id)||'');
+  // The routing that served this goal: the roles in force when it started and
+  // every LLM call it made, with re-routes and CPU spills named. Run 51's
+  // collapse was invisible without this - every number above was measuring a
+  // coder that was a fifth on the CPU.
+  const ro=(r.record&&r.record.routing)||null;
+  let routingHtml='';
+  if(ro&&ro.at_start){
+    const roles=ro.at_start.roles||{};
+    const roleLine=Object.keys(roles).map(k=>{const v=roles[k]||{};return '<span class="tag" title="'+esc(k+(v.overridden?(' (override; declared '+(v.declared_model||'?')+')'):'')+(v.deny_gpu?' · deny_gpu':(v.prefer_gpu?' · prefer_gpu':''))+(v.pin?(' · pin '+v.pin):''))+'">'+esc(k)+' <span class="mono">'+esc(v.model||'(default)')+'</span>'+(v.overridden?' <span style="color:#c9a35a">ovr</span>':'')+'</span>';}).join(' ');
+    const calls=(ro.calls&&ro.calls.calls)||[];
+    const rr=(ro.calls&&ro.calls.reroutes)||[];
+    const callRows=calls.map(c=>'<tr'+(c.reroute?' style="color:#c9a35a"':'')+'><td class="mono hint">'+esc(String(c.ts||'').slice(11,19))+'</td>'
+      +'<td class="mono">'+esc(String(c.caller||'').split(':').pop())+'</td><td class="mono hint">'+esc(c.role||c.job||'')+'</td>'
+      +'<td class="mono">'+esc(String(c.model||'').replace(/^jaahas\//,''))+'</td><td class="mono">'+esc(c.node||'')+'</td>'
+      +'<td class="mono">'+(c.s==null?'—':Math.round(c.s)+'s')+'</td><td class="mono">'+(c.tok_s==null?'—':c.tok_s)+'</td>'
+      +'<td class="mono"'+(c.gpu_pct!=null&&c.gpu_pct<99?' style="color:#c96b6b"':'')+'>'+(c.gpu_pct==null?'—':c.gpu_pct+'%')+'</td>'
+      +'<td class="hint">'+esc(c.reroute||'')+'</td></tr>').join('');
+    routingHtml='<details style="margin-top:8px"'+(rr.length||(ro.calls&&ro.calls.spill_calls)?' open':'')+'><summary class="clk"><b>Routing</b> <span class="hint">'
+      +calls.length+' LLM call(s)'+(rr.length?(' · <span style="color:#c9a35a">'+rr.length+' re-routed</span>'):'')
+      +((ro.calls&&ro.calls.spill_calls)?(' · <span style="color:#c96b6b">'+ro.calls.spill_calls+' CPU spill(s)</span>'):'')
+      +((ro.calls&&ro.calls.truncated)?' · <span style="color:#c96b6b">log truncated</span>':'')+'</span></summary>'
+      +'<div style="margin:4px 0">'+roleLine+'</div>'
+      +(callRows?('<div style="max-height:260px;overflow:auto"><table><tr><th>at</th><th>caller</th><th>role</th><th>model</th><th>node</th><th>took</th><th>tok/s</th><th>GPU</th><th>re-route</th></tr>'+callRows+'</table></div>'):'<div class="hint">no calls recorded in the window</div>')
+      +'</details>';
+  }else if(r.record){
+    routingHtml='<div class="hint" style="margin-top:8px">Routing not recorded for this goal (rows before 2026-09-10 predate routing capture).</div>';
+  }
   modalFill(tok,
     '<div class="hint" style="margin-bottom:6px">'+esc(e.how_to_read||'')+'</div>'
     +'<div style="margin-bottom:6px"><b>done_when</b><div class="mono" style="white-space:pre-wrap">'+esc(e.done_when||'(not recorded)')+'</div></div>'
@@ -3006,6 +3136,7 @@ async function openCensusGoal(run,goal){
     +(steps?('<table><tr><th>step</th><th>title</th><th>planned caps</th><th>tools used</th><th>cycles</th><th></th></tr>'+steps+'</table>'):'<div class="empty">No step detail — the run\'s event log has aged out.</div>')
     +((e.unplanned_steps||[]).length?('<div class="hint" style="margin-top:6px;color:#c96b6b">steps marked + were never in the plan: '+esc((e.unplanned_steps||[]).join(', '))+'</div>'):'')
     +((e.warnings||[]).length?('<div class="hint" style="margin-top:6px">'+(e.warnings||[]).map(w=>'• '+esc(w)).join('<br>')+'</div>'):'')
+    +routingHtml
     // The loop's OWN output, replayed in full (and tailing live if it is still
     // running). Everything above is the census's summary OF the run; this is
     // the run.
