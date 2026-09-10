@@ -10,6 +10,18 @@ from Vera.vera.capabilities import cap_tracking
 pytestmark = pytest.mark.critical
 
 
+@pytest.mark.asyncio
+async def test_enforcement_readiness_fails_closed_when_evidence_is_unavailable(monkeypatch):
+    monkeypatch.setattr(
+        integrations, "default_external_effect_shadow_evidence",
+        lambda: (_ for _ in ()).throw(OSError("private storage detail")))
+    result = await integrations.integration_effect_enforcement_readiness()
+    assert result["eligible_for_operator_review"] is False
+    assert result["enforcement_enabled"] is False
+    assert result["error"] == "evidence_unavailable"
+    assert "private storage detail" not in str(result)
+
+
 def test_api_call_declares_payload_redaction_for_all_activity_channels():
     cap = orchestration.CAPABILITY_REGISTRY["integration.api.call"]
     assert cap["redact_result"] is True
@@ -74,6 +86,12 @@ async def test_api_call_observes_policy_without_forwarding_or_enforcing(monkeypa
         def replay_status(self, plan):
             return {"already_succeeded": False, "successful_receipt_id": ""}
 
+    recorded = {}
+
+    class ShadowEvidence:
+        def record(self, value):
+            recorded.update(value)
+
     class Response:
         status_code = 200
         text = '{"ok":true}'
@@ -102,6 +120,8 @@ async def test_api_call_observes_policy_without_forwarding_or_enforcing(monkeypa
     monkeypatch.setattr(integrations, "_audit", capture_audit)
     monkeypatch.setattr(integrations, "default_external_effect_receipt_ledger",
                         lambda: Ledger())
+    monkeypatch.setattr(integrations, "default_external_effect_shadow_evidence",
+                        lambda: ShadowEvidence())
     monkeypatch.setattr(integrations.httpx, "AsyncClient", Client)
 
     result = await integrations.cap_api_call(
@@ -111,6 +131,7 @@ async def test_api_call_observes_policy_without_forwarding_or_enforcing(monkeypa
 
     assert result["ok"] is True
     assert result["effect_shadow"]["decision"]["would_execute"] is True
+    assert recorded["decision"]["would_execute"] is True
     assert captured["url"].endswith("/orders?private=secret")
     assert "idempotency_key" not in captured
     assert "approval_receipt_ref" not in captured
@@ -152,6 +173,12 @@ async def test_denied_shadow_does_not_block_current_compatibility_call(monkeypat
 
     monkeypatch.setattr(integrations, "_get", get_record)
     monkeypatch.setattr(integrations, "_audit", no_audit)
+    class BrokenEvidence:
+        def record(self, _value):
+            raise OSError("evidence store unavailable")
+
+    monkeypatch.setattr(integrations, "default_external_effect_shadow_evidence",
+                        lambda: BrokenEvidence())
     monkeypatch.setattr(integrations.httpx, "AsyncClient", Client)
     result = await integrations.cap_api_call(
         id="service-1", method="POST", path="/legacy-write")

@@ -68,6 +68,7 @@ from Vera.vera.integrations.external_effects import (
     plan_external_effect as _plan_external_effect,
 )
 from Vera.vera.integrations.effect_receipts import default_external_effect_receipt_ledger
+from Vera.vera.integrations.effect_shadow_evidence import default_external_effect_shadow_evidence
 from Vera.vera.integrations.effect_retry import plan_effect_retry as _plan_effect_retry
 from Vera.vera.integrations.connection_projection import project_connections
 
@@ -456,6 +457,10 @@ async def cap_api_call(id: str = "", method: str = "GET", path: str = "",
                                "reasons": ["invalid_policy_evidence"]},
                   "blocks_current_call": False, "forwards_control_references": False,
                   "records_completion": False, "executes": False}
+    try:
+        default_external_effect_shadow_evidence().record(shadow)
+    except Exception:
+        log.exception("external-effect shadow evidence record failed")
     spec = KIND_SPECS.get(rec.get("kind", "generic"), {})
     api_base = (rec.get("api") or {}).get("api_base", spec.get("api_base", ""))
     url = base + api_base + ("/" + path.lstrip("/") if path else "")
@@ -954,6 +959,46 @@ async def integration_effect_replay_status(plan: Optional[Dict] = None, trace_id
 
 
 @capability(
+    "integration.effect.enforcement.readiness", http_method="GET",
+    http_path="/integrations/effect/enforcement/readiness",
+    http_tags=["integration", "policy"], memory="off", silent=True,
+    description="Assess whether observe-only external-effect evidence is sufficiently "
+                "representative for operator review. This fail-closed assessment does not "
+                "prove safety, authorize enforcement, change policy, execute, or retain payloads.",
+)
+async def integration_effect_enforcement_readiness(trace_id=None):
+    from Vera.vera.integrations.effect_shadow_evidence import evaluate_enforcement_readiness
+    try:
+        evidence = default_external_effect_shadow_evidence().summary(limit=200)
+        return evaluate_enforcement_readiness(evidence)
+    except Exception:
+        result = evaluate_enforcement_readiness({"totals": {}, "classifications": {}})
+        result["error"] = "evidence_unavailable"
+        return result
+
+
+@capability(
+    "integration.effect.shadow.evidence", http_method="GET",
+    http_path="/integrations/effect/shadow/evidence",
+    http_tags=["integration", "policy"], memory="off", silent=True,
+    description="Inspect bounded payload-free aggregates of observe-only external-effect "
+                "decisions. Returns admission, execution and replay-suppression counts plus "
+                "reason codes; it cannot enforce, execute, retry, open secrets, or retain payloads.",
+)
+async def integration_effect_shadow_evidence(limit: int = 50, trace_id=None):
+    try:
+        return default_external_effect_shadow_evidence().summary(limit=limit)
+    except (TypeError, ValueError) as exc:
+        return {"schema": "vera.external-effect-shadow-evidence/v1", "error": str(exc),
+                "totals": {"observations": 0, "would_admit": 0,
+                           "would_execute": 0, "would_suppress": 0},
+                "classifications": {}, "reasons_in_window": {}, "recent": [],
+                "window": {"requested": 0, "returned": 0},
+                "enforcement": "observe_only", "executes": False,
+                "retries": False, "retains_payload": False}
+
+
+@capability(
     "integration.effect.receipts", http_method="GET",
     http_path="/integrations/effect/receipts",
     http_tags=["integration", "policy"], memory="off", silent=True,
@@ -974,6 +1019,20 @@ async def integration_effect_receipts(limit: int = 50, plan_id: str = "",
                 "outcomes": {}, "recent": [],
                 "window": {"requested": 0, "returned": 0},
                 "executes": False, "retries": False, "retains_payload": False}
+
+
+@capability(
+    "integration.effect.retry.policy", http_method="GET",
+    http_path="/integrations/effect/retry/policy",
+    http_tags=["integration", "policy"], memory="off", silent=True,
+    description="Describe the bounded retry decision vocabulary used for external "
+                "effects. Returns transient outcome classes, refusal explanations, "
+                "requirements, and hard bounds; it never executes, sleeps, retries, "
+                "opens secrets, records receipts, or retains payloads.",
+)
+async def integration_effect_retry_policy(trace_id=None):
+    from Vera.vera.integrations.effect_retry import describe_retry_policy
+    return describe_retry_policy()
 
 
 @capability(
@@ -1130,7 +1189,10 @@ register_ui(
         "integration.source.transition.plan",
         "integration.source.build.status", "integration.source.build.plan",
         "integration.effect.plan", "integration.effect.replay.status",
-        "integration.effect.retry.plan", "integration.effect.receipts",
+        "integration.effect.retry.plan", "integration.effect.retry.policy",
+        "integration.effect.enforcement.readiness",
+        "integration.effect.shadow.evidence",
+        "integration.effect.receipts",
         # the one-click "register & secure everything" button drives autoenroll
         "autoenroll.scan", "autoenroll.run", "autoenroll.pending",
     ],

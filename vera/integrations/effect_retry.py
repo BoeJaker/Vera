@@ -18,6 +18,31 @@ RETRYABLE_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
 RETRYABLE_ERRORS = frozenset({"connection_error", "timeout", "temporarily_unavailable"})
 MAX_ATTEMPTS_LIMIT = 20
 MAX_DELAY_MS = 86_400_000
+REASON_DESCRIPTIONS = {
+    "effect_not_admitted": "The original effect did not pass policy admission.",
+    "successful_receipt_exists": "A durable success receipt already exists.",
+    "retry_not_requested": "The original effect did not explicitly request retry handling.",
+    "attempt_budget_exhausted": "The bounded attempt budget has been exhausted.",
+    "outcome_not_retryable": "The observed outcome is not classified as transient.",
+}
+
+
+def describe_retry_policy() -> dict[str, Any]:
+    """Return the bounded, non-executing retry vocabulary for inspection UIs."""
+    return {
+        "schema": "vera.external-effect-retry-policy/v1",
+        "retryable_http_statuses": sorted(RETRYABLE_STATUS),
+        "retryable_error_codes": sorted(RETRYABLE_ERRORS),
+        "reason_descriptions": dict(sorted(REASON_DESCRIPTIONS.items())),
+        "bounds": {"maximum_attempts": MAX_ATTEMPTS_LIMIT,
+                   "maximum_delay_ms": MAX_DELAY_MS},
+        "requirements": ["effect_admitted", "retry_explicitly_requested",
+                         "attempt_budget_remaining", "transient_outcome",
+                         "no_successful_receipt"],
+        "delay_semantics": "provider_floor_plus_caller_jitter_window",
+        "executes": False, "sleeps": False, "records_receipt": False,
+        "resolves_secrets": False, "retains_payload": False,
+    }
 
 
 def _integer(value: Any, field: str, *, minimum: int, maximum: int) -> int:

@@ -51,6 +51,15 @@ def test_the_five_pages_are_gone_and_agents_is_there(src):
         assert old not in nav, old
 
 
+def test_every_rail_button_calls_nav_plainly(src):
+    """Found 2026-09-10: the Agents button landed as onclick="nav(\\'agents\\')" (a
+    raw-string patch kept the backslashes) - a JS syntax error on every click,
+    while the deep link still worked, so the probe never saw it."""
+    for m in re.finditer(r'<button class="btn(?: on)?" data-sec="([a-z]+)" onclick="([^"]*)"', src):
+        assert m.group(2) == "nav('%s')" % m.group(1), m.group(0)[:120]
+    assert "\\'" not in "".join(re.findall(r'onclick="([^"]*)"', src[:src.index("</div>", src.index('id="nav"'))]))
+
+
 def test_the_old_pages_still_route_to_the_table_that_holds_their_data(src):
     nav = _fn(src, "nav")
     assert "agents:agentsPoll," in nav
