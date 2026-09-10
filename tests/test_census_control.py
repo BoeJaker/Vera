@@ -118,6 +118,39 @@ def test_rollup_flags_a_coder_that_changed_mid_run():
     assert r["calls"] == 14 and r["reroutes"] == 2 and r["spill_calls"] == 2
 
 
+def test_every_role_is_reported_not_just_the_coder():
+    row = json.loads(json.dumps(ROW))
+    row["routing"]["at_start"]["roles"].update({
+        "executor": {"model": "", "overridden": False},
+        "writer": {"model": "gemma3:12b", "overridden": False}})
+    row["routing"]["calls"]["calls"] = [
+        {"role": "planner", "job": "loop_planner", "model": "jaahas/qwen3.5-uncensored"},
+        {"role": "executor", "job": "loop_executor", "model": "jaahas/qwen3.5-uncensored"},
+        {"role": "executor", "job": "loop_executor", "model": "jaahas/qwen3.5-uncensored"},
+        {"role": "", "job": "chat", "model": "jaahas/qwen3.5-uncensored"},
+        {"role": "", "job": "", "model": "nomic-embed-text"},
+        {"role": "writer", "job": "loop_writer", "model": "gemma3:12b"},
+    ]
+    ro = ct.routing_of(row)
+    assert set(ro["roles"]) == {"coder", "planner", "executor", "writer"}
+    assert ro["roles"]["writer"]["model"] == "gemma3:12b"
+    assert ro["by_role"] == {
+        "planner": {"jaahas/qwen3.5-uncensored": 1},
+        "executor": {"jaahas/qwen3.5-uncensored": 2},
+        "chat": {"jaahas/qwen3.5-uncensored": 1},
+        "embed": {"nomic-embed-text": 1},
+        "writer": {"gemma3:12b": 1},
+    }
+    roll = ct.routing_rollup([row, ROW])
+    assert roll["roles"]["writer"] == ["gemma3:12b"]
+    assert roll["by_role"]["executor"] == {"jaahas/qwen3.5-uncensored": 2}
+    assert roll["roles_changed"] == []
+    # A role whose model changed between goals is named.
+    other = json.loads(json.dumps(row))
+    other["routing"]["at_start"]["roles"]["writer"]["model"] = "qwen3.5:9b"
+    assert ct.routing_rollup([row, other])["roles_changed"] == ["writer"]
+
+
 def test_rollup_of_unrecorded_runs_is_empty_not_zero_confidence():
     r = ct.routing_rollup([{"id": "a"}, {"id": "b"}])
     assert r["recorded_goals"] == 0 and r["coders"] == [] and not r["coder_changed"]

@@ -2703,24 +2703,39 @@ function _cenProv(p){
 function _cenRoute(ro){
   if(!ro)return '<span class="hint">—</span>';
   if(ro.recorded===false||ro.recorded_goals===0)return '<span class="hint" title="this run predates routing capture (2026-09-10)">not recorded</span>';
-  const coder=ro.coder||((ro.coders||[]).join(' → '))||'?';
-  const short=s=>String(s||'').replace(/^jaahas\//,'').replace(/^hf\.co\//,'');
+  const short=s=>String(s||'(default)').replace(/^jaahas\//,'').replace(/^hf\.co\//,'');
+  // EVERY role the profile declared, with the model in force. A run summary
+  // carries {role:[models]} (models seen across its goals); a goal carries
+  // {role:{model,overridden}}. Collapsed to "all: X" when they agree.
+  const roles=ro.roles||{};
+  const roleModels={};
+  Object.keys(roles).forEach(k=>{const v=roles[k]; roleModels[k]=Array.isArray(v)?v.slice():[(v&&v.model)||'']});
+  const rnames=Object.keys(roleModels).sort();
+  const distinct=[...new Set([].concat(...rnames.map(k=>roleModels[k])).map(m=>m||'(default)'))];
+  const changed=ro.roles_changed||(ro.coder_changed?['coder']:[]);
+  const byRole=ro.by_role||{};
+  const byRoleLine=Object.keys(byRole).sort().map(r=>r+': '+Object.entries(byRole[r]).map(([m,n])=>short(m)+' ×'+n).join(', ')).join('\n');
   const warn=[];
-  if(ro.coder_changed)warn.push('coder changed mid-run: '+(ro.coders||[]).join(' then '));
+  if(changed.length)warn.push('model changed mid-run for: '+changed.map(r=>r+' ('+(roleModels[r]||[]).join(' then ')+')').join('; '));
   if(ro.coder_overridden)warn.push('coder is a Model Routing override (declared '+(ro.coder_declared||'?')+')');
   if(ro.spill_calls)warn.push(ro.spill_calls+' call(s) ran partly on CPU (VRAM spill)');
   if(ro.reroutes)warn.push(ro.reroutes+' call(s) re-routed');
   if(ro.truncated)warn.push('request log was truncated; some calls unrecorded');
   const nodes=Object.entries(ro.nodes||{}).sort((a,b)=>b[1]-a[1]).map(([n,c])=>esc(n)+':'+c).join(' ');
-  return '<span title="'+esc('coder '+coder+(ro.planner?(' · planner '+ro.planner):'')+(nodes?(' · '+nodes):'')+(warn.length?('\n'+warn.join('\n')):''))+'">'
-    +'<span class="mono">'+esc(short(coder))+'</span>'
-    +(ro.coder_changed?' <span style="color:#c96b6b">≠</span>':'')
+  const rolesTxt=rnames.map(r=>r+' '+roleModels[r].join(' → ')).join('\n');
+  let main;
+  if(rnames.length&&distinct.length===1)main='<span class="mono" title="every declared role ran on this model">all roles: '+esc(short(distinct[0]))+'</span>';
+  else main=rnames.map(r=>'<span class="tag" title="'+esc(r)+'">'+esc(r.slice(0,4))+' <span class="mono">'+esc(roleModels[r].map(short).join('→'))+'</span></span>').join(' ')||'<span class="hint">roles unknown</span>';
+  return '<span title="'+esc('roles in force:\n'+(rolesTxt||'?')+(byRoleLine?('\n\ncalls by role:\n'+byRoleLine):'')+(nodes?('\n\nnodes: '+nodes):'')+(warn.length?('\n\n'+warn.join('\n')):''))+'">'
+    +main
+    +(changed.length?' <span style="color:#c96b6b" title="a role\'s model changed mid-run">≠</span>':'')
     +(ro.coder_overridden?' <span class="hint" title="Model Routing override">ovr</span>':'')
     +(nodes?(' <span class="hint mono">'+nodes+'</span>'):'')
     +(ro.spill_calls?(' <span style="color:#c96b6b" title="CPU spill">⚠'+ro.spill_calls+'</span>'):'')
-    +(ro.reroutes&&!ro.spill_calls?(' <span style="color:#c9a35a" title="re-routed">↷'+ro.reroutes+'</span>'):(ro.reroutes?(' <span style="color:#c9a35a">↷'+ro.reroutes+'</span>'):''))
+    +(ro.reroutes?(' <span style="color:#c9a35a" title="re-routed">↷'+ro.reroutes+'</span>'):'')
     +'</span>';
 }
+function _cenByRole(calls){const o={};(calls||[]).forEach(c=>{let r=c.role||c.job||'other';if(r.indexOf('loop_')===0)r=r.slice(5);const m=c.model||'?';if(r==='other'&&m.indexOf('embed')>=0)r='embed';o[r]=o[r]||{};o[r][m]=(o[r][m]||0)+1});return o}
 function _cenWhen(ts){
   if(!ts)return '—';
   const d=new Date(ts*1000);
@@ -2865,7 +2880,7 @@ function renderCensusTable(){
   el.innerHTML=bar+'<div style="overflow-x:auto"><table id="census-table"><tr>'
     +'<th>run</th><th title="the question set this run answers - runs of different templates are not comparable">template</th><th>when</th><th>goals</th><th>done</th><th title="goals that hit their wall cap">capped</th>'
     +'<th title="mean of each goal&#39;s declared quality checks - what was BUILT, not whether the run stopped">quality</th><th title="checks passed / declared">checks</th><th>wall</th>'
-    +'<th title="the coder model that actually served the run, the nodes its calls hit, and any re-route or CPU spill">coder · nodes</th>'
+    +'<th title="the model in force for every loop role (planner, controller, tier, executor, writer, coder), the nodes the calls hit, and any re-route or CPU spill - hover for calls by role">models · nodes</th>'
     +'<th>warns</th><th title="steps no producer claims">unacc.</th><th>counters</th><th title="who drove this run, with the skill, tool and helpers - hover">operated by</th></tr>'
     +shown.map(_cenRow).join('')+ops.map(_cenOpRow).join('')+'</table></div>';
   Object.keys(_cenOpen).forEach(k=>{ if(_cenOpen[k]&&document.getElementById('cen-goals-'+_cenId(k)))loadCensusGoals(k); });
@@ -2941,7 +2956,7 @@ async function loadCensusGoals(run){
     +'<label class="hint" style="display:flex;gap:4px;align-items:center" onclick="event.stopPropagation()">Δ vs <select onchange="event.stopPropagation();_cenBase[\''+esc(run)+'\']=this.value;loadCensusCompare(\''+esc(run)+'\')" style="width:auto">'
     +'<option value="">—</option>'+bases.map(b=>'<option value="'+esc(b.run_id)+'"'+(_cenBase[run]===b.run_id?' selected':'')+'>'+esc(b.run_id)+((b.template||'')!==(s.template||'')?' (other template)':'')+(b.excluded?' · not usable':'')+'</option>').join('')
     +'</select></label></div>'
-    +'<table><tr><th>goal</th><th>status</th><th>wall / cap</th><th title="declared checks passed / total; ✗ files never produced">quality</th><th title="planned / executed (+inserted)">steps</th><th>tools</th><th>cycles</th><th>warns</th><th title="the coder that served this goal, the nodes its calls hit, re-routes and CPU spills">coder · nodes</th><th title="this goal in the base run, and the wall-time change - click a base cell to open that run\'s record">Δ vs base</th></tr>'
+    +'<table><tr><th>goal</th><th>status</th><th>wall / cap</th><th title="declared checks passed / total; ✗ files never produced">quality</th><th title="planned / executed (+inserted)">steps</th><th>tools</th><th>cycles</th><th>warns</th><th title="the model in force for every role of this goal, the nodes its calls hit, re-routes and CPU spills - hover for calls by role">models · nodes</th><th title="this goal in the base run, and the wall-time change - click a base cell to open that run\'s record">Δ vs base</th></tr>'
     +rows+'</table>';
   if(_cenBase[run])loadCensusCompare(run);
 }
@@ -3120,7 +3135,7 @@ async function openCensusGoal(run,goal){
       +calls.length+' LLM call(s)'+(rr.length?(' · <span style="color:#c9a35a">'+rr.length+' re-routed</span>'):'')
       +((ro.calls&&ro.calls.spill_calls)?(' · <span style="color:#c96b6b">'+ro.calls.spill_calls+' CPU spill(s)</span>'):'')
       +((ro.calls&&ro.calls.truncated)?' · <span style="color:#c96b6b">log truncated</span>':'')+'</span></summary>'
-      +'<div style="margin:4px 0">'+roleLine+'</div>'
+      +'<div style="margin:4px 0">'+roleLine+'</div>'+(ro.calls&&ro.calls.calls&&ro.calls.calls.length?('<div class="hint" style="margin:2px 0 6px">calls by role: '+esc(Object.entries((r.record.routing_summary||{}).by_role||_cenByRole(ro.calls.calls)).map(([k,v])=>k+' '+Object.entries(v).map(([m,n])=>m.replace(/^jaahas\//,'')+' x'+n).join(', ')).join(' · '))+'</div>'):'')
       +(callRows?('<div style="max-height:260px;overflow:auto"><table><tr><th>at</th><th>caller</th><th>role</th><th>model</th><th>node</th><th>took</th><th>tok/s</th><th>GPU</th><th>re-route</th></tr>'+callRows+'</table></div>'):'<div class="hint">no calls recorded in the window</div>')
       +'</details>';
   }else if(r.record){
@@ -3140,9 +3155,10 @@ async function openCensusGoal(run,goal){
     // The loop's OWN output, replayed in full (and tailing live if it is still
     // running). Everything above is the census's summary OF the run; this is
     // the run.
-    +'<details style="margin-top:8px"'+(_sid?' open':'')+'><summary class="clk"><b>Agent loop output</b></summary>'
+    +'<details style="margin-top:8px" ontoggle="if(this.open)cenAloStart(\''+esc(_sid)+'\')"><summary class="clk"><b>Agent loop output</b> <span class="hint">open to replay the loop\'s own log</span></summary>'
     +cenAloBlock(_sid)+'</details>');
-  if(_sid)cenAloStart(_sid);
+  // The loop replay starts when its section is opened (ontoggle above), not on
+  // every modal open: a finished goal's record is judged from the summary.
 }
 
 /* ═══ SESSIONS: Claude Code session watch (§6.6) — read-only classify ═══ */

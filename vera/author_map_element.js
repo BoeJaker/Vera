@@ -108,9 +108,19 @@
       return this._base || window._veraBase || window.location.origin ||
         (window.__VERA_BASE__ || ('http://' + location.hostname + ':8999'));
     }
-    setBranch(b) { this._branch = b || ''; this.refresh(); }
+    // The Loop Lab calls this every 4 s from its active-run refresh with the
+    // SAME branch; each call used to start a 20-35 s /evolve/authors fetch, so
+    // they piled up and filled the browser's connection pool (2026-09-10).
+    // A branch that has not changed is not a reason to fetch.
+    setBranch(b) {
+      const nb = b || '';
+      if (nb === this._branch) return;
+      this._branch = nb; this.refresh();
+    }
 
     async refresh() {
+      if (this._inflight) return;            // one fetch at a time, ever
+      this._inflight = true;
       const qs = new URLSearchParams({ hours: this._hours });
       if (this._branch) qs.set('branch', this._branch);
       let d;
@@ -118,6 +128,7 @@
         const r = await fetch(this._getBase() + '/evolve/authors?' + qs.toString());
         d = await r.json();
       } catch (_) { d = null; }
+      finally { this._inflight = false; }
       const commits = (d && d.commits) || [];
       this._render(commits);
     }
