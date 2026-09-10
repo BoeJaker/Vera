@@ -13,6 +13,48 @@ from typing import Any, Mapping
 
 SCHEMA = "vera.external-effect-shadow-evidence/v1"
 _LOCK = threading.RLock()
+READINESS_THRESHOLDS = {
+    "minimum_observations": 100,
+    "minimum_reads": 25,
+    "minimum_mutations": 25,
+    "minimum_admitted": 10,
+    "minimum_denied": 10,
+    "minimum_replay_suppressions": 1,
+}
+
+
+def evaluate_enforcement_readiness(summary: Mapping[str, Any]) -> dict[str, Any]:
+    """Assess evidence sufficiency; never authorize or enable enforcement."""
+    totals = summary.get("totals") or {}
+    classes = summary.get("classifications") or {}
+    observations = int(totals.get("observations") or 0)
+    admitted = int(totals.get("would_admit") or 0)
+    denied = max(0, observations - admitted)
+    reads = int(classes.get("read") or 0)
+    mutations = sum(int(classes.get(name) or 0) for name in
+                    ("idempotent_write", "non_idempotent_write"))
+    suppressions = int(totals.get("would_suppress") or 0)
+    values = {
+        "minimum_observations": observations,
+        "minimum_reads": reads,
+        "minimum_mutations": mutations,
+        "minimum_admitted": admitted,
+        "minimum_denied": denied,
+        "minimum_replay_suppressions": suppressions,
+    }
+    checks = {name: {"required": required, "observed": values[name],
+                     "passed": values[name] >= required}
+              for name, required in READINESS_THRESHOLDS.items()}
+    unmet = sorted(name for name, check in checks.items() if not check["passed"])
+    return {
+        "schema": "vera.external-effect-enforcement-readiness/v1",
+        "eligible_for_operator_review": not unmet,
+        "enforcement_enabled": False,
+        "decision": "ready_for_operator_review" if not unmet else "collect_more_evidence",
+        "unmet_checks": unmet, "checks": checks,
+        "meaning": "evidence_sufficiency_only_not_safety_or_authorization",
+        "executes": False, "changes_policy": False, "retains_payload": False,
+    }
 
 
 def _digest(value: str) -> str:

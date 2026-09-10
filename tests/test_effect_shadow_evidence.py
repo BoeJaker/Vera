@@ -1,6 +1,7 @@
 import pytest
 
-from vera.integrations.effect_shadow_evidence import ExternalEffectShadowEvidence
+from vera.integrations.effect_shadow_evidence import (
+    ExternalEffectShadowEvidence, evaluate_enforcement_readiness)
 from vera.integrations.external_effects import plan_api_effect_shadow
 
 
@@ -40,3 +41,23 @@ def test_shadow_summary_rejects_unbounded_windows(tmp_path, limit):
     ledger = ExternalEffectShadowEvidence(tmp_path / "shadow.sqlite3")
     with pytest.raises(ValueError):
         ledger.summary(limit=limit)
+
+
+def test_readiness_fails_closed_and_names_missing_evidence():
+    result = evaluate_enforcement_readiness({
+        "totals": {"observations": 99, "would_admit": 50, "would_suppress": 0},
+        "classifications": {"read": 25, "non_idempotent_write": 25}})
+    assert result["eligible_for_operator_review"] is False
+    assert result["enforcement_enabled"] is False
+    assert result["unmet_checks"] == ["minimum_observations", "minimum_replay_suppressions"]
+
+
+def test_readiness_only_qualifies_operator_review_not_enforcement():
+    result = evaluate_enforcement_readiness({
+        "totals": {"observations": 100, "would_admit": 80, "would_suppress": 1},
+        "classifications": {"read": 50, "idempotent_write": 25,
+                            "non_idempotent_write": 25}})
+    assert result["eligible_for_operator_review"] is True
+    assert result["decision"] == "ready_for_operator_review"
+    assert result["enforcement_enabled"] is False
+    assert result["changes_policy"] is False

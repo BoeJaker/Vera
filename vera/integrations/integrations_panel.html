@@ -178,9 +178,10 @@ function shortHash(value){const s=String(value||'');return s?s.slice(0,10)+'…'
 async function openEffects(){$('#effectOv').classList.add('on');await loadEffects();}
 async function loadEffects(){
   const el=$('#effectBody');el.innerHTML='<div class="hint">Loading durable receipt evidence…</div>';
-  const [r,policy,shadow]=await Promise.all([api('/integrations/effect/receipts?limit=50'),
+  const [r,policy,shadow,readiness]=await Promise.all([api('/integrations/effect/receipts?limit=50'),
     api('/integrations/effect/retry/policy'),
-    api('/integrations/effect/shadow/evidence?limit=50')]);
+    api('/integrations/effect/shadow/evidence?limit=50'),
+    api('/integrations/effect/enforcement/readiness')]);
   if(r.error){el.innerHTML='<div class="hint">'+esc(r.error)+'</div>';return;}
   const t=r.totals||{}, recent=r.recent||[], outcomes=r.outcomes||{};
   const outcome=Object.entries(outcomes).filter(([,v])=>v&&v.receipts)
@@ -208,12 +209,19 @@ async function loadEffects(){
     +'<div class="metric"><b>'+esc(st.would_admit||0)+'</b><span>would admit</span></div>'
     +'<div class="metric"><b>'+esc(st.would_suppress||0)+'</b><span>would suppress</span></div></div>'
     +'<div class="badges">'+shadowReasons+'</div>';
+  const readinessChecks=Object.entries(readiness.checks||{}).map(([k,v])=>
+    '<div class="receipt"><b>'+esc(k.replace(/^minimum_/,'').replaceAll('_',' '))+'</b> '
+    +'<span class="bdg '+(v.passed?'ok':'warn')+'">'+esc(v.observed)+' / '+esc(v.required)+'</span></div>').join('');
+  const readinessInfo=readiness.error?'<div class="hint">Readiness unavailable: '+esc(readiness.error)+'</div>':
+    '<div class="sec">Enforcement review readiness</div><div class="hint">'+
+    (readiness.eligible_for_operator_review?'Evidence thresholds met. An operator review is still required; enforcement remains off.':'More representative evidence is required. Enforcement remains off.')+
+    ' Passing these checks measures coverage, not safety or authorization.</div>'+readinessChecks;
   el.innerHTML='<div class="hint">Durable outcomes and replay evidence. Request/response bodies, credentials, and raw approval or idempotency references are never shown.</div>'
     +'<div class="metrics"><div class="metric"><b>'+esc(t.plans||0)+'</b><span>effect plans</span></div>'
     +'<div class="metric"><b>'+esc(t.receipts||0)+'</b><span>receipts</span></div>'
     +'<div class="metric"><b>'+esc(t.observations||0)+'</b><span>observations</span></div></div>'
     +'<div class="badges">'+outcome+'</div><div class="sec">Recent evidence</div>'
-    +(rows||'<div class="hint">No external-effect receipts have been recorded yet.</div>')+shadowInfo+retryInfo;
+    +(rows||'<div class="hint">No external-effect receipts have been recorded yet.</div>')+shadowInfo+readinessInfo+retryInfo;
 }
 
 async function load(){
