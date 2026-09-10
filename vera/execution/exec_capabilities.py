@@ -1810,7 +1810,10 @@ async def _run_code(language: str, code: str, *, stdin: str = "",
                 "dir), stdin (str), timeout (int sec, default 600 = 10 min; raise it for long "
                 "runs), cwd (str — working dir, "
                 "defaults to the file's dir when running by path), args (list[str] — passed to "
-                "the script). Provide EITHER code OR path. "
+                "the script). Provide code, path, or both: with both, inside a session "
+                "sandbox, a path that does not exist yet is CREATED from code and then "
+                "run (result carries materialised=<path>); an existing path is run as-is "
+                "and the inline code is ignored. "
                 "Output: {ok, rc, stdout, stderr, elapsed_ms, language, bin}. "
                 "Use the /exec/code/stream endpoint for live output of long runs.",
     schema={"properties": {
@@ -1850,10 +1853,13 @@ def _make_lang_cap(lang_id: str, label: str):
         f"exec.{lang_id}.run",
         http_method="POST", http_path=f"/exec/{lang_id}/run", http_tags=["exec"],
         description=f"Run {label} locally and capture output. Subject to the exec "
-                    f"sandbox policy. Provide EITHER an inline snippet via code, OR a saved "
-                    f"file to run via path (e.g. a script you wrote to the artifact dir — "
-                    f"pass the absolute path, NOT 'python <path>' as code). "
-                    f"Input: code (str), path (str — existing file to run), stdin (str), "
+                    f"sandbox policy. Provide an inline snippet via code, a saved file to "
+                    f"run via path (e.g. a script you wrote to the artifact dir — pass the "
+                    f"absolute path, NOT 'python <path>' as code), or BOTH: inside a "
+                    f"session sandbox a path that does not exist yet is created from code "
+                    f"and then run (result carries materialised=<path>); an existing path "
+                    f"is run as-is. "
+                    f"Input: code (str), path (str — file to run), stdin (str), "
                     f"timeout (int sec), cwd (str), args (list[str]). "
                     f"Output: {{ok, rc, stdout, stderr, elapsed_ms, language, bin}}.",
     )(_runner)

@@ -3094,7 +3094,36 @@ async def route_code(session_id: str, language: str, code: str, path: str = "",
     rec = await _ensure_routable(session_id, create=True)
     if not rec:
         return None
-    p = (path or "").strip()
+    p = (path or "").strip().strip('"\'')
+    # BOTH `code` and `path` in one call: the model handed over a script's
+    # source and the file it wants it to be, together. Running the absent path
+    # discarded the source and the interpreter said "can't open file"; nothing
+    # about the retry changed, so it failed identically - research-web burned
+    # seven exec calls that way in census run 47 and wall-capped again in run 48
+    # (board loop-o43). Write the code there and run it: what the call meant,
+    # and the only outcome that leaves the named artifact behind. An EXISTING
+    # file is still run as-is - inline code never overwrites an authored file.
+    # Best-effort throughout: a probe or write that fails leaves the old path.
+    materialised = ""
+    if p and (code or "").strip():
+        _et = None
+        try:
+            from Vera.vera.execution import exec_target as _et
+        except Exception:
+            try:
+                from vera.execution import exec_target as _et   # type: ignore
+            except Exception:
+                _et = None
+        if _et is not None:
+            try:
+                ex = await route_fs_exists(rec["session_id"], p)
+                known = ex is not None and ex.get("kind") != "error"
+                if known and _et.decide(code, p, bool(ex.get("exists"))) == _et.MATERIALISE:
+                    w = await route_fs_write(rec["session_id"], p, code)
+                    if w and not w.get("error"):
+                        materialised = p
+            except Exception as e:                            # pragma: no cover
+                log.debug("materialise %s skipped: %s", p, e)
     # Preflight the SOURCE, whether it arrived inline or already lives in the
     # container — a by-path run is exactly the case that used to fail on an
     # ImportError the author never sees, because the file was written in an
@@ -3117,6 +3146,12 @@ async def route_code(session_id: str, language: str, code: str, path: str = "",
         return None
     res.setdefault("elapsed_ms", 0)
     res.setdefault("language", language)
+    if materialised:
+        res["materialised"] = materialised
+        try:
+            res["note"] = _et.materialised_note(materialised)
+        except Exception:                                     # pragma: no cover
+            pass
     return res
 
 
