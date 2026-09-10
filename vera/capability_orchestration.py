@@ -9790,6 +9790,9 @@ async def lifespan(app: FastAPI):
         # The Ship page's one table: a row per branch from the pipeline list,
         # the sandbox registry, the test history and the edges - after evolve/.
         os.path.join(_here, "evolve/ship_capabilities.py"),
+        # The Agents page's one table: a row per agent session from the session
+        # watch, the board, the pipelines and the sandboxes - after evolve/.
+        os.path.join(_here, "evolve/agents_capabilities.py"),
         # Closed-loop orchestrator (M7 Phase B) — part of Loop Lab; dedicated module.
         os.path.join(_here, "evolve/orchestrator_capabilities.py"),
         # Operator: general observe→think→act web/computer operator (drives any
