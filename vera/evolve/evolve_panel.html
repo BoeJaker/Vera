@@ -3589,7 +3589,7 @@ function routeHash(){
   if(!h)return false;
   const i=h.indexOf('?');
   const page=i<0?h:h.slice(0,i), q=new URLSearchParams(i<0?'':h.slice(i+1));
-  if(page&&page!==_curSec())nav(page);
+  if(page)nav(page);   // always: the page's loader must run (replaceState never re-enters here)
   for(const kind of Object.keys(ENTITY)){
     const id=q.get(kind);
     if(!id)continue;

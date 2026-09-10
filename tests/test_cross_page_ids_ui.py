@@ -54,7 +54,7 @@ def test_an_id_is_a_link_with_a_deep_link_href_and_one_click_handler(src):
 
 def test_the_hash_routes_on_load_and_on_change(src):
     r = _fn(src, "routeHash")
-    assert "location.hash" in r and "if(page&&page!==_curSec())nav(page);" in r
+    assert "location.hash" in r and "if(page)nav(page);" in r, "the page's loader must run even when it is the page on screen"
     assert "ENTITY[kind].open(id,extra)" in r
     assert "window.addEventListener('hashchange',routeHash);" in src
     assert "if(!routeHash()&&_curSec()==='work')nav('work');" in src, "on load: the deep link wins over the default page"
