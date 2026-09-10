@@ -1,0 +1,532 @@
+{
+ "schema": "vera.design-adoption-state/v1",
+ "canvas": "Vera UI redesign (chat & canvas · widgets · system)",
+ "slug": "vera-ui-redesign-chat-canvas-widgets-system",
+ "artifacts": [
+  "https://claude.ai/code/artifact/58f8910e-18b3-4dc6-91a2-4f8607863dd1",
+  "https://claude.ai/code/artifact/ac375d17-fb01-461f-9223-ce6c3f33439b",
+  "https://claude.ai/code/artifact/51b802c8-d6c0-419b-a73b-231bab804f4e"
+ ],
+ "edge": "bleeding-edge-design",
+ "created": "2026-09-10T23:02:57.695Z",
+ "updated": "2026-09-10T23:02:58.251Z",
+ "sources": {
+  "slices": "slices.json",
+  "map": "adopt-map.json"
+ },
+ "totals": {
+  "boards": 28,
+  "parts": 127,
+  "verdicts": {
+   "replaces": 120,
+   "extends": 6,
+   "new": 1,
+   "retire": 0
+  },
+  "keep": 3352
+ },
+ "slices": [
+  {
+   "id": "adoption-helpers",
+   "order": 1,
+   "title": "Design-adoption helpers in the vera-design-adopt skill (estate index · design index · map · slices · state · pair diff), registered in Vera's registry",
+   "boards": [],
+   "targets": [
+    ".claude/skills/vera-design-adopt/",
+    "docs/design-adoption/"
+   ],
+   "parts": 0,
+   "verdicts": {
+    "replaces": 0,
+    "extends": 0,
+    "new": 0,
+    "retire": 0
+   },
+   "done": [
+    "the six helpers run against this canvas and the estate",
+    "outputs committed under docs/design-adoption/<canvas>/",
+    "registry entry skill:vera-design-adopt lists them"
+   ],
+   "verify": {
+    "design": "",
+    "live": "/registry/entry?id=skill:vera-design-adopt",
+    "pairDir": "Notes/adopt-shots/adoption-helpers"
+   },
+   "prerequisites": [],
+   "status": "in-progress",
+   "pipelines": [],
+   "commits": [],
+   "pairs": [],
+   "parked": [],
+   "notes": [
+    "estate · design-index · map · slices · state · pairdiff written and run against the 28-board canvas"
+   ],
+   "updated": "2026-09-10T23:02:58.067Z"
+  },
+  {
+   "id": "m1a-tokens-packs",
+   "order": 2,
+   "title": "M1a — style packs, density tiers, the data-viz ramp; the appearance runtime (theme_defs.py, vera-ui.js)",
+   "boards": [
+    "StylePacks.dc.html",
+    "Settings.dc.html"
+   ],
+   "targets": [
+    "vera/chat/chat_panel.html",
+    "vera/vera-ui.js",
+    "vera/execution/netmap_panel.html",
+    "vera/dag/dag_workshop_panel.html",
+    "vera/theme_defs.py"
+   ],
+   "parts": 24,
+   "verdicts": {
+    "replaces": 23,
+    "extends": 1,
+    "new": 0,
+    "retire": 0
+   },
+   "done": [
+    "style packs + tiers + ramp in theme_defs.py",
+    "the appearance runtime (setAppearance) in vera-ui.js"
+   ],
+   "verify": {
+    "design": "StylePacks.dc.html",
+    "live": "/chat",
+    "pairDir": "Notes/adopt-shots/m1a-tokens-packs"
+   },
+   "prerequisites": [],
+   "status": "landed",
+   "pipelines": [
+    "e5066bc1"
+   ],
+   "commits": [
+    "5e543b1",
+    "5199321"
+   ],
+   "pairs": [],
+   "parked": [],
+   "notes": [
+    "merged to bleeding-edge-design 2026-09-10; pair not yet taken"
+   ],
+   "updated": "2026-09-10T23:02:57.865Z"
+  },
+  {
+   "id": "m1b-tiers-blocks",
+   "order": 3,
+   "title": "M1b — the three density tiers and Blocks in the chat (data-den · data-blocks), appearance controls in the top bar",
+   "boards": [
+    "Main.dc.html"
+   ],
+   "targets": [
+    "vera/chat/chat_panel.html",
+    "vera/chat/chat_panel.js",
+    "vera/elements/chat_data_element.js"
+   ],
+   "parts": 0,
+   "verdicts": {
+    "replaces": 0,
+    "extends": 0,
+    "new": 0,
+    "retire": 0
+   },
+   "done": [
+    "chat_panel.html carries the tier and blocks CSS + the appearance controls",
+    "tests/test_chat_panel_appearance.py passes",
+    "design-vs-live pair kept under Notes/adopt-shots/m1b"
+   ],
+   "verify": {
+    "design": "Main.dc.html",
+    "live": "/chat?den=full",
+    "pairDir": "Notes/adopt-shots/m1b-tiers-blocks"
+   },
+   "prerequisites": [],
+   "status": "in-progress",
+   "pipelines": [],
+   "commits": [],
+   "pairs": [],
+   "parked": [],
+   "notes": [
+    "chat_panel.html patch built in scratchpad w5-m1b; test + pair pending"
+   ],
+   "updated": "2026-09-10T23:02:58.251Z"
+  },
+  {
+   "id": "lhm-library",
+   "order": 4,
+   "title": "The LHM library and the one panel set — quick menus as widgets (rail · header · list · CTA), the absorbed menu in the harness, Open now rows",
+   "boards": [
+    "ChatMenu.dc.html",
+    "Harness.dc.html"
+   ],
+   "targets": [
+    "vera/chat/chat_panel.html",
+    "vera/vera_graph.js",
+    "vera/chat/vera-panel-bridge.js",
+    "vera/capability_orchestration.html",
+    "vera/chat/vera-dashboard.js"
+   ],
+   "parts": 0,
+   "verdicts": {
+    "replaces": 0,
+    "extends": 0,
+    "new": 0,
+    "retire": 0
+   },
+   "done": [
+    "one LHM implementation serves the chat and the harness (absorb + in-place ☰)",
+    "ui.panels.open lists every open panel from any origin; panel.dispatch/query/state work for all",
+    "pair for the chat menu and the harness LHM"
+   ],
+   "verify": {
+    "design": "ChatMenu.dc.html",
+    "live": "/chat",
+    "pairDir": "Notes/adopt-shots/lhm-library"
+   },
+   "prerequisites": [],
+   "status": "planned",
+   "pipelines": [],
+   "commits": [],
+   "pairs": [],
+   "parked": [],
+   "notes": [],
+   "updated": "2026-09-10T23:02:57.696Z"
+  },
+  {
+   "id": "widget-record-registry",
+   "order": 5,
+   "title": "The widget record and the registry — every LHM part a widget (WYSIWYG edit, records), widget.template.* caps, placement pickers",
+   "boards": [
+    "WidgetRegistry.dc.html",
+    "WidgetConfig.dc.html",
+    "WidgetAdoption.dc.html",
+    "Widgets.dc.html",
+    "Dashboard.dc.html"
+   ],
+   "targets": [
+    "vera/chat/vera-dashboard.js",
+    "vera/registry/registry_panel.html",
+    "vera/capability_orchestration.html",
+    "vera/ui builder/ui_builder_panel.html",
+    "vera/agent_loop_config_element.js",
+    "vera/workers/workers_ollama_panel.html",
+    "vera/sparkline_element.js",
+    "vera/dream/dream_panel.html",
+    "vera/widgets/widget_registry.py (new: widget.template.*)",
+    "vera/widgets/ (new: the 66 still forms as <vera-widget>)"
+   ],
+   "parts": 78,
+   "verdicts": {
+    "replaces": 76,
+    "extends": 2,
+    "new": 0,
+    "retire": 0
+   },
+   "done": [
+    "widget.template.list/get/save/instantiate/delete land as capabilities",
+    "the registry board's list · record · Place into work against them",
+    "edit mode outlines and records on the chat LHM"
+   ],
+   "verify": {
+    "design": "WidgetRegistry.dc.html",
+    "live": "/ui/panel/widget_registry",
+    "pairDir": "Notes/adopt-shots/widget-record-registry"
+   },
+   "prerequisites": [],
+   "status": "planned",
+   "pipelines": [],
+   "commits": [],
+   "pairs": [],
+   "parked": [],
+   "notes": [],
+   "updated": "2026-09-10T23:02:57.696Z"
+  },
+  {
+   "id": "control-plane",
+   "order": 6,
+   "title": "The control plane — the directive vocabulary, one dispatcher, DIRECT and SCRIPTED paths (ui.script.* on·if·do), the room manifest, policy and undo",
+   "boards": [
+    "Control.dc.html",
+    "Driven.dc.html"
+   ],
+   "targets": [
+    "vera/chat/chat_panel.html",
+    "vera/chat/vera-panel-bridge.js",
+    "vera/vllm/vllm_panel.html",
+    "vera/ui/directives.py (new: the 20-directive vocabulary + dispatcher)",
+    "vera/ui/scripts.py (new: ui.script.* on·if·do)",
+    "vera/ui/directives.py (new)"
+   ],
+   "parts": 5,
+   "verdicts": {
+    "replaces": 3,
+    "extends": 2,
+    "new": 0,
+    "retire": 0
+   },
+   "done": [
+    "vera/ui/directives.py + vera/ui/scripts.py registered; the chat's panel bridge routes through the dispatcher",
+    "a traced minute reproduces the board's trace",
+    "what the model sees matches the manifest on the board"
+   ],
+   "verify": {
+    "design": "Control.dc.html",
+    "live": "/ui/control",
+    "pairDir": "Notes/adopt-shots/control-plane"
+   },
+   "prerequisites": [],
+   "status": "planned",
+   "pipelines": [],
+   "commits": [],
+   "pairs": [],
+   "parked": [],
+   "notes": [],
+   "updated": "2026-09-10T23:02:57.696Z"
+  },
+  {
+   "id": "chat-modes",
+   "order": 7,
+   "title": "Chat modes — voice · council · diffuse strips, paste exchange, tools sheet",
+   "boards": [
+    "Paste.dc.html",
+    "Formats.dc.html"
+   ],
+   "targets": [
+    "vera/chat/chat_panel.html",
+    "vera/vera_graph.js",
+    "vera/chat/vera-panel-bridge.js",
+    "vera/vera_markdown_element.js",
+    "vera/render/vera_mermaid.js"
+   ],
+   "parts": 2,
+   "verdicts": {
+    "replaces": 1,
+    "extends": 0,
+    "new": 1,
+    "retire": 0
+   },
+   "done": [
+    "the three mode strips and their states in chat_panel.html",
+    "paste exchange with attachment chips and the editor",
+    "pair for each mode"
+   ],
+   "verify": {
+    "design": "Canvas.dc.html",
+    "live": "/chat",
+    "pairDir": "Notes/adopt-shots/chat-modes"
+   },
+   "prerequisites": [],
+   "status": "planned",
+   "pipelines": [],
+   "commits": [],
+   "pairs": [],
+   "parked": [],
+   "notes": [],
+   "updated": "2026-09-10T23:02:57.696Z"
+  },
+  {
+   "id": "canvas-graph",
+   "order": 8,
+   "title": "The tri-page canvas and the unified graph — one board embedded everywhere; galaxy · iso · flow · time; typed merged runs graph→chat",
+   "boards": [
+    "Canvas.dc.html",
+    "Ultrawide.dc.html",
+    "Graph.dc.html",
+    "GraphViews.dc.html"
+   ],
+   "targets": [
+    "vera/chat/chat_panel.html",
+    "vera/vera_graph.js",
+    "vera/chat/vera-panel-bridge.js",
+    "vera/fabric/memory_graph_panel.html",
+    "vera/vera_graph_panel_discover.js",
+    "vera/chat/chat_panel.py"
+   ],
+   "parts": 11,
+   "verdicts": {
+    "replaces": 10,
+    "extends": 1,
+    "new": 0,
+    "retire": 0
+   },
+   "done": [
+    "the chat's canvas column and graph column follow the board's geometry",
+    "the four graph views with fixed lanes",
+    "typed merged runs from the graph to the chat"
+   ],
+   "verify": {
+    "design": "Canvas.dc.html",
+    "live": "/chat?pages=chat,graph",
+    "pairDir": "Notes/adopt-shots/canvas-graph"
+   },
+   "prerequisites": [],
+   "status": "planned",
+   "pipelines": [],
+   "commits": [],
+   "pairs": [],
+   "parked": [],
+   "notes": [],
+   "updated": "2026-09-10T23:02:57.696Z"
+  },
+  {
+   "id": "m1",
+   "order": 9,
+   "title": "M1 foundations",
+   "boards": [
+    "Coverage.dc.html",
+    "Ops.dc.html",
+    "WidgetsMotion.dc.html",
+    "WidgetSpec.dc.html",
+    "Sizes.dc.html"
+   ],
+   "targets": [
+    "vera/execution/netmap_panel.html",
+    "vera/topology_map_element.js",
+    "vera/monitor/system_monitor_panel.html",
+    "vera/chat/vera-dashboard.js",
+    "vera/activity_timeline_element.js",
+    "vera/loop_graph_element.js",
+    "vera/dream/dream_pipelines_panel.html",
+    "vera/workers/system_log_element.js",
+    "vera/nodes/nodes_capabilities.py",
+    "vera/widgets/widget_record.py (new)",
+    "vera/widgets/widget_registry.py (new)"
+   ],
+   "parts": 7,
+   "verdicts": {
+    "replaces": 7,
+    "extends": 0,
+    "new": 0,
+    "retire": 0
+   },
+   "done": [],
+   "verify": {
+    "design": "Ops.dc.html",
+    "live": "",
+    "pairDir": "Notes/adopt-shots/m1"
+   },
+   "prerequisites": [],
+   "status": "planned",
+   "pipelines": [],
+   "commits": [],
+   "pairs": [],
+   "parked": [],
+   "notes": [],
+   "updated": "2026-09-10T23:02:57.696Z"
+  },
+  {
+   "id": "m2",
+   "order": 10,
+   "title": "M2 widgets still",
+   "boards": [
+    "Globes.dc.html",
+    "WidgetsIso.dc.html"
+   ],
+   "targets": [
+    "vera/vera_graph_panel_worldview.js",
+    "vera/worldview/worldview_panel.html",
+    "vera/chat/vera-dashboard.js",
+    "vera/topology_map_element.js",
+    "vera/chat/chat_panel.html",
+    "vera/static/iso.js (new: the shared ISO library)"
+   ],
+   "parts": 0,
+   "verdicts": {
+    "replaces": 0,
+    "extends": 0,
+    "new": 0,
+    "retire": 0
+   },
+   "done": [],
+   "verify": {
+    "design": "Globes.dc.html",
+    "live": "",
+    "pairDir": "Notes/adopt-shots/m2"
+   },
+   "prerequisites": [
+    "m1"
+   ],
+   "status": "planned",
+   "pipelines": [],
+   "commits": [],
+   "pairs": [],
+   "parked": [],
+   "notes": [],
+   "updated": "2026-09-10T23:02:57.696Z"
+  },
+  {
+   "id": "m8",
+   "order": 11,
+   "title": "M8 moving forms, exploded views, loops",
+   "boards": [
+    "QC.dc.html",
+    "JoinedUp.dc.html",
+    "Arrivals.dc.html"
+   ],
+   "targets": [],
+   "parts": 0,
+   "verdicts": {
+    "replaces": 0,
+    "extends": 0,
+    "new": 0,
+    "retire": 0
+   },
+   "done": [],
+   "verify": {
+    "design": "QC.dc.html",
+    "live": "",
+    "pairDir": "Notes/adopt-shots/m8"
+   },
+   "prerequisites": [],
+   "status": "planned",
+   "pipelines": [],
+   "commits": [],
+   "pairs": [],
+   "parked": [],
+   "notes": [],
+   "updated": "2026-09-10T23:02:57.696Z"
+  }
+ ],
+ "log": [
+  {
+   "at": "2026-09-10T23:02:57.696Z",
+   "event": "init",
+   "text": "11 slices from slices.json"
+  },
+  {
+   "at": "2026-09-10T23:02:57.865Z",
+   "event": "set",
+   "slice": "m1a-tokens-packs",
+   "from": "planned",
+   "to": "landed",
+   "pipeline": "e5066bc1",
+   "commit": [
+    "5e543b1",
+    "5199321"
+   ],
+   "pair": "",
+   "note": "merged to bleeding-edge-design 2026-09-10; pair not yet taken"
+  },
+  {
+   "at": "2026-09-10T23:02:58.067Z",
+   "event": "set",
+   "slice": "adoption-helpers",
+   "from": "planned",
+   "to": "in-progress",
+   "pipeline": "",
+   "commit": "",
+   "pair": "",
+   "note": "estate · design-index · map · slices · state · pairdiff written and run against the 28-board canvas"
+  },
+  {
+   "at": "2026-09-10T23:02:58.251Z",
+   "event": "set",
+   "slice": "m1b-tiers-blocks",
+   "from": "planned",
+   "to": "in-progress",
+   "pipeline": "",
+   "commit": "",
+   "pair": "",
+   "note": "chat_panel.html patch built in scratchpad w5-m1b; test + pair pending"
+  }
+ ]
+}

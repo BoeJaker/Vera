@@ -1,6 +1,6 @@
 ---
 name: vera-design-adopt
-description: Land a complex UI redesign into Vera without feature loss — read a Claude Design canvas back into working files, map its boards to the panels they replace, build the must-keep checklist against what prod already ships, then land slice by slice through the Loop Lab pipeline on the design's own bleeding edge, verifying each slice by a design-vs-live screenshot pair. Use when a design canvas exists and the work is to implement it, to check an implementation against its design, or to keep a long redesign programme moving across sessions.
+description: Land a complex UI redesign into Vera without feature loss — pre-map the UI estate Vera already has, read a Claude Design canvas back into working files, index it and map every design part to the estate element it replaces / extends / adds, plan the slices, keep the adoption state in Vera's registry, build the must-keep checklist against what prod already ships, then land slice by slice through the Loop Lab pipeline on the design's own bleeding edge, verifying each slice by a design-vs-live screenshot pair. Use when a design canvas exists and the work is to implement it, to check an implementation against its design, or to keep a long redesign programme moving across sessions.
 ---
 
 # Landing a redesign into Vera
@@ -33,8 +33,23 @@ from canvas to code, verified by a screenshot pair, landed as its own pipeline.
 
 ---
 
-## 1. Read the canvas back
+## 1. Pre-map the estate — before any canvas
 
+    node scripts/estate.mjs <vera repo> [estate.json]        (~5 min over SMB)
+
+The ESTATE INDEX is the UI Vera has today, as data: every panel (`*_panel.html`,
+`chat_panel.html`, the harness, every `register_ui(...)`) and every UI runtime
+(`vera_graph*.js`, `vera-*.js`, `*_element.js`, the chat's scripts), each with
+its handlers, top-level containers, LHM sections, sub-tabs and the capabilities
+it calls. A capability name counts only when it is in the catalog (the
+`@capability("…")` decorators in the Python sources) — so the list is real,
+not every dotted word in a script. A redesign is mapped against THIS index,
+never against memory of the code. Re-run it when a landed slice moves the
+estate; commit it under `docs/design-adoption/<canvas>/`.
+
+---
+
+## 2. Read the canvas back
     pwsh scripts/extract.ps1 <saved artifact html> <FRESH empty dir>
 
 The Artifact tool's `action: "read"` on the canvas URL names a local file
@@ -52,22 +67,68 @@ Two rules, both learned the hard way:
 
 ---
 
-## 2. Map the boards to the code they touch
+## 3. Index the canvas, then map it to the estate
 
-    node scripts/map.mjs <design dir> <vera repo> [adopt-map.json]
+    node scripts/design-index.mjs <design dir> <estate.json> [design-index.json]
+    node scripts/adopt-map.mjs    <design-index.json> <estate.json> [adopt-map.json] [adopt-hints.json]
 
-For each board this records its title, the workstream it belongs to (matched
-against Note 40's `## W<n>` headings), the prod panels whose names it mentions
-(from a `register_ui(...)` and `*_panel.html` sweep), and which design
-vocabulary it relies on (`data-den` tiers, `data-blocks`, the nine directives,
-the widget envelopes, the ISO lattice, `dc-import`).
+The DESIGN INDEX is the canvas as data: per board its set, kind (board · shell ·
+storyboard · qc), the parts it declares (`data-w="label · tag"` widgets, `WREC`
+widget records, adoption rows — a board with none is indexed by its h2/h3
+sections), regions, headings, control labels, holes, props, embeds, the
+directive vocabulary it shows (`ui.* panel.* canvas.* widget.* lhm.*` …, split
+into catalogued and novel) and the demo states.
 
-Read the map before you plan the slices. A board that touches five panels is
+The ADOPTION MAP (`adopt-map.json` + a readable `adopt-map.md`) joins the two:
+
+- per board, the estate targets it lands on, scored with evidence — title
+  specificity (a word that names half the estate says little), shared
+  capabilities, heading/label tokens found in the estate's sections, adoption
+  rows; a shell lands with the board it embeds;
+- per part, a verdict: **replaces** (the design redraws an element the estate
+  has) · **extends** (it grows an existing element's neighbourhood) · **new**
+  (nothing in the estate answers to it) · **retire** (ONLY from the hints, with
+  the user's word) — with confidence and the estate element;
+- per target, the **keep** list: elements no part answers to. They survive
+  untouched; that is the must-keep rule made mechanical.
+
+What the matching cannot know goes in `adopt-hints.json` beside the outputs:
+`boards.<file>.targets` pins, `lands:"reference"` for spec / audit / storyboard
+boards, `also` for files outside the index (python, new modules),
+`parts."<board>#<key>"` pins, `synonyms`. Read the `.md`; fix a wrong landing
+with a pin, never by hand-editing the json. A board that lands on five files is
 five slices, not one.
 
 ---
 
-## 3. Build the must-keep checklist — BEFORE writing any code
+## 4. Plan the slices and keep the state
+
+    node scripts/slices.mjs <adopt-map.json> <vera repo> [slices.json] [adopt-hints.json]
+    node scripts/adopt-state.mjs init <state.json> --slices <slices.json> --map <adopt-map.json> \
+         --canvas "<title>" --artifact <url>... --edge <design edge>
+    node scripts/adopt-state.mjs set  <state.json> <slice> planned|in-progress|landed|verified|parked \
+         [--pipeline <id>] [--commit <sha>] [--pair <path>] [--parked "<row>"] [--note "..."]
+    node scripts/adopt-state.mjs show <state.json>
+    node scripts/adopt-state.mjs push <state.json> --registry https://llm.int:8999 --repo <path> \
+         --commit <sha> [--session <id>] [--skill <skill dir>]
+
+`slices.mjs` cuts the map into landable slices. Note 40 §0 (the workstream
+table: which boards belong to which workstream) and §12 (the milestones M1–M8
+and their dependencies) give the default spine; `adopt-hints.json` `slices` +
+`order` add the finer cuts the user asked for — they take their boards first,
+and an emptied milestone drops out. Each slice carries its boards, estate
+targets, parts by verdict, prerequisites, done-lines and the pair that proves
+it (`verify.design` board → `verify.live` path).
+
+`adopt-state.mjs` is where the programme IS, across sessions: every slice with
+its status, pipelines, commits, pairs, parked rows and a log. `push` projects
+it into Vera's registry as `technique:design-adoption-<slug>` (summary + a
+markdown body any agent can `registry.get`), and with `--skill` refreshes
+`skill:vera-design-adopt`'s helpers list and source commit from this file's
+scripts table. Commit the state with the slice that moved it.
+
+---
+## 5. Build the must-keep checklist — BEFORE writing any code
 
     node scripts/checklist.mjs <design dir> <vera repo> [adopt-checklist.md]
 
@@ -86,7 +147,7 @@ less widgets."* It generalises to every surface.
 
 ---
 
-## 4. Cut the slice
+## 6. Cut the slice
 
     evolve.pipeline.begin(title, branch="feat/ui-redesign-<slice>",
                           base="<design edge>", spawn=true, session_id=...)
@@ -104,7 +165,7 @@ reviewed, promoted or reverted as a unit.
 
 ---
 
-## 5. Implement in dependency order
+## 7. Implement in dependency order
 
 Everything downstream depends on these, so do them in this order or you will
 redo them:
@@ -131,11 +192,12 @@ the vocabulary prod already has.
 
 ---
 
-## 6. Verify with a screenshot pair — not with an opinion
+## 8. Verify with a screenshot pair — not with an opinion
 
     node   scripts/probe.mjs   <dir> <page.html|http url> <waitMs> <out.png>
     pwsh   scripts/shot-live.ps1 <sandbox url> <out dir> <out.png> [wait] [offset]
     pwsh   scripts/pair.ps1     <design.png> <live.png> <out.png>
+    node   scripts/pairdiff.mjs <design.png> <live.png> [--out diff.png] [--json diff.json] [--threshold 24] [--max <pct>]
 
 `probe.mjs` renders either a seeded design canvas (a local file) or a live URL,
 each run in its own Chrome profile on its own CDP port, cleaned up afterwards.
@@ -143,16 +205,21 @@ Give every concurrent probe a different `CDP_OFFSET` — two probes on one port
 is the single most common way to lose an hour.
 
 Judge the pair against the board's acceptance lines, and against the checklist
-rows for that slice. Keep the pair under `Notes/adopt-shots/<slice>/`. A slice
-is done when the pair matches on layout, tiers, blocks and every must-keep row
-— not when the code "looks right".
+rows for that slice — then put a number on it: `pairdiff.mjs` (pure JS, no
+dependencies) reports the share of pixels that differ beyond a threshold, the
+mean difference, a 4×4 grid of where the change sits, its bounding box, writes
+a diff PNG (design dimmed, differing pixels red) and gates with `--max`. The
+number backs the judgement; it does not replace it. Keep the pair, the diff and
+its json under `Notes/adopt-shots/<slice>/` and record the pair in the state
+(`adopt-state.mjs set … --pair`). A slice is done when the pair matches on
+layout, tiers, blocks and every must-keep row — not when the code "looks right".
 
 The four board checks (`lint`, `shape`, `bind`, `smoke`) must be clean before
 any re-seed of the canvas itself.
 
 ---
 
-## 7. Land it
+## 9. Land it
 
     evolve.pipeline.adopt(branch, to="<design edge>", title, summary)
     evolve.pipeline.review.request(id, reason)
@@ -165,11 +232,13 @@ higher-stakes act that needs the user's explicit, unambiguous go-ahead.
 
 ---
 
-## 8. Log it, then take the next slice
+## 10. Log it, then take the next slice
 
 Append to Note 41 §6: the slice, its pipeline id, the screenshot pair, and any
-row you parked. The log is what lets the next session — or the next model —
-pick the programme up without re-deriving it.
+row you parked; then `adopt-state.mjs set <slice> landed --commit <sha>
+--pipeline <id> --pair <path>` and `push`, so the registry says the same. The
+log and the state are what let the next session — or the next model — pick the
+programme up without re-deriving it.
 
 ---
 
@@ -178,7 +247,13 @@ pick the programme up without re-deriving it.
 | script | what it does |
 |---|---|
 | `extract.ps1` | artifact HTML → working boards, via the design helper |
-| `map.mjs` | boards → workstreams + prod panels (`adopt-map.json`) |
+| `estate.mjs` | the ESTATE INDEX: every panel + UI runtime with handlers, containers, sections, sub-tabs, catalogued capabilities (`estate.json`) |
+| `design-index.mjs` | the DESIGN INDEX: every board as data — parts, regions, headings, labels, holes, props, embeds, directives, states (`design-index.json`) |
+| `adopt-map.mjs` | design ↔ estate: board targets with evidence, part verdicts replaces / extends / new / retire, the keep list (`adopt-map.json` + `.md`; pins in `adopt-hints.json`) |
+| `slices.mjs` | the plan: slices from Note 40's milestones + the hints' finer cuts and order (`slices.json`) |
+| `adopt-state.mjs` | the state: init / set / show / push — projected into the registry as `technique:design-adoption-<slug>` |
+| `pairdiff.mjs` | numeric design-vs-live PNG diff: % differing, mean difference, 4×4 grid, bbox, diff PNG, `--max` gate |
+| `map.mjs` | the older, coarser boards → workstreams + prod panels by title (superseded by `adopt-map.mjs`) |
 | `checklist.mjs` | must-keep list vs the design (`adopt-checklist.md`) |
 | `probe.mjs` | headless render of a board or a live page (own port + profile) |
 | `shot-live.ps1` | the same probe pointed at a running Vera |
