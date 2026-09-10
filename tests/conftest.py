@@ -60,6 +60,7 @@ _CRITICAL_MODULES = {
     "test_gate_politeness",  # the suite must yield the box like the census (2026-09-07)
     "test_engine_params",  # a dropped model override is worse than an error (2026-09-07)
     "test_census_seed",  # a template must not silently rebase the timeline (2026-09-07)
+    "test_census_control",  # a prod restart must not cost a census; a row must name its node and model (2026-09-10)
     "test_census_template_store",  # a dropped goal must lose its task (2026-09-07)
     "test_unittest_history",  # green on fewer tests is not a pass (2026-09-07)
     "test_race_to_green_ui",  # the strip must show a race, not one cell per pipeline (2026-09-07)

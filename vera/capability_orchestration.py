@@ -2521,7 +2521,10 @@ def _ollama_caller_info(depth: int = 3) -> dict:
 
 # ── Ollama request log (in-process ring buffer + structured event emission) ──
 _OLLAMA_REQUEST_LOG: List[dict] = []      # ring buffer, max 500
-_OLLAMA_REQUEST_LOG_MAX = 500
+# Raised from 500 (2026-09-10): a census goal makes up to ~100 LLM calls and the
+# harness reads them back after the goal; 500 was enough for one goal but not
+# for a reader arriving late. Entries are small dicts.
+_OLLAMA_REQUEST_LOG_MAX = 2000
 
 
 def _err_text(e: Exception, limit: int = 300) -> str:
@@ -2952,6 +2955,9 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         "caller_file": caller["caller_file"], "caller_func": caller["caller_func"],
         "prompt_preview": prompt_preview, "ts": now_iso(),
         "status": "running",
+        # The loop's session, so a census (or anyone) can pull exactly the calls
+        # one run made out of the ring buffer instead of a time window.
+        "session_id": OLLAMA_EVENT_SESSION.get(""),
         "job_type": eff_job_type, "rule_source": rule_source,
         "profile": str(profile or "")[:64],
         "role": str(role or "")[:64],
@@ -6952,11 +6958,15 @@ async def _do_restart(delay: float) -> None:
                         "first; `build.sh run` does not respawn, so this re-exec — not an exit — "
                         "is what makes it safe. Requires VERA_DEV_MODE=1 and confirm=True. "
                         "In-flight work IS lost: agentic loops, chat streams and queued jobs are "
-                        "killed mid-execution. Inputs: confirm (bool!), delay_s (float, default "
-                        "1.5 — time to return this response before the swap), reason (str). "
-                        "Output: {ok, restarting, pid, argv}.")
+                        "killed mid-execution. A CENSUS in flight is paused first and resumes "
+                        "on the way back up (it re-runs the goal it was on); pass "
+                        "resume_census=false to drop it instead. Inputs: confirm (bool!), "
+                        "delay_s (float, default 1.5 — time to return this response before "
+                        "the swap), reason (str), resume_census (bool=true). "
+                        "Output: {ok, restarting, pid, argv, census}.")
 async def cap_sys_dev_restart(confirm: bool = False, delay_s: float = 1.5,
-                              reason: str = "", trace_id=None):
+                              reason: str = "", resume_census: bool = True,
+                              trace_id=None):
     if not dev_mode_on():
         return {"ok": False, "error": "dev mode is off — set VERA_DEV_MODE=1 to enable "
                                       "sys.dev.restart", "dev_mode": False}
@@ -6965,9 +6975,25 @@ async def cap_sys_dev_restart(confirm: bool = False, delay_s: float = 1.5,
                                       "work (agentic loops, chat streams, queued jobs)",
                 "dev_mode": True}
     log.warning("sys.dev.restart requested%s", f" — {reason}" if reason else "")
+    # A census in flight would otherwise record the restart as its goal's result
+    # and move on — which is why prod could not be restarted for the hours a set
+    # takes. Ask the harness to pause (resume) or stop (drop) BEFORE re-exec.
+    # A query parameter arrives as a STRING, so truthiness is judged, not typed.
+    _resume = str(resume_census).strip().lower() not in ("0", "false", "no", "off", "")
+    census: Dict[str, Any] = {"action": "none"}
+    try:
+        # The loader registers the module under its bare filename; importing it
+        # by package path here would execute its body a second time.
+        _cc = sys.modules.get("census_capabilities")
+        if _cc is None or not hasattr(_cc, "census_before_restart"):
+            raise RuntimeError("census_capabilities not loaded")
+        census = await _cc.census_before_restart(_resume)
+    except Exception as _ce:
+        census = {"action": "none", "why": f"census module unavailable: {_ce}"}
     try:
         await emit_event({"type": "sys.dev.restart", "reason": reason,
-                          "pid": os.getpid(), "delay_s": delay_s})
+                          "pid": os.getpid(), "delay_s": delay_s,
+                          "census": census.get("action")})
     except Exception:
         pass
     # Detached so THIS request can return before the process image is replaced —
@@ -6975,8 +7001,11 @@ async def cap_sys_dev_restart(confirm: bool = False, delay_s: float = 1.5,
     asyncio.create_task(_do_restart(float(delay_s or 1.5)))
     return {"ok": True, "restarting": True, "pid": os.getpid(),
             "argv": _relaunch_argv(), "delay_s": float(delay_s or 1.5),
+            "census": {k: v for k, v in census.items() if k != "active"},
             "note": "Vera is re-execing; it should answer again within a few seconds. "
-                    "In-flight loops/streams are gone."}
+                    "In-flight loops/streams are gone."
+                    + (" A census was paused and will resume." if census.get("action") == "pause"
+                       else " The census was dropped." if census.get("action") == "drop" else "")}
 
 
 async def _do_stop(delay: float) -> None:

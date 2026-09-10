@@ -15,6 +15,11 @@ READ-ONLY BY DESIGN. Nothing here starts, stops or edits a census run. The
 harness owns the runs; this owns reading them. That matters because the census
 is the measuring instrument — a UI that could quietly perturb it would make
 every number it displays suspect.
+
+The one deliberate exception is `census.control.set` (2026-09-10): it writes a
+REQUEST — pause, resume or drop — that the harness polls and acts on itself,
+so a prod restart no longer costs a census. It never touches a run file. See
+`control.py` for the contract and why the default on restart is resume.
 """
 import asyncio
 import json
@@ -147,8 +152,10 @@ async def _loop_events(session_id: str) -> List[Dict[str, Any]]:
 
 try:
     from Vera.vera.census import landed as _landed
+    from Vera.vera.census import control as _ctl
 except ImportError:                                   # pragma: no cover
     from vera.census import landed as _landed
+    from vera.census import control as _ctl
 
 
 def _run_files() -> Dict[str, Path]:
@@ -638,4 +645,110 @@ async def cap_census_landed(repo: str = "vera", limit: int = 300,
     return {"by_run": by_run,
             "runs": sorted((r["run_id"] for r in runs)),
             "repo": repo, "commits_scanned": len(commits)}
+
+
+# ── control across restarts, and what the harness is doing right now ─────────
+
+def _control_path() -> str:
+    return str(CENSUS_DIR / _ctl.CONTROL_NAME)
+
+
+def _active_path() -> str:
+    return str(CENSUS_DIR / _ctl.ACTIVE_NAME)
+
+
+def _read_control_sync() -> Dict[str, Any]:
+    return _ctl.read_json(_control_path())
+
+
+def _read_active_sync() -> Dict[str, Any]:
+    return _ctl.active_view(_ctl.read_json(_active_path()))
+
+
+async def census_control_view() -> Dict[str, Any]:
+    control, active = await asyncio.gather(asyncio.to_thread(_read_control_sync),
+                                           asyncio.to_thread(_read_active_sync))
+    return {"control": control, "state": _ctl.control_state(control),
+            "active": active, "dir": str(CENSUS_DIR)}
+
+
+@capability(
+    "census.control", memory="off", silent=True,
+    http_method="GET", http_path="/census/control", http_tags=["census", "workshop"],
+    description=(
+        "The census control state and what the harness reports it is doing. "
+        "`state` is run / pause / drop (what census.control.json currently asks "
+        "of the harness); `active` is the harness's own report — template, goal "
+        "in flight, goals done/total, running/paused/done/dropped — with `live` "
+        "false when that report is stale (a harness that died without saying "
+        "so). Safe to poll. Output: {control, state, active, dir}."),
+)
+async def cap_census_control(trace_id=None) -> Dict[str, Any]:
+    return await census_control_view()
+
+
+@capability(
+    "census.control.set", memory="off",
+    http_method="POST", http_path="/census/control/set", http_tags=["census", "workshop"],
+    description=(
+        "ASK the running census to pause, resume or drop. The harness polls the "
+        "control file every 15 s and acts on it: pause cancels the goal in flight "
+        "and, once resumed and prod is healthy, RE-RUNS that goal from scratch "
+        "(the abandoned attempt is noted on the row, never recorded as a result); "
+        "drop cancels the goal and ends the whole set, archived as -dropped. "
+        "sys.dev.restart writes a pause itself (default) or a drop "
+        "(resume_census=false) before it re-execs. Inputs: action (str! — pause|"
+        "resume|drop), reason (str), by (str). Output: {ok, wrote, state, active}."),
+)
+async def cap_census_control_set(action: str = "", reason: str = "", by: str = "",
+                                 trace_id=None) -> Dict[str, Any]:
+    try:
+        data = _ctl.make_control(action, reason=reason, by=by or "census.control.set")
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    ok = await asyncio.to_thread(_ctl.write_json, _control_path(), data)
+    if not ok:
+        return {"ok": False, "error": "could not write %s" % _control_path()}
+    view = await census_control_view()
+    log.warning("census.control: %s (%s) by %s", data.get("pause") and "PAUSE"
+                or data.get("drop") and "DROP" or "RESUME", reason or "-", by or "-")
+    return {"ok": True, "wrote": data, **view}
+
+
+async def census_before_restart(resume: bool, by: str = "sys.dev.restart") -> Dict[str, Any]:
+    """Called by sys.dev.restart before it re-execs. Writes a pause (to be lifted
+    on the way back up) or a drop, but ONLY when a census is genuinely live —
+    a pause left on file with nothing running would stop the next census cold."""
+    active = await asyncio.to_thread(lambda: _ctl.read_json(_active_path()))
+    plan = _ctl.restart_plan(active, resume)
+    if plan["action"] == "none":
+        return plan
+    data = _ctl.make_control(plan["action"], reason=_ctl.RESTART_REASON, by=by,
+                             resume_on_start=(plan["action"] == "pause"))
+    plan["wrote"] = await asyncio.to_thread(_ctl.write_json, _control_path(), data)
+    log.warning("census: %s written before restart (%s)", plan["action"].upper(), plan["why"])
+    return plan
+
+
+def _lift_restart_pause_sync() -> Dict[str, Any]:
+    """On startup: lift a pause that a restart wrote asking to resume. A pause a
+    person wrote is left alone. Idempotent — the module body runs more than
+    once per process and a second lift finds nothing to do."""
+    path = _control_path()
+    control = _ctl.read_json(path)
+    if not _ctl.should_lift_on_start(control):
+        return {"lifted": False, "state": _ctl.control_state(control)}
+    data = _ctl.make_control("resume", reason="lifted on startup after restart",
+                             by="census startup")
+    ok = _ctl.write_json(path, data)
+    return {"lifted": bool(ok), "state": "run" if ok else _ctl.control_state(control)}
+
+
+try:
+    _lift = _lift_restart_pause_sync()
+    if _lift.get("lifted"):
+        log.warning("census: restart pause LIFTED on startup — the harness will resume "
+                    "and re-run the goal it was on")
+except Exception as _e:                                  # pragma: no cover
+    log.info("census: startup pause check skipped: %s", _e)
 
