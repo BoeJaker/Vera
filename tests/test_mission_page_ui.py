@@ -145,7 +145,7 @@ def test_the_pollers_follow_the_page_and_its_folds(src):
     arm = _fn(src, "_mcArm")
     assert "_curSec()==='mission'" in arm and "_mcMeta.any_live" in arm and "setTimeout(missionPoll,6000)" in arm
     rf = _fn(src, "missionRefresh")
-    assert "if(_curSec()!=='mission')return" in rf and "setTimeout(missionPoll,1500)" in rf, "debounced"
+    assert "if(_curSec()!=='mission')return" in rf and "setTimeout(missionPoll,4000)" in rf, "debounced"
     assert "setInterval(" not in src[src.index("function renderMissionLive"):src.index("async function pollAutonomous")]
 
 

@@ -959,7 +959,7 @@ async function loadMission(){
   if(b){if(a.engaged){b.style.display='flex';const since=(a.since||'').slice(0,19).replace('T',' ');if($('auto-banner-msg'))$('auto-banner-msg').innerHTML='main is <b>LOCKED</b>'+(a.reason?(' &mdash; '+esc(a.reason)):'')+(since?(' &middot; since '+esc(since)):'')}else b.style.display='none'}
 }
 /* After a bus event or an action: the table, debounced, while Mission control is on screen. */
-function missionRefresh(){if(_curSec()!=='mission')return;clearTimeout(_mcRefreshT);_mcRefreshT=setTimeout(missionPoll,1500)}
+function missionRefresh(){if(_curSec()!=='mission')return;clearTimeout(_mcRefreshT);_mcRefreshT=setTimeout(missionPoll,4000)}
 function missionOnChange(){renderMissionTable()}
 /* Land on Mission control with a theatre open and in view - the way in for
    "run once", "watch" and "errors" from anywhere. */
@@ -1390,7 +1390,7 @@ async function loadTest(){
   // launched by a direct HTTP call while Loop Lab was already open on the
   // Test tab stayed invisible until a manual reload. Only fires the (cheap)
   // adopt-check when nothing is already being actively followed here.
-  if(!_testAdoptTimer)_testAdoptTimer=setInterval(()=>{if(!_implTimer)restoreTestRun()},8000);
+  if(!_testAdoptTimer)_testAdoptTimer=setInterval(()=>{if(!_implTimer&&_theatreOnScreen())restoreTestRun()},8000);
 }
 // Refresh ONLY the recent-runs table (used after a run completes — does not wipe
 // the workflow diagram, so the final animated state stays on screen).
@@ -3023,6 +3023,10 @@ async function cenAloPoll(id){
   if(!s||!s.sid)return;
   const el=document.getElementById(id);
   if(!el){cenAloStop(id);return}                    // modal closed / dash gone under us
+  // The dash lives on Work; from any other page its follow kept reading the
+  // loop's events every 3 s for nobody (2026-09-10). Off screen: keep the
+  // follow armed, skip the read.
+  if(typeof el.checkVisibility==='function'&&!el.checkVisibility()){s.timer=setTimeout(()=>cenAloPoll(id),3000);return}
   const st=await api('/workshop/agent_loop/session_state?session_id='
                      +encodeURIComponent(s.sid)+'&since='+s.since);
   if(_cenAloS[id]!==s)return;                       // restarted for another session meanwhile
@@ -5860,7 +5864,13 @@ function renderSbxStrip(sb){
   txt.textContent=(sb.paused?'paused':(sb.up?('idle '+Math.floor(idleS)+'s · pauses in '+Math.floor(remain)+'s'):'down'))+' · snapshot '+snapTxt;
   if(drift)drift.style.display=(sb.routing_drift&&sb.routing_drift.checked&&(sb.routing_drift.mismatches||[]).length)?'':'none';
 }
-setInterval(refreshActiveRun,4000);
+/* The Run-once theatre's own clocks tick only while its fold is on screen:
+   the active-run header it refreshes and the run it re-adopts live inside
+   the fold, and a run in flight is on the Mission strip regardless. Before
+   this, /evolve/run/status was polled every 4 s on every page for as long
+   as a run id was remembered (2026-09-10). */
+function _theatreOnScreen(){const d=$('mc-test');return _curSec()==='mission'&&!!d&&d.open}
+setInterval(()=>{if(_theatreOnScreen())refreshActiveRun()},4000);
 setInterval(pollAutonomous,12000);
 refreshActiveRun();
 
