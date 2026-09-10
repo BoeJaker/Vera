@@ -2781,8 +2781,11 @@ function renderCensusTable(){
   const ops=(_cenStatusF===''||_cenStatusF==='operator')&&!_cenTemplate&&(!q||'operator'.indexOf(q)>=0)?_cenOpRuns.slice().reverse():[];
   const hidden=_cenShowPartial?0:runs.filter(s=>s.excluded&&s.run_id!=='current').length;
   // The other driver kinds, through the same filters (kind, text, status).
-  const others=(_workKind==='census'||_cenTemplate||_cenStatusF==='live'||_cenStatusF==='operator')?[]:_workRows.filter(x=>x.kind!=='census').filter(x=>{
+  // A census run known only from the scoreboard the harness posted (no
+  // archive here) has no summary and renders as a plain driver row.
+  const others=(_cenStatusF==='live'||_cenStatusF==='operator')?[]:_workRows.filter(x=>!(x.kind==='census'&&x.census)).filter(x=>{
     if(_workKind&&x.kind!==_workKind)return false;
+    if(_cenTemplate&&(x.kind!=='census'||(x.template||'')!==_cenTemplate))return false;
     if(_workSrc&&x.kind==='run'&&x.source!==_workSrc)return false;
     if(_cenStatusF==='usable'&&x.excluded)return false;
     if(_cenStatusF==='excluded'&&!x.excluded)return false;
@@ -3199,7 +3202,9 @@ function toggleWorkDriver(kind,id){
 async function loadWorkDriverDetail(kind,id){
   const el=$('wk-det-'+_cenId(id));if(!el)return;
   const d=_workRows.find(x=>x.kind===kind&&x.id===id)||{};
-  if(kind==='suite'){
+  // A suite, or a census run known only from the scoreboard the harness
+  // posted (no archive here): its result rows.
+  if(kind==='suite'||(kind==='census'&&d.results)){
     const rows=d.results||[];
     if(!rows.length){el.innerHTML='<div class="empty">No task results in this suite.</div>';return}
     el.innerHTML='<table><tr><th>task</th><th>type</th><th>checks</th><th>score</th><th>combined</th><th>time</th><th>error</th><th></th></tr>'
@@ -3311,7 +3316,7 @@ async function loadWorkTaskDetail(id){
   const rows=(h.results||[]).slice(0,12);
   const t=h.task||{};
   let out='<div class="hint" style="margin:4px 0">'+(t.goal?esc(String(t.goal).slice(0,300)):'')+'</div>';
-  out+='<div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:4px">'+_thStats('all drivers',h.stats)+_thStats('census only',h.census_stats)+'</div>';
+  out+='<div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:4px">'+_thStats(h.stats,'all drivers')+_thStats(h.census_stats,'census only')+'</div>';
   if(!rows.length){el.innerHTML=out+'<div class="empty">No results yet.</div>';return}
   out+='<table><tr><th>when</th><th>driver</th><th>status</th><th>wall</th><th>checks</th><th>code</th><th>coder</th></tr>'
     +rows.map(r=>{const drv=r.driver||{};const onclick=r.source==='census'?'openCensusGoal(\''+esc(drv.id||'')+'\',\''+esc(r.goal||'')+'\')':'openRun(\''+esc(r.run_id||'')+'\')';
@@ -3936,7 +3941,7 @@ async function pollSuite(){
   const r=await api('/evolve/suite/status');const s=(r&&r.status)||{};_suite=s;_suite.running=!!(r&&r.running);
   renderLive();
   if(_suite.running){if($('ov-run'))$('ov-run').disabled=true;if(!_suitePoll)_suitePoll=setInterval(pollSuite,2500)}
-  else{if($('ov-run'))$('ov-run').disabled=false;if(_suitePoll){clearInterval(_suitePoll);_suitePoll=null}workOnChange()}
+  else{if($('ov-run'))$('ov-run').disabled=false;if(_suitePoll){clearInterval(_suitePoll);_suitePoll=null;workOnChange()}}
 }
 
 /* ═══ TASKS ═══ */
