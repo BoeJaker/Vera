@@ -464,6 +464,19 @@ async def cap_census_live(trace_id=None) -> Dict[str, Any]:
     except Exception:
         pass
 
+    # The goal's own LLM calls so far, for the live dash: from the in-process
+    # request log, since the loop started (the census holds the box alone).
+    routing: Dict[str, Any] = {}
+    if sid:
+        try:
+            fn = (CAPABILITY_REGISTRY.get("ollama.request_log") or {}).get("func")
+            if fn is not None:
+                d = await fn(limit=600) or {}
+                routing = _ctl.live_routing(d.get("entries") or [], str(run.get("started_at") or ""),
+                                            session_id=sid)
+        except Exception as e:
+            log.info("census.live: request log unavailable: %s", e)
+
     return {
         "active": ({"session_id": sid, "goal": gtext, "goal_id": active_goal,
                     "started_at": run.get("started_at"), "elapsed_s": elapsed}
@@ -471,6 +484,7 @@ async def cap_census_live(trace_id=None) -> Dict[str, Any]:
         "progress": cc.live_progress(goal_ids, done, active_goal),
         "counters": counters,
         "steps": steps,
+        "routing": routing,
         # Every goal this run has finished, not the last six: a 12-goal census
         # was showing half its own progress, which is why the only way to see
         # how a run was going was to load it into the Compare table.

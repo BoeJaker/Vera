@@ -288,3 +288,53 @@ def routing_rollup(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         "nodes": nodes, "models": models,
         "calls": calls, "reroutes": reroutes, "spill_calls": spill,
     }
+
+
+# ── the running goal's own routing, live ─────────────────────────────────────
+
+def live_routing(entries: Sequence[Dict[str, Any]], since_iso: str, *, session_id: str = "",
+                 last_n: int = 6) -> Dict[str, Any]:
+    """What the goal in flight has asked of the LLMs so far, from the
+    in-process request log: calls by node and by model, CPU spills and
+    re-routes, the median tokens/s, and the last few calls with their speed
+    and GPU residency - the live half of what a finished row records.
+
+    A call belongs to the goal when the log stamped it with the goal's loop
+    session, or (the v7 runner stamps no session) when it was made since the
+    goal started. The census holds the box alone, so the window is the goal.
+    """
+    lo = str(since_iso or "")[:19]
+    mine: List[Dict[str, Any]] = []
+    for e in entries or []:
+        if not isinstance(e, dict):
+            continue
+        sid = str(e.get("session_id") or "")
+        ts = str(e.get("ts") or "")[:19]
+        if (session_id and sid == session_id) or (lo and ts >= lo and (not sid or sid == session_id)):
+            mine.append(e)
+    by_node: Dict[str, int] = {}
+    by_model: Dict[str, int] = {}
+    spill = reroutes = 0
+    toks: List[float] = []
+    for e in mine:
+        node = str(e.get("instance") or e.get("fallback_instance") or "?")
+        model = str(e.get("model") or "?")
+        by_node[node] = by_node.get(node, 0) + 1
+        by_model[model] = by_model.get(model, 0) + 1
+        if e.get("cpu_spill"):
+            spill += 1
+        if e.get("escalated") or e.get("fallback_instance") or str(e.get("status") or "") == "done_fallback":
+            reroutes += 1
+        t = e.get("tok_per_s")
+        if isinstance(t, (int, float)) and not isinstance(t, bool) and t > 0:
+            toks.append(float(t))
+    toks.sort()
+    median = (toks[len(toks) // 2] if toks else None)
+    last = [{"ts": str(e.get("ts") or "")[11:19], "job": e.get("job_type") or "", "role": e.get("role") or "",
+             "model": str(e.get("model") or ""), "node": str(e.get("instance") or e.get("fallback_instance") or ""),
+             "tok_s": e.get("tok_per_s"), "gpu_pct": e.get("gpu_resident_pct"), "s": e.get("elapsed_s"),
+             "status": str(e.get("status") or ""), "spill": bool(e.get("cpu_spill"))}
+            for e in mine[-max(0, int(last_n)):]]
+    return {"calls": len(mine), "by_node": by_node, "by_model": by_model, "spill_calls": spill,
+            "reroutes": reroutes, "tok_s_median": (round(median, 1) if median is not None else None),
+            "last": last, "since": lo}

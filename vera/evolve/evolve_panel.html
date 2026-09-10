@@ -469,6 +469,7 @@ html.vpb-nav-hosted body{padding-left:0}
     </div>
     <div id="census-live"></div>
     <div id="work-live"></div>
+    <div id="census-dash"></div>
     <div id="census-runs"><div class="empty">Loading…</div></div>
     <div id="work-tasks" style="display:none"><div class="empty">Loading&hellip;</div></div>
     <details style="margin-top:8px"><summary class="clk hint">Trends</summary><div id="census-charts" style="margin-top:6px"></div><div id="work-charts" style="margin-top:6px"></div></details>
@@ -2337,6 +2338,7 @@ async function censusPoll(){
     _workLive=await api('/evolve/work/live');
     const done=await loadCensusLive();
     _wkLive(_workLive);
+    _cenDash(_workLive&&_workLive.census);
     const L=_workLive||{}, s=(L.suite&&L.suite.status)||{};
     const sig=[done,!!(L.suite&&(L.suite.running||s.running)),s.done||0,L.improve?(L.improve.id+':'+(L.improve.rounds_done||0)+':'+(L.improve.status||'')):'',(L.run&&(L.run.live||L.run.running))?((L.run.current||{}).run_id||'live'):''].join('|');
     if(sig!==_workLiveSig){
@@ -2984,39 +2986,45 @@ async function loadCensusOperator(){ const op=await api('/census/operator/runs')
    /workshop/agent_loop/session_state?since=N (plain JSON, index-exact, full
    replay from 0). No SSE and no event bus, so it cannot silently miss events,
    and a finished run replays in full rather than showing nothing. */
-let _cenAloSid='',_cenAloSince=0,_cenAloTimer=null;
-function cenAloStop(){if(_cenAloTimer)clearTimeout(_cenAloTimer);_cenAloTimer=null;_cenAloSid='';_cenAloSince=0}
-function _cenAloStat(t){const n=document.getElementById('cen-alo-stat');if(n)n.textContent=t}
-async function cenAloPoll(){
-  if(!_cenAloSid)return;
-  const el=document.getElementById('cen-alo');
-  if(!el){cenAloStop();return}                     // modal closed under us
+/* One follow per element id: the modal ('cen-alo') and the live dash
+   ('cen-dash-alo') can each show a session at the same time. */
+const _cenAloS={};
+function cenAloStop(id){id=id||'cen-alo';const s=_cenAloS[id];if(!s)return;if(s.timer)clearTimeout(s.timer);delete _cenAloS[id]}
+function _cenAloStat(id,t){const n=document.getElementById(id+'-stat');if(n)n.textContent=t}
+async function cenAloPoll(id){
+  id=id||'cen-alo';
+  const s=_cenAloS[id];
+  if(!s||!s.sid)return;
+  const el=document.getElementById(id);
+  if(!el){cenAloStop(id);return}                    // modal closed / dash gone under us
   const st=await api('/workshop/agent_loop/session_state?session_id='
-                     +encodeURIComponent(_cenAloSid)+'&since='+_cenAloSince);
+                     +encodeURIComponent(s.sid)+'&since='+s.since);
+  if(_cenAloS[id]!==s)return;                       // restarted for another session meanwhile
   const evs=(st&&st.events)||[];
   if(evs.length){
     if(el.appendEvents){try{el.appendEvents(evs)}catch(_){}}
     else if(el.appendEvent){evs.forEach(e=>{try{el.appendEvent(e)}catch(_){}})}
-    _cenAloSince=(st&&typeof st.count==='number'&&st.count>=_cenAloSince+evs.length)
-      ? st.count : (_cenAloSince+evs.length);
+    s.since=(st&&typeof st.count==='number'&&st.count>=s.since+evs.length)
+      ? st.count : (s.since+evs.length);
   }
   const status=(st&&st.run&&st.run.status)||'';
   if(status&&status!=='running'){
-    _cenAloStat(_cenAloSince+' events \u00b7 '+status);
+    _cenAloStat(id,s.since+' events · '+status);
     return;                                        // terminal: stop polling
   }
-  _cenAloStat(_cenAloSince?('\u25cf live \u00b7 '+_cenAloSince+' events'):'waiting for events\u2026');
-  _cenAloTimer=setTimeout(cenAloPoll,3000);
+  _cenAloStat(id,s.since?('● live · '+s.since+' events'):'waiting for events…');
+  s.timer=setTimeout(()=>cenAloPoll(id),3000);
 }
-function cenAloBlock(sid){
+function cenAloBlock(sid,id){
+  id=id||'cen-alo';
   if(!sid)return '<div class="hint">No agent-loop session recorded for this goal.</div>';
   return '<div class="row" style="align-items:center;margin:6px 0 4px"><b>Agent loop</b>'
     +'<span class="hint mono" style="margin-left:8px">'+esc(sid.slice(0,8))+'</span>'
-    +'<span class="hint" id="cen-alo-stat" style="margin-left:8px">connecting\u2026</span></div>'
-    +'<vera-agent-loop-output id="cen-alo" compact="true" show-toolkit="true" show-triage="true"'
+    +'<span class="hint" id="'+id+'-stat" style="margin-left:8px">connecting…</span></div>'
+    +'<vera-agent-loop-output id="'+id+'" compact="true" show-toolkit="true" show-triage="true"'
     +' style="height:340px;overflow:auto;display:block"></vera-agent-loop-output>';
 }
-function cenAloStart(sid){cenAloStop();if(!sid)return;_cenAloSid=sid;_cenAloSince=0;cenAloPoll()}
+function cenAloStart(sid,id){id=id||'cen-alo';cenAloStop(id);if(!sid)return;_cenAloS[id]={sid:sid,since:0,timer:null};cenAloPoll(id)}
 /* Open the running census goal's loop output straight from the live card. */
 function openCensusLiveLoop(sid,goalId){
   const tok=openModalLoading('Agent loop \u00b7 '+(goalId||'running goal'),sid||'');
@@ -3414,6 +3422,96 @@ async function renderWorkCharts(){
   const suites=(s&&s.suites)||[];
   el.innerHTML='<div class="card"><div class="card-h"><span class="card-t">Race to green</span><span class="hint">each task\'s score across recent suites and census runs</span></div>'+(b?svgBoard(b):'<div class="empty">—</div>')+'</div>'
     +'<div class="card"><div class="card-h"><span class="card-t">Score trend</span><span class="hint">average combined score, recent suites</span></div>'+(suites.length?svgTrend(suites):'<div class="empty">—</div>')+'</div>';
+}
+
+/* ═══ LIVE CENSUS DASH — the running goal, as it runs ═══════════════════════
+   Asked 2026-09-10: "if a census is running there should be a live dash
+   with the live agentic loop ui output and live infographics". Shown under
+   the live strip while a census goal is in flight, gone when none is. Left:
+   the agent loop's own output (the index-exact poll of
+   /workshop/agent_loop/session_state the modal uses, keyed by element).
+   Right: the goal's numbers as they move — goals done / in flight /
+   remaining, elapsed against the cap, steps × cycles, the loop's counters,
+   this goal's LLM calls by node and model with speed and residency, and the
+   quality and wall of the goals finished so far. Everything on the right
+   comes from the one evolve.work.live poll; nothing here fetches on its own. */
+let _cenDashSid='';
+function _cenDash(r){
+  const el=$('census-dash');if(!el)return;
+  const a=r&&r.active;
+  if(!a||!a.session_id){
+    if(el.innerHTML){el.innerHTML='';cenAloStop('cen-dash-alo');_cenDashSid=''}
+    return;
+  }
+  if(_cenDashSid!==a.session_id){
+    _cenDashSid=a.session_id;
+    el.innerHTML='<div class="card" style="margin:6px 0"><div class="card-h"><span class="card-t">Live census</span>'
+      +'<span class="hint" id="cen-dash-hd"></span><span style="flex:1"></span>'
+      +'<button class="btn sm" onclick="openCensusLiveLoop(\''+esc(a.session_id)+'\',\''+esc(a.goal_id||'')+'\')" title="the loop output on its own, larger">&#9723; pop out</button></div>'
+      +'<div style="display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:12px;align-items:start">'
+      +'<div style="min-width:0">'+cenAloBlock(a.session_id,'cen-dash-alo')+'</div>'
+      +'<div id="cen-dash-info" style="min-width:0"></div></div></div>';
+    cenAloStart(a.session_id,'cen-dash-alo');
+  }
+  const hz=r.harness||{}, cap=(r.wall_cap_s||1800);
+  const hd=$('cen-dash-hd');
+  if(hd)hd.innerHTML='<b>'+esc(a.goal_id||'(unmatched goal)')+'</b>'+(hz.template?(' <span class="mono">'+esc(hz.template)+'</span>'):'')
+    +' · '+_cenSec(a.elapsed_s)+' / cap '+_cenSec(cap)+' · <span class="mono">'+esc(a.session_id.slice(0,8))+'</span>';
+  const info=$('cen-dash-info');
+  if(info)info.innerHTML=_cenDashInfo(r,cap);
+}
+function _cenDashBar(pct,col,h){
+  return '<span style="display:inline-block;width:100%;height:'+(h||8)+'px;background:var(--bg3);border-radius:3px;overflow:hidden;vertical-align:middle">'
+    +'<span style="display:block;width:'+Math.max(0,Math.min(100,pct))+'%;height:100%;background:'+col+'"></span></span>';
+}
+function _cenDashInfo(r,cap){
+  const a=r.active||{}, p=r.progress||{}, rec=r.recent||[], c=r.counters||{}, ro=r.routing||{}, steps=r.steps||[];
+  const tile=(t,body)=>'<div style="border:1px solid var(--border);border-radius:6px;padding:6px 8px;margin-bottom:8px;background:var(--bg2)"><div class="hint" style="margin-bottom:4px">'+t+'</div>'+body+'</div>';
+  // goals: finished ones by status, the one in flight, the rest
+  const total=p.goals_total||(rec.length+1+((p.remaining||[]).length));
+  const segs=rec.map(g=>{const st=String(g.status||'');const col=st==='done'?'#3cb371':(st==='wall-cap'?'#c9a35a':'#c96b6b');
+      return '<span title="'+esc(g.id+' · '+st+' · '+_cenSec(g.wall_s))+'" style="flex:1;height:10px;background:'+col+';border-radius:2px"></span>'}).join('')
+    +'<span title="'+esc((a.goal_id||'running')+' · in flight')+'" style="flex:1;height:10px;background:#5b8dd6;border-radius:2px;animation:pulse 1.2s infinite"></span>'
+    +(p.remaining||[]).map(id=>'<span title="'+esc(id)+'" style="flex:1;height:10px;background:var(--bg3);border-radius:2px"></span>').join('');
+  const goals=tile('goals · <b>'+(rec.length+1)+' of '+total+'</b>'+(p.remaining&&p.remaining.length?(' · next '+esc(p.remaining[0])):' · last one'),
+    '<div style="display:flex;gap:2px">'+segs+'</div>');
+  // elapsed vs cap
+  const el=a.elapsed_s||0, pct=Math.round(el/cap*100);
+  const elapsed=tile('elapsed · <b>'+_cenSec(el)+'</b> of '+_cenSec(cap)+(pct>=90?' <span style="color:#c96b6b">near the cap</span>':''),
+    _cenDashBar(pct,pct>=90?'#c96b6b':(pct>=70?'#c9a35a':'#3cb371'),10));
+  // steps x cycles
+  const maxC=Math.max(1,...steps.map(s=>s.cycles||0));
+  const stepRows=steps.length?steps.map(s=>{const col=s.ok===false?'#c96b6b':(s.ok?'#3cb371':'#5b8dd6');
+      return '<div style="display:flex;align-items:center;gap:6px;margin:2px 0"><span class="mono hint" style="min-width:16px">'+esc(String(s.id))+'</span>'
+        +'<span style="flex:1;min-width:0">'+_cenDashBar((s.cycles||0)/maxC*100,col,7)+'</span><span class="mono" style="min-width:26px;text-align:right">'+(s.cycles||0)+'c</span>'
+        +'<span class="hint" style="max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(s.title||'')+'">'+esc(s.title||'')+'</span></div>'}).join('')
+    :'<div class="hint">planning…</div>';
+  const stepsT=tile('steps × cycles · <b>'+steps.length+'</b> planned'+(c.executed_steps!=null?(' · '+c.executed_steps+' executed'):''),stepRows);
+  // counters
+  const cnt=tile('counters','<div class="row" style="gap:10px;flex-wrap:wrap"><span>tools <b>'+(c.tool_calls==null?'?':c.tool_calls)+'</b></span>'
+    +'<span>inserted <b>'+(c.inserted_steps==null?(c.controller_inserted_steps||0):c.inserted_steps)+'</b></span>'
+    +(c.gate_inserted_steps?'<span style="color:#c9a35a">gate +'+c.gate_inserted_steps+'</span>':'')
+    +(c.fast_path_steps?'<span>fast path '+c.fast_path_steps+'</span>':'')
+    +(c.unaccounted_steps?'<span style="color:#c96b6b;font-weight:600">unaccounted '+c.unaccounted_steps+'</span>':'<span class="hint">accounting ok</span>')+'</div>');
+  // routing of this goal
+  const nodes=Object.keys(ro.by_node||{}).sort((x,y)=>(ro.by_node[y]-ro.by_node[x]));
+  const maxN=Math.max(1,...nodes.map(n=>ro.by_node[n]));
+  const nodeRows=nodes.map(n=>'<div style="display:flex;align-items:center;gap:6px;margin:2px 0"><span class="mono" style="min-width:64px">'+esc(n)+'</span>'
+    +'<span style="flex:1;min-width:0">'+_cenDashBar(ro.by_node[n]/maxN*100,n.indexOf('gpu')===0?'#3cb371':'#c9a35a',7)+'</span><span class="mono" style="min-width:24px;text-align:right">'+ro.by_node[n]+'</span></div>').join('');
+  const models=Object.keys(ro.by_model||{}).map(m=>'<span class="tag" title="'+ro.by_model[m]+' call(s)">'+esc(m)+' · '+ro.by_model[m]+'</span>').join(' ');
+  const last=(ro.last||[]).slice().reverse().map(x=>'<div class="mono hint" style="font-size:10px">'+esc(x.ts)+' '+esc(x.job||x.role||'')+' '+esc(x.model)+'@'+esc(x.node)
+    +(x.tok_s!=null?(' <b>'+(+x.tok_s).toFixed(1)+' tok/s</b>'):'')+(x.gpu_pct!=null?(' GPU '+x.gpu_pct+'%'):'')+(x.spill?' <span style="color:#c96b6b">spill</span>':'')+(x.status&&x.status!=='done'?(' '+esc(x.status)):'')+'</div>').join('');
+  const routing=tile('routing · this goal · <b>'+(ro.calls||0)+'</b> calls'+(ro.tok_s_median!=null?(' · median <b>'+ro.tok_s_median+' tok/s</b>'):'')
+      +(ro.spill_calls?' · <span style="color:#c96b6b">'+ro.spill_calls+' CPU spill</span>':'')+(ro.reroutes?' · <span style="color:#c9a35a">'+ro.reroutes+' re-routed</span>':''),
+    (nodes.length?nodeRows:'<div class="hint">no LLM call yet</div>')+(models?('<div style="margin-top:4px">'+models+'</div>'):'')+(last?('<div style="margin-top:4px">'+last+'</div>'):''));
+  // quality and wall of the goals finished so far
+  const scored=rec.filter(g=>g.quality&&g.quality.total);
+  const passed=scored.reduce((n,g)=>n+(g.quality.passed||0),0), tot=scored.reduce((n,g)=>n+(g.quality.total||0),0);
+  const walls=rec.map(g=>g.wall_s||0), ids=rec.map(g=>g.id);
+  const quality=tile('so far · quality <b>'+(tot?(Math.round(passed/tot*100)+'%'):'—')+'</b> ('+passed+'/'+tot+' checks over '+scored.length+' goal'+(scored.length===1?'':'s')+') · '
+      +rec.filter(g=>g.status==='done').length+' done · '+rec.filter(g=>g.status==='wall-cap').length+' capped',
+    rec.length?_cenSpark(walls,ids,{w:300,h:40,lo:0,col:'#9b7fd6'})+'<div class="hint">wall time per finished goal</div>':'<div class="hint">no goal finished yet</div>');
+  return goals+elapsed+stepsT+cnt+routing+quality;
 }
 
 /* ═══ ONE TASK THROUGH TIME ═════════════════════════════════════════════════
