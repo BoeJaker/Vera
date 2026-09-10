@@ -33,10 +33,14 @@ async def test_live_validator_uses_portable_binding_and_emits_no_content():
 
     assert report["schema"] == LIVE_INFERENCE_REPORT_SCHEMA
     assert report["passed"] is True
+    assert report["transport_passed"] is True
+    assert report["content_conformant"] is True
     assert report["privacy"] == "prompt_and_output_omitted"
     assert [case["case"] for case in report["cases"]] == ["non_stream", "stream"]
     assert all(case["output_sha256"] ==
                "627f745fdb5b4165c6c5070fc0f0720bdd29f693f87c8a28bb21b593680242a2"
+               for case in report["cases"])
+    assert all(case["expected_output_sha256"] == case["output_sha256"]
                for case in report["cases"])
     encoded = json.dumps(report)
     assert "Reply with" not in encoded
@@ -58,8 +62,38 @@ async def test_failed_terminal_is_reported_without_backend_detail():
         model="model", instance_id="node", artifact_sha256="b" * 64,
         artifact_size=1, runner=failed)
     assert report["passed"] is False
+    assert report["transport_passed"] is False
+    assert report["content_conformant"] is False
     assert {case["error_code"] for case in report["cases"]} == {"backend_error"}
     assert "private backend error" not in json.dumps(report)
+
+
+@pytest.mark.asyncio
+async def test_nonempty_wrong_content_is_transport_success_not_conformance():
+    async def wrong(_prompt, **kwargs):
+        callback = kwargs.get("stream_cb")
+        if callback:
+            await callback("WRONG")
+        kwargs["meta_out"].update({"eval_count": 1})
+        return "WRONG"
+
+    report = await validate_ollama_provider(
+        model="model", instance_id="node", artifact_sha256="b" * 64,
+        artifact_size=1, runner=wrong)
+    assert report["transport_passed"] is True
+    assert report["content_conformant"] is False
+    assert report["passed"] is False
+    assert all(case["transport_passed"] and not case["content_conformant"]
+               for case in report["cases"])
+    assert "WRONG" not in json.dumps(report)
+
+
+@pytest.mark.parametrize("expected", ["", None, "x" * 16_385])
+def test_expected_content_must_be_bounded(expected):
+    with pytest.raises(ValueError, match="expected output"):
+        asyncio.run(validate_ollama_provider(
+            model="model", instance_id="node", artifact_sha256="b" * 64,
+            artifact_size=1, runner=Runner(), expected_output=expected))
 
 
 @pytest.mark.parametrize('mode', ['direct', 'controller_broker'])
@@ -115,4 +149,6 @@ async def test_timeout_reaps_runner_and_stops_additional_cases():
     assert not report["passed"]
     assert len(report["cases"]) == len(calls) == 1
     assert report["cases"][0]["error_code"] == "case_timeout"
+    assert report["transport_passed"] is False
+    assert report["content_conformant"] is False
     assert reaped.is_set()
