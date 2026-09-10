@@ -73,6 +73,8 @@ tr.clk:hover td{background:var(--bg2)}
 .modal-bg.on{display:flex}
 .modal{background:var(--bg1);border:1px solid var(--border2);border-radius:var(--radius-lg);width:760px;max-width:94vw;max-height:88vh;overflow:auto;padding:16px}
 .mono{font-family:var(--mono);font-size:10px}
+.eid{color:inherit;text-decoration:none;border-bottom:1px dotted var(--dim2);cursor:pointer}
+.eid:hover{color:var(--acc);border-bottom-color:var(--acc)}
 pre{white-space:pre-wrap;background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:8px;font-size:10px;overflow-x:auto}
 .toast{position:fixed;bottom:14px;left:14px;background:var(--bg2);border:1px solid var(--border2);border-left:3px solid var(--acc);border-radius:6px;padding:8px 12px;font-size:10.5px;z-index:950;box-shadow:0 6px 20px rgba(0,0,0,.45)}
 details>summary{cursor:pointer;font-size:10.5px;color:var(--acc);font-family:var(--mono)}
@@ -1055,6 +1057,8 @@ function nav(sec){
     logs:()=>nav('sandbox'),
     sources:loadSources,sandbox:()=>{loadSandbox();loadLogs()},activity:loadAudit,settings:fillSettings,errors:loadErrors}[sec];
   if(f)f();
+  // The address bar says which page is open (a deep link says more).
+  try{const cur=(location.hash||'').replace(/^#/,'');if(cur.split('?')[0]!==sec)history.replaceState(null,'',location.pathname+location.search+'#'+sec)}catch(_){}
   // Elements on the page just opened refresh now: they poll only while on
   // screen (offsetParent), so the first fresh read is this, not the next tick.
   document.querySelectorAll('#sec-'+sec+' *').forEach(el=>{
@@ -1313,7 +1317,7 @@ async function refreshTestRuns(){
   if(!$('test-runs'))return;
   const rr=await api('/evolve/runs?limit=12');const runs=(rr&&rr.runs)||[];
   $('test-runs').innerHTML=runs.length?('<table><tr><th>time</th><th>task</th><th>where</th><th>combined</th></tr>'
-    +runs.map(x=>'<tr class="clk" onclick="openRun(\''+esc(x.run_id)+'\')"><td class="mono">'+esc((x.ts||'').slice(11,19))+'</td><td>'+esc(x.task)+'</td><td>'+(x.where==='sandbox'?'🛡':'')+esc(x.where||'')+'</td><td>'+scChip(x.combined)+'</td></tr>').join('')+'</table>'):'<div class="empty">No runs yet.</div>';
+    +runs.map(x=>'<tr class="clk" onclick="openRun(\''+esc(x.run_id)+'\')"><td class="mono">'+eid('run',x.run_id,esc((x.ts||'').slice(11,19)))+'</td><td>'+eid('task',x.task)+'</td><td>'+(x.where==='sandbox'?'🛡':'')+esc(x.where||'')+'</td><td>'+scChip(x.combined)+'</td></tr>').join('')+'</table>'):'<div class="empty">No runs yet.</div>';
 }
 // The Test section's OWN agent-loop element (avoids the duplicate #evolve-alo id
 // which also lives in Watch — getElementById would return the wrong one).
@@ -1826,7 +1830,7 @@ async function loadAll(){
   // Work is the home — but this init awaits slow config/targets, so only land on
   // Work if the user hasn't already switched tabs DURING the load (else we'd yank
   // them off the tab they opened). _curSec() reads the active nav button.
-  if(_curSec()==='work')nav('work');
+  if(!routeHash()&&_curSec()==='work')nav('work');
   pollSuite();       // reflect any in-flight suite immediately
 }
 
@@ -2005,7 +2009,7 @@ async function loadBoardTab(){
     h+='<div style="min-width:210px;max-width:240px;flex:0 0 auto"><div style="font-size:11px;font-weight:600;border-bottom:2px solid '+c+';padding-bottom:3px;margin-bottom:6px">'+esc(lane)+' <span class="hint">'+its.length+'</span></div>';
     for(const it of its){
       const labels=(it.labels||[]).map(l=>'<span class="tag" style="font-size:9px">'+esc(l)+'</span>').join(' ');
-      const meta=[it.repo?('⊟ '+esc(it.repo)):'',it.project?('▸ '+esc(it.project)):'',it.agent?('@'+esc(it.agent)):''].filter(Boolean).join('  ');
+      const meta=[it.repo?('⊟ '+esc(it.repo)):'',it.project?('▸ '+esc(it.project)):'',it.agent?('@'+esc(it.agent)):'',it.branch?('⎇ '+eid('branch',it.branch,esc(String(it.branch).slice(0,30)))):'',it.pipeline?('⌸ '+eid('pipeline',it.pipeline)):''].filter(Boolean).join('  ');
       const moves=_LANES.map(l=>'<option value="'+l+'"'+(l===it.lane?' selected':'')+'>'+l+'</option>').join('');
       const canDispatch=(lane==='ready'||lane==='inbox');
       h+='<div style="background:var(--bg2);border-radius:6px;padding:6px;margin-bottom:6px;border-left:3px solid '+c+'">'
@@ -2737,7 +2741,7 @@ function _cenRow(s){
   const isLive=live&&(hz.live||(_cenLiveData&&_cenLiveData.active));
   const open=!!_cenOpen[s.run_id];
   const excl=s.excluded?(' <span class="tag" title="'+esc(s.exclude_reason||'not usable history')+' — excluded from the trend">'+(s.partial?'partial':'not usable')+'</span>'):'';
-  const name=live?('<span style="color:'+(isLive?'#3cb371':'#8a8a8a')+'">●</span> current'+(hz.template?(' <span class="hint">→ '+esc(hz.template)+' run</span>'):'')):esc(s.run_id);
+  const name=live?('<span style="color:'+(isLive?'#3cb371':'#8a8a8a')+'">●</span> current'+(hz.template?(' <span class="hint">→ '+esc(hz.template)+' run</span>'):'')):eid('census',s.run_id);
   return '<tr class="clk cen-run" data-run="'+esc(s.run_id)+'" onclick="toggleCensusRun(\''+esc(s.run_id)+'\')">'
     +'<td class="mono">'+(open?'▾':'▸')+' '+name+excl+(s.reruns?(' <span class="tag" title="goals re-run after a pause or interruption">↻'+s.reruns+'</span>'):'')+'</td>'
     +'<td class="mono hint">'+esc(s.template||(live&&hz.template)||'unlabelled')+'</td>'
@@ -2901,7 +2905,7 @@ async function loadCensusGoals(run){
     const hit=(g.wall_s||0)>=cap(g)-30&&st!=='done';
     const cyc=Object.values(g.cycles_per_step||{}).reduce((a,b)=>a+(+b||0),0);
     return '<tr class="clk" onclick="event.stopPropagation();openCensusGoal(\''+esc(run)+'\',\''+esc(g.id)+'\')">'
-      +'<td class="mono"><span class="clk" title="this task through time — every run of it, from every driver" onclick="event.stopPropagation();openTaskHistory(_thTaskIdFor(\''+esc(run)+'\',\''+esc(g.id)+'\'))">⌁</span> '+esc(g.id)+(g.reruns&&g.reruns.length?(' <span class="tag" title="'+esc(g.reruns.map(x=>x.why).join('; '))+'">↻'+g.reruns.length+'</span>'):'')+'</td>'
+      +'<td class="mono"><span class="clk" title="this task through time — every run of it, from every driver" onclick="event.stopPropagation();openTaskHistory(_thTaskIdFor(\''+esc(run)+'\',\''+esc(g.id)+'\'))">⌁</span> '+eid('census',run,esc(g.id),{goal:g.id})+(g.session_id?(' '+eid('loop',g.session_id,'<span class="hint">'+esc(String(g.session_id).slice(0,8))+'</span>',{goal:g.id},'the agent loop of this goal')):'')+(g.reruns&&g.reruns.length?(' <span class="tag" title="'+esc(g.reruns.map(x=>x.why).join('; '))+'">↻'+g.reruns.length+'</span>'):'')+'</td>'
       +'<td>'+_cenStatus(st)+'</td>'
       +'<td>'+_cenCode(g.code_summary)+'</td>'
       +'<td class="mono"'+(hit?' style="color:#c9a35a" title="hit the '+Math.round(cap(g)/60)+'m cap"':'')+'>'+_cenSec(g.wall_s)+'<span class="hint">/'+_cenSec(cap(g))+'</span></td>'
@@ -3192,13 +3196,13 @@ function _wkPct(v){return (v===null||v===undefined)?'<span class="hint">—</spa
    score · pass · wall · model/critic · — · — · — · source. */
 function _wkRow(d){
   const open=!!_cenOpen[d.id];
-  const name='<span class="mono">'+(open?'▾':'▸')+' '+_wkKindTag(d.kind)+' '+esc(d.id)+'</span>'+(d.status==='running'?' <span style="color:#3cb371">●</span>':'')+(d.excluded?' <span class="tag">'+esc(d.excluded)+'</span>':'');
+  const name='<span class="mono">'+(open?'▾':'▸')+' '+_wkKindTag(d.kind)+' '+eid(d.kind==='improve'?'session':(d.kind==='census'?'census':d.kind),d.id)+'</span>'+(d.status==='running'?' <span style="color:#3cb371">●</span>':'')+(d.excluded?' <span class="tag">'+esc(d.excluded)+'</span>':'');
   const st=(d.status==='error'||d.status==='failed')?'<span style="color:#c96b6b">'+esc(d.status)+'</span>':(d.status==='running'?'<span style="color:#3cb371">running</span>':esc(d.status||''));
   const model=d.kind==='improve'?('critic '+esc(d.critic||'?')+' · editor '+esc(d.editor||'?')+(d.best_variant?(' · best '+esc(d.best_variant)):'')):(d.variant?('variant '+esc(d.variant)):(d.critic?('critic '+esc(d.critic)):(d.where?esc(d.where):'')));
   const wall=d.wall_total_s!=null?_cenSec(d.wall_total_s):'—';
   return '<tr class="clk cen-run" data-run="'+esc(d.id)+'" onclick="toggleWorkDriver(\''+esc(d.kind)+'\',\''+esc(d.id)+'\')">'
     +'<td>'+name+'</td>'
-    +'<td class="mono hint">'+esc(d.tag||d.profile||d.task||'')+'</td>'
+    +'<td class="mono hint">'+(d.task?eid('task',d.task):esc(d.tag||d.profile||''))+'</td>'
     +'<td class="hint">—</td>'
     +'<td class="mono hint">'+_cenWhen(d.ended_at)+'</td>'
     +'<td>'+(d.kind==='improve'?esc(d.rounds||''):d.tasks_n)+'</td>'
@@ -3305,7 +3309,7 @@ function renderWorkTasks(){
     const trend=(st.trend_ok_rate==null)?'—':('<span style="color:'+(st.trend_ok_rate>0?'#3cb371':(st.trend_ok_rate<0?'#c96b6b':'inherit'))+'">'+(st.trend_ok_rate>0?'+':'')+Math.round(st.trend_ok_rate*100)+'%</span>')
       +(st.streak&&st.streak.n>1?(' <span class="hint" title="the newest results in a row">'+esc(st.streak.kind)+'×'+st.streak.n+'</span>'):'');
     h+='<tr class="clk wk-task" data-task="'+esc(t.task_id)+'" onclick="toggleWorkTask(\''+esc(t.task_id)+'\')">'
-      +'<td><span class="mono">'+(open?'▾':'▸')+'</span> <b>'+esc(t.task_id)+'</b>'+(t.registered===false?' <span class="tag" title="results exist but the task is no longer in the store">unregistered</span>':'')+(t.enabled===false?' <span class="tag" style="color:var(--dim)">off</span>':'')+(t.overrides&&t.overrides.model?' <span class="tag" title="model override">'+esc(t.overrides.model)+'</span>':'')+'<div class="hint">'+esc(t.label||'')+'</div></td>'
+      +'<td><span class="mono">'+(open?'▾':'▸')+'</span> '+eid('task',t.task_id,'<b>'+esc(t.task_id)+'</b>')+(t.registered===false?' <span class="tag" title="results exist but the task is no longer in the store">unregistered</span>':'')+(t.enabled===false?' <span class="tag" style="color:var(--dim)">off</span>':'')+(t.overrides&&t.overrides.model?' <span class="tag" title="model override">'+esc(t.overrides.model)+'</span>':'')+'<div class="hint">'+esc(t.label||'')+'</div></td>'
       +'<td>'+(t.template?'<span class="mono">'+esc(t.template)+'</span> ':'')+((t.tags||[]).filter(x=>x!=='census'&&x!=='census-'+t.template).map(x=>'<span class="tag">'+esc(x)+'</span>').join(' '))+'</td>'
       +'<td><span class="tag">'+esc(t.type||'loop')+'</span></td>'
       +'<td class="mono">'+esc(t.type==='cap'?(t.cap||''):(t.profile||''))+'</td>'
@@ -3344,7 +3348,8 @@ async function loadWorkTaskDetail(id){
   if(!rows.length){el.innerHTML=out+'<div class="empty">No results yet.</div>';return}
   out+='<table><tr><th>when</th><th>driver</th><th>status</th><th>wall</th><th>checks</th><th>code</th><th>coder</th></tr>'
     +rows.map(r=>{const drv=r.driver||{};const onclick=r.source==='census'?'openCensusGoal(\''+esc(drv.id||'')+'\',\''+esc(r.goal||'')+'\')':'openRun(\''+esc(r.run_id||'')+'\')';
-      return '<tr class="clk" onclick="event.stopPropagation();'+onclick+'"><td class="mono hint">'+esc(String(r.ts||'').slice(0,16).replace('T',' '))+'</td><td>'+_wkKindTag(drv.kind||r.source)+' <span class="mono">'+esc(drv.id||'')+'</span></td>'
+      const dk=drv.kind==='improve'?'session':(drv.kind==='census'?'census':(drv.kind==='suite'?'suite':'run'));
+      return '<tr class="clk" onclick="event.stopPropagation();'+onclick+'"><td class="mono hint">'+esc(String(r.ts||'').slice(0,16).replace('T',' '))+'</td><td>'+_wkKindTag(drv.kind||r.source)+' <span class="mono">'+eid(dk,drv.id,null,dk==='census'?{goal:r.goal}:null)+'</span>'+(r.session?(' '+eid('loop',r.session,'<span class="hint">⟳</span>',{goal:r.goal},'the agent loop of this result')):'')+'</td>'
         +'<td>'+_cenStatus(r.status)+(r.reruns?(' <span class="tag" title="re-run after a pause or interruption">↻'+r.reruns+'</span>'):'')+'</td><td class="mono">'+_cenSec(r.wall_s)+(r.hit_cap?' <span class="hint">cap</span>':'')+'</td>'
         +'<td class="mono">'+(r.checks_n?((r.checks_ok||0)+'/'+r.checks_n):'—')+'</td><td class="mono hint">'+(r.code?esc((r.code.sha_short||'').slice(0,7)+'@'+(r.code.branch||'?'))+(r.code.changed?' ⚠':''):'—')+'</td>'
         +'<td class="hint">'+esc((r.routing&&r.routing.coder)||'')+((r.routing&&r.routing.spill_calls)?' <span style="color:#c96b6b" title="CPU spill">⚠</span>':'')+'</td></tr>';}).join('')
@@ -3530,6 +3535,104 @@ function _cenDashInfo(r,cap){
   return goals+elapsed+stepsT+cnt+routing+quality;
 }
 
+/* ═══ CROSS-PAGE IDS — one record per entity, wherever its id appears ═══════
+   Flattening slice 4 (shared-planning/loop-lab-flattening/PLAN.md §3): every
+   id in Loop Lab is a link that opens the SAME record modal wherever it
+   appears, and a deep link that survives a copy — #<page>?<kind>=<id>. The
+   kinds and their records: */
+const ENTITY={
+  task:    {label:'task',                open:(id)=>openTaskHistory(id),                                   page:'work'},
+  census:  {label:'census run',          open:(id,x)=>(x&&x.goal)?openCensusGoal(id,x.goal):openCensusRun(id), page:'work'},
+  run:     {label:'run',                 open:(id)=>openRun(id),                                           page:'work'},
+  suite:   {label:'suite',               open:(id)=>openSuite(id),                                         page:'work'},
+  session: {label:'improvement session', open:(id)=>openSession(id),                                       page:'work'},
+  loop:    {label:'agent loop',          open:(id,x)=>openCensusLiveLoop(id,(x&&x.goal)||''),              page:'work'},
+  pipeline:{label:'pipeline',            open:(id)=>openPipe(id),                                          page:'pipelines'},
+  branch:  {label:'branch',              open:(id)=>openBranch(id),                                        page:'pipelines'},
+  item:    {label:'board item',          open:(id)=>openBoardItem(id),                                     page:'board'},
+  chat:    {label:'chat session',        open:(id)=>openSessionChat(id),                                   page:'csessions'},
+  commit:  {label:'commit',              open:(id)=>crossLinkToDispatch(id),                               page:'pipelines'},
+};
+function entityHref(kind,id,extra){
+  const q=new URLSearchParams();q.set(kind,String(id));
+  Object.keys(extra||{}).forEach(k=>{if(extra[k]!=null&&extra[k]!=='')q.set(k,String(extra[k]))});
+  return '#'+((ENTITY[kind]||{}).page||'work')+'?'+q.toString();
+}
+/* Open an entity's record and put its deep link in the address bar, so what
+   is on screen can be copied and sent. */
+function openEntity(kind,id,extra){
+  const e=ENTITY[kind];
+  if(!e||!id){toast('no record for '+kind);return}
+  try{history.replaceState(null,'',location.pathname+location.search+entityHref(kind,id,extra))}catch(_){}
+  return e.open(String(id),extra||{});
+}
+/* An id as a link. `label` is HTML (already escaped by the caller) or absent
+   for the id itself; `extra` rides in the href and in the click. */
+function eid(kind,id,label,extra,title){
+  if(id==null||id==='')return label||'';
+  const x=extra&&Object.keys(extra).length?JSON.stringify(extra):'';
+  return '<a class="eid" href="'+esc(entityHref(kind,id,extra))+'" data-kind="'+esc(kind)+'" data-id="'+esc(String(id))+'"'
+    +(x?(' data-extra="'+esc(x)+'"'):'')+' title="'+esc(title||(((ENTITY[kind]||{}).label||kind)+' '+id))+'">'
+    +(label==null?esc(String(id)):label)+'</a>';
+}
+document.addEventListener('click',e=>{
+  const a=e.target&&e.target.closest?e.target.closest('a.eid'):null;
+  if(!a)return;
+  e.preventDefault();e.stopPropagation();
+  let extra={};try{extra=a.dataset.extra?JSON.parse(a.dataset.extra):{}}catch(_){}
+  openEntity(a.dataset.kind,a.dataset.id,extra);
+},true);
+/* #<page>?<kind>=<id>: land on the page, open the record. Pages the Work
+   page absorbed still route (nav() aliases them). */
+function routeHash(){
+  const h=(location.hash||'').replace(/^#/,'');
+  if(!h)return false;
+  const i=h.indexOf('?');
+  const page=i<0?h:h.slice(0,i), q=new URLSearchParams(i<0?'':h.slice(i+1));
+  if(page)nav(page);   // always: the page's loader must run (replaceState never re-enters here)
+  for(const kind of Object.keys(ENTITY)){
+    const id=q.get(kind);
+    if(!id)continue;
+    const extra={};q.forEach((v,k)=>{if(k!==kind)extra[k]=v});
+    setTimeout(()=>{try{ENTITY[kind].open(id,extra)}catch(err){toast('could not open '+kind+' '+id)}},150);
+    return true;
+  }
+  return false;
+}
+window.addEventListener('hashchange',routeHash);
+/* A suite's record: its scoreboard, every row a link to the run and the task. */
+async function openSuite(id){
+  const tok=openModalLoading('Suite',id);
+  const r=await api('/evolve/suites?limit='+60);
+  const s=((r&&r.suites)||[]).find(x=>String(x.suite_id)===String(id));
+  if(!s){modalFail(tok,'no suite '+id+' in the store (the store keeps the last 60; a census run has its archive)');return}
+  const rows=(s.results||[]).map(x=>'<tr><td>'+eid('task',x.task)+'</td><td><span class="tag">'+esc(x.type||'loop')+'</span></td>'
+    +'<td class="mono">'+esc(x.checks||'')+'</td><td>'+scChip(x.score)+'</td><td>'+scChip(x.combined)+'</td><td class="mono">'+(x.elapsed_s||0)+'s</td>'
+    +'<td class="mono">'+(x.run_id?eid('run',x.run_id,esc(String(x.run_id).slice(0,10))):'')+'</td><td class="hint">'+esc((x.error||'').slice(0,60))+'</td></tr>').join('');
+  modalFill(tok,'<div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:6px"><span class="pill">avg '+scChip(s.avg_combined)+'</span><span class="pill">pass '+Math.round((s.pass_rate||0)*100)+'%</span>'
+    +'<span class="pill">'+(s.tasks_n||0)+' tasks</span>'+(s.tag?'<span class="tag">'+esc(s.tag)+'</span>':'')+(s.critic?'<span class="hint">critic '+esc(s.critic)+'</span>':'')
+    +(s.source==='census'?(' '+eid('census',s.census_run||s.suite_id,'census record →')):'')
+    +'<span class="hint mono">'+esc((s.ts||'').slice(0,19))+'</span></div>'
+    +'<table><tr><th>task</th><th>type</th><th>checks</th><th>score</th><th>combined</th><th>time</th><th>run</th><th>error</th></tr>'+rows+'</table>');
+}
+/* A branch's record: its pipelines newest first, its sandbox, and the way in. */
+async function openBranch(name){
+  const tok=openModalLoading('Branch',name);
+  const [pr,sr]=await Promise.all([api('/evolve/pipeline/list?limit=100').catch(()=>null),api('/evolve/sandbox/list').catch(()=>null)]);
+  const ps=((pr&&pr.pipelines)||[]).filter(p=>p.branch===name);
+  const sb=((sr&&sr.sandboxes)||[]).find(x=>x.branch===name);
+  const rows=ps.map(p=>'<tr><td class="mono">'+eid('pipeline',p.id)+(p.live?' <span class="spin"></span>':'')+'</td><td><span class="tag">'+esc(p.kind||'')+'</span>'+(p.adopted?' <span class="tag">adopted</span>':'')+'</td>'
+    +'<td>'+esc(p.status||'')+'</td><td>'+(p.gate_passed==null?'':(p.gate_passed?'<span style="color:var(--ok)">PASS</span>':'<span style="color:var(--err)">FAIL</span>'))+'</td>'
+    +'<td>'+pipeDecision(p.decision)+'</td><td class="hint mono">'+esc((p.created_at||'').slice(0,16))+'</td></tr>').join('');
+  modalFill(tok,'<div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:6px">'
+    +(sb?('<span class="pill" title="'+esc(sb.name||'')+'">sandbox '+(sb.running?'<span style="color:var(--ok)">up</span>':(sb.paused?'paused':'down'))+(sb.port?(' · :'+sb.port):'')+'</span>'
+        +'<button class="btn sm" onclick="closeModal();nav(\'sandbox\')">sandbox page</button>')
+        :'<span class="hint">no sandbox for this branch</span> <button class="btn sm" onclick="openBranchSandbox(\''+esc(name)+'\')" title="bring up a dev container for it">bring one up</button>')
+    +'<span class="hint">'+ps.length+' pipeline'+(ps.length===1?'':'s')+'</span><span style="flex:1"></span>'
+    +'<button class="btn sm" onclick="closeModal();nav(\'pipelines\')">CI / CD</button></div>'
+    +(rows?('<table><tr><th>pipeline</th><th>kind</th><th>status</th><th>gate</th><th>decision</th><th>when</th></tr>'+rows+'</table>'):'<div class="empty">No pipeline has run on this branch.</div>'));
+}
+
 /* ═══ ONE TASK THROUGH TIME ═════════════════════════════════════════════════
    A census goal is a task; a task is one runnable test. Its results used to
    live in two stores (the census archive, the suite's run records) and no
@@ -3563,7 +3666,7 @@ async function openTaskHistory(taskId){
     const cap=x.wall_cap_s;
     return '<tr class="clk" onclick="'+open+'">'
       +'<td class="mono hint">'+esc(String(x.ts||'').slice(0,16).replace('T',' '))+'</td>'
-      +'<td><span class="tag" title="'+esc(x.source)+'">'+esc(d.kind||x.source)+'</span> <span class="mono">'+esc(String(d.id||'').slice(0,18))+'</span></td>'
+      +'<td><span class="tag" title="'+esc(x.source)+'">'+esc(d.kind||x.source)+'</span> <span class="mono">'+eid(d.kind==='improve'?'session':(d.kind==='census'?'census':(d.kind==='suite'?'suite':'run')),d.id,esc(String(d.id||'').slice(0,18)),d.kind==='census'?{goal:x.goal}:null)+'</span>'+(x.session?(' '+eid('loop',x.session,'<span class="hint">⟳</span>',{goal:x.goal},'the agent loop of this result')):'')+'</td>'
       +'<td>'+_cenStatus(x.status)+(x.reruns?(' <span class="tag" title="re-run after a pause or interruption">↻'+x.reruns+'</span>'):'')+'</td>'
       +'<td class="mono"'+(x.hit_cap?' style="color:#c9a35a"':'')+'>'+_cenSec(x.wall_s)+(cap?('<span class="hint">/'+_cenSec(cap)+'</span>'):'')+'</td>'
       +'<td class="mono">'+(x.checks_n?(x.checks_ok+'/'+x.checks_n):'—')+'</td>'
@@ -3616,13 +3719,13 @@ async function loadCSessions(){
   let h='<table style="width:100%;border-collapse:collapse;font-size:12px"><tr style="text-align:left;color:var(--muted)"><th>state</th><th>session</th><th>turns</th><th>idle</th><th>claims</th><th>pipelines</th><th>why</th><th>act</th></tr>';
   for(const s of rows){
     const c=_CSESS_COLOR[s.state]||'#666';
-    const claims=(s.claims||[]).map(x=>esc((x.title||x.id||'').slice(0,28))).join(', ')||'—';
-    const pipes=(s.pipelines||[]).map(p=>esc((p.branch||p.id||'')+' ('+(p.decision||'?')+')')).join(', ')||'—';
+    const claims=(s.claims||[]).map(x=>eid('item',x.id,esc((x.title||x.id||'').slice(0,28)))).join(', ')||'—';
+    const pipes=(s.pipelines||[]).map(p=>(p.branch?eid('branch',p.branch,esc(String(p.branch).slice(0,28))):eid('pipeline',p.id,esc(p.id||'')))+' ('+esc(p.decision||'?')+')').join(', ')||'—';
     h+='<tr style="border-top:1px solid var(--border)">'
       +'<td style="white-space:nowrap"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+c+';margin-right:5px"></span>'+esc(s.state)+(s.action&&s.action!=='none'?' <span class="hint">→'+esc(s.action)+'</span>':'')+'</td>'
       +'<td style="cursor:pointer;max-width:230px" onclick="openSessionChat(\''+esc(s.claude_session_id)+'\')" title="open chat · '+esc(s.claude_session_id)+'">'
         +'<div style="font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(s.title||('session '+(s.claude_session_id||'').slice(0,8)))+'</div>'
-        +'<div class="hint mono" style="font-size:8.5px">'+esc((s.claude_session_id||'').slice(0,8))+(s.project_dir?(' · '+esc((s.project_dir||'').replace(/\/+$/,'').split('/').pop())):'')+'</div></td>'
+        +'<div class="hint mono" style="font-size:8.5px">'+eid('chat',s.claude_session_id,esc((s.claude_session_id||'').slice(0,8)))+(s.project_dir?(' · '+esc((s.project_dir||'').replace(/\/+$/,'').split('/').pop())):'')+'</div></td>'
       +'<td>'+(s.turns||0)+'</td>'
       +'<td>'+_csessAge(s.age_s)+'</td>'
       +'<td>'+claims+'</td>'
@@ -4165,7 +4268,7 @@ async function loadRuns(){ workOnChange(); if(typeof refreshTestRuns==='function
 async function openRun(id){const r=await api('/evolve/run/get?run_id='+encodeURIComponent(id));if(r&&r.run)openRunDetail(r.run);else toast('run not found')}
 function openRunDetail(d){
   const a=d.assessment||{};
-  let h='<div class="card-h"><span class="card-t">'+esc(d.task)+'</span><span class="hint">'+esc(d.run_id)+' · '+(d.elapsed_s||0)+'s</span></div>'
+  let h='<div class="card-h"><span class="card-t">'+eid('task',d.task,esc(d.task))+'</span><span class="hint">'+esc(d.run_id)+' · '+(d.elapsed_s||0)+'s'+(d.loop_session?(' · '+eid('loop',d.loop_session,'loop '+esc(String(d.loop_session).slice(0,8)),{goal:d.goal_id})):'')+'</span></div>'
     +'<div class="row" style="margin-bottom:8px">'+scChip(d.combined)+' <span class="hint">combined</span>'
     +(d.score!=null?(' '+scChip(d.score)+' <span class="hint">critic</span>'):'')
     +' <span class="pill">checks '+esc(d.checks_ok)+'/'+esc(d.checks_n)+'</span>'
@@ -4182,7 +4285,7 @@ function openRunDetail(d){
       +'<span class="pill">'+esc(d.status||'')+(d.wall_cap_s?' · cap '+esc(d.wall_cap_s)+'s':'')+(d.reruns?' · '+esc(d.reruns)+' rerun(s)':'')+'</span>'
       +(c.sha_short?'<span class="pill mono" title="the code prod ran this goal on'+(c.changed?' (it changed during the goal)':'')+'">'+esc(c.sha_short)+'@'+esc(c.branch||'?')+(c.changed?' ⚠':'')+'</span>':'')
       +(ro.coder?'<span class="pill" title="coder model; '+esc(String(ro.spill_calls||0))+' spilled call(s), '+esc(String(ro.reroutes||0))+' re-route(s)">coder '+esc(ro.coder)+(ro.spill_calls?' ⚠spill':'')+'</span>':'')
-      +'<a href="#" onclick="event.preventDefault();openCensusGoal(\''+esc(d.census_run||d.session||'')+'\',\''+esc(d.goal_id||d.label||'')+'\')" title="the census record: loop replay, outputs, routing">census record →</a>'
+      +eid('census',d.census_run||d.session||'','census record →',{goal:d.goal_id||d.label||''},'the census record: loop replay, outputs, routing')
       +' <a href="#" onclick="event.preventDefault();openTaskHistory(\''+esc(d.task)+'\')" title="this task through time">⌁ task history</a></div>';
   }
   h+='<label class="fld">goal</label><pre>'+esc(d.goal||'')+'</pre>';
@@ -4267,7 +4370,7 @@ async function openSession(id){
   if(s.error)h+='<div class="pill" style="color:var(--err);margin-bottom:8px">'+esc(s.error)+'</div>';
   h+='<div class="row" style="margin-bottom:8px"><span class="pill">best '+scChip(s.best_score)+' '+esc(s.best_variant||'')+'</span> <span class="pill">target '+esc(s.target_score)+'</span> <span class="pill">round '+(s.rounds_done||0)+'/'+(s.max_rounds||'?')+'</span></div>';
   h+='<table><tr><th>round</th><th>variant</th><th>avg</th><th>tasks</th></tr>';
-  for(const rd of s.rounds||[])h+='<tr><td class="mono">'+rd.round+'</td><td class="mono">'+esc(rd.variant||'base')+'</td><td>'+scChip(rd.avg)+'</td><td class="mono">'+(rd.results||[]).map(x=>esc(x.task)+' '+(x.combined!=null?(+x.combined).toFixed(1):'—')).join(', ')+'</td></tr>';
+  for(const rd of s.rounds||[])h+='<tr><td class="mono">'+rd.round+'</td><td class="mono">'+esc(rd.variant||'base')+'</td><td>'+scChip(rd.avg)+'</td><td class="mono">'+(rd.results||[]).map(x=>(x.run_id?eid('run',x.run_id,eid('task',x.task)):eid('task',x.task))+' '+(x.combined!=null?(+x.combined).toFixed(1):'—')).join(', ')+'</td></tr>';
   h+='</table>';
   if(s.best_variant)h+='<div class="row" style="margin-top:10px"><button class="btn primary" onclick="promoteVar(\''+esc(s.profile)+'\',\''+esc(s.best_variant)+'\')">Promote best → overlay</button><button class="btn" onclick="ciVariant(\''+esc(s.profile)+'\',\''+esc(s.best_variant)+'\')">Promote via CI (gated)</button></div>';
   const cs=s.code_suggestions||[];
@@ -4333,12 +4436,13 @@ async function loadPipelines(){
   loadGitLog();
   const r=await api('/evolve/pipeline/list?limit=30');const ps=(r&&r.pipelines)||[];
   if(!ps.length){$('pipes-body').innerHTML='<div class="empty">No pipelines yet.</div>';return}
-  let h='<table><tr><th>id</th><th>repo</th><th>kind</th><th>profile</th><th>status</th><th>controller</th><th>base→cand</th><th>gate</th><th>decision</th><th></th></tr>';
+  let h='<table><tr><th>id</th><th>branch</th><th>repo</th><th>kind</th><th>profile</th><th>status</th><th>controller</th><th>base→cand</th><th>gate</th><th>decision</th><th></th></tr>';
   for(const p of ps){
     const gate=p.gate_passed==null?'':(p.gate_passed
       ?'<span style="color:var(--ok)">PASS'+(p.gate_delta!=null?' '+(p.gate_delta>0?'+':'')+p.gate_delta:'')+'</span>'
       :'<span style="color:var(--err)">FAIL'+(p.gate_delta!=null?' '+p.gate_delta:'')+'</span>');
-    h+='<tr class="clk" onclick="openPipe(\''+esc(p.id)+'\')"><td class="mono">'+esc(p.id)+(p.live?' <span class="spin"></span>':'')+'</td>'
+    h+='<tr class="clk" onclick="openPipe(\''+esc(p.id)+'\')"><td class="mono">'+eid('pipeline',p.id)+(p.live?' <span class="spin"></span>':'')+'</td>'
+      +'<td class="mono">'+(p.branch?eid('branch',p.branch,esc(String(p.branch).slice(0,40))):'')+'</td>'
       +'<td><span class="tag">'+esc(p.repo||'vera')+'</span></td>'
       +'<td><span class="tag">'+esc(p.kind)+'</span>'+(p.adopted?' <span class="tag" style="background:var(--acc3);color:#111" title="hand-authored branch adopted into CI/CD (edits made directly in a worktree, not dispatched to the edit queue)">adopted</span>':'')+'</td><td>'+esc(p.profile)+'</td>'
       +'<td>'+esc(p.status||'')+'</td>'
