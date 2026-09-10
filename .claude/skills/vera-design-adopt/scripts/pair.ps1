@@ -9,6 +9,7 @@ $g.Clear([System.Drawing.Color]::FromArgb(14, 15, 18))
 $font = New-Object System.Drawing.Font('Segoe UI', 11); $br = [System.Drawing.Brushes]::Gainsboro
 $g.DrawString($LeftLabel, $font, $br, 4, 4); $g.DrawString($RightLabel, $font, $br, ($a.Width + 28), 4)
 $g.DrawImage($a, 0, 28, $a.Width, $a.Height); $g.DrawImage($b, ($a.Width + 24), 28, $b.Width, $b.Height)
-$bmp.Save((Join-Path (Split-Path -Parent (Resolve-Path (Split-Path -Parent $Out))) (Split-Path -Leaf $Out)), [System.Drawing.Imaging.ImageFormat]::Png)
+$outDir = Split-Path -Parent $Out; if ($outDir -and -not (Test-Path $outDir)) { New-Item -ItemType Directory -Force -Path $outDir | Out-Null }
+$bmp.Save((Join-Path (Resolve-Path (if ($outDir) { $outDir } else { '.' })) (Split-Path -Leaf $Out)), [System.Drawing.Imaging.ImageFormat]::Png)
 $g.Dispose(); $bmp.Dispose(); $a.Dispose(); $b.Dispose()
 Write-Output ("pair → " + $Out)
