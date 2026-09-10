@@ -139,15 +139,27 @@ def active_view(active: Dict[str, Any], *, now: Optional[float] = None) -> Dict[
     return a
 
 
-def restart_plan(active: Dict[str, Any], resume: bool) -> Dict[str, Any]:
-    """What a restart should write, given what the harness says it is doing.
+def restart_plan(active: Dict[str, Any], resume: bool,
+                 control: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """What a restart should write, given what the harness says it is doing
+    and what is on the control file already.
 
     Nothing to pause when no census is live: writing a pause anyway would leave
     a stale pause on file that the NEXT census would obey on its first poll.
+    Nothing to write either when a PERSON has paused the census: a paused
+    harness still reads as live, and a restart's pause (which lifts itself on
+    startup) would replace theirs - the census would resume the moment the
+    process came back, on a GPU they had asked for (2026-09-10).
     """
     v = active_view(active)
     if not v.get("live"):
         return {"action": "none", "why": "no live census", "active": v}
+    c = control or {}
+    if resume and c.get("pause") and not c.get("resume_on_start") and not c.get("drop"):
+        # Only the restart's own pause is displaced. A caller who asked NOT to
+        # resume (a drop) still gets the drop: that is an explicit choice.
+        return {"action": "none", "why": "paused by a person (%s); their pause is kept" % (c.get("by") or "?"),
+                "active": v, "kept": dict(c)}
     if resume:
         return {"action": "pause", "why": "census in flight; will resume after restart",
                 "active": v}

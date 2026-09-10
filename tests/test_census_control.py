@@ -78,6 +78,29 @@ def test_restart_plan_pauses_only_a_live_census():
     assert ct.restart_plan(stale, resume=True)["action"] == "none"
 
 
+def test_a_restart_keeps_a_persons_pause():
+    """A paused harness still reads as live, and a restart's own pause lifts
+    itself on startup: it must not replace a pause a person wrote, or the
+    census resumes on a GPU they asked for (2026-09-10 21:27Z)."""
+    paused = {"state": "paused", "updated_at": _ts(-10), "goals_total": 4, "goals_done": 3}
+    theirs = ct.make_control("pause", reason="user needs the GPU", by="claude")
+    plan = ct.restart_plan(paused, resume=True, control=theirs)
+    assert plan["action"] == "none" and "kept" in plan and "claude" in plan["why"]
+    assert not ct.should_lift_on_start(theirs), "and startup leaves it alone"
+    # A restart's own earlier pause is not a person's: a second restart may write again.
+    ours = ct.make_control("pause", reason=ct.RESTART_REASON, by="sys.dev.restart", resume_on_start=True)
+    assert ct.restart_plan(paused, resume=True, control=ours)["action"] == "pause"
+    # A running harness with no control on file: unchanged.
+    live = {"state": "running", "updated_at": _ts(-10), "goals_total": 4, "goals_done": 1}
+    assert ct.restart_plan(live, resume=True, control={})["action"] == "pause"
+    assert ct.restart_plan(live, resume=True)["action"] == "pause"
+    # A drop on file is not a pause to keep.
+    dropped = ct.make_control("drop", reason="x", by="someone")
+    assert ct.restart_plan(live, resume=False, control=dropped)["action"] == "drop"
+    # A caller who asked not to resume still drops: their pause does not shield the census from an explicit drop.
+    assert ct.restart_plan(paused, resume=False, control=theirs)["action"] == "drop"
+
+
 # ── routing on rows ──────────────────────────────────────────────────────────
 ROW = {
     "id": "build-simple-code", "status": "done", "wall_s": 427.0,
