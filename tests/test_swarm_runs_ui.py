@@ -21,11 +21,14 @@ line saying so it reads as redundant with Suite.
 import os
 import re
 import shutil
+import sys
 import subprocess
 
 import pytest
 
 pytestmark = pytest.mark.critical
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 PANEL = os.path.join(os.path.dirname(__file__), "..", "vera", "evolve", "evolve_panel.html")
 
@@ -42,28 +45,22 @@ def _fn(src, name):
 
 
 # ── the swarm can actually show a session ───────────────────────────────────
-def _live_sess_filter(src):
-    """Just the expression that decides which sessions the card shows.
-
-    Scoped deliberately: asserting `age_s` appears anywhere in loadSwarm passed
-    against the BROKEN version too, because the function already rendered
-    `_csessAge(s.age_s)` in a row. A test that passes before the fix guards
-    nothing.
-    """
-    i = src.index("const liveSess=")
-    return src[i:src.index(";", src.index("filter(", i))]
-
-
+# Since flattening slice 6 the Swarm is the Agents page: its session list is
+# the table (rows from evolve.agents.rows; recency is decided server-side in
+# agents_core - test_agents_core pins it) and its counts are the strip above.
+# The same things must still be true.
 def test_an_untracked_session_is_not_excluded(src):
     """`untracked` means no board claim — not "not running". Excluding it
-    emptied the list on an instance where all 90 sessions are untracked."""
-    f = _live_sess_filter(src)
-    assert "age_s" in f, "the FILTER still tests state alone"
+    emptied the list on an instance where all 90 sessions are untracked. The
+    page shows every session and says so; the strip counts the recent ones."""
+    assert "untracked" in src[src.index('id="sec-agents"'):src.index("\n</div>\n", src.index('id="sec-agents"'))]
+    assert "'active agent sessions'" in _fn(src, "renderAgentsHead")
 
 
-def test_recency_decides_what_counts_as_active(src):
-    assert "stalled_after_s" in _fn(src, "loadSwarm")
-    assert "_stale" in _live_sess_filter(src)
+def test_recency_decides_what_counts_as_active():
+    from vera.evolve import agents_core as ac
+    fresh = ac.session_rows([{"claude_session_id": "f", "state": "untracked", "age_s": 60.0}], [], [], [], recent_s=2700)
+    assert fresh[0]["state"] == "recent" and ac.swarm_counts(fresh, [], [], [])["sessions_active"] == 1
 
 
 def test_the_swarm_asks_for_more_than_forty_sessions(src):
@@ -72,32 +69,32 @@ def test_the_swarm_asks_for_more_than_forty_sessions(src):
 
 def test_each_session_row_names_its_agent(src):
     """"whose session is this" was the question the card could not answer."""
-    body = _fn(src, "loadSwarm")
-    assert "s.agent" in body
-    assert "codex" in body
+    body = _fn(src, "_agRow")
+    assert "_agAgent(r.agent)" in body
+    assert "codex" in src[src.index("const _AG_AGENT="):src.index("const _AG_AGENT=") + 200]
 
 
 def test_the_section_is_no_longer_claude_only_by_name(src):
-    assert "Active agent sessions" in src
+    assert "active agent sessions" in src
     assert "Active Claude sessions" not in src
 
 
-# ── the swarm's follow cannot die ───────────────────────────────────────────
+# ── the page's follow cannot die ────────────────────────────────────────────
 def test_the_swarm_timer_is_rearmed_in_a_finally(src):
-    body = _fn(src, "swarmPoll")
-    assert "finally" in body and "_swArm()" in body
+    body = _fn(src, "agentsPoll")
+    assert "finally" in body and "_agArm()" in body
 
 
 def test_the_swarm_render_no_longer_arms_its_own_timer(src):
-    assert "setTimeout(loadSwarm" not in src
+    assert "setTimeout(loadAgents" not in src and "setTimeout(loadSwarm" not in src
 
 
 def test_swarm_ticks_do_not_stack(src):
-    assert "_swBusy" in _fn(src, "swarmPoll")
+    assert "_agBusy" in _fn(src, "agentsPoll")
 
 
 def test_navigating_to_swarm_starts_the_poller(src):
-    assert "swarm:swarmPoll" in src
+    assert "agents:agentsPoll" in src and "swarm:()=>nav('agents')" in src
 
 
 # ── runs says what it is, and can be sifted ─────────────────────────────────
