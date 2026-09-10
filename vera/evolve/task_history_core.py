@@ -292,6 +292,20 @@ def archive_marks(run_ids: Iterable[str], marker_of: Callable[[str], str]) -> Di
     return out
 
 
+_RUN_NUM_RE = re.compile(r"run(\d+)", re.I)
+
+
+def order_key(r: Dict[str, Any]) -> tuple:
+    """Chronological order for results. Time first; on a tie (rows written
+    before rows carried a time all take their archive's end time, and the
+    backfilled archives of one day share it) the census run NUMBER decides -
+    the one honest ordering signal the archive names carry; the run id last,
+    for a stable order."""
+    drv = str((r.get("driver") or {}).get("id") or "")
+    m = _RUN_NUM_RE.search(drv)
+    return (r.get("ts") or "", int(m.group(1)) if m else 0, r.get("run_id") or "")
+
+
 def task_history(results: Sequence[Dict[str, Any]], task_id: str) -> Dict[str, Any]:
     """One task's results, newest first, with the stats a dashboard shows.
 
@@ -301,7 +315,7 @@ def task_history(results: Sequence[Dict[str, Any]], task_id: str) -> Dict[str, A
     rules). A number that mixes them would be measuring two instruments.
     """
     rows = [r for r in results if r.get("task_id") == task_id]
-    rows.sort(key=lambda r: (r.get("ts") or "", r.get("run_id") or ""), reverse=True)
+    rows.sort(key=order_key, reverse=True)
     return {
         "task_id": task_id,
         "results": rows,
@@ -320,7 +334,7 @@ def tasks_overview(results: Sequence[Dict[str, Any]], *, task_ids: Optional[Iter
     ids = list(task_ids) if task_ids is not None else sorted(by)
     out = []
     for tid in ids:
-        rows = sorted(by.get(tid, []), key=lambda r: (r.get("ts") or "", r.get("run_id") or ""), reverse=True)
+        rows = sorted(by.get(tid, []), key=order_key, reverse=True)
         st = _stats(rows)
         last = rows[0] if rows else None
         out.append({"task_id": tid, "runs": len(rows), "stats": st,

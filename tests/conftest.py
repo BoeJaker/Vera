@@ -70,6 +70,7 @@ _CRITICAL_MODULES = {
     "test_result_ingest_core",  # a census goal is a run record; the archive row still wins (2026-09-10)
     "test_result_ingest_boot",  # evolve.result.ingest must load, store, and read back through every view (2026-09-10)
     "test_census_results_ingest_ui",  # the Runs view shows a census goal as what it is (2026-09-10)
+    "test_census_ingest_timestamps",  # a row without a time takes its archive's END time; old rows stay out of the run list (2026-09-10)
     "test_census_template_store",  # a dropped goal must lose its task (2026-09-07)
     "test_unittest_history",  # green on fewer tests is not a pass (2026-09-07)
     "test_race_to_green_ui",  # the strip must show a race, not one cell per pipeline (2026-09-07)
