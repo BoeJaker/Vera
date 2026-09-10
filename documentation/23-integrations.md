@@ -209,6 +209,16 @@ Telegram, Calendar, commerce, generic API/MCP connectors, provisioning, and
 other external-effect adapters; those existing paths are not silently treated
 as migrated until they enforce and retain corresponding receipts.
 
+Completed adapters can record each attempt in the durable, out-of-tree
+`ExternalEffectReceiptLedger`. Attempt identities are hashed; response evidence
+is accepted only as a SHA-256 digest; provider receipt references are hashed;
+and request/response payloads are never accepted. Re-observing the same attempt
+is idempotent, while different evidence for that attempt fails as a conflict.
+`integration.effect.replay.status` validates the complete plan and reports
+`do_not_repeat` after any matching successful receipt. The inspection surface
+cannot execute or retry an operation, and there is intentionally no general
+capability that lets an untrusted caller manufacture completion receipts.
+
 ---
 
 ## 8. Common threads

@@ -64,6 +64,7 @@ from Vera.vera.integrations.source_build_plan import (
     plan_source_build as _plan_source_build,
 )
 from Vera.vera.integrations.external_effects import plan_external_effect as _plan_external_effect
+from Vera.vera.integrations.effect_receipts import default_external_effect_receipt_ledger
 
 try:
     from Vera.vera.security import secrets as vsecrets
@@ -858,6 +859,26 @@ async def integration_effect_plan(connection_id: str = "", operation: str = "",
 
 
 @capability(
+    "integration.effect.replay.status", http_method="POST",
+    http_path="/integrations/effect/replay/status",
+    http_tags=["integration", "policy"], memory="off", silent=True,
+    description="Inspect durable replay evidence for one previously generated "
+                "external-effect plan without performing or retrying it. Input: plan "
+                "(the complete vera.external-effect-plan/v1 object). Returns whether "
+                "a matching successful receipt already exists; payloads and raw opaque "
+                "references are never stored or returned.",
+)
+async def integration_effect_replay_status(plan: Optional[Dict] = None, trace_id=None):
+    try:
+        return default_external_effect_receipt_ledger().replay_status(plan or {})
+    except (TypeError, ValueError) as exc:
+        return {"schema": "vera.external-effect-replay-status/v1",
+                "error": str(exc), "already_succeeded": False,
+                "decision": "invalid_plan", "executes": False,
+                "retries": False, "retains_payload": False}
+
+
+@capability(
     "integration.source.lifecycle", http_method="GET",
     http_path="/integrations/source/lifecycle", http_tags=["integration", "intake"],
     memory="off", silent=True,
@@ -971,7 +992,7 @@ register_ui(
         "integration.source.lifecycle", "integration.source.inspect",
         "integration.source.transition.plan",
         "integration.source.build.status", "integration.source.build.plan",
-        "integration.effect.plan",
+        "integration.effect.plan", "integration.effect.replay.status",
         # the one-click "register & secure everything" button drives autoenroll
         "autoenroll.scan", "autoenroll.run", "autoenroll.pending",
     ],

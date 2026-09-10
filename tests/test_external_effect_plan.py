@@ -3,6 +3,9 @@ import pytest
 from Vera.vera.integrations.external_effects import plan_external_effect
 
 
+pytestmark = pytest.mark.critical
+
+
 def test_read_plan_is_admissible_without_write_authority():
     plan = plan_external_effect(
         connection_id="integration:weather", operation="forecast.read", method="GET")
