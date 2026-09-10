@@ -7,6 +7,7 @@ resolves elsewhere. A pure test cannot see an import-time NameError; this can.
 import asyncio
 import json
 import os
+import time
 
 import pytest
 
@@ -72,3 +73,32 @@ def test_pause_resume_drop_round_trip(tmp_path, monkeypatch):
     assert run(CC.cap_census_control())["state"] == "drop"
     # Bad action is refused, not written.
     assert run(CC.cap_census_control_set(action="halt"))["ok"] is False
+
+
+def test_the_restart_waits_for_the_harness_to_acknowledge(tmp_path, monkeypatch):
+    """Found live 2026-09-10: the re-exec came 1.5s after the pause was written
+    and the new process lifted it 9s later, inside the harness's poll, so the
+    harness never saw the pause and sat on a loop the restart had killed."""
+    import inspect
+    monkeypatch.setattr(CC, "CENSUS_DIR", tmp_path)
+    (tmp_path / "census.active.json").write_text(json.dumps({
+        "state": "running", "updated_at": CC._ctl._now_iso(),
+        "goals_total": 4, "goals_done": 1, "current_goal": "g2", "template": "t"}))
+    plan = run(CC.census_before_restart(True))
+    assert plan["action"] == "pause" and plan["wrote"] and plan["written_at"]
+    assert plan["ack_wait_max_s"] == CC._ctl.PAUSE_ACK_MAX_S
+    # the harness says nothing: the wait is bounded and says so
+    t0 = time.time()
+    out = run(CC.census_wait_acked(plan, max_wait_s=1.5))
+    assert out["acked"] is False and out["why"] == "timeout" and 1.0 <= time.time() - t0 < 5
+    # the harness parks itself: acknowledged
+    (tmp_path / "census.active.json").write_text(json.dumps({
+        "state": "paused", "updated_at": CC._ctl._now_iso(), "current_goal": "g2"}))
+    out = run(CC.census_wait_acked(plan, max_wait_s=5))
+    assert out["acked"] is True and out["waited_s"] < 3
+    # nothing written (no live census) -> nothing to wait for
+    assert run(CC.census_wait_acked({"action": "none"}))["acked"] is False
+    # and sys.dev.restart hands exactly this wait to the re-exec as its gate
+    src = inspect.getsource(ORCH.cap_sys_dev_restart)
+    assert "census_wait_acked" in src and "gate=_gate" in src
+    assert "gate" in inspect.signature(ORCH._do_restart).parameters
