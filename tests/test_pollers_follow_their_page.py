@@ -82,7 +82,8 @@ def test_the_element_rides_the_pages_bus_instead_of_its_own_socket(name):
     assert src.count("new WebSocket(") == 1, "only the shared fallback opens a socket"
     assert "this._unsubEvents = veraSharedEvents(this._getBase(), ev =>" in src
     assert "this._unsubEvents && this._unsubEvents(); this._unsubEvents = null;" in src, "disconnect unsubscribes"
-    assert "typeof window._veraSubscribe === 'function'" in src, "the page's own bus first"
+    assert "if (typeof window._veraSubscribe === 'function') { const off = window._veraSubscribe(fn);" in src, "the page's own bus first, unconditionally"
+    assert "__veraEventsBusOwner" not in src, "found live: a guard on this flag kept every element off the bus (6 sockets, all 403)"
 
 
 def test_the_panel_declares_its_bus_before_the_elements_load():

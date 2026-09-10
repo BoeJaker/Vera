@@ -34,7 +34,7 @@
      unsubscribe function. */
   function veraSharedEvents(base, fn) {
     try {
-      if (typeof window._veraSubscribe === 'function' && !window.__veraEventsBusOwner) { window._veraSubscribe(fn); return () => {}; }
+      if (typeof window._veraSubscribe === 'function') { const off = window._veraSubscribe(fn); return typeof off === 'function' ? off : () => {}; }
       const par = window.parent;
       if (par && par !== window && typeof par._veraSubscribe === 'function') { par._veraSubscribe(fn); return () => {}; }
     } catch (_) {}
