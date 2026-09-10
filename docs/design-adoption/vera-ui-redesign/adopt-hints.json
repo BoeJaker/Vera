@@ -1,0 +1,45 @@
+{
+  "_": "Pins for adopt-map.mjs that the token matching cannot know. targets = estate files (matched by basename/stem) the board lands on; also = files outside the estate index it touches (python, new modules); lands:'reference' = a spec/audit/storyboard that lands nowhere by itself; retire = part keys the user has agreed to drop (none yet); parts = per-part pins keyed '<board>#<part key>'.",
+  "boards": {
+    "Canvas.dc.html":        { "targets": ["vera/chat/chat_panel.html", "vera/chat/vera-panel-bridge.js", "vera/vera_graph.js"], "also": ["vera/chat/chat_panel.py"] },
+    "Graph.dc.html":         { "targets": ["vera/chat/chat_panel.html", "vera/vera_graph.js", "vera/fabric/memory_graph_panel.html"] },
+    "GraphViews.dc.html":    { "targets": ["vera/vera_graph.js", "vera/fabric/memory_graph_panel.html", "vera/vera_graph_panel_discover.js"] },
+    "Harness.dc.html":       { "targets": ["vera/capability_orchestration.html", "vera/chat/vera-dashboard.js", "vera/chat/vera-panel-bridge.js"] },
+    "Ops.dc.html":           { "targets": ["vera/topology_map_element.js", "vera/execution/netmap_panel.html", "vera/monitor/system_monitor_panel.html"], "also": ["vera/nodes/nodes_capabilities.py"] },
+    "Settings.dc.html":      { "targets": ["vera/chat/chat_panel.html", "vera/vera-ui.js"], "also": ["vera/theme_defs.py"] },
+    "StylePacks.dc.html":    { "targets": ["vera/vera-ui.js", "vera/chat/chat_panel.html"], "also": ["vera/theme_defs.py"] },
+    "Coverage.dc.html":      { "lands": "reference" },
+    "QC.dc.html":            { "lands": "reference" },
+    "JoinedUp.dc.html":      { "lands": "reference" },
+    "Arrivals.dc.html":      { "lands": "reference" },
+    "WidgetSpec.dc.html":    { "lands": "reference", "also": ["vera/widgets/widget_record.py (new)", "vera/widgets/widget_registry.py (new)"] },
+    "Widgets.dc.html":       { "targets": ["vera/chat/vera-dashboard.js", "vera/sparkline_element.js", "vera/capability_orchestration.html"], "also": ["vera/widgets/ (new: the 66 still forms as <vera-widget>)"] },
+    "WidgetsMotion.dc.html": { "targets": ["vera/chat/vera-dashboard.js", "vera/activity_timeline_element.js", "vera/loop_graph_element.js"] },
+    "WidgetsIso.dc.html":    { "targets": ["vera/topology_map_element.js", "vera/chat/vera-dashboard.js"], "also": ["vera/static/iso.js (new: the shared ISO library)"] },
+    "WidgetConfig.dc.html":  { "targets": ["vera/chat/vera-dashboard.js", "vera/ui builder/ui_builder_panel.html"] },
+    "WidgetRegistry.dc.html":{ "targets": ["vera/chat/vera-dashboard.js", "vera/registry/registry_panel.html"], "also": ["vera/widgets/widget_registry.py (new: widget.template.*)"] },
+    "WidgetAdoption.dc.html":{ "targets": ["vera/chat/vera-dashboard.js", "vera/capability_orchestration.html", "vera/workers/workers_ollama_panel.html"] },
+    "Sizes.dc.html":         { "targets": ["vera/chat/vera-dashboard.js"] },
+    "Formats.dc.html":       { "targets": ["vera/chat/chat_panel.html", "vera/vera_markdown_element.js", "vera/render/vera_mermaid.js"] },
+    "Globes.dc.html":        { "targets": ["vera/worldview/worldview_panel.html", "vera/vera_graph_panel_worldview.js"] },
+    "Dashboard.dc.html":     { "targets": ["vera/chat/vera-dashboard.js", "vera/capability_orchestration.html"] },
+    "Driven.dc.html":        { "targets": ["vera/chat/chat_panel.html", "vera/chat/vera-panel-bridge.js"], "also": ["vera/ui/directives.py (new)"] },
+    "Control.dc.html":       { "targets": ["vera/chat/vera-panel-bridge.js", "vera/chat/chat_panel.html"], "also": ["vera/ui/directives.py (new: the 20-directive vocabulary + dispatcher)", "vera/ui/scripts.py (new: ui.script.* on·if·do)"] }
+  },
+  "parts": {
+    "Canvas.dc.html#rows": { "verdict": "replaces", "target": "vera/chat/chat_panel.html", "element": ".rpane (the rows of every rail pane)" },
+    "Canvas.dc.html#cta":  { "verdict": "replaces", "target": "vera/chat/chat_panel.html", "element": ".rpane .btn (each pane's action button)" }
+  },
+  "synonyms": {},
+  "order": ["adoption-helpers", "m1a-tokens-packs", "m1b-tiers-blocks", "lhm-library", "widget-record-registry", "control-plane", "chat-modes", "canvas-graph", "m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8", "rest"],
+  "slices": {
+    "adoption-helpers":       { "title": "Design-adoption helpers in the vera-design-adopt skill (estate index · design index · map · slices · state · pair diff), registered in Vera's registry", "boards": [], "targets": [".claude/skills/vera-design-adopt/", "docs/design-adoption/"], "done": ["the six helpers run against this canvas and the estate", "outputs committed under docs/design-adoption/<canvas>/", "registry entry skill:vera-design-adopt lists them"], "verify": { "design": "", "live": "/registry/entry?id=skill:vera-design-adopt" } },
+    "m1a-tokens-packs":       { "title": "M1a — style packs, density tiers, the data-viz ramp; the appearance runtime (theme_defs.py, vera-ui.js)", "boards": ["StylePacks.dc.html", "Settings.dc.html"], "done": ["style packs + tiers + ramp in theme_defs.py", "the appearance runtime (setAppearance) in vera-ui.js"], "verify": { "design": "StylePacks.dc.html", "live": "/chat" } },
+    "m1b-tiers-blocks":       { "title": "M1b — the three density tiers and Blocks in the chat (data-den · data-blocks), appearance controls in the top bar", "boards": ["Main.dc.html"], "done": ["chat_panel.html carries the tier and blocks CSS + the appearance controls", "tests/test_chat_panel_appearance.py passes", "design-vs-live pair kept under Notes/adopt-shots/m1b"], "verify": { "design": "Main.dc.html", "live": "/chat?den=full" } },
+    "lhm-library":            { "title": "The LHM library and the one panel set — quick menus as widgets (rail · header · list · CTA), the absorbed menu in the harness, Open now rows", "boards": ["ChatMenu.dc.html", "Harness.dc.html"], "done": ["one LHM implementation serves the chat and the harness (absorb + in-place ☰)", "ui.panels.open lists every open panel from any origin; panel.dispatch/query/state work for all", "pair for the chat menu and the harness LHM"], "verify": { "design": "ChatMenu.dc.html", "live": "/chat" } },
+    "widget-record-registry": { "title": "The widget record and the registry — every LHM part a widget (WYSIWYG edit, records), widget.template.* caps, placement pickers", "boards": ["WidgetRegistry.dc.html", "WidgetConfig.dc.html", "WidgetAdoption.dc.html", "Widgets.dc.html", "Dashboard.dc.html"], "done": ["widget.template.list/get/save/instantiate/delete land as capabilities", "the registry board's list · record · Place into work against them", "edit mode outlines and records on the chat LHM"], "verify": { "design": "WidgetRegistry.dc.html", "live": "/ui/panel/widget_registry" } },
+    "control-plane":          { "title": "The control plane — the directive vocabulary, one dispatcher, DIRECT and SCRIPTED paths (ui.script.* on·if·do), the room manifest, policy and undo", "boards": ["Control.dc.html", "Driven.dc.html"], "done": ["vera/ui/directives.py + vera/ui/scripts.py registered; the chat's panel bridge routes through the dispatcher", "a traced minute reproduces the board's trace", "what the model sees matches the manifest on the board"], "verify": { "design": "Control.dc.html", "live": "/ui/control" } },
+    "chat-modes":             { "title": "Chat modes — voice · council · diffuse strips, paste exchange, tools sheet", "boards": ["Paste.dc.html", "Formats.dc.html"], "done": ["the three mode strips and their states in chat_panel.html", "paste exchange with attachment chips and the editor", "pair for each mode"], "verify": { "design": "Canvas.dc.html", "live": "/chat" } },
+    "canvas-graph":           { "title": "The tri-page canvas and the unified graph — one board embedded everywhere; galaxy · iso · flow · time; typed merged runs graph→chat", "boards": ["Canvas.dc.html", "Ultrawide.dc.html", "Graph.dc.html", "GraphViews.dc.html"], "done": ["the chat's canvas column and graph column follow the board's geometry", "the four graph views with fixed lanes", "typed merged runs from the graph to the chat"], "verify": { "design": "Canvas.dc.html", "live": "/chat?pages=chat,graph" } }
+  }
+}
