@@ -19,7 +19,20 @@
 #  Deliberate, reviewed history rewrite you are doing BY HAND, on purpose:
 #       VERA_ALLOW_FORCE_PUSH=1 git push …
 # ─────────────────────────────────────────────────────────────────────────────
+# The protected list lives in ONE place — tools/hooks/protected-branches (the
+# mainlines plus every registered bleeding edge; vera/evolve/edge_registry.py is
+# kept in step by a unit test). The literal pair is only the fallback when the
+# file is missing.
 protected="refs/heads/main refs/heads/bleeding-edge"
+list_file="$(dirname "$0")/protected-branches"
+if [ -f "$list_file" ]; then
+    protected=""
+    while IFS= read -r name || [ -n "$name" ]; do
+        name="${name%%#*}"
+        name="$(printf '%s' "$name" | tr -d '[:space:]')"
+        [ -n "$name" ] && protected="$protected refs/heads/$name"
+    done < "$list_file"
+fi
 zero="0000000000000000000000000000000000000000"
 status=0
 

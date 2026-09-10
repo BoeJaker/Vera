@@ -69,29 +69,33 @@ def protected_mainline_names(mainline: str) -> set:
     return names
 
 
-def main_merge_refusal(to: str, mainline: str, authorize: str) -> str:
+def main_merge_refusal(to: str, mainline: str, authorize: str,
+                       edge_name: str = "bleeding-edge") -> str:
     """Pure guard for evolve.pipeline.adopt/promote. Returns a non-empty refusal
     message when `to` targets the protected mainline WITHOUT the explicit
     authorization sentinel, else '' (the merge is allowed to proceed).
 
-      to='bleeding-edge' / any feature branch          -> ''            (allowed)
-      to='main'/'master'/<mainline>, blank/wrong auth   -> loud refusal  (blocked)
-      to='main' + authorize==MAIN_MERGE_SENTINEL        -> ''            (deliberate, allowed)
+      to='bleeding-edge' / any edge / any feature branch -> ''           (allowed)
+      to='main'/'master'/<mainline>, blank/wrong auth    -> loud refusal (blocked)
+      to='main' + authorize==MAIN_MERGE_SENTINEL         -> ''           (deliberate, allowed)
 
     The sentinel must be passed per-call and deliberately; it is never a default,
     so a habitual or fat-fingered to='main' is refused, not silently honoured.
-    Case- and whitespace-insensitive on the target name."""
+    Case- and whitespace-insensitive on the target name. `edge_name` is the
+    integration branch the refusal points the caller back to (a registered
+    bleeding edge; the default edge unless the caller works on another)."""
     target = (to or "").strip().lower()
     if target not in protected_mainline_names(mainline):
         return ""
     if (authorize or "").strip() == MAIN_MERGE_SENTINEL:
         return ""
+    edge = (edge_name or "").strip() or "bleeding-edge"
     return (
         f"REFUSED: '{to}' is the protected mainline. ALL new code lands on "
-        f"'bleeding-edge'; main advances ONLY on the user's explicit, unambiguous "
-        f"go-ahead, via evolve.bleeding_edge.promote_to_main - never a per-feature "
-        f"adopt/promote to main. If you genuinely have that go-ahead, re-call with "
-        f"authorize_main='{MAIN_MERGE_SENTINEL}'. "
+        f"'{edge}' (a bleeding edge); main advances ONLY on the user's explicit, "
+        f"unambiguous go-ahead, via evolve.bleeding_edge.promote_to_main - never a "
+        f"per-feature adopt/promote to main. If you genuinely have that go-ahead, "
+        f"re-call with authorize_main='{MAIN_MERGE_SENTINEL}'. "
         f"(HARD RULE / M3.6 - documentation/specs/consolidated-route-forward.md)"
     )
 
@@ -131,26 +135,30 @@ def worktree_is_severed(git_status_stderr: str) -> bool:
 
 
 def release_preflight(main_sha: str, bleeding_edge_sha: str,
-                      main_is_ancestor: bool, bleeding_edge_is_ancestor: bool) -> dict:
-    """Choose the only history-preserving bleeding-edge release action.
+                      main_is_ancestor: bool, bleeding_edge_is_ancestor: bool,
+                      edge_name: str = "bleeding-edge") -> dict:
+    """Choose the only history-preserving release action for an edge.
 
     A release may be a no-op or a fast-forward. It must never manufacture a
     main-only merge commit, and it must never guess how to combine diverged
-    histories. Divergence is reconciled into bleeding-edge through a normal,
-    reviewed pipeline before this release is retried.
+    histories. Divergence is reconciled into the edge through a normal, reviewed
+    pipeline before this release is retried. `edge_name` names the edge being
+    released (the default edge unless the caller works on another) so the
+    refusal tells the operator which trunk to reconcile.
     """
+    edge = (edge_name or "").strip() or "bleeding-edge"
     if main_sha and main_sha == bleeding_edge_sha:
         return {"ok": True, "action": "already-up-to-date", "error": ""}
     if main_is_ancestor:
         return {"ok": True, "action": "fast-forward", "error": ""}
-    reason = ("main is ahead of bleeding-edge" if bleeding_edge_is_ancestor
-              else "main and bleeding-edge have diverged")
+    reason = (f"main is ahead of {edge}" if bleeding_edge_is_ancestor
+              else f"main and {edge} have diverged")
     return {
         "ok": False,
         "action": "refuse",
         "error": (
             f"REFUSED: {reason}. Preserve all changes by reconciling main into "
-            "bleeding-edge through an isolated reviewed pipeline, then retry the "
+            f"{edge} through an isolated reviewed pipeline, then retry the "
             "fast-forward-only release."
         ),
     }

@@ -1,0 +1,7 @@
+# Branches the git hooks protect (pre-push refuses force-pushes and deletions).
+# One name per line. Kept in agreement with vera/evolve/edge_registry.py by
+# tests/test_edge_registry.py: the mainlines plus every registered bleeding edge.
+main
+master
+bleeding-edge
+bleeding-edge-design
