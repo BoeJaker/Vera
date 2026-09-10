@@ -97,6 +97,8 @@ def test_a_restart_keeps_a_persons_pause():
     # A drop on file is not a pause to keep.
     dropped = ct.make_control("drop", reason="x", by="someone")
     assert ct.restart_plan(live, resume=False, control=dropped)["action"] == "drop"
+    # A caller who asked not to resume still drops: their pause does not shield the census from an explicit drop.
+    assert ct.restart_plan(paused, resume=False, control=theirs)["action"] == "drop"
 
 
 # ── routing on rows ──────────────────────────────────────────────────────────

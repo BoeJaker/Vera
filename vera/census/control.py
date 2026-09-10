@@ -155,7 +155,9 @@ def restart_plan(active: Dict[str, Any], resume: bool,
     if not v.get("live"):
         return {"action": "none", "why": "no live census", "active": v}
     c = control or {}
-    if c.get("pause") and not c.get("resume_on_start") and not c.get("drop"):
+    if resume and c.get("pause") and not c.get("resume_on_start") and not c.get("drop"):
+        # Only the restart's own pause is displaced. A caller who asked NOT to
+        # resume (a drop) still gets the drop: that is an explicit choice.
         return {"action": "none", "why": "paused by a person (%s); their pause is kept" % (c.get("by") or "?"),
                 "active": v, "kept": dict(c)}
     if resume:
