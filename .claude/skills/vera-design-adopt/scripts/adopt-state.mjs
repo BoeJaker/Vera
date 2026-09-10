@@ -56,8 +56,8 @@ else if (cmd === 'push'){
   md.push('', 'Helpers (the vera-design-adopt skill): estate.mjs (the estate index) · design-index.mjs (the canvas as data) · adopt-map.mjs (design ↔ estate, verdicts) · slices.mjs (the plan) · adopt-state.mjs (this state, pushed here) · pairdiff.mjs (numeric design-vs-live diff).');
   const entry = { id:'technique:design-adoption-' + st.slug, kind:'technique', name:'design-adoption · ' + st.canvas, version:'1.' + st.log.length,
     summary:'Where the "' + st.canvas + '" canvas is on its way into Vera: ' + st.slices.length + ' slices onto ' + st.edge + ' — ' + STATUS.filter((k) => c[k]).map((k) => c[k] + ' ' + k).join(', ') + '.',
-    body:md.filter((l) => l !== undefined).join('\n'), source:{ origin:'claude_code', path:flags.path || 'docs/design-adoption/' + st.slug + '/adopt-state.json', repo:flags.repo || '', commit:flags.commit || '' },
-    owner:{ agent:'claude-code', session:flags.session || '' }, interop:{ cap:'registry.get', mcp_tool:'', protocol:'vera.design-adoption-state/v1' },
+    body:md.filter((l) => l !== undefined).join('\n'), source:{ origin:'claude-code', path:flags.path || 'docs/design-adoption/' + st.slug + '/adopt-state.json', repo:flags.repo || 'vera', commit:flags.commit || '' },
+    owner:{ agent:'claude_code', session:flags.session || '' }, interop:{ cap:'registry.get', mcp_tool:'', protocol:'vera.design-adoption-state/v1' },
     tags:['design-adoption', 'ui-redesign', st.slug, st.edge], applies_to:[...new Set(st.slices.flatMap((s) => s.targets))].filter((t) => !/\(new/.test(t)).slice(0, 60),
     helpers:[{ name:'adopt-state.mjs', purpose:'show / set / push this state', path:'.claude/skills/vera-design-adopt/scripts/adopt-state.mjs' }] };
   const post = async (body) => { const r = await fetch(base + '/registry/upsert', { method:'POST', headers:{ 'content-type':'application/json' }, body:JSON.stringify(body) }); const j = await r.json().catch(() => ({ ok:false, error:'non-json ' + r.status })); return j; };
@@ -67,7 +67,7 @@ else if (cmd === 'push'){
     const sk = fs.readFileSync(path.join(String(flags.skill), 'SKILL.md'), 'utf8');
     const helpers = [...sk.matchAll(/^\|\s*`([^`]+)`((?:\s*`[^`]+`)*)\s*\|\s*([^|]+?)\s*\|$/gm)].flatMap((m) => [m[1]].concat([...m[2].matchAll(/`([^`]+)`/g)].map((x) => x[1])).map((n) => ({ name:n, purpose:m[3].replace(/\s+/g, ' ').trim().slice(0, 200), path:'.claude/skills/vera-design-adopt/scripts/' + n })));
     const skillEntry = { id:'skill:vera-design-adopt', kind:'skill', name:'vera-design-adopt', body:sk.slice(0, 12000), summary:(sk.match(/^description:\s*(.+)$/m) || [])[1] || undefined,
-      source:{ origin:'claude_code', path:'.claude/skills/vera-design-adopt/SKILL.md', repo:flags.repo || '', commit:flags.commit || '' }, helpers, tags:['design-adoption', 'ui-redesign', 'skill'] };
+      source:{ origin:'claude-code', path:'.claude/skills/vera-design-adopt/SKILL.md', repo:flags.repo || 'vera', commit:flags.commit || '' }, owner:{ agent:'claude_code', session:flags.session || '' }, helpers, tags:['design-adoption', 'ui-redesign', 'skill'] };
     const r2 = await post({ entry:skillEntry, force:!!flags.force });
     console.log('skill ' + skillEntry.id + ': ' + (r2.ok ? (r2.created ? 'created' : 'updated') + ' · ' + helpers.length + ' helpers' : 'REFUSED ' + JSON.stringify(r2.problems || r2.error || r2)));
   }
