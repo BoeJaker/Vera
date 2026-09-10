@@ -354,17 +354,36 @@ async def _is_stale(r, sid: str, run: Dict[str, Any]) -> bool:
         return True
 
 
-async def _running_loop() -> Dict[str, Any]:
+async def _running_loop(named_sid: str = "") -> Dict[str, Any]:
     """The loop session GENUINELY running, if any.
 
     /workshop/agent_loop/sessions is a plain route rather than a capability, so
     this reads the same Redis keys it does — including the same durable-history
     index with the resume index as fallback — instead of reaching over HTTP to
     our own process.
+
+    `named_sid` is the session the harness says it is running (census.active
+    .json). While the harness is live that name is the fact: the loop's own
+    staleness rule hesitates during a long generation (no event for a while),
+    and on 2026-09-10 that blink read as "no goal in flight" to a helper that
+    then restarted prod mid-goal and cost a 17-minute run. A named session
+    that still says running is returned without the staleness test.
     """
     r = _redis()
     if not r:
         return {}
+    if named_sid:
+        try:
+            raw_run = await r.hgetall(_RUN_KEY % named_sid)
+            if not raw_run:
+                raw_run = await r.hgetall("vera:loop:history:run:%s" % named_sid)
+            run = {_rd(k): _rd(v) for k, v in (raw_run or {}).items()}
+            if run and run.get("status") == "running":
+                run["session_id"] = named_sid
+                run["named_by_harness"] = True
+                return run
+        except Exception as e:
+            log.info("census.live: the harness's session %s unreadable: %s", named_sid[:12], e)
     sids: List[Any] = []
     try:
         sids = await r.zrevrange("vera:loop:history:index", 0, 40) or []
@@ -422,7 +441,7 @@ async def cap_census_live(trace_id=None) -> Dict[str, Any]:
     goal_ids = list(harness.get("goal_ids") or []) if harness.get("live") else []
     if not goal_ids:
         goal_ids = await asyncio.to_thread(_goal_ids_sync)
-    run = await _running_loop()
+    run = await _running_loop(str(harness.get("session_id") or "") if harness.get("live") else "")
 
     counters: Dict[str, Any] = {}
     steps: List[Dict[str, Any]] = []

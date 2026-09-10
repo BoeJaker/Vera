@@ -102,3 +102,32 @@ def test_the_restart_waits_for_the_harness_to_acknowledge(tmp_path, monkeypatch)
     src = inspect.getsource(ORCH.cap_sys_dev_restart)
     assert "census_wait_acked" in src and "gate=_gate" in src
     assert "gate" in inspect.signature(ORCH._do_restart).parameters
+
+
+def test_the_harness_named_session_outranks_the_loops_staleness_rule(monkeypatch):
+    """census.live's `active` blinked to None mid-goal: the loop's staleness rule
+    hesitates during a long generation, and a helper read that blink as a gap
+    between goals and restarted prod (2026-09-10 21:18Z, a 17-minute goal lost).
+    While the harness is live it names the session it is running; a named
+    session that still says running is the goal in flight, staleness or not."""
+    class _R:
+        def __init__(self, runs):
+            self.runs = runs
+        async def hgetall(self, key):
+            sid = key.rsplit(":", 1)[-1]
+            return {k.encode(): v.encode() for k, v in (self.runs.get(sid) or {}).items()}
+        async def zrevrange(self, key, a, b):
+            return [s.encode() for s in self.runs]
+    runs = {"named": {"status": "running", "goal": "chart", "started_at": "2026-09-10T22:00:00Z"},
+            "other": {"status": "running", "goal": "x", "started_at": "2026-09-10T21:00:00Z"}}
+    monkeypatch.setattr(CC, "_redis", lambda: _R(runs))
+
+    async def stale(r, sid, run):
+        return True          # the loop's rule hesitates: everything looks stale
+    monkeypatch.setattr(CC, "_is_stale", stale)
+    got = run(CC._running_loop("named"))
+    assert got.get("session_id") == "named" and got.get("named_by_harness") is True, "the harness's word stands"
+    assert run(CC._running_loop("")) == {}, "without the harness's name the staleness rule decides, as before"
+    assert run(CC._running_loop("gone")) == {}, "a named session that is not running is not the goal in flight"
+    runs["named"]["status"] = "done"
+    assert run(CC._running_loop("named")) == {}
