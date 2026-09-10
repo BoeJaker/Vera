@@ -74,7 +74,9 @@ const ISO = (() => {
     const a = (i / n) * Math.PI * 2; return { a, u:cu + Math.cos(a) * r, v:cv + Math.sin(a) * r, p:P(cu + Math.cos(a) * r, cv + Math.sin(a) * r, z || 0) }; });
   // how a circle on the ground looks on screen: rotate by the azimuth, then
   // squash by the tilt — the transform for a CSS disc that lies on the floor
-  const discTf = (P) => 'rotate(' + P.azim + 'deg) scaleY(' + Math.sin(P.tilt * Math.PI / 180).toFixed(3) + ')';
+  // a ground circle under this projection is an AXIS-ALIGNED ellipse: x = r·k·cos(t+azim), y = r·k·sin(tilt)·sin(t+azim)
+  // — the azimuth only phases the parameter, so the disc is a plain vertical squash, never a rotation
+  const discTf = (P) => 'scaleY(' + Math.sin(P.tilt * Math.PI / 180).toFixed(3) + ')';
   // where a straight line from `from` toward `to` leaves a box centred on `from`
   const edgeOfBox = (from, hw, hh, to) => {
     const dx = to[0] - from[0], dy = to[1] - from[1];
