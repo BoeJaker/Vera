@@ -81,6 +81,7 @@ _CRITICAL_MODULES = {
     "test_own_origin_tls",  # trust OUR cert only - never the open internet (2026-08-31)
     "test_loader_modules_have_no_parent_package",  # a relative import silently unregisters a whole subsystem (2026-08-31)
     "test_mcp_bridge_utf8",  # a bullet sent through the bridge must arrive as a bullet (2026-09-09)
+    "test_exec_target",  # code sent with its destination must be written there, not discarded (2026-09-10)
     "test_prose_author_think",  # the writer must write, not ruminate (2026-08-31)
     "test_sandbox_file_target",  # the operator can be pointed at a file it just wrote (2026-08-31)
     "test_operator_progress",  # a run that changes nothing must stop; a long run must not (2026-08-31)
