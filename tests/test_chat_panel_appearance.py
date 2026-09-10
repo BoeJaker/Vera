@@ -13,7 +13,7 @@ surface, not just the transcript. chat_panel.html is text, so this runs anywhere
 import os
 import re
 
-from Vera.vera.theme_defs import DENSITY_TIERS, DEFAULT_DENSITY
+from Vera.vera.theme_defs import DENSITY_TIERS, DEFAULT_DENSITY, STYLE_PACKS
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 
@@ -132,6 +132,44 @@ def test_blocks_off_outranks_the_minimal_views_own_question_rules():
     assert 'html[data-blocks="off"] body[data-view="minimal"].has-msgs #msgs > .mwrap.u{background:transparent;border-left-color:transparent}' in css
     assert 'html[data-blocks="off"] body[data-view="minimal"].has-msgs #msgs > .mwrap.u.pin{background-color:var(--bg0);background-image:none;border-left-color:transparent}' in css
     assert 'html[data-blocks="off"] body[data-view="minimal"].has-msgs:not(.has-panel) #inputBar' in css
+
+# ── the chat reads the style-pack tokens (M1a-surfaces) ──────────────────────
+
+def _packs_css():
+    i = HTML.index("Style packs on the chat surface")
+    return HTML[i:HTML.index("</style>", i)]
+
+
+def test_the_chats_own_type_variables_derive_from_the_pack():
+    """A pack switch changed nothing on the chat while --sans/--mono were its own; now they follow --f-ui/--f-mono,
+    with the old stacks as the fallback for a chat opened without vera-ui.js."""
+    root = HTML[HTML.index(":root{"):HTML.index("}", HTML.index(":root{"))]
+    assert re.search(r"--sans:var\(--f-ui,'Inter'", root)
+    assert re.search(r"--mono:var\(--f-mono,'JetBrains Mono'", root)
+
+
+def test_prose_display_radius_labels_and_the_primary_button_follow_the_pack():
+    css = _packs_css()
+    assert "html[data-style] .mbody,html[data-style] .msg-body{font-family:var(--f-prose,var(--sans))}" in css
+    assert "var(--f-disp,var(--sans))" in css
+    assert "font-size:var(--body,13.5px);line-height:var(--lead,1.6)" in css
+    assert "text-transform:var(--label-case,none);letter-spacing:var(--label-track,0)" in css
+    assert "html[data-style] .cap-inline{border-radius:var(--ui-radius,7px)}" in css
+    assert "html[data-style] .ib.send{background:var(--pri-bg,var(--acc))" in css
+    # the block comes after the tiers, so it is the last word on these properties
+    assert HTML.index("Style packs on the chat surface") > HTML.index("Density tiers and Blocks")
+
+
+def test_every_token_the_chat_reads_is_one_the_packs_declare():
+    """The chat may only lean on tokens every pack carries; a typo here would silently fall back forever."""
+    declared = set(STYLE_PACKS["standard"]["vars"])
+    for pack in STYLE_PACKS.values():
+        declared &= set(pack["vars"])
+    used = set(re.findall(r"var\((--(?:f-|ui-radius|r-|label-|body|lead|pri-|fill|card)[\w-]*)", _packs_css() + HTML[HTML.index(":root{"):HTML.index(":root[data-theme=light]")]))
+    assert used, "no pack tokens read"
+    missing = used - declared
+    assert not missing, f"the chat reads tokens no pack declares: {sorted(missing)}"
+
 
 # ── the stylesheet the panel ships still parses as one ───────────────────────
 
