@@ -15,15 +15,18 @@ Design guarantees:
   • Owner-fenced release — release only deletes a slot the caller still owns
     (Lua CAS), so a lease that already expired and was re-taken by someone else
     is never stolen back.
-  • Fail-OPEN, never fail-closed — if the gate is disabled, the node is
+  • Legacy callers fail OPEN — if the gate is disabled, the node is
     ungated, or the coordination Redis is unreachable/errors, acquire returns
     None and the caller proceeds unslotted. The gate can only ever ADD waiting;
-    it must never be able to BREAK generation.
+    it must never be able to BREAK generation. Explicit `required=True`
+    acquisition instead raises GateAcquisitionError if no lease is obtained.
+    This opt-in primitive does not enable sandbox coordination by itself.
 
 Pure helpers (env/policy/key-shape) are separated from the async Redis calls so
 the policy is unit-testable without a live Redis.
 """
 import asyncio
+import math
 import os
 import socket
 import time
@@ -112,29 +115,54 @@ def new_owner() -> str:
 
 # ── async gate (needs a coordination Redis client) ───────────────────────────
 
+class GateAcquisitionError(RuntimeError):
+    """A required lease was not acquired; callers must not dispatch inference."""
+
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(f"required inference lease unavailable: {reason}")
+
+
 async def acquire(r, node: str, capacity: int, ttl: int, wait: float,
-                  poll: float = 0.25, owner: Optional[str] = None
+                  poll: float = 0.25, owner: Optional[str] = None, *,
+                  required: bool = False
                   ) -> Optional[Dict[str, Any]]:
     """Try to claim one of `capacity` slots for `node`. Returns a lease dict on
     success, or None (proceed unslotted) when ungated / no Redis / Redis errors
-    / waited longer than `wait`. NEVER raises — the gate can only add waiting."""
-    if capacity <= 0 or r is None:
+    / waited longer than `wait`. Legacy calls fail open. With required=True,
+    configuration, connectivity and queue failures raise GateAcquisitionError.
+    Cancellation always propagates. Redis operations still require a transport
+    timeout (or an outer deadline); `wait` bounds contention, not stalled I/O.
+    """
+    def unavailable(reason):
+        if required:
+            raise GateAcquisitionError(reason)
         return None
+
+    if required and (not node or not math.isfinite(wait) or wait < 0
+                     or not math.isfinite(poll) or poll <= 0
+                     or not math.isfinite(ttl) or ttl < 1):
+        raise GateAcquisitionError("invalid_policy")
+    if capacity <= 0 or r is None:
+        return unavailable("ungated_node" if capacity <= 0 else "coordination_unavailable")
     owner = owner or new_owner()
-    deadline = time.time() + max(0.0, wait)
+    started = time.monotonic()
+    deadline = started + max(0.0, wait)
     while True:
         for i in range(capacity):
             k = slot_key(node, i)
             try:
                 ok = await r.set(k, owner, nx=True, px=int(ttl))
             except Exception:
-                return None  # coordination Redis down/errored → fail-open
+                # Transport exception text may contain credentials.
+                return unavailable("coordination_error")
             if ok:
                 return {"key": k, "owner": owner, "node": node, "slot": i,
-                        "waited_s": round(time.time() - (deadline - wait), 2)}
-        if time.time() >= deadline:
-            return None  # queued long enough → proceed unslotted
-        await asyncio.sleep(poll)
+                        "waited_s": round(time.monotonic() - started, 2)}
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return unavailable("queue_timeout")
+        await asyncio.sleep(min(poll, remaining))
 
 
 async def release(r, lease: Optional[Dict[str, Any]]) -> bool:
