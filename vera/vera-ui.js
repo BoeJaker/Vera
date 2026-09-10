@@ -158,6 +158,80 @@
     return s;
   }
 
+  // ── 0b′. Appearance: style pack · density tier · blocks ─────────────────────
+  // Three attributes on <html>, beside data-theme:
+  //   data-style  = standard | newspaper | terminal | pixel  (the type ramp,
+  //                 radii, spacing, label metrics, primary button, card shadow
+  //                 — themes.css carries a [data-style] block per pack)
+  //   data-den    = full | hover | zen                       (the density tier
+  //                 a chat-variant surface draws itself at)
+  //   data-blocks = on | off                                  (per-turn block
+  //                 backgrounds painted or stripped, on every surface)
+  // Same storage and broadcast as the scale: localStorage is the live store
+  // shared by every same-origin frame, /ui/appearance seeds fresh browsers,
+  // postMessage relays through the shell's iframe tree.
+  var STYLE_KEY = 'vera:ui:style', DEN_KEY = 'vera:ui:den', BLOCKS_KEY = 'vera:ui:blocks';
+  var STYLES = ['standard', 'newspaper', 'terminal', 'pixel'];
+  var DENSITIES = ['full', 'hover', 'zen'];
+  var APPEAR_DEFAULT = {style:'standard', den:'full', blocks:true};
+  function _clampAppearance(a){
+    a = a || {};
+    var s = String(a.style || APPEAR_DEFAULT.style).toLowerCase();
+    var d = String(a.den || a.density || APPEAR_DEFAULT.den).toLowerCase();
+    var b = a.blocks;
+    if(STYLES.indexOf(s) < 0) s = APPEAR_DEFAULT.style;
+    if(DENSITIES.indexOf(d) < 0) d = APPEAR_DEFAULT.den;
+    if(typeof b === 'string') b = !(b === 'off' || b === '0' || b === 'false' || b === 'no');
+    else if(b == null) b = true;
+    return {style:s, den:d, blocks:!!b};
+  }
+  function _readAppearance(){
+    var a = {};
+    try{
+      a.style = localStorage.getItem(STYLE_KEY);
+      a.den = localStorage.getItem(DEN_KEY);
+      var b = localStorage.getItem(BLOCKS_KEY); a.blocks = b == null ? true : b;
+    }catch(e){}
+    return _clampAppearance(a);
+  }
+  var _appearance = APPEAR_DEFAULT;
+  // Paint only — the three attributes on the root. A pack carries its own
+  // --ui-radius in themes.css; the theme's inline layout tail must not shadow
+  // it, so that one property is cleared from the inline style here.
+  function _paintAppearance(a){
+    a = _clampAppearance(a);
+    _appearance = a;
+    var d = document.documentElement;
+    try{
+      d.setAttribute('data-style', a.style);
+      d.setAttribute('data-den', a.den);
+      d.setAttribute('data-blocks', a.blocks ? 'on' : 'off');
+      d.style.removeProperty('--ui-radius');
+    }catch(e){}
+    return a;
+  }
+  // Set + persist + broadcast. Takes a partial ({style} | {den} | {blocks}).
+  function setAppearance(patch){
+    var a = _clampAppearance(Object.assign({}, _readAppearance(), patch || {}));
+    _paintAppearance(a);
+    try{
+      localStorage.setItem(STYLE_KEY, a.style);
+      localStorage.setItem(DEN_KEY, a.den);
+      localStorage.setItem(BLOCKS_KEY, a.blocks ? 'on' : 'off');
+    }catch(e){}
+    fetch(BASE + '/ui/appearance/set', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({style:a.style, density:a.den, blocks:a.blocks})
+    }).catch(function(){});
+    var msg = {type:'vera:appearance', style:a.style, den:a.den, blocks:a.blocks};
+    try{ window.parent.postMessage(msg, '*'); }catch(e){}
+    try{
+      var fr = document.querySelectorAll('iframe');
+      for(var i=0;i<fr.length;i++){ try{ fr[i].contentWindow.postMessage(msg, '*'); }catch(e2){} }
+    }catch(e3){}
+    return a;
+  }
+
   // ── 0c. Truthful-animation primitive ───────────────────────────────────────
   // The one rule every new infographic in this app must follow: animation
   // reflects a REAL event that just happened, never decorative perpetual
@@ -241,8 +315,10 @@
     var out = {};
     function set(key, val){ root.style.setProperty(key, val); out[key] = val; }
     var k;
-    // Set all theme vars directly
-    for(k in vars) set(k, vars[k]);
+    // Set all theme vars directly — except the layout radius while a style pack
+    // is active: the pack's [data-style] block owns --ui-radius then.
+    var packed = !!root.getAttribute('data-style');
+    for(k in vars){ if(packed && k === '--ui-radius') continue; set(k, vars[k]); }
 
     // Map research → orchestrator namespace
     var rmap = {
@@ -349,6 +425,9 @@
   // with zero network latency. Applies inline vars directly, so it doesn't even
   // wait on themes.css to download. No cache (first-ever load) → no-op, and the
   // fetch below fills it in exactly as before.
+  // The appearance first (its attributes decide which layout vars the theme
+  // may set inline), then the theme.
+  (function applyCachedAppearance(){ _paintAppearance(_readAppearance()); })();
   (function applyCachedTheme(){
     var c = _readCache();
     if(c && c.theme){
@@ -361,6 +440,19 @@
   // Paint the cached UI scale synchronously too, so the panel never flashes at
   // 100% before the setting applies.
   (function applyCachedScale(){ _paintScale(_readScale()); })();
+
+  // A device that has never chosen an appearance takes the server's (the seed
+  // an agent or another client may have set); a device that has chosen keeps
+  // its own, like the scale.
+  (function seedAppearance(){
+    var chosen = false;
+    try{ chosen = localStorage.getItem(STYLE_KEY) != null; }catch(e){}
+    if(chosen) return;
+    fetch(BASE + '/ui/appearance').then(function(r){ return r.json(); }).then(function(a){
+      if(!a || !a.style) return;
+      _paintAppearance({style:a.style, den:a.density, blocks:a.blocks});
+    }).catch(function(){});
+  })();
 
   // ── 3. Hook into existing setTheme ─────────────────────────────────────────
   // If the panel already has setTheme(), wrap it so changes broadcast to the API.
@@ -426,6 +518,18 @@
     if(e.data && e.data.type === 'vera:scale' && typeof e.data.scale !== 'undefined'){
       _paintScale(e.data.scale);
     }
+    // Appearance relayed from a sibling/parent frame, or changed via the capability.
+    if(e.data && e.data.type === 'vera:appearance'){
+      _paintAppearance(e.data);
+    }
+    if(e.data && e.data.type === 'vera_event' && e.data.event &&
+       e.data.event.type === 'ui.appearance.changed'){
+      var ap = _paintAppearance({style:e.data.event.style, den:e.data.event.density, blocks:e.data.event.blocks});
+      try{
+        localStorage.setItem(STYLE_KEY, ap.style); localStorage.setItem(DEN_KEY, ap.den);
+        localStorage.setItem(BLOCKS_KEY, ap.blocks ? 'on' : 'off');
+      }catch(e2){}
+    }
     // Scale changed via the capability (agent / another client) — apply + cache.
     if(e.data && e.data.type === 'vera_event' && e.data.event &&
        e.data.event.type === 'ui.scale.changed'){
@@ -440,6 +544,7 @@
   // changes localStorage — the natural broadcast channel for a shared setting.
   window.addEventListener('storage', function(e){
     if(e.key === SCALE_KEY){ _paintScale(e.newValue!=null ? e.newValue : SCALE_DEFAULT); }
+    if(e.key === STYLE_KEY || e.key === DEN_KEY || e.key === BLOCKS_KEY){ _paintAppearance(_readAppearance()); }
   });
   // Ctrl/Cmd+Alt with =/-/0 adjusts UI scale (Alt keeps native browser zoom on
   // plain Ctrl +/-/0 free).
@@ -456,6 +561,12 @@
     var parentRoot = window.parent && window.parent.document ? window.parent.document.documentElement : null;
     if(parentRoot && parentRoot !== document.documentElement){
       new MutationObserver(function(){
+        // the appearance attributes mirror straight across
+        var ps = parentRoot.getAttribute('data-style');
+        if(ps && (ps !== _appearance.style || parentRoot.getAttribute('data-den') !== _appearance.den ||
+                  parentRoot.getAttribute('data-blocks') !== (_appearance.blocks ? 'on' : 'off'))){
+          _paintAppearance({style:ps, den:parentRoot.getAttribute('data-den'), blocks:parentRoot.getAttribute('data-blocks')});
+        }
         var theme = parentRoot.getAttribute('data-theme');
         if(theme && theme !== _current){
           // Read vars from parent's computed style
@@ -469,7 +580,7 @@
           });
           setThemeLocal(theme, Object.keys(vars).length ? vars : null);
         }
-      }).observe(parentRoot, {attributes:true, attributeFilter:['data-theme']});
+      }).observe(parentRoot, {attributes:true, attributeFilter:['data-theme', 'data-style', 'data-den', 'data-blocks']});
     }
   }catch(e){/* cross-origin */}
 
@@ -493,6 +604,39 @@
       }
       container.innerHTML = html;
     }).catch(function(){});
+  }
+
+  // ── 6a′. Reusable style-pack control ────────────────────────────────────────
+  // Std · News · Term · Pixel — a segmented row for the floating picker (the
+  // shell builds an equivalent in its own appearance sheet).
+  function _makeStyleControl(){
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:3px;padding:4px 6px 6px;'+
+      'border-bottom:1px solid var(--bd,rgba(128,128,128,.2));margin-bottom:4px';
+    var lab = document.createElement('span');
+    lab.textContent = 'Style';
+    lab.style.cssText = 'font-size:10px;color:var(--t3,var(--dim2,#777));margin-right:auto';
+    row.appendChild(lab);
+    var names = {standard:'Std', newspaper:'News', terminal:'Term', pixel:'Pixel'};
+    STYLES.forEach(function(sid){
+      var b = document.createElement('button');
+      b.type = 'button'; b.textContent = names[sid] || sid; b.title = sid;
+      var on = _appearance.style === sid;
+      b.style.cssText = 'font:inherit;font-size:10px;padding:2px 6px;border-radius:4px;cursor:pointer;'+
+        'border:1px solid var(--bd2,rgba(128,128,128,.3));'+
+        (on ? 'background:var(--ac,#5a9e8f);color:var(--on-ac,#fff)' : 'background:transparent;color:var(--t2,var(--dim,#999))');
+      b.onclick = function(e){ e.stopPropagation(); setAppearance({style:sid}); renderStyleRow(); };
+      row.appendChild(b);
+    });
+    function renderStyleRow(){
+      var bs = row.querySelectorAll('button');
+      for(var i=0;i<bs.length;i++){
+        var on = _appearance.style === bs[i].title;
+        bs[i].style.background = on ? 'var(--ac,#5a9e8f)' : 'transparent';
+        bs[i].style.color = on ? 'var(--on-ac,#fff)' : 'var(--t2,var(--dim,#999))';
+      }
+    }
+    return row;
   }
 
   // ── 6b. Reusable "UI size" control ─────────────────────────────────────────
@@ -569,6 +713,7 @@
         var themes = (data && data.themes) || {};
         menu.innerHTML = '';
         menu.appendChild(_makeScaleControl());
+        menu.appendChild(_makeStyleControl());
         Object.keys(themes).forEach(function(tid){
           var t = themes[tid];
           var active = tid === _current;
@@ -682,6 +827,18 @@
     injectPicker: injectPicker,
     injectFloatingPicker: injectFloatingPicker,
     onAccent: _deriveOnAccent,
+    // Appearance: style pack · density tier · blocks
+    setAppearance: setAppearance,
+    getAppearance: function(){ return {style:_appearance.style, den:_appearance.den, blocks:_appearance.blocks}; },
+    applyAppearance: _paintAppearance,
+    setStyle: function(id){ return setAppearance({style:id}).style; },
+    getStyle: function(){ return _appearance.style; },
+    setDensity: function(id){ return setAppearance({den:id}).den; },
+    getDensity: function(){ return _appearance.den; },
+    setBlocks: function(on){ return setAppearance({blocks:on}).blocks; },
+    getBlocks: function(){ return _appearance.blocks; },
+    makeStyleControl: _makeStyleControl,
+    STYLES: STYLES, DENSITIES: DENSITIES,
     // UI scale (global zoom)
     setScale: setScale,
     getScale: _readScale,
