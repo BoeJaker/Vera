@@ -69,6 +69,8 @@ from Vera.vera.integrations.external_effects import (
 )
 from Vera.vera.integrations.effect_receipts import default_external_effect_receipt_ledger
 from Vera.vera.integrations.effect_shadow_evidence import default_external_effect_shadow_evidence
+from Vera.vera.integrations.effect_enforcement_decision import (
+    DecisionConflict, default_external_effect_enforcement_decisions)
 from Vera.vera.integrations.effect_retry import plan_effect_retry as _plan_effect_retry
 from Vera.vera.integrations.connection_projection import project_connections
 
@@ -959,6 +961,60 @@ async def integration_effect_replay_status(plan: Optional[Dict] = None, trace_id
 
 
 @capability(
+    "integration.effect.enforcement.decision", http_method="GET",
+    http_path="/integrations/effect/enforcement/decision",
+    http_tags=["integration", "policy"], memory="off", silent=True,
+    description="Read the current revision-guarded operator decision and bounded history "
+                "for future external-effect enforcement. Effective runtime mode remains "
+                "observe-only; no payloads or raw identities are returned.",
+)
+async def integration_effect_enforcement_decision(history_limit: int = 20, trace_id=None):
+    try:
+        return default_external_effect_enforcement_decisions().current(
+            history_limit=history_limit)
+    except (TypeError, ValueError) as exc:
+        return {"schema": "vera.external-effect-enforcement-decision/v1",
+                "error": str(exc), "revision": 0,
+                "decision": "continue_observing", "requested_mode": "observe_only",
+                "effective_mode": "observe_only", "enforcement_enabled": False,
+                "history": [], "executes": False, "changes_runtime_policy": False,
+                "retains_payload": False}
+
+
+@capability(
+    "integration.effect.enforcement.decide", http_method="POST",
+    http_path="/integrations/effect/enforcement/decision",
+    http_tags=["integration", "policy"], memory="on",
+    redact_args=["actor_ref", "approval_receipt_ref"],
+    description="Record a reversible operator decision to continue observation or approve "
+                "a future enforcement rollout. Inputs: decision, expected_revision, actor_ref, "
+                "and approval_receipt_ref for approval. Approval requires current readiness. "
+                "This records hashed intent only; effective runtime mode remains observe-only.",
+)
+async def integration_effect_enforcement_decide(
+        decision: str = "continue_observing", expected_revision: int = 0,
+        actor_ref: str = "", approval_receipt_ref: str = "", trace_id=None):
+    from Vera.vera.integrations.effect_shadow_evidence import evaluate_enforcement_readiness
+    try:
+        readiness = evaluate_enforcement_readiness(
+            default_external_effect_shadow_evidence().summary(limit=200))
+    except Exception:
+        return {"error": "evidence_unavailable", "code": "evidence_unavailable",
+                "effective_mode": "observe_only", "enforcement_enabled": False}
+    try:
+        return default_external_effect_enforcement_decisions().decide(
+            decision=decision, expected_revision=expected_revision,
+            actor_ref=actor_ref, approval_receipt_ref=approval_receipt_ref,
+            readiness=readiness)
+    except DecisionConflict as exc:
+        return {"error": str(exc), "code": "revision_conflict",
+                "current": default_external_effect_enforcement_decisions().current()}
+    except (TypeError, ValueError) as exc:
+        return {"error": str(exc), "code": "invalid_decision",
+                "current": default_external_effect_enforcement_decisions().current()}
+
+
+@capability(
     "integration.effect.enforcement.readiness", http_method="GET",
     http_path="/integrations/effect/enforcement/readiness",
     http_tags=["integration", "policy"], memory="off", silent=True,
@@ -1191,6 +1247,8 @@ register_ui(
         "integration.effect.plan", "integration.effect.replay.status",
         "integration.effect.retry.plan", "integration.effect.retry.policy",
         "integration.effect.enforcement.readiness",
+        "integration.effect.enforcement.decision",
+        "integration.effect.enforcement.decide",
         "integration.effect.shadow.evidence",
         "integration.effect.receipts",
         # the one-click "register & secure everything" button drives autoenroll
