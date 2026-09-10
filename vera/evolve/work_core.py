@@ -166,6 +166,7 @@ def run_row(r: Dict[str, Any]) -> Dict[str, Any]:
         "source": str(r.get("source") or ""), "task": str(r.get("task") or ""), "run_id": str(r.get("run_id") or ""),
         "where": str(r.get("where") or ""), "variant": str(r.get("variant") or ""),
         "error": err[:200],
+        "commits": [c for c in (r.get("commits") or []) if isinstance(c, dict)],
         "open": {"kind": "run", "id": str(r.get("run_id") or "")},
     }
 

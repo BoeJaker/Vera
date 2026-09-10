@@ -196,13 +196,11 @@ html.vpb-nav-hosted body{padding-left:0}
 <div class="nav rail" id="nav">
   <div class="rail-logo">🧪 LOOP LAB</div>
   <div class="rail-grp">Run</div>
-  <button class="btn on" data-sec="test" onclick="nav('test')" title="Run something ONCE — a task, a suite, or a census template"><span class="ic">▶</span>Run once</button>
-  <button class="btn" data-sec="improve" onclick="nav('improve')" title="Configure a session that runs, scores, edits and re-runs until it converges"><span class="ic">✦</span>Improve · set up</button>
+  <button class="btn on" data-sec="work" onclick="nav('work')" title="Every task and every driver run &mdash; census, suite, improvement, single &mdash; in one table, with what is live on top"><span class="ic">&#9636;</span>Work</button>
+  <button class="btn" data-sec="test" onclick="nav('test')" title="Run something ONCE — a task, a suite, or a census template"><span class="ic">▶</span>Run once</button>
   <button class="btn" data-sec="watch" onclick="nav('watch')" title="The session Improve started, live — same session, later moment"><span class="ic">◉</span>Improve · live</button>
   <div class="rail-grp">Insight</div>
-  <button class="btn" data-sec="overview" onclick="nav('overview')"><span class="ic">▦</span>Suite</button>
   <button class="btn" data-sec="errors" onclick="nav('errors')"><span class="ic">⚠</span>Errors</button>
-  <button class="btn" data-sec="variants" onclick="nav('variants')"><span class="ic">⑂</span>Variants</button>
   <button class="btn" data-sec="activity" onclick="nav('activity')"><span class="ic">≣</span>Activity</button>
   <div class="rail-grp">Ship</div>
   <button class="btn" data-sec="pipelines" onclick="nav('pipelines')"><span class="ic">⎇</span>CI / CD</button>
@@ -214,11 +212,7 @@ html.vpb-nav-hosted body{padding-left:0}
   <button class="btn" data-sec="notes" onclick="nav('notes')"><span class="ic">✎</span>Notes</button>
   <button class="btn" data-sec="capacity" onclick="nav('capacity')"><span class="ic">▰</span>Capacity</button>
   <button class="btn" data-sec="swarm" onclick="nav('swarm')"><span class="ic">◇</span>Swarm</button>
-  <button class="btn" data-sec="census" onclick="nav('census')"><span class="ic">◷</span>Census</button>
   <button class="btn" data-sec="master" onclick="nav('master')"><span class="ic">◉</span>Master</button>
-  <div class="rail-grp">Library</div>
-  <button class="btn" data-sec="tasks" onclick="nav('tasks')"><span class="ic">☰</span>Tasks</button>
-  <button class="btn" data-sec="runs" onclick="nav('runs')"><span class="ic">↻</span>Runs</button>
   <button class="btn" data-sec="unittests" onclick="nav('unittests')"><span class="ic">◫</span>Unit tests</button>
   <button class="btn" data-sec="settings" onclick="nav('settings')"><span class="ic">⚙</span>Settings</button>
 </div>
@@ -258,6 +252,22 @@ html.vpb-nav-hosted body{padding-left:0}
 
 <!-- ── UNIT TESTS: coverage matrix + gate race-to-green ── -->
 <div class="sec" id="sec-unittests" style="display:none">
+  <div class="card">
+    <div class="card-h"><span class="card-t">Quick tests</span>
+      <span class="hint">test any capability · unit-test any part of Vera</span>
+    </div>
+    <div class="row">
+      <input id="ct-cap" placeholder="cap name, e.g. fabric.datasets" style="min-width:190px">
+      <input id="ct-args" placeholder='args JSON (optional)' style="flex:1;min-width:150px">
+      <button class="btn" onclick="capTest()">▶ Test cap</button>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <input id="ut-path" placeholder="pytest path (Vera only, e.g. tests)" value="tests" style="min-width:180px">
+      <span class="hint" id="ut-repo-hint" title="Which repo the Unit test runs against — set by the CONTEXT bar. Vera runs pytest in an ephemeral container; a registered repo runs its own test_cmd in its checkout.">repo: vera</span>
+      <button class="btn" onclick="unitTest()">▶ Unit test</button>
+      <div id="qt-out" class="hint" style="flex:1"></div>
+    </div>
+  </div>
   <div class="card">
     <div class="card-h"><span class="card-t">Unit tests — coverage &amp; gate tier</span>
       <span class="hint" id="ut-matrix-status">—</span>
@@ -411,8 +421,8 @@ html.vpb-nav-hosted body{padding-left:0}
   </div>
 </div>
 
-<!-- ── CENSUS: the agentic-loop measuring instrument, run over run ── -->
-<div class="sec" id="sec-census" style="display:none">
+<!-- ── WORK: one table — every task, or every driver run — with what is live on top ── -->
+<div class="sec" id="sec-work">
   <!-- ── Templates: the question set, and starting a run of it ──────────────
        A census template is a named set of goals; seeding turns it into suite
        tasks tagged census-<name>, so its timeline is evolve.suites for THAT
@@ -450,22 +460,24 @@ html.vpb-nav-hosted body{padding-left:0}
        run, compare, operator runs, fixes per run) plus a modal chain is this
        one table with the same data reachable in one or two clicks. -->
   <div class="card" id="census-live-card">
-    <div class="card-h"><span class="card-t">Census</span>
+    <div class="card-h"><span class="card-t">Work</span><div class="seg" id="work-mode" style="margin-left:10px"><button class="on" data-mode="runs" onclick="setWorkMode('runs')" title="every driver run: census runs, suites, improvement sessions, single runs">runs</button><button data-mode="tasks" onclick="setWorkMode('tasks')" title="every task, with its history from every driver">tasks</button></div>
       <span class="hint" id="census-live-status">—</span>
       <span style="flex:1"></span>
       <span class="hint" id="census-trend" style="margin-right:8px">—</span>
       <label class="hint" style="margin-right:8px" title="refresh the live run every 5s while this section is open"><input type="checkbox" id="census-follow" checked onchange="_cenArm()"> follow</label>
-      <button class="btn sm" onclick="loadCensus()">&#8635;</button>
+      <button class="btn sm" onclick="openRunOnce()" title="run a suite, a goal, the quick smoke tests, or generate tests">&#9654; run&hellip;</button><button class="btn sm" onclick="openImproveForm()" title="start an improvement session: run, score, edit, re-run">+ improve</button><button class="btn sm" onclick="openTask({})" title="define a task">+ task</button><button class="btn sm" onclick="openVariants()" title="tuning variants and the active overlay, per profile">variants</button><button class="btn sm" onclick="loadWork()">&#8635;</button>
     </div>
     <div id="census-live"></div>
+    <div id="work-live"></div>
     <div id="census-runs"><div class="empty">Loading…</div></div>
-    <details style="margin-top:8px"><summary class="clk hint">Trends over usable runs</summary><div id="census-charts" style="margin-top:6px"></div></details>
-    <div class="hint" style="margin-top:6px">A row is one census. <b>▸</b> expands its goals; a goal opens its full record — output, steps, routing, the loop's own log. <b>coder</b> / <b>nodes</b> are the routing that actually served the run: a coder that changed mid-run, a re-route or a CPU spill is a different instrument, not a different loop. Partial and failed runs are hidden unless asked for; the trend only ever counts usable runs.</div>
+    <div id="work-tasks" style="display:none"><div class="empty">Loading&hellip;</div></div>
+    <details style="margin-top:8px"><summary class="clk hint">Trends</summary><div id="census-charts" style="margin-top:6px"></div><div id="work-charts" style="margin-top:6px"></div></details>
+    <div class="hint" style="margin-top:6px">In <b>runs</b> a row is one driver run &mdash; a census, a suite, an improvement session or a single run; <b>&#9656;</b> expands it to its tasks, a task opens its record. In <b>tasks</b> a row is one task with its history from every driver; <b>&#9656;</b> expands its recent results, <b>&#8961;</b> opens it through time. <b>coder</b> / <b>nodes</b> are the models and nodes a census run&#39;s calls hit; <b>code</b> the sha@branch prod ran.</div>
   </div>
 </div>
 
 <!-- ── TEST (home): compose a run → watch the workflow ── -->
-<div class="sec" id="sec-test">
+<div class="sec" id="sec-test" style="display:none">
   <!-- active-run header — replaces the old tiny wf-status hint with a real,
        always-visible strip: what's running, its goal, its branch, and
        whether the sandbox it's routed to is healthy. Fixes "the name of
@@ -592,57 +604,8 @@ html.vpb-nav-hosted body{padding-left:0}
     <vera-task-matrix id="task-matrix" cols="8"></vera-task-matrix>
   </div>
   <div class="card">
-    <div class="card-h"><span class="card-t">Recent runs</span><span style="flex:1"></span><button class="btn sm" onclick="loadRuns()">&#8635;</button></div>
+    <div class="card-h"><span class="card-t">Recent runs</span><span style="flex:1"></span><button class="btn sm" onclick="refreshTestRuns()">&#8635;</button></div>
     <div id="test-runs"></div>
-  </div>
-</div>
-
-<!-- ── OVERVIEW ── -->
-<div class="sec" id="sec-overview" style="display:none">
-  <div class="card">
-    <div class="card-h"><span class="card-t">Benchmark suite</span>
-      <span class="hint">runs every task · critic scores loop runs · stores a scoreboard</span>
-      <span style="flex:1"></span>
-      <select id="ov-tag" style="width:110px"><option value="">all tags</option><option value="core" selected>core</option><option value="loop">loop</option><option value="smoke">smoke</option><option value="dream">dream</option><option value="markets">markets</option><option value="sim">sim</option><option value="generated">generated</option></select>
-      <label class="row" style="gap:4px"><input type="checkbox" id="ov-assess" checked style="width:auto"> assess</label>
-      <button class="btn" onclick="runQuickSmoke()" title="Run only the fast cap smoke-tests (seconds) to prove the plumbing works">⚡ Quick smoke</button>
-      <button class="btn primary" id="ov-run" onclick="runSuite()">&#9654; Run suite</button>
-    </div>
-    <div class="row" style="margin-bottom:8px">
-      <input id="ov-goal" placeholder="Set a goal for the loop and analyse it… (e.g. 'find the 3 largest fabric datasets and summarise each')" style="flex:1">
-      <select id="ov-goal-profile" style="width:130px"></select>
-      <button class="btn" onclick="runGoal()">▶ Run &amp; analyse</button>
-      <button class="btn" onclick="openGenerate()" title="LLM-generate benchmark tasks from a goal/subsystem and save them">✎ Generate tests</button>
-    </div>
-    <div id="ov-scoreboard"><div class="empty">No suites yet — press Run suite (or Self-test / Quick smoke first).</div></div>
-  </div>
-  <div class="card">
-    <div class="card-h"><span class="card-t">🏁 race to green</span><span class="hint">each task's score across recent suites — watch it converge</span></div>
-    <div id="ov-board"><div class="empty">—</div></div>
-  </div>
-  <div class="card">
-    <div class="card-h"><span class="card-t">⚖ Compare</span>
-      <span class="hint">task outcomes A vs B by variant id, plus real model throughput</span>
-      <span style="flex:1"></span>
-      <input id="bc-a" placeholder="group A variant id" style="width:150px">
-      <input id="bc-b" placeholder="group B variant id (blank = baseline)" style="width:190px">
-      <button class="btn sm" onclick="$('bench-compare').setGroups($('bc-a').value.trim(),$('bc-b').value.trim())">Compare</button>
-    </div>
-    <vera-bench-compare id="bench-compare"></vera-bench-compare>
-  </div>
-  <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:12px">
-    <div class="card">
-      <div class="card-h"><span class="card-t">▦ activity</span><span class="hint">runs &amp; edits per hour</span></div>
-      <div id="ov-activity"><div class="empty">—</div></div>
-    </div>
-    <div class="card">
-      <div class="card-h"><span class="card-t">Score trend</span></div>
-      <div id="ov-trend"><div class="empty">—</div></div>
-    </div>
-  </div>
-  <div class="card">
-    <div class="card-h"><span class="card-t">🗺 component map</span><span class="hint">everything Loop Lab can self-improve — click to improve</span></div>
-    <div id="ov-map"><div class="empty">—</div></div>
   </div>
 </div>
 
@@ -662,94 +625,6 @@ html.vpb-nav-hosted body{padding-left:0}
   </div>
   <!-- kanban lanes -->
   <div class="err-board" id="err-board"><div class="empty">Loading…</div></div>
-</div>
-
-<!-- ── TASKS ── -->
-<div class="sec" id="sec-tasks" style="display:none">
-  <div class="card">
-    <div class="card-h"><span class="card-t">Quick tests</span>
-      <span class="hint">test any capability · unit-test any part of Vera</span>
-    </div>
-    <div class="row">
-      <input id="ct-cap" placeholder="cap name, e.g. fabric.datasets" style="min-width:190px">
-      <input id="ct-args" placeholder='args JSON (optional)' style="flex:1;min-width:150px">
-      <button class="btn" onclick="capTest()">▶ Test cap</button>
-    </div>
-    <div class="row" style="margin-top:6px">
-      <input id="ut-path" placeholder="pytest path (Vera only, e.g. tests)" value="tests" style="min-width:180px">
-      <span class="hint" id="ut-repo-hint" title="Which repo the Unit test runs against — set by the CONTEXT bar. Vera runs pytest in an ephemeral container; a registered repo runs its own test_cmd in its checkout.">repo: vera</span>
-      <button class="btn" onclick="unitTest()">▶ Unit test</button>
-      <div id="qt-out" class="hint" style="flex:1"></div>
-    </div>
-  </div>
-  <div class="card">
-    <div class="card-h"><span class="card-t">Benchmark tasks</span>
-      <span class="hint">loop · cap · sim — all run sandbox-first when a sandbox is up</span>
-      <span style="flex:1"></span>
-      <button class="btn" onclick="openTask({})">+ New task</button>
-    </div>
-    <div id="tasks-body"><div class="empty">Loading…</div></div>
-  </div>
-</div>
-
-<!-- ── RUNS ── -->
-<div class="sec" id="sec-runs" style="display:none">
-  <div class="card">
-    <div class="card-h"><span class="card-t">Runs</span>
-      <span class="hint" id="runs-count">—</span>
-      <span style="flex:1"></span>
-      <select id="runs-src" onchange="_runsRender()" style="min-width:120px">
-        <option value="">every source</option>
-        <option value="suite">suite</option>
-        <option value="run">Test tab</option>
-        <option value="manual">manual</option>
-        <option value="improve">improve session</option>
-        <option value="census">census</option>
-        <option value="goal">goal</option>
-        <option value="captest">cap test</option>
-        <option value="ide">IDE</option>
-      </select>
-      <input id="runs-q" placeholder="filter task…" style="width:140px;margin-left:6px" oninput="_runsRender()">
-      <label class="hint" style="margin-left:8px"><input type="checkbox" id="runs-bad" onchange="_runsRender()"> problems only</label>
-      <button class="btn sm" onclick="loadRuns()" style="margin-left:8px">&#8635;</button></div>
-    <div class="hint" style="margin-bottom:6px">Every task execution, newest first — the raw record the Suite scoreboard, Improve sessions and the Census all summarise. A census goal is here as source <span class="mono">census</span> under its <span class="mono">census-*</span> task, posted by the harness as it finishes (its session is the census run: <span class="mono">run52</span>, <span class="mono">exec-family-run3</span>). Click a row for its checks; <span class="mono">⌁</span> opens the task through time; <span class="mono">⇄</span> re-scores a suite run with both critics.</div>
-    <div id="runs-body"><div class="empty">Loading…</div></div>
-  </div>
-</div>
-
-<!-- ── IMPROVE ── -->
-<div class="sec" id="sec-improve" style="display:none">
-  <div class="card">
-    <div class="card-h"><span class="card-t">Start improvement session</span>
-      <span class="hint">run → critic scores → editor proposes a better variant → rerun</span>
-      <span style="flex:1"></span>
-      <span class="hint" id="im-live-link"></span></div>
-    <div class="hint" style="margin-bottom:6px">This page CONFIGURES a session; <a href="#" onclick="event.preventDefault();nav('watch')">Improve · live</a> is the same session running. To run something once instead — a task, a suite, or a census template — use <a href="#" onclick="event.preventDefault();nav('test')">Run once</a>.</div>
-    <div class="grid">
-      <div><label class="fld">Improve (category)</label><select id="im-cat" style="width:100%" onchange="fillTargets('im-cat','im-profile')"></select></div>
-      <div><label class="fld">Target</label><select id="im-profile" style="width:100%"></select></div>
-      <div><label class="fld">Goals from</label><select id="im-source" style="width:100%" onchange="imSourceCh()">
-        <option value="tasks">existing benchmark tasks</option>
-        <option value="goals">existing long-term goals</option>
-        <option value="generate">generate new goals</option>
-      </select></div>
-      <div><label class="fld">Task tag (optional)</label><input id="im-tag" placeholder="e.g. loop" style="width:100%"></div>
-      <div><label class="fld">Critic (scores runs)</label><select id="im-critic" style="width:100%"></select></div>
-      <div><label class="fld">Editor (proposes variant)</label><select id="im-editor" style="width:100%"></select></div>
-      <div><label class="fld">Max rounds</label><input id="im-rounds" type="number" min="1" max="12" value="4" style="width:100%"></div>
-      <div><label class="fld">Target score</label><input id="im-target" type="number" min="0" max="10" step="0.5" value="8" style="width:100%"></div>
-    </div>
-    <div id="im-goals-row" style="display:none;margin-top:8px"><label class="fld">Goals (one per line, blank = pull the system's long-term goals)</label><textarea id="im-goals" style="min-height:52px" placeholder="e.g. keep the memory graph free of orphan nodes"></textarea></div>
-    <div id="im-gen-row" style="display:none;margin-top:8px"><label class="fld">Generate goals to test</label><input id="im-gen" style="width:100%" placeholder="a subsystem or objective, e.g. the fabric discovery system"></div>
-    <div class="row" style="margin-top:10px">
-      <button class="btn primary" onclick="startImprove()">&#9654; Start &amp; watch</button>
-      <span class="hint">Synthesis runs in the background on <b id="im-editq-lbl">gpt-oss:20b</b> (CPU node). Watch it live in the Watch tab.</span>
-    </div>
-  </div>
-  <div class="card">
-    <div class="card-h"><span class="card-t">Sessions</span><span style="flex:1"></span><button class="btn sm" onclick="loadSessions()">&#8635;</button></div>
-    <div id="sessions-body"><div class="empty">Loading…</div></div>
-  </div>
 </div>
 
 <!-- ── WATCH (live test → evaluate → synthesize) ── -->
@@ -1029,19 +904,6 @@ html.vpb-nav-hosted body{padding-left:0}
   </div>
 </div>
 
-<!-- ── VARIANTS ── -->
-<div class="sec" id="sec-variants" style="display:none">
-  <div class="card">
-    <div class="card-h"><span class="card-t">Tuning variants &amp; overlay</span>
-      <span style="flex:1"></span>
-      <select id="var-profile" style="width:160px" onchange="loadVariants()"></select>
-      <button class="btn sm" onclick="loadVariants()">&#8635;</button>
-    </div>
-    <div id="overlay-box" style="margin-bottom:10px"></div>
-    <div id="variants-body"><div class="empty">Pick a profile.</div></div>
-  </div>
-</div>
-
 <!-- ── SETTINGS ── -->
 <div class="sec" id="sec-settings" style="display:none">
   <div class="card">
@@ -1170,13 +1032,16 @@ function scChip(v){return '<span class="sc" style="color:'+scColor(v)+';backgrou
 function nav(sec){
   document.querySelectorAll('#nav .btn').forEach(b=>b.classList.toggle('on',b.dataset.sec===sec));
   document.querySelectorAll('.sec').forEach(s=>s.style.display=s.id==='sec-'+sec?'':'none');
-  const f={test:loadTest,tasks:loadTasks,runs:loadRuns,unittests:loadUnitTests,master:loadMaster,improve:loadSessions,watch:loadWatch,pipelines:()=>{loadGit();loadPipelines()},
-    review:loadReview,csessions:loadCSessions,board:loadBoardTab,notes:loadNotes,capacity:loadCapacity,swarm:swarmPoll,census:loadCensus,
+  const f={work:loadWork,test:loadTest,unittests:loadUnitTests,master:loadMaster,watch:loadWatch,pipelines:()=>{loadGit();loadPipelines()},
+    // Pages the Work page absorbed (flattening slice 3): an old deep-link
+    // or injected nav item still lands on the table that holds their data.
+    tasks:()=>nav('work'),runs:()=>nav('work'),census:()=>nav('work'),overview:()=>nav('work'),variants:()=>nav('work'),improve:()=>nav('work'),
+    review:loadReview,csessions:loadCSessions,board:loadBoardTab,notes:loadNotes,capacity:loadCapacity,swarm:swarmPoll,
     // Logs live inside Sandbox now — one subject, one page. `logs` is kept as
     // an alias so an old deep-link or an injected nav item still lands
     // somewhere real instead of on a blank panel.
     logs:()=>nav('sandbox'),
-    sources:loadSources,sandbox:()=>{loadSandbox();loadLogs()},activity:loadAudit,variants:loadVariants,settings:fillSettings,overview:loadOverview,errors:loadErrors}[sec];
+    sources:loadSources,sandbox:()=>{loadSandbox();loadLogs()},activity:loadAudit,settings:fillSettings,errors:loadErrors}[sec];
   if(f)f();
   // Keep the outer shell's injected top-level sub-menu in sync when this
   // panel changes section on its own (a direct click here, not one relayed
@@ -1190,11 +1055,10 @@ function nav(sec){
 // — every button above already carries data-sec, which VeraPanelBridge's
 // generic nav_select fallback matches directly.
 if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
-  {id:'test', label:'Test'}, {id:'improve', label:'Improve'}, {id:'watch', label:'Watch'},
-  {id:'overview', label:'Suite'}, {id:'errors', label:'Errors'}, {id:'variants', label:'Variants'},
-  {id:'activity', label:'Activity'},
-  {id:'pipelines', label:'CI / CD'}, {id:'review', label:'Review'}, {id:'sources', label:'Sources'}, {id:'sandbox', label:'Sandbox'}, {id:'csessions', label:'Sessions'}, {id:'board', label:'Board'}, {id:'notes', label:'Notes'}, {id:'capacity', label:'Capacity'}, {id:'swarm', label:'Swarm'}, {id:'census', label:'Census'},
-  {id:'tasks', label:'Tasks'}, {id:'runs', label:'Runs'}, {id:'unittests', label:'Unit tests'}, {id:'settings', label:'Settings'},
+  {id:'work', label:'Work'}, {id:'test', label:'Test'}, {id:'watch', label:'Watch'},
+  {id:'errors', label:'Errors'}, {id:'activity', label:'Activity'},
+  {id:'pipelines', label:'CI / CD'}, {id:'review', label:'Review'}, {id:'sources', label:'Sources'}, {id:'sandbox', label:'Sandbox'}, {id:'csessions', label:'Sessions'}, {id:'board', label:'Board'}, {id:'notes', label:'Notes'}, {id:'capacity', label:'Capacity'}, {id:'swarm', label:'Swarm'},
+  {id:'master', label:'Master'}, {id:'unittests', label:'Unit tests'}, {id:'settings', label:'Settings'},
 ]);
 
 /* ═══ TEST GENERATION — LLM-propose pytest for a branch (route-forward M3.4) ═══ */
@@ -1942,12 +1806,11 @@ async function loadAll(){
   if($('im-editor'))$('im-editor').value=_cfg.editor_provider||'anthropic';
   await loadTargets();
   fillTargetSelectors('im-cat','im-profile','specialist');   // Improve target
-  // Test is the home — but this init awaits slow config/targets, so only land on
-  // Test if the user hasn't already switched tabs DURING the load (else we'd yank
+  // Work is the home — but this init awaits slow config/targets, so only land on
+  // Work if the user hasn't already switched tabs DURING the load (else we'd yank
   // them off the tab they opened). _curSec() reads the active nav button.
-  if(_curSec()==='test')nav('test');
+  if(_curSec()==='work')nav('work');
   pollSuite();       // reflect any in-flight suite immediately
-  loadSessions(true);
 }
 
 /* ═══ LIVE STRIP — event bus + polling ═══ */
@@ -2004,19 +1867,19 @@ function onEvent(ev){
   if(!t.startsWith('evolve.')&&!t.startsWith('markets.evolve.'))return;
   if(t.startsWith('evolve.suite.')){pollSuite();if(_curSec()==='test')testSuiteRefresh()}
   if(t==='evolve.run.started'){_loopStep={};renderLive()}
-  if(t==='evolve.run.done'){testOnRunDone(ev);testSuiteOnRunDone(ev);if(_curSec()==='runs')loadRuns()}
+  if(t==='evolve.run.done'){testOnRunDone(ev);testSuiteOnRunDone(ev);workOnChange()}
   if(t==='evolve.run.reviewed'){testOnRunReviewed(ev)}
-  if(t.startsWith('evolve.run.')||t==='evolve.assessed'){if(_curSec()==='runs')loadRuns()}
+  if(t.startsWith('evolve.run.')||t==='evolve.assessed'){workOnChange()}
   if(t==='evolve.workflow'){wfSet(ev.node,ev.state,ev)}
   if(t==='evolve.assessed')watchOnAssessed(ev);
   if(t==='evolve.phase')watchOnPhase(ev);
   if(t.startsWith('evolve.editq.')){watchOnEditq(ev);if(_curSec()==='watch')loadEditq()}
   if(t.startsWith('evolve.errors.')){if(_curSec()==='errors')loadErrors()}
-  if(t==='evolve.suite.done'){loadOverview();if(_curSec()==='test')testSuiteRefresh()}
+  if(t==='evolve.suite.done'){workOnChange();if(_curSec()==='test')testSuiteRefresh()}
   if(t.startsWith('evolve.improve.')){
     if(t==='evolve.improve.started'&&ev.session){_watchSession=ev.session;const wa=_watchAlo();if(wa&&wa.reset)try{wa.reset()}catch(_){}}
     pollSessionLive(ev.session);
-    if(_curSec()==='improve')loadSessions(true);
+    workOnChange();
     if(_curSec()==='watch')watchRefresh();
   }
   if(t.startsWith('evolve.pipeline.')){if(_curSec()==='pipelines')loadPipelines();if(_curSec()==='review')loadReview();pollPipeLive(ev.id)}
@@ -2349,7 +2212,7 @@ function _cenStatus(s){
    then. It does not arm its own timer — see censusPoll. */
 async function loadCensusLive(){
   const el=$('census-live');if(!el)return null;
-  const r=await api('/census/live');
+  const r=_workLive&&_workLive.census?_workLive.census:await api('/census/live');
   if(!r){el.innerHTML='<div class="empty">unavailable</div>';return null}
   const p=r.progress||{}, a=r.active, c=r.counters||{}, hz=r.harness||{}, ctl=r.control||{};
   _cenLiveData=r;
@@ -2457,7 +2320,7 @@ let _cenT=null, _cenLastDone=-1, _cenBusy=false;
 
 function _cenFollowing(){
   const cb=$('census-follow');
-  return !!(cb&&cb.checked)&&typeof _curSec==='function'&&_curSec()==='census';
+  return !!(cb&&cb.checked)&&typeof _curSec==='function'&&_curSec()==='work';
 }
 
 function _cenArm(){
@@ -2469,12 +2332,22 @@ async function censusPoll(){
   if(_cenBusy){_cenArm();return}          // never stack a slow tick on a slower one
   _cenBusy=true;
   try{
+    // ONE request for everything live (census, suite, session, run); the
+    // census strip reads its part, the rest renders under it.
+    _workLive=await api('/evolve/work/live');
     const done=await loadCensusLive();
-    if(done!=null&&done!==_cenLastDone){
-      _cenLastDone=done;
-      loadCensusRuns();                   // a goal landed — the tables have news
-      loadCensusOperator();
-      if(_ctCur)ctTimeline();
+    _wkLive(_workLive);
+    const L=_workLive||{}, s=(L.suite&&L.suite.status)||{};
+    const sig=[done,!!(L.suite&&(L.suite.running||s.running)),s.done||0,L.improve?(L.improve.id+':'+(L.improve.rounds_done||0)+':'+(L.improve.status||'')):'',(L.run&&(L.run.live||L.run.running))?((L.run.current||{}).run_id||'live'):''].join('|');
+    if(sig!==_workLiveSig){
+      const first=_workLiveSig==='';
+      _workLiveSig=sig;
+      if(done!=null&&done!==_cenLastDone){_cenLastDone=done;}
+      if(!first){                          // something landed → the table has news
+        if(_workMode==='tasks')loadWorkTasks(); else loadCensusRuns();
+        loadCensusOperator();
+        if(_ctCur)ctTimeline();
+      }
     }
   }catch(e){ /* a failed tick must not stop the next one */ }
   finally{ _cenBusy=false; _cenArm(); }
@@ -2624,7 +2497,7 @@ async function ctSeed(){
 
 async function ctRun(){
   if(!_ctCur){toast('pick a template');return}
-  if(!confirm('Run '+_ctCur.goals_n+' census goals as a suite?\n\nThis takes the GPU for hours — it waits for a free box before each goal and skips nothing.'))return;
+  if(!confirm('Run '+_ctCur.goals_n+' census goals as a suite?\n\nThis takes the GPU for hours — it waits for a free box before each goal and skips nothing.\n\nThe suite path runs tasks in the PRIMARY sandbox and is blocked when none is up (board loop-o50); the census harness (census_all.sh) is the instrument until that is fixed.'))return;
   // assess=false: the census score is its declared checks, not a critic's
   // opinion. Adding a critic here would change what the number means.
   const r=await post('/evolve/suite/start',{tag:_ctCur.tag,assess:false});
@@ -2677,12 +2550,7 @@ async function ctSave(force){
   loadCensusTemplates();
 }
 
-async function loadCensus(){
-  loadCensusTemplates();
-  _cenLastDone=-1;              // a fresh visit re-syncs the tables once
-  censusPoll();                 // live card + arm the follow timer
-  loadCensusRuns();
-}
+async function loadCensus(){ return loadWork(); }
 
 // Who drove a run. "unattributed" is a real answer and is shown as one - a
 // blank cell reads as a UI fault rather than as a fact about the run.
@@ -2804,10 +2672,16 @@ function setCensusStatus(v){ _cenStatusF=String(v||''); renderCensusTable(); }
    the live run IS partial while it runs, and it is the row you came for. */
 async function loadCensusRuns(){
   const el=$('census-runs');if(!el)return;
-  const [r,op]=await Promise.all([api('/census/runs?include_partial=true'),api('/census/operator/runs')]);
-  _cenRunsAll=(r&&r.runs)||[];
-  _cenRunsMeta=r||{};
+  // One call for every driver kind (evolve.work.drivers); the census rows
+  // carry their full summary, which the census renderer reads as before.
+  const [d,op]=await Promise.all([api('/evolve/work/drivers?include_excluded=true'),api('/census/operator/runs')]);
+  _workRows=(d&&d.drivers)||[];
+  _workMeta=d||{};
+  _cenRunsAll=_workRows.filter(x=>x.kind==='census'&&x.census).map(x=>x.census);
+  const r=(d&&d.census_meta)||{};
+  _cenRunsMeta=r;
   _cenOpRuns=(op&&op.runs)||[];
+  renderWorkCharts();
   delete _cenRecCache['current'];
   renderCensusTable();
   // A goal landing changes what 'current' contains; an expanded live row must
@@ -2887,40 +2761,69 @@ function renderCensusTable(){
   const runs=_cenRunsAll, r=_cenRunsMeta||{};
   const tmpls=[...new Set(runs.map(x=>x.template||'').filter(Boolean))].sort();
   const q=_cenText;
+  // ?commit=<sha> (the git graph's "runs of this commit" link): census runs
+  // on that code, and single runs whose window holds that commit.
+  const filterCommit=new URLSearchParams(location.search).get('commit')||'';
+  const onCommit=(codes)=>!filterCommit||(codes||[]).some(c=>{const sha=String(c||'').split('@')[0];return sha&&(sha.startsWith(filterCommit)||filterCommit.startsWith(sha))});
   const match=s=>{
     if(_cenTemplate&&(_cenTemplate===' unlabelled'?!!s.template:(s.template||'')!==_cenTemplate))return false;
     if(!_cenShowPartial&&s.excluded&&s.run_id!=='current')return false;
     if(_cenStatusF==='usable'&&s.excluded)return false;
     if(_cenStatusF==='excluded'&&!s.excluded)return false;
     if(_cenStatusF==='live'&&s.run_id!=='current')return false;
+    // problems: a goal hit its cap or errored, or the run is not usable history
+    if(_cenStatusF==='problems'&&!((s.wall_capped||0)>0||(s.other||0)>0||s.excluded))return false;
+    if(filterCommit&&!onCommit((s.code||{}).codes))return false;
     if(q){const hay=[s.run_id,s.template,(s.provenance||{}).operator,(s.provenance||{}).tool,((s.routing||{}).coders||[]).join(' '),Object.keys((s.routing||{}).nodes||{}).join(' ')].join(' ').toLowerCase(); if(hay.indexOf(q)<0)return false}
     return true;
   };
   const shown=runs.filter(match).sort((a,b)=>(a.run_id==='current')?-1:((b.run_id==='current')?1:((b.ended_at||0)-(a.ended_at||0))));
   const ops=(_cenStatusF===''||_cenStatusF==='operator')&&!_cenTemplate&&(!q||'operator'.indexOf(q)>=0)?_cenOpRuns.slice().reverse():[];
   const hidden=_cenShowPartial?0:runs.filter(s=>s.excluded&&s.run_id!=='current').length;
+  // The other driver kinds, through the same filters (kind, text, status).
+  const others=(_workKind==='census'||_cenTemplate||_cenStatusF==='live'||_cenStatusF==='operator')?[]:_workRows.filter(x=>x.kind!=='census').filter(x=>{
+    if(_workKind&&x.kind!==_workKind)return false;
+    if(_workSrc&&x.kind==='run'&&x.source!==_workSrc)return false;
+    if(_cenStatusF==='usable'&&x.excluded)return false;
+    if(_cenStatusF==='excluded'&&!x.excluded)return false;
+    if(_cenStatusF==='problems'&&!((x.failed||0)>0||(x.capped||0)>0||x.excluded||x.status==='error'))return false;
+    if(!_cenShowPartial&&x.excluded)return false;
+    if(filterCommit&&!(x.commits||[]).some(c=>c.hash===filterCommit||filterCommit.startsWith(c.hash)))return false;
+    if(q){const hay=[x.kind,x.id,x.label,x.tag,x.profile,x.task,x.source,x.status,x.variant,x.critic].join(' ').toLowerCase();if(hay.indexOf(q)<0)return false}
+    return true;});
+  const censusShown=_workKind&&_workKind!=='census'?[]:shown;
+  const rowsAll=censusShown.map(s=>({kind:'census',ended_at:s.ended_at||0,live:s.run_id==='current',html:_cenRow(s)}))
+    .concat(others.map(x=>({kind:x.kind,ended_at:x.ended_at||0,live:!!x.live,html:_wkRow(x)})))
+    .sort((a,b)=>(b.live-a.live)||((b.ended_at||0)-(a.ended_at||0)));
+  const kinds=(_workMeta&&_workMeta.kinds)||{};
+  const kindBar='<label style="display:flex;gap:4px;align-items:center">kind <select onchange="setWorkKind(this.value)" style="width:auto"><option value="">all</option>'
+    +['census','suite','improve','run'].map(k=>'<option value="'+k+'"'+(_workKind===k?' selected':'')+'>'+k+(kinds[k]?(' ('+kinds[k]+')'):'')+'</option>').join('')+'</select></label>'
+    +(_workKind==='run'?('<label style="display:flex;gap:4px;align-items:center">source <select onchange="setWorkSrc(this.value)" style="width:auto"><option value="">every source</option>'
+      +['run','manual','goal','captest','ide'].map(v=>'<option value="'+v+'"'+(_workSrc===v?' selected':'')+'>'+v+'</option>').join('')+'</select></label>'):'');
   const bar='<div class="hint" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 6px">'
-    +'<input id="cen-text" placeholder="filter: run, template, operator, model, node" value="'+esc(_cenText)+'" oninput="setCensusText(this.value)" style="width:230px">'
+    +'<input id="cen-text" placeholder="filter: run, template, operator, model, node, task" value="'+esc(_cenText)+'" oninput="setCensusText(this.value)" style="width:230px">'
+    +kindBar
     +'<label style="display:flex;gap:4px;align-items:center">template <select onchange="setCensusTemplate(this.value)" style="width:auto">'
     +'<option value="">all ('+runs.length+')</option>'
     +tmpls.map(t=>'<option value="'+esc(t)+'"'+(_cenTemplate===t?' selected':'')+'>'+esc(t)+' ('+runs.filter(x=>(x.template||'')===t).length+')</option>').join('')
     +(runs.some(x=>!x.template)?('<option value=" unlabelled"'+(_cenTemplate===' unlabelled'?' selected':'')+'>unlabelled ('+runs.filter(x=>!x.template).length+')</option>'):'')
     +'</select></label>'
     +'<label style="display:flex;gap:4px;align-items:center">show <select onchange="setCensusStatus(this.value)" style="width:auto">'
-    +['','usable','excluded','live','operator'].map(v=>'<option value="'+v+'"'+(_cenStatusF===v?' selected':'')+'>'+(v||'everything')+'</option>').join('')
+    +['','usable','excluded','problems','live','operator'].map(v=>'<option value="'+v+'"'+(_cenStatusF===v?' selected':'')+'>'+(v||'everything')+'</option>').join('')
     +'</select></label>'
     +'<label style="display:flex;gap:4px;align-items:center" title="Runs excluded as partial, failed, stalled, aborted, interrupted, invalid or wedged - or simply shorter than a full pass.">'
     +'<input type="checkbox" id="cen-partial" onchange="toggleCensusPartial(this.checked)"'+(_cenShowPartial?' checked':'')+'> partial / failed</label>'
-    +'<span class="mono" style="opacity:.75">showing '+shown.length+(ops.length?('+'+ops.length+' operator'):'')+' of '+(r.count||runs.length)+'</span>'
+    +'<span class="mono" style="opacity:.75">showing '+rowsAll.length+(ops.length?('+'+ops.length+' operator'):'')+' of '+((_workMeta&&_workMeta.total)||runs.length)+'</span>'
     +(hidden>0&&!_cenShowPartial?('<span class="tag">'+hidden+' hidden</span>'):'')
+    +(filterCommit?(' <span class="tag">commit '+esc(filterCommit)+' <a href="#" onclick="event.preventDefault();history.replaceState(null,\'\',location.pathname);renderCensusTable()">clear</a></span>'):'')
     +'</div>';
-  if(!shown.length&&!ops.length){el.innerHTML=bar+'<div class="empty">No census runs match'+(r.dir?(' in <code>'+esc(r.dir)+'</code>'):'')+'.</div>';return}
+  if(!rowsAll.length&&!ops.length){el.innerHTML=bar+'<div class="empty">No driver run matches'+(r.dir?(' (census archive: <code>'+esc(r.dir)+'</code>)'):'')+'.</div>';return}
   el.innerHTML=bar+'<div style="overflow-x:auto"><table id="census-table"><tr>'
-    +'<th>run</th><th title="the question set this run answers - runs of different templates are not comparable">template</th><th title="the git sha@branch prod ran; ≠ when it changed mid-run (a restart) - hover for where">code</th><th>when</th><th>goals</th><th>done</th><th title="goals that hit their wall cap">capped</th>'
+    +'<th>run</th><th title="the question set a census run answers (runs of different templates are not comparable); a suite\'s tag; a session\'s profile">template</th><th title="the git sha@branch prod ran; ≠ when it changed mid-run (a restart) - hover for where">code</th><th>when</th><th>goals</th><th>done</th><th title="goals that hit their wall cap">capped</th>'
     +'<th title="mean of each goal&#39;s declared quality checks - what was BUILT, not whether the run stopped">quality</th><th title="checks passed / declared">checks</th><th>wall</th>'
     +'<th title="the model in force for every loop role (planner, controller, tier, executor, writer, coder), the nodes the calls hit, and any re-route or CPU spill - hover for calls by role">models · nodes</th>'
     +'<th>warns</th><th title="steps no producer claims">unacc.</th><th>counters</th><th title="who drove this run, with the skill, tool and helpers - hover">operated by</th></tr>'
-    +shown.map(_cenRow).join('')+ops.map(_cenOpRow).join('')+'</table></div>';
+    +rowsAll.map(x=>x.html).join('')+ops.map(_cenOpRow).join('')+'</table></div>';
   Object.keys(_cenOpen).forEach(k=>{ if(_cenOpen[k]&&document.getElementById('cen-goals-'+_cenId(k)))loadCensusGoals(k); });
 }
 
@@ -3201,6 +3104,313 @@ async function openCensusGoal(run,goal){
   // every modal open: a finished goal's record is judged from the summary.
 }
 
+/* ═══ WORK — one table: every task, or every driver run; what is live on top ═══
+   Flattening slice 3 (shared-planning/loop-lab-flattening/PLAN.md §3, §6).
+   Eight pages held the same facts in eight shapes — Run once, Improve · set
+   up, Improve · live (its list), Suite, Variants, Census, Tasks, Runs. This
+   is ONE table with a mode toggle: `runs` is a row per DRIVER RUN (census
+   run, suite, improvement session, single run — evolve.work.drivers) and
+   `tasks` a row per task with its history from every driver
+   (evolve.tasks.overview). Expand a row for its tasks / results, click a
+   thing for its record. ONE poller (workPoll, 5s while the section is open
+   and `follow` is on) asks evolve.work.live what is running; the tables
+   refresh when that answer changes, never on a tick. The census table's
+   own code (renderCensusTable, _cenRow, loadCensusGoals …) is the runs view;
+   the other kinds render beside it. */
+let _workMode='runs', _workRows=[], _workMeta={}, _workKind='', _workSrc='',
+    _workTasks=[], _workTaskText='', _workTaskTemplate='', _workTaskProblems=false, _workTaskOpen={},
+    _workLive=null, _workLiveSig='';
+function loadWork(){ if(_workMode==='tasks')loadWorkTasks(); else loadCensusRuns(); loadCensusTemplates&&loadCensusTemplates(); censusPoll(); }
+function setWorkMode(m){
+  _workMode=(m==='tasks')?'tasks':'runs';
+  document.querySelectorAll('#work-mode button').forEach(b=>b.classList.toggle('on',b.dataset.mode===_workMode));
+  if($('census-runs'))$('census-runs').style.display=_workMode==='runs'?'':'none';
+  if($('work-tasks'))$('work-tasks').style.display=_workMode==='tasks'?'':'none';
+  if(_workMode==='tasks')loadWorkTasks(); else renderCensusTable();
+}
+function setWorkKind(v){ _workKind=String(v||''); renderCensusTable(); }
+function setWorkSrc(v){ _workSrc=String(v||''); renderCensusTable(); }
+/* Something finished somewhere (an event, a poll that saw a change): refresh
+   whichever view is on screen. Cheap to call; it only fetches when Work is
+   the section on screen. */
+let _workChangeT=null;
+function workOnChange(){
+  if(typeof _curSec!=='function'||_curSec()!=='work')return;
+  clearTimeout(_workChangeT);
+  _workChangeT=setTimeout(()=>{ if(_workMode==='tasks')loadWorkTasks(); else loadCensusRuns(); },400);
+}
+/* What is live besides the census: a suite in progress, an improvement
+   session, a single run. Rendered under the census strip from the same
+   evolve.work.live answer. */
+function _wkLive(live){
+  const el=$('work-live');if(!el)return;
+  const s=(live&&live.suite&&live.suite.status)||{}, sr=!!((live&&live.suite&&live.suite.running)||s.running);
+  const im=live&&live.improve, run=(live&&live.run)||{}, cur=run.current||{};
+  const parts=[];
+  if(sr)parts.push('<span class="row" style="gap:6px"><span class="spin"></span><b>suite</b> <span class="hint">'+esc(s.current||'')+'</span><span class="mono">'+(s.done||0)+'/'+(s.total||'?')+'</span>'
+    +(s.suite_id?'<button class="btn sm" onclick="openWorkDriver(\'suite\',\''+esc(s.suite_id)+'\')" title="this suite so far">open</button>':'')+'</span>');
+  if(im)parts.push('<span class="row" style="gap:6px"><span class="spin"></span><b>improve</b> <span class="mono">'+esc(im.profile||'')+'</span><span class="hint">'+esc(im.current||'')+'</span><span class="mono">round '+(im.rounds_done||0)+'/'+(im.max_rounds||'?')+'</span>'
+    +'<button class="btn sm" onclick="_watchSession=\''+esc(im.id)+'\';nav(\'watch\')" title="watch it live">watch</button><button class="btn sm err-btn" onclick="cancelSession(\''+esc(im.id)+'\')">stop</button></span>');
+  if(run.live||run.running)parts.push('<span class="row" style="gap:6px"><span class="spin"></span><b>run</b> <span class="mono">'+esc(cur.task||cur.run_id||'')+'</span><span class="hint">'+esc(cur.goal||'')+'</span><span class="hint">'+_elapsed(cur.started_at)+'</span>'
+    +'<button class="btn sm" onclick="nav(\'test\')" title="watch the loop">watch</button></span>');
+  el.innerHTML=parts.length?('<div class="row" style="gap:14px;flex-wrap:wrap;margin:4px 0 6px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2)">'+parts.join('')+'</div>'):'';
+}
+function _wkKindTag(k){
+  const col={census:'#5b8dd6',suite:'#9b7fd6',improve:'#c9a35a',run:'#8a8a8a'}[k]||'#8a8a8a';
+  return '<span class="tag" style="border-left:3px solid '+col+'" title="'+({census:'a census run: the harness drove prod\'s own loop through a template',suite:'a suite: every enabled task of a tag, run in order',improve:'an improvement session: run, score, edit, re-run',run:'a single run'}[k]||k)+'">'+esc(k)+'</span>';
+}
+function _wkPct(v){return (v===null||v===undefined)?'<span class="hint">—</span>':('<span style="color:'+(v>=0.9?'#3cb371':(v>=0.7?'#c9a35a':'#c96b6b'))+';font-weight:600">'+Math.round(v*100)+'%</span>')}
+/* A non-census driver run as a row of the same table (15 cells, like
+   _cenRow): kind + id · template/tag · code · when · tasks · done · failed ·
+   score · pass · wall · model/critic · — · — · — · source. */
+function _wkRow(d){
+  const open=!!_cenOpen[d.id];
+  const name='<span class="mono">'+(open?'▾':'▸')+' '+_wkKindTag(d.kind)+' '+esc(d.id)+'</span>'+(d.status==='running'?' <span style="color:#3cb371">●</span>':'')+(d.excluded?' <span class="tag">'+esc(d.excluded)+'</span>':'');
+  const st=(d.status==='error'||d.status==='failed')?'<span style="color:#c96b6b">'+esc(d.status)+'</span>':(d.status==='running'?'<span style="color:#3cb371">running</span>':esc(d.status||''));
+  const model=d.kind==='improve'?('critic '+esc(d.critic||'?')+' · editor '+esc(d.editor||'?')+(d.best_variant?(' · best '+esc(d.best_variant)):'')):(d.variant?('variant '+esc(d.variant)):(d.critic?('critic '+esc(d.critic)):(d.where?esc(d.where):'')));
+  const wall=d.wall_total_s!=null?_cenSec(d.wall_total_s):'—';
+  return '<tr class="clk cen-run" data-run="'+esc(d.id)+'" onclick="toggleWorkDriver(\''+esc(d.kind)+'\',\''+esc(d.id)+'\')">'
+    +'<td>'+name+'</td>'
+    +'<td class="mono hint">'+esc(d.tag||d.profile||d.task||'')+'</td>'
+    +'<td class="hint">—</td>'
+    +'<td class="mono hint">'+_cenWhen(d.ended_at)+'</td>'
+    +'<td>'+(d.kind==='improve'?esc(d.rounds||''):d.tasks_n)+'</td>'
+    +'<td style="color:#3cb371">'+(d.kind==='improve'?st:d.done)+'</td>'
+    +'<td style="color:#c96b6b">'+(d.kind==='improve'?(d.error?'<span title="'+esc(d.error)+'">error</span>':''):(d.failed||0))+(d.capped?(' <span class="hint" title="hit the wall cap">'+d.capped+' cap</span>'):'')+'</td>'
+    +'<td>'+(d.avg_combined!=null?scChip(d.avg_combined):'<span class="hint">—</span>')+'</td>'
+    +'<td class="mono hint">'+(d.pass_rate!=null?_wkPct(d.pass_rate):'—')+'</td>'
+    +'<td class="mono">'+wall+'</td>'
+    +'<td class="hint">'+model+'</td>'
+    +'<td class="hint">—</td><td class="hint">—</td><td class="hint">—</td>'
+    +'<td class="hint">'+esc(d.source||d.kind)+(d.also_in_store?' <span title="also a scoreboard in the suite store (posted by the harness)">·</span>':'')+'</td>'
+    +'</tr>'
+    +'<tr class="cen-detail" data-run="'+esc(d.id)+'"'+(open?'':' style="display:none"')+'><td colspan="15" style="padding:0 6px 8px 18px;background:var(--bg2)"><div id="wk-det-'+_cenId(d.id)+'">'+(open?'<span class="spin"></span>':'')+'</div></td></tr>';
+}
+function toggleWorkDriver(kind,id){
+  _cenOpen[id]=!_cenOpen[id];
+  const det=document.querySelector('tr.cen-detail[data-run="'+id+'"]');
+  const row=document.querySelector('tr.cen-run[data-run="'+id+'"] td');
+  if(det)det.style.display=_cenOpen[id]?'':'none';
+  if(row)row.innerHTML=row.innerHTML.replace(_cenOpen[id]?'▸':'▾',_cenOpen[id]?'▾':'▸');
+  if(_cenOpen[id])loadWorkDriverDetail(kind,id);
+}
+/* Expand a suite → its result rows; a session → its rounds; a run → its
+   record. Each line opens the record it names. */
+async function loadWorkDriverDetail(kind,id){
+  const el=$('wk-det-'+_cenId(id));if(!el)return;
+  const d=_workRows.find(x=>x.kind===kind&&x.id===id)||{};
+  if(kind==='suite'){
+    const rows=d.results||[];
+    if(!rows.length){el.innerHTML='<div class="empty">No task results in this suite.</div>';return}
+    el.innerHTML='<table><tr><th>task</th><th>type</th><th>checks</th><th>score</th><th>combined</th><th>time</th><th>error</th><th></th></tr>'
+      +rows.map(r=>'<tr class="clk" onclick="event.stopPropagation();openRun(\''+esc(r.run_id)+'\')"><td class="mono">'+esc(r.task)+'</td><td><span class="tag">'+esc(r.type||'loop')+'</span></td><td class="mono">'+esc(r.checks||'')+'</td>'
+        +'<td>'+scChip(r.score)+'</td><td>'+scChip(r.combined)+'</td><td class="mono">'+(r.elapsed_s||0)+'s</td><td class="hint">'+esc((r.error||'').slice(0,80))+(r.contended?' <span title="ran with the GPU contended">⚠</span>':'')+'</td>'
+        +'<td><button class="btn sm" onclick="event.stopPropagation();openTaskHistory(\''+esc(r.task)+'\')" title="this task through time">⌁</button></td></tr>').join('')+'</table>';
+    return;
+  }
+  if(kind==='improve'){
+    const r=await api('/evolve/improve/status?session_id='+encodeURIComponent(id));
+    const s=(r&&r.session)||{};
+    let h='<div class="row" style="margin:4px 0;gap:8px;flex-wrap:wrap"><span class="pill">best '+scChip(s.best_score)+' '+esc(s.best_variant||'')+'</span><span class="pill">target '+esc(s.target_score)+'</span><span class="pill">round '+(s.rounds_done||0)+'/'+(s.max_rounds||'?')+'</span>'
+      +(s.current?'<span class="hint">'+esc(s.current)+'</span>':'')+(s.error?'<span class="pill" style="color:var(--err)">'+esc(s.error)+'</span>':'')
+      +'<span style="flex:1"></span><button class="btn sm" onclick="event.stopPropagation();openSession(\''+esc(id)+'\')">full record</button>'
+      +(s.live||s.status==='running'?'<button class="btn sm" onclick="event.stopPropagation();_watchSession=\''+esc(id)+'\';nav(\'watch\')">watch</button>':'')+'</div>';
+    h+='<table><tr><th>round</th><th>variant</th><th>avg</th><th>tasks</th></tr>'+(s.rounds||[]).map(rd=>'<tr><td class="mono">'+rd.round+'</td><td class="mono">'+esc(rd.variant||'base')+'</td><td>'+scChip(rd.avg)+'</td>'
+      +'<td class="mono">'+(rd.results||[]).map(x=>'<span class="clk" onclick="event.stopPropagation();openRun(\''+esc(x.run_id||'')+'\')">'+esc(x.task)+' '+(x.combined!=null?(+x.combined).toFixed(1):'—')+'</span>').join(' · ')+'</td></tr>').join('')+'</table>';
+    el.innerHTML=h;
+    return;
+  }
+  if(kind==='run'){
+    const r=await api('/evolve/run/get?run_id='+encodeURIComponent(id));
+    const run=(r&&r.run)||{};
+    el.innerHTML='<div class="row" style="margin:4px 0;gap:8px;flex-wrap:wrap"><span class="mono">'+esc(run.task||d.task||'')+'</span>'+scChip(run.combined)+'<span class="pill">checks '+esc(run.checks_ok)+'/'+esc(run.checks_n)+'</span>'
+      +(run.error?'<span class="pill" style="color:var(--err)">'+esc(run.error)+'</span>':'')+'<span class="hint">'+esc(run.where||'')+' · '+esc(run.source||'')+'</span>'
+      +'<span style="flex:1"></span><button class="btn sm" onclick="event.stopPropagation();openRun(\''+esc(id)+'\')">record</button><button class="btn sm" onclick="event.stopPropagation();openTaskHistory(\''+esc(run.task||d.task||'')+'\')" title="this task through time">⌁</button></div>'
+      +((run.checks||[]).length?('<div>'+run.checks.map(c=>'<div class="mono" style="font-size:10px;color:'+(c.ok?'var(--ok)':'var(--err)')+'">'+(c.ok?'✓':'✗')+' '+esc(c.type)+'('+esc(String(c.value||'').slice(0,40))+')'+(c.note?' — '+esc(c.note):'')+'</div>').join('')+'</div>'):'');
+    return;
+  }
+  el.innerHTML='<div class="empty">Nothing to expand.</div>';
+}
+function openWorkDriver(kind,id){
+  if(kind==='census')return openCensusRun(id);
+  if(kind==='improve')return openSession(id);
+  if(kind==='run')return openRun(id);
+  _cenOpen[id]=true; renderCensusTable();
+}
+/* ── the tasks view ───────────────────────────────────────────────────── */
+function setWorkTaskText(v){_workTaskText=String(v||'').trim().toLowerCase();renderWorkTasks()}
+function setWorkTaskTemplate(v){_workTaskTemplate=String(v||'');renderWorkTasks()}
+function toggleWorkTaskProblems(on){_workTaskProblems=!!on;renderWorkTasks()}
+async function loadWorkTasks(){
+  const el=$('work-tasks');if(!el)return;
+  const r=await api('/evolve/tasks/overview');
+  _workTasks=(r&&r.tasks)||[];
+  renderWorkTasks();
+}
+function _wkDots(series){
+  return (series||[]).map(p=>'<span title="'+esc((p.driver||'')+' '+(p.status||'')+(p.wall_s?(' '+_cenSec(p.wall_s)):''))+'" style="width:7px;height:7px;border-radius:2px;display:inline-block;margin-right:1px;background:'+(p.ok?'#3cb371':(p.status==='wall-cap'?'#c9a35a':'#c96b6b'))+'"></span>').join('');
+}
+function renderWorkTasks(){
+  const el=$('work-tasks');if(!el)return;
+  const all=_workTasks;
+  const tmpls=[...new Set(all.map(t=>t.template||'').filter(Boolean))].sort();
+  const q=_workTaskText;
+  const shown=all.filter(t=>{
+    if(_workTaskTemplate&&(_workTaskTemplate===' none'?!!t.template:(t.template||'')!==_workTaskTemplate))return false;
+    if(_workTaskProblems){const st=t.stats||{};const last=t.last||{};if(!(t.runs&&((st.ok_rate!=null&&st.ok_rate<1)||(last.ok===false))))return false}
+    if(q){const hay=[t.task_id,t.label,t.template,(t.tags||[]).join(' '),t.type,t.profile,t.cap,t.goal].join(' ').toLowerCase();if(hay.indexOf(q)<0)return false}
+    return true;
+  });
+  const bar='<div class="hint" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 6px">'
+    +'<input id="wk-task-text" placeholder="filter: task, label, tag, goal" value="'+esc(_workTaskText)+'" oninput="setWorkTaskText(this.value)" style="width:230px">'
+    +'<label style="display:flex;gap:4px;align-items:center">template <select onchange="setWorkTaskTemplate(this.value)" style="width:auto"><option value="">all ('+all.length+')</option>'
+    +tmpls.map(t=>'<option value="'+esc(t)+'"'+(_workTaskTemplate===t?' selected':'')+'>'+esc(t)+' ('+all.filter(x=>(x.template||'')===t).length+')</option>').join('')
+    +(all.some(x=>!x.template)?('<option value=" none"'+(_workTaskTemplate===' none'?' selected':'')+'>not a census goal ('+all.filter(x=>!x.template).length+')</option>'):'')+'</select></label>'
+    +'<label style="display:flex;gap:4px;align-items:center" title="tasks whose runs were not all ok, or whose last result was not"><input type="checkbox" onchange="toggleWorkTaskProblems(this.checked)"'+(_workTaskProblems?' checked':'')+'> problems only</label>'
+    +'<span class="mono" style="opacity:.75">showing '+shown.length+' of '+all.length+'</span></div>';
+  if(!shown.length){el.innerHTML=bar+'<div class="empty">No task matches.</div>';return}
+  let h=bar+'<div style="overflow-x:auto"><table id="work-task-table"><tr><th>task</th><th>template · tags</th><th>type</th><th>profile / cap</th><th>checks</th>'
+    +'<th title="results from every driver">runs</th><th title="share of runs the harness or suite called ok">ok</th><th>wall median</th><th title="newest result">last</th><th title="ok-rate change, recent vs earlier; streak of the newest results">trend</th><th></th></tr>';
+  for(const t of shown){
+    const st=t.stats||{}, last=t.last||null, open=!!_workTaskOpen[t.task_id];
+    const trend=(st.trend_ok_rate==null)?'—':('<span style="color:'+(st.trend_ok_rate>0?'#3cb371':(st.trend_ok_rate<0?'#c96b6b':'inherit'))+'">'+(st.trend_ok_rate>0?'+':'')+Math.round(st.trend_ok_rate*100)+'%</span>')
+      +(st.streak&&st.streak.n>1?(' <span class="hint" title="the newest results in a row">'+esc(st.streak.kind)+'×'+st.streak.n+'</span>'):'');
+    h+='<tr class="clk wk-task" data-task="'+esc(t.task_id)+'" onclick="toggleWorkTask(\''+esc(t.task_id)+'\')">'
+      +'<td><span class="mono">'+(open?'▾':'▸')+'</span> <b>'+esc(t.task_id)+'</b>'+(t.registered===false?' <span class="tag" title="results exist but the task is no longer in the store">unregistered</span>':'')+(t.enabled===false?' <span class="tag" style="color:var(--dim)">off</span>':'')+(t.overrides&&t.overrides.model?' <span class="tag" title="model override">'+esc(t.overrides.model)+'</span>':'')+'<div class="hint">'+esc(t.label||'')+'</div></td>'
+      +'<td>'+(t.template?'<span class="mono">'+esc(t.template)+'</span> ':'')+((t.tags||[]).filter(x=>x!=='census'&&x!=='census-'+t.template).map(x=>'<span class="tag">'+esc(x)+'</span>').join(' '))+'</td>'
+      +'<td><span class="tag">'+esc(t.type||'loop')+'</span></td>'
+      +'<td class="mono">'+esc(t.type==='cap'?(t.cap||''):(t.profile||''))+'</td>'
+      +'<td class="mono">'+(t.checks_n||0)+'</td>'
+      +'<td class="mono">'+(t.runs||0)+(t.series&&t.series.length?('<div>'+_wkDots(t.series)+'</div>'):'')+'</td>'
+      +'<td class="mono">'+(st.runs?_wkPct(st.ok_rate):'—')+'</td>'
+      +'<td class="mono">'+(st.runs?_cenSec(st.wall_median_s):'—')+'</td>'
+      +'<td>'+(last?(_cenStatus(last.status)+' <span class="hint mono">'+esc(String(last.ts||'').slice(0,10))+'</span>'):'<span class="hint">never</span>')+'</td>'
+      +'<td class="mono">'+trend+'</td>'
+      +'<td class="row" style="gap:4px"><button class="btn sm" onclick="event.stopPropagation();runTask(\''+esc(t.task_id)+'\')" title="run it now and watch">&#9654;</button>'
+      +'<button class="btn sm" onclick="event.stopPropagation();openTaskHistory(\''+esc(t.task_id)+'\')" title="this task through time">⌁</button>'
+      +(t.registered===false?'':'<button class="btn sm" onclick="event.stopPropagation();editWorkTask(\''+esc(t.task_id)+'\')">edit</button>')+'</td></tr>'
+      +'<tr class="wk-task-detail" data-task="'+esc(t.task_id)+'"'+(open?'':' style="display:none"')+'><td colspan="11" style="padding:0 6px 8px 18px;background:var(--bg2)"><div id="wk-task-'+_cenId(t.task_id)+'">'+(open?'<span class="spin"></span>':'')+'</div></td></tr>';
+  }
+  h+='</table></div>';el.innerHTML=h;
+  Object.keys(_workTaskOpen).forEach(k=>{ if(_workTaskOpen[k]&&$('wk-task-'+_cenId(k)))loadWorkTaskDetail(k); });
+}
+function toggleWorkTask(id){
+  _workTaskOpen[id]=!_workTaskOpen[id];
+  const det=document.querySelector('tr.wk-task-detail[data-task="'+id+'"]');
+  const row=document.querySelector('tr.wk-task[data-task="'+id+'"] td span');
+  if(det)det.style.display=_workTaskOpen[id]?'':'none';
+  if(row)row.textContent=_workTaskOpen[id]?'▾':'▸';
+  if(_workTaskOpen[id])loadWorkTaskDetail(id);
+}
+/* The task's recent results, every driver, newest first — each opens the
+   record it came from (a census goal → the census record, a run → the run). */
+async function loadWorkTaskDetail(id){
+  const el=$('wk-task-'+_cenId(id));if(!el)return;
+  const h=await api('/evolve/task/history?id='+encodeURIComponent(id));
+  if(!h||h.error){el.innerHTML='<div class="empty">'+esc((h&&h.error)||'no history')+'</div>';return}
+  const rows=(h.results||[]).slice(0,12);
+  const t=h.task||{};
+  let out='<div class="hint" style="margin:4px 0">'+(t.goal?esc(String(t.goal).slice(0,300)):'')+'</div>';
+  out+='<div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:4px">'+_thStats('all drivers',h.stats)+_thStats('census only',h.census_stats)+'</div>';
+  if(!rows.length){el.innerHTML=out+'<div class="empty">No results yet.</div>';return}
+  out+='<table><tr><th>when</th><th>driver</th><th>status</th><th>wall</th><th>checks</th><th>code</th><th>coder</th></tr>'
+    +rows.map(r=>{const drv=r.driver||{};const onclick=r.source==='census'?'openCensusGoal(\''+esc(drv.id||'')+'\',\''+esc(r.goal||'')+'\')':'openRun(\''+esc(r.run_id||'')+'\')';
+      return '<tr class="clk" onclick="event.stopPropagation();'+onclick+'"><td class="mono hint">'+esc(String(r.ts||'').slice(0,16).replace('T',' '))+'</td><td>'+_wkKindTag(drv.kind||r.source)+' <span class="mono">'+esc(drv.id||'')+'</span></td>'
+        +'<td>'+_cenStatus(r.status)+(r.reruns?(' <span class="tag" title="re-run after a pause or interruption">↻'+r.reruns+'</span>'):'')+'</td><td class="mono">'+_cenSec(r.wall_s)+(r.hit_cap?' <span class="hint">cap</span>':'')+'</td>'
+        +'<td class="mono">'+(r.checks_n?((r.checks_ok||0)+'/'+r.checks_n):'—')+'</td><td class="mono hint">'+(r.code?esc((r.code.sha_short||'').slice(0,7)+'@'+(r.code.branch||'?'))+(r.code.changed?' ⚠':''):'—')+'</td>'
+        +'<td class="hint">'+esc((r.routing&&r.routing.coder)||'')+((r.routing&&r.routing.spill_calls)?' <span style="color:#c96b6b" title="CPU spill">⚠</span>':'')+'</td></tr>';}).join('')
+    +'</table>'+((h.results||[]).length>12?('<div class="hint">'+((h.results||[]).length-12)+' older — <a href="#" onclick="event.preventDefault();event.stopPropagation();openTaskHistory(\''+esc(id)+'\')">all of them</a></div>'):'');
+  el.innerHTML=out;
+}
+async function editWorkTask(id){
+  const r=await api('/evolve/tasks');
+  const t=((r&&r.tasks)||[]).find(x=>x.id===id);
+  if(!t){toast('task not found');return}
+  openTask(t);
+}
+/* ── the modals that replaced whole pages ─────────────────────────────── */
+const _WORK_IMPROVE_FORM=`    <div class="card-h"><span class="card-t">Start improvement session</span>
+      <span class="hint">run → critic scores → editor proposes a better variant → rerun</span>
+      <span style="flex:1"></span>
+      <span class="hint" id="im-live-link"></span></div>
+    <div class="hint" style="margin-bottom:6px">This page CONFIGURES a session; <a href="#" onclick="event.preventDefault();nav('watch')">Improve · live</a> is the same session running. To run something once instead — a task, a suite, or a census template — use <a href="#" onclick="event.preventDefault();nav('test')">Run once</a>.</div>
+    <div class="grid">
+      <div><label class="fld">Improve (category)</label><select id="im-cat" style="width:100%" onchange="fillTargets('im-cat','im-profile')"></select></div>
+      <div><label class="fld">Target</label><select id="im-profile" style="width:100%"></select></div>
+      <div><label class="fld">Goals from</label><select id="im-source" style="width:100%" onchange="imSourceCh()">
+        <option value="tasks">existing benchmark tasks</option>
+        <option value="goals">existing long-term goals</option>
+        <option value="generate">generate new goals</option>
+      </select></div>
+      <div><label class="fld">Task tag (optional)</label><input id="im-tag" placeholder="e.g. loop" style="width:100%"></div>
+      <div><label class="fld">Critic (scores runs)</label><select id="im-critic" style="width:100%"></select></div>
+      <div><label class="fld">Editor (proposes variant)</label><select id="im-editor" style="width:100%"></select></div>
+      <div><label class="fld">Max rounds</label><input id="im-rounds" type="number" min="1" max="12" value="4" style="width:100%"></div>
+      <div><label class="fld">Target score</label><input id="im-target" type="number" min="0" max="10" step="0.5" value="8" style="width:100%"></div>
+    </div>
+    <div id="im-goals-row" style="display:none;margin-top:8px"><label class="fld">Goals (one per line, blank = pull the system's long-term goals)</label><textarea id="im-goals" style="min-height:52px" placeholder="e.g. keep the memory graph free of orphan nodes"></textarea></div>
+    <div id="im-gen-row" style="display:none;margin-top:8px"><label class="fld">Generate goals to test</label><input id="im-gen" style="width:100%" placeholder="a subsystem or objective, e.g. the fabric discovery system"></div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn primary" onclick="startImprove()">&#9654; Start &amp; watch</button>
+      <span class="hint">Synthesis runs in the background on <b id="im-editq-lbl">gpt-oss:20b</b> (CPU node). Watch it live in the Watch tab.</span>
+    </div>`;
+function openImproveForm(){
+  openModal('<div class="card-h"><span class="card-t">Start improvement session</span><span class="hint">run → critic scores → editor proposes a better variant → rerun</span></div>'
+    +_WORK_IMPROVE_FORM
+    +'<div class="card" style="margin-top:10px"><div class="card-h"><span class="card-t">Component map</span><span class="hint">everything Loop Lab can self-improve — click to pick it</span></div><div id="ov-map"><div class="empty">—</div></div></div>'
+    +'<div class="row" style="margin-top:10px"><span style="flex:1"></span><button class="btn" onclick="closeModal()">Close</button></div>');
+  const provOpts=_providers.map(p=>'<option value="'+esc(p.id)+'">'+esc(p.label)+'</option>').join('');
+  ['im-critic','im-editor'].forEach(id=>{if($(id))$(id).innerHTML=provOpts});
+  if($('im-critic'))$('im-critic').value=_cfg.critic_provider||'ollama';
+  if($('im-editor'))$('im-editor').value=_cfg.editor_provider||'anthropic';
+  if($('im-editq-lbl'))$('im-editq-lbl').textContent=_cfg.editq_model||'gpt-oss:20b';
+  loadTargets().then(()=>{fillTargetSelectors('im-cat','im-profile','specialist');loadComponentMap();});
+}
+const _WORK_VARIANTS=`    <div class="card-h"><span class="card-t">Tuning variants &amp; overlay</span>
+      <span style="flex:1"></span>
+      <select id="var-profile" style="width:160px" onchange="loadVariants()"></select>
+      <button class="btn sm" onclick="loadVariants()">&#8635;</button>
+    </div>
+    <div id="overlay-box" style="margin-bottom:10px"></div>
+    <div id="variants-body"><div class="empty">Pick a profile.</div></div>`;
+function openVariants(){
+  openModal('<div class="card-h"><span class="card-t">Tuning variants &amp; overlay</span><span class="hint">per profile: the variants improvement sessions produced, and the one in force</span></div>'
+    +_WORK_VARIANTS
+    +'<div class="card" style="margin-top:10px"><div class="card-h"><span class="card-t">Compare</span><span class="hint">task outcomes A vs B by variant id</span><span style="flex:1"></span><input id="bc-a" placeholder="group A variant id" style="width:150px"><input id="bc-b" placeholder="group B variant id (blank = baseline)" style="width:190px"><button class="btn sm" onclick="$(\'bench-compare\').setGroups($(\'bc-a\').value.trim(),$(\'bc-b\').value.trim())">Compare</button></div><vera-bench-compare id="bench-compare"></vera-bench-compare></div>'
+    +'<div class="row" style="margin-top:10px"><span style="flex:1"></span><button class="btn" onclick="closeModal()">Close</button></div>');
+  const profOpts=_profiles.map(p=>'<option value="'+esc(p.id)+'">'+esc(p.label||p.id)+'</option>').join('');
+  if($('var-profile')){$('var-profile').innerHTML=profOpts;loadVariants();}
+}
+const _WORK_RUN_ONCE=`<div class="card-h"><span class="card-t">Run once</span><span class="hint">a suite of tasks, a goal, the quick smoke tests &mdash; or generate tests</span></div>
+<div class="row" style="margin-bottom:8px">
+  <select id="ov-tag" style="width:110px"><option value="">all tags</option><option value="core" selected>core</option><option value="loop">loop</option><option value="smoke">smoke</option><option value="census">census</option></select>
+  <label class="row" style="gap:4px"><input type="checkbox" id="ov-assess" checked style="width:auto"> assess</label>
+  <button class="btn" onclick="runQuickSmoke()" title="Run only the fast cap smoke-tests (seconds) to prove the plumbing works">&#9889; Quick smoke</button>
+  <button class="btn primary" id="ov-run" onclick="runSuite()">&#9654; Run suite</button>
+</div>
+<div class="row" style="margin-bottom:8px">
+  <input id="ov-goal" placeholder="Set a goal for the loop and analyse it&hellip; (e.g. 'find the 3 largest fabric datasets and summarise each')" style="flex:1">
+  <select id="ov-goal-profile" style="width:130px"></select>
+  <button class="btn" onclick="runGoal()">&#9654; Run &amp; analyse</button>
+  <button class="btn" onclick="openGenerate()" title="LLM-generate benchmark tasks from a goal/subsystem and save them">&#10022; Generate tests</button>
+</div>
+<div class="hint">A single task runs from its row (&#9654;); a census template runs from Templates &amp; run above the table. The suite path runs tasks in the PRIMARY sandbox and is blocked when none is up (board loop-o50); the census harness is the instrument until then.</div>
+<div class="row" style="margin-top:10px"><span style="flex:1"></span><button class="btn" onclick="closeModal()">Close</button></div>`;
+function openRunOnce(){
+  openModal(_WORK_RUN_ONCE);
+  const profOpts=_profiles.map(p=>'<option value="'+esc(p.id)+'">'+esc(p.label||p.id)+'</option>').join('');
+  if($('ov-goal-profile')){$('ov-goal-profile').innerHTML=profOpts;$('ov-goal-profile').value=_cfg.default_profile||'';}
+}
+/* Trends under the table: the census sparklines (renderCensusCharts) plus
+   what the Suite page drew — the race-to-green board and the score trend. */
+async function renderWorkCharts(){
+  const el=$('work-charts');if(!el)return;
+  const [b,s]=await Promise.all([api('/evolve/board?limit=24').catch(()=>null),api('/evolve/suites?limit=12').catch(()=>null)]);
+  const suites=(s&&s.suites)||[];
+  el.innerHTML='<div class="card"><div class="card-h"><span class="card-t">Race to green</span><span class="hint">each task\'s score across recent suites and census runs</span></div>'+(b?svgBoard(b):'<div class="empty">—</div>')+'</div>'
+    +'<div class="card"><div class="card-h"><span class="card-t">Score trend</span><span class="hint">average combined score, recent suites</span></div>'+(suites.length?svgTrend(suites):'<div class="empty">—</div>')+'</div>';
+}
+
 /* ═══ ONE TASK THROUGH TIME ═════════════════════════════════════════════════
    A census goal is a task; a task is one runnable test. Its results used to
    live in two stores (the census archive, the suite's run records) and no
@@ -3401,7 +3611,7 @@ async function openEditq(id){
 }
 async function editqSave(id){const r=await post('/evolve/editq/update',{id,prompt:$('eq-prompt').value});if(r&&r.ok){toast('Saved');closeModal();loadEditq()}else toast((r&&r.error)||'failed')}
 async function editqCancel(id){const r=await post('/evolve/editq/cancel',{id});toast(r&&r.ok?'Cancelled':(r&&r.error)||'failed');closeModal&&closeModal();loadEditq()}
-function _curSec(){const b=document.querySelector('#nav .btn.on');return b?b.dataset.sec:'overview'}
+function _curSec(){const b=document.querySelector('#nav .btn.on');return b?b.dataset.sec:'work'}
 // subscribe: parent bus if available, else own WS to /ws/mcp
 (function subscribe(){
   try{const par=window.parent;if(par&&par!==window&&typeof par._veraSubscribe==='function'){par._veraSubscribe(onEvent);return}}catch(e){}
@@ -3632,6 +3842,9 @@ function svgFlywheel(active){
 
 /* ═══ OVERVIEW / SUITE ═══ */
 async function loadOverview(){
+  // The Suite page is part of Work now: its scoreboard is a suite row's
+  // expansion, its board/trend/activity live under Trends (renderWorkCharts).
+  if(!$('ov-scoreboard')){workOnChange();return}
   loadBoard(); loadActivityChart(); loadComponentMap();
   const r=await api('/evolve/suites?limit=12');const suites=(r&&r.suites)||[];
   const cur=suites[0];
@@ -3659,7 +3872,7 @@ async function loadComponentMap(){
   h+='</div><div class="hint" style="margin-top:6px">● tunable · click a component to improve it</div>';
   el.innerHTML=h;
 }
-function improveTarget(cat,id){nav('improve');setTimeout(()=>{if($('im-cat')){$('im-cat').value=cat;fillTargets('im-cat','im-profile');$('im-profile').value=id}},60)}
+function improveTarget(cat,id){openImproveForm();setTimeout(()=>{if($('im-cat')){$('im-cat').value=cat;fillTargets('im-cat','im-profile');$('im-profile').value=id}},60)}
 function renderScoreboard(cur,prev){
   const prevBy={};((prev||{}).results||[]).forEach(r=>prevBy[r.task]=r);
   let h='<div class="row" style="margin-bottom:8px">'
@@ -3681,6 +3894,7 @@ function renderScoreboard(cur,prev){
 }
 let _suite=null,_suitePoll=null;
 async function runSuite(){
+  if(!$('ov-tag')){openRunOnce();return}
   const r=await post('/evolve/suite/start',{tag:$('ov-tag').value,assess:$('ov-assess').checked});
   if(r&&r.error){toast(r.error);return}
   toast('Suite started');pollSuite();
@@ -3691,6 +3905,7 @@ async function runQuickSmoke(){
   toast('Quick smoke started (cap tests only)');pollSuite();
 }
 async function runGoal(){
+  if(!$('ov-goal')){openRunOnce();return}
   const g=$('ov-goal').value.trim();if(!g){toast('type a goal');return}
   const r=await post('/evolve/run/start',{kind:'loop',goal:g,target:'specialist:'+($('ov-goal-profile').value||'planning')});
   if(r&&r.ok){_testRunId=r.run_id;_testRunKind='loop';_testRunLabel=(r.target||'');_testRunGoal=g;_suiteActive=false;$('tc-goal').value=g;nav('test')}else toast((r&&r.error)||'failed');
@@ -3720,12 +3935,14 @@ async function doGenerate(){
 async function pollSuite(){
   const r=await api('/evolve/suite/status');const s=(r&&r.status)||{};_suite=s;_suite.running=!!(r&&r.running);
   renderLive();
-  if(_suite.running){$('ov-run').disabled=true;if(!_suitePoll)_suitePoll=setInterval(pollSuite,2500)}
-  else{$('ov-run').disabled=false;if(_suitePoll){clearInterval(_suitePoll);_suitePoll=null}if(_curSec()==='overview')loadOverview()}
+  if(_suite.running){if($('ov-run'))$('ov-run').disabled=true;if(!_suitePoll)_suitePoll=setInterval(pollSuite,2500)}
+  else{if($('ov-run'))$('ov-run').disabled=false;if(_suitePoll){clearInterval(_suitePoll);_suitePoll=null}workOnChange()}
 }
 
 /* ═══ TASKS ═══ */
 async function loadTasks(){
+  // The Tasks page is the tasks view of Work now.
+  if(!$('tasks-body')){if(_curSec()==='work'){setWorkMode('tasks');}return}
   const [r,ov]=await Promise.all([api('/evolve/tasks'),api('/evolve/tasks/overview').catch(()=>null)]);
   const tasks=(r&&r.tasks)||[];
   if(!tasks.length){$('tasks-body').innerHTML='<div class="empty">No tasks.</div>';return}
@@ -3762,8 +3979,14 @@ async function runTask(id){
   _testRunGoal=(tt&&tt.goal)||'';
   nav('test');
 }
+let _tkOrig={};
 function openTask(t){
   t=t||{};
+  // Keep the record as opened: the form shows a few fields, and a seeded
+  // census task carries census{}, overrides{model}, scenario, target the
+  // form never showed; saveTask overlays the edits on this (and the backend
+  // merges too), so an edit no longer strips a task of what made it one.
+  _tkOrig=t.id?JSON.parse(JSON.stringify(t)):{};
   const h='<div class="card-h"><span class="card-t">'+(t.id?'Edit task':'New task')+'</span></div>'
     +'<div class="grid">'
     +'<div><label class="fld">id</label><input id="tk-id" value="'+esc(t.id||'')+'" '+(t.id?'readonly':'')+' style="width:100%"></div>'
@@ -3789,11 +4012,11 @@ function tkTypeCh(){const cap=$('tk-type').value==='cap';['tk-loop1','tk-loop2']
 async function saveTask(){
   let checks,args;try{checks=JSON.parse($('tk-checks').value||'[]')}catch(e){toast('checks JSON invalid');return}
   try{args=JSON.parse($('tk-args').value||'{}')}catch(e){toast('args JSON invalid');return}
-  const task={id:$('tk-id').value.trim(),label:$('tk-label').value,type:$('tk-type').value,
+  const task=Object.assign({},_tkOrig,{id:$('tk-id').value.trim(),label:$('tk-label').value,type:$('tk-type').value,
     tags:$('tk-tags').value.split(',').map(s=>s.trim()).filter(Boolean),
     profile:$('tk-profile').value,allowed_caps:$('tk-caps').value,cap:$('tk-cap').value,args,
     goal:$('tk-goal').value,checks,rubric:$('tk-rubric').value,
-    max_steps:+$('tk-steps').value,timeout_s:+$('tk-timeout').value,enabled:$('tk-en').checked};
+    max_steps:+$('tk-steps').value,timeout_s:+$('tk-timeout').value,enabled:$('tk-en').checked});
   if(!task.id){toast('id required');return}
   const r=await post('/evolve/task/upsert',{task});
   if(r&&!r.error){toast('Saved');closeModal();loadTasks()}else toast((r&&r.error)||'failed')
@@ -3812,52 +4035,11 @@ function runCommitTags(commits){
   if(!commits||!commits.length)return'';
   return commits.map(c=>'<span class="tag commit" onclick="event.stopPropagation();crossLinkToDispatch(\''+esc(c.hash)+'\')" title="'+esc(c.message||'')+' — jump to the Dispatch session that made this commit">📌 '+esc(c.hash)+'</span>').join('');
 }
-let _runsAll=[];
-async function loadRuns(){
-  const r=await api('/evolve/runs?limit=200');
-  _runsAll=(r&&r.runs)||[];
-  _runsRender();
-}
-
-/* Filters run client-side over one fetch: the point of this view is to SIFT
-   the raw run log, and a round trip per keystroke would make that unpleasant. */
-function _runsRender(){
-  let runs=_runsAll.slice();
-  const src=(($('runs-src')||{}).value)||'';
-  const q=((($('runs-q')||{}).value)||'').toLowerCase().trim();
-  const bad=$('runs-bad')&&$('runs-bad').checked;
-  if(src)runs=runs.filter(r2=>String(r2.source||'')===src);
-  if(q)runs=runs.filter(r2=>String(r2.task||'').toLowerCase().indexOf(q)>=0);
-  // "problems" is errored OR any check failed — a run that returned cleanly
-  // having failed half its checks is exactly what you come here to find.
-  if(bad)runs=runs.filter(r2=>r2.error||((r2.checks_n||0)&&(r2.checks_ok||0)<r2.checks_n));
-  const filterCommit=new URLSearchParams(location.search).get('commit');
-  if(filterCommit){
-    runs=runs.filter(r2=>(r2.commits||[]).some(c=>c.hash===filterCommit||filterCommit.startsWith(c.hash)));
-  }
-  if($('runs-count'))$('runs-count').textContent=runs.length+' of '+_runsAll.length+' run(s)';
-  const filterBar=filterCommit?'<div class="hint" style="padding:6px 0">Filtered to commit '+esc(filterCommit)+' — <a href="#" onclick="event.preventDefault();history.replaceState(null,\'\',location.pathname);loadRuns()">clear</a></div>':'';
-  if(!runs.length){$('runs-body').innerHTML=filterBar+'<div class="empty">'+(_runsAll.length?'No run matches these filters.':(filterCommit?'No run in this window produced commit '+esc(filterCommit)+'.':'No runs yet.'))+'</div>';return}
-  let h=filterBar+'<table><tr><th>time</th><th>task</th><th>where</th><th>src</th><th>checks</th><th>score</th><th>combined</th><th>time</th><th>commits</th><th></th></tr>';
-  for(const r2 of runs){
-    const isCensus=r2.source==='census';
-    // A census goal ran on prod's own loop (the harness), which is neither the
-    // sandbox nor in-process: say which census run it belongs to instead.
-    const wh=isCensus?'<span class="tag" title="ran on prod\'s own loop, driven by the census harness">'+esc(r2.census_run||r2.session||'census')+'</span>'
-      :(r2.where==='sandbox'?'<span class="tag" style="color:var(--ok)">🛡 sandbox</span>':(r2.where?'<span class="tag" style="color:var(--warn)">in-proc</span>':''));
-    const err=isCensus?(r2.hit_cap?' <span class="tag" style="color:var(--warn)" title="hit the wall cap">cap</span>':(r2.error?' <span class="tag" style="color:var(--err)">'+esc(r2.status||'err')+'</span>':''))
-      :(r2.error?' <span class="tag" style="color:var(--err)">err</span>':'');
-    h+='<tr class="clk" onclick="openRun(\''+esc(r2.run_id)+'\')"><td class="mono">'+esc((r2.ts||'').slice(11,19))+'</td>'
-      +'<td>'+esc(r2.task)+err+(r2.variant?' <span class="tag">'+esc(r2.variant)+'</span>':'')+'</td>'
-      +'<td>'+wh+'</td>'
-      +'<td><span class="tag">'+esc(r2.source||'')+'</span></td><td class="mono">'+esc(r2.checks_ok)+'/'+esc(r2.checks_n)+'</td>'
-      +'<td>'+scChip(r2.score)+'</td><td>'+scChip(r2.combined)+'</td><td class="mono">'+(r2.elapsed_s||0)+'s</td>'
-      +'<td>'+runCommitTags(r2.commits)+'</td>'
-      +'<td><button class="btn sm" onclick="event.stopPropagation();openTaskHistory(\''+esc(r2.task)+'\')" title="this task through time">⌁</button>'
-      +(isCensus?'':'<button class="btn sm" onclick="event.stopPropagation();compareRun(\''+esc(r2.run_id)+'\')" title="Score with both critics">⇄</button>')+'</td></tr>';
-  }
-  h+='</table>';$('runs-body').innerHTML=h;
-}
+/* The Runs page is the runs view of Work (kind = run) since flattening
+   slice 3; its per-task filter, source filter, problems-only and commit
+   filter live in renderCensusTable. Callers that used to refresh it refresh
+   Work and the Test page's recent-runs card instead. */
+async function loadRuns(){ workOnChange(); if(typeof refreshTestRuns==='function')refreshTestRuns(); }
 async function openRun(id){const r=await api('/evolve/run/get?run_id='+encodeURIComponent(id));if(r&&r.run)openRunDetail(r.run);else toast('run not found')}
 function openRunDetail(d){
   const a=d.assessment||{};
@@ -3913,11 +4095,12 @@ async function startImprove(){
   if(src==='goals'){body.goals=$('im-goals').value.split('\n').map(x=>x.trim()).filter(Boolean)}
   if(src==='generate'){body.generate_from=$('im-gen').value.trim();if(!body.generate_from){toast('describe what to generate goals for');return}}
   const r=await post('/evolve/improve/start',body);
-  if(r&&r.ok){toast('Session '+r.session_id+' started ('+((r.tasks||[]).length)+' tasks)');_watchSession=r.session_id;pollSessionLive(r.session_id);loadSessions(true);nav('watch')}else toast((r&&r.error)||'failed')
+  if(r&&r.ok){toast('Session '+r.session_id+' started ('+((r.tasks||[]).length)+' tasks)');_watchSession=r.session_id;pollSessionLive(r.session_id);closeModal();workOnChange();nav('watch')}else toast((r&&r.error)||'failed')
 }
 async function loadSessions(quiet){
   const r=await api('/evolve/improve/list?limit=25');const ss=(r&&r.sessions)||[];
   const live=ss.find(s=>s.live||s.status==='running');_liveSession=live||_liveSession;renderLive();
+  if(!$('sessions-body')){if(!quiet)workOnChange();return}
   // Improve is a form; once a session is running the interesting thing is on
   // the live page. Say so here rather than leave the form looking inert.
   const ll=$('im-live-link');
@@ -3940,7 +4123,10 @@ async function loadSessions(quiet){
       h+='</table>';$('sessions-body').innerHTML=h;
     }
   }
-  if(ss.some(s=>s.live||s.status==='running')){clearTimeout(window._sesT);window._sesT=setTimeout(()=>loadSessions(true),3500)}
+  // No self-re-arming timer here any more: the Work page's single poller
+  // (workPoll) follows a live session; this re-arms only while its own
+  // list is on screen (a modal), which it never is now.
+  if($('sessions-body')&&ss.some(s=>s.live||s.status==='running')){clearTimeout(window._sesT);window._sesT=setTimeout(()=>loadSessions(true),3500)}
 }
 async function pollSessionLive(sid){
   if(!sid)return;

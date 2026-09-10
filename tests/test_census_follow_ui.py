@@ -108,7 +108,7 @@ def test_the_run_history_can_refresh_without_reentering_the_poller(src):
     """loadCensus used to own the history table inline, so refreshing it meant
     calling loadCensus, which calls the live card, which polls."""
     assert "async function loadCensusRuns(" in src
-    assert "loadCensusRuns()" in _fn(src, "loadCensus")
+    assert "loadCensusRuns()" in _fn(src, "loadWork")
 
 
 # ── monitoring the run without the Compare table ────────────────────────────

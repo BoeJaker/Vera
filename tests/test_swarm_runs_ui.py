@@ -101,42 +101,51 @@ def test_navigating_to_swarm_starts_the_poller(src):
 
 
 # ── runs says what it is, and can be sifted ─────────────────────────────────
+# Since flattening slice 3 the Runs page is the runs view of Work: every
+# driver run (census, suite, improvement session, single run) in one table,
+# rendered by renderCensusTable. The same things must still be possible.
 def test_runs_explains_what_it_holds(src):
-    assert "Every task execution" in src
-    assert "census-" in src, "a census goal shows up here; say so"
+    assert "a row is one driver run" in src
+    assert "census" in src and "single run" in src, "say what kinds of run share the table"
 
 
 def test_runs_can_be_filtered_by_source(src):
-    body = _fn(src, "_runsRender")
-    assert "runs-src" in body
+    body = _fn(src, "renderCensusTable")
+    assert "setWorkKind" in body and "setWorkSrc" in body
+    for src_name in ("manual", "goal", "captest", "ide"):
+        assert src_name in body
 
 
 def test_runs_can_be_filtered_by_task(src):
-    assert "runs-q" in _fn(src, "_runsRender")
+    body = _fn(src, "renderCensusTable")
+    assert "cen-text" in body and "x.task" in body, "the text filter reaches a single run's task"
 
 
 def test_runs_can_show_problems_only(src):
     """A run that returned cleanly having failed half its checks is exactly
     what this view is for finding — so 'problems' is not just `error`."""
-    body = _fn(src, "_runsRender")
-    assert "runs-bad" in body
-    assert "checks_ok" in body and "checks_n" in body
+    body = _fn(src, "renderCensusTable")
+    assert "'problems'" in body
+    assert "x.failed" in body and "x.capped" in body and "s.wall_capped" in body
 
 
 def test_filtering_does_not_refetch(src):
     """A round trip per keystroke would make sifting unpleasant."""
-    assert "_runsAll" in _fn(src, "_runsRender")
-    assert "await api" not in _fn(src, "_runsRender")
+    body = _fn(src, "renderCensusTable")
+    assert "_workRows" in body and "_cenRunsAll" in body
+    assert "await api" not in body
 
 
 def test_the_count_shows_the_denominator(src):
     """"12 runs" after filtering must not read as "12 runs exist"."""
-    assert "_runsAll.length" in _fn(src, "_runsRender")
+    assert "_workMeta.total" in _fn(src, "renderCensusTable")
 
 
 def test_the_commit_filter_still_works(src):
-    """It was the one thing this view already did; do not lose it."""
-    assert "filterCommit" in _fn(src, "_runsRender")
+    """The git graph's "runs of this commit" link; census runs on that code
+    count too."""
+    body = _fn(src, "renderCensusTable")
+    assert "filterCommit" in body and "x.commits" in body and "s.code" in body
 
 
 # ── logs belong with the sandboxes they came from ───────────────────────────

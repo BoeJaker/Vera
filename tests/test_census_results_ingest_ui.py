@@ -1,11 +1,10 @@
-"""The Runs view shows an ingested census goal as what it is.
+"""The runs view shows an ingested census goal as what it is.
 
 Slice 2 of the Loop Lab flattening: a census goal is a run record with
-source=census. Source-level pins, like the other panel tests: the source
-filter offers every source the store writes, a census row names its census
-run instead of pretending to be a sandbox or in-process run, every row opens
-the task through time, and the run-detail modal hands a census record to the
-census record rather than to a critic that would score an empty output.
+source=census. Since slice 3 the Runs page is the runs view of the Work page
+(renderCensusTable): every driver kind in one table, a single run's source
+filter among the filters, and the run-detail modal hands a census record to
+the census record rather than to a critic that would score an empty output.
 """
 import os
 import re
@@ -30,31 +29,24 @@ def _fn(src, name):
     return src[start:src.index("\n}\n", start)]
 
 
-def _runs_section(src):
-    i = src.index('id="sec-runs"')
-    return src[i:src.index("</div>\n</div>", i)]
+def test_the_runs_view_offers_every_kind_and_every_single_run_source(src):
+    body = _fn(src, "renderCensusTable")
+    for k in ("census", "suite", "improve", "run"):
+        assert "'%s'" % k in body, "kind '%s' cannot be picked" % k
+    for s in ("run", "manual", "goal", "captest", "ide"):
+        assert "'%s'" % s in body, "source '%s' cannot be picked" % s
 
 
-def test_the_source_filter_offers_every_source_the_store_writes(src):
-    sec = _runs_section(src)
-    opts = re.findall(r'<option value="([a-z]*)"', sec[sec.index('id="runs-src"'):])
-    for s in ("suite", "run", "manual", "improve", "census", "goal", "captest", "ide"):
-        assert s in opts, "source '%s' cannot be picked" % s
+def test_the_old_runs_page_and_its_promise_are_gone(src):
+    assert 'id="sec-runs"' not in src
+    assert "appears here as a suite run" not in src
+    assert "function _runsRender(" not in src, "dead renderer"
 
 
-def test_the_hint_no_longer_promises_a_suite_run_that_never_came(src):
-    sec = _runs_section(src)
-    assert "appears here as a suite run" not in sec
-    assert "source <span class=\"mono\">census</span>" in sec
-
-
-def test_a_census_row_names_its_census_run_and_opens_the_task_history(src):
-    body = _fn(src, "_runsRender")
-    assert "r2.source==='census'" in body
-    assert "r2.census_run" in body, "the 'where' cell is the census run, not sandbox/in-proc"
-    assert "openTaskHistory(" in body, "every run row opens its task through time"
-    assert "r2.hit_cap" in body, "a capped goal is marked as capped, not as a generic error"
-    assert "compareRun(" in body
+def test_a_census_record_reads_as_a_census_run_in_the_task_history(src):
+    body = _fn(src, "loadWorkTaskDetail")
+    assert "openCensusGoal(" in body and "openRun(" in body, "a census result opens the census record, a run the run"
+    assert "r.hit_cap" in body and "r.reruns" in body
 
 
 def test_the_run_detail_hands_a_census_record_to_the_census_record(src):
