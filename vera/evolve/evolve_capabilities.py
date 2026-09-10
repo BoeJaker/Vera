@@ -61,12 +61,15 @@ from __future__ import annotations
 import asyncio
 import calendar
 import contextlib
+import hashlib
+import hmac
 import json
 import logging
 import os
 import re
 import shlex
 import shutil
+import secrets
 import sqlite3
 import subprocess
 import sys
@@ -82,6 +85,7 @@ from Vera.vera.capability_orchestration import (
     BACKGROUND_LLM,
     CALLER_KIND,
     CAPABILITY_REGISTRY,
+    SANDBOX_GATE_TOKEN,
     capability,
     emit_event,
     enum_schema,
@@ -7217,7 +7221,8 @@ def _redis_url_with_db(url: str, db: int) -> str:
 
 
 def _dev_compose_yaml(worktree_rel: str, name: str = "vera-dev",
-                      port: int = None, db: int = None) -> str:
+                      port: int = None, db: int = None,
+                      gate_token: str = "") -> str:
     """A compose override defining a dev-sandbox container. Parameterized per
     branch (name/port/db) so MANY can run concurrently; the defaults reproduce
     the original single `vera-dev` on the active port + DEV_REDIS_DB, so existing
@@ -7327,6 +7332,11 @@ services:
       # so this keeps that behaviour and makes it explicit. A genuinely shared
       # coordination endpoint would go here instead.
       VERA_COORD_REDIS_URL: "{_coord_setting}"
+      # The controller brokers only opaque acquire/renew/release operations.
+      # The raw production Redis endpoint never enters the sandbox.
+      VERA_GATE_BROKER_URL: "{'https://host.docker.internal:8999/mcp/call' if gate_token else ''}"
+      VERA_GATE_BROKER_SANDBOX: "{name if gate_token else ''}"
+      VERA_GATE_BROKER_TOKEN: "{gate_token}"
     volumes:
       - ./{worktree_rel}:/app/Vera:rw
       - {_tls_dir}:/certs:ro
@@ -7425,6 +7435,142 @@ async def _sandbox_pool() -> Dict[str, Dict[str, Any]]:
     return out
 
 
+def _gate_token_digest(token: str) -> str:
+    return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
+
+
+async def _gate_broker_authorized(sandbox: str) -> bool:
+    """Authenticate a spawned sandbox without returning its descriptor."""
+    token = SANDBOX_GATE_TOKEN.get()
+    if not sandbox or not token or CALLER_KIND.get() != "sandbox_gate":
+        return False
+    descriptor = next((item for item in (await _sandbox_pool()).values()
+                       if item.get("name") == sandbox), None)
+    if descriptor is None:
+        primary = await _get_sandbox()
+        if primary.get("name", _SANDBOX_CONTAINER) == sandbox:
+            descriptor = primary
+    expected = str((descriptor or {}).get("gate_token_sha256") or "")
+    return bool(expected and hmac.compare_digest(expected, _gate_token_digest(token)))
+
+
+_BROKER_LEASES: Dict[str, Dict[str, Any]] = {}
+
+
+async def _gate_broker_auth_or_error(sandbox: str) -> Optional[dict]:
+    if not await _gate_broker_authorized(sandbox):
+        return {"ok": False, "error": "unauthorized"}
+    return None
+
+
+@capability("ollama.gate.lease.status", memory="off", silent=True, mcp_expose=False,
+            description="Report sanitized shared-gate availability to one authenticated sandbox.")
+async def ollama_gate_lease_status(sandbox: str = "", trace_id=None):
+    denied = await _gate_broker_auth_or_error(sandbox)
+    if denied:
+        return denied
+    await _orch._ensure_coord_redis()
+    nodes = []
+    for node, inst in _orch.OLLAMA_INSTANCES.items():
+        capacity = _orch._gate.capacity_for(bool(inst.get("has_gpu")))
+        if capacity <= 0:
+            nodes.append({"node": node, "gated": False, "capacity": 0})
+            continue
+        occupancy = await _orch._gate.occupancy(_orch.COORD_REDIS, node, capacity)
+        nodes.append({key: value for key, value in {
+            "node": node, "gated": True, "capacity": capacity,
+            "held": occupancy.get("held"), "free": occupancy.get("free")}.items()})
+    return {"ok": True, "coord_connected": _orch.COORD_REDIS is not None,
+            "mode": "controller_broker", "nodes": nodes}
+
+
+@capability("ollama.gate.lease.acquire", memory="off", silent=True, mcp_expose=False,
+            description="Acquire one opaque, controller-owned inference lease for an "
+                        "authenticated Loop Lab sandbox. This deliberately exposes no "
+                        "Redis address, key, command, owner token, or estate mutation.")
+async def ollama_gate_lease_acquire(sandbox: str = "", node: str = "",
+                                    wait_s: float = 120,
+                                    trace_id=None):
+    denied = await _gate_broker_auth_or_error(sandbox)
+    if denied:
+        return denied
+    inst = _orch.OLLAMA_INSTANCES.get(node)
+    capacity = _orch._gate.capacity_for(bool((inst or {}).get("has_gpu")))
+    if not inst or capacity <= 0:
+        return {"ok": False, "error": "node_not_brokered"}
+    await _orch._ensure_coord_redis()
+    if _orch.COORD_REDIS is None:
+        return {"ok": False, "error": "coordination_unavailable"}
+    wait = max(0.0, min(float(wait_s or 0), 120.0))
+    owner = f"broker:{sandbox}:{secrets.token_urlsafe(18)}"
+    try:
+        lease = await _orch._gate.acquire(
+            _orch.COORD_REDIS, node, capacity, _orch._gate.lease_ttl_ms(),
+            wait, owner=owner, required=True)
+    except _orch._gate.GateAcquisitionError as exc:
+        return {"ok": False, "error": exc.reason}
+    lease_id = secrets.token_urlsafe(24)
+    _BROKER_LEASES[lease_id] = {"sandbox": sandbox, "lease": lease,
+                                "created": time.monotonic()}
+    # Bound stale opaque handles. The underlying Redis lease remains protected
+    # by its short TTL even if the controller restarts and forgets this map.
+    if len(_BROKER_LEASES) > 1024:
+        oldest = min(_BROKER_LEASES, key=lambda key: _BROKER_LEASES[key]["created"])
+        if oldest != lease_id:
+            _BROKER_LEASES.pop(oldest, None)
+    return {"ok": True, "lease_id": lease_id,
+            "waited_s": float(lease.get("waited_s") or 0)}
+
+
+async def _gate_broker_lease(sandbox: str,
+                             lease_id: str) -> tuple[Optional[dict], Optional[dict]]:
+    denied = await _gate_broker_auth_or_error(sandbox)
+    if denied:
+        return None, denied
+    record = _BROKER_LEASES.get(str(lease_id or ""))
+    if not record or record.get("sandbox") != sandbox:
+        return None, {"ok": False, "error": "unknown_lease"}
+    return record, None
+
+
+@capability("ollama.gate.lease.renew", memory="off", silent=True, mcp_expose=False,
+            description="Renew an authenticated sandbox's opaque inference lease.")
+async def ollama_gate_lease_renew(sandbox: str = "", lease_id: str = "",
+                                  trace_id=None):
+    record, denied = await _gate_broker_lease(sandbox, lease_id)
+    if denied:
+        return denied
+    renewed = await _orch._gate.renew(
+        _orch.COORD_REDIS, record["lease"], _orch._gate.lease_ttl_ms())
+    if not renewed:
+        _BROKER_LEASES.pop(lease_id, None)
+    return {"ok": True, "renewed": bool(renewed)}
+
+
+@capability("ollama.gate.lease.release", memory="off", silent=True, mcp_expose=False,
+            description="Release only the authenticated sandbox's opaque inference lease.")
+async def ollama_gate_lease_release(sandbox: str = "", lease_id: str = "",
+                                    trace_id=None):
+    record, denied = await _gate_broker_lease(sandbox, lease_id)
+    if denied:
+        return denied
+    released = await _orch._gate.release(_orch.COORD_REDIS, record["lease"])
+    _BROKER_LEASES.pop(lease_id, None)
+    return {"ok": True, "released": bool(released)}
+
+
+async def _gate_broker_release_sandbox(sandbox: str) -> int:
+    """Release only opaque leases issued to one exact sandbox descriptor."""
+    released = 0
+    for lease_id, record in list(_BROKER_LEASES.items()):
+        if record.get("sandbox") != sandbox:
+            continue
+        if await _orch._gate.release(_orch.COORD_REDIS, record.get("lease")):
+            released += 1
+        _BROKER_LEASES.pop(lease_id, None)
+    return released
+
+
 @capability("evolve.sandbox.spawn", memory="on",
             http_method="POST", http_path="/evolve/sandbox/spawn", http_tags=["evolve"],
             description="Spawn an ADDITIONAL per-branch dev container ALONGSIDE the "
@@ -7465,9 +7611,11 @@ async def evolve_sandbox_spawn(branch: str = "", rebuild_image: bool = False,
     if not (isinstance(ens, dict) and ens.get("ok")):
         return {"error": f"{DEV_IMAGE} unavailable: {(ens or {}).get('error', ens)}"}
     compose_file = f"docker-compose.dev-{safe}.yml"
+    gate_token = secrets.token_urlsafe(32)
     try:
         (_repo_root() / compose_file).write_text(
-            _dev_compose_yaml(wt_rel, name=name, port=port, db=db), encoding="utf-8")
+            _dev_compose_yaml(wt_rel, name=name, port=port, db=db,
+                              gate_token=gate_token), encoding="utf-8")
     except Exception as e:
         return {"error": f"could not write {compose_file}: {e}"}
     up = await _sh(["docker", "compose", "-f", "docker-compose.yml", "-f", compose_file,
@@ -7480,7 +7628,8 @@ async def evolve_sandbox_spawn(branch: str = "", rebuild_image: bool = False,
             "compose": compose_file, "worktree": str(wt_abs), "started_at": created,
             "created_at": created, "last_activity": created,
             "owner": (owner or _triggered_by()).strip(),
-            "session_id": (session_id or "").strip()}
+            "session_id": (session_id or "").strip(),
+            "gate_token_sha256": _gate_token_digest(gate_token)}
     r = _redis()
     if r:
         try:
@@ -7729,18 +7878,19 @@ async def _release_container_gate_leases(name: str) -> int:
     idle container running. Returns how many slots were handed back.
     """
     try:
+        n = await _gate_broker_release_sandbox(name)
         insp = await _sh(["docker", "inspect", "-f", "{{.Config.Hostname}}", name],
                          timeout=10)
         host = (insp.get("out") or "").strip()
         if not host:
-            return 0
+            return n
         from Vera.vera import capability_orchestration as _orch
         from Vera.vera import ollama_gate as _gate
         r = getattr(_orch, "COORD_REDIS", None)
         if r is None:
-            return 0
+            return n
         res = await _gate.release_leases_for_host(r, host)
-        n = int(res.get("count") or 0)
+        n += int(res.get("count") or 0)
         if n:
             log.info("evolve: released %d GPU gate slot(s) held by %s (%s) before pause",
                      n, name, host)
@@ -9234,8 +9384,10 @@ async def evolve_sandbox_up(branch: str = "", snapshot: bool = True,
                 "ensure": ens if isinstance(ens, dict) else {"raw": str(ens)}}
 
     # 3. compose override
+    gate_token = secrets.token_urlsafe(32)
     try:
-        (_repo_root() / _DEV_COMPOSE).write_text(_dev_compose_yaml(wt_rel),
+        (_repo_root() / _DEV_COMPOSE).write_text(
+            _dev_compose_yaml(wt_rel, gate_token=gate_token),
                                                  encoding="utf-8")
     except Exception as e:
         return {"error": f"could not write {_DEV_COMPOSE}: {e}"}
@@ -9260,7 +9412,9 @@ async def evolve_sandbox_up(branch: str = "", snapshot: bool = True,
     sb = {"branch": branch, "worktree": str(wt_abs), "port": port,
           "redis_db": DEV_REDIS_DB, "compose": _DEV_COMPOSE,
           "started_at": created, "created_at": created,
-          "last_activity": created, "owner": _triggered_by(), "session_id": ""}
+          "last_activity": created, "owner": _triggered_by(), "session_id": "",
+          "name": _SANDBOX_CONTAINER,
+          "gate_token_sha256": _gate_token_digest(gate_token)}
     r = _redis()
     if r:
         await r.set(KEY_SANDBOX, json.dumps(sb, default=str))

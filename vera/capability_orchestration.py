@@ -189,6 +189,11 @@ BACKGROUND_LLM: "contextvars.ContextVar[str]" = contextvars.ContextVar(
 # triggered_by field (codex / claude_code / autonomous via BACKGROUND_LLM / user).
 CALLER_KIND: "contextvars.ContextVar[str]" = contextvars.ContextVar(
     "vera_caller_kind", default="")
+# Credential for the three narrow sandbox gate operations. It is sourced only
+# from an HTTP header by /mcp/call, never from capability arguments, so generic
+# capability telemetry and argument capture cannot persist it.
+SANDBOX_GATE_TOKEN: "contextvars.ContextVar[str]" = contextvars.ContextVar(
+    "vera_sandbox_gate_token", default="")
 
 # Set to True by the agentic loop (cap_dag_agent_loop_v6, which powers v5-v8)
 # for the duration of its run, same propagation idiom as BACKGROUND_LLM above
@@ -1260,7 +1265,16 @@ OLLAMA_QUEUE_TIMEOUT = float(os.environ.get("OLLAMA_QUEUE_TIMEOUT", "0") or 0)
 # a no-op until enabled AND a coordination Redis is connected, so it deploys
 # dark and can never wedge generation. See vera/ollama_gate.py.
 from Vera.vera import ollama_gate as _gate   # noqa: E402
+from Vera.vera.ollama_gate_broker_client import (  # noqa: E402
+    BrokerError as _GateBrokerError, from_environment as _gate_broker_from_env)
 _GATE_ON = _gate.gate_enabled()
+_GATE_BROKER_CONFIGURED = bool(os.getenv("VERA_GATE_BROKER_URL", "").strip())
+try:
+    _GATE_BROKER = _gate_broker_from_env()
+    _GATE_BROKER_ERROR = ""
+except _GateBrokerError as _broker_error:
+    _GATE_BROKER = None
+    _GATE_BROKER_ERROR = str(_broker_error)
 # Dev-sandbox write guard (strict no-op in prod). See vera/sandbox_guard.py.
 from Vera.vera.sandbox_guard import write_blocked as _sbx_write_blocked   # noqa: E402
 
@@ -1434,7 +1448,8 @@ async def _run_is_cancelled(session_id: str) -> bool:
 
 
 async def _gate_heartbeat(lease: dict, session_id: str = "",
-                          activity: Optional[dict] = None) -> None:
+                          activity: Optional[dict] = None,
+                          holder_task: Optional[asyncio.Task] = None) -> None:
     """Hold a live generation's GPU-gate slot by renewing its short lease — and
     make a WEDGED slot impossible by giving the heartbeat its OWN way to let go.
     A slot stops being held the instant ANY of these is true:
@@ -1460,7 +1475,10 @@ async def _gate_heartbeat(lease: dict, session_id: str = "",
 
     async def _free():
         try:
-            await _gate.release(COORD_REDIS, lease)
+            if lease.get("broker_lease_id") and _GATE_BROKER is not None:
+                await _GATE_BROKER.release(lease)
+            else:
+                await _gate.release(COORD_REDIS, lease)
         except Exception:
             pass
 
@@ -1495,9 +1513,23 @@ async def _gate_heartbeat(lease: dict, session_id: str = "",
             if since_renew >= renew_every:
                 since_renew = 0.0
                 try:
-                    await _gate.renew(COORD_REDIS, lease, ttl)
+                    if lease.get("broker_lease_id") and _GATE_BROKER is not None:
+                        renewed = await _GATE_BROKER.renew(lease, ttl)
+                        if not renewed:
+                            if activity is not None:
+                                activity["gate_lost"] = True
+                            if holder_task is not None and not holder_task.done():
+                                holder_task.cancel()
+                            return
+                    else:
+                        await _gate.renew(COORD_REDIS, lease, ttl)
                 except Exception:
-                    pass
+                    if lease.get("broker_lease_id"):
+                        if activity is not None:
+                            activity["gate_lost"] = True
+                        if holder_task is not None and not holder_task.done():
+                            holder_task.cancel()
+                        return
     except asyncio.CancelledError:
         pass
 
@@ -1540,38 +1572,46 @@ async def _ollama_slot(iid: str, timeout: Optional[float] = None):
         # that ignore the yielded marker fall back to the heartbeat's hard cap.
         _activity = {"t": time.monotonic(), "beats": 0}
         if _GATE_ON:
-            try:
-                if COORD_REDIS is None:
-                    await _ensure_coord_redis()
-                _cap = _gate.capacity_for(bool(OLLAMA_INSTANCES.get(iid, {}).get("has_gpu")))
-                if _cap > 0 and COORD_REDIS is not None:
-                    # SHORT lease + heartbeat (not the 30-min hard TTL). If this
-                    # generation is cancelled/crashed and its heartbeat stops, the
-                    # slot expires within lease_ttl_ms and the node self-heals —
-                    # instead of a wedged slot blocking every later loop-planner call
-                    # for the full TTL (the recurring GPU hang, 2026-08-18).
-                    _lease = await _gate.acquire(
-                        COORD_REDIS, iid, _cap, _gate.lease_ttl_ms(), _gate.wait_s())
-                    if _lease is not None:
-                        # Capture the driving run's session so the heartbeat can free
-                        # the slot the instant that run is cancelled, and the activity
-                        # marker so it can free a slot whose generation went silent.
-                        _hb_task = asyncio.ensure_future(
-                            _gate_heartbeat(_lease, _current_run_session(), _activity))
-            except Exception as _ge:
-                log.debug("ollama gate acquire skipped for %s: %s", iid, _ge)
+            _cap = _gate.capacity_for(bool(OLLAMA_INSTANCES.get(iid, {}).get("has_gpu")))
+            # A configured broker is a security boundary for sandboxes: it must
+            # produce a real shared lease or inference is refused. Never fall
+            # through to the local/private Redis gate under a broker failure.
+            if _cap > 0 and _GATE_BROKER_CONFIGURED:
+                if _GATE_BROKER is None:
+                    raise _GateBrokerError(_GATE_BROKER_ERROR or "invalid_broker_configuration")
+                _lease = await _GATE_BROKER.acquire(iid, min(float(wait), _gate.wait_s()))
+                _hb_task = asyncio.ensure_future(
+                    _gate_heartbeat(_lease, _current_run_session(), _activity,
+                                    asyncio.current_task()))
+            else:
+                # Existing production/local behavior remains deliberately
+                # fail-open until it is separately migrated to strict mode.
+                try:
+                    if COORD_REDIS is None:
+                        await _ensure_coord_redis()
+                    if _cap > 0 and COORD_REDIS is not None:
+                        _lease = await _gate.acquire(
+                            COORD_REDIS, iid, _cap, _gate.lease_ttl_ms(), _gate.wait_s())
+                        if _lease is not None:
+                            _hb_task = asyncio.ensure_future(
+                                _gate_heartbeat(_lease, _current_run_session(), _activity))
+                except Exception as _ge:
+                    log.debug("ollama gate acquire skipped for %s: %s", iid, _ge)
         yield _activity
     finally:
         if _hb_task is not None:
             _hb_task.cancel()   # stop renewing; the slot may now expire on its own
-        if _lease is not None and COORD_REDIS is not None:
+        if _lease is not None:
             # Fire the release as an INDEPENDENT task, not `await`ed here: if THIS
             # coroutine is being cancelled, an awaited release in the finally gets
             # interrupted mid-flight and the slot is orphaned (exactly how the
             # gate kept wedging). A detached task completes regardless; the short
             # lease TTL above is the backstop if even it can't run.
             try:
-                asyncio.ensure_future(_gate.release(COORD_REDIS, _lease))
+                if _lease.get("broker_lease_id") and _GATE_BROKER is not None:
+                    asyncio.ensure_future(_GATE_BROKER.release(_lease))
+                elif COORD_REDIS is not None:
+                    asyncio.ensure_future(_gate.release(COORD_REDIS, _lease))
             except Exception:
                 pass
         sem.release()
@@ -6793,6 +6833,8 @@ def _make_mcp_call_handler():
 
         caller_kind = str(body.get("caller_kind") or "").strip()
         _ck_token = CALLER_KIND.set(caller_kind) if caller_kind else None
+        gate_credential = str(request.headers.get("x-vera-sandbox-gate") or "").strip()
+        _gate_token = SANDBOX_GATE_TOKEN.set(gate_credential) if gate_credential else None
         try:
             result = await cap["func"](**args, trace_id=tid)
             return await _json_response(
@@ -6809,6 +6851,8 @@ def _make_mcp_call_handler():
             log.error("mcp/call cap %s: %s", name, e)
             raise HTTPException(500, str(e))
         finally:
+            if _gate_token is not None:
+                SANDBOX_GATE_TOKEN.reset(_gate_token)
             if _ck_token is not None:
                 CALLER_KIND.reset(_ck_token)
 
@@ -7202,6 +7246,22 @@ async def obs_neo4j_diag(trace_id=None):
                         "slot capacity / held / free (live occupancy shared across prod + "
                         "every dev sandbox). Output: {enabled, coord_db, nodes:[...]}.")
 async def ollama_gate_status(trace_id=None):
+    if _GATE_BROKER_CONFIGURED:
+        if _GATE_BROKER is None:
+            return {"enabled": _GATE_ON, "coord_connected": False,
+                    "coordination_mode": "controller_broker",
+                    "error": _GATE_BROKER_ERROR or "invalid_broker_configuration",
+                    "nodes": []}
+        try:
+            status = await _GATE_BROKER.status()
+            return {"enabled": _GATE_ON,
+                    "coord_connected": bool(status.get("coord_connected")),
+                    "coordination_mode": "controller_broker",
+                    "nodes": status.get("nodes") or []}
+        except Exception:
+            return {"enabled": _GATE_ON, "coord_connected": False,
+                    "coordination_mode": "controller_broker",
+                    "error": "broker_unreachable", "nodes": []}
     await _ensure_coord_redis()
     nodes = []
     for iid, inst in OLLAMA_INSTANCES.items():

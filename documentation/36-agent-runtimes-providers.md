@@ -264,6 +264,13 @@ metrics. The registry manifest digest identifies the selected model declaration;
 it is not an independent checksum of downloaded weights. These smoke checks do
 not establish model quality, load tolerance, recovery, or cross-runtime parity.
 
+Loop Lab sandboxes join the same GPU capacity queue through a narrow controller
+broker. Each sandbox receives a rotated credential and can request, renew, or
+release only opaque leases; it never receives the production Redis address,
+lease key, or owner token. Missing authentication, an unavailable controller,
+queue timeout, or renewal loss stops sandbox inference instead of silently
+bypassing the shared limit. Production's existing gate behavior is unchanged.
+
 Separate dependency/image failure, provider authentication, model lookup,
 framework initialization, tool-schema incompatibility, runtime exception, and
 result-normalization failure. Preserve the native trace alongside Vera's
