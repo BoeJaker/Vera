@@ -104,7 +104,11 @@
     /* Poll only while on screen. offsetParent is null inside a hidden
        section (display:none), so an element on a page that is not showing
        costs nothing; the panel's nav() refreshes it when its page opens. */
-    _onScreen() { return this.offsetParent !== null; }
+    // offsetParent alone misses a closed <details>: Chromium keeps its contents
+    // laid out (content-visibility: hidden) for find-in-page, so an element
+    // in a folded card kept polling (found 2026-09-10 on Mission control).
+    // checkVisibility() sees content-visibility; older browsers fall back.
+    _onScreen() { return this.offsetParent !== null && (typeof this.checkVisibility !== 'function' || this.checkVisibility()); }
     disconnectedCallback() { if (this._pollTimer) clearInterval(this._pollTimer); }
 
     setApiBase(url) { this._base = (url || '').replace(/\/$/, ''); }

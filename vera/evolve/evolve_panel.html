@@ -85,6 +85,7 @@ details>summary{cursor:pointer;font-size:10.5px;color:var(--acc);font-family:var
 .fold[open]>summary::before{content:'\25be'}
 .fold[open]>summary{border-radius:6px 6px 0 0}
 .fold>.card{margin-top:0;border-radius:0 0 6px 6px}
+.fold>summary .live-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok);margin-left:6px;animation:pulse 1.4s ease-in-out infinite}
 /* phase stepper */
 .phase-step{flex:1;display:flex;gap:8px;align-items:center;padding:8px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;opacity:.55;transition:all .2s}
 .phase-step.active{opacity:1;border-color:var(--acc);background:rgba(90,158,143,.08);box-shadow:0 0 0 1px var(--acc) inset}
@@ -204,51 +205,239 @@ html.vpb-nav-hosted body{padding-left:0}
 
 <div class="nav rail" id="nav">
   <div class="rail-logo">🧪 LOOP LAB</div>
-  <div class="rail-grp">Run</div>
   <button class="btn on" data-sec="work" onclick="nav('work')" title="Every task and every driver run &mdash; census, suite, improvement, single &mdash; in one table, with what is live on top"><span class="ic">&#9636;</span>Work</button>
-  <button class="btn" data-sec="test" onclick="nav('test')" title="Run something ONCE — a task, a suite, or a census template"><span class="ic">▶</span>Run once</button>
-  <button class="btn" data-sec="watch" onclick="nav('watch')" title="The session Improve started, live — same session, later moment"><span class="ic">◉</span>Improve · live</button>
-  <div class="rail-grp">Insight</div>
-  <button class="btn" data-sec="errors" onclick="nav('errors')"><span class="ic">⚠</span>Errors</button>
-  <button class="btn" data-sec="activity" onclick="nav('activity')"><span class="ic">≣</span>Activity</button>
-  <div class="rail-grp">Ship</div>
   <button class="btn" data-sec="ship" onclick="nav('ship')" title="Every branch &mdash; its pipeline, review, sandbox and tests &mdash; in one table, the commit graph, race lanes, authorship and gate strip below it"><span class="ic">&#8599;</span>Ship</button>
   <button class="btn" data-sec="agents" onclick="nav('agents')" title="Every agent session &mdash; Claude Code, Codex, a Vera loop, an edit-queue agent &mdash; with its board items, pipelines and sandboxes; the board by lane, notes and seats fold up under it"><span class="ic">&#9737;</span>Agents</button>
-  <button class="btn" data-sec="master" onclick="nav('master')"><span class="ic">◉</span>Master</button>
+  <button class="btn" data-sec="mission" onclick="nav('mission')" title="Every event &mdash; actions, errors, gates &mdash; in one table, with what is live and what needs a person above it; the run-once and improve-live theatres fold up under it"><span class="ic">&#9673;</span>Mission control</button>
   <button class="btn" data-sec="settings" onclick="nav('settings')"><span class="ic">⚙</span>Settings</button>
 </div>
 
-<!-- Phase D: MASTER — one page for the whole loop (activity · board · promotions · gates) -->
-<div class="sec" id="sec-master" style="display:none">
-  <div class="row" style="gap:10px;align-items:center;margin-bottom:8px">
-    <span class="card-t" style="font-size:14px">◉ Mission Control</span>
-    <span class="hint" id="master-sub">the whole loop at a glance — refreshes live</span>
-    <span style="flex:1"></span>
-    <label class="hint"><input type="checkbox" id="master-auto" checked onchange="_masterAutoToggle()"> auto-refresh</label>
-    <button class="btn sm" onclick="loadMaster()">&#8635;</button>
+<!-- == MISSION CONTROL: one table of events - actions x errors x gates - with the live strip ==
+     Master, Activity and Errors were three pages over the same happenings: the
+     audit log, the errors work-queue, the gates, and a glance at what needs a
+     person. A row is an event (evolve.mission.events); expand it for the record;
+     an error's actions are in its row. The strip above says what is live now and
+     what needs a person. The Run-once and Improve-live theatres fold up under the
+     table, verbatim, and open when their thing is live. -->
+<div class="sec" id="sec-mission" style="display:none">
+  <div class="card" id="mission-card">
+    <div class="card-h"><span class="card-t">Mission control</span>
+      <span class="hint" id="mission-status">&hellip;</span>
+      <span style="flex:1"></span>
+      <label class="hint" style="margin-right:8px" title="refresh every 6s while something is live"><input type="checkbox" id="mission-follow" checked onchange="_mcArm()"> follow</label>
+      <button class="btn sm" onclick="mcOpen('test')" title="compose a run - a loop goal, a capability, a saved task, a suite - and watch it">&#9654; run once</button>
+      <button class="btn sm" onclick="errSync()" title="Pull ONLY real problems (perf crit/warn findings, event-loop stalls/hangs, syslog errors) into the queue and suggest fixes">&#8635; sync errors</button>
+      <button class="btn sm" onclick="missionPoll()">&#8635;</button>
+    </div>
+    <div id="mission-live" class="row" style="gap:6px;flex-wrap:wrap;margin:6px 0"></div>
+    <div class="row" style="gap:6px;flex-wrap:wrap;margin:8px 0 6px;align-items:center">
+      <input id="mc-q" placeholder="filter: action, summary, who, branch&hellip;" oninput="missionOnChange()" style="min-width:220px">
+      <select id="mc-kind" onchange="missionOnChange()"><option value="">every kind</option><option value="action">actions</option><option value="error">errors</option><option value="gate">gates</option></select>
+      <select id="mc-family" onchange="missionOnChange()"><option value="">every family</option></select>
+      <label class="hint"><input type="checkbox" id="mc-problems" onchange="missionOnChange()"> problems only</label>
+      <label class="hint" title="every command run in a sandbox is an audit action; hidden by default, they are most of the log"><input type="checkbox" id="mc-hide-exec" checked onchange="missionOnChange()"> hide sandbox.exec</label>
+      <span class="hint" id="mission-count"></span>
+    </div>
+    <div id="mission-table"><div class="empty">Loading&hellip;</div></div>
+    <div class="hint" style="margin-top:6px">A row is an <b>event</b>: an audit <b>action</b> (every promote, rollback, merge, sandbox command, config change &mdash; who, whether it went well, the record it names), an <b>error</b> in the work-queue (new &rarr; suggested &rarr; approved &rarr; committed; suggest / approve / dismiss are in the row), a <b>gate</b> (a unit-test run and its pipeline). <b>&#9656;</b> expands the record; ids open theirs. Open errors lead, then newest first. The pills above are what Master showed &mdash; click one to go where those rows live.</div>
   </div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-    <div class="card">
-      <div class="card-h"><span class="card-t">Needs promotion</span><span class="hint" id="m-promo-n">—</span>
-        <span style="flex:1"></span><span class="hint">gated / reviewed, not yet promoted</span></div>
-      <div id="m-promo"><div class="empty">…</div></div>
+  <details class="fold" id="mc-test" ontoggle="if(this.open)loadTest()"><summary>Run once &mdash; compose a run (a loop goal, a capability, a saved task, a suite) and watch every stage live</summary>
+  <!-- active-run header — replaces the old tiny wf-status hint with a real,
+       always-visible strip: what's running, its goal, its branch, and
+       whether the sandbox it's routed to is healthy. Fixes "the name of
+       the running test is not displayed" by surfacing it prominently
+       instead of only in a small hint span buried in the workflow card. -->
+  <div class="card" id="active-run-card" style="display:none">
+    <div class="card-h" style="gap:10px">
+      <span id="arh-dot" style="width:8px;height:8px;border-radius:50%;background:var(--ok);flex-shrink:0"></span>
+      <span class="card-t" id="arh-task">—</span>
+      <span class="pill" id="arh-profile" style="display:none" title="The loop profile actually executing this run — engine + bound specialist agent, if any"></span>
+      <span class="hint" id="arh-trigger" title=""></span>
+      <span class="hint" id="arh-branch"></span>
+      <span class="pill" id="arh-sbx" style="display:none;cursor:pointer" onclick="nav('ship')" title="Sandbox this run is routed to">🛡 sandbox</span>
+      <span style="flex:1"></span>
+      <span class="hint" id="arh-elapsed"></span>
     </div>
-    <div class="card">
-      <div class="card-h"><span class="card-t">Active board items</span><span class="hint" id="m-board-n">—</span>
-        <span style="flex:1"></span><span class="hint">in-progress · review · ready · blocked</span></div>
-      <div id="m-board"><div class="empty">…</div></div>
-    </div>
-    <div class="card">
-      <div class="card-h"><span class="card-t">Recent gate / test results</span>
-        <span style="flex:1"></span><span class="hint">code-pipeline gates, newest first</span></div>
-      <div id="m-gates"><div class="empty">…</div></div>
-    </div>
-    <div class="card">
-      <div class="card-h"><span class="card-t">Agent activity</span>
-        <span style="flex:1"></span><span class="hint">every Loop Lab action, newest first</span></div>
-      <div id="m-activity"><div class="empty">…</div></div>
+    <div class="hint" id="arh-goal" style="padding:0 12px 8px;white-space:normal"></div>
+    <!-- Sandbox Lifecycle Strip (G): only shown when this run is sandboxed —
+         a real countdown toward the idle-pause threshold, snapshot
+         freshness, and routing-drift status, all from evolve.sandbox.status. -->
+    <div id="sbx-strip" style="display:none;padding:6px 12px 10px;border-top:1px dotted var(--border);font-size:9.5px;color:var(--dim2);align-items:center;gap:10px">
+      <span id="sbx-ring" style="width:22px;height:22px;border-radius:50%;flex-shrink:0;
+        background:conic-gradient(var(--acc) 0deg,var(--bg3) 0deg)"></span>
+      <span id="sbx-txt">—</span>
+      <span style="flex:1"></span>
+      <span id="sbx-drift" style="display:none;color:var(--warn)">⚠ routing drift</span>
+      <button class="btn sm" onclick="post('/evolve/sandbox/pause',{}).then(()=>refreshActiveRun())">⏸ pause now</button>
     </div>
   </div>
+  <div class="card" id="ollama-map-card" style="display:none">
+    <div class="card-h"><span class="card-t">Ollama routing</span>
+      <span class="hint">which real node the active run's LLM calls land on</span></div>
+    <vera-ollama-map id="ollama-map"></vera-ollama-map>
+  </div>
+  <div class="card" id="test-pipeline-card" style="display:none">
+    <div class="card-h"><span class="card-t">Pipeline</span>
+      <span class="hint">this run's branch → sandbox test → gate → promote lifecycle</span></div>
+    <vera-branch-pipeline id="test-pipeline" mode="detail"></vera-branch-pipeline>
+  </div>
+  <div class="card" id="test-author-card" style="display:none">
+    <div class="card-h"><span class="card-t">🗺 Who's changing this branch</span>
+      <span class="hint">real commits on this run's branch, tagged Claude Code / Vera agent / direct</span></div>
+    <vera-author-map id="test-author-map" hours="72"></vera-author-map>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">Run a test</span>
+      <span class="hint">pick what to improve, run it, watch every stage &amp; tool live — no timeouts</span>
+    </div>
+    <div class="row" style="margin-bottom:8px">
+      <div class="seg" id="tc-kind">
+        <button class="on" data-kind="loop" onclick="tcKind('loop')">Loop goal</button>
+        <button data-kind="cap" onclick="tcKind('cap')">Capability</button>
+        <button data-kind="task" onclick="tcKind('task')">Saved task</button>
+        <button data-kind="suite" onclick="tcKind('suite')">Suite</button>
+      </div>
+      <span style="flex:1"></span>
+      <button class="btn primary" id="tc-run" onclick="tcRun()">▶ Run &amp; watch</button>
+    </div>
+    <!-- target selector (category → target) -->
+    <div class="row" id="tc-target-row" style="margin-bottom:8px">
+      <label class="fld" style="margin:0">Improve / test</label>
+      <select id="tc-cat" style="width:170px" onchange="tcCatCh()"></select>
+      <select id="tc-target" style="min-width:200px" onchange="tcCatCh()"></select>
+      <button class="btn sm" id="tc-info-btn" onclick="tcInfoToggle()" title="Show the description + config of the thing being tested">ℹ</button>
+      <label class="row" id="tc-ide-opts" style="gap:4px;display:none" title="Off = diagnose only (proposes edits, no changes). On = let the IDE agent make the changes."><input type="checkbox" id="tc-ide-apply" style="width:auto"> apply changes</label>
+      <select id="tc-ide-engine" style="width:120px;display:none"><option value="claude">Claude Code</option><option value="vera-agent">Vera agent</option></select>
+      <span class="hint" id="tc-target-hint"></span>
+    </div>
+    <!-- what exactly is being tested: description + config -->
+    <div id="tc-info" style="display:none;background:var(--bg1);border:1px solid var(--border);border-radius:6px;padding:9px 11px;margin-bottom:8px;font-size:10.5px;line-height:1.55"></div>
+    <!-- kind-specific inputs -->
+    <div id="tc-loop"><input id="tc-goal" placeholder="Goal for the agent loop, e.g. 'list the 3 largest fabric datasets and summarise each'" style="width:100%"></div>
+    <div id="tc-cap-in" style="display:none" class="row"><input id="tc-cap" placeholder="cap name, e.g. fabric.datasets" style="min-width:200px"><input id="tc-args" placeholder='args JSON (optional)' style="flex:1"></div>
+    <div id="tc-task-in" style="display:none" class="row"><select id="tc-task" style="min-width:260px"></select></div>
+    <div id="tc-suite-in" style="display:none" class="row"><select id="tc-tag" style="width:150px"><option value="core">core</option><option value="loop">loop</option><option value="smoke">smoke</option></select><label class="row" style="gap:4px"><input type="checkbox" id="tc-assess" checked style="width:auto"> assess</label></div>
+  </div>
+  <!-- the dynamic workflow diagram + flywheel -->
+  <div class="card">
+    <div class="card-h"><span class="card-t">✻ dynamic workflow</span>
+      <span class="hint" id="wf-status">idle — implementer → adversarial reviewers → fixer</span>
+    </div>
+    <div style="display:flex;gap:14px;align-items:center">
+      <div id="wf-fly" style="flex-shrink:0"></div>
+      <div class="wf" id="wf-diagram" style="flex:1"></div>
+    </div>
+  </div>
+  <!-- live theatre: agent loop element + result -->
+  <div class="watch-grid" style="margin-bottom:12px">
+    <div class="watch-col active" data-phase="test">
+      <div class="wc-head">① Implementer — agent loop (every stage + tool)</div>
+      <div id="test-impl-note" style="display:none;font-size:10px;line-height:1.5;color:var(--warn);background:var(--bg1);border:1px solid var(--border);border-radius:5px;padding:7px 9px;margin-bottom:6px"></div>
+      <!-- show-final=false: the big final-answer pane used to render INSIDE this
+           360px viewport right when the loop ended (= review start) and, with the
+           sticky bottom-scroll, shoved the whole timeline out of view — "the
+           timeline disappeared". The final answer lives in ③ Result instead. -->
+      <vera-agent-loop-output id="evolve-alo" compact="true" show-toolkit="true" show-triage="true" show-final="false" style="height:360px;overflow:auto"></vera-agent-loop-output>
+    </div>
+    <div class="watch-col" data-phase="evaluate">
+      <div class="wc-head">② Adversarial review — failures found</div>
+      <div id="test-eval" class="wc-body"><div class="empty">Reviewers' findings appear here.</div></div>
+    </div>
+    <div class="watch-col" data-phase="synthesize">
+      <div class="wc-head">③ Result</div>
+      <div id="test-result" class="wc-body"><div class="empty">Score + checks appear here when the run finishes.</div></div>
+    </div>
+  </div>
+  <!-- suite results (shown only while running/after a Suite run from here) -->
+  <div class="card" id="test-suite-card" style="display:none">
+    <div class="card-h"><span class="card-t">🏁 suite</span><span class="hint" id="test-suite-hd">—</span><span style="flex:1"></span>
+      <div class="bar" style="max-width:180px"><span id="test-suite-bar" style="width:0%"></span></div>
+      <span class="mono" id="test-suite-count">0/0</span></div>
+    <div id="test-suite-log" style="max-height:220px;overflow:auto"><div class="empty">Per-task results stream here as the suite runs.</div></div>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">▦ Test activity</span>
+      <span class="hint">hourly run history · replay · stall/error overlay</span></div>
+    <vera-test-activity-timeline id="test-activity" hours="48"></vera-test-activity-timeline>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">⛨ Regression guard</span>
+      <span class="hint">every task × its own recent runs — a persistent, live-updating matrix</span></div>
+    <vera-task-matrix id="task-matrix" cols="8"></vera-task-matrix>
+    <script>document.getElementById('task-matrix').addEventListener('taskmatrix:opencell',e=>{const d=(e&&e.detail)||{};if(d.task&&typeof openTaskHistory==='function')openTaskHistory(d.task)});</script>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">Recent runs</span><span style="flex:1"></span><button class="btn sm" onclick="refreshTestRuns()">&#8635;</button></div>
+    <div id="test-runs"></div>
+  </div>
+  </details>
+  <details class="fold" id="mc-watch" ontoggle="if(this.open)loadWatch()"><summary>Improve &middot; live &mdash; test &rarr; evaluate &rarr; synthesize, the fleet, the edit queue</summary>
+  <div class="card">
+    <div class="card-h"><span class="card-t">Live improvement</span>
+      <span class="hint" id="watch-sub">watch a session go test → evaluate → synthesize</span>
+      <span class="hint" style="margin-left:8px">· configured in <a href="#" onclick="event.preventDefault();nav('improve')">Improve · set up</a></span>
+      <span style="flex:1"></span>
+      <select id="watch-sel" style="min-width:160px" onchange="watchSelect()"></select>
+    </div>
+    <!-- phase stepper -->
+    <div id="phase-steps" style="display:flex;gap:0;align-items:stretch;margin-bottom:10px">
+      <div class="phase-step" data-phase="test"><div class="ps-ic">1</div><div class="ps-lbl">Test<div class="ps-sub">run the agent loop</div></div></div>
+      <div class="phase-arrow">→</div>
+      <div class="phase-step" data-phase="evaluate"><div class="ps-ic">2</div><div class="ps-lbl">Evaluate<div class="ps-sub">critic scores it</div></div></div>
+      <div class="phase-arrow">→</div>
+      <div class="phase-step" data-phase="synthesize"><div class="ps-ic">3</div><div class="ps-lbl">Synthesize<div class="ps-sub">propose next variant · CPU</div></div></div>
+    </div>
+    <div class="row" style="margin-bottom:6px"><span class="hint" id="watch-status">No live session — start one from Improve, or pick a past session.</span></div>
+    <!-- 3-column live panels -->
+    <div class="watch-grid">
+      <div class="watch-col" data-phase="test">
+        <div class="wc-head">① Test — agent loop</div>
+        <vera-agent-loop-output id="evolve-alo-watch" compact="true" show-toolkit="true" show-triage="true" style="height:340px;overflow:auto"></vera-agent-loop-output>
+      </div>
+      <div class="watch-col" data-phase="evaluate">
+        <div class="wc-head">② Evaluate — critique</div>
+        <div id="watch-eval" class="wc-body"><div class="empty">Critic scores appear here as each run finishes.</div></div>
+      </div>
+      <div class="watch-col" data-phase="synthesize">
+        <div class="wc-head">③ Synthesize — edit queue (background CPU)</div>
+        <div id="watch-synth" class="wc-body"><div class="empty">Proposed variants appear here, synthesised on the CPU node.</div></div>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">🚀 fleet</span>
+      <span class="hint">every improvement loop &amp; CPU editor running in parallel</span>
+      <span style="flex:1"></span><button class="btn sm" onclick="loadFleet()">&#8635;</button>
+    </div>
+    <div id="fleet-body"><div class="empty">—</div></div>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">Edit queue · work grid</span>
+      <span class="hint">actions synthesised on <b id="editq-model-lbl">gpt-oss:20b</b> — click to view/edit before it runs</span>
+      <span style="flex:1"></span>
+      <span class="pill" id="editq-worker">worker —</span>
+      <button class="btn sm" onclick="loadEditq()">&#8635;</button>
+    </div>
+    <div id="editq-grid" style="margin-bottom:8px"></div>
+    <div id="editq-body"><div class="empty">Loading…</div></div>
+  </div>
+  </details>
+  <details class="fold" id="mc-errors" ontoggle="if(this.open)loadErrors()"><summary>Errors &rarr; edits &rarr; commits &mdash; the work-queue by lane, with the flow</summary>
+  <div class="card">
+    <div class="card-h"><span class="card-t">⚠ errors → edits → commits</span>
+      <span class="hint">observability + ollama/workers errors flow in · a fix is suggested · you approve · it becomes a commit</span>
+      <span style="flex:1"></span>
+      <label class="row" style="gap:4px" title="Periodically pull perf/syslog errors in and suggest fixes automatically"><input type="checkbox" id="err-autosync" onchange="errToggleAutosync()" style="width:auto"> auto-sync</label>
+      <button class="btn" onclick="errSync()" title="Pull ONLY real problems (perf crit/warn findings, event-loop stalls/hangs, syslog errors) into the queue and suggest fixes">⟲ Sync now</button>
+      <button class="btn" onclick="errClear()" title="Purge the queue (reset)">🗑 Clear</button>
+    </div>
+    <div class="hint" style="margin-top:4px">Only real problems land here — healthy perf statuses (severity <b>ok</b>/<b>info</b>, e.g. "no loop stall") are ignored.</div>
+    <!-- Bun-style flow diagram -->
+    <div id="err-flow" style="margin-bottom:6px"></div>
+  </div>
+  <!-- kanban lanes -->
+  <div class="err-board" id="err-board"><div class="empty">Loading…</div></div>
+  </details>
 </div>
 
 <!-- == AGENTS: one table of agent sessions - items x pipelines x sandboxes x seats ==
@@ -420,211 +609,6 @@ html.vpb-nav-hosted body{padding-left:0}
     <div id="work-tasks" style="display:none"><div class="empty">Loading&hellip;</div></div>
     <details style="margin-top:8px"><summary class="clk hint">Trends</summary><div id="census-charts" style="margin-top:6px"></div><div id="work-charts" style="margin-top:6px"></div></details>
     <div class="hint" style="margin-top:6px">In <b>runs</b> a row is one driver run &mdash; a census, a suite, an improvement session or a single run; <b>&#9656;</b> expands it to its tasks, a task opens its record. In <b>tasks</b> a row is one task with its history from every driver; <b>&#9656;</b> expands its recent results, <b>&#8961;</b> opens it through time. <b>coder</b> / <b>nodes</b> are the models and nodes a census run&#39;s calls hit; <b>code</b> the sha@branch prod ran.</div>
-  </div>
-</div>
-
-<!-- ── TEST (home): compose a run → watch the workflow ── -->
-<div class="sec" id="sec-test" style="display:none">
-  <!-- active-run header — replaces the old tiny wf-status hint with a real,
-       always-visible strip: what's running, its goal, its branch, and
-       whether the sandbox it's routed to is healthy. Fixes "the name of
-       the running test is not displayed" by surfacing it prominently
-       instead of only in a small hint span buried in the workflow card. -->
-  <div class="card" id="active-run-card" style="display:none">
-    <div class="card-h" style="gap:10px">
-      <span id="arh-dot" style="width:8px;height:8px;border-radius:50%;background:var(--ok);flex-shrink:0"></span>
-      <span class="card-t" id="arh-task">—</span>
-      <span class="pill" id="arh-profile" style="display:none" title="The loop profile actually executing this run — engine + bound specialist agent, if any"></span>
-      <span class="hint" id="arh-trigger" title=""></span>
-      <span class="hint" id="arh-branch"></span>
-      <span class="pill" id="arh-sbx" style="display:none;cursor:pointer" onclick="nav('ship')" title="Sandbox this run is routed to">🛡 sandbox</span>
-      <span style="flex:1"></span>
-      <span class="hint" id="arh-elapsed"></span>
-    </div>
-    <div class="hint" id="arh-goal" style="padding:0 12px 8px;white-space:normal"></div>
-    <!-- Sandbox Lifecycle Strip (G): only shown when this run is sandboxed —
-         a real countdown toward the idle-pause threshold, snapshot
-         freshness, and routing-drift status, all from evolve.sandbox.status. -->
-    <div id="sbx-strip" style="display:none;padding:6px 12px 10px;border-top:1px dotted var(--border);font-size:9.5px;color:var(--dim2);align-items:center;gap:10px">
-      <span id="sbx-ring" style="width:22px;height:22px;border-radius:50%;flex-shrink:0;
-        background:conic-gradient(var(--acc) 0deg,var(--bg3) 0deg)"></span>
-      <span id="sbx-txt">—</span>
-      <span style="flex:1"></span>
-      <span id="sbx-drift" style="display:none;color:var(--warn)">⚠ routing drift</span>
-      <button class="btn sm" onclick="post('/evolve/sandbox/pause',{}).then(()=>refreshActiveRun())">⏸ pause now</button>
-    </div>
-  </div>
-  <div class="card" id="ollama-map-card" style="display:none">
-    <div class="card-h"><span class="card-t">Ollama routing</span>
-      <span class="hint">which real node the active run's LLM calls land on</span></div>
-    <vera-ollama-map id="ollama-map"></vera-ollama-map>
-  </div>
-  <div class="card" id="test-pipeline-card" style="display:none">
-    <div class="card-h"><span class="card-t">Pipeline</span>
-      <span class="hint">this run's branch → sandbox test → gate → promote lifecycle</span></div>
-    <vera-branch-pipeline id="test-pipeline" mode="detail"></vera-branch-pipeline>
-  </div>
-  <div class="card" id="test-author-card" style="display:none">
-    <div class="card-h"><span class="card-t">🗺 Who's changing this branch</span>
-      <span class="hint">real commits on this run's branch, tagged Claude Code / Vera agent / direct</span></div>
-    <vera-author-map id="test-author-map" hours="72"></vera-author-map>
-  </div>
-  <div class="card">
-    <div class="card-h"><span class="card-t">Run a test</span>
-      <span class="hint">pick what to improve, run it, watch every stage &amp; tool live — no timeouts</span>
-    </div>
-    <div class="row" style="margin-bottom:8px">
-      <div class="seg" id="tc-kind">
-        <button class="on" data-kind="loop" onclick="tcKind('loop')">Loop goal</button>
-        <button data-kind="cap" onclick="tcKind('cap')">Capability</button>
-        <button data-kind="task" onclick="tcKind('task')">Saved task</button>
-        <button data-kind="suite" onclick="tcKind('suite')">Suite</button>
-      </div>
-      <span style="flex:1"></span>
-      <button class="btn primary" id="tc-run" onclick="tcRun()">▶ Run &amp; watch</button>
-    </div>
-    <!-- target selector (category → target) -->
-    <div class="row" id="tc-target-row" style="margin-bottom:8px">
-      <label class="fld" style="margin:0">Improve / test</label>
-      <select id="tc-cat" style="width:170px" onchange="tcCatCh()"></select>
-      <select id="tc-target" style="min-width:200px" onchange="tcCatCh()"></select>
-      <button class="btn sm" id="tc-info-btn" onclick="tcInfoToggle()" title="Show the description + config of the thing being tested">ℹ</button>
-      <label class="row" id="tc-ide-opts" style="gap:4px;display:none" title="Off = diagnose only (proposes edits, no changes). On = let the IDE agent make the changes."><input type="checkbox" id="tc-ide-apply" style="width:auto"> apply changes</label>
-      <select id="tc-ide-engine" style="width:120px;display:none"><option value="claude">Claude Code</option><option value="vera-agent">Vera agent</option></select>
-      <span class="hint" id="tc-target-hint"></span>
-    </div>
-    <!-- what exactly is being tested: description + config -->
-    <div id="tc-info" style="display:none;background:var(--bg1);border:1px solid var(--border);border-radius:6px;padding:9px 11px;margin-bottom:8px;font-size:10.5px;line-height:1.55"></div>
-    <!-- kind-specific inputs -->
-    <div id="tc-loop"><input id="tc-goal" placeholder="Goal for the agent loop, e.g. 'list the 3 largest fabric datasets and summarise each'" style="width:100%"></div>
-    <div id="tc-cap-in" style="display:none" class="row"><input id="tc-cap" placeholder="cap name, e.g. fabric.datasets" style="min-width:200px"><input id="tc-args" placeholder='args JSON (optional)' style="flex:1"></div>
-    <div id="tc-task-in" style="display:none" class="row"><select id="tc-task" style="min-width:260px"></select></div>
-    <div id="tc-suite-in" style="display:none" class="row"><select id="tc-tag" style="width:150px"><option value="core">core</option><option value="loop">loop</option><option value="smoke">smoke</option></select><label class="row" style="gap:4px"><input type="checkbox" id="tc-assess" checked style="width:auto"> assess</label></div>
-  </div>
-
-  <!-- the dynamic workflow diagram + flywheel -->
-  <div class="card">
-    <div class="card-h"><span class="card-t">✻ dynamic workflow</span>
-      <span class="hint" id="wf-status">idle — implementer → adversarial reviewers → fixer</span>
-    </div>
-    <div style="display:flex;gap:14px;align-items:center">
-      <div id="wf-fly" style="flex-shrink:0"></div>
-      <div class="wf" id="wf-diagram" style="flex:1"></div>
-    </div>
-  </div>
-
-  <!-- live theatre: agent loop element + result -->
-  <div class="watch-grid" style="margin-bottom:12px">
-    <div class="watch-col active" data-phase="test">
-      <div class="wc-head">① Implementer — agent loop (every stage + tool)</div>
-      <div id="test-impl-note" style="display:none;font-size:10px;line-height:1.5;color:var(--warn);background:var(--bg1);border:1px solid var(--border);border-radius:5px;padding:7px 9px;margin-bottom:6px"></div>
-      <!-- show-final=false: the big final-answer pane used to render INSIDE this
-           360px viewport right when the loop ended (= review start) and, with the
-           sticky bottom-scroll, shoved the whole timeline out of view — "the
-           timeline disappeared". The final answer lives in ③ Result instead. -->
-      <vera-agent-loop-output id="evolve-alo" compact="true" show-toolkit="true" show-triage="true" show-final="false" style="height:360px;overflow:auto"></vera-agent-loop-output>
-    </div>
-    <div class="watch-col" data-phase="evaluate">
-      <div class="wc-head">② Adversarial review — failures found</div>
-      <div id="test-eval" class="wc-body"><div class="empty">Reviewers' findings appear here.</div></div>
-    </div>
-    <div class="watch-col" data-phase="synthesize">
-      <div class="wc-head">③ Result</div>
-      <div id="test-result" class="wc-body"><div class="empty">Score + checks appear here when the run finishes.</div></div>
-    </div>
-  </div>
-  <!-- suite results (shown only while running/after a Suite run from here) -->
-  <div class="card" id="test-suite-card" style="display:none">
-    <div class="card-h"><span class="card-t">🏁 suite</span><span class="hint" id="test-suite-hd">—</span><span style="flex:1"></span>
-      <div class="bar" style="max-width:180px"><span id="test-suite-bar" style="width:0%"></span></div>
-      <span class="mono" id="test-suite-count">0/0</span></div>
-    <div id="test-suite-log" style="max-height:220px;overflow:auto"><div class="empty">Per-task results stream here as the suite runs.</div></div>
-  </div>
-  <div class="card">
-    <div class="card-h"><span class="card-t">▦ Test activity</span>
-      <span class="hint">hourly run history · replay · stall/error overlay</span></div>
-    <vera-test-activity-timeline id="test-activity" hours="48"></vera-test-activity-timeline>
-  </div>
-  <div class="card">
-    <div class="card-h"><span class="card-t">⛨ Regression guard</span>
-      <span class="hint">every task × its own recent runs — a persistent, live-updating matrix</span></div>
-    <vera-task-matrix id="task-matrix" cols="8"></vera-task-matrix>
-    <script>document.getElementById('task-matrix').addEventListener('taskmatrix:opencell',e=>{const d=(e&&e.detail)||{};if(d.task&&typeof openTaskHistory==='function')openTaskHistory(d.task)});</script>
-  </div>
-  <div class="card">
-    <div class="card-h"><span class="card-t">Recent runs</span><span style="flex:1"></span><button class="btn sm" onclick="refreshTestRuns()">&#8635;</button></div>
-    <div id="test-runs"></div>
-  </div>
-</div>
-
-<!-- ── ERRORS (work-queue: errors → suggested edit → approve → commit) ── -->
-<div class="sec" id="sec-errors" style="display:none">
-  <div class="card">
-    <div class="card-h"><span class="card-t">⚠ errors → edits → commits</span>
-      <span class="hint">observability + ollama/workers errors flow in · a fix is suggested · you approve · it becomes a commit</span>
-      <span style="flex:1"></span>
-      <label class="row" style="gap:4px" title="Periodically pull perf/syslog errors in and suggest fixes automatically"><input type="checkbox" id="err-autosync" onchange="errToggleAutosync()" style="width:auto"> auto-sync</label>
-      <button class="btn" onclick="errSync()" title="Pull ONLY real problems (perf crit/warn findings, event-loop stalls/hangs, syslog errors) into the queue and suggest fixes">⟲ Sync now</button>
-      <button class="btn" onclick="errClear()" title="Purge the queue (reset)">🗑 Clear</button>
-    </div>
-    <div class="hint" style="margin-top:4px">Only real problems land here — healthy perf statuses (severity <b>ok</b>/<b>info</b>, e.g. "no loop stall") are ignored.</div>
-    <!-- Bun-style flow diagram -->
-    <div id="err-flow" style="margin-bottom:6px"></div>
-  </div>
-  <!-- kanban lanes -->
-  <div class="err-board" id="err-board"><div class="empty">Loading…</div></div>
-</div>
-
-<!-- ── WATCH (live test → evaluate → synthesize) ── -->
-<div class="sec" id="sec-watch" style="display:none">
-  <div class="card">
-    <div class="card-h"><span class="card-t">Live improvement</span>
-      <span class="hint" id="watch-sub">watch a session go test → evaluate → synthesize</span>
-      <span class="hint" style="margin-left:8px">· configured in <a href="#" onclick="event.preventDefault();nav('improve')">Improve · set up</a></span>
-      <span style="flex:1"></span>
-      <select id="watch-sel" style="min-width:160px" onchange="watchSelect()"></select>
-    </div>
-    <!-- phase stepper -->
-    <div id="phase-steps" style="display:flex;gap:0;align-items:stretch;margin-bottom:10px">
-      <div class="phase-step" data-phase="test"><div class="ps-ic">1</div><div class="ps-lbl">Test<div class="ps-sub">run the agent loop</div></div></div>
-      <div class="phase-arrow">→</div>
-      <div class="phase-step" data-phase="evaluate"><div class="ps-ic">2</div><div class="ps-lbl">Evaluate<div class="ps-sub">critic scores it</div></div></div>
-      <div class="phase-arrow">→</div>
-      <div class="phase-step" data-phase="synthesize"><div class="ps-ic">3</div><div class="ps-lbl">Synthesize<div class="ps-sub">propose next variant · CPU</div></div></div>
-    </div>
-    <div class="row" style="margin-bottom:6px"><span class="hint" id="watch-status">No live session — start one from Improve, or pick a past session.</span></div>
-    <!-- 3-column live panels -->
-    <div class="watch-grid">
-      <div class="watch-col" data-phase="test">
-        <div class="wc-head">① Test — agent loop</div>
-        <vera-agent-loop-output id="evolve-alo-watch" compact="true" show-toolkit="true" show-triage="true" style="height:340px;overflow:auto"></vera-agent-loop-output>
-      </div>
-      <div class="watch-col" data-phase="evaluate">
-        <div class="wc-head">② Evaluate — critique</div>
-        <div id="watch-eval" class="wc-body"><div class="empty">Critic scores appear here as each run finishes.</div></div>
-      </div>
-      <div class="watch-col" data-phase="synthesize">
-        <div class="wc-head">③ Synthesize — edit queue (background CPU)</div>
-        <div id="watch-synth" class="wc-body"><div class="empty">Proposed variants appear here, synthesised on the CPU node.</div></div>
-      </div>
-    </div>
-  </div>
-  <div class="card">
-    <div class="card-h"><span class="card-t">🚀 fleet</span>
-      <span class="hint">every improvement loop &amp; CPU editor running in parallel</span>
-      <span style="flex:1"></span><button class="btn sm" onclick="loadFleet()">&#8635;</button>
-    </div>
-    <div id="fleet-body"><div class="empty">—</div></div>
-  </div>
-  <div class="card">
-    <div class="card-h"><span class="card-t">Edit queue · work grid</span>
-      <span class="hint">actions synthesised on <b id="editq-model-lbl">gpt-oss:20b</b> — click to view/edit before it runs</span>
-      <span style="flex:1"></span>
-      <span class="pill" id="editq-worker">worker —</span>
-      <button class="btn sm" onclick="loadEditq()">&#8635;</button>
-    </div>
-    <div id="editq-grid" style="margin-bottom:8px"></div>
-    <div id="editq-body"><div class="empty">Loading…</div></div>
   </div>
 </div>
 
@@ -897,19 +881,6 @@ html.vpb-nav-hosted body{padding-left:0}
   </details>
 </div>
 
-<!-- ── ACTIVITY (audit log) ── -->
-<div class="sec" id="sec-activity" style="display:none">
-  <div class="card">
-    <div class="card-h"><span class="card-t">Change &amp; rollback log</span>
-      <span class="hint">every promote · rollback · merge-to-source · branch · sandbox · config change</span>
-      <span style="flex:1"></span>
-      <input id="aud-filter" placeholder="filter action…" style="width:150px" oninput="loadAudit()">
-      <button class="btn sm" onclick="loadAudit()">&#8635;</button>
-    </div>
-    <div id="audit-body"><div class="empty">Loading…</div></div>
-  </div>
-</div>
-
 <!-- ── SETTINGS ── -->
 <div class="sec" id="sec-settings" style="display:none">
   <div class="card">
@@ -965,43 +936,148 @@ async function post(p,b){return api(p,{method:'POST',body:JSON.stringify(b||{})}
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 
 /* ═══ MASTER / MISSION CONTROL + autonomous-mode banner (closed-loop Phase D) ═══ */
-let _masterTimer=null;
-function _masterAutoToggle(){
-  const on=(($('master-auto')||{}).checked);
-  if(on&&!_masterTimer){_masterTimer=setInterval(()=>{const s=$('sec-master');if(s&&s.style.display!=='none')loadMaster();},6000);}
-  else if(!on&&_masterTimer){clearInterval(_masterTimer);_masterTimer=null;}
+/* === MISSION CONTROL - one table of events ================================
+   Master, Activity and Errors were three pages over the same happenings. A row
+   is an event (evolve.mission.events, ONE call): an audit action, an error in
+   the work-queue, a gate. The strip above is what is live now (evolve.work.live
+   rides in the same call) and what needs a person - Master's four cards as
+   pills. The Run-once and Improve-live theatres are folds below the table. */
+let _mcRows=[],_mcMeta={},_mcOpen={},_mcT=null,_mcBusy=false,_mcRefreshT=null,_mcWasLive={};
+const _MC_KIND={action:'var(--dim2)',error:'var(--err)',gate:'var(--acc)'};
+const _MC_ERR={new:'var(--err)',suggested:'var(--warn)',approved:'var(--acc2)',applied:'var(--ok)',dismissed:'var(--dim2)'};
+async function loadMission(){
+  const el=$('mission-table');if(!el)return;
+  const r=await api('/evolve/mission/events?limit=400');
+  if(!r||r.error){el.innerHTML='<div class="empty">'+esc((r&&r.error)||'mission table unavailable — restart prod if evolve.mission.events was just deployed')+'</div>';return}
+  _mcRows=r.events||[];_mcMeta=r;
+  renderMissionLive(r);
+  const fam=$('mc-family');
+  if(fam){const cur=fam.value;fam.innerHTML='<option value="">every family</option>'+(r.families||[]).map(f=>'<option value="'+esc(f)+'">'+esc(f)+'</option>').join('');if((r.families||[]).indexOf(cur)>=0)fam.value=cur}
+  renderMissionTable();
+  // The autonomous banner reads the same answer.
+  const b=$('auto-banner'),a=r.autonomous||{};
+  if(b){if(a.engaged){b.style.display='flex';const since=(a.since||'').slice(0,19).replace('T',' ');if($('auto-banner-msg'))$('auto-banner-msg').innerHTML='main is <b>LOCKED</b>'+(a.reason?(' &mdash; '+esc(a.reason)):'')+(since?(' &middot; since '+esc(since)):'')}else b.style.display='none'}
 }
-async function loadMaster(){
-  const [pl,bd,au]=await Promise.all([
-    api('/evolve/pipeline/list?limit=60').catch(()=>null),
-    api('/board/items').catch(()=>null),
-    api('/evolve/audit?limit=40').catch(()=>null)]);
-  const pipes=((pl&&(pl.pipelines||pl.runs))||[]);
-  const needs=pipes.filter(p=>{const d=(p.decision||'').toLowerCase();return d!=='promoted'&&d!=='rolled_back'&&(p.review_requested||p.gate_passed===true);});
-  if($('m-promo-n'))$('m-promo-n').textContent=needs.length;
-  if($('m-promo'))$('m-promo').innerHTML=needs.length?needs.slice(0,12).map(p=>{
-    const g=p.gate_passed===true?'<span class="tag" style="color:var(--acc)">gated</span>':(p.review_requested?'<span class="tag" style="color:var(--acc3)">review</span>':'');
-    return '<div style="padding:4px 0;border-bottom:1px solid var(--border);font-size:10.5px"><b class="mono">'+esc((p.id||'').slice(0,8))+'</b> '+g+' <span class="mono">'+esc(p.branch||'')+'</span> &rarr; '+esc(p.to||'bleeding-edge')+'</div>';
-  }).join(''):'<div class="empty">nothing awaiting promotion</div>';
-  const ACT=['in_progress','needs_review','review','ready','blocked','in_progress_vera'];
-  const its=((bd&&bd.items)||[]).filter(i=>ACT.includes(i.lane));
-  if($('m-board-n'))$('m-board-n').textContent=its.length;
-  if($('m-board'))$('m-board').innerHTML=its.length?its.slice(0,14).map(i=>
-    '<div style="padding:4px 0;border-bottom:1px solid var(--border);font-size:10.5px"><span class="tag">'+esc(i.lane)+'</span> '+esc((i.title||'').slice(0,52))+(i.agent?(' <span class="hint mono" style="font-size:9px">@'+esc(i.agent)+'</span>'):'')+(i.comment_count?(' <span class="hint" style="font-size:9px">'+i.comment_count+'&#128172;</span>'):'')+'</div>'
-  ).join(''):'<div class="empty">no active items</div>';
-  const gated=pipes.filter(p=>p.gate_passed!=null||['promoted','held','rolled_back'].includes((p.decision||'').toLowerCase())).slice(0,12);
-  if($('m-gates'))$('m-gates').innerHTML=gated.length?gated.map(p=>{
-    const ok=p.gate_passed===true?'var(--acc)':(p.gate_passed===false?'#e74c3c':'var(--dim2)');
-    return '<div style="padding:4px 0;border-bottom:1px solid var(--border);font-size:10.5px"><span style="color:'+ok+'">&#9679;</span> <span class="mono">'+esc((p.branch||p.id||'').slice(0,34))+'</span> <span class="hint mono" style="font-size:9px">gate '+(p.gate_passed===true?'pass':(p.gate_passed===false?'FAIL':'n/a'))+' &middot; '+esc((p.decision||'pending'))+'</span></div>';
-  }).join(''):'<div class="empty">no recent gates</div>';
-  const rows=((au&&au.audit)||[]).slice(0,30);
-  if($('m-activity'))$('m-activity').innerHTML=rows.length?rows.map(e=>{
-    const t=(e.ts||'').slice(11,19); const who=e.controller||e.by||'';
-    const mine=/claude/i.test(who)?'style="background:rgba(90,158,143,.08)"':'';
-    return '<div '+mine+' style="padding:3px 0;border-bottom:1px solid var(--border);font-size:10px"><span class="hint mono" style="font-size:9px">'+esc(t)+'</span> <span class="mono" style="color:'+(e.ok===false?'#e74c3c':'var(--acc)')+'">'+esc(e.action||'')+'</span> '+esc((e.summary||'').slice(0,60))+'</div>';
-  }).join(''):'<div class="empty">no activity</div>';
-  pollAutonomous();
-  if((($('master-auto')||{}).checked)&&!_masterTimer)_masterAutoToggle();
+/* After a bus event or an action: the table, debounced, while Mission control is on screen. */
+function missionRefresh(){if(_curSec()!=='mission')return;clearTimeout(_mcRefreshT);_mcRefreshT=setTimeout(missionPoll,1500)}
+function missionOnChange(){renderMissionTable()}
+/* Land on Mission control with a theatre open and in view - the way in for
+   "run once", "watch" and "errors" from anywhere. */
+function mcOpen(which){
+  nav('mission');
+  const d=$('mc-'+which);if(!d)return;
+  if(!d.open)d.open=true;else({test:loadTest,watch:loadWatch,errors:loadErrors}[which]||function(){})();
+  try{d.scrollIntoView({behavior:'smooth',block:'start'})}catch(_){}
+}
+function _mcPill(label,n,c,click,title){return '<span class="tag" style="border-left:3px solid '+c+(click?';cursor:pointer':'')+'"'+(click?' onclick="'+click+'"':'')+(title?' title="'+esc(title)+'"':'')+'>'+label+(n==null?'':' '+n)+'</span>'}
+/* The live strip: evolve.work.live (the census, the suite, the improvement
+   session, the single run) and Master's counts, each a way to its rows. A
+   theatre's fold opens by itself when its thing goes live. */
+function renderMissionLive(r){
+  const lv=r.live||{},c=r.counts||{},cen=lv.census||{},hz=(cen.harness&&typeof cen.harness==='object')?cen.harness:{},sw=$('mission-live');
+  const pills=[];
+  const cenLive=!!(cen.active||hz.live);
+  if(cenLive){const a=cen.active||{};pills.push(_mcPill('census '+esc(hz.template||'')+(a.goal_id?' · '+esc(a.goal_id):''),a.elapsed_s!=null?_cenSec(a.elapsed_s):(hz.state||'live'),'#3cb371',"nav('work')",'the census in flight - its live dash is on Work'))}
+  const st=(lv.suite&&(lv.suite.status||lv.suite))||{};
+  if(st.running)pills.push(_mcPill('suite',esc(String(st.tag||st.suite_id||'running')),'#3cb371',"nav('work')",'the suite in progress - on Work'));
+  if(lv.improve)pills.push(_mcPill('improve · live',esc(String(lv.improve.id||'').slice(0,8)),'#e0a030',"mcOpen('watch')",'the improvement session in flight - watch it below'));
+  const run=lv.run||{};
+  if(run.live||run.running)pills.push(_mcPill('run',esc(String((run.current&&run.current.task)||run.task||'').slice(0,30)||'live'),'#3cb371',"mcOpen('test')",'the single run in flight - watch it below'));
+  if(c.live_pipelines)pills.push(_mcPill('live pipelines',c.live_pipelines,'#4a9ed0',"nav('ship')",'CI/CD pipelines running now - rows of the Ship page'));
+  pills.push(_mcPill('needs promotion',c.needs_promotion||0,c.needs_promotion?'var(--warn)':'#6a6a6a',"agFilterShip()",'gated or reviewed, not yet promoted - the Ship page, stage review'));
+  pills.push(_mcPill('active items',c.active_items||0,'#3cb371',"agFilter('items','hide','1')",'board items in progress, review, ready or blocked - the Agents page'));
+  const eo=c.errors_open||0,es=c.errors||{};
+  pills.push(_mcPill('errors',(eo?(eo+' open'):'none open')+(es.applied?(' · '+es.applied+' fixed'):''),eo?'var(--err)':'#6a6a6a',"mcFilter('error')",'the errors work-queue: new / suggested / approved lead the table'));
+  const lg=c.last_gate;
+  if(lg)pills.push(_mcPill('last gate',(lg.ok?'PASS':'FAIL')+' '+esc(String(lg.branch||'').slice(0,28)),lg.ok?'var(--ok)':'var(--err)',"mcFilter('gate')",esc(lg.summary||'')+(c.gates_red?(' · '+c.gates_red+' of the last '+c.gates_recent+' red'):'')));
+  const a=r.autonomous||{};
+  if(a.engaged)pills.push(_mcPill('main LOCKED',esc(String(a.reason||'').slice(0,30)),'var(--err)','','autonomous mode has sealed main'));
+  if(sw)sw.innerHTML=pills.join('');
+  const s=r.summary||{},k=s.kinds||{};
+  if($('mission-status'))$('mission-status').innerHTML=(s.count||0)+' events · '+(k.action||0)+' actions · '+(k.error||0)+' errors · '+(k.gate||0)+' gates'+(s.problems?(' · <span style="color:var(--err)">'+s.problems+' problems</span>'):'');
+  // A theatre opens when its thing goes live (once per transition).
+  const nowLive={test:!!(run.live||run.running),watch:!!lv.improve};
+  ['test','watch'].forEach(w=>{const d=$('mc-'+w);if(!d)return;const sm=d.querySelector('summary');if(sm){let dot=sm.querySelector('.live-dot');if(nowLive[w]&&!dot){dot=document.createElement('span');dot.className='live-dot';sm.appendChild(dot)}else if(!nowLive[w]&&dot)dot.remove()}
+    if(nowLive[w]&&!_mcWasLive[w]&&!d.open)d.open=true;_mcWasLive[w]=nowLive[w]});
+}
+function agFilterShip(){nav('ship');setTimeout(()=>{if($('ship-stage')){$('ship-stage').value='review';renderShipTable()}},300)}
+function mcFilter(kind){if($('mc-kind'))$('mc-kind').value=kind;renderMissionTable()}
+function _mcFiltered(){
+  const q=(($('mc-q')||{}).value||'').trim().toLowerCase(),kind=($('mc-kind')||{}).value||'',fam=($('mc-family')||{}).value||'',prob=!!($('mc-problems')&&$('mc-problems').checked),hideExec=!!($('mc-hide-exec')&&$('mc-hide-exec').checked);
+  return _mcRows.filter(r=>{
+    if(kind&&r.kind!==kind)return false;
+    if(fam&&r.family!==fam)return false;
+    if(prob&&!r.problem)return false;
+    if(hideExec&&r.action==='sandbox.exec')return false;
+    if(q){const hay=[r.action,r.summary,r.who,r.branch,(r.ref||{}).id,r.suggestion].join(' ').toLowerCase();if(hay.indexOf(q)<0)return false}
+    return true;
+  });
+}
+function renderMissionTable(){
+  const el=$('mission-table');if(!el)return;
+  const rows=_mcFiltered();
+  if($('mission-count'))$('mission-count').textContent=rows.length+' of '+_mcRows.length;
+  if(!rows.length){el.innerHTML='<div class="empty">'+(_mcRows.length?'Nothing matches the filter.':'No events yet.')+'</div>';return}
+  el.innerHTML='<table id="mission-tbl"><tr><th>when</th><th>kind</th><th>what</th><th>who</th><th>summary</th><th>record</th><th>ok</th><th></th></tr>'+rows.map(_mcRow).join('')+'</table>';
+}
+function _mcId(s){return String(s).replace(/[^a-z0-9]/gi,'_')}
+function _mcRow(r){
+  const open=!!_mcOpen[r.id];
+  const kind='<span class="tag" style="border-left:3px solid '+(_MC_KIND[r.kind]||'#666')+'">'+esc(r.kind)+'</span>'+(r.kind==='error'?' <span class="pill" style="color:'+(_MC_ERR[r.state]||'var(--dim2)')+'">'+esc(r.state)+'</span>':'');
+  const okc=r.ok===true?'<span style="color:var(--ok)">✓</span>':(r.ok===false?'<span style="color:var(--err)">✗</span>':'<span class="hint">—</span>');
+  const ref=r.ref&&r.ref.id?eid(r.ref.kind,r.ref.id,esc(String(r.ref.id).slice(0,26))):'';
+  let acts='';
+  if(r.kind==='error'){
+    const id=esc(r.error_id||'');
+    if(r.state==='new')acts='<button class="btn sm" onclick="event.stopPropagation();errSuggest(\''+id+'\')">suggest fix</button><button class="btn sm" onclick="event.stopPropagation();errDismiss(\''+id+'\')">dismiss</button>';
+    else if(r.state==='suggested')acts='<button class="btn sm primary" onclick="event.stopPropagation();errApprove(\''+id+'\')" title="'+(r.remediation?'Apply the built-in safe remediation now':'Approve: launch a gated code pipeline that commits the fix')+'">'+(r.remediation?'apply safe fix':'approve → commit')+'</button><button class="btn sm" onclick="event.stopPropagation();errDismiss(\''+id+'\')">dismiss</button>';
+  }
+  const what='<span class="mono">'+esc(r.action||'')+'</span>'+(r.level?' <span class="pill" style="color:'+(r.level==='crit'?'var(--err)':'var(--warn)')+'">'+esc(r.level)+'</span>':'')+(r.count>1?' <span class="hint">×'+r.count+'</span>':'');
+  return '<tr class="clk mc-row" data-id="'+esc(r.id)+'" onclick="toggleMission(\''+esc(r.id)+'\')">'
+    +'<td class="mono hint" style="white-space:nowrap">'+(open?'▾':'▸')+' '+esc((r.ts||'').slice(5,19).replace('T',' '))+'</td>'
+    +'<td>'+kind+'</td><td>'+what+'</td><td class="hint">'+esc(r.who||'')+'</td>'
+    +'<td style="max-width:460px"><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+esc(r.summary||'')+'">'+esc(r.summary||'')+'</div></td>'
+    +'<td class="mono">'+ref+'</td><td>'+okc+'</td><td class="row" style="gap:3px">'+acts+'</td></tr>'
+    +'<tr class="mc-detail" data-id="'+esc(r.id)+'"'+(open?'':' style="display:none"')+'><td colspan="8" style="padding:0 6px 8px 18px;background:var(--bg2)"><div id="mc-det-'+_mcId(r.id)+'">'+(open?_mcDetail(r):'')+'</div></td></tr>';
+}
+function toggleMission(id){
+  _mcOpen[id]=!_mcOpen[id];
+  const det=document.querySelector('tr.mc-detail[data-id="'+id+'"]'),row=document.querySelector('tr.mc-row[data-id="'+id+'"] td');
+  if(det)det.style.display=_mcOpen[id]?'':'none';
+  if(row)row.innerHTML=row.innerHTML.replace(_mcOpen[id]?'▸':'▾',_mcOpen[id]?'▾':'▸');
+  if(_mcOpen[id]){const el=$('mc-det-'+_mcId(id)),r=_mcRows.find(x=>x.id===id);if(el&&r)el.innerHTML=_mcDetail(r)}
+}
+/* Expand an event: the whole record - an error's suggested fix and its
+   remediation result, a gate's counts, an action's every field. */
+function _mcDetail(r){
+  let h='';
+  if(r.kind==='error'){
+    h+='<div style="margin:6px 0;white-space:pre-wrap">'+esc(r.summary||'')+'</div>';
+    if(r.suggestion)h+='<div class="hint" style="margin:4px 0"><b>fix:</b> '+esc(r.suggestion)+'</div>';
+    if(r.remediation_result)h+='<div class="hint" style="margin:4px 0"><b>result:</b> '+esc(r.remediation_result)+'</div>';
+  } else if(r.kind==='gate'){
+    h+='<div class="row" style="gap:8px;flex-wrap:wrap;margin:6px 0"><span class="pill" style="color:'+(r.ok?'var(--ok)':'var(--err)')+'">'+(r.ok?'PASS':'FAIL')+'</span><span class="mono">'+r.passed+' passed · '+r.failed+' failed · '+r.total+' total</span>'+(r.branch?eid('branch',r.branch):'')+'</div>';
+  } else {
+    h+='<div style="margin:6px 0;white-space:pre-wrap;font-size:10.5px">'+esc(r.summary||'')+'</div>';
+  }
+  const raw=Object.assign({},r.raw||{});delete raw.summary;
+  h+='<details style="margin-top:4px"><summary class="clk hint">record</summary><pre style="margin:4px 0;max-height:260px;overflow:auto">'+esc(JSON.stringify(raw,null,1))+'</pre></details>';
+  return h;
+}
+/* Same lesson as the census follow timer: re-arming at the END of the render
+   path means anything that throws on the way there stops following for good.
+   Armed in a finally instead; ticks do not stack; only while something is live. */
+function _mcArm(){
+  clearTimeout(_mcT);_mcT=null;
+  const cb=$('mission-follow');
+  if(cb&&cb.checked&&_curSec()==='mission'&&_mcMeta.any_live)_mcT=setTimeout(missionPoll,6000);
+}
+async function missionPoll(){
+  if(_mcBusy){_mcArm();return}
+  _mcBusy=true;
+  try{await loadMission()}
+  catch(e){/* one bad tick must not end the watch */}
+  finally{_mcBusy=false;_mcArm()}
 }
 async function pollAutonomous(){
   const s=await api('/autonomous/status').catch(()=>null);
@@ -1048,7 +1124,10 @@ function scChip(v){return '<span class="sc" style="color:'+scColor(v)+';backgrou
 function nav(sec){
   document.querySelectorAll('#nav .btn').forEach(b=>b.classList.toggle('on',b.dataset.sec===sec));
   document.querySelectorAll('.sec').forEach(s=>s.style.display=s.id==='sec-'+sec?'':'none');
-  const f={work:loadWork,test:loadTest,master:loadMaster,watch:loadWatch,ship:loadShip,agents:agentsPoll,
+  const f={work:loadWork,ship:loadShip,agents:agentsPoll,mission:missionPoll,
+    // Pages Mission control absorbed (slice 7): the theatres open as folds
+    // on it; the rest is its table.
+    test:()=>mcOpen('test'),watch:()=>mcOpen('watch'),errors:()=>mcOpen('errors'),master:()=>nav('mission'),activity:()=>nav('mission'),
     // Pages the Work page absorbed (flattening slice 3): an old deep-link
     // or injected nav item still lands on the table that holds their data.
     tasks:()=>nav('work'),runs:()=>nav('work'),census:()=>nav('work'),overview:()=>nav('work'),variants:()=>nav('work'),improve:()=>nav('work'),
@@ -1059,7 +1138,7 @@ function nav(sec){
     // absorbed before it: an old deep-link or injected nav item still lands
     // on the table that holds their data.
     pipelines:()=>nav('ship'),review:()=>nav('ship'),sources:()=>nav('ship'),sandbox:()=>nav('ship'),unittests:()=>nav('ship'),logs:()=>nav('ship'),
-    activity:loadAudit,settings:fillSettings,errors:loadErrors}[sec];
+    settings:fillSettings}[sec];
   if(f)f();
   // The address bar says which page is open (a deep link says more).
   try{const cur=(location.hash||'').replace(/^#/,'');if(cur.split('?')[0]!==sec)history.replaceState(null,'',location.pathname+location.search+'#'+sec)}catch(_){}
@@ -1080,10 +1159,8 @@ function nav(sec){
 // — every button above already carries data-sec, which VeraPanelBridge's
 // generic nav_select fallback matches directly.
 if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
-  {id:'work', label:'Work'}, {id:'test', label:'Test'}, {id:'watch', label:'Watch'},
-  {id:'errors', label:'Errors'}, {id:'activity', label:'Activity'},
-  {id:'ship', label:'Ship'}, {id:'agents', label:'Agents'},
-  {id:'master', label:'Master'}, {id:'settings', label:'Settings'},
+  {id:'work', label:'Work'}, {id:'ship', label:'Ship'}, {id:'agents', label:'Agents'},
+  {id:'mission', label:'Mission control'}, {id:'settings', label:'Settings'},
 ]);
 
 /* ═══ TEST GENERATION — LLM-propose pytest for a branch (route-forward M3.4) ═══ */
@@ -1325,8 +1402,8 @@ async function refreshTestRuns(){
 }
 // The Test section's OWN agent-loop element (avoids the duplicate #evolve-alo id
 // which also lives in Watch — getElementById would return the wrong one).
-function _testAlo(){return document.querySelector('#sec-test vera-agent-loop-output')}
-function _watchAlo(){return document.querySelector('#sec-watch vera-agent-loop-output')}
+function _testAlo(){return document.querySelector('#mc-test vera-agent-loop-output')}
+function _watchAlo(){return document.querySelector('#mc-watch vera-agent-loop-output')}
 // Drive the implementer timeline the ROBUST way the workshop panel does: REATTACH
 // to the run's persisted agent-loop session over SSE (replay + tail-live). This
 // populates the timeline reliably (not via the flaky global bus) AND survives
@@ -1882,14 +1959,14 @@ function onEvent(ev){
     // would double-render — so skip it then. During a SUITE (no single reattach)
     // we DO bus-feed it so the current task's loop streams live, as before.
     document.querySelectorAll('vera-agent-loop-output').forEach(alo=>{
-      if(alo.closest&&alo.closest('#sec-test')&&!_suiteActive)return;
+      if(alo.closest&&alo.closest('#mc-test')&&!_suiteActive)return;
       if(alo.appendEvent){try{alo.appendEvent(ev)}catch(_){}}
     });
     if(t.endsWith('.tool_call')){_loopStep={tool:ev.tool||ev.cap||'?',ok:null};renderLive()}
     else if(t.endsWith('.tool_done')){_loopStep={tool:ev.tool||ev.cap||'?',ok:ev.ok!==false};renderLive()}
   }
   if(!t.startsWith('evolve.')&&!t.startsWith('markets.evolve.'))return;
-  if(t.startsWith('evolve.suite.')){pollSuite();if(_curSec()==='test')testSuiteRefresh()}
+  if(t.startsWith('evolve.suite.')){pollSuite();if(_curSec()==='mission')testSuiteRefresh()}
   if(t==='evolve.run.started'){_loopStep={};renderLive()}
   if(t==='evolve.run.done'){testOnRunDone(ev);testSuiteOnRunDone(ev);workOnChange()}
   if(t==='evolve.run.reviewed'){testOnRunReviewed(ev)}
@@ -1897,14 +1974,17 @@ function onEvent(ev){
   if(t==='evolve.workflow'){wfSet(ev.node,ev.state,ev)}
   if(t==='evolve.assessed')watchOnAssessed(ev);
   if(t==='evolve.phase')watchOnPhase(ev);
-  if(t.startsWith('evolve.editq.')){watchOnEditq(ev);if(_curSec()==='watch')loadEditq()}
-  if(t.startsWith('evolve.errors.')){if(_curSec()==='errors')loadErrors()}
-  if(t==='evolve.suite.done'){workOnChange();if(_curSec()==='test')testSuiteRefresh()}
+  if(t.startsWith('evolve.editq.')){watchOnEditq(ev);if(_curSec()==='mission'&&$('mc-watch')&&$('mc-watch').open)loadEditq()}
+  if(t.startsWith('evolve.errors.')){if(_curSec()==='mission'){missionRefresh();if($('mc-errors')&&$('mc-errors').open)loadErrors()}}
+  // Every Loop Lab event is a row of Mission control's table: refresh it,
+  // debounced, while it is on screen.
+  if(t.startsWith('evolve.')&&_curSec()==='mission')missionRefresh();
+  if(t==='evolve.suite.done'){workOnChange();if(_curSec()==='mission')testSuiteRefresh()}
   if(t.startsWith('evolve.improve.')){
     if(t==='evolve.improve.started'&&ev.session){_watchSession=ev.session;const wa=_watchAlo();if(wa&&wa.reset)try{wa.reset()}catch(_){}}
     pollSessionLive(ev.session);
     workOnChange();
-    if(_curSec()==='watch')watchRefresh();
+    if(_curSec()==='mission'&&$('mc-watch')&&$('mc-watch').open)watchRefresh();
   }
   if(t.startsWith('evolve.pipeline.')){shipRefresh();pollPipeLive(ev.id)}
   if(t.startsWith('ide.workspace.changes.')||t==='evolve.sandbox.review'){shipRefresh()}
@@ -3882,7 +3962,7 @@ async function loadFleet(){
       +'<span class="hint">'+esc(a.model||'')+(a.instance?(' @'+esc(a.instance)):'')+' · '+esc(a.status)+'</span></div>';
   }
   el.innerHTML=h;
-  if((ss.length||eq.length)&&_curSec()==='watch'){clearTimeout(window._fleetT);window._fleetT=setTimeout(loadFleet,4000)}
+  if((ss.length||eq.length)&&_curSec()==='mission'&&$('mc-watch')&&$('mc-watch').open){clearTimeout(window._fleetT);window._fleetT=setTimeout(loadFleet,4000)}
 }
 function watchSelect(){_watchSession=$('watch-sel').value;document.querySelectorAll('vera-agent-loop-output').forEach(a=>{if(a.reset)try{a.reset()}catch(_){}});watchRefresh()}
 async function watchRefresh(){
@@ -5147,16 +5227,6 @@ async function sandboxEnsure(){
   const r=await post('/evolve/sandbox/ensure',{});
   if(r&&r.ok)toast(r.already_up?'Sandbox already up':(r.healthy?'Sandbox up + healthy':'Sandbox starting'));
   else toast((r&&r.error)||'failed'); loadSandbox();
-}
-async function loadAudit(){
-  const r=await api('/evolve/audit?limit=120'+($('aud-filter')&&$('aud-filter').value?('&action='+encodeURIComponent($('aud-filter').value)):''));
-  const rows=(r&&r.audit)||[];
-  if(!rows.length){$('audit-body').innerHTML='<div class="empty">No activity yet.</div>';return}
-  const col=a=>a.indexOf('rollback')>=0||a.indexOf('clear')>=0||a.indexOf('delete')>=0?'var(--warn)':a.indexOf('promote')>=0||a.indexOf('up')>=0?'var(--ok)':'var(--dim2)';
-  $('audit-body').innerHTML='<table><tr><th>when</th><th>action</th><th>detail</th></tr>'+rows.map(a=>
-    '<tr><td class="mono" style="white-space:nowrap">'+esc((a.ts||'').slice(0,19).replace('T',' '))+'</td>'
-    +'<td><span class="tag" style="color:'+col(a.action||'')+'">'+esc(a.action||'')+'</span></td>'
-    +'<td>'+esc(a.summary||'')+'</td></tr>').join('')+'</table>';
 }
 
 /* ═══ Integration branches (bleeding edges) — evolve.bleeding_edge.list ═══ */
