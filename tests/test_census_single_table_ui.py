@@ -36,7 +36,7 @@ def _fn(src, name):
 
 def _section(src):
     i = src.index('id="sec-work"')
-    return src[i:src.index("<!-- ── TEST (home)", i)]
+    return src[i:src.index("\n</div>\n", i)]   # to the section's own close (the page after it has changed twice)
 
 
 # ── one table, not five cards ───────────────────────────────────────────────

@@ -45,7 +45,7 @@ def test_the_absorbed_pages_are_gone_from_rail_and_dom(src):
         assert 'data-sec="%s"' % sec not in src, "rail still has %s" % sec
         assert 'id="sec-%s"' % sec not in src, "section %s still in the DOM" % sec
     secs = re.findall(r'<div class="sec" id="sec-([a-z]+)"', src)
-    assert "work" in secs and len(secs) == 9, secs   # 17 after slice 3; 13 after Ship (5); 9 after Agents (6)
+    assert "work" in secs and len(secs) == 5, secs   # 17 after slice 3; 13 after Ship (5); 9 after Agents (6); 5 after Mission control (7)
 
 
 def test_work_is_first_and_the_home(src):
@@ -53,7 +53,7 @@ def test_work_is_first_and_the_home(src):
     assert rail[0] == "work"
     assert re.search(r'<button class="btn on" data-sec="work"', src)
     assert '<div class="sec" id="sec-work">' in src, "shown at load"
-    assert '<div class="sec" id="sec-test" style="display:none">' in src
+    assert '<div class="sec" id="sec-ship" style="display:none">' in src
     assert "return b?b.dataset.sec:'work'" in _fn(src, "_curSec")
     assert "if(!routeHash()&&_curSec()==='work')nav('work')" in src, "a deep link lands on its page; otherwise Work"
 

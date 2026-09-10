@@ -33,7 +33,9 @@ def _read(name):
 @pytest.mark.parametrize("name", ELEMENTS)
 def test_the_element_polls_only_on_screen(name):
     src = _read(name)
-    assert "_onScreen() { return this.offsetParent !== null; }" in src
+    # offsetParent alone missed a closed <details> (Chromium keeps its contents
+    # laid out, content-visibility: hidden); checkVisibility() sees it (2026-09-10).
+    assert "_onScreen() { return this.offsetParent !== null && (typeof this.checkVisibility !== 'function' || this.checkVisibility()); }" in src
     assert re.search(r"setInterval\(\(\) => \{ if \(this\._onScreen\(\)\) this\.refresh\(\); \}", src), name
     assert "if (this._onScreen()) this.refresh();" in src, "the first read too"
     assert not re.search(r"setInterval\(\(\) => this\.refresh\(\)", src), "an unguarded tick remains"
@@ -51,7 +53,8 @@ def test_the_panel_refreshes_a_pages_elements_when_it_opens():
     i = src.index("function nav(sec){")
     nav = src[i:src.index("\n}\n", i)]
     assert "el.tagName.startsWith('VERA-')&&typeof el.refresh==='function'&&el._pollTimer" in nav
-    assert "if((ss.length||eq.length)&&_curSec()==='watch'){clearTimeout(window._fleetT)" in src
+    # The Watch page is a fold of Mission control since slice 7: its fleet polls only while that fold is open.
+    assert "if((ss.length||eq.length)&&_curSec()==='mission'&&$('mc-watch')&&$('mc-watch').open){clearTimeout(window._fleetT)" in src
     # CI/CD and Review are the Ship page since slice 5: one poller for the
     # table, the full pipeline list's own only while its fold is open.
     assert "if(r.any_live&&$('ship-follow')&&$('ship-follow').checked&&_curSec()==='ship')window._shipT=setTimeout(loadShip,6000)" in src
