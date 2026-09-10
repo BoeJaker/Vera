@@ -68,6 +68,7 @@ from Vera.vera.integrations.external_effects import (
     plan_external_effect as _plan_external_effect,
 )
 from Vera.vera.integrations.effect_receipts import default_external_effect_receipt_ledger
+from Vera.vera.integrations.effect_retry import plan_effect_retry as _plan_effect_retry
 from Vera.vera.integrations.connection_projection import project_connections
 
 try:
@@ -953,6 +954,44 @@ async def integration_effect_replay_status(plan: Optional[Dict] = None, trace_id
 
 
 @capability(
+    "integration.effect.retry.plan", http_method="POST",
+    http_path="/integrations/effect/retry/plan",
+    http_tags=["integration", "policy"], memory="off",
+    description="Plan whether and when a failed or rate-limited external-effect "
+                "attempt may be retried. Inputs: plan, attempts_completed, "
+                "max_attempts, status_code or a stable error_code, optional "
+                "retry/rate-limit timing, successful_receipt, and bounded "
+                "backoff settings. Returns a delay window and reason codes; it "
+                "never sleeps, retries, executes, resolves secrets, or records a receipt.",
+)
+async def integration_effect_retry_plan(
+        plan: Optional[Dict] = None, attempts_completed: int = 1,
+        max_attempts: int = 3, status_code: int = 0, error_code: str = "",
+        retry_after_ms: Optional[int] = None, rate_limit: Optional[int] = None,
+        rate_remaining: Optional[int] = None,
+        rate_reset_after_ms: Optional[int] = None,
+        successful_receipt: bool = False, base_delay_ms: int = 250,
+        backoff_cap_ms: int = 30_000, trace_id=None):
+    try:
+        return _plan_effect_retry(
+            plan or {}, attempts_completed=attempts_completed,
+            max_attempts=max_attempts, status_code=status_code,
+            error_code=error_code, retry_after_ms=retry_after_ms,
+            rate_limit=rate_limit, rate_remaining=rate_remaining,
+            rate_reset_after_ms=rate_reset_after_ms,
+            successful_receipt=successful_receipt,
+            base_delay_ms=base_delay_ms, backoff_cap_ms=backoff_cap_ms)
+    except (TypeError, ValueError) as exc:
+        return {"schema": "vera.external-effect-retry-plan/v1",
+                "error": str(exc),
+                "schedule": {"allowed": False, "reasons": ["invalid_request"],
+                             "earliest_delay_ms": 0, "latest_delay_ms": 0,
+                             "selection": "none"},
+                "executes": False, "sleeps": False, "records_receipt": False,
+                "resolves_secrets": False, "retains_payload": False}
+
+
+@capability(
     "integration.source.lifecycle", http_method="GET",
     http_path="/integrations/source/lifecycle", http_tags=["integration", "intake"],
     memory="off", silent=True,
@@ -1068,6 +1107,7 @@ register_ui(
         "integration.source.transition.plan",
         "integration.source.build.status", "integration.source.build.plan",
         "integration.effect.plan", "integration.effect.replay.status",
+        "integration.effect.retry.plan",
         # the one-click "register & secure everything" button drives autoenroll
         "autoenroll.scan", "autoenroll.run", "autoenroll.pending",
     ],

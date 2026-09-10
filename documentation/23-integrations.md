@@ -243,6 +243,16 @@ suppress the replay, but the compatibility phase still preserves current
 behavior. This makes the migration gap measurable before an explicit decision
 turns enforcement on.
 
+`integration.effect.retry.plan` turns a validated effect plan plus bounded
+outcome evidence into a non-executing retry decision. It recognizes a small,
+stable set of transient HTTP statuses and transport error codes, enforces a
+maximum attempt budget, refuses retries after a durable success, and requires
+the original plan to have explicitly requested and admitted retry behavior.
+Provider `Retry-After` or exhausted-rate-limit reset evidence becomes a minimum
+delay that local backoff cannot shorten. Vera returns a jitter window for a
+scheduler to use later; the capability itself never sleeps, chooses random
+timing, executes the operation, opens credentials, or records a receipt.
+
 ---
 
 ## 8. Common threads
