@@ -2742,9 +2742,12 @@ async def _evolve_authors_uncached(hours: int, branch: str):
                         "message}]) — the same join key Dispatch's chat-session "
                         "list uses, for connecting a run back to whatever "
                         "session (Claude Code or otherwise) produced it. "
-                        "Query: limit, task, session.")
+                        "Query: limit, task, session (a suite id, an improve "
+                        "session, or a census run such as run52), source "
+                        "(suite | run | manual | improve | census | goal | "
+                        "captest | ide).")
 async def evolve_runs(limit: int = 50, task: str = "", session: str = "",
-                      trace_id=None):
+                      source: str = "", trace_id=None):
     r = _redis()
     out: List[Dict[str, Any]] = []
     if r:
@@ -2758,6 +2761,8 @@ async def evolve_runs(limit: int = 50, task: str = "", session: str = "",
                 if task and rec.get("task") != task:
                     continue
                 if session and rec.get("session") != session:
+                    continue
+                if source and str(rec.get("source") or "") != source:
                     continue
                 out.append(rec)
                 if len(out) >= int(limit):
