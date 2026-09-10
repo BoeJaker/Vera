@@ -88,6 +88,7 @@ _CRITICAL_MODULES = {
     "test_mission_core",  # Mission control: a row per event - action, error, gate; open errors lead (2026-09-10)
     "test_mission_page_boot",  # evolve.mission.events must load with the app and read its stores in one call (2026-09-10)
     "test_mission_page_ui",  # Master, Activity, Errors are one page; the theatres are its folds; Loop Lab is five pages (2026-09-10)
+    "test_census_posture_boot",  # a seeded census runs on prod's own loop, whatever sandbox_mode says (2026-09-10)
     "test_census_template_store",  # a dropped goal must lose its task (2026-09-07)
     "test_unittest_history",  # green on fewer tests is not a pass (2026-09-07)
     "test_race_to_green_ui",  # the strip must show a race, not one cell per pipeline (2026-09-07)

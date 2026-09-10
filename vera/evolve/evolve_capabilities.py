@@ -2187,20 +2187,34 @@ async def _sandbox_mirror(run_id: str, use_sandbox: bool):
                 task.cancel()
 
 
+def _is_census_posture(task: Dict[str, Any]) -> bool:
+    """A seeded census task runs the way the harness ran every archived goal
+    (census_seed.CENSUS_POSTURE): prod's own loop, no sandbox, no test
+    denylist, the engine's own defaults. The archived series is the
+    instrument; this posture keeps a seeded run a point on its timeline."""
+    return bool(_census_seed is not None and _census_seed.is_census_task(task))
+
+
 async def _run_loop_task(task: Dict[str, Any], variant: Optional[Dict[str, Any]],
                          run_id: str, timeout: int) -> Dict[str, Any]:
     kw = dict(task.get("overrides") or {})
     kw.update(_variant_call_overrides(variant))
-    # A Loop Lab test runs HEADLESS — never let the loop pause for a human
-    # (enable_step_questions/HITL) or it hangs until the 300s timeout with no
-    # visible progress. The caller/variant can still override.
-    kw.setdefault("enable_step_questions", False)
+    census = _is_census_posture(task)
+    if not census:
+        # A Loop Lab test runs HEADLESS — never let the loop pause for a human
+        # (enable_step_questions/HITL) or it hangs until the 300s timeout with no
+        # visible progress. The caller/variant can still override.
+        kw.setdefault("enable_step_questions", False)
+    # A census task passes what the harness passed - the goal, a model pin -
+    # and leaves the engine its own defaults (step questions included: the
+    # archived series ran with them on). Its step ceiling is the engine's, set
+    # on the task by the seeder; the suite's own default of 6 is two short.
     args = dict(profile=task.get("profile", "planning"),
                 goal=task.get("goal", ""),
                 allowed_caps=_deny_filter(task.get("allowed_caps", ""),
                                           task.get("_denylist") or []),
                 session_id=f"evolve:{run_id}",
-                max_steps=int(task.get("max_steps", 6) or 6), **kw)
+                max_steps=int(task.get("max_steps") or (8 if census else 6)), **kw)
     use_sandbox = task.get("_sandbox", False)
     if not task.get("_indefinite"):
         # bounded run (suite / benchmark / improve variant test). Mirror the
@@ -2396,16 +2410,26 @@ async def _run_task(task: Dict[str, Any], variant: Optional[Dict[str, Any]] = No
     timeout = max(20, int(task.get("timeout_s", default_to) or default_to))
     error, final, steps, raw_keys = "", "", [], []
     sim_score = None
+    capped = False        # the run hit its timeout_s - the census's wall-cap, not a failure of the goal
     extra: Dict[str, Any] = {}
 
     # ── Sandbox-first: decide where this runs (loop/cap in the dev sandbox when
     # active; sim uses the business-sim's own isolation). Denylist strips
     # external-effect caps from test loops as defence in depth.
     cfg = task.get("_cfg") or await _get_config()
-    sb = await _resolve_sandbox(cfg, ttype)
+    census = _is_census_posture(task)
+    if census:
+        # The census posture: prod's own loop, whatever sandbox_mode says, and
+        # no test denylist - the harness restricted nothing. Under require every
+        # seeded task was refused in 0.1 s (loop-o50); under prefer it would
+        # have measured the primary sandbox's branch instead of prod.
+        sb = {"use": False, "blocked": False,
+              "reason": "census posture: prod's own loop, the archived series' instrument"}
+    else:
+        sb = await _resolve_sandbox(cfg, ttype)
     task = dict(task)
     task["_sandbox"] = sb["use"]
-    task["_denylist"] = cfg.get("test_denylist") or []
+    task["_denylist"] = [] if census else (cfg.get("test_denylist") or [])
     # Interactive tests (run.start) AND manual one-at-a-time task runs
     # (evolve.task.run) are ACTIVITY-watched, not clock-killed — the loop
     # under test may take an indefinite amount of time, and a run that's
@@ -2421,7 +2445,7 @@ async def _run_task(task: Dict[str, Any], variant: Optional[Dict[str, Any]] = No
         task["_indefinite"] = True
         task["_idle_s"] = cfg.get("run_idle_timeout_s", 300)
         task["_max_s"] = cfg.get("run_max_s", 7200)
-    where = "sandbox" if sb["use"] else "in-process"
+    where = "prod" if census else ("sandbox" if sb["use"] else "in-process")
 
     _RUN_LIVE.update({"run_id": run_id, "task": task.get("id"),
                       "type": ttype, "started_at": now_iso(), "t0": t0,
@@ -2472,6 +2496,7 @@ async def _run_task(task: Dict[str, Any], variant: Optional[Dict[str, Any]] = No
             raw_keys = list(res.keys())[:20]
     except asyncio.TimeoutError:
         error = f"timeout after {timeout}s"
+        capped = True
     except Exception as e:
         error = str(e)
     finally:
@@ -2529,6 +2554,7 @@ async def _run_task(task: Dict[str, Any], variant: Optional[Dict[str, Any]] = No
         "variant": (variant or {}).get("id", ""), "source": source,
         "session": session_id, "error": error[:200], "where": where,
         "triggered_by": _triggered_by(),
+        "capped": capped, "posture": ("census" if census else ""),
     }
     detail = dict(compact)
     detail.update({

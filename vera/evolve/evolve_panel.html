@@ -569,7 +569,7 @@ html.vpb-nav-hosted body{padding-left:0}
       <select id="ct-pick" style="min-width:150px" onchange="ctPick()"></select>
       <input id="ct-model" placeholder="model (blank = live routing)" style="width:190px;margin-left:6px">
       <button class="btn sm" onclick="ctSeed()" title="write this template's goals as suite tasks tagged census-&lt;name&gt;">Seed</button>
-      <button class="btn sm" onclick="ctRun()" title="run the seeded tasks as a suite">▶ Run census</button>
+      <button class="btn sm" onclick="ctRun()" title="run the seeded tasks as a suite on prod's own loop (the census posture) - the archived series' instrument">▶ Run census</button>
       <button class="btn sm" onclick="ctEdit()">Edit</button>
       <button class="btn sm" onclick="ctNew()">New</button>
       <button class="btn sm" onclick="loadCensusTemplates()">&#8635;</button>
@@ -2525,7 +2525,7 @@ async function ctSeed(){
 
 async function ctRun(){
   if(!_ctCur){toast('pick a template');return}
-  if(!confirm('Run '+_ctCur.goals_n+' census goals as a suite?\n\nThis takes the GPU for hours — it waits for a free box before each goal and skips nothing.\n\nThe suite path runs tasks in the PRIMARY sandbox and is blocked when none is up (board loop-o50); the census harness (census_all.sh) is the instrument until that is fixed.'))return;
+  if(!confirm('Run '+_ctCur.goals_n+' census goals as a suite?\n\nThis takes the GPU for hours — it waits for a free box before each goal and skips nothing.\n\nA seeded census runs on prod\'s OWN loop (the census posture: never the dev sandbox, no test denylist, the engine\'s own defaults) - the same instrument as every archived census, so its numbers are points on the template\'s timeline. Its scoreboard is tagged census-<template> and shows on Work beside the harness\'s runs.'))return;
   // assess=false: the census score is its declared checks, not a critic's
   // opinion. Adding a critic here would change what the number means.
   const r=await post('/evolve/suite/start',{tag:_ctCur.tag,assess:false});

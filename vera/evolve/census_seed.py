@@ -46,6 +46,20 @@ DEFAULT_WALL_CAP_S = 1800
 #: The only profile whose engine is v7. Not a preference - a lookup.
 CENSUS_PROFILE = "planning"
 
+#: How a seeded task RUNS: the way the harness ran every archived goal -
+#: prod's own loop (never the dev sandbox, whatever sandbox_mode says), no
+#: test denylist, the engine's own defaults. The suite runner reads it
+#: (evolve_capabilities._run_task); nothing else sets it. Found 2026-09-10
+#: (loop-o50): under sandbox_mode=require every seeded task was refused in
+#: 0.1 s, and under prefer it would have measured the primary sandbox's
+#: branch - a different instrument from the archived series either way.
+CENSUS_POSTURE = "census"
+
+#: The engine's own step ceiling (dag.agent_loop_v6 max_steps default), which
+#: is what the harness's bare v7 call got. The suite runner's default for a
+#: task that says nothing is 6 - two steps short of every archived number.
+ENGINE_MAX_STEPS = 8
+
 #: Every seeded task carries this, so the census set is one filter away from
 #: the hand-written Loop Lab tasks it now lives beside.
 CENSUS_TAG = "census"
@@ -117,6 +131,8 @@ def goal_to_task(goal: Dict[str, Any], template_name: str,
         # none.
         "allowed_caps": "",
         "timeout_s": int(wall_cap_s or DEFAULT_WALL_CAP_S),
+        "max_steps": ENGINE_MAX_STEPS,
+        "posture": CENSUS_POSTURE,
         "enabled": True,
         "checks": list(goal.get("checks") or []),
         "tags": [CENSUS_TAG, tag_for(template_name)],
@@ -234,3 +250,8 @@ def comparable(a: Optional[Dict[str, Any]], b: Optional[Dict[str, Any]]) -> List
     if ca != cb:
         out.append("different wall cap (%ds vs %ds)" % (ca, cb))
     return out
+
+
+def is_census_task(task: Any) -> bool:
+    """Does this task run under the census posture (prod's own loop)?"""
+    return isinstance(task, dict) and str(task.get("posture") or "") == CENSUS_POSTURE
