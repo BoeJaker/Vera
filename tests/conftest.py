@@ -62,6 +62,7 @@ _CRITICAL_MODULES = {
     "test_census_seed",  # a template must not silently rebase the timeline (2026-09-07)
     "test_census_control",  # a prod restart must not cost a census; a row must name its node and model (2026-09-10)
     "test_census_control_boot",  # the control caps must load with the app (2026-09-10)
+    "test_census_single_table_ui",  # one table: expand a run, click a goal (2026-09-10)
     "test_census_template_store",  # a dropped goal must lose its task (2026-09-07)
     "test_unittest_history",  # green on fewer tests is not a pass (2026-09-07)
     "test_race_to_green_ui",  # the strip must show a race, not one cell per pipeline (2026-09-07)
