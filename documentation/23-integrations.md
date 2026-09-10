@@ -233,15 +233,17 @@ connection, or becomes the authority for the underlying records. This gives UI
 and tool-using models one bounded inventory while preserving the existing
 registries as owners during migration.
 
-The generic `integration.api.call` boundary now emits the same policy decision
-as `effect_shadow` while remaining in `observe_only` mode. Existing calls are
-not blocked and Vera does not add retries. Optional idempotency and approval
+The generic `integration.api.call` boundary emits the same policy decision as
+`effect_shadow`. It remains in `observe_only` mode unless three independent
+conditions agree: the deployment gate is enabled, the current operator decision
+approves enforcement, and a fresh activation is bound to that exact decision
+revision and enforcement contract. Optional idempotency and approval
 references are evaluated but never forwarded to the remote API; the request
 path is represented only by an operation digest in audit events. If a durable
 success receipt already exists, telemetry reports that enforcement would
-suppress the replay, but the compatibility phase still preserves current
-behavior. This makes the migration gap measurable before an explicit decision
-turns enforcement on.
+suppress the replay. When enforcement is active, a denied or already-completed
+mutation is rejected before credentials are opened or an HTTP request is made.
+Vera does not add automatic retries.
 
 `integration.effect.retry.plan` turns a validated effect plan plus bounded
 outcome evidence into a non-executing retry decision. It recognizes a small,
@@ -290,9 +292,15 @@ a newer choice, preserve bounded immutable history, and store operator and
 approval references only as digests. Future-rollout approval is rejected until
 the readiness checks pass and an approval receipt is supplied. Requested and
 effective modes remain separate: recording approval changes the requested mode,
-but the effective generic API mode remains `observe_only` until a separate code
-change is reviewed and deliberately activated. Recording `continue_observing`
-reverses the requested mode without deleting its audit history.
+but the effective generic API mode remains `observe_only` until the deployment
+gate is enabled and an operator records a separate activation receipt. Activation
+is revision-guarded, reversible, stored as immutable history, and automatically
+invalidated by a changed approval or enforcement contract. Operator and receipt
+references are stored only as digests. If the deployment gate is enabled but
+activation state cannot be read, mutations fail closed; reads and deployments
+with the gate disabled retain compatibility behavior. Recording
+`continue_observing` or deactivating reverses the effective mode without deleting
+its audit history.
 
 ---
 

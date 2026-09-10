@@ -178,11 +178,12 @@ function shortHash(value){const s=String(value||'');return s?s.slice(0,10)+'…'
 async function openEffects(){$('#effectOv').classList.add('on');await loadEffects();}
 async function loadEffects(){
   const el=$('#effectBody');el.innerHTML='<div class="hint">Loading durable receipt evidence…</div>';
-  const [r,policy,shadow,readiness,decision]=await Promise.all([api('/integrations/effect/receipts?limit=50'),
+  const [r,policy,shadow,readiness,decision,activation]=await Promise.all([api('/integrations/effect/receipts?limit=50'),
     api('/integrations/effect/retry/policy'),
     api('/integrations/effect/shadow/evidence?limit=50'),
     api('/integrations/effect/enforcement/readiness'),
-    api('/integrations/effect/enforcement/decision')]);
+    api('/integrations/effect/enforcement/decision'),
+    api('/integrations/effect/enforcement/activation')]);
   if(r.error){el.innerHTML='<div class="hint">'+esc(r.error)+'</div>';return;}
   const t=r.totals||{}, recent=r.recent||[], outcomes=r.outcomes||{};
   const outcome=Object.entries(outcomes).filter(([,v])=>v&&v.receipts)
@@ -205,7 +206,8 @@ async function loadEffects(){
   const st=shadow.totals||{}, shadowReasons=Object.entries(shadow.reasons_in_window||{})
     .map(([k,v])=>'<span class="bdg">'+esc(k)+' '+esc(v)+'</span>').join(' ');
   const shadowInfo=shadow.error?'<div class="hint">Decision evidence unavailable: '+esc(shadow.error)+'</div>':
-    '<div class="sec">Observe-only decisions</div><div class="hint">What policy would have done at the generic API boundary. Current calls are not blocked; these counts are evidence for a later enforcement decision, not proof of safety.</div>'
+    '<div class="sec">Policy decisions</div><div class="hint">What policy decided at the generic API boundary. '+
+    (activation.enforcement_enabled?'Enforcement is active; rejected mutations are blocked before credentials or HTTP.':'Enforcement is inactive; these counts describe what would be blocked, not proof of safety.')+'</div>'
     +'<div class="metrics"><div class="metric"><b>'+esc(st.observations||0)+'</b><span>observed</span></div>'
     +'<div class="metric"><b>'+esc(st.would_admit||0)+'</b><span>would admit</span></div>'
     +'<div class="metric"><b>'+esc(st.would_suppress||0)+'</b><span>would suppress</span></div></div>'
@@ -223,12 +225,30 @@ async function loadEffects(){
     '. Recording approval does not activate enforcement.</div><div style="display:flex;gap:8px;margin-top:8px">'
     +'<button class="btn" onclick="recordEffectDecision(\'continue_observing\','+Number(decision.revision||0)+')">Continue observing</button>'
     +'<button class="btn" '+(readiness.eligible_for_operator_review?'':'disabled')+' onclick="recordEffectDecision(\'approve_future_enforcement\','+Number(decision.revision||0)+')">Approve future rollout</button></div>';
+  const activationInfo=activation.error?'<div class="hint">Activation state unavailable: '+esc(activation.error)+'</div>':
+    '<div class="sec">Runtime enforcement</div><div class="hint">Deployment gate: <b>'+(activation.runtime_gate?'enabled':'disabled')+
+    '</b> · requested: <b>'+(activation.requested_active?'active':'inactive')+'</b> · effective: <b>'+esc(activation.effective_mode)+
+    '</b> · revision '+esc(activation.revision)+'. Activation is bound to the current approval and enforcement contract. A changed approval or contract disables it automatically.</div>'+
+    '<div style="display:flex;gap:8px;margin-top:8px"><button class="btn" '+((activation.runtime_gate&&decision.decision==='approve_future_enforcement')?'':'disabled')+
+    ' onclick="recordEffectActivation(\'activate\','+Number(activation.revision||0)+')">Activate enforcement</button>'+
+    '<button class="btn" onclick="recordEffectActivation(\'deactivate\','+Number(activation.revision||0)+')">Deactivate</button></div>';
   el.innerHTML='<div class="hint">Durable outcomes and replay evidence. Request/response bodies, credentials, and raw approval or idempotency references are never shown.</div>'
     +'<div class="metrics"><div class="metric"><b>'+esc(t.plans||0)+'</b><span>effect plans</span></div>'
     +'<div class="metric"><b>'+esc(t.receipts||0)+'</b><span>receipts</span></div>'
     +'<div class="metric"><b>'+esc(t.observations||0)+'</b><span>observations</span></div></div>'
     +'<div class="badges">'+outcome+'</div><div class="sec">Recent evidence</div>'
-    +(rows||'<div class="hint">No external-effect receipts have been recorded yet.</div>')+shadowInfo+readinessInfo+decisionInfo+retryInfo;
+    +(rows||'<div class="hint">No external-effect receipts have been recorded yet.</div>')+shadowInfo+readinessInfo+decisionInfo+activationInfo+retryInfo;
+}
+async function recordEffectActivation(action,revision){
+  const actor=prompt('Operator reference (stored only as a digest):'); if(!actor)return;
+  let receipt='';
+  if(action==='activate'){
+    receipt=prompt('Activation receipt reference (stored only as a digest):'); if(!receipt)return;
+  }
+  const r=await api('/integrations/effect/enforcement/activation','POST',{
+    action,expected_revision:revision,actor_ref:actor,activation_receipt_ref:receipt});
+  if(r.error){toast(r.error,true);return;}
+  toast(action==='activate'?'Enforcement activation recorded':'Enforcement deactivated');loadEffects();
 }
 async function recordEffectDecision(decision,revision){
   const actor=prompt('Operator reference (stored only as a digest):'); if(!actor)return;

@@ -74,10 +74,15 @@ def test_integrations_ui_explains_empty_evidence_without_mutation_controls():
     assert "/integrations/effect/shadow/evidence?limit=50" in source
     assert "/integrations/effect/enforcement/readiness" in source
     assert "/integrations/effect/enforcement/decision" in source
+    assert "/integrations/effect/enforcement/activation" in source
+    assert "recordEffectActivation" in source
+    assert "Activate enforcement" in source
+    assert "A changed approval or contract disables it automatically" in source
     assert "Recording approval does not activate enforcement" in source
     assert "runtime remains observe-only" in source
     assert "Passing these checks measures coverage, not safety or authorization" in source
-    assert "Current calls are not blocked" in source
+    assert "rejected mutations are blocked before credentials or HTTP" in source
+    assert "Enforcement is inactive" in source
     assert "Vera does not automatically retry" in source
     assert "policy.reason_descriptions" in source
     assert "No external-effect receipts have been recorded yet" in source
