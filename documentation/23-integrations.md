@@ -284,6 +284,16 @@ example. Passing every check means only that the shadow sample is representative
 enough to review. It does not prove safety, authorize a rollout, or enable
 enforcement; the generic API remains observe-only.
 
+An operator may record either `continue_observing` or an approval for a future
+rollout. Decisions use optimistic revisions so a stale browser cannot overwrite
+a newer choice, preserve bounded immutable history, and store operator and
+approval references only as digests. Future-rollout approval is rejected until
+the readiness checks pass and an approval receipt is supplied. Requested and
+effective modes remain separate: recording approval changes the requested mode,
+but the effective generic API mode remains `observe_only` until a separate code
+change is reviewed and deliberately activated. Recording `continue_observing`
+reverses the requested mode without deleting its audit history.
+
 ---
 
 ## 8. Common threads

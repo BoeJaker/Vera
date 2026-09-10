@@ -10,6 +10,22 @@ from Vera.vera.capabilities import cap_tracking
 pytestmark = pytest.mark.critical
 
 
+def test_enforcement_decision_redacts_operator_and_approval_references():
+    cap = orchestration.CAPABILITY_REGISTRY["integration.effect.enforcement.decide"]
+    assert set(cap["redact_args"]) == {"actor_ref", "approval_receipt_ref"}
+
+
+@pytest.mark.asyncio
+async def test_enforcement_decision_fails_closed_when_evidence_is_unavailable(monkeypatch):
+    monkeypatch.setattr(
+        integrations, "default_external_effect_shadow_evidence",
+        lambda: (_ for _ in ()).throw(OSError("private storage detail")))
+    result = await integrations.integration_effect_enforcement_decide(
+        decision="continue_observing", expected_revision=0, actor_ref="operator:alice")
+    assert result == {"error": "evidence_unavailable", "code": "evidence_unavailable",
+                      "effective_mode": "observe_only", "enforcement_enabled": False}
+
+
 @pytest.mark.asyncio
 async def test_enforcement_readiness_fails_closed_when_evidence_is_unavailable(monkeypatch):
     monkeypatch.setattr(
