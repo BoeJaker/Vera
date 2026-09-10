@@ -102,8 +102,8 @@ def test_the_table_reads_the_five_stores_in_one_call(monkeypatch):
     items = run(AG.cap_evolve_agents_rows(mode="items", hide_done="true"))
     assert items["mode"] == "items" and [i["id"] for i in items["items"]] == ["it-1"] and items["total"] == 2
     assert items["items"][0]["session_state"] == "live", "an item names its session's state"
-    lean = run(AG.cap_evolve_agents_rows(state="idle", limit=1))
-    assert [s["id"] for s in lean["sessions"]] == ["s-idle"] and lean["count"] == 1
+    lean = run(AG.cap_evolve_agents_rows(state="done", limit=1))
+    assert [s["id"] for s in lean["sessions"]] == ["s-idle"] and lean["count"] == 1, "its one item is done, so it is"
 
 
 def test_a_failing_reader_costs_its_column_not_the_page(monkeypatch):
