@@ -24,6 +24,7 @@ so a prod restart no longer costs a census. It never touches a run file. See
 import asyncio
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -774,8 +775,33 @@ async def census_before_restart(resume: bool, by: str = "sys.dev.restart") -> Di
     data = _ctl.make_control(plan["action"], reason=_ctl.RESTART_REASON, by=by,
                              resume_on_start=(plan["action"] == "pause"))
     plan["wrote"] = await asyncio.to_thread(_ctl.write_json, _control_path(), data)
+    plan["written_at"] = str(data.get("ts") or "")
+    plan["ack_wait_max_s"] = _ctl.PAUSE_ACK_MAX_S
     log.warning("census: %s written before restart (%s)", plan["action"].upper(), plan["why"])
     return plan
+
+
+async def census_wait_acked(plan: Dict[str, Any], max_wait_s: float = 0.0) -> Dict[str, Any]:
+    """Wait (bounded) for the harness to act on what census_before_restart
+    wrote, so the re-exec happens AFTER the loop is cancelled and the harness
+    is parked, not under it. Returns {acked, waited_s}."""
+    action = str((plan or {}).get("action") or "none")
+    since = str((plan or {}).get("written_at") or "")
+    if action == "none" or not (plan or {}).get("wrote"):
+        return {"acked": False, "waited_s": 0.0, "why": "nothing written"}
+    limit = float(max_wait_s or _ctl.PAUSE_ACK_MAX_S)
+    t0 = time.time()
+    while time.time() - t0 < limit:
+        active = await asyncio.to_thread(lambda: _ctl.read_json(_active_path()))
+        if _ctl.pause_acked(active, since, action):
+            waited = round(time.time() - t0, 1)
+            log.warning("census: harness acknowledged the %s after %ss", action, waited)
+            return {"acked": True, "waited_s": waited}
+        await asyncio.sleep(1.0)
+    waited = round(time.time() - t0, 1)
+    log.warning("census: harness did not acknowledge the %s within %ss; restarting anyway",
+                action, waited)
+    return {"acked": False, "waited_s": waited, "why": "timeout"}
 
 
 def _lift_restart_pause_sync() -> Dict[str, Any]:

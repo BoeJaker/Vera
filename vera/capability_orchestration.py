@@ -6933,7 +6933,7 @@ def _relaunch_argv() -> List[str]:
     return [sys.executable, "-m", "Vera.vera.capability_orchestration"]
 
 
-async def _do_restart(delay: float) -> None:
+async def _do_restart(delay: float, gate=None) -> None:
     """Re-exec Vera in place after `delay` seconds.
 
     os.execv REPLACES this process image: same PID, same parent, same cwd and
@@ -6942,9 +6942,19 @@ async def _do_restart(delay: float) -> None:
     exiting would take Vera down with nothing to bring it back. execv also fails
     SAFE: on error the current process keeps running rather than dying.
 
+    `gate`, when given, is awaited BEFORE the delay: a bounded wait for
+    something outside this process to get out of the way (the census harness
+    acknowledging its pause, so the re-exec does not land on a loop it would
+    kill unannounced). A gate that raises does not stop the restart.
+
     Shutdown hooks run first so anything holding external state (e.g. the Loop
     Lab sandbox in follow-host mode) is released before the swap.
     """
+    if gate is not None:
+        try:
+            await gate()
+        except Exception as e:
+            log.warning("restart: gate failed, restarting anyway: %s", e)
     await asyncio.sleep(max(0.2, delay))
     log.warning("DEV RESTART: re-exec %s", " ".join(_relaunch_argv()))
     for _hook in list(SHUTDOWN_HOOKS):
@@ -7016,9 +7026,22 @@ async def cap_sys_dev_restart(confirm: bool = False, delay_s: float = 1.5,
                           "census": census.get("action")})
     except Exception:
         pass
+    # The harness reads the control file on its own clock; if the re-exec came
+    # first, the new process lifted the pause before the harness ever saw it
+    # (twice on 2026-09-10) and the harness sat on a loop the restart had
+    # killed. So the re-exec waits, bounded, for the harness to say it has
+    # paused (or dropped) - census_wait_acked - and only then swaps the image.
+    _gate = None
+    if census.get("wrote") and census.get("action") in ("pause", "drop"):
+        _cc_mod = sys.modules.get("census_capabilities")
+        if _cc_mod is not None and hasattr(_cc_mod, "census_wait_acked"):
+            async def _gate(_plan=census, _mod=_cc_mod):
+                await _mod.census_wait_acked(_plan)
+        census["ack"] = "the re-exec waits up to %ss for the harness to acknowledge" % (
+            census.get("ack_wait_max_s") or "?")
     # Detached so THIS request can return before the process image is replaced —
     # otherwise the caller only ever sees a dropped connection.
-    asyncio.create_task(_do_restart(float(delay_s or 1.5)))
+    asyncio.create_task(_do_restart(float(delay_s or 1.5), gate=_gate))
     return {"ok": True, "restarting": True, "pid": os.getpid(),
             "argv": _relaunch_argv(), "delay_s": float(delay_s or 1.5),
             "census": {k: v for k, v in census.items() if k != "active"},

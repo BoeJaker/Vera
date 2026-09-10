@@ -155,6 +155,31 @@ def restart_plan(active: Dict[str, Any], resume: bool) -> Dict[str, Any]:
             "active": v}
 
 
+#: How long a restart waits for the harness to say it has paused (or dropped)
+#: before re-exec'ing anyway. The harness reads the control file every 3s and a
+#: cancel takes a few seconds; a harness that says nothing in this long is not
+#: going to, and the restart must not hang on it.
+PAUSE_ACK_MAX_S = 45.0
+
+
+def pause_acked(active: Dict[str, Any], control_written_at: str, action: str = "pause") -> bool:
+    """Has the harness acted on the control written at `control_written_at`?
+
+    True when the active file says `paused` (or `dropped`, for a drop) AND was
+    updated at or after the control was written - an older "paused" is from an
+    earlier pause and says nothing about this one. Found live 2026-09-10: a
+    restart wrote its pause and the new process lifted it 9s later, inside the
+    harness's 15s poll, so the harness never saw it and sat on a loop the
+    restart had killed for the rest of its wall cap.
+    """
+    a = active or {}
+    want = "dropped" if action == "drop" else "paused"
+    if str(a.get("state") or "") != want:
+        return False
+    updated = str(a.get("updated_at") or "")
+    return bool(updated) and updated >= str(control_written_at or "")
+
+
 # ── routing recorded on census rows ──────────────────────────────────────────
 
 def routing_of(record: Dict[str, Any]) -> Dict[str, Any]:

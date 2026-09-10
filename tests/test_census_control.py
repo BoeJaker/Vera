@@ -154,3 +154,19 @@ def test_every_role_is_reported_not_just_the_coder():
 def test_rollup_of_unrecorded_runs_is_empty_not_zero_confidence():
     r = ct.routing_rollup([{"id": "a"}, {"id": "b"}])
     assert r["recorded_goals"] == 0 and r["coders"] == [] and not r["coder_changed"]
+
+
+# ── the harness must acknowledge a restart's pause before the re-exec ────────
+def test_pause_acked_means_paused_since_the_control_was_written():
+    written = "2026-09-10T17:11:40Z"
+    assert ct.pause_acked({"state": "paused", "updated_at": "2026-09-10T17:11:46Z"}, written)
+    assert ct.pause_acked({"state": "paused", "updated_at": written}, written), "same second counts"
+    # an older 'paused' is a previous pause, not this one
+    assert not ct.pause_acked({"state": "paused", "updated_at": "2026-09-10T15:38:55Z"}, written)
+    assert not ct.pause_acked({"state": "running", "updated_at": "2026-09-10T17:11:46Z"}, written)
+    assert not ct.pause_acked({}, written)
+    assert not ct.pause_acked({"state": "paused"}, written), "no timestamp: cannot be believed"
+    # a drop is acknowledged by 'dropped'
+    assert ct.pause_acked({"state": "dropped", "updated_at": "2026-09-10T17:11:46Z"}, written, "drop")
+    assert not ct.pause_acked({"state": "paused", "updated_at": "2026-09-10T17:11:46Z"}, written, "drop")
+    assert 10 <= ct.PAUSE_ACK_MAX_S <= 120, "bounded: a silent harness must not hang the restart"
