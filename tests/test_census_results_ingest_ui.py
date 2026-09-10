@@ -52,7 +52,7 @@ def test_a_census_record_reads_as_a_census_run_in_the_task_history(src):
 def test_the_run_detail_hands_a_census_record_to_the_census_record(src):
     body = _fn(src, "openRunDetail")
     assert "d.source==='census'" in body
-    assert "openCensusGoal(" in body and "d.census_run" in body
+    assert "eid('census',d.census_run||d.session||''" in body, "the census record link is the entity link"
     assert "openTaskHistory(" in body
     # the critics score a final output; a census record has none here
     assert "isCensus?'':'<button class=\"btn\" onclick=\"assessRun(" in body

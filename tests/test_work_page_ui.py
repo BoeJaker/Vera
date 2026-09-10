@@ -55,7 +55,7 @@ def test_work_is_first_and_the_home(src):
     assert '<div class="sec" id="sec-work">' in src, "shown at load"
     assert '<div class="sec" id="sec-test" style="display:none">' in src
     assert "return b?b.dataset.sec:'work'" in _fn(src, "_curSec")
-    assert "if(_curSec()==='work')nav('work')" in src
+    assert "if(!routeHash()&&_curSec()==='work')nav('work')" in src, "a deep link lands on its page; otherwise Work"
 
 
 def test_old_deep_links_still_land_on_the_table(src):
