@@ -69,3 +69,28 @@ def test_check_file_routes_by_extension():
     assert not P.check_file("x/y.js", "a\n=======\nb", use_node=False)["ok"]
     assert P.check_file("x/y.py", "<<<<<<< HEAD", use_node=False)["ok"]   # not this gate's job
     assert P.is_ui_file("a.html") and P.is_ui_file("b.js") and not P.is_ui_file("c.py")
+
+
+ESM = 'import fs from "fs";\nexport const x = fs.existsSync("/");\n'
+CJS = 'const fs = require("fs");\nmodule.exports = { x: fs.existsSync("/") };\n'
+
+
+@pytest.mark.skipif(not P.node_available(), reason="node not on this box")
+def test_a_valid_esm_mjs_file_passes():
+    """node decides script vs module by EXTENSION. The first version copied
+    every file to a temp .js, so valid ESM failed on its first `import` -
+    pipeline 3b28bcbf rejected tests/test_widget_element.mjs that way."""
+    assert P.check_file("tests/x.mjs", ESM)["ok"]
+
+
+@pytest.mark.skipif(not P.node_available(), reason="node not on this box")
+def test_a_valid_cjs_file_passes_and_a_broken_one_fails():
+    assert P.check_file("tests/x.cjs", CJS)["ok"]
+    assert not P.check_file("tests/x.cjs", "function (")["ok"]
+
+
+@pytest.mark.skipif(not P.node_available(), reason="node not on this box")
+def test_esm_syntax_in_a_plain_js_file_is_still_rejected():
+    """Unchanged on purpose: a .js in this repo is a classic script (the panels
+    are inline scripts) and `import` at top level of one is a real error."""
+    assert not P.check_file("x.js", ESM)["ok"]
