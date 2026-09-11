@@ -7120,12 +7120,16 @@ async def cap_sys_dev_restart(confirm: bool = False, delay_s: float = 1.5,
     # (twice on 2026-09-10) and the harness sat on a loop the restart had
     # killed. So the re-exec waits, bounded, for the harness to say it has
     # paused (or dropped) - census_wait_acked - and only then swaps the image.
+    # ...and then CANCELS every loop the census still owns (its goal, a seeded
+    # census task): loops survive a restart by design and a cancelled run is
+    # the one thing not resumed. The gate runs on every restart - a person's
+    # pause on file still has a loop parked under it (2026-09-11).
     _gate = None
+    _cc_mod = sys.modules.get("census_capabilities")
+    if _cc_mod is not None and hasattr(_cc_mod, "census_restart_gate"):
+        async def _gate(_plan=census, _mod=_cc_mod):
+            census["gate"] = await _mod.census_restart_gate(_plan)
     if census.get("wrote") and census.get("action") in ("pause", "drop"):
-        _cc_mod = sys.modules.get("census_capabilities")
-        if _cc_mod is not None and hasattr(_cc_mod, "census_wait_acked"):
-            async def _gate(_plan=census, _mod=_cc_mod):
-                await _mod.census_wait_acked(_plan)
         census["ack"] = "the re-exec waits up to %ss for the harness to acknowledge" % (
             census.get("ack_wait_max_s") or "?")
     # Detached so THIS request can return before the process image is replaced —

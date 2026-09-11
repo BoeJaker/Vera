@@ -108,6 +108,7 @@ def test_the_loop_call_is_the_harness_call():
     import inspect
     src = inspect.getsource(EV._run_loop_task)
     assert 'if not census:' in src and 'kw.setdefault("enable_step_questions", False)' in src
+    assert 'kw["enable_dream_persistence"] = False' in src, "a census run never persists a goal or spawns a program"
     assert 'max_steps=int(task.get("max_steps") or (8 if census else 6))' in src
     assert EV._is_census_posture(CS.goal_to_task(GOAL, "default")) is True
     assert EV._is_census_posture({"id": "x", "type": "loop"}) is False

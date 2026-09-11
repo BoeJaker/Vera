@@ -2205,6 +2205,12 @@ async def _run_loop_task(task: Dict[str, Any], variant: Optional[Dict[str, Any]]
         # (enable_step_questions/HITL) or it hangs until the 300s timeout with no
         # visible progress. The caller/variant can still override.
         kw.setdefault("enable_step_questions", False)
+    else:
+        # A census run is a measurement, not a goal to keep: it must not persist
+        # a strategic plan as a dream project nor escalate into a V8 program (one
+        # did on 2026-09-11 and held the GPU for five hours). The engine refuses
+        # the escalation for a census-owned session too; this is the first wall.
+        kw["enable_dream_persistence"] = False
     # A census task passes what the harness passed - the goal, a model pin -
     # and leaves the engine its own defaults (step questions included: the
     # archived series ran with them on). Its step ceiling is the engine's, set
