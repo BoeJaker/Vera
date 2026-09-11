@@ -1153,6 +1153,12 @@ body[data-view="minimal"]:not(.has-msgs):not(.has-panel) #cmpStrips{position:abs
 #councilPanel.on.cmp-strip,#sdPanel.on.cmp-strip{display:flex}
 body[data-view="minimal"] #cmpStrips .cmp-strip{border:1px solid var(--border);border-bottom:none;border-radius:14px 14px 0 0;padding:7px 12px}
 body[data-view="minimal"] #cmpStrips .cmp-strip ~ .cmp-strip{border-radius:0}
+/* the attachment chips, the editor and the podcast bar are the composer's too: same width, attached above it */
+body[data-view="minimal"].has-msgs:not(.has-panel) #docChips,body[data-view="minimal"].has-msgs:not(.has-panel) #docEditor,body[data-view="minimal"].has-msgs:not(.has-panel) #podcastBar{max-width:760px;width:calc(100% - 24px);margin:0 auto;border:1px solid var(--border)!important;border-bottom:none!important;border-radius:14px 14px 0 0}
+body[data-view="minimal"].has-msgs.has-panel #docChips,body[data-view="minimal"].has-msgs.has-panel #docEditor,body[data-view="minimal"].has-msgs.has-panel #podcastBar{margin:0 12px;border:1px solid var(--border)!important;border-bottom:none!important;border-radius:14px 14px 0 0}
+body[data-view="minimal"].has-msgs #docChips ~ #docEditor,body[data-view="minimal"].has-msgs #docChips ~ #podcastBar{border-radius:0}
+body[data-view="minimal"].has-msgs #docChips{padding:7px 12px 4px!important}
+body[data-view="minimal"].has-msgs #docEditor{max-height:32vh}
 .cmp-strip .sp{flex:1}
 .cmp-strip .mono{font-family:var(--mono);font-size:9px;color:var(--dim2)}
 html[data-blocks="off"] .cmp-strip{background:transparent;border-color:transparent}
@@ -5361,7 +5367,7 @@ IMPORTANT:
   let _LAST_SENT_DOCS=[], _LAST_SENT_TYPED='';
   function _paRenderAttachments(body, typed, docs, extraHtml){
     if(!body||!docs||!docs.length) return;
-    const icon=(d)=>{ const l=(d.lang||'').toLowerCase(); return l==='python'?'py':l==='javascript'?'js':l==='markdown'?'md':l==='json'?'json':l==='html'?'html':/\.csv$/i.test(d.title||'')?'csv':/log/i.test(d.title||'')?'log':'text'; };
+    const icon=(d)=>{ const l=(d.lang||'').toLowerCase(); return l==='python'?'py':l==='javascript'?'js':l==='markdown'?'md':l==='json'?'json':l==='html'?'html':l==='diff'?'diff':l==='csv'?'csv':l==='log'?'log':/\.csv$/i.test(d.title||'')?'csv':/log/i.test(d.title||'')?'log':'text'; };
     const cards=docs.map((d,i)=>{ const lines=(d.body||'').split('\n'); const ex=lines.slice(0,12).join('\n'); const more=lines.length-12;
       return '<div class="pa-att" data-pa="'+i+'"><div class="hdr" onclick="this.parentElement.classList.toggle(\'open\')"><span class="ico">'+esc(icon(d))+'</span><b>'+esc(d.title||'attachment')+'</b><small>'+(d.lang?esc(d.lang)+' · ':'')+lines.length.toLocaleString()+' lines · '+(d.body||'').length.toLocaleString()+' chars · attached inline</small><span class="op">▾</span></div>'
         +'<pre>'+esc(ex)+(more>0?'\n<i>… '+more.toLocaleString()+' more lines · Open to read or edit</i>':'')+'</pre>'
@@ -14004,14 +14010,26 @@ Your task: decide what to do next to advance toward the goal.
   let _docActive=null;           // id of currently-edited chip
 
   function _docInferTitle(text){
-    // Try first non-blank line, then fall back to "Document N"
+    // a unified diff is titled by its file header (+++ b/path), else by its hunks — never by an "@@" line
+    const hdr=(text||'').match(/^(?:\+\+\+ b\/|--- a\/|diff --git a\/)([^\s]+)/m);
+    if(hdr) return hdr[1].split('/').pop();
+    if(/^@@ /m.test(text||'')){ const n=((text||'').match(/^@@ /mg)||[]).length; return 'patch · '+n+' hunk'+(n===1?'':'s'); }
+    // a log is named by its size, a table by its header row
+    const kind=_docInferLang(text);
     const first=(text||'').split('\n').map(l=>l.trim()).find(l=>l.length>0)||'';
+    if(kind==='log') return 'log · '+(text||'').split('\n').filter(l=>l.trim()).length+' lines';
+    if(kind==='csv') return first.split(',').map(s=>s.trim()).filter(Boolean).slice(0,6).join(' · ').slice(0,64);
+    // Try first non-blank line, then fall back to "Document N"
     if(first.length>0 && first.length<=64) return first;
     return 'Document '+(_DOCS.length+1);
   }
   function _docInferLang(text){
     // Cheap heuristic — look at extension hints / shebangs / common patterns
     const t=(text||'').slice(0,400).toLowerCase();
+    if(/^(?:diff --git |@@ -\d)/m.test(text)&&/^[+-]/m.test(text)) return 'diff';
+    const ls=(text||'').split('\n').filter(l=>l.trim()).slice(0,12);
+    if(ls.length>=4&&ls.filter(l=>/^\d{4}-\d\d-\d\d[ T]\d\d:\d\d|^\[\d{2}:\d\d:\d\d|^\d\d:\d\d:\d\d\b/.test(l)).length>=ls.length*0.75) return 'log';
+    if(ls.length>=3&&ls.every(l=>(l.match(/,/g)||[]).length>=2&&(l.match(/,/g)||[]).length===(ls[0].match(/,/g)||[]).length)) return 'csv';
     if(/^\s*<!doctype html/i.test(text)||/<html[\s>]/i.test(text)) return 'html';
     if(/^\s*#!\/.*python|^\s*from\s+\w+\s+import|^\s*def\s+\w+\(/m.test(text)) return 'python';
     if(/function\s+\w+\(|=>\s*[{(]|^\s*const\s+\w+\s*=/m.test(text)) return 'javascript';
