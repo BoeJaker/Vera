@@ -190,6 +190,17 @@ Reuse prod's own components: `VeraDash` for grids, `vera_graph.js` for graphs,
 the panel bridge for dispatch, `register_ui` for mounting. The design EXTENDS
 the vocabulary prod already has.
 
+Before ANY chat / page / renderer change lands — always, however small:
+
+    node scripts/jscheck.mjs <every .html and .js the slice touches>
+    node <a static stand-in serving the patched files> ; node scripts/probe.mjs <dir> http://127.0.0.1:<port>/chat_panel 9000 smoke.png
+                                                          (EVAL="<js>" drives the page into each state and returns what it built)
+
+A page whose own script throws mounts nothing and reads as a half-built UI
+until someone notices (the LHM landed that way once: one line, ten minutes
+of a broken rail on the edge). The syntax check catches the first kind, the
+stand-in smoke the second (a mount that throws inside a never-fatal guard).
+
 ---
 
 ## 8. Verify with a screenshot pair — not with an opinion
@@ -262,6 +273,7 @@ programme up without re-deriving it.
 | `slices.mjs` | the plan: slices from Note 40's milestones + the hints' finer cuts and order (`slices.json`) |
 | `adopt-state.mjs` | the state: init / set / show / push — projected into the registry as `technique:design-adoption-<slug>` |
 | `pairdiff.mjs` | numeric design-vs-live PNG diff: % differing, mean difference, 4×4 grid, bbox, diff PNG, `--max` gate |
+| `jscheck.mjs` | pre-landing syntax check: every .js, and every inline `<script>` of every .html, through `node --check` |
 | `map.mjs` | the older, coarser boards → workstreams + prod panels by title (superseded by `adopt-map.mjs`) |
 | `checklist.mjs` | must-keep list vs the design (`adopt-checklist.md`) |
 | `probe.mjs` | headless render of a board or a live page (own port + profile) |

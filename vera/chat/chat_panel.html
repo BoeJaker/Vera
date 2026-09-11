@@ -256,6 +256,70 @@ details.lp-sub:not([open])>summary{opacity:.8}
 .msg-body.a{color:var(--fg)}
 .msg-body pre{background:var(--bg0);border:1px solid var(--border);border-radius:3px;padding:8px;font-family:var(--mono);font-size:10.5px;overflow-x:auto;white-space:pre;margin:6px 0}
 .msg-body code:not(pre code){background:var(--bg0);padding:1px 5px;border-radius:2px;font-family:var(--mono);font-size:10.5px;border:1px solid var(--border)}
+/* ═══ Everything a reply may contain (the Formats board) — the shared markdown renderer's blocks, in a message ═══ */
+.msg-body p{margin:.35em 0}
+.msg-body > p:first-child,.msg-body > h1:first-child,.msg-body > h2:first-child,.msg-body > h3:first-child{margin-top:0}
+.msg-body h1,.msg-body h2,.msg-body h3,.msg-body h4,.msg-body h5,.msg-body h6{font-weight:600;line-height:1.3;margin:.8em 0 .3em;color:var(--text);letter-spacing:-.01em}
+.msg-body h1{font-size:1.3em}.msg-body h2{font-size:1.18em;color:var(--acc)}.msg-body h3{font-size:1.08em;color:var(--acc2)}.msg-body h4,.msg-body h5,.msg-body h6{font-size:1em}
+.msg-body ul,.msg-body ol{margin:.35em 0;padding-left:1.4em}
+.msg-body li{margin:.12em 0}
+.msg-body li::marker{color:var(--dim2)}
+.msg-body .vmd-task{color:var(--dim2)}.msg-body .vmd-task.done{color:var(--acc2)}
+.msg-body hr{border:none;border-top:1px solid var(--border);margin:8px 0}
+.msg-body blockquote{border-left:2.5px solid var(--acc);margin:6px 0;padding:2px 10px;color:var(--dim2);font-style:italic;background:var(--bg1);border-radius:0 4px 4px 0}
+.msg-body .vmd-tablewrap{overflow-x:auto;margin:6px 0}
+.msg-body table{border-collapse:collapse;font-size:.95em;min-width:40%}
+.msg-body th{text-align:left;font-family:var(--mono);font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);padding:4px 8px;border-bottom:1px solid var(--border2)}
+.msg-body td{padding:4px 8px;border-bottom:1px solid var(--border);color:var(--text)}
+.msg-body a{color:var(--acc);text-decoration:none}.msg-body a:hover{text-decoration:underline}
+.msg-body a.vmd-img{border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-size:.9em}
+.msg-body .vmd-call{display:grid;grid-template-columns:16px 1fr;gap:8px;border-radius:var(--ui-radius,8px);padding:7px 10px;margin:8px 0;font-size:.98em;line-height:1.5;background:var(--bg1);white-space:normal}
+.msg-body .vmd-call > div > b{display:block;font-size:.8em;text-transform:uppercase;letter-spacing:.06em;color:var(--text);font-weight:600}
+.msg-body .vmd-call > div > p{margin:.15em 0 0}
+.msg-body .vmd-call.note{background:color-mix(in srgb,var(--acc) 10%,var(--bg1))}
+.msg-body .vmd-call.warn{background:color-mix(in srgb,var(--warn,#c9a35a) 12%,var(--bg1))}
+.msg-body .vmd-call.stop{background:color-mix(in srgb,var(--err) 12%,var(--bg1))}
+.msg-body .vmd-call-i{text-align:center}
+.msg-body .vmd-fn{font-size:.85em;color:var(--dim2);border-top:1px solid var(--border);padding-top:5px;margin-top:8px}
+.msg-body .vmd-fn b{color:var(--acc);font-weight:500}
+.msg-body .vmd-sup{font-size:.7em;color:var(--acc);vertical-align:super;line-height:0}
+.msg-body .vmd-math{font-family:'Times New Roman',Times,serif;font-size:1.15em;color:var(--text);text-align:center;padding:4px 0;font-style:italic}
+html[data-blocks="off"] .msg-body blockquote,html[data-blocks="off"] .msg-body .vmd-call{background:transparent}
+/* a widget in the reply — a component of the message: the drawing, the record beside it, the actions at its foot */
+.wblk{display:grid;grid-template-columns:1fr 168px;border:1px solid var(--border);border-radius:var(--ui-radius,10px);background:var(--bg1);overflow:hidden;margin:8px 0;white-space:normal;font-style:normal}
+.wblk.xl{grid-template-columns:1fr 200px}
+.wblk .wl{padding:8px 10px;display:flex;flex-direction:column;gap:5px;min-width:0}
+.wblk .wh{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);font-weight:600}
+.wblk .wh b{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--text);font-weight:400;text-transform:none;letter-spacing:0}
+.wblk .wh i{width:6px;height:6px;border-radius:50%;background:var(--acc);flex-shrink:0}
+.wblk .wh i.rule{background:var(--acc3)}
+.wblk .wb{flex:1;min-height:70px;display:flex;align-items:center;justify-content:center;overflow:hidden;font-size:10.5px;color:var(--text)}
+.wblk.xl .wb{min-height:200px}
+.wblk .wb svg{width:100%;display:block}
+.wblk .wb .wempty{color:var(--dim2);font-size:9.5px;font-family:var(--mono)}
+.wblk .wr{background:var(--bg0);padding:8px 10px;font-family:var(--mono);font-size:8.5px;color:var(--dim2);line-height:1.55;display:flex;flex-direction:column;gap:4px;border-left:1px solid var(--border)}
+.wblk .wr .by b{color:var(--acc2);font-weight:400}
+.wblk .wr .rec{white-space:pre-wrap;word-break:break-word;color:var(--dim2);max-height:96px;overflow:auto}
+.wblk .wr .acts{display:flex;gap:4px;flex-wrap:wrap;margin-top:auto}
+.wblk .wr .acts button{font-size:8.5px;color:var(--text);background:var(--bg2);border:1px solid var(--border);border-radius:99px;padding:2px 7px;cursor:pointer;font-family:inherit}
+.wblk .wr .acts button:hover{color:var(--acc);border-color:var(--acc)}
+.wblk table{border-collapse:collapse;font-size:9.5px;width:100%}
+.wblk th{text-align:left;font-family:var(--mono);font-size:8px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);padding:2px 6px;border-bottom:1px solid var(--border2)}
+.wblk td{padding:2px 6px;border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px}
+.wblk .wlog{display:flex;flex-direction:column;gap:2px;width:100%;font-family:var(--mono);font-size:9px}
+.wblk .wlog div{display:flex;gap:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wblk .wlog .t{color:var(--dim);flex-shrink:0}.wblk .wlog .k{color:var(--acc);flex-shrink:0;min-width:48px}
+.wblk .wlog .lane{color:var(--dim2);text-transform:uppercase;letter-spacing:.08em;font-size:8px;margin-top:3px}
+.wblk .wtherm{display:flex;flex-direction:column;gap:4px;width:100%;font-size:9.5px}
+.wblk .wtherm div{display:grid;grid-template-columns:90px 1fr 48px;gap:6px;align-items:center}
+.wblk .wtherm span{display:block;height:8px;border-radius:4px;background:var(--bg2);overflow:hidden}
+.wblk .wtherm span i{display:block;height:100%;background:var(--acc);border-radius:4px}
+.wblk .wtherm b{font-family:var(--mono);font-weight:400;text-align:right;color:var(--text)}
+.wblk .wheat{display:grid;gap:2px;width:100%}
+.wblk .wheat div{aspect-ratio:1.6;border-radius:3px;background:var(--acc);display:flex;align-items:flex-end;padding:2px 4px;font-family:var(--mono);font-size:8px;color:var(--text);overflow:hidden}
+.wblk .wb .mm-slot{width:100%;height:100%;min-height:70px}
+html[data-blocks="off"] .wblk{background:transparent}
+@media (max-width:640px){.wblk{grid-template-columns:1fr}.wblk .wr{border-left:none;border-top:1px solid var(--border)}}
 .mtime{font-size:8px;color:var(--dim);margin-top:1px;font-family:var(--mono);padding-left:62px}
 .think-box{font-size:10px;color:var(--acc4);font-style:italic;background:rgba(158,143,160,.04);border-left:2px solid rgba(158,143,160,.3);padding:4px 8px;margin:3px 0 3px 62px;white-space:pre-wrap;word-break:break-word;max-height:120px;overflow-y:auto}
 .sys-msg{font-size:10px;color:var(--dim2);padding:5px 16px;border-bottom:1px solid var(--border);font-family:var(--mono)}
@@ -1066,6 +1130,83 @@ html[data-style] .ib.send{background:var(--pri-bg,var(--acc));border-color:var(-
 #rightRail.lhm-host.slim > .lhm-det{display:none}
 html.vpb-nav-hosted #rightRail.lhm-host.slim{width:0 !important;min-width:0 !important}
 #rightRail.lhm-host > .lhm-det > .ctx-tab-bar .ctab{padding:6px 9px}
+/* ═══ The composer's modes (chat-modes; the Canvas and Paste boards) — chips in the composer's foot, strips above
+   it for voice · council · diffuse, attachments as cards in the question. The top-bar buttons stay; these mirror. ═══ */
+#inputBar{flex-wrap:wrap}
+#cmpFt{width:100%;display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:5px 2px 0;order:9}
+.cchip{display:inline-flex;align-items:center;gap:4px;padding:2px 9px;border-radius:10px;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);font-size:var(--label-size,9.5px);letter-spacing:.2px;cursor:pointer;user-select:none;white-space:nowrap;line-height:1.5}
+.cchip:hover{color:var(--text);border-color:var(--border2)}
+.cchip.on{color:var(--acc);border-color:var(--acc);background:color-mix(in srgb,var(--acc) 12%,transparent)}
+.cchip.live{color:var(--err);border-color:var(--err)}
+.cchip b{font-weight:600;color:inherit}
+#cmpFt .lbl{font-family:var(--mono);font-size:8.5px;color:var(--dim);margin-left:auto;white-space:nowrap}
+/* the strips stack in one box above the composer; in the minimal view the box follows the composer card */
+#cmpStrips{flex-shrink:0;display:flex;flex-direction:column}
+body[data-view="minimal"].has-msgs:not(.has-panel) #cmpStrips{max-width:760px;width:calc(100% - 24px);margin:0 auto -8px}
+body[data-view="minimal"].has-msgs.has-panel #cmpStrips{margin:0 12px -8px}
+body[data-view="minimal"]:not(.has-msgs):not(.has-panel) #cmpStrips{position:absolute;left:50%;bottom:calc(54% + 48px);transform:translateX(-50%);width:min(680px,90%);z-index:4}
+.cmp-strip{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 10px;border-top:1px solid var(--border);background:var(--bg1);font-size:10.5px}
+#councilPanel.on.cmp-strip,#sdPanel.on.cmp-strip{display:flex}
+body[data-view="minimal"] #cmpStrips .cmp-strip{border:1px solid var(--border);border-bottom:none;border-radius:14px 14px 0 0;padding:7px 12px}
+body[data-view="minimal"] #cmpStrips .cmp-strip ~ .cmp-strip{border-radius:0}
+.cmp-strip .sp{flex:1}
+.cmp-strip .mono{font-family:var(--mono);font-size:9px;color:var(--dim2)}
+html[data-blocks="off"] .cmp-strip{background:transparent;border-color:transparent}
+/* VOICE — one press opens a conversation; the strip says which state it is in */
+#cmpVoice .vmic{width:30px;height:30px;border-radius:50%;border:1px solid var(--err);background:color-mix(in srgb,var(--err) 14%,transparent);display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;padding:0}
+#cmpVoice .vmic i{width:10px;height:10px;border-radius:50%;background:var(--err);display:block}
+#cmpVoice.speaking .vmic{border-color:var(--acc);background:color-mix(in srgb,var(--acc) 14%,transparent)}
+#cmpVoice.speaking .vmic i{background:var(--acc);border-radius:2px}
+#cmpVoice.transcribing .vmic i{animation:pr 1s infinite}
+#cmpVoice .vmeter{display:flex;align-items:flex-end;gap:2px;height:18px;width:60px}
+#cmpVoice .vmeter i{display:block;width:2px;min-height:2px;background:var(--acc);border-radius:1px;opacity:.9;transition:height .08s linear}
+#cmpVoice.speaking .vmeter i{background:var(--acc2)}
+#cmpVoice .vstate b{font-weight:600;color:var(--text);font-size:11px;margin-right:6px}
+#cmpVoice .vhint{color:var(--dim2);font-size:9.5px}
+#cmpVoice .vopt b{color:var(--text);font-weight:600;margin-left:3px}
+#cmpVoice .vtts.on{color:var(--acc);border-color:var(--acc)}
+#cmpVoice .vstop{border-color:var(--err);color:var(--err)}
+/* COUNCIL — the same panel the chat had, as the board's strip: header, instances, All · None, the mode segment */
+#councilPanel{border-top:none}
+#councilPanel .cc-h{display:inline-flex;align-items:center;gap:6px;font-weight:600;color:#f472b6;font-size:10.5px;white-space:nowrap}
+#councilPanel .cc-h .cc-n{font-weight:400;color:var(--dim2);font-family:var(--mono);font-size:9px}
+#councilPanel .cc-h i{width:8px;height:8px;border-radius:50%;background:#f472b6;display:inline-block;margin-right:5px}
+#sdPanel .df-h i{width:8px;height:8px;border-radius:2px;background:var(--acc3);display:inline-block;margin-right:5px}
+#councilPanel #councilInstChips{display:inline-flex;gap:4px;flex-wrap:wrap}
+#councilPanel .cc-mode{display:inline-flex;border:1px solid var(--border);border-radius:var(--r-sm,6px);overflow:hidden;margin-left:auto}
+#councilPanel .cc-mode button{background:transparent;border:none;border-right:1px solid var(--border);color:var(--dim2);font-size:9.5px;padding:3px 8px;cursor:pointer;font-family:inherit}
+#councilPanel .cc-mode button:last-child{border-right:none}
+#councilPanel .cc-mode button.on{color:#f472b6;background:color-mix(in srgb,#f472b6 12%,transparent)}
+#councilPanel #councilMode{display:none}
+/* DIFFUSE — one line: the knobs, the negative prompt, the LoRAs, Illustrate replies, Generate */
+#sdPanel{border-top:none;max-height:none;overflow:visible}
+#sdPanel .df-h{display:inline-flex;align-items:center;gap:6px;font-weight:600;color:var(--acc3);font-size:10.5px;white-space:nowrap}
+#sdPanel .df-h .df-t{font-weight:400;color:var(--dim2);font-size:9.5px;letter-spacing:0}
+#sdPanel .sd-controls{display:inline-flex;gap:8px;flex-wrap:wrap}
+#sdPanel .sd-controls .row{display:inline-flex;align-items:center;gap:4px;margin:0}
+#sdPanel .sd-controls label{font-family:var(--mono);font-size:8.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
+#sdPanel .sd-controls input,#sdPanel .sd-controls select{height:20px;font-size:10px;padding:0 4px}
+#sdPanel > .row{display:inline-flex!important;align-items:center;gap:4px;margin:0!important;flex:1;min-width:220px}
+#sdPanel #sdNeg{flex:1;min-width:120px;height:20px;font-size:10px}
+#sdPanel .df-ill.on{color:var(--acc3);border-color:var(--acc3)}
+#sdPanel #sdLoRAs{display:inline-flex;gap:4px;flex-wrap:wrap;margin:0!important}
+#sdPanel #sdLoRAs:empty{display:none}
+/* the attachments a question carries — collapsed cards, an excerpt when opened, the actions at the foot */
+.pa-atts{display:flex;flex-direction:column;gap:5px;margin-top:8px;white-space:normal}
+.pa-att{border:1px solid var(--border);border-radius:var(--ui-radius,8px);background:var(--bg1);overflow:hidden;font-weight:400}
+.pa-att .hdr{display:flex;align-items:center;gap:7px;padding:5px 9px;cursor:pointer;user-select:none}
+.pa-att .hdr .ico{font-family:var(--mono);font-size:8.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--acc);border:1px solid var(--border);border-radius:3px;padding:0 4px}
+.pa-att .hdr b{font-weight:600;font-size:11px;color:var(--text)}
+.pa-att .hdr small{font-family:var(--mono);font-size:8.5px;color:var(--dim2);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pa-att .hdr .op{color:var(--dim2);font-size:11px}
+.pa-att pre{display:none;margin:0;padding:6px 10px;border:none;border-top:1px solid var(--border);border-radius:0;font-family:var(--mono);font-size:9.5px;line-height:1.5;color:var(--text);white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;background:var(--bg0)}
+.pa-att pre i{color:var(--dim2);font-style:normal}
+.pa-att .ft{display:none;gap:4px;padding:5px 9px;border-top:1px solid var(--border);flex-wrap:wrap}
+.pa-att.open pre{display:block}
+.pa-att.open .ft{display:flex}
+.pa-att .ft button{font-size:9px;padding:2px 8px;border:1px solid var(--border);border-radius:var(--r-sm,4px);background:var(--bg2);color:var(--dim2);cursor:pointer;font-family:inherit}
+.pa-att .ft button:hover{color:var(--acc);border-color:var(--acc)}
+html[data-blocks="off"] .pa-att{background:transparent}
 </style>
 </head>
 <body data-view="minimal">
@@ -1354,6 +1495,7 @@ html.vpb-nav-hosted #rightRail.lhm-host.slim{width:0 !important;min-width:0 !imp
     <!-- Session memory note — shared element, also embedded in agent/dream panels -->
     <div class="sec" style="margin-top:5px">Session Memory</div>
     <script src="/ui/vera-notes.js"></script>
+<script src="/ui/elements/vera_markdown.js"></script>
     <vera-session-notes id="ctxNotesEl" scope="chat" title="Chat session memory"></vera-session-notes>
     <div class="sec" style="margin-top:5px">Sources</div>
     <div style="display:flex;flex-wrap:wrap;gap:3px">
@@ -1977,6 +2119,22 @@ html.vpb-nav-hosted #rightRail.lhm-host.slim{width:0 !important;min-width:0 !imp
            no separate panel, the whole workflow lives in the chat column. -->
       <div id="podcastBar" style="display:none;flex-direction:column;border-top:1px solid var(--border);background:var(--bg1);flex-shrink:0;max-height:46vh;overflow:auto"></div>
 
+      <!-- The composer's modes (chat-modes): the strips above the composer. The council and diffuse panels are
+           moved in here at init (_cmpMount); VOICE is new — one press on the mic opens a conversation, this strip
+           says which state it is in (listening · transcribing · speaking), the level, the time, what a pause does,
+           Speak replies, Stop. Painted by _cmpPaintVoice() while the mic is live; the mic's own logic is untouched. -->
+      <div id="cmpStrips">
+        <div id="cmpVoice" class="cmp-strip cmp-voice" style="display:none" data-w="voice strip · controls">
+          <button class="vmic" onclick="CH.toggleMic()" title="Listening — press to end the conversation"><i></i></button>
+          <span class="vmeter" id="cmpVMeter"></span>
+          <span class="vstate"><b id="cmpVWord">listening</b><span class="mono" id="cmpVTime">0:00</span></span>
+          <span class="vhint" id="cmpVHint">a pause sends · press the mic to end</span>
+          <div class="sp"></div>
+          <span class="vopt mono" title="Silence that ends your turn and sends it">pause-to-send <b id="cmpVPause">2.0 s</b></span>
+          <button class="btn xs vtts" id="cmpVTts" onclick="CH.toggleTts()" title="GPU TTS reads the reply as it streams — press the mic to interrupt">Speak replies</button>
+          <button class="btn xs vstop" onclick="CH.toggleMic()" title="End the conversation">Stop</button>
+        </div>
+      </div>
       <div id="inputBar">
         <div id="slashMenu" class="slash-menu"></div>
         <div id="micDot"></div>
@@ -1984,6 +2142,17 @@ html.vpb-nav-hosted #rightRail.lhm-host.slim{width:0 !important;min-width:0 !imp
         <button class="ib" id="cmdBtn" onclick="CH.cmdOpen()" title="Command palette — search panels, set up DAGs / fabric sources / dreams (Ctrl/⌘ K)">⌘K</button>
         <button id="stopBtn" onclick="CH.stopAll()" title="Stop all running streams and agentic loops (Escape)">Stop</button>
         <button class="ib send" onclick="CH.send()">&#8593;</button>
+        <!-- the composer's foot (chat-modes): what is on for this message — each chip mirrors and toggles a feature the
+             top bar already has; nothing here is the only way to reach it -->
+        <div id="cmpFt" data-w="composer chips · controls">
+          <span class="cchip" id="cmpChipCtx" onclick="CH._cmpChip('context')" title="Context — what goes in with this message (the Context menu)">Context</span>
+          <span class="cchip" id="cmpChipWeb" onclick="CH._cmpChip('web')" title="Web search before answering">Web</span>
+          <span class="cchip" id="cmpChipAttach" onclick="CH._cmpChip('attach')" title="Attach — paste or drop text, code, logs; each becomes a card in the message">Attach</span>
+          <span class="cchip" id="cmpChipVoice" onclick="CH._cmpChip('voice')" title="Voice — one press opens a conversation; a pause sends; press again to end it">Voice</span>
+          <span class="cchip" id="cmpChipCouncil" onclick="CH._cmpChip('council')" title="Council — the same message to several instances at once">Council</span>
+          <span class="cchip" id="cmpChipDiffuse" onclick="CH._cmpChip('diffuse')" title="Diffuse — the composer becomes an image prompt">Diffuse</span>
+          <span class="lbl">⏎ send · ⌘K commands</span>
+        </div>
       </div>
     </div><!-- /#chatStack -->
 
@@ -4577,7 +4746,9 @@ IMPORTANT:
       slot.dataset.live='1';
       const bare=slot.dataset.mmBare==='1';
       const mount=()=>{
-        const el=document.createElement('vera-mermaid');
+        let el=null;
+        try{ const key=slot.closest('.msg-body')?.dataset.mid; const live=key&&_MM_LIVE_EL[key]; if(live){ el=live; delete _MM_LIVE_EL[key]; } }catch(_){}
+        if(!el) el=document.createElement('vera-mermaid');
         el.setAttribute('title','mermaid');
         // Bare inside an art-card (the card is the frame) and fills it;
         // standalone inline gets its own toolbar + a pop-out button.
@@ -4606,6 +4777,209 @@ IMPORTANT:
       _mmHydT=setTimeout(()=>_hydrateMermaidSlots(document),120);
     }).observe(document.body,{childList:true,subtree:true});
   }catch(_){}
+
+  // A streaming paint: the message body is re-rendered on every token; the ONE <vera-mermaid> of the fence that is
+  // still open survives the repaint (it is moved into the fresh slot, not remade) and streams the complete lines.
+  const _MM_LIVE_EL={};
+  function _paintStream(bubEl, fullText){
+    const key=(bubEl&&bubEl.dataset&&bubEl.dataset.mid)||'live';
+    _MM_LIVE_KEY=key;
+    let html=''; try{ html=_renderStreamingMarkdown(fullText); } finally { _MM_LIVE_KEY=''; }
+    bubEl.innerHTML=html+'<span class="cur"></span>';
+    const slot=bubEl.querySelector('.mm-slot[data-mm-live]');
+    if(!slot) return;
+    _ensureMermaidJs();
+    let el=_MM_LIVE_EL[key];
+    if(!el){ el=document.createElement('vera-mermaid'); el.setAttribute('title','mermaid · streaming'); el.setAttribute('popout',''); _MM_LIVE_EL[key]=el; }
+    slot.appendChild(el);
+    const code=_MM_BLOCKS[slot.dataset.mm]||'';
+    el._pendingCode=code;
+    if(typeof el.stream==='function'){ try{ el.stream(code); }catch(_){} }
+    else if(window.customElements){ customElements.whenDefined('vera-mermaid').then(()=>{ if(el.isConnected&&typeof el.stream==='function'){ try{ el.stream(el._pendingCode||''); }catch(_){} } }); }
+  }
+
+  /* ═══ WIDGETS IN THE REPLY (the Formats board) — a component of the message, chosen by the model (a ```widget fence
+     with the record) or by rule (a capability result whose SHAPE maps to a default form). It is the same record the
+     gallery and the canvas use: Pin to canvas is a copy of the record (through canvas.append, deduplicated on its
+     key), Open at XL grows the drawing, Change form cycles the draw forms over the same data. ═══ */
+  const _W_DRAWS=['trace','radial','thermo','heat','log','lane','pipes','table','files'];
+  const _W_KIND={trace:'sparkline',radial:'meter',thermo:'chart',heat:'chart',log:'list',lane:'list',pipes:'graph',table:'table',files:'tree'};
+  const _W_SIZE={xs:36,s:48,m:70,l:110,xl:200};
+  const _W_STORE={}; let _wSeq=0;
+  // a capability result's SHAPE → its default draw form, deterministically (the Formats board's table)
+  function _widgetFormByShape(x, depth){
+    depth=depth||0; if(depth>2||x==null) return null;
+    if(Array.isArray(x)){
+      if(!x.length) return null;
+      const o=x[0];
+      if(o==null||typeof o!=='object'){ return x.length>1&&x.every(v=>typeof v==='number')?'trace':null; }
+      if(('t' in o||'ts' in o||'time' in o||'x' in o)&&('v' in o||'value' in o||'y' in o)) return 'trace';
+      if(('t' in o||'ts' in o||'time' in o||'when' in o)&&('text' in o||'msg' in o||'message' in o||'line' in o)) return x.length>20?'lane':'log';
+      if('path' in o) return 'files';
+      if('name' in o||'id' in o||'title' in o) return 'table';
+      return Object.keys(o).length<=8?'table':null;
+    }
+    if(typeof x==='object'){
+      if(typeof x.value==='number'&&('min' in x||'max' in x)) return 'radial';
+      if(Array.isArray(x.nodes)&&(Array.isArray(x.links)||Array.isArray(x.edges))) return 'pipes';
+      const ks=Object.keys(x);
+      if(ks.length>=2&&ks.every(k=>typeof x[k]==='number')) return ks.length>8?'heat':'thermo';
+      for(const k of ['data','result','items','rows','points','series','history','values','entries','results']) if(x[k]!=null){ const f=_widgetFormByShape(x[k],depth+1); if(f) return f; }
+    }
+    return null;
+  }
+  // the data a form draws, dug out of the envelope the shape mapper saw through
+  function _widgetData(x, form, depth){
+    depth=depth||0; if(x==null||depth>2) return x;
+    if(Array.isArray(x)) return x;
+    if(typeof x==='object'){
+      if(form==='radial'&&typeof x.value==='number') return x;
+      if(form==='pipes'&&Array.isArray(x.nodes)) return x;
+      const ks=Object.keys(x); if((form==='thermo'||form==='heat')&&ks.length>=2&&ks.every(k=>typeof x[k]==='number')) return x;
+      for(const k of ['data','result','items','rows','points','series','history','values','entries','results']) if(x[k]!=null){ const f=_widgetFormByShape(x[k],depth+1); if(f) return _widgetData(x[k],form,depth+1); }
+    }
+    return x;
+  }
+  const _wNum=(v)=>{ const n=typeof v==='number'?v:parseFloat(v); return isFinite(n)?n:0; };
+  const _wFmt=(v)=>{ const n=_wNum(v); return Math.abs(n)>=100?Math.round(n).toLocaleString():(Math.round(n*10)/10).toString(); };
+  function _wDraw(form, data, hpx){
+    const H=hpx||70;
+    if(data==null) return '<span class="wempty">no data yet</span>';
+    if(form==='trace'){
+      const pts=(Array.isArray(data)?data:[]).map(p=>typeof p==='number'?p:_wNum(p.v??p.value??p.y)).slice(-120);
+      if(pts.length<2) return '<span class="wempty">'+pts.length+' point'+(pts.length===1?'':'s')+' · a trace needs two</span>';
+      const lo=Math.min(...pts), hi=Math.max(...pts), sp=(hi-lo)||1, W=300;
+      const xy=pts.map((v,i)=>[(i/(pts.length-1))*W,(H-4)-((v-lo)/sp)*(H-8)]);
+      const line=xy.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ');
+      return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="height:${H}px"><path d="M0,${H} L${line.split(' ').join(' L')} L${W},${H} Z" fill="var(--acc)" fill-opacity=".12"/><polyline points="${line}" fill="none" stroke="var(--acc)" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>`;
+    }
+    if(form==='radial'){
+      if(Array.isArray(data)||typeof data!=='object'||typeof data.value!=='number') return '<span class="wempty">a ring needs { value, min, max }</span>';
+      const v=_wNum(data.value), lo=_wNum(data.min??0), hi=_wNum(data.max??100), f=Math.max(0,Math.min(1,(v-lo)/((hi-lo)||1)));
+      const r=Math.max(16,(H-8)/2), c=2*Math.PI*r, s=H/2+2, unit=typeof data.unit==='string'?data.unit:(hi===100&&lo===0?'%':'');
+      return `<svg viewBox="0 0 ${s*2} ${s*2}" style="height:${H}px;width:auto"><circle cx="${s}" cy="${s}" r="${r}" fill="none" stroke="var(--bg2)" stroke-width="6"/><circle cx="${s}" cy="${s}" r="${r}" fill="none" stroke="var(--acc)" stroke-width="6" stroke-dasharray="${(f*c).toFixed(1)} ${(c-f*c).toFixed(1)}" transform="rotate(-90 ${s} ${s})" stroke-linecap="round"/><text x="${s}" y="${s}" text-anchor="middle" dominant-baseline="central" font-size="${Math.max(10,r*0.55)}" fill="var(--text)" font-family="var(--mono)">${esc(_wFmt(v))}${esc(unit)}</text></svg>`;
+    }
+    if(form==='thermo'||form==='heat'){
+      const ks=Object.keys(data).filter(k=>typeof data[k]==='number'); if(!ks.length) return '<span class="wempty">no numbers to draw</span>';
+      const hi=Math.max(...ks.map(k=>Math.abs(data[k])))||1;
+      if(form==='heat'){ const cols=Math.min(6,Math.max(3,Math.ceil(Math.sqrt(ks.length)))); return '<div class="wheat" style="grid-template-columns:repeat('+cols+',1fr)">'+ks.slice(0,48).map(k=>'<div style="opacity:'+(0.2+0.8*Math.abs(data[k])/hi).toFixed(2)+'" title="'+esc(k)+' · '+esc(_wFmt(data[k]))+'">'+esc(k)+'</div>').join('')+'</div>'; }
+      return '<div class="wtherm">'+ks.slice(0,8).map(k=>'<div><label title="'+esc(k)+'" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(k)+'</label><span><i style="width:'+(100*Math.abs(data[k])/hi).toFixed(1)+'%"></i></span><b>'+esc(_wFmt(data[k]))+'</b></div>').join('')+'</div>';
+    }
+    if(form==='log'||form==='lane'){
+      const rows=(Array.isArray(data)?data:[]).filter(r=>r&&typeof r==='object');
+      if(!rows.length||!rows.some(r=>r.text!=null||r.msg!=null||r.message!=null||r.line!=null)) return '<span class="wempty">a log needs rows with text</span>';
+      const line=r=>'<div><span class="t">'+esc(String(r.t??r.ts??r.time??r.when??'').slice(11,19)||String(r.t??r.ts??'').slice(0,8))+'</span><span class="k">'+esc(String(r.kind??r.level??r.type??''))+'</span><span>'+esc(String(r.text??r.msg??r.message??r.line??''))+'</span></div>';
+      if(form==='lane'){ const by={}; rows.forEach(r=>{ const k=String(r.kind??r.level??r.type??'other'); (by[k]=by[k]||[]).push(r); }); return '<div class="wlog">'+Object.keys(by).slice(0,6).map(k=>'<div class="lane">'+esc(k)+' · '+by[k].length+'</div>'+by[k].slice(-4).map(line).join('')).join('')+'</div>'; }
+      return '<div class="wlog">'+rows.slice(-12).map(line).join('')+'</div>';
+    }
+    if(form==='table'||form==='files'){
+      const rows=(Array.isArray(data)?data:[]).filter(r=>r&&typeof r==='object'); if(!rows.length) return '<span class="wempty">no rows</span>';
+      if(form==='files'&&!rows.some(r=>r.path!=null)) return '<span class="wempty">files need a path field</span>';
+      const cols=Object.keys(rows[0]).filter(k=>typeof rows[0][k]!=='object').slice(0,6);
+      if(form==='files'&&!cols.includes('path')) cols.unshift('path');
+      return '<div style="width:100%;overflow:auto;max-height:'+Math.max(H,60)+'px"><table><thead><tr>'+cols.map(c=>'<th>'+esc(c)+'</th>').join('')+'</tr></thead><tbody>'+rows.slice(0,12).map(r=>'<tr>'+cols.map(c=>'<td title="'+esc(String(r[c]??''))+'">'+esc(String(r[c]??''))+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';
+    }
+    if(form==='pipes'){
+      // {nodes, links} → the mermaid renderer (one diagram implementation): a flow of the links
+      const nodes=(data.nodes||[]).slice(0,40), links=(data.links||data.edges||[]).slice(0,80);
+      const idOf=n=>typeof n==='object'?String(n.id??n.name??''):String(n);
+      const lbl=n=>typeof n==='object'?String(n.label??n.name??n.id??''):String(n);
+      const safe=s=>String(s).replace(/[^A-Za-z0-9_]/g,'_');
+      const L=['graph LR'];
+      nodes.forEach(n=>{ const id=idOf(n); if(id) L.push(safe(id)+'["'+lbl(n).replace(/"/g,"'")+'"]'); });
+      links.forEach(e=>{ const a=idOf(e.source??e.from??e.a??''), b=idOf(e.target??e.to??e.b??''); if(a&&b) L.push(safe(a)+' -->'+(e.label?'|'+String(e.label).replace(/\|/g,'/')+'|':'')+' '+safe(b)); });
+      if(L.length<2) return '<span class="wempty">no nodes</span>';
+      const mid='mm'+(++_mmSeq); _MM_BLOCKS[mid]=L.join('\n');
+      return '<div class="mm-slot" data-mm="'+mid+'" data-mm-bare="1"></div>';
+    }
+    return '<span class="wempty">form '+esc(form)+' · no drawing yet</span>';
+  }
+  // the record, normalised the way widget.template.* normalises it (the short form's window/size/refresh are sugar)
+  function _widgetRecord(src, by){
+    const o=(src&&typeof src==='object')?src:{};
+    const draw=String(o.draw&&o.draw.form||o.form||o.draw||'table').toLowerCase();
+    const size=String(o.size||(o.draw&&o.draw.size)||'m').toLowerCase();
+    const reads=(o.reads&&typeof o.reads==='object')?o.reads:{};
+    const cap=String(reads.cap||o.source||o.cap||'');
+    const args=Object.assign({}, (reads.args&&typeof reads.args==='object')?reads.args:{}, (o.args&&typeof o.args==='object')?o.args:{}, o.window?{window:o.window}:{});
+    return { name:String(o.name||o.title||cap||draw), form:_W_KIND[draw]||'panel', draw:{form:_W_DRAWS.includes(draw)?draw:'table', size:_W_SIZE[size]?size:'m', motion:String(o.motion||(o.draw&&o.draw.motion)||'')},
+             reads:{cap, args, every:String(o.refresh||reads.every||''), note:String(reads.note||'')}, placed:['reply'],
+             source:{origin:by==='rule'?'rule':'aide', from:String(o.from||cap||'')}, data:o.data!==undefined?o.data:undefined };
+  }
+  function _widgetKey(rec){ return rec.draw.form+' '+rec.reads.cap+' '+JSON.stringify(rec.reads.args||{}); }
+  // may the block read its source on its own? only quiet, read-shaped capabilities; anything else waits for a click
+  function _widgetReadable(cap){ return /(\.(get|list|status|load|history|read|stats|metrics|recent|tail|search|find|show|info|summary|query|health|state|series|events|nodes|jobs|runs)|^obs\.|^sysmon\.|^perf\.|^nodes\.|^docker\.(ps|stats)|^git\.log|^markets\.)/.test(cap)&&!/(write|delete|remove|create|run|exec|kill|restart|stop|start|set|save|send|post|push|upsert)\b/.test(cap); }
+  function _widgetBlock(rec, by, data){
+    const id='w'+(++_wSeq); _W_STORE[id]={rec, by, data, xl:false};
+    const H=_W_SIZE[rec.draw.size]||70;
+    const rowRec={ form:rec.draw.form, source:rec.reads.cap||undefined, args:Object.keys(rec.reads.args||{}).length?rec.reads.args:undefined, refresh:rec.reads.every||undefined, size:rec.draw.size };
+    const recTxt=JSON.stringify(rowRec,null,1).replace(/"(\w+)":/g,'$1:').replace(/\n\s*/g,' ');
+    const body=(data!==undefined)?_wDraw(rec.draw.form,_widgetData(data,rec.draw.form),H)
+      : (rec.reads.cap?(_widgetReadable(rec.reads.cap)?'<span class="wempty">reading '+esc(rec.reads.cap)+'…</span>':'<button class="btn xs" onclick="CH._wRead(\''+id+'\',true)" title="This capability is not read-shaped, so it only runs when you ask">Read '+esc(rec.reads.cap)+'</button>'):'<span class="wempty">no source and no data</span>');
+    const headline=(data&&typeof data==='object'&&!Array.isArray(data)&&typeof data.value==='number')?_wFmt(data.value)+(typeof data.unit==='string'?data.unit:''):'';
+    return `<div class="wblk" id="${id}" data-form="${esc(rec.draw.form)}" data-w="widget block · reply">`
+         + `<div class="wl"><span class="wh"><i class="${by==='rule'?'rule':''}"></i>${esc(rec.name)}${rec.reads.args&&rec.reads.args.window?' · '+esc(String(rec.reads.args.window)):''}<b>${esc(headline)}</b></span><div class="wb">${body}</div></div>`
+         + `<div class="wr"><span class="by">${by==='rule'?'by <b>rule</b> · the result\'s shape':'chosen by <b>aide</b>'} · form: ${esc(rec.draw.form)}</span><span class="rec">${esc(recTxt)}</span>`
+         + `<span class="acts"><button onclick="CH._wPin('${id}',this)" title="A copy of the record onto the canvas — the same key brings the first item back">Pin to canvas</button><button onclick="CH._wXl('${id}',this)" title="A larger drawing, in place">Open at XL</button><button onclick="CH._wForm('${id}')" title="Another form over the same data">Change form</button></span></div></div>`;
+  }
+  // the model wrote a ```widget fence: its record (JSON, or key: value lines), drawn — inline data now, a source read
+  function _widgetFence(raw){
+    let o=null; const s=String(raw||'').trim(); if(!s) return null;
+    try{ o=JSON.parse(s); }catch(_){ try{ o=JSON.parse(s.replace(/(\w+)\s*:/g,'"$1":').replace(/'/g,'"').replace(/,\s*([}\]])/g,'$1')); }catch(__){ o=null; } }
+    if(!o||typeof o!=='object') return null;
+    const rec=_widgetRecord(o,'aide');
+    const html=_widgetBlock(rec,'aide',rec.data);
+    if(rec.data===undefined&&rec.reads.cap&&_widgetReadable(rec.reads.cap)) setTimeout(()=>{ const id=html.match(/id="(w\d+)"/); if(id) _wRead(id[1],false); },0);
+    return html;
+  }
+  async function _wRead(id, forced){
+    const w=_W_STORE[id]; if(!w||!w.rec.reads.cap) return;
+    if(!forced&&!_widgetReadable(w.rec.reads.cap)) return;
+    let res=null; try{ res=await _capCall(w.rec.reads.cap, w.rec.reads.args||{}); }catch(e){ res={error:String(e&&e.message||e)}; }
+    if(res&&typeof res==='object'&&res.error&&Object.keys(res).length<=2){ const el=document.getElementById(id); if(el){ const b=el.querySelector('.wb'); if(b) b.innerHTML='<span class="wempty">'+esc(w.rec.reads.cap)+': '+esc(String(res.error).slice(0,120))+'</span>'; } return; }
+    w.data=res; _wRepaint(id);
+    const every=parseFloat(w.rec.reads.every); if(every>=10&&!w.timer){ w.timer=setInterval(()=>{ if(!document.getElementById(id)){ clearInterval(w.timer); w.timer=null; return; } _wRead(id,forced); }, every*1000); }
+  }
+  function _wRepaint(id){
+    const w=_W_STORE[id], el=document.getElementById(id); if(!w||!el) return;
+    const b=el.querySelector('.wb'); if(b) b.innerHTML=_wDraw(w.rec.draw.form,_widgetData(w.data,w.rec.draw.form),w.xl?200:(_W_SIZE[w.rec.draw.size]||70));
+    const hb=el.querySelector('.wh b'); if(hb){ const d=w.data; hb.textContent=(d&&typeof d==='object'&&!Array.isArray(d)&&typeof d.value==='number')?_wFmt(d.value)+(typeof d.unit==='string'?d.unit:''):''; }
+    el.dataset.form=w.rec.draw.form; const by=el.querySelector('.wr .by'); if(by) by.innerHTML=(w.by==='rule'?'by <b>rule</b> · the result\'s shape':'chosen by <b>aide</b>')+' · form: '+esc(w.rec.draw.form);
+  }
+  function _wXl(id, btn){ const w=_W_STORE[id], el=document.getElementById(id); if(!w||!el) return; w.xl=!w.xl; el.classList.toggle('xl',w.xl); if(btn) btn.textContent=w.xl?'Back to size':'Open at XL'; _wRepaint(id); }
+  // the next form that can draw THIS data (a trace's points can be a log or a table, never a ring)
+  function _wForm(id){
+    const w=_W_STORE[id]; if(!w) return;
+    const data=w.data, cur=_W_DRAWS.indexOf(w.rec.draw.form);
+    for(let k=1;k<=_W_DRAWS.length;k++){
+      const f=_W_DRAWS[(cur+k)%_W_DRAWS.length];
+      let ok=false; try{ ok=data===undefined||!/class="wempty"/.test(_wDraw(f,_widgetData(data,f),70)); }catch(_){ ok=false; }
+      if(ok){ w.rec.draw.form=f; break; }
+    }
+    w.rec.form=_W_KIND[w.rec.draw.form]||'panel'; w.by=w.by==='rule'?'you':w.by; _wRepaint(id);
+    const el=document.getElementById(id); const r=el&&el.querySelector('.wr .rec'); if(r) r.textContent=r.textContent.replace(/form: ?"?[a-z]+"?/,'form: "'+w.rec.draw.form+'"');
+  }
+  // Pin to canvas: a copy of the record (canvas.append type "widget"); the same key brings the first item back
+  async function _wPin(id, btn){
+    const w=_W_STORE[id]; if(!w) return;
+    if(btn){ btn.disabled=true; btn.textContent='Pinning…'; }
+    try{
+      const key=_widgetKey(w.rec);
+      let cid=_PIN_CANVAS_ID;
+      if(!cid){ const ls=await _capCall('canvas.list',{limit:30}); const hit=((ls&&ls.canvases)||[]).find(c=>c.title==='Pinned from chat'); cid=hit?hit.id:null; }
+      if(!cid){ const cr=await _capCall('canvas.create',{title:'Pinned from chat',mode:'static'}); cid=cr&&cr.id; }
+      if(!cid) throw new Error('no canvas');
+      _PIN_CANVAS_ID=cid;
+      const doc=await _capCall('canvas.get',{id:cid});
+      const same=((doc&&doc.blocks)||[]).find(b=>b.type==='widget'&&b.meta&&b.meta.key===key);
+      if(!same){ const content=Object.assign({},w.rec); delete content.data; await _capCall('canvas.append',{id:cid,type:'widget',content:content,meta:{key,from:'reply',by:w.by}}); }
+      const shown=await _capCall('canvas.show',{id:cid,session_id:(typeof SID!=='undefined'&&SID)||'',title:'Pinned from chat',pinned:false});
+      if(btn){ btn.textContent=same?'Already pinned · shown':'Pinned'; }
+      if(!(shown&&shown.ok)) try{ _handleChatRender({kind:'canvas',canvas_id:cid,title:'Pinned from chat',popout:false}); }catch(_){}
+    }catch(e){ if(btn) btn.textContent='Pin failed'; console.warn('pin to canvas', e); }
+    finally{ if(btn){ btn.disabled=false; setTimeout(()=>{ btn.textContent='Pin to canvas'; },2500); } }
+  }
+  let _PIN_CANVAS_ID='';
 
   /* ── Artifact rendering (inline cards + floating pop-outs) ────────── */
   function _artImgGallery(images){
@@ -4871,6 +5245,107 @@ IMPORTANT:
     fetch(BASE+'/ui/event',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type, payload:payload||{}, session_id:SID})}).catch(()=>{});
   }
 
+  /* ═══ THE COMPOSER'S MODES (chat-modes; the Canvas and Paste boards) ═══
+     The chips in the composer's foot and the strips above it mirror features the chat already has (web search, the
+     doc chips, the mic conversation, council, diffuse) — same handlers, same state, one more place to see and reach
+     them. The council and diffuse panels are the chat's own, moved above the composer and given the board's strip. */
+  let _cmpTimer=null, _micLevel=0, _micTx=0, _micHist=[];
+  function _cmpMount(){
+    const box=document.getElementById('cmpStrips'), voice=document.getElementById('cmpVoice');
+    if(!box) return;
+    // the council and diffuse panels sit above the composer, as strips
+    ['councilPanel','sdPanel'].forEach(id=>{ const p=document.getElementById(id); if(p&&p.parentElement!==box){ p.classList.add('cmp-strip'); box.insertBefore(p, voice); } });
+    // the council's header + count, the mode segment (the select stays, hidden, as the source of truth)
+    const cp=document.getElementById('councilPanel'), sel=document.getElementById('councilMode');
+    if(cp&&sel&&!cp.querySelector('.cc-mode')){
+      const hd=cp.firstElementChild; if(hd){ hd.classList.add('cc-h'); hd.style.marginBottom='0'; hd.style.display='inline-flex'; hd.style.fontSize=''; hd.style.color=''; const sp=hd.querySelector('div[style*="flex:1"]'); if(sp) sp.remove(); const first=hd.querySelector('span'); if(first) first.innerHTML='<i></i>Council'; const n=document.createElement('span'); n.className='cc-n'; n.id='cmpCcN'; hd.insertBefore(n, hd.children[1]||null); }
+      const seg=document.createElement('span'); seg.className='cc-mode';
+      [['vote','Vote','The GPU judge scores every answer and the best one is the reply'],['combine','Synthesise','One answer written from all of them'],['show','Show all','Every answer, side by side']].forEach(m=>{
+        const b=document.createElement('button'); b.textContent=m[1]; b.title=m[2]; b.dataset.mode=m[0];
+        b.addEventListener('click',()=>{ sel.value=m[0]; sel.dispatchEvent(new Event('change')); _cmpSync(); }); seg.appendChild(b); });
+      cp.appendChild(seg);
+    }
+    // the diffuse strip: header, Illustrate replies (mirrors the Config checkbox), Generate
+    const sd=document.getElementById('sdPanel');
+    if(sd&&!sd.querySelector('.df-ill')){
+      const hd=sd.firstElementChild; if(hd){ hd.classList.add('df-h'); hd.style.marginBottom='0'; hd.style.display='inline-flex'; hd.style.fontSize=''; hd.style.color=''; const sp=hd.querySelector('div[style*="flex:1"]'); if(sp) sp.remove();
+        // "— type your image prompt then click Generate (or send)" becomes the quiet half of the header
+        Array.from(hd.childNodes).forEach(nd=>{ if(nd.nodeType===3&&nd.textContent.trim()){ const t=document.createElement('span'); t.className='df-t'; t.textContent=nd.textContent.replace(/^\s*[—-]\s*/,'').trim(); hd.replaceChild(t, nd); } });
+        const first=hd.querySelector('span'); if(first&&!first.querySelector('i')) first.insertBefore(document.createElement('i'), first.firstChild); }
+      const ill=document.createElement('button'); ill.className='btn xs df-ill'; ill.textContent='Illustrate replies'; ill.title='Vera may generate illustrative images in her replies (Config → Media)';
+      ill.addEventListener('click',()=>{ const cb=document.getElementById('cfgIllustrate'); if(cb){ cb.checked=!cb.checked; cb.dispatchEvent(new Event('change')); } _cmpSync(); });
+      const gen=sd.querySelector('button[onclick*="sdGenerate"]'); if(gen&&gen.parentElement) gen.parentElement.insertBefore(ill, gen); else sd.appendChild(ill);
+    }
+    if(!_cmpTimer) _cmpTimer=setInterval(_cmpSync, 500);
+    _cmpSync();
+  }
+  function _cmpChip(k){
+    if(k==='context'){ try{ if(window.VeraLHM){ VeraLHM.pick('context/ctx'); const r=document.getElementById('rightRail'); if(r&&r.classList.contains('slim')) toggleRight(); } }catch(_){} return; }
+    if(k==='web'){ toggleWebSearch(); }
+    else if(k==='attach'){ const ed=document.getElementById('docEditor'); if(_DOCS.length&&ed&&ed.style.display==='none') _docEditorOpen(_DOCS[0].id); else { const ta=document.getElementById('chatInput'); if(ta){ ta.focus(); appendSys('Attach: paste text, code or a log into the composer — anything over a few lines becomes a card on the message. Drop files onto the composer too.'); } } }
+    else if(k==='voice'){ toggleMic(); }
+    else if(k==='council'){ toggleCouncil(); }
+    else if(k==='diffuse'){ toggleSD(); }
+    setTimeout(_cmpSync,0);
+  }
+  function _cmpSync(){
+    const on=(id,v)=>{ const el=document.getElementById(id); if(el) el.classList.toggle('on',!!v); };
+    const web=document.getElementById('webSearchBtn'); on('cmpChipWeb', web&&(web.classList.contains('on')||web.classList.contains('active')));
+    on('cmpChipAttach', _DOCS.length>0); const at=document.getElementById('cmpChipAttach'); if(at) at.innerHTML=_DOCS.length?('Attach <b>'+_DOCS.length+'</b>'):'Attach';
+    on('cmpChipVoice', MIC_ACTIVE); const vc=document.getElementById('cmpChipVoice'); if(vc){ vc.classList.toggle('live', MIC_ACTIVE); vc.textContent=MIC_ACTIVE?'Voice · live':'Voice'; }
+    on('cmpChipCouncil', COUNCIL_MODE); on('cmpChipDiffuse', SD_MODE);
+    const cx=document.getElementById('cmpChipCtx'); if(cx){ const n=(typeof CTX_NODES!=='undefined'&&CTX_NODES)?CTX_NODES.length:0; cx.innerHTML=n?('Context <b>'+n+'</b>'):'Context'; cx.classList.toggle('on', n>0); }
+    const sel=document.getElementById('councilMode'); if(sel) document.querySelectorAll('#councilPanel .cc-mode button').forEach(b=>b.classList.toggle('on', b.dataset.mode===sel.value));
+    const ccn=document.getElementById('cmpCcN'); if(ccn){ const all=(typeof INSTANCES!=='undefined'&&INSTANCES)?INSTANCES.length:0; ccn.textContent=(COUNCIL_INSTS?COUNCIL_INSTS.size:0)+' of '+all; }
+    const ill=document.querySelector('#sdPanel .df-ill'); if(ill) ill.classList.toggle('on', !!document.getElementById('cfgIllustrate')?.checked);
+    _cmpPaintVoice();
+  }
+  function _cmpPaintVoice(){
+    const st=document.getElementById('cmpVoice'); if(!st) return;
+    st.style.display=MIC_ACTIVE?'flex':'none';
+    if(!MIC_ACTIVE) return;
+    const busy=(typeof _STREAMING!=='undefined'&&_STREAMING)||_audioPlaying;
+    const phase=busy?'speaking':(_micTx>0?'transcribing':'listening');
+    st.classList.toggle('listening',phase==='listening'); st.classList.toggle('transcribing',phase==='transcribing'); st.classList.toggle('speaking',phase==='speaking');
+    const s=Math.max(0,Math.floor((Date.now()-(_micT0||Date.now()))/1000));
+    const word=document.getElementById('cmpVWord'), time=document.getElementById('cmpVTime'), hint=document.getElementById('cmpVHint'), mic=st.querySelector('.vmic');
+    if(word) word.textContent=phase==='speaking'?'Vera is speaking':phase;
+    if(time) time.textContent=(phase==='listening'?'● ':'')+Math.floor(s/60)+':'+String(s%60).padStart(2,'0');
+    if(hint) hint.textContent=phase==='speaking'?'press the mic to interrupt her':phase==='transcribing'?'Whisper · phrases land in the order they were spoken':'a pause sends · press the mic to end';
+    if(mic) mic.title=phase==='speaking'?'Speaking — press to interrupt':phase==='transcribing'?'Transcribing':'Listening — press to end the conversation';
+    const pz=document.getElementById('cmpVPause'); if(pz) pz.textContent=((parseFloat(document.getElementById('cfgVadPause')?.value)||2.0).toFixed(1))+' s';
+    const tts=document.getElementById('cmpVTts'); if(tts) tts.classList.toggle('on', !!TTS_ON);
+    const meter=document.getElementById('cmpVMeter');
+    if(meter){ if(!meter.children.length) for(let i=0;i<14;i++) meter.appendChild(document.createElement('i'));
+      _micHist.push(_micLevel); if(_micHist.length>14) _micHist.shift();
+      const bars=meter.children; for(let i=0;i<bars.length;i++){ const v=_micHist[_micHist.length-bars.length+i]||0; const hh=phase==='speaking'?(4+((i*7)%10)):Math.min(18,2+Math.round(v*220)); bars[i].style.height=hh+'px'; } }
+  }
+  // The attachments a question carried (the Paste board): cards in the sent message — a collapsed header, the excerpt
+  // on open, Open (back into the editor as a new attachment) and Copy at the foot. The fenced text still goes to the
+  // model exactly as before; only the bubble changes.
+  let _LAST_SENT_DOCS=[], _LAST_SENT_TYPED='';
+  function _paRenderAttachments(body, typed, docs, extraHtml){
+    if(!body||!docs||!docs.length) return;
+    const icon=(d)=>{ const l=(d.lang||'').toLowerCase(); return l==='python'?'py':l==='javascript'?'js':l==='markdown'?'md':l==='json'?'json':l==='html'?'html':/\.csv$/i.test(d.title||'')?'csv':/log/i.test(d.title||'')?'log':'text'; };
+    const cards=docs.map((d,i)=>{ const lines=(d.body||'').split('\n'); const ex=lines.slice(0,12).join('\n'); const more=lines.length-12;
+      return '<div class="pa-att" data-pa="'+i+'"><div class="hdr" onclick="this.parentElement.classList.toggle(\'open\')"><span class="ico">'+esc(icon(d))+'</span><b>'+esc(d.title||'attachment')+'</b><small>'+(d.lang?esc(d.lang)+' · ':'')+lines.length.toLocaleString()+' lines · '+(d.body||'').length.toLocaleString()+' chars · attached inline</small><span class="op">▾</span></div>'
+        +'<pre>'+esc(ex)+(more>0?'\n<i>… '+more.toLocaleString()+' more lines · Open to read or edit</i>':'')+'</pre>'
+        +'<div class="ft"><button onclick="CH._paOpen(this)">Open</button><button onclick="CH._paCopy(this)">Copy</button></div></div>'; });
+    body.innerHTML=(typed?esc(typed).replace(/\n/g,'<br>'):'<span style="color:var(--dim2)">the attached document'+(docs.length>1?'s':'')+'</span>')+(extraHtml||'')+'<div class="pa-atts">'+cards.join('')+'</div>';
+    body._paDocs=docs;
+  }
+  // a question the chat sent itself: the stash send() left, then cleared
+  function _paDecorate(body, extraHtml){ if(!_LAST_SENT_DOCS.length) return; try{ _paRenderAttachments(body, _LAST_SENT_TYPED, _LAST_SENT_DOCS, extraHtml); }catch(_){} _LAST_SENT_DOCS=[]; _LAST_SENT_TYPED=''; }
+  // a question read back from history: the "### title\n```lang … ```" blocks _buildDocsPrefix wrote, as cards again
+  function _paFromMarkdown(txt){
+    const docs=[]; let rest=String(txt||''); const re=/^### ([^\n]+)\n```([^\n]*)\n([\s\S]*?)\n```\n*/;
+    for(;;){ const m=rest.match(re); if(!m) break; docs.push({title:m[1].trim(),lang:m[2].trim(),body:m[3]}); rest=rest.slice(m[0].length); }
+    return docs.length?{docs,typed:rest.trim()}:null;
+  }
+  function _paDocOf(btn){ const card=btn.closest('.pa-att'), body=btn.closest('.msg-body'); const i=card?+card.dataset.pa:-1; return body&&body._paDocs?body._paDocs[i]:null; }
+  function _paOpen(btn){ const d=_paDocOf(btn); if(!d) return; const id='doc'+(++_DOC_SEQ); _DOCS.push({id,title:d.title,body:d.body,lang:d.lang}); _renderDocChips(); _docEditorOpen(id); _cmpSync(); }
+  function _paCopy(btn){ const d=_paDocOf(btn); if(!d) return; try{ navigator.clipboard.writeText(d.body||''); btn.textContent='Copied'; setTimeout(()=>{ btn.textContent='Copy'; },1200); }catch(_){} }
+
   /* ── Studio prompt hint — advertises the media/render/code caps ───── */
   function _studioHint(){
     if(!document.getElementById('cfgCapInteg')?.checked)return'';
@@ -4887,6 +5362,7 @@ IMPORTANT:
     if(ren){
       L.push('- Diagrams (ONLY for flows, architectures, processes, sequences, state machines or proportions — never for depicting a scene/place/object, that is an image): emit a ```mermaid fenced block (graph TD/LR, sequenceDiagram, stateDiagram, pie). It renders as an interactive diagram inline — no cap call, and do NOT also narrate the raw code.');
       L.push('- Quick charts: [[cap:render.chart {'+sidArg+'"spec":{"type":"bar","labels":["a","b"],"series":[{"name":"x","values":[1,2]}]}}]].');
+      L.push('- Widgets IN the reply (a live figure as part of the message): emit a ```widget fenced block holding one JSON record — { "form": "trace|radial|thermo|heat|log|lane|pipes|table|files", "source": "<a read-only capability, e.g. obs.health>", "args": {…}, "window": "1h", "refresh": 30, "size": "xs|s|m|l", "title": "…" } — the chat reads the source and draws it (and re-reads every "refresh" seconds); or give the data inline instead of a source: "data": [{"t":…,"v":…},…] for trace, {"value":62,"min":0,"max":100} for radial, {"name":number,…} for thermo. Say what the figure shows in one line; do not narrate the record.');
       L.push('- Live HTML: a self-contained widget/mini-UI/animation: [[cap:render.html {'+sidArg+'"title":"…","html":"<!doctype html>…","popout":false}]] (popout:true floats it over the UI). After building a panel with ui.panel.create, show it with [[cap:render.screen {'+sidArg+'"panel_id":"…"}]].');
       L.push('- CANVAS — for work that BUILDS UP over the conversation (a research board, a plan, a running summary) rather than a one-off visual: create with [[cap:canvas.create {"title":"…"}]], add structured blocks with [[cap:canvas.append {"id":"cv_…","type":"markdown|code|diagram|image|note|table","content":{…}}]], then SHOW it to the user with [[cap:canvas.show {'+sidArg+'"id":"cv_…","pinned":true}]] — pinned:true floats it in a fixed window that stays visible while you both keep talking. It updates LIVE, so keep appending to the same canvas instead of re-posting the whole thing.');
     }
@@ -5009,77 +5485,70 @@ IMPORTANT:
     }catch(_){return o;}
   }
 
+  /* ═══ ONE MARKDOWN RENDERER (the Formats board) — the shared vera_markdown element renders every block a reply may
+     contain (headings, lists, task lists, tables, blockquotes, callouts, footnotes, math, links); the chat only
+     supplies what it draws differently: the fenced blocks (_mdFenceCard — code cards with Copy · Save · Preview ·
+     Run, the mermaid slot, the widget block). The chat's older inline renderer stays as the fallback when the
+     shared script is not loaded. ═══ */
+  const _mdUnesc=(x)=>String(x).replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&amp;/g,'&');
+  let _MM_LIVE_KEY='';                 // set while a streaming paint runs: the unclosed mermaid fence gets a live slot
+  function _mdFenceCard(lang,info,raw,st,opts){
+    st=st||{}; opts=opts||{}; lang=lang||'';
+    const L=lang.toLowerCase();
+    // ```mermaid fences render as live diagrams (Vera's own renderer). A CLOSED fence gets a slot the hydrator fills
+    // once (opts.liveMermaid!==false — the final render); while it is still STREAMING the slot is a live one: the
+    // paint keeps a single <vera-mermaid> alive across repaints and streams the complete lines into it.
+    if(L==='mermaid' && document.getElementById('cfgAutoRender')?.checked!==false){
+      if(!st.incomplete && opts.liveMermaid!==false){ const mid='mm'+(++_mmSeq); _MM_BLOCKS[mid]=raw; return `<div class="mm-slot" data-mm="${mid}" style="margin:8px 0"></div>`; }
+      if(st.incomplete && _MM_LIVE_KEY){ const mid='mml-'+_MM_LIVE_KEY; _MM_BLOCKS[mid]=raw; return `<div class="mm-slot mm-live" data-mm="${mid}" data-mm-live="1" data-live="1" style="margin:8px 0"></div>`; }
+    }
+    // ```widget fences are widgets in the reply (the record the model wrote)
+    if(L==='widget' && !st.incomplete){ try{ const w=_widgetFence(raw); if(w) return w; }catch(_){} }
+    const fname=_parseFenceFilename(info||'');
+    const id=_registerCodeBlock(lang,raw,fname);
+    const langLbl=esc((lang||'plain').toLowerCase())+(fname?` · <span style="color:var(--acc,#5a9e8f)">${esc(fname)}</span>`:'');
+    if(st.incomplete){
+      // marked data-incomplete so the linter skips it (no half-written-brace noise)
+      return `<div class="code-card" data-cb="${id}" data-incomplete="1">`
+           + `<div class="code-bar"><span class="code-lang">${langLbl}</span><div style="flex:1"></div><span class="cb-stream">streaming</span></div>`
+           + `<pre><code>${highlightCode(raw, lang)}</code></pre></div>`;
+    }
+    const previewable=_isPreviewable(lang);
+    const previewBtn=previewable
+      ? `<button class="cb-act" onclick="CH._codePreview('${id}')" title="Render in preview pane">Preview</button>`
+      : '';
+    const runBtn=(['js','javascript','jsx'].includes(L))
+      ? `<button class="cb-act" onclick="CH._codeRun('${id}')" title="Render in sandboxed iframe (browser console output captured)">Preview JS</button>`
+      : '';
+    // Server-side execution for backend languages (python, node, ruby, …). Routes through /exec/code/run, subject
+    // to the exec sandbox policy.
+    const execBtn=_isServerRunnable(lang)
+      ? `<button class="cb-act run" onclick="CH._codeExec('${id}',this)" title="Execute on the Vera host and show output inline (exec sandbox applies)">&#9654; Run</button>`
+      : '';
+    const saveBtn=`<button class="cb-act" onclick="CH._codeSaveArtifact('${id}',this)" title="Save this code to the session's artifact directory (shows in the Code tab tree)">&#8681; Save</button>`;
+    return `<div class="code-card" data-cb="${id}">`
+         + `<div class="code-bar"><span class="code-lang">${langLbl}</span>`
+         +   `<div style="flex:1"></div>`
+         +   `<button class="cb-act" onclick="CH._codeCopy('${id}',this)" title="Copy to clipboard">Copy</button>`
+         +   saveBtn + previewBtn + runBtn + execBtn
+         + `</div>`
+         + `<pre><code>${highlightCode(raw, lang)}</code></pre>`
+         + `<div class="code-exec-out" data-exec-out="${id}" style="display:none"></div>`
+         + `</div>`;
+  }
   function renderMd(t,opts){
     opts=opts||{};
+    if(window.VeraMD && typeof VeraMD.render==='function' && VeraMD.version>=2){
+      try{ return VeraMD.render(t,{fence:(lang,info,code,st)=>_mdFenceCard(lang,info,code,st,opts)}); }
+      catch(e){ console.warn('shared markdown renderer failed; falling back', e); }
+    }
     // 1. HTML-escape (keep this first)
     let s=t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    // 2. Fenced code blocks — capture language + info-line + body, register,
-    //    render with toolbar. The info line after the language (e.g.
-    //    ```python app.py) carries an optional filename that auto-persists the
-    //    block as a maintainable artifact.
-    s=s.replace(/```(\w*)([^\n]*)\n?([\s\S]*?)```/g,(_,lang,info,code)=>{
-      // `code` here is ALREADY html-escaped (step 1 escapes the whole string),
-      // so store the RAW source for Preview / Run / Copy — otherwise the
-      // preview iframe receives "&lt;div&gt;…" and renders it as literal text.
-      // The escaped `code` is still used below for the <pre><code> display.
-      const raw=code.replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&amp;/g,'&');
-      // ```mermaid fences render as live diagrams (Vera's own renderer).
-      // ONLY at final render (opts.liveMermaid!==false) — during streaming the
-      // fence stays a raw code card (the model's text streams into it), and the
-      // diagram replaces it once in a single pass. Rendering live on every token
-      // remounts the element and makes it flicker, so we don't. The <vera-mermaid>
-      // element carries its OWN frame + toolbar + pop-out, so there is no art-card
-      // wrapper here (that produced a redundant box-in-box).
-      if((lang||'').toLowerCase()==='mermaid'
-         && opts.liveMermaid!==false
-         && document.getElementById('cfgAutoRender')?.checked!==false){
-        const mid='mm'+(++_mmSeq); _MM_BLOCKS[mid]=raw;
-        return `<div class="mm-slot" data-mm="${mid}" style="margin:8px 0"></div>`;
-      }
-      const fname=_parseFenceFilename(info ? info.replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&') : '');
-      const id=_registerCodeBlock(lang,raw,fname);
-      const langLbl=esc((lang||'plain').toLowerCase())+(fname?` · <span style="color:var(--acc,#5a9e8f)">${esc(fname)}</span>`:'');
-      const previewable=_isPreviewable(lang);
-      const previewBtn=previewable
-        ? `<button class="cb-act" onclick="CH._codePreview('${id}')" title="Render in preview pane">Preview</button>`
-        : '';
-      const runBtn=(['js','javascript','jsx'].includes((lang||'').toLowerCase()))
-        ? `<button class="cb-act" onclick="CH._codeRun('${id}')" title="Render in sandboxed iframe (browser console output captured)">Preview JS</button>`
-        : '';
-      // Server-side execution for backend languages (python, node, ruby, …).
-      // Routes through /exec/code/run, subject to the exec sandbox policy.
-      const execBtn=_isServerRunnable(lang)
-        ? `<button class="cb-act run" onclick="CH._codeExec('${id}',this)" title="Execute on the Vera host and show output inline (exec sandbox applies)">&#9654; Run</button>`
-        : '';
-      const saveBtn=`<button class="cb-act" onclick="CH._codeSaveArtifact('${id}',this)" title="Save this code to the session's artifact directory (shows in the Code tab tree)">&#8681; Save</button>`;
-      return `<div class="code-card" data-cb="${id}">`
-           + `<div class="code-bar"><span class="code-lang">${langLbl}</span>`
-           +   `<div style="flex:1"></div>`
-           +   `<button class="cb-act" onclick="CH._codeCopy('${id}',this)" title="Copy to clipboard">Copy</button>`
-           +   saveBtn + previewBtn + runBtn + execBtn
-           + `</div>`
-           + `<pre><code>${highlightCode(raw, lang)}</code></pre>`
-           + `<div class="code-exec-out" data-exec-out="${id}" style="display:none"></div>`
-           + `</div>`;
-    });
-    // 2b. UNCLOSED trailing fence (A — live card while streaming). After the
-    //     closed-fence pass, any remaining ``` opens a block with no closer;
-    //     treat end-of-text as the close so the card + syntax colours appear
-    //     the moment the fence streams in, not only once it completes. Marked
-    //     data-incomplete so the linter skips it (no half-written-brace noise).
-    s=s.replace(/```(\w*)([^\n]*)\n([\s\S]*)$/, (_,lang,info,code)=>{
-      const raw=code.replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&amp;/g,'&');
-      const fname=_parseFenceFilename(info ? info.replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&') : '');
-      const id=_registerCodeBlock(lang,raw,fname);
-      const langLbl=esc((lang||'plain').toLowerCase())+(fname?` · <span style="color:var(--acc,#5a9e8f)">${esc(fname)}</span>`:'');
-      return `<div class="code-card" data-cb="${id}" data-incomplete="1">`
-           + `<div class="code-bar"><span class="code-lang">${langLbl}</span>`
-           +   `<div style="flex:1"></div>`
-           +   `<span class="cb-stream">streaming</span>`
-           + `</div>`
-           + `<pre><code>${highlightCode(raw, lang)}</code></pre>`
-           + `</div>`;
-    });
+    // 2. Fenced code blocks → the chat's cards (_mdFenceCard: code cards with their toolbar, the mermaid slot, the
+    //    widget block). The fallback path unescapes what step 1 escaped before handing the raw source over.
+    s=s.replace(/```(\w*)([^\n]*)\n?([\s\S]*?)```/g,(_,lang,info,code)=>_mdFenceCard(lang,_mdUnesc(info||''),_mdUnesc(code),{incomplete:false},opts));
+    // 2b. UNCLOSED trailing fence — a card that is still streaming
+    s=s.replace(/```(\w*)([^\n]*)\n([\s\S]*)$/,(_,lang,info,code)=>_mdFenceCard(lang,_mdUnesc(info||''),_mdUnesc(code),{incomplete:true},opts));
     // 3. Inline code, bold, italic, headings, line breaks
     s=s.replace(/`([^`]+)`/g,'<code>$1</code>')
        .replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>')
@@ -6511,11 +6980,14 @@ IMPORTANT:
       // Structured (object/array) results render as an interactive tree with a
       // raw-JSON toggle; strings/primitives fall back to a plain <pre>.
       const structured=(!imgGallery)?_capStructuredView(content):null;
+      // by rule: the result's shape picks a default form — a widget above the tree, and the block says so
+      let ruleWidget='';
+      try{ if(!_rep&&!imgGallery&&content&&typeof content==='object'){ const f=_widgetFormByShape(content); if(f) ruleWidget=_widgetBlock(_widgetRecord({form:f,source:capName,args:capArgs,name:capName},'rule'),'rule',content); } }catch(_){ ruleWidget=''; }
       const rawStyle='font-family:var(--mono);font-size:9.5px;white-space:pre-wrap;margin:0';
       const bodyInner=_rep
         ? `<button class="cap-raw-btn" onclick="const w=this.parentNode,m=w.querySelector('.cap-md'),r=w.querySelector('.cap-raw');const toRaw=r.style.display==='none';m.style.display=toRaw?'none':'block';r.style.display=toRaw?'block':'none';this.textContent=toRaw?'report':'{ } raw';">{ } raw</button><div class="cap-md md">${renderMd(_rep)}</div><pre class="cap-raw" style="${rawStyle};display:none">${esc(previewClean.slice(0,8000))}</pre>`
         : structured
-        ? `<button class="cap-raw-btn" onclick="const w=this.parentNode,j=w.querySelector('.cap-json'),r=w.querySelector('.cap-raw');const toRaw=r.style.display==='none';j.style.display=toRaw?'none':'block';r.style.display=toRaw?'block':'none';this.textContent=toRaw?'tree':'{ } raw';">{ } raw</button>${structured}<pre class="cap-raw" style="${rawStyle};display:none">${esc(previewClean.slice(0,8000))}</pre>`
+        ? `${ruleWidget}<button class="cap-raw-btn" onclick="const w=this.parentNode,j=w.querySelector('.cap-json'),r=w.querySelector('.cap-raw');const toRaw=r.style.display==='none';j.style.display=toRaw?'none':'block';r.style.display=toRaw?'block':'none';this.textContent=toRaw?'tree':'{ } raw';">{ } raw</button>${structured}<pre class="cap-raw" style="${rawStyle};display:none">${esc(previewClean.slice(0,8000))}</pre>`
         : `<pre style="${rawStyle}">${esc(previewClean.slice(0,8000))}</pre>`;
       el.className='cap-inline'+(isErr?' error':' done');
       // Single compact header: cap · args · status · toggle — no sparse standalone
@@ -7525,6 +7997,7 @@ Your task: decide what to do next to advance toward the goal.
     const docPrefix=_buildDocsPrefix();
     const hasDocs=_DOCS.length>0;
     if(!msg && !hasDocs) return;
+    _LAST_SENT_DOCS=hasDocs?_DOCS.map(d=>({title:d.title,body:d.body,lang:d.lang})):[]; _LAST_SENT_TYPED=msg;
     if(docPrefix){
       msg = docPrefix + (msg||'Please review the attached document(s).');
     }
@@ -7787,6 +8260,7 @@ Your task: decide what to do next to advance toward the goal.
     const uCtx=ctxInj?` <span class="ctx-pill">+${CTX_NODES.filter(n=>(n.score||0)>=parseFloat(document.getElementById('ctxSim')?.value||'0.55')).slice(0,parseInt(document.getElementById('ctxK')?.value||'8')).length} ctx</span>`:'';
     const uMsg=_mkMsg('user','you',esc(msg).replace(/\n/g,'<br>')+uCtx);
     try{ uMsg.body.dataset.markdown = msg; }catch(_){}
+    _paDecorate(uMsg.body, uCtx);
     BOX().appendChild(uMsg.wrap);scroll();
     HISTORY.push({role:'user',content:msg});
 
@@ -7929,7 +8403,7 @@ Your task: decide what to do next to advance toward the goal.
         _sc[i]={top:p.scrollTop,
                 atEnd:(p.scrollHeight-p.scrollTop-p.clientHeight)<40};
       });
-      bubEl.innerHTML=_renderStreamingMarkdown(fullText)+'<span class="cur"></span>';
+      _paintStream(bubEl, fullText);
       bubEl.querySelectorAll('.code-card pre').forEach((p,i)=>{
         const s=_sc[i];
         const streaming=!!p.closest('.code-card[data-incomplete]');
@@ -11417,7 +11891,7 @@ Your task: decide what to do next to advance toward the goal.
     const agentName=document.getElementById('agentBarSel')?.value||'assistant';const mode=document.getElementById('councilMode')?.value||'vote';
     const ctxInj=buildCtxInj();const instIds=[...COUNCIL_INSTS];
     if(!instIds.length){appendSys('Select instances for council mode');return;}
-    const uCouncil=_mkMsg('user','council',`<span style="color:#f472b6;font-size:9px">&#127487; ${instIds.length} instances</span> `+esc(msg).replace(/\n/g,'<br>'));BOX().appendChild(uCouncil.wrap);scroll();
+    const uCouncil=_mkMsg('user','council',`<span style="color:#f472b6;font-size:9px">&#127487; ${instIds.length} instances</span> `+esc(msg).replace(/\n/g,'<br>'));_paDecorate(uCouncil.body,`<span style="color:#f472b6;font-size:9px"> &#127487; ${instIds.length} instances</span>`);BOX().appendChild(uCouncil.wrap);scroll();
     HISTORY.push({role:'user',content:msg});
     const cW=document.createElement('div');cW.className='mwrap a';const cCard=document.createElement('div');cCard.className='bubble council-card';cCard.innerHTML=`<div style="font-size:9px;color:#f472b6;margin-bottom:6px">&#127487; Querying ${instIds.length} instances…<span class="cur"></span></div>`;cW.appendChild(cCard);BOX().appendChild(cW);scroll();
     const results=await Promise.all(instIds.map(iid=>_streamCouncilInst(agentName,iid,msg+ctxInj)));
@@ -11548,6 +12022,7 @@ Your task: decide what to do next to advance toward the goal.
         const hasSystem=txt.includes('[INTEGRATED CAPABILITY MODE')||txt.includes('[Retrieved Context]')||txt.includes('[Parent Context]');
         const displayTxt=hasSystem?txt.split('\n\n[')[0]:txt; // strip injected blocks for display
         const m=_mkMsg('user','you',esc(displayTxt).replace(/\n/g,'<br>'));
+        try{ const pa=_paFromMarkdown(displayTxt); if(pa) _paRenderAttachments(m.body, pa.typed, pa.docs); }catch(_){}
         m.time.textContent=ts;BOX().appendChild(m.wrap);
         HISTORY.push({role:'user',content:txt}); // full text goes into HISTORY for continuity
       }else if(rec.ai_output&&(rec.full_text||rec.text)){
@@ -13525,6 +14000,7 @@ Your task: decide what to do next to advance toward the goal.
 
   function _renderDocChips(){
     const wrap=document.getElementById('docChips');
+    try{ setTimeout(_cmpSync,0); }catch(_){}
     if(!wrap)return;
     if(!_DOCS.length){
       wrap.classList.remove('on');
@@ -13644,6 +14120,7 @@ Your task: decide what to do next to advance toward the goal.
 
   function _micUi(on){
     MIC_ACTIVE=!!on;
+    try{ _micHist=[]; _cmpPaintVoice(); }catch(_){}
     try{document.getElementById('micDot')?.classList.toggle('on',MIC_ACTIVE);}catch(_){}
     try{document.getElementById('micBtn')?.classList.toggle('on',MIC_ACTIVE);}catch(_){}
     const btn=document.getElementById('micBtn');
@@ -13785,6 +14262,7 @@ Your task: decide what to do next to advance toward the goal.
       let s=0;for(let i=0;i<inp.length;i++)s+=inp[i]*inp[i];
       const v=Math.sqrt(s/inp.length);
       if(v>peak)peak=v;
+      _micLevel=v;   // the voice strip's meter reads this
 
       thr=Math.max(floor*MULT,ABS_MIN);
       if(v>thr){
@@ -13856,7 +14334,7 @@ Your task: decide what to do next to advance toward the goal.
         // Chain the requests: phrases must land in the order they were spoken,
         // and Whisper answers out of order if they overlap.
         pending=pending.then(async()=>{
-          const txt=await _sttSegment(samples,rate);
+          _micTx++; let txt=''; try{ txt=await _sttSegment(samples,rate); } finally { _micTx=Math.max(0,_micTx-1); }
           if(!txt)return;
           heard=true;
           const inp=document.getElementById('chatInput');
@@ -15124,6 +15602,8 @@ Your task: decide what to do next to advance toward the goal.
     try{ _panelsOpenStart(); }catch(e){ console.warn('panel set: report failed', e); }
     // …and the scripts hear that a session started
     try{ setTimeout(()=>_uiEvent('session.start',{}),1500); }catch(_){}
+    // …and the composer's modes: chips in its foot, the strips above it (never fatal)
+    try{ _cmpMount(); }catch(e){ console.warn('composer modes: mount failed', e); }
     // Rail default: COLLAPSED. The minimal/document aesthetic looks best
     // with the chat column centred and unobstructed; the user can pop the
     // menu out via the top-bar Menu button. Persisted in localStorage so an
@@ -15341,6 +15821,8 @@ Your task: decide what to do next to advance toward the goal.
     toggleViewMode,setViewMode,
     setDensity,toggleBlocks,
     _uiAskAnswer,_uiAskPick,_uiDirectiveApply,
+    _cmpChip,_cmpSync,_paOpen,_paCopy,
+    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_micUi,
     _persistMediaCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},
     setContext:txt=>{_parentCtx=txt;},
