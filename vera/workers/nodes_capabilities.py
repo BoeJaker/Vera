@@ -751,12 +751,10 @@ async def cap_nodes_provision_plan(node_id: str = "",
 # ─────────────────────────────────────────────────────────────────────────────
 # PROVISION EXECUTION
 # ─────────────────────────────────────────────────────────────────────────────
-_OLLAMA_CT_INSTALL = (
-    "command -v ollama >/dev/null 2>&1 || "
-    "(command -v curl >/dev/null 2>&1 || (apt-get -qq update && apt-get -qq -y install curl); "
-    "curl -fsSL https://ollama.com/install.sh | sh); "
-    "systemctl enable --now ollama && sleep 2 && systemctl is-active ollama"
-)
+try:
+    from Vera.vera.provisioning import ollama_node_core as _ollama_core
+except Exception:                                    # worktree / app-free import
+    from vera.provisioning import ollama_node_core as _ollama_core
 
 
 async def _ensure_docker_host(node: Dict) -> Dict:
@@ -793,11 +791,17 @@ async def _register_ollama(node: Dict, port: int, has_gpu: bool) -> Dict:
     if not add:
         return {"error": "ollama.add_instance unavailable"}
     addr = node.get("addr") or "localhost"
-    iid = f"node-{re.sub(r'[^a-zA-Z0-9]+', '-', addr)}-{port}"
-    url = f"http://{addr}:{port}"
-    res = await add(id=iid, url=url, has_gpu=has_gpu,
+    # Reuse the id already serving this URL. ollama.add_instance keys on the id
+    # alone, so a second id for one Ollama lets the GPU gate — whose capacity is
+    # counted per instance id — hand the same card to two callers at once.
+    plan = _ollama_core.registration_plan(
+        getattr(_orch, "OLLAMA_INSTANCES", {}) or {}, addr, port, has_gpu,
+        preferred_id=f"node-{re.sub(r'[^a-zA-Z0-9]+', '-', addr)}-{port}")
+    res = await add(id=plan["instance_id"], url=plan["url"], has_gpu=has_gpu,
                     label=f"{node.get('label', addr)} (ollama)")
-    return {"ok": True, "instance_id": iid, "url": url, "result": res}
+    return {"ok": True, "instance_id": plan["instance_id"], "url": plan["url"],
+            "reused": plan["action"] == "reuse", "reason": plan["reason"],
+            "result": res}
 
 
 async def _register_vllm(node: Dict, port: int, api_key: str = "") -> Dict:
@@ -923,11 +927,14 @@ async def _prov_step(node: Dict, key: str, b: str, opt: Dict) -> Dict:
             pxm = _mod("pxstore_capabilities")
             if not pxm:
                 return {"error": "pxstore module not loaded"}
+            # The recipe binds 0.0.0.0:port and proves the node ANSWERS there.
+            # The stock unit binds loopback, so `systemctl is-active` passed for a
+            # node Vera could never reach.
             r = await pxm._node_ssh(pmx.get("cluster_id", ""), pve_node,
                                     pxm._sh(pxm._pct_exec(int(pmx.get("vmid") or 0),
-                                                          _OLLAMA_CT_INSTALL)),
+                                                          _ollama_core.ct_install_script(port))),
                                     timeout=900)
-            active = "active" in (r.get("stdout", "") or "")
+            active = _ollama_core.install_succeeded(r.get("stdout", ""))
             out = {"ok": active, "log": (r.get("stdout", "") or "")[-800:]}
             if active:
                 out["register"] = await _register_ollama(node, port, bool(gpus))
@@ -935,7 +942,10 @@ async def _prov_step(node: Dict, key: str, b: str, opt: Dict) -> Dict:
         inst = _rawcap("provision.install")
         if not inst:
             return {"error": "provision.install unavailable"}
-        ires = await inst(host_id=hid, target="ollama", sudo=True, timeout=900)
+        # Without `port`, Ollama installs on 11434 while the node is registered
+        # on the port that was asked for.
+        ires = await inst(host_id=hid, target="ollama", sudo=True, port=port,
+                          timeout=900)
         out = {"ok": bool(ires.get("ok")), "install": ires}
         if ires.get("ok"):
             out["register"] = await _register_ollama(node, port, bool(gpus))
