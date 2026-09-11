@@ -231,7 +231,7 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 /* In LHM mode the horizontal tab bar is hidden; navigation lives in .lhm-nav */
 .body-wrap.lhm .tabs{display:none !important}
 /* LHM nav panel — hidden by default, shown when lhm class present */
-.lhm-nav{display:none;flex-direction:column;width:160px;min-width:120px;flex-shrink:0;background:var(--bg1);border-right:1px solid var(--border);transition:width .15s}
+.lhm-nav{display:none;flex-direction:column;width:186px;min-width:150px;flex-shrink:0;background:var(--bg1);border-right:1px solid var(--border);transition:width .15s}
 .body-wrap.lhm .lhm-nav{display:flex}
 .body-wrap.lhm .lhm-nav.events-open{width:260px}
 /* Auto-hide extended to vertical/LHM mode — same overlay + reserved-gutter
@@ -242,7 +242,11 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
    so never actually did anything here. */
 .body-wrap.lhm .lhm-nav.autohide{position:absolute;top:0;left:0;bottom:0;transform:translateX(-100%);opacity:0;pointer-events:none;transition:transform .12s ease,opacity .1s ease;z-index:20}
 .body-wrap.lhm .lhm-nav.autohide.show{transform:translateX(0);opacity:1;pointer-events:auto}
-.body-wrap.lhm .main.autohide-reserve-v{padding-left:160px}
+.body-wrap.lhm .main.autohide-reserve-v{padding-left:186px}
+/* the strips under the tab bar (tabs mode only): the active panel's sections and the open section's tabs */
+#tabSubtabs:empty,.body-wrap.lhm #tabSubtabs{display:none}
+.lhm-nav .lhm-s-w.events #lhmEventsFeed{flex:1;min-height:0}
+.lhm-nav.events-open .lhm-s-w.events .lhm-s-wbody{max-height:50vh}
 .body-wrap.lhm .tab-hover-zone{top:0;left:0;bottom:0;right:auto;width:28px;height:auto}
 .lhm-nav-foot{padding:4px 6px;border-top:1px solid var(--border);flex-shrink:0;display:flex;gap:2px;align-items:center;justify-content:flex-end}
 .lhm-nav .tab{display:flex;align-items:center;border-bottom:none;border-right:2px solid transparent;padding:8px 10px 8px 10px;font-family:var(--mono);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.7px;color:var(--dim2);white-space:normal;word-break:break-word;user-select:none;cursor:pointer;position:relative;transition:all .14s;text-align:left;line-height:1.3}
@@ -708,6 +712,7 @@ select option{background:var(--bg2)}
                 title="Open any panel standalone in a new browser tab">⧉</button>
       </div>
     </div>
+    <div id="tabSubtabs"></div>
 
     <!-- LHM nav: shown when LHM mode is active -->
     <nav class="lhm-nav" id="lhmNav">
@@ -2089,8 +2094,9 @@ window.addEventListener('message', e => {
 // Sync the LHM nav tab list from the top tabBar
 function _lhmNavSync(){
   const host = document.getElementById('lhmNavTabs'); if(!host) return;
+  // the live-events feed lives in a widget inside this list now: lift it out before the list is rebuilt
+  try{ const fe = document.getElementById('lhmEventsFeed'); if(fe && host.contains(fe)) host.parentNode.insertBefore(fe, host.nextSibling); }catch(_){}
   host.innerHTML = '';
-  if(_lhmEventsOpen) return;
   const absorbed = _lhmAbsorbedFor();
   if(absorbed && absorbed.pid !== _lhmAbsorbPid){ _lhmAbsorbPid = absorbed.pid; _lhmAbsorbTop = false; }
   if(!absorbed) _lhmAbsorbPid = '';
@@ -2098,6 +2104,15 @@ function _lhmNavSync(){
   document.querySelector('.main')?.classList.toggle('absorbed', !!absorbed && !_lhmAbsorbTop);
   if(absorbed && _lhmRenderAbsorbed(host, absorbed.pid, absorbed.nav)) return;
 
+  _tabStripsRender();
+  // the main LHM (UI redesign, Notes/40 §9; the Harness board): built from the one menu component — search, the one
+  // panel set as Open now, the panels with their sections (the registry's + a panel's registered nav) as one tree,
+  // the registered count, live events and running loops as widgets. The hand-drawn list stays as the fallback.
+  if(window.VeraLHM && typeof VeraLHM.side === 'function'){ _lhmNativeRender(host); _tabAttachHoverMenus(); return; }
+  _lhmNativeLegacy(host);
+  _tabAttachHoverMenus();
+}
+function _lhmNativeLegacy(host){
   document.querySelectorAll('#tabBar .tab').forEach(t=>{
     const pid = _tabToPanelId(t);
     if(!pid) return;
@@ -2151,6 +2166,66 @@ function _lhmNavSync(){
     }
   });
   _tabAttachHoverMenus();
+}
+
+// ── the main LHM, from the one menu component ─────────────────────────────────
+let _lhmSecOpen = {};                 // panel id → the section open in its accordion / strip
+// a panel's sections: what it registered (register_ui sections, from /ui/panels) and, as one more section, the nav
+// items it published through the bridge (registerNav) — the same tree in the side menu and the strips
+function _panelSectionsFor(pid){
+  const rid = String(pid || '').replace(/^auto-/, '');
+  const reg = (_uiPanelCache || []).find(p => p.id === rid) || null;
+  const secs = (reg && Array.isArray(reg.sections) ? reg.sections : []).map(s => ({ id: String(s.id || s.label || ''), label: s.label || s.id || '', tabs: (Array.isArray(s.tabs) ? s.tabs : []).map(t => ({ id: String(t.id || t.label || ''), label: t.label || t.id || '' })) }));
+  const nav = _panelNavCache[pid];
+  if(nav && Array.isArray(nav.items) && nav.items.length && !nav.lhm) secs.push({ id: '__nav', label: secs.length ? 'Sections' : (nav.title || 'Sections'), nav: true, tabs: nav.items.map(it => ({ id: it.id, label: it.label || it.id, on: it.id === nav.active })) });
+  return secs;
+}
+function _lhmTabRows(){
+  return [...document.querySelectorAll('#tabBar .tab')].map(t => { const pid = _tabToPanelId(t); if(!pid) return null;
+    const label = Array.from(t.childNodes).filter(n => n.nodeType === 3).map(n => n.textContent.trim()).join('') || pid;
+    const reg = (_uiPanelCache || []).find(p => p.id === pid.replace(/^auto-/, '')) || null;
+    const isOpen = _openTabs.has(pid), active = isOpen && ([..._openTabs][0] === pid || _openTabs.size === 1);
+    return { pid, label, icon: (reg && reg.icon) || '', open: isOpen, active }; }).filter(Boolean);
+}
+function _lhmNativeRender(host){
+  const rows = _lhmTabRows();
+  const open = rows.filter(r => r.open).map(r => ({ id: r.pid, label: r.label, icon: r.icon || '▭', origin: 'you', placement: _openTabs.size > 1 ? 'split' : 'tab', active: r.active,
+    close: _openTabs.size > 1 ? () => { splitTab(r.pid); } : null, focus: () => { switchTab(r.pid); _tabFireLoader(r.pid); } }));
+  const panels = rows.map(r => { const secs = r.active ? _panelSectionsFor(r.pid) : []; const openIdx = Math.min(_lhmSecOpen[r.pid] || 0, Math.max(0, secs.length - 1));
+    return { id: r.pid, label: r.label, icon: r.icon || '▭', ct: '', active: r.active, open: r.open,
+      sections: secs.map((s, i) => ({ id: s.id, label: s.label, nav: !!s.nav, on: i === openIdx, tabs: i === openIdx ? s.tabs : [] })) }; });
+  const feed = document.getElementById('lhmEventsFeed'), mirror = document.getElementById('lhmEvFeedMirror');
+  const widgets = [
+    feed ? { title: 'Live events', count: mirror ? mirror.children.length : 0, el: feed, cls: 'events' + (_lhmEventsOpen ? ' open' : ''), open: () => _lhmToggleEvents() } : null,
+    _lhmLoopsWidget() ];
+  VeraLHM.side(host, {
+    search: { label: 'Find a panel', hint: '⌘K', open: () => openTabPicker() },
+    open, panels, registered: { n: (_uiPanelCache || []).length, open: () => openTabPicker() },
+    onPanel: (pid, ev) => { if(ev && (ev.ctrlKey || ev.metaKey)) splitTab(pid); else switchTab(pid); _tabFireLoader(pid); _lhmNavSync(); },
+    onSection: (pid, sid, i) => { _lhmSecOpen[pid] = i; _lhmNavSync(); },
+    onTab: (pid, sec, tab) => { _lhmNavSelect(pid, sec.nav ? tab.id : (sec.id + '/' + tab.id)); if(sec.nav){ const nav = _panelNavCache[pid]; if(nav) _panelNavCache[pid] = Object.assign({}, nav, { active: tab.id }); } _lhmNavSync(); },
+    widgets, note: 'One menu, everywhere: this side menu, the strips under the tabs and the chat\'s rail are one component. Open a UI and its menu is this menu; ☰ at the top swaps it for this list, in place.' });
+}
+// running loops, as a widget in the menu (the chat's data source: the persisted loop-run registry)
+let _lhmLoops = { rows: [], t: 0 };
+function _lhmLoopsWidget(){
+  if(Date.now() - _lhmLoops.t > 30000){ _lhmLoops.t = Date.now();
+    Promise.resolve().then(() => api('/workshop/agent_loop/sessions?limit=5&status=running')).then(r => { const rows = (r && r.sessions) || []; const changed = JSON.stringify(rows.map(s => s.session_id)) !== JSON.stringify(_lhmLoops.rows.map(s => s.session_id)); _lhmLoops.rows = rows; if(changed && _lhmMode) _lhmNavSync(); }).catch(() => {}); }
+  const el = document.createElement('div');
+  if(!_lhmLoops.rows.length){ const e = document.createElement('span'); e.className = 'lhm-s-wrow'; e.style.color = 'var(--dim)'; e.textContent = 'none running'; el.appendChild(e); }
+  _lhmLoops.rows.forEach(s => { const r = document.createElement('span'); r.className = 'lhm-s-wrow'; r.title = s.goal || ''; r.innerHTML = '<i style="background:var(--acc)"></i>' + esc(String(s.goal || s.session_id || 'loop').slice(0, 28)) + '<em>' + esc(String(s.version || s.engine || '')) + '</em>'; el.appendChild(r); });
+  return { title: 'Running loops', count: _lhmLoops.rows.length, el };
+}
+// tabs mode: the same sections as strips under the tab bar (the active panel's sections, the open section's tabs)
+function _tabStripsRender(){
+  const host = document.getElementById('tabSubtabs'); if(!host) return;
+  const pid = [..._openTabs][0] || ''; const secs = (pid && window.VeraLHM && typeof VeraLHM.strips === 'function') ? _panelSectionsFor(pid) : [];
+  if(!secs.length || _lhmMode){ host.innerHTML = ''; return; }
+  const openIdx = Math.min(_lhmSecOpen[pid] || 0, secs.length - 1), sec = secs[openIdx];
+  const row = _lhmTabRows().find(r => r.pid === pid);
+  VeraLHM.strips(host, { title: row ? row.label : pid, sections: secs.map((s, i) => ({ id: s.id, label: s.label || 'Sections', on: i === openIdx })), tabs: sec.tabs || [],
+    onSection: (sid, i) => { _lhmSecOpen[pid] = i; _tabStripsRender(); },
+    onTab: (tab) => { _lhmNavSelect(pid, sec.nav ? tab.id : (sec.id + '/' + tab.id)); if(sec.nav){ const nav = _panelNavCache[pid]; if(nav) _panelNavCache[pid] = Object.assign({}, nav, { active: tab.id }); } _tabStripsRender(); } });
 }
 
 // Horizontal-mode equivalent of the injected sub-menu above: the top tab bar
@@ -2213,28 +2288,18 @@ function _hideTabDropdown(){
 let _lhmEventsOpen = false;
 
 function _lhmToggleEvents(){
+  // live events is a widget in the menu now: the toggle opens or folds that widget, the list stays
   _lhmEventsOpen = !_lhmEventsOpen;
-  const nav     = document.getElementById('lhmNav');
-  const tabList = document.getElementById('lhmNavTabs');
-  const feed    = document.getElementById('lhmEventsFeed');
-  const evBtn   = document.getElementById('lhmEventsBtn');
+  const nav = document.getElementById('lhmNav'), feed = document.getElementById('lhmEventsFeed'), evBtn = document.getElementById('lhmEventsBtn');
+  nav?.classList.toggle('events-open', _lhmEventsOpen);
+  if(feed) feed.style.display = _lhmEventsOpen ? 'flex' : 'none';
+  if(evBtn) evBtn.classList.toggle('active', _lhmEventsOpen);
   if(_lhmEventsOpen){
-    nav?.classList.add('events-open');
-    if(tabList) tabList.style.display = 'none';
-    if(feed)    feed.style.display    = 'flex';
-    if(evBtn)   evBtn.classList.add('active');
     // Backfill from main feed on first open
-    const lhmFeed  = document.getElementById('lhmEvFeedMirror');
-    const mainFeed = document.getElementById('evFeed');
-    if(lhmFeed && mainFeed && !lhmFeed.children.length){
-      Array.from(mainFeed.children).forEach(c => lhmFeed.appendChild(c.cloneNode(true)));
-    }
-  } else {
-    nav?.classList.remove('events-open');
-    if(tabList) tabList.style.display = '';
-    if(feed)    feed.style.display    = 'none';
-    if(evBtn)   evBtn.classList.remove('active');
+    const lhmFeed = document.getElementById('lhmEvFeedMirror'), mainFeed = document.getElementById('evFeed');
+    if(lhmFeed && mainFeed && !lhmFeed.children.length) Array.from(mainFeed.children).forEach(c => lhmFeed.appendChild(c.cloneNode(true)));
   }
+  _lhmNavSync();   // the widget's header and its count follow
 }
 
 // ── Auto-hide ──

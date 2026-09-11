@@ -100,6 +100,54 @@
     '.lhm-absorbed .lhm-tab:hover{color:var(--text);background:var(--bg2)}',
     '.lhm-absorbed .lhm-tab.on{color:var(--acc);border-left-color:var(--acc);background:var(--bg2)}',
     '.lhm-absorbed .lhm-tabs .lhm-ttl{font-family:var(--sans);font-size:11px;font-weight:600;color:var(--text);padding:4px 8px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    /* the top-level SIDE menu — the harness\'s main LHM (the Harness board): search, Open now, the panels with their sections, widgets */
+    '.lhm-side{flex:1;display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden}',
+    '.lhm-side .lhm-s-hd{padding:10px 10px 6px;flex-shrink:0}',
+    '.lhm-side .lhm-s-srch{display:flex;align-items:center;gap:8px;height:28px;padding:0 9px;border-radius:var(--r-sm,6px);background:var(--bg2);color:var(--dim2);font-size:10.5px;cursor:pointer;border:1px solid transparent}',
+    '.lhm-side .lhm-s-srch:hover{color:var(--text);border-color:var(--border)}',
+    '.lhm-side .lhm-s-srch .k{margin-left:auto;font-family:var(--mono);font-size:9px}',
+    '.lhm-side .lhm-s-bd{flex:1;overflow-y:auto;overflow-x:hidden;padding:2px 8px 8px;display:flex;flex-direction:column;gap:1px;min-height:0}',
+    '.lhm-side .lhm-s-grp{font-family:var(--mono);font-size:8px;text-transform:uppercase;letter-spacing:1px;font-weight:600;color:var(--dim);padding:12px 6px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '.lhm-side .lhm-s-row{display:flex;align-items:center;gap:8px;height:30px;padding:0 8px;border-radius:var(--r-sm,6px);color:var(--dim2);font-size:11px;white-space:nowrap;overflow:hidden;cursor:pointer;border-left:2px solid transparent}',
+    '.lhm-side .lhm-s-row:hover{color:var(--text);background:var(--bg2)}',
+    '.lhm-side .lhm-s-row.on{color:var(--text);background:var(--bg2);font-weight:600;border-left-color:var(--acc)}',
+    '.lhm-side .lhm-s-row.open:not(.on){color:var(--acc2,var(--acc))}',
+    '.lhm-side .lhm-s-row .ico{width:16px;text-align:center;color:var(--dim2);font-size:12px;flex-shrink:0}',
+    '.lhm-side .lhm-s-pan.on .lhm-s-row .ico{color:var(--acc)}',
+    '.lhm-side .lhm-s-row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;display:flex;flex-direction:column;line-height:1.15}',
+    '.lhm-side .lhm-s-row .nm em{font-style:normal;font-family:var(--mono);font-size:8px;color:var(--dim2);font-weight:400}',
+    '.lhm-side .lhm-s-row .ct{margin-left:auto;font-family:var(--mono);font-size:8.5px;color:var(--dim2);background:var(--bg0);border-radius:8px;padding:1px 6px;flex-shrink:0}',
+    '.lhm-side .lhm-s-row .x{margin-left:auto;flex-shrink:0;width:16px;height:16px;display:flex;align-items:center;justify-content:center;border-radius:3px;color:var(--dim2);font-size:11px}',
+    '.lhm-side .lhm-s-row .x:hover{color:var(--err,#e06c75);background:var(--bg0)}',
+    '.lhm-side .lhm-s-empty{padding:4px 8px;font-size:10px;color:var(--dim)}',
+    '.lhm-side .lhm-s-pan{display:flex;flex-direction:column}',
+    '.lhm-side .lhm-s-sec{display:flex;flex-direction:column;margin-left:18px;border-left:1px solid var(--border)}',
+    '.lhm-side .lhm-s-sech{display:flex;align-items:center;gap:6px;height:24px;padding:0 8px;font-size:10.5px;color:var(--dim2);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '.lhm-side .lhm-s-sech:hover{color:var(--text)}',
+    '.lhm-side .lhm-s-sech i{width:0;height:0;border:4px solid transparent;border-left-color:var(--dim2);margin-right:2px;transition:transform .15s;flex-shrink:0}',
+    '.lhm-side .lhm-s-sec.on .lhm-s-sech{color:var(--text)}',
+    '.lhm-side .lhm-s-sec.on .lhm-s-sech i{transform:rotate(90deg);border-left-color:var(--acc)}',
+    '.lhm-side .lhm-s-opt{height:22px;padding:0 8px 0 22px;font-size:10px;color:var(--dim2);display:flex;align-items:center;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-radius:var(--r-sm,6px)}',
+    '.lhm-side .lhm-s-opt:hover,.lhm-side .lhm-s-opt.on{color:var(--text);background:var(--bg2)}',
+    '.lhm-side .lhm-s-opt.on{color:var(--acc)}',
+    '.lhm-side .lhm-s-reg{color:var(--dim2);font-family:var(--mono);font-size:9.5px}',
+    '.lhm-side .lhm-s-w{background:var(--bg2);border-radius:var(--r-sm,6px);padding:7px 8px;display:flex;flex-direction:column;gap:4px;margin:3px 0;border:1px solid var(--border)}',
+    '.lhm-side .lhm-s-wh{display:flex;align-items:center;font-family:var(--mono);font-size:8.5px;text-transform:uppercase;letter-spacing:.8px;font-weight:600;color:var(--dim2);cursor:pointer}',
+    '.lhm-side .lhm-s-wh b{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--text);font-weight:400}',
+    '.lhm-side .lhm-s-wrow{display:flex;align-items:center;gap:6px;font-size:9.5px;color:var(--dim2);height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '.lhm-side .lhm-s-wrow i{width:5px;height:5px;border-radius:50%;flex-shrink:0}',
+    '.lhm-side .lhm-s-wrow em{margin-left:auto;font-style:normal;font-family:var(--mono);font-size:8.5px;color:var(--dim)}',
+    '.lhm-side .lhm-s-w.events .lhm-s-wbody{max-height:260px;display:flex;flex-direction:column;min-height:0}',
+    '.lhm-side .lhm-s-note{padding:8px 10px;font-size:9.5px;color:var(--dim2);line-height:1.45;border-top:1px solid var(--border);flex-shrink:0}',
+    /* the STRIPS under the tab bar (tabs mode): the active panel\'s sections, then the open section\'s tabs as pills */
+    '.lhm-strips{display:flex;align-items:center;gap:3px;height:30px;padding:0 14px;flex-shrink:0;background:var(--bg1);border-bottom:1px solid var(--border);overflow:hidden}',
+    '.lhm-strips .lhm-st-p{font-family:var(--mono);font-size:8.5px;text-transform:uppercase;letter-spacing:1px;font-weight:600;color:var(--dim);margin-right:8px;flex-shrink:0;white-space:nowrap}',
+    '.lhm-strips .lhm-st{height:22px;padding:0 9px;border-radius:var(--r-sm,6px);font-size:10.5px;color:var(--dim2);white-space:nowrap;cursor:pointer;display:inline-flex;align-items:center;border:none;background:transparent;font-family:var(--sans)}',
+    '.lhm-strips .lhm-st:hover{color:var(--text);background:var(--bg2)}',
+    '.lhm-strips .lhm-st.on{color:var(--text);background:var(--bg2);font-weight:600;box-shadow:inset 0 -2px 0 var(--acc)}',
+    '.lhm-strips .lhm-st-sep{width:1px;height:16px;background:var(--border);margin:0 8px;flex-shrink:0}',
+    '.lhm-strips .lhm-st-o{height:20px;padding:0 8px;border-radius:10px;font-size:9.5px;color:var(--dim2);background:var(--bg2);white-space:nowrap;cursor:pointer;display:inline-flex;align-items:center;border:1px solid var(--border);font-family:var(--sans)}',
+    '.lhm-strips .lhm-st-o:hover,.lhm-strips .lhm-st-o.on{color:var(--text);border-color:var(--acc)}',
   ].join('\n');
 
   function _css(doc){
@@ -435,7 +483,88 @@
     return wrap;
   }
 
-  window.VeraLHM = { mount: mount, pick: pick, setActiveTab: setActiveTab, toggleTop: toggleTop, toggleEdit: toggleEdit, render: render, spec: spec, absorb: absorb, css: _css,
+  // ── the top-level SIDE menu: the harness's main LHM (Notes/40 §9; the Harness board) ─────────────
+  // host: an element to fill. cfg: { search:{label, hint, open()}, open:[{id, label, icon, origin, placement, active,
+  // close(), focus()}], panels:[{id, label, icon, ct, active, open, sections:[{id, label, on, nav, tabs:[{id, label,
+  // on}]}]}], onPanel(id, ev), onSection(pid, sid, index), onTab(pid, section, tab), registered:{n, open()},
+  // widgets:[{title, count, el, cls, open()}], note }. Every part carries data-w so edit mode can name it.
+  function side(host, cfg){
+    if(!host) return null; cfg = cfg || {}; _css(host.ownerDocument);
+    host.innerHTML = '';
+    var wrap = _el('div', 'lhm-side');
+    if(cfg.search){
+      var hd = _el('div', 'lhm-s-hd'); var s = _el('div', 'lhm-s-srch'); s.setAttribute('data-w', 'search · search');
+      s.innerHTML = '<svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="6" r="4.2"/><path d="m9.3 9.3 3 3"/></svg>';
+      s.appendChild(_el('span', '', cfg.search.label || 'Find a panel')); s.appendChild(_el('span', 'k', cfg.search.hint || '⌘K'));
+      s.addEventListener('click', function(){ if(cfg.search.open) cfg.search.open(); });
+      hd.appendChild(s); wrap.appendChild(hd);
+    }
+    var bd = _el('div', 'lhm-s-bd');
+    // ONE set of open panels: opened by you or by the aide, wherever they sit
+    var open = cfg.open || [];
+    var g1 = _el('div', 'lhm-s-grp', 'Open now · ' + open.length + ' · one set, one bridge'); g1.setAttribute('data-w', 'open now · list'); bd.appendChild(g1);
+    if(!open.length) bd.appendChild(_el('div', 'lhm-s-empty', 'Nothing open. Pick a panel below, or the aide can open one here.'));
+    open.forEach(function(o){
+      var r = _el('div', 'lhm-s-row open' + (o.active ? ' on' : '')); r.title = 'opened by ' + (o.origin || 'you') + (o.placement ? ' · ' + o.placement : '');
+      r.appendChild(_el('span', 'ico', o.icon || '▭'));
+      var nm = _el('span', 'nm'); nm.appendChild(_el('span', '', o.label || o.id)); nm.appendChild(_el('em', '', [o.origin || 'you', o.placement || ''].filter(Boolean).join(' · '))); r.appendChild(nm);
+      if(o.close){ var x = _el('span', 'x', '✕'); x.title = 'Close'; x.addEventListener('click', function(ev){ ev.stopPropagation(); try{ o.close(); }catch(e){} }); r.appendChild(x); }
+      r.addEventListener('click', function(){ if(o.focus) o.focus(); });
+      bd.appendChild(r);
+    });
+    // the panels, the active one opened as an accordion: its sections, the open section's tabs
+    var g2 = _el('div', 'lhm-s-grp', 'Panels'); g2.setAttribute('data-w', 'panels · tree'); bd.appendChild(g2);
+    (cfg.panels || []).forEach(function(p){
+      var pan = _el('div', 'lhm-s-pan' + (p.active ? ' on' : ''));
+      var r = _el('div', 'lhm-s-row' + (p.active ? ' on' : p.open ? ' open' : '')); r.setAttribute('data-w', 'panel · ' + (p.label || p.id));
+      r.appendChild(_el('span', 'ico', p.icon || '▭')); var nm = _el('span', 'nm'); nm.appendChild(_el('span', '', p.label || p.id)); r.appendChild(nm);
+      if(p.ct) r.appendChild(_el('span', 'ct', String(p.ct)));
+      r.addEventListener('click', function(ev){ if(cfg.onPanel) cfg.onPanel(p.id, ev); });
+      pan.appendChild(r);
+      (p.sections || []).forEach(function(sec, i){
+        var se = _el('div', 'lhm-s-sec' + (sec.on ? ' on' : ''));
+        var h = _el('div', 'lhm-s-sech'); h.appendChild(_el('i')); h.appendChild(_el('span', '', sec.label || sec.id));
+        h.addEventListener('click', function(ev){ ev.stopPropagation(); if(cfg.onSection) cfg.onSection(p.id, sec.id, i); });
+        se.appendChild(h);
+        if(sec.on) (sec.tabs || []).forEach(function(t){ var o = _el('div', 'lhm-s-opt' + (t.on ? ' on' : ''), t.label || t.id); o.addEventListener('click', function(ev){ ev.stopPropagation(); if(cfg.onTab) cfg.onTab(p.id, sec, t); }); se.appendChild(o); });
+        pan.appendChild(se);
+      });
+      bd.appendChild(pan);
+    });
+    if(cfg.registered && cfg.registered.n){ var reg = _el('div', 'lhm-s-row lhm-s-reg'); reg.appendChild(_el('span', 'nm', cfg.registered.n + ' registered · ⌘K')); reg.title = 'Every registered panel — add one as a tab'; reg.addEventListener('click', function(){ if(cfg.registered.open) cfg.registered.open(); }); bd.appendChild(reg); }
+    // the LHM is a widget host: live events, running loops, whatever the host hands it
+    var ws = (cfg.widgets || []).filter(Boolean);
+    if(ws.length){ var g3 = _el('div', 'lhm-s-grp', 'Widgets'); g3.setAttribute('data-w', 'widgets · host'); bd.appendChild(g3); }
+    ws.forEach(function(w){
+      var box = _el('div', 'lhm-s-w' + (w.cls ? ' ' + w.cls : '')); box.setAttribute('data-w', 'widget · ' + (w.title || ''));
+      var h = _el('div', 'lhm-s-wh'); h.appendChild(_el('span', '', w.title || 'widget')); if(w.count != null) h.appendChild(_el('b', '', String(w.count)));
+      if(w.open) h.addEventListener('click', function(){ w.open(); });
+      box.appendChild(h);
+      if(w.el){ var body = _el('div', 'lhm-s-wbody'); body.appendChild(w.el); box.appendChild(body); }
+      bd.appendChild(box);
+    });
+    wrap.appendChild(bd);
+    if(cfg.note) wrap.appendChild(_el('div', 'lhm-s-note', cfg.note));
+    host.appendChild(wrap);
+    return wrap;
+  }
+  // ── the STRIPS under a tab bar (tabs mode): the active panel's sections, then the open section's tabs ──
+  // cfg: { title, sections:[{id, label, on}], tabs:[{id, label, on}], onSection(sid, index), onTab(tab) }
+  function strips(host, cfg){
+    if(!host) return null; cfg = cfg || {}; _css(host.ownerDocument);
+    host.innerHTML = '';
+    var secs = cfg.sections || [];
+    if(!secs.length) return null;
+    var row = _el('div', 'lhm-strips'); row.setAttribute('data-w', 'sub-tabs · strip');
+    if(cfg.title) row.appendChild(_el('span', 'lhm-st-p', cfg.title));
+    secs.forEach(function(s, i){ var b = _el('button', 'lhm-st' + (s.on ? ' on' : ''), s.label || s.id); b.type = 'button'; b.addEventListener('click', function(){ if(cfg.onSection) cfg.onSection(s.id, i); }); row.appendChild(b); });
+    var tabs = cfg.tabs || [];
+    if(tabs.length){ row.appendChild(_el('span', 'lhm-st-sep')); tabs.forEach(function(t){ var b = _el('button', 'lhm-st-o' + (t.on ? ' on' : ''), t.label || t.id); b.type = 'button'; b.addEventListener('click', function(){ if(cfg.onTab) cfg.onTab(t); }); row.appendChild(b); }); }
+    host.appendChild(row);
+    return row;
+  }
+
+  window.VeraLHM = { mount: mount, pick: pick, setActiveTab: setActiveTab, toggleTop: toggleTop, toggleEdit: toggleEdit, render: render, spec: spec, absorb: absorb, side: side, strips: strips, css: _css,
     openRecord: openRecord, closeRecord: closeRecord, saveAsTemplate: saveAsTemplate, placeInto: placeInto,
     compose: compose, composeUndo: composeUndo, saveAsMenu: saveAsMenu, addMenus: addMenus,
     get active(){ return { menu: _active, tab: _activeTab, top: _topMode, editing: _editing, hosted: _hosted, embedded: _embedded }; } };
