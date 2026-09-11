@@ -44,7 +44,7 @@ authorize tools, or prove causality.
 
 ## Projection-backed migration boundary
 
-The W2 projection path creates an offline seam between Fabric projections and
+The projection path creates an offline seam between Fabric projections and
 JEPA training. A frozen manifest pins graph/vector specification IDs and
 generations, the embedding package/dimension/preprocessing/metric, exact active
 record/revision pairs, tombstone count, and hashes of both snapshots.
@@ -133,6 +133,20 @@ through provenance-pinned projections:
 
 This prevents prompts and tool telemetry becoming an uncontrolled training
 feedback loop.
+
+The lineages can nevertheless exchange data through the same controlled
+boundary. Non-JEPA Worldview and Godseye datasets may be normalized into
+canonical Fabric records, explicit record revisions, and an immutable
+`DatasetSnapshot`. JEPA Worldview may then consume that snapshot as training or
+retrieval evidence while retaining its own model-package provenance. This
+allows their datasets to complement the JEPA implementation without coupling
+JEPA to Godseye storage, UI state, or product-specific schemas.
+
+Offline retrieval comparisons name JEPA explicitly as
+`jepa_worldview_evidence` and measure it against other providers on identical
+snapshot and citation fixtures. They report quality, latency, failures, storage,
+and lifecycle costs separately. Comparison evidence cannot activate JEPA as a
+ranker or imply that the non-JEPA/Godseye product is a JEPA implementation.
 
 ## Operational checks
 
