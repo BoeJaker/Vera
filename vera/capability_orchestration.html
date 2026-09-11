@@ -1751,6 +1751,7 @@ function _tabPaneOpen(id){
 function _tabRender(){
   const panelsEl = document.querySelector('.panels');
   const multi = _openTabs.size > 1;
+  try{ _panelsOpenStart(); setTimeout(_panelsOpenReport, 400); }catch(_){}   // the one panel set follows the tabs
 
   // 1) Update tab button states + add/remove close buttons
   document.querySelectorAll('#tabBar .tab').forEach(t=>{
@@ -2030,6 +2031,60 @@ function _lhmRenderAbsorbed(host, pid, nav){
   host.appendChild(abs);
   return true;
 }
+
+// ── THE ONE PANEL SET (UI redesign, Notes/40 §9) ─────────────────────────────
+// The harness reports the tabs it holds around the chat (ui.panels.open lists them with the panel beside the chat),
+// tells the chat so its LHM's "Open now" rows show them, routes a panel.dispatch that names one of its tabs to that
+// tab's iframe and acks like the chat does, and closes / focuses a tab the chat's rows ask for.
+let _panelsOpenTimer = null;
+// the frames that own an LHM and a chat session (the chat): CH is a top-level const there, not a window property
+function _chatFrames(){ return [...document.querySelectorAll('.panels .panel iframe')].filter(f => { try{ const w = f.contentWindow; return !!(w && w.VeraLHM && w._veraSessionId); }catch(_){ return false; } }); }
+function _panelsOpenList(){
+  return [..._openTabs].map(pid => {
+    const t = document.querySelector('#tabBar .tab[data-tab="' + pid + '"]');
+    const label = t ? (Array.from(t.childNodes).filter(n => n.nodeType === 3).map(n => n.textContent.trim()).join('') || pid) : pid;
+    return { id: pid.replace(/^auto-/, ''), label, origin: 'you', placement: 'harness tab' };
+  });
+}
+function _panelsOpenReport(){
+  const list = _panelsOpenList().filter(p => p.id !== 'chat2');   // the chat itself is the host, not a panel in its own set
+  const chats = _chatFrames();
+  const sids = chats.map(f => { try{ return f.contentWindow._veraSessionId || ''; }catch(_){ return ''; } }).filter(Boolean);
+  (sids.length ? sids : [_veraSessionId]).forEach(sid => {
+    api('/ui/panels/open/report', 'POST', { session_id: sid, host: 'harness', panels: list });
+  });
+  chats.forEach(f => { try{ f.contentWindow.postMessage({ type: 'vera:lhm:open', panels: list }, '*'); }catch(_){} });
+}
+function _panelsOpenStart(){
+  if(_panelsOpenTimer) return;
+  _panelsOpenTimer = setInterval(_panelsOpenReport, 30000);
+  setTimeout(_panelsOpenReport, 1500);
+}
+const _panelsDispatchWaits = {};   // action_id → resolve(result message)
+window.addEventListener('message', e => {
+  const d = e.data; if(!d || typeof d !== 'object') return;
+  if(d.type === 'vera:panel:action_result' && d.action_id && _panelsDispatchWaits[d.action_id]){
+    _panelsDispatchWaits[d.action_id](d); delete _panelsDispatchWaits[d.action_id]; return;
+  }
+  if(d.type === 'vera:lhm:close' && d.id){
+    const pid = _openTabs.has(d.id) ? d.id : 'auto-' + d.id;
+    if(_openTabs.has(pid) && _openTabs.size > 1) splitTab(pid);          // out of the split first (splitTab keeps a lone tab)
+    if(_customTabsGet().includes(d.id)) customTabRemove(d.id);            // and gone from the bar when it was a picked tab
+    _panelsOpenReport(); return;
+  }
+  if(d.type === 'vera:lhm:focus' && d.id){ const pid = _openTabs.has(d.id) ? d.id : 'auto-' + d.id; if(_openTabs.has(pid)) switchTab(pid); return; }
+  if(d.type !== 'vera:panel:dispatch' || !d.req || !d.req.request_id) return;
+  const req = d.req, sid = req.session_id || '';
+  const ack = (ok, result, error) => api('/ui/panels/dispatch/ack', 'POST', { request_id: req.request_id, session_id: sid, ok: !!ok, result: result === undefined ? null : result, error: error || null, action: req.action || '' });
+  const pid = _openTabs.has(req.panel) ? req.panel : ('auto-' + req.panel);
+  const f = _panelFrame(pid);
+  if(!f || !f.contentWindow || !_openTabs.has(pid)){ ack(false, null, 'panel ' + req.panel + ' is not open in the harness'); return; }
+  const aid = 'disp-' + req.request_id;
+  const timer = setTimeout(() => { if(_panelsDispatchWaits[aid]){ delete _panelsDispatchWaits[aid]; ack(false, null, 'timeout: the panel did not answer'); } }, 8000);
+  _panelsDispatchWaits[aid] = (res) => { clearTimeout(timer); ack(res.ok, res.result, res.error); };
+  try{ f.contentWindow.postMessage({ type: 'vera:panel:action', action: req.action, action_id: aid, payload: req.payload || {} }, '*'); }
+  catch(err){ clearTimeout(timer); delete _panelsDispatchWaits[aid]; ack(false, null, 'post failed: ' + err); }
+});
 
 // Sync the LHM nav tab list from the top tabBar
 function _lhmNavSync(){

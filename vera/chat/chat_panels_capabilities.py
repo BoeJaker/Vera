@@ -747,20 +747,124 @@ async def _panel_dispatch_await_reply(sid: str, request_id: str, timeout: float)
         except Exception: pass
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# THE ONE PANEL SET (UI redesign, Notes/40 §9)
+# ─────────────────────────────────────────────────────────────────────────────
+# Every panel open anywhere — beside the chat, or as a tab of the harness —
+# whoever opened it, in one list. The UIs that hold panels report what they
+# hold (POST /ui/panels/open/report, refreshed while they live; the key
+# expires when they go), ui.panels.open returns the union, and panel.dispatch /
+# panel.query take a 'panel' target so any of them can be driven through the
+# one bridge: the chat answers for the panel beside it and hands the rest to
+# the harness that holds the tab. Keyed under vera:ui:panels:open:* — NOT
+# vera:ui:panel:* which the startup loader globs for dynamic panel records.
+
+from fastapi import Request as _BridgeRequest   # also imported further down, beside the ack route
+
+_PANELS_OPEN_KEY = "vera:ui:panels:open:{sid}:{host}"
+_PANELS_OPEN_TTL = 90        # seconds; the holders re-report every 30 s
+
+
+@APP.post("/ui/panels/open/report", include_in_schema=False)
+async def _panels_open_report(request: _BridgeRequest):
+    """A UI that holds panels reports them. Body: {session_id, host ('chat' |
+    'harness'), panels:[{id, label, origin ('you' | 'aide'), placement}]}."""
+    from fastapi.responses import JSONResponse
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "invalid json"}, status_code=400)
+    sid = str((body or {}).get("session_id", "")).strip()
+    host = str((body or {}).get("host", "")).strip() or "chat"
+    panels = (body or {}).get("panels")
+    if not sid:
+        return JSONResponse({"ok": False, "error": "session_id required"}, status_code=400)
+    if not isinstance(panels, list):
+        return JSONResponse({"ok": False, "error": "panels must be a list"}, status_code=400)
+    r = _redis()
+    if not r:
+        return JSONResponse({"ok": False, "error": "redis unavailable"}, status_code=503)
+    rows = []
+    for x in panels[:40]:
+        if not isinstance(x, dict) or not x.get("id"):
+            continue
+        rows.append({
+            "id": str(x.get("id"))[:80], "label": str(x.get("label") or x.get("id"))[:120],
+            "origin": str(x.get("origin") or "you")[:16], "placement": str(x.get("placement") or "")[:40],
+            "host": host, "since": str(x.get("since") or ""),
+        })
+    key = _PANELS_OPEN_KEY.format(sid=sid, host=host)
+    try:
+        if rows:
+            await r.set(key, json.dumps({"session_id": sid, "host": host, "panels": rows, "ts": now_iso()}),
+                        ex=_PANELS_OPEN_TTL)
+        else:
+            await r.delete(key)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"store failed: {e}"}, status_code=500)
+    return JSONResponse({"ok": True, "count": len(rows)})
+
+
+@capability(
+    "ui.panels.open",
+    http_method="GET", http_path="/ui/panels/open", http_tags=["ui", "panel"],
+    memory="off", silent=True,
+    description=(
+        "The one panel set: every UI panel open right now for a chat session, "
+        "wherever it is held — beside the chat ('chat' host) or as a tab of the "
+        "harness ('harness' host) — with who opened it (origin 'you' or 'aide') "
+        "and its placement. Inputs: session_id (str! — the chat session; usually "
+        "the trace_id of the calling turn). Output: {ok, session_id, panels:[{id, "
+        "label, origin, placement, host}], count, hosts}. Drive any of them with "
+        "panel.dispatch(session_id, action, payload, panel=<id>) or read it with "
+        "panel.query(session_id, panel=<id>)."
+    ),
+)
+async def cap_ui_panels_open(session_id: str = "", trace_id=None):
+    sid = (session_id or trace_id or "").strip()
+    if not sid:
+        return {"ok": False, "error": "session_id is required"}
+    r = _redis()
+    if not r:
+        return {"ok": False, "error": "redis unavailable"}
+    panels, hosts = [], []
+    for host in ("chat", "harness"):
+        try:
+            raw = await r.get(_PANELS_OPEN_KEY.format(sid=sid, host=host))
+        except Exception:
+            raw = None
+        if not raw:
+            continue
+        if isinstance(raw, (bytes, bytearray)):
+            raw = raw.decode("utf-8", "replace")
+        try:
+            rec = json.loads(raw)
+        except Exception:
+            continue
+        rows = rec.get("panels") if isinstance(rec, dict) else None
+        if isinstance(rows, list) and rows:
+            hosts.append(host)
+            panels.extend([x for x in rows if isinstance(x, dict)])
+    return {"ok": True, "session_id": sid, "panels": panels, "count": len(panels), "hosts": hosts}
+
+
 @capability(
     "panel.dispatch",
     http_method="POST", http_path="/panel/dispatch", http_tags=["ui", "panel"],
     memory="off",
     description=(
-        "Send an action to the UI panel currently mounted in the user's chat "
-        "session. The panel's vera-panel-bridge.js shim runs the matching "
-        "action handler and returns the result. Inputs: session_id (str! — "
-        "the chat session ID; usually the trace_id of the calling turn), "
-        "action (str! — handler name registered via "
+        "Send an action to a UI panel open in the user's session — the panel "
+        "beside the chat by default, or any panel in the one panel set "
+        "(ui.panels.open) when 'panel' names it: a harness tab is reached "
+        "through the harness that holds it. The panel's vera-panel-bridge.js "
+        "shim runs the matching action handler and returns the result. Inputs: "
+        "session_id (str! — the chat session ID; usually the trace_id of the "
+        "calling turn), action (str! — handler name registered via "
         "VeraPanelBridge.registerActionHandler), payload (object — handler "
-        "args, default {}), timeout_secs (number — max wait for ack, "
-        "default 8). Returns the panel handler's result, or "
-        "{ok:false, error:'…'} on timeout / no panel mounted."
+        "args, default {}), panel (str — a panel id from ui.panels.open; "
+        "default: the panel beside the chat), timeout_secs (number — max wait "
+        "for ack, default 8). Returns the panel handler's result, or "
+        "{ok:false, error:'…'} on timeout / no such panel open."
     ),
 )
 async def cap_panel_dispatch(
@@ -768,6 +872,7 @@ async def cap_panel_dispatch(
     action: str = "",
     payload: dict = None,
     timeout_secs: float = 8.0,
+    panel: str = "",
     trace_id=None,
 ):
     sid = (session_id or trace_id or "").strip()
@@ -790,6 +895,7 @@ async def cap_panel_dispatch(
         "session_id": sid,
         "action":     act,
         "payload":    payload or {},
+        "panel":      str(panel or "").strip(),   # '' = the panel beside the chat
         "ts":         now_iso(),
     }
     # Publish first so the SSE has something to forward when the chat
@@ -821,13 +927,15 @@ async def cap_panel_dispatch(
         "session. Equivalent to panel.dispatch with action='__query__' but "
         "lighter — returns the panel's last state snapshot directly. "
         "Inputs: session_id (str! — chat session ID; usually trace_id), "
-        "timeout_secs (number — default 4). Returns the panel state object "
-        "or {ok:false, error:'…'} on timeout."
+        "panel (str — a panel id from ui.panels.open; default: the panel "
+        "beside the chat), timeout_secs (number — default 4). Returns the "
+        "panel state object or {ok:false, error:'…'} on timeout."
     ),
 )
 async def cap_panel_query(
     session_id: str = "",
     timeout_secs: float = 4.0,
+    panel: str = "",
     trace_id=None,
 ):
     return await cap_panel_dispatch(
@@ -835,6 +943,7 @@ async def cap_panel_query(
         action="__query__",
         payload={},
         timeout_secs=float(timeout_secs),
+        panel=panel,
         trace_id=trace_id,
     )
 

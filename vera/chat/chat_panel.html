@@ -11173,10 +11173,38 @@ Your task: decide what to do next to advance toward the goal.
   const _lhmTabIdOf=(el)=>{ const m=(el.getAttribute('onclick')||'').match(/CH\.(?:railTab|ctxTab)\('([^']+)'/); return m?m[1]:''; };
   // the one panel set: what is open beside the chat right now, whoever opened it (the aide's [[panel:…]] or you)
   const _lhmOpenNow=()=>{
-    if(!document.body.classList.contains('has-panel')||!_activePanelId) return [];
-    return [{id:_activePanelId, label:_lhmTxt('chatPanelTitle')||_activePanelId, icon:'▭', origin:_panelOpenedBy||'you', placement:'beside chat',
-             close:()=>panelClose(), focus:()=>{ try{ document.getElementById('chatPanelFrame')?.focus(); }catch(_){} }}];
+    const mine=(document.body.classList.contains('has-panel')&&_activePanelId)
+      ? [{id:_activePanelId, label:_lhmTxt('chatPanelTitle')||_activePanelId, icon:'▭', origin:_panelOpenedBy||'you', placement:'beside chat',
+          close:()=>panelClose(), focus:()=>{ try{ document.getElementById('chatPanelFrame')?.focus(); }catch(_){} }}]
+      : [];
+    // …and the tabs the harness holds around this chat (it tells us; a close goes back to it)
+    const theirs=(_lhmHarnessOpen||[]).map(p=>({id:p.id, label:p.label||p.id, icon:'⧉', origin:p.origin||'you', placement:p.placement||'harness tab',
+      close:()=>{ try{ window.parent.postMessage({type:'vera:lhm:close', id:p.id}, '*'); }catch(_){} },
+      focus:()=>{ try{ window.parent.postMessage({type:'vera:lhm:focus', id:p.id}, '*'); }catch(_){} }}));
+    return mine.concat(theirs);
   };
+  let _lhmHarnessOpen=[];
+  /* THE ONE PANEL SET — this chat reports the panel beside it (whoever opened it) so ui.panels.open lists it with
+     the harness's tabs; refreshed while the chat lives (the record expires when it goes). */
+  let _panelsOpenTimer=null;
+  function _panelsOpenReport(){
+    if(!SID) return;
+    const mine=_lhmOpenNow().filter(p=>p.placement==='beside chat').map(p=>({id:p.id, label:p.label, origin:p.origin, placement:p.placement}));
+    fetch(BASE+'/ui/panels/open/report',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({session_id:SID, host:'chat', panels:mine})}).catch(()=>{});
+  }
+  function _panelsOpenStart(){
+    if(_panelsOpenTimer) return;
+    _panelsOpenReport();
+    _panelsOpenTimer=setInterval(_panelsOpenReport, 30000);
+    try{ window.addEventListener('vera:panel-mounted', ()=>setTimeout(_panelsOpenReport,0)); }catch(_){}
+    // the harness tells this chat what tabs it holds; the LHM's Open now rows show them
+    window.addEventListener('message', ev=>{
+      const d=ev.data; if(!d||typeof d!=='object'||d.type!=='vera:lhm:open') return;
+      _lhmHarnessOpen=Array.isArray(d.panels)?d.panels.slice(0,40):[];
+      try{ if(window.VeraLHM) VeraLHM.render(); }catch(_){}
+    });
+  }
   let _panelOpenedBy='';
   function _lhmMount(){
     if(!window.VeraLHM) return;
@@ -12375,6 +12403,7 @@ Your task: decide what to do next to advance toward the goal.
   function panelClose(){
     _panelOpenedBy='';
     try{ if(window.VeraLHM) setTimeout(()=>VeraLHM.render(),0); }catch(_){}
+    try{ setTimeout(_panelsOpenReport,0); }catch(_){}
     document.body.classList.remove('has-panel');
     delete document.body.dataset.uiPanel;
     _activePanelId=null;
@@ -12872,6 +12901,16 @@ Your task: decide what to do next to advance toward the goal.
   async function _handleServerDispatch(req){
     const action = req.action||'';
     const payload = req.payload||{};
+    // THE ONE BRIDGE — a dispatch that names a panel this chat does not hold goes to the harness around it, which
+    // routes it to the tab that holds the panel and acks the same way. Standalone, there is no one to hand it to.
+    if(req.panel && req.panel!==_activePanelId && !String(action).startsWith('__')){
+      if(window.parent && window.parent!==window){
+        try{ window.parent.postMessage({type:'vera:panel:dispatch', req}, '*'); return; }catch(_){}
+      }
+      fetch(BASE+'/ui/panels/dispatch/ack',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({request_id:req.request_id, session_id:req.session_id||SID, ok:false, error:'panel '+req.panel+' is not open beside this chat', action})}).catch(()=>{});
+      return;
+    }
     // Pseudo-action: __cap_activity__ — live mirror of a capability the agent
     // is running server-side (published by the cap wrapper for every non-silent
     // call/ok/error carrying this session id). Forwarded into the mounted panel
@@ -14987,6 +15026,8 @@ Your task: decide what to do next to advance toward the goal.
     // …then the LHM: the rail of quick menus around that unified strip (nothing removed, the 13 tabs grouped).
     // Never fatal: a chat without its LHM is still a chat.
     try{ _lhmMount(); }catch(e){ console.warn('LHM: mount failed', e); }
+    // …and the one panel set: what this chat holds, reported for ui.panels.open
+    try{ _panelsOpenStart(); }catch(e){ console.warn('panel set: report failed', e); }
     // Rail default: COLLAPSED. The minimal/document aesthetic looks best
     // with the chat column centred and unobstructed; the user can pop the
     // menu out via the top-bar Menu button. Persisted in localStorage so an
