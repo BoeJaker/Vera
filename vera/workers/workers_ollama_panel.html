@@ -654,12 +654,6 @@ html.vpb-nav-hosted #secNav{display:none}
              + source embedding, dream, narrator) enqueue here instead of
              running themselves, so this is where you see what ambient load is
              pending and WHY it has not run. -->
-        <div class="widget w-w6 w-h3" data-wid="ol-bgqueue">
-          <div class="w-head"><span class="w-grip">&#10303;</span><span class="w-dot"></span><span class="w-title">Background Queue <span style="font-weight:400;color:var(--dim2)">&mdash; waiting for an idle box</span></span><span class="w-actions"><button class="w-iconbtn" onclick="P.bgqRefresh()" title="Refresh">&#8635;</button><button class="w-iconbtn" onclick="P.gridHide('ollama','ol-bgqueue')">&times;</button></span></div>
-          <div class="w-body">
-            <div id="ol-bgq-head" style="font-size:10px;color:var(--dim2);margin-bottom:6px">&hellip;</div>
-            <div id="ol-bgq-body"></div>
-          </div>
         </div>
 
         <div class="widget w-w6 w-h3" data-wid="ol-embed-cfg">
@@ -809,6 +803,10 @@ html.vpb-nav-hosted #secNav{display:none}
               <button class="btn sm" onclick="P.jRecoverOrphans()" style="font-size:8.5px;margin:2px 0">Recover Orphans</button>
               <button class="btn sm err-btn" onclick="P.jPurgePending()" style="font-size:8.5px;margin:2px 0" id="j-purge-toolbar-btn">Purge Stuck</button>
             </div>
+            <!-- The idle queue's own state - how much quiet it has seen, what is
+                 blocking it, projected order. Queued tab only: these jobs are
+                 rows in the table below, this is the queue they are in. -->
+            <div id="j-bgq-head" style="display:none;font-size:10px;color:var(--dim2);padding:4px 0 6px"></div>
             <div id="j-empty" class="j-empty">No jobs</div>
             <div id="j-live-wrap" style="overflow-y:auto;max-height:400px">
               <table class="job-tbl" id="j-table" style="display:none">
@@ -1966,6 +1964,7 @@ const P = (function(){
 const BASE = window.location.origin || (window.__VERA_BASE__||('http://'+location.hostname+':8999'));
 let _cluster = null;
 let _jobs = {pending:[],queued:[],running:[],done:[],failed:[]};
+let _bgq=null, _bgqRows=[];   // the idle queue's jobs, shown as rows in the Queued tab
 let _selWorker = null;
 let _wkFilter = 'all';
 let _jTab = 'pending';
@@ -2513,90 +2512,57 @@ async function wkRemoveStale(){
 // Reads /background/status (capability background.status). Two structures come
 // back: the quiet CLOCK (how long the box has been continuously idle, and why
 // it is not) and the QUEUE itself.
+// The background (idle) queue is NOT its own widget: its jobs are rows in the
+// Jobs table's Queued tab, beside the live ollama jobs waiting for a node slot.
+// They are the same thing from the operator's side - work that is waiting -
+// and one table says so; two widgets made it look like two systems.
+const _etaTxt = v => { if(v==null) return ''; v=Math.round(v);
+  if(v<90) return v+'s'; if(v<5400) return Math.round(v/60)+'m'; return (v/3600).toFixed(1)+'h'; };
+
 async function renderBgQueue(){
-  const head=$('ol-bgq-head'), body=$('ol-bgq-body');
-  if(!head||!body) return;
   const r = await api('/background/status');
-  if(!r || r.error){ head.textContent = r&&r.error ? ('\u2717 '+r.error) : 'unavailable'; body.innerHTML=''; return; }
+  const head=$('j-bgq-head');
+  if(!r || r.error){ _bgq=null; _bgqRows=[]; if(head) head.textContent = r&&r.error ? ('✗ '+r.error) : ''; renderJobs(); return; }
+  _bgq=r;
   const q = r.queue || {depth:0, note:'no queue'};
   const blocked = q.blocked_reason || r.busy_reason || '';
   const quiet = Math.max(0, parseInt(r.quiet_for_s||0,10));
   const need  = Math.max(1, parseInt(r.min_quiet_s||600,10));
-  setDot('ol-bgqueue', q.running ? 'ok' : (blocked ? 'warn' : (q.depth ? 'warn' : 'ok')));
-
-  const pct = Math.min(100, Math.round(quiet*100/need));
-  head.innerHTML =
-    '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
-    + '<b style="color:var(--text)">'+q.depth+'</b> waiting'
-    + (q.running ? ' &middot; <span style="color:var(--gpu)">running '+esc(q.running.title||q.running.kind||'')+'</span>' : '')
-    + '<span style="flex:1"></span>'
-    + (r.eta_total_s!=null
-        ? ' &middot; <span title="Total, from rates measured on completed runs">~'+etaTxt(r.eta_total_s)+' of work</span>'
-        : ((r.timeline||[]).length ? ' &middot; <span style="color:var(--dim)" title="At least one queued kind has never completed, so nothing has been measured for it and a total would be a guess.">part-estimated</span>' : ''))
-    + '<span title="The queue only starts work after this much CONTINUOUSLY OBSERVED quiet. A census leaves 30-60s gaps between goals, which is why a snapshot check is not enough.">idle '+quiet+'s / '+need+'s</span>'
-    + '</div>'
-    + '<div style="height:3px;background:var(--border);border-radius:2px;margin-top:4px;overflow:hidden">'
-    +   '<div style="height:100%;width:'+pct+'%;background:'+(pct>=100?'var(--ok,#6fd68b)':'var(--acc)')+'"></div>'
-    + '</div>'
-    + (blocked ? '<div style="margin-top:4px;color:var(--warn,#dec37e)">\u23f8 '+esc(blocked)+'</div>' : '');
-
-  // Estimates come from rates LEARNED FROM COMPLETED RUNS. A kind that has
-  // never finished has no rate, so it gets no bar and says so - a guessed
-  // duration would be indistinguishable from a measured one here.
   const eta = {}; (r.timeline||[]).forEach(t=>{ eta[t.id]=t; });
-  const etaTxt = v => { if(v==null) return ''; v=Math.round(v);
-    if(v<90) return v+'s'; if(v<5400) return Math.round(v/60)+'m';
-    return (v/3600).toFixed(1)+'h'; };
-  const rows = (q.waiting||[]);
-  if(!rows.length && !q.running){
-    body.innerHTML='<div style="font-size:9.5px;color:var(--dim)">'+esc(q.note||'nothing queued')+'</div>';
-    return;
+  // Rows for the table. `_bg` marks them so the row renderer knows.
+  _bgqRows = (q.running?[Object.assign({},q.running,{_run:true})]:[]).concat(q.waiting||[])
+    .map(j=>({ _bg:true, id:j.id, kind:j.kind, title:j.title||j.id, state:j._run?'running':'queued',
+               ts:j.enqueued_iso||j.ts||'', waiting_for_s:j.waiting_for_s||0, preempts:j.preempts||0,
+               stranded:j.stranded||0, progress:j.progress||{}, remaining:j.remaining, eta:eta[j.id]||null }));
+  if(head){
+    const pct = Math.min(100, Math.round(quiet*100/need));
+    const tl=(r.timeline||[]).filter(t=>t.seconds!=null);
+    const tlSpan=tl.length?tl[tl.length-1].ends_in_s:0;
+    head.innerHTML =
+      '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+      + '<span style="font-size:8px;padding:1px 5px;border-radius:7px;background:var(--bg2);color:var(--dim2)">background queue</span>'
+      + '<b style="color:var(--text)">'+q.depth+'</b> waiting for an idle box'
+      + (q.running ? ' &middot; <span style="color:var(--gpu)">running '+esc(q.running.title||q.running.kind||'')+'</span>' : '')
+      + '<span style="flex:1"></span>'
+      + (r.eta_total_s!=null
+          ? '<span title="Total, from rates measured on completed runs">~'+_etaTxt(r.eta_total_s)+' of work</span> &middot; '
+          : ((r.timeline||[]).length ? '<span style="color:var(--dim)" title="At least one queued kind has never completed, so nothing has been measured for it and a total would be a guess.">part-estimated</span> &middot; ' : ''))
+      + '<span title="The queue only starts work after this much CONTINUOUSLY OBSERVED quiet. A census leaves 30-60s gaps between goals, which is why a snapshot check is not enough.">idle '+quiet+'s / '+need+'s</span>'
+      + '</div>'
+      + '<div style="height:3px;background:var(--border);border-radius:2px;margin-top:4px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:'+(pct>=100?'var(--ok,#6fd68b)':'var(--acc)')+'"></div></div>'
+      + (blocked ? '<div style="margin-top:4px;color:var(--warn,#dec37e)">⏸ '+esc(blocked)+'</div>' : '')
+      + ((tl.length && tlSpan>0)
+          ? '<div style="margin-top:5px"><div style="font-size:8.5px;color:var(--dim2);margin-bottom:2px">projected order &mdash; one at a time'
+            + ((r.timeline||[]).some(t=>t.seconds==null) ? ', truncated where nothing has been measured' : '')+'</div>'
+            + '<div style="display:flex;height:6px;border-radius:3px;overflow:hidden;background:var(--border)">'
+            + tl.map((t,i)=>'<div title="'+esc((t.title||t.id)+' - '+_etaTxt(t.seconds)+' ('+(t.basis||'')+')')+'" style="width:'+Math.max(2,Math.round(t.seconds*100/tlSpan))+'%;background:'+(i%2?'var(--acc)':'var(--gpu,#7fb4e0)')+';opacity:'+(t.provisional?0.55:1)+'"></div>').join('')
+            + '</div></div>'
+          : '')
+      + ((q.struggling||[]).length
+          ? '<div style="margin-top:4px;font-size:9px;color:var(--warn,#dec37e)" title="Pre-empted repeatedly - it may never finish in the gaps, and the answer is to split it.">⚠ '+(q.struggling||[]).length+' job(s) keep getting pre-empted</div>'
+          : '');
   }
-  const one=(j,isRun)=>{
-    const kind=esc(j.kind||'?'), title=esc(j.title||j.id||'');
-    const waited=parseInt(j.waiting_for_s||0,10);
-    const pre=parseInt(j.preempts||0,10);
-    return '<div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid var(--border)">'
-      + '<span style="font-size:8px;padding:1px 5px;border-radius:7px;background:var(--bg2);color:var(--dim2)">'+kind+'</span>'
-      + '<span style="flex:1;font-size:9.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+title+'</span>'
-      + (pre>0 ? '<span title="times this job was stopped to give the box back" style="font-size:8px;color:var(--warn,#dec37e)">\u21ba'+pre+'</span>' : '')
-      + (parseInt(j.stranded||0,10)>0 ? '<span title="times this job was found marked running with nothing running it - a restart, or a runner that died. Counted apart from pre-emptions: that means the box was busy, this means runners are dying." style="font-size:8px;color:var(--bad,#e08585)">!'+j.stranded+'</span>' : '')
-      + (eta[j.id] && eta[j.id].seconds!=null
-          ? '<span title="'+esc(eta[j.id].basis||'')+(eta[j.id].provisional?' (provisional - too few samples yet)':'')+'" style="font-size:8.5px;color:'+(eta[j.id].provisional?'var(--dim2)':'var(--acc)')+'">~'+etaTxt(eta[j.id].seconds)+'</span>'
-          : (eta[j.id] ? '<span title="no completed run of this kind yet, so nothing has been measured" style="font-size:8.5px;color:var(--dim)">no est.</span>' : ''))
-      + (function(){
-          // done/total, when the producer declared a size. A job 900 of 1000
-          // through is a different thing to schedule from one not started.
-          const pr=j.progress||{}, tot=parseInt(pr.total||0,10), dn=parseInt(pr.done||0,10);
-          if(!tot) return '';
-          const pc=Math.min(100,Math.round(dn*100/tot));
-          return '<span title="'+dn+' of '+tot+' done'+(j.remaining!=null?(' - '+j.remaining+' left'):'')+'" style="display:inline-flex;align-items:center;gap:3px">'
-            + '<span style="width:26px;height:3px;background:var(--border);border-radius:2px;overflow:hidden;display:inline-block">'
-            +   '<span style="display:block;height:100%;width:'+pc+'%;background:var(--acc)"></span>'
-            + '</span><span style="font-size:8px;color:var(--dim2)">'+pc+'%</span></span>';
-        })()
-      + (isRun ? '<span style="font-size:8.5px;color:var(--gpu)">running</span>'
-               : '<span style="font-size:8.5px;color:var(--dim)">'+(waited?age(Date.now()/1000-waited):'queued')+'</span>')
-      + (isRun ? '' : '<button class="w-iconbtn" title="Remove from the queue" onclick="P.bgqCancel('+sq(j.id)+')">&times;</button>')
-      + '</div>';
-  };
-  // The queue runs ONE job at a time, so the timeline is a running sum rather
-  // than a packing problem - and it stops where the measurements stop.
-  const tl=(r.timeline||[]).filter(t=>t.seconds!=null);
-  const tlSpan=tl.length?tl[tl.length-1].ends_in_s:0;
-  const tlBar = (tl.length && tlSpan>0)
-    ? '<div style="margin-top:6px">'
-      + '<div style="font-size:8.5px;color:var(--dim2);margin-bottom:2px">projected order &mdash; one at a time'
-      + ((r.timeline||[]).some(t=>t.seconds==null) ? ', truncated where nothing has been measured' : '')+'</div>'
-      + '<div style="display:flex;height:8px;border-radius:3px;overflow:hidden;background:var(--border)">'
-      + tl.map((t,i)=>'<div title="'+esc((t.title||t.id)+' - '+etaTxt(t.seconds)+' ('+(t.basis||'')+')')+'" style="width:'+Math.max(2,Math.round(t.seconds*100/tlSpan))+'%;background:'+(i%2?'var(--acc)':'var(--gpu,#7fb4e0)')+';opacity:'+(t.provisional?0.55:1)+'"></div>').join('')
-      + '</div></div>'
-    : '';
-  body.innerHTML = (q.running?one(q.running,true):'') + rows.map(j=>one(j,false)).join('') + tlBar
-    + ((q.struggling||[]).length
-        ? '<div style="margin-top:6px;font-size:9px;color:var(--warn,#dec37e)" title="Pre-empted repeatedly - it may never finish in the gaps, and the answer is to split it.">\u26a0 '
-          + (q.struggling||[]).length+' job(s) keep getting pre-empted</div>'
-        : '');
+  renderJobs();
 }
 
 async function bgqCancel(id){
@@ -3165,6 +3131,7 @@ function jTab(t){
   if(histWrap)   histWrap.style.display    = t==='history'?'':'none';
   if(ollaWrap)   ollaWrap.style.display    = t==='ollama'?'':'none';
   if(streamWrap) streamWrap.style.display  = t==='stream'?'':'none';
+  const bgqHead=$('j-bgq-head'); if(bgqHead) bgqHead.style.display = t==='queued'?'':'none';
   if(_liveTabs.includes(t)) renderJobList();
   else if(t==='history') renderHistory();
   else if(t==='ollama') renderOllamaLog();
@@ -3176,19 +3143,25 @@ function renderJobs(){
     txt('jc-'+k,(_jobs[k]||[]).length);
   });
   txt('k-j-pend', _pendingTotal || (_jobs.pending||[]).length);
-  txt('k-j-queued',(_jobs.queued||[]).length);
+  // The Queued figures count BOTH queues: ollama calls waiting for a node
+  // slot, and background jobs waiting for an idle box. The tab lists both.
+  const _bgWaiting=_bgqRows.filter(x=>x.state==='queued').length;
+  txt('jc-queued',(_jobs.queued||[]).length+_bgWaiting);
+  txt('k-j-queued',(_jobs.queued||[]).length+_bgWaiting);
   // Say when the queue is not ours. A queue full of a sandbox's jobs reads as
-  // prod being busy unless it says so.
+  // prod being busy unless it says so - and say how much of it is background.
   (function(){
     const foreign=(_jobs.queued||[]).concat(_jobs.running||[]).filter(j=>j.origin&&j.origin.kind&&j.origin.kind!=='prod');
     const el=document.querySelector('#j-queued-kpi .kpi-sub');
-    if(el) el.textContent = foreign.length ? ('waiting for a node slot · '+foreign.length+' from sandboxes') : 'waiting for a node slot';
+    if(el) el.textContent = 'waiting for a node slot'
+      + (_bgWaiting ? (' \u00b7 '+_bgWaiting+' background') : '')
+      + (foreign.length ? (' \u00b7 '+foreign.length+' from sandboxes') : '');
   })();
   txt('k-j-run',(_jobs.running||[]).length);
   txt('k-j-done', _doneTotal || (_jobs.done||[]).length);
   txt('k-j-fail',(_jobs.failed||[]).length);
   setDot('j-pending',(_pendingTotal||(_jobs.pending||[]).length)>0?'warn':'ok');
-  setDot('j-queued-kpi',(_jobs.queued||[]).length>0?'warn':'ok');
+  setDot('j-queued-kpi',((_jobs.queued||[]).length+_bgWaiting)>0?'warn':'ok');
   setDot('j-running',(_jobs.running||[]).length>0?'warn':'ok');
   setDot('j-done-kpi',(_doneTotal||(_jobs.done||[]).length)>0?'ok':'');
   setDot('j-failed-kpi',(_jobs.failed||[]).length>0?'err':'ok');
@@ -3204,7 +3177,7 @@ let _pageOllamaRef=[];
 const _expandedOllama=new Set();
 
 function renderJobList(){
-  const jobs = _jobs[_jTab]||[];
+  const jobs = (_jTab==='queued') ? (_jobs.queued||[]).concat(_bgqRows) : (_jobs[_jTab]||[]);
   const tbody=$('j-tbody');
   const empty=$('j-empty');
   const tbl=$('j-table');
@@ -3234,6 +3207,31 @@ function renderJobList(){
   const pageJobs = jobs.slice(start, start + pageSize);
   _pageJobsRef=pageJobs;
   tbody.innerHTML = pageJobs.map((j,idx)=>{
+    if(j._bg){
+      // An idle-queue job. Same columns, read for what it is: no model or
+      // instance yet (it has not been given a box), progress where the
+      // producer declared a size, an estimate only where one was MEASURED.
+      const pr=j.progress||{}, tot=parseInt(pr.total||0,10), dn=parseInt(pr.done||0,10);
+      const prog = tot ? (Math.min(100,Math.round(dn*100/tot))+'% <span style="color:var(--dim)">'+dn+'/'+tot+'</span>') : '—';
+      const et = j.eta && j.eta.seconds!=null
+        ? '<span title="'+esc(j.eta.basis||'')+(j.eta.provisional?' (provisional)':'')+'" style="color:'+(j.eta.provisional?'var(--dim2)':'var(--acc)')+'">~'+_etaTxt(j.eta.seconds)+'</span>'
+        : (j.eta ? '<span title="no completed run of this kind yet" style="color:var(--dim)">no est.</span>' : '');
+      const marks = (j.preempts>0?'<span title="times stopped to give the box back" style="color:var(--warn,#dec37e);margin-left:4px">↺'+j.preempts+'</span>':'')
+                  + (j.stranded>0?'<span title="times found marked running with nothing running it" style="color:var(--bad,#e08585);margin-left:4px">!'+j.stranded+'</span>':'');
+      const waited = j.state==='queued' && j.waiting_for_s ? age(Date.now()/1000-j.waiting_for_s) : '—';
+      return '<tr>'
+        +'<td style="font-size:8px;color:var(--dim2)">'+esc(String(j.id||'').slice(-12))+'</td>'
+        +'<td><span style="display:inline-block;font-size:8px;padding:0 5px;border-radius:8px;margin-right:4px;background:var(--bg2);color:var(--dim2);border:1px solid var(--border);font-family:var(--mono)">background</span>'+esc(j.kind||'?')+'</td>'
+        +'<td style="font-size:9px;color:var(--dim)">—</td>'
+        +'<td style="font-size:9px;color:var(--dim)">'+(j.state==='running'?'<span class="j-hist-instance gpu">idle box</span>':'—')+'</td>'
+        +'<td style="font-size:8.5px;color:var(--text)">'+esc(j.title||'')+marks+'</td>'
+        +'<td>'+waited+'</td>'
+        +'<td style="font-size:9px">'+prog+'</td>'
+        +'<td style="font-size:8px;color:var(--dim2);white-space:nowrap">'+_fmtDateTime(j.ts)+'</td>'
+        +'<td><span class="j-badge '+(j.state==='running'?'j-running':'j-queued')+'">'+esc(j.state)+'</span> '+et+'</td>'
+        +'<td>'+(j.state==='queued'?'<button class="btn sm" onclick="event.stopPropagation();P.bgqCancel('+sq(j.id)+')" style="font-size:7px;padding:1px 5px;color:var(--err)" title="Remove from the queue">remove</button>':'')+'</td>'
+        +'</tr>';
+    }
     const state = j.state==='failed'||j.success===false||j.error?'failed':(_jTab==='failed'?'failed':_jTab);
     const bc = state==='failed'?'j-failed':(badgeCls[_jTab]||'j-pending');
     const callerInfo = j.caller_file ? esc(j.caller_file)+':'+esc(j.caller_func||'?') : '—';
