@@ -263,6 +263,7 @@ html.vpb-nav-hosted #secNav{display:none}
 .j-badge{font-size:7.5px;padding:2px 6px;border-radius:7px;font-family:var(--mono);font-weight:600}
 .j-pending{background:rgba(90,158,143,.1);color:var(--acc);border:1px solid rgba(90,158,143,.2)}
 .j-queued{background:rgba(122,140,201,.1);color:var(--acc2);border:1px solid rgba(122,140,201,.25)}
+.j-origin{display:inline-block;font-size:8px;padding:0 5px;border-radius:8px;margin-right:4px;background:rgba(201,149,90,.14);color:var(--acc3);border:1px solid rgba(201,149,90,.35);font-family:var(--mono);vertical-align:middle}
 .j-running{background:rgba(201,163,90,.1);color:var(--warn);border:1px solid rgba(201,163,90,.2)}
 .j-done{background:rgba(109,184,122,.1);color:var(--ok);border:1px solid rgba(109,184,122,.22)}
 .job-tbl tr.clk:hover td{background:var(--bg2)}
@@ -2018,6 +2019,9 @@ function _ingestCapEventAsJob(ev){
     j.ts=ev.ts||new Date().toISOString();
     j.model=ev.model||j.model||'';
     j.instance_id=ev.instance_id||j.instance_id||'';
+    // Which Vera PROCESS submitted it. Sandboxes share this Redis, so their
+    // jobs arrive here indistinguishable from prod's own unless we keep this.
+    if(ev.origin) j.origin=ev.origin;
     j.caller_file=ev.caller_file||j.caller_file||'';
     j.caller_func=ev.caller_func||j.caller_func||'';
     j.prompt_preview=ev.prompt_preview||j.prompt_preview||'';
@@ -3139,11 +3143,22 @@ function renderJobs(){
     txt('jc-'+k,(_jobs[k]||[]).length);
   });
   txt('k-j-pend', _pendingTotal || (_jobs.pending||[]).length);
+<<<<<<< HEAD
   // The Queued figures count BOTH queues: ollama calls waiting for a node
   // slot, and background jobs waiting for an idle box. The tab lists both.
   const _bgWaiting=_bgqRows.filter(x=>x.state==='queued').length;
   txt('jc-queued',(_jobs.queued||[]).length+_bgWaiting);
   txt('k-j-queued',(_jobs.queued||[]).length+_bgWaiting);
+=======
+  txt('k-j-queued',(_jobs.queued||[]).length);
+  // Say when the queue is not ours. A queue full of a sandbox's jobs reads as
+  // prod being busy unless it says so.
+  (function(){
+    const foreign=(_jobs.queued||[]).concat(_jobs.running||[]).filter(j=>j.origin&&j.origin.kind&&j.origin.kind!=='prod');
+    const el=document.querySelector('#j-queued-kpi .kpi-sub');
+    if(el) el.textContent = foreign.length ? ('waiting for a node slot · '+foreign.length+' from sandboxes') : 'waiting for a node slot';
+  })();
+>>>>>>> bleeding-edge
   txt('k-j-run',(_jobs.running||[]).length);
   txt('k-j-done', _doneTotal || (_jobs.done||[]).length);
   txt('k-j-fail',(_jobs.failed||[]).length);
@@ -3222,6 +3237,10 @@ function renderJobList(){
     const state = j.state==='failed'||j.success===false||j.error?'failed':(_jTab==='failed'?'failed':_jTab);
     const bc = state==='failed'?'j-failed':(badgeCls[_jTab]||'j-pending');
     const callerInfo = j.caller_file ? esc(j.caller_file)+':'+esc(j.caller_func||'?') : '—';
+    const org = j.origin||{};
+    const orgBadge = (org.kind && org.kind!=='prod')
+      ? '<span class="j-origin" title="submitted by another Vera process: '+esc(org.node||org.kind)+'">'+esc(org.kind)+' &middot; '+esc(String(org.node||'').replace(/^vera-dev-/,'').slice(0,28))+'</span> '
+      : '';
     const modelStr = j.model ? esc(j.model) : '—';
     const instId = j.instance_id||j.worker_id||j.worker||'';
     const isGpu = instId.includes('gpu')||instId.includes('250');
@@ -3241,7 +3260,7 @@ function renderJobList(){
       +'<td>'+esc(j.cap_name||j.capability||'?')+'</td>'
       +'<td style="font-size:9px;color:var(--acc3)">'+modelStr+'</td>'
       +'<td>'+instLabel+'</td>'
-      +'<td style="font-size:8.5px;color:var(--acc2)">'+callerInfo+'</td>'
+      +'<td style="font-size:8.5px;color:var(--acc2)">'+orgBadge+callerInfo+'</td>'
       +'<td>'+elStr+'</td>'
       +'<td>'+tokStr+'</td>'
       +'<td style="font-size:8px;color:var(--dim2);white-space:nowrap">'+tsDisplay+'</td>'

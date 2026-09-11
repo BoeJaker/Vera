@@ -4305,6 +4305,43 @@ except Exception:                       # provenance must never break event emit
         return None
 
 
+def _origin_node() -> dict:
+    """Which VERA PROCESS this is - prod, or a dev sandbox and which one.
+
+    Sandboxes share prod's Redis, so their ollama jobs land in prod's event
+    stream and in prod's Jobs widget looking exactly like prod's own. `instance_id`
+    on those events is the OLLAMA NODE that served the call, not the Vera
+    process that submitted it, so nothing distinguished them. Sandbox containers
+    are started with VERA_IS_DEV_SANDBOX=1 and VERA_GATE_BROKER_SANDBOX=<their
+    container name>; prod has neither.
+    """
+    try:
+        import socket as _sock
+        host = _sock.gethostname()
+    except Exception:
+        host = ""
+    sbx = os.environ.get("VERA_GATE_BROKER_SANDBOX", "").strip()
+    if os.environ.get("VERA_IS_DEV_SANDBOX", "").strip() in ("1", "true", "yes") or sbx:
+        return {"kind": "sandbox", "node": sbx or host or "sandbox", "host": host}
+    return {"kind": "prod", "node": os.environ.get("VERA_NODE_ID", "").strip() or host or "prod",
+            "host": host}
+
+
+_ORIGIN_NODE = _origin_node()
+
+
+def _origin_stamp(event: dict) -> None:
+    """Stamp the submitting Vera process onto ollama.* events. One place rather
+    than eight emit sites, and any future ollama.* event gets it for free.
+    setdefault semantics: an event that already says where it came from is
+    left alone."""
+    try:
+        if str(event.get("type") or "").startswith("ollama.") and "origin" not in event:
+            event["origin"] = _ORIGIN_NODE
+    except Exception:
+        pass
+
+
 def _session_stamp(event: dict) -> None:
     """Stamp the session + caller that TRIGGERED this event (§5.1 provenance) —
     the 'which session' hop, so any event/error ties back not just to the commit
@@ -4334,6 +4371,7 @@ async def emit_event(event: dict):
     event.setdefault("ts", now_iso())
     _prov_stamp(event)     # compact git {ver, br, dirty} → correlate any event to code
     _session_stamp(event)  # {sid, via} → correlate any event to the session that triggered it
+    _origin_stamp(event)   # {kind, node} → which Vera PROCESS (prod / which sandbox) submitted it
     try:
         import asyncio as _asyncio
         from Vera.vera.execution.agent_loop_run_projection import observe_agent_loop_event
