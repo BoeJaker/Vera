@@ -5430,6 +5430,18 @@ IMPORTANT:
     if(msgs){ msgs.addEventListener('scroll', ()=>_graphAnchorPost(), {passive:true}); msgs.addEventListener('click', ev=>{ const w=ev.target&&ev.target.closest&&ev.target.closest('.mwrap'); if(w){ _grFocusMid=w.dataset.mid||''; _graphAnchorPost(true); } }); }
   }
   let _grFocusMid='';
+  // the unified graph's families the chat owns: the turn's context (CTX_NODES/EDGES, retrieved into the focused turn)
+  // and the turns themselves — posted to the graph column whenever the anchor moves (families.js draws them)
+  let _grFamSig='';
+  function _graphFamiliesPost(frame, mid){
+    if(!frame||!frame.contentWindow) return;
+    const ctx={nodes:(CTX_NODES||[]).map(n=>({id:n.id,label:n.label,source:n.source||n.src||'',type:n.type||'',score:n.score,included:n.included!==false,text:String(n.text||'').slice(0,200)})), edges:(CTX_EDGES||[]).map(e=>({from:e.from||e.source,to:e.to||e.target,label:e.label||e.rel||''})), turn:mid||''};
+    const turns=[...document.querySelectorAll('#msgs .mwrap[data-mid]')].slice(-40).map(w=>({mid:w.dataset.mid, role:w.classList.contains('u')?'you':'aide', text:String((w.querySelector('.msg-body')||{}).textContent||'').trim().slice(0,60)}));
+    const sig=ctx.nodes.length+':'+(ctx.nodes[0]&&ctx.nodes[0].id)+':'+turns.length+':'+mid;
+    if(sig===_grFamSig) return; _grFamSig=sig;
+    frame.contentWindow.postMessage({type:'vera:graph:family', family:'context', payload:ctx},'*');
+    frame.contentWindow.postMessage({type:'vera:graph:family', family:'turns', payload:{turns}},'*');
+  }
   // which turn is in focus: the one the user picked, else the turn under the top third of the transcript, else the newest
   function _focusedTurn(){
     const msgs=document.getElementById('msgs'); if(!msgs) return null;
@@ -5445,6 +5457,7 @@ IMPORTANT:
       const rect=w?(r=>({top:r.top,left:r.left,width:r.width,height:r.height}))(w.getBoundingClientRect()):null;
       const msg={type:'vera:graph:anchor', mid:w?(w.dataset.mid||''):'', rect, session_id:SID||''};
       try{ frame&&frame.contentWindow&&frame.contentWindow.postMessage(msg,'*'); }catch(_){}
+      try{ _graphFamiliesPost(frame, msg.mid); }catch(_){}
       try{ const cv=document.querySelector('#canvasColumn vera-canvas'); if(cv) cv.dataset.focusMid=msg.mid; }catch(_){}
       return msg; };
     if(now||Date.now()-_grAnchorT>150){ if(_grAnchorTimer){ clearTimeout(_grAnchorTimer); _grAnchorTimer=null; } return send(); }

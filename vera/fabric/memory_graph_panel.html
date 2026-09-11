@@ -230,6 +230,9 @@ input[type=text]:focus, input[type=search]:focus { border-color: var(--ac); }
   color: var(--t3); cursor: pointer; transition: all .12s;
 }
 .view-chip.on { border-color: var(--ac2); color: var(--ac2); background: rgba(94,201,160,.1); }
+/* the mixer's chips: off is hollow, focus is half, all is full */
+.chip.fam.focus { border-style: dashed; }
+.chip.fam.off { opacity: .55; }
 
 /* Unresolved banner */
 #unresolved-banner {
@@ -404,7 +407,14 @@ input[type=text]:focus, input[type=search]:focus { border-color: var(--ac); }
         <span class="view-chip"    id="vchip-timeline"  onclick="setViewMode('timeline')">Timeline</span>
         <span class="view-chip"    id="vchip-hierarchy" onclick="setViewMode('hierarchy')">Hierarchy</span>
         <span class="view-chip"    id="vchip-radial"    onclick="setViewMode('radial')">Radial</span>
+        <!-- the unified graph's views (the GraphViews board): one document of families, drawn four ways -->
+        <span class="view-chip"    id="vchip-galaxy"    onclick="setViewMode('galaxy')" title="The whole session at a glance · families are sectors, time is radius, relevance is size">Galaxy</span>
+        <span class="view-chip"    id="vchip-iso"       onclick="setViewMode('iso')" title="The same galaxy at a tilt · rings lie on the floor, the hub stands (needs /ui/iso.js)">Iso</span>
+        <span class="view-chip"    id="vchip-flow"      onclick="setViewMode('flow')" title="The loops as they ran · layered left to right">Flow</span>
       </div>
+      <div class="sl">Families <span id="family-count" style="color:var(--t3);font-size:8.5px"></span></div>
+      <!-- the mixer: as much or as little of each family — off · focus (what touches the selection or another family) · all -->
+      <div class="chips" id="family-chips"></div>
 
       <div id="unresolved-banner">
         <span id="unresolved-count"></span> unresolved nodes hidden
@@ -635,6 +645,85 @@ function _isHubEdge(label) { return HUB_EDGES.has(label); }
 // ─── Unresolved node tracking ────────────────────────────────────────────────
 let _showUnresolved = false;  // default: hide placeholder/unresolved nodes
 
+// ─── The unified graph's families (UI redesign, Notes/40 §7; families.js) ───────────────
+// Every node belongs to a family — memory (this panel's own load), dag (the run shadow),
+// context / turns / loop (posted in by the chat's graph column), plan, estate — and the
+// MIXER shows as much or as little of each: off · focus · all. The views below draw the
+// mixed document; the filters, the inspector and the cap runner see the same nodes.
+const _famSettings = {};        // family → 'off' | 'focus' | 'all'
+const _famDocs = {};            // family → the adapter's document as it was fed in
+let _famVisible = null;         // Set of node ids the mixer keeps, or null = everything
+let _famAnchor = null;          // {mid, rect} — the chat's focused turn (vera:graph:anchor)
+function famSetting(f) { return _famSettings[f] || (f === 'memory' || f === 'dag' ? 'all' : 'focus'); }
+function famOf(n) { return (n && (n.family || (n.rec && n.rec.family))) || 'memory'; }
+function _famFocusIds() {
+  const ids = [];
+  if (selectedId) ids.push(selectedId);
+  if (_famAnchor && _famAnchor.mid) ids.push(_famAnchor.mid);
+  // the turn's context: every context node is in focus when the chat posted one
+  Object.values(nodes).forEach(n => { if (famOf(n) === 'context' && n.rec && n.rec.included !== false) ids.push(n.id); });
+  return ids;
+}
+function recomputeFamilyMix() {
+  const F = window.VeraGraphFamilies;
+  if (!F) { _famVisible = null; return; }
+  const doc = { nodes: Object.values(nodes).map(n => ({ id: n.id, family: famOf(n) })), edges: edges.map(e => ({ from: e.from, to: e.to, label: e.label })) };
+  const settings = {}; F.FAMILIES.forEach(f => { settings[f.id] = famSetting(f.id); });
+  const mixed = F.mix(doc, settings, _famFocusIds());
+  _famVisible = new Set(mixed.nodes.map(n => n.id));
+}
+function ingestFamily(family, payload) {
+  const F = window.VeraGraphFamilies; if (!F) return 0;
+  const doc = F.toDoc(family, payload); if (doc.error) { addLog('err', 'family ' + family + ': ' + doc.error); return 0; }
+  // a family posted again replaces what it posted before (the chat's context changes every turn)
+  if (_famDocs[family]) { _famDocs[family].nodes.forEach(n => { if (nodes[n.id] && famOf(nodes[n.id]) === family && !doc.nodes.some(x => x.id === n.id)) delete nodes[n.id]; }); edges = edges.filter(e => nodes[e.from] && nodes[e.to]); edgeSet = new Set(edges.map(e => e.from + '→' + e.to)); }
+  _famDocs[family] = doc;
+  const recs = doc.nodes.map(n => ({ id: n.id, record_type: n.kind, summary: n.label, text: (n.rec && (n.rec.text || n.rec.summary)) || '', source_type: n.layer, session_id: (n.rec && n.rec.session_id) || '',
+    created_at: n.time ? new Date(n.time).toISOString() : '', importance: n.weight, status: n.status, non_authoritative: n.nonAuthoritative, family: n.family, capability: n.kind === 'cap' ? n.label : '' }));
+  ingest(recs, doc.edges.map(e => ({ from_id: e.from, to_id: e.to, relation: e.label })), false);
+  doc.nodes.forEach(n => { const x = nodes[n.id]; if (x) { x.family = n.family; x.rec.family = n.family; x.rec.included = n.rec && n.rec.included; if (n.status) x.rec.status = n.status; } });
+  rebuildFamilyChips(); rebuildFilters(); recomputeFamilyMix(); updateStat();
+  if (_viewMode !== 'force') applyView(); else warmupPhysics(60);
+  return doc.nodes.length;
+}
+function setFamily(f, mode) { _famSettings[f] = mode; rebuildFamilyChips(); recomputeFamilyMix(); updateStat(); if (_viewMode !== 'force') applyView(); }
+function cycleFamily(f) { const cur = famSetting(f); setFamily(f, cur === 'off' ? 'focus' : cur === 'focus' ? 'all' : 'off'); }
+function rebuildFamilyChips() {
+  const host = document.getElementById('family-chips'); const F = window.VeraGraphFamilies; if (!host || !F) return;
+  const counts = {}; Object.values(nodes).forEach(n => { const f = famOf(n); counts[f] = (counts[f] || 0) + 1; });
+  const present = F.FAMILIES.filter(f => counts[f.id]);
+  host.innerHTML = present.map(f => { const mode = famSetting(f.id); return '<span class="chip fam ' + mode + (mode !== 'off' ? ' on' : '') + '" data-fam="' + esc(f.id) + '" onclick="cycleFamily(\'' + esc(f.id) + '\')" title="' + esc(f.label) + ' · ' + mode + ' — click to cycle off · focus · all">' + esc(f.icon) + ' ' + esc(f.label) + '<span style="opacity:.55;margin-left:4px">' + counts[f.id] + '</span><small style="margin-left:4px;opacity:.7">' + mode + '</small></span>'; }).join('') || '<span style="color:var(--t3);font-size:9px">(no families yet)</span>';
+  const fc = document.getElementById('family-count'); if (fc) fc.textContent = present.length ? '(' + present.length + ')' : '';
+}
+// the galaxy: families are sectors, time is radius (older further out), relevance is size; a lone family takes the
+// whole circle. iso = the same field through the shared projection, height = relevance (the hub stands)
+function _applyGalaxyLayout(iso) {
+  const F = window.VeraGraphFamilies;
+  const vis = Object.values(nodes).filter(_nodeVisible);
+  if (!vis.length) return;
+  // the families on screen share the circle equally, in the families' own order (turns first, estate last)
+  const order = F ? F.FAMILIES.map(x => x.id) : [];
+  const fams = [...new Set(vis.map(famOf))].sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  const R = parseFloat(document.getElementById('rd-radius')?.value || 200) * 1.8;
+  const byFam = {}; vis.forEach(n => { (byFam[famOf(n)] = byFam[famOf(n)] || []).push(n); });
+  const P = (iso && window.VeraISO) ? VeraISO.proj(30, 45, 1, true) : null;
+  fams.forEach((f, fi) => {
+    const list = byFam[f].slice().sort((a, b) => (new Date(a.rec?.created_at || 0).getTime()) - (new Date(b.rec?.created_at || 0).getTime()));
+    const a0 = -Math.PI / 2 + (fi / fams.length) * Math.PI * 2, a1 = -Math.PI / 2 + ((fi + 1) / fams.length) * Math.PI * 2;
+    const span = (a1 - a0) * 0.86, base = a0 + (a1 - a0) * 0.07;
+    list.forEach((n, i) => {
+      // angle spreads the family across its sector; radius grows with age; the newest sit near the hub
+      const t = list.length > 1 ? i / (list.length - 1) : 0.5;
+      const ang = base + span * ((i * 0.6180339887) % 1);
+      const r = 60 + (1 - t) * R * (0.55 + 0.45 * (1 - (n.rec?.importance == null ? 0.5 : parseFloat(n.rec.importance))));
+      let x = Math.cos(ang) * r, y = Math.sin(ang) * r;
+      if (P) { const p = P(x, y, (n.rec?.importance == null ? 0.5 : parseFloat(n.rec.importance)) * 140); x = p[0]; y = p[1]; }
+      n.x = x; n.y = y; n.vx = 0; n.vy = 0;
+    });
+  });
+}
+function _famPostToParent() { /* runs to the chat land with the next pass */ }
+
 function _isUnresolved(n) {
   return n._synthetic && n.rec?.summary === '(unresolved)';
 }
@@ -705,7 +794,8 @@ let _viewFrozen = false;  // when true, physics tick is suppressed (static views
 function setViewMode(mode) {
   _viewMode = mode;
   _viewFrozen = (mode !== 'force');
-  ['force','timeline','hierarchy','radial'].forEach(m => {
+  if (mode === 'iso' && !window.VeraISO) { setStatus('iso needs /ui/iso.js — drawing the flat galaxy', 'busy'); }
+  ['force','timeline','hierarchy','radial','galaxy','iso','flow'].forEach(m => {
     const chip = document.getElementById(`vchip-${m}`);
     if (chip) chip.classList.toggle('on', m === mode);
     const ctrl = document.getElementById(`${m==='force'?'force':m}-controls`);
@@ -726,10 +816,14 @@ function applyView() {
 
   if (_viewMode === 'timeline') {
     _applyTimelineLayout();
-  } else if (_viewMode === 'hierarchy') {
+  } else if (_viewMode === 'hierarchy' || _viewMode === 'flow') {
     _applyHierarchyLayout();
   } else if (_viewMode === 'radial') {
     _applyRadialLayout();
+  } else if (_viewMode === 'galaxy') {
+    _applyGalaxyLayout(false);
+  } else if (_viewMode === 'iso') {
+    _applyGalaxyLayout(!!window.VeraISO);
   }
   fitAll();
 }
@@ -927,6 +1021,7 @@ function P() {
 // Used by physics, draw, mouse hover, and visibility stats.
 function _nodeVisible(n) {
   if (!_showUnresolved && _isUnresolved(n)) return false;
+  if (_famVisible && !_famVisible.has(n.id)) return false;      // the mixer: off hides, focus keeps what touches
   return _passTypes(n.type) && _passSources(n.rec?.source_type);
 }
 
@@ -1387,6 +1482,8 @@ async function loadGraph(mode) {
     }
 
     ingest(data.nodes||[], data.edges||[], true);
+    // a family the chat posted before this load is kept (its nodes were replaced by the reset above)
+    Object.keys(_famDocs).forEach(f => { const d = _famDocs[f]; delete _famDocs[f]; ingestFamily(f, d.nodes.length ? { nodes: d.nodes.map(n => Object.assign({}, n.rec, { id: n.id })), edges: d.edges.map(e => ({ from: e.from, to: e.to, label: e.label })), turn: '' } : {}); });
     // Run Protocol projections are a lifecycle-only overlay. They remain
     // visibly distinct and never become memory records or memory authority.
     try {
@@ -1401,6 +1498,7 @@ async function loadGraph(mode) {
     const linkedRun = new URLSearchParams(window.location.search).get('run_id');
     if (linkedRun && nodes['run:' + linkedRun]) selectNode('run:' + linkedRun);
     rebuildFilters();   // regenerate chip bar from the actual data shape
+    rebuildFamilyChips(); recomputeFamilyMix();
     updateStat();
     // Run physics warmup synchronously so graph is near-settled before first paint.
     // Use a heavier burst for large graphs; lighter for small ones.
@@ -1736,6 +1834,7 @@ function _nodeFromRec(rec, idx) {
     type,
     label: (rec.summary || rec.text || rec.capability || rec.id).slice(0, 60),
     pulse: 0, pulseT: 0, _dim: false,
+    family: rec.family || (rec.non_authoritative ? 'dag' : 'memory'),   // the unified graph's family
     _createdAt: Date.now(),   // for eviction — tracks INSERTION time in this tab
     rec: {
       id: rec.id,
@@ -2777,8 +2876,16 @@ setTimeout(async () => {
 // Re-apply theme if parent theme changes
 window.addEventListener('message', e => {
   if (e.data?.type === 'vera_theme_change') applyParentTheme();
+  const d = e.data;
+  if (!d || typeof d !== 'object') return;
+  // a family posted in by the host (the chat's graph column: the turn's context, the turns, the loop's events)
+  if (d.type === 'vera:graph:family' && d.family) { try { ingestFamily(String(d.family), d.payload || {}); } catch (err) { addLog('err', 'family: ' + err.message); } }
+  // the chat's focused turn — what the mixer's focus follows (the runs to the message land with the next pass)
+  if (d.type === 'vera:graph:anchor') { _famAnchor = { mid: d.mid || '', rect: d.rect || null }; recomputeFamilyMix(); }
 });
 </script>
+<script src="/ui/graph/families.js"></script>
+<script src="/ui/iso.js"></script>
 <script src="/ui/vera-ui.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 </body>
