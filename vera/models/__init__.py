@@ -16,6 +16,13 @@ from .training_contracts import (
 from .deterministic_evaluation import (
     DeterministicScalarEvalProvider, ScalarCaseObservation,
     ScalarEvaluationFixture, ScalarMetricPolicy)
+from .evaluation_evidence import (
+    CaseEvaluationEvidence, DeterministicEvidenceEvalProvider,
+    EvaluationCaseIdentity, EvaluationCIPolicy, EvaluationUsage,
+    FrozenEvaluationEvidenceFixture, JudgeProvenance, PartialEvaluationReport,
+    case_evaluation_evidence_from_dict, evaluate_ci_policy,
+    evaluation_case_identity_from_dict, evaluation_usage_from_dict,
+    judge_provenance_from_dict, partial_evaluation_report_from_dict)
 from .inference_contracts import (
     InferenceArtifact, InferenceCancellation, InferenceContractConflict,
     InferenceEvent, InferenceProvider, InferenceRequest, InferenceTranscript,
@@ -79,6 +86,13 @@ __all__ = ["AdmittedModelActivation", "LegacyModelCapabilityBinding", "ModelActi
            "TrainingRun", "TrainingRuntime",
            "DeterministicScalarEvalProvider", "ScalarCaseObservation",
            "ScalarEvaluationFixture", "ScalarMetricPolicy",
+           "CaseEvaluationEvidence", "DeterministicEvidenceEvalProvider",
+           "EvaluationCaseIdentity", "EvaluationCIPolicy", "EvaluationUsage",
+           "FrozenEvaluationEvidenceFixture", "JudgeProvenance",
+           "PartialEvaluationReport",
+           "case_evaluation_evidence_from_dict", "evaluate_ci_policy",
+           "evaluation_case_identity_from_dict", "evaluation_usage_from_dict",
+           "judge_provenance_from_dict", "partial_evaluation_report_from_dict",
            "SQLiteModelPackageRegistry", "inspect_and_register_onnx",
            "evaluate_model_admission", "evaluation_report_from_dict",
            "evaluation_request_from_dict", "legacy_onnx_bindings",
