@@ -793,6 +793,34 @@ body.has-panel #chatPanelHost{
   border-left:1px solid var(--border);
 }
 
+/* ── THE TRI-PAGE COLUMNS (canvas-graph; the Canvas board) ─────────────
+   #canvasColumn and #graphColumn are siblings of #chatStack inside
+   #chatColumn, beside it the way #chatPanelHost is. ?pages=chat,canvas,graph
+   (or + Canvas / + Graph in the top bar; remembered in localStorage) opens
+   them: body[data-cols] names the open ones, body.has-cols turns the wrapper
+   into a row. Chat + one column split evenly like the board at 1440; three
+   columns want an ultrawide, so below 1920 the graph column takes a fixed
+   strip. Nothing here changes #chatPanelHost or the panel it holds. */
+body.has-cols #chatColumn{flex-direction:row;gap:0}
+body.has-cols #chatStack{flex:1 1 0;min-width:0}
+.tri-col{display:none;flex-direction:column;flex:1 1 0;min-width:0;min-height:0;background:var(--bg0);border-left:1px solid var(--border);overflow:hidden}
+body[data-cols~="canvas"] #canvasColumn,body[data-cols~="graph"] #graphColumn{display:flex}
+@media (max-width:1919px){ body[data-cols~="canvas"][data-cols~="graph"] #graphColumn{flex:0 0 min(340px,28%)} }
+.tri-hd{display:flex;align-items:center;gap:8px;height:32px;flex-shrink:0;padding:0 10px;border-bottom:1px solid var(--border);background:var(--bg1);font-size:11px}
+.tri-hd b{font-weight:600;white-space:nowrap}
+.tri-hd .lbl{font-size:9.5px;color:var(--dim2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.tri-hd .sp{flex:1}
+.tri-hd .nowbar{display:inline-flex;align-items:center;gap:5px;font-size:9.5px;color:var(--dim2);border:1px solid var(--border);border-radius:10px;padding:1px 8px 1px 6px;white-space:nowrap}
+.tri-hd .nowbar i{width:6px;height:6px;border-radius:50%;background:var(--acc3,#e09a55);animation:pr 2.2s infinite}
+.tri-bd{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column}
+#canvasColumn vera-canvas{--vc-max:none;margin:0;flex:1;min-height:0}
+#graphColumnFrame{flex:1;width:100%;min-height:0;border:none;background:var(--bg0)}
+.tb-btn.col-on{color:var(--acc);border-color:var(--acc)}
+/* an empty minimal session lays its system lines out in a row; beside a column they wrap and stay in the chat */
+body[data-view="minimal"]:not(.has-msgs).has-cols #msgs{flex-wrap:wrap;overflow:hidden}
+html[data-blocks="off"] .tri-col{border-left-color:transparent}
+html[data-blocks="off"] .tri-hd{background:transparent;border-color:transparent}
+
 /* Resize handle between #chatStack and #chatPanelHost. Hidden when no
    panel is mounted; mousedown on it toggles a drag-state which the
    global mousemove translates into a width override on #chatStack
@@ -1295,6 +1323,8 @@ html[data-blocks="off"] .pa-att{background:transparent}
   <!-- Layout toggles -->
   <div class="tb-group" title="Panel layout">
     <button class="tb-btn" id="viewToggleBtn" onclick="CH.toggleViewMode()" title="Toggle minimal / full layout — minimal centres the input box for empty sessions">Min</button>
+    <button class="tb-btn" id="colCanvasBtn" onclick="CH.togglePage('canvas')" title="The session canvas beside the chat — what this conversation is working with, keyed so nothing is on it twice">+ Canvas</button>
+    <button class="tb-btn" id="colGraphBtn" onclick="CH.togglePage('graph')" title="The memory graph beside the chat, following the turn in focus">+ Graph</button>
     <button class="tb-btn" onclick="CH.toggleRight()" title="Toggle the side menu (history, config, context, graphs…)">Menu</button>
   </div>
 </div>
@@ -2193,6 +2223,22 @@ html[data-blocks="off"] .pa-att{background:transparent}
     <!-- Vertical resize handle between chat stack and panel host. Visible
          only when body.has-panel is set. Drag to set the chat/panel split. -->
     <div id="chatPanelResize" title="Drag to resize chat/panel split"></div>
+
+    <!-- The tri-page's other two columns (canvas-graph; the Canvas board):
+         the SESSION canvas and the memory graph, siblings of #chatStack.
+         CH.togglePage('canvas'|'graph') / ?pages=chat,canvas,graph show them;
+         the canvas element and the graph iframe mount on first open. -->
+    <div id="canvasColumn" class="tri-col" data-col="canvas">
+      <div class="tri-hd"><b>Session canvas</b><span class="lbl" id="cvColSub"></span><span class="sp"></span>
+        <span class="nowbar" title="Items in the NOW band"><i></i><b>NOW</b><span id="cvColNow">0</span></span>
+        <button class="btn xs" onclick="CH.togglePage('canvas')" title="Close the canvas column">&#215;</button></div>
+      <div class="tri-bd" id="canvasColumnBody"></div>
+    </div>
+    <div id="graphColumn" class="tri-col" data-col="graph">
+      <div class="tri-hd"><b>Graph</b><span class="lbl" id="grColSub">memory graph</span><span class="sp"></span>
+        <button class="btn xs" onclick="CH.togglePage('graph')" title="Close the graph column">&#215;</button></div>
+      <div class="tri-bd"><iframe id="graphColumnFrame" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" title="Graph column"></iframe></div>
+    </div>
 
     <!-- Panel host: hidden by default. CH.panelOpen(name) shows it
          as a 50/50 sibling of #chatStack inside #chatColumn. The LLM
@@ -5001,26 +5047,24 @@ IMPORTANT:
     const el=document.getElementById(id); const r=el&&el.querySelector('.wr .rec'); if(r) r.textContent=r.textContent.replace(/form: ?"?[a-z]+"?/,'form: "'+w.rec.draw.form+'"');
   }
   // Pin to canvas: a copy of the record (canvas.append type "widget"); the same key brings the first item back
+  // Pin = put the widget's record on the SESSION canvas through the resolver: the same record is one item, so a
+  // second pin shows it again rather than adding a twin; the canvas column opens to show where it landed.
   async function _wPin(id, btn){
     const w=_W_STORE[id]; if(!w) return;
     if(btn){ btn.disabled=true; btn.textContent='Pinning…'; }
     try{
-      const key=_widgetKey(w.rec);
-      let cid=_PIN_CANVAS_ID;
-      if(!cid){ const ls=await _capCall('canvas.list',{limit:30}); const hit=((ls&&ls.canvases)||[]).find(c=>c.title==='Pinned from chat'); cid=hit?hit.id:null; }
-      if(!cid){ const cr=await _capCall('canvas.create',{title:'Pinned from chat',mode:'static'}); cid=cr&&cr.id; }
-      if(!cid) throw new Error('no canvas');
-      _PIN_CANVAS_ID=cid;
-      const doc=await _capCall('canvas.get',{id:cid});
-      const same=((doc&&doc.blocks)||[]).find(b=>b.type==='widget'&&b.meta&&b.meta.key===key);
-      if(!same){ const content=Object.assign({},w.rec); delete content.data; await _capCall('canvas.append',{id:cid,type:'widget',content:content,meta:{key,from:'reply',by:w.by}}); }
-      const shown=await _capCall('canvas.show',{id:cid,session_id:(typeof SID!=='undefined'&&SID)||'',title:'Pinned from chat',pinned:false});
-      if(btn){ btn.textContent=same?'Already pinned · shown':'Pinned'; }
-      if(!(shown&&shown.ok)) try{ _handleChatRender({kind:'canvas',canvas_id:cid,title:'Pinned from chat',popout:false}); }catch(_){}
+      const key='widget:'+_widgetKey(w.rec);
+      const cv=await _capCall('canvas.session.resolve',{session_id:SID||''});
+      const cid=cv&&cv.id; if(!cid) throw new Error((cv&&cv.error)||'no session canvas');
+      const content=Object.assign({},w.rec); delete content.data;
+      const mid=(btn&&btn.closest('.mwrap')&&btn.closest('.mwrap').dataset.mid)||'';
+      const r=await _capCall('canvas.add',{id:cid,session_id:SID||'',kind:'widget',content,key,size:(w.rec.draw&&w.rec.draw.size)||'m',anchor:{mid,turn:mid}});
+      if(!(r&&r.ok)) throw new Error((r&&r.error)||'canvas.add failed');
+      if(btn){ btn.textContent=r.resolved==='shown'?'Already on the canvas · shown':'On the canvas'; }
+      openPage('canvas');
     }catch(e){ if(btn) btn.textContent='Pin failed'; console.warn('pin to canvas', e); }
     finally{ if(btn){ btn.disabled=false; setTimeout(()=>{ btn.textContent='Pin to canvas'; },2500); } }
   }
-  let _PIN_CANVAS_ID='';
 
   /* ── Artifact rendering (inline cards + floating pop-outs) ────────── */
   function _artImgGallery(images){
@@ -5225,7 +5269,17 @@ IMPORTANT:
         return {ok:false,outcome:'failed',note:'panel '+a.id+' is not open here'};
       }
       case 'lhm.focus': { if(!window.VeraLHM) return later('the LHM'); const ok=VeraLHM.pick(String(a.menu||'')+(a.tab?'/'+a.tab:'')); return ok?done('menu '+a.menu):{ok:false,outcome:'failed',note:'no menu '+a.menu}; }
-      case 'lhm.compose': return later('composing a menu by rule (edit mode composes by hand today)');
+      case 'lhm.compose': { if(!(window.VeraLHM&&typeof VeraLHM.compose==='function')) return later('composing a menu by rule (edit mode composes by hand today)'); const r=VeraLHM.compose(a.menu, a.widgets); return (r&&r.ok===false)?{ok:false,outcome:'failed',note:String(r.note||'the LHM refused')}:done('menu '+a.menu+' composed'); }
+      // the ask chip for a canvas item: like ui.ask, quoting the item; the question itself lands in the canvas timeline
+      case 'canvas.ask': { const key=String(a.key||''), q=String(a.question||a.q||'?'); _uiAskCard(q, a.choices, 'canvas item · '+key); try{ if(key) _capCall('canvas.ask',{key, question:q, session_id:SID||''}).catch(()=>{}); }catch(_){} return done('the ask chip quotes '+(key||'the canvas')); }
+      // the session canvas: one implementation (the caps) whoever asks — the model, the column, the pin button
+      case 'canvas.add': case 'canvas.show': case 'canvas.pin': case 'canvas.park': case 'canvas.size': {
+        const args=Object.assign({}, a, {session_id:SID||''}); if(name==='canvas.show') args.kind=args.kind||'note';
+        const r=await _capCall(name==='canvas.show'?'canvas.add':name, args);
+        if(!(r&&r.ok)) return {ok:false,outcome:'failed',note:String((r&&r.error)||'the canvas refused')};
+        openPage('canvas');
+        return done((r.resolved==='shown'?'shown again':name.split('.')[1])+' · '+(r.key||''), {prev:r.prev, key:r.key, revision:r.revision});
+      }
       case 'graph.view': { const m={galaxy:'graph',graph:'graph',list:'list',fabric:'fabric',raw:'raw',frames:'frames'}[String(a.view||'')]; if(!m) return later('the '+a.view+' view of the unified graph (canvas-graph)'); ctxTab('ctx',null); ctxViewMode(m); return done('context view '+m); }
       case 'graph.focus': { ctxTab('memgraph',null); return done('the memory graph is open; focus by turn/step/record lands with canvas-graph'); }
       case 'chat.mode': {
@@ -5285,6 +5339,99 @@ IMPORTANT:
     if(!SID) return;
     fetch(BASE+'/ui/event',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type, payload:payload||{}, session_id:SID})}).catch(()=>{});
   }
+
+  /* ═══ THE TRI-PAGE COLUMNS (canvas-graph; the Canvas board) ═══
+     The chat UI lives inside the tri-page: chat · canvas · graph. The other two columns are siblings of the chat
+     stack, opened by ?pages=chat,canvas,graph or the + Canvas / + Graph buttons and remembered in localStorage.
+     The canvas column hosts <vera-canvas> on the SESSION canvas (canvas.session.resolve, made on demand); the
+     graph column hosts the memory graph panel through the same panel-iframe path panelOpen uses, and hears which
+     turn is in focus as {type:'vera:graph:anchor', mid, rect}. Both report into the one panel set as 'column'. */
+  const _PAGES_KEY='vera.chat.pages';
+  const _PAGE_NAMES=['canvas','graph'];
+  let _pages=new Set();
+  let _cvColSid='', _cvColTimer=null, _grAnchorT=0, _grAnchorTimer=null, _grMounted=false;
+  function _pagesFromUrl(){
+    try{ const q=new URLSearchParams(location.search).get('pages'); if(q==null) return null;
+      return new Set(q.split(',').map(s=>s.trim().toLowerCase()).filter(s=>_PAGE_NAMES.includes(s))); }catch(_){ return null; }
+  }
+  function _pagesLoad(){
+    const u=_pagesFromUrl(); if(u) return u;
+    try{ const s=localStorage.getItem(_PAGES_KEY); if(s) return new Set(JSON.parse(s).filter(x=>_PAGE_NAMES.includes(x))); }catch(_){}
+    return new Set();
+  }
+  function _pagesOpen(){ return Array.from(_pages); }
+  function _pagesApply(){
+    const body=document.body;
+    body.dataset.cols=_pagesOpen().join(' ');
+    body.classList.toggle('has-cols', _pages.size>0);
+    _PAGE_NAMES.forEach(n=>{ const b=document.getElementById(n==='canvas'?'colCanvasBtn':'colGraphBtn'); if(b) b.classList.toggle('col-on', _pages.has(n)); });
+    try{ localStorage.setItem(_PAGES_KEY, JSON.stringify(_pagesOpen())); }catch(_){}
+    if(_pages.has('canvas')) _canvasColumnMount(); else _canvasColumnIdle();
+    if(_pages.has('graph')) _graphColumnMount();
+    try{ window.dispatchEvent(new CustomEvent('vera:panel-mounted',{detail:{placement:'column', pages:_pagesOpen()}})); }catch(_){}
+    try{ _uiEvent('pages',{pages:_pagesOpen()}); }catch(_){}
+  }
+  function togglePage(name){ if(!_PAGE_NAMES.includes(name)) return false; if(_pages.has(name)) _pages.delete(name); else _pages.add(name); _pagesApply(); return _pages.has(name); }
+  function openPage(name){ if(!_PAGE_NAMES.includes(name)||_pages.has(name)) return false; _pages.add(name); _pagesApply(); return true; }
+  // the session canvas follows the session: resolve it when the column opens, and again when SID changes under it
+  async function _canvasColumnMount(){
+    const host=document.getElementById('canvasColumnBody'); if(!host) return;
+    if(!_cvColTimer) _cvColTimer=setInterval(()=>{ if(_pages.has('canvas')&&SID&&SID!==_cvColSid) _canvasColumnMount(); }, 2000);
+    if(!SID){ if(!host.querySelector('.sys-msg')) host.innerHTML='<div class="sys-msg" style="padding:12px">The session canvas appears once a session starts.</div>'; return; }
+    if(SID===_cvColSid && host.querySelector('vera-canvas')) return;
+    _cvColSid=SID;
+    let cid='';
+    try{ const r=await _capCall('canvas.session.resolve',{session_id:SID}); cid=(r&&r.id)||''; }catch(_){}
+    if(!cid) cid='cv_session_'+String(SID).replace(/[^A-Za-z0-9_.-]/g,'_').slice(0,64);
+    let el=host.querySelector('vera-canvas');
+    if(!el){ host.innerHTML=''; el=document.createElement('vera-canvas'); el.setAttribute('fill',''); el.setAttribute('session',''); host.appendChild(el);
+      el.addEventListener('vera:canvas:rendered', ev=>{ const d=ev.detail||{}; const n=document.getElementById('cvColNow'); if(n) n.textContent=String(d.now||0); const s=document.getElementById('cvColSub'); if(s) s.textContent=(d.pinned?d.pinned+' pinned · ':'')+(d.parked?d.parked+' parked · ':'')+'rev '+(d.revision||0); }); }
+    if(el.getAttribute('canvas-id')!==cid) el.setAttribute('canvas-id', cid);
+    try{ window._veraBase=BASE; }catch(_){}
+  }
+  function _canvasColumnIdle(){ if(_cvColTimer&&!_pages.has('canvas')){ clearInterval(_cvColTimer); _cvColTimer=null; } }
+  // the graph column: the memory-graph panel through the chat's panel registry, as panelOpen would load it
+  async function _graphColumnMount(){
+    const frame=document.getElementById('graphColumnFrame'); if(!frame||_grMounted) { _graphAnchorPost(); return; }
+    _grMounted=true;
+    let src='';
+    try{ await _loadUiPanels(); const p=_resolvePanel('memory-graph'); if(p) src=await _panelSrcAsync(p); }catch(_){}
+    if(!src) src=_PANEL_ENDPOINT_ALIASES['memory-graph']||'/ui/panels/file/memory_graph_panel.html';
+    try{ if(frame.contentWindow){ frame.contentWindow._veraBase=BASE; frame.contentWindow._veraSessionId=SID; } }catch(_){}
+    frame.onload=()=>{ try{ frame.contentWindow?.postMessage({type:'vera:base', url:BASE}, '*'); frame.contentWindow?.postMessage({type:'vera:panel:init', panel_id:'memory-graph', session_id:SID}, '*'); }catch(_){} _graphAnchorPost(true); };
+    frame.src=(src.charAt(0)==='/'&&BASE)?(BASE.replace(/\/$/,'')+src):src;
+    const msgs=document.getElementById('msgs');
+    if(msgs){ msgs.addEventListener('scroll', ()=>_graphAnchorPost(), {passive:true}); msgs.addEventListener('click', ev=>{ const w=ev.target&&ev.target.closest&&ev.target.closest('.mwrap'); if(w){ _grFocusMid=w.dataset.mid||''; _graphAnchorPost(true); } }); }
+  }
+  let _grFocusMid='';
+  // which turn is in focus: the one the user picked, else the turn under the top third of the transcript, else the newest
+  function _focusedTurn(){
+    const msgs=document.getElementById('msgs'); if(!msgs) return null;
+    if(_grFocusMid){ const w=msgs.querySelector('.mwrap[data-mid="'+_grFocusMid+'"]'); if(w) return w; }
+    const wraps=msgs.querySelectorAll('.mwrap'); if(!wraps.length) return null;
+    const box=msgs.getBoundingClientRect(), line=box.top+box.height*0.33;
+    for(const w of wraps){ const r=w.getBoundingClientRect(); if(r.bottom>=line) return w; }
+    return wraps[wraps.length-1];
+  }
+  function _graphAnchorPost(now){
+    if(!_pages.has('graph')) return;
+    const send=()=>{ _grAnchorT=Date.now(); const w=_focusedTurn(); const frame=document.getElementById('graphColumnFrame');
+      const rect=w?(r=>({top:r.top,left:r.left,width:r.width,height:r.height}))(w.getBoundingClientRect()):null;
+      const msg={type:'vera:graph:anchor', mid:w?(w.dataset.mid||''):'', rect, session_id:SID||''};
+      try{ frame&&frame.contentWindow&&frame.contentWindow.postMessage(msg,'*'); }catch(_){}
+      try{ const cv=document.querySelector('#canvasColumn vera-canvas'); if(cv) cv.dataset.focusMid=msg.mid; }catch(_){}
+      return msg; };
+    if(now||Date.now()-_grAnchorT>150){ if(_grAnchorTimer){ clearTimeout(_grAnchorTimer); _grAnchorTimer=null; } return send(); }
+    if(!_grAnchorTimer) _grAnchorTimer=setTimeout(()=>{ _grAnchorTimer=null; send(); }, 160);
+  }
+  // the columns in the one panel set (the LHM's Open now rows and ui.panels.open): placement 'column'
+  function _pagesOpenNow(){
+    const out=[];
+    if(_pages.has('canvas')) out.push({id:'session-canvas', label:'Session canvas', icon:'▤', origin:'you', placement:'column', close:()=>togglePage('canvas'), focus:()=>{ try{ document.querySelector('#canvasColumn vera-canvas')?.focus(); }catch(_){} }});
+    if(_pages.has('graph')) out.push({id:'memory-graph', label:'Memory graph', icon:'▤', origin:'you', placement:'column', close:()=>togglePage('graph'), focus:()=>{ try{ document.getElementById('graphColumnFrame')?.focus(); }catch(_){} }});
+    return out;
+  }
+  function _pagesMount(){ _pages=_pagesLoad(); if(_pages.size) _pagesApply(); else _PAGE_NAMES.forEach(n=>{ const b=document.getElementById(n==='canvas'?'colCanvasBtn':'colGraphBtn'); if(b) b.classList.remove('col-on'); }); }
 
   /* ═══ THE COMPOSER'S MODES (chat-modes; the Canvas and Paste boards) ═══
      The chips in the composer's foot and the strips above it mirror features the chat already has (web search, the
@@ -11777,7 +11924,7 @@ Your task: decide what to do next to advance toward the goal.
     const theirs=(_lhmHarnessOpen||[]).map(p=>({id:p.id, label:p.label||p.id, icon:'⧉', origin:p.origin||'you', placement:p.placement||'harness tab',
       close:()=>{ try{ window.parent.postMessage({type:'vera:lhm:close', id:p.id}, '*'); }catch(_){} },
       focus:()=>{ try{ window.parent.postMessage({type:'vera:lhm:focus', id:p.id}, '*'); }catch(_){} }}));
-    return mine.concat(theirs);
+    return mine.concat(_pagesOpenNow()).concat(theirs);
   };
   let _lhmHarnessOpen=[];
   /* THE ONE PANEL SET — this chat reports the panel beside it (whoever opened it) so ui.panels.open lists it with
@@ -11785,7 +11932,7 @@ Your task: decide what to do next to advance toward the goal.
   let _panelsOpenTimer=null;
   function _panelsOpenReport(){
     if(!SID) return;
-    const mine=_lhmOpenNow().filter(p=>p.placement==='beside chat').map(p=>({id:p.id, label:p.label, origin:p.origin, placement:p.placement}));
+    const mine=_lhmOpenNow().filter(p=>p.placement==='beside chat'||p.placement==='column').map(p=>({id:p.id, label:p.label, origin:p.origin, placement:p.placement}));
     fetch(BASE+'/ui/panels/open/report',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({session_id:SID, host:'chat', panels:mine})}).catch(()=>{});
   }
@@ -15657,6 +15804,8 @@ Your task: decide what to do next to advance toward the goal.
     try{ setTimeout(()=>_uiEvent('session.start',{}),1500); }catch(_){}
     // …and the composer's modes: chips in its foot, the strips above it (never fatal)
     try{ _cmpMount(); }catch(e){ console.warn('composer modes: mount failed', e); }
+    // …and the tri-page's columns: ?pages= or the remembered ones (never fatal)
+    try{ _pagesMount(); }catch(e){ console.warn('tri-page columns: mount failed', e); }
     // Rail default: COLLAPSED. The minimal/document aesthetic looks best
     // with the chat column centred and unobstructed; the user can pop the
     // menu out via the top-bar Menu button. Persisted in localStorage so an
@@ -15838,6 +15987,7 @@ Your task: decide what to do next to advance toward the goal.
   }
 
   return{
+    togglePage,openPage,_pagesOpen,_canvasColumnMount,_graphAnchorPost,_pagesOpenNow,
     init,send,agentBarChanged,cfgAgentSync,_setDefaultAgent,_refreshAgentList,restoreAgentsFromFabric,histLoad,histFilter,loadSession,newSession,clearChat,recall,autoName,autoNameAll,promptRename,
     toggleLeft,toggleRight,railTab,ctxTab,loadChatGoals,watchGoalLoopChat,openGoalDetail,loadChatLoops,pickUpLoop,ctxViewMode,setLayer,srcToggle,ctxFetch,saveFrame,loadFrame,updateFrameUI,nodeClick,resetGraph,renderCtxGraph,renderCtxList,
     _ctxToggleNode,_ctxExcludeAll,_ctxIncludeAll,

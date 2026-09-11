@@ -24,6 +24,7 @@ build on top of these caps.
 from typing import Any, Dict, List, Optional
 from pathlib import Path
 import json
+import re
 import time
 import uuid
 
@@ -79,6 +80,92 @@ BLOCK_TYPES: Dict[str, Dict[str, str]] = {
 }
 CANVAS_MODES = ("dynamic", "static")
 
+# ── The SESSION canvas (Notes/38): one document per chat session, its items KEYED so the same thing is never on
+#    the canvas twice. A keyed block carries key (<kind>:<ref>), state (now · parked · pinned · hidden), size
+#    (s · m · l · xl) and its anchors (the turns that used it — additive, never replaced). The document carries a
+#    revision (bumped on every write) and a timeline ([{rev, ts, op, key}], append-only; bounded so a runaway loop
+#    cannot grow it forever). Keyless blocks — the existing canvases — are untouched by all of this. ─────────────
+ITEM_STATES = ("now", "parked", "pinned", "hidden")
+ITEM_SIZES = ("s", "m", "l", "xl")
+_MAX_TIMELINE = 2000
+_SESSION_PREFIX = "cv_session_"
+
+
+def _session_canvas_id(session_id: str) -> str:
+    sid = re.sub(r"[^A-Za-z0-9_.-]", "_", str(session_id or "").strip())[:64]
+    return _SESSION_PREFIX + sid if sid else ""
+
+
+def _as_obj(v: Any) -> Any:
+    """Arguments arrive as JSON text over MCP as often as as objects."""
+    if isinstance(v, str) and v.strip()[:1] in ("{", "["):
+        try:
+            return json.loads(v)
+        except Exception:
+            return v
+    return v
+
+
+def _record(doc: Dict[str, Any], op: str, key: str = "", **extra) -> int:
+    """Append the timeline entry for the write about to be saved; returns the revision it will carry."""
+    nxt = int(doc.get("revision") or 0) + 1
+    tl = doc.setdefault("timeline", [])
+    ent = {"rev": nxt, "ts": now_iso(), "op": op, "key": key}
+    ent.update({k: v for k, v in extra.items() if v not in (None, "")})
+    tl.append(ent)
+    if len(tl) > _MAX_TIMELINE:
+        del tl[: len(tl) - _MAX_TIMELINE]
+    return nxt
+
+
+async def _write(doc: Dict[str, Any], op: str, key: str = "", **extra) -> int:
+    """One keyed write: timeline → save (bumps the revision) → canvas.updated {id, revision, op, key}."""
+    _record(doc, op, key, **extra)
+    await _save(doc)
+    await _emit(doc["id"], op, id=doc["id"], revision=doc.get("revision"), key=key)
+    return int(doc.get("revision") or 0)
+
+
+def _find_key(doc: Dict[str, Any], key: str) -> Optional[Dict[str, Any]]:
+    key = str(key or "")
+    if not key:
+        return None
+    return next((b for b in doc.get("blocks", []) if b.get("key") == key), None)
+
+
+async def _target(id: str = "", session_id: str = "", create: bool = True) -> Optional[Dict[str, Any]]:
+    """The document a keyed call means: an explicit id, else the session's canvas (made on demand)."""
+    if id:
+        return await _load(id)
+    cid = _session_canvas_id(session_id)
+    if not cid:
+        return None
+    doc = await _load(cid)
+    if doc or not create:
+        return doc
+    doc = {"id": cid, "title": "Session canvas", "mode": "session", "topic": "",
+           "session": str(session_id), "created": now_iso(), "updated": now_iso(),
+           "blocks": [], "revision": 0, "timeline": []}
+    await _write(doc, "create")
+    return doc
+
+
+def _item_view(b: Dict[str, Any]) -> Dict[str, Any]:
+    return {"id": b.get("id"), "key": b.get("key"), "type": b.get("type"), "state": b.get("state"),
+            "size": b.get("size"), "anchor": b.get("anchor"), "anchors": b.get("anchors") or [],
+            "ts": b.get("ts")}
+
+
+def _add_anchor(b: Dict[str, Any], anchor: Any) -> None:
+    """Anchors only grow: the latest is 'anchor', every one it ever had is in 'anchors'."""
+    anchor = _as_obj(anchor)
+    if not isinstance(anchor, dict) or not anchor:
+        return
+    b["anchor"] = anchor
+    arr = b.setdefault("anchors", [])
+    if anchor not in arr:
+        arr.append(anchor)
+
 
 def _now_epoch() -> float:
     return time.time()
@@ -109,6 +196,7 @@ async def _save(doc: Dict[str, Any]) -> None:
     if not r:
         return
     doc["updated"] = now_iso()
+    doc["revision"] = int(doc.get("revision") or 0) + 1
     try:
         await r.set(KEY_CANVAS + doc["id"], json.dumps(doc))
         await r.zadd(KEY_CANVAS_INDEX, {doc["id"]: _now_epoch()})
@@ -300,9 +388,21 @@ async def cap_canvas_move(id: str = "", block_id: str = "",
 @capability(
     "canvas.remove", memory="off",
     http_method="POST", http_path="/canvas/remove", http_tags=["canvas"],
-    description="Remove a block from a canvas. Inputs: id (str!), block_id (str!).",
+    description="Remove a block from a canvas. Inputs: id (str!), block_id (str!) — or, for a "
+                "keyed item on the session canvas, key (str) with id or session_id.",
 )
-async def cap_canvas_remove(id: str = "", block_id: str = "", trace_id=None):
+async def cap_canvas_remove(id: str = "", block_id: str = "", key: str = "",
+                            session_id: str = "", trace_id=None):
+    if key:
+        doc = await _target(id, session_id, create=False)
+        if not doc:
+            return {"ok": False, "error": f"unknown canvas: {id or session_id}"}
+        hit = _find_key(doc, key)
+        if not hit:
+            return {"ok": False, "error": f"unknown key: {key}"}
+        doc["blocks"] = [b for b in doc.get("blocks", []) if b is not hit]
+        rev = await _write(doc, "remove", key)
+        return {"ok": True, "removed": hit.get("id"), "key": key, "id": doc["id"], "revision": rev}
     doc = await _load(id)
     if not doc:
         return {"error": f"unknown canvas: {id}"}
@@ -343,6 +443,199 @@ async def cap_canvas_delete(id: str = "", trace_id=None):
 )
 async def cap_canvas_block_types(trace_id=None):
     return {"block_types": BLOCK_TYPES, "modes": list(CANVAS_MODES)}
+
+
+# ── The session canvas and THE RESOLVER (Notes/38 §3.1–3.2, P0–P1). Argument names follow the directive
+#    vocabulary in vera/ui/directives.py (key · kind · at · size), so a directive maps straight onto a call. ────
+@capability(
+    "canvas.session.resolve", memory="off", silent=True,
+    http_method="POST", http_path="/canvas/session/resolve", http_tags=["canvas"],
+    description="The chat session's canvas — cv_session_<sid>, created on demand (\"Session canvas\"). "
+                "Input: session_id (str!). Output: {ok, id, revision, count, created}.",
+)
+async def cap_canvas_session_resolve(session_id: str = "", trace_id=None):
+    if not _session_canvas_id(session_id):
+        return {"ok": False, "error": "session_id is required"}
+    had = await _load(_session_canvas_id(session_id))
+    doc = await _target("", session_id)
+    if not doc:
+        return {"ok": False, "error": "no store"}
+    return {"ok": True, "id": doc["id"], "revision": doc.get("revision", 0),
+            "count": len(doc.get("blocks") or []), "created": had is None, "title": doc.get("title")}
+
+
+@capability(
+    "canvas.add", memory="off",
+    http_method="POST", http_path="/canvas/add", http_tags=["canvas"],
+    description="Put an item on the session canvas THROUGH THE RESOLVER — recall over recreate: an item whose "
+                "key already exists is not added again, it is brought back into the NOW band (resolved: "
+                "'shown'). Inputs: kind (block type), content (JSON for the kind), key (str, <kind>:<ref>; "
+                "generated if absent), id (canvas id) or session_id (its session canvas), at "
+                "('now'|'pinned'|'parked'|'hidden', default now), size ('s'|'m'|'l'|'xl'), anchor "
+                "({turn, mid, step} — the turn using it). Output: {ok, resolved: 'added'|'shown', existing, "
+                "key, item, id, revision}.",
+)
+async def cap_canvas_add(id: str = "", session_id: str = "", kind: str = "note", content: Any = None,
+                         key: str = "", at: str = "", size: str = "", anchor: Any = None, trace_id=None):
+    doc = await _target(id, session_id)
+    if not doc:
+        return {"ok": False, "error": f"unknown canvas: {id or session_id or '(no id or session_id)'}"}
+    key = str(key or "").strip()
+    hit = _find_key(doc, key)
+    if hit is not None:
+        # the resolver's whole point: the same key comes back, it does not double
+        hit["state"] = "now"
+        hit["ts"] = now_iso()
+        _add_anchor(hit, anchor)
+        rev = await _write(doc, "show", key)
+        return {"ok": True, "resolved": "shown", "existing": True, "key": key, "item": _item_view(hit),
+                "id": doc["id"], "revision": rev}
+    if key and content is None:
+        # a bare key is a request to SHOW; an unknown one is not made up out of nothing
+        return {"ok": False, "error": f"unknown key: {key} — give kind and content to add it", "key": key}
+    blocks = doc.setdefault("blocks", [])
+    if len(blocks) >= _MAX_BLOCKS:
+        return {"ok": False, "error": f"canvas is full ({_MAX_BLOCKS} blocks)"}
+    v = _validate_block(str(kind or "note"), _as_obj(content))
+    bid = _new_id("bk")
+    if not key:
+        key = f"{v['type']}:{bid}"
+    block = {"id": bid, "type": v["type"], "ts": now_iso(), "content": v["content"], "meta": {},
+             "layout": {"order": len(blocks)}, "key": key,
+             "state": at if at in ITEM_STATES else "now",
+             "size": size if size in ITEM_SIZES else "m"}
+    _add_anchor(block, anchor)
+    blocks.append(block)
+    rev = await _write(doc, "add", key)
+    return {"ok": True, "resolved": "added", "existing": False, "key": key, "item": _item_view(block),
+            "id": doc["id"], "revision": rev}
+
+
+async def _set_state(id: str, session_id: str, key: str, state: str, op: str) -> Dict[str, Any]:
+    doc = await _target(id, session_id, create=False)
+    if not doc:
+        return {"ok": False, "error": f"unknown canvas: {id or session_id}"}
+    hit = _find_key(doc, key)
+    if not hit:
+        return {"ok": False, "error": f"unknown key: {key}"}
+    prev = hit.get("state")
+    hit["state"] = state
+    rev = await _write(doc, op, key)
+    return {"ok": True, "key": key, "state": state, "prev": prev, "item": _item_view(hit),
+            "id": doc["id"], "revision": rev}
+
+
+@capability(
+    "canvas.pin", memory="off",
+    http_method="POST", http_path="/canvas/pin", http_tags=["canvas"],
+    description="Keep a session-canvas item above the flow. Inputs: key (str!), id or session_id.",
+)
+async def cap_canvas_pin(key: str = "", id: str = "", session_id: str = "", trace_id=None):
+    return await _set_state(id, session_id, key, "pinned", "pin")
+
+
+@capability(
+    "canvas.park", memory="off",
+    http_method="POST", http_path="/canvas/park", http_tags=["canvas"],
+    description="Put a session-canvas item below the flow (the parked chip line). Inputs: key (str!), "
+                "id or session_id.",
+)
+async def cap_canvas_park(key: str = "", id: str = "", session_id: str = "", trace_id=None):
+    return await _set_state(id, session_id, key, "parked", "park")
+
+
+@capability(
+    "canvas.size", memory="off",
+    http_method="POST", http_path="/canvas/size", http_tags=["canvas"],
+    description="Resize a session-canvas item. Inputs: key (str!), size ('s'|'m'|'l'|'xl'), id or session_id. "
+                "Output includes prev so it can be undone.",
+)
+async def cap_canvas_size(key: str = "", size: str = "m", id: str = "", session_id: str = "", trace_id=None):
+    size = str(size or "").lower()
+    if size not in ITEM_SIZES:
+        return {"ok": False, "error": f"size must be one of {'|'.join(ITEM_SIZES)}"}
+    doc = await _target(id, session_id, create=False)
+    if not doc:
+        return {"ok": False, "error": f"unknown canvas: {id or session_id}"}
+    hit = _find_key(doc, key)
+    if not hit:
+        return {"ok": False, "error": f"unknown key: {key}"}
+    prev = hit.get("size")
+    hit["size"] = size
+    rev = await _write(doc, "size", key, size=size)
+    return {"ok": True, "key": key, "size": size, "prev": prev, "item": _item_view(hit),
+            "id": doc["id"], "revision": rev}
+
+
+@capability(
+    "canvas.recall", memory="off", silent=True,
+    http_method="GET", http_path="/canvas/recall", http_tags=["canvas"],
+    description="Find items already on a canvas before creating one (recall over recreate). Inputs: id (str!), "
+                "q (str — matched against key, kind, title and content). Output: {ok, matches:[item]}. "
+                "Read-only; canvas.add with the match's key brings it back.",
+)
+async def cap_canvas_recall(id: str = "", q: str = "", session_id: str = "", trace_id=None):
+    doc = await _target(id, session_id, create=False)
+    if not doc:
+        return {"ok": False, "error": f"unknown canvas: {id or session_id}", "matches": []}
+    needle = str(q or "").strip().lower()
+    out = []
+    for b in doc.get("blocks", []):
+        if not b.get("key"):
+            continue
+        hay = " ".join([str(b.get("key") or ""), str(b.get("type") or ""),
+                        json.dumps(b.get("content") or {}, ensure_ascii=False)]).lower()
+        if not needle or needle in hay:
+            out.append(_item_view(b))
+    return {"ok": True, "id": doc["id"], "q": q, "matches": out}
+
+
+@capability(
+    "canvas.timeline", memory="off", silent=True,
+    http_method="GET", http_path="/canvas/timeline", http_tags=["canvas"],
+    description="A canvas's write history: {ok, id, revision, timeline:[{rev, ts, op, key}]}. Input: id (str!).",
+)
+async def cap_canvas_timeline(id: str = "", session_id: str = "", trace_id=None):
+    doc = await _target(id, session_id, create=False)
+    if not doc:
+        return {"ok": False, "error": f"unknown canvas: {id or session_id}"}
+    return {"ok": True, "id": doc["id"], "revision": doc.get("revision", 0),
+            "timeline": list(doc.get("timeline") or [])}
+
+
+@capability(
+    "canvas.session.room", memory="off", silent=True,
+    http_method="GET", http_path="/canvas/session/room", http_tags=["canvas"],
+    description="What the session canvas holds, for the room manifest: {id, revision, now:[keys], pinned:[keys], "
+                "parked:[keys], sizes:{key:size}, count}. Input: session_id (str!). Never creates the canvas.",
+)
+async def cap_canvas_session_room(session_id: str = "", trace_id=None):
+    cid = _session_canvas_id(session_id)
+    doc = await _load(cid) if cid else None
+    if not doc:
+        return {"ok": True, "id": cid, "revision": 0, "now": [], "pinned": [], "parked": [], "sizes": {},
+                "count": 0}
+    keyed = [b for b in doc.get("blocks", []) if b.get("key")]
+    by = lambda st: [b["key"] for b in keyed if b.get("state") == st]
+    return {"ok": True, "id": doc["id"], "revision": doc.get("revision", 0),
+            "now": by("now"), "pinned": by("pinned"), "parked": by("parked"),
+            "sizes": {b["key"]: b.get("size") or "m" for b in keyed}, "count": len(keyed)}
+
+
+@capability(
+    "canvas.ask", memory="off",
+    http_method="POST", http_path="/canvas/ask", http_tags=["canvas"],
+    description="Record a question asked about a canvas item (the ask chip itself is drawn by the chat). Inputs: "
+                "key (str!), question (str!), id or session_id. Output: {ok, key, question, revision}.",
+)
+async def cap_canvas_ask(key: str = "", question: str = "", id: str = "", session_id: str = "", trace_id=None):
+    doc = await _target(id, session_id, create=False)
+    if not doc:
+        return {"ok": False, "error": f"unknown canvas: {id or session_id}"}
+    if not _find_key(doc, key):
+        return {"ok": False, "error": f"unknown key: {key}"}
+    rev = await _write(doc, "ask", key, q=str(question or "")[:500])
+    return {"ok": True, "key": key, "question": question, "id": doc["id"], "revision": rev}
 
 
 # ── UI: the <canvas panel> — a live whiteboard renderer (its own page + a tab) ──
@@ -434,7 +727,9 @@ register_ui(
     "",
     ui_caps=["canvas.create", "canvas.get", "canvas.list", "canvas.append",
              "canvas.update", "canvas.move", "canvas.remove", "canvas.delete",
-             "canvas.block_types"],
+             "canvas.block_types",
+             "canvas.session.resolve", "canvas.add", "canvas.pin", "canvas.park", "canvas.size",
+             "canvas.recall", "canvas.timeline", "canvas.session.room", "canvas.ask"],
     mode="tab",
     tab_order=60,
 )
