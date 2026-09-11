@@ -58,14 +58,16 @@ def _cap(name: str):
 # gets registered into a Vera runtime registry after install. Command templates
 # take {sudo} ('' or 'sudo ') and {port}. They end with VERA_PROVISION_DONE so
 # we can confirm the script reached the end even when a trailing step warns.
-_OLLAMA_INSTALL = (
-    "curl -fsSL https://ollama.com/install.sh | sh && "
-    "{sudo}mkdir -p /etc/systemd/system/ollama.service.d && "
-    "printf '[Service]\\nEnvironment=\"OLLAMA_HOST=0.0.0.0:{port}\"\\n' "
-    "| {sudo}tee /etc/systemd/system/ollama.service.d/override.conf >/dev/null && "
-    "{sudo}systemctl daemon-reload && {sudo}systemctl restart ollama && "
-    "echo VERA_PROVISION_DONE"
-)
+try:
+    from Vera.vera.provisioning import ollama_node_core as _ollama_core
+except Exception:                                    # worktree / app-free import
+    from vera.provisioning import ollama_node_core as _ollama_core
+
+# Rendered per install so the requested port reaches the bind address.
+# One recipe is shared with the Proxmox path so the two cannot drift
+# apart, and it ends by proving the node answers on the port rather
+# than only that the unit is active.
+_OLLAMA_INSTALL = "{ollama_recipe}"
 _DOCKER_INSTALL = (
     "curl -fsSL https://get.docker.com | sh && "
     "{sudo}systemctl enable --now docker && "
@@ -236,8 +238,11 @@ async def cap_install(host_id: str = "", target: str = "", sudo: bool = True,
     if not rec:
         return {"ok": False, "error": f"host_id not found: {host_id}"}
     t = _TARGETS[target]
-    cmd = t["install"].format(sudo=_sudo_for(rec, sudo),
-                              port=int(port or t["default_port"]))
+    _port = int(port or t["default_port"])
+    _sudo = _sudo_for(rec, sudo)
+    cmd = t["install"].format(
+        sudo=_sudo, port=_port,
+        ollama_recipe=_ollama_core.ct_install_script(_port, sudo=_sudo))
     await emit_event({"type": "provision.install.start", "host": rec.get("host", ""),
                       "target": target})
     res = await _ssh(host_id, cmd, timeout=int(timeout or 900))
@@ -317,10 +322,17 @@ async def cap_connect(host_id: str = "", target: str = "", port: int = 0,
         add = _cap("ollama.add_instance")
         if not add:
             return {"ok": False, "error": "ollama module not loaded"}
-        url = f"http://{addr}:{port}"
-        node = await add(id=iid, url=url, has_gpu=has_gpu, label=lbl)
-        await emit_event({"type": "provision.connect", "kind": "ollama", "url": url})
-        return {"ok": True, "kind": "ollama", "id": iid, "url": url, "result": node}
+        # Reuse the id already serving this URL — see registration_plan.
+        plan = _ollama_core.registration_plan(
+            getattr(_orch, "OLLAMA_INSTANCES", {}) or {}, addr, port, has_gpu,
+            preferred_id=iid)
+        node = await add(id=plan["instance_id"], url=plan["url"], has_gpu=has_gpu,
+                         label=lbl)
+        await emit_event({"type": "provision.connect", "kind": "ollama",
+                          "url": plan["url"], "reused": plan["action"] == "reuse"})
+        return {"ok": True, "kind": "ollama", "id": plan["instance_id"],
+                "url": plan["url"], "reused": plan["action"] == "reuse",
+                "reason": plan["reason"], "result": node}
 
     if reg == "vllm":
         add = _cap("vllm.instances.add")
