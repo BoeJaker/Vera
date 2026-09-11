@@ -59,6 +59,18 @@ and already-observed evidence, rejects dataset, membership, and metric drift,
 and emits either an honest partial report or a complete one. Importing or
 calling it performs no judge, model, network, filesystem, or activation effect.
 
+Evidence-producing providers run through `execute_evaluation` under an explicit
+`EvaluationExecutionPolicy`. The default admits only providers declaring
+offline operation and deterministic judges, passes no case payloads, limits the
+case set and total integer cost, and keeps timeout/cancellation ownership in
+Vera. The wrapper cancels a timed-out provider, preserves a bounded failed
+report, rejects provider/request/case/provenance drift, and converts a cost
+overrun into non-passing evidence. Enabling a model judge or an external
+provider requires a deliberate policy change. External providers must also
+declare enforceable cost-budget and cancellation support; a local task cancel
+or post-hoc cost observation is not treated as proof of either. This contract
+does not expose such an activation through a capability or UI.
+
 The current ML Workshop remains unchanged. DeepEval/Promptfoo adapters,
 Accelerate, PEFT, MLflow, DSPy, live judges, and training execution are
 subsequent gated slices.

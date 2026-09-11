@@ -23,6 +23,9 @@ from .evaluation_evidence import (
     case_evaluation_evidence_from_dict, evaluate_ci_policy,
     evaluation_case_identity_from_dict, evaluation_usage_from_dict,
     judge_provenance_from_dict, partial_evaluation_report_from_dict)
+from .evaluation_execution import (
+    EvidenceEvalProvider, EvaluationExecutionPolicy, execute_evaluation,
+    plan_evaluation_execution)
 from .inference_contracts import (
     InferenceArtifact, InferenceCancellation, InferenceContractConflict,
     InferenceEvent, InferenceProvider, InferenceRequest, InferenceTranscript,
@@ -93,6 +96,8 @@ __all__ = ["AdmittedModelActivation", "LegacyModelCapabilityBinding", "ModelActi
            "case_evaluation_evidence_from_dict", "evaluate_ci_policy",
            "evaluation_case_identity_from_dict", "evaluation_usage_from_dict",
            "judge_provenance_from_dict", "partial_evaluation_report_from_dict",
+           "EvidenceEvalProvider", "EvaluationExecutionPolicy",
+           "execute_evaluation", "plan_evaluation_execution",
            "SQLiteModelPackageRegistry", "inspect_and_register_onnx",
            "evaluate_model_admission", "evaluation_report_from_dict",
            "evaluation_request_from_dict", "legacy_onnx_bindings",
