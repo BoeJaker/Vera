@@ -6676,6 +6676,57 @@ async def eval_resolver_shadow(detail: bool = False, limit: int = 50, trace_id=N
 
 
 @capability(
+    "eval.ontology.decision", memory="off", silent=True,
+    http_method="GET", http_path="/eval/ontology/decision",
+    http_tags=["eval", "caps", "ontology"],
+    description="Compare the resolver baseline with curated and generated capability-"
+                "ontology preference hints on a frozen synthetic corpus. Reports "
+                "selection, unsafe-choice, ambiguity, hint-size, relation-precision, "
+                "and local timing evidence without invoking a model, capability, or "
+                "activating ontology influence.",
+    contract={
+        "canonical_task": "evaluation.ontology.decision",
+        "effects": ["read", "filesystem"], "output_schema": {"type": "object"},
+        "approval": {"status": "not_required"},
+        "trust": {"status": "repository_fixture"},
+        "secrets": {"status": "not_required"},
+        "filesystem": {"status": "read_repository_fixture"},
+        "network": {"status": "not_required"},
+        "tenant": {"status": "global_read_only"},
+        "idempotency": {"status": "idempotent"},
+        "cancellation": {"status": "not_required"},
+        "pagination": {"status": "bounded"},
+        "resources": {"status": "declared", "classes": ["cpu"]},
+        "owner": "vera.ontologies",
+    },
+)
+async def eval_ontology_decision(detail: bool = False, limit: int = 50,
+                                 timing_repetitions: int = 20, trace_id=None):
+    from pathlib import Path
+    from Vera.vera.ontologies.capability_ontology_evaluation import (
+        evaluate_ontology_decision_corpus,
+        load_ontology_decision_corpus,
+    )
+    path = (Path(__file__).resolve().parent.parent / "evaluations" /
+            "capability-ontology-decision-v1.json")
+    report = evaluate_ontology_decision_corpus(
+        load_ontology_decision_corpus(path),
+        timing_repetitions=timing_repetitions)
+    bounded = max(1, min(int(limit or 50), 200))
+    variants = {}
+    for name, variant in report.get("variants", {}).items():
+        value = dict(variant)
+        cases = value.pop("cases", [])
+        if detail:
+            value.update({"matched": len(cases),
+                          "returned": min(len(cases), bounded),
+                          "truncated": len(cases) > bounded,
+                          "cases": cases[:bounded]})
+        variants[name] = value
+    return {**report, "variants": variants}
+
+
+@capability(
     "eval.policy.boundary", memory="off", silent=True,
     http_method="GET", http_path="/eval/policy/boundary", http_tags=["eval", "cap"],
     description="Run the frozen deterministic W1-05 adversarial policy corpus. Covers "

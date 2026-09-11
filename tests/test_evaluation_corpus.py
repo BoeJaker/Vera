@@ -104,3 +104,18 @@ def test_resolver_evaluation_capability_is_aggregate_by_default_and_bounded_in_d
         detail=True, limit=2))
     assert detail["returned"] == 2 and detail["truncated"] is True
     assert len(detail["cases"]) == 2
+
+
+def test_ontology_decision_capability_is_aggregate_by_default_and_bounded_in_detail():
+    aggregate = asyncio.run(orchestration.eval_ontology_decision.__wrapped__(
+        timing_repetitions=1))
+    assert aggregate["decision"] == "disable_generated_relations"
+    assert aggregate["generated_gate"]["passed"] is False
+    assert all("cases" not in variant for variant in aggregate["variants"].values())
+
+    detail = asyncio.run(orchestration.eval_ontology_decision.__wrapped__(
+        detail=True, limit=2, timing_repetitions=1))
+    assert all(variant["returned"] == 2 and variant["truncated"] is True
+               for variant in detail["variants"].values())
+    assert all(len(variant["cases"]) == 2
+               for variant in detail["variants"].values())
