@@ -201,10 +201,12 @@ def test_widget_fence_and_rule_share_one_record_and_one_block():
 
 
 def test_pin_to_canvas_copies_the_record_and_dedupes_on_its_key():
+    # the SESSION canvas through the resolver (canvas-graph): the record's key dedupes server-side
     pin = _fn("_wPin")
-    assert "_capCall('canvas.append',{id:cid,type:'widget',content:content,meta:{key,from:'reply',by:w.by}})" in pin
-    assert "b.type==='widget'&&b.meta&&b.meta.key===key" in pin
-    assert "_capCall('canvas.show'" in pin
+    assert "const key='widget:'+_widgetKey(w.rec);" in pin
+    assert "_capCall('canvas.session.resolve',{session_id:SID||''})" in pin
+    assert "_capCall('canvas.add',{id:cid,session_id:SID||'',kind:'widget',content,key," in pin
+    assert "r.resolved==='shown'" in pin
     assert "delete content.data" in pin                          # a copy of the record, not of the data
 
 
