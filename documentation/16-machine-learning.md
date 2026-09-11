@@ -35,6 +35,30 @@ canonical `EvaluationReport`. Its fixed arithmetic-mean aggregation and
 case-level failure count are reproducible and perform no model, judge, trainer,
 network, or external-provider call.
 
+Case-level and incremental evidence uses the compatible contracts in
+`vera/models/evaluation_evidence.py`. An `EvaluationCaseIdentity` binds a case
+key to its exact dataset revision plus input and expected-output SHA-256
+digests; raw inputs and answers never enter the evidence envelope.
+`CaseEvaluationEvidence` records thresholded metrics, integer token/cost/latency
+accounting, and explicit deterministic, model, or human judge provenance. Model
+judges must identify the provider, ModelPackage, and PromptPackage together.
+
+`PartialEvaluationReport` can preserve a non-empty subset after interruption
+without claiming terminal success. Completion requires every expected
+content-bound case, and strict reconstruction recomputes case/report IDs,
+coverage, usage totals, and pass flags. `evaluate_ci_policy` is a pure,
+effect-free decision over terminal state, coverage, failed cases, judge kind,
+cost, and latency; it never calls a provider or activates the evaluated model,
+prompt, capability, or run. This makes incomplete and forged evidence visible
+while keeping optimization and activation as later, separately reviewed
+decisions.
+
+`DeterministicEvidenceEvalProvider` is the reference replay adapter for this
+richer envelope. It accepts only a frozen request, its exact case identities,
+and already-observed evidence, rejects dataset, membership, and metric drift,
+and emits either an honest partial report or a complete one. Importing or
+calling it performs no judge, model, network, filesystem, or activation effect.
+
 The current ML Workshop remains unchanged. DeepEval/Promptfoo adapters,
 Accelerate, PEFT, MLflow, DSPy, live judges, and training execution are
 subsequent gated slices.
