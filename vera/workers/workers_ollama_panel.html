@@ -7754,6 +7754,16 @@ async function benchMatrixPoll(rid){
   }
 }
 
+async function benchMatrixApply(id){
+  if(!id) return;
+  if(!confirm('Use these measured windows as this node\'s learned safe windows? Vera prefers a learned window over its own estimate; a later CPU spill can still lower it.')) return;
+  const r=await api('/bench/matrix/apply','POST',{id:id});
+  if(!r||r.error){ txt('bm-status','could not apply: '+((r&&r.error)||'no response')); return; }
+  const set=(r.changes||[]).filter(c=>c.action==='set');
+  txt('bm-status','applied '+set.length+' window'+(set.length===1?'':'s'));
+  benchMatrixOpen(id);
+}
+
 async function benchMatrixCancel(){
   if(!_bmRun) return;
   if(!confirm('Stop this sweep? The cell in progress is abandoned; finished cells are kept.')) return;
@@ -7820,7 +7830,12 @@ function _bmRender(rec){
       .map(([k,l])=>'<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:10px;height:10px;display:inline-block;background:rgba('+tint[k]+',.45);border:1px solid var(--border)"></span>'+l+'</span>').join('')
     + '</div>';
   const recs=rec.recommendations||[];
-  if(recs.length) h+='<div style="font-size:9px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim);margin-bottom:3px">Recommended window</div>'
+  const sweepId=rec.id||rec.run_id||'';
+  const canApply=sweepId&&recs.some(x=>x.num_ctx);
+  if(recs.length) h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">'
+    +'<span style="font-size:9px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)">Recommended window</span>'
+    +(canApply?'<button class="btn sm" onclick="P.benchMatrixApply('+sq(sweepId)+')" title="Use these measured windows as the learned safe window for this node, instead of Vera\'s pre-load estimate">Apply to this node</button>':'')
+    +'</div>'
     + recs.map(x=>'<div style="font-size:10px;padding:2px 0"><b>'+esc(x.model)+'</b> → '
         +(x.num_ctx?'<span style="font-family:var(--mono);color:var(--gpu)">'+x.num_ctx+'</span> tokens at '+x.gen_tps+' tok/s':'<span style="color:#e0603a">none</span>')
         +' <span style="color:var(--dim2)">— '+esc(x.reason||'')+'</span></div>').join('');
@@ -7881,7 +7896,7 @@ return {
   benchOpen, benchLoop, benchClear, benchTempChanged, benchPassive,
   benchMon, benchMonAuto, benchNodeGpu, benchNodeTrace,
   benchMatrixVariants, benchMatrixStart, benchMatrixOpen, benchMatrixHistory, trafficOpen,
-  benchMatrixCancel,
+  benchMatrixCancel, benchMatrixApply,
   ndLoad, ndDetect, ndDetectAll, ndProv, ndProvClose, ndCompToggle,
   ndModelSearch, ndModelPick, ndPlan, ndRun, ndSwitch,
 };

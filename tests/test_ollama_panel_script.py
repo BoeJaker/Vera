@@ -60,7 +60,7 @@ def test_the_background_queue_renderer_is_still_wired_up():
     src = open(_PANEL, encoding="utf-8").read()
     assert "async function renderBgQueue()" in src
     assert src.count("renderBgQueue") >= 3        # defined, called, exported
-    assert 'data-wid="ol-bgqueue"' in src
+    assert "j-bgq-head" in src      # its target since a8f3b4e moved the widget
 
 
 def test_the_traffic_pane_reads_the_access_log_not_the_retired_wrapper():
@@ -86,12 +86,13 @@ def test_the_sweep_and_trace_controls_are_still_wired_up():
                          ("benchMatrixHistory", "/bench/matrix/results"),
                          ("benchMatrixVariants", "/bench/matrix/variants"),
                          ("benchMatrixCancel", "/bench/matrix/cancel"),
+                         ("benchMatrixApply", "/bench/matrix/apply"),
                          ("benchNodeTrace", "/bench/node_trace")):
         assert "async function %s(" % fn in src, "%s is not defined" % fn
         assert endpoint in src, "%s's endpoint %s is gone" % (fn, endpoint)
     for exported in ("benchMatrixStart", "benchMatrixOpen", "benchMatrixVariants",
                      "benchMatrixHistory", "benchNodeTrace", "trafficOpen",
-                     "benchMatrixCancel"):
+                     "benchMatrixCancel", "benchMatrixApply"):
         assert src.count(exported) >= 2, "%s is defined but never used or exported" % exported
     assert 'onclick="P.benchMatrixStart()"' in src
     assert 'onclick="P.benchMatrixCancel()"' in src

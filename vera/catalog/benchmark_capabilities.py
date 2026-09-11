@@ -1713,6 +1713,11 @@ async def _measure_cell(url: str, model: str, num_ctx: int, settings: dict,
                 summary = _summarise_sample(has_gpu, stdout)
                 if summary:
                     out["trace"] = summary
+                else:
+                    err = ((r.get("error") or r.get("stderr", ""))
+                           if isinstance(r, dict) else "")
+                    out["trace_error"] = (str(err)[:160]
+                                          or "the hardware sampler returned no samples")
             except Exception as e:
                 out["trace_error"] = str(e)[:160]
     out["repeats_run"] = len(runs) - 1
@@ -1954,6 +1959,52 @@ async def cap_bench_matrix_cancel(run_id: str = "", trace_id=None):
         return {"error": "no sweep %s is running in this Vera process" % run_id}
     task.cancel()
     return {"ok": True, "run_id": run_id, "state": "cancelling"}
+
+
+@capability("bench.matrix.apply", memory="off",
+            http_method="POST", http_path="/bench/matrix/apply", http_tags=["bench"],
+            description="Adopt a sweep's recommended window as the LEARNED safe window "
+                        "for each model it measured on that node. Vera's context sizing "
+                        "prefers a learned window over its own pre-load estimate, and only "
+                        "consults that estimate when no learned value exists — so this "
+                        "replaces a guess with a measurement and takes the estimator out "
+                        "of the path for those models. A window the sweep could not "
+                        "measure cleanly is skipped, never guessed. The value still caps "
+                        "to the model's own maximum, and a later CPU spill can still lower "
+                        "it. Inputs: id (str! — a sweep from bench.matrix.results), models "
+                        "(list — restrict to these), dry_run (bool, default false — report "
+                        "the changes without making them). Output: {ok, instance_id, "
+                        "dry_run, changes:[{model, num_ctx, previous, action, reason}]}.")
+async def cap_bench_matrix_apply(id: str = "", models: Any = None,
+                                 dry_run: bool = False, trace_id=None):
+    r = _redis()
+    if not r:
+        return {"error": "redis unavailable"}
+    raw = await r.get(KEY_MATRIX + id)
+    if not raw:
+        raw = await r.hget(KEY_RUNS, id)
+    if not raw:
+        return {"error": "no sweep with id %s" % id}
+    rec = json.loads(raw)
+    iid = rec.get("instance_id", "")
+    if not _instance_url(iid):
+        return {"error": "the node this sweep measured (%s) is no longer registered" % iid}
+    learned = getattr(_orch, "_NODE_MODEL_CTX", None)
+    if learned is None:
+        return {"error": "this Vera has no learned-window store to write to"}
+    changes = _matrix.apply_plan(rec.get("recommendations") or [], iid,
+                                 learned, only=models)
+    if not dry_run:
+        for ch in changes:
+            if ch["action"] == "set":
+                learned["%s::%s" % (iid, ch["model"])] = int(ch["num_ctx"])
+        applied = [c for c in changes if c["action"] == "set"]
+        if applied:
+            await emit_event({"type": "bench.matrix.applied", "id": id,
+                              "instance_id": iid,
+                              "windows": {c["model"]: c["num_ctx"] for c in applied}})
+    return {"ok": True, "id": id, "instance_id": iid, "dry_run": bool(dry_run),
+            "changes": changes}
 
 
 @capability("bench.matrix.status", memory="off", silent=True,
