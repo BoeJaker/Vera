@@ -31,7 +31,7 @@ from typing import Any, Dict, List, Optional
 
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import (   # noqa: F401
-    APP, CAPABILITY_REGISTRY, capability, emit_event, now_iso,
+    APP, CAPABILITY_REGISTRY, capability, emit_event, now_iso, register_ui,
 )
 
 # ── the vocabulary ────────────────────────────────────────────────────────────
@@ -243,6 +243,39 @@ async def _apply(sid: str, name: str, args: Dict[str, Any], by: str, row_id: str
             res = await fn(id=str(a.get("key")), session_id=sid, title=str(a.get("title") or ""), pinned=bool(a.get("pinned")))
             ok = bool(isinstance(res, dict) and res.get("ok"))
             return {"ok": ok, "outcome": "applied" if ok else "failed", "note": "" if ok else str((res or {}).get("error") or ""), "result": res}
+        # a key on the session canvas: the resolver shows it (canvas.add on an existing key IS show)
+        add = _cap("canvas.add")
+        if add and a.get("key"):
+            res = await add(session_id=sid, key=str(a.get("key")), kind=str(a.get("kind") or ""), content=a.get("content"))
+            ok = bool(isinstance(res, dict) and res.get("ok"))
+            return {"ok": ok, "outcome": "applied" if ok else "failed", "note": "" if ok else str((res or {}).get("error") or ""), "result": res}
+        return await _to_chat(sid, name, a, by, row_id)
+    if name in ("canvas.add", "canvas.pin", "canvas.park", "canvas.size", "canvas.remove"):
+        # the session canvas's own capabilities (canvas_capabilities.py) when they are registered; the chat applies
+        # them otherwise (a page without the resolver still gets the column's answer)
+        fn = _cap(name)
+        if fn:
+            if name == "canvas.add":
+                res = await fn(session_id=sid, kind=str(a.get("kind") or ""), content=a.get("content") if a.get("content") is not None else a.get("ref"),
+                               key=str(a.get("key") or ""), at=a.get("at"), size=str(a.get("size") or ""), anchor=a.get("anchor") if isinstance(a.get("anchor"), dict) else None)
+            elif name == "canvas.size":
+                res = await fn(session_id=sid, key=str(a.get("key") or ""), size=str(a.get("size") or ""))
+            else:
+                res = await fn(session_id=sid, key=str(a.get("key") or ""))
+            ok = bool(isinstance(res, dict) and res.get("ok"))
+            undo = None
+            if ok and name == "canvas.add":
+                undo = {"name": "canvas.remove", "args": {"key": (res.get("key") or a.get("key"))}} if not res.get("existing") else None
+            elif ok and name == "canvas.pin":
+                undo = {"name": "canvas.park", "args": {"key": a.get("key")}}
+            elif ok and name == "canvas.park":
+                undo = {"name": "canvas.pin", "args": {"key": a.get("key")}}
+            elif ok and name == "canvas.size" and res.get("prev"):
+                undo = {"name": "canvas.size", "args": {"key": a.get("key"), "size": res.get("prev")}}
+            note = "" if ok else str((res or {}).get("error") or "")
+            if ok and res.get("resolved") == "shown":
+                note = "the key was on the canvas already - shown"
+            return {"ok": ok, "outcome": "applied" if ok else "failed", "note": note, "result": res, "undo": undo}
         return await _to_chat(sid, name, a, by, row_id)
     if name == "widget.place":
         fn = _cap("widget.template.instantiate")
@@ -597,6 +630,14 @@ async def cap_ui_room(session_id: str = "", trace_id=None):
             room["scripts"] = [{"name": s.get("name"), "on": (s.get("on") or {}).get("event"), "state": s.get("state")} for s in (res or {}).get("scripts") or [] if s.get("state") == "on"]
         except Exception:
             pass
+    fn = _cap("canvas.session.room")
+    if fn:
+        try:
+            res = await fn(session_id=sid)
+            if isinstance(res, dict) and res.get("ok"):
+                room["canvas"] = {k: res.get(k) for k in ("id", "revision", "now", "pinned", "parked", "sizes", "count")}
+        except Exception:
+            pass
     room["policy"] = await _policy_for(sid)
     log = await cap_ui_directive_log(session_id=sid, limit=8)
     room["asks"] = log.get("asks") or []
@@ -609,6 +650,11 @@ async def cap_ui_room(session_id: str = "", trace_id=None):
         lines.append("panels: none open")
     if room["widgets"]:
         lines.append("widgets: " + " . ".join("%s (%s . %s)" % (w.get("name") or w.get("template"), w.get("form"), w.get("where")) for w in room["widgets"]))
+    if room.get("canvas"):
+        cv = room["canvas"]
+        lines.append("canvas: %s rev %s . now %s . pinned %s . parked %s" % (
+            cv.get("id"), cv.get("revision"),
+            " ".join(cv.get("now") or []) or "-", " ".join(cv.get("pinned") or []) or "-", " ".join(cv.get("parked") or []) or "-"))
     if room["scripts"]:
         lines.append("scripts armed: " + " . ".join(str(s.get("name")) for s in room["scripts"]))
     pol = room["policy"]
@@ -619,3 +665,29 @@ async def cap_ui_room(session_id: str = "", trace_id=None):
         lines.append("last directives: " + " . ".join("%s %s -> %s" % (x["by"], x["name"], x["outcome"]) for x in room["recent"][-5:]))
     lines.append("directives: [[cap:ui.directive {\"name\":\"panel.open\",\"args\":{\"id\":\"<panel id>\"}}]] - one vocabulary, policy drive . ask . never; ui.room shows the room you changed on the next turn")
     return {"ok": True, "room": room, "text": "\n".join(lines)}
+
+
+# ── the Driven panel (the Driven board): the directive log with its outcomes and undo, the policy in force,
+# the scripts armed, the asks pending - the control plane's own window ──────────────────────────────────────
+_DRIVEN_HTML = """
+<div style="height:100%;display:flex;flex-direction:column">
+  <iframe src="/ui/driven" style="flex:1;border:none;width:100%;background:transparent"></iframe>
+</div>
+"""
+
+
+@APP.get("/ui/driven", include_in_schema=False)
+async def _driven_page():
+    """The Driven panel as a standalone document (the harness tab and the chat's beside-panel mount it as an iframe)."""
+    from fastapi.responses import HTMLResponse
+    from pathlib import Path
+    p = Path(__file__).parent / "driven_panel.html"
+    return HTMLResponse(p.read_text(encoding="utf-8") if p.exists()
+                        else "<p style='color:#c96b6b'>driven_panel.html not found</p>")
+
+
+# mode="element": listed for the picker, the chat's Panels list and a beside-panel; opened where it is needed.
+register_ui("driven", "Driven", "\u27e1", _DRIVEN_HTML, js="",
+            ui_caps=["ui.directive.log", "ui.directive.undo", "ui.directive.answer", "ui.policy.get", "ui.policy.set",
+                     "ui.script.list", "ui.script.enable", "ui.room"],
+            mode="element", tab_order=64)

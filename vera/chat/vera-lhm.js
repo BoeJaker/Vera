@@ -229,6 +229,46 @@
   function toggleTop(on){ _topMode = (on == null) ? !_topMode : !!on; render(); }
   function toggleEdit(on){ _editing = (on == null) ? !_editing : !!on; if(!_editing) closeRecord(); render(); }
 
+  // ── composing a menu (the ChatMenu board's edit mode; the lhm.compose directive) ──────────────────────
+  // compose(spec) edits a menu the way ✎ does - it turns edit mode ON, applies the spec, and leaves edit mode on for
+  // the user to confirm or close; nothing is a second implementation. spec = { menu, add:[{id, label, tpl?, icon?}],
+  // remove:[ids], order:[ids], open:true }. A menu id that does not exist yet is created (a menu of the user's own).
+  var _menuHistory = [];   // for undo: the menus before each compose
+  function compose(spec){
+    spec = spec || {}; if(!_cfg) return false;
+    var menus = _cfg.menus = (_cfg.menus || []);
+    _menuHistory.push(JSON.parse(JSON.stringify(menus.map(function(m){ return { id:m.id, label:m.label, icon:m.icon, tabs:(m.tabs || []).map(function(t){ return { id:t.id, label:t.label, tpl:t.tpl }; }) }; }))));
+    var id = String(spec.menu || _active || ''); if(!id) return false;
+    var m = _menu(id);
+    if(!m){ m = { id:id, label:spec.label || id, icon:spec.icon || '✦', tabs:[], own:true }; menus.push(m); }
+    (spec.add || []).forEach(function(a){ if(!a || !a.id) return; if((m.tabs || []).some(function(t){ return t.id === a.id; })) return; (m.tabs = m.tabs || []).push({ id:String(a.id), label:String(a.label || a.id), tpl:a.tpl || '', icon:a.icon || '' }); });
+    if(Array.isArray(spec.remove)) m.tabs = (m.tabs || []).filter(function(t){ return spec.remove.indexOf(t.id) < 0; });
+    if(Array.isArray(spec.order) && spec.order.length){ var byId = {}; (m.tabs || []).forEach(function(t){ byId[t.id] = t; }); m.tabs = spec.order.map(function(k){ return byId[k]; }).filter(Boolean).concat((m.tabs || []).filter(function(t){ return spec.order.indexOf(t.id) < 0; })); }
+    toggleEdit(true);
+    if(spec.open !== false) pick(m.id, { silent:true });
+    if(_cfg.onCompose){ try{ _cfg.onCompose(m, spec); }catch(e){} }
+    render();
+    return true;
+  }
+  function composeUndo(){ var prev = _menuHistory.pop(); if(!prev || !_cfg) return false; var byId = {}; prev.forEach(function(p){ byId[p.id] = p; }); _cfg.menus = _cfg.menus.filter(function(m){ return byId[m.id]; }).map(function(m){ var p = byId[m.id]; m.tabs = p.tabs; return m; }); render(); return true; }
+  // Save as menu…: the current menu as a record of the user's own, handed to the owner (cfg.saveMenu(record) - the
+  // chat stores it through lhm.menu.save) and to the rail; addMenus(list) puts saved menus back beneath the built-ins
+  function saveAsMenu(name){
+    var m = _menu(_active); if(!m) return null;
+    var rec = { id:'menu:' + String(name || m.label).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48), name:String(name || m.label), icon:m.icon || '✦',
+      items:(m.tabs || []).map(function(t){ return { id:t.id, label:t.label, tpl:t.tpl || '' }; }), from:m.id };
+    if(_cfg && _cfg.saveMenu){ try{ _cfg.saveMenu(rec); }catch(e){} }
+    addMenus([rec]);
+    return rec;
+  }
+  function addMenus(list){
+    if(!_cfg || !Array.isArray(list)) return 0;
+    var n = 0;
+    list.forEach(function(rec){ if(!rec || !rec.id) return; if(_menu(rec.id)) return; _cfg.menus.push({ id:rec.id, label:rec.name || rec.id, icon:rec.icon || '✦', own:true, tabs:(rec.items || []).map(function(t){ return { id:t.id, label:t.label || t.id, tpl:t.tpl || '' }; }) }); n++; });
+    if(n) render();
+    return n;
+  }
+
   // ── every part's record: the widget registry's template behind it ──────
   function _base(){ try{ return (_cfg && _cfg.base) || window._veraBase || location.origin; }catch(e){ return ''; } }
   function _tplOf(el){ return el ? (el.getAttribute('data-tpl') || '') : ''; }
@@ -397,5 +437,6 @@
 
   window.VeraLHM = { mount: mount, pick: pick, setActiveTab: setActiveTab, toggleTop: toggleTop, toggleEdit: toggleEdit, render: render, spec: spec, absorb: absorb, css: _css,
     openRecord: openRecord, closeRecord: closeRecord, saveAsTemplate: saveAsTemplate, placeInto: placeInto,
+    compose: compose, composeUndo: composeUndo, saveAsMenu: saveAsMenu, addMenus: addMenus,
     get active(){ return { menu: _active, tab: _activeTab, top: _topMode, editing: _editing, hosted: _hosted, embedded: _embedded }; } };
 })();

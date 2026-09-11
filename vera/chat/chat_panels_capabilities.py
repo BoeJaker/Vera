@@ -848,6 +848,80 @@ async def cap_ui_panels_open(session_id: str = "", trace_id=None):
     return {"ok": True, "session_id": sid, "panels": panels, "count": len(panels), "hosts": hosts}
 
 
+# ── saved menus (the ChatMenu board's "Save as menu…"): a menu record of the user's own, shown in the rail beneath
+# the built-ins - {id, name, icon, items:[{id, label, tpl}], from}. Keyed per owner (a session id, or 'me').
+_LHM_MENU_KEY = "vera:ui:lhm:menu:{owner}:{id}"
+
+
+def _lhm_menu_owner(owner: str, sid: str) -> str:
+    return (str(owner or "").strip() or str(sid or "").strip() or "me")[:80]
+
+
+@capability(
+    "lhm.menu.save", memory="off",
+    http_method="POST", http_path="/ui/lhm/menu/save", http_tags=["ui", "lhm"],
+    description="Save a composed menu (Save as menu…). Inputs: menu (object! - {id, name, icon, items:[{id,label,tpl}], "
+                "from}), owner (str - defaults to the session), session_id (str). Output: {ok, menu}.")
+async def cap_lhm_menu_save(menu: Optional[dict] = None, owner: str = "", session_id: str = "", trace_id=None):
+    m = menu if isinstance(menu, dict) else {}
+    name = str(m.get("name") or "").strip()[:80]
+    mid = str(m.get("id") or ("menu:" + name.lower().replace(" ", "-"))).strip()[:80]
+    if not name or not mid:
+        return {"ok": False, "error": "a menu needs a name"}
+    items = [{"id": str(i.get("id") or "")[:64], "label": str(i.get("label") or i.get("id") or "")[:80], "tpl": str(i.get("tpl") or "")[:80]}
+             for i in (m.get("items") or []) if isinstance(i, dict) and i.get("id")][:24]
+    rec = {"id": mid, "name": name, "icon": str(m.get("icon") or "\u2726")[:4], "items": items, "from": str(m.get("from") or "")[:64],
+           "owner": _lhm_menu_owner(owner, session_id or trace_id), "saved_at": now_iso()}
+    r = _redis()
+    if not r:
+        return {"ok": False, "error": "redis unavailable"}
+    await r.set(_LHM_MENU_KEY.format(owner=rec["owner"], id=mid), json.dumps(rec))
+    await emit_event({"type": "lhm.menu.save", "id": mid, "owner": rec["owner"], "items": len(items)})
+    return {"ok": True, "menu": rec}
+
+
+@capability(
+    "lhm.menu.list", memory="off", silent=True,
+    http_method="GET", http_path="/ui/lhm/menus", http_tags=["ui", "lhm"],
+    description="The saved menus of an owner (the session by default). Inputs: owner (str), session_id (str). "
+                "Output: {ok, menus:[{id, name, icon, items, from, saved_at}], count}.")
+async def cap_lhm_menu_list(owner: str = "", session_id: str = "", trace_id=None):
+    r = _redis()
+    if not r:
+        return {"ok": True, "menus": [], "count": 0}
+    own = _lhm_menu_owner(owner, session_id or trace_id)
+    out = []
+    try:
+        async for key in r.scan_iter(match=_LHM_MENU_KEY.format(owner=own, id="*"), count=200):
+            raw = await r.get(key)
+            if isinstance(raw, (bytes, bytearray)):
+                raw = raw.decode("utf-8", "replace")
+            try:
+                out.append(json.loads(raw))
+            except Exception:
+                continue
+    except Exception:
+        pass
+    out.sort(key=lambda m: m.get("saved_at") or "")
+    return {"ok": True, "menus": out, "count": len(out)}
+
+
+@capability(
+    "lhm.menu.delete", memory="off",
+    http_method="POST", http_path="/ui/lhm/menu/delete", http_tags=["ui", "lhm"],
+    description="Delete a saved menu. Inputs: id (str!), owner (str), session_id (str). Output: {ok, id}.")
+async def cap_lhm_menu_delete(id: str = "", owner: str = "", session_id: str = "", trace_id=None):
+    r = _redis()
+    if not r:
+        return {"ok": False, "error": "redis unavailable"}
+    own = _lhm_menu_owner(owner, session_id or trace_id)
+    n = await r.delete(_LHM_MENU_KEY.format(owner=own, id=str(id or "").strip()))
+    if not n:
+        return {"ok": False, "error": "no saved menu %r" % id}
+    await emit_event({"type": "lhm.menu.delete", "id": id, "owner": own})
+    return {"ok": True, "id": id}
+
+
 @capability(
     "panel.dispatch",
     http_method="POST", http_path="/panel/dispatch", http_tags=["ui", "panel"],

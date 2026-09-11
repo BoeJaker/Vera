@@ -620,8 +620,8 @@ async def registry_upsert(entry: Optional[dict] = None, force: bool = False,
            else RC.normalise(dict(entry, id=eid), now=now_iso()))
     ENTRIES[rec["id"]] = rec
     await _save(rec)
-    emit_event({"type": "registry.upsert", "id": rec["id"], "kind": rec["kind"],
-                "name": rec["name"], "created": existing is None})
+    await emit_event({"type": "registry.upsert", "id": rec["id"], "kind": rec["kind"],
+                      "name": rec["name"], "created": existing is None})
     return {"ok": True, "entry": rec, "problems": probs, "created": existing is None}
 
 
@@ -635,7 +635,7 @@ async def registry_delete(id: str = "", trace_id=None):
         return {"ok": False, "error": "no entry %r" % eid}
     ENTRIES.pop(eid, None)
     await _drop(eid)
-    emit_event({"type": "registry.delete", "id": eid})
+    await emit_event({"type": "registry.delete", "id": eid})
     return {"ok": True, "id": eid}
 
 

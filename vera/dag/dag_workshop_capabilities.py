@@ -15254,6 +15254,19 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                           "hint": "POST /workshop/agent_loop/hitl/respond "
                                   f"{{session_id, step:{_step_q_key}, decision:'continue', "
                                   "comment:'<answer>'}"})
+        # The control plane hears the wait too (UI redesign, Notes/40 §5.4): the shipped
+        # `loop-waits` script turns it into the ask block on the canvas and the Loop menu
+        # with no model call. Never fatal - a loop must not stop because the UI could not
+        # be told; the HITL wait below is the answer path either way.
+        try:
+            from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY as _cr_ui
+            _ui_ev = (_cr_ui.get("ui.event") or {}).get("func")
+            if _ui_ev:
+                await _ui_ev(type="loop.step.waiting", session_id=sid,
+                             payload={"run": stream_id, "step": step_id, "question": q, "choices": [],
+                                      "channel": _ch or "ui", "hitl_step": _step_q_key})
+        except Exception as _e:
+            log.debug("ui.event loop.step.waiting not delivered: %s", _e)
         decision = await _await_hitl_decision(
             sid, _step_q_key, timeout=float(max(15, question_timeout_secs)))
         try:
