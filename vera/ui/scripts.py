@@ -427,8 +427,18 @@ async def _tick():
                 continue
 
 
+# One tick per estate: on prod the scheduler leader runs it (singleton). A dev sandbox has its own Redis db -
+# its event stream is its own - so there it runs as an ordinary job, or the scripted path could never be seen
+# on the design edge (singleton jobs are skipped where no leadership is held, which is every sandbox).
+def _is_sandbox() -> bool:
+    try:
+        return bool(_orch.is_dev_sandbox())
+    except Exception:
+        return False
+
+
 if not any(t.get("name") == "ui.scripts.tick" for t in getattr(_orch, "SCHEDULED_TASKS", [])):
-    schedule(_tick, 2.0, name="ui.scripts.tick", skip_in_sandbox=False, singleton=True)
+    schedule(_tick, 2.0, name="ui.scripts.tick", skip_in_sandbox=False, singleton=not _is_sandbox())
 
 
 # ── capabilities ──────────────────────────────────────────────────────────────
