@@ -11,6 +11,7 @@ from typing import Any
 
 CAPABILITY_ONTOLOGY_SNAPSHOT_SCHEMA = "vera.capability-ontology-snapshot/v1"
 AUTO_GENERATION_ENV = "VERA_CAP_ONTOLOGY_AUTO_GENERATION"
+GENERATED_RELATIONS_ENV = "VERA_CAP_ONTOLOGY_GENERATED_RELATIONS"
 MAX_SNAPSHOT_RELATIONS = 10_000
 MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024
 MAX_DESCRIPTION_BYTES = 16_384
@@ -43,6 +44,22 @@ def auto_generation_status(environ: Mapping[str, str]) -> dict[str, Any]:
         "config_valid": valid,
         "environment": AUTO_GENERATION_ENV,
         "rollback": f"set {AUTO_GENERATION_ENV}=disabled or clear it",
+    }
+
+
+def generated_relation_consumption_status(environ: Mapping[str, str]) -> dict[str, Any]:
+    """Resolve whether auto-generated rows may enter planner prompt context."""
+    raw = str(environ.get(GENERATED_RELATIONS_ENV, "disabled") or "disabled").strip().lower()
+    valid = raw in {"disabled", "enabled"}
+    mode = raw if valid else "disabled"
+    return {
+        "mode": mode,
+        "enabled": mode == "enabled" and valid,
+        "config_valid": valid,
+        "environment": GENERATED_RELATIONS_ENV,
+        "scope": "planner_and_agent_prompt_context",
+        "stored_relations_changed": False,
+        "rollback": f"set {GENERATED_RELATIONS_ENV}=disabled or clear it",
     }
 
 

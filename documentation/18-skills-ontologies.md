@@ -108,6 +108,15 @@ update time; duplicate pairs, malformed values, or oversized exports fail
 closed. Disabling generation does not remove existing relations. Take and retain
 this snapshot before any later deletion or migration.
 
+Existing LLM-generated rows are also excluded from planner and agent prompt
+context by default. They remain visible through list, matrix, neighbourhood,
+statistics, and snapshot operations, so evidence and human review are preserved.
+`VERA_CAP_ONTOLOGY_GENERATED_RELATIONS=enabled` temporarily restores their
+legacy prompt-context use; clearing it or setting `disabled` rolls back. The
+context response reports the active mode and number of generated rows excluded.
+Manual relations continue to be available, but this does not grant them resolver
+authority—the separate evaluation and activation decision still applies.
+
 ### Planner integration & the "adjacent hidden cap" trick
 
 `cap_ontology.context_for` returns a snippet for a planner system-prompt. When an agent has a restricted `domain_caps` allowlist, this returns relations *between an allowed cap and a hidden cap* — described **by the relation only**. The planner thus learns that an adjacent capability exists (and how it relates) without being able to call it directly: situational awareness without privilege escalation.
