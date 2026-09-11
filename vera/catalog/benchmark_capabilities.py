@@ -1470,6 +1470,9 @@ MATRICES_CAP = 100
 # One sweep per node at a time: two would only interleave cell by cell through the
 # node's slot and take twice as long to say the same thing.
 _MATRIX_ACTIVE: Dict[str, str] = {}
+# run_id -> the background task, so a sweep can be stopped. Per process: a
+# sweep can only be stopped by the Vera process that is running it.
+_MATRIX_TASKS: Dict[str, "asyncio.Task"] = {}
 
 
 def _sampler_command(gpu: bool, seconds: int) -> str:
@@ -1826,10 +1829,18 @@ async def _run_matrix(run_id: str, instance_id: str, cells: List[dict], settings
                               "status": rec["status"], "gen_tps": rec.get("gen_tps")})
             await _matrix_status_put(run_id, status, done)
         status["state"] = "done"
+    except asyncio.CancelledError:
+        # Stopped through bench.matrix.cancel. The cell in flight closed its
+        # request to the node and released the node's slot on the way out. The
+        # cancellation is not re-raised: this task is the sweep, and what it
+        # finished is still worth storing.
+        status["state"] = "cancelled"
+        notes.append("Stopped after %d of %d cells." % (len(done), len(cells)))
     except Exception as e:
         status.update(state="error", error="%s: %s" % (type(e).__name__, str(e)[:200]))
     finally:
         _MATRIX_ACTIVE.pop(instance_id, None)
+        _MATRIX_TASKS.pop(run_id, None)
 
     if any(c.get("repeats_run") is not None and c["repeats_run"] < settings["repeats"]
            for c in done):
@@ -1924,9 +1935,25 @@ async def cap_bench_matrix_start(instance_id: str = "", models: Any = None, ctxs
               "waiting_for_slot": False, "started_at": now_iso()}
     _MATRIX_ACTIVE[instance_id] = rid
     await _matrix_status_put(rid, status, [])
-    asyncio.create_task(_run_matrix(rid, instance_id, cells, settings, dropped, status))
+    _MATRIX_TASKS[rid] = asyncio.create_task(
+        _run_matrix(rid, instance_id, cells, settings, dropped, status))
     return {"ok": True, "run_id": rid, "state": "running", "cells": len(cells),
             "dropped_models": dropped}
+
+
+@capability("bench.matrix.cancel", memory="off",
+            http_method="POST", http_path="/bench/matrix/cancel", http_tags=["bench"],
+            description="Stop a running context × quantisation sweep. The cell in flight "
+                        "is abandoned — its request to the node is closed and the node's "
+                        "slot released — finished cells are kept, and the sweep is stored "
+                        "as cancelled. Only the Vera process running the sweep can stop "
+                        "it. Inputs: run_id (str!). Output: {ok, run_id, state}.")
+async def cap_bench_matrix_cancel(run_id: str = "", trace_id=None):
+    task = _MATRIX_TASKS.get(run_id)
+    if task is None or task.done():
+        return {"error": "no sweep %s is running in this Vera process" % run_id}
+    task.cancel()
+    return {"ok": True, "run_id": run_id, "state": "cancelling"}
 
 
 @capability("bench.matrix.status", memory="off", silent=True,

@@ -1050,6 +1050,7 @@ html.vpb-nav-hosted #secNav{display:none}
                   <label style="font-size:9.5px;color:var(--dim2);display:flex;align-items:center;gap:4px" title="How long each cell keeps waiting for a busy node before giving up. A sweep never measures on top of live work.">wait for a busy node
                     <select id="bm-wait" style="font-size:10px;padding:2px 4px"><option value="10">10 min</option><option value="30" selected>30 min</option><option value="120">2 h</option></select></label>
                   <button class="btn sm" style="border-color:var(--gpu);color:var(--gpu)" onclick="P.benchMatrixStart()">▶ Run sweep</button>
+                  <button class="btn sm" id="bm-cancel" style="display:none;border-color:var(--err);color:var(--err)" onclick="P.benchMatrixCancel()" title="Stop the sweep: the cell in flight is abandoned, finished cells are kept">■ Stop</button>
                   <span id="bm-status" style="font-size:9px;color:var(--dim2);font-family:var(--mono)"></span>
                 </div>
               </div>
@@ -7234,7 +7235,7 @@ async function ndSwitch(nodeId,backend){
 // deterministic accuracy packs), with a role leaderboard. Sub-tab of Ollama.
 // ═══════════════════════════════════════════════════════════════════════════
 let _benchNodes=[], _benchInited=false, _benchBusy=false, _benchRoles=[], _benchMonTimer=null;
-let _benchMonNodes=[], _bmPoll=null;
+let _benchMonNodes=[], _bmPoll=null, _bmRun='';
 
 function benchStatus(s){ const e=$('bench-status'); if(e) e.textContent=s||''; }
 function _benchMs(v){ return (v==null)?'—':(v>=1000?(v/1000).toFixed(1)+'s':Math.round(v)+'ms'); }
@@ -7720,6 +7721,8 @@ async function benchMatrixStart(){
   txt('bm-status','running · 0/'+st.cells+' cells'+((st.dropped_models||[]).length?' · '+st.dropped_models.length+' model(s) left out to stay under the cell limit':''));
   $('bm-result').innerHTML='';
   if(_bmPoll) clearInterval(_bmPoll);
+  _bmRun=st.run_id;
+  const stop=$('bm-cancel'); if(stop) stop.style.display='';
   _bmPoll=setInterval(()=>benchMatrixPoll(st.run_id),3000);
 }
 
@@ -7730,11 +7733,20 @@ async function benchMatrixPoll(rid){
   txt('bm-status',s.state+' · '+(s.done||0)+'/'+(s.total||0)+' cells'+cur+(s.waiting_for_slot?' · waiting for the node to be free'+(s.slot_waited_s?' ('+Math.round(s.slot_waited_s/60)+' min)':''):''));
   if((s.cells||[]).length) _bmRender(s);
   if(s.state!=='running'){
-    clearInterval(_bmPoll); _bmPoll=null;
+    clearInterval(_bmPoll); _bmPoll=null; _bmRun='';
+    const stop=$('bm-cancel'); if(stop) stop.style.display='none';
     if(s.error) txt('bm-status','failed · '+s.error);
     benchMatrixOpen(rid);
     benchMatrixHistory();
   }
+}
+
+async function benchMatrixCancel(){
+  if(!_bmRun) return;
+  if(!confirm('Stop this sweep? The cell in progress is abandoned; finished cells are kept.')) return;
+  const r=await api('/bench/matrix/cancel','POST',{run_id:_bmRun});
+  if(!r||r.error) txt('bm-status','could not stop: '+((r&&r.error)||'no response'));
+  else txt('bm-status','stopping…');
 }
 
 async function benchMatrixHistory(){
@@ -7856,6 +7868,7 @@ return {
   benchOpen, benchLoop, benchClear, benchTempChanged, benchPassive,
   benchMon, benchMonAuto, benchNodeGpu, benchNodeTrace,
   benchMatrixVariants, benchMatrixStart, benchMatrixOpen, benchMatrixHistory, trafficOpen,
+  benchMatrixCancel,
   ndLoad, ndDetect, ndDetectAll, ndProv, ndProvClose, ndCompToggle,
   ndModelSearch, ndModelPick, ndPlan, ndRun, ndSwitch,
 };

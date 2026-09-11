@@ -85,11 +85,14 @@ def test_the_sweep_and_trace_controls_are_still_wired_up():
                          ("benchMatrixOpen", "/bench/matrix/get"),
                          ("benchMatrixHistory", "/bench/matrix/results"),
                          ("benchMatrixVariants", "/bench/matrix/variants"),
+                         ("benchMatrixCancel", "/bench/matrix/cancel"),
                          ("benchNodeTrace", "/bench/node_trace")):
         assert "async function %s(" % fn in src, "%s is not defined" % fn
         assert endpoint in src, "%s's endpoint %s is gone" % (fn, endpoint)
     for exported in ("benchMatrixStart", "benchMatrixOpen", "benchMatrixVariants",
-                     "benchMatrixHistory", "benchNodeTrace", "trafficOpen"):
+                     "benchMatrixHistory", "benchNodeTrace", "trafficOpen",
+                     "benchMatrixCancel"):
         assert src.count(exported) >= 2, "%s is defined but never used or exported" % exported
     assert 'onclick="P.benchMatrixStart()"' in src
+    assert 'onclick="P.benchMatrixCancel()"' in src
     assert "P.benchNodeTrace(" in src and "P.trafficOpen(" in src
