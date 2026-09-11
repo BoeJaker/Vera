@@ -1731,9 +1731,11 @@ async def _matrix_status_put(run_id: str, status: dict, cells: List[dict]) -> No
 # Entering _ollama_slot without a timeout uses OLLAMA_QUEUE_TIMEOUT (default 0),
 # which under a gate broker means "do not wait": a sandbox sweep failed both
 # cells in seconds with BrokerError queue_timeout while prod held gpu-250's slot.
-# A sweep waits the gate's own wait budget, and re-waits; only a node that stays
-# busy across every attempt fails the cell.
-_SLOT_ATTEMPTS = 3
+# A sweep re-queues for the node's slot until its patience (max_wait_minutes) runs
+# out. Patience is wall time, not an attempt count: each attempt is capped by the
+# gate's own wait budget, which differs between prod and a sandbox broker, and a
+# fixed three attempts gave up after six minutes on a node busy for twelve.
+DEFAULT_MAX_WAIT_MINUTES = 30
 
 
 def _slot_wait_s() -> float:
@@ -1786,8 +1788,10 @@ async def _run_matrix(run_id: str, instance_id: str, cells: List[dict], settings
             # waits for live work — as long as any caller would, and then again: a
             # sweep is background work, so a busy node means wait, not fail.
             wait_started = time.monotonic()
-            for attempt in range(_SLOT_ATTEMPTS):
+            patience_s = settings["max_wait_minutes"] * 60.0
+            while True:
                 entered = False
+                status["slot_waited_s"] = round(time.monotonic() - wait_started)
                 try:
                     async with (slot(instance_id, timeout=_slot_wait_s()) if slot
                                 else _no_slot()) as act:
@@ -1804,10 +1808,11 @@ async def _run_matrix(run_id: str, instance_id: str, cells: List[dict], settings
                     break
                 except Exception as e:
                     if not entered and _is_queue_timeout(e):
-                        if attempt + 1 < _SLOT_ATTEMPTS:
+                        if time.monotonic() - wait_started < patience_s:
+                            await _matrix_status_put(run_id, status, done)
                             continue
-                        rec["error"] = ("The node stayed busy for %.0fs, so this cell never "
-                                        "got its slot." % (time.monotonic() - wait_started))
+                        rec["error"] = ("The node stayed busy for %.0f min, so this cell never "
+                                        "got its slot." % ((time.monotonic() - wait_started) / 60))
                     else:
                         rec["error"] = "%s: %s" % (type(e).__name__, str(e)[:180])
                     break
@@ -1881,12 +1886,16 @@ async def _run_matrix(run_id: str, instance_id: str, cells: List[dict], settings
                         "(float 0-0.9, default 0 — pad prompts to this share of the window to "
                         "measure long-context prefill; slow on CPU nodes), trace (bool, "
                         "default true), cold (bool, default false — unload each model before "
-                        "its first window). At most 40 cells: whole trailing models are left "
+                        "its first window), max_wait_minutes (int 1-240, default 30 — how long a "
+                        "cell keeps re-queuing for a busy node's slot before it fails). "
+                        "At most 40 cells: whole trailing models are left "
                         "out beyond that. Output: {ok, run_id, cells, dropped_models}.")
 async def cap_bench_matrix_start(instance_id: str = "", models: Any = None, ctxs: Any = None,
                                  num_predict: int = 192, repeats: int = 3,
                                  prompt_fill: float = 0.0, trace: bool = True,
-                                 cold: bool = False, trace_id=None):
+                                 cold: bool = False,
+                                 max_wait_minutes: int = DEFAULT_MAX_WAIT_MINUTES,
+                                 trace_id=None):
     if not _instance_url(instance_id):
         return {"error": "unknown Ollama node: %s" % instance_id}
     ms = _matrix.normalise_models(models)
@@ -1904,6 +1913,7 @@ async def cap_bench_matrix_start(instance_id: str = "", models: Any = None, ctxs
                 "repeats": max(1, min(int(repeats or 3), _matrix.MAX_REPEATS)),
                 "prompt_fill": min(max(float(prompt_fill or 0.0), 0.0), _matrix.MAX_FILL),
                 "trace": bool(trace), "cold": bool(cold),
+                "max_wait_minutes": max(1, min(int(max_wait_minutes or DEFAULT_MAX_WAIT_MINUTES), 240)),
                 "models": [m for m in ms if m not in dropped], "ctxs": cs}
     rid = "matrix-%s" % uuid.uuid4().hex[:8]
     node = _instance(instance_id) or {}

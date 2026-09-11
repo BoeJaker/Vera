@@ -1047,6 +1047,8 @@ html.vpb-nav-hosted #secNav{display:none}
                 <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
                   <label style="font-size:9.5px;color:var(--dim2);display:flex;align-items:center;gap:4px" title="Sample GPU clocks and throttling, or CPU and memory, during each cell's warm calls"><input type="checkbox" id="bm-trace" checked> hardware trace</label>
                   <label style="font-size:9.5px;color:var(--dim2);display:flex;align-items:center;gap:4px" title="Unload each model before its first window, so that cell shows a true cold load"><input type="checkbox" id="bm-cold"> cold first load</label>
+                  <label style="font-size:9.5px;color:var(--dim2);display:flex;align-items:center;gap:4px" title="How long each cell keeps waiting for a busy node before giving up. A sweep never measures on top of live work.">wait for a busy node
+                    <select id="bm-wait" style="font-size:10px;padding:2px 4px"><option value="10">10 min</option><option value="30" selected>30 min</option><option value="120">2 h</option></select></label>
                   <button class="btn sm" style="border-color:var(--gpu);color:var(--gpu)" onclick="P.benchMatrixStart()">▶ Run sweep</button>
                   <span id="bm-status" style="font-size:9px;color:var(--dim2);font-family:var(--mono)"></span>
                 </div>
@@ -7706,7 +7708,8 @@ async function benchMatrixStart(){
     num_predict:parseInt($('bm-predict').value)||192,
     repeats:parseInt($('bm-repeats').value)||3,
     prompt_fill:parseFloat($('bm-fill').value)||0,
-    trace:$('bm-trace').checked, cold:$('bm-cold').checked};
+    trace:$('bm-trace').checked, cold:$('bm-cold').checked,
+    max_wait_minutes:parseInt(($('bm-wait')||{}).value)||30};
   txt('bm-status','starting…');
   const st=await api('/bench/matrix/start','POST',body);
   if(!st||!st.run_id){
@@ -7724,7 +7727,7 @@ async function benchMatrixPoll(rid){
   const s=await api('/bench/matrix/status?run_id='+encodeURIComponent(rid));
   if(!s||s.error) return;
   const cur=s.current?' · '+_benchTrunc(s.current.model,24)+' @ '+s.current.num_ctx:'';
-  txt('bm-status',s.state+' · '+(s.done||0)+'/'+(s.total||0)+' cells'+cur+(s.waiting_for_slot?' · waiting for the GPU slot':''));
+  txt('bm-status',s.state+' · '+(s.done||0)+'/'+(s.total||0)+' cells'+cur+(s.waiting_for_slot?' · waiting for the node to be free'+(s.slot_waited_s?' ('+Math.round(s.slot_waited_s/60)+' min)':''):''));
   if((s.cells||[]).length) _bmRender(s);
   if(s.state!=='running'){
     clearInterval(_bmPoll); _bmPoll=null;
