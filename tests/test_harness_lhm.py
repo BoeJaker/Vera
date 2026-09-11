@@ -39,7 +39,8 @@ def test_the_library_renders_the_side_menu_and_the_strips():
 
 def test_the_harness_builds_its_main_menu_from_the_component():
     assert "if(window.VeraLHM && typeof VeraLHM.side === 'function'){ _lhmNativeRender(host); _tabAttachHoverMenus(); return; }" in HARNESS
-    assert "function _lhmNativeRender(host){" in HARNESS and "VeraLHM.side(host, {" in HARNESS
+    assert "function _lhmNativeRender(host){" in HARNESS and "VeraLHM.side(box, {" in HARNESS
+    assert "box.className = 'lhm-side-host'" in HARNESS, "the ☰ bar the absorb path drew stays above the list"
     assert "function _lhmNativeLegacy(host){" in HARNESS, "the hand-drawn list stays as the fallback"
     # the one panel set as Open now; the panels with the registry's sections and a panel's registered nav as one tree
     assert "open, panels, registered: { n: (_uiPanelCache || []).length, open: () => openTabPicker() }," in HARNESS

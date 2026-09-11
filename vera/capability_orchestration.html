@@ -2198,7 +2198,10 @@ function _lhmNativeRender(host){
   const widgets = [
     feed ? { title: 'Live events', count: mirror ? mirror.children.length : 0, el: feed, cls: 'events' + (_lhmEventsOpen ? ' open' : ''), open: () => _lhmToggleEvents() } : null,
     _lhmLoopsWidget() ];
-  VeraLHM.side(host, {
+  // into a child of the list host: when the chat's menu is absorbed and ☰ swapped to this list, the ☰ bar the
+  // absorb path drew stays above it (side() clears what it is given)
+  const box = document.createElement('div'); box.className = 'lhm-side-host'; box.style.cssText = 'flex:1;display:flex;flex-direction:column;min-height:0'; host.appendChild(box);
+  VeraLHM.side(box, {
     search: { label: 'Find a panel', hint: '⌘K', open: () => openTabPicker() },
     open, panels, registered: { n: (_uiPanelCache || []).length, open: () => openTabPicker() },
     onPanel: (pid, ev) => { if(ev && (ev.ctrlKey || ev.metaKey)) splitTab(pid); else switchTab(pid); _tabFireLoader(pid); _lhmNavSync(); },
