@@ -20,6 +20,14 @@
    ───
      el.render(code)      — parse + draw (also: set attribute `code`, or put
                             the source as the element's text content)
+     el.stream(code)      — the same, while the code is still ARRIVING: every
+                            complete line (closed by its newline) is placed; the
+                            unfinished tail line is shown as a ghost (dashed node,
+                            dashed edge), never guessed; a badge counts nodes ·
+                            edges · pending; a parse that fails on a half-written
+                            structure keeps the last good drawing instead of an
+                            error banner. render() on the closing fence settles
+                            the layout once.
      el.getSvg()          — serialised <svg> string ('' if nothing rendered)
      el.fit()             — re-fit the diagram to the viewport
      attribute `title`    — toolbar label
@@ -133,19 +141,23 @@
       }
       if (/^end\s*$/i.test(line)) { cur = subStack.pop() || null; continue; }
 
-      // edge chains — split by edge tokens
+      // edge chains — split by edge tokens. Text inside a node's brackets or quotes ("digest == stored?",
+      // "a -- b") is masked first so its own ==/-- never reads as an edge.
+      const masks = [];
+      const masked = line.replace(/"[^"]*"|\[[^\]]*\]|\([^)]*\)|\{[^}]*\}/g, s => { masks.push(s); return '\u0001' + (masks.length - 1) + '\u0001'; });
+      const unmask = s => s.replace(/\u0001(\d+)\u0001/g, (_, i) => masks[+i]);
       EDGE_RE.lastIndex = 0;
       const parts = []; const ops = [];
       let last = 0; let m;
-      while ((m = EDGE_RE.exec(line)) !== null) {
+      while ((m = EDGE_RE.exec(masked)) !== null) {
         // ignore matches inside label text: crude guard — require non-empty left side
-        const left = line.slice(last, m.index);
+        const left = masked.slice(last, m.index);
         if (!left.trim() && parts.length === 0) { continue; }
-        parts.push(left);
-        ops.push({ back: m[1] === '<', body: m[2], arrow: m[3] === '>', label: m[4] || '' });
+        parts.push(unmask(left));
+        ops.push({ back: m[1] === '<', body: m[2], arrow: m[3] === '>', label: unmask(m[4] || '') });
         last = EDGE_RE.lastIndex;
       }
-      parts.push(line.slice(last));
+      parts.push(unmask(masked.slice(last)));
 
       if (ops.length === 0) { endpoint(line); continue; }
 
@@ -312,7 +324,8 @@
 
   function nodeSvg(n, t) {
     const x = n.x - n.w / 2, y = n.y - n.h / 2;
-    const common = `fill="${t.card}" stroke="${t.line}" stroke-width="1.2"`;
+    const common = n.ghost ? `fill="none" stroke="${t.dim}" stroke-width="1.2" stroke-dasharray="3 3"`
+                           : `fill="${t.card}" stroke="${t.line}" stroke-width="1.2"`;
     let shape = '';
     switch (n.shape) {
       case 'round':
@@ -353,7 +366,7 @@
     }
     const ty = n.y - ((n.lines.length - 1) * LINE_H) / 2;
     const txt = n.lines.map((l, i) =>
-      `<text x="${n.x}" y="${ty + i * LINE_H}" text-anchor="middle" dominant-baseline="central" font-size="11" fill="${t.text}">${esc(l)}</text>`).join('');
+      `<text x="${n.x}" y="${ty + i * LINE_H}" text-anchor="middle" dominant-baseline="central" font-size="11" fill="${n.ghost ? t.dim : t.text}">${esc(l)}</text>`).join('');
     return shape + txt;
   }
 
@@ -391,9 +404,9 @@
       const horiz = g.dir === 'LR' || g.dir === 'RL';
       const c1 = horiz ? `${mx},${p1.y}` : `${p1.x},${my}`;
       const c2 = horiz ? `${mx},${p2.y}` : `${p2.x},${my}`;
-      const dash = e.dotted ? ' stroke-dasharray="4 4"' : '';
+      const dash = (e.dotted || e.ghost) ? ' stroke-dasharray="4 4"' : '';
       const width = e.thick ? 2.4 : 1.4;
-      parts.push(`<path d="M${p1.x},${p1.y} C${c1} ${c2} ${p2.x},${p2.y}" fill="none" stroke="${t.line}" stroke-width="${width}"${dash} marker-end="url(#vmArrow)"/>`);
+      parts.push(`<path d="M${p1.x},${p1.y} C${c1} ${c2} ${p2.x},${p2.y}" fill="none" stroke="${e.ghost ? t.dim : t.line}" stroke-width="${width}"${dash} marker-end="url(#vmArrow)"/>`);
       if (e.label) {
         const lw = e.label.length * TXT_W + 10;
         parts.push(`<rect x="${mx - lw / 2}" y="${my - 9}" width="${lw}" height="18" rx="4" fill="${t.bg}" fill-opacity=".92"/>` +
@@ -572,6 +585,14 @@
     .vp.panning{cursor:grabbing}
     .vp svg{display:block}
     .err{padding:10px 12px;font-size:11px;color:var(--err,#c96b6b);font-family:ui-monospace,monospace;white-space:pre-wrap}
+    .badge{position:absolute;right:8px;top:6px;font-family:ui-monospace,monospace;font-size:8.5px;color:var(--dim2,#8a92a0);
+      background:var(--bg2,#1a1c20);border:1px solid var(--border,rgba(255,255,255,.09));border-radius:99px;padding:2px 7px;
+      display:flex;gap:5px;align-items:center;pointer-events:none;z-index:2}
+    .badge i{width:5px;height:5px;border-radius:50%;background:var(--warn,#c9a35a);animation:vmbp 1.2s ease-in-out infinite}
+    .badge.done i{background:var(--acc2,#8fb87a);animation:none}
+    @keyframes vmbp{0%,100%{opacity:1}50%{opacity:.3}}
+    .ghost{display:flex;align-items:center;gap:12px;padding:22px 16px;font-size:10px;color:var(--dim2,#8a92a0);font-family:ui-monospace,monospace}
+    .ghost i{width:110px;height:32px;border:1px dashed var(--dim2,#8a92a0);border-radius:6px;display:inline-block;flex-shrink:0;opacity:.7}
     .err pre{margin:6px 0 0;padding:8px;background:rgba(0,0,0,.25);border-radius:5px;
       font-size:10px;color:var(--dim2,#8a92a0);max-height:180px;overflow:auto}
     .src{display:none;margin:0;padding:8px 10px;background:rgba(0,0,0,.22);font-size:10.5px;
@@ -637,6 +658,33 @@
       if (name === 'title') this._sh.querySelector('.ttl').textContent = v || 'diagram';
     }
 
+    /* what kind of diagram the source is, and the graph for the flow-like kinds */
+    static _kind(code) {
+      const head = (String(code || '').split('\n').find(l => l.trim()) || '').trim().toLowerCase();
+      if (/^sequencediagram/.test(head)) return 'sequence';
+      if (/^pie\b/.test(head)) return 'pie';
+      if (/^statediagram/.test(head)) return 'state';
+      return 'flowchart';
+    }
+    static _graph(code, kind) {
+      if (kind === 'state') return parseState(code);
+      const head = (String(code || '').split('\n').find(l => l.trim()) || '').trim().toLowerCase();
+      return parseFlow(/^(graph|flowchart)\b/.test(head) ? code : 'graph TD\n' + code);
+    }
+    _build(code, t) {
+      const type = VeraMermaid._kind(code);
+      if (type === 'sequence') return { type, result: seqSvg(parseSeq(code), t) };
+      if (type === 'pie') return { type, result: pieSvg(parsePie(code), t) };
+      return { type, result: flowSvg(VeraMermaid._graph(code, type), t) };
+    }
+    _badge(text, live) {
+      if (!this._badgeEl) { this._badgeEl = document.createElement('span'); this._badgeEl.className = 'badge'; }
+      const b = this._badgeEl;
+      if (text == null) { b.remove(); return; }
+      b.className = 'badge' + (live ? '' : ' done'); b.innerHTML = '<i></i>' + esc(text);
+      if (b.parentNode !== this._vp) this._vp.appendChild(b);
+    }
+
     /* main entry */
     render(code) {
       this._code = String(code || '').trim();
@@ -644,18 +692,61 @@
       const t = THEME();
       let result, type;
       try {
-        const head = (this._code.split('\n').find(l => l.trim()) || '').trim().toLowerCase();
-        if (/^sequencediagram/.test(head)) { type = 'sequence'; result = seqSvg(parseSeq(this._code), t); }
-        else if (/^pie\b/.test(head)) { type = 'pie'; result = pieSvg(parsePie(this._code), t); }
-        else if (/^statediagram/.test(head)) { type = 'state'; result = flowSvg(parseState(this._code), t); }
-        else if (/^(graph|flowchart)\b/.test(head)) { type = 'flowchart'; result = flowSvg(parseFlow(this._code), t); }
-        else { type = 'flowchart'; result = flowSvg(parseFlow('graph TD\n' + this._code), t); }
+        ({ type, result } = this._build(this._code, t));
       } catch (err) {
         this._svgEl = null;
         this._vp.innerHTML = `<div class="err">⚠ mermaid parse failed: ${esc(err && err.message || err)}<pre>${esc(this._code.slice(0, 1200))}</pre></div>`;
         this.dispatchEvent(new CustomEvent('vm:error', { detail: { message: String(err && err.message || err) } }));
         return;
       }
+      this._paint(result, type);
+      // the closing fence settles the layout once: the badge says so, then goes
+      if (this._live) { this._live = false; this._badge(`${result.count.nodes || 0} nodes · ${result.count.edges || 0} edges · settled`, false); clearTimeout(this._badgeT); this._badgeT = setTimeout(() => this._badge(null), 2500); }
+    }
+
+    /* the same, while the source is still arriving (see the header) */
+    stream(code) {
+      code = String(code || '').replace(/\r\n?/g, '\n');
+      this._live = true;
+      const lines = code.split('\n');
+      const partial = /\n$/.test(code) ? '' : (lines.pop() || '');
+      if (/\n$/.test(code)) lines.pop();
+      const full = lines.join('\n');
+      this._code = (full + (partial ? '\n' + partial : '')).trim();
+      this._sh.querySelector('.src').textContent = this._code;
+      const t = THEME();
+      const kind = VeraMermaid._kind(this._code);
+      const pending = partial.trim() ? 1 : 0;
+      let result, type;
+      try {
+        if (kind === 'sequence' || kind === 'pie') { ({ type, result } = this._build(full, t)); }
+        else {
+          let gA = null, gB = null;
+          try { gA = VeraMermaid._graph(full, kind); } catch (_) { gA = null; }
+          if (pending) { try { gB = VeraMermaid._graph(full + '\n' + partial, kind); } catch (_) { gB = null; } }
+          if (gB && gA) {
+            for (const [id, n] of gB.nodes) if (!gA.nodes.has(id)) n.ghost = true;
+            for (let i = gA.edges.length; i < gB.edges.length; i++) gB.edges[i].ghost = true;
+          } else if (gB && !gA) {
+            for (const n of gB.nodes.values()) n.ghost = true;
+            for (const e of gB.edges) e.ghost = true;
+          }
+          const g = gB || gA;
+          if (!g) throw new Error('waiting for a complete line');
+          type = kind; result = flowSvg(g, t);
+        }
+      } catch (err) {
+        // nothing whole yet — a ghost frame, never an error banner; a previous drawing stays
+        if (!this._svgEl) this._vp.innerHTML = '<div class="ghost"><i></i>lines parse as they close · a line is complete at its newline</div>';
+        this._badge('0 nodes · waiting for a complete line', true);
+        return;
+      }
+      this._paint(result, type);
+      this._badge(`${result.count.nodes || 0} nodes · ${result.count.edges || 0} edges${pending ? ' · ' + pending + ' pending' : ''}`, true);
+      this.dispatchEvent(new CustomEvent('vm:stream', { detail: { type, pending, ...result.count } }));
+    }
+
+    _paint(result, type) {
       const svgNs = 'http://www.w3.org/2000/svg';
       this._vp.innerHTML = '';
       const svg = document.createElementNS(svgNs, 'svg');
@@ -676,6 +767,7 @@
       const natural = Math.min(maxH, Math.max(120, this._bounds.h));
       if (!this.style.height && !this.hasAttribute('fill')) this._vp.style.height = natural + 'px';
       this.fit();
+      if (this._badgeEl && this._badgeEl.isConnected === false && this._live) this._vp.appendChild(this._badgeEl);
       this.dispatchEvent(new CustomEvent('vm:rendered', { detail: { type, ...result.count } }));
     }
 
