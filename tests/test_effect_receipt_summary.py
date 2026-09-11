@@ -72,6 +72,10 @@ def test_integrations_ui_explains_empty_evidence_without_mutation_controls():
     assert "/integrations/effect/receipts?limit=50" in source
     assert "/integrations/effect/retry/policy" in source
     assert "/integrations/effect/shadow/evidence?limit=50" in source
+    assert "family='+encodeURIComponent(EFFECT_FAMILY)" in source
+    assert "setEffectFamily" in source
+    assert "const isGeneric=EFFECT_FAMILY==='integration_api'" in source
+    assert "const readinessInfo=!isGeneric?''" in source
     assert "/integrations/effect/enforcement/readiness" in source
     assert "/integrations/effect/enforcement/decision" in source
     assert "/integrations/effect/enforcement/activation" in source
@@ -82,7 +86,7 @@ def test_integrations_ui_explains_empty_evidence_without_mutation_controls():
     assert "runtime remains observe-only" in source
     assert "Passing these checks measures coverage, not safety or authorization" in source
     assert "rejected mutations are blocked before credentials or HTTP" in source
-    assert "Enforcement is inactive" in source
+    assert "This family is observe-only here" in source
     assert "Vera does not automatically retry" in source
     assert "policy.reason_descriptions" in source
     assert "No external-effect receipts have been recorded yet" in source

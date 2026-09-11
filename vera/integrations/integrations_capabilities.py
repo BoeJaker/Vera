@@ -1128,17 +1128,21 @@ async def integration_effect_enforcement_readiness(trace_id=None):
     http_tags=["integration", "policy"], memory="off", silent=True,
     description="Inspect bounded payload-free aggregates of observe-only external-effect "
                 "decisions. Returns admission, execution and replay-suppression counts plus "
-                "reason codes; it cannot enforce, execute, retry, open secrets, or retain payloads.",
+                "reason codes for one isolated family: integration_api, telegram, or email. "
+                "It cannot enforce, execute, retry, open secrets, or retain payloads.",
 )
-async def integration_effect_shadow_evidence(limit: int = 50, trace_id=None):
+async def integration_effect_shadow_evidence(
+        limit: int = 50, family: str = "integration_api", trace_id=None):
     try:
-        return default_external_effect_shadow_evidence().summary(limit=limit)
+        result = default_external_effect_shadow_evidence(family=family).summary(limit=limit)
+        result["family"] = family
+        return result
     except (TypeError, ValueError) as exc:
         return {"schema": "vera.external-effect-shadow-evidence/v1", "error": str(exc),
                 "totals": {"observations": 0, "would_admit": 0,
                            "would_execute": 0, "would_suppress": 0},
                 "classifications": {}, "reasons_in_window": {}, "recent": [],
-                "window": {"requested": 0, "returned": 0},
+                "family": family, "window": {"requested": limit, "returned": 0},
                 "enforcement": "observe_only", "executes": False,
                 "retries": False, "retains_payload": False}
 
