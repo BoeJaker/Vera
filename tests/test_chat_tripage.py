@@ -120,8 +120,8 @@ def test_wpin_goes_through_the_resolver_onto_the_session_canvas():
 
 def test_the_directive_cases():
     sw = HTML[HTML.index("async function _uiDirectiveApply(p){"):HTML.index("function _uiAskChip(row){")]
-    assert "case 'lhm.compose': { if(!(window.VeraLHM&&typeof VeraLHM.compose==='function')) return later(" in sw
-    assert "VeraLHM.compose(a.menu, a.widgets)" in sw
+    assert "case 'lhm.compose': {" in sw and "if(!(window.VeraLHM&&typeof VeraLHM.compose==='function')) return later(" in sw
+    assert "VeraLHM.compose({menu:String(a.menu||''), label:a.label, icon:a.icon, add, remove:" in sw   # the chat wiring pass: the vocabulary's {menu, widgets} as the library's spec
     assert "case 'canvas.ask': {" in sw and "_uiAskCard(q, a.choices, 'canvas item · '+key)" in sw and "_capCall('canvas.ask',{key, question:q, session_id:SID||''})" in sw
     assert "case 'canvas.add': case 'canvas.show': case 'canvas.pin': case 'canvas.park': case 'canvas.size': {" in sw
     assert "_capCall(name==='canvas.show'?'canvas.add':name, args)" in sw and "openPage('canvas');" in sw

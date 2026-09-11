@@ -1166,6 +1166,12 @@ html.vpb-nav-hosted #rightRail.lhm-host.slim{width:0 !important;min-width:0 !imp
    it for voice · council · diffuse, attachments as cards in the question. The top-bar buttons stay; these mirror. ═══ */
 #inputBar{flex-wrap:wrap}
 #cmpFt{width:100%;display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:5px 2px 0;order:9}
+/* the Driven ribbon on a panel the aide opened (the Driven board) */
+.drv-ribbon{display:inline-flex;align-items:center;gap:6px;margin-left:8px;padding:1px 8px;border-radius:10px;border:1px solid var(--acc3,#d4a96a);background:color-mix(in srgb,var(--acc3,#d4a96a) 12%,transparent);font-size:9px;color:var(--text)}
+.drv-ribbon i{width:6px;height:6px;border-radius:50%;background:var(--acc3,#d4a96a);display:inline-block;animation:pr 1.6s infinite}
+.drv-ribbon b{font-family:var(--mono);font-size:8.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--acc3,#d4a96a)}
+.drv-ribbon .who,.drv-ribbon .pol{font-family:var(--mono);font-size:8.5px;color:var(--dim2)}
+.drv-ribbon .btn.xs{font-size:8.5px;padding:0 6px}
 .cchip{display:inline-flex;align-items:center;gap:4px;padding:2px 9px;border-radius:10px;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);font-size:var(--label-size,9.5px);letter-spacing:.2px;cursor:pointer;user-select:none;white-space:nowrap;line-height:1.5}
 .cchip:hover{color:var(--text);border-color:var(--border2)}
 .cchip.on{color:var(--acc);border-color:var(--acc);background:color-mix(in srgb,var(--acc) 12%,transparent)}
@@ -2248,6 +2254,8 @@ html[data-blocks="off"] .pa-att{background:transparent}
       <div class="panel-inner">
         <div class="panel-host-bar">
           <span class="panel-host-title" id="chatPanelTitle">Panel</span>
+          <!-- the Driven ribbon (chat wiring pass): shown when the aide opened this panel — who, the policy in force, undo, the log -->
+          <span id="chatPanelRibbon" class="drv-ribbon" style="display:none" data-w="driven ribbon · controls"><i></i><b>driven</b><span class="who"></span><span class="pol"></span><button class="btn xs" onclick="CH._drvUndo()" title="Undo the directive that opened this panel">undo</button><button class="btn xs" onclick="CH._drvLog()" title="The directive log, the policy, the asks — the Driven panel">log</button></span>
           <button class="btn xs" onclick="CH.panelPopOut()" title="Open in new tab">&#8599;</button>
           <button class="btn xs" onclick="CH.panelClose()"  title="Close">&#215;</button>
         </div>
@@ -5278,7 +5286,16 @@ IMPORTANT:
         return {ok:false,outcome:'failed',note:'panel '+a.id+' is not open here'};
       }
       case 'lhm.focus': { if(!window.VeraLHM) return later('the LHM'); const ok=VeraLHM.pick(String(a.menu||'')+(a.tab?'/'+a.tab:'')); return ok?done('menu '+a.menu):{ok:false,outcome:'failed',note:'no menu '+a.menu}; }
-      case 'lhm.compose': { if(!(window.VeraLHM&&typeof VeraLHM.compose==='function')) return later('composing a menu by rule (edit mode composes by hand today)'); const r=VeraLHM.compose(a.menu, a.widgets); return (r&&r.ok===false)?{ok:false,outcome:'failed',note:String(r.note||'the LHM refused')}:done('menu '+a.menu+' composed'); }
+      case 'lhm.compose': {
+        if(!(window.VeraLHM&&typeof VeraLHM.compose==='function')) return later('composing a menu by rule (edit mode composes by hand today)');
+        // the vocabulary's {menu, widgets} → the library's spec; a widget may be a tab id or {id, label, tpl}
+        const add=(Array.isArray(a.widgets)?a.widgets:(Array.isArray(a.add)?a.add:[])).map(w=>typeof w==='string'?{id:w,label:w}:w).filter(w=>w&&w.id);
+        const ok=VeraLHM.compose({menu:String(a.menu||''), label:a.label, icon:a.icon, add, remove:Array.isArray(a.remove)?a.remove:undefined, order:Array.isArray(a.order)?a.order:undefined, open:a.open!==false});
+        if(!ok) return {ok:false,outcome:'failed',note:'no menu '+a.menu};
+        const r=document.getElementById('rightRail'); if(r&&r.classList.contains('slim')) toggleRight();
+        return done('menu '+(a.menu||'')+' composed · edit mode is on for you to confirm', {undo:{name:'lhm.compose.undo'}});
+      }
+      case 'lhm.compose.undo': { if(!(window.VeraLHM&&typeof VeraLHM.composeUndo==='function')) return later('the LHM'); return VeraLHM.composeUndo()?done('the menu is back'):{ok:false,outcome:'failed',note:'nothing to undo'}; }
       // the ask chip for a canvas item: like ui.ask, quoting the item; the question itself lands in the canvas timeline
       case 'canvas.ask': { const key=String(a.key||''), q=String(a.question||a.q||'?'); _uiAskCard(q, a.choices, 'canvas item · '+key); try{ if(key) _capCall('canvas.ask',{key, question:q, session_id:SID||''}).catch(()=>{}); }catch(_){} return done('the ask chip quotes '+(key||'the canvas')); }
       // the session canvas: one implementation (the caps) whoever asks — the model, the column, the pin button
@@ -5566,6 +5583,7 @@ IMPORTANT:
     if(run){
       L.push('- Run your own code: after writing a snippet you may execute it IN THIS TURN with [[cap:exec.code.run {"language":"python","code":"…"}]] — the output returns to you automatically next turn; interpret it for the user. For write→test→fix loops use [[cap:exec.code.iterate {"language":"python","code":"…","goal":"…","expect":"substring of correct stdout","max_iterations":3}]].');
     }
+    L.push('- Driving the UI inline: a directive of the control plane may be written in the reply as ⟦name {"arg":…}⟧ — e.g. ⟦panel.open {"id":"exec-panel"}⟧, ⟦lhm.focus {"menu":"loop"}⟧, ⟦canvas.add {"kind":"note","key":"note:plan","content":{"text":"…"}}⟧ — the same policy, log and undo as [[cap:ui.directive …]]; the room you changed shows on the next turn.');
     L.push('- These run under the user\'s explicit settings — do not ask permission again, but only use them when they add real value.');
     return L.join('\n');
   }
@@ -5797,6 +5815,7 @@ IMPORTANT:
     let t=text;
     t=t.replace(new RegExp(PANEL_PLACEHOLDER_RE.source,'gi'),(_,n)=>stash(_streamBadge('panel','panel: '+n)));
     t=t.replace(new RegExp(CAP_PLACEHOLDER_RE.source,'gi'),(_,n)=>stash(_streamBadge('cap',n)));
+    t=t.replace(new RegExp(DIRECTIVE_INLINE_RE.source,'g'),(_,n)=>stash(_streamBadge('cap','ui.directive '+n)));
     t=t.replace(new RegExp(CAP_PAREN_RE.source,'gi'),(_,n)=>stash(_streamBadge('cap',n)));
     t=t.replace(new RegExp(DAG_PLACEHOLDER_RE.source,'gi'),(_,a)=>stash(_streamBadge('cap','dag.'+a)));
     t=t.replace(/\[\[suggest:([a-z0-9_.]+)[\s\S]*?\]\]/gi,(_,n)=>stash(_streamBadge('suggest','suggest '+n)));
@@ -5804,6 +5823,8 @@ IMPORTANT:
     let tail='';
     const lo=t.lastIndexOf('[[');
     if(lo>-1 && t.indexOf(']]',lo)===-1){ tail='<span class="stream-badge pending">&#9679;</span>'; t=t.slice(0,lo); }
+    const lo2=t.lastIndexOf('\u27e6');
+    if(lo2>-1 && t.indexOf('\u27e7',lo2)===-1){ tail='<span class="stream-badge pending">&#9679;</span>'; t=t.slice(0,lo2); }
     return renderMd(t,{liveMermaid:false}).replace(/(\d+)/g,(_,i)=>badges[+i]||'') + tail;
   }
 
@@ -6680,6 +6701,9 @@ IMPORTANT:
   // [[loop]] or [[loop: <refined goal>]] — the LLM DEFERS the whole request to the
   // agentic loop (v7) when it needs more than one capability / multiple steps.
   const LOOP_PLACEHOLDER_RE=/\[\[loop(?::\s*([\s\S]*?))?\s*\]\]/gi;
+  // ⟦panel.open {"id":"exec-panel"}⟧ — the control plane's inline shorthand (the Control board): one directive of
+  // the vocabulary with its args, lifted into a ui.directive call; the same policy, log and undo as the tool call.
+  const DIRECTIVE_INLINE_RE=/\u27e6\s*([a-z][a-z0-9_.]+)\s*(\{[\s\S]*?\})?\s*\u27e7/g;
 
   // Strip markdown link wrappers around cap names that the LLM creates:
   //   [[[exec.bash.run](http://exec.bash.run)(args)]]
@@ -6721,6 +6745,13 @@ IMPORTANT:
     while((m=rePnl.exec(text))!==null){
       if(matches.find(x=>x.idx===m.index)) continue;
       matches.push({idx:m.index,end:m.index+m[0].length,type:'panel',groups:[m[1],m[2]||'']});
+    }
+    // ⟦name {args}⟧ → a cap match of ui.directive (the dispatcher applies policy, logs, and answers with the outcome)
+    const reDir=new RegExp(DIRECTIVE_INLINE_RE.source,'g');
+    while((m=reDir.exec(text))!==null){
+      if(matches.find(x=>x.idx===m.index)) continue;
+      let args={}; try{ args=m[2]?JSON.parse(m[2]):{}; }catch(_){ args={}; }
+      matches.push({idx:m.index,end:m.index+m[0].length,type:'cap',groups:['ui.directive',JSON.stringify({name:m[1],args})]});
     }
 
     // [[cap:name {...}]] — inline execute (canonical, space-separated)
@@ -11969,9 +12000,15 @@ Your task: decide what to do next to advance toward the goal.
       base:BASE,
       // every pane is a widget with a record in the registry (widget.template.get lhm:…); ⚙ in edit mode opens it
       panes:[{id:'rpHist',w:'sessions · list',tpl:'lhm:sessions'},{id:'rpCfg',w:'settings · form'},{id:'rpCaps',w:'capabilities · list'},{id:'rpPanels',w:'panels · list'},{id:'rpLoop',w:'loop program · form',tpl:'lhm:loop-graph'},{id:'ctxCanvas',w:'context galaxy · graph',tpl:'lhm:ctx-galaxy'},{id:'ctxMeter',w:'budget bar · meter',tpl:'lhm:ctx-budget'},{id:'paneLoopGraph',w:'loop graph · graph',tpl:'lhm:loop-graph'},{id:'paneMemGraph',w:'memory graph · graph',tpl:'lhm:memory-graph'},{id:'paneCode',w:'file tree · tree',tpl:'lhm:file-tree'},{id:'sbxSessionTools',w:'sandbox actions · controls',tpl:'lhm:actions'},{id:'paneBrowser',w:'browser · panel'},{id:'paneMonitor',w:'monitor · log'}],
-      onPick:()=>{ if(host.classList.contains('slim')) toggleRight(); }});
+      onPick:()=>{ if(host.classList.contains('slim')) toggleRight(); },
+      // "Save as menu…" (the ChatMenu board's edit mode): the composed menu becomes a record of yours through lhm.menu.save
+      saveMenu:(rec)=>{ _capCall('lhm.menu.save',{menu:rec, session_id:SID||''}).then(r=>{ appendSys(r&&r.ok?('Saved menu <b>'+esc(rec.name)+'</b> — it is in the rail now'):('Save as menu failed: '+esc(String((r&&r.error)||'')))); }).catch(()=>{}); },
+      // the ☰ list gains the button while a menu is being edited; the record goes to the owner (above) and to the rail
+      topExtra:(top)=>{ if(!(VeraLHM.active&&VeraLHM.active.editing)) return; const b=document.createElement('button'); b.className='lhm-cta'; b.style.margin='6px 8px 0'; b.textContent='⧉ Save as menu…'; b.title='The menu as it stands, as a menu of your own in the rail'; b.addEventListener('click',()=>{ const n=prompt('Name for this menu', ''); if(n) VeraLHM.saveAsMenu(n); }); top.appendChild(b); }});
     // the rail's badge and the Open now rows follow the beside-panel
     try{ window.addEventListener('vera:panel-mounted', ()=>{ setTimeout(()=>VeraLHM.render(),0); }); }catch(_){}
+    // the menus you saved come back beneath the built-ins (never fatal; a page without the caps has none)
+    try{ _capCall('lhm.menu.list',{session_id:SID||''}).then(r=>{ if(r&&r.ok&&Array.isArray(r.menus)&&r.menus.length) VeraLHM.addMenus(r.menus); }).catch(()=>{}); }catch(_){}
   }
   function _unifyRails(){
     const rail=document.getElementById('rightRail');
@@ -13153,11 +13190,35 @@ Your task: decide what to do next to advance toward the goal.
     // Notify the resize subsystem so it can apply the saved split fraction.
     try{ window.dispatchEvent(new CustomEvent('vera:panel-mounted',{detail:{id:p.id}})); }catch(_){}
     try{ _uiEvent('panel.opened',{id:p.id, by:_panelOpenedBy||'you', placement:'beside chat'}); }catch(_){}
+    try{ _drvRibbon(p.id, _panelOpenedBy||'you'); }catch(_){}
     return true;
   }
+  // the ribbon says who opened the panel beside the chat and under which policy; undo reverses the directive that
+  // opened it, log opens the Driven panel here (it takes the session from the bridge's init)
+  function _drvRibbon(pid, by){
+    const rb=document.getElementById('chatPanelRibbon'); if(!rb) return;
+    const driven=by&&by!=='you'&&by!=='user';
+    rb.style.display=driven?'inline-flex':'none';
+    if(!driven) return;
+    rb.dataset.panel=pid; rb.querySelector('.who').textContent=String(by);
+    const pol=rb.querySelector('.pol'); pol.textContent='';
+    _capCall('ui.policy.get',{session_id:SID||''}).then(r=>{ const p=(r&&(r.policy||r.rules))||{}; const mode=p['panel:'+pid]||p.panels||'drive'; pol.textContent='policy '+mode; }).catch(()=>{});
+  }
+  async function _drvUndo(){
+    const rb=document.getElementById('chatPanelRibbon'); const pid=rb&&rb.dataset.panel; if(!pid) return;
+    try{
+      const log=await _capCall('ui.directive.log',{session_id:SID||'', limit:60});
+      const row=((log&&log.rows)||[]).slice().reverse().find(x=>x.name==='panel.open'&&x.outcome==='applied'&&((x.args||{}).id===pid));
+      if(!row){ appendSys('No directive opened <b>'+esc(pid)+'</b> — closing it instead.'); panelClose(); return; }
+      const r=await _capCall('ui.directive.undo',{session_id:SID||'', row_id:row.id});
+      appendSys(r&&r.ok?('Undone: the aide\'s <b>panel.open '+esc(pid)+'</b>'):('Undo failed: '+esc(String((r&&r.error)||''))));
+    }catch(e){ appendSys('Undo failed: '+esc(String(e&&e.message||e))); }
+  }
+  function _drvLog(){ panelOpen('driven','you'); }
 
   function panelClose(){
     _panelOpenedBy='';
+    try{ const rb=document.getElementById('chatPanelRibbon'); if(rb) rb.style.display='none'; }catch(_){}
     try{ if(window.VeraLHM) setTimeout(()=>VeraLHM.render(),0); }catch(_){}
     try{ setTimeout(_panelsOpenReport,0); }catch(_){}
     document.body.classList.remove('has-panel');
@@ -16037,6 +16098,7 @@ Your task: decide what to do next to advance toward the goal.
     _uiAskAnswer,_uiAskPick,_uiDirectiveApply,
     _cmpChip,_cmpSync,_paOpen,_paCopy,
     _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,
+    _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
     _persistMediaCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},
     setContext:txt=>{_parentCtx=txt;},
