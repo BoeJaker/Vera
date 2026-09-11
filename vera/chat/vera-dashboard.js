@@ -726,6 +726,47 @@
       var inp = _modal.querySelector('.vd-wl-search'); inp.value = ''; inp.focus();
       fetchPanels().then(function () { renderLoader(''); });
     }
+    /* a RECORD tile (UI redesign M2): the same grid mechanics — grip, resize ghost, snap, hide, float, solo —
+       around a <vera-widget> drawing the record at the size its span picks (the element watches its own width).
+       Persisted beside the panel tiles as dynamic {record, wid}; the loader's panel tiles are unchanged. */
+    function ensureElement() {
+      if (window.VeraWidget || document.querySelector('script[data-vera-widget-el]')) return;
+      var s = document.createElement('script'); s.src = '/ui/widgets/widget_element.js'; s.setAttribute('data-vera-widget-el', '1');
+      document.head.appendChild(s);
+    }
+    function spanClass(record) {
+      var size = String((record && ((record.frame && record.frame.size) || record.size || (record.draw && record.draw.size))) || 'm').toLowerCase();
+      return { xs: 'w-w2 w-h1', s: 'w-w2 w-h1', m: 'w-w4 w-h2', l: 'w-w6 w-h3', xl: 'w-w8 w-h4' }[size] || 'w-w4 w-h2';
+    }
+    function addRecord(record, o2) {
+      if (!record || typeof record !== 'object') return null;
+      ensureElement();
+      var rid = String(record.id || record.title || record.name || record.form || 'widget').replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 48);
+      var wid = (o2 && o2.wid) || ('rec-' + rid + '-' + Math.random().toString(36).slice(2, 6));
+      if (grid.querySelector(':scope > [data-wid="' + wid + '"]')) return null;
+      var widget = document.createElement('div');
+      widget.className = 'widget ' + spanClass(record);
+      widget.dataset.wid = wid; widget.dataset.record = '1';
+      widget.innerHTML =
+        '<div class="w-head"><span class="w-grip">⠿</span><span class="w-dot ok"></span>' +
+        '<span class="w-title">' + esc(record.title || record.name || record.form || 'widget') + '</span>' +
+        '<span class="w-actions"><button class="w-iconbtn" data-vd-hide title="Hide">×</button>' +
+        '<button class="w-iconbtn" data-vd-remove title="Remove widget">🗑</button></span></div>' +
+        '<div class="w-body" style="padding:8px;position:relative;min-height:0"></div>' +
+        '<span class="w-resize" data-resize></span>';
+      var el = document.createElement('vera-widget');
+      el.setAttribute('size', 'auto');
+      el.setAttribute('record', JSON.stringify(record));
+      widget.querySelector('.w-body').appendChild(el);
+      widget.querySelector('[data-vd-hide]').onclick = function () { hide(wid); };
+      widget.querySelector('[data-vd-remove]').onclick = function () { removeDynamic(wid); };
+      grid.appendChild(widget);
+      wireWidget(widget);
+      state.dynamic[wid] = { record: record, wid: wid };
+      if (!(o2 && o2.silent)) { state.order = widgets().map(function (w) { return w.dataset.wid; }); }
+      save();
+      return widget;
+    }
     function addWidget(panelId, o2) {
       var wid = 'dyn-' + String(panelId).replace(/[^a-zA-Z0-9_-]/g, '');
       if (grid.querySelector(':scope > [data-wid="' + wid + '"]')) return Promise.resolve();
@@ -772,6 +813,7 @@
       Object.keys(state.dynamic).forEach(function (wid) {
         var info = state.dynamic[wid];
         if (grid.querySelector(':scope > [data-wid="' + wid + '"]')) return;
+        if (info && info.record) { addRecord(info.record, { silent: true, wid: wid }); return; }
         addWidget(info.panelId, { silent: true });
       });
     }
@@ -786,7 +828,7 @@
     var ctl = {
       key: key, grid: grid,
       toggleEdit: toggleEdit, reset: reset, openLoader: openLoader,
-      hide: hide, show: show, addWidget: addWidget, refresh: applyLayout
+      hide: hide, show: show, addWidget: addWidget, addRecord: addRecord, refresh: applyLayout
     };
     grid._veraDash = ctl;
     return ctl;
