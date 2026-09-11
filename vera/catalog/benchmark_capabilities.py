@@ -1728,6 +1728,27 @@ async def _matrix_status_put(run_id: str, status: dict, cells: List[dict]) -> No
         log.debug("matrix status %s: %s", run_id, e)
 
 
+# Entering _ollama_slot without a timeout uses OLLAMA_QUEUE_TIMEOUT (default 0),
+# which under a gate broker means "do not wait": a sandbox sweep failed both
+# cells in seconds with BrokerError queue_timeout while prod held gpu-250's slot.
+# A sweep waits the gate's own wait budget, and re-waits; only a node that stays
+# busy across every attempt fails the cell.
+_SLOT_ATTEMPTS = 3
+
+
+def _slot_wait_s() -> float:
+    gate = getattr(_orch, "_gate", None)
+    try:
+        return float(gate.wait_s()) if gate else 600.0
+    except Exception:
+        return 600.0
+
+
+def _is_queue_timeout(e: BaseException) -> bool:
+    text = str(e).lower()
+    return "queue_timeout" in text or "queue timeout" in text
+
+
 async def _run_matrix(run_id: str, instance_id: str, cells: List[dict], settings: dict,
                       dropped: List[str], status: dict) -> None:
     url = _instance_url(instance_id)
@@ -1759,22 +1780,37 @@ async def _run_matrix(run_id: str, instance_id: str, cells: List[dict], settings
                           waiting_for_slot=True)
             await _matrix_status_put(run_id, status, done)
             rec: Dict[str, Any] = {"model": model, "num_ctx": num_ctx, **metas[model]}
-            try:
-                # The node's own slot for the WHOLE cell: another request slipping in
-                # between warm calls could reload the model and turn a "warm" timing
-                # into a load. Live work on the node waits for the cell, and the cell
-                # waits for live work.
-                async with (slot(instance_id) if slot else _no_slot()) as act:
-                    slot_started = time.monotonic()
-                    status["waiting_for_slot"] = False
-                    await _matrix_status_put(run_id, status, done)
-                    if settings["cold"] and model != prev_model:
-                        await _unload(url, model)
-                        await asyncio.sleep(1.0)
-                    rec.update(await _measure_cell(url, model, num_ctx, settings, act,
-                                                   has_gpu, host, ssh_run, slot_started))
-            except Exception as e:
-                rec["error"] = "%s: %s" % (type(e).__name__, str(e)[:180])
+            # The node's own slot for the WHOLE cell: another request slipping in
+            # between warm calls could reload the model and turn a "warm" timing
+            # into a load. Live work on the node waits for the cell, and the cell
+            # waits for live work — as long as any caller would, and then again: a
+            # sweep is background work, so a busy node means wait, not fail.
+            wait_started = time.monotonic()
+            for attempt in range(_SLOT_ATTEMPTS):
+                entered = False
+                try:
+                    async with (slot(instance_id, timeout=_slot_wait_s()) if slot
+                                else _no_slot()) as act:
+                        entered = True
+                        slot_started = time.monotonic()
+                        rec["slot_wait_s"] = round(slot_started - wait_started, 1)
+                        status["waiting_for_slot"] = False
+                        await _matrix_status_put(run_id, status, done)
+                        if settings["cold"] and model != prev_model:
+                            await _unload(url, model)
+                            await asyncio.sleep(1.0)
+                        rec.update(await _measure_cell(url, model, num_ctx, settings, act,
+                                                       has_gpu, host, ssh_run, slot_started))
+                    break
+                except Exception as e:
+                    if not entered and _is_queue_timeout(e):
+                        if attempt + 1 < _SLOT_ATTEMPTS:
+                            continue
+                        rec["error"] = ("The node stayed busy for %.0fs, so this cell never "
+                                        "got its slot." % (time.monotonic() - wait_started))
+                    else:
+                        rec["error"] = "%s: %s" % (type(e).__name__, str(e)[:180])
+                    break
             prev_model = model
             rec["status"], rec["note"] = _matrix.cell_verdict(rec, has_gpu)
             done.append(rec)
