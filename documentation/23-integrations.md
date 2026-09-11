@@ -97,6 +97,21 @@ A bidirectional bot that brings the capability framework into Telegram.
 
 The bot token is sealed via the shared secrets helper; config persists in `vera:tg:*` and auto-resumes on restart.
 
+Outbound `tg.send`, `tg.send_markdown`, `tg.notify`, and `tg.broadcast` operations
+also project into the shared external-effect contract. Each recipient becomes a
+separate non-executing plan identified only by a digest; message bodies, raw chat
+identifiers, credentials, and raw approval/idempotency references are excluded.
+Optional approval, idempotency, and retry intent is evaluated but never forwarded
+to Telegram. Durable success evidence is consulted to report whether a replay
+would be suppressed, and the same bounded evidence store used by the Integrations
+drawer receives the policy observation.
+
+This Telegram migration is deliberately observe-only: existing delivery behavior
+is preserved if planning or evidence storage fails, no send is blocked, no
+completion receipt is manufactured, and Vera adds no retry. Broadcast records one
+observation for each allowed recipient and returns only aggregate evidence rather
+than a recipient list.
+
 ---
 
 ## 5. A2A agent interoperability
