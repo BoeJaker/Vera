@@ -72,6 +72,7 @@ from Vera.vera.capability_orchestration import (
 from Vera.vera.ontologies.capability_ontology_snapshot import (
     auto_generation_status,
     build_capability_ontology_snapshot,
+    generated_relation_consumption_status,
 )
 
 log = logging.getLogger("vera.cap_ontology")
@@ -704,7 +705,13 @@ async def co_context_for(
         allowed_set = set(allowed)
         wildcard = False
 
-    rels = _db_all()
+    all_rels = _db_all()
+    generated_relations = generated_relation_consumption_status(os.environ)
+    if generated_relations["enabled"]:
+        rels = all_rels
+    else:
+        rels = [relation for relation in all_rels if not relation.get("auto", False)]
+    excluded_generated_count = len(all_rels) - len(rels)
     visible_pair = []   # both ends visible
     edge_to_hidden = []  # one end is hidden — describe by relation only
     for r in rels:
@@ -746,6 +753,8 @@ async def co_context_for(
         "snippet": snippet,
         "allowed_count": len(visible_pair),
         "hidden_referenced_count": len(edge_to_hidden),
+        "generated_relations": generated_relations,
+        "excluded_generated_count": excluded_generated_count,
     }
 
 
@@ -1305,6 +1314,8 @@ async def co_stats(trace_id=None):
         "total_caps":   len(CAPABILITY_REGISTRY),
         "by_group":     groups,
         "auto_generation": auto_generation_status(os.environ),
+        "generated_relation_consumption": generated_relation_consumption_status(
+            os.environ),
     }
 
 

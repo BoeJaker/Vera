@@ -6,8 +6,10 @@ import pytest
 
 from vera.ontologies.capability_ontology_snapshot import (
     AUTO_GENERATION_ENV,
+    GENERATED_RELATIONS_ENV,
     auto_generation_status,
     build_capability_ontology_snapshot,
+    generated_relation_consumption_status,
 )
 
 
@@ -72,6 +74,18 @@ def test_persistent_generation_is_default_off_invalid_values_fail_closed_and_rol
     assert AUTO_GENERATION_ENV in enabled["rollback"]
 
 
+def test_generated_relation_consumption_is_independently_default_off():
+    default = generated_relation_consumption_status({})
+    invalid = generated_relation_consumption_status({GENERATED_RELATIONS_ENV: "maybe"})
+    enabled = generated_relation_consumption_status({GENERATED_RELATIONS_ENV: "enabled"})
+    assert default["enabled"] is False and default["mode"] == "disabled"
+    assert invalid["enabled"] is False and invalid["config_valid"] is False
+    assert enabled["enabled"] is True
+    assert enabled["scope"] == "planner_and_agent_prompt_context"
+    assert enabled["stored_relations_changed"] is False
+    assert GENERATED_RELATIONS_ENV in enabled["rollback"]
+
+
 def test_capability_gate_blocks_before_model_or_database_access(monkeypatch):
     from vera.ontologies import cap_ontology
 
@@ -116,3 +130,60 @@ def test_snapshot_capability_uses_all_rows_without_mutating_them(monkeypatch):
     assert result["relation_count"] == 1
     assert result["snapshot_id"].startswith("capsont_")
     assert rows == [relation()]
+
+
+def test_planner_context_excludes_generated_rows_by_default_but_keeps_manual(monkeypatch):
+    from vera.ontologies import cap_ontology
+
+    rows = [relation(), relation("prose.author", "llm.generate", auto=True)]
+    monkeypatch.delenv(GENERATED_RELATIONS_ENV, raising=False)
+    monkeypatch.setattr(cap_ontology, "_db_all", lambda *args, **kwargs: rows)
+    result = asyncio.run(cap_ontology.co_context_for.__wrapped__(
+        "code.author,llm.generate,prose.author", include_hidden=False))
+    assert "code.author" in result["snippet"]
+    assert "prose.author" not in result["snippet"]
+    assert result["allowed_count"] == 1
+    assert result["excluded_generated_count"] == 1
+    assert result["generated_relations"]["enabled"] is False
+    assert rows[1]["auto"] is True
+
+
+def test_explicit_consumption_enable_restores_generated_context_without_changing_rows(monkeypatch):
+    from vera.ontologies import cap_ontology
+
+    rows = [relation(), relation("prose.author", "llm.generate", auto=True)]
+    monkeypatch.setenv(GENERATED_RELATIONS_ENV, "enabled")
+    monkeypatch.setattr(cap_ontology, "_db_all", lambda *args, **kwargs: rows)
+    result = asyncio.run(cap_ontology.co_context_for.__wrapped__(
+        "code.author,llm.generate,prose.author", include_hidden=False))
+    assert "code.author" in result["snippet"] and "prose.author" in result["snippet"]
+    assert result["allowed_count"] == 2
+    assert result["excluded_generated_count"] == 0
+    assert result["generated_relations"]["enabled"] is True
+    assert len(rows) == 2
+
+
+def test_generated_rows_remain_visible_in_matrix_when_context_use_is_disabled(monkeypatch):
+    from vera.ontologies import cap_ontology
+
+    rows = [relation(), relation("prose.author", "llm.generate", auto=True)]
+    monkeypatch.delenv(GENERATED_RELATIONS_ENV, raising=False)
+    monkeypatch.setattr(cap_ontology, "_all_cap_names", lambda: [
+        "code.author", "llm.generate", "prose.author"])
+    monkeypatch.setattr(cap_ontology, "_db_all", lambda *args, **kwargs: rows)
+    result = asyncio.run(cap_ontology.co_matrix.__wrapped__())
+    assert result["total_cells"] == 2
+    assert any(cell["auto"] is True for cell in result["cells"])
+
+
+def test_planner_context_treats_legacy_rows_without_auto_flag_as_manual(monkeypatch):
+    from vera.ontologies import cap_ontology
+
+    legacy = relation()
+    legacy.pop("auto")
+    monkeypatch.delenv(GENERATED_RELATIONS_ENV, raising=False)
+    monkeypatch.setattr(cap_ontology, "_db_all", lambda *args, **kwargs: [legacy])
+    result = asyncio.run(cap_ontology.co_context_for.__wrapped__(
+        "code.author,llm.generate", include_hidden=False))
+    assert result["allowed_count"] == 1
+    assert result["excluded_generated_count"] == 0
