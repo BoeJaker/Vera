@@ -259,6 +259,21 @@ async def _serve_vera_ui_js():
                     media_type="application/javascript")
 
 
+# Serve vera-lhm.js — the one left-hand menu (UI redesign): a rail of quick menus
+# beside a detail column, the ☰ top-level list, every part a widget; the same
+# code draws a page's own menu and, in the harness, another page's absorbed one.
+@APP.get("/ui/vera-lhm.js", include_in_schema=False)
+async def _serve_vera_lhm_js():
+    from fastapi.responses import Response
+    from pathlib import Path
+    p = Path(__file__).parent / "vera-lhm.js"
+    if p.exists():
+        return Response(content=p.read_text(encoding="utf-8"),
+                        media_type="application/javascript")
+    return Response(content="console.warn('vera-lhm.js not found');",
+                    media_type="application/javascript")
+
+
 # Serve vera-dashboard.js — the shared VeraDash widget-grid framework (drag/
 # resize/hide in edit mode + widget loader + pop-out) used by every dashboard.
 @APP.get("/ui/vera-dashboard.js", include_in_schema=False)
