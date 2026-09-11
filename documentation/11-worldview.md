@@ -94,6 +94,16 @@ checkpoint, query Fabric, run inference, alter result ordering, or attach the
 evidence to a consumer. That last activation step requires the exact-identity
 availability check plus separately measured quality and latency evidence.
 
+`vera.worldview.reranking_shadow` provides the intervening, non-authoritative
+comparison seam. It accepts only a reranking envelope whose dataset snapshot and
+ModelPackage identities match exactly. Every evidence score must cite one
+existing context candidate at its exact source-record revision; unknown,
+ambiguous, duplicated, or mismatched identities fail closed. The resulting
+payload-free report shows baseline and hypothetical ranks, but it does not
+mutate candidates, register a ranker, invoke JEPA, or change context selection.
+Stale and unavailable evidence is explicitly ineligible. Activation remains
+blocked on the separate cited quality and latency evaluation.
+
 ## Snapshot, parity, and evidence
 
 The legacy loader retains backend-supplied revision/hash evidence. Missing or
@@ -154,6 +164,7 @@ dangling edges merely to obtain a green report.
 - `vera/worldview/worldview_shadow_snapshot.py` — bounded legacy snapshot.
 - `vera/worldview/worldview_shadow_parity.py` — parity report.
 - `vera/worldview/worldview_shadow_evidence.py` — evidence window.
+- `vera/worldview/reranking_shadow.py` — exact-identity context comparison only.
 
 ## Related guides
 
