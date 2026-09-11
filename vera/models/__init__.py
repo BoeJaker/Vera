@@ -29,6 +29,12 @@ from .evaluation_execution import (
 from .external_evaluation_import import (
     ExternalEvaluationImportReceipt, import_deepeval_projection,
     import_external_evaluation_projection, import_promptfoo_projection)
+from .optimizer_contracts import (
+    OptimizationBudget, OptimizationRequest, OptimizerProfile, OptimizerProposal,
+    OptimizerProvider, OptimizerSelectionPolicy, PromptOptimizationCandidate,
+    optimization_budget_from_dict, optimization_request_from_dict,
+    optimizer_profile_from_dict, optimizer_proposal_from_dict,
+    prompt_optimization_candidate_from_dict, select_optimizer_candidate)
 from .inference_contracts import (
     InferenceArtifact, InferenceCancellation, InferenceContractConflict,
     InferenceEvent, InferenceProvider, InferenceRequest, InferenceTranscript,
@@ -103,6 +109,12 @@ __all__ = ["AdmittedModelActivation", "LegacyModelCapabilityBinding", "ModelActi
            "execute_evaluation", "plan_evaluation_execution",
            "ExternalEvaluationImportReceipt", "import_deepeval_projection",
            "import_external_evaluation_projection", "import_promptfoo_projection",
+           "OptimizationBudget", "OptimizationRequest", "OptimizerProfile",
+           "OptimizerProposal", "OptimizerProvider", "OptimizerSelectionPolicy",
+           "PromptOptimizationCandidate", "select_optimizer_candidate",
+           "optimization_budget_from_dict", "optimization_request_from_dict",
+           "optimizer_profile_from_dict", "optimizer_proposal_from_dict",
+           "prompt_optimization_candidate_from_dict",
            "SQLiteModelPackageRegistry", "inspect_and_register_onnx",
            "evaluate_model_admission", "evaluation_report_from_dict",
            "evaluation_request_from_dict", "legacy_onnx_bindings",

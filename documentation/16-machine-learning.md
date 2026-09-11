@@ -81,6 +81,23 @@ at any nesting depth. The resulting receipt pins the source/version and export
 digest and states that no provider was invoked and no payload was retained.
 Incomplete result sets become partial evidence rather than an apparent pass.
 
+Prompt optimizers use a proposal-only boundary. An `OptimizationRequest` pins
+the source PromptPackage, distinct training and held-out dataset revisions,
+objective metrics, candidate count, integer cost, and duration budgets.
+Candidates contain immutable PromptPackages plus exact optimizer name/version,
+trace digest, parent prompt, and usage provenance. Proposal reconstruction
+recomputes request, candidate, PromptPackage, and proposal identities and rejects
+forged activation/effect claims.
+
+Selection is a separate pure decision over complete held-out evidence. It first
+requires the baseline and every candidate report to match the requested prompt,
+dataset, metrics, and CI policy, then recommends the best reproducible
+improvement or declines all candidates. Ties resolve by stable candidate ID.
+Neither the proposal nor selection contract has an operation for prompt
+registration, alias mutation, deployment, or activation. DSPy and other
+optimizer execution remains an optional provider concern and is not enabled by
+these records.
+
 The current ML Workshop remains unchanged. DeepEval/Promptfoo adapters,
 Accelerate, PEFT, MLflow, DSPy, live judges, and training execution are
 subsequent gated slices.
