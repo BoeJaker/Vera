@@ -220,6 +220,7 @@ async def _record(
     dedup_key:       str   = "",
     extra_link:      tuple = None,
     bulk:            bool  = False,
+    defer_embedding: bool  = False,
 ) -> str:
     """
     Core sequential activity recorder for all IDE operations.
@@ -319,12 +320,25 @@ async def _record(
                 fdata = {"node_id": node_id, "session_id": session_id,
                          "category": category, "tags": tags, "ts": ts,
                          **(fabric_data or {})}
+                _kw = {}
+                if defer_embedding:
+                    # Store the row now, embed later: the fabric queues its own
+                    # backfill for the idle queue. Only pass the flag if this
+                    # fabric knows it, so a version skew cannot turn a stored
+                    # row into a TypeError caught below and NO row at all.
+                    try:
+                        import inspect as _insp
+                        if "defer_embedding" in _insp.signature(fabric.ingest_dataset).parameters:
+                            _kw["defer_embedding"] = True
+                    except Exception:
+                        pass
                 await fabric.ingest_dataset(
                     dataset_id=ds,
                     data=[{"text": text[:4000], **fdata}],
                     source="ide",
                     source_id=session_id or node_id,
                     tags=tags,
+                    **_kw,
                 )
                 _FABRIC_DEDUP.add(dk)
                 log.info("ide _record fabric [%s] node=%s", ds, node_id[:8])

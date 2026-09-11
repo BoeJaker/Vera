@@ -353,7 +353,8 @@ async def _read_new_bytes(instance_id: str, rel: str, offset: int) -> Optional[s
     return (out.get("result") or {}).get("content", "")
 
 
-async def _ingest_file(instance_id: str, rel: str, state: dict) -> int:
+async def _ingest_file(instance_id: str, rel: str, state: dict,
+                       defer_embedding: bool = False) -> int:
     """Ingest new lines from one transcript. Returns count of new turns recorded."""
     key = _source_key(instance_id)
     src_state = state.setdefault(key, {})
@@ -424,6 +425,7 @@ async def _ingest_file(instance_id: str, rel: str, state: dict) -> int:
             },
             dedup_key=f"ccsess:{rel}:{turn.get('uuid') or new_offset}",
             bulk=_bulk,
+            defer_embedding=defer_embedding,
         )
         recorded += 1
 
@@ -553,7 +555,7 @@ async def cap_claude_sessions_ingest(rel: str = "", instance_id: str = "", trace
         return {"error": "rel is required"}
     state = _load_state()
     try:
-        n = await _ingest_file(instance_id, rel, state)
+        n = await _ingest_file(instance_id, rel, state, defer_embedding=defer_embedding)
     finally:
         _save_state(state)
     return {"ok": True, "turns_recorded": n}
@@ -570,7 +572,8 @@ async def cap_claude_sessions_ingest(rel: str = "", instance_id: str = "", trace
 )
 async def cap_claude_sessions_ingest_all(instance_id: str = "", trace_id=None,
                                          should_continue=None,
-                                         on_progress=None) -> dict:
+                                         on_progress=None,
+                                         defer_embedding: bool = False) -> dict:
     """`should_continue` is an async callable returning a busy REASON (or "").
     Polled between files so a long backfill yields the moment the box gets
     busy — see vera/background_work.py rule 2.
@@ -628,7 +631,8 @@ async def cap_claude_sessions_ingest_all(instance_id: str = "", trace_id=None,
             known = src_state.get(rel, {})
             if "offset" in known and f.get("size", 0) <= known["offset"]:
                 continue  # nothing new
-            n = await _ingest_file(instance_id, rel, state)
+            n = await _ingest_file(instance_id, rel, state,
+                                   defer_embedding=defer_embedding)
             _save_state(state)  # persist per-file so a restart/crash mid-pass loses at most one file's progress
             if n:
                 updated += 1
@@ -1174,6 +1178,34 @@ if _svc is not None and _iq is not None:
     _svc.register_handler(_iq.KIND_EMBED_SESSIONS, _ingest_job)
 
 
+_IMPORT_TASK: Optional[asyncio.Task] = None
+
+
+def _kick_deferred_import() -> None:
+    """Start an import pass as a task if one is not already in flight, so the
+    tick keeps its 60s cadence for the queue it also drains. The ingest lock
+    inside ingest_all makes a second concurrent pass a no-op anyway."""
+    global _IMPORT_TASK
+    if _IMPORT_TASK is not None and not _IMPORT_TASK.done():
+        return
+
+    async def _run():
+        try:
+            await cap_claude_sessions_ingest_all(instance_id="", defer_embedding=True)
+            for inst in await _load_instances():
+                iid = inst.get("id", "")
+                if inst.get("kind") == "vscode-client" and _client_alive(iid):
+                    try:
+                        await cap_claude_sessions_ingest_all(instance_id=iid,
+                                                             defer_embedding=True)
+                    except Exception as e:
+                        log.warning("claude_sessions: deferred import failed for %s: %s", iid, e)
+        except Exception as e:
+            log.warning("claude_sessions: deferred import: %s", e)
+
+    _IMPORT_TASK = asyncio.create_task(_run())
+
+
 async def _idle_queue_tick():
     """The queue's TICK - and the transcript backfill's producer.
 
@@ -1196,11 +1228,16 @@ async def _idle_queue_tick():
     _QUEUE.observe(now, busy)
     blocked = _bg.quiet_gate(busy, _QUEUE.last_busy, now, _QUEUE.min_quiet_s)
 
-    try:
-        await _svc.submit(_iq.KIND_EMBED_SESSIONS, "Claude transcript backfill",
-                          dedupe_key="ingest:local")
-    except Exception as e:
-        log.warning("claude_sessions: could not queue the backfill: %s", e)
+    # IMPORT NOW, EMBED LATER. The import used to be the queued job, so a new
+    # session was not VISIBLE until the box had been quiet for 600s and the
+    # queue got round to it - and then each turn waited ~4s for its vector
+    # before the next was stored. What made the backfill dangerous was the
+    # embedding, not the import: with embedding deferred, an import is file
+    # reads and row writes, the same class of work as every other sampler, and
+    # the rows are readable by the UI (it reads fabric_records) the moment they
+    # land. The fabric queues ONE embed.fabric backfill for the rows it left
+    # without vectors, and THAT waits for the idle box.
+    _kick_deferred_import()
 
     try:
         res = await _svc.drain_once(blocked, _system_is_busy, now)
