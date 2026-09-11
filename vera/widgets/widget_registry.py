@@ -325,7 +325,7 @@ async def widget_template_save(template: Optional[dict] = None, force: bool = Fa
         await r.set(key, json.dumps(t))
     except Exception as e:
         return {"ok": False, "error": "store failed: %s" % e}
-    emit_event({"type": "widget.template.save", "id": t["id"], "form": t["form"], "created": existing is None})
+    await emit_event({"type": "widget.template.save", "id": t["id"], "form": t["form"], "created": existing is None})
     return {"ok": True, "template": t, "problems": probs, "created": existing is None}
 
 
@@ -346,7 +346,7 @@ async def widget_template_delete(id: str = "", trace_id=None):
     n = await r.delete(_TPL_KEY.format(id=tid))
     if not n:
         return {"ok": False, "error": "no saved template %r" % tid}
-    emit_event({"type": "widget.template.delete", "id": tid})
+    await emit_event({"type": "widget.template.delete", "id": tid})
     return {"ok": True, "id": tid}
 
 
@@ -382,7 +382,7 @@ async def widget_template_instantiate(id: str = "", where: str = "", host: str =
         await r.set(_INST_KEY.format(id=inst["id"]), json.dumps(inst))
     except Exception as e:
         return {"ok": False, "error": "store failed: %s" % e}
-    emit_event({"type": "widget.instance.place", "id": inst["id"], "template": tid, "where": w, "host": inst["host"]})
+    await emit_event({"type": "widget.instance.place", "id": inst["id"], "template": tid, "where": w, "host": inst["host"]})
     return {"ok": True, "instance": inst, "template": t}
 
 
@@ -420,7 +420,7 @@ async def widget_instance_remove(id: str = "", trace_id=None):
     n = await r.delete(_INST_KEY.format(id=iid))
     if not n:
         return {"ok": False, "error": "no instance %r" % iid}
-    emit_event({"type": "widget.instance.remove", "id": iid})
+    await emit_event({"type": "widget.instance.remove", "id": iid})
     return {"ok": True, "id": iid}
 
 
