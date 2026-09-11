@@ -745,6 +745,10 @@ async def _run_program_loop(prog: Dict[str, Any], lp: Dict[str, Any]) -> None:
         run_goal = _ctx + "\n\n" + run_goal
     async with _RUN_LOCK:
         lp["state"]["status"] = "running"
+        # The live session id, so loops.program.cancel (and the idle queue's
+        # pre-emption) can set this run's cooperative cancel flag without
+        # re-deriving it from a run count that has not been appended to yet.
+        lp["state"]["session_id"] = session_id
         await _prog_save(prog)
         runtime_dispatch = safely_select_agent_runtime_dispatch(
             session_id=session_id, profile=str(lp.get("profile") or ""),
@@ -981,6 +985,153 @@ def _next_due_loop(prog: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return None
 
 
+# ── the idle queue: a loop-program run is background work like any other ────
+# One run held the GPU for 18,535s (5.1h) on 2026-09-11. Its only gate was
+# dream_background_allowed(), checked ONCE before launch - and a census leaves
+# 30-60s gaps between goals, which that gate reads as quiet. Once launched
+# nothing could stop it: pause only flipped the program's status.
+#
+# Through the queue it inherits the 600s-quiet start rule, the panel row, the
+# stranded-runner reconciliation, and pre-emption. Pre-emption here means the
+# same cooperative cancel flag the Stop button sets: the v7 engine
+# self-terminates at its next generation, the run is recorded as yielded, and
+# the loop stays due for the next quiet window.
+try:                                                       # pragma: no cover
+    from Vera.vera import idle_queue as _IQ
+    from Vera.vera import idle_queue_service as _IQS
+except Exception:                                          # pragma: no cover
+    try:
+        from vera import idle_queue as _IQ
+        from vera import idle_queue_service as _IQS
+    except Exception:
+        _IQ = _IQS = None                                  # type: ignore
+
+
+async def _set_loop_cancel_flag(session_id: str) -> bool:
+    """The cooperative cancel: HSET status=cancelled on the run hash. This is
+    exactly what POST /workshop/agent_loop/cancel writes first, and what the
+    engine's per-generation _loop_run_cancelled() reads - so it works whether
+    or not this process holds the runner task."""
+    if not session_id:
+        return False
+    try:
+        r = _orch.REDIS
+        if r is None:
+            return False
+        await r.hset(f"vera:loop:run:{session_id}",
+                     mapping={"status": "cancelled", "updated_at": now_iso()})
+        return True
+    except Exception as e:
+        log.debug("v8 cancel flag %s: %s", session_id, e)
+        return False
+
+
+async def _cancel_running_loops(prog: Dict[str, Any], reason: str) -> List[str]:
+    """Stop every in-flight constituent loop of a program. Returns the session
+    ids flagged. Safe to call when nothing is running."""
+    out: List[str] = []
+    for lp in prog.get("loops", []) or []:
+        st = lp.get("state") or {}
+        if st.get("status") != "running":
+            continue
+        sid = str(st.get("session_id") or "")
+        if not sid:
+            # A run started before session_id was recorded on the state:
+            # derive it the way _run_program_loop does.
+            sid = f"v8:{prog['id']}:{lp['name']}:{len(st.get('runs') or []) + 1}"
+        if await _set_loop_cancel_flag(sid):
+            out.append(sid)
+            await emit_event({"type": "agent_loop_v8.loop_cancel_requested",
+                              "program": prog["id"], "loop": lp.get("name"),
+                              "session_id": sid, "reason": reason})
+    return out
+
+
+async def _loop_program_job(job=None, should_continue=None):
+    """Idle-queue handler: run ONE constituent loop, yielding if the box is
+    wanted back. The program and loop are re-fetched at run time - the queue
+    may start this hours after the tick that queued it, and the program may
+    have been paused, closed or advanced since."""
+    payload = (job or {}).get("payload") or {}
+    pid, lname = str(payload.get("program") or ""), str(payload.get("loop") or "")
+    prog = await _prog_get(pid)
+    if not prog or prog.get("status") != "active":
+        return {"ok": True, "skipped": "program no longer active", "items": 0}
+    if any((l.get("state") or {}).get("status") == "running" for l in prog.get("loops", [])):
+        return {"ok": True, "skipped": "a loop of this program is already running", "items": 0}
+    lp = next((l for l in prog.get("loops", []) if l.get("name") == lname), None)
+    if lp is None or (lp.get("state") or {}).get("status") in ("done", "failed", "retired"):
+        return {"ok": True, "skipped": "loop no longer due", "items": 0}
+
+    global _RUNNING_LOOPS
+    _RUNNING_LOOPS += 1
+    task = asyncio.create_task(_run_program_loop(prog, lp))
+    yielded = ""
+    try:
+        while not task.done():
+            if should_continue is not None:
+                busy = await should_continue()
+                if busy:
+                    yielded = busy
+                    sid = str((lp.get("state") or {}).get("session_id") or "")
+                    log.info("v8 %s/%s yielding - %s", pid, lname, busy)
+                    await _set_loop_cancel_flag(sid)
+                    await emit_event({"type": "agent_loop_v8.loop_cancel_requested",
+                                      "program": pid, "loop": lname,
+                                      "session_id": sid, "reason": "idle queue: " + busy})
+                    # The engine notices at its next generation. Give it that
+                    # long, then cancel the task outright so a stuck call
+                    # cannot hold the box against the person who wants it.
+                    try:
+                        await asyncio.wait_for(asyncio.shield(task), timeout=120)
+                    except (asyncio.TimeoutError, asyncio.CancelledError):
+                        task.cancel()
+                    break
+            await asyncio.sleep(5)
+        if not task.done():
+            await task
+    finally:
+        _RUNNING_LOOPS = max(0, _RUNNING_LOOPS - 1)
+    if yielded:
+        # Leave the loop DUE. _run_program_loop marks the run failed/waiting on
+        # cancel; a cancelled run is not a failed loop, so restore waiting.
+        try:
+            prog = await _prog_get(pid)
+            for l in prog.get("loops", []) if prog else []:
+                if l.get("name") == lname and (l.get("state") or {}).get("status") == "failed":
+                    l["state"]["status"] = "waiting"
+                    l["state"].setdefault("notes", []).append(
+                        {"ts": now_iso(), "note": "yielded to a person - " + yielded})
+            if prog:
+                await _prog_save(prog)
+        except Exception as e:
+            log.debug("v8 yield bookkeeping: %s", e)
+        return {"ok": True, "yielded": yielded, "items": 0}
+    return {"ok": True, "items": 1}
+
+
+if _IQS is not None and _IQ is not None:                   # pragma: no cover
+    _IQS.register_handler(_IQ.KIND_LOOP_PROGRAM, _loop_program_job)
+
+
+async def _queue_or_spawn(prog: Dict[str, Any], lp: Dict[str, Any]) -> str:
+    """Hand the run to the idle queue; fall back to the old direct spawn only
+    if the queue is unavailable, so a broken queue degrades to yesterday's
+    behaviour rather than to no background loops at all."""
+    if _IQS is not None and _IQ is not None:
+        try:
+            res = await _IQS.submit(
+                _IQ.KIND_LOOP_PROGRAM,
+                "%s / %s" % (prog.get("name") or prog["id"], lp.get("name")),
+                dedupe_key="v8:%s:%s" % (prog["id"], lp.get("name")),
+                payload={"program": prog["id"], "loop": lp.get("name")})
+            return "queued" if res.get("queued") else str(res.get("reason") or "queued")
+        except Exception as e:
+            log.warning("v8: idle queue unavailable (%s) - spawning directly", e)
+    _spawn_loop(prog, lp)
+    return "spawned"
+
+
 async def _v8_tick():
     """Background driver: advance at most ONE program loop per tick, only when
     the dream activity gate allows and we're under the concurrency ceiling."""
@@ -1050,7 +1201,7 @@ async def _v8_tick():
                     await emit_event({"type": "agent_loop_v8.program_done",
                                       "program": prog["id"], "reason": "all loops terminal"})
                 continue
-            _spawn_loop(prog, lp)
+            await _queue_or_spawn(prog, lp)
             break   # one loop in flight globally
     except Exception as e:
         log.warning("v8 tick: %s", e)
@@ -1320,7 +1471,26 @@ async def cap_loops_program_pause(id: str = "", trace_id=None):
         return {"error": f"unknown program: {id}"}
     prog["status"] = "paused"
     await _prog_save(prog)
-    return {"ok": True, "id": id, "status": "paused"}
+    # Pause used to flip the status and leave a 5-hour run going. Pausing a
+    # program means stopping it.
+    stopped = await _cancel_running_loops(prog, "program paused")
+    return {"ok": True, "id": id, "status": "paused", "cancelled": stopped}
+
+
+@capability(
+    "loops.program.cancel", memory="off",
+    http_method="POST", http_path="/loops/program/cancel", http_tags=["dag", "agents"],
+    description="Stop the IN-FLIGHT loop run(s) of a V8 program now, without "
+                "pausing the program: the loop stays due and runs again in the "
+                "next quiet window. Input: id (str!). Output: {ok, cancelled:[session ids]}.",
+)
+async def cap_loops_program_cancel(id: str = "", trace_id=None):
+    prog = await _prog_get(id)
+    if not prog:
+        return {"error": f"unknown program: {id}"}
+    stopped = await _cancel_running_loops(prog, "cancelled by operator")
+    return {"ok": True, "id": id, "cancelled": stopped,
+            "note": "" if stopped else "no loop of this program was running"}
 
 
 @capability(
