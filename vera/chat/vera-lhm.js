@@ -345,9 +345,9 @@
     if(strip && !strip.getAttribute('data-w')) strip.setAttribute('data-w', 'tabs · strip');
     _top = _el('div', 'lhm-top'); _top.setAttribute('data-w', 'top list · list');
     _det.insertBefore(_top, _hd.nextSibling);
+    _wcfg = _el('div', 'lhm-wcfg'); _wcfg.setAttribute('data-w', 'widget record · sheet');   // the record sheet, made before it is placed
     _det.insertBefore(_wcfg, _top.nextSibling);
     _cta = _el('button', 'lhm-cta'); _cta.setAttribute('data-w', 'cta · button'); _cta.setAttribute('data-tpl', 'lhm:cta');
-    _wcfg = _el('div', 'lhm-wcfg'); _wcfg.setAttribute('data-w', 'widget record · sheet');
     _cta.addEventListener('click', function(){ var m = _menu(_active); if(m && m.cta && m.cta.run){ try{ m.cta.run(); }catch(e){} } });
     _det.appendChild(_cta);
     (cfg.panes || []).forEach(function(p){ var el = document.getElementById(p.id); if(!el) return; if(!el.getAttribute('data-w')) el.setAttribute('data-w', p.w || (p.id + ' · list')); if(p.tpl) el.setAttribute('data-tpl', p.tpl); });
