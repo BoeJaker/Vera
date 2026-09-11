@@ -61,3 +61,38 @@ def test_the_background_queue_renderer_is_still_wired_up():
     assert "async function renderBgQueue()" in src
     assert src.count("renderBgQueue") >= 3        # defined, called, exported
     assert 'data-wid="ol-bgqueue"' in src
+
+
+def test_the_traffic_pane_reads_the_access_log_not_the_retired_wrapper():
+    """The Wrapper sub-tab framed edge/ollama_wrapper.sh's :11436 dashboard, which
+    was never deployed and polled /api/report — an endpoint the script never
+    served — so it could not have worked. Traffic reads each node's own access
+    log through bench.node_requests. Guard against the dead plumbing returning."""
+    src = open(_PANEL, encoding="utf-8").read()
+    assert "async function wrapperRefreshStats()" in src
+    assert "'/bench/node_requests'" in src
+    assert 'id="obs-traffic-body"' in src
+    for dead in ('id="obs-wrapper-iframe"', "/api/report", "_wrapperUrl"):
+        assert dead not in src, "retired wrapper plumbing is back: %s" % dead
+
+
+def test_the_sweep_and_trace_controls_are_still_wired_up():
+    """Each control is only useful if its markup calls it, the panel exports it,
+    and it talks to the capability it claims to — defined, called, exported."""
+    src = open(_PANEL, encoding="utf-8").read()
+    for fn, endpoint in (("benchMatrixStart", "/bench/matrix/start"),
+                         ("benchMatrixPoll", "/bench/matrix/status"),
+                         ("benchMatrixOpen", "/bench/matrix/get"),
+                         ("benchMatrixHistory", "/bench/matrix/results"),
+                         ("benchMatrixVariants", "/bench/matrix/variants"),
+                         ("benchMatrixCancel", "/bench/matrix/cancel"),
+                         ("benchNodeTrace", "/bench/node_trace")):
+        assert "async function %s(" % fn in src, "%s is not defined" % fn
+        assert endpoint in src, "%s's endpoint %s is gone" % (fn, endpoint)
+    for exported in ("benchMatrixStart", "benchMatrixOpen", "benchMatrixVariants",
+                     "benchMatrixHistory", "benchNodeTrace", "trafficOpen",
+                     "benchMatrixCancel"):
+        assert src.count(exported) >= 2, "%s is defined but never used or exported" % exported
+    assert 'onclick="P.benchMatrixStart()"' in src
+    assert 'onclick="P.benchMatrixCancel()"' in src
+    assert "P.benchNodeTrace(" in src and "P.trafficOpen(" in src
