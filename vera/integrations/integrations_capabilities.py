@@ -76,6 +76,7 @@ from Vera.vera.integrations.effect_enforcement_activation import (
     ActivationConflict, default_external_effect_enforcement_activations)
 from Vera.vera.integrations.effect_retry import plan_effect_retry as _plan_effect_retry
 from Vera.vera.integrations.connection_projection import project_connections
+from Vera.vera.integrations.provider_effect_inventory import provider_effect_inventory
 
 try:
     from Vera.vera.security import secrets as vsecrets
@@ -1148,6 +1149,20 @@ async def integration_effect_shadow_evidence(
 
 
 @capability(
+    "integration.effect.inventory", http_method="GET",
+    http_path="/integrations/effect/inventory",
+    http_tags=["integration", "policy"], memory="off", silent=True,
+    description="Inspect the deterministic boundary inventory for business, commerce, "
+                "container/build, Proxmox, and provisioning operations. It separates "
+                "local state, simulation, reads, credential lifecycle, real provider "
+                "mutations, and unimplemented connectors without probing, executing, "
+                "opening credentials, recording receipts, or changing enforcement.",
+)
+async def integration_effect_inventory(trace_id=None):
+    return provider_effect_inventory()
+
+
+@capability(
     "integration.effect.receipts", http_method="GET",
     http_path="/integrations/effect/receipts",
     http_tags=["integration", "policy"], memory="off", silent=True,
@@ -1346,6 +1361,7 @@ register_ui(
         "integration.effect.enforcement.activate",
         "integration.effect.shadow.evidence",
         "integration.effect.receipts",
+        "integration.effect.inventory",
         # the one-click "register & secure everything" button drives autoenroll
         "autoenroll.scan", "autoenroll.run", "autoenroll.pending",
     ],

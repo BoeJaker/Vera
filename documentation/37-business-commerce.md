@@ -42,6 +42,22 @@ and financial records are external or durable mutations. Use idempotency keys
 where supported and retain provider IDs. On retry, query current remote state
 before creating a second listing, shipment, or transaction.
 
+The implemented boundary is narrower than that future model. Core business,
+inventory, customer, order, transaction, and draft-listing operations currently
+write Vera's local databases; `business.sim.*` is explicitly simulated. Commerce
+pricing/enrichment, eBay/Vinted listing sync, and order sync read provider state
+and may then update local records. OAuth exchange/refresh changes credential
+lifecycle rather than listing state.
+
+Real marketplace writes are concentrated at
+`business.platform.listing.push`, `business.listing.publish`, and
+`business.listing.archive`. eBay can upsert inventory, create/update/publish or
+withdraw an offer; Vinted can create or delete an item. Shopify, WooCommerce,
+Etsy, and Amazon connectors are declared but unimplemented. The deterministic
+`integration.effect.inventory` surface reports those facts without making a
+provider call. Commerce has not yet joined the shared effect evidence or
+enforcement families, and no automatic retry is implied by this inventory.
+
 ## Troubleshooting and reconciliation
 
 Reconcile from stable IDs: store/account, platform listing/order, internal

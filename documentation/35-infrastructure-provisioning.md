@@ -31,6 +31,22 @@ Discovery and planning should be read-only. Power, reboot, PXE, disk layout,
 firmware, and guest lifecycle operations can interrupt or destroy workloads and
 need an exact target plus confirmation.
 
+## External-effect boundary
+
+Infrastructure is not a single effect. Local Docker/Proxmox connection records
+are Vera metadata; status, inventory, metrics, storage listings, detection, and
+reachability checks are remote reads. Container execution/lifecycle, image pulls,
+builder startup, arbitrary builds, guest actions and creation/destruction,
+firewall edits, host commands, package installation, and service deployment are
+real mutations on the selected engine, cluster, or managed host.
+
+`integration.effect.inventory` publishes this distinction without contacting a
+target. These infrastructure paths have not yet adopted the shared external-
+effect contract and must not borrow Generic API, Email, or Telegram evidence.
+No automatic retry is added: repeating a partially completed provision, guest
+creation, firewall edit, image build, or destructive action without provider
+state and an operation-specific idempotency design can amplify damage.
+
 ## State ownership
 
 Proxmox owns guest lifecycle; the guest owns its operating system; Docker owns

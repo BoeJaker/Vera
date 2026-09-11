@@ -107,6 +107,15 @@ Telegram, and Email observations. Enforcement readiness, approval, and activatio
 controls appear only for the Generic API contract; the messaging-family views do
 not borrow or imply that authority.
 
+The same drawer also exposes a static **Provider boundaries** inventory from
+`integration.effect.inventory`. It separates local business records and
+simulations from marketplace reads, OAuth lifecycle, marketplace writes,
+container/build mutations, and Proxmox/provisioning mutations. This inventory is
+descriptive: it performs no probe and does not add Commerce or Infrastructure to
+the evidence families. The current bounded migration candidate is the shared
+marketplace listing seam used by eBay and Vinted; credentialed validation remains
+a separate, explicitly authorized activity.
+
 ---
 
 ## 4. Telegram (`telegram/`)
