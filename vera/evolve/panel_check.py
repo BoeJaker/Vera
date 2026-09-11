@@ -47,9 +47,15 @@ def node_available() -> bool:
     return shutil.which("node") is not None
 
 
-def _node_check(js: str) -> str:
-    """'' if node parses it, else node's first error line."""
-    fd, path = tempfile.mkstemp(suffix=".js")
+def _node_check(js: str, *, module: bool = False) -> str:
+    """'' if node parses it, else node's first error line.
+
+    `module` keeps the .mjs extension on the temp file. node decides script vs
+    ES module BY EXTENSION, so copying an .mjs to a temp .js made node parse
+    valid ESM as a classic script and fail on its first `import` - which is
+    exactly what happened to tests/test_widget_element.mjs on 2026-09-11.
+    """
+    fd, path = tempfile.mkstemp(suffix=".mjs" if module else ".js")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(js)
@@ -90,11 +96,11 @@ def check_html(text: str, *, use_node: bool = True) -> Dict[str, object]:
     return {"ok": not problems, "problems": problems, "scripts": len(scripts), "skipped": skipped}
 
 
-def check_js(text: str, *, use_node: bool = True) -> Dict[str, object]:
+def check_js(text: str, *, use_node: bool = True, module: bool = False) -> Dict[str, object]:
     problems = [f"line {ln}: git conflict marker" for ln in conflict_markers(text)]
     skipped = ""
     if use_node and node_available():
-        err = _node_check(text or "")
+        err = _node_check(text or "", module=module)
         if err:
             problems.append(err)
     else:
@@ -106,11 +112,13 @@ def check_file(path: str, text: str, *, use_node: bool = True) -> Dict[str, obje
     p = (path or "").lower()
     if p.endswith(".html") or p.endswith(".htm"):
         return check_html(text, use_node=use_node)
-    if p.endswith(".js") or p.endswith(".mjs"):
+    if p.endswith(".mjs"):
+        return check_js(text, use_node=use_node, module=True)
+    if p.endswith(".js") or p.endswith(".cjs"):
         return check_js(text, use_node=use_node)
     return {"ok": True, "problems": [], "scripts": 0, "skipped": "not a panel file"}
 
 
 def is_ui_file(path: str) -> bool:
     p = (path or "").lower()
-    return p.endswith((".html", ".htm", ".js", ".mjs"))
+    return p.endswith((".html", ".htm", ".js", ".mjs", ".cjs"))
