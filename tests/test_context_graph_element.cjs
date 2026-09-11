@@ -46,7 +46,7 @@ const L = G.loopFromEvents([{ type: 'start', run_id: 'r1' }, { type: 'agent_loop
 t('the loop lane: steps with status, cap and time; what each read', L.steps.length === 2 && L.steps[0].status === 'ok' && L.steps[0].cap === 'obs.provenance' && L.steps[0].ms === '1.2 s' && L.steps[1].status === 'running' && L.stepReads[0].join(',') === 'v1,g1');
 const P = G.planFromGoals({ goals: [{ id: 'g1', title: 'find the cause', status: 'done' }, { id: 'g2', title: 'patch the gate', status: 'active' }, { id: 'g3', title: 'test it', status: 'open' }] });
 t('the plan row from the goals', P.length === 3 && P[1].label === 'patch the gate');
-const g3 = G.compute(Object.assign({}, base, { loop: L.steps, plan: P, stepReads: L.stepReads }), 660, 600);
+const g3 = G.compute(Object.assign({}, base, { loop: L.steps, plan: P, stepReads: L.stepReads, allEdges: true }), 660, 600);
 t('lanes: the loop down the left, the plan along the top, the plot moved right and down', g3.loopNodes.length === 2 && g3.planNodes.length === 3 && g3.lanes.l === 118 && g3.lanes.t === 52 && g3.loopNodes[1].cls.indexOf('run') === 0 && g3.planNodes[1].cls === 'run' && g3.cnodes.every((n) => +n.x > 118));
 t('every step\'s reads run into the plot, dim unless in focus; the plan step in flight hands to the running step', g3.sedges.some((e) => e.cls === 'mem' && /plan step 2/.test(e.title)) && g3.sedges.filter((e) => e.cls === 'rel' && /^step 1 read/.test(e.title)).length === 2 && g3.regions.some((r) => r.t === 'loop · 1 of 2'));
 const g4 = G.compute(Object.assign({}, base, { loop: L.steps, plan: P, stepReads: L.stepReads, lsel: 0 }), 660, 600);
@@ -55,5 +55,28 @@ t('a loop step in focus draws its reads lit, the others none', g4.sedges.filter(
 const g5 = G.compute(Object.assign({}, base, { sel: 'v1' }), 660, 600);
 t('the record: name, kind, relevance in this prompt, read by, relations, the turn to focus', g5.rec && g5.rec.name === 'fabric_capabilities.py' && /in this prompt/.test(g5.rec.rows[0].v) && g5.rec.rows[2].v === 'm4' && g5.rec.rels.length === 2 && g5.rec.turn === 'm4' && /\bon\b/.test(g5.cnodes.find((n) => n.id === 'v1').cls));
 t('no records: nothing drawn, no crash', G.compute({ view: 'galaxy', nodes: [], edges: [] }, 300, 200).cnodes.length === 0);
+// the chat's other graphs, in this one
+const sess = [{ id: 'sm1', record_type: 'message', text: 'why?', created_at: '2026-09-11T10:00:00Z', source_type: 'human', importance: 0.7 }, { id: 'ss1', record_type: 'session', summary: 'session', created_at: '2026-09-11T09:59:00Z' }, { id: 'sd1', record_type: 'dag_step', capability: 'obs.health', created_at: '2026-09-11T10:01:00Z' }, { id: 'v1', record_type: 'fact', text: 'already in the prompt', created_at: '2026-09-11T10:02:00Z' }];
+const sessEdges = [{ from_id: 'ss1', to_id: 'sm1', relation: 'SESSION_CONTENT' }, { from_id: 'sm1', to_id: 'sd1', relation: 'FOLLOWED_BY' }, { from_id: 'sd1', to_id: 'v1', relation: 'DERIVED_FROM' }];
+const memColor = (ty) => ty === 'message' ? '#5a9e8f' : ty === 'session' ? '#fb923c' : '#a78bfa';
+const g6 = G.compute(Object.assign({}, base, { memory: sess, memEdges: sessEdges, memColor, edgeColor: (r) => r === 'FOLLOWED_BY' ? '#8fb87a' : '#888', memHide: new Set(['SESSION_CONTENT']), allEdges: true }), 660, 600);
+t('the session memory graph joins the arc, hollow; a record already in the prompt is drawn once, in its sector', g6.memNodes.length === 2 + 3 && g6.memNodes.filter((n) => /ghost/.test(n.cls)).length === 4 && !g6.memNodes.some((n) => n.id === 'v1') && g6.cnodes.some((n) => n.id === 'v1') && g6.pos.sm1.ghost && g6.pos.sm1.sess);
+t('the rail\'s shapes and colours: a message is a slab, the session a diamond, a dag step dashed', /\bmsg\b/.test(g6.memNodes.find((n) => n.id === 'sm1').cls) && /\bsess\b/.test(g6.memNodes.find((n) => n.id === 'ss1').cls) && /\bdag\b/.test(g6.memNodes.find((n) => n.id === 'sd1').cls) && g6.memNodes.find((n) => n.id === 'sm1').col === '#5a9e8f');
+t('the session\'s relations: drawn among what is on the arc and into the prompt\'s records, hidden types folded', g6.cedges.some((e) => /followed by/i.test(e.title) && e.col === '#8fb87a') && g6.cedges.some((e) => /derived from/i.test(e.title) && /→ fabric_capabilities\.py/.test(e.title)) && !g6.cedges.some((e) => /session content/i.test(e.title)));
+t('a memory chip with the count; the region says how many from the session', g6.families.some((f) => f.name === 'memory' && f.n === 5 && f.on) && g6.regions.some((r) => /memory · session 3/.test(r.t)) && g6.ghosts === 2 + 3);
+const g7 = G.compute(Object.assign({}, base, { memory: sess, memEdges: sessEdges, layersOff: new Set(['memory']) }), 660, 600);
+t('the memory chip folds the session graph away, the prompt\'s own memory stays', g7.memNodes.length === 2 && g7.families.some((f) => f.name === 'memory' && !f.on));
+const g8 = G.compute(Object.assign({}, base, { memory: sess, sel: 'sm1' }), 660, 600);
+t('the record panel for a session record: kind, recalled, created', g8.rec && g8.rec.family === 'memory' && g8.rec.rows[0].k === 'kind' && /human/.test(g8.rec.rows[0].v) && /never injected/.test(g8.rec.rows[1].v) && g8.rec.rec && g8.rec.rec.id === 'sm1');
+// the run's DAG as the loop lane while no loop is live
+const dag = [{ id: 'dag:0', label: 'obs.health', status: 'ok', cap: 'health' }, { id: 'dag:1', label: 'code.read', status: 'running', cap: '' }, { id: 'dag:2', label: 'evolve.assess', status: 'pending', cap: '' }];
+const g9 = G.compute(Object.assign({}, base, { dag }), 660, 600);
+t('the DAG steps take the loop lane, a dag chip, until a loop is live', g9.loopNodes.length === 3 && g9.loopNodes[1].cls.indexOf('run') === 0 && g9.families.some((f) => f.name === 'dag' && f.n === 3) && !g9.families.some((f) => f.name === 'loop'));
+const g10 = G.compute(Object.assign({}, base, { dag, loop: L.steps, stepReads: L.stepReads }), 660, 600);
+t('a live loop takes the lane over the DAG; a loop chip', g10.loopNodes.length === 2 && g10.families.some((f) => f.name === 'loop') && !g10.families.some((f) => f.name === 'dag'));
+t('the loop chip folds the lane away', G.compute(Object.assign({}, base, { dag, layersOff: new Set(['loop']) }), 660, 600).loopNodes.length === 0);
+// All edges
+const gA = G.compute(Object.assign({}, base, { loop: L.steps, stepReads: L.stepReads }), 660, 600), gB = G.compute(Object.assign({}, base, { loop: L.steps, stepReads: L.stepReads, allEdges: true }), 660, 600);
+t('All edges off keeps what touches the prompt; on draws every relation', gA.sedges.filter((e) => e.cls === 'rel').length === 0 && gB.sedges.filter((e) => e.cls === 'rel').length === 2 && gA.cedges.length === gB.cedges.length);
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

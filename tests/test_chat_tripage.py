@@ -92,6 +92,11 @@ def test_the_graph_column_is_the_chats_own_context_graph_and_hears_the_focused_t
     assert "_ctxCol.setContext(CTX_NODES, CTX_EDGES.map(" in HTML and "color:srcCol" in HTML, "fed by the chat's own records"
     assert "function _ctxColLoopEv(ev){" in HTML and HTML.count("_ctxColLoopEv(ev)") >= 4, "the live loop's events reach the column's loop lane"
     assert "fetch(BASE+'/dream/goals/list')" in HTML and "_ctxCol.setPlan(" in HTML
+    # the chat's other graphs, in the same column: the rail's Memory graph and the DAG graph, from the state the chat keeps
+    assert "_ctxCol.setMemory(_memAllNodes, _memAllEdges, {color:_nodeColorByType, edgeColor:r=>_edgeStyle(r||'').c, hide:_memEdgeHideTypes})" in HTML
+    assert "try{ memGraphLoad(); }catch(_){}" in HTML, "the rail's own loader"
+    assert "_ctxCol.setDag(_lastDagNodes)" in HTML
+    assert "if(d.family==='memory'&&d.rec){ try{ _memNodeClick(d.id, d.rec); }catch(_){} }" in HTML, "Open on a memory record opens the rail's memory detail"
     assert "const msg={type:'vera:graph:anchor', mid:w?(w.dataset.mid||''):'', rect, session_id:SID||''};" in HTML
     assert "try{ _ctxColumnSync(msg.mid); _ctxRunsDraw(); }catch(_){}" in HTML, "the focused turn drives the graph and the runs"
     assert "msgs.addEventListener('scroll', ()=>_graphAnchorPost(), {passive:true})" in HTML

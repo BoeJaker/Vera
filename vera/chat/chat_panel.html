@@ -5427,14 +5427,14 @@ IMPORTANT:
   // the graph column: the design's context graph — the Context menu grown into the full graph, beside the transcript.
   // The chat's own records (CTX_NODES / CTX_EDGES), the live loop's events and the goals feed <vera-context-graph>
   // (the chat's own element; nothing else's graph); the records in the focused turn's context run to the message.
-  let _ctxCol=null, _ctxColTimer=null, _ctxColSig='', _ctxColPlanT=0;
+  let _ctxCol=null, _ctxColTimer=null, _ctxColSig='', _ctxColPlanT=0, _ctxColMemT=0, _ctxColMemSig='', _ctxColDagSig='';
   function _graphColumnMount(){
     const host=document.getElementById('graphColumnBody'); if(!host) return;
     if(!_ctxCol||!host.contains(_ctxCol)){
       if(!(window.customElements&&window.customElements.get('vera-context-graph'))){ if(!host.querySelector('.sys-msg')) host.innerHTML='<div class="sys-msg" style="padding:12px">The context graph is loading…</div>'; if(!_ctxColTimer) _ctxColTimer=setInterval(_graphColumnTick, 800); return; }
       host.innerHTML=''; _ctxCol=document.createElement('vera-context-graph'); host.appendChild(_ctxCol);
       _ctxCol.addEventListener('vera:ctx:rendered', ()=>_ctxRunsDraw());
-      _ctxCol.addEventListener('vera:ctx:pick', ev=>{ const d=ev.detail||{}; if(d.open&&d.id){ try{ nodeClick(d.id); }catch(_){} } });
+      _ctxCol.addEventListener('vera:ctx:pick', ev=>{ const d=ev.detail||{}; if(!(d.open&&d.id)) return; if(d.family==='memory'&&d.rec){ try{ _memNodeClick(d.id, d.rec); }catch(_){} } else { try{ nodeClick(d.id); }catch(_){} } });
       _ctxCol.addEventListener('vera:ctx:toggle', ev=>{ const id=(ev.detail||{}).id; const n=CTX_NODES.find(x=>x.id===id); if(!n) return; n.included=n.included===false; try{ renderCtxList(); }catch(_){} _ctxColSig=''; _ctxColumnSync(_grFocusMid||''); });
       _ctxCol.addEventListener('vera:ctx:focus-turn', ev=>{ const mid=(ev.detail||{}).mid||''; if(!mid) return; _grFocusMid=mid; const w=document.querySelector('#msgs .mwrap[data-mid="'+mid+'"]'); try{ w&&w.scrollIntoView({block:'center',behavior:'smooth'}); }catch(_){} _graphAnchorPost(true); });
       const msgs=document.getElementById('msgs');
@@ -5453,6 +5453,13 @@ IMPORTANT:
     const sig=CTX_NODES.length+':'+CTX_EDGES.length+':'+incl.length+':'+(CTX_NODES[0]&&CTX_NODES[0].id)+':'+mid+':'+_ctxQuery;
     if(sig!==_ctxColSig){ _ctxColSig=sig; const reads={}; if(mid) reads[mid]=incl;
       _ctxCol.setContext(CTX_NODES, CTX_EDGES.map(e=>({from:e.from,to:e.to,label:e.type||e.label||''})), {focus:incl, reads, color:srcCol, turn:mid?'turn '+mid:''}); }
+    // the rail's other graphs, in the same column: the session's memory graph (loaded once per session, the rail's
+    // own loader) and the run's DAG — fed when they changed
+    if(SID&&!_memAllNodes.length&&Date.now()-_ctxColMemT>30000){ _ctxColMemT=Date.now(); try{ memGraphLoad(); }catch(_){} }
+    const msig=(SID||'')+':'+_memAllNodes.length+':'+_memAllEdges.length+':'+_memEdgeHideTypes.size;
+    if(msig!==_ctxColMemSig){ _ctxColMemSig=msig; _ctxCol.setMemory(_memAllNodes, _memAllEdges, {color:_nodeColorByType, edgeColor:r=>_edgeStyle(r||'').c, hide:_memEdgeHideTypes}); }
+    const dsig=_lastDagNodes.map(n=>n.cap+':'+n.status).join('|');
+    if(dsig!==_ctxColDagSig){ _ctxColDagSig=dsig; _ctxCol.setDag(_lastDagNodes); }
     if(Date.now()-_ctxColPlanT>60000){ _ctxColPlanT=Date.now(); fetch(BASE+'/dream/goals/list').then(r=>r.json()).then(r=>{ try{ _ctxCol&&_ctxCol.setPlan((r&&r.goals)||[]); }catch(_){} }).catch(()=>{}); }
     const s=document.getElementById('grColSub'); if(s) s.textContent='context graph · '+incl.length+' of '+CTX_NODES.length+' in the prompt';
   }
@@ -10542,6 +10549,7 @@ Your task: decide what to do next to advance toward the goal.
     if(_memEdgeHideTypes.has(type)){_memEdgeHideTypes.delete(type);btn.classList.remove('on');btn.textContent='Show sess edges';}
     else{_memEdgeHideTypes.add(type);btn.classList.add('on');btn.textContent='Hide sess edges';}
     if(_memAllNodes.length)_renderMemGraph(_memAllNodes,_memAllEdges);
+    try{ _ctxColMemSig=''; }catch(_){}
   }
 
   function _nodeColorByType(t){

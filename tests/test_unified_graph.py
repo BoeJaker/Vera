@@ -46,3 +46,8 @@ def test_the_chats_context_graph_is_its_own_element():
     assert "createGraph(" not in EL and "vera_graph.js" not in EL
     assert '<script src="/ui/context_graph_element.js"></script>' in CHAT and '<script src="/ui/graph/families.js"></script>' in CHAT
     assert "_ctxCol=document.createElement('vera-context-graph')" in CHAT
+    # the chat's graphs integrate: context (fed), memory (the rail's session graph on the arc), dag (the loop lane's fallback), loop (teed)
+    for api in ("setContext(nodes, edges, o)", "setMemory(nodes, edges, o)", "setDag(nodes)", "appendLoopEvent(ev)", "setPlan(goals)", "allEdges(on)"):
+        assert api in EL, api
+    assert "data-a=\"alledges\"" in EL and "if (!S.allEdges) {" in EL, "the design's All edges toggle"
+    assert "out.families.push({ name: 'memory'" in EL and "out.families.push({ name: 'dag'" in EL and "out.families.push({ name: 'loop'" in EL
