@@ -3143,22 +3143,20 @@ function renderJobs(){
     txt('jc-'+k,(_jobs[k]||[]).length);
   });
   txt('k-j-pend', _pendingTotal || (_jobs.pending||[]).length);
-<<<<<<< HEAD
   // The Queued figures count BOTH queues: ollama calls waiting for a node
   // slot, and background jobs waiting for an idle box. The tab lists both.
   const _bgWaiting=_bgqRows.filter(x=>x.state==='queued').length;
   txt('jc-queued',(_jobs.queued||[]).length+_bgWaiting);
   txt('k-j-queued',(_jobs.queued||[]).length+_bgWaiting);
-=======
-  txt('k-j-queued',(_jobs.queued||[]).length);
   // Say when the queue is not ours. A queue full of a sandbox's jobs reads as
-  // prod being busy unless it says so.
+  // prod being busy unless it says so - and say how much of it is background.
   (function(){
     const foreign=(_jobs.queued||[]).concat(_jobs.running||[]).filter(j=>j.origin&&j.origin.kind&&j.origin.kind!=='prod');
     const el=document.querySelector('#j-queued-kpi .kpi-sub');
-    if(el) el.textContent = foreign.length ? ('waiting for a node slot · '+foreign.length+' from sandboxes') : 'waiting for a node slot';
+    if(el) el.textContent = 'waiting for a node slot'
+      + (_bgWaiting ? (' \u00b7 '+_bgWaiting+' background') : '')
+      + (foreign.length ? (' \u00b7 '+foreign.length+' from sandboxes') : '');
   })();
->>>>>>> bleeding-edge
   txt('k-j-run',(_jobs.running||[]).length);
   txt('k-j-done', _doneTotal || (_jobs.done||[]).length);
   txt('k-j-fail',(_jobs.failed||[]).length);
