@@ -5680,6 +5680,36 @@ async def evolve_pipeline_adopt(branch: str = "", to: str = "bleeding-edge", tit
         _pstep(rec, "gate", True,
                "no .py changes — compile gate n/a; promote with force for docs/infra")
 
+    # The UI half of the same gate: panel HTML and JS. On 2026-09-11 an adopt
+    # passed with git conflict markers inside an inline <script> - the .py check
+    # above never looks at a panel, and a panel that does not parse ships as a
+    # page that silently stops rendering. Same contract as the .py check: the
+    # file PARSES, nothing about behaviour. If node is missing the scripts are
+    # reported as NOT CHECKED rather than passed.
+    try:
+        from Vera.vera.evolve import panel_check as _pc
+    except Exception:                                      # pragma: no cover
+        from vera.evolve import panel_check as _pc         # type: ignore
+    ui = [f for f in changed if _pc.is_ui_file(f)]
+    ui_bad: List[str] = []
+    ui_skipped = ""
+    for f in ui:
+        show = await _git("show", f"{branch}:{f}", repo_root=root)
+        if not show["ok"]:
+            continue  # deleted/renamed on the branch
+        res = await asyncio.to_thread(_pc.check_file, f, show.get("out", "") or "")
+        for prob in res.get("problems") or []:
+            ui_bad.append(f"{f}: {prob}")
+        if res.get("skipped") and not ui_skipped:
+            ui_skipped = str(res["skipped"])
+    if ui:
+        ui_ok = not ui_bad
+        compile_ok = compile_ok and ui_ok
+        _pstep(rec, "gate-ui", ui_ok,
+               f"panel-check {len(ui)} html/js file(s): "
+               + ("PASS" if ui_ok else "FAIL — " + "; ".join(ui_bad[:3]))
+               + (f" ({ui_skipped})" if ui_skipped else ""))
+
     # Critical-system regression gate (dev-lifecycle §6 / route-forward M3) — the
     # compile check above never behaviourally exercised anything, so a fix could
     # parse clean and still be wrong; every fix landed by hand this session had to
