@@ -73,7 +73,10 @@ def _load_module():
 
     orch.APP = _App()
     orch.capability = capability
-    orch.emit_event = lambda ev: None
+    async def _emit(ev):          # awaited by the registry since the control-plane slice
+        orch.EVENTS.append(ev)
+    orch.EVENTS = []
+    orch.emit_event = _emit
     orch.now_iso = lambda: "2026-09-11T00:00:00+00:00"
     orch.register_ui = lambda *a, **k: orch.UI.__setitem__(a[0], {"args": a, "kw": k})
     pkg = types.ModuleType("Vera"); pkg.__path__ = []

@@ -517,7 +517,9 @@ def register_ui(panel_id: str, label: str, icon: str, html: str, js: str = "",
                 tab_order: int = 100,
                 specialist_agent: str = "",
                 specialist_loop_profile: str = "",
-                specialist_context_cap: str = ""):
+                specialist_context_cap: str = "",
+                sections: List[dict] = None,
+                options: List[dict] = None):
     """Register a built-in UI panel.
 
     mode:
@@ -550,6 +552,11 @@ def register_ui(panel_id: str, label: str, icon: str, html: str, js: str = "",
     passed as agent.consult's `context` argument — no new execution engine,
     just real data prepended to the same consult/loop call. Blank = no
     context injection, specialist answers from persona alone as before.
+    sections / options (UI redesign, Notes/40 §2): what the panel's own menu
+    holds — sections [{id, label, tabs:[{id,label}]}] and options [{id, label,
+    kind, get, set}] — so the harness LHM, the chat rail and a panel's side menu
+    are built from ONE registration instead of three hand-drawn lists. Empty =
+    the panel has no declared menu (as every panel today).
     """
     UI_PANELS[panel_id] = {
         "id":        panel_id,
@@ -563,6 +570,8 @@ def register_ui(panel_id: str, label: str, icon: str, html: str, js: str = "",
         "specialist_agent":        specialist_agent,
         "specialist_loop_profile": specialist_loop_profile,
         "specialist_context_cap":  specialist_context_cap,
+        "sections":  [s for s in (sections or []) if isinstance(s, dict)],
+        "options":   [o for o in (options or []) if isinstance(o, dict)],
     }
 
 REDIS = PG_POOL = CHROMA = NEO = None
@@ -9636,6 +9645,13 @@ async def lifespan(app: FastAPI):
         # the widget registry and the chat's panel bridge, which it drives.
         os.path.join(_here, "ui/directives.py"),
         os.path.join(_here, "ui/scripts.py"),
+        # The shared UI libraries (UI redesign): the one ISO projection and the
+        # one context-menu registry, served at /ui/iso.js and /ui/menus.js.
+        os.path.join(_here, "ui/libs.py"),
+        # The widget catalogue (UI redesign): shapes, forms, sources; the
+        # validate / render_spec a renderer or editor asks before drawing.
+        # After the registry, whose templates it validates.
+        os.path.join(_here, "widgets/widget_catalog.py"),
         # Planning styles: additive alternatives to the loop's own planner
         # (plan.styles / plan.detailed). Loaded late so plan.detailed's default
         # capability catalogue is the complete registry, not a partial one.

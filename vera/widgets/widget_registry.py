@@ -27,8 +27,10 @@ is the UI over them; a dashboard host realises instances placed on it.
 """
 from __future__ import annotations
 
+import importlib.util as _ilu
 import json
 import re
+import sys
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -37,6 +39,22 @@ import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import (   # noqa: F401
     APP, UI_PANELS, capability, emit_event, now_iso, register_ui,
 )
+
+
+def _sibling(name: str):
+    """A module beside this file, loaded once by path (the way _module_files loads us: no package to import from)."""
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = _ilu.spec_from_file_location(name, Path(__file__).parent / (name + ".py"))
+    mod = _ilu.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+# The record's schema and rules (m1 foundations): the registry keeps its template shape, the full record the
+# WidgetSpec board writes is accepted too, and both are normalised and checked in ONE place - widget_record.py.
+_rec = _sibling("widget_record")
 
 FORMS = ("counter", "meter", "sparkline", "node", "chart", "graph", "terminal", "table",
          "program", "iso", "ask", "panel", "list", "tree", "controls", "button", "header", "rail")
@@ -138,44 +156,16 @@ def _builtin_panels() -> List[Dict[str, Any]]:
 
 # ── the record ────────────────────────────────────────────────────────────────
 def _normalise(t: Dict[str, Any]) -> Dict[str, Any]:
-    """One shape for every template, whatever came in."""
-    reads = t.get("reads") if isinstance(t.get("reads"), dict) else {"cap": str(t.get("reads") or "")}
-    draw = t.get("draw") if isinstance(t.get("draw"), dict) else {"form": str(t.get("draw") or "")}
-    form = str(t.get("form") or draw.get("form") or "panel").strip().lower()
-    can = t.get("can") if isinstance(t.get("can"), list) else [s.strip() for s in str(t.get("can") or "").split(".") if s.strip()]
-    placed = t.get("placed") if isinstance(t.get("placed"), list) else []
-    placed = [str(x.get("where") if isinstance(x, dict) else x)[:32] for x in placed if x]
-    name = str(t.get("name") or "").strip()[:120]          # empty stays empty: problems() refuses a nameless record
-    return {
-        "id": str(t.get("id") or _slug(name or "widget"))[:80],
-        "name": name,
-        "form": form[:24],
-        "reads": {"cap": str(reads.get("cap") or "")[:120], "args": reads.get("args") if isinstance(reads.get("args"), dict) else {},
-                  "every": str(reads.get("every") or "")[:24], "note": str(reads.get("note") or "")[:200]},
-        "frame": str(t.get("frame") or "")[:300],
-        "draw": {"form": str(draw.get("form") or form)[:24], "size": str(draw.get("size") or "M")[:4], "motion": str(draw.get("motion") or "")[:40]},
-        "can": [str(c)[:60] for c in can][:16],
-        "placed": placed[:16],
-        "source": t.get("source") if isinstance(t.get("source"), dict) else {"origin": "you", "from": "", "panel": ""},
-        "version": int(t.get("version") or 1),
-        "tags": [str(x)[:32] for x in (t.get("tags") or []) if x][:12],
-        "created_at": str(t.get("created_at") or ""),
-        "updated_at": str(t.get("updated_at") or ""),
-    }
+    """One shape for every template, whatever came in - the template shape, or the WidgetSpec board's full record
+    (title . source . read . frame{size} . draw options), which is folded to the template shape first."""
+    if isinstance(t, dict) and ("title" in t or isinstance(t.get("read"), dict) or isinstance(t.get("frame"), dict)) and "reads" not in t:
+        return _rec.to_template(t)
+    return _rec.normalise_template(t if isinstance(t, dict) else {})
 
 
 def problems(t: Dict[str, Any]) -> List[str]:
-    out = []
-    if not t.get("name"):
-        out.append("a template needs a name")
-    if t.get("form") not in FORMS:
-        out.append("unknown form %r (one of: %s)" % (t.get("form"), ", ".join(FORMS)))
-    if not (t.get("reads") or {}).get("cap") and t.get("form") not in ("header", "button", "rail", "controls", "panel"):
-        out.append("a %s widget must say what it reads (reads.cap)" % t.get("form"))
-    for w in t.get("placed") or []:
-        if w not in WHERES and not w.startswith("harness") and not w.startswith("header"):
-            out.append("unknown placement %r (one of: %s)" % (w, ", ".join(WHERES)))
-    return out
+    """What a save refuses: the catalogue's forms are as valid as the registry's own eighteen."""
+    return _rec.template_problems(t, FORMS, WHERES)
 
 
 async def _load_saved() -> List[Dict[str, Any]]:
