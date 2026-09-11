@@ -9862,6 +9862,10 @@ async def lifespan(app: FastAPI):
         # Server Trigger consumed through the real MCP client in vera/mcp/ —
         # after the catalog, whose connect path reuses that same client.
         os.path.join(_here, "n8n/n8n_capabilities.py"),
+        # Home Assistant, natively: read entities and call services over
+        # HA's own REST API, rather than through an n8n webhook that only
+        # works while a second container is up.
+        os.path.join(_here, "homeassistant/ha_capabilities.py"),
         # Platform configuration controller: one place to set shared
         # facts (coordinates, timezone) and credentials, and push them
         # into n8n / Home Assistant. After n8n so both are registered.
