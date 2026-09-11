@@ -91,7 +91,7 @@ def test_voice_strip_is_painted_from_the_mic():
     # the capture publishes its level; the transcription counter wraps the segment call; the UI hook repaints
     assert "_micLevel=v;" in HTML
     assert "_micTx++; let txt=''; try{ txt=await _sttSegment(samples,rate); } finally { _micTx=Math.max(0,_micTx-1); }" in HTML
-    assert re.search(r"function _micUi\(on\)\{\n    MIC_ACTIVE=!!on;\n    try\{ _micHist=\[\]; _cmpPaintVoice\(\); \}", HTML)
+    assert re.search(r"function _micUi\(on\)\{\n    MIC_ACTIVE=!!on;\n    try\{ _micHist=\[\]; _cmpSync\(\); \}", HTML)   # chips + strip at once
     for el in ("cmpVMeter", "cmpVWord", "cmpVTime", "cmpVHint", "cmpVPause", "cmpVTts"):
         assert 'id="%s"' % el in HTML, el
 
@@ -214,6 +214,34 @@ def test_widget_reads_only_quiet_capabilities_on_its_own():
     read = _fn("_wRead")
     assert "if(!forced&&!_widgetReadable(w.rec.reads.cap)) return;" in read
     assert "every>=10" in read                                   # refresh never tighter than 10 s
+
+
+def test_widget_draws_what_it_read_even_when_the_chosen_form_cannot():
+    f = _fn("_wFormFor")
+    assert "if(data===undefined||!empty(rec.draw.form)) return rec.draw.form;" in f
+    assert "const byShape=_widgetFormByShape(data); if(byShape&&!empty(byShape)) return byShape;" in f
+    assert "return 'kv';" in f
+    assert "drawn as '+esc(w.drawn)+' (the data\\'s shape)'" in _fn("_wRepaint")
+
+
+def test_slash_menu_is_hidden_until_it_has_rows():
+    assert ".slash-menu:empty{display:none!important}" in HTML
+    assert "menu.style.display='flex'; _slashVisible=true;" in HTML
+    assert ".slash-menu{padding:0;overflow:hidden;flex-direction:column}" in HTML
+
+
+def test_widget_draws_what_it_read_even_when_the_chosen_form_cannot():
+    f = _fn("_wFormFor")
+    assert "if(data===undefined||!empty(rec.draw.form)) return rec.draw.form;" in f
+    assert "const byShape=_widgetFormByShape(data); if(byShape&&!empty(byShape)) return byShape;" in f
+    assert "return 'kv';" in f
+    assert "drawn as '+esc(w.drawn)+' (the data\\'s shape)'" in _fn("_wRepaint")
+
+
+def test_slash_menu_is_hidden_until_it_has_rows():
+    assert ".slash-menu:empty{display:none!important}" in HTML
+    assert "menu.style.display='flex'; _slashVisible=true;" in HTML
+    assert ".slash-menu{padding:0;overflow:hidden;flex-direction:column}" in HTML
 
 
 def test_the_model_is_told_about_the_widget_fence():

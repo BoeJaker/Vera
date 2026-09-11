@@ -557,7 +557,8 @@ body.composer-focus #ctxStrip{display:flex}
 .slash-lbl{font-family:var(--mono);font-size:11px;color:var(--acc2);font-weight:600;white-space:nowrap}
 .slash-hint{font-size:9.5px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
 /* Unified with the command drawer: same item model, slim inline face. */
-.slash-menu{padding:0;overflow:hidden;display:flex;flex-direction:column}
+.slash-menu{padding:0;overflow:hidden;flex-direction:column}
+.slash-menu:empty{display:none!important}
 .slash-list{flex:1;min-height:0;overflow-y:auto;padding:4px}
 .slash-item{align-items:center}
 .slash-ico{width:16px;text-align:center;font-size:11px;color:var(--acc);flex-shrink:0}
@@ -4892,7 +4893,19 @@ IMPORTANT:
       const mid='mm'+(++_mmSeq); _MM_BLOCKS[mid]=L.join('\n');
       return '<div class="mm-slot" data-mm="'+mid+'" data-mm-bare="1"></div>';
     }
+    if(form==='kv'){
+      const o=(data&&typeof data==='object'&&!Array.isArray(data))?data:null; if(!o) return '<span class="wempty">nothing to list</span>';
+      const ks=Object.keys(o).filter(k=>typeof o[k]!=='object'||o[k]===null).slice(0,8); if(!ks.length) return '<span class="wempty">no plain values to list</span>';
+      return '<div class="wlog">'+ks.map(k=>'<div><span class="k">'+esc(k)+'</span><span>'+esc(String(o[k]))+'</span></div>').join('')+'</div>';
+    }
     return '<span class="wempty">form '+esc(form)+' · no drawing yet</span>';
+  }
+  // the form that actually draws this data: the chosen one, else what its shape picks, else the key · value list
+  function _wFormFor(rec, data){
+    const empty=(f)=>{ try{ return /class="wempty"/.test(_wDraw(f,_widgetData(data,f),70)); }catch(_){ return true; } };
+    if(data===undefined||!empty(rec.draw.form)) return rec.draw.form;
+    const byShape=_widgetFormByShape(data); if(byShape&&!empty(byShape)) return byShape;
+    return 'kv';
   }
   // the record, normalised the way widget.template.* normalises it (the short form's window/size/refresh are sugar)
   function _widgetRecord(src, by){
@@ -4914,12 +4927,13 @@ IMPORTANT:
     const H=_W_SIZE[rec.draw.size]||70;
     const rowRec={ form:rec.draw.form, source:rec.reads.cap||undefined, args:Object.keys(rec.reads.args||{}).length?rec.reads.args:undefined, refresh:rec.reads.every||undefined, size:rec.draw.size };
     const recTxt=JSON.stringify(rowRec,null,1).replace(/"(\w+)":/g,'$1:').replace(/\n\s*/g,' ');
-    const body=(data!==undefined)?_wDraw(rec.draw.form,_widgetData(data,rec.draw.form),H)
+    const drawn=(data!==undefined)?_wFormFor(rec,data):rec.draw.form; if(drawn!==rec.draw.form) _W_STORE[id].drawn=drawn;
+    const body=(data!==undefined)?_wDraw(drawn,_widgetData(data,drawn),H)
       : (rec.reads.cap?(_widgetReadable(rec.reads.cap)?'<span class="wempty">reading '+esc(rec.reads.cap)+'…</span>':'<button class="btn xs" onclick="CH._wRead(\''+id+'\',true)" title="This capability is not read-shaped, so it only runs when you ask">Read '+esc(rec.reads.cap)+'</button>'):'<span class="wempty">no source and no data</span>');
     const headline=(data&&typeof data==='object'&&!Array.isArray(data)&&typeof data.value==='number')?_wFmt(data.value)+(typeof data.unit==='string'?data.unit:''):'';
-    return `<div class="wblk" id="${id}" data-form="${esc(rec.draw.form)}" data-w="widget block · reply">`
+    return `<div class="wblk" id="${id}" data-form="${esc(drawn)}" data-w="widget block · reply">`
          + `<div class="wl"><span class="wh"><i class="${by==='rule'?'rule':''}"></i>${esc(rec.name)}${rec.reads.args&&rec.reads.args.window?' · '+esc(String(rec.reads.args.window)):''}<b>${esc(headline)}</b></span><div class="wb">${body}</div></div>`
-         + `<div class="wr"><span class="by">${by==='rule'?'by <b>rule</b> · the result\'s shape':'chosen by <b>aide</b>'} · form: ${esc(rec.draw.form)}</span><span class="rec">${esc(recTxt)}</span>`
+         + `<div class="wr"><span class="by">${by==='rule'?'by <b>rule</b> · the result\'s shape':'chosen by <b>aide</b>'} · form: ${esc(rec.draw.form)}${drawn!==rec.draw.form?' · drawn as '+esc(drawn)+' (the data\'s shape)':''}</span><span class="rec">${esc(recTxt)}</span>`
          + `<span class="acts"><button onclick="CH._wPin('${id}',this)" title="A copy of the record onto the canvas — the same key brings the first item back">Pin to canvas</button><button onclick="CH._wXl('${id}',this)" title="A larger drawing, in place">Open at XL</button><button onclick="CH._wForm('${id}')" title="Another form over the same data">Change form</button></span></div></div>`;
   }
   // the model wrote a ```widget fence: its record (JSON, or key: value lines), drawn — inline data now, a source read
@@ -4937,19 +4951,23 @@ IMPORTANT:
     if(!forced&&!_widgetReadable(w.rec.reads.cap)) return;
     let res=null; try{ res=await _capCall(w.rec.reads.cap, w.rec.reads.args||{}); }catch(e){ res={error:String(e&&e.message||e)}; }
     if(res&&typeof res==='object'&&res.error&&Object.keys(res).length<=2){ const el=document.getElementById(id); if(el){ const b=el.querySelector('.wb'); if(b) b.innerHTML='<span class="wempty">'+esc(w.rec.reads.cap)+': '+esc(String(res.error).slice(0,120))+'</span>'; } return; }
-    w.data=res; _wRepaint(id);
+    w.data=res;
+    const f=_wFormFor(w.rec,res); if(f!==w.rec.draw.form){ w.drawn=f; } else { w.drawn=undefined; }
+    _wRepaint(id);
     const every=parseFloat(w.rec.reads.every); if(every>=10&&!w.timer){ w.timer=setInterval(()=>{ if(!document.getElementById(id)){ clearInterval(w.timer); w.timer=null; return; } _wRead(id,forced); }, every*1000); }
   }
   function _wRepaint(id){
     const w=_W_STORE[id], el=document.getElementById(id); if(!w||!el) return;
-    const b=el.querySelector('.wb'); if(b) b.innerHTML=_wDraw(w.rec.draw.form,_widgetData(w.data,w.rec.draw.form),w.xl?200:(_W_SIZE[w.rec.draw.size]||70));
+    const form=w.drawn||w.rec.draw.form;
+    const b=el.querySelector('.wb'); if(b) b.innerHTML=_wDraw(form,_widgetData(w.data,form),w.xl?200:(_W_SIZE[w.rec.draw.size]||70));
     const hb=el.querySelector('.wh b'); if(hb){ const d=w.data; hb.textContent=(d&&typeof d==='object'&&!Array.isArray(d)&&typeof d.value==='number')?_wFmt(d.value)+(typeof d.unit==='string'?d.unit:''):''; }
-    el.dataset.form=w.rec.draw.form; const by=el.querySelector('.wr .by'); if(by) by.innerHTML=(w.by==='rule'?'by <b>rule</b> · the result\'s shape':'chosen by <b>aide</b>')+' · form: '+esc(w.rec.draw.form);
+    el.dataset.form=form; const by=el.querySelector('.wr .by'); if(by) by.innerHTML=(w.by==='rule'?'by <b>rule</b> · the result\'s shape':'chosen by <b>aide</b>')+' · form: '+esc(w.rec.draw.form)+(w.drawn?' · drawn as '+esc(w.drawn)+' (the data\'s shape)':'');
   }
   function _wXl(id, btn){ const w=_W_STORE[id], el=document.getElementById(id); if(!w||!el) return; w.xl=!w.xl; el.classList.toggle('xl',w.xl); if(btn) btn.textContent=w.xl?'Back to size':'Open at XL'; _wRepaint(id); }
   // the next form that can draw THIS data (a trace's points can be a log or a table, never a ring)
   function _wForm(id){
     const w=_W_STORE[id]; if(!w) return;
+    w.drawn=undefined;
     const data=w.data, cur=_W_DRAWS.indexOf(w.rec.draw.form);
     for(let k=1;k<=_W_DRAWS.length;k++){
       const f=_W_DRAWS[(cur+k)%_W_DRAWS.length];
@@ -14120,7 +14138,7 @@ Your task: decide what to do next to advance toward the goal.
 
   function _micUi(on){
     MIC_ACTIVE=!!on;
-    try{ _micHist=[]; _cmpPaintVoice(); }catch(_){}
+    try{ _micHist=[]; _cmpSync(); }catch(_){}
     try{document.getElementById('micDot')?.classList.toggle('on',MIC_ACTIVE);}catch(_){}
     try{document.getElementById('micBtn')?.classList.toggle('on',MIC_ACTIVE);}catch(_){}
     const btn=document.getElementById('micBtn');
@@ -15350,7 +15368,7 @@ Your task: decide what to do next to advance toward the goal.
     menu.innerHTML=`<div class="slash-list">${rows}</div>`
       +`<div class="slash-foot"><kbd>↑</kbd><kbd>↓</kbd> move <kbd>↵</kbd> select`
       +`<span class="exp" data-exp="1">Tab / ⌘K → full drawer</span></div>`;
-    menu.style.display='block'; _slashVisible=true;
+    menu.style.display='flex'; _slashVisible=true;
     [...menu.querySelectorAll('.slash-item')].forEach(el=>{
       el.addEventListener('mousedown',ev=>{ ev.preventDefault(); _slashChoose(+el.dataset.i); });
       el.addEventListener('mousemove',()=>{ const i=+el.dataset.i; if(i!==_slashSel){ _slashSel=i; [...menu.querySelectorAll('.slash-item')].forEach(x=>x.classList.toggle('on',+x.dataset.i===_slashSel)); } });
