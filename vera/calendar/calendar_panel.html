@@ -469,6 +469,7 @@ body.rail-hidden #rail{ display:none; }
       <div id="sync-tile">
         <div class="lbl">Sync</div>
         <div class="row"><span class="dot" id="sync-dot"></span><span id="sync-text" class="muted">never synced</span></div>
+        <div class="row" title="Calendar effect boundary"><span class="dot warn"></span><span id="effect-text" class="muted">checking write boundary…</span></div>
         <button class="btn ghost sm" style="margin-top:8px;width:100%" onclick="syncNow()">⟳ Sync now</button>
       </div>
     </div>
@@ -1800,6 +1801,11 @@ loadTodos();
 initAssist();
 connectWS();
 (async()=>{ const r=await call("/cal/sync/status"); if(r.ts) updateSyncTile(r.ts); })();
+(async()=>{ const r=await call("/cal/effects/status");
+  const remote=r.remote_mutations||{};
+  $("effect-text").textContent=remote.implemented?"remote writes instrumented":"local edits · remote sync read-only";
+  $("effect-text").title=remote.implemented?"Remote calendar mutations have an effect boundary":"No remote calendar-write adapter is implemented";
+})();
 setInterval(()=>{ renderAgenda(); if(VIEW!=="month") renderView(); },300000);
 </script>
 <script src="/ui/elements/agent_loop_output.js" id="alo-script"></script>

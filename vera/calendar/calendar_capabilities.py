@@ -27,6 +27,7 @@ Capabilities (group `cal.*`)
   cal.sources.list / cal.source.upsert / cal.source.delete
   cal.sync.run    / cal.sync.status
   cal.google.auth_url / cal.google.auth_complete
+  cal.effects.status
   cal.fabric.persist
   cal.config.get  / cal.config.set
   cal.panel.html  (serves /cal/panel)
@@ -72,6 +73,7 @@ from Vera.vera.capability_orchestration import (
 )
 from Vera.vera.config import cfg
 from Vera.vera.calendar import ical
+from Vera.vera.calendar.effect_inventory import calendar_effect_inventory
 from Vera.vera.security import secrets as cal_secrets
 
 log = logging.getLogger("vera.calendar")
@@ -1685,6 +1687,17 @@ async def cap_assistant_handover(request: str = "", context: str = "",
 # ═════════════════════════════════════════════════════════════════════════════
 
 @capability(
+    "cal.effects.status", http_method="GET", http_path="/cal/effects/status",
+    http_tags=["calendar", "policy"], memory="off", silent=True,
+    description="Inspect Calendar's local-state, remote-read, authorization, and "
+                "remote-mutation boundaries. This deterministic inventory does not "
+                "probe, sync, mutate, open credentials, or claim an unimplemented "
+                "remote calendar-write adapter.",
+)
+async def cap_effects_status(trace_id=None):
+    return calendar_effect_inventory()
+
+@capability(
     "cal.panel.html", http_method="GET", http_path="/cal/panel",
     http_tags=["calendar", "ui"], memory="off", silent=True,
     description="Serve the Calendar panel HTML.",
@@ -1767,6 +1780,7 @@ register_ui(
         "cal.sources.list", "cal.source.upsert", "cal.source.delete",
         "cal.sync.run", "cal.sync.status",
         "cal.google.auth_url", "cal.google.auth_complete", "cal.google.calendars",
+        "cal.effects.status",
         "cal.fabric.persist", "cal.config.get", "cal.config.set",
     ],
     mode="inject",          # now a sub-tab of the combined "Comms" tab

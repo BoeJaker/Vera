@@ -51,6 +51,20 @@ A personal scheduler/diary: events, todos, and notes stored in Redis (with a sor
 
 Cloud credentials (Google OAuth secret + refresh token, CalDAV app-password) are sealed before they touch Redis and never returned to the UI.
 
+`cal.effects.status` makes the execution boundary explicit. Event, todo, note,
+and brain-dump commits currently mutate only Vera's local Redis diary. ICS fetch,
+CalDAV `REPORT`, and Google event listing are inbound remote reads. Google OAuth
+exchange and refresh belong to credential lifecycle rather than calendar-event
+mutation. Vera does not currently implement a remote event create/update/delete
+adapter, so Calendar truthfully reports no external mutation evidence,
+enforcement, receipts, or retry behavior instead of borrowing another family's
+readiness.
+
+The Calendar sidebar shows **local edits · remote sync read-only** alongside sync
+state. When a real remote-write adapter is introduced, it must first adopt the
+shared effect contract and Calendar-specific evidence ledger before this status
+can claim instrumentation.
+
 ---
 
 ## 3. Email (`email/`)
