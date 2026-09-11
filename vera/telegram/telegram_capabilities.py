@@ -390,7 +390,7 @@ def _observe_send_effect(chat_id: str, *, mode: str,
                   "records_completion": False, "executes": False,
                   "retains_payload": False}
     try:
-        default_external_effect_shadow_evidence().record(shadow)
+        default_external_effect_shadow_evidence(family="telegram").record(shadow)
     except Exception:
         log.exception("Telegram effect shadow evidence record failed")
     return shadow

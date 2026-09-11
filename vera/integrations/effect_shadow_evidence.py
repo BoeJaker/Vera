@@ -21,6 +21,7 @@ READINESS_THRESHOLDS = {
     "minimum_denied": 10,
     "minimum_replay_suppressions": 1,
 }
+EVIDENCE_FAMILIES = frozenset({"integration_api", "telegram", "email"})
 
 
 def evaluate_enforcement_readiness(summary: Mapping[str, Any]) -> dict[str, Any]:
@@ -146,9 +147,14 @@ class ExternalEffectShadowEvidence:
         }
 
 
-@lru_cache(maxsize=1)
-def default_external_effect_shadow_evidence() -> ExternalEffectShadowEvidence:
+@lru_cache(maxsize=8)
+def default_external_effect_shadow_evidence(
+        family: str = "integration_api") -> ExternalEffectShadowEvidence:
     from Vera.vera import state_paths
-    path = state_paths.state_dir("integrations") / "external-effect-shadow.sqlite3"
+    if family not in EVIDENCE_FAMILIES:
+        raise ValueError("external-effect evidence family is unsupported")
+    filename = ("external-effect-shadow.sqlite3" if family == "integration_api" else
+                f"external-effect-shadow-{family}.sqlite3")
+    path = state_paths.state_dir("integrations") / filename
     state_paths.guard_out_of_tree(path)
     return ExternalEffectShadowEvidence(path)

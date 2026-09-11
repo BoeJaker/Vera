@@ -73,6 +73,26 @@ Multi-account IMAP/SMTP backed by the Accounts registry, with AI assistance.
 
 Email keeps only global settings + the notification bridge config in Redis; credentials live (sealed) in Accounts.
 
+SMTP sends, replies, and event-bridge deliveries project into the shared
+external-effect contract before account transport resolution. Plans identify the
+account and destination only by digests and exclude recipients, thread IDs,
+subjects, bodies, credentials, and raw approval/idempotency references. Optional
+control evidence is never passed to SMTP. When a durable success receipt exists,
+the projection reports that policy would suppress the replay.
+
+The Email migration remains observe-only. It records bounded policy evidence but
+does not block delivery, retry a send, manufacture a completion receipt, or turn
+an evidence failure into a mail failure. Email, Telegram, and generic API
+observations use separate ledgers so one family cannot satisfy another family's
+enforcement-readiness thresholds. Capability activity also redacts Email
+arguments and results; the existing mail event stream remains a separate legacy
+surface pending its own privacy migration.
+
+The Integrations **Effect evidence** drawer can switch among Generic API,
+Telegram, and Email observations. Enforcement readiness, approval, and activation
+controls appear only for the Generic API contract; the messaging-family views do
+not borrow or imply that authority.
+
 ---
 
 ## 4. Telegram (`telegram/`)
@@ -103,8 +123,8 @@ separate non-executing plan identified only by a digest; message bodies, raw cha
 identifiers, credentials, and raw approval/idempotency references are excluded.
 Optional approval, idempotency, and retry intent is evaluated but never forwarded
 to Telegram. Durable success evidence is consulted to report whether a replay
-would be suppressed, and the same bounded evidence store used by the Integrations
-drawer receives the policy observation.
+would be suppressed, and a Telegram-specific bounded ledger receives the policy
+observation through the shared inspection surface.
 
 This Telegram migration is deliberately observe-only: existing delivery behavior
 is preserved if planning or evidence storage fails, no send is blocked, no

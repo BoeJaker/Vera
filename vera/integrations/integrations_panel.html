@@ -168,6 +168,7 @@
 const $=s=>document.querySelector(s);
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let ITEMS=[], CUR=null;
+let EFFECT_FAMILY='integration_api';
 const MODES=['embed','interact','api','mcp','ssh'];
 function toast(m,e){const t=$('#toast');t.textContent=m;t.className='on'+(e?' err':'');clearTimeout(t._h);t._h=setTimeout(()=>t.className='',2600);}
 async function api(path,method='GET',body){const o={method,headers:{'Content-Type':'application/json'}};if(body)o.body=JSON.stringify(body);
@@ -180,7 +181,7 @@ async function loadEffects(){
   const el=$('#effectBody');el.innerHTML='<div class="hint">Loading durable receipt evidence…</div>';
   const [r,policy,shadow,readiness,decision,activation]=await Promise.all([api('/integrations/effect/receipts?limit=50'),
     api('/integrations/effect/retry/policy'),
-    api('/integrations/effect/shadow/evidence?limit=50'),
+    api('/integrations/effect/shadow/evidence?limit=50&family='+encodeURIComponent(EFFECT_FAMILY)),
     api('/integrations/effect/enforcement/readiness'),
     api('/integrations/effect/enforcement/decision'),
     api('/integrations/effect/enforcement/activation')]);
@@ -205,9 +206,14 @@ async function loadEffects(){
     +'<span class="bdg">max '+esc(bounds.maximum_attempts||0)+' attempts</span></div>'+reasons;
   const st=shadow.totals||{}, shadowReasons=Object.entries(shadow.reasons_in_window||{})
     .map(([k,v])=>'<span class="bdg">'+esc(k)+' '+esc(v)+'</span>').join(' ');
+  const familyLabel={integration_api:'Generic API',telegram:'Telegram',email:'Email'}[EFFECT_FAMILY]||EFFECT_FAMILY;
+  const familySwitch='<div class="sec">Effect family</div><div class="badges">'+
+    ['integration_api','telegram','email'].map(f=>'<button class="btn '+(f===EFFECT_FAMILY?'pri':'')+'" onclick="setEffectFamily(\''+f+'\')">'+
+      esc({integration_api:'Generic API',telegram:'Telegram',email:'Email'}[f])+'</button>').join(' ')+'</div>';
+  const isGeneric=EFFECT_FAMILY==='integration_api';
   const shadowInfo=shadow.error?'<div class="hint">Decision evidence unavailable: '+esc(shadow.error)+'</div>':
-    '<div class="sec">Policy decisions</div><div class="hint">What policy decided at the generic API boundary. '+
-    (activation.enforcement_enabled?'Enforcement is active; rejected mutations are blocked before credentials or HTTP.':'Enforcement is inactive; these counts describe what would be blocked, not proof of safety.')+'</div>'
+    '<div class="sec">'+esc(familyLabel)+' policy decisions</div><div class="hint">Payload-free decisions for this isolated effect family. '+
+    (isGeneric&&activation.enforcement_enabled?'Enforcement is active; rejected mutations are blocked before credentials or HTTP.':'This family is observe-only here; these counts describe what policy would do, not proof of safety.')+'</div>'
     +'<div class="metrics"><div class="metric"><b>'+esc(st.observations||0)+'</b><span>observed</span></div>'
     +'<div class="metric"><b>'+esc(st.would_admit||0)+'</b><span>would admit</span></div>'
     +'<div class="metric"><b>'+esc(st.would_suppress||0)+'</b><span>would suppress</span></div></div>'
@@ -215,17 +221,17 @@ async function loadEffects(){
   const readinessChecks=Object.entries(readiness.checks||{}).map(([k,v])=>
     '<div class="receipt"><b>'+esc(k.replace(/^minimum_/,'').replaceAll('_',' '))+'</b> '
     +'<span class="bdg '+(v.passed?'ok':'warn')+'">'+esc(v.observed)+' / '+esc(v.required)+'</span></div>').join('');
-  const readinessInfo=readiness.error?'<div class="hint">Readiness unavailable: '+esc(readiness.error)+'</div>':
+  const readinessInfo=!isGeneric?'':readiness.error?'<div class="hint">Readiness unavailable: '+esc(readiness.error)+'</div>':
     '<div class="sec">Enforcement review readiness</div><div class="hint">'+
     (readiness.eligible_for_operator_review?'Evidence thresholds met. An operator review is still required; enforcement remains off.':'More representative evidence is required. Enforcement remains off.')+
     ' Passing these checks measures coverage, not safety or authorization.</div>'+readinessChecks;
-  const decisionInfo=decision.error?'<div class="hint">Decision record unavailable: '+esc(decision.error)+'</div>':
+  const decisionInfo=!isGeneric?'':decision.error?'<div class="hint">Decision record unavailable: '+esc(decision.error)+'</div>':
     '<div class="sec">Operator decision</div><div class="hint">Requested: <b>'+esc(decision.requested_mode)+
     '</b> · effective: <b>'+esc(decision.effective_mode)+'</b> · revision '+esc(decision.revision)+
     '. Recording approval does not activate enforcement.</div><div style="display:flex;gap:8px;margin-top:8px">'
     +'<button class="btn" onclick="recordEffectDecision(\'continue_observing\','+Number(decision.revision||0)+')">Continue observing</button>'
     +'<button class="btn" '+(readiness.eligible_for_operator_review?'':'disabled')+' onclick="recordEffectDecision(\'approve_future_enforcement\','+Number(decision.revision||0)+')">Approve future rollout</button></div>';
-  const activationInfo=activation.error?'<div class="hint">Activation state unavailable: '+esc(activation.error)+'</div>':
+  const activationInfo=!isGeneric?'':activation.error?'<div class="hint">Activation state unavailable: '+esc(activation.error)+'</div>':
     '<div class="sec">Runtime enforcement</div><div class="hint">Deployment gate: <b>'+(activation.runtime_gate?'enabled':'disabled')+
     '</b> · requested: <b>'+(activation.requested_active?'active':'inactive')+'</b> · effective: <b>'+esc(activation.effective_mode)+
     '</b> · revision '+esc(activation.revision)+'. Activation is bound to the current approval and enforcement contract. A changed approval or contract disables it automatically.</div>'+
@@ -237,8 +243,9 @@ async function loadEffects(){
     +'<div class="metric"><b>'+esc(t.receipts||0)+'</b><span>receipts</span></div>'
     +'<div class="metric"><b>'+esc(t.observations||0)+'</b><span>observations</span></div></div>'
     +'<div class="badges">'+outcome+'</div><div class="sec">Recent evidence</div>'
-    +(rows||'<div class="hint">No external-effect receipts have been recorded yet.</div>')+shadowInfo+readinessInfo+decisionInfo+activationInfo+retryInfo;
+    +(rows||'<div class="hint">No external-effect receipts have been recorded yet.</div>')+familySwitch+shadowInfo+readinessInfo+decisionInfo+activationInfo+retryInfo;
 }
+function setEffectFamily(family){EFFECT_FAMILY=family;loadEffects();}
 async function recordEffectActivation(action,revision){
   const actor=prompt('Operator reference (stored only as a digest):'); if(!actor)return;
   let receipt='';

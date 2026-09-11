@@ -152,7 +152,7 @@ async def test_shadow_failure_preserves_existing_delivery(monkeypatch):
         lambda **_kwargs: (_ for _ in ()).throw(ValueError("private planning detail")))
     monkeypatch.setattr(
         telegram, "default_external_effect_shadow_evidence",
-        lambda: (_ for _ in ()).throw(OSError("private storage detail")))
+        lambda **_kwargs: (_ for _ in ()).throw(OSError("private storage detail")))
     monkeypatch.setattr(
         telegram, "_get_config",
         lambda: _async_value({"token": "provider-secret", "max_reply_chars": 3800}))
