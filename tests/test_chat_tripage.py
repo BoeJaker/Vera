@@ -89,7 +89,7 @@ def test_the_graph_column_is_the_chats_own_context_graph_and_hears_the_focused_t
     # the design's context graph, the chat's own element — no other panel embedded, no iframe
     assert '<div class="tri-bd" id="graphColumnBody"></div>' in HTML and 'graphColumnFrame' not in HTML
     assert "_ctxCol=document.createElement('vera-context-graph')" in HTML
-    assert "_ctxCol.setContext(CTX_NODES, CTX_EDGES.map(" in HTML and "color:srcCol" in HTML, "fed by the chat's own records"
+    assert "_ctxCol.setContext(nodesAll, edgesAll.map(" in HTML and "color:srcCol" in HTML, "fed by the chat's own records and the assembled context"
     assert "function _ctxColLoopEv(ev){" in HTML and HTML.count("_ctxColLoopEv(ev)") >= 4, "the live loop's events reach the column's loop lane"
     assert "fetch(BASE+'/dream/goals/list')" in HTML and "_ctxCol.setPlan(" in HTML
     # the chat's other graphs, in the same column: the rail's Memory graph and the DAG graph, from the state the chat keeps
@@ -97,6 +97,15 @@ def test_the_graph_column_is_the_chats_own_context_graph_and_hears_the_focused_t
     assert "try{ memGraphLoad(); }catch(_){}" in HTML, "the rail's own loader"
     assert "_ctxCol.setDag(_lastDagNodes)" in HTML
     assert "if(d.family==='memory'&&d.rec){ try{ _memNodeClick(d.id, d.rec); }catch(_){} }" in HTML, "Open on a memory record opens the rail's memory detail"
+    # the user's notes: two menus on the left (rail | graph), no runs while typing, the assembled context in the column
+    assert 'body[data-cols~="graph"] #rightRail.lhm-host > .lhm-det{display:none}' in HTML, "the quick menu folds while the graph column is open"
+    assert "if(ico&&!ico.classList.contains('top')) togglePage('graph'); }catch(_){} }, true);" in HTML, "a rail icon folds the graph back"
+    assert "_ctxCol.addEventListener('vera:ctx:collapse', ()=>{ togglePage('graph');" in HTML
+    assert "if(Date.now()-_ctxTypingT<900){ svg.innerHTML='';" in HTML and "inp.addEventListener('input', ()=>{ _ctxTypingT=Date.now(); _ctxRunsDraw(); });" in HTML
+    assert "function _ctxAssembledExtra(layers, present){" in HTML and "const extra=_ctxAssembledExtra(_CTX_ALL_LAYERS, CTX_NODES);" in HTML
+    assert "const _ex=_ctxAssembledExtra(_ctxLayers, vis); const extraNodes=_ex.nodes, extraEdges=_ex.edges;" in HTML, "the rail's graph draws from the same function"
+    for src in ("'__skill__'", "'__ont__'", "'__ent__'", "'__cap__'", "'__qa__'", "'__agent__'"):
+        assert HTML.count(src) >= 1, src
     assert "const msg={type:'vera:graph:anchor', mid:w?(w.dataset.mid||''):'', rect, session_id:SID||''};" in HTML
     assert "try{ _ctxColumnSync(msg.mid); _ctxRunsDraw(); }catch(_){}" in HTML, "the focused turn drives the graph and the runs"
     assert "msgs.addEventListener('scroll', ()=>_graphAnchorPost(), {passive:true})" in HTML

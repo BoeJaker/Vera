@@ -821,6 +821,10 @@ body.has-cols #chatColumn{position:relative}
 body[data-cols~="graph"] #ctxRunsOverlay{display:block}
 /* the design's order: rail | context graph | chat | canvas — the graph is the LHM grown, so it sits by the rail */
 body[data-cols~="graph"] #graphColumn{order:-1;border-left:none;border-right:1px solid var(--border)}
+/* the column IS the Context quick menu grown into the full graph: while it is open the quick menu folds to the rail —
+   rail | graph | chat, not rail | menu | graph | chat */
+body[data-cols~="graph"] #rightRail.lhm-host{width:46px !important;min-width:46px !important}
+body[data-cols~="graph"] #rightRail.lhm-host > .lhm-det{display:none}
 .tb-btn.col-on{color:var(--acc);border-color:var(--acc)}
 /* an empty minimal session lays its system lines out in a row; beside a column they wrap and stay in the chat */
 body[data-view="minimal"]:not(.has-msgs).has-cols #msgs{flex-wrap:wrap;overflow:hidden}
@@ -5406,6 +5410,8 @@ IMPORTANT:
     try{ _uiEvent('pages',{pages:_pagesOpen()}); }catch(_){}
   }
   function togglePage(name){ if(!_PAGE_NAMES.includes(name)) return false; if(_pages.has(name)) _pages.delete(name); else _pages.add(name); _pagesApply(); return _pages.has(name); }
+  // a rail icon while the graph column is open: fold the graph back into the quick menu (the pick itself opens it)
+  document.addEventListener('click', ev=>{ try{ if(!_pages.has('graph')) return; const ico=ev.target&&ev.target.closest&&ev.target.closest('#rightRail .lhm-rail .lhm-ico'); if(ico&&!ico.classList.contains('top')) togglePage('graph'); }catch(_){} }, true);
   function openPage(name){ if(!_PAGE_NAMES.includes(name)||_pages.has(name)) return false; _pages.add(name); _pagesApply(); return true; }
   // the session canvas follows the session: resolve it when the column opens, and again when SID changes under it
   async function _canvasColumnMount(){
@@ -5427,13 +5433,19 @@ IMPORTANT:
   // the graph column: the design's context graph — the Context menu grown into the full graph, beside the transcript.
   // The chat's own records (CTX_NODES / CTX_EDGES), the live loop's events and the goals feed <vera-context-graph>
   // (the chat's own element; nothing else's graph); the records in the focused turn's context run to the message.
-  let _ctxCol=null, _ctxColTimer=null, _ctxColSig='', _ctxColPlanT=0, _ctxColMemT=0, _ctxColMemSig='', _ctxColDagSig='';
+  let _ctxCol=null, _ctxColTimer=null, _ctxColSig='', _ctxColPlanT=0, _ctxColMemT=0, _ctxColMemSig='', _ctxColDagSig='', _ctxTypingT=0, _ctxTypingTimer=null;
+  // every source the column shows (the rail's graph honours its own layer toggles; the column has its own chips)
+  const _CTX_ALL_LAYERS=new Set(['vector','graph','memory','fabric','web','cap','run','skill','ontology','related_qa','worldview','agent','news','both','entities','urls']);
   function _graphColumnMount(){
     const host=document.getElementById('graphColumnBody'); if(!host) return;
     if(!_ctxCol||!host.contains(_ctxCol)){
       if(!(window.customElements&&window.customElements.get('vera-context-graph'))){ if(!host.querySelector('.sys-msg')) host.innerHTML='<div class="sys-msg" style="padding:12px">The context graph is loading…</div>'; if(!_ctxColTimer) _ctxColTimer=setInterval(_graphColumnTick, 800); return; }
       host.innerHTML=''; _ctxCol=document.createElement('vera-context-graph'); host.appendChild(_ctxCol);
       _ctxCol.addEventListener('vera:ctx:rendered', ()=>_ctxRunsDraw());
+      _ctxCol.addEventListener('vera:ctx:collapse', ()=>{ togglePage('graph'); try{ if(window.VeraLHM){ VeraLHM.pick('context'); const r=document.getElementById('rightRail'); if(r&&r.classList.contains('slim')) toggleRight(); } }catch(_){} });
+      // 2. no runs are routed while the composer is being typed in — the context changes under the typing
+      const inp=document.getElementById('chatInput');
+      if(inp&&!inp._ctxColBound){ inp._ctxColBound=true; inp.addEventListener('input', ()=>{ _ctxTypingT=Date.now(); _ctxRunsDraw(); }); }
       _ctxCol.addEventListener('vera:ctx:pick', ev=>{ const d=ev.detail||{}; if(!(d.open&&d.id)) return; if(d.family==='memory'&&d.rec){ try{ _memNodeClick(d.id, d.rec); }catch(_){} } else { try{ nodeClick(d.id); }catch(_){} } });
       _ctxCol.addEventListener('vera:ctx:toggle', ev=>{ const id=(ev.detail||{}).id; const n=CTX_NODES.find(x=>x.id===id); if(!n) return; n.included=n.included===false; try{ renderCtxList(); }catch(_){} _ctxColSig=''; _ctxColumnSync(_grFocusMid||''); });
       _ctxCol.addEventListener('vera:ctx:focus-turn', ev=>{ const mid=(ev.detail||{}).mid||''; if(!mid) return; _grFocusMid=mid; const w=document.querySelector('#msgs .mwrap[data-mid="'+mid+'"]'); try{ w&&w.scrollIntoView({block:'center',behavior:'smooth'}); }catch(_){} _graphAnchorPost(true); });
@@ -5449,10 +5461,15 @@ IMPORTANT:
   function _ctxColumnSync(mid){
     if(!_ctxCol) return;
     const w=_focusedTurn(); mid=mid||(w?(w.dataset.mid||''):'');
-    const incl=CTX_NODES.filter(n=>n.included!==false).map(n=>n.id);
-    const sig=CTX_NODES.length+':'+CTX_EDGES.length+':'+incl.length+':'+(CTX_NODES[0]&&CTX_NODES[0].id)+':'+mid+':'+_ctxQuery;
+    // the records plus the assembled context (the agent, its skills, ontologies + entities, caps, related Q&A) — the
+    // same function the rail's graph draws from
+    const extra=_ctxAssembledExtra(_CTX_ALL_LAYERS, CTX_NODES);
+    const nodesAll=CTX_NODES.concat(extra.nodes.filter(n=>!CTX_NODES.some(c=>c.id===n.id)));
+    const edgesAll=CTX_EDGES.concat(extra.edges);
+    const incl=nodesAll.filter(n=>n.included!==false).map(n=>n.id);
+    const sig=nodesAll.length+':'+edgesAll.length+':'+incl.length+':'+(nodesAll[0]&&nodesAll[0].id)+':'+mid+':'+_ctxQuery;
     if(sig!==_ctxColSig){ _ctxColSig=sig; const reads={}; if(mid) reads[mid]=incl;
-      _ctxCol.setContext(CTX_NODES, CTX_EDGES.map(e=>({from:e.from,to:e.to,label:e.type||e.label||''})), {focus:incl, reads, color:srcCol, turn:mid?'turn '+mid:''}); }
+      _ctxCol.setContext(nodesAll, edgesAll.map(e=>({from:e.from,to:e.to,label:e.type||e.label||''})), {focus:incl, reads, color:srcCol, turn:mid?'turn '+mid:''}); }
     // the rail's other graphs, in the same column: the session's memory graph (loaded once per session, the rail's
     // own loader) and the run's DAG — fed when they changed
     if(SID&&!_memAllNodes.length&&Date.now()-_ctxColMemT>30000){ _ctxColMemT=Date.now(); try{ memGraphLoad(); }catch(_){} }
@@ -5461,7 +5478,7 @@ IMPORTANT:
     const dsig=_lastDagNodes.map(n=>n.cap+':'+n.status).join('|');
     if(dsig!==_ctxColDagSig){ _ctxColDagSig=dsig; _ctxCol.setDag(_lastDagNodes); }
     if(Date.now()-_ctxColPlanT>60000){ _ctxColPlanT=Date.now(); fetch(BASE+'/dream/goals/list').then(r=>r.json()).then(r=>{ try{ _ctxCol&&_ctxCol.setPlan((r&&r.goals)||[]); }catch(_){} }).catch(()=>{}); }
-    const s=document.getElementById('grColSub'); if(s) s.textContent='context graph · '+incl.length+' of '+CTX_NODES.length+' in the prompt';
+    const s=document.getElementById('grColSub'); if(s) s.textContent='context graph · '+incl.length+' of '+nodesAll.length+' in the prompt';
   }
   // the live loop's events, teed into the column's loop lane (the same stream the loop card and the rail's graph read)
   function _ctxColLoopEv(ev){ if(_ctxCol&&_pages.has('graph')) _ctxCol.appendLoopEvent(ev); }
@@ -5469,6 +5486,7 @@ IMPORTANT:
   // connector per source to the channel between the columns, then into the message's edge — never across a card
   function _ctxRunsDraw(){
     const svg=document.getElementById('ctxRunsOverlay'); if(!svg) return;
+    if(Date.now()-_ctxTypingT<900){ svg.innerHTML=''; if(!_ctxTypingTimer) _ctxTypingTimer=setTimeout(()=>{ _ctxTypingTimer=null; _ctxRunsDraw(); }, 950); return; }
     const col=document.getElementById('chatColumn'), gcol=document.getElementById('graphColumn'), w=_focusedTurn();
     if(!_pages.has('graph')||!_ctxCol||!col||!gcol||!w){ svg.innerHTML=''; return; }
     const R=col.getBoundingClientRect(), M=w.getBoundingClientRect(), gc=gcol.getBoundingClientRect();
@@ -10984,6 +11002,34 @@ Your task: decide what to do next to advance toward the goal.
     loadAllCaps();
   }
 
+  // The assembled context as graph nodes: the agent at the centre, its skills, ontologies with their entities and
+  // relationships, its caps, the related Q&A — for the layers in `layers`; `present` are the nodes already drawn
+  // (the agent node is not added twice). Used by the rail's context graph and by the graph column.
+  function _ctxAssembledExtra(layers, present){
+    const extraNodes=[], extraEdges=[]; const ac=_assembledCtx; present=present||[];
+    if(!(ac&&ac.res)) return {nodes:extraNodes, edges:extraEdges};
+    const a=ac.agent;
+    if(layers.has('agent')&&a){ const aid='__agent__'; if(!present.find(n=>n.id===aid)) extraNodes.push({id:aid,label:a.name||'agent',source:'agent',score:1,type:'agent'}); }
+    if(layers.has('skill')){ const sDetails=ac.skillDetails||[];
+      (ac.res.skills||[]).forEach(s=>{ const sid='__skill__'+s; const sd=sDetails.find(x=>x.name===s||x.id===s);
+        extraNodes.push({id:sid,label:s,source:'skill',score:0.8,type:'skill',text:sd?(sd.description||'')+(sd.context_hints?'\n'+sd.context_hints:''):''});
+        if(layers.has('agent')) extraEdges.push({from:'__agent__',to:sid,source:'skill',type:'HAS_SKILL'}); }); }
+    if(layers.has('ontology')){ const ontDetails=ac.ontDetails||[];
+      (ac.res.ontologies||[]).forEach(o=>{ const oid='__ont__'+o;
+        extraNodes.push({id:oid,label:o,source:'ontology',score:0.8,type:'ontology'});
+        if(layers.has('agent')) extraEdges.push({from:'__agent__',to:oid,source:'ontology',type:'HAS_ONTOLOGY'});
+        const od=ontDetails.find(x=>x.name===o||x.id===o);
+        if(od){
+          (od.entities||[]).forEach(e=>{ const eid='__ent__'+o+'__'+e.name;
+            extraNodes.push({id:eid,label:e.name,source:'ontology',score:0.65,type:'entity',text:e.description||'',tags:e.attributes?.map(a=>typeof a==='string'?a:a.name)||[]});
+            extraEdges.push({from:oid,to:eid,source:'ontology',type:'HAS_ENTITY'});
+            (e.sub_class_of||[]).forEach(parent=>{ extraEdges.push({from:eid,to:'__ent__'+o+'__'+parent,source:'ontology',type:'SUB_CLASS_OF'}); }); });
+          (od.relationships||[]).forEach(r=>{ extraEdges.push({from:'__ent__'+o+'__'+(r.from||r.source),to:'__ent__'+o+'__'+(r.to||r.target),source:'ontology',type:r.label||r.relation||'REL'}); });
+        } }); }
+    if(layers.has('cap')&&a?.domain_caps?.length){ a.domain_caps.slice(0,30).forEach(c=>{ const cid='__cap__'+c; extraNodes.push({id:cid,label:c,source:'cap',score:0.6,type:'cap'}); if(layers.has('agent')) extraEdges.push({from:'__agent__',to:cid,source:'cap',type:'HAS_CAP'}); }); }
+    if(layers.has('related_qa')){ (ac.res.related_qa||[]).forEach((p,i)=>{ const qid='__qa__'+i; extraNodes.push({id:qid,label:'Q'+(i+1)+': '+(p.q||'').slice(0,30),source:'related_qa',score:p.score||0.5,type:'related_qa'}); if(layers.has('agent')) extraEdges.push({from:'__agent__',to:qid,source:'related_qa',type:'RELATED_QA'}); }); }
+    return {nodes:extraNodes, edges:extraEdges};
+  }
   function renderCtxGraph(){
     const svg=document.getElementById('ctxSvg'),nG=document.getElementById('nodeG'),eG=document.getElementById('edgeG');if(!svg||!nG||!eG)return;
     // Per-source layer filtering (replaces old Both/Vec/Neo toggle)
@@ -10991,77 +11037,9 @@ Your task: decide what to do next to advance toward the goal.
     const visIds=new Set(vis.map(n=>n.id));
     const visE=CTX_EDGES.filter(e=>visIds.has(e.from)&&visIds.has(e.to));
 
-    // Inject assembled-context nodes (skills, ontologies, caps, agent, related-QA)
-    // as synthetic nodes in the graph for a unified view.
-    const extraNodes=[];
-    const extraEdges=[];
-    const ac=_assembledCtx;
-    if(ac?.res){
-      const a=ac.agent;
-      // Agent centre node
-      if(_ctxLayers.has('agent')&&a){
-        const aid='__agent__';
-        if(!vis.find(n=>n.id===aid)) extraNodes.push({id:aid,label:a.name||'agent',source:'agent',score:1,type:'agent'});
-      }
-      // Skills — show as nodes connected to agent, with description in text
-      if(_ctxLayers.has('skill')){
-        const sDetails=ac.skillDetails||[];
-        (ac.res.skills||[]).forEach(s=>{
-          const sid='__skill__'+s;
-          const sd=sDetails.find(x=>x.name===s||x.id===s);
-          extraNodes.push({id:sid,label:s,source:'skill',score:0.8,type:'skill',
-            text:sd?(sd.description||'')+(sd.context_hints?'\n'+sd.context_hints:''):''});
-          if(_ctxLayers.has('agent')) extraEdges.push({from:'__agent__',to:sid,source:'skill',type:'HAS_SKILL'});
-        });
-      }
-      // Ontologies — show full graph with entities + relationships
-      if(_ctxLayers.has('ontology')){
-        const ontDetails=ac.ontDetails||[];
-        (ac.res.ontologies||[]).forEach(o=>{
-          const oid='__ont__'+o;
-          extraNodes.push({id:oid,label:o,source:'ontology',score:0.8,type:'ontology'});
-          if(_ctxLayers.has('agent')) extraEdges.push({from:'__agent__',to:oid,source:'ontology',type:'HAS_ONTOLOGY'});
-          // Add entity sub-nodes from the full ontology record
-          const od=ontDetails.find(x=>x.name===o||x.id===o);
-          if(od){
-            (od.entities||[]).forEach(e=>{
-              const eid='__ent__'+o+'__'+e.name;
-              extraNodes.push({id:eid,label:e.name,source:'ontology',score:0.65,type:'entity',
-                text:e.description||'',tags:e.attributes?.map(a=>typeof a==='string'?a:a.name)||[]});
-              extraEdges.push({from:oid,to:eid,source:'ontology',type:'HAS_ENTITY'});
-              // Sub-class edges
-              (e.sub_class_of||[]).forEach(parent=>{
-                const pid='__ent__'+o+'__'+parent;
-                extraEdges.push({from:eid,to:pid,source:'ontology',type:'SUB_CLASS_OF'});
-              });
-            });
-            // Relationship edges between entities
-            (od.relationships||[]).forEach(r=>{
-              const fromId='__ent__'+o+'__'+(r.from||r.source);
-              const toId='__ent__'+o+'__'+(r.to||r.target);
-              extraEdges.push({from:fromId,to:toId,source:'ontology',type:r.label||r.relation||'REL'});
-            });
-          }
-        });
-      }
-      // Caps (show agent's domain_caps as nodes)
-      if(_ctxLayers.has('cap')&&a?.domain_caps?.length){
-        a.domain_caps.slice(0,30).forEach(c=>{
-          const cid='__cap__'+c;
-          extraNodes.push({id:cid,label:c,source:'cap',score:0.6,type:'cap'});
-          if(_ctxLayers.has('agent')) extraEdges.push({from:'__agent__',to:cid,source:'cap',type:'HAS_CAP'});
-        });
-      }
-      // Related Q&A
-      if(_ctxLayers.has('related_qa')){
-        (ac.res.related_qa||[]).forEach((p,i)=>{
-          const qid='__qa__'+i;
-          extraNodes.push({id:qid,label:'Q'+(i+1)+': '+(p.q||'').slice(0,30),source:'related_qa',score:p.score||0.5,type:'related_qa'});
-          if(_ctxLayers.has('agent')) extraEdges.push({from:'__agent__',to:qid,source:'related_qa',type:'RELATED_QA'});
-        });
-      }
-    }
-
+    // the assembled context (skills, ontologies, caps, agent, related Q&A) as synthetic nodes — the one function the
+    // graph column reads too
+    const _ex=_ctxAssembledExtra(_ctxLayers, vis); const extraNodes=_ex.nodes, extraEdges=_ex.edges;
     const allVis=[...vis,...extraNodes.filter(n=>!vis.find(v=>v.id===n.id))];
     const allVisIds=new Set(allVis.map(n=>n.id));
     const allEdges=[...visE,...extraEdges.filter(e=>allVisIds.has(e.from)&&allVisIds.has(e.to))];

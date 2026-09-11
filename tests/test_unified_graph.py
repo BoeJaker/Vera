@@ -50,4 +50,5 @@ def test_the_chats_context_graph_is_its_own_element():
     for api in ("setContext(nodes, edges, o)", "setMemory(nodes, edges, o)", "setDag(nodes)", "appendLoopEvent(ev)", "setPlan(goals)", "allEdges(on)"):
         assert api in EL, api
     assert "data-a=\"alledges\"" in EL and "if (!S.allEdges) {" in EL, "the design's All edges toggle"
+    assert "data-a=\"collapse\"" in EL and "vera:ctx:collapse" in EL, "Collapse folds the graph back into the quick menu"
     assert "out.families.push({ name: 'memory'" in EL and "out.families.push({ name: 'dag'" in EL and "out.families.push({ name: 'loop'" in EL
