@@ -8,6 +8,15 @@ prediction, counterfactual exploration, anomaly detection, and visualization.
 Worldview is optional. Missing Torch, FAISS, weights, or backend services
 degrade its capabilities rather than preventing Vera from starting.
 
+## Naming and product boundary
+
+This guide describes **JEPA Worldview**, the predictive representation system in
+`vera/worldview/worldview_jepa.py`. Vera also contains an older non-JEPA
+Worldview product lineage. Godseye is the integrated successor intended to
+converge with that non-JEPA experience; it does not supersede JEPA Worldview.
+Keeping those lineages explicit prevents model evidence, geospatial/visual
+product state, and UI ownership from being treated as interchangeable.
+
 ## Architecture
 
 | Layer | Responsibility | Boundary |
@@ -48,6 +57,27 @@ manifest contains no source content, embeddings, graph payload, or result.
 This path is not wired into `worldview.train`: it performs no backend read or
 model work. The existing loader/trainer remains authoritative until live shadow
 evidence supports a deliberate migration.
+
+## Portable JEPA evidence
+
+`vera.worldview.evidence_provider` defines an offline contract for the six JEPA
+signal families: concepts, predictions, anomalies, counterfactuals, drift, and
+reranking. Every evidence envelope binds an exact immutable `DatasetSnapshot`, a
+compatible JEPA Worldview `ModelPackage` checkpoint, a provider revision, a
+zoned observation time, and cited record revisions. Its identity changes when
+any authority input or observation changes.
+
+The contract carries bounded scores and non-payload attributes. It rejects raw
+text, prompts, vectors, embeddings, payloads, credential-like fields, non-finite
+scores, duplicate observation identities, uncited observations, incompatible
+checkpoints, and evidence predating its input snapshot. Counterfactuals and
+predictions remain derived evidence—not causal facts or execution authority.
+
+`FrozenEvidenceProvider` is a deterministic conformance/reference store. It can
+filter exact evidence identities but cannot load Torch, inspect Fabric, generate
+a signal, rank context, fall back to a stale revision, or activate a checkpoint.
+Exact snapshot and ModelPackage matching is required before evidence is marked
+usable; missing evidence is unavailable and mismatched evidence is stale.
 
 ## Snapshot, parity, and evidence
 
