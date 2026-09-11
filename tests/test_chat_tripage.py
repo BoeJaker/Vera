@@ -97,6 +97,8 @@ def test_the_graph_column_is_the_chats_own_context_graph_and_hears_the_focused_t
     assert "msgs.addEventListener('scroll', ()=>_graphAnchorPost(), {passive:true})" in HTML
     assert "Date.now()-_grAnchorT>150" in HTML, "throttled"
     assert '<svg id="ctxRunsOverlay" aria-hidden="true"></svg>' in HTML and "function _ctxRunsDraw(){" in HTML
+    assert 'body[data-cols~="graph"] #graphColumn{order:-1;border-left:none;border-right:1px solid var(--border)}' in HTML, "the design's order: rail | graph | chat | canvas"
+    assert "const leftSide=gc.left<M.left;" in HTML, "the runs enter the message from the graph's side"
     _once(HTML, '<script src="/ui/context_graph_element.js"></script>')
     assert "'/ui/panels/file/memory_graph_panel.html'," in HTML, "the alias table itself is unchanged"
 

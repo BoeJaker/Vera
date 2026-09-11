@@ -819,6 +819,8 @@ body[data-cols~="canvas"] #canvasColumn,body[data-cols~="graph"] #graphColumn{di
 body.has-cols #chatColumn{position:relative}
 #ctxRunsOverlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:5;display:none}
 body[data-cols~="graph"] #ctxRunsOverlay{display:block}
+/* the design's order: rail | context graph | chat | canvas — the graph is the LHM grown, so it sits by the rail */
+body[data-cols~="graph"] #graphColumn{order:-1;border-left:none;border-right:1px solid var(--border)}
 .tb-btn.col-on{color:var(--acc);border-color:var(--acc)}
 /* an empty minimal session lays its system lines out in a row; beside a column they wrap and stay in the chat */
 body[data-view="minimal"]:not(.has-msgs).has-cols #msgs{flex-wrap:wrap;overflow:hidden}
@@ -5466,11 +5468,15 @@ IMPORTANT:
     svg.setAttribute('viewBox','0 0 '+Math.round(R.width)+' '+Math.round(R.height));
     const lit=_ctxCol.positions().filter(p=>p.lit&&p.y>gc.top+40&&p.y<gc.bottom&&p.x>gc.left&&p.x<gc.right);
     const bySrc={}; lit.forEach(p=>{ (bySrc[p.source]=bySrc[p.source]||[]).push(p); });
-    const chX=gc.left-R.left-6, mx=M.right-R.left; let out='', gi=0;
-    Object.keys(bySrc).forEach(src=>{ const g=bySrc[src], c=g[0].col; const cx=Math.min.apply(null,g.map(p=>p.x-p.rim))-R.left-12; const ys=g.map(p=>p.y-R.top); const y0=Math.min.apply(null,ys), y1=Math.max.apply(null,ys), cy=(y0+y1)/2;
+    // the graph on the left (the design) runs rightwards into the message's left edge; on the right, leftwards
+    const leftSide=gc.left<M.left;
+    const chX=(leftSide?gc.right+6:gc.left-6)-R.left, mx=(leftSide?M.left:M.right)-R.left; let out='', gi=0;
+    Object.keys(bySrc).forEach(src=>{ const g=bySrc[src], c=g[0].col;
+      const cx=(leftSide?Math.max.apply(null,g.map(p=>p.x+p.rim))+12:Math.min.apply(null,g.map(p=>p.x-p.rim))-12)-R.left;
+      const ys=g.map(p=>p.y-R.top); const y0=Math.min.apply(null,ys), y1=Math.max.apply(null,ys), cy=(y0+y1)/2;
       const my=Math.max(M.top-R.top+12, Math.min(M.bottom-R.top-12, M.top-R.top+12+gi*8));
       const L=(x1,y1,x2,y2)=>'<line x1="'+x1.toFixed(1)+'" y1="'+y1.toFixed(1)+'" x2="'+x2.toFixed(1)+'" y2="'+y2.toFixed(1)+'" stroke="'+c+'"><title>'+src+' · '+g.length+' in this prompt</title></line>';
-      g.forEach(p=>{ out+=L(p.x-p.rim-R.left, p.y-R.top, cx, p.y-R.top); });
+      g.forEach(p=>{ out+=L((leftSide?p.x+p.rim:p.x-p.rim)-R.left, p.y-R.top, cx, p.y-R.top); });
       out+=L(cx,y0,cx,y1)+L(cx,cy,chX,cy)+L(chX,cy,chX,my)+L(chX,my,mx,my); gi++; });
     svg.innerHTML='<g fill="none" stroke-width="1.5" stroke-opacity=".8" stroke-linecap="round">'+out+'</g>';
   }
