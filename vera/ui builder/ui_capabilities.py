@@ -523,6 +523,23 @@ async def _serve_vera_markdown_js():
     )
 
 
+# Serve widget_element.js — <vera-widget> + window.VeraWidget (UI redesign M2):
+# the ONE renderer for every widget record wherever it is placed (a dashboard
+# tile, a canvas item, an LHM slot, a block in a reply). The chat, VeraDash and
+# the registry panel all draw through it.
+@APP.get("/ui/widgets/widget_element.js", include_in_schema=False)
+async def _serve_widget_element_js():
+    from fastapi.responses import Response
+    from pathlib import Path
+    p = Path(__file__).parent.parent / "widgets" / "widget_element.js"
+    if p.exists():
+        return Response(content=p.read_text(encoding="utf-8"),
+                        media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache"})
+    return Response(content="console.warn('widget_element.js not found');",
+                    media_type="application/javascript")
+
+
 # Serve loop_graph.js — the <vera-loop-graph> live agentic-loop activity graph.
 @APP.get("/ui/elements/loop_graph.js", include_in_schema=False)
 async def _serve_loop_graph_js():

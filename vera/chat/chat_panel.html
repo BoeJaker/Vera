@@ -1536,6 +1536,7 @@ html[data-blocks="off"] .pa-att{background:transparent}
     <div class="sec" style="margin-top:5px">Session Memory</div>
     <script src="/ui/vera-notes.js"></script>
 <script src="/ui/elements/vera_markdown.js"></script>
+<script src="/ui/widgets/widget_element.js"></script>
     <vera-session-notes id="ctxNotesEl" scope="chat" title="Chat session memory"></vera-session-notes>
     <div class="sec" style="margin-top:5px">Sources</div>
     <div style="display:flex;flex-wrap:wrap;gap:3px">
@@ -4879,6 +4880,8 @@ IMPORTANT:
   // a capability result's SHAPE → its default draw form, deterministically (the Formats board's table)
   function _widgetFormByShape(x, depth){
     depth=depth||0; if(depth>2||x==null) return null;
+    // ONE rule for a result's shape, wherever a widget is drawn (widget_element.js); the code below is the fallback
+    if(!depth && window.VeraWidget && typeof VeraWidget.formByShape==='function') return VeraWidget.formByShape(x);
     if(Array.isArray(x)){
       if(!x.length) return null;
       const o=x[0];
@@ -4915,6 +4918,12 @@ IMPORTANT:
   function _wDraw(form, data, hpx){
     const H=hpx||70;
     if(data==null) return '<span class="wempty">no data yet</span>';
+    // ONE renderer for every widget wherever it is placed (widget_element.js): the reply block draws through it at
+    // the size its height names; the pipes form stays here (its diagram goes through the chat's own mermaid slots);
+    // the code below is the fallback for a page without the element.
+    if(window.VeraWidget && typeof VeraWidget.draw==='function' && form!=='pipes'){
+      try{ const sz=({36:'xs',48:'s',70:'m',110:'l',200:'xl'})[H]||'m'; const out=VeraWidget.draw(form, data, sz, {height:H, bare:true}); if(typeof out==='string' && out) return out; }catch(_){}
+    }
     if(form==='trace'){
       const pts=(Array.isArray(data)?data:[]).map(p=>typeof p==='number'?p:_wNum(p.v??p.value??p.y)).slice(-120);
       if(pts.length<2) return '<span class="wempty">'+pts.length+' point'+(pts.length===1?'':'s')+' · a trace needs two</span>';
@@ -15804,6 +15813,8 @@ Your task: decide what to do next to advance toward the goal.
     try{ setTimeout(()=>_uiEvent('session.start',{}),1500); }catch(_){}
     // …and the composer's modes: chips in its foot, the strips above it (never fatal)
     try{ _cmpMount(); }catch(e){ console.warn('composer modes: mount failed', e); }
+    // …and the widget renderer's styles, once, for the blocks drawn in replies (never fatal)
+    try{ if(window.VeraWidget) VeraWidget.ensureCss(document); }catch(_){}
     // …and the tri-page's columns: ?pages= or the remembered ones (never fatal)
     try{ _pagesMount(); }catch(e){ console.warn('tri-page columns: mount failed', e); }
     // Rail default: COLLAPSED. The minimal/document aesthetic looks best
