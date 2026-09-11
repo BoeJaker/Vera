@@ -12,9 +12,9 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from vera.catalog.bench_matrix_core import (  # noqa: E402
-    BASE_PROMPT, CHARS_PER_TOKEN, DEFAULT_CTXS, build_grid, cell_prompt, cell_verdict,
-    group_variants, normalise_ctxs, normalise_models, recommend, residency,
-    summarise_runs)
+    BASE_PROMPT, CHARS_PER_TOKEN, DEFAULT_CTXS, apply_plan, build_grid, cell_prompt,
+    cell_verdict, group_variants, normalise_ctxs, normalise_models, recommend,
+    residency, summarise_runs)
 
 pytestmark = pytest.mark.critical
 
@@ -183,3 +183,30 @@ def test_group_variants_folds_tags_that_share_a_blob_into_aliases():
     (group,) = group_variants(tags)
     assert [(v["name"], v["aliases"]) for v in group["variants"]] == [
         ("mistral:7b", ["mistral:latest"]), ("mistral:7b-q8_0", [])]
+
+
+def test_apply_plan_adopts_a_measured_window_over_an_estimate():
+    """Vera only consults its pre-load VRAM estimate when there is no learned
+    window, so adopting a measurement also takes the estimator out of the path."""
+    recs = [{"model": "q", "num_ctx": 28672, "gen_tps": 105.8}]
+    (row,) = apply_plan(recs, "gpu-250", learned={})
+    assert row["action"] == "set"
+    assert (row["instance_id"], row["model"], row["num_ctx"]) == ("gpu-250", "q", 28672)
+    assert row["previous"] is None
+    assert "105.8" in row["reason"]
+
+
+def test_apply_plan_never_guesses_a_window_the_sweep_could_not_measure():
+    recs = [{"model": "q", "num_ctx": None}]
+    (row,) = apply_plan(recs, "gpu-250", learned={})
+    assert row["action"] == "skip"
+    assert "cleanly" in row["reason"]
+
+
+def test_apply_plan_skips_what_is_already_learned_and_honours_a_filter():
+    recs = [{"model": "a", "num_ctx": 8192}, {"model": "b", "num_ctx": 4096}]
+    rows = apply_plan(recs, "n1", learned={"n1::a": 8192})
+    assert [r["action"] for r in rows] == ["skip", "set"]
+    assert rows[0]["reason"] == "already the learned window"
+    only = apply_plan(recs, "n1", learned={}, only=["b"])
+    assert [r["model"] for r in only] == ["b"]

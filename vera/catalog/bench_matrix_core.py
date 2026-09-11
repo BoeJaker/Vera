@@ -274,3 +274,36 @@ def group_variants(tag_models: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         g["variants"].sort(key=lambda v: (v["size_gb"], v["name"]))
     return sorted(groups.values(),
                   key=lambda g: (-len(g["variants"]), g["family"], g["params"]))
+
+
+def apply_plan(recommendations: List[Dict[str, Any]], instance_id: str,
+               learned: Optional[Dict[str, int]] = None,
+               only: Any = None) -> List[Dict[str, Any]]:
+    """What adopting a sweep's recommended windows would change.
+
+    Vera keeps a learned-safe window per (node, model) and prefers it over its
+    own pre-load estimate; the estimate is only consulted when no learned value
+    exists. So adopting a measured window does two things: it replaces a guess
+    with a measurement, and it takes the estimator out of the path for that pair.
+    Pure: the caller performs the write."""
+    learned = learned or {}
+    wanted = {str(m) for m in (only or [])} or None
+    out: List[Dict[str, Any]] = []
+    for rec in recommendations or []:
+        model = rec.get("model")
+        if not model or (wanted and model not in wanted):
+            continue
+        ctx = rec.get("num_ctx")
+        previous = learned.get("%s::%s" % (instance_id, model))
+        row = {"instance_id": instance_id, "model": model, "num_ctx": ctx,
+               "previous": previous, "gen_tps": rec.get("gen_tps")}
+        if not ctx:
+            row.update(action="skip",
+                       reason="the sweep found no window that ran cleanly on this node")
+        elif previous == ctx:
+            row.update(action="skip", reason="already the learned window")
+        else:
+            row.update(action="set",
+                       reason="measured on this node at %s tok/s" % (rec.get("gen_tps") or "?"))
+        out.append(row)
+    return out
