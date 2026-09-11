@@ -9,7 +9,7 @@
  ],
  "edge": "bleeding-edge-design",
  "created": "2026-09-10T23:02:57.695Z",
- "updated": "2026-09-10T23:52:47.463Z",
+ "updated": "2026-09-11T05:29:27.760Z",
  "sources": {
   "slices": "slices.json",
   "map": "adopt-map.json"
@@ -212,13 +212,29 @@
     "pairDir": "Notes/adopt-shots/lhm-library"
    },
    "prerequisites": [],
-   "status": "planned",
-   "pipelines": [],
-   "commits": [],
-   "pairs": [],
+   "status": "landed",
+   "pipelines": [
+    "d67847b1",
+    "9d666625",
+    "9039d13c"
+   ],
+   "commits": [
+    "f79f44e",
+    "a3e57cb",
+    "e6093b1",
+    "08eaaef",
+    "af5c791",
+    "abd5808"
+   ],
+   "pairs": [
+    "Notes/adopt-shots/lhm-library/pair-chatmenu.png",
+    "Notes/adopt-shots/lhm-library/live-harness-absorbed.png"
+   ],
    "parked": [],
-   "notes": [],
-   "updated": "2026-09-10T23:02:57.696Z"
+   "notes": [
+    "three landings: vera-lhm.js + the chat as owner (8 rail menus grouping all 13 tabs, header/CTA/top list, edit-mode outlines); the harness absorbs the chat's menu in LHM mode with the in-place ☰ swap; the one panel set (ui.panels.open, report route, panel target on dispatch/query, Open now rows both ways, close round trip). Verified live: chat menu pair (22.17% vs the ChatMenu board — content differs), harness absorbed shot, ui.panels.open round trip on the edge. Pending: the Harness board's design render (the preview watchdog trips under the user's 100% CPU) — retry for the numeric pair"
+   ],
+   "updated": "2026-09-11T01:29:15.244Z"
   },
   {
    "id": "widget-record-registry",
@@ -261,13 +277,27 @@
     "pairDir": "Notes/adopt-shots/widget-record-registry"
    },
    "prerequisites": [],
-   "status": "planned",
-   "pipelines": [],
-   "commits": [],
-   "pairs": [],
+   "status": "verified",
+   "pipelines": [
+    "29c4e584",
+    "f13a8e5d"
+   ],
+   "commits": [
+    "24c97be",
+    "350350e",
+    "7781aff",
+    "af67d2b"
+   ],
+   "pairs": [
+    "Notes/adopt-shots/widget-record-registry/pair-registry.png",
+    "Notes/adopt-shots/widget-record-registry/live-dashboard-placed.png",
+    "Notes/adopt-shots/widget-record-registry/live-lhm-record-sheet.png"
+   ],
    "parked": [],
-   "notes": [],
-   "updated": "2026-09-10T23:02:57.696Z"
+   "notes": [
+    "vera/widgets/widget_registry.py: widget.template.list/get/save/delete/instantiate + widget.instance.list/remove, built-ins = 77 panels + 11 LHM parts (88 live), Redis-backed; the Widgets registry panel (element) mirrors the board's filters/list/record/Place into; the harness dashboard realises a placed panel template as a VeraDash widget (verified live: inst placed -> dyn-memory-graph on main); the LHM edit mode ⚙ opens a part's record in place, ⧉ saves it, + dashboard/canvas/LHM place it. Regression caught live and fixed (f13a8e5d): the record sheet was inserted before it was created and the mount threw. Not in this slice: renderers for non-panel forms placed on a dashboard (noted in console), Save as menu, the 66 still forms"
+   ],
+   "updated": "2026-09-11T02:20:50.305Z"
   },
   {
    "id": "control-plane",
@@ -303,13 +333,25 @@
     "pairDir": "Notes/adopt-shots/control-plane"
    },
    "prerequisites": [],
-   "status": "planned",
-   "pipelines": [],
-   "commits": [],
-   "pairs": [],
+   "status": "verified",
+   "pipelines": [
+    "b69f6f96",
+    "7418916f"
+   ],
+   "commits": [
+    "d0cb3c4",
+    "265279e",
+    "421880c",
+    "5021fcd"
+   ],
+   "pairs": [
+    "Notes/adopt-shots/control-plane/live-scripted-and-ask-chip.png"
+   ],
    "parked": [],
-   "notes": [],
-   "updated": "2026-09-10T23:02:57.696Z"
+   "notes": [
+    "vera/ui/directives.py (21 directives, ui.directive with policy drive/ask/never, log, ask chip + ui.directive.answer, undo, ui.policy, ui.event, ui.room manifest) + vera/ui/scripts.py (on·if·do records, fenced expressions, ui.script.*, the 2 s runner tick over the event stream) + the chat side (__ui_directive__ apply, the ask chip/block, the room in every turn). Verified live on :8994: never→refused, ask→chip, widget.place→applied+undo, a reported loop wait fired the shipped loop-waits script into the chat (ask block + Loop menu) with no model call. Fix 7418916f: the runner tick was singleton and sandboxes hold no leadership. Not in this slice: the ⟦…⟧ inline shorthand ([[cap:ui.directive …]] works), the Driven board's ribbon/log UI, wiring the loop's own HITL pause to ui.event, canvas.* directives (canvas-graph slice); known: the chat's dispatch listener stays on the boot session after loadSession (pre-existing); the scripts' fired counter is per module copy"
+   ],
+   "updated": "2026-09-11T03:19:35.729Z"
   },
   {
    "id": "chat-modes",
@@ -344,13 +386,32 @@
     "pairDir": "Notes/adopt-shots/chat-modes"
    },
    "prerequisites": [],
-   "status": "planned",
-   "pipelines": [],
-   "commits": [],
-   "pairs": [],
-   "parked": [],
-   "notes": [],
-   "updated": "2026-09-10T23:02:57.696Z"
+   "status": "verified",
+   "pipelines": [
+    "addffa56",
+    "f3101f36",
+    "e6515740",
+    "eeb4dfb6"
+   ],
+   "commits": [
+    "2b11ae4",
+    "ea93b00",
+    "4cedd5c",
+    "bf21250"
+   ],
+   "pairs": [
+    "Notes/adopt-shots/chat-modes/"
+   ],
+   "parked": [
+    "paste kinds: image / file / link / rich text as attachments; the size guard (inline the diff · files for the rest · everything inline); [attachment] reference lines the model sees"
+   ],
+   "notes": [
+    "The composer's modes (chips + voice/council/diffuse strips), attachments on the question, one markdown renderer (VeraMD + fence hook, callouts/footnotes/math), streaming mermaid (stream/ghost/settle), widgets in the reply (widget fence + by rule, Pin to canvas). tests/test_chat_modes.py 16. Skill: jscheck.mjs + the pre-landing rule.",
+    "live follow-up: slash menu's empty box (pre-existing), widget draws what it read (shape fallback, kv), Voice chip at once",
+    "Formats pair: diff fences coloured by line; _paRenderAttachments exported; tests deduplicated (19)",
+    "Paste pair: chips + editor + podcast bar follow the composer card; diff/log/csv pastes recognised and titled (21 tests). Pairs: voice 14.78%, council 17.2%, diffuse 15.69% (Canvas composer via the Paste board's embedded pane), Formats markdown column 22.61%, Paste composer 43.3% (the board's six attachment kinds + size guard + preview are carried). Edge 249a301."
+   ],
+   "updated": "2026-09-11T05:29:27.760Z"
   },
   {
    "id": "canvas-graph",
@@ -627,6 +688,145 @@
     "Notes/adopt-shots/m1b/pair-blocks-off.png"
    ],
    "note": "the pair caught Blocks off not reaching the minimal view's question (fixed a7e59465); tiers verified live: full chrome at rest, hover chrome at the foot of the pointed turn, zen 820px column without chrome, blocks off flat on every surface; 15 tests. Not in this slice: the LHM quick menu, the chip rows and the composer modes the board also shows (lhm-library, chat-modes)"
+  },
+  {
+   "at": "2026-09-10T23:54:12.946Z",
+   "event": "push",
+   "registry": "https://llm.int:8999",
+   "entry": "technique:design-adoption-vera-ui-redesign-chat-canvas-widgets-system",
+   "ok": true
+  },
+  {
+   "at": "2026-09-11T01:29:15.244Z",
+   "event": "set",
+   "slice": "lhm-library",
+   "from": "planned",
+   "to": "landed",
+   "pipeline": [
+    "d67847b1",
+    "9d666625",
+    "9039d13c"
+   ],
+   "commit": [
+    "f79f44e",
+    "a3e57cb",
+    "e6093b1",
+    "08eaaef",
+    "af5c791",
+    "abd5808"
+   ],
+   "pair": [
+    "Notes/adopt-shots/lhm-library/pair-chatmenu.png",
+    "Notes/adopt-shots/lhm-library/live-harness-absorbed.png"
+   ],
+   "note": "three landings: vera-lhm.js + the chat as owner (8 rail menus grouping all 13 tabs, header/CTA/top list, edit-mode outlines); the harness absorbs the chat's menu in LHM mode with the in-place ☰ swap; the one panel set (ui.panels.open, report route, panel target on dispatch/query, Open now rows both ways, close round trip). Verified live: chat menu pair (22.17% vs the ChatMenu board — content differs), harness absorbed shot, ui.panels.open round trip on the edge. Pending: the Harness board's design render (the preview watchdog trips under the user's 100% CPU) — retry for the numeric pair"
+  },
+  {
+   "at": "2026-09-11T01:29:17.136Z",
+   "event": "push",
+   "registry": "https://llm.int:8999",
+   "entry": "technique:design-adoption-vera-ui-redesign-chat-canvas-widgets-system",
+   "ok": true
+  },
+  {
+   "at": "2026-09-11T02:20:50.306Z",
+   "event": "set",
+   "slice": "widget-record-registry",
+   "from": "planned",
+   "to": "verified",
+   "pipeline": [
+    "29c4e584",
+    "f13a8e5d"
+   ],
+   "commit": [
+    "24c97be",
+    "350350e",
+    "7781aff",
+    "af67d2b"
+   ],
+   "pair": [
+    "Notes/adopt-shots/widget-record-registry/pair-registry.png",
+    "Notes/adopt-shots/widget-record-registry/live-dashboard-placed.png",
+    "Notes/adopt-shots/widget-record-registry/live-lhm-record-sheet.png"
+   ],
+   "note": "vera/widgets/widget_registry.py: widget.template.list/get/save/delete/instantiate + widget.instance.list/remove, built-ins = 77 panels + 11 LHM parts (88 live), Redis-backed; the Widgets registry panel (element) mirrors the board's filters/list/record/Place into; the harness dashboard realises a placed panel template as a VeraDash widget (verified live: inst placed -> dyn-memory-graph on main); the LHM edit mode ⚙ opens a part's record in place, ⧉ saves it, + dashboard/canvas/LHM place it. Regression caught live and fixed (f13a8e5d): the record sheet was inserted before it was created and the mount threw. Not in this slice: renderers for non-panel forms placed on a dashboard (noted in console), Save as menu, the 66 still forms"
+  },
+  {
+   "at": "2026-09-11T02:20:52.919Z",
+   "event": "push",
+   "registry": "https://llm.int:8999",
+   "entry": "technique:design-adoption-vera-ui-redesign-chat-canvas-widgets-system",
+   "ok": true
+  },
+  {
+   "at": "2026-09-11T03:19:35.730Z",
+   "event": "set",
+   "slice": "control-plane",
+   "from": "planned",
+   "to": "verified",
+   "pipeline": [
+    "b69f6f96",
+    "7418916f"
+   ],
+   "commit": [
+    "d0cb3c4",
+    "265279e",
+    "421880c",
+    "5021fcd"
+   ],
+   "pair": "Notes/adopt-shots/control-plane/live-scripted-and-ask-chip.png",
+   "note": "vera/ui/directives.py (21 directives, ui.directive with policy drive/ask/never, log, ask chip + ui.directive.answer, undo, ui.policy, ui.event, ui.room manifest) + vera/ui/scripts.py (on·if·do records, fenced expressions, ui.script.*, the 2 s runner tick over the event stream) + the chat side (__ui_directive__ apply, the ask chip/block, the room in every turn). Verified live on :8994: never→refused, ask→chip, widget.place→applied+undo, a reported loop wait fired the shipped loop-waits script into the chat (ask block + Loop menu) with no model call. Fix 7418916f: the runner tick was singleton and sandboxes hold no leadership. Not in this slice: the ⟦…⟧ inline shorthand ([[cap:ui.directive …]] works), the Driven board's ribbon/log UI, wiring the loop's own HITL pause to ui.event, canvas.* directives (canvas-graph slice); known: the chat's dispatch listener stays on the boot session after loadSession (pre-existing); the scripts' fired counter is per module copy"
+  },
+  {
+   "at": "2026-09-11T03:19:37.327Z",
+   "event": "push",
+   "registry": "https://llm.int:8999",
+   "entry": "technique:design-adoption-vera-ui-redesign-chat-canvas-widgets-system",
+   "ok": true
+  },
+  {
+   "at": "2026-09-11T05:29:26.265Z",
+   "event": "set",
+   "slice": "chat-modes",
+   "from": "planned",
+   "to": "landed",
+   "pipeline": "addffa56",
+   "commit": "2b11ae4",
+   "pair": "",
+   "note": "The composer's modes (chips + voice/council/diffuse strips), attachments on the question, one markdown renderer (VeraMD + fence hook, callouts/footnotes/math), streaming mermaid (stream/ghost/settle), widgets in the reply (widget fence + by rule, Pin to canvas). tests/test_chat_modes.py 16. Skill: jscheck.mjs + the pre-landing rule."
+  },
+  {
+   "at": "2026-09-11T05:29:26.758Z",
+   "event": "set",
+   "slice": "chat-modes",
+   "from": "landed",
+   "to": "landed",
+   "pipeline": "f3101f36",
+   "commit": "ea93b00",
+   "pair": "",
+   "note": "live follow-up: slash menu's empty box (pre-existing), widget draws what it read (shape fallback, kv), Voice chip at once"
+  },
+  {
+   "at": "2026-09-11T05:29:27.319Z",
+   "event": "set",
+   "slice": "chat-modes",
+   "from": "landed",
+   "to": "landed",
+   "pipeline": "e6515740",
+   "commit": "4cedd5c",
+   "pair": "",
+   "note": "Formats pair: diff fences coloured by line; _paRenderAttachments exported; tests deduplicated (19)"
+  },
+  {
+   "at": "2026-09-11T05:29:27.760Z",
+   "event": "set",
+   "slice": "chat-modes",
+   "from": "landed",
+   "to": "verified",
+   "pipeline": "eeb4dfb6",
+   "commit": "bf21250",
+   "pair": "Notes/adopt-shots/chat-modes/",
+   "note": "Paste pair: chips + editor + podcast bar follow the composer card; diff/log/csv pastes recognised and titled (21 tests). Pairs: voice 14.78%, council 17.2%, diffuse 15.69% (Canvas composer via the Paste board's embedded pane), Formats markdown column 22.61%, Paste composer 43.3% (the board's six attachment kinds + size guard + preview are carried). Edge 249a301."
   }
  ]
 }
