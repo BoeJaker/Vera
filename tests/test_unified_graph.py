@@ -1,13 +1,11 @@
 """
-The unified graph, pass A (UI redesign canvas-graph part 2; the GraphViews
-board): the memory graph panel draws one document of families with the mixer
-and the board's views beside every view it had; families.js is served; the
-chat's graph column posts the turn's context and the turns as families. The
-files are text, so this runs anywhere (the adapters run under node in
-tests/test_graph_families.cjs).
+The unified graph's families (UI redesign, Notes/40 §7) and the chat's context
+graph (the Graph board's column). The memory graph panel is out of scope and
+untouched; the chat's graph column is the chat's own element. The files are
+text, so this runs anywhere (the layouts run under node in
+tests/test_graph_families.cjs and tests/test_context_graph_element.cjs).
 """
 import os
-import re
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 
@@ -19,39 +17,32 @@ def _read(*parts):
 
 PANEL = _read("vera", "fabric", "memory_graph_panel.html")
 ROUTES = _read("vera", "vera_graph_panels.py")
+CHAT_ROUTES = _read("vera", "chat", "chat_panels_capabilities.py")
 CHAT = _read("vera", "chat", "chat_panel.html")
 FAM = _read("vera", "graph", "families.js")
+EL = _read("vera", "chat", "context_graph_element.js")
 
 
-def test_families_are_served_and_loaded_by_the_panel():
+def test_families_are_served():
     assert '@APP.get("/ui/graph/families.js", include_in_schema=False)' in ROUTES and 'Path(__file__).parent / "graph" / "families.js"' in ROUTES
-    assert '<script src="/ui/graph/families.js"></script>' in PANEL and '<script src="/ui/iso.js"></script>' in PANEL
     assert "root.VeraGraphFamilies = api;" in FAM and "module.exports = api;" in FAM
 
 
-def test_the_panel_has_the_views_the_mixer_and_keeps_its_own():
-    for chip in ("vchip-galaxy", "vchip-iso", "vchip-flow", "vchip-force", "vchip-timeline", "vchip-hierarchy", "vchip-radial"):
-        assert 'id="%s"' % chip in PANEL, chip
-    assert 'id="family-chips"' in PANEL and "function rebuildFamilyChips()" in PANEL and "function cycleFamily(f)" in PANEL
-    assert "['force','timeline','hierarchy','radial','galaxy','iso','flow'].forEach" in PANEL
-    assert "_applyGalaxyLayout(false);" in PANEL and "_applyGalaxyLayout(!!window.VeraISO);" in PANEL
-    assert "} else if (_viewMode === 'hierarchy' || _viewMode === 'flow') {" in PANEL
-    g = PANEL[PANEL.index("function _applyGalaxyLayout(iso) {"):PANEL.index("function _famPostToParent()")]
-    assert "VeraISO.proj(30, 45, 1, true)" in g and "F.FAMILIES.map(x => x.id)" in g, "iso goes through the shared projection; sectors follow the families' order"
-    assert "if (_famVisible && !_famVisible.has(n.id)) return false;" in PANEL, "the mixer gates visibility"
-    assert "family: rec.family || (rec.non_authoritative ? 'dag' : 'memory')," in PANEL
-    assert "if (d.type === 'vera:graph:family' && d.family)" in PANEL and "if (d.type === 'vera:graph:anchor')" in PANEL
-    # Note 39 §23: what the unified graph must keep — the panel's own controls are all still here
-    for fn in ("function onSearch()", "function rebuildFilters()", "function selectNode(id)", "async function expandSel()", "function focusSel()", "async function labelSel()",
-               "async function runCap()", "function loadSessionList()", "function setWindow(hours)", "async function loadOlder()", "function toggleCleanupMenu()",
-               "function _applyTimelineLayout()", "function _applyHierarchyLayout()", "function _applyRadialLayout()", "function warmupPhysics(ticks)", "function fitAll()",
-               'id="node-detail"', 'id="cap-runner"', 'id="session-picker"', 'id="type-chips"', 'id="edge-chips"', 'id="source-chips"'):
-        assert fn in PANEL, fn + " still there"
+def test_the_memory_graph_panel_is_untouched():
+    # out of scope: nothing of the unified graph's UI lives in it, and nothing embeds it in the chat's columns
+    for marker in ('id="family-chips"', 'id="vchip-galaxy"', "function ingestFamily(", '<script src="/ui/graph/families.js"></script>', "vera:graph:family"):
+        assert marker not in PANEL, marker
+    assert "_resolvePanel('memory-graph')" not in CHAT and "graphColumnFrame" not in CHAT
 
 
-def test_the_chat_posts_its_families_with_the_anchor():
-    assert "try{ _graphFamiliesPost(frame, msg.mid); }catch(_){}" in CHAT
-    f = CHAT[CHAT.index("function _graphFamiliesPost(frame, mid){"):CHAT.index("// which turn is in focus:")]
-    assert "family:'context', payload:ctx" in f and "family:'turns', payload:{turns}" in f
-    assert "turn:mid||''" in f, "the context is retrieved into the focused turn"
-    assert "if(sig===_grFamSig) return;" in f, "posted only when it changed"
+def test_the_chats_context_graph_is_its_own_element():
+    assert '@APP.get("/ui/context_graph_element.js", include_in_schema=False)' in CHAT_ROUTES and 'Path(__file__).parent / "context_graph_element.js"' in CHAT_ROUTES
+    assert "root.customElements.define('vera-context-graph', VeraContextGraph);" in EL and "root.VeraContextGraph = api;" in EL
+    for view in ("'galaxy'", "'iso'", "'flow'", "'time'"):
+        assert view in EL
+    assert "vera:ctx:rendered" in EL and "vera:ctx:pick" in EL and "vera:ctx:toggle" in EL and "vera:ctx:focus-turn" in EL
+    assert "positions()" in EL, "the host draws the runs to the message from the positions the element reports"
+    assert "VeraGraph" not in EL.replace("VeraGraphFamilies", "").replace("VeraContextGraph", ""), "not built on any other graph's engine"
+    assert "createGraph(" not in EL and "vera_graph.js" not in EL
+    assert '<script src="/ui/context_graph_element.js"></script>' in CHAT and '<script src="/ui/graph/families.js"></script>' in CHAT
+    assert "_ctxCol=document.createElement('vera-context-graph')" in CHAT

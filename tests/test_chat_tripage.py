@@ -1,7 +1,7 @@
 """
 The tri-page's canvas and graph columns in the chat (canvas-graph; the Canvas board): #canvasColumn and
 #graphColumn beside #chatStack, + Canvas / + Graph in the top bar, ?pages=chat,canvas,graph, the session
-canvas in <vera-canvas>, the memory graph through the panel-iframe path, the focused turn posted to the graph,
+canvas in <vera-canvas>, the chat's own context graph in <vera-context-graph>, the focused turn driving the graph,
 _wPin through the resolver, the canvas.* / lhm.compose directives — and everything that was there before,
 still there. Text-level: the chain is held together by the strings these tests look for.
 """
@@ -36,7 +36,7 @@ def test_the_two_columns_sit_beside_the_chat_stack_inside_the_chat_column():
     end = HTML.index('</div><!-- /#chatColumn -->')
     assert col < stack < cv < gr < host < end, "siblings of #chatStack, before the untouched panel host"
     _once(HTML, 'id="canvasColumnBody"')
-    _once(HTML, 'id="graphColumnFrame"')
+    _once(HTML, 'id="graphColumnBody"')
     assert '<b>Session canvas</b>' in HTML and 'id="cvColNow"' in HTML, "the board's header: Session canvas · NOW"
 
 
@@ -85,20 +85,26 @@ def test_the_canvas_column_hosts_the_session_canvas_element():
     assert "el.addEventListener('vera:canvas:rendered'" in HTML and "dispatchEvent(new CustomEvent('vera:canvas:rendered'" in EL
 
 
-def test_the_graph_column_goes_through_the_panel_registry_and_hears_the_focused_turn():
-    assert "_resolvePanel('memory-graph')" in HTML and "src=await _panelSrcAsync(p)" in HTML
-    assert "_PANEL_ENDPOINT_ALIASES['memory-graph']||'/ui/panels/file/memory_graph_panel.html'" in HTML
-    assert "postMessage({type:'vera:panel:init', panel_id:'memory-graph', session_id:SID}, '*')" in HTML
+def test_the_graph_column_is_the_chats_own_context_graph_and_hears_the_focused_turn():
+    # the design's context graph, the chat's own element — no other panel embedded, no iframe
+    assert '<div class="tri-bd" id="graphColumnBody"></div>' in HTML and 'graphColumnFrame' not in HTML
+    assert "_ctxCol=document.createElement('vera-context-graph')" in HTML
+    assert "_ctxCol.setContext(CTX_NODES, CTX_EDGES.map(" in HTML and "color:srcCol" in HTML, "fed by the chat's own records"
+    assert "function _ctxColLoopEv(ev){" in HTML and HTML.count("_ctxColLoopEv(ev)") >= 4, "the live loop's events reach the column's loop lane"
+    assert "fetch(BASE+'/dream/goals/list')" in HTML and "_ctxCol.setPlan(" in HTML
     assert "const msg={type:'vera:graph:anchor', mid:w?(w.dataset.mid||''):'', rect, session_id:SID||''};" in HTML
+    assert "try{ _ctxColumnSync(msg.mid); _ctxRunsDraw(); }catch(_){}" in HTML, "the focused turn drives the graph and the runs"
     assert "msgs.addEventListener('scroll', ()=>_graphAnchorPost(), {passive:true})" in HTML
     assert "Date.now()-_grAnchorT>150" in HTML, "throttled"
+    assert '<svg id="ctxRunsOverlay" aria-hidden="true"></svg>' in HTML and "function _ctxRunsDraw(){" in HTML
+    _once(HTML, '<script src="/ui/context_graph_element.js"></script>')
     assert "'/ui/panels/file/memory_graph_panel.html'," in HTML, "the alias table itself is unchanged"
 
 
 def test_the_columns_report_into_the_one_panel_set():
     assert "return mine.concat(_pagesOpenNow()).concat(theirs);" in HTML
     assert "p.placement==='beside chat'||p.placement==='column'" in HTML
-    assert "placement:'column', close:()=>togglePage('canvas')" in HTML and "id:'memory-graph', label:'Memory graph'" in HTML
+    assert "placement:'column', close:()=>togglePage('canvas')" in HTML and "id:'context-graph', label:'Context graph'" in HTML
     _once(HTML, "function _panelsOpenReport(){")
     assert "fetch(BASE+'/ui/panels/open/report'" in HTML
 
