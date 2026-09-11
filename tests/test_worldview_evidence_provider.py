@@ -4,7 +4,7 @@ from vera.fabric.dataset_provider import DatasetSnapshot
 from vera.models.model_package import ModelArtifact, ModelCompatibility, ModelPackage
 from vera.worldview.evidence_provider import (
     EVIDENCE_KINDS, EvidenceCitation, EvidenceObservation, FrozenEvidenceProvider,
-    WorldviewEvidence, evidence_availability,
+    JepaResultProjector, WorldviewEvidence, evidence_availability,
 )
 
 
@@ -143,3 +143,99 @@ def test_stale_and_unavailable_evidence_are_never_usable():
     assert evidence_availability(
         evidence, expected_snapshot_id=evidence.snapshot_id,
         expected_model_package_id=evidence.model_package_id)["usable"] is True
+
+
+def _project(kind, result, *, support=("record-1",)):
+    return JepaResultProjector().project(
+        kind=kind, result=result, snapshot=_snapshot(), checkpoint=_checkpoint(),
+        provider_revision="runtime-7", observed_at="2026-09-11T10:02:00Z",
+        citation_revisions={"record-1": "revision-1", "record-2": "revision-2"},
+        support_record_ids=support)
+
+
+def test_projector_strips_concept_member_text_and_pins_revisions():
+    result = {"concepts": [{"idx": 7, "population": 2, "label": "systems",
+                            "members_sample": [{"id": "record-1", "text": "private"}]}]}
+    evidence = _project("concept", result, support=())
+    observation = evidence.to_dict()["observations"][0]
+    assert observation["attributes"] == {
+        "concept": 7, "label": "systems", "population": 2}
+    assert observation["citations"] == [
+        {"record_id": "record-1", "revision_id": "revision-1"}]
+    assert "private" not in str(evidence.to_dict())
+
+
+@pytest.mark.parametrize("result", [
+    {"next_concepts": [{"concept": 8, "prob": 0.8, "label": "next"}]},
+    {"trajectory": [{"step": 0, "concept": 7, "label": "start", "members": ["record-1"]},
+                    {"step": 1, "concept": 8, "label": "next", "members": ["record-2"]}]},
+])
+def test_projector_handles_prediction_and_rollout_shapes(result):
+    evidence = _project("prediction", result)
+    assert evidence.kind == "prediction"
+    assert all(item.citations[0].revision_id == "revision-1"
+               for item in evidence.observations)
+
+
+def test_projector_strips_anomaly_and_reranking_payloads():
+    anomaly = _project("anomaly", {"anomalies": [{
+        "id": "record-1", "text": "secret source text", "concept": 3,
+        "concept_label": "odd", "anomaly_score": 0.91,
+        "recon_distance": 0.8, "log_prob": -2.0}]}, support=())
+    reranking = _project("reranking", {"query": "private query", "results": [{
+        "id": "record-2", "text": "private result", "score": -0.2,
+        "concept": 3, "concept_label": "odd"}]}, support=())
+    assert anomaly.observations[0].score == 0.91
+    assert reranking.observations[0].score == 0.4
+    assert "secret source text" not in str(anomaly.to_dict())
+    assert "private" not in str(reranking.to_dict())
+
+
+def test_projector_preserves_counterfactual_distinction_without_causal_claim():
+    evidence = _project("counterfactual", {
+        "start_concept": 1, "swap_at": 1, "swap_to": 9,
+        "baseline": [{"step": 0, "concept": 1, "members": ["record-1"]},
+                     {"step": 1, "concept": 2, "members": ["record-2"]}],
+        "counterfactual": [{"step": 0, "concept": 1, "members": ["record-1"]},
+                           {"step": 1, "concept": 9, "members": ["record-2"]}],
+        "divergence_step": 1})
+    assert [item.attributes["diverged"] for item in evidence.observations] == [False, True]
+    assert evidence.to_dict()["authority"] == "derived_evidence_only"
+
+
+def test_projector_preserves_drift_measurements_as_derived_evidence():
+    evidence = _project("drift", {"dataset_id": "fabric.news", "drifted_concepts": [{
+        "concept": 4, "label": "changed", "dataset_frac": 0.4,
+        "global_frac": 0.1, "ratio": 4.0, "direction": "over"}]})
+    assert evidence.observations[0].attributes == {
+        "concept": 4, "dataset_fraction": 0.4, "direction": "over",
+        "global_fraction": 0.1, "label": "changed", "ratio": 4.0}
+
+
+def test_projector_fails_closed_on_errors_missing_citations_and_bad_shapes():
+    with pytest.raises(ValueError, match="successful"):
+        _project("concept", {"error": "not ready"})
+    with pytest.raises(ValueError, match="missing authoritative revision"):
+        JepaResultProjector().project(
+            kind="anomaly", result={"anomalies": [{"id": "unknown", "anomaly_score": 0.5}]},
+            snapshot=_snapshot(), checkpoint=_checkpoint(), provider_revision="runtime-7",
+            observed_at="2026-09-11T10:02:00Z", citation_revisions={})
+    with pytest.raises(ValueError, match="bounded sequence"):
+        _project("prediction", {"next_concepts": None})
+    with pytest.raises(ValueError, match="equal length"):
+        _project("counterfactual", {"baseline": [{"concept": 1}], "counterfactual": []})
+    with pytest.raises(ValueError, match="bounded integer"):
+        _project("prediction", {"next_concepts": [{"concept": True, "prob": 0.5}]})
+    with pytest.raises(ValueError, match="over or under"):
+        _project("drift", {"drifted_concepts": [{
+            "concept": 1, "direction": "sideways", "ratio": 1.0}]})
+    with pytest.raises(ValueError, match="malformed JEPA concept"):
+        _project("concept", {"concepts": [{"population": 1}]})
+
+
+def test_projector_module_does_not_import_operational_runtime_or_frameworks():
+    source = (__import__("pathlib").Path(__file__).resolve().parents[1] / "vera" /
+              "worldview" / "evidence_provider.py").read_text(encoding="utf-8")
+    assert "worldview_jepa" not in source
+    assert "import torch" not in source
+    assert "import numpy" not in source

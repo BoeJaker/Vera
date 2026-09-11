@@ -79,6 +79,21 @@ a signal, rank context, fall back to a stale revision, or activate a checkpoint.
 Exact snapshot and ModelPackage matching is required before evidence is marked
 usable; missing evidence is unavailable and mismatched evidence is stale.
 
+`JepaResultProjector` is the pure compatibility seam for current operational
+result shapes. It accepts already-produced concept lists, next-concept/rollout
+predictions, anomalies, counterfactual paths, drift reports, or latent-query
+ranking results. The caller must supply the authoritative record-to-revision
+mapping and explicit support records because the legacy JEPA responses do not
+carry sufficient revision evidence. Missing citations fail closed.
+
+The projector copies only identifiers, bounded labels, ranks/positions, scores,
+concept numbers, and aggregate drift/counterfactual fields. Source/query text,
+member text, reconstruction details, embeddings, vectors, prompts, and other
+payloads are discarded. It does not call an operational capability, load a
+checkpoint, query Fabric, run inference, alter result ordering, or attach the
+evidence to a consumer. That last activation step requires the exact-identity
+availability check plus separately measured quality and latency evidence.
+
 ## Snapshot, parity, and evidence
 
 The legacy loader retains backend-supplied revision/hash evidence. Missing or
