@@ -26,6 +26,9 @@ from .evaluation_evidence import (
 from .evaluation_execution import (
     EvidenceEvalProvider, EvaluationExecutionPolicy, execute_evaluation,
     plan_evaluation_execution)
+from .external_evaluation_import import (
+    ExternalEvaluationImportReceipt, import_deepeval_projection,
+    import_external_evaluation_projection, import_promptfoo_projection)
 from .inference_contracts import (
     InferenceArtifact, InferenceCancellation, InferenceContractConflict,
     InferenceEvent, InferenceProvider, InferenceRequest, InferenceTranscript,
@@ -98,6 +101,8 @@ __all__ = ["AdmittedModelActivation", "LegacyModelCapabilityBinding", "ModelActi
            "judge_provenance_from_dict", "partial_evaluation_report_from_dict",
            "EvidenceEvalProvider", "EvaluationExecutionPolicy",
            "execute_evaluation", "plan_evaluation_execution",
+           "ExternalEvaluationImportReceipt", "import_deepeval_projection",
+           "import_external_evaluation_projection", "import_promptfoo_projection",
            "SQLiteModelPackageRegistry", "inspect_and_register_onnx",
            "evaluate_model_admission", "evaluation_report_from_dict",
            "evaluation_request_from_dict", "legacy_onnx_bindings",
