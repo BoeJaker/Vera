@@ -224,18 +224,12 @@ def test_widget_draws_what_it_read_even_when_the_chosen_form_cannot():
     assert "drawn as '+esc(w.drawn)+' (the data\\'s shape)'" in _fn("_wRepaint")
 
 
-def test_slash_menu_is_hidden_until_it_has_rows():
-    assert ".slash-menu:empty{display:none!important}" in HTML
-    assert "menu.style.display='flex'; _slashVisible=true;" in HTML
-    assert ".slash-menu{padding:0;overflow:hidden;flex-direction:column}" in HTML
-
-
-def test_widget_draws_what_it_read_even_when_the_chosen_form_cannot():
-    f = _fn("_wFormFor")
-    assert "if(data===undefined||!empty(rec.draw.form)) return rec.draw.form;" in f
-    assert "const byShape=_widgetFormByShape(data); if(byShape&&!empty(byShape)) return byShape;" in f
-    assert "return 'kv';" in f
-    assert "drawn as '+esc(w.drawn)+' (the data\\'s shape)'" in _fn("_wRepaint")
+def test_diff_fences_are_coloured_by_line():
+    assert "diff:'diff',patch:'diff'," in HTML
+    assert "else if(fam==='diff') html=_hlDiff(code);" in HTML
+    d = _fn("_hlDiff")
+    assert "hl-add" in d and "hl-del" in d and "hl-hunk" in d
+    assert ".hl-add{background:rgba(95,207,154,.14)" in HTML and ".hl-del{background:rgba(232,112,107,.14)" in HTML
 
 
 def test_slash_menu_is_hidden_until_it_has_rows():

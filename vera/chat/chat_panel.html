@@ -879,6 +879,9 @@ body.has-panel #chatStack.resized{ flex:0 0 auto; }
 .hl-kw{color:var(--acc);font-weight:600}
 .hl-str{color:var(--acc2)}
 .hl-com{color:var(--dim);font-style:italic}
+.hl-add{background:rgba(95,207,154,.14);color:var(--acc2);display:inline-block;width:100%}
+.hl-del{background:rgba(232,112,107,.14);color:var(--err);display:inline-block;width:100%}
+.hl-hunk{color:var(--acc);display:inline-block;width:100%}
 .hl-num{color:var(--acc3)}
 .hl-fn{color:var(--acc4)}
 .hl-type{color:var(--acc4)}
@@ -4456,6 +4459,7 @@ IMPORTANT:
     sql:'sql',css:'css',scss:'css',less:'css',
     json:'json',
     html:'html',htm:'html',xml:'html',svg:'html',vue:'html',
+    diff:'diff',patch:'diff',
   };
   const _HL_KW={
     clike:new Set(('var let const function return if else for while do switch case break continue new class '
@@ -4504,6 +4508,18 @@ IMPORTANT:
     if(last<code.length) out+=_hlEsc(code.slice(last));
     return out;
   }
+  // a unified diff: added and removed lines washed across the row, hunk headers and file lines quiet
+  function _hlDiff(code){
+    return code.split('\n').map(l=>{
+      const e=_hlEsc(l);
+      if(/^@@/.test(l)) return '<span class="hl-hunk">'+e+'</span>';
+      if(/^(\+\+\+|---|diff |index |rename |similarity )/.test(l)) return '<span class="hl-com">'+e+'</span>';
+      if(l[0]==='+') return '<span class="hl-add">'+e+'</span>';
+      if(l[0]==='-') return '<span class="hl-del">'+e+'</span>';
+      if(l[0]==='#') return '<span class="hl-com">'+e+'</span>';
+      return e;
+    }).join('\n');
+  }
   function _hlTag(seg){
     // One pass over the ALREADY-escaped tag so inserted spans are never re-scanned.
     return _hlEsc(seg).replace(
@@ -4537,6 +4553,7 @@ IMPORTANT:
     try{
       if(!fam) html=_hlEsc(code);              // unknown lang → escaped, uncoloured
       else if(fam==='html') html=_hlHtml(code);
+      else if(fam==='diff') html=_hlDiff(code);
       else html=_hlGeneric(code, fam);
     }catch(_){ html=_hlEsc(code); }
     if(_hlCache.size>400) _hlCache.clear();     // bound memory over a long session
@@ -15840,7 +15857,7 @@ Your task: decide what to do next to advance toward the goal.
     setDensity,toggleBlocks,
     _uiAskAnswer,_uiAskPick,_uiDirectiveApply,
     _cmpChip,_cmpSync,_paOpen,_paCopy,
-    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_micUi,
+    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,
     _persistMediaCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},
     setContext:txt=>{_parentCtx=txt;},
