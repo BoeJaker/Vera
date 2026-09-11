@@ -5737,8 +5737,19 @@ async def evolve_pipeline_adopt(branch: str = "", to: str = "bleeding-edge", tit
             except Exception as e:
                 crit = {"error": str(e)}
             if crit.get("error"):
+                # A tier that was ATTEMPTED and could not execute is a failed
+                # gate, not an absent one. It used to stay None ("infra hiccup,
+                # not counted") - and on 2026-09-11 that let a branch with four
+                # red critical tests onto bleeding-edge and main with
+                # gate_passed=True, because the container failed to start
+                # pytest that once. If the box is genuinely broken, the
+                # promoter verifies by hand and uses force; the gate must not
+                # say PASS for tests that never ran.
+                critical_ok = False
                 _pstep(rec, "critical-tests", False,
-                       f"could not run critical-tier tests: {crit['error']}")
+                       f"could not run critical-tier tests: {crit['error']} "
+                       "- counted as FAILED (re-adopt, or promote with force "
+                       "after verifying by hand)")
             else:
                 critical_ok = bool(crit.get("ok"))
                 _pstep(rec, "critical-tests", critical_ok,
