@@ -258,7 +258,7 @@ vera-context-graph .cg-empty{position:absolute;inset:0;display:flex;align-items:
       connectedCallback() {
         ensureCss(this.ownerDocument); if (this._built) { this._schedule(); return; } this._built = true;
         const a = this.getAttribute('view'); if (a) this._S.view = a;
-        this.innerHTML = '<div class="cg-hd"><h2>Context graph</h2><span class="lbl" data-r="tok"></span><span class="sp"></span><span class="cg-seg" data-r="views" title="The unified graph\'s layouts, here"></span><button class="cg-btn" data-a="alledges" data-r="alledges" title="Draw every relation, not only the ones that touch the prompt">All edges</button><span class="lbl" data-r="zoom">100%</span><button class="cg-btn" data-a="fit" title="Back to the whole graph">Fit</button></div>'
+        this.innerHTML = '<div class="cg-hd"><h2>Context graph</h2><span class="lbl" data-r="tok"></span><span class="sp"></span><span class="cg-seg" data-r="views" title="The unified graph\'s layouts, here"></span><button class="cg-btn" data-a="alledges" data-r="alledges" title="Draw every relation, not only the ones that touch the prompt">All edges</button><span class="lbl" data-r="zoom">100%</span><button class="cg-btn" data-a="fit" title="Back to the whole graph">Fit</button><button class="cg-btn" data-a="collapse" title="Fold the graph back into the quick menu">Collapse</button></div>'
           + '<div class="cg-key"><span><b>angle</b> = source</span><span><b>distance</b> = lower relevance</span><span><b>area</b> = tokens</span><span><b>hollow</b> = related, not injected</span></div>'
           + '<div class="cg-layers" data-r="layers"></div><div class="cg-plot" data-r="plot"><div class="cg-in" data-r="in"></div><div data-r="lanes"></div></div>';
         this._r = {}; this.querySelectorAll('[data-r]').forEach((el) => { this._r[el.dataset.r] = el; });
@@ -295,7 +295,7 @@ vera-context-graph .cg-empty{position:absolute;inset:0;display:flex;align-items:
       _click(e) {
         const t = e.target; const b = t.closest && t.closest('button[data-v]'); if (b) { this.view(b.dataset.v); return; }
         const a = t.closest && t.closest('[data-a]'); if (a) { const S = this._S; const k = a.dataset.a;
-          if (k === 'fit') this.fit(); else if (k === 'alledges') { S.allEdges = !S.allEdges; this._schedule(); } else if (k === 'layer') { const s = a.dataset.s; if (S.layersOff.has(s)) S.layersOff.delete(s); else S.layersOff.add(s); this._schedule(); }
+          if (k === 'fit') this.fit(); else if (k === 'collapse') { this.dispatchEvent(new CustomEvent('vera:ctx:collapse', { bubbles: true })); } else if (k === 'alledges') { S.allEdges = !S.allEdges; this._schedule(); } else if (k === 'layer') { const s = a.dataset.s; if (S.layersOff.has(s)) S.layersOff.delete(s); else S.layersOff.add(s); this._schedule(); }
           else if (k === 'related') { S.related = !S.related; this._schedule(); } else if (k === 'close') { S.sel = null; this._schedule(); }
           else if (k === 'toggle') { this.dispatchEvent(new CustomEvent('vera:ctx:toggle', { detail: { id: a.dataset.id }, bubbles: true })); }
           else if (k === 'open') { const r = this._last && this._last.rec; this.dispatchEvent(new CustomEvent('vera:ctx:pick', { detail: { id: a.dataset.id, open: true, family: r && r.id === a.dataset.id ? r.family : 'context', rec: r && r.id === a.dataset.id ? r.rec : null }, bubbles: true })); }
