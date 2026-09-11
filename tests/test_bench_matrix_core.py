@@ -210,3 +210,19 @@ def test_apply_plan_skips_what_is_already_learned_and_honours_a_filter():
     assert rows[0]["reason"] == "already the learned window"
     only = apply_plan(recs, "n1", learned={}, only=["b"])
     assert [r["model"] for r in only] == ["b"]
+
+
+def test_apply_plan_accepts_a_comma_separated_string_of_models():
+    """`only` takes what bench.matrix.start's `models` takes. A bare string used
+    to be iterated character by character, so every row was silently skipped."""
+    recs = [{"model": "a:latest", "num_ctx": 8192, "gen_tps": 50.0},
+            {"model": "b:latest", "num_ctx": 4096, "gen_tps": 20.0}]
+    by_string = apply_plan(recs, "node-1", {}, only="a:latest")
+    assert [r["model"] for r in by_string] == ["a:latest"]
+    assert by_string[0]["action"] == "set"
+
+    both = apply_plan(recs, "node-1", {}, only="a:latest, b:latest")
+    assert [r["model"] for r in both] == ["a:latest", "b:latest"]
+
+    assert len(apply_plan(recs, "node-1", {}, only=["b:latest"])) == 1
+    assert len(apply_plan(recs, "node-1", {}, only=None)) == 2

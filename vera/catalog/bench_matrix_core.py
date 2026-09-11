@@ -287,7 +287,10 @@ def apply_plan(recommendations: List[Dict[str, Any]], instance_id: str,
     with a measurement, and it takes the estimator out of the path for that pair.
     Pure: the caller performs the write."""
     learned = learned or {}
-    wanted = {str(m) for m in (only or [])} or None
+    # Same shapes as bench.matrix.start's `models`: a list, or one
+    # comma-separated string. Iterating a bare string yields characters,
+    # which match no model and silently skip every row.
+    wanted = set(normalise_models(only)) or None
     out: List[Dict[str, Any]] = []
     for rec in recommendations or []:
         model = rec.get("model")
