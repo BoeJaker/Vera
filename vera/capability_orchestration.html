@@ -39,6 +39,7 @@
 <meta name="apple-mobile-web-app-title" content="Vera">
 <script src="/ui/pwa/pwa.js" defer></script>
 <script src="/ui/vera-ui.js?v=scale2"></script>
+<script src="/ui/vera-lhm.js"></script>
 <!-- Fonts loaded non-render-blocking: the shell paints immediately with the
      system fallbacks in the CSS var stacks, then swaps in the web fonts if/when
      they arrive. On a LAN box with slow/no route to Google, this avoids the
@@ -258,6 +259,17 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .lhm-nav .subitem{display:block;padding:5px 10px 5px 20px;font-family:var(--mono);font-size:9px;font-weight:600;letter-spacing:.3px;color:var(--dim2);white-space:normal;word-break:break-word;user-select:none;cursor:pointer;border-right:2px solid transparent;transition:all .12s}
 .lhm-nav .subitem:hover{color:var(--text);background:rgba(255,255,255,.02)}
 .lhm-nav .subitem.on{color:var(--acc2);border-right-color:var(--acc2)}
+/* ── The absorbed menu (UI redesign lhm-library) — when the open panel publishes a full LHM spec (the chat: eight
+   quick menus), this outer LHM draws that panel's rail and its current menu's tabs IN PLACE of the tab list, one
+   LHM instead of two; the ☰ bar above it swaps back to this page's own tab list, in the same place. ── */
+.body-wrap.lhm .lhm-nav.absorbed{width:212px}
+.body-wrap.lhm .main.autohide-reserve-v.absorbed{padding-left:212px}
+.lhm-nav .lhm-topbar{display:flex;align-items:center;gap:6px;padding:5px 6px;border-bottom:1px solid var(--border);flex-shrink:0}
+.lhm-nav .lhm-topbar .lhm-tb{width:24px;height:24px;display:flex;align-items:center;justify-content:center;border-radius:4px;border:1px solid transparent;color:var(--dim2);font-size:14px;cursor:pointer;user-select:none;flex-shrink:0}
+.lhm-nav .lhm-topbar .lhm-tb:hover{color:var(--text);background:var(--bg2)}
+.lhm-nav .lhm-topbar .lhm-tb.on{color:var(--acc);border-color:var(--acc)}
+.lhm-nav .lhm-topbar .lhm-tt{flex:1;min-width:0;font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--dim2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lhm-nav .lhm-abs{flex:1;display:flex;min-height:0;overflow:hidden}
 
 /* ── Panels area: multi-tab split ── */
 .panels{flex:1;overflow:hidden;position:relative;display:flex;flex-direction:row}
@@ -1904,6 +1916,7 @@ function _tabApplyLhm(){
   }
   _tabRender();
   _tabApplyAutohide();   // switching horizontal/LHM re-targets autohide at whichever nav is now visible
+  _reapplyNavHosting();  // a full LHM spec is hosted only in the vertical menu — tell the panel which it is now
 }
 
 // ── Top-level nav unification ──────────────────────────────────────────────
@@ -1924,9 +1937,28 @@ const _panelNavSources = {};   // panelId -> e.source, so _reapplyNavHosting() c
 // always reliably reachable, so the panel's own (now redundant) rail is
 // still hidden regardless of the toggle.
 function _navHostingAllowed(){ return !(_autohide && _keepInnerNavOnAutohide); }
+// The panel id of the iframe a message came from — for a frame that was never sent vera:panel:init (an iframe a
+// panel's own mount script created, like the chat's, is not parked with data-lazy-src, so the load poll never
+// addresses it). Named by the .panel element that holds the frame.
+function _panelIdOfSource(src){
+  if(!src) return '';
+  for(const f of document.querySelectorAll('.panels .panel iframe')){
+    try{ if(f.contentWindow === src){ const p = f.closest('.panel'); return p ? _panelIdFromEl(p) : ''; } }catch(_){}
+  }
+  return '';
+}
+// Whether this outer menu is really hosting a given panel's nav right now: a plain section list is hosted whenever
+// hosting is allowed; a FULL LHM spec (state.nav.lhm) only while this menu is in its vertical (LHM) mode — in the
+// horizontal tab bar the sections are only a hover dropdown, so the panel keeps its own rail there.
+function _navHostedFor(nav){ return _navHostingAllowed() && (!(nav && nav.lhm) || _lhmMode); }
 window.addEventListener('message', e => {
   const d = e.data;
-  if(!d || typeof d!=='object' || d.type!=='vera:panel:state' || !d.panel_id) return;
+  if(!d || typeof d!=='object' || d.type!=='vera:panel:state') return;
+  if(!d.panel_id){
+    const pid = _panelIdOfSource(e.source); if(!pid) return;
+    d.panel_id = pid;
+    try{ e.source.postMessage({type:'vera:panel:init', panel_id: pid, session_id:''}, '*'); }catch(_){}
+  }
   const nav = (d.state && d.state.nav) || null;
   if(nav && Array.isArray(nav.items) && nav.items.length && e.source){
     _panelNavSources[d.panel_id] = e.source;
@@ -1940,7 +1972,7 @@ window.addEventListener('message', e => {
     // active, so a panel that already hid its rail before the user toggled
     // this on gets it back immediately rather than waiting on its own next
     // unrelated state change.
-    try{ e.source.postMessage({type: _navHostingAllowed() ? 'vera:panel:nav_hosted' : 'vera:panel:nav_unhosted'}, '*'); }catch(err){}
+    try{ e.source.postMessage({type: _navHostedFor(nav) ? 'vera:panel:nav_hosted' : 'vera:panel:nav_unhosted'}, '*'); }catch(err){}
   }
   const prevSig = JSON.stringify(_panelNavCache[d.panel_id] || null);
   if(JSON.stringify(nav) === prevSig) return;   // no real change → no re-render
@@ -1951,8 +1983,10 @@ window.addEventListener('message', e => {
 // autohide or the keep-inner-nav toggle changes, so already-mounted panels
 // react immediately instead of waiting for their own next state publish.
 function _reapplyNavHosting(){
-  const msg = { type: _navHostingAllowed() ? 'vera:panel:nav_hosted' : 'vera:panel:nav_unhosted' };
-  Object.values(_panelNavSources).forEach(src => { try{ src.postMessage(msg, '*'); }catch(e){} });
+  Object.keys(_panelNavSources).forEach(pid => {
+    const msg = { type: _navHostedFor(_panelNavCache[pid]) ? 'vera:panel:nav_hosted' : 'vera:panel:nav_unhosted' };
+    try{ _panelNavSources[pid].postMessage(msg, '*'); }catch(e){}
+  });
 }
 // Reach the iframe for a given top-level panel id, so an injected sub-item
 // click can postMessage nav_select straight into it.
@@ -1967,11 +2001,47 @@ function _lhmNavSelect(pid, itemId){
     {type:'vera:panel:action', action:'nav_select', action_id:aid, payload:{id:itemId}}, '*');
 }
 
+// The absorbed menu: while the ACTIVE tab's panel publishes a full LHM spec (state.nav.lhm — the chat's eight
+// quick menus), this outer menu shows that panel's rail + its current menu's tabs instead of the tab list, and a
+// ☰ bar that swaps the tab list back IN PLACE (never a second menu beside it). Picks go to the panel as nav_select.
+let _lhmAbsorbTop = false, _lhmAbsorbPid = '';
+function _lhmAbsorbedFor(){
+  const first = [..._openTabs][0] || '';
+  const nav = first ? _panelNavCache[first] : null;
+  return (nav && nav.lhm && window.VeraLHM) ? { pid: first, nav } : null;
+}
+function _lhmRenderAbsorbed(host, pid, nav){
+  const bar = document.createElement('div'); bar.className = 'lhm-topbar';
+  const tb = document.createElement('div'); tb.className = 'lhm-tb' + (_lhmAbsorbTop ? ' on' : ''); tb.textContent = '☰';
+  tb.title = _lhmAbsorbTop ? "Back to the open panel's menu" : "This page's own menu — every tab";
+  tb.addEventListener('click', ()=>{ _lhmAbsorbTop = !_lhmAbsorbTop; _lhmNavSync(); });
+  const tt = document.createElement('div'); tt.className = 'lhm-tt';
+  tt.textContent = _lhmAbsorbTop ? 'Vera · every tab' : ((nav.lhm.title || 'panel') + ' · menu');
+  bar.appendChild(tb); bar.appendChild(tt); host.appendChild(bar);
+  if(_lhmAbsorbTop) return false;           // the caller draws the ordinary tab list under the bar
+  const abs = document.createElement('div'); abs.className = 'lhm-abs';
+  VeraLHM.absorb(abs, nav.lhm, id => {
+    _lhmNavSelect(pid, id);
+    const menu = String(id).split('/')[0], tab = String(id).split('/')[1] || '';
+    const lhm = Object.assign({}, nav.lhm, { active: Object.assign({}, nav.lhm.active, { menu, tab: tab || (nav.lhm.active && nav.lhm.active.menu === menu ? nav.lhm.active.tab : '') }) });
+    _panelNavCache[pid] = Object.assign({}, nav, { active: menu, lhm });   // optimistic; the panel's publish confirms
+    _lhmNavSync();
+  }, { topOn: false, topTitle: 'Its own top-level list', onTop: () => _lhmNavSelect(pid, '☰') });
+  host.appendChild(abs);
+  return true;
+}
+
 // Sync the LHM nav tab list from the top tabBar
 function _lhmNavSync(){
   const host = document.getElementById('lhmNavTabs'); if(!host) return;
   host.innerHTML = '';
   if(_lhmEventsOpen) return;
+  const absorbed = _lhmAbsorbedFor();
+  if(absorbed && absorbed.pid !== _lhmAbsorbPid){ _lhmAbsorbPid = absorbed.pid; _lhmAbsorbTop = false; }
+  if(!absorbed) _lhmAbsorbPid = '';
+  document.getElementById('lhmNav')?.classList.toggle('absorbed', !!absorbed && !_lhmAbsorbTop);
+  document.querySelector('.main')?.classList.toggle('absorbed', !!absorbed && !_lhmAbsorbTop);
+  if(absorbed && _lhmRenderAbsorbed(host, absorbed.pid, absorbed.nav)) return;
 
   document.querySelectorAll('#tabBar .tab').forEach(t=>{
     const pid = _tabToPanelId(t);
