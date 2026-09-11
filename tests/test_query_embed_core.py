@@ -1,0 +1,66 @@
+"""bounded_embed: a query embed is waited for, never thrown away.
+
+Imports lowercase `vera.dag.query_embed_core` with the repo root on sys.path so
+the WORKTREE copy is exercised.
+"""
+import asyncio
+import os
+import sys
+
+import pytest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from vera.dag import query_embed_core as qec  # noqa: E402
+
+pytestmark = pytest.mark.critical
+
+
+def test_a_vector_that_arrives_in_time_is_returned():
+    async def embed():
+        await asyncio.sleep(0.01)
+        return [0.1, 0.2]
+
+    assert asyncio.run(qec.bounded_embed(embed, 1.0)) == [0.1, 0.2]
+
+
+def test_a_slow_embed_gives_up_waiting_but_is_not_cancelled():
+    """The point of the module: the caller moves on, the work finishes anyway."""
+    done = []
+
+    async def embed():
+        await asyncio.sleep(0.2)
+        done.append(True)
+        return [1.0]
+
+    async def scenario():
+        got = await qec.bounded_embed(embed, 0.05)
+        assert got is None
+        await asyncio.sleep(0.35)        # outlive the embed
+        return done
+
+    assert asyncio.run(scenario()) == [True]
+
+
+def test_a_failing_embed_is_a_miss_not_an_error():
+    async def embed():
+        raise RuntimeError("embed node unreachable")
+
+    assert asyncio.run(qec.bounded_embed(embed, 1.0)) is None
+
+
+def test_no_vector_is_a_miss():
+    async def embed():
+        return None
+
+    assert asyncio.run(qec.bounded_embed(embed, 1.0)) is None
+
+
+def test_dag_store_query_embeds_wait_without_cancelling():
+    """dag_store's two search paths go through bounded_embed, and nothing in it
+    passes its own short timeout to ollama_embed any more."""
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "vera", "dag", "dag_store.py"), encoding="utf-8").read()
+    assert src.count("_query_embed.bounded_embed(") == 2
+    assert "timeout=10)" not in src
+    assert "timeout=15," not in src
