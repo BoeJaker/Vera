@@ -43,14 +43,18 @@ import base64
 import json
 import logging
 import math
+import os
 import re
+import socket
 import struct
 import sys
 import time
 import uuid
 import zlib
 from collections import deque
+from contextlib import asynccontextmanager
 from typing import Any, Deque, Dict, List, Optional
+from urllib.parse import urlparse
 
 import httpx
 
@@ -1342,25 +1346,29 @@ except Exception:                                    # worktree / app-free impor
 
 @capability("bench.node_trace", memory="off",
             http_method="POST", http_path="/bench/node_trace", http_tags=["bench"],
-            description="Trace a GPU node's CLOCKS, TEMPERATURE, POWER and THROTTLE "
-                        "REASONS *while it runs a real generation* — the sustained "
-                        "behaviour bench.node_gpu's single snapshot cannot see, because a "
-                        "card boosts first and only decays after seconds of load. Answers "
-                        "'is this node actually holding its rated clock, or is it "
-                        "thermally/power throttling?'. Inputs: instance_id (str! — an "
-                        "Ollama node mapped to an SSH host), model (str!), num_predict "
-                        "(int, default 512 — keep it LONG; a short generation finishes "
-                        "before a hot card decays and reports a clean bill of health), "
-                        "num_ctx (int, default 8192), prompt (str, optional), trace_seconds "
-                        "(int, default 0 = derive from num_predict — the sampler runs for "
-                        "this many seconds and the call takes about that long). Output: "
-                        "{ok, tokens_per_s, prefill_tokens_per_s, clock:{start_mhz,"
-                        "end_mhz,min_mhz,max_mhz,droop_pct}, peak_temp_c, peak_power_w, "
-                        "throttled_pct, throttle_reasons, verdict}.")
+            description="Run a real generation on an Ollama node and sample its hardware "
+                        "WHILE it runs. On a GPU node: clocks, temperature, power and "
+                        "throttle reasons — the sustained behaviour bench.node_gpu's single "
+                        "snapshot cannot see, because a card boosts first and only decays "
+                        "after seconds of load. On a CPU node: the container's own CPU use "
+                        "(its cgroup counter — load average inside an LXC container is the "
+                        "host's), memory, and host load. Inputs: instance_id (str! — an "
+                        "Ollama node mapped to an SSH host), model (str!), num_predict (int, "
+                        "default 512 — keep it LONG on a GPU node; a short generation "
+                        "finishes before a hot card decays), num_ctx (int, default 8192), "
+                        "prompt (str, optional), trace_seconds (int, default 0 = derive from "
+                        "num_predict; the call takes about this long), sampler (auto|gpu|cpu, "
+                        "default auto = gpu when the node has one). Output: {ok, kind, "
+                        "tokens_per_s, prefill_tokens_per_s, load_s, verdict} plus, for a "
+                        "GPU trace, clock:{start_mhz,end_mhz,min_mhz,max_mhz,droop_pct}, "
+                        "peak_temp_c, peak_power_w, throttled_pct, throttle_reasons — or, "
+                        "for a CPU trace, cpu_pct:{mean,peak}, cores_busy, mem_used_gb, "
+                        "mem_total_gb, host_load1, status.",
+            schema=enum_schema(sampler=["auto", "gpu", "cpu"]))
 async def cap_bench_node_trace(instance_id: str = "", model: str = "",
                                num_predict: int = 512, num_ctx: int = 8192,
                                prompt: str = "", trace_seconds: int = 0,
-                               trace_id=None):
+                               sampler: str = "auto", trace_id=None):
     if not instance_id or not model:
         return {"error": "instance_id and model are both required"}
     url = _instance_url(instance_id)
@@ -1373,16 +1381,19 @@ async def cap_bench_node_trace(instance_id: str = "", model: str = "",
     run = _rawcap("exec.ssh.run")
     if not run:
         return {"error": "exec.ssh.run unavailable"}
+    has_gpu = bool((_instance(instance_id) or {}).get("has_gpu"))
+    kind = sampler if sampler in ("gpu", "cpu") else ("gpu" if has_gpu else "cpu")
 
     prompt = prompt or ("Write a detailed technical essay on memory bandwidth in GPU "
                         "inference. Be specific, thorough and well structured.")
     # The sampler self-terminates after `budget_s` one-second samples. Both
     # halves are awaited together, so THIS IS ALSO ROUGHLY HOW LONG THE CALL
     # TAKES — an over-generous budget just idles after generation finishes.
-    # Default assumes >=15 tok/s (a GPU node floor) plus load headroom; pass
-    # trace_seconds explicitly for a slow node or a deliberately long window.
+    # Defaults assume a floor of 15 tok/s on a GPU node and 4 on a CPU node, plus
+    # load headroom; pass trace_seconds for a slow node or a deliberately long window.
+    floor_tps = 15 if kind == "gpu" else 4
     budget_s = (int(trace_seconds) if trace_seconds and int(trace_seconds) > 0
-                else int(num_predict / 15) + 15)
+                else int(num_predict / floor_tps) + 15)
     budget_s = max(15, min(budget_s, 300))
 
     body = {"model": model, "prompt": prompt, "stream": False,
@@ -1396,10 +1407,10 @@ async def cap_bench_node_trace(instance_id: str = "", model: str = "",
             return r.json()
 
     async def _sample():
-        return await run(command=GPU_TRACE_QUERY.format(count=budget_s),
+        return await run(command=_sampler_command(kind == "gpu", budget_s),
                          host_id=host, timeout=budget_s + 30) or {}
 
-    # Concurrently: the trace only means anything while the card is under the
+    # Concurrently: the trace only means anything while the node is under the
     # load we are attributing it to.
     gen, smp = await asyncio.gather(_generate(), _sample(), return_exceptions=True)
     if isinstance(gen, BaseException):
@@ -1411,24 +1422,526 @@ async def cap_bench_node_trace(instance_id: str = "", model: str = "",
     pe = gen.get("prompt_eval_count", 0) or 0
     ped = gen.get("prompt_eval_duration", 0) or 1
     out: Dict[str, Any] = {
-        "ok": True, "instance_id": instance_id, "host_id": host, "model": model,
-        "num_ctx": int(num_ctx), "num_predict": int(num_predict), "tokens": ev,
+        "ok": True, "kind": kind, "instance_id": instance_id, "host_id": host,
+        "model": model, "num_ctx": int(num_ctx), "num_predict": int(num_predict),
+        "tokens": ev,
         "tokens_per_s": round(ev / (evd / ns), 1),
         "prefill_tokens_per_s": round(pe / (ped / ns), 1),
         "load_s": round((gen.get("load_duration", 0) or 0) / ns, 2),
     }
     if isinstance(smp, BaseException):
-        out["trace_error"] = "gpu sampling failed: %s" % smp
+        out["trace_error"] = "hardware sampling failed: %s" % smp
         return out
 
     stdout = (smp.get("stdout", "") if isinstance(smp, dict) else "") or ""
-    summary = trace_summary(parse_gpu_trace(stdout))
+    summary = _summarise_sample(kind == "gpu", stdout)
     if not summary:
         out["trace_error"] = (((smp.get("error") or smp.get("stderr", "")) or "")[:200]
-                              or "no nvidia-smi samples (missing binary or no GPU)")
+                              or ("no nvidia-smi samples (missing binary or no GPU)"
+                                  if kind == "gpu" else "no CPU samples returned"))
         return out
     out.update(summary)
     return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NODE TELEMETRY + CONTEXT × QUANTISATION SWEEP
+#
+# What the router's own statistics cannot show: a CPU node's CPU and memory under
+# load, the traffic reaching a node WITHOUT going through Vera, and how a model's
+# speed and GPU residency change across context windows and quantisations. All
+# parsing, grid planning and scoring is pure (node_telemetry_core,
+# bench_matrix_core) and unit-tested; this section only does the I/O.
+# ─────────────────────────────────────────────────────────────────────────────
+try:
+    from Vera.vera.catalog import bench_matrix_core as _matrix
+    from Vera.vera.catalog.node_telemetry_core import (
+        cpu_trace_script, cpu_trace_summary, parse_cpu_trace, parse_request_log,
+        request_log_script, summarise_processes, summarise_requests)
+except Exception:                                    # worktree / app-free import
+    from vera.catalog import bench_matrix_core as _matrix
+    from vera.catalog.node_telemetry_core import (
+        cpu_trace_script, cpu_trace_summary, parse_cpu_trace, parse_request_log,
+        request_log_script, summarise_processes, summarise_requests)
+
+KEY_MATRIX = "vera:bench:matrix:"        # + run_id -> full sweep record (TTL 30d)
+KEY_MATRICES = "vera:bench:matrices"     # list of compact sweep records, newest first
+MATRICES_CAP = 100
+# One sweep per node at a time: two would only interleave cell by cell through the
+# node's slot and take twice as long to say the same thing.
+_MATRIX_ACTIVE: Dict[str, str] = {}
+
+
+def _sampler_command(gpu: bool, seconds: int) -> str:
+    n = max(2, int(seconds))
+    return GPU_TRACE_QUERY.format(count=n) if gpu else cpu_trace_script(n)
+
+
+def _summarise_sample(gpu: bool, stdout: str) -> Dict[str, Any]:
+    if gpu:
+        return trace_summary(parse_gpu_trace(stdout))
+    return cpu_trace_summary(parse_cpu_trace(stdout))
+
+
+def _node_host_port(instance_id: str):
+    u = urlparse(_instance_url(instance_id))
+    return (u.hostname or ""), (u.port or (443 if u.scheme == "https" else 80))
+
+
+def _vera_source_ips(node_host: str, extra: str = "") -> List[str]:
+    """Addresses a node's access log will show for Vera's own requests: anything
+    passed in, VERA_HOST_IPS, and the source address the OS picks to reach the
+    node. A Vera inside a NAT'd container shows up in the log as its HOST's
+    address, which it cannot discover — that case must pass it in."""
+    ips = [x.strip() for x in str(extra or "").split(",") if x.strip()]
+    ips += [x.strip() for x in os.environ.get("VERA_HOST_IPS", "").split(",") if x.strip()]
+    if node_host:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                s.connect((node_host, 9))          # UDP: no packet is sent
+                ips.append(s.getsockname()[0])
+            finally:
+                s.close()
+        except Exception:
+            pass
+    return list(dict.fromkeys(ips))
+
+
+@capability("bench.node_requests", memory="off",
+            http_method="POST", http_path="/bench/node_requests", http_tags=["bench"],
+            description="Who is calling an Ollama node, and what else is running on it — "
+                        "read from the node's OWN access log over SSH, so requests that "
+                        "bypass Vera (another server, a script, a workflow tool) become "
+                        "visible without putting a proxy in the request path. Status polls "
+                        "(/api/ps, /api/version, /api/tags) are counted per client, not "
+                        "listed. Inputs: instance_id (str! — mapped to an SSH host), "
+                        "minutes (int, default 60, max 1440), max_rows (int, default 200 — "
+                        "newest non-poll requests returned), vera_ips (str — comma-separated "
+                        "addresses to count as Vera; defaults to the address this process "
+                        "uses to reach the node plus VERA_HOST_IPS. A Vera inside a NAT'd "
+                        "container appears in the log as its host's address and must pass "
+                        "it). Output: {ok, verdict, unit, total_requests, polls, "
+                        "inference_calls, external_clients, external_inference_calls, "
+                        "truncated, by_client[], by_endpoint[], long_requests[], recent[], "
+                        "processes:{ollama_cores, other_cores, top_other[], verdict?}}.")
+async def cap_bench_node_requests(instance_id: str = "", minutes: int = 60,
+                                  max_rows: int = 200, vera_ips: str = "",
+                                  trace_id=None):
+    if not instance_id:
+        return {"error": "instance_id required"}
+    node_host, port = _node_host_port(instance_id)
+    if not node_host:
+        return {"error": "unknown instance_id %r" % instance_id}
+    host = await _ssh_host_for(instance_id)
+    if not host:
+        return {"error": "no SSH host mapped for this node — map one in the "
+                         "Catalog › Nodes & Hardware tab first"}
+    run = _rawcap("exec.ssh.run")
+    if not run:
+        return {"error": "exec.ssh.run unavailable"}
+    minutes = max(1, min(int(minutes or 60), 1440))
+    max_rows = max(10, min(int(max_rows or 200), 1000))
+    r = await run(command=request_log_script(port, minutes, max_rows),
+                  host_id=host, timeout=60) or {}
+    stdout = (r.get("stdout", "") if isinstance(r, dict) else "") or ""
+    if not stdout.strip():
+        err = (r.get("error") or r.get("stderr", "")) if isinstance(r, dict) else ""
+        return {"error": (err or "no output from the node")[:200],
+                "instance_id": instance_id, "host_id": host}
+    parsed = parse_request_log(stdout)
+    ips = _vera_source_ips(node_host, vera_ips)
+    out = summarise_requests(parsed, ips)
+    out.update({"ok": True, "instance_id": instance_id, "host_id": host,
+                "minutes": minutes, "vera_ips": ips,
+                "processes": summarise_processes(parsed["processes"], parsed.get("ncpu"))})
+    return out
+
+
+@capability("bench.matrix.variants", memory="off", silent=True,
+            http_method="GET", http_path="/bench/matrix/variants", http_tags=["bench"],
+            description="The text-generation models installed on one Ollama node, grouped "
+                        "by model family and parameter size so the quantisations of one "
+                        "model can be swept side by side. Encoder-only embedding models are "
+                        "left out. Query: instance_id (str!). Output: {ok, instance_id, "
+                        "has_gpu, groups:[{family, params, variants:[{name, quant, "
+                        "size_gb}]}]}.")
+async def cap_bench_matrix_variants(instance_id: str = "", trace_id=None):
+    url = _instance_url(instance_id)
+    if not url:
+        return {"error": "unknown or URL-less Ollama node: %s" % instance_id}
+    try:
+        async with httpx.AsyncClient(timeout=10, verify=_ssl()) as c:
+            r = await c.get(url.rstrip("/") + "/api/tags")
+            r.raise_for_status()
+            tags = (r.json() or {}).get("models", []) or []
+    except Exception as e:
+        return {"error": "could not list models on %s: %s" % (instance_id, str(e)[:160])}
+    return {"ok": True, "instance_id": instance_id,
+            "has_gpu": bool((_instance(instance_id) or {}).get("has_gpu")),
+            "groups": _matrix.group_variants(tags)}
+
+
+@asynccontextmanager
+async def _no_slot():
+    yield {"t": time.monotonic(), "beats": 0}
+
+
+# The GPU-gate heartbeat frees a slot whose activity marker stops moving: 60s of
+# silence once the marker has moved, 150s if it never did (_GATE_STALL_HOT_S /
+# _GATE_STALL_COLD_S in capability_orchestration). Those rules assume a slot holds
+# ONE call. A sweep cell holds several, and each has legitimately silent phases —
+# a reload (124s for a cold 9B Q6_K on gpu-250), a long CPU prefill — that would
+# trip them and hand the node to other work mid-measurement. So while a request
+# to Ollama is actually in flight the marker is also refreshed on a timer. That
+# stays bounded: the request's own HTTP timeout, the heartbeat's absolute
+# _GATE_MAX_HOLD_S, and the cell's hold budget in _measure_cell all still apply.
+_MARKER_EVERY_S = 15.0
+_CALL_TIMEOUT_S = 600.0
+# Head-room left under _GATE_MAX_HOLD_S when deciding whether a cell has time for
+# another warm call.
+_CELL_HOLD_MARGIN_S = 120.0
+
+
+def _touch(activity: Optional[dict]) -> None:
+    if activity is not None:
+        activity["t"] = time.monotonic()
+        activity["beats"] = int(activity.get("beats", 0)) + 1
+
+
+async def _keep_marker_fresh(activity: dict) -> None:
+    while True:
+        await asyncio.sleep(_MARKER_EVERY_S)
+        _touch(activity)
+
+
+async def _stream_generate(url: str, body: dict, activity: Optional[dict] = None,
+                           timeout: float = _CALL_TIMEOUT_S) -> dict:
+    """A streamed /api/generate that returns Ollama's final envelope, touching the
+    slot's activity marker as tokens arrive and on a timer while in flight."""
+    final: dict = {}
+    req = dict(body, stream=True)
+    t = httpx.Timeout(timeout, connect=15.0)
+    ticker = (asyncio.ensure_future(_keep_marker_fresh(activity))
+              if activity is not None else None)
+    try:
+        async with httpx.AsyncClient(verify=_ssl(), timeout=t) as c:
+            async with c.stream("POST", url.rstrip("/") + "/api/generate", json=req) as r:
+                if r.status_code >= 400:
+                    detail = (await r.aread()).decode("utf-8", "replace")[:200]
+                    raise RuntimeError("HTTP %d: %s" % (r.status_code, detail))
+                async for line in r.aiter_lines():
+                    _touch(activity)
+                    if not line.strip():
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except Exception:
+                        continue
+                    if obj.get("error"):
+                        raise RuntimeError(str(obj["error"])[:200])
+                    if obj.get("done"):
+                        final = obj
+    finally:
+        if ticker is not None:
+            ticker.cancel()
+    if not final:
+        raise RuntimeError("the stream ended without a final response")
+    return final
+
+
+async def _ps_models(url: str) -> List[dict]:
+    try:
+        async with httpx.AsyncClient(timeout=8, verify=_ssl()) as c:
+            r = await c.get(url.rstrip("/") + "/api/ps")
+            r.raise_for_status()
+            return (r.json() or {}).get("models", []) or []
+    except Exception:
+        return []
+
+
+async def _measure_cell(url: str, model: str, num_ctx: int, settings: dict,
+                        activity: dict, has_gpu: bool, host: str, ssh_run,
+                        slot_started: float) -> dict:
+    npred, fill, reps = settings["num_predict"], settings["prompt_fill"], settings["repeats"]
+
+    def _body() -> dict:
+        return {"model": model, "think": False, "keep_alive": "10m",
+                "prompt": _matrix.cell_prompt(num_ctx, fill, npred, uuid.uuid4().hex[:8]),
+                "options": {"num_ctx": int(num_ctx), "num_predict": int(npred),
+                            "temperature": 0.0, "seed": 42}}
+
+    # The first call loads this window (a cold load, or the reload a window change
+    # forces); it is timed but kept apart from the warm calls.
+    runs = [_metrics(await _stream_generate(url, _body(), activity))]
+    out: Dict[str, Any] = {}
+    res = _matrix.residency(await _ps_models(url), model)
+    if res:
+        out.update(resident_pct=res.get("resident_pct"), vram_gb=res.get("vram_gb"),
+                   loaded_size_gb=res.get("size_gb"),
+                   effective_ctx=res.get("context_length") or num_ctx)
+
+    # Estimate one warm call from the first call's own measured speeds. It sizes
+    # the hardware sampler (so it neither stops early nor idles long after) and
+    # decides whether the cell still has time for another warm call.
+    m0 = runs[0]
+    per_call = ((npred / m0["gen_tps"]) if m0.get("gen_tps") else 30.0) + (
+        ((m0.get("prompt_tokens") or 0) / m0["prompt_tps"]) if m0.get("prompt_tps") else 0.0)
+    trace_task = None
+    if ssh_run and host:
+        seconds = max(3, min(int(per_call * reps) + 2, 120))
+        trace_task = asyncio.ensure_future(
+            ssh_run(command=_sampler_command(has_gpu, seconds), host_id=host,
+                    timeout=seconds + 30))
+    # Stay inside the heartbeat's absolute hold cap: the gate force-frees any slot
+    # held longer, which would let other work onto the node mid-cell. At least one
+    # warm call always runs, so a cell never reports its load call as warm speed.
+    budget = max(60.0, float(getattr(_orch, "_GATE_MAX_HOLD_S", 1020.0)) - _CELL_HOLD_MARGIN_S)
+    try:
+        for _ in range(reps):
+            if len(runs) > 1 and (time.monotonic() - slot_started) + per_call > budget:
+                break
+            runs.append(_metrics(await _stream_generate(url, _body(), activity)))
+    finally:
+        if trace_task is not None:
+            try:
+                r = await trace_task
+                stdout = (r.get("stdout", "") if isinstance(r, dict) else "") or ""
+                summary = _summarise_sample(has_gpu, stdout)
+                if summary:
+                    out["trace"] = summary
+            except Exception as e:
+                out["trace_error"] = str(e)[:160]
+    out["repeats_run"] = len(runs) - 1
+    out.update(_matrix.summarise_runs(runs))
+    return out
+
+
+async def _matrix_status_put(run_id: str, status: dict, cells: List[dict]) -> None:
+    r = _redis()
+    if not r:
+        return
+    try:
+        await r.hset(KEY_RUNS, run_id, json.dumps({**status, "cells": cells}))
+        await r.expire(KEY_RUNS, 6 * 3600)
+    except Exception as e:
+        log.debug("matrix status %s: %s", run_id, e)
+
+
+async def _run_matrix(run_id: str, instance_id: str, cells: List[dict], settings: dict,
+                      dropped: List[str], status: dict) -> None:
+    url = _instance_url(instance_id)
+    node = _instance(instance_id) or {}
+    has_gpu = bool(node.get("has_gpu"))
+    notes: List[str] = []
+    done: List[dict] = []
+    if dropped:
+        notes.append("Left out to stay under %d cells: %s."
+                     % (_matrix.MAX_CELLS, ", ".join(dropped)))
+    host, ssh_run = "", None
+    if settings["trace"]:
+        host = await _ssh_host_for(instance_id)
+        ssh_run = _rawcap("exec.ssh.run") if host else None
+        if not ssh_run:
+            notes.append("No hardware trace: this node is not mapped to an SSH host.")
+    slot = getattr(_orch, "_ollama_slot", None)
+    if slot is None:
+        notes.append("Ran without the node's generation slot, so live traffic may have "
+                     "skewed these timings.")
+    metas: Dict[str, dict] = {}
+    prev_model = None
+    try:
+        for i, cell in enumerate(cells):
+            model, num_ctx = cell["model"], cell["num_ctx"]
+            if model not in metas:
+                metas[model] = await _model_meta(url, model)
+            status.update(done=i, current={"model": model, "num_ctx": num_ctx},
+                          waiting_for_slot=True)
+            await _matrix_status_put(run_id, status, done)
+            rec: Dict[str, Any] = {"model": model, "num_ctx": num_ctx, **metas[model]}
+            try:
+                # The node's own slot for the WHOLE cell: another request slipping in
+                # between warm calls could reload the model and turn a "warm" timing
+                # into a load. Live work on the node waits for the cell, and the cell
+                # waits for live work.
+                async with (slot(instance_id) if slot else _no_slot()) as act:
+                    slot_started = time.monotonic()
+                    status["waiting_for_slot"] = False
+                    await _matrix_status_put(run_id, status, done)
+                    if settings["cold"] and model != prev_model:
+                        await _unload(url, model)
+                        await asyncio.sleep(1.0)
+                    rec.update(await _measure_cell(url, model, num_ctx, settings, act,
+                                                   has_gpu, host, ssh_run, slot_started))
+            except Exception as e:
+                rec["error"] = "%s: %s" % (type(e).__name__, str(e)[:180])
+            prev_model = model
+            rec["status"], rec["note"] = _matrix.cell_verdict(rec, has_gpu)
+            done.append(rec)
+            status.update(done=i + 1, waiting_for_slot=False)
+            await emit_event({"type": "bench.matrix.progress", "run_id": run_id,
+                              "instance_id": instance_id, "done": i + 1,
+                              "total": len(cells), "model": model, "num_ctx": num_ctx,
+                              "status": rec["status"], "gen_tps": rec.get("gen_tps")})
+            await _matrix_status_put(run_id, status, done)
+        status["state"] = "done"
+    except Exception as e:
+        status.update(state="error", error="%s: %s" % (type(e).__name__, str(e)[:200]))
+    finally:
+        _MATRIX_ACTIVE.pop(instance_id, None)
+
+    if any(c.get("repeats_run") is not None and c["repeats_run"] < settings["repeats"]
+           for c in done):
+        notes.append("Some cells ran fewer warm calls than asked, to stay inside the "
+                     "node's slot hold limit.")
+    recs = _matrix.recommend(done)
+    record = {"id": run_id, "created_at": status.get("started_at"),
+              "finished_at": now_iso(), "state": status["state"],
+              "error": status.get("error", ""), "instance_id": instance_id,
+              "node_label": node.get("label", instance_id), "has_gpu": has_gpu,
+              "settings": settings, "cells": done, "recommendations": recs,
+              "dropped_models": dropped, "notes": notes}
+    compact = {"id": run_id, "created_at": record["created_at"],
+               "instance_id": instance_id, "node_label": record["node_label"],
+               "has_gpu": has_gpu, "state": record["state"],
+               "models": sorted({c["model"] for c in done}, key=str),
+               "ctxs": settings.get("ctxs", []), "cells_total": len(done),
+               "errors": sum(1 for c in done if c.get("status") == "error"),
+               "recommendations": [{"model": x["model"], "num_ctx": x.get("num_ctx"),
+                                    "gen_tps": x.get("gen_tps")} for x in recs]}
+    r = _redis()
+    if r:
+        try:
+            await r.set(KEY_MATRIX + run_id, json.dumps(record), ex=RESULT_TTL)
+            await r.lpush(KEY_MATRICES, json.dumps(compact))
+            await r.ltrim(KEY_MATRICES, 0, MATRICES_CAP - 1)
+        except Exception as e:
+            log.debug("matrix store %s: %s", run_id, e)
+    status.update(finished_at=record["finished_at"], current=None, waiting_for_slot=False)
+    await _matrix_status_put(run_id, status, done)
+    await emit_event({"type": "bench.matrix.finished", "run_id": run_id,
+                      "instance_id": instance_id, "state": status["state"],
+                      "cells": len(done), "recommendations": compact["recommendations"]})
+
+
+@capability("bench.matrix.start", memory="off",
+            http_method="POST", http_path="/bench/matrix/start", http_tags=["bench"],
+            description="Start a CONTEXT × QUANTISATION sweep on one Ollama node in the "
+                        "background; returns a run_id. For every (model, context window) "
+                        "cell it loads the window, times warm calls, reads how much of the "
+                        "model stayed on the GPU, and samples the hardware during the warm "
+                        "calls. Each cell ends ok, throttled, cpu_bound, spill (part of the "
+                        "model ran on the CPU) or error, and each model gets a recommended "
+                        "window: the largest within 10% of its best clean speed — a spilled "
+                        "window is never recommended. Every cell holds the node's generation "
+                        "slot for its duration, so the sweep waits behind live work and live "
+                        "work on that node waits for the cell. Progress: bench.matrix.progress "
+                        "events and bench.matrix.status. Inputs: instance_id (str!), models "
+                        "(list or comma-separated str! — installed tags; pass several "
+                        "quantisations of one model to compare them), ctxs (list or "
+                        "comma-separated ints, default 2048,4096,8192,16384,32768), "
+                        "num_predict (int, default 192), repeats (int 1-5, default 3 — warm "
+                        "calls per cell, after the call that loads the window), prompt_fill "
+                        "(float 0-0.9, default 0 — pad prompts to this share of the window to "
+                        "measure long-context prefill; slow on CPU nodes), trace (bool, "
+                        "default true), cold (bool, default false — unload each model before "
+                        "its first window). At most 40 cells: whole trailing models are left "
+                        "out beyond that. Output: {ok, run_id, cells, dropped_models}.")
+async def cap_bench_matrix_start(instance_id: str = "", models: Any = None, ctxs: Any = None,
+                                 num_predict: int = 192, repeats: int = 3,
+                                 prompt_fill: float = 0.0, trace: bool = True,
+                                 cold: bool = False, trace_id=None):
+    if not _instance_url(instance_id):
+        return {"error": "unknown Ollama node: %s" % instance_id}
+    ms = _matrix.normalise_models(models)
+    if not ms:
+        return {"error": "models required — one or more tags installed on the node"}
+    cs = _matrix.normalise_ctxs(ctxs)
+    if not cs:
+        return {"error": "no usable context windows — each must be an integer of at "
+                         "least %d" % _matrix.MIN_CTX}
+    if instance_id in _MATRIX_ACTIVE:
+        return {"error": "a sweep is already running on %s" % instance_id,
+                "run_id": _MATRIX_ACTIVE[instance_id]}
+    cells, dropped = _matrix.build_grid(ms, cs)
+    settings = {"num_predict": max(16, min(int(num_predict or 192), 4096)),
+                "repeats": max(1, min(int(repeats or 3), _matrix.MAX_REPEATS)),
+                "prompt_fill": min(max(float(prompt_fill or 0.0), 0.0), _matrix.MAX_FILL),
+                "trace": bool(trace), "cold": bool(cold),
+                "models": [m for m in ms if m not in dropped], "ctxs": cs}
+    rid = "matrix-%s" % uuid.uuid4().hex[:8]
+    node = _instance(instance_id) or {}
+    status = {"run_id": rid, "kind": "matrix", "state": "running",
+              "instance_id": instance_id, "node_label": node.get("label", instance_id),
+              "has_gpu": bool(node.get("has_gpu")), "settings": settings,
+              "total": len(cells), "done": 0, "current": None,
+              "waiting_for_slot": False, "started_at": now_iso()}
+    _MATRIX_ACTIVE[instance_id] = rid
+    await _matrix_status_put(rid, status, [])
+    asyncio.create_task(_run_matrix(rid, instance_id, cells, settings, dropped, status))
+    return {"ok": True, "run_id": rid, "state": "running", "cells": len(cells),
+            "dropped_models": dropped}
+
+
+@capability("bench.matrix.status", memory="off", silent=True,
+            http_method="GET", http_path="/bench/matrix/status", http_tags=["bench"],
+            description="Live state of a context × quantisation sweep, including every "
+                        "finished cell so far. Query: run_id (str!). Output: {run_id, state "
+                        "(running|done|error), done, total, current:{model,num_ctx}, "
+                        "waiting_for_slot, settings, cells[], error}.")
+async def cap_bench_matrix_status(run_id: str = "", trace_id=None):
+    r = _redis()
+    if not r:
+        return {"error": "redis unavailable"}
+    raw = await r.hget(KEY_RUNS, run_id)
+    if not raw:
+        return {"error": "unknown or expired sweep: %s" % run_id}
+    return json.loads(raw)
+
+
+@capability("bench.matrix.results", memory="off", silent=True,
+            http_method="GET", http_path="/bench/matrix/results", http_tags=["bench"],
+            description="Recent context × quantisation sweeps, newest first. Query: "
+                        "instance_id (str — one node), limit (int, default 20). Output: "
+                        "{rows:[{id, created_at, instance_id, node_label, state, models, "
+                        "ctxs, cells_total, errors, recommendations}]}.")
+async def cap_bench_matrix_results(instance_id: str = "", limit: int = 20, trace_id=None):
+    r = _redis()
+    if not r:
+        return {"rows": []}
+    rows: List[dict] = []
+    try:
+        for raw in await r.lrange(KEY_MATRICES, 0, MATRICES_CAP - 1):
+            try:
+                row = json.loads(raw)
+            except Exception:
+                continue
+            if instance_id and row.get("instance_id") != instance_id:
+                continue
+            rows.append(row)
+            if len(rows) >= max(1, int(limit or 20)):
+                break
+    except Exception as e:
+        log.debug("matrix results: %s", e)
+    return {"rows": rows}
+
+
+@capability("bench.matrix.get", memory="off", silent=True,
+            http_method="GET", http_path="/bench/matrix/get", http_tags=["bench"],
+            description="One context × quantisation sweep in full: every cell, the "
+                        "recommended window per model, and notes. A sweep still running "
+                        "returns its live state. Query: id (str!). Output: {record}.")
+async def cap_bench_matrix_get(id: str = "", trace_id=None):
+    r = _redis()
+    if not r:
+        return {"error": "redis unavailable"}
+    raw = await r.get(KEY_MATRIX + id)
+    if raw:
+        return {"record": json.loads(raw)}
+    live = await r.hget(KEY_RUNS, id)
+    if live:
+        return {"record": json.loads(live)}
+    return {"error": "no sweep with id %s" % id}
 
 
 # Opt-out-able background sampler for the per-node monitor.

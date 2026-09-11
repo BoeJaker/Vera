@@ -563,13 +563,13 @@ html.vpb-nav-hosted #secNav{display:none}
       <div class="pane-tb" style="flex-shrink:0;padding:8px 12px 6px">
         <span class="pane-tb-title" style="color:var(--gpu)">OLLAMA CLUSTER</span>
         <span class="tb-sep"></span>
-        <!-- Sub-tabs: Nodes / Jobs / Catalog / Benchmark / Wrapper -->
+        <!-- Sub-tabs: Nodes / Jobs / Catalog / Benchmark / Traffic -->
         <div style="display:flex;gap:1px;margin-right:8px">
           <button class="btn sm ol-sub active" data-olsub="nodes" onclick="P.olSubTab('nodes',this)" style="border-radius:3px 0 0 3px">Nodes</button>
           <button class="btn sm ol-sub" data-olsub="jobs" onclick="P.olSubTab('jobs',this)" style="border-radius:0">Jobs</button>
           <button class="btn sm ol-sub" data-olsub="catalog" onclick="P.olSubTab('catalog',this)" style="border-radius:0">Catalog<span id="ol-dl-badge" style="display:none;margin-left:4px;font-size:8px;padding:0 4px;border-radius:7px;background:#e6b800;color:#111;font-weight:700">0</span></button>
           <button class="btn sm ol-sub" data-olsub="benchmark" onclick="P.olSubTab('benchmark',this)" style="border-radius:0">Benchmark</button>
-          <button class="btn sm ol-sub" data-olsub="wrapper" onclick="P.olSubTab('wrapper',this)" style="border-radius:0 3px 3px 0">Wrapper</button>
+          <button class="btn sm ol-sub" data-olsub="wrapper" onclick="P.olSubTab('wrapper',this)" style="border-radius:0 3px 3px 0" title="Who is calling each node, and what else runs on it — read from the node's own access log">Traffic</button>
         </div>
         <span class="tb-sep"></span>
         <button class="btn sm" onclick="P.refresh()">↻ Refresh</button>
@@ -1016,6 +1016,49 @@ html.vpb-nav-hosted #secNav{display:none}
             <div id="bench-last" style="margin-top:9px;font-size:11px;color:var(--dim)">Pick a node and model, then run a benchmark. Results are scored programmatically (temperature 0, fixed seed) so they are repeatable.</div>
           </div>
 
+          <!-- ── CONTEXT × QUANTISATION ───────────────────────────────── -->
+          <div style="border:1px solid var(--border);border-radius:6px;background:var(--bg1);padding:9px 11px">
+            <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:7px;flex-wrap:wrap">
+              <span style="font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)">Context × quantisation</span>
+              <span style="font-size:9px;color:var(--dim);max-width:640px">Sweep window sizes across models or quantisations on the node picked above. Each cell records its load cost, warm speed, how much of the model stayed on the GPU, and the hardware trace. Waits for the node's GPU slot, so it queues behind live work instead of competing with it.</span>
+            </div>
+            <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start">
+              <div style="flex:1 1 280px;min-width:240px">
+                <div style="font-size:9px;color:var(--dim2);margin-bottom:3px">Models — quantisations of the same model are grouped</div>
+                <div id="bm-variants" style="max-height:176px;overflow:auto;border:1px solid var(--border);border-radius:4px;background:var(--bg0);padding:5px 7px;font-size:10px"><span style="color:var(--dim)">Pick a node above.</span></div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:7px;flex:0 1 340px">
+                <label style="font-size:9px;color:var(--dim2);display:flex;flex-direction:column;gap:2px" title="Comma-separated context windows, in tokens">Windows (tokens)
+                  <input id="bm-ctxs" value="2048,4096,8192,16384,32768" style="font-size:10.5px;padding:3px 5px;font-family:var(--mono)">
+                </label>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+                  <label style="font-size:9px;color:var(--dim2);display:flex;flex-direction:column;gap:2px" title="Tokens generated per call">Output tokens
+                    <input type="number" id="bm-predict" value="192" min="16" max="2048" step="16" style="font-size:10.5px;padding:3px 4px;width:64px">
+                  </label>
+                  <label style="font-size:9px;color:var(--dim2);display:flex;flex-direction:column;gap:2px" title="Timed calls per cell, after the call that loads the window">Warm calls
+                    <input type="number" id="bm-repeats" value="3" min="1" max="5" step="1" style="font-size:10.5px;padding:3px 4px;width:48px">
+                  </label>
+                  <label style="font-size:9px;color:var(--dim2);display:flex;flex-direction:column;gap:2px" title="Pad each prompt to this share of the window. Empty measures memory and generation speed; a fill measures long-context prefill. Fills are slow on CPU nodes — every call re-reads the whole prompt.">Prompt fill
+                    <select id="bm-fill" style="font-size:10.5px;padding:3px 4px">
+                      <option value="0">empty</option><option value="0.25">25%</option><option value="0.5">50%</option><option value="0.75">75%</option>
+                    </select>
+                  </label>
+                </div>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+                  <label style="font-size:9.5px;color:var(--dim2);display:flex;align-items:center;gap:4px" title="Sample GPU clocks and throttling, or CPU and memory, during each cell's warm calls"><input type="checkbox" id="bm-trace" checked> hardware trace</label>
+                  <label style="font-size:9.5px;color:var(--dim2);display:flex;align-items:center;gap:4px" title="Unload each model before its first window, so that cell shows a true cold load"><input type="checkbox" id="bm-cold"> cold first load</label>
+                  <button class="btn sm" style="border-color:var(--gpu);color:var(--gpu)" onclick="P.benchMatrixStart()">▶ Run sweep</button>
+                  <span id="bm-status" style="font-size:9px;color:var(--dim2);font-family:var(--mono)"></span>
+                </div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;margin-top:9px">
+              <span style="font-size:9px;color:var(--dim2)">Past sweeps</span>
+              <select id="bm-history" style="font-size:10px;padding:2px 4px;min-width:280px" onchange="P.benchMatrixOpen(this.value)"></select>
+            </div>
+            <div id="bm-result" style="margin-top:8px"></div>
+          </div>
+
           <!-- ── NODE MONITOR (live per-node performance) ──────────────── -->
           <div>
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
@@ -1086,20 +1129,24 @@ html.vpb-nav-hosted #secNav{display:none}
         </div>
       </div><!-- /ol-sub-benchmark -->
 
-      <!-- Sub-pane: Wrapper -->
+      <!-- Sub-pane: Traffic — who calls each node, read from its own Ollama access log.
+           Replaces the iframe onto edge/ollama_wrapper.sh's :11436 dashboard, which
+           was never deployed and polled an endpoint the script did not serve. -->
       <div id="ol-sub-wrapper" style="display:none;flex:1;flex-direction:column;min-height:0;overflow:hidden">
         <div style="display:flex;gap:1px;background:var(--border);border-bottom:1px solid var(--border);flex-shrink:0">
-          <div style="flex:1;background:var(--bg1);padding:5px 8px"><div style="font-size:7px;color:var(--dim);text-transform:uppercase;letter-spacing:1px">Active</div><div id="owb-active" style="font-size:14px;font-weight:700;color:var(--warn)">—</div></div>
-          <div style="flex:1;background:var(--bg1);padding:5px 8px"><div style="font-size:7px;color:var(--dim);text-transform:uppercase;letter-spacing:1px">Total</div><div id="owb-total" style="font-size:14px;font-weight:700;color:var(--acc)">—</div></div>
-          <div style="flex:1;background:var(--bg1);padding:5px 8px"><div style="font-size:7px;color:var(--dim);text-transform:uppercase;letter-spacing:1px">Kills</div><div id="owb-kills" style="font-size:14px;font-weight:700;color:var(--err)">—</div></div>
-          <div style="flex:1;background:var(--bg1);padding:5px 8px"><div style="font-size:7px;color:var(--dim);text-transform:uppercase;letter-spacing:1px">Watchdog</div><div id="owb-wd" style="font-size:10px;font-weight:600;color:var(--dim2)">—</div></div>
-          <div style="flex:1;background:var(--bg1);padding:5px 8px;display:flex;align-items:center;gap:4px">
+          <div style="flex:1;background:var(--bg1);padding:5px 8px" title="Generate, chat and embed calls in the window"><div style="font-size:7px;color:var(--dim);text-transform:uppercase;letter-spacing:1px">Inference calls</div><div id="owb-active" style="font-size:14px;font-weight:700;color:var(--acc)">—</div></div>
+          <div style="flex:1;background:var(--bg1);padding:5px 8px" title="Every request the node logged, including status polls"><div style="font-size:7px;color:var(--dim);text-transform:uppercase;letter-spacing:1px">All requests</div><div id="owb-total" style="font-size:14px;font-weight:700;color:var(--dim2)">—</div></div>
+          <div style="flex:1;background:var(--bg1);padding:5px 8px" title="Clients other than Vera — load Vera's router does not count"><div style="font-size:7px;color:var(--dim);text-transform:uppercase;letter-spacing:1px">Other clients</div><div id="owb-kills" style="font-size:14px;font-weight:700;color:var(--warn)">—</div></div>
+          <div style="flex:1;background:var(--bg1);padding:5px 8px" title="CPU used right now by processes that are not Ollama"><div style="font-size:7px;color:var(--dim);text-transform:uppercase;letter-spacing:1px">Non-Ollama CPU</div><div id="owb-wd" style="font-size:10px;font-weight:600;color:var(--dim2)">—</div></div>
+          <div style="flex:1.4;background:var(--bg1);padding:5px 8px;display:flex;align-items:center;gap:4px">
             <select id="obs-wrapper-sel" style="font-size:8px;padding:2px 4px;background:var(--bg0);border:1px solid var(--border);color:var(--text);border-radius:3px;flex:1" onchange="P.wrapperSwitchNode(this.value)"></select>
-            <button class="btn sm" onclick="P.wrapperRefresh()" style="font-size:8px;padding:2px 6px">↻</button>
+            <select id="obs-traffic-window" style="font-size:8px;padding:2px 4px;background:var(--bg0);border:1px solid var(--border);color:var(--text);border-radius:3px" onchange="P.wrapperRefresh()" title="How far back to read the access log">
+              <option value="15">15 min</option><option value="60" selected>1 h</option><option value="240">4 h</option><option value="1440">24 h</option>
+            </select>
+            <button class="btn sm" onclick="P.wrapperRefresh()" style="font-size:8px;padding:2px 6px" title="Read the log again">↻</button>
           </div>
         </div>
-        <div id="obs-wrapper-kills" style="flex-shrink:0;max-height:120px;overflow-y:auto;border-bottom:1px solid var(--border);display:none"></div>
-        <iframe id="obs-wrapper-iframe" style="flex:1;border:none;min-height:0;background:var(--bg0)" src="about:blank"></iframe>
+        <div id="obs-traffic-body" style="flex:1;overflow:auto;min-height:0;padding:8px 12px"></div>
       </div><!-- /ol-sub-wrapper -->
 
       </div><!-- /inner flex wrapper -->
@@ -4546,7 +4593,7 @@ async function deleteModelGo(){
 }
 
 // ── Wrapper integration ─────────────────────────────────────────────────────
-let _wrapperUrl='';
+let _trafficNode='';
 let _wrapperPollTimer=null;
 let _olSubCurrent='nodes';
 
@@ -4572,51 +4619,34 @@ function olSubTab(name,btn){
   if(name==='jobs') oljRender();
   if(name==='catalog') catInit();
   if(name==='benchmark') benchInit();
-  // When switching to wrapper, init the selector and connect if needed
+  // Traffic re-reads the node's access log on entry.
   if(name==='wrapper'){
     wrapperInit();
-    // If already have a URL (from prior selection), ensure iframe is loaded
-    if(_wrapperUrl){
-      const iframe=$('obs-wrapper-iframe');
-      if(iframe && (!iframe.src||iframe.src==='about:blank'||iframe.src==='')) iframe.src=_wrapperUrl;
-      wrapperRefreshStats();
-    }
+    if(_trafficNode) wrapperRefreshStats();
   }
 }
 
 function wrapperInit(){
-  // Build node selector from known cluster instances
+  // The Traffic sub-pane (element ids keep their historical "wrapper" names).
   const sel=$('obs-wrapper-sel');
   if(!sel) return;
-  const prev=sel.value;
-  sel.innerHTML='<option value="">Select node...</option>';
-  // Derive wrapper URLs from cluster data — wrapper runs on STATUS_PORT (11436) on same host
+  const prev=sel.value||_trafficNode;
+  const opts=['<option value="">Select node…</option>'];
   if(_cluster && _cluster.ollama){
     for(const [id,n] of Object.entries(_cluster.ollama)){
-      if(!n.url) continue;
-      try{
-        const u=new URL(n.url);
-        const wrapperUrl=u.protocol+'//'+u.hostname+':11436';
-        const label=(n.label||id)+(n.has_gpu?' (GPU)':' (CPU)');
-        sel.innerHTML+='<option value="'+esc(wrapperUrl)+'">'+esc(label)+'</option>';
-      }catch(_){}
+      opts.push('<option value="'+esc(id)+'">'+esc((n.label||id)+(n.has_gpu?' (GPU)':' (CPU)'))+'</option>');
     }
   }
-  // Restore previous selection if still valid
-  if(prev){
-    for(const o of sel.options){ if(o.value===prev){sel.value=prev;break;} }
-  }
-  // Auto-select first option only if wrapper sub-pane is active and no URL set
-  if(_olSubCurrent==='wrapper' && !_wrapperUrl && sel.options.length===2){
+  sel.innerHTML=opts.join('');
+  if(prev && [...sel.options].some(o=>o.value===prev)) sel.value=prev;
+  if(_olSubCurrent==='wrapper' && !_trafficNode && sel.options.length>1){
     sel.selectedIndex=1;
     wrapperSwitchNode(sel.value);
-  } else if(_olSubCurrent==='wrapper' && _wrapperUrl && sel.value===_wrapperUrl){
-    // Already connected — just refresh stats, don't reload iframe
-    wrapperRefreshStats();
   }
 }
 
-// Re-init wrapper selector whenever cluster data refreshes
+// Keep the node list current as cluster data refreshes (selector only — the
+// access log is read on demand, never on every refresh).
 function _hookWrapperRefresh(){
   const origRenderOllama=renderOllama;
   renderOllama=function(){
@@ -4626,63 +4656,102 @@ function _hookWrapperRefresh(){
 }
 setTimeout(_hookWrapperRefresh,100);
 
-function wrapperSwitchNode(url){
-  const prev=_wrapperUrl;
-  _wrapperUrl=url;
-  if(!url){
-    const iframe=$('obs-wrapper-iframe');
-    if(iframe) iframe.src='about:blank';
-    if(_wrapperPollTimer){clearInterval(_wrapperPollTimer);_wrapperPollTimer=null;}
-    txt('owb-active','—');txt('owb-total','—');txt('owb-kills','—');txt('owb-wd','—');
+function trafficOpen(iid){
+  olSubTab('wrapper');
+  wrapperInit();
+  const sel=$('obs-wrapper-sel');
+  if(sel) sel.value=iid;
+  wrapperSwitchNode(iid);
+}
+
+function wrapperSwitchNode(iid){
+  _trafficNode=iid||'';
+  if(_wrapperPollTimer){ clearInterval(_wrapperPollTimer); _wrapperPollTimer=null; }
+  const body=$('obs-traffic-body');
+  if(!_trafficNode){
+    ['owb-active','owb-total','owb-kills','owb-wd'].forEach(k=>txt(k,'—'));
+    if(body) body.innerHTML='';
     return;
   }
-  // Only reload iframe if URL actually changed
-  const iframe=$('obs-wrapper-iframe');
-  if(iframe && iframe.src!==url){
-    iframe.src=url;
-  }
-  // Start stats polling
+  if(body) body.innerHTML='';
   wrapperRefreshStats();
-  if(_wrapperPollTimer) clearInterval(_wrapperPollTimer);
-  _wrapperPollTimer=setInterval(wrapperRefreshStats,5000);
+  // Reading the log costs an SSH round-trip, so refresh once a minute, and only
+  // while the pane is open.
+  _wrapperPollTimer=setInterval(()=>{ if(_olSubCurrent==='wrapper') wrapperRefreshStats(); },60000);
 }
 
 async function wrapperRefreshStats(){
-  if(!_wrapperUrl) return;
-  try{
-    const r=await fetch(_wrapperUrl.replace(/\/$/, '')+'/api/report',{signal:AbortSignal.timeout(4000)});
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    const d=await r.json();
-    txt('owb-active',d.active_count??'—');
-    txt('owb-total',d.total_requests??'—');
-    txt('owb-kills',d.kill_count??'—');
-    const wd=d.watchdog||{};
-    txt('owb-wd',wd.soft_limit!=null?'soft '+wd.soft_limit+'s / hard '+wd.hard_limit+'s':'—');
-    // Show kills if any
-    const killsEl=$('obs-wrapper-kills');
-    if(killsEl && d.recent_kills && d.recent_kills.length){
-      killsEl.style.display='block';
-      killsEl.innerHTML=d.recent_kills.map(k=>{
-        const ts=(k.ts_iso||'').replace('T',' ').slice(0,19);
-        return '<div style="padding:3px 6px;font-size:8.5px;font-family:var(--mono);border-left:3px solid var(--err);color:var(--err);background:rgba(201,107,107,.04);margin:2px 6px;border-radius:2px">'
-          +'<span style="color:var(--dim);margin-right:4px">'+esc(ts)+'</span>'
-          +'<span style="font-weight:700;margin-right:4px">'+esc(k.source)+'</span>'
-          +esc(k.reason)
-          +(k.model?' <span style="color:var(--acc3)">'+esc(k.model)+'</span>':'')
-          +(k.req_id?' <span style="color:var(--dim2)">'+esc(k.req_id)+'</span>':'')
-          +'</div>';
-      }).join('');
-    } else if(killsEl){
-      killsEl.style.display='none';
-    }
-  }catch(e){
-    txt('owb-active','err');
-    txt('owb-wd',String(e).slice(0,40));
+  if(!_trafficNode) return;
+  const node=_trafficNode;
+  const minutes=parseInt(($('obs-traffic-window')||{}).value)||60;
+  const body=$('obs-traffic-body');
+  if(body && !body.innerHTML) body.innerHTML='<div style="padding:10px;color:var(--dim)">Reading the node\'s access log…</div>';
+  const r=await api('/bench/node_requests','POST',{instance_id:node,minutes});
+  if(node!==_trafficNode) return;
+  if(!r||r.error){
+    txt('owb-wd','—');
+    if(body) body.innerHTML='<div style="padding:10px;color:var(--err)">'+esc((r&&r.error)||'No response from the node.')+'</div>';
+    return;
   }
+  txt('owb-active', r.inference_calls??'—');
+  txt('owb-total', r.total_requests??'—');
+  txt('owb-kills', r.external_clients??'—');
+  const p=r.processes||{};
+  txt('owb-wd', p.other_cores!=null?(p.other_cores+' cores'):'—');
+  if(body) body.innerHTML=_trafficHtml(r);
 }
 
-// Keep old name as alias for public API
 function wrapperRefresh(){ wrapperRefreshStats(); }
+
+function _trafficDur(v){
+  if(v==null) return '—';
+  return v>=60?(v/60).toFixed(1)+'m':v>=1?v.toFixed(1)+'s':Math.round(v*1000)+'ms';
+}
+
+function _trafficHtml(r){
+  const th='style="text-align:left;padding:3px 10px 3px 0;font-weight:600;color:var(--dim);font-size:8.5px;border-bottom:1px solid var(--border);white-space:nowrap"';
+  const td='style="padding:3px 10px 3px 0;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:9.5px;white-space:nowrap"';
+  const sec=(title,inner)=>'<div style="margin-bottom:12px"><div style="font-size:9px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim);margin-bottom:4px">'+title+'</div><div style="overflow-x:auto">'+inner+'</div></div>';
+  const ext=(r.external_clients||0)>0;
+  let h='<div style="padding:6px 9px;margin-bottom:12px;border-left:3px solid '+(ext?'var(--warn)':'#6fd68b')+';background:var(--bg1);font-size:10.5px">'+esc(r.verdict||'')
+    +'<div style="font-size:8.5px;color:var(--dim);margin-top:3px">'+esc(r.unit||'service not found')+' · last '+esc(String(r.minutes))+' min · '+(r.polls||0)+' status polls counted, not listed'
+    +(r.truncated?' · showing the latest '+r.rows_returned+' of '+r.work_requests+' requests':'')+'</div></div>';
+
+  const clients=r.by_client||[];
+  h+=sec('Clients', clients.length
+    ? '<table style="border-collapse:collapse"><tr><th '+th+'>Client</th><th '+th+'>Who</th><th '+th+'>Inference</th><th '+th+'>Other</th><th '+th+'>Polls</th><th '+th+'>Errors</th><th '+th+'>p50</th><th '+th+'>p95</th></tr>'
+      + clients.map(c=>'<tr><td '+td+'>'+esc(c.client)+'</td>'
+        +'<td '+td+'><span style="color:'+(c.is_vera?'var(--dim2)':'var(--warn)')+'">'+(c.is_vera?'Vera':'other')+'</span></td>'
+        +'<td '+td+'>'+c.inference+'</td><td '+td+'>'+(c.requests-c.inference)+'</td><td '+td+'>'+c.polls+'</td>'
+        +'<td '+td+'><span style="color:'+(c.errors?'var(--err)':'inherit')+'">'+c.errors+'</span></td>'
+        +'<td '+td+'>'+_trafficDur(c.p50_s)+'</td><td '+td+'>'+_trafficDur(c.p95_s)+'</td></tr>').join('')
+      + '</table>'
+    : '<span style="color:var(--dim)">No requests in this window.</span>');
+
+  const eps=r.by_endpoint||[];
+  if(eps.length) h+=sec('Endpoints', '<table style="border-collapse:collapse"><tr><th '+th+'>Path</th><th '+th+'>Calls</th><th '+th+'>Errors</th><th '+th+'>p50</th><th '+th+'>p95</th><th '+th+'>Slowest</th></tr>'
+    + eps.map(e=>'<tr><td '+td+'>'+esc(e.path)+'</td><td '+td+'>'+e.count+'</td><td '+td+'><span style="color:'+(e.errors?'var(--err)':'inherit')+'" title="'+esc(Object.entries(e.statuses||{}).map(([k,v])=>'HTTP '+k+' ×'+v).join(', '))+'">'+e.errors+(e.errors?' <span style="color:var(--dim2)">('+esc(Object.entries(e.statuses||{}).filter(([k])=>+k>=400).map(([k,v])=>k+' ×'+v).join(', '))+')</span>':'')+'</span></td>'
+      +'<td '+td+'>'+_trafficDur(e.p50_s)+'</td><td '+td+'>'+_trafficDur(e.p95_s)+'</td><td '+td+'>'+_trafficDur(e.max_s)+'</td></tr>').join('') + '</table>');
+
+  const p=r.processes||{};
+  if(p.ollama_cores!=null){
+    let inner='<div style="font-family:var(--mono);font-size:9.5px">Ollama '+p.ollama_cores+' cores · everything else '+p.other_cores+' cores'+(p.ncpu?' · '+p.ncpu+' CPUs':'')+'</div>';
+    if(p.verdict) inner+='<div style="color:var(--warn);font-size:10px;margin-top:2px">'+esc(p.verdict)+'</div>';
+    if((p.top_other||[]).length) inner+='<table style="border-collapse:collapse;margin-top:4px"><tr><th '+th+'>Process</th><th '+th+'>PID</th><th '+th+'>User</th><th '+th+'>CPU</th><th '+th+'>Mem</th></tr>'
+      + p.top_other.map(x=>'<tr><td '+td+'>'+esc(x.command)+'</td><td '+td+'>'+x.pid+'</td><td '+td+'>'+esc(x.user)+'</td><td '+td+'>'+x.cpu_pct+'%</td><td '+td+'>'+(x.mem_pct??'—')+'%</td></tr>').join('') + '</table>';
+    h+=sec('Running now', inner);
+  }
+
+  const longs=r.long_requests||[];
+  if(longs.length) h+=sec('Long requests (over a minute)', '<table style="border-collapse:collapse"><tr><th '+th+'>Time</th><th '+th+'>Client</th><th '+th+'>Path</th><th '+th+'>Took</th></tr>'
+    + longs.map(x=>'<tr><td '+td+'>'+esc(x.ts)+'</td><td '+td+'>'+esc(x.client)+'</td><td '+td+'>'+esc(x.path)+'</td><td '+td+'>'+_trafficDur(x.latency_s)+'</td></tr>').join('') + '</table>');
+
+  const recent=(r.recent||[]).slice(0,25);
+  if(recent.length) h+=sec('Recent requests (polls excluded)', '<table style="border-collapse:collapse"><tr><th '+th+'>Time</th><th '+th+'>Client</th><th '+th+'>Request</th><th '+th+'>Status</th><th '+th+'>Took</th></tr>'
+    + recent.map(x=>'<tr><td '+td+'>'+esc(x.ts)+'</td><td '+td+'>'+esc(x.client)+'</td><td '+td+'>'+esc(x.method+' '+x.path)+'</td>'
+      +'<td '+td+'><span style="color:'+(x.status>=400?'var(--err)':'inherit')+'">'+x.status+'</span></td><td '+td+'>'+_trafficDur(x.latency_s)+'</td></tr>').join('') + '</table>');
+  return h;
+}
 
 // ── Shared tracker-table detail rows (Jobs by Worker + Ollama All Jobs) ─────
 // One expandable detail row per job showing the full error, capability
@@ -7163,6 +7232,7 @@ async function ndSwitch(nodeId,backend){
 // deterministic accuracy packs), with a role leaderboard. Sub-tab of Ollama.
 // ═══════════════════════════════════════════════════════════════════════════
 let _benchNodes=[], _benchInited=false, _benchBusy=false, _benchRoles=[], _benchMonTimer=null;
+let _benchMonNodes=[], _bmPoll=null;
 
 function benchStatus(s){ const e=$('bench-status'); if(e) e.textContent=s||''; }
 function _benchMs(v){ return (v==null)?'—':(v>=1000?(v/1000).toFixed(1)+'s':Math.round(v)+'ms'); }
@@ -7205,6 +7275,7 @@ async function benchInit(force){
 }
 
 function benchNodeChanged(){
+  benchMatrixVariants();
   const nid=$('bench-node').value;
   const n=_benchNodes.find(x=>x.id===nid);
   const msel=$('bench-model'); if(!msel) return;
@@ -7482,6 +7553,7 @@ async function benchMon(){
 }
 
 function benchMonRender(nodes, series){
+  _benchMonNodes=nodes||[];
   const el=$('bench-nodes'); if(!el) return;
   if(!nodes.length){ el.innerHTML='<span style="color:var(--dim);font-size:10px">No Ollama nodes.</span>'; return; }
   el.innerHTML=nodes.map(n=>{
@@ -7524,9 +7596,12 @@ function benchMonRender(nodes, series){
       </div>
       ${jobs?`<div style="font-size:8px;color:var(--dim);margin-top:3px">jobs: ${esc(jobs)}</div>`:''}
       ${tops?`<div style="margin-top:4px">${tops}</div>`:''}
-      <div style="display:flex;align-items:center;gap:6px;margin-top:6px">
-        <button class="btn sm" onclick="P.benchNodeGpu(${sq(n.id)})" title="Sample live GPU utilisation over SSH (nvidia-smi)">GPU util</button>
+      <div style="display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap">
+        ${n.has_gpu?`<button class="btn sm" onclick="P.benchNodeGpu(${sq(n.id)})" title="Sample live GPU utilisation over SSH (nvidia-smi)">GPU util</button>`:''}
+        <button class="btn sm" onclick="P.benchNodeTrace(${sq(n.id)})" title="Run a real generation and sample ${n.has_gpu?'GPU clocks, temperature and throttling':'CPU and memory'} while it runs">Trace load</button>
+        <button class="btn sm" onclick="P.trafficOpen(${sq(n.id)})" title="Who is calling this node, and what else is running on it">Traffic</button>
         <span id="bench-gpu-${_benchIdSafe(n.id)}" style="font-size:8.5px;color:var(--dim2);font-family:var(--mono)"></span>
+        <div id="bench-trace-${_benchIdSafe(n.id)}" style="flex-basis:100%;font-size:9px"></div>
       </div>
     </div>`;
   }).join('');
@@ -7566,6 +7641,163 @@ async function benchClear(){
   await api('/bench/clear','POST',{});
   benchLeaderboard();
   $('bench-last').innerHTML='<span style="color:var(--dim)">Results cleared.</span>';
+}
+
+// ── Load trace (GPU clocks / throttling, or CPU and memory) ─────────────────
+async function benchNodeTrace(iid){
+  const slot=$('bench-trace-'+_benchIdSafe(iid)); if(!slot) return;
+  const node=(_benchMonNodes||[]).find(n=>n.id===iid)||{};
+  let model=(($('bench-node')||{}).value===iid)?(($('bench-model')||{}).value||''):'';
+  if(!model && (node.loaded||[]).length) model=node.loaded[0].model;
+  if(!model){
+    slot.innerHTML='<span style="color:var(--dim)">Pick this node and a model in the run panel above, or load a model on it first.</span>';
+    return;
+  }
+  slot.innerHTML='<span style="color:var(--gpu)">Generating with '+esc(model)+' and sampling '+(node.has_gpu?'the GPU':'CPU and memory')+'… about a minute.</span>';
+  const r=await api('/bench/node_trace','POST',{instance_id:iid,model,num_predict:node.has_gpu?512:192});
+  slot.innerHTML=_benchTraceHtml(r);
+}
+
+function _benchTraceHtml(r){
+  if(!r) return '<span style="color:var(--err)">No response.</span>';
+  if(r.error) return '<span style="color:var(--err)">'+esc(r.error)+'</span>';
+  let hw='';
+  if(r.kind==='cpu'){
+    const c=r.cpu_pct||{}, m=r.mem_used_gb||{};
+    hw='CPU '+(c.mean??'—')+'% mean / '+(c.peak??'—')+'% peak of '+(r.ncpu??'?')+' · memory '+(m.peak??'—')+' of '+(r.mem_total_gb??'—')+' GB';
+  } else if(r.clock){
+    hw='clock '+Math.round(r.clock.start_mhz)+'→'+Math.round(r.clock.min_mhz)+' MHz ('+r.clock.droop_pct+'% droop) · '+(r.peak_temp_c??'—')+'°C · '+(r.peak_power_w!=null?Math.round(r.peak_power_w)+' W':'—');
+  }
+  const bad=(r.throttle_reasons||[]).length>0||r.status==='cpu_bound'||r.status==='memory_pressure';
+  return '<div style="font-family:var(--mono);color:var(--text)"><b>'+(r.tokens_per_s??'—')+'</b> tok/s · prefill '+(r.prefill_tokens_per_s??'—')+'/s · load '+(r.load_s??'—')+'s</div>'
+    +(hw?'<div style="font-family:var(--mono);color:var(--dim2)">'+esc(hw)+'</div>':'')
+    +(r.verdict?'<div style="color:'+(bad?'#e0603a':'#6fd68b')+';margin-top:2px">'+esc(r.verdict)+'</div>':'')
+    +(r.trace_error?'<div style="color:var(--err)">'+esc(r.trace_error)+'</div>':'');
+}
+
+// ── Context × quantisation sweep ─────────────────────────────────────────────
+async function benchMatrixVariants(){
+  const box=$('bm-variants'); if(!box) return;
+  const iid=($('bench-node')||{}).value;
+  if(!iid){ box.innerHTML='<span style="color:var(--dim)">Pick a node above.</span>'; return; }
+  box.innerHTML='<span style="color:var(--dim)">Loading models…</span>';
+  const r=await api('/bench/matrix/variants?instance_id='+encodeURIComponent(iid));
+  if(iid!==($('bench-node')||{}).value) return;
+  if(!r||r.error){ box.innerHTML='<span style="color:var(--err)">'+esc((r&&r.error)||'Could not list this node\'s models.')+'</span>'; return; }
+  const groups=r.groups||[];
+  box.innerHTML=groups.length ? groups.map(g=>
+    '<div style="margin-bottom:5px"><div style="font-size:8.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.4px">'
+      +esc((g.family||'unknown')+' '+(g.params||''))+(g.variants.length>1?' · '+g.variants.length+' quantisations':'')+'</div>'
+      + g.variants.map(v=>'<label style="display:flex;align-items:center;gap:5px;padding:1px 0;cursor:pointer">'
+          +'<input type="checkbox" class="bm-model" value="'+esc(v.name)+'">'
+          +'<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(v.name+((v.aliases||[]).length?' — same weights as '+v.aliases.join(', '):''))+'">'+esc(v.name)+((v.aliases||[]).length?' <span style="color:var(--dim)">+'+v.aliases.length+' alias'+(v.aliases.length>1?'es':'')+'</span>':'')+'</span>'
+          +'<span style="font-family:var(--mono);color:var(--acc3)">'+esc(v.quant||'')+'</span>'
+          +'<span style="font-family:var(--mono);color:var(--dim2);width:46px;text-align:right">'+v.size_gb+' G</span></label>').join('')
+    +'</div>').join('')
+    : '<span style="color:var(--dim)">No text-generation models are installed on this node.</span>';
+  benchMatrixHistory();
+}
+
+async function benchMatrixStart(){
+  const iid=($('bench-node')||{}).value;
+  const models=[...document.querySelectorAll('.bm-model:checked')].map(x=>x.value);
+  if(!iid||!models.length){ alert('Pick a node above and tick at least one model.'); return; }
+  const body={instance_id:iid, models, ctxs:$('bm-ctxs').value,
+    num_predict:parseInt($('bm-predict').value)||192,
+    repeats:parseInt($('bm-repeats').value)||3,
+    prompt_fill:parseFloat($('bm-fill').value)||0,
+    trace:$('bm-trace').checked, cold:$('bm-cold').checked};
+  txt('bm-status','starting…');
+  const st=await api('/bench/matrix/start','POST',body);
+  if(!st||!st.run_id){
+    txt('bm-status','');
+    $('bm-result').innerHTML='<span style="color:var(--err)">Could not start the sweep: '+esc((st&&st.error)||'no response')+'</span>';
+    return;
+  }
+  txt('bm-status','running · 0/'+st.cells+' cells'+((st.dropped_models||[]).length?' · '+st.dropped_models.length+' model(s) left out to stay under the cell limit':''));
+  $('bm-result').innerHTML='';
+  if(_bmPoll) clearInterval(_bmPoll);
+  _bmPoll=setInterval(()=>benchMatrixPoll(st.run_id),3000);
+}
+
+async function benchMatrixPoll(rid){
+  const s=await api('/bench/matrix/status?run_id='+encodeURIComponent(rid));
+  if(!s||s.error) return;
+  const cur=s.current?' · '+_benchTrunc(s.current.model,24)+' @ '+s.current.num_ctx:'';
+  txt('bm-status',s.state+' · '+(s.done||0)+'/'+(s.total||0)+' cells'+cur+(s.waiting_for_slot?' · waiting for the GPU slot':''));
+  if((s.cells||[]).length) _bmRender(s);
+  if(s.state!=='running'){
+    clearInterval(_bmPoll); _bmPoll=null;
+    if(s.error) txt('bm-status','failed · '+s.error);
+    benchMatrixOpen(rid);
+    benchMatrixHistory();
+  }
+}
+
+async function benchMatrixHistory(){
+  const sel=$('bm-history'); if(!sel) return;
+  const iid=($('bench-node')||{}).value||'';
+  const r=await api('/bench/matrix/results?limit=20&instance_id='+encodeURIComponent(iid));
+  const rows=(r&&r.rows)||[];
+  sel.innerHTML='<option value="">'+(rows.length?'Open a past sweep…':'No sweeps on this node yet')+'</option>'
+    + rows.map(x=>'<option value="'+esc(x.id)+'">'+esc(String(x.created_at||'').replace('T',' ').slice(0,16))+' · '+x.models.length+' model'+(x.models.length===1?'':'s')+' · '+x.cells_total+' cells</option>').join('');
+}
+
+async function benchMatrixOpen(id){
+  if(!id) return;
+  const r=await api('/bench/matrix/get?id='+encodeURIComponent(id));
+  if(r&&r.record) _bmRender(r.record);
+  else if(r&&r.error) $('bm-result').innerHTML='<span style="color:var(--err)">'+esc(r.error)+'</span>';
+}
+
+function _bmRender(rec){
+  const box=$('bm-result'); if(!box) return;
+  const cells=rec.cells||[];
+  if(!cells.length){ box.innerHTML='<span style="color:var(--dim)">No finished cells yet.</span>'; return; }
+  const ctxs=[...new Set(cells.map(c=>c.num_ctx))].sort((a,b)=>a-b);
+  const models=[...new Set(cells.map(c=>c.model))];
+  const fastest=Math.max(1,...cells.map(c=>c.gen_tps||0));
+  const kfmt=x=>(x>=1024&&x%1024===0)?(x/1024)+'k':String(x);
+  const tint={ok:'57,135,229', cpu_bound:'57,135,229', throttled:'230,184,0', spill:'224,96,58', error:'128,128,128'};
+  const td=(c)=>{
+    if(!c) return '<td style="padding:4px 6px;border:1px solid var(--border);color:var(--dim);text-align:center">·</td>';
+    const alpha=(c.status==='ok'||c.status==='cpu_bound')?(0.08+0.32*((c.gen_tps||0)/fastest)):0.22;
+    const bg='rgba('+(tint[c.status]||tint.error)+','+alpha.toFixed(2)+')';
+    const tr=c.trace||{};
+    const hw=tr.clock?((tr.peak_temp_c??'—')+'°C · '+tr.clock.droop_pct+'% clock droop'):(tr.cpu_pct?('CPU '+tr.cpu_pct.peak+'% peak'):'');
+    const tip=[c.status+(c.note?': '+c.note:''),'load '+_benchMs(c.load_ms),'prefill '+(c.prompt_tps??'—')+' tok/s','first token '+_benchMs(c.ttft_ms),
+      'spread '+(c.gen_spread_pct??'—')+'%', c.effective_ctx&&c.effective_ctx!==c.num_ctx?'Ollama capped the window at '+c.effective_ctx:'', hw].filter(Boolean).join('\n');
+    return '<td title="'+esc(tip)+'" style="padding:4px 7px;background:'+bg+';border:1px solid var(--border);text-align:right;font-family:var(--mono);min-width:78px;vertical-align:top">'
+      +'<div style="font-size:11.5px;font-weight:600;color:var(--text)">'+(c.status==='error'?'✗':(c.gen_tps??'—'))+'</div>'
+      +'<div style="font-size:8px;color:var(--dim2)">pf '+(c.prompt_tps??'—')+' · load '+_benchMs(c.load_ms)+'</div>'
+      +((rec.has_gpu&&c.resident_pct!=null)?'<div style="font-size:8px;color:'+(c.status==='spill'?'#e0603a':'var(--dim2)')+'">'+c.resident_pct+'% on GPU</div>':'')
+      +(hw?'<div style="font-size:8px;color:var(--dim2)">'+esc(hw)+'</div>':'')+'</td>';
+  };
+  const set=rec.settings||{};
+  let h='<div style="font-size:9px;color:var(--dim2);margin-bottom:4px">'+esc(rec.node_label||rec.instance_id||'')
+    +' · '+(set.num_predict??'—')+' output tokens · '+(set.repeats??'—')+' warm calls · prompt fill '+Math.round((set.prompt_fill||0)*100)+'%'
+    +' · cells show generation tok/s (pf = prefill tok/s)'+(rec.state==='running'?' · <span style="color:var(--gpu)">in progress</span>':'')+'</div>';
+  h+='<div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:10px"><tr><th style="text-align:left;padding:3px 8px 3px 0;color:var(--dim);font-size:8.5px">Model</th>'
+    + ctxs.map(x=>'<th style="padding:3px 7px;color:var(--dim);font-size:8.5px;text-align:right" title="'+x+' tokens">'+kfmt(x)+'</th>').join('') + '</tr>'
+    + models.map(m=>{
+        const first=cells.find(c=>c.model===m)||{};
+        const meta=[first.quant, first.size_gb!=null?first.size_gb+' G':''].filter(Boolean).join(' · ');
+        return '<tr><td style="padding:4px 10px 4px 0;vertical-align:top;white-space:nowrap"><div title="'+esc(m)+'">'+esc(_benchTrunc(m,34))+'</div>'
+          +(meta?'<div style="font-size:8.5px;color:var(--acc3);font-family:var(--mono)">'+esc(meta)+'</div>':'')+'</td>'
+          + ctxs.map(x=>td(cells.find(c=>c.model===m&&c.num_ctx===x))).join('') + '</tr>';
+      }).join('')
+    + '</table></div>';
+  h+='<div style="display:flex;gap:10px;flex-wrap:wrap;font-size:8.5px;color:var(--dim2);margin:5px 0 8px">'
+    + [['ok','clean — deeper blue is faster'],['throttled','clock throttled'],['spill','part of the model on CPU — never recommended'],['error','failed']]
+      .map(([k,l])=>'<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:10px;height:10px;display:inline-block;background:rgba('+tint[k]+',.45);border:1px solid var(--border)"></span>'+l+'</span>').join('')
+    + '</div>';
+  const recs=rec.recommendations||[];
+  if(recs.length) h+='<div style="font-size:9px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim);margin-bottom:3px">Recommended window</div>'
+    + recs.map(x=>'<div style="font-size:10px;padding:2px 0"><b>'+esc(x.model)+'</b> → '
+        +(x.num_ctx?'<span style="font-family:var(--mono);color:var(--gpu)">'+x.num_ctx+'</span> tokens at '+x.gen_tps+' tok/s':'<span style="color:#e0603a">none</span>')
+        +' <span style="color:var(--dim2)">— '+esc(x.reason||'')+'</span></div>').join('');
+  (rec.notes||[]).forEach(n=>{ h+='<div style="font-size:9px;color:var(--warn);margin-top:3px">'+esc(n)+'</div>'; });
+  box.innerHTML=h;
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
@@ -7619,7 +7851,8 @@ return {
   catSuggest, catApply, catAutoSave,
   benchInit, benchNodeChanged, benchRun, benchRunAll, benchLeaderboard,
   benchOpen, benchLoop, benchClear, benchTempChanged, benchPassive,
-  benchMon, benchMonAuto, benchNodeGpu,
+  benchMon, benchMonAuto, benchNodeGpu, benchNodeTrace,
+  benchMatrixVariants, benchMatrixStart, benchMatrixOpen, benchMatrixHistory, trafficOpen,
   ndLoad, ndDetect, ndDetectAll, ndProv, ndProvClose, ndCompToggle,
   ndModelSearch, ndModelPick, ndPlan, ndRun, ndSwitch,
 };
