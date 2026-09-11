@@ -30,13 +30,21 @@
     const nodes = (S.nodes || []).filter((n) => n && n.id);
     const off = S.layersOff || new Set();
     const ghosts = S.related !== false;
-    const loop = S.loop || [], plan = S.plan || [];
+    // the chat's other graphs, in this one: the loop lane falls back to the run's DAG steps when no loop is live;
+    // the session's memory graph joins the memory arc (below); a family chip folds each away
+    const loop = off.has('loop') ? [] : ((S.loop && S.loop.length) ? S.loop : (S.dag || [])), plan = off.has('plan') ? [] : (S.plan || []);
     const hasLanes = loop.length > 0 || plan.length > 0;
     const LANE_L = loop.length ? 118 : 0, LANE_T = plan.length ? 52 : 0;
     const PW = Math.max(200, W), PH = Math.max(160, H);
     // the plot proper: right of the loop lane, below the plan row
     const cxp = LANE_L + (PW - LANE_L) / 2, cyp = LANE_T + (PH - LANE_T) / 2;
-    const mem = nodes.filter((n) => n.source === 'memory');
+    // memory: the context's own memory records (injected) plus the session's memory graph (the rail's Memory tab) —
+    // a session record already in the prompt is drawn once, filled; one never injected is hollow
+    const ctxIds = new Set(nodes.map((n) => n.id));
+    const memCtx = nodes.filter((n) => n.source === 'memory').map((n) => Object.assign({}, n, { _fam: 'memory', _injected: n.included !== false }));
+    // a session record that is in the prompt is drawn once, in its sector; the rest of the session sits hollow on the arc
+    const memSess = off.has('memory') ? [] : (S.memory || []).filter((m) => m && m.id && !ctxIds.has(m.id)).map((m) => ({ id: m.id, label: (m.text || m.summary || m.capability || m.category || m.id || '').slice(0, 60), source: 'memory', type: m.record_type || m.type || 'memory', score: m.importance == null ? 0.5 : +m.importance, text: m.text || m.summary || '', included: false, rec: m, _fam: 'memory', _injected: false, _sess: true, created_at: m.created_at || '' }));
+    const mem = memCtx.concat(memSess);
     const ctx = nodes.filter((n) => n.source !== 'memory' && !off.has(n.source) && (ghosts || n.included !== false));
     const RMAX = Math.max(60, Math.min(PW - LANE_L, PH - LANE_T) / 2 - (mem.length ? 96 : 62));
     const srcs = [...new Set(ctx.map((n) => n.source || '?'))].sort((a, b) => (ORDER.indexOf(a) + 1 || 99) - (ORDER.indexOf(b) + 1 || 99));
@@ -50,6 +58,10 @@
     const firstRead = (id) => { const ks = readBy(id); return ks.length ? Math.min.apply(null, ks.map((k) => turnKeys.indexOf(k) + 1)) : 0; };
     const isoP = S.isoProj || ((x, y, z) => { const u = x - cxp, v = y - cyp; return { x: cxp + (u - v) * 0.78, y: cyp + 40 + (u + v) * 0.39 - (z || 0) }; });
     const out = { view, rings: [], spokes: [], sectorLabels: [], cnodes: [], memNodes: [], cedges: [], sedges: [], stems: [], plate: null, regions: [], loopNodes: [], planNodes: [], pos: {}, tokens: 0, lit: 0, hub: { x: cxp, y: cyp, hid: view === 'flow' || view === 'time' } };
+    // the plot's pan/zoom, for what is drawn OUTSIDE it (the lanes) but joins a record inside it
+    const GZ = (S.pan && S.pan.z) || 1, GX = (S.pan && S.pan.x) || 0, GY = (S.pan && S.pan.y) || 0;
+    const atP = (p) => ({ x: PW / 2 + (p.x - PW / 2) * GZ + GX, y: PH / 2 + (p.y - PH / 2) * GZ + GY });
+    const edge = (list, a, b, col, cls, title) => { const dx = b.x - a.x, dy = b.y - a.y; list.push({ x: px(a.x), y: px(a.y), len: px(Math.sqrt(dx * dx + dy * dy)), deg: +(Math.atan2(dy, dx) * 180 / Math.PI).toFixed(2), col, cls, title }); };
     const bucket = {};
     const place = (si, i, n, score, id) => {
       const mid = -90 + si * step, half = step / 2 - 5;
@@ -88,21 +100,23 @@
     if (ctx.length && (view === 'galaxy' || view === 'iso')) out.regions.push({ x: px(cxp - 26), y: px(view === 'iso' ? PH - 26 : Math.min(PH - 16, cyp + RMAX + 40)), col: 'var(--cg-t3)', t: 'context' });
     // memory on the outer arc, hollow where it was never injected
     if (mem.length) {
-      const R1 = RMAX + 44, R2 = RMAX + 74;
-      const memAt = (a, R, row) => { if (view === 'galaxy') return { x: cxp + Math.cos(a * RAD) * R, y: cyp + Math.sin(a * RAD) * R }; if (view === 'iso') return isoP(cxp + Math.cos(a * RAD) * R, cyp + Math.sin(a * RAD) * R, 0); return { x: LANE_L + 40 + ((a + 78) / 156) * (PW - LANE_L - 80), y: PH - 50 + row * 24 }; };
-      const inj = mem.filter((n) => n.included !== false), gh = ghosts ? mem.filter((n) => n.included === false) : [];
-      inj.forEach((n, i) => { const a = -62 + (inj.length > 1 ? i * (124 / (inj.length - 1)) : 62); const q = memAt(a, R1, 0); const lit = focus.has(n.id);
-        out.pos[n.id] = { x: q.x, y: q.y, col: color('memory'), source: 'memory', label: n.label || n.id, lit, rim: 6, ghost: false, score: +n.score || 0, tok: tokOf(n), kind: 'memory' }; if (lit) { out.tokens += tokOf(n); out.lit++; }
-        out.memNodes.push({ id: n.id, x: px(q.x), y: px(q.y), cls: (lit ? 'lit ' : '') + (S.sel === n.id ? 'on' : ''), title: (n.label || n.id) + ' · memory · in prompt' }); });
-      gh.forEach((n, i) => { const a = -78 + (gh.length > 1 ? i * (156 / (gh.length - 1)) : 78); const q = memAt(a, R2, 1);
-        out.pos[n.id] = { x: q.x, y: q.y, col: color('memory'), source: 'memory', label: n.label || n.id, lit: false, rim: 6, ghost: true, score: +n.score || 0, tok: tokOf(n), kind: 'memory' };
-        out.memNodes.push({ id: n.id, x: px(q.x), y: px(q.y), cls: 'ghost' + (S.sel === n.id ? ' on' : ''), title: (n.label || n.id) + ' · related memory — not injected' }); });
-      out.regions.push(view === 'galaxy' ? { x: px(Math.min(PW - 60, cxp + R1 - 10)), y: px(Math.min(PH - 14, cyp + R1 - 4)), col: 'var(--cg-ac2)', t: 'memory' } : { x: px(PW - 70), y: px(PH - 74), col: 'var(--cg-ac2)', t: 'memory' });
+      const R1 = RMAX + 44, R2 = RMAX + 74, ROW = 26, PER = 22;      // the arcs: injected inside, the rest in rows outside
+      const memAt = (a, R, row) => { if (view === 'galaxy') return { x: cxp + Math.cos(a * RAD) * R, y: cyp + Math.sin(a * RAD) * R }; if (view === 'iso') return isoP(cxp + Math.cos(a * RAD) * R, cyp + Math.sin(a * RAD) * R, 0); return { x: LANE_L + 40 + ((a + 150) / 300) * (PW - LANE_L - 80), y: PH - 50 + row * 20 }; };
+      const byTime = (a, b) => String(a.created_at || '').localeCompare(String(b.created_at || ''));
+      const inj = mem.filter((n) => n._injected).sort(byTime), gh = ghosts ? mem.filter((n) => !n._injected).sort(byTime) : [];
+      const memCol = (n) => (n._sess && S.memColor && S.memColor(n.type)) || color('memory');
+      const shape = (n) => n.type === 'message' ? 'msg' : n.type === 'session' ? 'sess' : /^dag/.test(n.type || '') ? 'dag' : '';
+      const arc = (list, R0, ghost) => list.forEach((n, i) => { const row = Math.floor(i / PER), k = i % PER, nrow = Math.min(PER, list.length - row * PER);
+        const a = nrow === 1 ? 0 : -150 + k * (300 / (nrow - 1)); const q = memAt(a, R0 + row * ROW, row + (ghost ? 1 : 0)); const lit = !ghost && focus.has(n.id);
+        out.pos[n.id] = { x: q.x, y: q.y, col: memCol(n), source: 'memory', label: n.label || n.id, lit, rim: 6, ghost, score: +n.score || 0, tok: tokOf(n), kind: n.type || 'memory', rec: n.rec || n, sess: !!n._sess }; if (lit) { out.tokens += tokOf(n); out.lit++; }
+        out.memNodes.push({ id: n.id, x: px(q.x), y: px(q.y), col: memCol(n), cls: shape(n) + ' ' + (ghost ? 'ghost ' : lit ? 'lit ' : '') + (S.sel === n.id ? 'on' : ''), title: (n.label || n.id) + ' · ' + (n.type || 'memory') + (ghost ? ' · in the session, not injected' : lit ? ' · in this prompt' : ' · injected') }); });
+      arc(inj, R1, false); arc(gh, R2, true);
+      out.regions.push(view === 'galaxy' ? { x: px(Math.min(PW - 60, cxp + R1 - 10)), y: px(Math.min(PH - 14, cyp + R1 - 4)), col: 'var(--cg-ac2)', t: 'memory' + (memSess.length ? ' · session ' + memSess.length : '') } : { x: px(PW - 70), y: px(PH - 74), col: 'var(--cg-ac2)', t: 'memory' });
+      // the session graph's own relations (FOLLOWS · RESPONDS · CAUSES · DERIVED …) among what is drawn, and into the prompt's records
+      const hide = S.memHide || new Set();
+      (S.memEdges || []).forEach((e) => { const rel = String(e.relation || e.type || ''); if (hide.has(rel)) return; const a = out.pos[e.from_id || e.from], b = out.pos[e.to_id || e.to]; if (!a || !b) return;
+        const col = (S.edgeColor && S.edgeColor(rel)) || 'var(--cg-ac2)'; edge(out.cedges, a, b, col, 'mem' + (a.lit && b.lit ? ' lit' : ''), a.label + ' → ' + b.label + ' · ' + rel.replace(/_/g, ' ').toLowerCase()); });
     }
-    // the plot's pan/zoom, for what is drawn OUTSIDE it (the lanes) but joins a record inside it
-    const GZ = (S.pan && S.pan.z) || 1, GX = (S.pan && S.pan.x) || 0, GY = (S.pan && S.pan.y) || 0;
-    const atP = (p) => ({ x: PW / 2 + (p.x - PW / 2) * GZ + GX, y: PH / 2 + (p.y - PH / 2) * GZ + GY });
-    const edge = (list, a, b, col, cls, title) => { const dx = b.x - a.x, dy = b.y - a.y; list.push({ x: px(a.x), y: px(a.y), len: px(Math.sqrt(dx * dx + dy * dy)), deg: +(Math.atan2(dy, dx) * 180 / Math.PI).toFixed(2), col, cls, title }); };
     const lpos = [];
     if (loop.length) {
       loop.forEach((s, i) => { const y = LANE_T + 22 + i * 44; lpos.push({ x: LANE_L - 12, y, st: s.status });
@@ -127,11 +141,21 @@
     out.rec = null;
     if (S.sel && out.pos[S.sel]) { const r = out.pos[S.sel]; const by = readBy(S.sel), steps = readBySteps(S.sel);
       const rels = (S.edges || []).filter((e) => e.from === S.sel || e.to === S.sel).map((e) => { const o = out.pos[e.from === S.sel ? e.to : e.from]; return (o ? o.label : '?') + (e.label ? ' — ' + String(e.label).replace(/_/g, ' ').toLowerCase() : ''); }).slice(0, 4);
-      out.rec = { id: S.sel, name: r.label, kind: r.source + ' · ' + r.kind, col: r.col, turn: by[0] || null, ghost: r.ghost,
-        rows: [{ k: 'relevance', v: r.score.toFixed(2) + (r.ghost ? ' · related, not injected' : r.lit ? ' · in this prompt' : by.length ? ' · in the prompt of ' + by.join(', ') : ' · not read') }, { k: 'tokens', v: String(r.tok) }, { k: 'read by', v: by.length ? by.join(' · ') : '—' }, { k: 'loop steps', v: steps.length ? steps.map((s) => 'step ' + s).join(' · ') : '—' }, { k: 'source', v: r.source + ' · ' + r.kind }], rels }; }
+      out.rec = { id: S.sel, name: r.label, kind: r.source + ' · ' + r.kind, col: r.col, turn: by[0] || null, ghost: r.ghost, family: r.source === 'memory' ? 'memory' : 'context', rec: r.rec || null,
+        rows: r.sess ? [{ k: 'kind', v: r.kind + (r.rec && r.rec.source_type ? ' · ' + r.rec.source_type : '') }, { k: 'recalled', v: r.ghost ? 'in the session, never injected' : 'injected' + (by.length ? ' · ' + by.join(', ') : '') }, { k: 'created', v: String((r.rec && r.rec.created_at) || '').replace('T', ' ').slice(0, 16) || '—' }, { k: 'importance', v: r.score.toFixed(2) }]
+          : [{ k: 'relevance', v: r.score.toFixed(2) + (r.ghost ? ' · related, not injected' : r.lit ? ' · in this prompt' : by.length ? ' · in the prompt of ' + by.join(', ') : ' · not read') }, { k: 'tokens', v: String(r.tok) }, { k: 'read by', v: by.length ? by.join(' · ') : '—' }, { k: 'loop steps', v: steps.length ? steps.map((s) => 'step ' + s).join(' · ') : '—' }, { k: 'source', v: r.source + ' · ' + r.kind }], rels }; }
+    // All edges off: only the relations that touch the prompt (lit, used, memory) stay; the dim ones fold away
+    if (!S.allEdges) { out.cedges = out.cedges.filter((e) => e.cls !== 'rel'); out.sedges = out.sedges.filter((e) => e.cls !== 'rel'); }
     out.srcs = srcs.map((s) => ({ name: s, col: color(s), n: ctx.filter((n) => (n.source || '?') === s).length }));
     out.offSrcs = [...new Set(nodes.filter((n) => n.source !== 'memory').map((n) => n.source || '?'))].filter((s) => off.has(s)).map((s) => ({ name: s, col: color(s), n: nodes.filter((n) => (n.source || '?') === s).length }));
-    out.ghosts = nodes.filter((n) => n.included === false).length;
+    // the other graphs' chips: the same row, the same toggle
+    out.families = [];
+    const nMem = memCtx.length + (S.memory || []).filter((m) => m && m.id && !ctxIds.has(m.id)).length;
+    if (nMem) out.families.push({ name: 'memory', col: color('memory'), n: nMem, on: !off.has('memory') });
+    if ((S.dag || []).length && !(S.loop && S.loop.length)) out.families.push({ name: 'dag', col: 'var(--cg-ac)', n: S.dag.length, on: !off.has('loop') });
+    if (S.loop && S.loop.length) out.families.push({ name: 'loop', col: 'var(--cg-ac)', n: S.loop.length, on: !off.has('loop') });
+    if ((S.plan || []).length) out.families.push({ name: 'plan', col: 'var(--cg-t2)', n: S.plan.length, on: !off.has('plan') });
+    out.ghosts = nodes.filter((n) => n.included === false).length + memSess.filter((n) => !n._injected).length;
     out.lanes = { l: LANE_L, t: LANE_T, hasLanes };
     return out;
   }
@@ -190,8 +214,11 @@ vera-context-graph .cg-node.ghost{background:transparent;box-shadow:inset 0 0 0 
 vera-context-graph .cg-node.lit{box-shadow:0 0 0 2px var(--cg-bg),0 0 0 3.5px var(--nc),0 0 14px -2px var(--nc)}
 vera-context-graph .cg-node.on{box-shadow:0 0 0 3px var(--cg-bg),0 0 0 5px var(--cg-ac)}
 vera-context-graph .cg-node span{font-family:var(--cg-mono);font-size:7px;color:var(--cg-bg);opacity:.9;pointer-events:none;max-width:90%;overflow:hidden;white-space:nowrap}
-vera-context-graph .cg-mem{position:absolute;transform:translate(-50%,-50%);width:12px;height:12px;border-radius:3px;cursor:pointer;background:var(--cg-ac2)}
-vera-context-graph .cg-mem.ghost{background:transparent!important;box-shadow:inset 0 0 0 1.5px var(--cg-ac2);opacity:.55}
+vera-context-graph .cg-mem{position:absolute;transform:translate(-50%,-50%);width:12px;height:12px;border-radius:3px;cursor:pointer;--mc:var(--cg-ac2);background:var(--mc)}
+vera-context-graph .cg-mem.msg{width:16px;height:9px;border-radius:3px}vera-context-graph .cg-mem.sess{transform:translate(-50%,-50%) rotate(45deg);border-radius:1px}vera-context-graph .cg-mem.dag{border-radius:50%;border:1.5px dashed var(--mc);box-sizing:border-box}
+vera-context-graph .cg-mem.ghost{background:transparent!important;box-shadow:inset 0 0 0 1.5px var(--mc);opacity:.55}
+vera-context-graph .cg-lay.fam{margin-left:2px;box-shadow:inset 0 0 0 1px var(--cg-bd)}vera-context-graph .cg-lay i.p{border-radius:999px;width:13px;height:6px}vera-context-graph .cg-lay i.d{border-radius:1px;transform:rotate(45deg)}
+vera-context-graph .cg-btn.on{color:var(--cg-t1);border-color:var(--cg-ac)}
 vera-context-graph .cg-mem.lit,vera-context-graph .cg-mem.on{box-shadow:0 0 0 2px var(--cg-bg),0 0 0 4px var(--cg-t1)}
 vera-context-graph .cg-plate{position:absolute;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);background:linear-gradient(180deg,color-mix(in srgb,var(--cg-ac) 9%,transparent),color-mix(in srgb,var(--cg-ac) 3%,transparent));pointer-events:none}
 vera-context-graph .cg-stem{position:absolute;width:1px;background:color-mix(in srgb,var(--cg-t3) 60%,transparent);transform:translate(-50%,0);pointer-events:none}
@@ -227,11 +254,11 @@ vera-context-graph .cg-empty{position:absolute;inset:0;display:flex;align-items:
   /* ── the element ─────────────────────────────────────────────────────────────────────────────────── */
   if (typeof HTMLElement !== 'undefined' && root.customElements && !root.customElements.get('vera-context-graph')) {
     class VeraContextGraph extends HTMLElement {
-      constructor() { super(); this._S = { view: 'galaxy', nodes: [], edges: [], focus: [], reads: {}, stepReads: [], loop: [], plan: [], layersOff: new Set(), related: true, sel: null, lsel: null, pan: { x: 0, y: 0, z: 1 }, color: null, turn: '' }; this._evs = []; this._raf = 0; this._drag = null; }
+      constructor() { super(); this._S = { view: 'galaxy', nodes: [], edges: [], focus: [], reads: {}, stepReads: [], loop: [], plan: [], dag: [], memory: [], memEdges: [], memHide: null, memColor: null, edgeColor: null, allEdges: false, layersOff: new Set(), related: true, sel: null, lsel: null, pan: { x: 0, y: 0, z: 1 }, color: null, turn: '' }; this._evs = []; this._raf = 0; this._drag = null; }
       connectedCallback() {
         ensureCss(this.ownerDocument); if (this._built) { this._schedule(); return; } this._built = true;
         const a = this.getAttribute('view'); if (a) this._S.view = a;
-        this.innerHTML = '<div class="cg-hd"><h2>Context graph</h2><span class="lbl" data-r="tok"></span><span class="sp"></span><span class="cg-seg" data-r="views" title="The unified graph\'s layouts, here"></span><span class="lbl" data-r="zoom">100%</span><button class="cg-btn" data-a="fit" title="Back to the whole graph">Fit</button></div>'
+        this.innerHTML = '<div class="cg-hd"><h2>Context graph</h2><span class="lbl" data-r="tok"></span><span class="sp"></span><span class="cg-seg" data-r="views" title="The unified graph\'s layouts, here"></span><button class="cg-btn" data-a="alledges" data-r="alledges" title="Draw every relation, not only the ones that touch the prompt">All edges</button><span class="lbl" data-r="zoom">100%</span><button class="cg-btn" data-a="fit" title="Back to the whole graph">Fit</button></div>'
           + '<div class="cg-key"><span><b>angle</b> = source</span><span><b>distance</b> = lower relevance</span><span><b>area</b> = tokens</span><span><b>hollow</b> = related, not injected</span></div>'
           + '<div class="cg-layers" data-r="layers"></div><div class="cg-plot" data-r="plot"><div class="cg-in" data-r="in"></div><div data-r="lanes"></div></div>';
         this._r = {}; this.querySelectorAll('[data-r]').forEach((el) => { this._r[el.dataset.r] = el; });
@@ -252,6 +279,11 @@ vera-context-graph .cg-empty{position:absolute;inset:0;display:flex;align-items:
       appendLoopEvent(ev) { if (!ev || typeof ev !== 'object') return; if (ev.type === 'start' || /\.triage_start$/.test(String(ev.type || ''))) this._evs = []; this._evs.push(ev); if (this._evs.length > 4000) this._evs = this._evs.slice(-3000); this._loopRefresh(); }
       _loopRefresh() { const L = loopFromEvents(this._evs); this._S.loop = L.steps; if (!this._S.stepReadsPinned) this._S.stepReads = L.stepReads; this._schedule(); }
       setPlan(goals) { this._S.plan = planFromGoals(goals); this._schedule(); }
+      // the rail's Memory graph: the session's records and their relations (the same data, drawn here on the arc)
+      setMemory(nodes, edges, o) { o = o || {}; const S = this._S; S.memory = Array.isArray(nodes) ? nodes : []; S.memEdges = Array.isArray(edges) ? edges : []; if (o.color) S.memColor = o.color; if (o.edgeColor) S.edgeColor = o.edgeColor; if (o.hide) S.memHide = o.hide; this._schedule(); }
+      // the rail's DAG graph: the run's planned cap chain, as the loop lane while no loop is live
+      setDag(nodes) { this._S.dag = (Array.isArray(nodes) ? nodes : []).map((n, i) => ({ id: 'dag:' + (n.id != null ? n.id : i), label: String(n.cap || n.label || n.id), status: n.status === 'done' ? 'ok' : n.status === 'running' ? 'running' : n.status === 'err' || n.status === 'error' ? 'fail' : 'pending', cap: n.out || '', ms: '' })); this._schedule(); }
+      allEdges(on) { if (on != null) { this._S.allEdges = !!on; this._schedule(); } return this._S.allEdges; }
       view(name) { if (name && VIEWS.some((v) => v[0] === name)) { this._S.view = name; this._S.pan = { x: 0, y: 0, z: 1 }; this._schedule(); } return this._S.view; }
       fit() { this._S.pan = { x: 0, y: 0, z: 1 }; this._schedule(); }
       select(id) { this._S.sel = id || null; this._schedule(); }
@@ -263,10 +295,10 @@ vera-context-graph .cg-empty{position:absolute;inset:0;display:flex;align-items:
       _click(e) {
         const t = e.target; const b = t.closest && t.closest('button[data-v]'); if (b) { this.view(b.dataset.v); return; }
         const a = t.closest && t.closest('[data-a]'); if (a) { const S = this._S; const k = a.dataset.a;
-          if (k === 'fit') this.fit(); else if (k === 'layer') { const s = a.dataset.s; if (S.layersOff.has(s)) S.layersOff.delete(s); else S.layersOff.add(s); this._schedule(); }
+          if (k === 'fit') this.fit(); else if (k === 'alledges') { S.allEdges = !S.allEdges; this._schedule(); } else if (k === 'layer') { const s = a.dataset.s; if (S.layersOff.has(s)) S.layersOff.delete(s); else S.layersOff.add(s); this._schedule(); }
           else if (k === 'related') { S.related = !S.related; this._schedule(); } else if (k === 'close') { S.sel = null; this._schedule(); }
           else if (k === 'toggle') { this.dispatchEvent(new CustomEvent('vera:ctx:toggle', { detail: { id: a.dataset.id }, bubbles: true })); }
-          else if (k === 'open') { this.dispatchEvent(new CustomEvent('vera:ctx:pick', { detail: { id: a.dataset.id, open: true }, bubbles: true })); }
+          else if (k === 'open') { const r = this._last && this._last.rec; this.dispatchEvent(new CustomEvent('vera:ctx:pick', { detail: { id: a.dataset.id, open: true, family: r && r.id === a.dataset.id ? r.family : 'context', rec: r && r.id === a.dataset.id ? r.rec : null }, bubbles: true })); }
           else if (k === 'turn') { this.dispatchEvent(new CustomEvent('vera:ctx:focus-turn', { detail: { mid: a.dataset.mid }, bubbles: true })); }
           return; }
         const n = t.closest && t.closest('.cg-node,.cg-mem'); if (n) { const S = this._S; S.sel = S.sel === n.dataset.id ? null : n.dataset.id; S.lsel = null; this._schedule(); this.dispatchEvent(new CustomEvent('vera:ctx:pick', { detail: { id: n.dataset.id }, bubbles: true })); return; }
@@ -280,7 +312,10 @@ vera-context-graph .cg-empty{position:absolute;inset:0;display:flex;align-items:
         this._r.zoom.textContent = Math.round(p.z * 100) + '%';
         this._r.tok.textContent = (o.tokens ? o.tokens.toLocaleString() + ' tokens in the prompt' : '') + (S.turn ? (o.tokens ? ' · ' : '') + S.turn : '');
         this._r.views.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === o.view));
+        if (this._r.alledges) this._r.alledges.classList.toggle('on', !!S.allEdges);
+        const famChip = (f) => '<button class="cg-lay fam ' + (f.on ? 'on' : '') + '" data-a="layer" data-s="' + (f.name === 'dag' ? 'loop' : esc(f.name)) + '" style="color:' + esc(f.col) + '" title="' + esc(f.name) + ' · ' + f.n + ' · the ' + esc(f.name) + ' graph, folded into this one — click to fold it away"><i class="' + (f.name === 'plan' ? 'd' : f.name === 'memory' ? '' : 'p') + '" style="background:' + esc(f.col) + '"></i>' + esc(f.name) + '<b>' + f.n + '</b></button>';
         this._r.layers.innerHTML = o.srcs.concat(o.offSrcs).map((s) => '<button class="cg-lay ' + (S.layersOff.has(s.name) ? '' : 'on') + '" data-a="layer" data-s="' + esc(s.name) + '" style="color:' + esc(s.col) + '" title="' + esc(s.name) + ' · ' + s.n + ' records · click to fold this layer out of the graph"><i style="background:' + esc(s.col) + '"></i>' + esc(s.name) + '<b>' + s.n + '</b></button>').join('')
+          + (o.families || []).map(famChip).join('')
           + (o.ghosts ? '<span style="flex:1"></span><button class="cg-lay ' + (S.related ? 'on' : '') + '" data-a="related" style="color:var(--cg-ac2)" title="Records related to this question that were not injected"><i class="s"></i>related<b>+' + o.ghosts + '</b></button>' : '');
         const st = (x, y) => 'left:' + x + 'px;top:' + y + 'px;';
         let h = '';
@@ -291,7 +326,7 @@ vera-context-graph .cg-empty{position:absolute;inset:0;display:flex;align-items:
         o.sectorLabels.forEach((s) => { h += '<div class="cg-slbl' + (s.lane ? ' lane' : '') + '" style="' + st(s.x, s.y) + 'color:' + esc(s.col) + '">' + esc(s.name) + '</div>'; });
         o.cedges.forEach((e) => { h += '<div class="cg-edge ' + e.cls + '" title="' + esc(e.title) + '" style="' + st(e.x, e.y) + 'width:' + e.len + 'px;background:' + esc(e.col) + ';transform:rotate(' + e.deg + 'deg)"></div>'; });
         o.cnodes.forEach((n) => { h += '<div class="cg-node ' + n.cls + '" data-id="' + esc(n.id) + '" title="' + esc(n.title) + '" style="' + st(n.x, n.y) + 'width:' + n.d + 'px;height:' + n.d + 'px;--nc:' + esc(n.col) + ';opacity:' + n.op + '">' + (n.d >= 24 ? '<span>' + esc(String(n.id).replace(/^__\w+__/, '').slice(0, 6)) + '</span>' : '') + '</div>'; });
-        o.memNodes.forEach((n) => { h += '<div class="cg-mem ' + n.cls + '" data-id="' + esc(n.id) + '" title="' + esc(n.title) + '" style="' + st(n.x, n.y) + '"></div>'; });
+        o.memNodes.forEach((n) => { h += '<div class="cg-mem ' + n.cls + '" data-id="' + esc(n.id) + '" title="' + esc(n.title) + '" style="' + st(n.x, n.y) + (n.col ? ';--mc:' + esc(n.col) : '') + '"></div>'; });
         o.regions.forEach((r) => { h += '<div class="cg-region" style="' + st(r.x, r.y) + 'color:' + esc(r.col) + '">' + esc(r.t) + '</div>'; });
         h += '<div class="cg-hub' + (o.hub.hid ? ' hid' : '') + '" style="' + st(o.hub.x, o.hub.y) + '"><b>aide</b><span>' + (o.tokens >= 1000 ? (o.tokens / 1000).toFixed(1) + 'k' : o.tokens) + '</span></div>';
         this._r.in.innerHTML = h;
