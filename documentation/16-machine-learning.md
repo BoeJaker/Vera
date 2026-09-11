@@ -71,6 +71,16 @@ declare enforceable cost-budget and cancellation support; a local task cancel
 or post-hoc cost observation is not treated as proof of either. This contract
 does not expose such an activation through a capability or UI.
 
+Already-produced DeepEval and Promptfoo results can enter through a strict
+frozen-projection importer. It accepts a bounded Vera-owned envelope containing
+the native evaluation request, content-bound expected cases, threshold metrics,
+judge provenance, and integer usage. Full third-party exports are deliberately
+not accepted: prompt/configuration, input, expected and actual output, response,
+reason, environment, variable, message, stack, and traceback fields fail closed
+at any nesting depth. The resulting receipt pins the source/version and export
+digest and states that no provider was invoked and no payload was retained.
+Incomplete result sets become partial evidence rather than an apparent pass.
+
 The current ML Workshop remains unchanged. DeepEval/Promptfoo adapters,
 Accelerate, PEFT, MLflow, DSPy, live judges, and training execution are
 subsequent gated slices.
