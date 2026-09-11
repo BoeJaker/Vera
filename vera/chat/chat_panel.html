@@ -1058,6 +1058,14 @@ html[data-style] body[data-view="minimal"].has-msgs #msgs > .mwrap,html[data-sty
 html[data-style] body[data-view="minimal"].has-msgs #msgs > .mwrap.u{border-radius:var(--r-sm,4px) var(--ui-radius,10px) var(--ui-radius,10px) var(--r-sm,4px)}
 html[data-style] body[data-view="minimal"].has-msgs:not(.has-panel) #inputBar,html[data-style] body[data-view="minimal"].has-msgs.has-panel #inputBar,html[data-style] body[data-view="minimal"]:not(.has-msgs):not(.has-panel) #inputBar{border-radius:var(--ui-radius,14px)}
 html[data-style] .ib.send{background:var(--pri-bg,var(--acc));border-color:var(--pri-bd,var(--acc));color:var(--pri-fg,var(--on-acc,#fff));border-radius:var(--r-sm,3px)}
+/* ═══ The LHM (lhm-library, vera-lhm.js) — the unified side menu is a rail of quick menus beside its detail column.
+   Folding the menu (✕, the top-bar Menu button) keeps the 46px rail so a menu is one click away; when another page
+   hosts this menu (the harness, vpb-nav-hosted) the rail and the tab strip are drawn there and only the detail stays. */
+#rightRail.lhm-host{flex-direction:row}
+#rightRail.lhm-host.slim{width:46px !important;min-width:46px !important}
+#rightRail.lhm-host.slim > .lhm-det{display:none}
+html.vpb-nav-hosted #rightRail.lhm-host.slim{width:0 !important;min-width:0 !important}
+#rightRail.lhm-host > .lhm-det > .ctx-tab-bar .ctab{padding:6px 9px}
 </style>
 </head>
 <body data-view="minimal">
@@ -11138,6 +11146,51 @@ Your task: decide what to do next to advance toward the goal.
   /* Move the legacy left-rail panes into the unified rail. The panes keep
      their IDs and listeners (appendChild preserves both), so every existing
      render/enhance path keeps working — only their host column changed. */
+  /* ═══ THE LHM (design lhm-library) — the eight quick menus of the rail, each grouping tabs the unified strip
+     already has (by the argument their onclick passes), with the line under the title and the one action at the
+     foot. Nothing here replaces a tab or a pane: the library hides the tabs outside the current menu and shows them
+     again when their menu is picked. ═══ */
+  const _lhmTxt=(id)=>{ const el=document.getElementById(id); return el?(el.textContent||'').trim():''; };
+  const LHM_MENUS=[
+    {id:'sessions', icon:'◷', label:'Sessions',  tabs:[{id:'Hist',label:'History'}],
+     meta:()=>{ const n=document.querySelectorAll('#histList > div').length; return n?n+' sessions':''; }, cta:{label:'+ New session', run:()=>newSession()}},
+    {id:'context',  icon:'◎', label:'Context',   tabs:[{id:'ctx',label:'Context'},{id:'memgraph',label:'Memory'}],
+     meta:()=>_lhmTxt('ctxMeterLabel'), cta:{label:'Refresh the assembled context →', run:()=>_ctxFcRefresh()}},
+    {id:'activity', icon:'∿', label:'Activity',  tabs:[{id:'dag',label:'DAG'},{id:'monitor',label:'Monitor'}],
+     meta:()=>{ const n=(document.getElementById('monitorStream')||{children:[]}).children.length; return n?n+' monitor lines':''; }, cta:{label:'Clear the monitor', run:()=>_monitorClear()}},
+    {id:'loop',     icon:'⟳', label:'Loop',      tabs:[{id:'loop',label:'Loop'},{id:'loops',label:'Loops'},{id:'goals',label:'Goals'}],
+     meta:()=>_lhmTxt('loopVariantDesc').slice(0,48), cta:{label:'Loop settings ⚙', run:()=>_loopCfgToggle()}},
+    {id:'workspace',icon:'⊞', label:'Workspace', tabs:[{id:'Panels',label:'Panels'},{id:'browser',label:'Browser'}],
+     meta:()=>_activePanelId?('open · '+_lhmTxt('chatPanelTitle')):'nothing open beside the chat', cta:{label:'Open a panel beside the chat →', run:()=>railTab('Panels')}},
+    {id:'sandbox',  icon:'⌨', label:'Sandbox',   tabs:[{id:'code',label:'Code'}],
+     meta:()=>_lhmTxt('sbxSessionStatus').slice(0,48), cta:{label:'Open the terminal →', run:()=>_sessionSbxTerminal()}},
+    {id:'ops',      icon:'✦', label:'Ops glance', tabs:[{id:'Caps',label:'Caps'}],
+     meta:()=>_lhmTxt('capBadge'), cta:{label:'Reload capabilities', run:()=>_capsReload()}},
+    {id:'settings', icon:'⚙', label:'Settings',  tabs:[{id:'Cfg',label:'Config'}],
+     meta:()=>{ const s=document.getElementById('cfgAgent'); return s&&s.selectedOptions&&s.selectedOptions[0]?('agent · '+s.selectedOptions[0].textContent.trim()):''; }, cta:{label:'Full settings →', run:()=>railTab('Cfg')}},
+  ];
+  const _lhmTabEl=(id)=>document.querySelector('#rightRail .ctx-tab-bar .ctab[onclick*="(\''+id+'\'"]');
+  const _lhmTabIdOf=(el)=>{ const m=(el.getAttribute('onclick')||'').match(/CH\.(?:railTab|ctxTab)\('([^']+)'/); return m?m[1]:''; };
+  // the one panel set: what is open beside the chat right now, whoever opened it (the aide's [[panel:…]] or you)
+  const _lhmOpenNow=()=>{
+    if(!document.body.classList.contains('has-panel')||!_activePanelId) return [];
+    return [{id:_activePanelId, label:_lhmTxt('chatPanelTitle')||_activePanelId, icon:'▭', origin:_panelOpenedBy||'you', placement:'beside chat',
+             close:()=>panelClose(), focus:()=>{ try{ document.getElementById('chatPanelFrame')?.focus(); }catch(_){} }}];
+  };
+  let _panelOpenedBy='';
+  function _lhmMount(){
+    if(!window.VeraLHM) return;
+    const host=document.getElementById('rightRail'); if(!host||host.classList.contains('lhm-host')) return;
+    const onTab=document.querySelector('#rightRail .ctx-tab-bar .ctab.on');
+    const initialTab=onTab?_lhmTabIdOf(onTab):'ctx';
+    const initial=(LHM_MENUS.find(m=>m.tabs.some(t=>t.id===initialTab))||LHM_MENUS[1]).id+'/'+initialTab;
+    VeraLHM.mount({host, title:'Vera', tabBar:'.ctx-tab-bar', menus:LHM_MENUS, tabEl:_lhmTabEl, tabIdOf:_lhmTabIdOf, openNow:_lhmOpenNow,
+      sessionId:()=>SID, initial, silentInitial:true,
+      panes:[{id:'rpHist',w:'sessions · list'},{id:'rpCfg',w:'settings · form'},{id:'rpCaps',w:'capabilities · list'},{id:'rpPanels',w:'panels · list'},{id:'rpLoop',w:'loop program · form'},{id:'ctxCanvas',w:'context galaxy · graph'},{id:'paneLoopGraph',w:'loop graph · graph'},{id:'paneMemGraph',w:'memory graph · graph'},{id:'paneCode',w:'file tree · tree'},{id:'paneBrowser',w:'browser · panel'},{id:'paneMonitor',w:'monitor · log'}],
+      onPick:()=>{ if(host.classList.contains('slim')) toggleRight(); }});
+    // the rail's badge and the Open now rows follow the beside-panel
+    try{ window.addEventListener('vera:panel-mounted', ()=>{ setTimeout(()=>VeraLHM.render(),0); }); }catch(_){}
+  }
   function _unifyRails(){
     const rail=document.getElementById('rightRail');
     const anchor=document.getElementById('ctxCtrl');
@@ -12265,6 +12318,7 @@ Your task: decide what to do next to advance toward the goal.
       return false;
     }
     _activePanelId=p.id;
+    _panelOpenedBy=(arguments.length>1&&arguments[1])||'you';
     _panelExtraCaps=Array.isArray(p.ui_caps)?p.ui_caps.slice():[];
     // New panel mounting — its shim hasn't reported yet. _awaitPanelReady()
     // (used by the dispatch path) blocks until the first state arrives, so a
@@ -12319,6 +12373,8 @@ Your task: decide what to do next to advance toward the goal.
   }
 
   function panelClose(){
+    _panelOpenedBy='';
+    try{ if(window.VeraLHM) setTimeout(()=>VeraLHM.render(),0); }catch(_){}
     document.body.classList.remove('has-panel');
     delete document.body.dataset.uiPanel;
     _activePanelId=null;
@@ -12386,9 +12442,9 @@ Your task: decide what to do next to advance toward the goal.
     //    "exec.bash.run" or its namespace "exec" instead of a panel id).
     //    These are unambiguous, so open them directly.
     const direct=_resolvePanel(name);
-    if(direct) return panelOpen(direct.id);
+    if(direct) return panelOpen(direct.id,'aide');
     const owner=_panelOwningCap(name);
-    if(owner) return panelOpen(owner.id);
+    if(owner) return panelOpen(owner.id,'aide');
     // 2. No precise match. The old code fell back to _matchPanelByIntent, which
     //    returned ANY panel sharing a single word — that is exactly the "opens
     //    the wrong panel" bug. Instead only accept a fuzzy match when it is a
@@ -12397,7 +12453,7 @@ Your task: decide what to do next to advance toward the goal.
     const best=ranked[0];
     if(best && best.score>=_LLM_PANEL_MIN_SCORE
        && (!ranked[1] || best.score-ranked[1].score>=_LLM_PANEL_MARGIN)){
-      return panelOpen(best.panel.id);
+      return panelOpen(best.panel.id,'aide');
     }
     appendSys(`<span style="color:var(--dim2)">Agent referenced panel "${esc(name)}" but there was no confident match — leaving the view as-is.</span>`);
     return false;
@@ -14928,6 +14984,9 @@ Your task: decide what to do next to advance toward the goal.
     // Fold the legacy left-rail panes into the unified rail before any
     // rail-visibility / tab state is applied.
     _unifyRails();
+    // …then the LHM: the rail of quick menus around that unified strip (nothing removed, the 13 tabs grouped).
+    // Never fatal: a chat without its LHM is still a chat.
+    try{ _lhmMount(); }catch(e){ console.warn('LHM: mount failed', e); }
     // Rail default: COLLAPSED. The minimal/document aesthetic looks best
     // with the chat column centred and unobstructed; the user can pop the
     // menu out via the top-bar Menu button. Persisted in localStorage so an
@@ -15157,6 +15216,7 @@ window.addEventListener('DOMContentLoaded',()=>{
   CH.init({baseUrl:(()=>{const o=(window.location.origin&&window.location.origin!=='null')?window.location.origin:'http://localhost:8000';try{return window.parent?._veraBase||window._veraBase||localStorage.getItem('vera_base')||o;}catch(e){return o;}})(),sessionId:linkedSession});
 });
 </script>
+<script src="/ui/vera-lhm.js"></script>
 <script src="/ui/vera-ui.js"></script>
 <!-- <vera-agent-loop-output> element: loaded from the standalone file.
      Single source of truth — no embedded copy to drift out of sync.
