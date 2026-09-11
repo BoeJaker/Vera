@@ -1,0 +1,76 @@
+{
+  "schema": "vera.capability-ontology-decision-corpus/v1",
+  "revision": 1,
+  "policy": {
+    "synthetic_only": true,
+    "model_calls": false,
+    "network_calls": false,
+    "capability_execution": false,
+    "ontology_activation": false
+  },
+  "cases": [
+    {
+      "id": "generation.specialist-over-generic",
+      "registry": {
+        "code.author": {"schema": {"type": "object"}, "mode": "local", "source": "local", "contract": {"canonical_task": "code.generate", "effects": ["model"]}},
+        "llm.generate": {"schema": {"type": "object"}, "mode": "local", "source": "local", "contract": {"canonical_task": "code.generate", "effects": ["model"]}}
+      },
+      "request": {"canonical_task": "code.generate", "allowed_effects": ["model"]},
+      "expected_selected": "code.author",
+      "unsafe_names": [],
+      "curated_relations": [{"from": "code.author", "to": "llm.generate", "relation": "preferred_over", "confidence": 1.0, "provenance": "curated"}],
+      "generated_relations": [{"from": "llm.generate", "to": "code.author", "relation": "preferred_over", "confidence": 0.93, "provenance": "generated"}]
+    },
+    {
+      "id": "prose.specialist-over-generic",
+      "registry": {
+        "llm.generate": {"schema": {"type": "object"}, "mode": "local", "source": "local", "contract": {"canonical_task": "prose.generate", "effects": ["model"]}},
+        "prose.author": {"schema": {"type": "object"}, "mode": "local", "source": "local", "contract": {"canonical_task": "prose.generate", "effects": ["model"]}}
+      },
+      "request": {"canonical_task": "prose.generate", "allowed_effects": ["model"]},
+      "expected_selected": "prose.author",
+      "unsafe_names": [],
+      "curated_relations": [{"from": "prose.author", "to": "llm.generate", "relation": "preferred_over", "confidence": 1.0, "provenance": "curated"}],
+      "generated_relations": [{"from": "llm.generate", "to": "prose.author", "relation": "preferred_over", "confidence": 0.89, "provenance": "generated"}]
+    },
+    {
+      "id": "effects-remain-authoritative",
+      "registry": {
+        "records.read": {"schema": {"type": "object"}, "mode": "local", "source": "local", "contract": {"canonical_task": "records.inspect", "effects": ["read"]}},
+        "records.delete": {"schema": {"type": "object"}, "mode": "local", "source": "local", "contract": {"canonical_task": "records.inspect", "effects": ["delete"]}}
+      },
+      "request": {"canonical_task": "records.inspect", "allowed_effects": ["read"]},
+      "expected_selected": "records.read",
+      "unsafe_names": ["records.delete"],
+      "curated_relations": [{"from": "records.read", "to": "records.delete", "relation": "preferred_over", "confidence": 1.0, "provenance": "curated"}],
+      "generated_relations": [{"from": "records.delete", "to": "records.read", "relation": "preferred_over", "confidence": 0.99, "provenance": "generated"}]
+    },
+    {
+      "id": "caller-preference-remains-authoritative",
+      "registry": {
+        "search.local": {"schema": {"type": "object"}, "mode": "local", "source": "local", "contract": {"canonical_task": "records.search", "effects": ["read"]}},
+        "search.remote": {"schema": {"type": "object"}, "mode": "remote", "source": "remote", "contract": {"canonical_task": "records.search", "effects": ["read"]}}
+      },
+      "request": {"canonical_task": "records.search", "allowed_effects": ["read"], "preferred": ["search.remote"]},
+      "expected_selected": "search.remote",
+      "unsafe_names": [],
+      "curated_relations": [{"from": "search.local", "to": "search.remote", "relation": "preferred_over", "confidence": 1.0, "provenance": "curated"}],
+      "generated_relations": [{"from": "search.local", "to": "search.remote", "relation": "preferred_over", "confidence": 1.0, "provenance": "generated"}]
+    },
+    {
+      "id": "generated-cycle-fails-closed",
+      "registry": {
+        "image.alpha": {"schema": {"type": "object"}, "mode": "local", "source": "local", "contract": {"canonical_task": "image.generate", "effects": ["model"]}},
+        "image.beta": {"schema": {"type": "object"}, "mode": "local", "source": "local", "contract": {"canonical_task": "image.generate", "effects": ["model"]}}
+      },
+      "request": {"canonical_task": "image.generate", "allowed_effects": ["model"]},
+      "expected_selected": "image.alpha",
+      "unsafe_names": [],
+      "curated_relations": [],
+      "generated_relations": [
+        {"from": "image.alpha", "to": "image.beta", "relation": "preferred_over", "confidence": 0.8, "provenance": "generated"},
+        {"from": "image.beta", "to": "image.alpha", "relation": "preferred_over", "confidence": 0.8, "provenance": "generated"}
+      ]
+    }
+  ]
+}

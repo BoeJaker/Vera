@@ -81,6 +81,20 @@ Relations can be inferred by the LLM from each cap's name, description, and JSON
 | `cap_ontology.auto_grid` | Infer the full grid (long-running) |
 | `cap_ontology.auto_group` / `auto_grid` | …with `cap_ontology.suggest` for quick editor hints |
 
+Generated relations are not trusted routing authority. A frozen, synthetic
+comparison exposed by `eval.ontology.decision` runs the resolver unchanged,
+then with typed curated `preferred_over` hints, then with generated hints. It
+reports exact selection, unsafe choices, unresolved ambiguity, relation
+precision, serialized hint size/token estimate, and observed local latency. The
+fixture makes no model or network calls and executes no capability.
+
+The current fixture records an evidence-backed recommendation to disable
+generated routing relations: curated hints improve its exact selection while
+the generated set reduces it and includes a cycle. Resolver eligibility still
+rejects a generated preference for a disallowed-effect capability. This report
+does not itself activate curated hints, disable generation, or delete stored
+relations; an exact export must be preserved before a later runtime change.
+
 ### Planner integration & the "adjacent hidden cap" trick
 
 `cap_ontology.context_for` returns a snippet for a planner system-prompt. When an agent has a restricted `domain_caps` allowlist, this returns relations *between an allowed cap and a hidden cap* — described **by the relation only**. The planner thus learns that an adjacent capability exists (and how it relates) without being able to call it directly: situational awareness without privilege escalation.
