@@ -118,6 +118,8 @@ def _load():
         "widget.instance.list": {"func": inst_list}, "ui.panels.open": {"func": panels_open},
     })
     orch.APP = _App(); orch.capability = capability; orch.emit_event = emit_event
+    orch.UI_PANELS = {}
+    orch.register_ui = lambda panel_id, label, icon, html, js="", ui_caps=None, mode="inject", tab_order=100, **kw: orch.UI_PANELS.__setitem__(panel_id, {"id": panel_id, "label": label, "icon": icon, "html": html, "ui_caps": ui_caps or [], "mode": mode, "tab_order": tab_order})
     orch.now_iso = lambda: "2026-09-11T00:00:00+00:00"
     orch.schedule = lambda fn, interval, name=None, skip_in_sandbox=False, singleton=False: orch.SCHEDULED_TASKS.append({"fn": fn, "int": interval, "name": name})
     pkg = types.ModuleType("Vera"); pkg.__path__ = []
@@ -382,3 +384,94 @@ def test_the_chat_applies_asks_reports_and_shows_the_room():
     assert "_uiEvent('panel.opened',{id:p.id, by:_panelOpenedBy||'you', placement:'beside chat'})" in chat
     assert "_uiEvent('session.start',{})" in chat
     assert "_uiAskAnswer,_uiAskPick,_uiDirectiveApply," in chat
+
+
+# ── the carry-overs: the canvas resolver's caps, the room's canvas, the Driven panel, the loop's wait ─────────
+
+def _stub_canvas():
+    async def add(session_id="", kind="", content=None, key="", at=None, size="", anchor=None, trace_id=None, **kw):
+        ORCH.CALLS.append(("canvas.add", session_id, kind, key, size))
+        if key == "doc:seen":
+            return {"ok": True, "resolved": "shown", "existing": True, "key": key, "item": {"key": key}}
+        return {"ok": True, "resolved": "added", "existing": False, "key": key or "widget:new", "item": {"key": key}}
+
+    async def pin(session_id="", key="", trace_id=None): ORCH.CALLS.append(("canvas.pin", key)); return {"ok": True, "key": key}
+    async def park(session_id="", key="", trace_id=None): ORCH.CALLS.append(("canvas.park", key)); return {"ok": True, "key": key}
+    async def size(session_id="", key="", size="", trace_id=None): ORCH.CALLS.append(("canvas.size", key, size)); return {"ok": True, "key": key, "prev": "m"}
+    async def remove(session_id="", key="", trace_id=None): ORCH.CALLS.append(("canvas.remove", key)); return {"ok": True, "key": key}
+    async def room(session_id="", trace_id=None): return {"ok": True, "id": "cv_session_" + session_id, "revision": 7, "now": ["doc:a"], "pinned": ["widget:b"], "parked": [], "sizes": {"doc:a": "m"}, "count": 2}
+    ORCH.CAPABILITY_REGISTRY.update({"canvas.add": {"func": add}, "canvas.pin": {"func": pin}, "canvas.park": {"func": park},
+                                     "canvas.size": {"func": size}, "canvas.remove": {"func": remove}, "canvas.session.room": {"func": room}})
+
+
+def _unstub_canvas():
+    for n in ("canvas.add", "canvas.pin", "canvas.park", "canvas.size", "canvas.remove", "canvas.session.room"):
+        ORCH.CAPABILITY_REGISTRY.pop(n, None)
+
+
+def test_canvas_directives_route_to_the_resolvers_caps_when_registered():
+    _stub_canvas()
+    try:
+        r = _run(D.dispatch("canvas.add", {"kind": "widget", "key": "widget:x", "size": "s"}, SID))
+        assert r["ok"] and r["outcome"] == "applied" and ("canvas.add", SID, "widget", "widget:x", "s") in ORCH.CALLS
+        assert r["row"].get("undo") == {"name": "canvas.remove", "args": {"key": "widget:x"}}, "the undo of an add is the resolver's remove"
+        shown = _run(D.dispatch("canvas.add", {"kind": "doc", "key": "doc:seen"}, SID))
+        assert shown["ok"] and "shown" in shown["row"]["note"] and not shown["row"].get("undo"), "a key already on the canvas is shown, and there is nothing to undo"
+        p = _run(D.dispatch("canvas.pin", {"key": "doc:a"}, SID))
+        assert p["ok"] and p["row"]["undo"] == {"name": "canvas.park", "args": {"key": "doc:a"}} and ("canvas.pin", "doc:a") in ORCH.CALLS
+        s = _run(D.dispatch("canvas.size", {"key": "doc:a", "size": "xl"}, SID))
+        assert s["ok"] and s["row"]["undo"] == {"name": "canvas.size", "args": {"key": "doc:a", "size": "m"}}
+        sh = _run(D.dispatch("canvas.show", {"key": "doc:a"}, SID))
+        assert sh["ok"] and ("canvas.add", SID, "", "doc:a", "") in ORCH.CALLS, "show by key goes through the resolver"
+        # undo goes through the same caps
+        u = _run(D.cap_ui_directive_undo(session_id=SID, row_id=p["row"]["id"]))
+        assert u["ok"] and ("canvas.park", "doc:a") in ORCH.CALLS
+    finally:
+        _unstub_canvas()
+
+
+def test_canvas_directives_fall_back_to_the_chat_without_the_caps():
+    assert not D._cap("canvas.add")
+    before = len(ORCH.CALLS)
+    r = _run(D.dispatch("canvas.park", {"key": "doc:a"}, SID))   # (the stub chat refuses pin/size, as the pre-column chat did)
+    assert r["ok"] and any(c[0] == "panel.dispatch" and c[2] == "__ui_directive__" for c in ORCH.CALLS[before:]), "the chat applies it"
+
+
+def test_the_room_carries_the_session_canvas_when_the_resolver_is_registered():
+    _stub_canvas()
+    try:
+        r = _run(D.cap_ui_room(session_id=SID))
+        assert r["room"]["canvas"]["revision"] == 7 and r["room"]["canvas"]["now"] == ["doc:a"]
+        assert "canvas: cv_session_%s rev 7 . now doc:a . pinned widget:b . parked -" % SID in r["text"]
+    finally:
+        _unstub_canvas()
+    r2 = _run(D.cap_ui_room(session_id=SID))
+    assert "canvas" not in r2["room"] and "canvas:" not in r2["text"], "no resolver, no canvas line (today's text)"
+
+
+def test_the_driven_panel_is_registered_with_its_caps():
+    assert "driven" in ORCH.UI_PANELS
+    p = ORCH.UI_PANELS["driven"]
+    assert p["mode"] == "element" and "/ui/driven" in p["html"]
+    for c in ("ui.directive.log", "ui.directive.undo", "ui.directive.answer", "ui.policy.get", "ui.policy.set", "ui.script.list", "ui.script.enable", "ui.room"):
+        assert c in p["ui_caps"], c
+    html = _read("vera", "ui", "driven_panel.html")
+    for piece in ("call('ui.directive.log'", "call('ui.policy.get'", "call('ui.script.list'", "call('ui.room'", "drUndo(", "drAnswer(", "drPolicy(", "drScript(", "vera:panel:init"):
+        assert piece in html, piece
+
+
+def test_the_loop_tells_the_control_plane_when_a_step_waits():
+    src = _read("vera", "dag", "dag_workshop_capabilities.py")
+    i = src.index('"type": "agent_loop_v6.step_question"')
+    j = src.index("decision = await _await_hitl_decision(", i)
+    seg = src[i:j]
+    assert 'type="loop.step.waiting"' in seg and '"question": q' in seg and '"run": stream_id' in seg
+    assert "except Exception as _e:" in seg, "never fatal"
+    # the shipped script listens for exactly that event
+    assert any(s["on"]["event"] == "ui.loop.step.waiting" for s in S.SHIPPED)
+
+
+def test_the_agent_registrys_emits_are_awaited():
+    src = _read("vera", "registry", "registry_capabilities.py")
+    assert 'await emit_event({"type": "registry.upsert"' in src and 'await emit_event({"type": "registry.delete"' in src
+    assert "\n    emit_event({" not in src

@@ -1,0 +1,120 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Driven — the control plane's window</title>
+<script>/* vera theme boot - paint cached theme before CSS parses */
+(function(){try{var t=localStorage.getItem('vera.theme.vars');var v=t?JSON.parse(t):null;var d=document.documentElement;
+if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<link rel="stylesheet" href="/ui/themes.css">
+<style>
+/* Driven (UI redesign, the Driven board): what the LLM and the scripts did to the UI, whether it was allowed,
+   what is waiting on you, and what to undo - the control plane's own window. Plain HTML/JS, the house style. */
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg0,#101012);color:var(--text,#d8dce4);font-family:var(--sans,system-ui,sans-serif);font-size:11px;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+header{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--border,rgba(255,255,255,.09));flex-shrink:0}
+header h1{margin:0;font-size:11px;font-weight:600;letter-spacing:.5px;color:var(--acc,#5a9e8f)}
+header .sub{color:var(--dim2,#8a92a0);font-family:var(--mono,ui-monospace,monospace);font-size:9px}
+header .sp{flex:1}
+header input{font-size:10px;height:22px;padding:0 6px;background:var(--bg1,#151719);border:1px solid var(--border,rgba(255,255,255,.09));border-radius:4px;color:var(--text,#d8dce4);width:220px}
+button{font:inherit;font-size:9.5px;padding:2px 8px;border:1px solid var(--border,rgba(255,255,255,.09));border-radius:4px;background:var(--bg2,#1a1c20);color:var(--dim2,#8a92a0);cursor:pointer}
+button:hover{color:var(--acc,#5a9e8f);border-color:var(--acc,#5a9e8f)}
+button.on{color:var(--acc,#5a9e8f);border-color:var(--acc,#5a9e8f)}
+button.danger:hover{color:var(--err,#c96b6b);border-color:var(--err,#c96b6b)}
+#wrap{flex:1;min-height:0;display:grid;grid-template-columns:1fr 300px;gap:0}
+#log{overflow:auto;padding:6px 10px}
+#side{border-left:1px solid var(--border,rgba(255,255,255,.09));overflow:auto;padding:6px 10px;display:flex;flex-direction:column;gap:10px}
+.sec{font-family:var(--mono,ui-monospace,monospace);font-size:8.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim,#6b7280);margin:6px 0 4px}
+table{border-collapse:collapse;width:100%;font-size:10px}
+th{text-align:left;font-family:var(--mono,ui-monospace,monospace);font-size:8px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim,#6b7280);padding:3px 6px;border-bottom:1px solid var(--border2,rgba(255,255,255,.18));position:sticky;top:0;background:var(--bg0,#101012)}
+td{padding:3px 6px;border-bottom:1px solid var(--border,rgba(255,255,255,.09));vertical-align:top}
+td.m{font-family:var(--mono,ui-monospace,monospace);font-size:9px;color:var(--dim2,#8a92a0);white-space:nowrap}
+.by{display:inline-block;padding:0 5px;border-radius:8px;font-family:var(--mono,ui-monospace,monospace);font-size:8.5px;border:1px solid var(--border,rgba(255,255,255,.09))}
+.by.direct{color:var(--acc,#5a9e8f)}.by.script{color:#a78bfa}.by.you{color:var(--dim2,#8a92a0)}.by.undo{color:var(--warn,#c9a35a)}
+.oc{font-family:var(--mono,ui-monospace,monospace);font-size:9px}
+.oc.applied{color:var(--acc2,#8fb87a)}.oc.refused{color:var(--err,#c96b6b)}.oc.asked{color:var(--warn,#c9a35a)}.oc.failed,.oc.unreachable{color:var(--err,#c96b6b)}.oc.undone{color:var(--dim2,#8a92a0)}
+.args{font-family:var(--mono,ui-monospace,monospace);font-size:9px;color:var(--text,#d8dce4);max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.note{color:var(--dim2,#8a92a0);font-size:9.5px}
+.pol{display:grid;grid-template-columns:1fr auto;gap:4px 8px;align-items:center;font-size:10px}
+.pol .k{font-family:var(--mono,ui-monospace,monospace);font-size:9px;color:var(--text,#d8dce4)}
+.seg{display:inline-flex;border:1px solid var(--border,rgba(255,255,255,.09));border-radius:4px;overflow:hidden}
+.seg button{border:none;border-right:1px solid var(--border,rgba(255,255,255,.09));border-radius:0;padding:2px 7px;background:transparent}
+.seg button:last-child{border-right:none}
+.ask{border:1px solid var(--warn,#c9a35a);border-radius:6px;padding:6px 8px;margin-bottom:6px;background:color-mix(in srgb,var(--warn,#c9a35a) 8%,transparent)}
+.ask b{display:block;font-size:10.5px;margin-bottom:3px}
+.ask .acts{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
+.scr{display:flex;align-items:center;gap:6px;font-size:10px;padding:2px 0}
+.scr .n{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.scr .on{font-family:var(--mono,ui-monospace,monospace);font-size:8.5px;color:var(--dim2,#8a92a0)}
+.empty{color:var(--dim2,#8a92a0);font-size:10px;padding:8px 0}
+#status{font-family:var(--mono,ui-monospace,monospace);font-size:9px;color:var(--dim2,#8a92a0)}
+#status.ok{color:var(--acc2,#8fb87a)}#status.err{color:var(--err,#c96b6b)}
+</style>
+</head>
+<body>
+<header>
+  <h1>⟡ Driven</h1><span class="sub">what the aide and the scripts did to the UI · policy · asks · undo</span>
+  <span class="sp"></span>
+  <input id="sid" placeholder="session id (the chat's)" title="The chat session whose directives to show">
+  <button onclick="drLoad()">Refresh</button>
+  <span id="status"></span>
+</header>
+<div id="wrap">
+  <div id="log">
+    <div class="sec">Directive log <span id="logN"></span></div>
+    <table><thead><tr><th>when</th><th>who</th><th>directive</th><th>args</th><th>outcome</th><th></th></tr></thead><tbody id="rows"><tr><td colspan="6" class="empty">no session</td></tr></tbody></table>
+  </div>
+  <div id="side">
+    <div><div class="sec">Waiting on you</div><div id="asks"><div class="empty">nothing pending</div></div></div>
+    <div><div class="sec">Policy · drive · ask · never</div><div id="policy" class="pol"></div></div>
+    <div><div class="sec">Scripts armed</div><div id="scripts"><div class="empty">none</div></div></div>
+    <div><div class="sec">The room · what the aide sees</div><pre id="room" style="white-space:pre-wrap;font-family:var(--mono,ui-monospace,monospace);font-size:9px;color:var(--dim2,#8a92a0);margin:0"></pre></div>
+  </div>
+</div>
+<script>
+const BASE = window.location.origin;
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function call(name, args){ try{ const r = await fetch(BASE + '/mcp/call', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, arguments:args || {}})}); const j = await r.json(); return (j && j.type === 'tool_result') ? j.content : (j && j.content !== undefined ? j.content : j); }catch(e){ return {ok:false, error:String(e)}; } }
+function status(msg, cls){ const s = document.getElementById('status'); s.textContent = msg || ''; s.className = cls || ''; if(msg) setTimeout(()=>{ if(s.textContent === msg){ s.textContent=''; s.className=''; } }, 4000); }
+function sid(){ const v = document.getElementById('sid').value.trim(); if(v) return v; try{ const p = new URLSearchParams(location.search).get('session_id'); if(p) return p; }catch(e){} return ''; }
+// the policy targets the board names: the classes and the three patterns; an exact panel id can be typed
+const TARGETS = ['panels', 'canvas', 'widgets', 'scripts', 'ops:*', 'notebook:*', 'settings:*'];
+const MODES = {panels:['drive','ask','never'], canvas:['drive','ask','never'], widgets:['drive','ask','never'], scripts:['run','ask','off'], 'ops:*':['drive','ask','never'], 'notebook:*':['drive','ask','never'], 'settings:*':['drive','ask','never']};
+let LOG = null;
+async function drLoad(){
+  const s = sid(); if(!s){ document.getElementById('rows').innerHTML = '<tr><td colspan="6" class="empty">type the chat session id (or open this panel from the chat)</td></tr>'; return; }
+  const [log, pol, scr, room] = await Promise.all([call('ui.directive.log', {session_id:s, limit:60}), call('ui.policy.get', {session_id:s}), call('ui.script.list', {}), call('ui.room', {session_id:s})]);
+  LOG = log;
+  const rows = (log && log.rows) || [];
+  document.getElementById('logN').textContent = rows.length ? '· ' + rows.length : '';
+  document.getElementById('rows').innerHTML = rows.length ? rows.slice().reverse().map(x => {
+    const by = String(x.by || ''); const cls = by.startsWith('script') ? 'script' : by === 'undo' ? 'undo' : by === 'you' ? 'you' : 'direct';
+    const canUndo = x.undo && x.outcome === 'applied';
+    return '<tr><td class="m">' + esc(String(x.ts || '').slice(11, 19)) + '</td><td><span class="by ' + cls + '">' + esc(by || 'direct') + '</span></td>' +
+      '<td><b>' + esc(x.name) + '</b>' + (x.target ? '<div class="note">' + esc(x.target) + '</div>' : '') + '</td>' +
+      '<td class="args" title="' + esc(JSON.stringify(x.args || {})) + '">' + esc(JSON.stringify(x.args || {})) + '</td>' +
+      '<td><span class="oc ' + esc(x.outcome) + '">' + esc(x.outcome) + '</span>' + (x.note ? '<div class="note">' + esc(x.note) + '</div>' : '') + '</td>' +
+      '<td>' + (canUndo ? '<button onclick="drUndo(\'' + esc(x.id) + '\')" title="Reverse it through the same surface">undo</button>' : '') + '</td></tr>';
+  }).join('') : '<tr><td colspan="6" class="empty">no directives yet for ' + esc(s) + '</td></tr>';
+  const asks = (log && log.asks) || [];
+  document.getElementById('asks').innerHTML = asks.length ? asks.map(a => '<div class="ask"><b>' + esc(a.name) + '</b><span class="args">' + esc(JSON.stringify(a.args || {})) + '</span><div class="note">' + esc(a.by || '') + (a.target ? ' · ' + esc(a.target) : '') + '</div>' +
+    '<div class="acts"><button onclick="drAnswer(\'' + esc(a.id) + '\',\'once\')">allow once</button><button onclick="drAnswer(\'' + esc(a.id) + '\',\'always\')">always</button><button class="danger" onclick="drAnswer(\'' + esc(a.id) + '\',\'refuse\')">refuse</button></div></div>').join('') : '<div class="empty">nothing pending</div>';
+  const p = (pol && (pol.policy || pol.rules)) || {};
+  document.getElementById('policy').innerHTML = TARGETS.map(t => '<span class="k">' + esc(t) + '</span><span class="seg">' + MODES[t].map(m => '<button class="' + (p[t] === m ? 'on' : '') + '" onclick="drPolicy(\'' + esc(t) + '\',\'' + m + '\')">' + m + '</button>').join('') + '</span>').join('');
+  const scripts = (scr && scr.scripts) || [];
+  document.getElementById('scripts').innerHTML = scripts.length ? scripts.map(x => '<div class="scr"><span class="n" title="' + esc(x.doc || '') + '">' + esc(x.name) + '</span><span class="on">on ' + esc((x.on || {}).event || '') + '</span><button class="' + (x.state === 'on' ? 'on' : '') + '" onclick="drScript(\'' + esc(x.name) + '\',' + (x.state === 'on' ? 'false' : 'true') + ')">' + (x.state === 'on' ? 'armed' : x.state) + '</button></div>').join('') : '<div class="empty">none</div>';
+  document.getElementById('room').textContent = (room && room.text) || '';
+}
+async function drUndo(id){ const r = await call('ui.directive.undo', {session_id:sid(), id}); status(r && r.ok ? 'undone' : ((r && r.error) || 'undo failed'), r && r.ok ? 'ok' : 'err'); drLoad(); }
+async function drAnswer(id, answer){ const r = await call('ui.directive.answer', {session_id:sid(), id, answer}); status(r && r.ok ? 'answered ' + answer : ((r && r.error) || 'answer failed'), r && r.ok ? 'ok' : 'err'); drLoad(); }
+async function drPolicy(target, mode){ const r = await call('ui.policy.set', {session_id:sid(), target, mode}); status(r && r.ok ? target + ' → ' + mode : ((r && r.error) || 'policy failed'), r && r.ok ? 'ok' : 'err'); drLoad(); }
+async function drScript(name, on){ const r = await call('ui.script.enable', {name, on}); status(r && r.ok ? name + (on ? ' armed' : ' off') : ((r && r.error) || 'failed'), r && r.ok ? 'ok' : 'err'); drLoad(); }
+document.getElementById('sid').addEventListener('change', drLoad);
+// hosted beside the chat: the host tells us the session (the panel bridge's init); standalone: ?session_id=
+window.addEventListener('message', e => { const d = e.data; if(d && d.type === 'vera:panel:init' && d.session_id){ document.getElementById('sid').value = d.session_id; drLoad(); } });
+try{ const p = new URLSearchParams(location.search).get('session_id'); if(p) document.getElementById('sid').value = p; }catch(e){}
+drLoad();
+setInterval(drLoad, 8000);
+</script>
+<script src="/ui/vera-ui.js"></script>
+</body>
+</html>
