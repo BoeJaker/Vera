@@ -9626,6 +9626,10 @@ async def lifespan(app: FastAPI):
         # inventory and after skills/loop_profiles/agents, for the same reason -
         # it projects onto the live registries and must see all of them.
         os.path.join(_here, "registry/registry_capabilities.py"),
+        # The widget registry (UI redesign): every part of the UI as a record -
+        # templates, instances, the registry panel. Beside the agent registry
+        # because it projects the panel registry (UI_PANELS) as built-ins.
+        os.path.join(_here, "widgets/widget_registry.py"),
         # Planning styles: additive alternatives to the loop's own planner
         # (plan.styles / plan.detailed). Loaded late so plan.detailed's default
         # capability catalogue is the complete registry, not a partial one.

@@ -7232,12 +7232,46 @@ function dashResetLayout(){ _dashCtl && _dashCtl.reset(); }
 function dashOpenWidgetLoader(){ _dashCtl && _dashCtl.openLoader(); }
 function dashHideWidget(wid){ _dashCtl && _dashCtl.hide(wid); }
 function dashShowWidget(wid){ _dashCtl && _dashCtl.show(wid); }
+// ── The widget registry's placements (UI redesign) — a widget placed on this dashboard through
+// widget.template.instantiate(where='dashboard', host='main') is realised here: a panel-backed template becomes a
+// VeraDash dynamic widget (the same thing the "+ Add Widget" picker makes); other forms wait for their renderer
+// (noted in the console, never an error). Looked up on boot and every 30 s, so the aide's placement shows up
+// without a reload; a removed instance takes its widget away again.
+let _dashPlacedTimer=null;
+const _dashPlaced={};   // instance id → widget id
+async function _dashPlacedSync(){
+  if(!_dashCtl) return;
+  const r=await api('/ui/widgets/instances?where=dashboard&host=main');
+  if(!r||!r.ok) return;
+  const seen=new Set();
+  for(const inst of (r.instances||[])){
+    seen.add(inst.id);
+    if(_dashPlaced[inst.id]) continue;
+    if(inst.panel){
+      const wid='dyn-'+String(inst.panel).replace(/[^a-zA-Z0-9_-]/g,'');
+      _dashPlaced[inst.id]=wid;
+      try{ await _dashCtl.addWidget(inst.panel); }catch(_){}
+      const w=document.querySelector('#dashGrid > [data-wid="'+wid+'"]'); if(w) w.dataset.instance=inst.id;
+    } else {
+      _dashPlaced[inst.id]='';
+      console.info('widget registry: '+inst.name+' ('+inst.form+') is placed on this dashboard but has no renderer yet');
+    }
+  }
+  for(const iid of Object.keys(_dashPlaced)){
+    if(seen.has(iid)) continue;
+    const wid=_dashPlaced[iid]; delete _dashPlaced[iid];
+    const w=wid?document.querySelector('#dashGrid > [data-wid="'+wid+'"][data-instance="'+iid+'"]'):null;
+    if(w){ try{ w.querySelector('[data-vd-remove]')?.click(); }catch(_){} }
+  }
+}
+function _dashPlacedStart(){ if(_dashPlacedTimer) return; setTimeout(_dashPlacedSync,1200); _dashPlacedTimer=setInterval(_dashPlacedSync,30000); }
 (function _dashBootVeraDash(){
   function go(){
     const g=document.getElementById('dashGrid'); if(!g) return;
     if(!window.VeraDash){ return setTimeout(go,60); }   // wait for /ui/vera-dashboard.js
     _dashCtl=VeraDash.init(g,{key:'main',loader:true,popout:true,
       editBtn:'dashEditBtn',hiddenPicker:'dashHiddenPicker',hiddenChips:'dashHiddenChips'});
+    _dashPlacedStart();
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',go,{once:true});
   else go();
