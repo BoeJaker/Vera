@@ -73,7 +73,22 @@
     '.lhm-cta{flex-shrink:0;margin:6px 7px 7px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--r-sm,6px);background:var(--bg2);color:var(--text);font-family:var(--sans);font-size:10.5px;text-align:left;cursor:pointer}',
     '.lhm-cta:hover{border-color:var(--acc);color:var(--acc)}',
     '.lhm-topmode .lhm-cta{display:none!important}',
-    /* every part is a widget: edit mode outlines and names them */
+    /* every part is a widget: edit mode outlines and names them; ⚙ opens the part's record, ⧉ saves it as a template */
+    '.lhm-wbar{display:none;position:absolute;top:2px;right:4px;z-index:6;gap:2px}',
+    '.lhm-editing .lhm-wbar{display:flex}',
+    '.lhm-wbar button{width:18px;height:18px;border:1px solid var(--border);border-radius:var(--r-sm,4px);background:var(--bg1);color:var(--dim2);font-size:10px;line-height:1;cursor:pointer;padding:0}',
+    '.lhm-wbar button:hover{color:var(--acc);border-color:var(--acc)}',
+    '.lhm-wcfg{display:none;flex-direction:column;gap:6px;padding:8px;overflow-y:auto;flex:1;min-height:0}',
+    '.lhm-wcfgmode .lhm-wcfg{display:flex}',
+    '.lhm-wcfgmode .lhm-det > :not(.lhm-hd):not(.lhm-wcfg){display:none!important}',
+    '.lhm-wcfg .lhm-wr{display:grid;grid-template-columns:64px 1fr;border-bottom:1px solid var(--border);font-size:10.5px}',
+    '.lhm-wcfg .lhm-wr .k{font-family:var(--mono);font-size:8px;text-transform:uppercase;letter-spacing:1px;color:var(--dim);padding:5px 0}',
+    '.lhm-wcfg .lhm-wr .v{padding:4px 0 4px 6px;line-height:1.45;word-break:break-word;color:var(--text)}',
+    '.lhm-wcfg .lhm-wr .v code{font-family:var(--mono);font-size:9.5px;color:var(--acc)}',
+    '.lhm-wcfg .lhm-wacts{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}',
+    '.lhm-wcfg .lhm-wacts button{font-size:10px;padding:3px 8px;border:1px solid var(--border);border-radius:var(--r-sm,5px);background:var(--bg2);color:var(--text);cursor:pointer}',
+    '.lhm-wcfg .lhm-wacts button:hover{border-color:var(--acc);color:var(--acc)}',
+    '.lhm-wcfg .lhm-wnote{font-family:var(--mono);font-size:8.5px;color:var(--dim2)}',
     '.lhm-editing [data-w]{outline:1px dashed var(--acc);outline-offset:-1px;position:relative}',
     '.lhm-editing [data-w]::before{content:attr(data-w);position:absolute;top:0;left:0;z-index:5;font-family:var(--mono);font-size:8px;line-height:1;padding:2px 4px;background:var(--acc);color:var(--on-acc,#fff);border-radius:0 0 4px 0;pointer-events:none;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}',
     /* hosted elsewhere (the harness draws the rail + tab strip): the owner keeps header, panes and CTA */
@@ -100,6 +115,7 @@
   var _cfg = null, _host = null, _rail = null, _det = null, _hd = null, _top = null, _cta = null;
   var _active = '', _activeTab = '', _topMode = false, _editing = false;
   var _pid = '', _embedded = false, _hosted = false, _picking = false;   // _picking: the click is ours, not the user's
+  var _wcfg = null, _wcfgOpen = false;   // the record sheet
 
   // the tab strip's elements, keyed by the tab id the owner gave the menu
   function _tabEl(id){
@@ -184,6 +200,8 @@
     if(_host) _host.classList.toggle('lhm-topmode', _topMode);
     if(_host) _host.classList.toggle('lhm-editing', _editing);
     _renderRail(); _renderHeader(); _renderTabs(); _renderCta(); _renderTop();
+    if(_editing) _wireBars();
+    if(!_editing && _wcfgOpen) closeRecord();
     _publish();
   }
 
@@ -209,7 +227,71 @@
     _active = m.id; _activeTab = tabId; m._last = tabId; _topMode = false; render();
   }
   function toggleTop(on){ _topMode = (on == null) ? !_topMode : !!on; render(); }
-  function toggleEdit(on){ _editing = (on == null) ? !_editing : !!on; render(); }
+  function toggleEdit(on){ _editing = (on == null) ? !_editing : !!on; if(!_editing) closeRecord(); render(); }
+
+  // ── every part's record: the widget registry's template behind it ──────
+  function _base(){ try{ return (_cfg && _cfg.base) || window._veraBase || location.origin; }catch(e){ return ''; } }
+  function _tplOf(el){ return el ? (el.getAttribute('data-tpl') || '') : ''; }
+  function _wireBars(){
+    if(!_host) return;
+    var parts = _host.querySelectorAll('[data-w]');
+    Array.prototype.forEach.call(parts, function(el){
+      if(el.querySelector(':scope > .lhm-wbar')) return;
+      var bar = _el('div', 'lhm-wbar');
+      var cfgB = _el('button', '', '⚙'); cfgB.title = 'This widget\'s record';
+      cfgB.addEventListener('click', function(ev){ ev.stopPropagation(); openRecord(_tplOf(el), el.getAttribute('data-w')); });
+      var saveB = _el('button', '', '⧉'); saveB.title = 'Save as a template of your own';
+      saveB.addEventListener('click', function(ev){ ev.stopPropagation(); saveAsTemplate(_tplOf(el), el.getAttribute('data-w')); });
+      bar.appendChild(cfgB); bar.appendChild(saveB);
+      if(getComputedStyle(el).position === 'static') el.style.position = 'relative';
+      el.appendChild(bar);
+    });
+  }
+  function _row(k, v){ var r = _el('div', 'lhm-wr'); r.appendChild(_el('span', 'k', k)); var vv = _el('span', 'v'); vv.innerHTML = v; r.appendChild(vv); return r; }
+  function _escH(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]; }); }
+  function openRecord(tplId, label){
+    if(!_wcfg) return;
+    _wcfg.innerHTML = ''; _wcfgOpen = true; _host.classList.add('lhm-wcfgmode');
+    var hd = _el('div', 'lhm-wnote', (label || 'widget') + (tplId ? ' · ' + tplId : ' · no record yet')); _wcfg.appendChild(hd);
+    var closeRow = _el('div', 'lhm-wacts'); var x = _el('button', '', '✕ close'); x.addEventListener('click', closeRecord); closeRow.appendChild(x); _wcfg.appendChild(closeRow);
+    if(!tplId){ _wcfg.appendChild(_el('div', 'lhm-wnote', 'This part has no template in the registry yet — ⧉ saves it as one.')); return; }
+    fetch(_base() + '/ui/widgets/template?id=' + encodeURIComponent(tplId)).then(function(r){ return r.json(); }).then(function(r){
+      if(!r || !r.ok){ _wcfg.appendChild(_el('div', 'lhm-wnote', (r && r.error) || 'registry unavailable')); return; }
+      var t = r.template, reads = t.reads || {}, draw = t.draw || {};
+      _wcfg.appendChild(_row('template', _escH(t.id) + ' · v' + (t.version || 1)));
+      _wcfg.appendChild(_row('form', _escH(t.form)));
+      _wcfg.appendChild(_row('reads', reads.cap ? '<code>' + _escH(reads.cap) + '</code>' + (reads.args && Object.keys(reads.args).length ? ' ' + _escH(JSON.stringify(reads.args)) : '') + (reads.note ? ' · ' + _escH(reads.note) : '') : '—'));
+      _wcfg.appendChild(_row('frame', _escH(t.frame || '—')));
+      _wcfg.appendChild(_row('draw', _escH(draw.form || t.form) + ' · size ' + _escH(draw.size || 'M')));
+      _wcfg.appendChild(_row('can', _escH((t.can || []).join(' · ') || '—')));
+      _wcfg.appendChild(_row('placed', _escH((t.placements || []).map(function(p){ return p.where + (p.count > 1 ? ' ×' + p.count : ''); }).join(' · ') || '—')));
+      var acts = _el('div', 'lhm-wacts');
+      var sv = _el('button', '', '⧉ Save as my template'); sv.addEventListener('click', function(){ saveAsTemplate(tplId, label); }); acts.appendChild(sv);
+      ['dashboard', 'canvas', 'LHM'].forEach(function(w){ var b = _el('button', '', '+ ' + w); b.title = 'Place into ' + w; b.addEventListener('click', function(){ placeInto(tplId, w); }); acts.appendChild(b); });
+      _wcfg.appendChild(acts);
+    }).catch(function(){ _wcfg.appendChild(_el('div', 'lhm-wnote', 'registry unavailable')); });
+  }
+  function closeRecord(){ _wcfgOpen = false; if(_host) _host.classList.remove('lhm-wcfgmode'); }
+  function saveAsTemplate(tplId, label){
+    var name = ''; try{ name = window.prompt('Name for your template', (label || 'widget').split(' · ')[0] + ' (mine)') || ''; }catch(e){}
+    if(!name) return;
+    var go = function(t){
+      var copy = Object.assign({}, t || {}, { id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64), name: name,
+        source: { origin: 'you', from: 'the chat LHM', from_builtin: tplId || '', panel: (t && t.source && t.source.panel) || '' } });
+      if(!copy.form){ copy.form = ((label || '').split(' · ')[1] || 'list').trim(); }
+      if(!copy.reads) copy.reads = { cap: '', args: {} };
+      copy.placed = (t && t.placements ? t.placements.map(function(p){ return p.where; }) : ['LHM']); delete copy.placements; delete copy.instances;
+      return fetch(_base() + '/ui/widgets/templates/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ template: copy, force: !tplId }) })
+        .then(function(r){ return r.json(); }).then(function(r){ if(_wcfg && _wcfgOpen) _wcfg.appendChild(_el('div', 'lhm-wnote', r && r.ok ? 'saved ' + r.template.id + ' · v' + r.template.version : 'save failed: ' + ((r && (r.error || (r.problems || []).join('; '))) || '?'))); });
+    };
+    if(tplId) fetch(_base() + '/ui/widgets/template?id=' + encodeURIComponent(tplId)).then(function(r){ return r.json(); }).then(function(r){ return go(r && r.ok ? r.template : null); }).catch(function(){ go(null); });
+    else go(null);
+  }
+  function placeInto(tplId, where){
+    var sid = ''; try{ sid = _cfg.sessionId ? String(_cfg.sessionId() || '') : ''; }catch(e){}
+    fetch(_base() + '/ui/widgets/instantiate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: tplId, where: where, host: where === 'dashboard' ? 'main' : '', session_id: sid }) })
+      .then(function(r){ return r.json(); }).then(function(r){ if(_wcfg && _wcfgOpen) _wcfg.appendChild(_el('div', 'lhm-wnote', r && r.ok ? 'placed into ' + where + ' · ' + r.instance.id : 'place failed: ' + ((r && r.error) || '?'))); });
+  }
 
   function spec(){
     if(!_cfg) return null;
@@ -253,9 +335,9 @@
       while(_host.firstChild) _det.appendChild(_host.firstChild);
       _host.appendChild(_det);
     } else _det = _host.querySelector(':scope > .lhm-det');
-    _rail = _el('div', 'lhm-rail'); _rail.setAttribute('data-w', 'rail · ' + (cfg.menus || []).length + ' icons · order · badges');
+    _rail = _el('div', 'lhm-rail'); _rail.setAttribute('data-w', 'rail · ' + (cfg.menus || []).length + ' icons · order · badges'); _rail.setAttribute('data-tpl', 'lhm:rail');
     _host.insertBefore(_rail, _det);
-    _hd = _el('div', 'lhm-hd'); _hd.setAttribute('data-w', 'menu header · header');
+    _hd = _el('div', 'lhm-hd'); _hd.setAttribute('data-w', 'menu header · header'); _hd.setAttribute('data-tpl', 'lhm:header');
     _hd.appendChild(_el('h2', '', '')); _hd.appendChild(_el('span', 'lhm-meta mono', ''));
     var ed = _el('button', 'lhm-edit', '✎'); ed.title = 'Edit this menu — every part is a widget'; ed.addEventListener('click', function(){ toggleEdit(); }); _hd.appendChild(ed);
     _det.insertBefore(_hd, _det.firstChild);
@@ -263,10 +345,12 @@
     if(strip && !strip.getAttribute('data-w')) strip.setAttribute('data-w', 'tabs · strip');
     _top = _el('div', 'lhm-top'); _top.setAttribute('data-w', 'top list · list');
     _det.insertBefore(_top, _hd.nextSibling);
-    _cta = _el('button', 'lhm-cta'); _cta.setAttribute('data-w', 'cta · button');
+    _det.insertBefore(_wcfg, _top.nextSibling);
+    _cta = _el('button', 'lhm-cta'); _cta.setAttribute('data-w', 'cta · button'); _cta.setAttribute('data-tpl', 'lhm:cta');
+    _wcfg = _el('div', 'lhm-wcfg'); _wcfg.setAttribute('data-w', 'widget record · sheet');
     _cta.addEventListener('click', function(){ var m = _menu(_active); if(m && m.cta && m.cta.run){ try{ m.cta.run(); }catch(e){} } });
     _det.appendChild(_cta);
-    (cfg.panes || []).forEach(function(p){ var el = document.getElementById(p.id); if(el && !el.getAttribute('data-w')) el.setAttribute('data-w', p.w || (p.id + ' · list')); });
+    (cfg.panes || []).forEach(function(p){ var el = document.getElementById(p.id); if(!el) return; if(!el.getAttribute('data-w')) el.setAttribute('data-w', p.w || (p.id + ' · list')); if(p.tpl) el.setAttribute('data-tpl', p.tpl); });
     window.addEventListener('message', _onMessage);
     // the owner's tab strip may be clicked directly: follow it
     if(strip) strip.addEventListener('click', function(ev){ if(_picking) return; var t = ev.target && ev.target.closest ? ev.target.closest('.ctab') : null; if(!t || !cfg.tabIdOf) return; var id = ''; try{ id = cfg.tabIdOf(t) || ''; }catch(e){} if(id) setTimeout(function(){ setActiveTab(id); }, 0); });
@@ -312,5 +396,6 @@
   }
 
   window.VeraLHM = { mount: mount, pick: pick, setActiveTab: setActiveTab, toggleTop: toggleTop, toggleEdit: toggleEdit, render: render, spec: spec, absorb: absorb, css: _css,
+    openRecord: openRecord, closeRecord: closeRecord, saveAsTemplate: saveAsTemplate, placeInto: placeInto,
     get active(){ return { menu: _active, tab: _activeTab, top: _topMode, editing: _editing, hosted: _hosted, embedded: _embedded }; } };
 })();

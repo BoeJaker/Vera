@@ -11214,7 +11214,9 @@ Your task: decide what to do next to advance toward the goal.
     const initial=(LHM_MENUS.find(m=>m.tabs.some(t=>t.id===initialTab))||LHM_MENUS[1]).id+'/'+initialTab;
     VeraLHM.mount({host, title:'Vera', tabBar:'.ctx-tab-bar', menus:LHM_MENUS, tabEl:_lhmTabEl, tabIdOf:_lhmTabIdOf, openNow:_lhmOpenNow,
       sessionId:()=>SID, initial, silentInitial:true,
-      panes:[{id:'rpHist',w:'sessions · list'},{id:'rpCfg',w:'settings · form'},{id:'rpCaps',w:'capabilities · list'},{id:'rpPanels',w:'panels · list'},{id:'rpLoop',w:'loop program · form'},{id:'ctxCanvas',w:'context galaxy · graph'},{id:'paneLoopGraph',w:'loop graph · graph'},{id:'paneMemGraph',w:'memory graph · graph'},{id:'paneCode',w:'file tree · tree'},{id:'paneBrowser',w:'browser · panel'},{id:'paneMonitor',w:'monitor · log'}],
+      base:BASE,
+      // every pane is a widget with a record in the registry (widget.template.get lhm:…); ⚙ in edit mode opens it
+      panes:[{id:'rpHist',w:'sessions · list',tpl:'lhm:sessions'},{id:'rpCfg',w:'settings · form'},{id:'rpCaps',w:'capabilities · list'},{id:'rpPanels',w:'panels · list'},{id:'rpLoop',w:'loop program · form',tpl:'lhm:loop-graph'},{id:'ctxCanvas',w:'context galaxy · graph',tpl:'lhm:ctx-galaxy'},{id:'ctxMeter',w:'budget bar · meter',tpl:'lhm:ctx-budget'},{id:'paneLoopGraph',w:'loop graph · graph',tpl:'lhm:loop-graph'},{id:'paneMemGraph',w:'memory graph · graph',tpl:'lhm:memory-graph'},{id:'paneCode',w:'file tree · tree',tpl:'lhm:file-tree'},{id:'sbxSessionTools',w:'sandbox actions · controls',tpl:'lhm:actions'},{id:'paneBrowser',w:'browser · panel'},{id:'paneMonitor',w:'monitor · log'}],
       onPick:()=>{ if(host.classList.contains('slim')) toggleRight(); }});
     // the rail's badge and the Open now rows follow the beside-panel
     try{ window.addEventListener('vera:panel-mounted', ()=>{ setTimeout(()=>VeraLHM.render(),0); }); }catch(_){}
