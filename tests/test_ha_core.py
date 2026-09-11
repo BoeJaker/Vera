@@ -96,6 +96,23 @@ class TestIsAvailable:
     def test_reachable_states(self, state):
         assert core.is_available(E("light.x", state)) is True
 
+    @pytest.mark.parametrize("domain", ["scene", "button", "script", "event"])
+    def test_unknown_is_the_resting_state_of_a_stateless_domain(self, domain):
+        # Found live: 18 of 49 entities reported "unavailable" were scenes
+        # nobody had activated. A scene has no state until it runs, so calling
+        # that a fault hides the devices that are genuinely unreachable.
+        assert core.is_available(E(domain + ".x", "unknown")) is True
+
+    def test_a_stateless_domain_can_still_be_unavailable(self):
+        assert core.is_available(E("scene.x", "unavailable")) is False
+
+    def test_summary_no_longer_counts_scenes_as_broken(self):
+        mixed = [E("scene.a", "unknown"), E("scene.b", "unknown"),
+                 E("light.dead", "unavailable")]
+        s = core.summarise(mixed)
+        assert s["unavailable_count"] == 1
+        assert s["unavailable"] == ["light.dead"]
+
 
 class TestScoreMatch:
     def test_exact_entity_id_wins_outright(self):
@@ -189,8 +206,10 @@ class TestSummarise:
         s = core.summarise(STATES)
         assert s["total"] == len(STATES)
         assert s["domains"]["switch"] == 2
-        assert s["unavailable_count"] == 5
+        # The three genuinely-unreachable devices, NOT the two idle scenes.
+        assert s["unavailable_count"] == 3
         assert "light.gaming" in s["unavailable"]
+        assert "scene.movie_night" not in s["unavailable"]
 
     def test_empty(self):
         assert core.summarise([])["total"] == 0

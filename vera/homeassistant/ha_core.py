@@ -90,10 +90,30 @@ def friendly_name(entity: Dict[str, Any]) -> str:
     return object_id.replace("_", " ").strip()
 
 
+#: Domains that hold no state of their own, so `unknown` is their resting
+#: value rather than a fault. A scene is not "unreachable" because nobody has
+#: activated it yet, and counting 18 of them as broken hides the devices that
+#: genuinely are.
+STATELESS_DOMAINS = frozenset({
+    "scene", "button", "input_button", "event", "notify", "tts", "stt",
+    "conversation", "script",
+})
+
+
 def is_available(entity: Dict[str, Any]) -> bool:
-    """HA reports a device it cannot reach as a state, not as an absence."""
-    return str(entity.get("state") or "").lower() not in (
-        "unavailable", "unknown", "none", "")
+    """Whether HA can currently reach the thing behind this entity.
+
+    `unavailable` always means unreachable. `unknown` usually does too — but
+    for a stateless domain it is the normal resting value, so treating it as a
+    fault would report a working house as half-broken.
+    """
+    state = str(entity.get("state") or "").lower()
+    if state == "unavailable":
+        return False
+    domain, _ = split_entity(str(entity.get("entity_id") or ""))
+    if state in ("unknown", "none", ""):
+        return domain in STATELESS_DOMAINS
+    return True
 
 
 _WORD_RE = re.compile(r"[a-z0-9]+")
