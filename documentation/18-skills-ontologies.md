@@ -95,6 +95,19 @@ rejects a generated preference for a disallowed-effect capability. This report
 does not itself activate curated hints, disable generation, or delete stored
 relations; an exact export must be preserved before a later runtime change.
 
+Persistent LLM generation through `cap_ontology.auto_pair`, `auto_group`, and
+`auto_grid` is now disabled by default. An operator can temporarily restore the
+legacy behavior with `VERA_CAP_ONTOLOGY_AUTO_GENERATION=enabled`; clearing it or
+setting it to `disabled` is the rollback. Invalid values fail closed. The
+non-saving editor suggestion remains available for explicit human review.
+
+`cap_ontology.snapshot` exports every stored manual and generated relation in a
+canonical, content-addressed, restorable envelope. It preserves relation type,
+description, direction, strength, confidence, wiring, tags, provenance, and
+update time; duplicate pairs, malformed values, or oversized exports fail
+closed. Disabling generation does not remove existing relations. Take and retain
+this snapshot before any later deletion or migration.
+
 ### Planner integration & the "adjacent hidden cap" trick
 
 `cap_ontology.context_for` returns a snippet for a planner system-prompt. When an agent has a restricted `domain_caps` allowlist, this returns relations *between an allowed cap and a hidden cap* — described **by the relation only**. The planner thus learns that an adjacent capability exists (and how it relates) without being able to call it directly: situational awareness without privilege escalation.
