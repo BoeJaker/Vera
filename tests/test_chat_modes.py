@@ -232,6 +232,20 @@ def test_diff_fences_are_coloured_by_line():
     assert ".hl-add{background:rgba(95,207,154,.14)" in HTML and ".hl-del{background:rgba(232,112,107,.14)" in HTML
 
 
+def test_composer_companions_follow_the_card():
+    # the chips, the editor and the podcast bar are width-matched to the composer card in the minimal view
+    assert 'body[data-view="minimal"].has-msgs:not(.has-panel) #docChips,body[data-view="minimal"].has-msgs:not(.has-panel) #docEditor,body[data-view="minimal"].has-msgs:not(.has-panel) #podcastBar{max-width:760px;width:calc(100% - 24px);margin:0 auto;' in HTML
+    assert 'body[data-view="minimal"].has-msgs.has-panel #docChips,' in HTML
+
+
+def test_a_pasted_diff_log_or_csv_is_recognised():
+    lang = _fn("_docInferLang")
+    assert "return 'diff';" in lang and "return 'log';" in lang and "return 'csv';" in lang
+    title = _fn("_docInferTitle")
+    assert "+++ b" in title and "'patch · '+n+' hunk'" in title
+    assert "l==='diff'?'diff'" in _fn("_paRenderAttachments")
+
+
 def test_slash_menu_is_hidden_until_it_has_rows():
     assert ".slash-menu:empty{display:none!important}" in HTML
     assert "menu.style.display='flex'; _slashVisible=true;" in HTML
