@@ -814,7 +814,11 @@ body[data-cols~="canvas"] #canvasColumn,body[data-cols~="graph"] #graphColumn{di
 .tri-hd .nowbar i{width:6px;height:6px;border-radius:50%;background:var(--acc3,#e09a55);animation:pr 2.2s infinite}
 .tri-bd{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column}
 #canvasColumn vera-canvas{--vc-max:none;margin:0;flex:1;min-height:0}
-#graphColumnFrame{flex:1;width:100%;min-height:0;border:none;background:var(--bg0)}
+#graphColumn vera-context-graph{flex:1;min-height:0}
+/* the records in the focused turn's context run to the message: drawn over the columns, one collector per source */
+body.has-cols #chatColumn{position:relative}
+#ctxRunsOverlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:5;display:none}
+body[data-cols~="graph"] #ctxRunsOverlay{display:block}
 .tb-btn.col-on{color:var(--acc);border-color:var(--acc)}
 /* an empty minimal session lays its system lines out in a row; beside a column they wrap and stay in the chat */
 body[data-view="minimal"]:not(.has-msgs).has-cols #msgs{flex-wrap:wrap;overflow:hidden}
@@ -2235,6 +2239,7 @@ html[data-blocks="off"] .pa-att{background:transparent}
          the SESSION canvas and the memory graph, siblings of #chatStack.
          CH.togglePage('canvas'|'graph') / ?pages=chat,canvas,graph show them;
          the canvas element and the graph iframe mount on first open. -->
+    <svg id="ctxRunsOverlay" aria-hidden="true"></svg>
     <div id="canvasColumn" class="tri-col" data-col="canvas">
       <div class="tri-hd"><b>Session canvas</b><span class="lbl" id="cvColSub"></span><span class="sp"></span>
         <span class="nowbar" title="Items in the NOW band"><i></i><b>NOW</b><span id="cvColNow">0</span></span>
@@ -2242,9 +2247,10 @@ html[data-blocks="off"] .pa-att{background:transparent}
       <div class="tri-bd" id="canvasColumnBody"></div>
     </div>
     <div id="graphColumn" class="tri-col" data-col="graph">
-      <div class="tri-hd"><b>Graph</b><span class="lbl" id="grColSub">memory graph</span><span class="sp"></span>
+      <div class="tri-hd"><b>Graph</b><span class="lbl" id="grColSub">context graph</span><span class="sp"></span>
         <button class="btn xs" onclick="CH.togglePage('graph')" title="Close the graph column">&#215;</button></div>
-      <div class="tri-bd"><iframe id="graphColumnFrame" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" title="Graph column"></iframe></div>
+      <!-- the design's context graph: the Context menu grown into the full graph, beside the transcript -->
+      <div class="tri-bd" id="graphColumnBody"></div>
     </div>
 
     <!-- Panel host: hidden by default. CH.panelOpen(name) shows it
@@ -5416,32 +5422,59 @@ IMPORTANT:
     try{ window._veraBase=BASE; }catch(_){}
   }
   function _canvasColumnIdle(){ if(_cvColTimer&&!_pages.has('canvas')){ clearInterval(_cvColTimer); _cvColTimer=null; } }
-  // the graph column: the memory-graph panel through the chat's panel registry, as panelOpen would load it
-  async function _graphColumnMount(){
-    const frame=document.getElementById('graphColumnFrame'); if(!frame||_grMounted) { _graphAnchorPost(); return; }
-    _grMounted=true;
-    let src='';
-    try{ await _loadUiPanels(); const p=_resolvePanel('memory-graph'); if(p) src=await _panelSrcAsync(p); }catch(_){}
-    if(!src) src=_PANEL_ENDPOINT_ALIASES['memory-graph']||'/ui/panels/file/memory_graph_panel.html';
-    try{ if(frame.contentWindow){ frame.contentWindow._veraBase=BASE; frame.contentWindow._veraSessionId=SID; } }catch(_){}
-    frame.onload=()=>{ try{ frame.contentWindow?.postMessage({type:'vera:base', url:BASE}, '*'); frame.contentWindow?.postMessage({type:'vera:panel:init', panel_id:'memory-graph', session_id:SID}, '*'); }catch(_){} _graphAnchorPost(true); };
-    frame.src=(src.charAt(0)==='/'&&BASE)?(BASE.replace(/\/$/,'')+src):src;
-    const msgs=document.getElementById('msgs');
-    if(msgs){ msgs.addEventListener('scroll', ()=>_graphAnchorPost(), {passive:true}); msgs.addEventListener('click', ev=>{ const w=ev.target&&ev.target.closest&&ev.target.closest('.mwrap'); if(w){ _grFocusMid=w.dataset.mid||''; _graphAnchorPost(true); } }); }
+  // the graph column: the design's context graph — the Context menu grown into the full graph, beside the transcript.
+  // The chat's own records (CTX_NODES / CTX_EDGES), the live loop's events and the goals feed <vera-context-graph>
+  // (the chat's own element; nothing else's graph); the records in the focused turn's context run to the message.
+  let _ctxCol=null, _ctxColTimer=null, _ctxColSig='', _ctxColPlanT=0;
+  function _graphColumnMount(){
+    const host=document.getElementById('graphColumnBody'); if(!host) return;
+    if(!_ctxCol||!host.contains(_ctxCol)){
+      if(!(window.customElements&&window.customElements.get('vera-context-graph'))){ if(!host.querySelector('.sys-msg')) host.innerHTML='<div class="sys-msg" style="padding:12px">The context graph is loading…</div>'; if(!_ctxColTimer) _ctxColTimer=setInterval(_graphColumnTick, 800); return; }
+      host.innerHTML=''; _ctxCol=document.createElement('vera-context-graph'); host.appendChild(_ctxCol);
+      _ctxCol.addEventListener('vera:ctx:rendered', ()=>_ctxRunsDraw());
+      _ctxCol.addEventListener('vera:ctx:pick', ev=>{ const d=ev.detail||{}; if(d.open&&d.id){ try{ nodeClick(d.id); }catch(_){} } });
+      _ctxCol.addEventListener('vera:ctx:toggle', ev=>{ const id=(ev.detail||{}).id; const n=CTX_NODES.find(x=>x.id===id); if(!n) return; n.included=n.included===false; try{ renderCtxList(); }catch(_){} _ctxColSig=''; _ctxColumnSync(_grFocusMid||''); });
+      _ctxCol.addEventListener('vera:ctx:focus-turn', ev=>{ const mid=(ev.detail||{}).mid||''; if(!mid) return; _grFocusMid=mid; const w=document.querySelector('#msgs .mwrap[data-mid="'+mid+'"]'); try{ w&&w.scrollIntoView({block:'center',behavior:'smooth'}); }catch(_){} _graphAnchorPost(true); });
+      const msgs=document.getElementById('msgs');
+      if(msgs&&!msgs._ctxColBound){ msgs._ctxColBound=true; msgs.addEventListener('scroll', ()=>_graphAnchorPost(), {passive:true}); msgs.addEventListener('click', ev=>{ const w=ev.target&&ev.target.closest&&ev.target.closest('.mwrap'); if(w){ _grFocusMid=w.dataset.mid||''; _graphAnchorPost(true); } }); }
+      window.addEventListener('resize', ()=>_ctxRunsDraw());
+    }
+    if(!_ctxColTimer) _ctxColTimer=setInterval(_graphColumnTick, 800);
+    _graphAnchorPost(true);
+  }
+  function _graphColumnTick(){ if(!_pages.has('graph')){ clearInterval(_ctxColTimer); _ctxColTimer=null; _ctxRunsDraw(); return; } const host=document.getElementById('graphColumnBody'); if(!_ctxCol||!host||!host.contains(_ctxCol)){ _graphColumnMount(); return; } _ctxColumnSync(_grFocusMid||''); }
+  // feed the element when the records or the focus changed (a signature, so a tick costs nothing)
+  function _ctxColumnSync(mid){
+    if(!_ctxCol) return;
+    const w=_focusedTurn(); mid=mid||(w?(w.dataset.mid||''):'');
+    const incl=CTX_NODES.filter(n=>n.included!==false).map(n=>n.id);
+    const sig=CTX_NODES.length+':'+CTX_EDGES.length+':'+incl.length+':'+(CTX_NODES[0]&&CTX_NODES[0].id)+':'+mid+':'+_ctxQuery;
+    if(sig!==_ctxColSig){ _ctxColSig=sig; const reads={}; if(mid) reads[mid]=incl;
+      _ctxCol.setContext(CTX_NODES, CTX_EDGES.map(e=>({from:e.from,to:e.to,label:e.type||e.label||''})), {focus:incl, reads, color:srcCol, turn:mid?'turn '+mid:''}); }
+    if(Date.now()-_ctxColPlanT>60000){ _ctxColPlanT=Date.now(); fetch(BASE+'/dream/goals/list').then(r=>r.json()).then(r=>{ try{ _ctxCol&&_ctxCol.setPlan((r&&r.goals)||[]); }catch(_){} }).catch(()=>{}); }
+    const s=document.getElementById('grColSub'); if(s) s.textContent='context graph · '+incl.length+' of '+CTX_NODES.length+' in the prompt';
+  }
+  // the live loop's events, teed into the column's loop lane (the same stream the loop card and the rail's graph read)
+  function _ctxColLoopEv(ev){ if(_ctxCol&&_pages.has('graph')) _ctxCol.appendLoopEvent(ev); }
+  // the records in the focused turn's context run to the message: one collector per source beside its cluster, one
+  // connector per source to the channel between the columns, then into the message's edge — never across a card
+  function _ctxRunsDraw(){
+    const svg=document.getElementById('ctxRunsOverlay'); if(!svg) return;
+    const col=document.getElementById('chatColumn'), gcol=document.getElementById('graphColumn'), w=_focusedTurn();
+    if(!_pages.has('graph')||!_ctxCol||!col||!gcol||!w){ svg.innerHTML=''; return; }
+    const R=col.getBoundingClientRect(), M=w.getBoundingClientRect(), gc=gcol.getBoundingClientRect();
+    svg.setAttribute('viewBox','0 0 '+Math.round(R.width)+' '+Math.round(R.height));
+    const lit=_ctxCol.positions().filter(p=>p.lit&&p.y>gc.top+40&&p.y<gc.bottom&&p.x>gc.left&&p.x<gc.right);
+    const bySrc={}; lit.forEach(p=>{ (bySrc[p.source]=bySrc[p.source]||[]).push(p); });
+    const chX=gc.left-R.left-6, mx=M.right-R.left; let out='', gi=0;
+    Object.keys(bySrc).forEach(src=>{ const g=bySrc[src], c=g[0].col; const cx=Math.min.apply(null,g.map(p=>p.x-p.rim))-R.left-12; const ys=g.map(p=>p.y-R.top); const y0=Math.min.apply(null,ys), y1=Math.max.apply(null,ys), cy=(y0+y1)/2;
+      const my=Math.max(M.top-R.top+12, Math.min(M.bottom-R.top-12, M.top-R.top+12+gi*8));
+      const L=(x1,y1,x2,y2)=>'<line x1="'+x1.toFixed(1)+'" y1="'+y1.toFixed(1)+'" x2="'+x2.toFixed(1)+'" y2="'+y2.toFixed(1)+'" stroke="'+c+'"><title>'+src+' · '+g.length+' in this prompt</title></line>';
+      g.forEach(p=>{ out+=L(p.x-p.rim-R.left, p.y-R.top, cx, p.y-R.top); });
+      out+=L(cx,y0,cx,y1)+L(cx,cy,chX,cy)+L(chX,cy,chX,my)+L(chX,my,mx,my); gi++; });
+    svg.innerHTML='<g fill="none" stroke-width="1.5" stroke-opacity=".8" stroke-linecap="round">'+out+'</g>';
   }
   let _grFocusMid='';
-  // the unified graph's families the chat owns: the turn's context (CTX_NODES/EDGES, retrieved into the focused turn)
-  // and the turns themselves — posted to the graph column whenever the anchor moves (families.js draws them)
-  let _grFamSig='';
-  function _graphFamiliesPost(frame, mid){
-    if(!frame||!frame.contentWindow) return;
-    const ctx={nodes:(CTX_NODES||[]).map(n=>({id:n.id,label:n.label,source:n.source||n.src||'',type:n.type||'',score:n.score,included:n.included!==false,text:String(n.text||'').slice(0,200)})), edges:(CTX_EDGES||[]).map(e=>({from:e.from||e.source,to:e.to||e.target,label:e.label||e.rel||''})), turn:mid||''};
-    const turns=[...document.querySelectorAll('#msgs .mwrap[data-mid]')].slice(-40).map(w=>({mid:w.dataset.mid, role:w.classList.contains('u')?'you':'aide', text:String((w.querySelector('.msg-body')||{}).textContent||'').trim().slice(0,60)}));
-    const sig=ctx.nodes.length+':'+(ctx.nodes[0]&&ctx.nodes[0].id)+':'+turns.length+':'+mid;
-    if(sig===_grFamSig) return; _grFamSig=sig;
-    frame.contentWindow.postMessage({type:'vera:graph:family', family:'context', payload:ctx},'*');
-    frame.contentWindow.postMessage({type:'vera:graph:family', family:'turns', payload:{turns}},'*');
-  }
   // which turn is in focus: the one the user picked, else the turn under the top third of the transcript, else the newest
   function _focusedTurn(){
     const msgs=document.getElementById('msgs'); if(!msgs) return null;
@@ -5453,11 +5486,10 @@ IMPORTANT:
   }
   function _graphAnchorPost(now){
     if(!_pages.has('graph')) return;
-    const send=()=>{ _grAnchorT=Date.now(); const w=_focusedTurn(); const frame=document.getElementById('graphColumnFrame');
+    const send=()=>{ _grAnchorT=Date.now(); const w=_focusedTurn();
       const rect=w?(r=>({top:r.top,left:r.left,width:r.width,height:r.height}))(w.getBoundingClientRect()):null;
       const msg={type:'vera:graph:anchor', mid:w?(w.dataset.mid||''):'', rect, session_id:SID||''};
-      try{ frame&&frame.contentWindow&&frame.contentWindow.postMessage(msg,'*'); }catch(_){}
-      try{ _graphFamiliesPost(frame, msg.mid); }catch(_){}
+      try{ _ctxColumnSync(msg.mid); _ctxRunsDraw(); }catch(_){}
       try{ const cv=document.querySelector('#canvasColumn vera-canvas'); if(cv) cv.dataset.focusMid=msg.mid; }catch(_){}
       return msg; };
     if(now||Date.now()-_grAnchorT>150){ if(_grAnchorTimer){ clearTimeout(_grAnchorTimer); _grAnchorTimer=null; } return send(); }
@@ -5467,7 +5499,7 @@ IMPORTANT:
   function _pagesOpenNow(){
     const out=[];
     if(_pages.has('canvas')) out.push({id:'session-canvas', label:'Session canvas', icon:'▤', origin:'you', placement:'column', close:()=>togglePage('canvas'), focus:()=>{ try{ document.querySelector('#canvasColumn vera-canvas')?.focus(); }catch(_){} }});
-    if(_pages.has('graph')) out.push({id:'memory-graph', label:'Memory graph', icon:'▤', origin:'you', placement:'column', close:()=>togglePage('graph'), focus:()=>{ try{ document.getElementById('graphColumnFrame')?.focus(); }catch(_){} }});
+    if(_pages.has('graph')) out.push({id:'context-graph', label:'Context graph', icon:'◎', origin:'you', placement:'column', close:()=>togglePage('graph'), focus:()=>{ try{ document.querySelector('#graphColumn vera-context-graph')?.focus(); }catch(_){} }});
     return out;
   }
   function _pagesMount(){ _pages=_pagesLoad(); if(_pages.size) _pagesApply(); else _PAGE_NAMES.forEach(n=>{ const b=document.getElementById(n==='canvas'?'colCanvasBtn':'colGraphBtn'); if(b) b.classList.remove('col-on'); }); }
@@ -9370,6 +9402,7 @@ Your task: decide what to do next to advance toward the goal.
           aloEl.appendEvent(ev);
           // Tee the same live stream into the right-rail activity graph.
           try{ document.getElementById('loopGraphEl')?.appendEvent(ev); }catch(_){}
+          try{ _ctxColLoopEv(ev); }catch(_){}
         }
       }
     }
@@ -15810,7 +15843,7 @@ Your task: decide what to do next to advance toward the goal.
         for(const block of parts) for(const line of block.split('\n')){
           if(!line.startsWith('data:'))continue; const raw=line.slice(5).trim();
           if(!raw)continue; if(raw==='[DONE]')return;
-          try{ const ev=JSON.parse(raw); aloEl&&aloEl.appendEvent(ev); gEl&&gEl.appendEvent(ev); }catch(_){}
+          try{ const ev=JSON.parse(raw); aloEl&&aloEl.appendEvent(ev); gEl&&gEl.appendEvent(ev); try{ _ctxColLoopEv(ev); }catch(_){} }catch(_){}
         }
       }
     }catch(_){}
@@ -15837,7 +15870,7 @@ Your task: decide what to do next to advance toward the goal.
     if(!aloEl) return;
     const gEl=document.getElementById('loopGraphEl');
     try{ aloEl.reset&&aloEl.reset(); }catch(_){}
-    for(const ev of events){ try{ aloEl.appendEvent(ev); }catch(_){}; try{ gEl&&gEl.appendEvent(ev); }catch(_){} }
+    for(const ev of events){ try{ aloEl.appendEvent(ev); }catch(_){}; try{ gEl&&gEl.appendEvent(ev); }catch(_){}; try{ _ctxColLoopEv(ev); }catch(_){} }
     scroll();
     if(running){
       appendSys('<span style="color:var(--dim2)">↻ Reconnected to an agentic loop still running in the background…</span>');
@@ -16781,5 +16814,7 @@ window.addEventListener('DOMContentLoaded',()=>{
      copy of the element; the harness tag doesn't reach in here. This is what
      lets /canvas embed a live canvas inside the conversation. -->
 <script src="/ui/elements/canvas_element.js"></script>
+<script src="/ui/graph/families.js"></script>
+<script src="/ui/context_graph_element.js"></script>
 </body>
 </html>

@@ -274,6 +274,23 @@ async def _serve_vera_lhm_js():
                     media_type="application/javascript")
 
 
+# Serve context_graph_element.js — the chat's context graph (UI redesign: the
+# Graph board's column). <vera-context-graph> draws the records assembled for
+# the turn in focus — galaxy · iso · flow · time — with the loop lane and the
+# plan row; the chat feeds it and draws the runs to the message.
+@APP.get("/ui/context_graph_element.js", include_in_schema=False)
+async def _serve_context_graph_element_js():
+    from fastapi.responses import Response
+    from pathlib import Path
+    p = Path(__file__).parent / "context_graph_element.js"
+    if p.exists():
+        return Response(content=p.read_text(encoding="utf-8"),
+                        media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache"})
+    return Response(content="console.warn('context_graph_element.js not found');",
+                    media_type="application/javascript")
+
+
 # Serve vera-dashboard.js — the shared VeraDash widget-grid framework (drag/
 # resize/hide in edit mode + widget loader + pop-out) used by every dashboard.
 @APP.get("/ui/vera-dashboard.js", include_in_schema=False)
