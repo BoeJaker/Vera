@@ -9630,6 +9630,12 @@ async def lifespan(app: FastAPI):
         # templates, instances, the registry panel. Beside the agent registry
         # because it projects the panel registry (UI_PANELS) as built-ins.
         os.path.join(_here, "widgets/widget_registry.py"),
+        # The control plane (UI redesign): one vocabulary of directives, one
+        # dispatcher with policy / log / undo and the room manifest, and the
+        # scripted path (deterministic rules on events, no model call). After
+        # the widget registry and the chat's panel bridge, which it drives.
+        os.path.join(_here, "ui/directives.py"),
+        os.path.join(_here, "ui/scripts.py"),
         # Planning styles: additive alternatives to the loop's own planner
         # (plan.styles / plan.detailed). Loaded late so plan.detailed's default
         # capability catalogue is the complete registry, not a partial one.

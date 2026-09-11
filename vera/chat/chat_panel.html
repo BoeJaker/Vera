@@ -4792,6 +4792,85 @@ IMPORTANT:
     }catch(e){ return {ok:false,error:String(e?.message||e)}; }
   }
 
+  /* ═══ THE CONTROL PLANE, chat side (Notes/40 §5.4) ═══
+     One vocabulary, one dispatcher (vera/ui/directives.py). The chat applies the directives only it can; the rest
+     the dispatcher applies on its own surfaces. The ask chip is the policy's 'ask' landing here; the room manifest
+     is what the model sees of the UI in every turn; ui.event is how this UI tells the scripts what just happened. */
+  async function _uiDirectiveApply(p){
+    const name=String(p.name||''), a=p.args||{}, by=String(p.by||'model');
+    const who=by==='model'?'aide':by;
+    const done=(note,extra)=>Object.assign({ok:true,outcome:'applied',note:note||''},extra||{});
+    const later=(what)=>({ok:false,outcome:'unsupported',note:what+' — lands with a later slice'});
+    switch(name){
+      case 'ui.ask': _uiAskChip(a.row||{}); return done('the ask chip is on the message');
+      case 'panel.open': { const ok=await panelOpen(String(a.id||''), who); return ok?done('opened beside the chat'):{ok:false,outcome:'failed',note:'no panel '+a.id}; }
+      case 'panel.close': {
+        if(!a.id||a.id===_activePanelId){ panelClose(); return done('closed beside the chat'); }
+        if(window.parent&&window.parent!==window){ try{ window.parent.postMessage({type:'vera:lhm:close', id:a.id}, '*'); }catch(_){} return done('asked the harness to close its tab'); }
+        return {ok:false,outcome:'failed',note:'panel '+a.id+' is not open here'};
+      }
+      case 'lhm.focus': { if(!window.VeraLHM) return later('the LHM'); const ok=VeraLHM.pick(String(a.menu||'')+(a.tab?'/'+a.tab:'')); return ok?done('menu '+a.menu):{ok:false,outcome:'failed',note:'no menu '+a.menu}; }
+      case 'lhm.compose': return later('composing a menu by rule (edit mode composes by hand today)');
+      case 'graph.view': { const m={galaxy:'graph',graph:'graph',list:'list',fabric:'fabric',raw:'raw',frames:'frames'}[String(a.view||'')]; if(!m) return later('the '+a.view+' view of the unified graph (canvas-graph)'); ctxTab('ctx',null); ctxViewMode(m); return done('context view '+m); }
+      case 'graph.focus': { ctxTab('memgraph',null); return done('the memory graph is open; focus by turn/step/record lands with canvas-graph'); }
+      case 'chat.mode': {
+        const on=a.on!==false, mode=String(a.mode||'');
+        if(mode==='council'){ if(COUNCIL_MODE!==on) toggleCouncil(); return done('council '+(on?'on':'off')); }
+        if(mode==='diffuse'){ if(SD_MODE!==on) toggleSD(); return done('diffuse '+(on?'on':'off')); }
+        if(mode==='voice'){ await toggleMic(); return done('voice toggled'); }
+        return {ok:false,outcome:'failed',note:'no mode '+mode};
+      }
+      case 'chat.card': {
+        const kind=String(a.kind||''), pl=a.payload||{};
+        if(kind==='ask'){ _uiAskCard(String(pl.what||pl.q||'?'), pl.choices, pl.row); return done('ask card'); }
+        if(['image','html','chart','mermaid','canvas','panel','markdown','md'].includes(kind)){ const r=_handleChatRender(Object.assign({kind},pl)); return r&&r.ok?done(kind+' card'):{ok:false,outcome:'failed',note:(r&&r.error)||'render failed'}; }
+        appendSys('<span style="color:var(--acc)">'+esc(who)+' · '+esc(kind)+'</span> '+esc(typeof pl==='string'?pl:JSON.stringify(pl).slice(0,300)));
+        return done(kind+' card as a note');
+      }
+      case 'canvas.ask': { _uiAskCard(String(a.q||'?'), a.choices, a.run); return done('the ask block'); }
+      case 'canvas.show': case 'canvas.add': case 'canvas.pin': case 'canvas.park': case 'canvas.size':
+        return later('the canvas column ('+name+')');
+      default: return {ok:false,outcome:'unsupported',note:'the chat has no surface for '+name};
+    }
+  }
+  // the ask chip: a directive the policy held — allow once · allow always · refuse (ui.directive.answer)
+  function _uiAskChip(row){
+    const id=String(row.id||''), what=esc(String(row.name||'')+' '+JSON.stringify(row.args||{}).slice(0,160));
+    const html='<span class="ui-ask" data-ask="'+esc(id)+'"><b>'+esc(row.by==='model'?'aide':(row.by||'aide'))+' wants to</b> <code>'+what+'</code> — '+
+      '<button class="btn xs" onclick="CH._uiAskAnswer(\''+esc(id)+'\',\'allow_once\',this)">allow once</button> '+
+      '<button class="btn xs" onclick="CH._uiAskAnswer(\''+esc(id)+'\',\'allow_always\',this)">allow always</button> '+
+      '<button class="btn xs" onclick="CH._uiAskAnswer(\''+esc(id)+'\',\'refuse\',this)">refuse</button></span>';
+    appendSys(html);
+  }
+  async function _uiAskAnswer(askId, answer, btn){
+    const chip=btn&&btn.closest('.ui-ask'); if(chip) chip.querySelectorAll('button').forEach(b=>b.disabled=true);
+    let r=null; try{ r=await api('/ui/directive/answer','POST',{session_id:SID, ask_id:askId, answer}); }catch(_){}
+    if(chip) chip.insertAdjacentHTML('beforeend',' <span style="color:var(--dim2)">→ '+esc(answer.replace('_',' '))+(r&&r.outcome?' · '+esc(r.outcome):'')+'</span>');
+  }
+  // the ask block: a question with choices — a choice goes to the composer; you decide to send it
+  function _uiAskCard(q, choices, ref){
+    const ch=Array.isArray(choices)?choices:(typeof choices==='string'?choices.split(/\s*[,·]\s*/).filter(Boolean):[]);
+    const btns=ch.map(c=>'<button class="btn xs" onclick="CH._uiAskPick(\''+esc(String(c)).replace(/'/g,'&#39;')+'\')">'+esc(String(c))+'</button>').join(' ');
+    appendSys('<span class="ui-askblock"><b>'+esc(q)+'</b>'+(ref?' <span style="color:var(--dim2)">· '+esc(String(ref))+'</span>':'')+(btns?' — '+btns:'')+'</span>');
+  }
+  function _uiAskPick(choice){ const ta=document.getElementById('chatInput'); if(ta){ ta.value=choice; ta.focus(); } }
+  // the room manifest — what the model sees of the UI in every turn (ui.room), plus the menu in view
+  async function _uiRoomText(){
+    if(!SID) return '';
+    try{
+      const r=await api('/ui/room?session_id='+encodeURIComponent(SID));
+      if(!r||!r.ok||!r.text) return '';
+      let menu='';
+      try{ const st=window.VeraLHM&&VeraLHM.active; if(st&&st.menu) menu='\nmenu in view: '+st.menu+(st.tab?' · '+st.tab:''); }catch(_){}
+      return '\n\n'+r.text+menu;
+    }catch(_){ return ''; }
+  }
+  // this UI tells the scripts what just happened (ui.event → ui.<type> on the event stream)
+  function _uiEvent(type, payload){
+    if(!SID) return;
+    fetch(BASE+'/ui/event',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type, payload:payload||{}, session_id:SID})}).catch(()=>{});
+  }
+
   /* ── Studio prompt hint — advertises the media/render/code caps ───── */
   function _studioHint(){
     if(!document.getElementById('cfgCapInteg')?.checked)return'';
@@ -7868,6 +7947,8 @@ Your task: decide what to do next to advance toward the goal.
     // Capture the current abort controller — stopAll() may replace it
     const myAbort = _GLOBAL_ABORT;
     _streamStart();
+    // the room, as the model will see it this turn (the control plane's manifest)
+    const roomText = await _uiRoomText();
 
     try{
       const resp=await fetch(BASE+'/agents/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -7879,7 +7960,7 @@ Your task: decide what to do next to advance toward the goal.
           // name-to-id mapping being fresh. If the user has just edited the
           // agent in the agent panel, agent_id is the only stable handle.
           agent_id: a?.id||'',
-          message:msg+ctxInj+capHint+buildAutoLoopHint(msg)+_studioHint()+panelStateBlock+(_parentCtx?'\n\n[Parent Context]\n'+_parentCtx.slice(0,600):''),
+          message:msg+ctxInj+capHint+buildAutoLoopHint(msg)+_studioHint()+roomText+panelStateBlock+(_parentCtx?'\n\n[Parent Context]\n'+_parentCtx.slice(0,600):''),
           history:JSON.stringify(HISTORY.slice(-20)),
           session_id:SID,model_override:modelOverride,
           instance_id:document.getElementById('cfgInst')?.value||'',
@@ -12399,6 +12480,7 @@ Your task: decide what to do next to advance toward the goal.
     document.getElementById('panelsBtn')?.classList.add('on');
     // Notify the resize subsystem so it can apply the saved split fraction.
     try{ window.dispatchEvent(new CustomEvent('vera:panel-mounted',{detail:{id:p.id}})); }catch(_){}
+    try{ _uiEvent('panel.opened',{id:p.id, by:_panelOpenedBy||'you', placement:'beside chat'}); }catch(_){}
     return true;
   }
 
@@ -13005,6 +13087,16 @@ Your task: decide what to do next to advance toward the goal.
           action: '__chat_render__',
         }),
       }).catch(()=>{});
+      return;
+    }
+    // Pseudo-action: __ui_directive__ — the control plane's dispatcher (vera/ui/directives.py) hands this chat a
+    // directive only it can apply (a panel beside it, the LHM, a chat mode, a card, the ask chip) and expects the
+    // outcome back in the ack. Every outcome is honest: what the chat cannot do yet says so.
+    if(action==='__ui_directive__'){
+      let res;
+      try{ res=await _uiDirectiveApply(payload||{}); }catch(e){ res={ok:false,outcome:'failed',note:String(e&&e.message||e)}; }
+      fetch(BASE+'/ui/panels/dispatch/ack',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({request_id:req.request_id, session_id:req.session_id||SID, ok:!!res.ok, result:res, error:res.ok?null:(res.note||res.outcome), action:'__ui_directive__'})}).catch(()=>{});
       return;
     }
     // Real action — forward to the iframe and wait for the result message.
@@ -15030,6 +15122,8 @@ Your task: decide what to do next to advance toward the goal.
     try{ _lhmMount(); }catch(e){ console.warn('LHM: mount failed', e); }
     // …and the one panel set: what this chat holds, reported for ui.panels.open
     try{ _panelsOpenStart(); }catch(e){ console.warn('panel set: report failed', e); }
+    // …and the scripts hear that a session started
+    try{ setTimeout(()=>_uiEvent('session.start',{}),1500); }catch(_){}
     // Rail default: COLLAPSED. The minimal/document aesthetic looks best
     // with the chat column centred and unobstructed; the user can pop the
     // menu out via the top-bar Menu button. Persisted in localStorage so an
@@ -15246,6 +15340,7 @@ Your task: decide what to do next to advance toward the goal.
     cmdOpen,cmdClose,
     toggleViewMode,setViewMode,
     setDensity,toggleBlocks,
+    _uiAskAnswer,_uiAskPick,_uiDirectiveApply,
     _persistMediaCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},
     setContext:txt=>{_parentCtx=txt;},
