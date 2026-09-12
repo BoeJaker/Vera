@@ -825,10 +825,14 @@ body[data-cols~="canvas"] #cvRunsOverlay{display:block}
 #cvRunsOverlay .run.dim{stroke-opacity:.3}
 /* the design's order: rail | context graph | chat | canvas — the graph is the LHM grown, so it sits by the rail */
 body[data-cols~="graph"] #graphColumn{order:-1;border-left:none;border-right:1px solid var(--border)}
-/* the column IS the Context quick menu grown into the full graph: while it is open the quick menu folds to the rail —
-   rail | graph | chat, not rail | menu | graph | chat */
-body[data-cols~="graph"] #rightRail.lhm-host{width:46px !important;min-width:46px !important}
-body[data-cols~="graph"] #rightRail.lhm-host > .lhm-det{display:none}
+/* the expanded context IS the Context quick menu GROWN in place: the same rail, panel and header; the panel widens and
+   its body is the full context graph; the CTA folds it back (nothing opens beside the menu) */
+#rightRail.lhm-host.lhm-grown > .lhm-det{width:min(46vw,680px);flex:0 0 min(46vw,680px)}
+#rightRail.lhm-host.lhm-grown .lhm-quick{padding:0 0 6px;gap:0}
+#rightRail.lhm-host.lhm-grown .lhm-quick #ctxGrown{flex:1;min-height:0;display:flex;flex-direction:column}
+#rightRail.lhm-host.lhm-grown .lhm-quick #ctxGrown vera-context-graph{flex:1;min-height:0}
+#rightRail.lhm-host.lhm-grown .lhm-quick .wid.ctx-grown-bar{padding:6px 9px 0}
+body.ctx-grown #ctxRunsOverlay{display:block;position:fixed;inset:0;width:100vw;height:100vh;z-index:5}
 .tb-btn.col-on{color:var(--acc);border-color:var(--acc)}
 /* Explode: the one scene in the transcript's place, the composer docked under it; the mode segment shows while exploded */
 #xplHost{display:none;flex:1;min-height:0;position:relative}
@@ -5679,10 +5683,23 @@ IMPORTANT:
     return new Set();
   }
   function _pagesOpen(){ return Array.from(_pages); }
+  // the graph "page" is the Context menu grown in place, never a column: the body's columns leave it out
+  let _ctxGrown=false;
+  function _ctxGrow(on){
+    on=(on==null)?!_ctxGrown:!!on; if(on===_ctxGrown && document.getElementById('rightRail').classList.contains('lhm-grown')===on) return _ctxGrown;
+    _ctxGrown=on; const host=document.getElementById('rightRail');
+    if(host) host.classList.toggle('lhm-grown', on); document.body.classList.toggle('ctx-grown', on);
+    if(on){ _pages.add('graph'); try{ if(window.VeraLHM){ VeraLHM.deep(false); VeraLHM.pick('context'); if(host&&host.classList.contains('slim')) toggleRight(); } }catch(_){} }
+    else { _pages.delete('graph'); _ctxRunsDraw(); }
+    try{ if(window.VeraLHM) VeraLHM.render(); }catch(_){}
+    if(on) _graphColumnMount();
+    return _ctxGrown;
+  }
   function _pagesApply(){
     const body=document.body;
-    body.dataset.cols=_pagesOpen().join(' ');
-    body.classList.toggle('has-cols', _pages.size>0);
+    body.dataset.cols=_pagesOpen().filter(n=>n!=='graph').join(' ');
+    body.classList.toggle('has-cols', _pagesOpen().some(n=>n!=='graph'));
+    if(_pages.has('graph')!==_ctxGrown) _ctxGrow(_pages.has('graph'));
     _PAGE_NAMES.forEach(n=>{ const b=document.getElementById(n==='canvas'?'colCanvasBtn':'colGraphBtn'); if(b) b.classList.toggle('col-on', _pages.has(n)); });
     try{ localStorage.setItem(_PAGES_KEY, JSON.stringify(_pagesOpen())); }catch(_){}
     if(_pages.has('canvas')) _canvasColumnMount(); else _canvasColumnIdle();
@@ -5690,9 +5707,9 @@ IMPORTANT:
     try{ window.dispatchEvent(new CustomEvent('vera:panel-mounted',{detail:{placement:'column', pages:_pagesOpen()}})); }catch(_){}
     try{ _uiEvent('pages',{pages:_pagesOpen()}); }catch(_){}
   }
-  function togglePage(name){ if(!_PAGE_NAMES.includes(name)) return false; if(_pages.has(name)) _pages.delete(name); else _pages.add(name); _pagesApply(); return _pages.has(name); }
+  function togglePage(name){ if(!_PAGE_NAMES.includes(name)) return false; if(name==='graph') return _ctxGrow(); if(_pages.has(name)) _pages.delete(name); else _pages.add(name); _pagesApply(); return _pages.has(name); }
   // a rail icon while the graph column is open: fold the graph back into the quick menu (the pick itself opens it)
-  document.addEventListener('click', ev=>{ try{ if(!_pages.has('graph')) return; const ico=ev.target&&ev.target.closest&&ev.target.closest('#rightRail .lhm-rail .lhm-ico'); if(ico&&!ico.classList.contains('top')) togglePage('graph'); }catch(_){} }, true);
+  document.addEventListener('click', ev=>{ try{ if(!_ctxGrown) return; const ico=ev.target&&ev.target.closest&&ev.target.closest('#rightRail .lhm-rail .lhm-ico'); if(ico&&!ico.classList.contains('top')&&ico.getAttribute('data-menu')!=='context') _ctxGrow(false); }catch(_){} }, true);
   function openPage(name){ if(!_PAGE_NAMES.includes(name)||_pages.has(name)) return false; _pages.add(name); _pagesApply(); return true; }
   // the session canvas follows the session: resolve it when the column opens, and again when SID changes under it
   // the relevance engine (Notes/38 §3.3, P2): when a reply lands, the session canvas is asked what is in focus now —
@@ -5803,7 +5820,7 @@ IMPORTANT:
   // every source the column shows (the rail's graph honours its own layer toggles; the column has its own chips)
   const _CTX_ALL_LAYERS=new Set(['vector','graph','memory','fabric','web','cap','run','skill','ontology','related_qa','worldview','agent','news','both','entities','urls']);
   function _graphColumnMount(){
-    const host=document.getElementById('graphColumnBody'); if(!host) return;
+    const host=_ctxGraphHost(); if(!host) return;
     if(!_ctxCol||!host.contains(_ctxCol)){
       if(!(window.customElements&&window.customElements.get('vera-context-graph'))){ if(!host.querySelector('.sys-msg')) host.innerHTML='<div class="sys-msg" style="padding:12px">The context graph is loading…</div>'; if(!_ctxColTimer) _ctxColTimer=setInterval(_graphColumnTick, 800); return; }
       host.innerHTML=''; _ctxCol=document.createElement('vera-context-graph'); host.appendChild(_ctxCol);
@@ -5811,7 +5828,7 @@ IMPORTANT:
       _ctxRunSid=''; _ctxRunFor=''; _ctxRunPicked=false; _ctxRunsT=0; _ctxEstT=0;
       _ctxCol.addEventListener('vera:ctx:run', ev=>{ const sid=(ev.detail||{}).session_id||SID||''; _ctxRunPicked=sid!==(SID||''); _ctxColShowRun(sid); });
       _ctxCol.addEventListener('vera:ctx:rendered', ()=>_ctxRunsDraw());
-      _ctxCol.addEventListener('vera:ctx:collapse', ()=>{ togglePage('graph'); try{ if(window.VeraLHM){ VeraLHM.pick('context'); const r=document.getElementById('rightRail'); if(r&&r.classList.contains('slim')) toggleRight(); } }catch(_){} });
+      _ctxCol.addEventListener('vera:ctx:collapse', ()=>{ _ctxGrow(false); try{ if(window.VeraLHM){ VeraLHM.pick('context'); const r=document.getElementById('rightRail'); if(r&&r.classList.contains('slim')) toggleRight(); } }catch(_){} });
       // 2. no runs are routed while the composer is being typed in — the context changes under the typing
       const inp=document.getElementById('chatInput');
       if(inp&&!inp._ctxColBound){ inp._ctxColBound=true; inp.addEventListener('input', ()=>{ _ctxTypingT=Date.now(); _ctxRunsDraw(); }); }
@@ -5825,7 +5842,8 @@ IMPORTANT:
     if(!_ctxColTimer) _ctxColTimer=setInterval(_graphColumnTick, 800);
     _graphAnchorPost(true);
   }
-  function _graphColumnTick(){ if(!_pages.has('graph')){ clearInterval(_ctxColTimer); _ctxColTimer=null; _ctxRunsDraw(); return; } const host=document.getElementById('graphColumnBody'); if(!_ctxCol||!host||!host.contains(_ctxCol)){ _graphColumnMount(); return; } _ctxColumnSync(_grFocusMid||''); }
+  function _ctxGraphHost(){ return document.getElementById('ctxGrown') || document.getElementById('graphColumnBody'); }
+  function _graphColumnTick(){ if(!_pages.has('graph')){ clearInterval(_ctxColTimer); _ctxColTimer=null; _ctxRunsDraw(); return; } const host=_ctxGraphHost(); if(!_ctxCol||!host||!host.contains(_ctxCol)){ _graphColumnMount(); return; } _ctxColumnSync(_grFocusMid||''); }
   // feed the element when the records or the focus changed (a signature, so a tick costs nothing)
   function _ctxColumnSync(mid){
     if(!_ctxCol) return;
@@ -5926,9 +5944,9 @@ IMPORTANT:
   function _ctxRunsDraw(){
     const svg=document.getElementById('ctxRunsOverlay'); if(!svg) return;
     if(Date.now()-_ctxTypingT<900){ svg.innerHTML=''; if(!_ctxTypingTimer) _ctxTypingTimer=setTimeout(()=>{ _ctxTypingTimer=null; _ctxRunsDraw(); }, 950); return; }
-    const col=document.getElementById('chatColumn'), gcol=document.getElementById('graphColumn'), w=_focusedTurn();
+    const col=document.getElementById('chatColumn'), gcol=_ctxGrown?document.querySelector('#rightRail.lhm-host > .lhm-det'):document.getElementById('graphColumn'), w=_focusedTurn();
     if(!_pages.has('graph')||!_ctxCol||!col||!gcol||!w){ svg.innerHTML=''; return; }
-    const R=col.getBoundingClientRect(), M=w.getBoundingClientRect(), gc=gcol.getBoundingClientRect();
+    const R=_ctxGrown?{left:0,top:0,width:window.innerWidth,height:window.innerHeight}:col.getBoundingClientRect(), M=w.getBoundingClientRect(), gc=gcol.getBoundingClientRect();
     svg.setAttribute('viewBox','0 0 '+Math.round(R.width)+' '+Math.round(R.height));
     const lit=_ctxCol.positions().filter(p=>p.lit&&p.y>gc.top+40&&p.y<gc.bottom&&p.x>gc.left&&p.x<gc.right);
     const bySrc={}; lit.forEach(p=>{ (bySrc[p.source]=bySrc[p.source]||[]).push(p); });
@@ -5969,7 +5987,7 @@ IMPORTANT:
   function _pagesOpenNow(){
     const out=[];
     if(_pages.has('canvas')) out.push({id:'session-canvas', label:'Session canvas', icon:'▤', origin:'you', placement:'column', close:()=>togglePage('canvas'), focus:()=>{ try{ document.querySelector('#canvasColumn vera-canvas')?.focus(); }catch(_){} }});
-    if(_pages.has('graph')) out.push({id:'context-graph', label:'Context graph', icon:'◎', origin:'you', placement:'column', close:()=>togglePage('graph'), focus:()=>{ try{ document.querySelector('#graphColumn vera-context-graph')?.focus(); }catch(_){} }});
+    if(_pages.has('graph')) out.push({id:'context-graph', label:'Context graph', icon:'◎', origin:'you', placement:'the menu, grown', close:()=>_ctxGrow(false), focus:()=>{ try{ (_ctxCol||document.querySelector('vera-context-graph'))?.focus(); }catch(_){} }});
     return out;
   }
   function _pagesMount(){ _pages=_pagesLoad(); if(_pages.size) _pagesApply(); else _PAGE_NAMES.forEach(n=>{ const b=document.getElementById(n==='canvas'?'colCanvasBtn':'colGraphBtn'); if(b) b.classList.remove('col-on'); }); }
@@ -12428,7 +12446,7 @@ Your task: decide what to do next to advance toward the goal.
     {id:'sessions', icon:'◷', label:'Sessions',  tabs:[{id:'Hist',label:'History'}],
      meta:()=>{ const n=document.querySelectorAll('#histList > div').length; return n?n+' sessions':''; }, cta:{label:'+ New session', run:()=>newSession()}},
     {id:'context',  icon:'◎', label:'Context',   tabs:[{id:'ctx',label:'Context'},{id:'memgraph',label:'Memory'}],
-     meta:()=>_lhmTxt('ctxMeterLabel'), cta:{label:'Expand to the full graph →', run:()=>{ if(!_pages.has('graph')) togglePage('graph'); }}},
+     meta:()=>_lhmTxt('ctxMeterLabel'), cta:{get label(){ return _ctxGrown?'Fold back to the quick menu ←':'Expand to the full graph →'; }, run:()=>_ctxGrow()}},
     {id:'activity', icon:'∿', label:'Activity',  tabs:[{id:'dag',label:'DAG'},{id:'monitor',label:'Monitor'}],
      meta:()=>{ const n=(document.getElementById('monitorStream')||{children:[]}).children.length; return n?n+' monitor lines':''; }, cta:{label:'Clear the monitor', run:()=>_monitorClear()}},
     {id:'loop',     icon:'⟳', label:'Loop',      tabs:[{id:'loop',label:'Loop'},{id:'loops',label:'Loops'},{id:'goals',label:'Goals'}],
@@ -12532,6 +12550,11 @@ Your task: decide what to do next to advance toward the goal.
   }
   function _quickContext(el){
     const S=_ctxShares();
+    if(_ctxGrown){
+      const sig='grown#'+S.rows.map(r=>r.f+r.tok).join('|'); if(el.dataset.sig===sig) return; el.dataset.sig=sig;
+      if(!document.getElementById('ctxGrown')){ el.innerHTML='<div id="ctxGrown" class="wid" data-w="context graph · graph" data-tpl="lhm:ctx-galaxy"></div><div class="wid ctx-grown-bar" data-w="budget bar · meter" data-tpl="lhm:ctx-budget"></div>'; }
+      const bar=el.querySelector('.ctx-grown-bar'); if(bar) bar.innerHTML='<span class="comp" title="'+esc(_lhmTxt('ctxMeterLabel'))+'">'+S.rows.map(r=>'<i style="width:'+r.pct.toFixed(1)+'%;background:'+r.col+'" title="'+esc(r.label+' · '+_kfmt(r.tok))+'"></i>').join('')+'</span>';
+      _graphColumnMount(); return; }
     const views=[['galaxy','galaxy'],['iso','iso'],['flow','flow'],['timeline','time']];
     const sig=S.rows.map(r=>r.f+r.tok).join('|')+'#'+_qGalView+_qGalAll+JSON.stringify(_qGalOff)+_qSrcOn+CTX_EDGES.length+(_pages.has('graph')?'g':'');
     if(el.dataset.sig===sig) return; el.dataset.sig=sig;
@@ -16972,7 +16995,7 @@ Your task: decide what to do next to advance toward the goal.
     setDensity,toggleBlocks,
     _uiAskAnswer,_uiAskPick,_uiDirectiveApply,
     _cmpChip,_cmpSync,_paOpen,_paCopy,
-    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
+    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
     _persistMediaCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},

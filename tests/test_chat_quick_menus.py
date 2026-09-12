@@ -35,7 +35,7 @@ def test_every_menu_has_the_boards_body_and_the_context_menu_is_the_galaxy_budge
     for s in ('data-w="context galaxy · graph" data-tpl="lhm:ctx-galaxy"', "class=\"vseg\"", "class=\"gal-all", "class=\"gal-mix\"", 'data-w="budget bar · meter" data-tpl="lhm:ctx-budget"', '<span class="comp">', 'In this prompt<button class="grp-act"', '<div class="lrow', '<span class="wbar">'):
         assert s in ctx, s
     assert "nodeClick(d.dataset.id)" in ctx, "a record in the galaxy opens"
-    assert "cta:{label:'Expand to the full graph →', run:()=>{ if(!_pages.has('graph')) togglePage('graph'); }}}," in HTML
+    assert "cta:{get label(){ return _ctxGrown?'Fold back to the quick menu ←':'Expand to the full graph →'; }, run:()=>_ctxGrow()}}," in HTML, "the CTA grows the menu into the full graph and folds it back"
     assert "function _ctxShares(){" in HTML and "function _ctxMeterSegs(){" in HTML and "try{ _ctxMeterSegs(); }catch(_){}" in HTML, "the header meter carries the same shares"
     for fn, s in (("_quickSessions", "loadSession(r.dataset.sid)"), ("_quickActivity", "Running · '+running.length"), ("_quickLoop", '<div class="lps '), ("_quickLoop", "/workshop/agent_loop/cancel"),
                   ("_quickWorkspace", "panelOpen(r.dataset.panel)"), ("_quickWorkspace", "Open now · '+open.length+' · one set, one bridge"), ("_quickSandbox", "_sessionSbxTerminal()"), ("_quickOps", 'data-w="capabilities · counter"'), ("_quickSettings", "VeraLHM.pick('settings/Cfg')")):
