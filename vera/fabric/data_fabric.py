@@ -5920,6 +5920,19 @@ async def cap_fabric_backfill_vectors(confirm: bool = False, dataset_id: str = "
         vecs = await _embed_many([(r["text"] or "").strip() for r in rows])
         loop = asyncio.get_running_loop()
         for row, vec in zip(rows, vecs):
+            # Yield check PER RECORD, not per batch. At 5-10s per CPU embed a
+            # batch of 64 is 5-10 minutes, and on 2026-09-12 the queue had to
+            # hard-cancel this job because it could not reach the between-
+            # batch check inside its 60s grace. The vectors for this batch are
+            # already computed; stopping here loses only their upserts.
+            if should_continue is not None and not yielded:
+                _busy = await should_continue()
+                if _busy:
+                    yielded = _busy
+                    log.info("fabric backfill yielding mid-batch after %d record(s) - %s",
+                             done, _busy)
+            if yielded:
+                break
             text = (row["text"] or "").strip()
             if not text:
                 continue

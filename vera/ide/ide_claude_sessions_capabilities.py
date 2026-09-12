@@ -1124,6 +1124,17 @@ async def _system_is_busy() -> str:
                 return "a dream cycle is running"
     except Exception as e:
         log.debug("ingest dream probe: %s", e)
+    # A PERSON is using Vera. The gate only covers the GPU node; a chat or code
+    # call routed to a CPU node holds no lease, so for 12 hours on 2026-09-12
+    # an embed run read the box as idle while it was sharing both CPU nodes
+    # with someone waiting on a reply. interactive_recent() is the signal the
+    # chat path already stamps on every interactive generation.
+    try:
+        if _orch.interactive_recent():
+            w = int((_orch.INTERACTIVE_PRIORITY or {}).get("window_s", 180) or 180)
+            return "interactive use in the last %ds" % w
+    except Exception as e:
+        log.debug("ingest interactive probe: %s", e)
     reason = _bg.defer_reason(gate, loops)
     if reason:
         return reason
