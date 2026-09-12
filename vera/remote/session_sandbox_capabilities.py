@@ -54,6 +54,12 @@ import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import (
     APP, capability, emit_event, now_iso, enum_schema, schedule,
 )
+# Dual-spelled: Vera.vera.* resolves to the DEPLOYED checkout, which does not
+# have a new sibling module until it lands there.
+try:
+    from Vera.vera.remote import sandbox_idle_core as _idle_core
+except ImportError:                                        # pragma: no cover
+    from vera.remote import sandbox_idle_core as _idle_core
 
 log = logging.getLogger("vera.remote.sandbox")
 KEY_SBX = "vera:remote:sandboxes"
@@ -500,14 +506,14 @@ async def _save_rec(rec: Dict) -> None:
 
 
 def _cname(session_id: str) -> str:
-    # container names allow [a-zA-Z0-9_.-]; sanitise the session id.
-    safe = "".join(c if (c.isalnum() or c in "_.-") else "-" for c in session_id)[:48]
-    return f"vera-sbx-{safe}"
+    # container names allow [a-zA-Z0-9_.-]; sanitise the session id. Long ids
+    # end in a hash of the full id — see sandbox_idle_core.container_name for
+    # the two goals that used to collide on one container.
+    return _idle_core.container_name(session_id)
 
 
 def _volname(session_id: str) -> str:
-    safe = "".join(c if (c.isalnum() or c in "_.-") else "-" for c in session_id)[:48]
-    return f"vera-sbx-{safe}-ws"
+    return _idle_core.container_name(session_id, suffix="-ws")
 
 
 async def _container_running(dk, rec_host: Dict, cname: str) -> Optional[str]:
@@ -805,8 +811,15 @@ async def cap_sbx_start(session_id: str = "", base_image: str = "",
         return {"ok": False, "error": f"unknown docker host: {host_id}"}
 
     rec = await _get_rec(session_id) or {"session_id": session_id, "created": now_iso()}
-    cname = _cname(session_id)
-    vol = _volname(session_id)
+    # A record that already owns a docker container keeps ITS name (and the
+    # volume derived from it): the naming rule for long ids changed once, and
+    # recomputing it here would make such a session look container-less and
+    # mint a fresh one beside its own workspace.
+    prior = str(rec.get("container") or "")
+    if prior and not prior.startswith("local:"):
+        cname, vol = prior, prior + "-ws"
+    else:
+        cname, vol = _cname(session_id), _volname(session_id)
     committed = rec.get("committed_image", "")
     image = base_image or committed or rec.get("base_image") or scfg.get("base_image") or _DEFAULT_BASE
     restored = bool(committed and not base_image)
@@ -1543,16 +1556,24 @@ async def cap_sbx_sleep(session_id: str = "", sync: Optional[bool] = None,
         return {"ok": False, "error": "docker host unavailable"}
     if sync is None:
         sync = bool((await _get_cfg()).get("archive_on_stop", True))
+    # Packaging context is a file WRITE into the container, and a write into a
+    # stopped container wakes it (docker start) — so sleeping an already-asleep
+    # sandbox used to start it, snapshot it and stop it again. Only package
+    # while it is actually running; a snapshot (docker cp) works either way.
+    running = await _container_running(dk, host, rec["container"]) == "running"
     synced = None
     if sync:
-        try:
-            await cap_sbx_context(session_id=sid, package=True)
-        except Exception:
-            pass
+        if running:
+            try:
+                await cap_sbx_context(session_id=sid, package=True)
+            except Exception:
+                pass
         try:
             synced = await _sync_session(sid, message="sleep")
         except Exception as e:
             synced = {"ok": False, "error": str(e)}
+    if not running:
+        return {"ok": True, "slept": True, "already": True, "synced": synced}
     res = await dk._run_local(await dk._docker_argv(
         host, ["stop", rec["container"]]), timeout=90)
     if not res.get("ok"):
@@ -1588,6 +1609,17 @@ async def cap_sbx_link(session_id: str = "", target: str = "",
             await r.hdel(KEY_ALIAS, session_id)
         except Exception as e:
             return {"ok": False, "error": str(e)}
+        # A container retired by the link (stopped, record marked inactive)
+        # becomes this session's own again: re-activate the record so the next
+        # exec/file-IO wakes it, rather than reading active=false as the
+        # explicit host-only opt-out and never touching it.
+        own = await _get_rec(session_id)
+        if own and own.get("container") and not own.get("active") \
+                and str(own.get("retired_reason", "")).startswith("linked to "):
+            own["active"] = True
+            own.pop("retired_reason", None)
+            own["updated"] = now_iso()
+            await _save_rec(own)
         return {"ok": True, "session_id": session_id, "target": ""}
     if not target or target == session_id:
         return {"ok": False, "error": "target required (and must differ from session_id)"}
@@ -1604,9 +1636,46 @@ async def cap_sbx_link(session_id: str = "", target: str = "",
                 "directly to the container-owning id"}
     await r.hset(KEY_ALIAS, session_id, target)
     await _note_session(target, session_id)
+    # Everything for this session now lands in the target's container, so a
+    # container it owned before the link is unreachable from here on: retire
+    # it (stop, keep the /workspace volume) instead of leaving it running.
+    retired = await _retire_own_container(session_id, target)
     await emit_event({"type": "remote.sandbox.linked", "session_id": session_id,
-                      "target": target})
-    return {"ok": True, "session_id": session_id, "target": target}
+                      "target": target, "retired_container": retired or ""})
+    return {"ok": True, "session_id": session_id, "target": target,
+            "retired_container": retired or ""}
+
+
+async def _retire_own_container(session_id: str, target: str) -> str:
+    """Stop the docker container a session owned before it was linked (or that
+    a link left behind), mark its record inactive with the reason, and return
+    the container name ("" when there was nothing to retire). The volume is
+    kept — the idle-archive tier reclaims it on its own schedule. Never raises."""
+    try:
+        own = await _get_rec(session_id)
+        cname = _idle_core.own_container_to_retire(own, await _get_rec(target))
+        if not cname:
+            return ""
+        dk = _dk()
+        host = await _docker_host(dk, own.get("docker_host_id", "local")) if dk else None
+        if host:
+            state = await _container_running(dk, host, cname)
+            if state == "running":
+                await dk._run_local(await dk._docker_argv(host, ["stop", cname]),
+                                    timeout=90)
+        own["active"] = False
+        own["retired_at"] = now_iso()
+        own["retired_reason"] = f"linked to {target}"
+        own["updated"] = now_iso()
+        await _save_rec(own)
+        await emit_event({"type": "remote.sandbox.retired", "session_id": session_id,
+                          "container": cname, "target": target})
+        log.info("sandbox %s linked to %s — retired its own container %s",
+                 session_id, target, cname)
+        return cname
+    except Exception as e:
+        log.debug("retire own container for %s failed: %s", session_id, e)
+        return ""
 
 
 @capability(
@@ -4400,7 +4469,13 @@ async def _idle_sleep_tick() -> None:
     """Scheduler tick: docker-stop ACTIVE containers that have been idle for
     idle_sleep_minutes (0 = disabled). They wake automatically on next use via
     _ensure_routable. Containers with no last_used stamp get one now (grace
-    period) instead of being stopped immediately."""
+    period) instead of being stopped immediately.
+
+    The decision is sandbox_idle_core.idle_plan: an ALIAS record (a session
+    linked into someone else's container) is never a target — cap_sbx_sleep
+    resolves the alias, so judging the alias's own stale record used to sleep
+    the target's container every tick while the alias's own leftover container
+    kept running (2026-09-12). Such leftovers are retired here instead."""
     try:
         cfg = await _get_cfg()
         idle_min = int(cfg.get("idle_sleep_minutes", _IDLE_SLEEP_DEFAULT) or 0)
@@ -4411,23 +4486,26 @@ async def _idle_sleep_tick() -> None:
         if not r or dk is None:
             return
         items = await r.hgetall(KEY_SBX)
-        now = time.time()
-        due = []
+        aliases_raw = await r.hgetall(KEY_ALIAS)
+        aliases: Dict[str, str] = {}
+        for k, v in (aliases_raw or {}).items():
+            k = k.decode() if isinstance(k, bytes) else k
+            v = v.decode() if isinstance(v, bytes) else v
+            aliases[str(k)] = str(v)
+        records = []
         for v in (items or {}).values():
             try:
-                rec = json.loads(v)
+                records.append(json.loads(v))
             except Exception:
                 continue
-            if not rec.get("active") or not rec.get("container"):
-                continue
-            last = float(rec.get("last_used") or 0)
-            if not last:
-                rec["last_used"] = now
-                await _save_rec(rec)
-                continue
-            if now - last < idle_min * 60:
-                continue
-            due.append(rec)
+        now = time.time()
+        plan = _idle_core.idle_plan(records, aliases, now=now, idle_s=idle_min * 60)
+        for rec in plan.unstamped:
+            rec["last_used"] = now
+            await _save_rec(rec)
+        for rec in plan.orphans:
+            await _retire_own_container(rec["session_id"], aliases[rec["session_id"]])
+        due = plan.due
         if not due:
             return
         # One bulk docker call (cached, see `_containers_state_map`) per DISTINCT
