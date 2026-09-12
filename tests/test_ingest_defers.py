@@ -339,7 +339,7 @@ def test_interactive_use_on_a_cpu_node_reads_as_busy(monkeypatch):
         return {"nodes": []}
 
     monkeypatch.setattr(CS, "_running_loop_count", lambda: _zero())
-    monkeypatch.setattr(CS.CAPABILITY_REGISTRY, "get", lambda *_a, **_k: None)
+    monkeypatch.setattr(CS, "CAPABILITY_REGISTRY", {})       # no gate/census/dream caps
     monkeypatch.setattr(CS._orch, "interactive_recent", lambda *a, **k: True)
     why = run(CS._system_is_busy())
     assert "interactive" in why, why
