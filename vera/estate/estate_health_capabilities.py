@@ -14,6 +14,11 @@ found" on 12 Sep 2026:
 Each source runs under its own timeout, so one slow answer cannot blank the
 page. The rules live in estate_health_core.py; this module gathers the facts.
 
+The Docker and Proxmox helpers are reached through the capability registry.
+Capability modules load from _module_files under their bare file name
+(docker_capabilities, not Vera.vera.workers.docker_capabilities), so an
+import-path lookup finds nothing in a running Vera.
+
 Capabilities
 ------------
   estate.health   findings from the state store, the Vera host's containers
@@ -22,10 +27,10 @@ Capabilities
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
-import sys
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 import Vera.vera.capability_orchestration as _orch
@@ -53,6 +58,15 @@ def _display_url(url: str) -> str:
     return f"{p.scheme or 'redis'}://{p.hostname or ''}{port}/{db}"
 
 
+def _module_of(cap_name: str) -> Optional[Dict[str, Any]]:
+    """The globals of the module that registered `cap_name`, or None when no
+    such capability is loaded."""
+    fn = (_orch.CAPABILITY_REGISTRY.get(cap_name) or {}).get("func")
+    if fn is None:
+        return None
+    return getattr(inspect.unwrap(fn), "__globals__", None)
+
+
 async def _state_store() -> Dict[str, Any]:
     r = getattr(_orch, "REDIS", None)
     if r is None:
@@ -64,14 +78,15 @@ async def _state_store() -> Dict[str, Any]:
 
 
 async def _containers() -> Dict[str, Any]:
-    dk = sys.modules.get("Vera.vera.workers.docker_capabilities")
-    if dk is None:
-        return {"error": "the Docker module is not loaded"}
-    host = dk._get_host("local")
-    status, body, _ = await dk._engine_request(host, "GET", "/containers/json?all=true")
+    dk = _module_of("docker.ps")
+    if not dk or not all(k in dk for k in ("_get_host", "_engine_request", "_parse_engine_json")):
+        return {"error": "the Docker capabilities are not loaded"}
+    engine, parse = dk["_engine_request"], dk["_parse_engine_json"]
+    host = dk["_get_host"]("local")
+    status, body, _ = await engine(host, "GET", "/containers/json?all=true")
     if status != 200:
         return {"error": f"Docker Engine answered HTTP {status}"}
-    rows = await dk._parse_engine_json(body, [])
+    rows = await parse(body, [])
     rows = rows if isinstance(rows, list) else []
 
     def name_of(row: Dict[str, Any]) -> str:
@@ -86,10 +101,10 @@ async def _containers() -> Dict[str, Any]:
             stopped.append(row)
     gate = asyncio.Semaphore(_INSPECT_CONCURRENCY)
 
-    async def inspect(row: Dict[str, Any]) -> Dict[str, Any]:
+    async def read(row: Dict[str, Any]) -> Dict[str, Any]:
         async with gate:
-            st, raw, _ = await dk._engine_request(host, "GET", f"/containers/{row.get('Id')}/json")
-        data = await dk._parse_engine_json(raw, {}) if st == 200 else {}
+            st, raw, _ = await engine(host, "GET", f"/containers/{row.get('Id')}/json")
+        data = await parse(raw, {}) if st == 200 else {}
         data = data if isinstance(data, dict) else {}
         state = data.get("State") or {}
         return {"name": name_of(row), "labels": row.get("Labels") or {},
@@ -98,22 +113,23 @@ async def _containers() -> Dict[str, Any]:
                 "exit_code": state.get("ExitCode"), "error": state.get("Error") or "",
                 "finished_at": state.get("FinishedAt") or ""}
 
-    details = await asyncio.gather(*(inspect(row) for row in stopped))
+    details = await asyncio.gather(*(read(row) for row in stopped))
     return core.container_section(details, listed=len(rows), sandboxes=sandboxes)
 
 
 async def _guests() -> Dict[str, Any]:
-    px = sys.modules.get("Vera.vera.proxmox.proxmox_capabilities")
-    if px is None:
-        return {"error": "the Proxmox module is not loaded"}
-    records = await px._all_raw()
+    px = _module_of("proxmox.status")
+    if not px or not all(k in px for k in ("_all_raw", "_open", "_pve")):
+        return {"error": "the Proxmox capabilities are not loaded"}
+    pve = px["_pve"]
+    records = await px["_all_raw"]()
     guests: List[Dict[str, Any]] = []
     errors: List[Dict[str, str]] = []
     for host, group in core.group_clusters(records).items():
         rec, resources, err = None, None, ""
         for candidate in group:                     # the first record whose token works
-            rec = px._open(candidate)
-            resources, err = await px._pve(rec, "GET", "/cluster/resources?type=vm")
+            rec = px["_open"](candidate)
+            resources, err = await pve(rec, "GET", "/cluster/resources?type=vm")
             if resources is not None:
                 break
         if resources is None:
@@ -123,7 +139,7 @@ async def _guests() -> Dict[str, Any]:
 
         async def with_onboot(g: Dict[str, Any], rec=rec, gate=gate) -> Dict[str, Any]:
             async with gate:
-                cfg, cerr = await px._pve(
+                cfg, cerr = await pve(
                     rec, "GET", f"/nodes/{g.get('node')}/{g.get('type')}/{g.get('vmid')}/config")
             return {"vmid": g.get("vmid"), "name": g.get("name") or "", "type": g.get("type"),
                     "node": g.get("node"), "status": g.get("status"),
