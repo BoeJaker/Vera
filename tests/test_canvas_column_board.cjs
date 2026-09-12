@@ -42,7 +42,7 @@ t('a dragged height becomes the size record', V.sizeOfHeight(60) === 's' && V.si
 // ── the add bar: real block types through canvas.add ──
 const kinds = V.ADD_KINDS.map(k => k.n);
 t('the add bar is the board\'s row: note · terminal · panel · widget · chart', kinds.join(' · ') === 'note · terminal · panel · widget · chart');
-const REAL = ['markdown', 'code', 'diagram', 'image', 'note', 'table', 'widget', 'session', 'schedule', 'html', 'loop'];
+const REAL = ['markdown', 'code', 'diagram', 'image', 'note', 'table', 'widget', 'session', 'schedule', 'html', 'loop', 'notebook', 'panel'];   // BLOCK_TYPES, canvas_capabilities.py
 t('every kind is a real block type with its seed content', V.ADD_KINDS.every(k => REAL.includes(k.kind) && k.content && typeof k.content === 'object'));
 t('a terminal is a session item; a chart is a widget record with its form', V.ADD_KINDS.find(k => k.n === 'terminal').kind === 'session' && V.ADD_KINDS.find(k => k.n === 'chart').content.draw.form === 'trace');
 t('a new note opens for editing', V.ADD_KINDS.find(k => k.n === 'note').edit === true);

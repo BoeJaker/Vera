@@ -107,9 +107,46 @@
         ${esc(c.title || c.widget || '')}</div>`;
     },
 
-    session: c => `<div class="vc-stub"><span class="vc-badge">session</span>
-        ${esc(c.host || c.session_id || '')}${c.command ? ` · <code>${esc(c.command)}</code>` : ''}
-        ${c.output ? `<pre class="vc-pre vc-out"><code>${esc(String(c.output).slice(0, 4000))}</code></pre>` : ''}</div>`,
+    /* ── the Canvas board's live items (A16 of Notes/42): a LIVE TERMINAL, a NOTEBOOK CELL, a WHOLE PANEL ─────────
+       Each is a widget of the estate drawn as an item: the terminal is <vera-terminal> over the estate's terminal
+       WebSocket (ssh host · docker container), the cell is the notebook's own cell (its source, its output, Run
+       through the notebook's exec, Open the notebook), the panel is the panel page itself driven over the ONE
+       bridge (panel.query · panel.dispatch · refresh · standalone). Live elements (the terminal, the panel's frame)
+       are never re-created by a render: they live in the column's live layer, placed over their slot. ─────────── */
+    session: (c, size, key, el) => {
+      const hostId = String(c.host_id || '').trim(), shown = hostId || String(c.host || c.session_id || '').trim(), container = String(c.container || '').trim(), shell = String(c.shell || '').trim();
+      const ws = c.ws || (hostId ? (container ? '/remote/docker/term/ws/' + encodeURIComponent(hostId) + '/' + encodeURIComponent(container) + '?shell=' + encodeURIComponent(shell || 'sh') : '/remote/ssh/term/ws/' + encodeURIComponent(hostId) + '?shell=' + encodeURIComponent(shell)) : '');
+      const attached = !!key && !!ws && c.attached !== false;
+      const live = !!(el && el._live && el._live[key]);
+      const head = `<div class="vc-th"><i class="dot${attached ? (live ? ' on' : ' wait') : ''}"></i><b>${esc(shown ? (container ? shown + ' / ' + container : shown) : 'no host yet')}</b><span class="mono">${esc(shell || (container ? 'sh' : 'login shell'))}${c.command ? ' · ' + esc(c.command) : ''}</span><span class="sp"></span>`
+        + (attached ? '<button class="ib" data-act="tdetach" title="Detach — the item keeps its host; Attach opens a new shell">detach</button>' : (ws ? '<button class="ib on" data-act="tattach" title="Open a shell on this host">attach</button>' : ''))
+        + (ws ? '<button class="ib" data-act="tshare" title="Copy the terminal\'s address">share</button>' : '') + '</div>';
+      const conn = attached ? `<div class="vc-live" data-live="term" data-key="${esc(key)}" data-ws="${esc(ws)}"><span class="vc-dim">connecting…</span></div>`
+        : `<div class="vc-tconnect" data-w="canvas.terminal.connect"><input class="ti" data-f="host_id" placeholder="host id — an SSH host of the Exec panel" value="${esc(shown)}" spellcheck="false"><input class="ti" data-f="container" placeholder="container (docker) — optional" value="${esc(container)}" spellcheck="false"><input class="ti sm" data-f="shell" placeholder="shell" value="${esc(shell)}" spellcheck="false"><button class="ib on" data-act="tconnect">Connect</button></div>`;
+      return `<div class="vc-term" data-w="canvas.terminal">${head}${conn}${c.output ? `<pre class="vc-pre vc-out"><code>${esc(String(c.output).slice(0, 4000))}</code></pre>` : ''}</div>`;
+    },
+
+    // a notebook cell as an item: the cell the notebook holds (source · output), Run through the notebook's exec, Open
+    notebook: (c, size, key) => {
+      const t = String(c.cell_type || 'markdown'), lang = String(c.lang || ''), src = String(c.content || c.source || '');
+      const out = String(c.generated || c.output || '');
+      const runnable = t === 'code' || t === 'exec';
+      return `<div class="vc-nb" data-w="canvas.notebook"><div class="vc-th"><span class="vc-badge">${esc(t)}${lang && runnable ? ' · ' + esc(lang) : ''}</span><b>${esc(c.title || 'cell')}</b><span class="mono">${esc(String(c.notebook_id || '').slice(0, 8))}${c.cell_id ? ' · ' + esc(String(c.cell_id).slice(0, 8)) : ''}</span><span class="sp"></span>`
+        + (runnable ? `<button class="ib on" data-act="nbrun" title="Run the cell through the notebook's exec">Run</button>` : '') + `<button class="ib" data-act="nbopen" title="Open the notebook at this cell">Open the notebook ↗</button></div>`
+        + (t === 'markdown' ? `<div class="vc-md">${md(src)}</div>` : `<pre class="vc-pre"><code>${esc(src)}</code></pre>`)
+        + `<pre class="vc-pre vc-out vc-nbout"${out ? '' : ' hidden'}><code>${esc(out.slice(0, 8000))}</code></pre></div>`;
+    },
+
+    // a whole panel as an item: the panel page in its frame, driven over the one bridge
+    panel: (c, size, key, el) => {
+      const id = String(c.panel || c.id || '').trim(); const src = c.src || (id ? '/ui/panels/' + encodeURIComponent(id) : '');
+      const q = el && el._pq && el._pq[key];
+      return `<div class="vc-panel" data-w="canvas.panel"><div class="vc-th"><i class="dot on"></i><b>${esc(c.title || c.label || id || 'panel')}</b><span class="mono">${esc(id)} · over the bridge</span><span class="sp"></span>`
+        + `<button class="ib" data-act="pquery" title="panel.query — what the panel holds">query</button><button class="ib" data-act="pdispatch" title="panel.dispatch — drive it">dispatch</button><button class="ib" data-act="prefresh" title="Reload the panel">refresh</button><button class="ib" data-act="pstand" title="Open it standalone">standalone ↗</button></div>`
+        + (src ? `<div class="vc-live vc-frame" data-live="frame" data-key="${esc(key)}" data-src="${esc(src)}"></div>` : '<div class="vc-dim">no panel id</div>')
+        + `<div class="vc-bridge"${el && el._pdOpen && el._pdOpen[key] ? '' : ' hidden'} data-w="canvas.panel.bridge"><div class="row"><input class="ti" data-f="action" placeholder="action" spellcheck="false"><input class="ti" data-f="payload" placeholder="payload {…}" spellcheck="false"><button class="ib on" data-act="psend">Send</button></div></div>`
+        + `<pre class="vc-pre vc-out vc-pq"${q ? '' : ' hidden'}><code>${esc(q ? (q.text || '') : '')}</code></pre></div>`;
+    },
 
     // a run as an item (P7): its goal, its status, its steps — each the capability it ran, with its time
     loop: c => {
@@ -323,6 +360,35 @@
   .vc-steps li span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .vc-steps li code{font-size:9.5px;color:var(--dim,#6b7480)}.vc-steps li em{margin-left:auto;font-style:normal;font-size:9.5px;color:var(--dim,#6b7480)}
   .vc-run{font-family:ui-monospace,Consolas,monospace;font-size:9px;margin-top:3px}
+  /* the live items (A16): a terminal, a notebook cell, a whole panel — the board's item head, the live slot */
+  .body{position:relative}
+  #items{position:relative;min-height:1px}
+  #live{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;z-index:4}
+  #live .lv{position:absolute;box-sizing:border-box;border-radius:6px;overflow:hidden;background:#000}
+  #live .lv > *{display:block;width:100%;height:100%}
+  #live iframe.vc-pframe{border:0;background:var(--s1,var(--bg1,#15181d))}
+  .vc-th{display:flex;align-items:center;gap:8px;min-height:24px;padding:2px 0 6px;font-size:11px;color:var(--t1,var(--fg,#dce1e8))}
+  .vc-th b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  .vc-th .mono{font-family:var(--f-mono,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:9.5px;color:var(--t3,var(--dim,#6b7480));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .vc-th .sp{flex:1}
+  .vc-th .dot{width:7px;height:7px;border-radius:50%;background:var(--t3,var(--dim,#6b7480));flex:0 0 auto}
+  .vc-th .dot.on{background:var(--ac2,var(--acc2,#8fb87a));box-shadow:0 0 0 3px color-mix(in srgb,var(--ac2,var(--acc2,#8fb87a)) 22%,transparent)}
+  .vc-th .dot.wait{background:var(--ac3,var(--acc3,#c9955a));animation:vcp 1.4s infinite}
+  .vc-th .ib{height:22px;padding:0 8px;font-size:10px}
+  .ib.on{color:var(--ac,var(--acc,#5a9e8f));border-color:color-mix(in srgb,var(--ac,var(--acc,#5a9e8f)) 45%,transparent)}
+  .ti{height:24px;padding:0 8px;border:1px solid var(--bd,var(--border,#2a2f37));border-radius:var(--r-sm,6px);background:var(--s2,var(--bg2,#1c2026));color:var(--t1,var(--fg,#dce1e8));font:inherit;font-size:10.5px;min-width:0;flex:1 1 120px}
+  .ti.sm{flex:0 1 84px}.ti:focus{outline:none;border-color:var(--ac,var(--acc,#5a9e8f))}
+  .vc-term,.vc-panel,.vc-nb{display:flex;flex-direction:column;min-height:0;height:100%}
+  .vc-tconnect,.vc-bridge .row,.addpop .row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:4px 0}
+  .vc-live{flex:1 1 auto;min-height:40px;height:110px;border-radius:6px;background:var(--s3,var(--bg3,#0f1114));display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--t3,var(--dim,#6b7480))}
+  .it[data-size="s"] .vc-live{height:40px}.it[data-size="l"] .vc-live{height:230px}.it[data-size="xl"] .vc-live{height:440px}
+  .it.sized .vc-live{height:auto}
+  .vc-nbout{margin-top:6px;border-left:2px solid var(--ac,var(--acc,#5a9e8f))}
+  .vc-pq{margin-top:6px;max-height:160px}
+  .addpop{position:absolute;left:0;top:100%;z-index:6;margin-top:4px;min-width:260px;max-width:min(92%,420px);padding:8px;border-radius:var(--ui-radius,8px);background:var(--s1,var(--bg1,#15181d));box-shadow:var(--elev,0 8px 24px -12px rgba(0,0,0,.6)),0 0 0 1px var(--bd,var(--border,#2a2f37));display:flex;flex-direction:column;gap:2px}
+  .addpop .pp{display:flex;flex-direction:column;align-items:flex-start;gap:1px;padding:6px 8px;border:0;border-radius:var(--r-sm,6px);background:transparent;color:var(--t1,var(--fg,#dce1e8));font:inherit;font-size:11px;text-align:left;cursor:pointer}
+  .addpop .pp:hover{background:var(--s2,var(--bg2,#1c2026))}
+  .addpop .pp span{font-family:var(--f-mono,ui-monospace,monospace);font-size:9.5px;color:var(--t3,var(--dim,#6b7480))}
   .vc-rec{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
   .vc-rec b{font-size:11px}`;
 
@@ -357,16 +423,35 @@
 
   /* ── THE COLUMN'S PARTS (the Canvas board), pure ──────────────────────────────────────────────────────────────── */
   const ITEM_SIZES = ['s', 'm', 'l', 'xl'];
+  // a library of the estate loaded once from the page (the terminal element); the element that uses it draws when it lands
+  const _libs = {};
+  function ensureLib(src, tag) {
+    if (typeof document === 'undefined') return Promise.resolve(false);
+    if (tag && typeof customElements !== 'undefined' && customElements.get(tag)) return Promise.resolve(true);
+    if (_libs[src]) return _libs[src];
+    return (_libs[src] = new Promise((res) => { const s = document.createElement('script'); s.src = src; s.async = true; s.onload = () => res(true); s.onerror = () => res(false); document.head.appendChild(s); }));
+  }
+  // the notebook page's own mapping of a cell's language to the command its exec runs (python · node · ruby · a shell snippet)
+  function langRunCmd(lang, code) {
+    const eof = 'VERA_NB_EOF_' + Math.random().toString(36).slice(2, 8);
+    const heredoc = (i) => i + " - <<'" + eof + "'\n" + code + "\n" + eof;
+    switch (String(lang || '').toLowerCase()) {
+      case 'python': case 'python3': return heredoc('python3');
+      case 'javascript': case 'js': case 'node': return heredoc('node');
+      case 'ruby': return heredoc('ruby');
+      default: return code;
+    }
+  }
   /* the add bar: "+ note · terminal · panel · widget · chart" — each a real block type with its seed content; every
      one goes through canvas.add, the resolver's path, like anything an agent puts on the canvas */
   const ADD_KINDS = [
     { n: 'note', ik: '✎', kind: 'note', content: { title: 'Note', text: '' }, edit: true },
-    { n: 'terminal', ik: '>_', kind: 'session', content: { title: 'Terminal', host: '', command: '' } },
-    { n: 'panel', ik: '▤', kind: 'widget', content: { widget: 'panel', title: 'Panel' } },
+    { n: 'terminal', ik: '>_', kind: 'session', content: { title: 'Terminal', host_id: '', container: '', shell: '' } },
+    { n: 'panel', ik: '▤', kind: 'panel', content: { panel: '', title: 'Panel' }, pick: true },
     { n: 'widget', ik: 'WG', kind: 'widget', content: { widget: '', title: 'Widget' } },
     { n: 'chart', ik: 'CH', kind: 'widget', content: { name: 'chart', title: 'Chart', draw: { form: 'trace', size: 'm' }, data: [], source: { origin: 'you' } } },
   ];
-  const KIND_GLYPH = { note: '✎', markdown: 'MD', code: '{}', session: '>_', table: 'TB', widget: 'WG', loop: '⟳', diagram: '◇', image: '▣', schedule: '⏰', html: '<>', suggest: '✦' };
+  const KIND_GLYPH = { note: '✎', markdown: 'MD', code: '{}', session: '>_', table: 'TB', widget: 'WG', loop: '⟳', diagram: '◇', image: '▣', schedule: '⏰', html: '<>', suggest: '✦', notebook: 'NB', panel: '▥' };
   const glyphOf = t => KIND_GLYPH[t] || String(t || '?').slice(0, 2).toUpperCase();
   const hhmm = ts => { if (!ts) return ''; const d = new Date(ts); if (isNaN(d.getTime())) return String(ts).slice(0, 5); const p = n => (n < 10 ? '0' : '') + n; return p(d.getHours()) + ':' + p(d.getMinutes()); };
   /* the decision an item carries — what this turn is waiting on: content.ask {question, options, why, answer}, or a
@@ -458,6 +543,7 @@
     disconnectedCallback() {
       if (this._timer) clearInterval(this._timer);
       this._timer = null;
+      if (this._liveTick) { clearInterval(this._liveTick); this._liveTick = null; }
     }
 
     attributeChangedCallback(name) {
@@ -497,6 +583,7 @@
       P.placements.forEach((p) => { const c = cards.find((x) => x.dataset.key === p.key); if (!c) return; c.style.left = p.x + 'px'; c.style.top = p.y + 'px'; c.dataset.col = String(p.col); c.classList.toggle('level', !!p.level); });
       // the stage is at least as tall as the transcript's scroll height, so the column can scroll in step with it
       st.style.height = Math.max(P.height, (this._turnsH || 0) + 40) + 'px'; this._placed = P;
+      this._liveLayout();
       try { this.dispatchEvent(new CustomEvent('vera:canvas:placed', { bubbles: true, detail: { n: P.placements.length, level: P.placements.filter((p) => p.level).length, columns: cols, height: P.height } })); } catch (e) { /* observers are optional */ }
     }
 
@@ -614,7 +701,7 @@
         let inner;
         if (editing) inner = editHtml(b);
         else {
-          try { inner = fn(c, b.size); }
+          try { inner = fn(c, b.size, key, this); }
           catch (e) { inner = `<div class="err">Could not render a ${esc(b.type)} block.</div>`; }
           // a decision draws its ask above its own body; a bare question (a note that is only its question) is the ask alone
           if (dec) inner = askHtml(dec) + (b.type === 'loop' || c[textFieldOf(b.type)] ? inner : '');
@@ -674,10 +761,11 @@
         return `<div class="blk" data-type="${esc(b.type)}">${inner}</div>`;
       }).join('');
       const keepTop = body.scrollTop;
-      body.innerHTML = html;
+      this._layers(body).items.innerHTML = html;
       if (!stage) body.scrollTop = keepTop;
       this._bind(body);
       if (stage) this._placeNow();
+      this._mountLive(body);
       if (this._editKey) { const ta = body.querySelector('.it[data-key="' + this._editKey.replace(/"/g, '\\"') + '"] textarea'); if (ta && !this._editFocused) { this._editFocused = true; try { ta.focus(); } catch (e) {} } }
       if (window.mermaid && body.querySelector('.mermaid')) {
         try { window.mermaid.run({ nodes: body.querySelectorAll('.mermaid') }); }
@@ -752,8 +840,37 @@
         try { this.dispatchEvent(new CustomEvent('vera:canvas:edited', { bubbles: true, detail: { key, field: ta.dataset.field || 'text' } })); } catch (e) {}
         return this.call('canvas.update', { key, content });
       }
+      /* ── the live items' own actions (A16): the terminal, the cell, the panel over the bridge ── */
+      if (act === 'tconnect' || act === 'tattach' || act === 'tdetach') {
+        const c = this._contentOf(key); if (!c) return;
+        if (act === 'tconnect') { const rd = (f) => { const i = it.querySelector('.vc-tconnect [data-f="' + f + '"]'); return i ? String(i.value || '').trim() : ''; }; const hostId = rd('host_id'); if (!hostId) { const i = it.querySelector('.vc-tconnect [data-f="host_id"]'); if (i) i.focus(); return; } Object.assign(c, { host_id: hostId, container: rd('container'), shell: rd('shell'), attached: true }); }
+        else if (act === 'tattach') c.attached = true;
+        else { c.attached = false; if (this._live && this._live[key]) { try { this._live[key].remove(); } catch (e) {} delete this._live[key]; } }
+        this._open.add(key);
+        try { this.dispatchEvent(new CustomEvent('vera:canvas:terminal', { bubbles: true, detail: { key, host_id: c.host_id || '', container: c.container || '', attached: !!c.attached } })); } catch (e) {}
+        return this.call('canvas.update', { key, content: c });
+      }
+      if (act === 'tshare') { const h = it.querySelector('.vc-live[data-ws]'); const ws = h ? h.dataset.ws : ''; try { navigator.clipboard.writeText(location.origin + ws); } catch (e) {} return; }
+      if (act === 'nbrun') return this._nbRun(key, it);
+      if (act === 'nbopen') {
+        const c = this._contentOf(key) || {}; const ev2 = new CustomEvent('vera:canvas:open-notebook', { bubbles: true, cancelable: true, detail: { key, notebook_id: c.notebook_id || '', cell_id: c.cell_id || '' } });
+        this.dispatchEvent(ev2); if (ev2.defaultPrevented) return;
+        try { window.open((window._veraBase || '') + '/notebook/panel?nb=' + encodeURIComponent(c.notebook_id || '') + '&focus=1', '_blank'); } catch (e) {} return;
+      }
+      if (act === 'pquery' || act === 'psend') {
+        const c = this._contentOf(key) || {}; const id = String(c.panel || c.id || '');
+        let name = 'panel.query', args = { session_id: this._sid(), panel: id };
+        if (act === 'psend') { const rd = (f) => { const i = it.querySelector('.vc-bridge [data-f="' + f + '"]'); return i ? String(i.value || '') : ''; }; const action = rd('action').trim(); if (!action) return; let payload = {}; try { payload = rd('payload').trim() ? JSON.parse(rd('payload')) : {}; } catch (e) { return this._readout(key, 'payload is not JSON: ' + e.message); } name = 'panel.dispatch'; args = { session_id: this._sid(), panel: id, action, payload }; }
+        return this._bridge(key, id, name, args);
+      }
+      if (act === 'pdispatch') { this._pdOpen = this._pdOpen || {}; this._pdOpen[key] = !this._pdOpen[key]; if (this._doc) this.render(this._doc); return; }
+      if (act === 'prefresh') { const el = this._live && this._live[key]; const f = el && el.firstChild; if (f && f.tagName === 'IFRAME') { try { f.src = f.src; } catch (e) {} } return; }
+      if (act === 'pstand') { const h = it.querySelector('.vc-live[data-src]'); if (h) { try { window.open(h.dataset.src, '_blank'); } catch (e) {} } return; }
+      if (act === 'padd') return this._panelAdd(btn.dataset.pid, btn.dataset.plabel);
+      if (act === 'paddid') { const i = btn.parentElement && btn.parentElement.querySelector('[data-f="pid"]'); return this._panelAdd(i ? i.value : '', ''); }
       if (act === 'add') {
         const k = ADD_KINDS.find(x => x.n === btn.dataset.kind); if (!k) return;
+        if (k.pick) return this._panelPick(btn);
         const nk = k.kind + ':' + k.n + '-' + Date.now().toString(36);
         const args = { kind: k.kind, key: nk, content: JSON.parse(JSON.stringify(k.content)), at: 'now', size: 'm' };
         if (focusMid) args.anchor = { turn: focusMid, mid: focusMid };
@@ -780,6 +897,101 @@
       }
     }
 
+    /* ── the live layer (A16): the items' markup is replaced on every render, the live elements are not ────────────
+       #items holds the rendered column; #live (a sibling, never re-rendered) holds the terminal elements and the
+       panel frames, each placed over its slot (.vc-live) after every render, scroll and placement — hidden, still
+       connected, while its item is folded. ─────────────────────────────────────────────────────────────────────── */
+    _layers(body) {
+      let items = body.querySelector(':scope > #items'), live = body.querySelector(':scope > #live');
+      if (!items || !live) { body.innerHTML = ''; items = document.createElement('div'); items.id = 'items'; live = document.createElement('div'); live.id = 'live'; body.appendChild(items); body.appendChild(live);
+        if (!this._liveBound) { this._liveBound = true; body.addEventListener('scroll', () => this._liveLayout()); try { this._liveRO = new ResizeObserver(() => this._liveLayout()); this._liveRO.observe(body); this._liveRO.observe(items); } catch (e) {} } }
+      return { items, live };
+    }
+    _mountLive(body) {
+      const L = this._live || (this._live = {}); const { live } = this._layers(body);
+      body.querySelectorAll('#items .vc-live[data-live]').forEach((h) => {
+        const key = h.dataset.key, kind = h.dataset.live; let el = L[key];
+        if (el && el.dataset.kind !== kind) { try { el.remove(); } catch (e) {} el = null; }
+        if (!el) {
+          // the wrapper is the column's (placed, sized, hidden); the element inside is the estate's own and keeps its styles
+          let inner;
+          if (kind === 'term') { inner = document.createElement('vera-terminal'); inner.setAttribute('ws', h.dataset.ws || ''); ensureLib('/ui/vera-terminal.js', 'vera-terminal'); }
+          else { inner = document.createElement('iframe'); inner.className = 'vc-pframe'; inner.setAttribute('title', key); inner.src = h.dataset.src || 'about:blank'; }
+          el = document.createElement('div'); el.className = 'lv'; el.dataset.kind = kind; el.dataset.key = key; el.appendChild(inner); L[key] = el; live.appendChild(el);
+          try { this.dispatchEvent(new CustomEvent('vera:canvas:live', { bubbles: true, detail: { key, kind, ws: h.dataset.ws || '', src: h.dataset.src || '' } })); } catch (e) {}
+        } else if (kind === 'term' && h.dataset.ws) { const t = el.firstChild; if (t && t.getAttribute('ws') !== h.dataset.ws) { t.setAttribute('ws', h.dataset.ws); try { t.destroy && t.destroy(); t.connect(h.dataset.ws); } catch (e) {} } }
+      });
+      Object.keys(L).forEach((k) => { if (!body.querySelector('#items .vc-live[data-key="' + k.replace(/"/g, '\\"') + '"]')) { try { L[k].remove(); } catch (e) {} delete L[k]; } });
+      // the slots move after a render (placement, fonts, a frame's load): every slot is observed, and a slow tick
+      // catches what no observer reports, only while live elements exist
+      try { if (this._liveRO) body.querySelectorAll('#items .vc-live[data-live], #items .it').forEach((n) => this._liveRO.observe(n)); } catch (e) {}
+      const any = Object.keys(L).length > 0;
+      if (any && !this._liveTick) this._liveTick = setInterval(() => this._liveLayout(), 500);
+      if (!any && this._liveTick) { clearInterval(this._liveTick); this._liveTick = null; }
+      this._liveLayout();
+    }
+    _liveLayout() {
+      const L = this._live; if (!L) return; const body = this.shadowRoot.getElementById('body'); if (!body) return;
+      const B = body.getBoundingClientRect();
+      Object.keys(L).forEach((k) => {
+        const el = L[k]; const h = body.querySelector('#items .vc-live[data-key="' + k.replace(/"/g, '\\"') + '"]');
+        if (!h || !h.getClientRects().length) { el.style.display = 'none'; return; }
+        const r = h.getBoundingClientRect(); const w = Math.max(0, Math.round(r.width)), ht = Math.max(0, Math.round(r.height));
+        el.style.display = ''; el.style.left = Math.round(r.left - B.left + body.scrollLeft) + 'px'; el.style.top = Math.round(r.top - B.top + body.scrollTop) + 'px';
+        if (el.style.width !== w + 'px' || el.style.height !== ht + 'px') { el.style.width = w + 'px'; el.style.height = ht + 'px'; if (el.dataset.kind === 'term') { const t = el.firstChild; try { t && t._doFit && t._doFit(); } catch (e) {} } }
+      });
+    }
+    /* the bridge, asked for its answer (panel.query · panel.dispatch · ui.panels.open): the same /mcp/call, the reply back */
+    async callResult(name, args) {
+      const base = (window._veraBase || '').replace(/\/$/, '');
+      try { const r = await fetch(base + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, arguments: args || {} }) }); const j = await r.json(); return j && j.result !== undefined ? j.result : j; }
+      catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+    }
+    /* the bridge asked from an item: the readout on the item, the reply to the host */
+    async _bridge(key, id, name, args) {
+      this._readout(key, '… ' + name); const r = await this.callResult(name, args);
+      try { this.dispatchEvent(new CustomEvent('vera:canvas:panel', { bubbles: true, detail: { key, id, action: name, reply: r } })); } catch (e) {}
+      return this._readout(key, r);
+    }
+    _sid() { return String((this._doc && this._doc.session) || this.getAttribute('session-id') || ''); }
+    _contentOf(key) { const b = this._blockOf(key); return b ? Object.assign({}, b.content || {}) : null; }
+    _readout(key, obj) { this._pq = this._pq || {}; let text = ''; try { text = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 1); } catch (e) { text = String(obj); } this._pq[key] = { text: String(text).slice(0, 4000) }; if (this._doc) this.render(this._doc); }
+    /* the add bar's panel: the panels open for this session (ui.panels.open), or any id */
+    async _panelPick(btn) {
+      const bar = btn.closest('.addbar'); if (!bar) return; let pop = bar.querySelector('.addpop'); if (pop) { pop.remove(); return; }
+      pop = document.createElement('div'); pop.className = 'addpop'; pop.setAttribute('data-w', 'canvas.add.panel'); pop.innerHTML = '<span class="vc-dim">open panels — asking the bridge…</span>'; bar.appendChild(pop);
+      const r = await this.callResult('ui.panels.open', { session_id: this._sid() }); const rows = (r && Array.isArray(r.panels)) ? r.panels : [];
+      pop.innerHTML = (rows.length ? rows.map((p) => `<button class="pp" data-act="padd" data-pid="${esc(p.id)}" data-plabel="${esc(p.label || p.id)}"><b>${esc(p.label || p.id)}</b><span>${esc(p.host || '')}${p.origin ? ' · ' + esc(p.origin) : ''}</span></button>`).join('') : '<span class="vc-dim">no panel open for this session — any panel by its id:</span>')
+        + '<div class="row"><input class="ti" data-f="pid" placeholder="panel id" spellcheck="false"><button class="ib on" data-act="paddid">Add</button></div>';
+    }
+    _panelAdd(id, label) {
+      id = String(id || '').trim(); if (!id) return; const key = 'panel:' + id; const focusMid = this.dataset.focusMid || '';
+      const args = { kind: 'panel', key, content: { panel: id, title: label || id }, at: 'now', size: 'l' }; if (focusMid) args.anchor = { turn: focusMid, mid: focusMid };
+      this._open.add(key);
+      try { this.dispatchEvent(new CustomEvent('vera:canvas:panel-src', { bubbles: true, detail: { key, id, content: args.content } })); } catch (e) {}
+      return this.call('canvas.add', args);
+    }
+    /* the cell runs through the notebook's own exec (the SSE the notebook page uses); the output lands on the item
+       and on the cell */
+    async _nbRun(key, it) {
+      const c = this._contentOf(key); if (!c) return; const api = (this.getAttribute('nb-api') || '').replace(/\/$/, '');
+      const out = it && it.querySelector('.vc-nbout'); const paint = (t) => { if (out) { out.hidden = false; out.querySelector('code').textContent = t; } };
+      const src = String(c.content || c.source || ''); const cmd = langRunCmd(c.lang, src); let text = '';
+      paint('$ running…'); try { this.dispatchEvent(new CustomEvent('vera:canvas:cell', { bubbles: true, detail: { key, state: 'running' } })); } catch (e) {}
+      try {
+        const r = await fetch(api + '/ide-api/exec/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cmd, cwd: (c.props && c.props.cwd) || '', session_id: 'notebook:' + (c.notebook_id || '') }) });
+        if (!r.body || !/text\/event-stream/.test(r.headers.get('content-type') || '')) { text = await r.text(); }
+        else { const rd = r.body.getReader(), dec = new TextDecoder(); let buf = '';
+          while (true) { const { value, done } = await rd.read(); if (done) break; buf += dec.decode(value, { stream: true }); let i;
+            while ((i = buf.indexOf('\n\n')) >= 0) { const chunk = buf.slice(0, i); buf = buf.slice(i + 2); let ev = 'message'; const data = [];
+              chunk.split('\n').forEach((l) => { if (l.startsWith('event:')) ev = l.slice(6).trim(); else if (l.startsWith('data:')) data.push(l.slice(5).replace(/^ /, '')); });
+              const d = data.join('\n'); if (ev === 'pid') continue; if (ev === 'exit' || ev === 'done') { text += (text && !text.endsWith('\n') ? '\n' : '') + '[' + ev + (d ? ' ' + d : '') + ']'; } else text += d + '\n'; paint(text); } } }
+      } catch (e) { text += '\n[error ' + String(e && e.message || e) + ']'; }
+      paint(text || '(no output)');
+      try { if (c.notebook_id && c.cell_id) await fetch(api + '/api/notebooks/' + encodeURIComponent(c.notebook_id) + '/cells/' + encodeURIComponent(c.cell_id), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ generated: text }) }); } catch (e) {}
+      try { this.dispatchEvent(new CustomEvent('vera:canvas:cell', { bubbles: true, detail: { key, state: 'done', output: text } })); } catch (e) {}
+      return this.call('canvas.update', { key, content: Object.assign(c, { generated: text }) });
+    }
     /* Every per-item action is the capability the chat and the model use — one implementation — through the
        same /mcp/call the chat uses; the element only asks for a repaint afterwards. */
     async call(name, args) {
@@ -793,7 +1005,7 @@
     }
   }
 
-  const api = { place, checkRoutes, decisionOf, suggestionsOf, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, ITEM_SIZES, KIND_GLYPH, version: 2 };
+  const api = { place, checkRoutes, decisionOf, suggestionsOf, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, ITEM_SIZES, KIND_GLYPH, BLOCK, langRunCmd, version: 3 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.VeraCanvas = Object.assign(root.VeraCanvas || {}, api);
   if (typeof customElements !== 'undefined' && !customElements.get('vera-canvas')) {

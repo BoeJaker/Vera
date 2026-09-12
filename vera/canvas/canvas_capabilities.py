@@ -69,9 +69,18 @@ BLOCK_TYPES: Dict[str, Dict[str, str]] = {
     "widget":   {"desc": "A defined Vera widget via the panel bridge (widget-level, "
                          "not a whole panel).",
                  "content": "{widget:str, args?:obj, title?:str}"},
-    "session":  {"desc": "A live remote/SSH session or its results (e.g. an agent "
-                         "connected into the estate).",
-                 "content": "{session_id?:str, host?:str, command?:str, output?:str}"},
+    "session":  {"desc": "A live terminal (the Canvas board): <vera-terminal> over the estate's terminal "
+                         "WebSocket — an SSH host of the Exec panel (host_id) or a docker container on it "
+                         "(host_id + container) — or a session's results.",
+                 "content": "{host_id?:str, container?:str, shell?:str, ws?:str, attached?:bool, "
+                            "session_id?:str, host?:str, command?:str, output?:str}"},
+    "notebook": {"desc": "A notebook cell as an item: the cell the notebook holds (its source, its output); "
+                         "Run goes through the notebook's exec, Open opens the notebook at it.",
+                 "content": "{notebook_id:str, cell_id:str, cell_type:str, lang?:str, content:str, "
+                            "generated?:str, title?:str}"},
+    "panel":    {"desc": "A WHOLE panel as an item: the panel page in its frame, driven over the one bridge "
+                         "(panel.query · panel.dispatch); the add bar lists the panels open for the session.",
+                 "content": "{panel:str, title?:str, src?:str}"},
     "schedule": {"desc": "A scheduled item tied to this canvas, shown nicely.",
                  "content": "{when:str, what:str, action_id?:str}"},
     "html":     {"desc": "Raw HTML — ON-THE-FLY escape hatch; prefer a predefined "
@@ -230,7 +239,8 @@ def _validate_block(btype: str, content: Any) -> Dict[str, Any]:
     if isinstance(content, str):
         # A bare string is treated as the natural field for the type.
         key = {"markdown": "md", "code": "code", "diagram": "mermaid",
-               "note": "text", "html": "html", "loop": "goal"}.get(btype, "text")
+               "note": "text", "html": "html", "loop": "goal", "notebook": "content",
+               "panel": "panel"}.get(btype, "text")
         content = {key: content}
     if not isinstance(content, dict):
         content = {"text": str(content)}
