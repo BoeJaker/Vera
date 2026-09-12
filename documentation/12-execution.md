@@ -84,6 +84,34 @@ for cancellation. Research iteration records project active and paused states;
 its native stop currently deletes the record, so the shared lifecycle adapter
 fails closed instead of manufacturing a preserved cancelled state.
 
+## Scheduler, job, and transition authority
+
+A source-bound inventory distinguishes execution surfaces by semantic scope,
+role, state owner, persistence, and whether they execute. It records source
+digests rather than source bodies, and it cannot run, mutate, migrate, or remove
+any reviewed component.
+
+The process interval scheduler, Calendar action scheduler, Dream trigger
+scheduler, and Research iteration scheduler own different state and timing
+semantics. They are not duplicate executors merely because each advances work
+over time. The shared schedule and lifecycle contracts are non-executing
+projections rather than another scheduler. The current recommendation is to
+retain those native authorities while continuing to project their definitions,
+decisions, and lifecycle evidence through shared contracts.
+
+The job surfaces are also layered. Worker job persistence owns durable inference
+history, while the Workshop observatory tracks jobs awaited by agent and DAG
+runs. One concrete overlap remains: the IDE module duplicates the idle queue's
+load, save, and drop gateways even though `idle_queue_service` owns that state,
+and it hosts the queue driver. Those gateways and driver placement should
+migrate to the service owner behind compatibility tests; this review deletes
+nothing.
+
+Calendar and Dream transitions persist native state before emitting shared
+lifecycle evidence. Fabric revision transitions and operator Run projections
+belong to different state machines. Their shared word “transition” therefore
+does not establish duplicated authority.
+
 `execution/exec_capabilities.py` is two capability groups in one module: **`exec.*`** — shell, PowerShell, code, and SSH execution — and **`netscan.*`** — network asset discovery, target probing, and an auxiliary topology graph. Both are governed by a single configurable **exec sandbox policy**, and both surface their own harness tabs (the tabbed **Exec** consoles and the Cytoscape **Netmap**).
 
 This is the module that lets Vera (and an agent driving it) actually *touch* the host and the network — so the sandbox section is the most important part of the page.
