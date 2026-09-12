@@ -782,6 +782,87 @@ _PANELS_OPEN_KEY = "vera:ui:panels:open:{sid}:{host}"
 _PANELS_OPEN_TTL = 90        # seconds; the holders re-report every 30 s
 
 
+# ── attachments (UI redesign, Notes/40 §5.2; the Paste board) ───────────────────────────
+# POST /chat/attachment (multipart: file, session_id) puts a pasted or dropped file into
+# the session's artifact store — text through write_artifact_file (sandbox-aware, so a
+# run can open it at ./attachments/<id>_<name>), binaries on the host artifact dir — and
+# answers the attachment record the composer's chip and the [attachment …] reference line
+# the model sees are built from: {id, kind, name, mime, bytes, rel, preview, text_extracted,
+# pages}. The preview is the existing /exec/artifacts/download route.
+import os as _att_os
+from urllib.parse import quote as _att_quote
+from fastapi import File as _AttFile, Form as _AttForm, UploadFile as _AttUpload
+
+_ATT_TEXT_EXT = {".txt", ".md", ".markdown", ".rst", ".py", ".js", ".mjs", ".cjs", ".ts", ".json", ".csv", ".tsv",
+                 ".log", ".diff", ".patch", ".html", ".htm", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".sh",
+                 ".ps1", ".sql", ".xml", ".css"}
+_ATT_KIND_BY_EXT = {".diff": "diff", ".patch": "diff", ".csv": "csv", ".tsv": "csv", ".log": "log", ".md": "markdown",
+                    ".markdown": "markdown", ".html": "html", ".htm": "html", ".json": "json", ".pdf": "pdf",
+                    ".docx": "docx"}
+
+
+def _att_kind(name: str, mime: str) -> str:
+    ext = _att_os.path.splitext(name or "")[1].lower()
+    if (mime or "").startswith("image/"):
+        return "image"
+    if ext in _ATT_KIND_BY_EXT:
+        return _ATT_KIND_BY_EXT[ext]
+    if ext in _ATT_TEXT_EXT or (mime or "").startswith("text/"):
+        return "code" if ext in (".py", ".js", ".mjs", ".cjs", ".ts", ".sh", ".ps1", ".sql", ".css") else "text"
+    return "file"
+
+
+def _att_extract(kind: str, data: bytes) -> tuple:
+    """(text, pages) for what can be read as text: text kinds decode; a pdf through pypdf
+    when it is installed; anything else is opaque (the model opens it as a file)."""
+    if kind in ("text", "code", "diff", "csv", "log", "markdown", "html", "json"):
+        return data.decode("utf-8", "replace"), 0
+    if kind == "pdf":
+        try:
+            import io
+            from pypdf import PdfReader
+            r = PdfReader(io.BytesIO(data))
+            out = []
+            for p in r.pages[:80]:
+                try:
+                    out.append(p.extract_text() or "")
+                except Exception:
+                    out.append("")
+            return "\n\n".join(out).strip(), len(r.pages)
+        except Exception:
+            return "", 0
+    return "", 0
+
+
+@APP.post("/chat/attachment", include_in_schema=False)
+async def _chat_attachment_upload(file: _AttUpload = _AttFile(...), session_id: str = _AttForm("")):
+    from Vera.vera.execution.exec_capabilities import artifact_dir, write_artifact_file, _safe_seg
+    data = await file.read()
+    if len(data) > 64 * 1024 * 1024:
+        return {"ok": False, "error": "attachment over 64 MB"}
+    name = _safe_seg(_att_os.path.basename(file.filename or "attachment"))
+    att_id = uuid.uuid4().hex[:10]
+    rel = "attachments/" + att_id + "_" + name
+    kind = _att_kind(name, file.content_type or "")
+    text, pages = _att_extract(kind, data)
+    stored = ""
+    try:
+        if text and kind != "pdf":
+            stored = await write_artifact_file(relpath=rel, content=text, session_id=session_id)
+        else:
+            base = artifact_dir(session_id=session_id, create=True)
+            full = _att_os.path.join(base, "attachments")
+            _att_os.makedirs(full, exist_ok=True)
+            with open(_att_os.path.join(full, att_id + "_" + name), "wb") as fh:
+                fh.write(data)
+            stored = _att_os.path.join(full, att_id + "_" + name)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": "store failed: %s" % e}
+    preview = "/exec/artifacts/download?session_id=" + _att_quote(session_id or "") + "&rel=" + _att_quote(rel)
+    return {"ok": True, "id": att_id, "kind": kind, "name": name, "mime": file.content_type or "", "bytes": len(data),
+            "rel": rel, "path": stored, "preview": preview, "text_extracted": text[:200000], "pages": pages}
+
+
 @APP.post("/ui/panels/open/report", include_in_schema=False)
 async def _panels_open_report(request: _BridgeRequest):
     """A UI that holds panels reports them. Body: {session_id, host ('chat' |

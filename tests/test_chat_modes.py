@@ -119,7 +119,7 @@ def test_pasted_docs_still_reach_the_model_and_become_cards():
 
 def test_history_cards_parse_exactly_the_prefix_the_chat_writes():
     # _buildDocsPrefix writes "### title\n```lang\nbody\n```" blocks joined by blank lines; the parser reads that shape
-    assert "return `### ${d.title}\\n\\`\\`\\`${lang}\\n${d.body}\\n\\`\\`\\``;" in HTML
+    assert "blocks.push(`### ${d.title}\\n\\`\\`\\`${lang}\\n${d.body}\\n\\`\\`\\``); }" in HTML
     body = _fn("_paFromMarkdown")
     assert r"/^### ([^\n]+)\n```([^\n]*)\n([\s\S]*?)\n```\n*/" in body
 
