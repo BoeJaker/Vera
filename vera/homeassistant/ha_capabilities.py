@@ -699,7 +699,11 @@ register_ui(
              "ha.state", "ha.find", "ha.summary", "ha.set", "ha.scene",
              "ha.notify", "ha.call", "ha.estate.plan", "ha.estate.sync",
              "ha.estate.clear"],
-    mode="tab",
+    # "element", not "tab": Home Assistant is reached through the Automations
+    # hub, which embeds /ha/panel as its own sub-tab. It stays registered (so
+    # the dashboard-widget loader, custom tabs and solo popout can find it) but
+    # no longer claims a top-level tab.
+    mode="element",
     tab_order=74,
 )
 

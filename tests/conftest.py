@@ -196,6 +196,8 @@ _CRITICAL_MODULES = {
     "test_census34_failures",
     "test_edit_already_applied",
     "test_printer_wrap",  # paper does not re-flow: an unwrapped line is SILENTLY clipped off the page (2026-09-07)
+    "test_missing_module_import",  # a name resolved only at CALL time: agentbridge.catalog 500'd for a day (2026-09-12)
+    "test_automations_hub",  # a pane swapped in after load can never be switched off again (2026-09-12)
 }
 
 

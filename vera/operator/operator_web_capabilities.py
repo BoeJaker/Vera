@@ -1624,7 +1624,12 @@ register_ui(
              "operator.step", "operator.run", "operator.mission.list",
              "operator.mission.run", "docs.build", "docs.gallery",
              "operator.test.run", "operator.trace", "operator.runs"],
-    mode="tab", tab_order=73,
+    # "element", not "tab": the Operator is reached through the Automations
+    # hub, which embeds /operator/panel as its own sub-tab. It stays registered
+    # (test_ui_panels asserts that, and the dashboard-widget loader, custom
+    # tabs and solo popout all read the registry) but no longer claims a
+    # top-level tab.
+    mode="element", tab_order=73,
 )
 
 log.info("operator: capabilities registered (playwright=%s)", _be.playwright_available())
