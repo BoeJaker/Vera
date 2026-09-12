@@ -1432,6 +1432,80 @@ html[data-style] body[data-view="minimal"].has-msgs #msgs > .mwrap.u{border-radi
 html[data-blocks="off"] #msgs .mwrap.u .msg-user-line{background:transparent}
 html[data-blocks="off"] #msgs .mwrap + .mwrap{box-shadow:none}
 html[data-blocks="off"] #rightRail.lhm-host .lhm-det{background:transparent;box-shadow:0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)))}
+/* ── the quick menus as the board draws them (the menu's body is a list of widgets) ── */
+#rightRail.lhm-host .lhm-quick .grp{font-size:var(--label-size,9px);text-transform:uppercase;letter-spacing:.09em;font-weight:600;color:var(--t3,var(--dim,#6b7280));display:flex;align-items:center;gap:7px;margin-top:3px}
+#rightRail.lhm-host .lhm-quick .grp::after{content:'';flex:1;height:1px;background:var(--bd,var(--border,rgba(255,255,255,.09)))}
+#rightRail.lhm-host .lhm-quick .grp .grp-act{order:2;background:transparent;border:none;color:var(--t3,var(--dim,#6b7280));font-size:10px;cursor:pointer;padding:0 2px;line-height:1}
+#rightRail.lhm-host .lhm-quick .grp .grp-act:hover{color:var(--ac,var(--acc,#5a9e8f))}
+#rightRail.lhm-host .lhm-quick .lrow{display:flex;align-items:center;gap:8px;min-height:var(--row-h,26px);padding:3px 8px;margin:0 -8px;border-radius:var(--r-sm,6px);cursor:pointer}
+#rightRail.lhm-host .lhm-quick .lrow:hover{background:var(--surf2,var(--bg2,#1a1c20))}
+#rightRail.lhm-host .lhm-quick .lrow.on{background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent));box-shadow:inset 2px 0 0 var(--ac,var(--acc,#5a9e8f))}
+#rightRail.lhm-host .lhm-quick .lrow .tick{width:3px;height:13px;border-radius:2px;flex-shrink:0}
+#rightRail.lhm-host .lhm-quick .lrow .nm{font-size:11px;color:var(--t1,var(--text,#d8dce4));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+#rightRail.lhm-host .lhm-quick .lrow .nm small{display:block;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:8.5px;color:var(--t3,var(--dim,#6b7280))}
+#rightRail.lhm-host .lhm-quick .lrow .rt-n{margin-left:auto;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;color:var(--t2,var(--dim2,#8a92a0));flex-shrink:0}
+#rightRail.lhm-host .lhm-quick .wbar{height:4px;border-radius:2px;background:var(--s3,var(--bg3,#22262e));overflow:hidden;flex:0 0 44px}
+#rightRail.lhm-host .lhm-quick .wbar i{display:block;height:100%}
+#rightRail.lhm-host .lhm-quick .comp{display:flex;height:9px;border-radius:3px;overflow:hidden;gap:1px;background:var(--s3,var(--bg3,#22262e));flex-shrink:0}
+#rightRail.lhm-host .lhm-quick .comp i{display:block;height:100%}
+#rightRail.lhm-host .lhm-quick .wid{position:relative;border-radius:var(--r-sm,6px)}
+#rightRail.lhm-host .lhm-quick .gal-ctl{display:flex;align-items:center;gap:6px;padding:0 0 6px}
+#rightRail.lhm-host .lhm-quick .vseg{display:inline-flex;gap:2px;background:var(--s2,var(--bg2,#1a1c20));border-radius:6px;padding:2px}
+#rightRail.lhm-host .lhm-quick .vseg button{height:16px;padding:0 6px;border:none;border-radius:4px;background:transparent;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:8.5px;color:var(--t3,var(--dim,#6b7280));cursor:pointer}
+#rightRail.lhm-host .lhm-quick .vseg button.on{background:var(--surf,var(--bg1,#151719));color:var(--t1,var(--text,#d8dce4))}
+#rightRail.lhm-host .lhm-quick .gal-all{margin-left:auto;height:18px;padding:0 8px;border:none;border-radius:99px;background:var(--s2,var(--bg2,#1a1c20));font-size:9px;color:var(--t3,var(--dim,#6b7280));cursor:pointer}
+#rightRail.lhm-host .lhm-quick .gal-all.on{color:var(--ac,var(--acc,#5a9e8f));box-shadow:inset 0 0 0 1px var(--ac,var(--acc,#5a9e8f))}
+#rightRail.lhm-host .lhm-quick .gal-mix{display:flex;flex-wrap:wrap;gap:4px;padding-bottom:6px}
+#rightRail.lhm-host .lhm-quick .gm{display:inline-flex;align-items:center;gap:4px;height:17px;padding:0 7px 0 5px;border-radius:99px;background:var(--s2,var(--bg2,#1a1c20));font-size:8.5px;color:var(--t3,var(--dim,#6b7280));cursor:pointer}
+#rightRail.lhm-host .lhm-quick .gm i{width:6px;height:6px;border-radius:2px;background:var(--c);opacity:.35}
+#rightRail.lhm-host .lhm-quick .gm.on{color:var(--t2,var(--dim2,#8a92a0))}
+#rightRail.lhm-host .lhm-quick .gm.on i{opacity:1}
+#rightRail.lhm-host .lhm-quick .gm b{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-weight:400;font-size:8px;color:var(--t3,var(--dim,#6b7280))}
+#rightRail.lhm-host .lhm-quick .gal-host{margin-bottom:8px}
+#rightRail.lhm-host .lhm-quick .wsearch{height:28px;display:flex;align-items:center;padding:0 10px;border-radius:var(--r-sm,6px);background:var(--s1,var(--bg1,#151719));box-shadow:inset 0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));gap:6px;color:var(--t3,var(--dim,#6b7280));font-size:10.5px}
+#rightRail.lhm-host .lhm-quick .wsearch input{flex:1;min-width:0;background:transparent;border:none;padding:0;font-size:10.5px;color:var(--t1,var(--text,#d8dce4))}
+#rightRail.lhm-host .lhm-quick .tm-r{display:grid;grid-template-columns:22px 1fr auto;gap:8px;align-items:center;padding:6px 8px;margin:0 -8px;border-radius:var(--r-sm,6px);font-size:11px;color:var(--t1,var(--text,#d8dce4));cursor:pointer}
+#rightRail.lhm-host .lhm-quick .tm-r:hover{background:var(--surf2,var(--bg2,#1a1c20))}
+#rightRail.lhm-host .lhm-quick .tm-r.on{color:var(--ac,var(--acc,#5a9e8f));box-shadow:inset 2px 0 0 var(--ac,var(--acc,#5a9e8f))}
+#rightRail.lhm-host .lhm-quick .tm-r .ico{color:var(--t2,var(--dim2,#8a92a0));text-align:center}
+#rightRail.lhm-host .lhm-quick .tm-r .ct{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280))}
+#rightRail.lhm-host .lhm-quick .tm-r .nm{display:flex;flex-direction:column;gap:1px;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+#rightRail.lhm-host .lhm-quick .tm-r .who{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:8.5px;color:var(--t3,var(--dim,#6b7280))}
+#rightRail.lhm-host .lhm-quick .lpp-ctl{display:flex;align-items:center;gap:5px;padding:2px 0 10px}
+#rightRail.lhm-host .lhm-quick .lpp-ctl button{font:inherit;font-size:10px;color:var(--t2,var(--dim2,#8a92a0));background:var(--s2,var(--bg2,#1a1c20));border:0;border-radius:var(--r-pill,99px);padding:4px 11px;cursor:pointer}
+#rightRail.lhm-host .lhm-quick .lpp-ctl button.go{color:var(--on-ac,var(--on-acc,#fff));background:var(--ac,var(--acc,#5a9e8f))}
+#rightRail.lhm-host .lhm-quick .lpp-ctl button.danger{color:var(--dv6,#c96b6b)}
+#rightRail.lhm-host .lhm-quick .lpp-ctl .sp{flex:1}
+#rightRail.lhm-host .lhm-quick .lps{display:grid;grid-template-columns:14px 74px 1fr auto;grid-template-rows:auto auto;column-gap:8px;align-items:center;padding:7px 0;box-shadow:inset 0 -1px 0 0 var(--bd,var(--border,rgba(255,255,255,.09)));position:relative}
+#rightRail.lhm-host .lhm-quick .lps:last-child{box-shadow:none}
+#rightRail.lhm-host .lhm-quick .lps-d{grid-row:1 / span 2;width:8px;height:8px;border-radius:50%;background:var(--t3,var(--dim,#6b7280));opacity:.4}
+#rightRail.lhm-host .lhm-quick .lps.done .lps-d{background:var(--ac2,var(--acc2,#8fb87a));opacity:1}
+#rightRail.lhm-host .lhm-quick .lps.run .lps-d{background:var(--ac,var(--acc,#5a9e8f));opacity:1;box-shadow:0 0 0 3.5px color-mix(in srgb,var(--ac,var(--acc,#5a9e8f)) 22%,transparent)}
+#rightRail.lhm-host .lhm-quick .lps.fail .lps-d{background:var(--dv6,#c96b6b);opacity:1}
+#rightRail.lhm-host .lhm-quick .lps.ask .lps-d{background:var(--ac3,var(--acc3,#c9955a));opacity:1;animation:xbl 1s infinite}
+#rightRail.lhm-host .lhm-quick .lps-n{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:10px;color:var(--t2,var(--dim2,#8a92a0));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#rightRail.lhm-host .lhm-quick .lps.run .lps-n{color:var(--t1,var(--text,#d8dce4))}
+#rightRail.lhm-host .lhm-quick .lps-c{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:10px;color:var(--ac,var(--acc,#5a9e8f));overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#rightRail.lhm-host .lhm-quick .lps-m{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280))}
+#rightRail.lhm-host .lhm-quick .lps-x{grid-column:3 / span 2;grid-row:2;font-size:10px;color:var(--t3,var(--dim,#6b7280));overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#rightRail.lhm-host .lhm-quick .lpp-ft{padding:10px 0 4px;font-size:9.5px;color:var(--t3,var(--dim,#6b7280));line-height:1.5}
+#rightRail.lhm-host .lhm-quick .sbx-act{display:flex;gap:6px;flex-wrap:wrap}
+#rightRail.lhm-host .lhm-quick .sbx-act button{height:26px;padding:0 10px;border-radius:var(--r-sm,6px);font-size:10.5px;color:var(--t2,var(--dim2,#8a92a0));background:var(--surf2,var(--bg2,#1a1c20));border:0;cursor:pointer}
+#rightRail.lhm-host .lhm-quick .sbx-act button:hover{color:var(--t1,var(--text,#d8dce4));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent))}
+#rightRail.lhm-host .lhm-quick .sbx-st{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;color:var(--t2,var(--dim2,#8a92a0));line-height:1.5;padding:2px 0}
+#rightRail.lhm-host .lhm-quick .qnote{font-size:9.5px;color:var(--t3,var(--dim,#6b7280));line-height:1.5;padding:4px 2px 0}
+#rightRail.lhm-host .lhm-quick .lhm-empty{font-size:10px;color:var(--t3,var(--dim,#6b7280));padding:6px 2px}
+#rightRail.lhm-host .lhm-quick .wcard{display:flex;flex-direction:column;gap:6px;padding:8px 10px;border-radius:var(--r-sm,6px);background:var(--surf2,var(--bg2,#1a1c20));box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14))}
+#rightRail.lhm-host .lhm-quick .wc-h{display:flex;align-items:center;gap:7px;font-size:10.5px;color:var(--t1,var(--text,#d8dce4))}
+#rightRail.lhm-host .lhm-quick .wc-h b{font-weight:600;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#rightRail.lhm-host .lhm-quick .wc-h .mono{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280))}
+#rightRail.lhm-host .lhm-quick .wc-v{display:flex;align-items:center;gap:8px;min-height:22px}
+#rightRail.lhm-host .lhm-quick .wc-v .num{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:20px;font-weight:600;color:var(--t1,var(--text,#d8dce4));letter-spacing:-.02em;line-height:1}
+#rightRail.lhm-host .lhm-quick .wc-v .u{font-size:10px;color:var(--t3,var(--dim,#6b7280))}
+#rightRail.lhm-host .lhm-quick .wc-v .bar{flex:1;height:6px;border-radius:3px;background:var(--s1,var(--bg1,#151719));overflow:hidden}
+#rightRail.lhm-host .lhm-quick .wc-v .bar i{display:block;height:100%;background:var(--ac,var(--acc,#5a9e8f))}
+#rightRail.lhm-host .lhm-quick .sp{flex:1}
+@keyframes xbl{50%{opacity:.35}}
 </style>
 </head>
 <body data-view="minimal">
@@ -3881,7 +3955,8 @@ const CH = (() => {
     fill.style.width=pct+'%';
     fill.style.background=pct>85?'var(--err)':pct>65?'var(--warn)':'var(--acc2)';
     const rem=max-used;
-    if(lbl)lbl.textContent=`${(used/1000).toFixed(1)}k / ${(max/1000).toFixed(0)}k (${rem.toLocaleString()} free)`;
+    if(lbl){ lbl.textContent=`${(used/1000).toFixed(1)}k / ${(max/1000).toFixed(0)}k`; lbl.title=rem.toLocaleString()+' free'; }
+    try{ _ctxMeterSegs(); }catch(_){}
   }
 
   /* ── Load full capability registry from /mcp/tools ── */
@@ -12343,7 +12418,7 @@ Your task: decide what to do next to advance toward the goal.
     {id:'sessions', icon:'◷', label:'Sessions',  tabs:[{id:'Hist',label:'History'}],
      meta:()=>{ const n=document.querySelectorAll('#histList > div').length; return n?n+' sessions':''; }, cta:{label:'+ New session', run:()=>newSession()}},
     {id:'context',  icon:'◎', label:'Context',   tabs:[{id:'ctx',label:'Context'},{id:'memgraph',label:'Memory'}],
-     meta:()=>_lhmTxt('ctxMeterLabel'), cta:{label:'Refresh the assembled context →', run:()=>_ctxFcRefresh()}},
+     meta:()=>_lhmTxt('ctxMeterLabel'), cta:{label:'Expand to the full graph →', run:()=>{ if(!_pages.has('graph')) togglePage('graph'); }}},
     {id:'activity', icon:'∿', label:'Activity',  tabs:[{id:'dag',label:'DAG'},{id:'monitor',label:'Monitor'}],
      meta:()=>{ const n=(document.getElementById('monitorStream')||{children:[]}).children.length; return n?n+' monitor lines':''; }, cta:{label:'Clear the monitor', run:()=>_monitorClear()}},
     {id:'loop',     icon:'⟳', label:'Loop',      tabs:[{id:'loop',label:'Loop'},{id:'loops',label:'Loops'},{id:'goals',label:'Goals'}],
@@ -12422,13 +12497,140 @@ Your task: decide what to do next to advance toward the goal.
     const meta=()=>{ const el=document.getElementById('sessMeta'); if(!el) return; const n=document.querySelectorAll('#msgs .mwrap').length; el.textContent=(n?n+' msgs':'no messages yet')+(SID?' · '+String(SID).slice(-8):''); };
     meta(); try{ new MutationObserver(meta).observe(document.getElementById('msgs'),{childList:true}); }catch(_){}
   }
+  /* ── THE QUICK MENUS as the Canvas board draws them: every menu's body is a list of widgets ─────────────────
+     Context: the context galaxy (the context_graph widget form — galaxy · iso · flow · time, the family chips, All
+     edges), the budget bar (8 families as shares of the window), "In this prompt" rows, the CTA to the full graph.
+     Sessions · Activity · Loop · Workspace · Sandbox · Ops glance · Settings: the board's compact bodies, read from
+     the chat's own state. The old pane of every menu is one press away ("Full ▸" in the header) in the same panel. */
+  const _CTX_FAM_LABEL={agent:'Agent + system',skill:'Skills',ontology:'Ontologies',memory:'Memory recalls',vector:'Vector matches',graph:'Graph (Neo4j)',fabric:'Fabric records',cap:'Capabilities',web:'Web',news:'News',run:'Runs',related_qa:'Related Q&A',worldview:'Worldview',entities:'Entities',urls:'URLs',both:'Vector + graph'};
+  let _qGalView='galaxy', _qGalAll=false, _qGalOff={}, _qSrcOn='', _qSessQ='', _qPanelQ='';
+  const _kfmt=n=>n>=1000?(n/1000).toFixed(1)+'k':String(n);
+  // every family of the assembled context: its records, its tokens (≈ chars / 4), its colour, its share
+  function _ctxShares(){
+    let nodes=CTX_NODES.slice(); try{ const ex=_ctxAssembledExtra(_CTX_ALL_LAYERS, CTX_NODES); nodes=nodes.concat(ex.nodes.filter(n=>!CTX_NODES.some(c=>c.id===n.id))); }catch(_){}
+    const by={}; nodes.forEach(n=>{ if(n.included===false) return; const f=String(n.source||n.family||'context').toLowerCase(); const b=by[f]||(by[f]={f, n:0, tok:0}); b.n++; b.tok+=Math.max(8, Math.round(String(n.text||n.label||'').length/4)); });
+    const rows=Object.values(by).sort((a,b)=>b.tok-a.tok); const total=rows.reduce((s,b)=>s+b.tok,0)||1;
+    rows.forEach(b=>{ b.pct=b.tok/total*100; b.col=srcCol(b.f); b.label=_CTX_FAM_LABEL[b.f]||b.f; });
+    return {rows, total, nodes};
+  }
+  // the header's meter carries the same shares (the board's stacked meter)
+  function _ctxMeterSegs(){
+    const fill=document.getElementById('ctxMeterFill'); if(!fill) return; const S=_ctxShares();
+    if(!S.rows.length){ fill.innerHTML=''; return; }
+    fill.style.display='flex'; fill.style.gap='1px'; fill.style.background='transparent';
+    fill.innerHTML=S.rows.map(r=>'<i style="width:'+r.pct.toFixed(1)+'%;background:'+r.col+'" title="'+esc(r.label+' · '+_kfmt(r.tok))+'"></i>').join('');
+  }
+  function _quickContext(el){
+    const S=_ctxShares();
+    const views=[['galaxy','galaxy'],['iso','iso'],['flow','flow'],['timeline','time']];
+    const sig=S.rows.map(r=>r.f+r.tok).join('|')+'#'+_qGalView+_qGalAll+JSON.stringify(_qGalOff)+_qSrcOn+CTX_EDGES.length+(_pages.has('graph')?'g':'');
+    if(el.dataset.sig===sig) return; el.dataset.sig=sig;
+    const data={nodes:S.nodes.map(n=>({id:n.id,label:n.label,family:String(n.source||'context').toLowerCase(),score:n.score,included:n.included})), rels:CTX_EDGES.map(e=>({from:e.from,to:e.to,label:e.type||e.label||''}))};
+    const gal=window.VeraWidget?VeraWidget.draw('context_graph',data,'m',{height:196,bare:true,view:_qGalView,allEdges:_qGalAll,off:_qGalOff,color:srcCol,hub:'aide',hubMeta:_kfmt(S.total)}):'';
+    el.innerHTML='<div class="wid" data-w="context galaxy · graph" data-tpl="lhm:ctx-galaxy">'
+      +'<div class="gal-ctl"><span class="vseg">'+views.map(v=>'<button class="'+(_qGalView===v[0]?'on':'')+'" data-view="'+v[0]+'" title="'+v[0]+' view">'+v[1]+'</button>').join('')+'</span><button class="gal-all'+(_qGalAll?' on':'')+'" title="Every record\'s edge to the hub">All edges</button></div>'
+      +'<div class="gal-mix">'+S.rows.map(r=>'<span class="gm'+(_qGalOff[r.f]?'':' on')+'" data-fam="'+esc(r.f)+'" style="--c:'+r.col+'" title="'+esc(r.label)+' — press to dim or light this family"><i></i>'+esc(r.label.replace(' + system','').replace(' (Neo4j)',''))+'<b>'+_kfmt(r.tok)+'</b></span>').join('')+'</div>'
+      +'<div class="gal-host">'+gal+'</div></div>'
+      +'<div class="wid" data-w="budget bar · meter" data-tpl="lhm:ctx-budget" title="'+esc(_lhmTxt('ctxMeterLabel'))+'"><span class="comp">'+S.rows.map(r=>'<i style="width:'+r.pct.toFixed(1)+'%;background:'+r.col+'" title="'+esc(r.label+' · '+_kfmt(r.tok))+'"></i>').join('')+'</span></div>'
+      +'<div class="wid" data-w="in this prompt · list"><div class="grp">In this prompt<button class="grp-act" title="Refresh the assembled context">↻</button></div>'
+      +(S.rows.length?S.rows.map(r=>'<div class="lrow'+(r.f===_qSrcOn?' on':'')+'" data-fam="'+esc(r.f)+'" title="'+esc(r.label+' — '+r.n+' record'+(r.n===1?'':'s')+' · '+_kfmt(r.tok)+' tokens')+'"><span class="tick" style="background:'+r.col+'"></span><span class="nm">'+esc(r.label)+'</span><span class="wbar"><i style="width:'+r.pct.toFixed(0)+'%;background:'+r.col+'"></i></span><span class="rt-n">'+_kfmt(r.tok)+'</span></div>').join('')
+        :'<div class="lhm-empty">Nothing assembled yet — the context is gathered as you type, and shown here by source.</div>')+'</div>';
+    el.querySelectorAll('.vseg button').forEach(b=>b.addEventListener('click',()=>{ _qGalView=b.dataset.view; VeraLHM.render(); }));
+    el.querySelector('.gal-all').addEventListener('click',()=>{ _qGalAll=!_qGalAll; VeraLHM.render(); });
+    el.querySelectorAll('.gm').forEach(c=>c.addEventListener('click',()=>{ const f=c.dataset.fam; _qGalOff[f]=!_qGalOff[f]; VeraLHM.render(); }));
+    el.querySelector('.grp-act').addEventListener('click',()=>{ try{ _ctxFcRefresh(); }catch(_){} });
+    el.querySelectorAll('.lrow').forEach(r=>r.addEventListener('click',()=>{ _qSrcOn=(_qSrcOn===r.dataset.fam?'':r.dataset.fam); VeraLHM.render(); }));
+    el.querySelectorAll('.vw-gd[data-id]').forEach(d=>d.addEventListener('click',()=>{ try{ nodeClick(d.dataset.id); }catch(_){} }));
+  }
+  // Sessions: search, today's sessions as rows (the history list's own records), the current one lit
+  function _quickSessions(el){
+    const list=(typeof SESSIONS!=='undefined'&&Array.isArray(SESSIONS))?SESSIONS:[]; const q=_qSessQ.toLowerCase();
+    const rows=list.filter(s=>!q||(s.displayName||s.name||s.session_id||'').toLowerCase().includes(q)||(s.preview||'').toLowerCase().includes(q)).slice(0,10);
+    const sig=list.length+':'+q+':'+SID+':'+rows.map(s=>s.session_id).join(','); if(el.dataset.sig===sig) return; el.dataset.sig=sig;
+    const day=s=>{ const t=(s.first_ts||'').slice(0,10), today=new Date().toISOString().slice(0,10); return t===today?'Today':t; };
+    el.innerHTML='<div class="wid" data-w="search · search"><label class="wsearch">⌕<input placeholder="find a session · /" value="'+esc(_qSessQ)+'"></label></div>'
+      +'<div class="wid" data-w="sessions · list"><div class="grp">'+(rows.length&&day(rows[0])==='Today'?'Today':'Recent')+' · '+list.length+'</div>'
+      +(rows.length?rows.map(s=>'<div class="lrow'+(s.session_id===SID?' on':'')+'" data-sid="'+esc(s.session_id)+'" title="'+esc((s.agent||'?')+' · '+(s.count||0)+' msgs · '+(s.first_ts||'').slice(0,16))+'"><span class="nm">'+esc(s.displayName||s.name||s.session_id.slice(-12))+'<small>'+esc((s.agent||'?')+' · '+(s.count||0)+' msgs')+'</small></span><span class="rt-n">'+esc(day(s)==='Today'?(s.first_ts||'').slice(11,16):(s.first_ts||'').slice(5,10))+'</span></div>').join('')
+        :'<div class="lhm-empty">'+(list.length?'No session matches.':'No sessions yet.')+'</div>')+'</div>';
+    const inp=el.querySelector('input'); inp.addEventListener('input',()=>{ _qSessQ=inp.value; VeraLHM.render(); const i2=el.querySelector('input'); if(i2){ i2.focus(); i2.selectionStart=i2.selectionEnd=i2.value.length; } });
+    el.querySelectorAll('.lrow[data-sid]').forEach(r=>r.addEventListener('click',()=>{ try{ loadSession(r.dataset.sid); }catch(_){} }));
+  }
+  // Activity: the running loops (this session's runs as the canvas knows them) and the monitor's last lines
+  function _quickActivity(el){
+    const runs=Object.values(_LOOP_RUNS||{}); const mon=document.getElementById('monitorStream'); const lines=mon?Array.from(mon.children).slice(-6):[];
+    const sig=runs.map(r=>r.rid+r.status+r.evs.length).join(',')+'#'+lines.map(l=>l.textContent).join('|').slice(0,400); if(el.dataset.sig===sig) return; el.dataset.sig=sig;
+    const running=runs.filter(r=>r.status==='running'), done=runs.filter(r=>r.status!=='running');
+    const row=r=>{ const c=_loopRunContent(r); const cur=c.steps.filter(s=>s.status==='run'||s.status==='running')[0]; const n=c.steps.length; return '<div class="lrow" data-rid="'+esc(r.rid)+'" title="'+esc(c.goal||'agentic loop')+'"><span class="tick" style="background:'+(r.status==='running'?'var(--ac,#5a9e8f)':r.status==='ok'?'var(--ac2,#8fb87a)':'var(--dv6,#c96b6b)')+'"></span><span class="nm">'+esc(c.goal||'agentic loop')+'<small>'+esc(cur?('step '+(c.steps.indexOf(cur)+1)+' of '+n+' · '+(cur.cap||cur.n||'')):(n?n+' steps · '+r.status:r.status))+'</small></span><span class="rt-n">'+esc(r.status==='running'?'live':r.status)+'</span></div>'; };
+    el.innerHTML='<div class="wid" data-w="running loops · list"><div class="grp">Running · '+running.length+'</div>'+(running.length?running.map(row).join(''):'<div class="lhm-empty">No loop is running in this session. Auto-loop hands multi-step requests to one.</div>')+'</div>'
+      +(done.length?'<div class="wid" data-w="recent loops · list"><div class="grp">Recent · '+done.length+'</div>'+done.slice(-4).reverse().map(row).join('')+'</div>':'')
+      +'<div class="wid" data-w="monitor · log"><div class="grp">Monitor · '+(mon?mon.children.length:0)+' lines</div>'+(lines.length?lines.map(l=>'<div class="lrow" title="'+esc(l.textContent)+'"><span class="nm" style="font-family:var(--f-mono,var(--mono));font-size:9.5px;color:var(--t2,var(--dim2))">'+esc(l.textContent.slice(0,90))+'</span></div>').join(''):'<div class="lhm-empty">Nothing on the monitor yet.</div>')+'</div>';
+    el.querySelectorAll('.lrow[data-rid]').forEach(r=>r.addEventListener('click',()=>{ try{ VeraLHM.pick('loop'); }catch(_){} }));
+  }
+  // Loop: the running program — every step a capability call with what it read and what it left, the controls
+  function _quickLoop(el){
+    const runs=Object.values(_LOOP_RUNS||{}); const R=runs.filter(r=>r.status==='running').slice(-1)[0]||runs.slice(-1)[0]||null;
+    const c=R?_loopRunContent(R):null; const steps=c?c.steps:[];
+    const sig=(R?R.rid+R.status+R.evs.length:'none')+':'+_lhmTxt('loopVariantDesc').slice(0,40); if(el.dataset.sig===sig) return; el.dataset.sig=sig;
+    const st=s=>{ const k=String(s.status||'').toLowerCase(); return /done|ok|complete/.test(k)?'done':/run/.test(k)?'run':/ask|wait_user|decision/.test(k)?'ask':/fail|error/.test(k)?'fail':'wait'; };
+    el.innerHTML='<div class="wid" data-w="loop program · program" data-tpl="lhm:loop-graph"><div class="lpp-ctl"><button class="go" data-act="settings" title="The loop\'s settings — variant, branching, failure strategy">⚙ Settings</button><button data-act="loops" title="Every loop — running and recent — pick any up where it left off">Loops</button><button data-act="goals" title="The long-term goals">Goals</button><span class="sp"></span>'+(R&&R.status==='running'?'<button class="danger" data-act="cancel">Cancel</button>':'')+'</div>'
+      +(steps.length?steps.slice(0,12).map((s,i)=>'<div class="lps '+st(s)+'"><span class="lps-d"></span><span class="lps-n">'+(i+1)+' '+esc(String(s.n||'').replace(/^\d+\s*/,'').slice(0,12))+'</span><span class="lps-c">'+esc(s.cap||'')+'</span><span class="lps-m">'+esc(s.ms?(typeof s.ms==='number'?(s.ms>=1000?(s.ms/1000).toFixed(1)+' s':s.ms+' ms'):String(s.ms)):'—')+'</span><span class="lps-x">'+esc(s.status||'')+'</span></div>').join('')
+        :'<div class="lhm-empty">'+(R?'The run has not reported a step yet.':'No loop in this session yet. A goal in the composer with Auto-loop on, or the Loops tab, starts one.')+'</div>')
+      +'<span class="lpp-ft">'+esc(R?((c.goal||'agentic loop')+' · '+R.status+(steps.length?' · '+steps.filter(s=>st(s)==='done').length+' of '+steps.length+' done':'')):_lhmTxt('loopVariantDesc').slice(0,120))+'</span></div>';
+    el.querySelectorAll('[data-act]').forEach(b=>b.addEventListener('click',()=>{ const a=b.dataset.act; try{ if(a==='settings'){ VeraLHM.deep(true); _loopCfgToggle(); } else if(a==='loops'){ VeraLHM.deep(true); VeraLHM.pick('loop/loops'); } else if(a==='goals'){ VeraLHM.deep(true); VeraLHM.pick('loop/goals'); } else if(a==='cancel'){ fetch(BASE+'/workshop/agent_loop/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:SID||'',run_id:R?R.rid:''})}).catch(()=>{}); } }catch(_){} }));
+  }
+  // Workspace: what is open now (one set, one bridge), then the panels at hand
+  function _quickWorkspace(el){
+    const open=_lhmOpenNow(); const all=(typeof UI_PANELS!=='undefined'&&Array.isArray(UI_PANELS))?UI_PANELS.slice().sort((a,b)=>(a.tab_order||100)-(b.tab_order||100)):[]; const q=_qPanelQ.toLowerCase();
+    const rows=all.filter(p=>!q||(p.id||'').toLowerCase().includes(q)||(p.label||'').toLowerCase().includes(q)).slice(0,12);
+    const sig=open.map(o=>o.id).join(',')+'#'+q+'#'+all.length+'#'+(_activePanelId||''); if(el.dataset.sig===sig) return; el.dataset.sig=sig;
+    el.innerHTML='<div class="wid" data-w="search · search"><label class="wsearch">⌕<input placeholder="find a panel · '+all.length+' panels" value="'+esc(_qPanelQ)+'"></label></div>'
+      +'<div class="wid" data-w="open now · list"><div class="grp">Open now · '+open.length+' · one set, one bridge</div>'+(open.length?open.map(o=>'<div class="tm-r on" data-open="'+esc(o.id)+'" title="Opened by '+esc(o.origin||'you')+' · '+esc(o.placement||'')+' — focus, or ✕ closes it here"><span class="ico">'+esc(o.icon||'▭')+'</span><span class="nm">'+esc(o.label||o.id)+'<span class="who">'+esc((o.origin||'you')+' · '+(o.placement||''))+'</span></span><span class="ct" data-close="'+esc(o.id)+'">✕</span></div>').join(''):'<div class="lhm-empty">Nothing open beside the chat. A row below, the aide or + Canvas / + Graph opens something here.</div>')+'</div>'
+      +'<div class="wid" data-w="panels · list"><div class="grp">Panels</div>'+(rows.length?rows.map(p=>'<div class="tm-r'+(p.id===_activePanelId?' on':'')+'" data-panel="'+esc(p.id)+'" title="Open '+esc(p.label||p.id)+' beside the chat"><span class="ico">'+esc(p.icon||'▭')+'</span><span class="nm">'+esc(p.label||p.id)+'</span><span class="ct">'+esc(p.mode||'')+'</span></div>').join(''):'<div class="lhm-empty">'+(all.length?'No panel matches.':'Panels are loading…')+'</div>')+'</div>';
+    const inp=el.querySelector('input'); inp.addEventListener('input',()=>{ _qPanelQ=inp.value; VeraLHM.render(); const i2=el.querySelector('input'); if(i2){ i2.focus(); i2.selectionStart=i2.selectionEnd=i2.value.length; } });
+    el.querySelectorAll('.tm-r[data-panel]').forEach(r=>r.addEventListener('click',()=>{ try{ panelOpen(r.dataset.panel); }catch(_){} }));
+    el.querySelectorAll('.tm-r[data-open]').forEach(r=>{ const o=open.find(x=>x.id===r.dataset.open); r.addEventListener('click',ev=>{ if(ev.target&&ev.target.closest('[data-close]')){ try{ o&&o.close&&o.close(); }catch(_){} VeraLHM.render(); return; } try{ o&&o.focus&&o.focus(); }catch(_){} }); });
+  }
+  // Sandbox: the session container's state and the actions (each a capability call); the file tree and the terminal
+  // live in the full pane (Code) one press away
+  function _quickSandbox(el){
+    const st=_lhmTxt('sbxSessionStatus'); const cb=document.getElementById('cfgSessionSbx'); const on=!!(cb&&cb.checked);
+    const sig=st+':'+on+':'+SID; if(el.dataset.sig===sig) return; el.dataset.sig=sig;
+    el.innerHTML='<div class="wid" data-w="session container · status"><div class="grp">Session container</div><div class="sbx-st">'+esc(st||(on?'routing into the session container':'no container for this session yet'))+'</div></div>'
+      +'<div class="wid" data-w="actions · controls" data-tpl="lhm:actions"><div class="sbx-act">'+(on?'':'<button data-act="on" title="Create the container and route this session into it">Start container</button>')+'<button data-act="term" title="Open an interactive terminal into this session\'s container">Terminal</button><button data-act="vscode" title="Open VS Code on the workspace">VS Code</button><button data-act="code" title="The file tree and the editor, in this panel">Files</button><button data-act="refresh" title="Re-read the container\'s state">↻</button></div></div>'
+      +'<div class="qnote">Everything the aide runs for this session runs in here; the file tree, the terminal and the editor are behind Files.</div>';
+    el.querySelectorAll('[data-act]').forEach(b=>b.addEventListener('click',()=>{ const a=b.dataset.act; try{ if(a==='on') _sessionSbxToggle(true); else if(a==='term') _sessionSbxTerminal(); else if(a==='vscode') _sessionSbxVscode(); else if(a==='code'){ VeraLHM.deep(true); VeraLHM.pick('sandbox/code'); } else if(a==='refresh') _sessionSbxRefresh(); }catch(_){} }));
+  }
+  // Ops glance: the capability estate at a glance (loaded · in reach for this agent · queued) as the board's cards
+  function _quickOps(el){
+    const all=(typeof ALL_CAPS!=='undefined'&&Array.isArray(ALL_CAPS))?ALL_CAPS:[]; const badge=_lhmTxt('capBadge'); let reach=all.length; try{ const a=(typeof AGENTS!=='undefined'&&Array.isArray(AGENTS))?AGENTS.find(x=>x.name===(document.getElementById('cfgAgent')||{}).value):null; if(a) reach=(_getAgentCaps(a)||[]).length; }catch(_){}
+    const groups={}; all.forEach(c=>{ const g=String(c.name||'').split('.')[0]||'?'; groups[g]=(groups[g]||0)+1; }); const top=Object.entries(groups).sort((a,b)=>b[1]-a[1]).slice(0,6);
+    const sig=all.length+':'+reach+':'+badge; if(el.dataset.sig===sig) return; el.dataset.sig=sig;
+    el.innerHTML='<div class="wcard" data-w="capabilities · counter"><span class="wc-h"><span class="mono">#</span><b>Capabilities</b><span class="mono">/mcp/tools</span></span><span class="wc-v"><b class="num">'+all.length+'</b><span class="u">loaded · '+reach+' in reach for this agent</span></span></div>'
+      +'<div class="wcard" data-w="cap groups · bar"><span class="wc-h"><span class="mono">▬</span><b>Families</b><span class="mono">by prefix</span></span>'+(top.length?top.map(g=>'<span class="wc-v" style="min-height:16px"><span class="mono" style="font-family:var(--f-mono,var(--mono));font-size:9px;color:var(--t2,var(--dim2));width:64px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(g[0])+'</span><span class="bar"><i style="width:'+(g[1]/all.length*100).toFixed(0)+'%"></i></span><span class="mono" style="font-family:var(--f-mono,var(--mono));font-size:9px;color:var(--t3,var(--dim))">'+g[1]+'</span></span>').join(''):'<span class="lhm-empty">No capabilities loaded yet.</span>')+'</div>'
+      +'<div class="qnote">The full list, the search, the run form and the inspector are behind Full ▸.</div>';
+  }
+  // Settings: the frequent settings as rows (agent · model · format · loop variant · container · caps)
+  function _quickSettings(el){
+    const v=id=>{ const e=document.getElementById(id); if(!e) return ''; if(e.type==='checkbox') return e.checked?'on':'off'; if(e.tagName==='SELECT') return e.selectedOptions&&e.selectedOptions[0]?e.selectedOptions[0].textContent.trim():e.value; return e.value||''; };
+    const rows=[['Agent','cfgAgent'],['Model override','cfgModel'],['Output format','cfgFormat'],['Thinking','cfgThink'],['Loop variant','loopVariant'],['Auto-loop','cfgAutoDeferLoop'],['Session container','cfgSessionSbx'],['Capabilities','cfgCapInteg'],['Auto-run caps','cfgCapAutoExec'],['Web interactive','cfgWebInteractive']].map(r=>[r[0],r[1],v(r[1])]).filter(r=>document.getElementById(r[1]));
+    const sig=rows.map(r=>r[2]).join('|'); if(el.dataset.sig===sig) return; el.dataset.sig=sig;
+    el.innerHTML='<div class="wid" data-w="frequent settings · list"><div class="grp">Frequent</div>'+rows.map(r=>'<div class="lrow" data-for="'+r[1]+'" title="Change '+esc(r[0])+' in the full settings"><span class="nm">'+esc(r[0])+'</span><span class="rt-n">'+esc(String(r[2]||'—').slice(0,22))+'</span></div>').join('')+'</div>'
+      +'<div class="wid" data-w="appearance · controls"><div class="grp">Appearance</div><div class="sbx-act"><button data-act="aa" title="Theme, style pack and density">Aa Appearance</button><button data-act="tools" title="Every chat tool the header keeps behind ⋯">⋯ Tools</button></div></div>';
+    el.querySelectorAll('.lrow[data-for]').forEach(r=>r.addEventListener('click',()=>{ VeraLHM.deep(true); VeraLHM.pick('settings/Cfg'); setTimeout(()=>{ const e=document.getElementById(r.dataset.for); if(!e) return; try{ e.scrollIntoView({block:'center'}); e.focus(); }catch(_){} },50); }));
+    el.querySelectorAll('[data-act]').forEach(b=>b.addEventListener('click',ev=>{ try{ if(b.dataset.act==='aa') _appearanceSheet(ev); else _toolsSheet(true); }catch(_){} }));
+  }
+  const _QUICK={context:_quickContext, sessions:_quickSessions, activity:_quickActivity, loop:_quickLoop, workspace:_quickWorkspace, sandbox:_quickSandbox, ops:_quickOps, settings:_quickSettings};
+  // the quick bodies follow the chat's state: a light tick re-draws only when a body's signature changed
+  let _quickTimer=null;
+  function _quickTick(){ try{ const a=VeraLHM.active; if(!a||a.top) return; const host=document.getElementById('rightRail'); if(!host||host.classList.contains('slim')||!host.classList.contains('lhm-quickmode')) return; VeraLHM.render(); }catch(_){} }
   function _lhmMount(){
     if(!window.VeraLHM) return;
     const host=document.getElementById('rightRail'); if(!host||host.classList.contains('lhm-host')) return;
     const onTab=document.querySelector('#rightRail .ctx-tab-bar .ctab.on');
     const initialTab=onTab?_lhmTabIdOf(onTab):'ctx';
     const initial=(LHM_MENUS.find(m=>m.tabs.some(t=>t.id===initialTab))||LHM_MENUS[1]).id+'/'+initialTab;
-    LHM_MENUS.forEach(m=>{ if(_RAIL_SVG[m.id]) m.iconHtml=_RAIL_SVG[m.id]; });
+    LHM_MENUS.forEach(m=>{ if(_RAIL_SVG[m.id]) m.iconHtml=_RAIL_SVG[m.id]; if(_QUICK[m.id]) m.quick=_QUICK[m.id]; });
+    if(!_quickTimer) _quickTimer=setInterval(_quickTick, 1500);
     VeraLHM.mount({host, title:'Vera', tabBar:'.ctx-tab-bar', menus:LHM_MENUS, tabEl:_lhmTabEl, tabIdOf:_lhmTabIdOf, openNow:_lhmOpenNow,
       sessionId:()=>SID, initial, silentInitial:true,
       base:BASE,
@@ -16752,7 +16954,7 @@ Your task: decide what to do next to advance toward the goal.
     setDensity,toggleBlocks,
     _uiAskAnswer,_uiAskPick,_uiDirectiveApply,
     _cmpChip,_cmpSync,_paOpen,_paCopy,
-    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
+    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
     _persistMediaCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},

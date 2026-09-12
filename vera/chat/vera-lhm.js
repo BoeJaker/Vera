@@ -53,6 +53,12 @@
     '.lhm-hd .lhm-edit{flex:0 0 auto;background:transparent;border:1px solid transparent;border-radius:var(--r-sm,4px);color:var(--dim2);font-size:11px;line-height:1;padding:2px 5px;cursor:pointer}',
     '.lhm-hd .lhm-edit:hover{color:var(--text);border-color:var(--border)}',
     '.lhm-hd .lhm-edit.on{color:var(--acc);border-color:var(--acc)}',
+/* the quick body (the Canvas board: the menu as a list of widgets) and the switch to the menu's full pane, in place */
+'.lhm-quick{flex:1;min-height:0;overflow:auto;padding:4px 9px 8px;display:flex;flex-direction:column;gap:7px}',
+'.lhm-quickmode .lhm-det > :not(.lhm-hd):not(.lhm-quick):not(.lhm-cta):not(.lhm-top):not(.lhm-wcfg){display:none!important}',
+'.lhm-hd .lhm-deep{display:none;flex:0 0 auto;background:transparent;border:1px solid transparent;border-radius:var(--r-sm,4px);color:var(--dim2);font-size:9.5px;line-height:1;padding:3px 6px;cursor:pointer;white-space:nowrap}',
+'.lhm-hd .lhm-deep.has{display:inline-block}.lhm-hd .lhm-deep:hover{color:var(--text);border-color:var(--border)}',
+'.lhm-topmode .lhm-hd .lhm-deep{display:none!important}',
     /* the tab strip the owner already had: only the current menu\'s tabs show */
     '.lhm-det .ctab.lhm-off{display:none!important}',
     /* the top-level list */
@@ -167,6 +173,7 @@
   var _cfg = null, _host = null, _rail = null, _det = null, _hd = null, _top = null, _cta = null;
   var _active = '', _activeTab = '', _topMode = false, _editing = false;
   var _pid = '', _embedded = false, _hosted = false, _picking = false;   // _picking: the click is ours, not the user's
+  var _quick = null;   // the quick body's host (a menu with quick(el) draws there; "Full ▸" swaps to its panes)
   var _wcfg = null, _wcfgOpen = false;   // the record sheet
 
   // the tab strip's elements, keyed by the tab id the owner gave the menu
@@ -204,6 +211,7 @@
     if(_topMode){ h2.textContent = _cfg.title || 'Vera'; meta.textContent = (_cfg.menus || []).length + ' menus · ' + _openNow().length + ' open'; }
     else { h2.textContent = m ? (m.title || m.label) : ''; var s = ''; try{ s = m && m.meta ? String(m.meta() || '') : ''; }catch(e){} meta.textContent = s; }
     ed.classList.toggle('on', _editing);
+    var dp = _hd.querySelector('.lhm-deep'); if(dp){ var hasQ = !!(m && typeof m.quick === 'function' && !_topMode); dp.classList.toggle('has', hasQ); dp.textContent = (m && m._deep) ? '◂ Quick' : 'Full ▸'; dp.title = (m && m._deep) ? 'Back to the quick menu' : 'The full ' + (m ? (m.label || m.id) : '') + ' panel, in this same place'; }
   }
   function _renderTabs(){
     // only the current menu's tabs show in the owner's strip; the others stay in the DOM with their handlers
@@ -211,6 +219,18 @@
     if(m) (m.tabs || []).forEach(function(t){ ids[t.id] = 1; });
     (_cfg.menus || []).forEach(function(mm){ (mm.tabs || []).forEach(function(t){ var el = _tabEl(t.id); if(el) el.classList.toggle('lhm-off', !ids[t.id]); }); });
   }
+  // the quick body: the active menu's quick(el, api) draws the board's widgets; a menu in "deep" shows its old panes
+  function _renderQuick(){
+    if(!_quick || !_host) return;
+    var m = _menu(_active); var on = !!(m && typeof m.quick === 'function' && !m._deep && !_topMode);
+    _host.classList.toggle('lhm-quickmode', on);
+    if(!on){ _quick.style.display = 'none'; return; }
+    _quick.style.display = '';
+    if(_quick._for !== m.id){ _quick.innerHTML = ''; _quick._for = m.id; }
+    try{ m.quick(_quick, { menu:m, render:render, pick:pick, deep:deep }); }catch(e){ _quick.innerHTML = '<div class="lhm-empty">' + _escH(e && e.message || e) + '</div>'; }
+  }
+  // deep(on): the active menu's full pane (its old tabs and panes) in place of the quick body — and back
+  function deep(on){ var m = _menu(_active); if(!m) return false; m._deep = (on == null) ? !m._deep : !!on; render(); return m._deep; }
   function _renderCta(){
     if(!_cta) return;
     var m = _menu(_active);
@@ -252,7 +272,7 @@
     if(!_cfg) return;
     if(_host) _host.classList.toggle('lhm-topmode', _topMode);
     if(_host) _host.classList.toggle('lhm-editing', _editing);
-    _renderRail(); _renderHeader(); _renderTabs(); _renderCta(); _renderTop();
+    _renderRail(); _renderHeader(); _renderTabs(); _renderCta(); _renderTop(); _renderQuick();
     if(_editing) _wireBars();
     if(!_editing && _wcfgOpen) closeRecord();
     _publish();
@@ -448,6 +468,7 @@
     _host.insertBefore(_rail, _det);
     _hd = _el('div', 'lhm-hd'); _hd.setAttribute('data-w', 'menu header · header'); _hd.setAttribute('data-tpl', 'lhm:header');
     _hd.appendChild(_el('h2', '', '')); _hd.appendChild(_el('span', 'lhm-meta mono', ''));
+    var dp = _el('button', 'lhm-deep', 'Full ▸'); dp.type = 'button'; dp.addEventListener('click', function(){ deep(); }); _hd.appendChild(dp);
     var ed = _el('button', 'lhm-edit', '✎'); ed.title = 'Edit this menu — every part is a widget'; ed.addEventListener('click', function(){ toggleEdit(); }); _hd.appendChild(ed);
     _det.insertBefore(_hd, _det.firstChild);
     var strip = cfg.tabBar ? _det.querySelector(cfg.tabBar) : null;
@@ -456,6 +477,7 @@
     _det.insertBefore(_top, _hd.nextSibling);
     _wcfg = _el('div', 'lhm-wcfg'); _wcfg.setAttribute('data-w', 'widget record · sheet');   // the record sheet, made before it is placed
     _det.insertBefore(_wcfg, _top.nextSibling);
+    _quick = _el('div', 'lhm-quick'); _quick.setAttribute('data-w', 'quick body · widgets'); _det.insertBefore(_quick, _wcfg.nextSibling);
     _cta = _el('button', 'lhm-cta'); _cta.setAttribute('data-w', 'cta · button'); _cta.setAttribute('data-tpl', 'lhm:cta');
     _cta.addEventListener('click', function(){ var m = _menu(_active); if(m && m.cta && m.cta.run){ try{ m.cta.run(); }catch(e){} } });
     _det.appendChild(_cta);
@@ -594,6 +616,6 @@
 
   window.VeraLHM = { mount: mount, pick: pick, setActiveTab: setActiveTab, toggleTop: toggleTop, toggleEdit: toggleEdit, render: render, spec: spec, absorb: absorb, side: side, sideEdit: sideEdit, strips: strips, css: _css,
     openRecord: openRecord, closeRecord: closeRecord, saveAsTemplate: saveAsTemplate, placeInto: placeInto,
-    compose: compose, composeUndo: composeUndo, saveAsMenu: saveAsMenu, addMenus: addMenus,
+    compose: compose, composeUndo: composeUndo, saveAsMenu: saveAsMenu, addMenus: addMenus, deep: deep,
     get active(){ return { menu: _active, tab: _activeTab, top: _topMode, editing: _editing, hosted: _hosted, embedded: _embedded }; } };
 })();

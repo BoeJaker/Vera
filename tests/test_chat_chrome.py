@@ -48,7 +48,7 @@ def test_the_header_is_the_boards_and_every_old_control_stays_alive():
 
 def test_the_rail_wears_the_boards_glyphs_and_the_exchange_reads_as_the_board():
     assert "if(m.iconHtml) ico.innerHTML = m.iconHtml;" in LIB
-    assert "LHM_MENUS.forEach(m=>{ if(_RAIL_SVG[m.id]) m.iconHtml=_RAIL_SVG[m.id]; });" in HTML
+    assert "LHM_MENUS.forEach(m=>{ if(_RAIL_SVG[m.id]) m.iconHtml=_RAIL_SVG[m.id];" in HTML
     for k in ("sessions", "context", "activity", "loop", "workspace", "sandbox", "ops", "settings"):
         assert re.search(r"\n\s+%s:'<svg" % k, HTML), k
     assert "gutter.textContent=(role==='user'&&(!gutterLabel||gutterLabel==='you'))?_ts():(gutterLabel||_ts());" in HTML, "the question's gutter is the time"

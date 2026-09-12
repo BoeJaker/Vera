@@ -236,10 +236,59 @@
   // rels:[{from, to, kind}]}. S–L draw this mini graph; XL hands the data to the full <vera-context-graph> (hydrate).
   const CG_LANES = [['context', 'context', 'var(--dv1,#a78bfa)'], ['memory', 'memory', 'var(--acc2,#5ec9a0)'], ['loop', 'loop', 'var(--acc,#5a9e8f)'], ['plan', 'plan', 'var(--dim,#8a92a0)'], ['canvas', 'canvas', 'var(--dv2,#c9955a)']];
   const cgLane = (n) => { if (n.lane) return String(n.lane); const k = String(n.kind || n.source || '').toLowerCase(); if (/memory|recall/.test(k)) return 'memory'; if (/loop|step|run|cap$/.test(k)) return 'loop'; if (/plan|goal/.test(k)) return 'plan'; if (/canvas|land|pin/.test(k)) return 'canvas'; return 'context'; };
+  // THE MINI CONTEXT GRAPH — the Canvas board's "context galaxy", as a widget form so the same drawing sits in the
+  // Context menu, on an exploded plate, on the canvas or a dashboard: every FAMILY of the assembled context on a ring,
+  // a record's relevance as its distance from the hub, the family's colour, its label at the outer record, the edges the
+  // records cite. opts.view galaxy · iso · flow · timeline; opts.allEdges draws every record to the hub; opts.off = {family:true}
+  // dims a family; opts.color(family) overrides the palette; opts.width the plate (262 by default); opts.layout 'lanes' keeps
+  // the lane drawing. XL is the full <vera-context-graph> (hydrate() mounts it).
+  const CG_FAM = { agent:['Agent + system','var(--t3,#6b7280)'], skill:['Skills','var(--dv6,#c96b6b)'], ontology:['Ontologies','var(--dv4,#c9955a)'], memory:['Memory recalls','var(--dv2,#5ec9a0)'],
+    vector:['Vector matches','var(--dv1,#a78bfa)'], graph:['Graph (Neo4j)','var(--dv7,#fb923c)'], fabric:['Fabric records','var(--dv3,#38bdf8)'], cap:['Capabilities','var(--dv5,#ec4899)'], web:['Web','#f59e0b'],
+    news:['News','#e879f9'], run:['Runs','var(--acc,#5a9e8f)'], related_qa:['Related Q&A','#8fb87a'], worldview:['Worldview','#9e8fa0'], entities:['Entities','#c9a35a'], urls:['URLs','#7dd3fc'],
+    both:['Vector + graph','#8fb87a'], plan:['Plan','#8a92a0'], canvas:['Canvas','#c9955a'], loop:['Loop','#5a9e8f'], context:['Context','#a78bfa'] };
+  const cgFam = (n) => { const k = String(n.family || n.source || n.kind || 'context').toLowerCase(); if (CG_FAM[k]) return k; if (/memory|recall/.test(k)) return 'memory'; if (/loop|step|run/.test(k)) return 'run'; if (/cap/.test(k)) return 'cap'; return k; };
+  const cgFamLabel = (f) => (CG_FAM[f] || [f])[0];
   R.context_graph = (d, H, opts) => {
-    opts = opts || {}; const nodes = ((d && d.nodes) || []).filter((n) => n && (n.id || n.label)).slice(0, 60); const rels = ((d && (d.rels || d.links || d.edges)) || []).slice(0, 120);
+    opts = opts || {}; const nodes = ((d && d.nodes) || []).filter((n) => n && (n.id || n.label)).slice(0, 80); const rels = ((d && (d.rels || d.links || d.edges)) || []).slice(0, 160);
     if (!nodes.length) return EMPTY('no context yet');
     if (opts.size === 'xl' && opts.full !== false) return '<div class="vw-cgfull" data-cg="' + esc(JSON.stringify({ nodes, rels })) + '" style="position:relative;height:100%;min-height:' + Math.max(H, 220) + 'px"><small class="wempty">context graph · ' + nodes.length + ' records</small></div>';
+    if (opts.layout === 'lanes') return cgLanes(nodes, rels, H, opts);
+    const V = opts.view || 'galaxy', OFF = opts.off || {}, colorOf = typeof opts.color === 'function' ? opts.color : null;
+    const W = opts.width || 262, K = Math.max(.5, Math.min(1.6, H / 196)), cx = W / 2, cy = H / 2 + 6 * K, RAD = Math.PI / 180;
+    const fams = [], byF = {}; nodes.forEach((n) => { const f = cgFam(n); if (!byF[f]) { byF[f] = []; fams.push(f); } byF[f].push(n); });
+    const sc = (n) => Math.max(0, Math.min(1, +(n.score == null ? .5 : n.score)));
+    fams.forEach((f) => byF[f].sort((a, b) => sc(b) - sc(a)));
+    const iso = (x, y, z) => { const A = 32 * RAD, dx = x - cx, dy = y - cy; return [cx + dx * Math.cos(A) - dy * Math.sin(A), cy + (dx * Math.sin(A) + dy * Math.cos(A)) * .56 - z]; };
+    const px = (v) => v.toFixed(1) + 'px';
+    const P = {}, dots = [], labels = [], stems = [], edges = [];
+    fams.forEach((f, si) => { const col = (colorOf && colorOf(f)) || (CG_FAM[f] || [])[1] || 'var(--dim2,#8a92a0)'; const on = !OFF[f];
+      const list = byF[f].slice(0, 5), N = list.length, a0 = -90 + si * (360 / fams.length);
+      list.forEach((n, k) => { const rel = sc(n), id = String(n.id || n.label); let x, y, z = 0;
+        if (V === 'flow') { x = 18 + (si + .5) * ((W - 36) / Math.max(1, fams.length)); y = (24 + k * 26) * K; }
+        else if (V === 'timeline') { x = 30 + (1 - rel) * (W - 80) + (si % 3) * 6; y = (14 + (si + .5) * ((H - 28) / Math.max(1, fams.length)) / K) * K; }
+        else { const r = (28 + k * 20 + (1 - rel) * 8) * K, a = (a0 + (k - (N - 1) / 2) * 11) * RAD; x = cx + Math.cos(a) * r; y = cy + Math.sin(a) * r;
+          if (V === 'iso') { const tw = (r / (80 * K)) * 40 * RAD, a2 = a + tw; const gx = cx + Math.cos(a2) * r, gy = cy + Math.sin(a2) * r; z = rel * 22 * K; const q = iso(gx, gy, z); x = q[0]; y = q[1]; if (on && z > 4) { const q0 = iso(gx, gy, 0); stems.push({ x:q0[0], y:q0[1] - z, h:z }); } } }
+        P[id] = [x, y];
+        dots.push({ id, x, y, col, op:on ? (0.45 + rel * .55) : 0.12, lit:rel > .8 && n.included !== false, hollow:n.included === false, t:(n.label || n.id) + ' · ' + cgFamLabel(f) + ' · relevance ' + rel.toFixed(2) + (n.included === false ? ' · related, not injected' : '') });
+        if (k === N - 1) labels.push({ n:cgFamLabel(f).replace(' + system', '').replace(' matches', '').replace(' recalls', '').replace(' records', ''), col, x:x + (V === 'flow' ? -6 : 8), y:y + (V === 'flow' ? 12 : -4), on }); }); });
+    const hub = V === 'flow' ? [cx, H - 12] : V === 'timeline' ? [14, H - 10] : V === 'iso' ? iso(cx, cy, 16 * K) : [cx, cy];
+    if (V === 'iso') { const h0 = iso(cx, cy, 0); stems.push({ x:h0[0], y:h0[1] - 16 * K, h:16 * K }); }
+    const rings = (V === 'galaxy' || V === 'iso') ? [28, 50, 72].map((r) => { const c = V === 'iso' ? iso(cx, cy, 0) : [cx, cy]; return { x:c[0], y:c[1], d:r * 2 * K }; }) : [];
+    const seg = (a, b, col, cls) => { const dx = b[0] - a[0], dy = b[1] - a[1]; edges.push({ x:a[0], y:a[1], len:Math.hypot(dx, dy), deg:Math.atan2(dy, dx) * 180 / Math.PI, col, cls }); };
+    const colOfId = {}; dots.forEach((p) => { colOfId[p.id] = p.col; });
+    rels.forEach((e) => { const a = P[String(e.from)], b = P[String(e.to)]; if (a && b) seg(a, b, colOfId[String(e.from)] || 'var(--dim2,#8a92a0)', ''); });
+    if (opts.allEdges) dots.forEach((p) => { if (p.op > .2) seg([p.x, p.y], hub, p.col, 'faint'); });
+    let h = '<div class="vw-gal vw-gal-' + esc(V) + '" style="position:relative;height:' + H + 'px;overflow:hidden"><div style="position:absolute;left:50%;top:0;width:' + W + 'px;height:' + H + 'px;margin-left:' + (-W / 2) + 'px">';
+    rings.forEach((g) => { h += '<span class="vw-gring" style="left:' + px(g.x) + ';top:' + px(g.y) + ';width:' + px(g.d) + ';height:' + px(g.d) + '"></span>'; });
+    stems.forEach((s) => { h += '<span class="vw-gstem" style="left:' + px(s.x) + ';top:' + px(s.y) + ';height:' + px(s.h) + '"></span>'; });
+    edges.forEach((e) => { h += '<span class="vw-gedge' + (e.cls ? ' ' + e.cls : '') + '" style="left:' + px(e.x) + ';top:' + px(e.y) + ';width:' + px(e.len) + ';transform:rotate(' + e.deg.toFixed(1) + 'deg);--c:' + e.col + '"></span>'; });
+    dots.forEach((p) => { h += '<span class="vw-gd' + (p.lit ? ' lit' : '') + (p.hollow ? ' hollow' : '') + '" data-id="' + esc(p.id) + '" style="left:' + px(p.x) + ';top:' + px(p.y) + ';--c:' + p.col + ';opacity:' + p.op.toFixed(2) + '" title="' + esc(p.t) + '"></span>'; });
+    labels.forEach((l) => { h += '<span class="vw-glb" style="left:' + px(l.x) + ';top:' + px(l.y) + ';color:' + l.col + (l.on ? '' : ';opacity:.3') + '">' + esc(l.n) + '</span>'; });
+    h += '<span class="vw-ghub" style="left:' + px(hub[0]) + ';top:' + px(hub[1]) + '">' + esc(opts.hub || 'aide') + '<b>' + esc(opts.hubMeta || (nodes.length + ' rec')) + '</b></span>';
+    return h + '</div></div>';
+  };
+  // the lane drawing (records in lanes by family, relevance left → right): opts.layout === 'lanes'
+  function cgLanes(nodes, rels, H, opts) {
     const idOf = (n) => String(n.id || n.label); const laneOf = {}; nodes.forEach((n) => { laneOf[idOf(n)] = cgLane(n); });
     const lanes = CG_LANES.filter((L) => nodes.some((n) => cgLane(n) === L[0])); const LH = Math.max(22, Math.floor((H - 4) / Math.max(1, lanes.length)));
     const pos = {}; let html = '<div class="vw-cg" style="position:relative;height:' + H + 'px;overflow:hidden;font-family:var(--mono,ui-monospace,monospace)">';
@@ -253,7 +302,7 @@
       html += '<span title="' + esc((n.label || n.id) + ' · ' + cgLane(n) + ' · relevance ' + sc.toFixed(2) + (ghost ? ' · related, not injected' : '')) + '" style="position:absolute;left:' + p.x.toFixed(1) + '%;top:' + p.y.toFixed(1) + 'px;width:9px;height:9px;border-radius:50%;transform:translate(-50%,-50%);box-shadow:inset 0 0 0 1.5px ' + p.col + ';background:' + (ghost ? 'transparent' : 'color-mix(in srgb,' + p.col + ' 32%,transparent)') + '"></span>'
         + (labels ? '<span style="position:absolute;left:' + p.x.toFixed(1) + '%;top:' + (p.y + 6).toFixed(1) + 'px;transform:translateX(-50%);font-size:7.5px;color:var(--dim2,#8a92a0);white-space:nowrap;max-width:90px;overflow:hidden;text-overflow:ellipsis">' + esc(String(n.label || n.id).slice(0, 18)) + '</span>' : ''); });
     return html + '</div>';
-  };
+  }
   R.pipes = (d) => {
     // {nodes, links} → the ONE diagram renderer (<vera-mermaid>) through a slot hydrate() fills when the element is defined
     const nodes = ((d && d.nodes) || []).slice(0, 40), links = ((d && (d.links || d.edges)) || []).slice(0, 80);
@@ -347,6 +396,17 @@
   const CSS = `
 .wempty{color:var(--dim2,#8a92a0);font-size:9.5px;font-family:var(--mono,ui-monospace,monospace)}
 .vw-svg{display:block;width:100%}
+.vw-gal{border-radius:8px;background:radial-gradient(circle at 50% 52%,rgba(110,168,216,.08),transparent 60%)}
+.vw-gd{position:absolute;width:9px;height:9px;border-radius:50%;background:var(--surf2,var(--bg2,#1a1c20));box-shadow:0 0 0 1.2px var(--c);transform:translate(-50%,-50%);cursor:pointer}
+.vw-gd.lit{background:var(--c)}.vw-gd.hollow{background:transparent;box-shadow:0 0 0 1px var(--c)}
+.vw-gedge{position:absolute;height:1px;background:var(--c);transform-origin:0 50%;opacity:.55;pointer-events:none}.vw-gedge.faint{opacity:.18}
+.vw-glb{position:absolute;font-family:var(--mono,ui-monospace,monospace);font-size:7.5px;white-space:nowrap;opacity:.8;pointer-events:none}
+.vw-ghub{position:absolute;transform:translate(-50%,-50%);width:26px;height:26px;border-radius:50%;background:var(--surf2,var(--bg2,#1a1c20));box-shadow:0 0 0 1.2px var(--acc,#5a9e8f),0 0 14px rgba(110,168,216,.35);display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:var(--mono,ui-monospace,monospace);font-size:7px;color:var(--dim2,#8a92a0);line-height:1}
+.vw-ghub b{font-size:6.5px;color:var(--dim,#6b7280);font-weight:400}
+.vw-gring{position:absolute;border-radius:50%;box-shadow:0 0 0 1px color-mix(in srgb,var(--border2,#4a4540) 70%,transparent);transform:translate(-50%,-50%);pointer-events:none}
+.vw-gal-iso .vw-gring{transform:translate(-50%,-50%) scaleY(.56)}
+.vw-gstem{position:absolute;width:1px;background:color-mix(in srgb,var(--dim2,#8a92a0) 45%,transparent);pointer-events:none}
+.vw-gstem::after{content:'';position:absolute;left:-2px;bottom:-1px;width:5px;height:3px;border-radius:50%;background:color-mix(in srgb,var(--dim2,#8a92a0) 55%,transparent)}
 .vw-xs{display:inline-flex;align-items:center;gap:3px;font-family:var(--mono,ui-monospace,monospace);font-size:.92em;color:var(--text,#d8dce4);vertical-align:-1px}
 .vw-xs i,.vw-chip i{font-style:normal;color:var(--acc,#5a9e8f);font-size:.9em}
 .vw-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:12px;border:1px solid var(--border,rgba(255,255,255,.09));background:var(--bg2,#1a1c20);font-size:10px;color:var(--text,#d8dce4);white-space:nowrap}
