@@ -9228,9 +9228,23 @@ async def _health(trace_id=None):
 # even when vera_capabilities.py hasn't loaded yet.
 @capability("ui.panels", memory="off", silent=True,
             http_method="GET", http_path="/ui/panels", http_tags=["ui"],
-            description="List all registered built-in UI panels injected by capability modules.")
+            description="List all registered built-in UI panels injected by capability modules. "
+                        "A top-level tab the Estate tab replaced carries retired_into "
+                        "{panel, pane, sub, section} while ui.tabs.retired is on; the "
+                        "shell then opens that Estate pane instead of the tab.")
 async def _ui_panels(trace_id=None):
-    return list(UI_PANELS.values())
+    panels = list(UI_PANELS.values())
+    try:
+        from Vera.vera.estate import estate_nav_core as _estate_nav
+    except Exception:                                  # pragma: no cover
+        return panels
+    raw = None
+    if REDIS:
+        try:
+            raw = await REDIS.get(_estate_nav.RETIRE_SETTING_KEY)
+        except Exception:
+            raw = None
+    return _estate_nav.annotate_panels(panels, _estate_nav.setting_enabled(raw))
 
 @capability("ui.panel.specialist", memory="off", silent=True,
             http_method="GET", http_path="/ui/panel/specialist", http_tags=["ui"],
@@ -9813,6 +9827,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "workers/docker_capabilities.py"),
         os.path.join(_here, "workers/workers.py"),
         os.path.join(_here, "estate/estate_health_capabilities.py"),
+        os.path.join(_here, "estate/estate_nav_capabilities.py"),
         os.path.join(_here, "workers/nodes_capabilities.py"),
         os.path.join(_here, "remote/remote_capabilities.py"),
         os.path.join(_here, "remote/workspace_capabilities.py"),

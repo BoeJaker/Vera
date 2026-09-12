@@ -82,6 +82,13 @@ html.vpb-nav-hosted #secNav{display:none}
 .snav[data-pane="catalog"].on{color:#e6b800}
 .snav[data-pane="api"].on{color:var(--acc4)}
 .snav[data-pane="provision"].on{color:var(--acc3)}
+.snav[data-pane="remote"].on{color:#9c8cf0}
+.snav[data-pane="software"].on{color:var(--acc3)}
+.snav[data-pane="integrations"].on{color:#e6b800}
+.nsec{writing-mode:vertical-rl;transform:rotate(180deg);flex-shrink:0;width:34px;padding:8px 0 3px;text-align:center;font-family:var(--mono);font-size:7.5px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:var(--dim);user-select:none}
+#secNav [data-view="models"]{display:none}
+html.view-models #secNav [data-view="estate"]{display:none}
+html.view-models #secNav [data-view="models"]{display:block}
 .navdiv{width:24px;height:1px;background:var(--border);margin:3px 0;flex-shrink:0}
 #panes{flex:1;overflow:hidden;position:relative}
 .pane{position:absolute;inset:0;display:none;overflow-y:auto;padding:12px}
@@ -387,31 +394,40 @@ html.vpb-nav-hosted #secNav{display:none}
 <div id="shell">
   <!-- Side navigation -->
   <div id="secNav">
-    <div class="snav on" data-pane="overview" onclick="P.show('overview',this)">Overview</div>
-    <div class="navdiv"></div>
-    <div class="snav" data-pane="workers" onclick="P.show('workers',this)">Workers</div>
-    <div class="snav" data-pane="nodes" onclick="P.show('nodes',this)">Nodes</div>
-    <div class="navdiv"></div>
-    <div class="snav" data-pane="ollama" onclick="P.show('ollama',this)">Ollama</div>
-    <div class="snav" data-pane="modelrouting" onclick="P.show('modelrouting',this)">Model Routing</div>
-    <div class="navdiv"></div>
-    <div class="snav" data-pane="observe" onclick="P.show('observe',this)">Observe</div>
-    <div class="navdiv"></div>
-    <div class="snav" data-pane="proxmox" onclick="P.show('proxmox',this)">Proxmox</div>
-    <div class="snav" data-pane="storage" onclick="P.show('storage',this)">Storage</div>
-    <div class="snav" data-pane="estate" onclick="P.show('estate',this)">Map</div>
-    <div class="snav" data-pane="foundry" onclick="P.show('foundry',this)">Foundry</div>
-    <div class="navdiv"></div>
-    <div class="snav" data-pane="docker" onclick="P.show('docker',this)">Docker</div>
-    <div class="snav" data-pane="sandbox" onclick="P.show('sandbox',this)">Sandbox</div>
-    <div class="navdiv"></div>
-    <div class="snav" data-pane="network" onclick="P.show('network',this)">Network</div>
-    <div class="snav" data-pane="connections" onclick="P.show('connections',this)">Connections</div>
-    <div class="navdiv"></div>
-    <div class="snav" data-pane="mimic" onclick="P.show('mimic',this)">Mimic</div>
-    <div class="snav" data-pane="vllm" onclick="P.show('vllm',this)">vLLM</div>
-    <div class="snav" data-pane="api" onclick="P.show('api',this)">API</div>
-    <div class="snav" data-pane="provision" onclick="P.show('provision',this)">Provision</div>
+    <!-- Estate: one list, grouped by the question each section answers. The
+         Models tab opens this same panel with ?view=models and lists only the
+         model panes. -->
+    <div class="nsec" data-view="estate">Overview</div>
+    <div class="snav on" data-pane="overview" data-view="estate" onclick="P.show('overview',this)">Overview</div>
+    <div class="snav" data-pane="estate" data-view="estate" onclick="P.show('estate',this)">Map</div>
+    <div class="snav" data-pane="observe" data-view="estate" onclick="P.show('observe',this)">Observe</div>
+    <div class="navdiv" data-view="estate"></div>
+    <div class="nsec" data-view="estate">Machines</div>
+    <div class="snav" data-pane="workers" data-view="estate" onclick="P.show('workers',this)">Workers</div>
+    <div class="snav" data-pane="nodes" data-view="estate" onclick="P.show('nodes',this)">Nodes</div>
+    <div class="snav" data-pane="proxmox" data-view="estate" onclick="P.show('proxmox',this)">Proxmox</div>
+    <div class="snav" data-pane="docker" data-view="estate" onclick="P.show('docker',this)">Docker</div>
+    <div class="snav" data-pane="sandbox" data-view="estate" onclick="P.show('sandbox',this)">Sandbox</div>
+    <div class="snav" data-pane="connections" data-view="estate" onclick="P.show('connections',this)">Connections</div>
+    <div class="snav" data-pane="remote" data-view="estate" onclick="P.show('remote',this)">Remote</div>
+    <div class="navdiv" data-view="estate"></div>
+    <div class="snav" data-pane="storage" data-view="estate" onclick="P.show('storage',this)">Storage</div>
+    <div class="navdiv" data-view="estate"></div>
+    <div class="snav" data-pane="network" data-view="estate" onclick="P.show('network',this)">Network</div>
+    <div class="navdiv" data-view="estate"></div>
+    <div class="snav" data-pane="provision" data-view="estate" onclick="P.show('provision',this)">Trust</div>
+    <div class="navdiv" data-view="estate"></div>
+    <div class="nsec" data-view="estate">Build</div>
+    <div class="snav" data-pane="foundry" data-view="estate" onclick="P.show('foundry',this)">Foundry</div>
+    <div class="snav" data-pane="software" data-view="estate" onclick="P.show('software',this)">Provision</div>
+    <div class="navdiv" data-view="estate"></div>
+    <div class="snav" data-pane="integrations" data-view="estate" onclick="P.show('integrations',this)">Integrations</div>
+    <div class="snav" data-pane="ollama" data-view="models" onclick="P.show('ollama',this)">Ollama</div>
+    <div class="snav" data-pane="modelrouting" data-view="models" onclick="P.show('modelrouting',this)">Model Routing</div>
+    <div class="navdiv" data-view="models"></div>
+    <div class="snav" data-pane="mimic" data-view="models" onclick="P.show('mimic',this)">Mimic</div>
+    <div class="snav" data-pane="vllm" data-view="models" onclick="P.show('vllm',this)">vLLM</div>
+    <div class="snav" data-pane="api" data-view="models" onclick="P.show('api',this)">API</div>
   </div>
 
   <div id="panes">
@@ -1708,6 +1724,19 @@ html.vpb-nav-hosted #secNav{display:none}
       <iframe id="estate-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
     </div>
 
+    <!-- REMOTE, INTEGRATIONS and PROVISION (software) PANES — the standalone
+         panels of top-level tabs retired into Estate (see ui.tabs.retired), each
+         a lazy iframe so nothing they did loses its home. -->
+    <div class="pane" id="pane-remote" style="padding:0;overflow:hidden">
+      <iframe id="remote-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
+    </div>
+    <div class="pane" id="pane-integrations" style="padding:0;overflow:hidden">
+      <iframe id="integrations-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
+    </div>
+    <div class="pane" id="pane-software" style="padding:0;overflow:hidden">
+      <iframe id="software-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
+    </div>
+
     <!-- FOUNDRY PANE — OS provisioning (catalog × target × features), lazy iframe -->
     <div class="pane" id="pane-foundry" style="padding:0;overflow:hidden">
       <iframe id="foundry-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
@@ -1848,7 +1877,7 @@ html.vpb-nav-hosted #secNav{display:none}
     <div class="pane" id="pane-provision" style="padding:0;overflow:hidden">
       <div style="display:flex;flex-direction:column;height:100%;overflow:hidden">
         <div class="pane-tb" style="flex-shrink:0;padding:8px 12px 6px;gap:6px">
-          <span class="pane-tb-title" style="color:var(--acc3)">PROVISION</span>
+          <span class="pane-tb-title" style="color:var(--acc3)">IDENTITY &amp; TRUST</span>
           <span class="tb-sep"></span>
           <div style="display:flex;gap:2px">
             <!-- Software tab removed: runtime/component installs live in the
@@ -6134,7 +6163,7 @@ async function ovLoad(refresh){
 }
 function ovNotes(key){ _ovNotesOpen[key]=!_ovNotesOpen[key]; if(_ovLast) ovRender(_ovLast); }
 setInterval(()=>{ const p=$('pane-overview'); if(p&&p.classList.contains('on')&&document.visibilityState==='visible') ovLoad(false); }, 60000);
-setTimeout(()=>{ const p=$('pane-overview'); if(p&&p.classList.contains('on')) ovLoad(false); }, 0);
+setTimeout(()=>{ const p=$('pane-overview'); if(_VIEW==='estate'&&p&&p.classList.contains('on')) ovLoad(false); }, 0);
 
 function showPane(name, el){
   if(name==='perf'){ // legacy alias — Perf now lives as a sub-tab of Observe
@@ -6168,6 +6197,9 @@ function showPane(name, el){
   if(name==='network'){ netSub(_netSub); }
   if(name==='connections'){ connLoad(); }
   if(name==='nodes'){ ndInit(); }
+  if(name==='remote'){ _mountFrame('remote-frame', BASE+'/remote/panel'); }
+  if(name==='integrations'){ _mountFrame('integrations-frame', BASE+'/integrations/panel'); }
+  if(name==='software'){ _mountFrame('software-frame', BASE+'/provision/panel'); }
   // Keep the outer shell's injected top-level sub-menu in sync when this
   // panel changes pane on its own (a direct click here, not one relayed
   // from an injected item) — see registerNav() below. The 'perf'/'catalog'
@@ -6180,15 +6212,27 @@ function showPane(name, el){
 // nav_select fallback matches directly, so no selectFn is needed here
 // either. Excludes the 'perf'/'catalog' legacy aliases (they're sub-tabs
 // of Observe/Ollama, not real top-level panes of their own).
-if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
-  {id:'workers', label:'Workers'}, {id:'nodes', label:'Nodes'}, {id:'ollama', label:'Ollama'},
-  {id:'modelrouting', label:'Model Routing'},
-  {id:'observe', label:'Observe'}, {id:'proxmox', label:'Proxmox'}, {id:'storage', label:'Storage'},
-  {id:'estate', label:'Map'}, {id:'foundry', label:'Foundry'},
-  {id:'docker', label:'Docker'}, {id:'sandbox', label:'Sandbox'}, {id:'network', label:'Network'},
-  {id:'connections', label:'Connections'}, {id:'mimic', label:'Mimic'}, {id:'vllm', label:'vLLM'},
-{id:'api', label:'API'}, {id:'provision', label:'Provision'},
-]);
+// This panel serves two top-level tabs: Estate, and Models (?view=models).
+// Each lists only its own panes; ?pane=<id>&sub=<id> opens a pane directly,
+// and the shell sends vera:estate:open for a retired tab.
+const _VIEW=(new URLSearchParams(location.search).get('view')==='models')?'models':'estate';
+if(_VIEW==='models') document.documentElement.classList.add('view-models');
+if(window.VeraPanelBridge) VeraPanelBridge.registerNav(
+  [...document.querySelectorAll('#secNav .snav[data-view="'+_VIEW+'"]')]
+    .map(el=>({id:el.dataset.pane, label:el.textContent.trim()})));
+function estateOpen(pane, sub){
+  if(!$('pane-'+pane)) return false;
+  showPane(pane, document.querySelector('.snav[data-pane="'+pane+'"]'));
+  if(sub&&pane==='provision') provSub(sub);
+  if(sub&&pane==='network') netSub(sub);
+  return true;
+}
+// After the whole script has run: provSub/netSub read state declared below.
+setTimeout(()=>{
+  const q=new URLSearchParams(location.search);
+  if(q.get('pane')) estateOpen(q.get('pane'), q.get('sub')||'');
+  else if(_VIEW==='models') estateOpen('ollama','');
+}, 0);
 
 // ── Proxmox sub-tabs — Dashboard (native) / CPU-NUMA (pxstore solo iframe) ───
 function pmxSub(name){
@@ -6380,6 +6424,10 @@ function provSub(name){
 // ── Theme relay ──────────────────────────────────────────────────────────────
 window.addEventListener('message', e=>{
   if(e.data?.type==='vera:base'){/* could update BASE */}
+  if(e.data?.type==='vera:estate:open'&&e.data.pane){
+    const ok=estateOpen(String(e.data.pane), String(e.data.sub||''));
+    try{ if(e.source) e.source.postMessage({type:'vera:estate:opened', rid:e.data.rid, ok}, '*'); }catch(_){}
+  }
   if(e.data?.type==='vera:theme'&&e.data.vars){
     const root=document.documentElement;
     const map={'--bg':'--bg0','--s1':'--bg1','--s2':'--bg2','--s3':'--bg3',
