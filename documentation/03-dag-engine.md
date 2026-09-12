@@ -44,6 +44,33 @@ This is intentionally a compatibility facade. Workflow IR and
 runtime-adapter work can emit the same contract without requiring Vera to replace
 LangGraph, external runtimes, or its own established DAG execution paths.
 
+## Agent-loop engine ownership
+
+Vera currently exposes several generations of its generic capability-stepping
+loop. They are not a simple replacement chain. Versions 1–5 contain parallel
+step executors with different planning and verification strategies. Version 6
+adds an adaptive controller over version 5's step machinery; version 7 delegates
+to version 6 with long-horizon policy; and version 8 orchestrates programs made
+from versions 5–7 rather than replacing their step execution.
+
+The Workshop still exposes versions 1–4, including its editable flow builder,
+and profiles and internal callers actively reference versions 5–7. Those
+consumer surfaces must be migrated before any compatibility capability can be
+considered unused. `loops.run`, the Workshop stream endpoint, and Dream are
+adapters or routers around the selected engine, not additional generic step
+implementations. The browser Operator is a domain-specific
+observe/think/act loop with browser safety and progress semantics and should not
+be collapsed into a generic capability loop merely because both iterate.
+
+The convergence target is a shared step kernel for invocation, cancellation,
+timeouts, retries, Run events, artifact references, and result normalization.
+Planning, triage, adaptive control, verification, and long-horizon behavior
+remain strategy policies above that kernel. This permits gradual shadow and
+compatibility migration without forcing every historical behavior into one
+monolithic engine. The current source review is non-executing and its consumer
+scan is explicitly partial: stored workflows, runtime calls, and external
+consumers still require inventory evidence before removal review.
+
 ### Runtime-neutral durability fixture
 
 A static conformance fixture in
