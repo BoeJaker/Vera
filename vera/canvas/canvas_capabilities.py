@@ -156,7 +156,13 @@ async def _target(id: str = "", session_id: str = "", create: bool = True) -> Op
 def _item_view(b: Dict[str, Any]) -> Dict[str, Any]:
     return {"id": b.get("id"), "key": b.get("key"), "type": b.get("type"), "state": b.get("state"),
             "size": b.get("size"), "anchor": b.get("anchor"), "anchors": b.get("anchors") or [],
-            "ts": b.get("ts")}
+            "ts": b.get("ts"), "score": b.get("score")}
+
+
+def _anchor_turn(anchor: Any) -> str:
+    """The turn an anchor names — the timeline records it so the relevance engine knows what THIS turn touched."""
+    a = _as_obj(anchor)
+    return str(a.get("turn") or a.get("mid") or "") if isinstance(a, dict) else ""
 
 
 def _add_anchor(b: Dict[str, Any], anchor: Any) -> None:
@@ -512,7 +518,7 @@ async def cap_canvas_add(id: str = "", session_id: str = "", kind: str = "note",
         hit["state"] = "now"
         hit["ts"] = now_iso()
         _add_anchor(hit, anchor)
-        rev = await _write(doc, "show", key)
+        rev = await _write(doc, "show", key, turn=_anchor_turn(anchor))
         return {"ok": True, "resolved": "shown", "existing": True, "key": key, "item": _item_view(hit),
                 "id": doc["id"], "revision": rev}
     if key and content is None:
@@ -531,7 +537,7 @@ async def cap_canvas_add(id: str = "", session_id: str = "", kind: str = "note",
              "size": size if size in ITEM_SIZES else "m"}
     _add_anchor(block, anchor)
     blocks.append(block)
-    rev = await _write(doc, "add", key)
+    rev = await _write(doc, "add", key, turn=_anchor_turn(anchor))
     return {"ok": True, "resolved": "added", "existing": False, "key": key, "item": _item_view(block),
             "id": doc["id"], "revision": rev}
 
@@ -647,6 +653,190 @@ async def cap_canvas_session_room(session_id: str = "", trace_id=None):
             "sizes": {b["key"]: b.get("size") or "m" for b in keyed}, "count": len(keyed)}
 
 
+# ── THE RELEVANCE ENGINE (Notes/38 §3.3, P2): what is in focus now. Six signals, in order of weight; the score is
+#    the strongest of them. Items above the threshold are live — a parked one is recalled (its anchors grow, the
+#    timeline says "recall"); below it they park; pinned items never leave focus. The engine proposes, then applies
+#    within the document (apply=True) or only answers (apply=False, a focus change in the chat). ─────────────────
+_REL_THRESHOLD = 0.35
+_REL_RECENT_LIVE = 2           # an item stays live for this many turns after its last anchor, then decays
+_REL_WORD = re.compile(r"[a-z0-9][a-z0-9_.:/-]{2,}")
+# the user's intent: a small phrase table → the item kinds it means (the model's own directive is the resolver hit)
+_REL_INTENT: Dict[str, tuple] = {
+    "notebook": ("my notes", "the notes", "the notebook", "that notebook", "our notes"),
+    "session":  ("that terminal", "the terminal", "the shell", "that shell", "the ssh", "that session"),
+    "widget":   ("the chart", "that chart", "the graph from before", "the plot", "the widget", "that widget", "the tile"),
+    "table":    ("the table", "that table", "the rows", "those rows"),
+    "diagram":  ("the diagram", "that diagram"),
+    "markdown": ("the document", "the doc", "that document", "the notes", "the report"),
+    "note":     ("the note", "that note", "the notes"),
+    "code":     ("the code", "that snippet", "the file", "that file", "the script"),
+    "loop":     ("the loop", "that run", "the run", "that loop"),
+    "image":    ("the image", "that image", "the picture", "that picture"),
+}
+_REL_KIND_ALIASES = {"notebook": ("notebook", "note"), "session": ("session", "terminal"), "widget": ("widget", "chart"),
+                     "diagram": ("diagram", "mermaid"), "markdown": ("markdown", "document")}
+
+
+def _rel_strings(v: Any, out: List[str], depth: int = 0) -> None:
+    if depth > 3 or v is None:
+        return
+    if isinstance(v, str):
+        out.append(v)
+    elif isinstance(v, dict):
+        for x in v.values():
+            _rel_strings(x, out, depth + 1)
+    elif isinstance(v, (list, tuple)):
+        for x in v[:40]:
+            _rel_strings(x, out, depth + 1)
+
+
+def _rel_words(s: str) -> set:
+    return set(_REL_WORD.findall(str(s or "").lower()))
+
+
+def _rel_item_text(b: Dict[str, Any]) -> str:
+    parts: List[str] = [str(b.get("key") or ""), str(b.get("type") or "")]
+    _rel_strings(b.get("content"), parts)
+    for a in b.get("anchors") or []:
+        if isinstance(a, dict):
+            parts.extend(str(a.get(k) or "") for k in ("entity", "topic", "subject"))
+    return " ".join(parts)[:4000]
+
+
+def _rel_anchor_turns(b: Dict[str, Any]) -> List[str]:
+    out = []
+    for a in b.get("anchors") or []:
+        t = _anchor_turn(a)
+        if t:
+            out.append(t)
+    return out
+
+
+def _rel_kind_of(b: Dict[str, Any]) -> set:
+    kinds = {str(b.get("type") or "")}
+    key = str(b.get("key") or "")
+    if ":" in key:
+        kinds.add(key.split(":", 1)[0])
+    return {k for k in kinds if k}
+
+
+def _rel_score(b: Dict[str, Any], turn: str, text: str, entities: List[str], recent: List[str],
+               hits: set, intents: Dict[str, str]) -> Dict[str, Any]:
+    """One item's score and the signal that carried it."""
+    key = str(b.get("key") or "")
+    sig: Dict[str, float] = {}
+    if key in hits or (turn and turn in _rel_anchor_turns(b)):
+        sig["explicit"] = 1.0
+    if b.get("state") == "pinned":
+        sig["pin"] = 1.0
+    item_text = _rel_item_text(b)
+    low = item_text.lower()
+    words = _rel_words(item_text)
+    ents = [e for e in (str(x).strip().lower() for x in entities or []) if len(e) >= 3]
+    if any((e in words) or (len(e) >= 4 and e in low) for e in ents):
+        sig["entity"] = 0.85
+    kinds = _rel_kind_of(b)
+    for kind, best_key in intents.items():
+        aliases = set(_REL_KIND_ALIASES.get(kind, ())) | {kind}
+        if kinds & aliases:
+            sig["intent"] = max(sig.get("intent", 0.0), 0.7 if best_key == key else 0.5)
+    tw = _rel_words(text)
+    if tw and words:
+        overlap = len(tw & words) / float(max(1, min(len(tw), 12)))
+        if overlap > 0:
+            sig["similarity"] = round(min(0.6, 0.6 * overlap), 3)
+    turns = _rel_anchor_turns(b)
+    pos = None
+    for t in turns:
+        if t in recent:
+            i = recent.index(t)
+            pos = i if pos is None else min(pos, i)
+    if pos is not None:
+        sig["recency"] = 0.5 if pos <= _REL_RECENT_LIVE else round(max(0.0, 0.5 * (1 - (pos - _REL_RECENT_LIVE) / 3.0)), 3)
+    score = max(sig.values()) if sig else 0.0
+    return {"score": round(score, 3), "signals": sig}
+
+
+@capability(
+    "canvas.session.relevance", memory="off", silent=True,
+    http_method="POST", http_path="/canvas/session/relevance", http_tags=["canvas"],
+    description="What is in focus on the session canvas now (Notes/38 §3.3). Six signals, strongest wins: an "
+                "explicit resolver hit this turn (1.0) · an entity of the turn in the item (0.85) · the user's "
+                "intent — 'my notes', 'that terminal', 'the chart from before' (0.7) · similarity of the turn to the "
+                "item's text (≤0.6) · recency of the item's anchors (0.5 for two turns, then decays) · a pin (1.0, "
+                "never leaves focus). Above the threshold an item is live — a parked one is RECALLED (anchors grow, "
+                "timeline op 'recall'); below it a live one parks; pinned stay; hidden are untouched. Inputs: "
+                "session_id (or id), turn (the turn's mid), text (the turn's words), entities ([str]), recent "
+                "([mids], newest first), apply (bool, default true — false only answers), threshold (float). "
+                "Output: {ok, id, revision, turn, focus:[keys], scores:{key:{score, signals}}, recalled:[keys], "
+                "parked:[keys], applied}.",
+)
+async def cap_canvas_session_relevance(session_id: str = "", turn: str = "", text: str = "", entities: Any = None,
+                                       recent: Any = None, apply: bool = True, threshold: float = _REL_THRESHOLD,
+                                       id: str = "", trace_id=None):
+    doc = await _target(id, session_id, create=False)
+    if not doc:
+        return {"ok": True, "id": _session_canvas_id(session_id) or id, "revision": 0, "turn": turn, "focus": [],
+                "scores": {}, "recalled": [], "parked": [], "applied": False}
+    turn = str(turn or "")
+    entities = _as_obj(entities) if entities is not None else []
+    entities = [str(x) for x in entities] if isinstance(entities, (list, tuple)) else []
+    recent = _as_obj(recent) if recent is not None else []
+    recent = [str(x) for x in recent] if isinstance(recent, (list, tuple)) else []
+    if turn and turn not in recent:
+        recent.insert(0, turn)
+    try:
+        threshold = float(threshold)
+    except Exception:
+        threshold = _REL_THRESHOLD
+    keyed = [b for b in doc.get("blocks", []) if b.get("key")]
+    hits = {e.get("key") for e in doc.get("timeline") or [] if turn and e.get("turn") == turn and e.get("key")}
+    # the intent phrases the turn contains → the kind meant; the most recently anchored item of that kind wins
+    low = str(text or "").lower()
+    intents: Dict[str, str] = {}
+    for kind, phrases in _REL_INTENT.items():
+        if any(ph in low for ph in phrases):
+            aliases = set(_REL_KIND_ALIASES.get(kind, ())) | {kind}
+            cands = [b for b in keyed if _rel_kind_of(b) & aliases]
+            cands.sort(key=lambda b: str(b.get("ts") or ""), reverse=True)
+            intents[kind] = str(cands[0].get("key")) if cands else ""
+    scores: Dict[str, Any] = {}
+    focus: List[str] = []
+    recalled: List[str] = []
+    parked: List[str] = []
+    for b in keyed:
+        s = _rel_score(b, turn, text, entities, recent, hits, intents)
+        key = str(b["key"])
+        scores[key] = s
+        live = s["score"] >= threshold or b.get("state") == "pinned"
+        if live:
+            focus.append(key)
+        if not apply:
+            continue
+        b["score"] = s["score"]
+        st = b.get("state")
+        if live and st == "parked":
+            b["state"] = "now"
+            b["ts"] = now_iso()
+            if turn:
+                _add_anchor(b, {"turn": turn, "role": "recalled"})
+            recalled.append(key)
+        elif (not live) and st == "now" and "explicit" not in s["signals"]:
+            b["state"] = "parked"
+            parked.append(key)
+    rev = int(doc.get("revision") or 0)
+    if apply and (recalled or parked):
+        for key in recalled:
+            _record(doc, "recall", key, turn=turn)
+        for key in parked:
+            _record(doc, "park", key, turn=turn)
+        rev = await _write(doc, "relevance", "", turn=turn, focus=focus[:50])
+    elif apply:
+        await _save(doc)      # the scores on the items, no revision — nothing moved
+    return {"ok": True, "id": doc["id"], "revision": rev, "turn": turn, "focus": focus, "scores": scores,
+            "recalled": recalled, "parked": parked, "applied": bool(apply)}
+
+
 @capability(
     "canvas.ask", memory="off",
     http_method="POST", http_path="/canvas/ask", http_tags=["canvas"],
@@ -754,7 +944,7 @@ register_ui(
              "canvas.update", "canvas.move", "canvas.remove", "canvas.delete",
              "canvas.block_types",
              "canvas.session.resolve", "canvas.add", "canvas.pin", "canvas.park", "canvas.size",
-             "canvas.recall", "canvas.timeline", "canvas.session.room", "canvas.ask"],
+             "canvas.recall", "canvas.timeline", "canvas.session.room", "canvas.session.relevance", "canvas.ask"],
     mode="tab",
     tab_order=60,
 )
