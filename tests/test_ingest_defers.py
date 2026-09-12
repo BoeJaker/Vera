@@ -327,3 +327,82 @@ def test_a_handler_is_registered_for_the_backfill():
     """Without this the runner drops the job as 'no handler' and the backfill
     silently never happens."""
     assert SVC.has_handler(IQ.KIND_EMBED_SESSIONS)
+
+
+# ── embedding of Claude-session turns is a switch, OFF by default ────────────
+# 61,365 rows without vectors, 1,000-6,000 new turns a day, ~350 embeds an hour
+# across both CPU nodes: the backlog is a week of continuous embedding that the
+# queue can never give it. Off unless asked for; import and visibility unchanged.
+def test_embedding_is_off_by_default(monkeypatch):
+    class _NoRedis:
+        async def get(self, k): return None
+    monkeypatch.setattr(CS._orch, "REDIS", _NoRedis())
+    monkeypatch.delenv(CS._EMBED_ENV, raising=False)
+    assert run(CS._embed_enabled()) is False
+
+
+def test_the_redis_flag_wins_over_the_env_default(monkeypatch):
+    class _R:
+        def __init__(self, v): self.v = v
+        async def get(self, k): return self.v
+    monkeypatch.setenv(CS._EMBED_ENV, "1")
+    monkeypatch.setattr(CS._orch, "REDIS", _R(b"0"))
+    assert run(CS._embed_enabled()) is False
+    monkeypatch.setattr(CS._orch, "REDIS", _R(b"1"))
+    assert run(CS._embed_enabled()) is True
+
+
+def test_an_ingest_pass_passes_the_switch_to_every_file(monkeypatch):
+    seen = []
+
+    async def fake_scan(instance_id=""):
+        return {"files": [{"rel": "home::p/%d.jsonl" % i, "size": 100} for i in range(3)]}
+
+    async def fake_ingest_file(instance_id, rel, state, **kw):
+        seen.append(kw.get("embed"))
+        return 1
+
+    async def off():
+        return False
+
+    monkeypatch.setattr(CS, "cap_claude_sessions_scan", fake_scan)
+    monkeypatch.setattr(CS, "_ingest_file", fake_ingest_file)
+    monkeypatch.setattr(CS, "_load_state", lambda: {})
+    monkeypatch.setattr(CS, "_save_state", lambda s: None)
+    monkeypatch.setattr(CS, "_embed_enabled", off)
+    run(CS.cap_claude_sessions_ingest_all(instance_id=""))
+    assert seen == [False, False, False], seen
+
+
+def test_a_turn_recorded_without_embedding_writes_no_memory_node_and_queues_nothing(monkeypatch):
+    """The two embed paths: memory.py (per turn, inline) and the fabric
+    backfill (queued). Off must close BOTH, and still store the fabric row."""
+    from vera.ide import ide_capabilities as IC
+    calls = {}
+
+    class _Fabric:
+        async def ingest_dataset(self, dataset_id, data, source, source_id, tags,
+                                 defer_embedding=False, queue_backfill=True):
+            calls["fabric"] = {"defer": defer_embedding, "queue": queue_backfill}
+            return {"ok": True}
+
+    class _Memory:
+        class MemoryRecord:
+            def __init__(self, **kw): calls["memory_record"] = True
+        class MEMORY:
+            @staticmethod
+            async def store(rec): calls["memory_store"] = True
+
+    monkeypatch.setitem(sys.modules, "data_fabric", _Fabric())
+    monkeypatch.setitem(sys.modules, "memory", _Memory())
+    IC._FABRIC_DEDUP.clear()
+
+    async def no_emit(ev): calls["broadcast"] = ev.get("type")
+    monkeypatch.setattr(IC, "emit_event", no_emit)
+
+    run(IC._record(session_id="claude-cc:x", category="ide.claude_session_user",
+                   text="hello", full_text="hello", tags=["claude"],
+                   fabric_dataset="ide.claude_sessions", embed=False))
+    assert "memory_store" not in calls, "a memory node was written (and embedded) with embedding off"
+    assert calls["fabric"] == {"defer": True, "queue": False}, calls
+    assert calls.get("broadcast"), "the live turn broadcast must still happen"

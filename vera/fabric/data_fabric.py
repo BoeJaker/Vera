@@ -2571,6 +2571,7 @@ async def ingest_dataset(
     tags:       List[str] = None,
     source_id:  str = "",
     defer_embedding: bool = False,
+    queue_backfill: bool = True,
 ) -> Dict:
     recs: List[DataRecord] = []
     for item in (data if isinstance(data, list) else [data]):
@@ -2610,7 +2611,13 @@ async def ingest_dataset(
     # storing records that nothing will ever come back for. Deciding here and
     # not after the pipeline matters - by then the rows are already written
     # without vectors and the choice cannot be taken back.
-    if defer_embedding:
+    if defer_embedding and not queue_backfill:
+        # Store without a vector and queue NOTHING: the caller has said this
+        # dataset's embedding is switched off (see EMBED_EXCLUDED_DATASETS).
+        # The rows stay searchable by text and readable by the UI; they get
+        # vectors only if someone turns embedding on and runs a backfill.
+        pass
+    elif defer_embedding:
         queued = False
         if _IDLE_SVC is not None and _IDLE_IQ is not None:
             try:
@@ -5827,11 +5834,19 @@ async def cap_fabric_backfill_vectors(confirm: bool = False, dataset_id: str = "
 
     # The scan query binds $1=last_id, so the dataset filter is $2 there but $1
     # in the standalone COUNT.
-    cond, args = ("dataset_id=$2", [dataset_id]) if dataset_id else ("TRUE", [])
+    excluded = sorted(EMBED_EXCLUDED_DATASETS) if not dataset_id else []
+    if dataset_id:
+        cond, args = ("dataset_id=$2", [dataset_id])
+    elif excluded:
+        # "all" means all datasets whose embedding is ON.
+        cond, args = ("dataset_id <> ALL($2::text[])", [excluded])
+    else:
+        cond, args = ("TRUE", [])
+    count_cond = ("dataset_id=$1" if dataset_id
+                  else ("dataset_id <> ALL($1::text[])" if excluded else "TRUE"))
     async with pool.acquire() as conn:
         pg_total = await conn.fetchval(
-            "SELECT COUNT(*) FROM fabric_records WHERE "
-            + ("dataset_id=$1" if dataset_id else "TRUE"), *args)
+            "SELECT COUNT(*) FROM fabric_records WHERE " + count_cond, *args)
     try:
         chroma_count = col.count()
     except Exception as e:
@@ -10332,6 +10347,13 @@ except Exception:                                          # pragma: no cover
         from vera import idle_queue_service as _IDLE_SVC
     except Exception:
         _IDLE_IQ = _IDLE_SVC = None                        # type: ignore
+
+
+#: Datasets whose embedding is SWITCHED OFF. A backfill over "all" skips them;
+#: a backfill that names one of them explicitly still runs (that is how you
+#: catch up deliberately). Producers add and remove their own dataset here -
+#: ide.claude_sessions registers itself according to its toggle.
+EMBED_EXCLUDED_DATASETS: set = set()
 
 
 async def _fabric_backfill_job(job=None, should_continue=None):

@@ -221,6 +221,7 @@ async def _record(
     extra_link:      tuple = None,
     bulk:            bool  = False,
     defer_embedding: bool  = False,
+    embed:           bool  = True,
 ) -> str:
     """
     Core sequential activity recorder for all IDE operations.
@@ -253,7 +254,12 @@ async def _record(
     # 1. Memory graph
     graph_ok = False
     try:
-        mem_mod = None if bulk else sys.modules.get("memory")
+        # embed=False: no memory-graph node either. MEMORY.store embeds the
+        # record inline (memory.py:embed_text - 659 CPU embeds overnight on
+        # 2026-09-12 came from exactly this line for Claude-session turns), so
+        # a record whose embedding is switched off cannot go through it. The
+        # broadcast and the fabric row still happen.
+        mem_mod = None if (bulk or not embed) else sys.modules.get("memory")
         if mem_mod:
             MEMORY, MemRecord = mem_mod.MEMORY, mem_mod.MemoryRecord
             rec = MemRecord(
@@ -321,7 +327,10 @@ async def _record(
                          "category": category, "tags": tags, "ts": ts,
                          **(fabric_data or {})}
                 _kw = {}
-                if defer_embedding:
+                if not embed:
+                    _kw["defer_embedding"] = True
+                    _kw["queue_backfill"] = False
+                elif defer_embedding:
                     # Store the row now, embed later: the fabric queues its own
                     # backfill for the idle queue. Only pass the flag if this
                     # fabric knows it, so a version skew cannot turn a stored
@@ -332,6 +341,12 @@ async def _record(
                             _kw["defer_embedding"] = True
                     except Exception:
                         pass
+                try:
+                    import inspect as _insp2
+                    _acc = set(_insp2.signature(fabric.ingest_dataset).parameters)
+                    _kw = {k: v for k, v in _kw.items() if k in _acc}
+                except Exception:
+                    pass
                 await fabric.ingest_dataset(
                     dataset_id=ds,
                     data=[{"text": text[:4000], **fdata}],

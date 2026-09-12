@@ -65,6 +65,7 @@ import asyncio
 import json
 import logging
 import os
+import sys
 import re
 import sqlite3
 import time
@@ -353,8 +354,114 @@ async def _read_new_bytes(instance_id: str, rel: str, offset: int) -> Optional[s
     return (out.get("result") or {}).get("content", "")
 
 
+# ── embedding of Claude-session turns: a switch, OFF by default ──────────────
+# Every Claude Code transcript turn used to be embedded twice - once as a
+# memory-graph node (memory.py:embed_text, inline, per turn) and once as a
+# fabric row - on the CPU nodes, at roughly 350 embeds an hour across both. On
+# 2026-09-12 the backlog stood at 61,365 rows without vectors, chats arrive at
+# 1,000-6,000 turns a day, and the backfill ran 12 hours overnight sharing both
+# CPU nodes with a person. At that rate the backlog is ~7 days of continuous
+# embedding, which the queue can never give it. So: off unless asked for. The
+# transcripts are still imported, still visible, still text-searchable; they
+# just carry no vector and the memory graph gets no node for them.
+_EMBED_FLAG_KEY = "vera:claude_sessions:embed_enabled"
+_EMBED_ENV = "VERA_EMBED_CLAUDE_SESSIONS"
+_EMBED_DATASET = "ide.claude_sessions"
+
+
+async def _embed_enabled() -> bool:
+    """Redis flag if set (the UI/cap toggle), else the env default, else OFF."""
+    try:
+        r = _orch.REDIS
+        if r is not None:
+            v = await r.get(_EMBED_FLAG_KEY)
+            if v is not None:
+                v = v.decode() if isinstance(v, bytes) else str(v)
+                return v.strip().lower() in ("1", "true", "yes", "on")
+    except Exception as e:
+        log.debug("claude_sessions: embed flag read: %s", e)
+    return os.environ.get(_EMBED_ENV, "0").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _sync_fabric_exclusion(enabled: bool) -> None:
+    """Tell the fabric whether an 'all datasets' backfill may touch ours."""
+    try:
+        fabric = sys.modules.get("data_fabric")
+        ex = getattr(fabric, "EMBED_EXCLUDED_DATASETS", None)
+        if ex is None:
+            return
+        (ex.discard if enabled else ex.add)(_EMBED_DATASET)
+    except Exception as e:
+        log.debug("claude_sessions: fabric exclusion sync: %s", e)
+
+
+@capability("ide.claude_sessions.embed", memory="off", silent=True,
+            http_method="POST", http_path="/ide/claude_sessions/embed",
+            http_tags=["ide", "embed"],
+            description="Get or set whether Claude-session transcript turns are "
+                        "EMBEDDED (vectors + memory-graph nodes). OFF by default: "
+                        "they are still imported, visible and text-searchable. "
+                        "Inputs: enabled (bool, optional - omit to read), "
+                        "count (bool - also count rows still without a vector; a "
+                        "few seconds). Output: {enabled, source, missing?, "
+                        "created_24h?, rate_per_item_s?, eta_s?, eta_basis}.")
+async def cap_claude_sessions_embed(enabled: Optional[bool] = None,
+                                    count: bool = False, trace_id=None) -> dict:
+    if enabled is not None:
+        try:
+            r = _orch.REDIS
+            if r is not None:
+                await r.set(_EMBED_FLAG_KEY, "1" if enabled else "0")
+        except Exception as e:
+            return {"error": f"could not persist the flag: {e}"}
+        _sync_fabric_exclusion(bool(enabled))
+        await emit_event({"type": "ide.claude_sessions.embed_toggled",
+                          "enabled": bool(enabled)})
+    on = await _embed_enabled()
+    _sync_fabric_exclusion(on)
+    out: dict = {"enabled": on,
+                 "source": "redis flag" if enabled is not None else "redis flag or env default",
+                 "note": ("" if on else "transcripts are imported and visible; vectors and "
+                          "memory-graph nodes are not written while this is off")}
+    # An estimate only from a MEASURED rate: the queue learns embed.fabric's
+    # per-record cost from completed runs. Nothing completed -> no ETA.
+    rate = None
+    try:
+        if _svc is not None and hasattr(_svc, "load_rates"):
+            rates = await _svc.load_rates()
+            rate = ((rates or {}).get("embed.fabric") or {}).get("per_item_s")
+    except Exception as e:
+        log.debug("claude_sessions: rate read: %s", e)
+    out["rate_per_item_s"] = rate
+    if count:
+        try:
+            fabric = sys.modules.get("data_fabric")
+            fn = (CAPABILITY_REGISTRY.get("fabric.backfill_vectors") or {}).get("func")
+            if fn:
+                dry = await fn(confirm=False, dataset_id=_EMBED_DATASET)
+                out["missing"] = dry.get("missing")
+                out["rows_total"] = dry.get("pg_total")
+            pool = getattr(getattr(fabric, "FABRIC_PG", None), "_pool", None)
+            if pool is not None:
+                async with pool.acquire() as conn:
+                    out["created_24h"] = await conn.fetchval(
+                        "SELECT COUNT(*) FROM fabric_records WHERE dataset_id=$1 "
+                        "AND created_at > now() - interval '24 hours'", _EMBED_DATASET)
+        except Exception as e:
+            out["count_error"] = str(e)[:200]
+    missing = out.get("missing")
+    if rate and missing:
+        out["eta_s"] = round(float(rate) * int(missing))
+        out["eta_basis"] = "missing rows x per-record cost learned from completed embed.fabric runs"
+    else:
+        out["eta_s"] = None
+        out["eta_basis"] = ("no completed embed.fabric run has been measured yet"
+                            if not rate else "pass count=true to count the rows")
+    return out
+
+
 async def _ingest_file(instance_id: str, rel: str, state: dict,
-                       defer_embedding: bool = False) -> int:
+                       defer_embedding: bool = False, embed: bool = True) -> int:
     """Ingest new lines from one transcript. Returns count of new turns recorded."""
     key = _source_key(instance_id)
     src_state = state.setdefault(key, {})
@@ -426,6 +533,7 @@ async def _ingest_file(instance_id: str, rel: str, state: dict,
             dedup_key=f"ccsess:{rel}:{turn.get('uuid') or new_offset}",
             bulk=_bulk,
             defer_embedding=defer_embedding,
+            embed=embed,
         )
         recorded += 1
 
@@ -555,7 +663,8 @@ async def cap_claude_sessions_ingest(rel: str = "", instance_id: str = "", trace
         return {"error": "rel is required"}
     state = _load_state()
     try:
-        n = await _ingest_file(instance_id, rel, state, defer_embedding=defer_embedding)
+        n = await _ingest_file(instance_id, rel, state, defer_embedding=defer_embedding,
+                               embed=_embed_on)
     finally:
         _save_state(state)
     return {"ok": True, "turns_recorded": n}
@@ -574,6 +683,10 @@ async def cap_claude_sessions_ingest_all(instance_id: str = "", trace_id=None,
                                          should_continue=None,
                                          on_progress=None,
                                          defer_embedding: bool = False) -> dict:
+    # One read per pass. OFF means every turn is stored without a vector and
+    # without a memory node, and nothing is queued to embed it later.
+    _embed_on = await _embed_enabled()
+    _sync_fabric_exclusion(_embed_on)
     """`should_continue` is an async callable returning a busy REASON (or "").
     Polled between files so a long backfill yields the moment the box gets
     busy — see vera/background_work.py rule 2.
@@ -632,7 +745,7 @@ async def cap_claude_sessions_ingest_all(instance_id: str = "", trace_id=None,
             if "offset" in known and f.get("size", 0) <= known["offset"]:
                 continue  # nothing new
             n = await _ingest_file(instance_id, rel, state,
-                                   defer_embedding=defer_embedding)
+                                   defer_embedding=defer_embedding, embed=_embed_on)
             _save_state(state)  # persist per-file so a restart/crash mid-pass loses at most one file's progress
             if n:
                 updated += 1
