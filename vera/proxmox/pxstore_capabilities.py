@@ -36,8 +36,13 @@ What this module provides (group `pxstore.*`)
                 detached pulls through it (pxstore.models.pull.status).
                 pxstore.store.export / .attach_remote reuse VFS-02's read-only
                 NFS export -- nothing is installed on the hypervisor.
-  Backups       pxstore.backup.target — a PVE backup storage inside the
+  Backups       pxstore.backup.status — jobs, backup storages, snapshot counts,
+                the disk-full guard, replication and the latest per-guest
+                results, with plain-language warnings (read-only).
+                pxstore.backup.target — a PVE backup storage inside the
                 fabric's backup dataset, used by nodes.backup (vzdump).
+  Disks         pxstore.disks — every physical disk and what it is used for,
+                including free, USB-attached and damaged ones (read-only).
   Vera data     pxstore.veradata.provision / .plan
                 Dedicated dataset + NFS export for Vera's databases (the
                 "Vera VM keeps filling up" fix) plus a generated stop-copy-
@@ -83,6 +88,24 @@ from Vera.vera.proxmox.pxstore_attach_core import (
     is_token_bindmount_refusal as _is_token_refusal,
     mp_value as _mp_value,
     pct_set_command as _pct_set_command,
+)
+from Vera.vera.proxmox.pxstore_backup_core import (
+    BACKUP_SCRIPT as _BACKUP_SCRIPT,
+    DISKS_SCRIPT as _DISKS_SCRIPT,
+    backup_warnings as _backup_warnings,
+    classify_disks as _classify_disks,
+    lines as _bk_lines,
+    parse_datasets as _parse_bk_datasets,
+    parse_importable as _parse_importable,
+    parse_jobs as _parse_jobs,
+    parse_journal as _parse_journal,
+    parse_pools as _parse_bk_pools,
+    parse_pvesm_status as _parse_pvesm_status,
+    parse_pvs as _parse_pvs,
+    parse_snap_counts as _parse_snap_counts,
+    parse_timers as _parse_timers,
+    parse_vzdump as _parse_vzdump,
+    sections as _bk_sections,
 )
 from Vera.vera.proxmox.pxstore_fabric_core import (
     CONSOLIDATE_RSYNC_FLAGS as _RSYNC_FLAGS,
@@ -2263,6 +2286,72 @@ echo ATTACH_OK
             "hint": f"bind it into containers read-only with pruning off: -v "
                     f"{local_path}/models/ollama:/root/.ollama/models:ro "
                     f"-e OLLAMA_NOPRUNE=1"}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  PHYSICAL DISKS + BACKUP SYSTEM STATUS  (read-only)
+# ═════════════════════════════════════════════════════════════════════════════
+@capability(
+    "pxstore.disks",
+    http_method="POST", http_path="/pxstore/disks", http_tags=["pxstore"],
+    memory="off", silent=True,
+    description="Every physical disk on a Proxmox node and what it is used for: "
+                "the ZFS pool it belongs to (imported, importable or damaged), an "
+                "LVM volume group, a mounted filesystem, or nothing at all, so an "
+                "unused disk shows up, and so does a USB-attached one. Read-only: "
+                "importable pools are listed, never imported. Inputs: cluster_id "
+                "(str!), node (str!). Output: {disks:[{name,size,model,transport,"
+                "usb,rotational,role,state,detail,pool}], free:[names]} or {error}.",
+)
+async def cap_disks(cluster_id: str = "", node: str = "", trace_id=None) -> Dict:
+    if not (cluster_id and node):
+        return {"error": "cluster_id and node required"}
+    r = await _node_ssh(cluster_id, node, _sh(_DISKS_SCRIPT), timeout=60)
+    if r.get("error"):
+        return {"error": r["error"]}
+    s = _bk_sections(r.get("stdout", ""))
+    disks = _classify_disks(s.get("LSBLK", ""), _bk_lines(s.get("IMPORTED", "")),
+                            _parse_importable(s.get("IMPORTABLE", "")),
+                            _parse_pvs(s.get("PVS", "")))
+    return {"disks": disks, "free": [d["name"] for d in disks if d["state"] == "free"]}
+
+
+@capability(
+    "pxstore.backup.status",
+    http_method="POST", http_path="/pxstore/backup/status", http_tags=["pxstore"],
+    memory="off", silent=True,
+    description="The backup system on a Proxmox node at a glance: backup jobs "
+                "(and whether any is enabled), backup storages with usage, pool "
+                "capacity, ZFS snapshot counts per pool, the snapshot disk-full "
+                "guard and replication timers with their recent log lines, the "
+                "latest result per guest, anything running now, and plain-language "
+                "warnings (no enabled job, a job writing to the hypervisor's root "
+                "disk, storage or a pool over 80%, a timer missing). Read-only. "
+                "Inputs: cluster_id (str!), node (str!). Output: {jobs, storages, "
+                "pools, datasets, snapshots, timers, guard, replication, runs, "
+                "running, warnings} or {error}.",
+)
+async def cap_backup_status(cluster_id: str = "", node: str = "", trace_id=None) -> Dict:
+    if not (cluster_id and node):
+        return {"error": "cluster_id and node required"}
+    r = await _node_ssh(cluster_id, node, _sh(_BACKUP_SCRIPT), timeout=60)
+    if r.get("error"):
+        return {"error": r["error"]}
+    s = _bk_sections(r.get("stdout", ""))
+    jobs = _parse_jobs(s.get("JOBS", ""))
+    storages = _parse_pvesm_status(s.get("STORAGE", ""))
+    pools = _parse_bk_pools(s.get("POOLS", ""))
+    timers = _parse_timers(s.get("TIMERS", ""))
+    return {"jobs": jobs, "storages": storages, "pools": pools,
+            "datasets": _parse_bk_datasets(s.get("DATASETS", "")),
+            "snapshots": _parse_snap_counts(s.get("SNAPS", "")),
+            "timers": timers,
+            "guard": _parse_journal(s.get("GUARD", "")),
+            "replication": _parse_journal(s.get("REPL", "")),
+            "runs": _parse_vzdump(s.get("VZDUMP", "")),
+            "running": _bk_lines(s.get("RUNNING", "")),
+            "warnings": _backup_warnings(jobs, storages, pools, timers),
+            "checked_at": now_iso()}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
