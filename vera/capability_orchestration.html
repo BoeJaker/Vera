@@ -6931,6 +6931,10 @@ function _applyThemeVars(vars, themeId){
   const root = document.documentElement;
   const applied = {};
   const put = (k,v)=>{ root.style.setProperty(k,v); applied[k]=v; };
+  // the theme's OWN tokens first (--bg · --s1 · --t1 · --ac · --dv1 …): everything drawn on them — the design landing's
+  // shell, the chat, the panels — follows the pick; only mapping them onto the old names left the new tokens holding
+  // the previous theme (the boot cache replays them inline, so a light --bg outlived a dark pick)
+  for(const [k, v] of Object.entries(vars)){ if(/^--/.test(k) && v != null && v !== '') put(k, String(v)); }
   for(const [src, targets] of Object.entries(_THEME_VAR_MAP)){
     if(vars[src]) targets.forEach(t => put(t, vars[src]));
   }
