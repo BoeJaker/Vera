@@ -1822,9 +1822,14 @@ function _hdrSheet(on){ const s=document.getElementById('hdrSheet'), b=document.
 // the activity ticker in the header is the activity overlay's pill (vera/activity_overlay.js): the /activity/timeline
 // feed, the lane in the column flow under the header, the run flow beneath it
 function _hdrStyleSync(){ const seg=document.getElementById('hdrStyleSeg'); if(!seg) return; let cur='standard'; try{ cur=document.documentElement.getAttribute('data-style')||localStorage.getItem('vera:ui:style')||'standard'; }catch(_){} seg.innerHTML=_HDR_STYLES.map(s=>'<button type="button" class="'+(s[0]===cur?'on':'')+'" data-style="'+s[0]+'">'+s[1]+'</button>').join(''); seg.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ try{ if(window.veraUI&&veraUI.setAppearance) veraUI.setAppearance({style:b.dataset.style}); else document.documentElement.setAttribute('data-style', b.dataset.style); }catch(_){} setTimeout(_hdrStyleSync,50); })); }
-async function _hdrSwatches(){ const host=document.getElementById('hdrSwatches'); if(!host) return; let themes={}; try{ themes=await _fetchAllThemes(); }catch(_){} const ids=Object.keys(themes||{}); if(!ids.length) return; const cur=(typeof _currentTheme!=='undefined'&&_currentTheme)||document.documentElement.getAttribute('data-theme')||''; const pick=ids.slice(0,5);
-  host.innerHTML=pick.map(id=>{ const t=themes[id]||{}; const v=t.vars||t||{}; const bg=v['--bg0']||v['--bg']||'#111', ac=v['--acc']||v['--ac']||'#5a9e8f'; return '<span class="swp'+(id===cur?' on':'')+'" data-theme="'+id+'" title="'+(t.name||id)+'" style="background:'+bg+'"><i style="background:'+ac+'"></i></span>'; }).join('');
-  host.querySelectorAll('.swp').forEach(s=>s.addEventListener('click',()=>{ try{ if(typeof _applyThemeById==='function') _applyThemeById(s.dataset.theme); else if(window.veraUI) veraUI.setTheme(s.dataset.theme); }catch(_){} host.querySelectorAll('.swp').forEach(x=>x.classList.toggle('on', x===s)); })); }
+// the swatches ARE the theme menu: the same catalogue, the same pick (_setTheme — the server's choice, the vars,
+// the broadcast to every panel, the button, the saved theme); the current one is lit whichever way it was set
+async function _hdrSwatches(){ const host=document.getElementById('hdrSwatches'); if(!host) return; let themes={}; try{ themes=await _fetchAllThemes(); }catch(_){} const ids=Object.keys(themes||{}); if(!ids.length) return;
+  const cur=_hdrCurTheme(); const pick=ids.indexOf(cur)>=5?ids.slice(0,4).concat([cur]):ids.slice(0,5);
+  host.innerHTML=pick.map(id=>{ const t=themes[id]||{}; const v=t.vars||{}; const bg=v['--bg']||v['--bg0']||(t.type==='light'?'#f4f4f2':'#111318'), ac=v['--ac']||v['--acc']||t.accent||'#5a9e8f'; return '<span class="swp'+(id===cur?' on':'')+'" data-theme="'+id+'" title="'+(t.label||t.name||id)+' — the same pick as the theme menu" style="background:'+bg+'"><i style="background:'+ac+'"></i></span>'; }).join('');
+  host.querySelectorAll('.swp').forEach(s=>s.addEventListener('click',async()=>{ try{ await _setTheme(s.dataset.theme); }catch(_){} _hdrSwatchesSync(); })); }
+function _hdrCurTheme(){ let cur=''; try{ cur=_currentTheme||''; }catch(_){} return cur||document.documentElement.getAttribute('data-theme')||''; }
+function _hdrSwatchesSync(){ const host=document.getElementById('hdrSwatches'); if(!host) return; const cur=_hdrCurTheme(); const have=Array.from(host.querySelectorAll('.swp')); if(cur&&!have.some(x=>x.dataset.theme===cur)){ _hdrSwatches(); return; } have.forEach(x=>x.classList.toggle('on', x.dataset.theme===cur)); }
 function _dashRecLabel(){ const g=document.getElementById('dashGrid'), l=document.getElementById('dashRecLbl'); if(!g||!l) return; const n=g.querySelectorAll('.widget:not(.hidden)').length; let rows=0; try{ rows=getComputedStyle(g).gridTemplateRows.split(' ').length; }catch(_){} l.textContent=n+' widgets · every one a record · grid 12 × '+(rows||'—')+' · vera.dash.main'; const lv=document.getElementById('dashLive'); const ab=document.getElementById('dashAutoBtn'); if(lv&&ab) lv.style.display=/auto/i.test(ab.textContent)&&ab.classList.contains('teal')?'':'none'; }
 function _tabsMoreChip(){ const bar=document.getElementById('tabBar'); if(!bar||bar.querySelector('.tab.more')) return; const m=document.createElement('div'); m.className='tab more'; m.title='Every registered panel — add one as a tab'; m.textContent='+ ⌘K'; m.addEventListener('click',()=>openTabPicker()); const ctl=bar.querySelector('.tab-controls'); bar.insertBefore(m, ctl||null);
   try{ fetch(base()+'/ui/panels').then(r=>r.json()).then(list=>{ const all=Array.isArray(list)?list.length:(list&&list.panels?list.panels.length:0); const open=bar.querySelectorAll('.tab[data-tab]').length; if(all>open) m.textContent='+'+(all-open)+' ⌘K'; }).catch(()=>{}); }catch(_){} }
@@ -6971,6 +6976,7 @@ async function _applyThemeById(themeId, vars){
 }
 
 function _updateThemeBtn(themeId){
+  try{ _hdrSwatchesSync(); }catch(e){}
   const btn = document.getElementById('themeBtn');
   if(!btn) return;
   const icons = {ash:'☀',dusk:'🌒',void:'⬛',chalk:'🪨',ice:'❄',
