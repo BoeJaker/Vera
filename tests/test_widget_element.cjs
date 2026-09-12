@@ -54,5 +54,11 @@ t('readable: quiet reads only', W.readable('obs.health') && W.readable('sysmon.h
 t('hydrate is a no-op without the mermaid element', W.hydrate({ querySelectorAll: () => [{}] }) === 0);
 t('css names the classes the markup uses', /\.wempty/.test(W.css()) && /\.vw-therm/.test(W.css()) && /\.vw-xl/.test(W.css()));
 t('forms() lists the drawn forms and the aliases', W.forms().some((f) => f.id === 'trace' && f.shape === 'series') && W.forms().some((f) => f.id === 'sparkline' && f.as === 'trace') && W.forms().length > 60);
+// the context graph as a form: mini lanes at M (a lane per family, hollow where not injected, the relations), the full element's slot at XL
+const cgd = { nodes: [{ id: 'v1', label: 'fabric.py', kind: 'chunk', score: 0.9 }, { id: 'm1', label: 'recall', kind: 'memory', score: 0.6, included: false }, { id: 's1', label: 'recall step', kind: 'step', score: 0.8 }], rels: [{ from: 'm1', to: 'v1', kind: 'mem' }] };
+const cgm = W.draw('context_graph', cgd, 'm', { bare: true, height: 90, labels: true });
+t('context_graph at M: three lanes, three members, one relation, the ghost hollow, labels', /vw-cg/.test(cgm) && (cgm.match(/border-top:1px dashed/g) || []).length === 3 && (cgm.match(/border-radius:50%/g) || []).length === 3 && /<line /.test(cgm) && /background:transparent/.test(cgm) && /fabric\.py/.test(cgm), cgm.slice(0, 200));
+t('context_graph at XL: the slot the full element fills', /vw-cgfull/.test(W.draw('context_graph', cgd, 'xl', {})) && /data-cg=/.test(W.draw('context_graph', cgd, 'xl', {})));
+t('context_graph is a drawn form of the graph shape', W.forms().some((f) => f.id === 'context_graph' && f.shape === 'graph' && f.drawn));
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

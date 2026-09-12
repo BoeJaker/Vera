@@ -14469,7 +14469,7 @@ Your task: decide what to do next to advance toward the goal.
      it produced, where it landed — in three projections. The chat records what a question read when it is sent and
      what a turn pinned to the canvas, and harvests what the reply produced from the reply itself. ═══ */
   let _xpl={on:false, mode:'cards'}, _xplEl=null, _xplMo=null, _xplT=null;
-  const _TURN_READS={}, _TURN_LAND={};
+  const _TURN_READS={}, _TURN_LAND={}, _TURN_RELS={};
   function explode(on){
     on=(on==null)?!_xpl.on:!!on; _xpl.on=on;
     document.body.classList.toggle('exploded', on);
@@ -14493,32 +14493,36 @@ Your task: decide what to do next to advance toward the goal.
     const msgs=document.getElementById('msgs');
     if(msgs&&window.MutationObserver){ _xplMo=new MutationObserver(()=>{ if(!_xpl.on) return; clearTimeout(_xplT); _xplT=setTimeout(_xplRefresh, 400); }); _xplMo.observe(msgs,{childList:true,subtree:true,characterData:true}); }
   }
-  function _xplRefresh(){ if(!_xpl.on||!_xplEl||typeof _xplEl.setScene!=='function') return; try{ _xplEl.setScene(_xplScene()); }catch(e){ console.warn('explode: scene', e); } }
-  const _xplCtxCard=(n)=>({n:n.label||n.id, d:(n.source||'')+' · '+(+(n.score||0)).toFixed(2), col:srcCol(n.source), kind:n.type||n.source||'', score:+(n.score||0), body:String(n.text||'').slice(0,240)});
-  function _xplRecordReads(mid){ try{ if(!mid||typeof CTX_NODES==='undefined') return; _TURN_READS[mid]=CTX_NODES.filter(n=>n.included!==false).slice(0,40).map(_xplCtxCard); }catch(_){} }
+  function _xplRefresh(){ if(!_xpl.on||!_xplEl||typeof _xplEl.setScene!=='function') return; try{ _xplEl.dataset.den=(document.documentElement.getAttribute('data-den')||'full').toLowerCase(); _xplEl.setScene(_xplScene()); }catch(e){ console.warn('explode: scene', e); } }
+  const _xplCtxCard=(n)=>({id:n.id, n:n.label||n.id, d:(n.source||'')+' · '+(+(n.score||0)).toFixed(2), col:srcCol(n.source), kind:n.type||n.source||'', score:+(n.score||0), body:String(n.text||'').slice(0,240)});
+  function _xplRecordReads(mid){ try{ if(!mid||typeof CTX_NODES==='undefined') return; _TURN_READS[mid]=CTX_NODES.filter(n=>n.included!==false).slice(0,40).map(_xplCtxCard); _TURN_RELS[mid]=_xplRels(); }catch(_){} }
+  // the relations among the turn's records (the context graph's own edges), for the scene's context-graph layer
+  function _xplRels(){ try{ const ids=new Set(CTX_NODES.filter(n=>n.included!==false).map(n=>n.id)); return (CTX_EDGES||[]).filter(e=>ids.has(e.from)&&ids.has(e.to)).slice(0,80).map(e=>({from:e.from, to:e.to, kind:/memory|recall|related/i.test(String(e.type||e.label||''))?'mem':'cite'})); }catch(_){ return []; } }
   // the scene from the transcript: a station per question with its reply folded in
   function _xplScene(){
     const wraps=[...document.querySelectorAll('#msgs .mwrap[data-mid]')]; const turns=[]; let cur=null;
-    const txt=(w)=>{ const b=w.querySelector('.msg-body'); return b?String(b.textContent||'').replace(/\s+/g,' ').trim():''; };
+    // the words of a message — never the thinking throbber's phrase, the think box or the streaming dot
+    const txt=(w)=>{ const b=w.querySelector('.msg-body'); if(!b) return ''; if(b.querySelector('.think-throb')) return ''; const c=b.cloneNode(true); c.querySelectorAll('.think-throb,.think-box,.cap-dot').forEach(x=>x.remove()); return String(c.textContent||'').replace(/\s+/g,' ').trim(); };
     const tm=(w)=>{ const t=w.querySelector('.mtime'); return t?String(t.textContent||'').trim():''; };
     wraps.forEach(w=>{ const mid=w.dataset.mid; const isU=w.classList.contains('u');
-      if(isU){ cur={mid, who:'you', t:tm(w), text:txt(w).slice(0,160), read:(_TURN_READS[mid]||[]).slice(0,12), say:[], made:[], land:(_TURN_LAND[mid]||[]).slice(0,12)};
+      if(isU){ cur={mid, who:'you', t:tm(w), text:txt(w).slice(0,160), read:(_TURN_READS[mid]||[]).slice(0,12), rel:(_TURN_RELS[mid]||[]).slice(0,80), say:[], made:[], land:(_TURN_LAND[mid]||[]).slice(0,12)};
         w.querySelectorAll('.pa-atts .pa-att b').forEach(el=>{ cur.read.push({n:String(el.textContent||'').slice(0,60), d:'attached to the question', col:'#38bdf8', kind:'attachment'}); });
         turns.push(cur); return; }
       if(!cur){ cur={mid, who:'aide', t:tm(w), text:'', read:[], say:[], made:[], land:[]}; turns.push(cur); }
       if(!cur.reply){ cur.reply=txt(w).slice(0,160); cur.rt=tm(w); cur.amid=mid; }
-      const body=w.querySelector('.msg-body'); if(!body) return; const made=cur.made;
+      const body=w.querySelector('.msg-body'); if(!body||body.querySelector('.think-throb')) return; const made=cur.made;   // a reply still streaming has made nothing yet
       body.querySelectorAll('.cap-inline').forEach(el=>{ const hd=el.querySelector('.cap-inline-header'); const n=String((hd?hd.textContent:el.textContent)||'').replace(/\s+/g,' ').trim().slice(0,60); if(n) made.push({n, d:'capability · '+(el.classList.contains('error')?'failed':el.classList.contains('done')?'done':'ran'), col:'var(--acc2)', kind:'cap', body:String((el.querySelector('.cap-result,.cap-peek')||{}).textContent||'').slice(0,400)}); });
       body.querySelectorAll('.art-card').forEach(el=>{ const n=String(((el.querySelector('.art-hd .t')||{}).textContent)||'artifact').trim().slice(0,60); made.push({n, d:'artifact', col:'#c9955a', kind:'artifact'}); });
       body.querySelectorAll('vera-widget').forEach(el=>{ made.push({n:el.getAttribute('title')||el.getAttribute('form')||'widget', d:'widget · '+(el.getAttribute('form')||''), col:'#a78bfa', kind:'widget'}); });
       body.querySelectorAll('vera-mermaid,.mermaid,pre.mermaid').forEach(()=>{ made.push({n:'Diagram', d:'mermaid', col:'#a78bfa', kind:'diagram'}); });
       body.querySelectorAll('pre code').forEach(el=>{ const lang=(String(el.className||'').match(/language-([\w-]+)/)||[])[1]||''; if(lang==='mermaid'||lang==='widget') return; const s=String(el.textContent||''); made.push({n:(lang||'code')+' · '+s.split('\n').length+' lines', d:'code block', col:'#fb923c', kind:'code', body:s.slice(0,400)}); });
       body.querySelectorAll('vera-agent-loop-output').forEach(el=>{ let steps=[]; try{ steps=[...el.querySelectorAll('[data-step],.step,.alo-step')].slice(0,12).map(s=>({label:String(s.textContent||'').trim().slice(0,40), status:/done|ok/.test(s.className)?'ok':/run|active/.test(s.className)?'run':/err|fail/.test(s.className)?'fail':''})); }catch(_){} made.push({n:'Agentic loop', d:'loop · '+(steps.length?steps.length+' steps':'running'), col:'var(--acc)', kind:'loop', steps}); });
-      body.querySelectorAll('img:not(.art-card img)').forEach(el=>{ made.push({n:el.getAttribute('alt')||'image', d:'image', col:'#e879f9', kind:'image'}); });
+      // every image the reply carries — a diffusion render, an artifact's picture, a capability's screenshot — with its source, so the scene can show it per tier
+      body.querySelectorAll('img').forEach(el=>{ if(el.closest('.msg-actions,.cap-inline-header,.pa-att')||/\b(ico|icon|avatar)\b/.test(String(el.className||''))) return; const src=el.currentSrc||el.getAttribute('src')||''; if(!src) return; made.push({n:el.getAttribute('alt')||'image', d:el.closest('.sd-img,.cap-imgs')?'image · diffusion':'image', col:'#e879f9', kind:'image', src}); });
     });
     // the newest question without a recorded context: the live context is what it read
     const last=turns.length?turns[turns.length-1]:null;
-    if(last&&!last.read.length&&typeof CTX_NODES!=='undefined') last.read=CTX_NODES.filter(n=>n.included!==false).slice(0,12).map(_xplCtxCard);
+    if(last&&!last.read.length&&typeof CTX_NODES!=='undefined'){ last.read=CTX_NODES.filter(n=>n.included!==false).slice(0,12).map(_xplCtxCard); last.rel=_xplRels(); }
     return {turns, sel:(_grFocusMid&&turns.some(t=>t.mid===_grFocusMid))?_grFocusMid:(last?last.mid:'')};
   }
 
@@ -16464,6 +16468,7 @@ Your task: decide what to do next to advance toward the goal.
     _appearanceSync();
     try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); cv&&cv.retier&&cv.retier(); }catch(_){}   // the focus set follows the tier
     try{ _cvRunsDraw(); }catch(_){}
+    try{ if(_xpl.on) _xplRefresh(); }catch(_){}   // the scene's images follow the tier
   }
   function setDensity(id){ _appearanceApply({den:String(id||'full')}); }
   function toggleBlocks(){ _appearanceApply({blocks:document.documentElement.getAttribute('data-blocks')==='off'}); }
@@ -16523,7 +16528,7 @@ Your task: decide what to do next to advance toward the goal.
     setDensity,toggleBlocks,
     _uiAskAnswer,_uiAskPick,_uiDirectiveApply,
     _cmpChip,_cmpSync,_paOpen,_paCopy,
-    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
+    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
     _persistMediaCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},

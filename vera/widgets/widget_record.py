@@ -158,6 +158,7 @@ FORMS: List[Dict[str, Any]] = [
     _F("scatter", "points", ("flat", "iso"), glyph="scatter", options=("x", "y", "size")),
     _F("globe", "points", glyph="globe", options=("layer", "page", "limit")),
     # the three the spec adds, and the chrome the registry already names
+    _F("context_graph", "graph", glyph="context_graph", options=("lanes", "labels")),   # the chat's context graph: mini lanes; the full element at XL
     _F("panel", "panel", glyph="panel", sizes=("l", "xl")),
     _F("form", "values", glyph="form", options=("fields",)),
     _F("composite", "composite", glyph="composite"),
