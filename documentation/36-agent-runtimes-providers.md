@@ -234,6 +234,21 @@ starting the image; missing labels and drift remain visibly distinct from a
 matching self-declaration. This is version evidence, not a signature or
 independent supply-chain attestation.
 
+The other shipped container bridges already share the hardened low-level
+container runner, but they do not yet use the complete adapter facade.
+PydanticAI and Smolagents still repeat Docker health checks, image build
+wrappers, run preconditions, and request assembly; the aggregate catalog also
+checks image presence directly. A safe consolidation seam is therefore the
+existing RuntimeAdapter and ContainerRunRequest, not a new agent loop.
+Static descriptors can centralize common health, image, cancellation, teardown,
+and run lifecycle behavior while preserving each bridge's capability names,
+event prefix, opt-in setting, image and Dockerfile, command arguments, progress
+kinds, and runtime-specific errors. Catalog health can use registered adapters
+with an explicit legacy fallback while migration is incomplete. No wrapper may
+be removed until stored and external callers are inventoried and deterministic
+success, error, timeout, cancellation, teardown, and resource-gate parity is
+proven; live image builds and bridge runs remain separate validation gates.
+
 Agent Bridges also exposes an interoperability summary in its UI. The summary
 shows the A2A mapping and inert client/server plans, runtime candidate and
 dimension counts, migrated adapter contracts with their explicit gaps, queued
