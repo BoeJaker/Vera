@@ -1,6 +1,6 @@
 """
 The harness default view as the Harness board draws it (design landing, step 4 / B1): the header (wordmark · meters ·
-activity ticker · Search ⌘K · style segment · theme swatches · Aa · ⋯ with every old control), the tab bar (+N ⌘K chip,
+the activity overlay's ticker · Search ⌘K · style segment · theme swatches · Aa · ⋯ with every old control), the tab bar (+N ⌘K chip,
 controls at the right, ◫ for live events), the strips, live events folded by default, the dashboard toolbar and the
 widgets' surfaces. Text-level.
 """
@@ -28,7 +28,7 @@ def test_the_design_stylesheet_is_last_in_the_head_and_carries_the_boards_rules(
 
 
 def test_the_header_and_tab_bar_carry_the_boards_pieces_and_every_old_control():
-    for s in ('id="hdrAct" type="button" onclick="_hdrActToggle()"', 'onclick="openTabPicker()" title="Find a panel, a setting, a capability"', 'id="hdrStyleSeg"', 'id="hdrSwatches"', 'onclick="openThemeMenu(event)" title="Theme, style pack and UI size"', 'id="hdrMore" onclick="_hdrSheet()"', '<div id="hdrSheet"></div>',
+    for s in ('onclick="openTabPicker()" title="Find a panel, a setting, a capability"', 'id="hdrStyleSeg"', 'id="hdrSwatches"', 'onclick="openThemeMenu(event)" title="Theme, style pack and UI size"', 'id="hdrMore" onclick="_hdrSheet()"', '<div id="hdrSheet"></div>',
               'id="tabEvBtn">◫</button>', 'id="tabLhmBtn">☰</button>', 'onclick="tabToggleAutohide()"', 'onclick="tabAddPane()"', 'onclick="openTabPicker()" id="tabPickerBtn"', 'onclick="openActiveStandalone()"', 'onclick="openStandalonePicker()"',
               'id="backendUrl"', 'onclick="connect()">Connect</button>', 'onclick="refreshAll()">↻</button>', 'id="hdrMetricBtn"', 'id="evSidebar"', 'id="evFeed"', 'id="dashHealthStrip"'):
         assert s in HTML, s
