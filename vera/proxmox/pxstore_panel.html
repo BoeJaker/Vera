@@ -261,7 +261,7 @@ pre{background:var(--bg);border:1px solid var(--bd);border-radius:7px;padding:10
       <div class="frow">
         <div class="field"><label>Container</label><select id="atCT"></select></div>
         <div class="field"><label>Store subdir</label><input id="atSub" value="models/ollama"></div>
-        <div class="field"><label>Mount at (inside CT)</label><input id="atPath" value="/root/.ollama/models"></div>
+        <div class="field"><label>Mount at (inside CT)</label><input id="atPath" value="/.ollama/models" title="Not /root: unprivileged containers cannot traverse it, and ollama then fails to start. Must match OLLAMA_MODELS in ollama-vera.service."></div>
         <label class="checkrow" style="font-size:11px;color:var(--t2)"><input type="checkbox" id="atRO" checked> read-only</label>
         <button class="btn" onclick="P.storeAttach()">Attach</button>
       </div>
