@@ -75,6 +75,7 @@ import httpx
 
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.config import cfg
+from Vera.vera.dag import query_embed_core as _query_embed
 from Vera.vera.execution.dag_workflow_execution import (
     prepare_dag_execution,
     workflow_execution_metadata,
@@ -92,6 +93,11 @@ import hashlib as _hashlib
 # ── Config ────────────────────────────────────────────────────────────────────
 OLLAMA_EMBED_URL   = cfg.OLLAMA_EMBED_URL
 OLLAMA_EMBED_MODEL = cfg.OLLAMA_EMBED_MODEL
+# How long a search waits for its query vector before scoring by keywords.
+# The embed is not cancelled when the wait ends, so a late vector still reaches
+# ollama_embed's cache (see query_embed_core). Vectors stored with a capability
+# or DAG take Vera's configured embed budget: nothing waits on them.
+DAG_QUERY_EMBED_WAIT_S = float(os.environ.get("DAG_QUERY_EMBED_WAIT_S", "30") or 30)
 MAX_CAPS_IN_PROMPT = int(os.getenv("MAX_CAPS_IN_PROMPT", "25"))
 # Default OFF — set EMBED_CAPS_ON_START=1 to enable cap embedding on startup.
 # When enabled, only new/changed caps are embedded (hash-gated) so restarts
@@ -332,7 +338,7 @@ class CapabilityIndex:
         try:
             from Vera.vera.capability_orchestration import ollama_embed
             vec = await ollama_embed(
-                entry["embed_text"][:512], model=OLLAMA_EMBED_MODEL, timeout=15,
+                entry["embed_text"][:512], model=OLLAMA_EMBED_MODEL,
             )
             if not vec:
                 return False
@@ -392,7 +398,9 @@ class CapabilityIndex:
         q_emb: List[float] = []
         try:
             from Vera.vera.capability_orchestration import ollama_embed
-            vec = await ollama_embed(query[:512], model=OLLAMA_EMBED_MODEL, timeout=10)
+            vec = await _query_embed.bounded_embed(
+                lambda: ollama_embed(query[:512], model=OLLAMA_EMBED_MODEL),
+                DAG_QUERY_EMBED_WAIT_S)
             if vec:
                 q_emb = vec
         except Exception:
@@ -612,7 +620,7 @@ class DagStore:
         try:
             from Vera.vera.capability_orchestration import ollama_embed
             vec = await ollama_embed(
-                rec.embedding_text[:512], model=OLLAMA_EMBED_MODEL, timeout=15,
+                rec.embedding_text[:512], model=OLLAMA_EMBED_MODEL,
             )
             if vec:
                 rec.embedding = vec
@@ -760,7 +768,9 @@ class DagStore:
         q_emb: List[float] = []
         try:
             from Vera.vera.capability_orchestration import ollama_embed
-            vec = await ollama_embed(query[:512], model=OLLAMA_EMBED_MODEL, timeout=10)
+            vec = await _query_embed.bounded_embed(
+                lambda: ollama_embed(query[:512], model=OLLAMA_EMBED_MODEL),
+                DAG_QUERY_EMBED_WAIT_S)
             if vec:
                 q_emb = vec
         except Exception:

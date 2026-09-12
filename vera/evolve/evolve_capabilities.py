@@ -5565,6 +5565,13 @@ async def evolve_pipeline_run(kind: str = "variant", profile: str = "",
     return {"ok": True, "id": rec["id"]}
 
 
+# Wall-clock budget for the critical tier, shared by pipeline.adopt and
+# pipeline.test. It was 300 s. By 2026-09-11 the tier (about 4,070 tests) took
+# 260-300 s on a quiet box and longer while other gates ran, so green branches
+# failed with "ephemeral test container failed to run pytest" - what the runner
+# says when pytest is killed before it prints its exit code.
+_CRITICAL_TIER_TIMEOUT_S = 500
+
 @capability("evolve.pipeline.adopt", memory="on",
             http_method="POST", http_path="/evolve/pipeline/adopt", http_tags=["evolve"],
             description="Register an ALREADY-edited branch as a code pipeline run — for a "
@@ -5738,7 +5745,7 @@ async def evolve_pipeline_adopt(branch: str = "", to: str = "bleeding-edge", tit
         if wt:
             try:
                 crit = await evolve_unittest_run(branch=branch, paths="tests",
-                                                 markers="critical", timeout=300,
+                                                 markers="critical", timeout=_CRITICAL_TIER_TIMEOUT_S,
                                                  pipeline_id=rec["id"])
             except Exception as e:
                 crit = {"error": str(e)}
@@ -6004,7 +6011,7 @@ async def evolve_pipeline_test(id: str = "", trace_id=None):
                f"compile-check {len(py_files)} .py file(s): " +
                ("PASS" if compile_ok else "FAIL — " + "; ".join(parse_errors[:3])))
         critical = await evolve_unittest_run(branch=branch, paths="tests",
-                                             markers="critical", timeout=300,
+                                             markers="critical", timeout=_CRITICAL_TIER_TIMEOUT_S,
                                              pipeline_id=rec["id"])
         critical_ok = bool(critical.get("ok")) and not critical.get("error")
         failures = critical.get("failure_details") or []

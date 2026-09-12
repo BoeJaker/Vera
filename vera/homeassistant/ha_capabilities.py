@@ -48,6 +48,7 @@ from Vera.vera.capability_orchestration import (
     APP, capability, enum_schema, now_iso, register_ui,
 )
 from Vera.vera.homeassistant import ha_core as core
+from Vera.vera.homeassistant import ha_estate as estate
 from Vera.vera.security import secrets as vsecrets
 
 log = logging.getLogger("vera.homeassistant")
@@ -487,6 +488,180 @@ async def cap_notify(message: str = "", title: str = "",
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+#  ESTATE  -  project Vera's service registry into Home Assistant
+# ═════════════════════════════════════════════════════════════════════════════
+
+async def _registry() -> List[Dict[str, Any]]:
+    """Vera's own view of what the estate is running.
+
+    Read through the capability rather than the integrations store directly,
+    so the access policy applied there is applied here too.
+    """
+    cap = _orch.CAPABILITY_REGISTRY.get("integration.list")
+    if not cap:
+        return []
+    try:
+        out = await cap["func"]()
+    except Exception:
+        log.debug("ha: integration.list failed", exc_info=True)
+        return []
+    if isinstance(out, dict):
+        return out.get("integrations") or out.get("items") or []
+    return out if isinstance(out, list) else []
+
+
+async def _probe(url: str, timeout: float = 4.0) -> bool:
+    """Is the service answering? Any HTTP response counts as alive.
+
+    A 401 or a 404 still proves something is listening and serving, which is
+    the question being asked. Only a connection failure or a timeout is down.
+    """
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=timeout,
+                                     follow_redirects=False) as c:
+            await c.get(url)
+        return True
+    except Exception:
+        return False
+
+
+@capability(
+    "ha.estate.plan", http_method="GET", http_path="/ha/estate/plan",
+    http_tags=["homeassistant"], memory="off",
+    description="What an estate sync would push into Home Assistant, without "
+                "pushing it. One entity per registered service. Ephemeral "
+                "Loop Lab sandboxes are skipped unless include_ephemeral. "
+                "Input: include_ephemeral (bool), prune (bool=True). "
+                "Output: {create, update, remove, skipped, counts}.",
+)
+async def cap_estate_plan(include_ephemeral: bool = False,
+                          prune: bool = True, trace_id=None):
+    try:
+        states = await _states()
+    except RuntimeError as e:
+        return _unconfigured() if "not configured" in str(e) else {"error": str(e)}
+    ints = await _registry()
+    if not ints:
+        return {"error": "Vera's integration registry is empty - run "
+                         "integration.discover first"}
+    plan = estate.plan_sync(ints, states, include_ephemeral=include_ephemeral,
+                            prune=prune)
+    plan["summary"] = estate.summarise_plan(plan)
+    plan["registered"] = len(ints)
+    return plan
+
+
+@capability(
+    "ha.estate.sync", http_method="POST", http_path="/ha/estate/sync",
+    http_tags=["homeassistant"], memory="on",
+    description="Push one Home Assistant entity per registered Vera service, "
+                "so the estate sits alongside the house and can drive "
+                "dashboards and automations. Each service is probed first, so "
+                "the entity reads Connected or Disconnected. DRY RUN BY "
+                "DEFAULT - pass dry_run=false to apply. Only entities stamped "
+                "by a previous sync are ever updated or removed, so a real "
+                "device cannot be touched. Note these entities are not backed "
+                "by a config entry: Home Assistant forgets them on restart, "
+                "so this is a mirror that wants re-running on a schedule. "
+                "Input: dry_run (bool=True), include_ephemeral (bool), "
+                "prune (bool=True), probe (bool=True). "
+                "Output: {ok, dry_run, created, updated, removed, failed}.",
+)
+async def cap_estate_sync(dry_run: bool = True, include_ephemeral: bool = False,
+                          prune: bool = True, probe: bool = True,
+                          trace_id=None):
+    try:
+        states = await _states()
+    except RuntimeError as e:
+        return _unconfigured() if "not configured" in str(e) else {"error": str(e)}
+    ints = await _registry()
+    if not ints:
+        return {"error": "Vera's integration registry is empty - run "
+                         "integration.discover first"}
+
+    plan = estate.plan_sync(ints, states, include_ephemeral=include_ephemeral,
+                            prune=prune)
+    if dry_run:
+        return {"ok": True, "dry_run": True, "would": plan,
+                "summary": estate.summarise_plan(plan)}
+
+    by_id = {str(i.get("id") or ""): i for i in ints}
+    ids = estate.entity_ids_for(
+        [i for i in ints if include_ephemeral
+         or not estate.is_ephemeral(str(i.get("label") or i.get("id") or ""))])
+
+    reachable: Dict[str, bool] = {}
+    if probe:
+        for key, url in estate.probe_targets(
+                [by_id[k] for k in ids if k in by_id]):
+            reachable[key] = await _probe(url)
+
+    checked = now_iso()
+    created, updated, failed = [], [], []
+    wanted = {r["entity_id"] for r in plan["create"]} | \
+             {r["entity_id"] for r in plan["update"]}
+    is_new = {r["entity_id"] for r in plan["create"]}
+
+    for key, eid in ids.items():
+        if eid not in wanted:
+            continue
+        body = estate.build_entity(by_id[key], eid,
+                                   reachable.get(key) if probe else None,
+                                   checked)
+        try:
+            await _request("POST", f"/api/states/{eid}",
+                           {"state": body["state"],
+                            "attributes": body["attributes"]})
+            (created if eid in is_new else updated).append(eid)
+        except Exception as e:
+            failed.append({"entity_id": eid, "error": str(e)[:160]})
+
+    removed = []
+    for row in plan["remove"]:
+        eid = row["entity_id"]
+        try:
+            await _request("DELETE", f"/api/states/{eid}")
+            removed.append(eid)
+        except Exception as e:
+            failed.append({"entity_id": eid, "error": str(e)[:160]})
+
+    return {"ok": not failed, "dry_run": False, "created": created,
+            "updated": updated, "removed": removed, "failed": failed,
+            "probed": len(reachable),
+            "summary": f"{len(created)} added, {len(updated)} refreshed, "
+                       f"{len(removed)} removed, {len(failed)} failed"}
+
+
+@capability(
+    "ha.estate.clear", http_method="POST", http_path="/ha/estate/clear",
+    http_tags=["homeassistant"], memory="on",
+    description="Remove every Home Assistant entity a previous estate sync "
+                "created. Only entities carrying Vera's own source tag are "
+                "considered, so nothing of yours is at risk. DRY RUN BY "
+                "DEFAULT. Input: dry_run (bool=True). "
+                "Output: {ok, dry_run, removed, failed}.",
+)
+async def cap_estate_clear(dry_run: bool = True, trace_id=None):
+    try:
+        states = await _states()
+    except RuntimeError as e:
+        return _unconfigured() if "not configured" in str(e) else {"error": str(e)}
+    owned = estate.owned_entity_ids(states)
+    if dry_run:
+        return {"ok": True, "dry_run": True, "would_remove": owned,
+                "count": len(owned)}
+    removed, failed = [], []
+    for eid in owned:
+        try:
+            await _request("DELETE", f"/api/states/{eid}")
+            removed.append(eid)
+        except Exception as e:
+            failed.append({"entity_id": eid, "error": str(e)[:160]})
+    return {"ok": not failed, "dry_run": False, "removed": removed,
+            "failed": failed}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 #  UI
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -522,8 +697,13 @@ register_ui(
     "",
     ui_caps=["ha.config.get", "ha.config.set", "ha.health", "ha.states",
              "ha.state", "ha.find", "ha.summary", "ha.set", "ha.scene",
-             "ha.notify", "ha.call"],
-    mode="tab",
+             "ha.notify", "ha.call", "ha.estate.plan", "ha.estate.sync",
+             "ha.estate.clear"],
+    # "element", not "tab": Home Assistant is reached through the Automations
+    # hub, which embeds /ha/panel as its own sub-tab. It stays registered (so
+    # the dashboard-widget loader, custom tabs and solo popout can find it) but
+    # no longer claims a top-level tab.
+    mode="element",
     tab_order=74,
 )
 

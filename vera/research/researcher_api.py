@@ -10316,6 +10316,7 @@ if _VERA_MODE:
         return await cap_research_run(**request, trace_id=trace_id)
 
     @capability("research.report", http_method="POST", http_path="/research/report",
+                compatibility_alias_for="research.run",
                 http_tags=["research", "pipeline"], memory="on",
                 description="Fast web research that produces a markdown report. "
                             "WHEN TO USE: 'research X', 'find out about Y', 'write a report on Z', "
@@ -10332,6 +10333,7 @@ if _VERA_MODE:
             context=context, context_mode=context_mode, trace_id=trace_id)
 
     @capability("research.parallel", http_method="POST", http_path="/research/parallel",
+                compatibility_alias_for="research.run",
                 http_tags=["research", "pipeline"], memory="on",
                 description="Multi-agent parallel web research with report output. "
                             "WHEN TO USE: complex topics, 'thorough research on', 'comprehensive analysis of' — "
@@ -10346,6 +10348,7 @@ if _VERA_MODE:
             context=context, context_mode=context_mode, trace_id=trace_id)
 
     @capability("research.deep", http_method="POST", http_path="/research/deep",
+                compatibility_alias_for="research.run",
                 http_tags=["research", "pipeline"], memory="on",
                 description="Deep exhaustive research with report output — most thorough pipeline. "
                             "WHEN TO USE: 'comprehensive overview of', 'deep dive into', 'everything about X', "
@@ -10360,6 +10363,7 @@ if _VERA_MODE:
             context=context, context_mode=context_mode, trace_id=trace_id)
 
     @capability("research.code", http_method="POST", http_path="/research/code",
+                compatibility_alias_for="research.run",
                 http_tags=["research", "pipeline"], memory="on",
                 description="Research-then-implement pipeline: researches a topic then produces working code. "
                             "WHEN TO USE: 'research how to build X and implement it', 'find the best approach for Y and write the code', "
@@ -10374,6 +10378,7 @@ if _VERA_MODE:
             context=context, context_mode=context_mode, trace_id=trace_id)
 
     @capability("research.guide", http_method="POST", http_path="/research/guide",
+                compatibility_alias_for="research.run",
                 http_tags=["research", "pipeline"], memory="on",
                 description="Web research formatted as a structured step-by-step guide. "
                             "WHEN TO USE: 'how to X', 'tutorial for Y', 'guide me through Z', "
@@ -10388,6 +10393,7 @@ if _VERA_MODE:
             context=context, context_mode=context_mode, trace_id=trace_id)
 
     @capability("research.filestore", http_method="POST", http_path="/research/filestore",
+                compatibility_alias_for="research.run",
                 http_tags=["research", "pipeline"], memory="on",
                 description="Deep research that produces a complete project file tree with full content. "
                             "WHEN TO USE: 'build me a full project for', 'create a complete application', "
@@ -10402,6 +10408,7 @@ if _VERA_MODE:
             context=context, context_mode=context_mode, trace_id=trace_id)
 
     @capability("research.quick_search", http_method="POST", http_path="/research/quick_search",
+                compatibility_alias_for="research.report",
                 http_tags=["research", "pipeline"], memory="on",
                 description="Compatibility name for a single-agent synthesized research report. "
                             "It has the same long-running job behavior as research.report; use web.search "

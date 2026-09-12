@@ -79,7 +79,6 @@ html.vpb-nav-hosted #secNav{display:none}
 .snav[data-pane="mimic"].on{color:var(--gpu)}
 .snav[data-pane="vllm"].on{color:var(--acc2)}
 .snav[data-pane="catalog"].on{color:#e6b800}
-.snav[data-pane="openclaw"].on{color:#b07ad6}
 .snav[data-pane="api"].on{color:var(--acc4)}
 .snav[data-pane="provision"].on{color:var(--acc3)}
 .navdiv{width:24px;height:1px;background:var(--border);margin:3px 0;flex-shrink:0}
@@ -391,7 +390,6 @@ html.vpb-nav-hosted #secNav{display:none}
     <div class="navdiv"></div>
     <div class="snav" data-pane="mimic" onclick="P.show('mimic',this)">Mimic</div>
     <div class="snav" data-pane="vllm" onclick="P.show('vllm',this)">vLLM</div>
-    <div class="snav" data-pane="openclaw" onclick="P.show('openclaw',this)">OpenClaw</div>
     <div class="snav" data-pane="api" onclick="P.show('api',this)">API</div>
     <div class="snav" data-pane="provision" onclick="P.show('provision',this)">Provision</div>
   </div>
@@ -650,11 +648,6 @@ html.vpb-nav-hosted #secNav{display:none}
         </div>
 
         <!-- Embedding Configuration -->
-        <!-- Background queue: work waiting for an idle box. Producers (session
-             + source embedding, dream, narrator) enqueue here instead of
-             running themselves, so this is where you see what ambient load is
-             pending and WHY it has not run. -->
-        </div>
 
         <div class="widget w-w6 w-h3" data-wid="ol-embed-cfg">
           <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Embedding Config</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('ollama','ol-embed-cfg')">×</button></span></div>
@@ -1794,10 +1787,10 @@ html.vpb-nav-hosted #secNav{display:none}
     </div>
 
     <!-- ════════════════════════════════════════════════════════════════════
-         MIMIC / vLLM / OPENCLAW / API panes — standalone pages in iframes.
+         MIMIC / vLLM / API panes — standalone pages in iframes.
          Each loads lazily (src set on first activation in showPane) so the
-         backend isn't hit until the tab is opened. vLLM and OpenClaw moved
-         here from their old top-level harness tabs; the iframe pattern also
+         backend isn't hit until the tab is opened. vLLM moved
+         here from its old top-level harness tab; the iframe pattern also
          fixes the vLLM "nothing is clickable" bug (its scripts now run in
          their own window instead of being dropped by innerHTML injection).
          ════════════════════════════════════════════════════════════════════ -->
@@ -1811,9 +1804,6 @@ html.vpb-nav-hosted #secNav{display:none}
       <iframe id="vllm-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
     </div>
 
-    <div class="pane" id="pane-openclaw" style="padding:0;overflow:hidden">
-      <iframe id="openclaw-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
-    </div>
     <div class="pane" id="pane-api" style="padding:0;overflow:hidden">
       <iframe id="api-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
     </div>
@@ -6065,7 +6055,6 @@ function showPane(name, el){
   if(name==='modelrouting'){ _mountFrame('modelrouting-frame', BASE+'/ui/panels/model-routing'); }
   if(name==='mimic'){ _mountFrame('mimic-frame', BASE+'/cluster/mimic/panel'); }
   if(name==='vllm'){ _mountFrame('vllm-frame', BASE+'/vllm/panel'); }
-  if(name==='openclaw'){ _mountFrame('openclaw-frame', BASE+'/openclaw/panel'); }
   if(name==='api'){ _mountFrame('api-frame', BASE+'/providers/panel'); }
   if(name==='provision'){ provSub(_prvSub); }
   if(name==='storage'){ _mountFrame('storage-frame', BASE+'/pxstore/panel'); }
@@ -6093,7 +6082,7 @@ if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
   {id:'estate', label:'Estate'}, {id:'foundry', label:'Foundry'},
   {id:'docker', label:'Docker'}, {id:'sandbox', label:'Sandbox'}, {id:'network', label:'Network'},
   {id:'connections', label:'Connections'}, {id:'mimic', label:'Mimic'}, {id:'vllm', label:'vLLM'},
-  {id:'openclaw', label:'OpenClaw'}, {id:'api', label:'API'}, {id:'provision', label:'Provision'},
+{id:'api', label:'API'}, {id:'provision', label:'Provision'},
 ]);
 
 // ── Proxmox sub-tabs — Dashboard (native) / CPU-NUMA (pxstore solo iframe) ───
@@ -7754,6 +7743,16 @@ async function benchMatrixPoll(rid){
   }
 }
 
+async function benchMatrixApply(id){
+  if(!id) return;
+  if(!confirm('Use these measured windows as this node\'s learned safe windows? Vera prefers a learned window over its own estimate; a later CPU spill can still lower it.')) return;
+  const r=await api('/bench/matrix/apply','POST',{id:id});
+  if(!r||r.error){ txt('bm-status','could not apply: '+((r&&r.error)||'no response')); return; }
+  const set=(r.changes||[]).filter(c=>c.action==='set');
+  txt('bm-status','applied '+set.length+' window'+(set.length===1?'':'s'));
+  benchMatrixOpen(id);
+}
+
 async function benchMatrixCancel(){
   if(!_bmRun) return;
   if(!confirm('Stop this sweep? The cell in progress is abandoned; finished cells are kept.')) return;
@@ -7820,7 +7819,12 @@ function _bmRender(rec){
       .map(([k,l])=>'<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:10px;height:10px;display:inline-block;background:rgba('+tint[k]+',.45);border:1px solid var(--border)"></span>'+l+'</span>').join('')
     + '</div>';
   const recs=rec.recommendations||[];
-  if(recs.length) h+='<div style="font-size:9px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim);margin-bottom:3px">Recommended window</div>'
+  const sweepId=rec.id||rec.run_id||'';
+  const canApply=sweepId&&recs.some(x=>x.num_ctx);
+  if(recs.length) h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">'
+    +'<span style="font-size:9px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)">Recommended window</span>'
+    +(canApply?'<button class="btn sm" onclick="P.benchMatrixApply('+sq(sweepId)+')" title="Use these measured windows as the learned safe window for this node, instead of Vera\'s pre-load estimate">Apply to this node</button>':'')
+    +'</div>'
     + recs.map(x=>'<div style="font-size:10px;padding:2px 0"><b>'+esc(x.model)+'</b> → '
         +(x.num_ctx?'<span style="font-family:var(--mono);color:var(--gpu)">'+x.num_ctx+'</span> tokens at '+x.gen_tps+' tok/s':'<span style="color:#e0603a">none</span>')
         +' <span style="color:var(--dim2)">— '+esc(x.reason||'')+'</span></div>').join('');
@@ -7881,7 +7885,7 @@ return {
   benchOpen, benchLoop, benchClear, benchTempChanged, benchPassive,
   benchMon, benchMonAuto, benchNodeGpu, benchNodeTrace,
   benchMatrixVariants, benchMatrixStart, benchMatrixOpen, benchMatrixHistory, trafficOpen,
-  benchMatrixCancel,
+  benchMatrixCancel, benchMatrixApply,
   ndLoad, ndDetect, ndDetectAll, ndProv, ndProvClose, ndCompToggle,
   ndModelSearch, ndModelPick, ndPlan, ndRun, ndSwitch,
 };

@@ -9,7 +9,6 @@ asked for:
 
   • gpu_inference   edge/GPU_inference.py     Whisper STT + SD + TTS GPU server
   • onnx_runtime    edge/onnx_runtime.py      edge ONNX model server (CUDA→DML→CPU)
-  • ollama_wrapper  edge/ollama_wrapper.sh    Ollama launch/manage wrapper (+unit)
   • mesh_gateway    vera/mesh/mesh_gateway.py LAN→Vera forwarder for ESP32 nodes
   • vera-worker     the orchestrator itself, joined to the cluster as a worker
 
@@ -96,14 +95,13 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
         "desc": "Edge ONNX model server (CUDAExecutionProvider→DML→CPU). Serves the "
                 ".onnx artifacts produced by ml.export.onnx.",
     },
-    "ollama_wrapper": {
-        "label": "Ollama Wrapper", "port": 0, "python": False,
-        "files": [("edge/ollama_wrapper.sh", "ollama_wrapper.sh"),
-                  ("edge/ollama.service", "ollama.service")],
-        "run": "bash ollama_wrapper.sh",
-        "desc": "Ollama launch/management wrapper script (ships its systemd unit "
-                "alongside). Run directly, or deploy as a service.",
-    },
+    # ollama_wrapper was removed as a deployable component. It proxied :11435 in
+    # front of Ollama to make requests visible, but it was never deployed, it
+    # collides with the ollama-vera unit that owns that port, its watchdog fell
+    # back to killing every ollama process on the node, and its default stop
+    # tokens included "###" — which would truncate Vera's own markdown output.
+    # The visibility it was written for now comes from bench.node_requests, which
+    # reads each node's own access log and adds nothing to the request path.
     "mesh_gateway": {
         "label": "Mesh Gateway", "port": 8088, "python": True,
         "files": [("vera/mesh/mesh_gateway.py", "mesh_gateway.py")],
@@ -191,7 +189,7 @@ async def cap_components(trace_id=None) -> Dict:
     memory="off",
     description="Push a bundled component's file(s) to a stored host (into "
                 "~/.vera/edge) and optionally install deps + launch it. Inputs: "
-                "host_id (str!), component (gpu_inference|onnx_runtime|ollama_wrapper|"
+                "host_id (str!), component (gpu_inference|onnx_runtime|"
                 "mesh_gateway), port (int — override), install_deps (bool=false), "
                 "launch (bool=true), systemd (bool=false — install as a service, "
                 "needs sudo), sudo (bool=true), vera_url (str — required for "
