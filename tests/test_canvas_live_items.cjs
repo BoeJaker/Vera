@@ -52,6 +52,7 @@ t('the bridge is asked through the same /mcp/call, its reply back on the item', 
 t('the cell runs through the notebook\'s exec SSE and its output lands on the cell and the item', SRC.includes("fetch(api + '/ide-api/exec/run'") && SRC.includes("'/cells/' + encodeURIComponent(c.cell_id), { method: 'PATCH'") && SRC.includes("return this.call('canvas.update', { key, content: Object.assign(c, { generated: text }) });"));
 t('the /mcp/call envelope is opened either way: prod {type, tool_name, content}, a stand-in {result}', V.unwrap({ type: 'tool_result', tool_name: 'panel.query', content: { ok: true, panels: [1] } }).panels.length === 1 && V.unwrap({ result: { ok: 1 } }).ok === 1 && V.unwrap({ ok: true, panels: [] }).ok === true);
 t('the host is asked for the panel\'s page after the item exists', SRC.includes("return this.call('canvas.add', args).then(() => { try { this.dispatchEvent(new CustomEvent('vera:canvas:panel-src'"));
+t('nothing is placed under the sticky heads: the placement floors at the add bar + NOW head', SRC.includes("const pad = (bar ? bar.offsetHeight : 0) + (bh ? bh.offsetHeight : 0);") && SRC.includes("{ columns: cols, gap, colWidth: w, pad });"));
 t('the host hears the live items', ['vera:canvas:live', 'vera:canvas:terminal', 'vera:canvas:cell', 'vera:canvas:panel', 'vera:canvas:panel-src', 'vera:canvas:open-notebook'].every(ev => SRC.includes(ev)));
 
 console.log((fails ? 'FAILED ' : 'passed ') + (fails ? fails + ' check(s)' : 'all checks'));
