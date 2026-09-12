@@ -318,7 +318,9 @@ At startup, `capability_orchestration.py` loads companion modules from an **expl
 
 The list is order-sensitive — modules that others depend on (the fabric, memory, the cluster) load first. A `sys.modules` guard means each module loads at most once. The `VERA_MODULES` env var appends extra comma-separated paths to the end of the list, so you can add a module without editing the core.
 
-Some modules ship **commented out** in the list — they're opt-in (e.g. `vllm/vllm_capabilities.py` and `openclaw/openclaw_capabilities.py`). Enable one by uncommenting it or naming it in `VERA_MODULES`.
+The default ordered loader includes the vLLM and OpenClaw capability modules.
+Additional local modules can be appended with `VERA_MODULES` without editing
+the core loader.
 
 If a module isn't found or fails to import, the orchestrator logs the error and continues. Each successful load logs `✓ <module>  caps=<n> ui_panels=<n>`, and the harness UI's "Loaded modules" panel shows the status of every attempted import, with the failure reason for any that crashed.
 
@@ -344,6 +346,21 @@ catalog. Compound requests may retain both provider families. Ambiguous text or
 an unavailable resolution preserves the planner's existing scope. Resolution
 does not grant authority or execute anything; normal session and capability
 policy still govern the eventual call.
+
+Generation availability and default discovery are deliberately separate.
+`code.author` and `prose.author` are task-facing loop defaults because they bind
+generation to a concrete source-file or document contract. `llm.generate` is a
+backend-routing broker and the raw `llm.*` family is excluded from loop tool
+discovery by default, while remaining callable by explicit workflows and
+internal subsystems. Direct backend and configured-provider entry points such as
+`ollama.generate_raw`, `vllm.generate`, `vllm.chat`, and `providers.chat` remain
+explicitly callable too. Their availability does not automatically make them
+equivalent default tools: one shared discovery policy must classify these direct
+entry points before changing their default visibility. Provider identity is a
+routing constraint; canonical task and effects are the tool-selection contract.
+The direct vLLM generation/chat entry points and configured-provider chat entry
+point still need those explicit task/effect contracts before a resolver can
+safely treat them as interchangeable candidates.
 
 An inspection capability can expose a plan, contract, runtime mapping, or health
 assessment without performing the operation it describes. See
