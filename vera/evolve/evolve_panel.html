@@ -160,7 +160,7 @@ html.vpb-nav-hosted body{padding-left:0}
 .err-card .ea{display:flex;gap:4px;margin-top:6px;flex-wrap:wrap}
 .err-src{background:var(--bg3);border-radius:3px;padding:0 5px;font-size:8.5px;color:var(--dim2)}
 /* a card only ever gets this on the exact real poll/WS refresh where it
-   genuinely just landed in this lane (see loadErrors()'s id-diff) — never
+   genuinely just landed in this lane (see missionRefresh()'s id-diff) — never
    a decorative replay, never re-applied on an unrelated redraw. */
 @keyframes errEnter{from{opacity:0;transform:translateY(5px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
 .err-card.enter{animation:errEnter .38s ease-out both}
@@ -219,34 +219,34 @@ html.vpb-nav-hosted body{padding-left:0}
      an error's actions are in its row. The strip above says what is live now and
      what needs a person. The Run-once and Improve-live theatres fold up under the
      table, verbatim, and open when their thing is live. -->
+<!-- == MISSION CONTROL: one table of events - actions x errors x gates - what is live above it ==
+     Master, Activity and Errors were three pages over the same happenings: the
+     audit log, the errors work-queue, the gates, and a glance at what needs a
+     person. A row is an event (evolve.mission.events); expand it for the record;
+     an error's actions are in its row. The strip above says what is live and what
+     needs a person; a run or an improvement session in flight shows in full above
+     the table. Run once is a modal; the error flow is the page's infographic. -->
 <div class="sec" id="sec-mission" style="display:none">
   <div class="card" id="mission-card">
     <div class="card-h"><span class="card-t">Mission control</span>
       <span class="hint" id="mission-status">&hellip;</span>
       <span style="flex:1"></span>
       <label class="hint" style="margin-right:8px" title="refresh every 6s while something is live"><input type="checkbox" id="mission-follow" checked onchange="_mcArm()"> follow</label>
-      <button class="btn sm" onclick="mcOpen('test')" title="compose a run - a loop goal, a capability, a saved task, a suite - and watch it">&#9654; run once</button>
+      <button class="btn sm" onclick="openRunCompose()" title="compose a run - a loop goal, a capability, a saved task, a suite - and watch it here">&#9654; run once</button>
+      <button class="btn sm" onclick="openImproveForm()" title="start an improvement session: run, score, edit, re-run">+ improve</button>
+      <label class="hint" style="margin-left:6px" title="Periodically pull perf/syslog errors in and suggest fixes automatically"><input type="checkbox" id="err-autosync" onchange="errToggleAutosync()"> auto-sync errors</label>
       <button class="btn sm" onclick="errSync()" title="Pull ONLY real problems (perf crit/warn findings, event-loop stalls/hangs, syslog errors) into the queue and suggest fixes">&#8635; sync errors</button>
+      <button class="btn sm" onclick="errClear()" title="Purge the errors queue (reset)">&#10005; clear errors</button>
       <button class="btn sm" onclick="missionPoll()">&#8635;</button>
     </div>
     <div id="mission-live" class="row" style="gap:6px;flex-wrap:wrap;margin:6px 0"></div>
-    <div class="row" style="gap:6px;flex-wrap:wrap;margin:8px 0 6px;align-items:center">
-      <input id="mc-q" placeholder="filter: action, summary, who, branch&hellip;" oninput="missionOnChange()" style="min-width:220px">
-      <select id="mc-kind" onchange="missionOnChange()"><option value="">every kind</option><option value="action">actions</option><option value="error">errors</option><option value="gate">gates</option></select>
-      <select id="mc-family" onchange="missionOnChange()"><option value="">every family</option></select>
-      <label class="hint"><input type="checkbox" id="mc-problems" onchange="missionOnChange()"> problems only</label>
-      <label class="hint" title="every command run in a sandbox is an audit action; hidden by default, they are most of the log"><input type="checkbox" id="mc-hide-exec" checked onchange="missionOnChange()"> hide sandbox.exec</label>
-      <span class="hint" id="mission-count"></span>
-    </div>
-    <div id="mission-table"><div class="empty">Loading&hellip;</div></div>
-    <div class="hint" style="margin-top:6px">A row is an <b>event</b>: an audit <b>action</b> (every promote, rollback, merge, sandbox command, config change &mdash; who, whether it went well, the record it names), an <b>error</b> in the work-queue (new &rarr; suggested &rarr; approved &rarr; committed; suggest / approve / dismiss are in the row), a <b>gate</b> (a unit-test run and its pipeline). <b>&#9656;</b> expands the record; ids open theirs. Open errors lead, then newest first. The pills above are what Master showed &mdash; click one to go where those rows live.</div>
-  </div>
-  <details class="fold" id="mc-test" ontoggle="if(this.open)loadTest()"><summary>Run once &mdash; compose a run (a loop goal, a capability, a saved task, a suite) and watch every stage live</summary>
-  <!-- active-run header — replaces the old tiny wf-status hint with a real,
-       always-visible strip: what's running, its goal, its branch, and
-       whether the sandbox it's routed to is healthy. Fixes "the name of
-       the running test is not displayed" by surfacing it prominently
-       instead of only in a small hint span buried in the workflow card. -->
+    <!-- LIVE: what is in flight, in full - shown only while a single run or an
+         improvement session is running (the strip above says which; the census's
+         live dash is on Work). A run: its header, routing, pipeline, authorship,
+         the workflow flywheel, the agent loop + reviewers + result, a suite's
+         progress. An improvement session: its phase and the three live columns. -->
+    <div id="mc-live" style="display:none;margin:8px 0">
+      <div id="mc-live-run" style="display:none">
   <div class="card" id="active-run-card" style="display:none">
     <div class="card-h" style="gap:10px">
       <span id="arh-dot" style="width:8px;height:8px;border-radius:50%;background:var(--ok);flex-shrink:0"></span>
@@ -287,39 +287,6 @@ html.vpb-nav-hosted body{padding-left:0}
     <vera-author-map id="test-author-map" hours="72"></vera-author-map>
   </div>
   <div class="card">
-    <div class="card-h"><span class="card-t">Run a test</span>
-      <span class="hint">pick what to improve, run it, watch every stage &amp; tool live — no timeouts</span>
-    </div>
-    <div class="row" style="margin-bottom:8px">
-      <div class="seg" id="tc-kind">
-        <button class="on" data-kind="loop" onclick="tcKind('loop')">Loop goal</button>
-        <button data-kind="cap" onclick="tcKind('cap')">Capability</button>
-        <button data-kind="task" onclick="tcKind('task')">Saved task</button>
-        <button data-kind="suite" onclick="tcKind('suite')">Suite</button>
-      </div>
-      <span style="flex:1"></span>
-      <button class="btn primary" id="tc-run" onclick="tcRun()">▶ Run &amp; watch</button>
-    </div>
-    <!-- target selector (category → target) -->
-    <div class="row" id="tc-target-row" style="margin-bottom:8px">
-      <label class="fld" style="margin:0">Improve / test</label>
-      <select id="tc-cat" style="width:170px" onchange="tcCatCh()"></select>
-      <select id="tc-target" style="min-width:200px" onchange="tcCatCh()"></select>
-      <button class="btn sm" id="tc-info-btn" onclick="tcInfoToggle()" title="Show the description + config of the thing being tested">ℹ</button>
-      <label class="row" id="tc-ide-opts" style="gap:4px;display:none" title="Off = diagnose only (proposes edits, no changes). On = let the IDE agent make the changes."><input type="checkbox" id="tc-ide-apply" style="width:auto"> apply changes</label>
-      <select id="tc-ide-engine" style="width:120px;display:none"><option value="claude">Claude Code</option><option value="vera-agent">Vera agent</option></select>
-      <span class="hint" id="tc-target-hint"></span>
-    </div>
-    <!-- what exactly is being tested: description + config -->
-    <div id="tc-info" style="display:none;background:var(--bg1);border:1px solid var(--border);border-radius:6px;padding:9px 11px;margin-bottom:8px;font-size:10.5px;line-height:1.55"></div>
-    <!-- kind-specific inputs -->
-    <div id="tc-loop"><input id="tc-goal" placeholder="Goal for the agent loop, e.g. 'list the 3 largest fabric datasets and summarise each'" style="width:100%"></div>
-    <div id="tc-cap-in" style="display:none" class="row"><input id="tc-cap" placeholder="cap name, e.g. fabric.datasets" style="min-width:200px"><input id="tc-args" placeholder='args JSON (optional)' style="flex:1"></div>
-    <div id="tc-task-in" style="display:none" class="row"><select id="tc-task" style="min-width:260px"></select></div>
-    <div id="tc-suite-in" style="display:none" class="row"><select id="tc-tag" style="width:150px"><option value="core">core</option><option value="loop">loop</option><option value="smoke">smoke</option></select><label class="row" style="gap:4px"><input type="checkbox" id="tc-assess" checked style="width:auto"> assess</label></div>
-  </div>
-  <!-- the dynamic workflow diagram + flywheel -->
-  <div class="card">
     <div class="card-h"><span class="card-t">✻ dynamic workflow</span>
       <span class="hint" id="wf-status">idle — implementer → adversarial reviewers → fixer</span>
     </div>
@@ -328,7 +295,6 @@ html.vpb-nav-hosted body{padding-left:0}
       <div class="wf" id="wf-diagram" style="flex:1"></div>
     </div>
   </div>
-  <!-- live theatre: agent loop element + result -->
   <div class="watch-grid" style="margin-bottom:12px">
     <div class="watch-col active" data-phase="test">
       <div class="wc-head">① Implementer — agent loop (every stage + tool)</div>
@@ -348,34 +314,17 @@ html.vpb-nav-hosted body{padding-left:0}
       <div id="test-result" class="wc-body"><div class="empty">Score + checks appear here when the run finishes.</div></div>
     </div>
   </div>
-  <!-- suite results (shown only while running/after a Suite run from here) -->
   <div class="card" id="test-suite-card" style="display:none">
     <div class="card-h"><span class="card-t">🏁 suite</span><span class="hint" id="test-suite-hd">—</span><span style="flex:1"></span>
       <div class="bar" style="max-width:180px"><span id="test-suite-bar" style="width:0%"></span></div>
       <span class="mono" id="test-suite-count">0/0</span></div>
     <div id="test-suite-log" style="max-height:220px;overflow:auto"><div class="empty">Per-task results stream here as the suite runs.</div></div>
   </div>
-  <div class="card">
-    <div class="card-h"><span class="card-t">▦ Test activity</span>
-      <span class="hint">hourly run history · replay · stall/error overlay</span></div>
-    <vera-test-activity-timeline id="test-activity" hours="48"></vera-test-activity-timeline>
-  </div>
-  <div class="card">
-    <div class="card-h"><span class="card-t">⛨ Regression guard</span>
-      <span class="hint">every task × its own recent runs — a persistent, live-updating matrix</span></div>
-    <vera-task-matrix id="task-matrix" cols="8"></vera-task-matrix>
-    <script>document.getElementById('task-matrix').addEventListener('taskmatrix:opencell',e=>{const d=(e&&e.detail)||{};if(d.task&&typeof openTaskHistory==='function')openTaskHistory(d.task)});</script>
-  </div>
-  <div class="card">
-    <div class="card-h"><span class="card-t">Recent runs</span><span style="flex:1"></span><button class="btn sm" onclick="refreshTestRuns()">&#8635;</button></div>
-    <div id="test-runs"></div>
-  </div>
-  </details>
-  <details class="fold" id="mc-watch" ontoggle="if(this.open)loadWatch()"><summary>Improve &middot; live &mdash; test &rarr; evaluate &rarr; synthesize, the fleet, the edit queue</summary>
+      </div>
+      <div id="mc-live-improve" style="display:none">
   <div class="card">
     <div class="card-h"><span class="card-t">Live improvement</span>
       <span class="hint" id="watch-sub">watch a session go test → evaluate → synthesize</span>
-      <span class="hint" style="margin-left:8px">· configured in <a href="#" onclick="event.preventDefault();nav('improve')">Improve · set up</a></span>
       <span style="flex:1"></span>
       <select id="watch-sel" style="min-width:160px" onchange="watchSelect()"></select>
     </div>
@@ -404,40 +353,24 @@ html.vpb-nav-hosted body{padding-left:0}
       </div>
     </div>
   </div>
-  <div class="card">
-    <div class="card-h"><span class="card-t">🚀 fleet</span>
-      <span class="hint">every improvement loop &amp; CPU editor running in parallel</span>
-      <span style="flex:1"></span><button class="btn sm" onclick="loadFleet()">&#8635;</button>
+      </div>
     </div>
-    <div id="fleet-body"><div class="empty">—</div></div>
+    <div class="row" style="gap:6px;flex-wrap:wrap;margin:8px 0 6px;align-items:center">
+      <input id="mc-q" placeholder="filter: action, summary, who, branch&hellip;" oninput="missionOnChange()" style="min-width:220px">
+      <select id="mc-kind" onchange="missionOnChange()"><option value="">every kind</option><option value="action">actions</option><option value="error">errors</option><option value="gate">gates</option></select>
+      <select id="mc-family" onchange="missionOnChange()"><option value="">every family</option></select>
+      <label class="hint"><input type="checkbox" id="mc-problems" onchange="missionOnChange()"> problems only</label>
+      <label class="hint" title="every command run in a sandbox is an audit action; hidden by default, they are most of the log"><input type="checkbox" id="mc-hide-exec" checked onchange="missionOnChange()"> hide sandbox.exec</label>
+      <span class="hint" id="mission-count"></span>
+    </div>
+    <div id="mission-table"><div class="empty">Loading&hellip;</div></div>
+    <div class="hint" style="margin-top:6px">A row is an <b>event</b>: an audit <b>action</b> (every promote, rollback, merge, sandbox command, config change &mdash; who, whether it went well, the record it names), an <b>error</b> in the work-queue (new &rarr; suggested &rarr; approved &rarr; committed; suggest / approve / dismiss are in the row), a <b>gate</b> (a unit-test run and its pipeline). <b>&#9656;</b> expands the record; ids open theirs. Open errors lead, then newest first. The pills above are what is live and what needs a person &mdash; click one to go where those rows live. A run or an improvement session in flight shows in full above the table while it runs.</div>
   </div>
   <div class="card">
-    <div class="card-h"><span class="card-t">Edit queue · work grid</span>
-      <span class="hint">actions synthesised on <b id="editq-model-lbl">gpt-oss:20b</b> — click to view/edit before it runs</span>
-      <span style="flex:1"></span>
-      <span class="pill" id="editq-worker">worker —</span>
-      <button class="btn sm" onclick="loadEditq()">&#8635;</button>
-    </div>
-    <div id="editq-grid" style="margin-bottom:8px"></div>
-    <div id="editq-body"><div class="empty">Loading…</div></div>
+    <div class="card-h"><span class="card-t">Errors &rarr; edits &rarr; commits</span>
+      <span class="hint">observability + ollama/workers errors flow in &rarr; a fix is suggested &rarr; you approve &rarr; it becomes a commit; only real problems land (healthy perf statuses are ignored)</span></div>
+    <div id="err-flow"></div>
   </div>
-  </details>
-  <details class="fold" id="mc-errors" ontoggle="if(this.open)loadErrors()"><summary>Errors &rarr; edits &rarr; commits &mdash; the work-queue by lane, with the flow</summary>
-  <div class="card">
-    <div class="card-h"><span class="card-t">⚠ errors → edits → commits</span>
-      <span class="hint">observability + ollama/workers errors flow in · a fix is suggested · you approve · it becomes a commit</span>
-      <span style="flex:1"></span>
-      <label class="row" style="gap:4px" title="Periodically pull perf/syslog errors in and suggest fixes automatically"><input type="checkbox" id="err-autosync" onchange="errToggleAutosync()" style="width:auto"> auto-sync</label>
-      <button class="btn" onclick="errSync()" title="Pull ONLY real problems (perf crit/warn findings, event-loop stalls/hangs, syslog errors) into the queue and suggest fixes">⟲ Sync now</button>
-      <button class="btn" onclick="errClear()" title="Purge the queue (reset)">🗑 Clear</button>
-    </div>
-    <div class="hint" style="margin-top:4px">Only real problems land here — healthy perf statuses (severity <b>ok</b>/<b>info</b>, e.g. "no loop stall") are ignored.</div>
-    <!-- Bun-style flow diagram -->
-    <div id="err-flow" style="margin-bottom:6px"></div>
-  </div>
-  <!-- kanban lanes -->
-  <div class="err-board" id="err-board"><div class="empty">Loading…</div></div>
-  </details>
 </div>
 
 <!-- == AGENTS: one table of agent sessions - items x pipelines x sandboxes x seats ==
@@ -475,6 +408,17 @@ html.vpb-nav-hosted body{padding-left:0}
     </div>
     <div id="agents-table"><div class="empty">Loading&hellip;</div></div>
     <div class="hint" style="margin-top:6px">In <b>sessions</b> a row is an agent session &mdash; a Claude Code or Codex session (the watch classifies it), a session the board names, a live Vera loop, an edit-queue agent &mdash; with its items by lane, its pipelines, sandboxes and branches; <b>&#9656;</b> expands them, a chat id opens the transcript. In <b>board items</b> a row is one item, live lanes first, naming its session; <b>&#9656;</b> expands its body and last comments; move, dispatch and open are in the row. The pills are what the Swarm page counted &mdash; click one to filter. States: live &rarr; working / recent / queued &rarr; resumable / stalled &rarr; declared-block / finished-unreported &rarr; human &rarr; done / idle. <b>untracked</b> means no board claim, not &ldquo;not running&rdquo; &mdash; a session that spoke within the stalled window is <b>recent</b>.</div>
+  </div>
+  <!-- the editors' work: the background edit queue's grid, one cell per action -->
+  <div class="card">
+    <div class="card-h"><span class="card-t">Edit queue · work grid</span>
+      <span class="hint">actions synthesised on <b id="editq-model-lbl">gpt-oss:20b</b> — click to view/edit before it runs</span>
+      <span style="flex:1"></span>
+      <span class="pill" id="editq-worker">worker —</span>
+      <button class="btn sm" onclick="loadEditq()">&#8635;</button>
+    </div>
+    <div id="editq-grid" style="margin-bottom:8px"></div>
+    <div id="editq-body"><div class="empty">Loading…</div></div>
   </div>
   <details class="fold" id="agents-board" ontoggle="if(this.open)loadBoardTab()"><summary>Board &mdash; the work plane by lane: create, edit, move, claim, comment, dispatch</summary>
   <div class="card">
@@ -609,6 +553,18 @@ html.vpb-nav-hosted body{padding-left:0}
     <div id="work-tasks" style="display:none"><div class="empty">Loading&hellip;</div></div>
     <details style="margin-top:8px"><summary class="clk hint">Trends</summary><div id="census-charts" style="margin-top:6px"></div><div id="work-charts" style="margin-top:6px"></div></details>
     <div class="hint" style="margin-top:6px">In <b>runs</b> a row is one driver run &mdash; a census, a suite, an improvement session or a single run; <b>&#9656;</b> expands it to its tasks, a task opens its record. In <b>tasks</b> a row is one task with its history from every driver; <b>&#9656;</b> expands its recent results, <b>&#8961;</b> opens it through time. <b>coder</b> / <b>nodes</b> are the models and nodes a census run&#39;s calls hit; <b>code</b> the sha@branch prod ran.</div>
+  </div>
+  <!-- the tasks' infographics: every task's recent runs, and the run history by hour -->
+  <div class="card">
+    <div class="card-h"><span class="card-t">⛨ Regression guard</span>
+      <span class="hint">every task × its own recent runs — a persistent, live-updating matrix</span></div>
+    <vera-task-matrix id="task-matrix" cols="8"></vera-task-matrix>
+    <script>document.getElementById('task-matrix').addEventListener('taskmatrix:opencell',e=>{const d=(e&&e.detail)||{};if(d.task&&typeof openTaskHistory==='function')openTaskHistory(d.task)});</script>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">▦ Test activity</span>
+      <span class="hint">hourly run history · replay · stall/error overlay</span></div>
+    <vera-test-activity-timeline id="test-activity" hours="48"></vera-test-activity-timeline>
   </div>
 </div>
 
@@ -954,6 +910,7 @@ async function loadMission(){
   const fam=$('mc-family');
   if(fam){const cur=fam.value;fam.innerHTML='<option value="">every family</option>'+(r.families||[]).map(f=>'<option value="'+esc(f)+'">'+esc(f)+'</option>').join('');if((r.families||[]).indexOf(cur)>=0)fam.value=cur}
   renderMissionTable();
+  renderErrorFlow(r);
   // The autonomous banner reads the same answer.
   const b=$('auto-banner'),a=r.autonomous||{};
   if(b){if(a.engaged){b.style.display='flex';const since=(a.since||'').slice(0,19).replace('T',' ');if($('auto-banner-msg'))$('auto-banner-msg').innerHTML='main is <b>LOCKED</b>'+(a.reason?(' &mdash; '+esc(a.reason)):'')+(since?(' &middot; since '+esc(since)):'')}else b.style.display='none'}
@@ -965,10 +922,20 @@ function missionOnChange(){renderMissionTable()}
    "run once", "watch" and "errors" from anywhere. */
 function mcOpen(which){
   nav('mission');
-  const d=$('mc-'+which);if(!d)return;
-  if(!d.open)d.open=true;else({test:loadTest,watch:loadWatch,errors:loadErrors}[which]||function(){})();
-  try{d.scrollIntoView({behavior:'smooth',block:'start'})}catch(_){}
+  if(which==='test'){if(_testRunId||_mcLiveNow.run)mcRevealLive('run');else openRunCompose()}
+  else if(which==='watch')mcRevealLive('improve');
+  else if(which==='errors')mcFilter('error');
 }
+/* Show what is in flight, in full, above the table: the run theatre or the
+   improvement session's phases. Hidden again when nothing is live. */
+let _mcLiveNow={run:false,improve:false};
+function mcRevealLive(which){
+  const p=$('mc-live'),r=$('mc-live-run'),m=$('mc-live-improve');if(!p||!r||!m)return;
+  p.style.display='';r.style.display=which==='run'?'':'none';m.style.display=which==='improve'?'':'none';
+  if(which==='run')loadTest();else loadWatch();
+  try{p.scrollIntoView({behavior:'smooth',block:'start'})}catch(_){}
+}
+function mcHideLive(){const p=$('mc-live');if(p)p.style.display='none'}
 function _mcPill(label,n,c,click,title){return '<span class="tag" style="border-left:3px solid '+c+(click?';cursor:pointer':'')+'"'+(click?' onclick="'+click+'"':'')+(title?' title="'+esc(title)+'"':'')+'>'+label+(n==null?'':' '+n)+'</span>'}
 /* The live strip: evolve.work.live (the census, the suite, the improvement
    session, the single run) and Master's counts, each a way to its rows. A
@@ -980,9 +947,9 @@ function renderMissionLive(r){
   if(cenLive){const a=cen.active||{};pills.push(_mcPill('census '+esc(hz.template||'')+(a.goal_id?' · '+esc(a.goal_id):''),a.elapsed_s!=null?_cenSec(a.elapsed_s):(hz.state||'live'),'#3cb371',"nav('work')",'the census in flight - its live dash is on Work'))}
   const st=(lv.suite&&(lv.suite.status||lv.suite))||{};
   if(st.running)pills.push(_mcPill('suite',esc(String(st.tag||st.suite_id||'running')),'#3cb371',"nav('work')",'the suite in progress - on Work'));
-  if(lv.improve)pills.push(_mcPill('improve · live',esc(String(lv.improve.id||'').slice(0,8)),'#e0a030',"mcOpen('watch')",'the improvement session in flight - watch it below'));
+  if(lv.improve)pills.push(_mcPill('improve · live',esc(String(lv.improve.id||'').slice(0,8)),'#e0a030',"mcRevealLive('improve')",'the improvement session in flight - shown above the table'));
   const run=lv.run||{};
-  if(run.live||run.running)pills.push(_mcPill('run',esc(String((run.current&&run.current.task)||run.task||'').slice(0,30)||'live'),'#3cb371',"mcOpen('test')",'the single run in flight - watch it below'));
+  if(run.live||run.running)pills.push(_mcPill('run',esc(String((run.current&&run.current.task)||run.task||'').slice(0,30)||'live'),'#3cb371',"mcRevealLive('run')",'the single run in flight - shown above the table'));
   if(c.live_pipelines)pills.push(_mcPill('live pipelines',c.live_pipelines,'#4a9ed0',"nav('ship')",'CI/CD pipelines running now - rows of the Ship page'));
   pills.push(_mcPill('needs promotion',c.needs_promotion||0,c.needs_promotion?'var(--warn)':'#6a6a6a',"agFilterShip()",'gated or reviewed, not yet promoted - the Ship page, stage review'));
   pills.push(_mcPill('active items',c.active_items||0,'#3cb371',"agFilter('items','hide','1')",'board items in progress, review, ready or blocked - the Agents page'));
@@ -995,10 +962,13 @@ function renderMissionLive(r){
   if(sw)sw.innerHTML=pills.join('');
   const s=r.summary||{},k=s.kinds||{};
   if($('mission-status'))$('mission-status').innerHTML=(s.count||0)+' events · '+(k.action||0)+' actions · '+(k.error||0)+' errors · '+(k.gate||0)+' gates'+(s.problems?(' · <span style="color:var(--err)">'+s.problems+' problems</span>'):'');
-  // A theatre opens when its thing goes live (once per transition).
-  const nowLive={test:!!(run.live||run.running),watch:!!lv.improve};
-  ['test','watch'].forEach(w=>{const d=$('mc-'+w);if(!d)return;const sm=d.querySelector('summary');if(sm){let dot=sm.querySelector('.live-dot');if(nowLive[w]&&!dot){dot=document.createElement('span');dot.className='live-dot';sm.appendChild(dot)}else if(!nowLive[w]&&dot)dot.remove()}
-    if(nowLive[w]&&!_mcWasLive[w]&&!d.open)d.open=true;_mcWasLive[w]=nowLive[w]});
+  // What is in flight shows in full above the table: revealed once per
+  // transition to live, hidden again when nothing is live and no run is remembered.
+  _mcLiveNow={run:!!(run.live||run.running),improve:!!lv.improve};
+  if(_mcLiveNow.run&&!_mcWasLive.run)mcRevealLive('run');
+  else if(_mcLiveNow.improve&&!_mcWasLive.improve&&!_mcLiveNow.run)mcRevealLive('improve');
+  else if(!_mcLiveNow.run&&!_mcLiveNow.improve&&!_testRunId)mcHideLive();
+  _mcWasLive={run:_mcLiveNow.run,improve:_mcLiveNow.improve};
 }
 function agFilterShip(){nav('ship');setTimeout(()=>{if($('ship-stage')){$('ship-stage').value='review';renderShipTable()}},300)}
 function mcFilter(kind){if($('mc-kind'))$('mc-kind').value=kind;renderMissionTable()}
@@ -1375,15 +1345,20 @@ async function tcInfoLoad(){
   if(r.ide)h+='<div class="hint" style="margin-top:4px"><span class="mono">'+esc(JSON.stringify(r.ide))+'</span></div>';
   el.innerHTML=h;
 }
-async function loadTest(){
+/* The compose form's selectors (it lives in a modal now: openRunCompose). */
+async function loadTestForm(){
+  if(!$('tc-cat'))return;
   await loadTargets();
   fillTargetSelectors('tc-cat','tc-target',$('tc-cat')&&$('tc-cat').value);
   tcCatCh();
   // saved-task dropdown
   const r=await api('/evolve/tasks');const ts=(r&&r.tasks)||[];
   if($('tc-task'))$('tc-task').innerHTML=ts.map(t=>'<option value="'+esc(t.id)+'">'+esc(t.id)+' · '+esc(t.type||'')+'</option>').join('');
+}
+/* The live run panel above the Mission control table: re-attach to the run
+   in flight (or the last one) and keep adopting a new one while it shows. */
+async function loadTest(){
   wfInit();
-  refreshTestRuns();
   restoreTestRun();   // if a run is in-flight/last, re-attach + restore its view
   // Re-check periodically for a NEW externally-triggered run while this tab
   // just sits open (not merely on nav/reload) — found live 2026-08-03: a run
@@ -1402,8 +1377,8 @@ async function refreshTestRuns(){
 }
 // The Test section's OWN agent-loop element (avoids the duplicate #evolve-alo id
 // which also lives in Watch — getElementById would return the wrong one).
-function _testAlo(){return document.querySelector('#mc-test vera-agent-loop-output')}
-function _watchAlo(){return document.querySelector('#mc-watch vera-agent-loop-output')}
+function _testAlo(){return document.querySelector('#mc-live-run vera-agent-loop-output')}
+function _watchAlo(){return document.querySelector('#mc-live-improve vera-agent-loop-output')}
 // Drive the implementer timeline the ROBUST way the workshop panel does: REATTACH
 // to the run's persisted agent-loop session over SSE (replay + tail-live). This
 // populates the timeline reliably (not via the flaky global bus) AND survives
@@ -1959,7 +1934,7 @@ function onEvent(ev){
     // would double-render — so skip it then. During a SUITE (no single reattach)
     // we DO bus-feed it so the current task's loop streams live, as before.
     document.querySelectorAll('vera-agent-loop-output').forEach(alo=>{
-      if(alo.closest&&alo.closest('#mc-test')&&!_suiteActive)return;
+      if(alo.closest&&alo.closest('#mc-live-run')&&!_suiteActive)return;
       if(alo.appendEvent){try{alo.appendEvent(ev)}catch(_){}}
     });
     if(t.endsWith('.tool_call')){_loopStep={tool:ev.tool||ev.cap||'?',ok:null};renderLive()}
@@ -1974,8 +1949,8 @@ function onEvent(ev){
   if(t==='evolve.workflow'){wfSet(ev.node,ev.state,ev)}
   if(t==='evolve.assessed')watchOnAssessed(ev);
   if(t==='evolve.phase')watchOnPhase(ev);
-  if(t.startsWith('evolve.editq.')){watchOnEditq(ev);if(_curSec()==='mission'&&$('mc-watch')&&$('mc-watch').open)loadEditq()}
-  if(t.startsWith('evolve.errors.')){if(_curSec()==='mission'){missionRefresh();if($('mc-errors')&&$('mc-errors').open)loadErrors()}}
+  if(t.startsWith('evolve.editq.')){watchOnEditq(ev);if(_curSec()==='agents')loadEditq()}
+  if(t.startsWith('evolve.errors.')){missionRefresh()}
   // Every Loop Lab event is a row of Mission control's table: refresh it,
   // debounced, while it is on screen.
   if(t.startsWith('evolve.')&&_curSec()==='mission')missionRefresh();
@@ -1984,7 +1959,7 @@ function onEvent(ev){
     if(t==='evolve.improve.started'&&ev.session){_watchSession=ev.session;const wa=_watchAlo();if(wa&&wa.reset)try{wa.reset()}catch(_){}}
     pollSessionLive(ev.session);
     workOnChange();
-    if(_curSec()==='mission'&&$('mc-watch')&&$('mc-watch').open)watchRefresh();
+    if(_curSec()==='mission'&&$('mc-live-improve')&&$('mc-live-improve').style.display!=='none')watchRefresh();
   }
   if(t.startsWith('evolve.pipeline.')){shipRefresh();pollPipeLive(ev.id)}
   if(t.startsWith('ide.workspace.changes.')||t==='evolve.sandbox.review'){shipRefresh()}
@@ -3440,6 +3415,40 @@ const _WORK_RUN_ONCE=`<div class="card-h"><span class="card-t">Run once</span><s
 </div>
 <div class="hint">A single task runs from its row (&#9654;); a census template runs from Templates &amp; run above the table. The suite path runs tasks in the PRIMARY sandbox and is blocked when none is up (board loop-o50); the census harness is the instrument until then.</div>
 <div class="row" style="margin-top:10px"><span style="flex:1"></span><button class="btn" onclick="closeModal()">Close</button></div>`;
+const _MC_RUN_FORM=`<div class="card-h"><span class="card-t">Run once</span><span class="hint">pick what to improve, run it, watch every stage &amp; tool live above the table</span><span style="flex:1"></span><button class="btn sm" onclick="closeModal()">&#10005;</button></div>
+    <div class="row" style="margin-bottom:8px">
+      <div class="seg" id="tc-kind">
+        <button class="on" data-kind="loop" onclick="tcKind('loop')">Loop goal</button>
+        <button data-kind="cap" onclick="tcKind('cap')">Capability</button>
+        <button data-kind="task" onclick="tcKind('task')">Saved task</button>
+        <button data-kind="suite" onclick="tcKind('suite')">Suite</button>
+      </div>
+      <span style="flex:1"></span>
+      <button class="btn primary" id="tc-run" onclick="tcRun()">▶ Run &amp; watch</button>
+    </div>
+    <!-- target selector (category → target) -->
+    <div class="row" id="tc-target-row" style="margin-bottom:8px">
+      <label class="fld" style="margin:0">Improve / test</label>
+      <select id="tc-cat" style="width:170px" onchange="tcCatCh()"></select>
+      <select id="tc-target" style="min-width:200px" onchange="tcCatCh()"></select>
+      <button class="btn sm" id="tc-info-btn" onclick="tcInfoToggle()" title="Show the description + config of the thing being tested">ℹ</button>
+      <label class="row" id="tc-ide-opts" style="gap:4px;display:none" title="Off = diagnose only (proposes edits, no changes). On = let the IDE agent make the changes."><input type="checkbox" id="tc-ide-apply" style="width:auto"> apply changes</label>
+      <select id="tc-ide-engine" style="width:120px;display:none"><option value="claude">Claude Code</option><option value="vera-agent">Vera agent</option></select>
+      <span class="hint" id="tc-target-hint"></span>
+    </div>
+    <!-- what exactly is being tested: description + config -->
+    <div id="tc-info" style="display:none;background:var(--bg1);border:1px solid var(--border);border-radius:6px;padding:9px 11px;margin-bottom:8px;font-size:10.5px;line-height:1.55"></div>
+    <!-- kind-specific inputs -->
+    <div id="tc-loop"><input id="tc-goal" placeholder="Goal for the agent loop, e.g. 'list the 3 largest fabric datasets and summarise each'" style="width:100%"></div>
+    <div id="tc-cap-in" style="display:none" class="row"><input id="tc-cap" placeholder="cap name, e.g. fabric.datasets" style="min-width:200px"><input id="tc-args" placeholder='args JSON (optional)' style="flex:1"></div>
+    <div id="tc-task-in" style="display:none" class="row"><select id="tc-task" style="min-width:260px"></select></div>
+    <div id="tc-suite-in" style="display:none" class="row"><select id="tc-tag" style="width:150px"><option value="core">core</option><option value="loop">loop</option><option value="smoke">smoke</option></select><label class="row" style="gap:4px"><input type="checkbox" id="tc-assess" checked style="width:auto"> assess</label></div>`;
+/* The Run-once page's compose form, as the modal it always was: what is
+   started here shows in full above the Mission control table. */
+async function openRunCompose(){
+  openModal(_MC_RUN_FORM);
+  await loadTestForm();
+}
 function openRunOnce(){
   openModal(_WORK_RUN_ONCE);
   const profOpts=_profiles.map(p=>'<option value="'+esc(p.id)+'">'+esc(p.label||p.id)+'</option>').join('');
@@ -3908,7 +3917,7 @@ function _agArm(){
 async function agentsPoll(){
   if(_agBusy){_agArm();return}
   _agBusy=true;
-  try{await loadAgents()}
+  try{await loadAgents();loadEditq()}
   catch(e){/* one bad tick must not end the watch */}
   finally{_agBusy=false;_agArm()}
 }
@@ -3940,7 +3949,7 @@ async function loadWatch(){
     if(!_watchSession){const cur=(live[0]||ss[0]);if(cur){_watchSession=cur.id;sel.value=cur.id}}
     else sel.value=_watchSession;
   }
-  watchRefresh(); loadEditq(); loadFleet();
+  watchRefresh(); loadEditq();
 }
 async function loadFleet(){
   const el=$('fleet-body');if(!el)return;
@@ -3966,7 +3975,6 @@ async function loadFleet(){
       +'<span class="hint">'+esc(a.model||'')+(a.instance?(' @'+esc(a.instance)):'')+' · '+esc(a.status)+'</span></div>';
   }
   el.innerHTML=h;
-  if((ss.length||eq.length)&&_curSec()==='mission'&&$('mc-watch')&&$('mc-watch').open){clearTimeout(window._fleetT);window._fleetT=setTimeout(loadFleet,4000)}
 }
 function watchSelect(){_watchSession=$('watch-sel').value;document.querySelectorAll('vera-agent-loop-output').forEach(a=>{if(a.reset)try{a.reset()}catch(_){}});watchRefresh()}
 async function watchRefresh(){
@@ -4026,7 +4034,7 @@ function _busDispatch(ev){onEvent(ev);_busSubs.forEach(fn=>{try{fn(ev)}catch(_){
 })();
 
 /* ═══ ERRORS WORK-QUEUE (errors → suggested edit → approve → commit) ═══
-   loadErrors() already re-fires live on every real evolve.errors.* WS event
+   missionRefresh() already re-fires live on every real evolve.errors.* WS event
    (see the dispatcher above: `if(t.startsWith('evolve.errors.'))...`) — the
    DATA was always live. What wasn't honest was the rendering: every refresh
    used to be a flat instant redraw, and the flow diagram's particles ran
@@ -4038,50 +4046,26 @@ function _busDispatch(ev){onEvent(ev);_busSubs.forEach(fn=>{try{fn(ev)}catch(_){
    stage transition that just happened — idle-but-nonempty queues now sit
    perfectly still, exactly like every other component in this suite. */
 const ERR_LANES=[['new','⚠ new','var(--err)'],['suggested','✎ suggested','var(--warn)'],['approved','⎇ approved','var(--acc2)'],['applied','✓ committed','var(--ok)']];
+/* The errors flow (sources -> queue -> fixer -> commits), drawn from the
+   Mission control read: the counts by state ride in it and the error rows are
+   the table's. A particle fires only on a real transition since the last draw. */
 let _errPrevLanes=null,_errFirstLoad=true;
-async function loadErrors(){
+function renderErrorFlow(r){
+  const el=$('err-flow');if(!el)return;
   if($('err-autosync'))$('err-autosync').checked=!!(_cfg&&_cfg.errors_autosync);
-  const r=await api('/evolve/errors?limit=200');const items=(r&&r.items)||[];const counts=(r&&r.counts)||{};
-  const bySource={};items.forEach(i=>{if(i.state!=='dismissed'){bySource[i.source]=(bySource[i.source]||0)+1}});
-  const curLanes={};ERR_LANES.forEach(([st])=>{curLanes[st]=new Set(items.filter(i=>i.state===st).map(i=>i.id))});
+  const counts=(r&&r.errors_counts)||{};
+  const items=(_mcRows||[]).filter(x=>x.kind==='error');
+  const bySource={};items.forEach(i=>{if(i.state!=='dismissed'){bySource[i.who]=(bySource[i.who]||0)+1}});
+  const curLanes={};ERR_LANES.forEach(([st])=>{curLanes[st]=new Set(items.filter(i=>i.state===st).map(i=>i.error_id))});
   const justEntered=new Set();const transitions={};
   if(!_errFirstLoad&&_errPrevLanes){
-    ERR_LANES.forEach(([st])=>{
-      curLanes[st].forEach(id=>{if(!_errPrevLanes[st]||!_errPrevLanes[st].has(id))justEntered.add(id)});
-    });
+    ERR_LANES.forEach(([st])=>{curLanes[st].forEach(id=>{if(!_errPrevLanes[st]||!_errPrevLanes[st].has(id))justEntered.add(id)})});
     if([...curLanes['new']].some(id=>justEntered.has(id)))transitions.in=true;
     if([...curLanes['approved']].some(id=>justEntered.has(id)))transitions.fix=true;
     if([...curLanes['applied']].some(id=>justEntered.has(id)))transitions.commit=true;
   }
-  _errPrevLanes=curLanes;
-  $('err-flow').innerHTML=svgErrorFlow(counts,bySource,transitions);
-  const board=$('err-board');
-  let staggerN=0;
-  board.innerHTML=ERR_LANES.map(([st,lbl,col])=>{
-    const lane=items.filter(i=>i.state===st);
-    return '<div class="err-lane"><div class="err-lane-h"><span style="color:'+col+'">'+esc(lbl)+'</span><span class="n">'+lane.length+'</span></div>'
-      +(lane.length?lane.map(it=>errCard(it,!_errFirstLoad&&justEntered.has(it.id),staggerN++)).join(''):'<div class="empty" style="font-size:9px">—</div>')+'</div>';
-  }).join('');
-  _errFirstLoad=false;
-}
-function errCard(it,isEnter,staggerIdx){
-  const sug=it.suggestion||{};
-  const sev=(it.meta&&it.meta.severity)||'';
-  const isRem=!!(sug.remediation_id||(it.meta&&it.meta.remediation_id));
-  const approveLbl=isRem?'apply safe fix':'approve → commit';
-  const approveTitle=isRem?'Apply the built-in safe remediation (perf.remediate) immediately':'Approve → launch a gated code pipeline that commits the fix';
-  let acts='';
-  if(it.state==='new')acts='<button class="btn sm" onclick="errSuggest(\''+esc(it.id)+'\')">suggest fix</button><button class="btn sm" onclick="errDismiss(\''+esc(it.id)+'\')">dismiss</button>';
-  else if(it.state==='suggested')acts='<button class="btn sm primary" onclick="errApprove(\''+esc(it.id)+'\')" title="'+approveTitle+'">'+approveLbl+'</button><button class="btn sm" onclick="errDismiss(\''+esc(it.id)+'\')">dismiss</button>';
-  else if(it.state==='approved')acts='<button class="btn sm" onclick="nav(\'ship\')">view pipeline '+esc(it.pipeline_id||'')+'</button>';
-  else if(it.state==='applied'&&it.remediation_result)acts='<span class="hint">'+esc(String(it.remediation_result).slice(0,120))+'</span>';
-  const sevChip=sev?('<span class="err-src" style="color:'+(sev==='crit'?'var(--err)':'var(--warn)')+'">'+esc(sev)+'</span>'):'';
-  const runChip=(it.meta&&it.meta.run_id)?'<span class="err-src clk" style="color:var(--acc)" onclick="openRun(\''+esc(it.meta.run_id)+'\')" title="open the test run this error came from">run '+esc(String(it.meta.run_id).slice(0,8))+'</span>':'';
-  return '<div class="err-card s-'+esc(it.state)+(isEnter?' enter':'')+'"'+(isEnter?' style="animation-delay:'+(Math.min(staggerIdx||0,10)*70)+'ms"':'')+'>'
-    +'<div class="et">'+esc((it.title||'').slice(0,180))+'</div>'
-    +'<div class="ea">'+sevChip+'<span class="err-src">'+esc(it.source)+'</span>'+(it.count>1?'<span class="err-src">×'+it.count+'</span>':'')+(isRem?'<span class="err-src" style="color:var(--ok)">safe fix</span>':'')+runChip+'</div>'
-    +(sug.suggestion?'<div class="em"><b>fix:</b> '+esc(sug.suggestion.slice(0,240))+'</div>':'')
-    +'<div class="ea">'+acts+'</div></div>';
+  _errPrevLanes=curLanes;_errFirstLoad=false;
+  el.innerHTML=svgErrorFlow(counts,bySource,transitions);
 }
 /* Bun-style flow: error SOURCES fan into a queue → fixer worker → commits.
    (à la the article's "errors being sent to workers and flowing to commits") */
@@ -4099,7 +4083,7 @@ function svgErrorFlow(counts,bySource,transitions){
   // used to loop forever (repeatCount="indefinite") regardless of whether
   // anything was actually happening — not truthful. It now fires ONCE,
   // and only on the exact refresh where a real new error genuinely landed
-  // (transitions.in, computed in loadErrors() from a real id-diff).
+  // (transitions.in, computed in missionRefresh() from a real id-diff).
   const sy=srcs.length?(H-2*20)/(srcs.length):0;
   (srcs.length?srcs:[['—',0]]).forEach(([name,v],i)=>{
     const y=20+sy*i+sy/2;
@@ -4126,11 +4110,11 @@ function svgErrorFlow(counts,bySource,transitions){
   s+='<text x="360" y="26" text-anchor="middle" font-size="8.5" fill="var(--dim2)">'+totalIn+' in queue → suggest → approve → commit</text>';
   return '<svg viewBox="0 0 '+W+' '+H+'" width="100%" height="'+H+'"><defs><marker id="efa" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="var(--dim2)"/></marker></defs>'+s+'</svg>';
 }
-async function errSync(){toast('pulling real problems…');const r=await post('/evolve/errors/sync',{suggest:true});if(r&&r.ok)toast('ingested '+(r.ingested||0)+' · suggested '+(r.suggested||0));loadErrors()}
-async function errClear(){if(!confirm('Purge the whole errors queue?'))return;const r=await post('/evolve/errors/clear',{});if(r&&r.ok)toast('cleared '+(r.removed||0));loadErrors()}
-async function errSuggest(id){await post('/evolve/errors/suggest',{id});loadErrors()}
-async function errApprove(id){const r=await post('/evolve/errors/approve',{id});if(r&&r.ok)toast('approved → pipeline '+(r.pipeline_id||''));else toast((r&&r.error)||'failed');loadErrors()}
-async function errDismiss(id){await post('/evolve/errors/dismiss',{id});loadErrors()}
+async function errSync(){toast('pulling real problems…');const r=await post('/evolve/errors/sync',{suggest:true});if(r&&r.ok)toast('ingested '+(r.ingested||0)+' · suggested '+(r.suggested||0));missionRefresh()}
+async function errClear(){if(!confirm('Purge the whole errors queue?'))return;const r=await post('/evolve/errors/clear',{});if(r&&r.ok)toast('cleared '+(r.removed||0));missionRefresh()}
+async function errSuggest(id){await post('/evolve/errors/suggest',{id});missionRefresh()}
+async function errApprove(id){const r=await post('/evolve/errors/approve',{id});if(r&&r.ok)toast('approved → pipeline '+(r.pipeline_id||''));else toast((r&&r.error)||'failed');missionRefresh()}
+async function errDismiss(id){await post('/evolve/errors/dismiss',{id});missionRefresh()}
 async function errToggleAutosync(){const on=$('err-autosync').checked;const r=await post('/evolve/config/set',{errors_autosync:on});if(r&&r.config)_cfg=r.config;toast('auto-sync '+(on?'on':'off'))}
 
 /* ═══ SELF-TEST ═══ */
@@ -5869,7 +5853,7 @@ function renderSbxStrip(sb){
    the fold, and a run in flight is on the Mission strip regardless. Before
    this, /evolve/run/status was polled every 4 s on every page for as long
    as a run id was remembered (2026-09-10). */
-function _theatreOnScreen(){const d=$('mc-test');return _curSec()==='mission'&&!!d&&d.open}
+function _theatreOnScreen(){const p=$('mc-live'),r=$('mc-live-run');return _curSec()==='mission'&&!!p&&p.style.display!=='none'&&!!r&&r.style.display!=='none'}
 setInterval(()=>{if(_theatreOnScreen())refreshActiveRun()},4000);
 setInterval(pollAutonomous,12000);
 refreshActiveRun();

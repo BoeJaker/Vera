@@ -59,7 +59,7 @@ def test_the_run_once_theatres_clocks_tick_only_while_its_fold_is_on_screen():
     with open(os.path.join(ROOT, "evolve", "evolve_panel.html"), encoding="utf-8") as fh:
         src = fh.read()
     assert "setInterval(refreshActiveRun,4000)" not in src
-    assert "function _theatreOnScreen(){const d=$('mc-test');return _curSec()==='mission'&&!!d&&d.open}" in src
+    assert "function _theatreOnScreen(){const p=$('mc-live'),r=$('mc-live-run');return _curSec()==='mission'&&!!p&&p.style.display!=='none'&&!!r&&r.style.display!=='none'}" in src
     assert "setInterval(()=>{if(_theatreOnScreen())refreshActiveRun()},4000);" in src
     assert "_testAdoptTimer=setInterval(()=>{if(!_implTimer&&_theatreOnScreen())restoreTestRun()},8000);" in src
     assert "_mcRefreshT=setTimeout(missionPoll,4000)" in src, "a burst of bus events is one refresh"
@@ -73,8 +73,8 @@ def test_the_panel_refreshes_a_pages_elements_when_it_opens():
     i = src.index("function nav(sec){")
     nav = src[i:src.index("\n}\n", i)]
     assert "el.tagName.startsWith('VERA-')&&typeof el.refresh==='function'&&el._pollTimer" in nav
-    # The Watch page is a fold of Mission control since slice 7: its fleet polls only while that fold is open.
-    assert "if((ss.length||eq.length)&&_curSec()==='mission'&&$('mc-watch')&&$('mc-watch').open){clearTimeout(window._fleetT)" in src
+    # The Watch page's fleet is the Agents table now; its own poller is gone.
+    assert "_fleetT" not in src
     # CI/CD and Review are the Ship page since slice 5: one poller for the
     # table, the full pipeline list's own only while its fold is open.
     assert "if(r.any_live&&$('ship-follow')&&$('ship-follow').checked&&_curSec()==='ship')window._shipT=setTimeout(loadShip,6000)" in src
