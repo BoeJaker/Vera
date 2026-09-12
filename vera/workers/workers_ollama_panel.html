@@ -66,6 +66,7 @@ html.vpb-nav-hosted #secNav{display:none}
 }
 .snav:hover{color:var(--text)}
 .snav.on{border-color:var(--border);background:var(--bg2)}
+.snav[data-pane="overview"].on{color:var(--ok)}
 .snav[data-pane="workers"].on{color:var(--acc)}
 .snav[data-pane="nodes"].on{color:#6fd68b}
 .snav[data-pane="ollama"].on{color:var(--gpu)}
@@ -173,6 +174,23 @@ html.vpb-nav-hosted #secNav{display:none}
 
 /* ── Pane toolbar ── */
 .pane-tb{display:flex;align-items:center;gap:7px;margin-bottom:10px;flex-wrap:wrap}
+/* ── Overview (estate.health) ── */
+.ov-summary{display:flex;align-items:center;gap:10px;padding:9px 12px;margin-bottom:14px;max-width:980px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg1);font-size:11px;color:var(--text)}
+.ov-level{font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;padding:2px 8px;border-radius:var(--radius-sm);border:1px solid currentColor;color:var(--dim2)}
+.ov-level.ok{color:var(--ok)}.ov-level.warn{color:var(--warn)}.ov-level.error{color:var(--err)}
+.ov-sec{margin-bottom:16px;max-width:980px}
+.ov-sec-h{display:flex;align-items:baseline;gap:8px;margin-bottom:4px;font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim2)}
+.ov-time{margin-left:auto;font-weight:400;letter-spacing:0;text-transform:none;color:var(--dim);font-variant-numeric:tabular-nums}
+.ov-facts{margin-bottom:6px;font-family:var(--mono);font-size:9.5px;color:var(--dim);overflow-wrap:anywhere}
+.ov-list{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg1)}
+.ov-list>*+*{border-top:1px solid var(--border)}
+.ov-row{display:grid;grid-template-columns:48px 1fr;gap:10px;padding:6px 10px;font-size:11px;color:var(--text)}
+.ov-sev{padding-top:1px;font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:.8px;text-transform:uppercase}
+.ov-sev.error{color:var(--err)}.ov-sev.warn{color:var(--warn)}.ov-sev.info{color:var(--dim2)}
+.ov-detail{display:block;margin-top:2px;font-size:10px;color:var(--dim2);overflow-wrap:anywhere}
+.ov-clear{padding:6px 10px;font-size:11px;color:var(--ok)}
+.ov-more{padding:5px 10px;font-size:10px;color:var(--dim2);cursor:pointer}
+.ov-more:hover{color:var(--text)}
 .pane-tb-title{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:2px}
 .tb-sep{width:1px;height:15px;background:var(--border2);flex-shrink:0}
 .pane-tb .status-hint{font-size:9px;color:var(--dim2);font-family:var(--mono);margin-left:auto}
@@ -369,7 +387,9 @@ html.vpb-nav-hosted #secNav{display:none}
 <div id="shell">
   <!-- Side navigation -->
   <div id="secNav">
-    <div class="snav on" data-pane="workers" onclick="P.show('workers',this)">Workers</div>
+    <div class="snav on" data-pane="overview" onclick="P.show('overview',this)">Overview</div>
+    <div class="navdiv"></div>
+    <div class="snav" data-pane="workers" onclick="P.show('workers',this)">Workers</div>
     <div class="snav" data-pane="nodes" onclick="P.show('nodes',this)">Nodes</div>
     <div class="navdiv"></div>
     <div class="snav" data-pane="ollama" onclick="P.show('ollama',this)">Ollama</div>
@@ -399,7 +419,21 @@ html.vpb-nav-hosted #secNav{display:none}
     <!-- ════════════════════════════════════════════════════════════════════
          WORKERS PANE
          ════════════════════════════════════════════════════════════════════ -->
-    <div class="pane on" id="pane-workers">
+    <!-- OVERVIEW PANE — is the estate's infrastructure up? (estate.health): the
+         state store, stopped infrastructure containers on the Vera host, and
+         running Proxmox guests that will not start after a reboot. -->
+    <div class="pane on" id="pane-overview">
+      <div class="pane-tb">
+        <span class="pane-tb-title" style="color:var(--ok)">OVERVIEW</span>
+        <span class="tb-sep"></span>
+        <button class="btn sm" onclick="P.ovRefresh()">↻ Check now</button>
+        <span class="status-hint" id="ov-ts"></span>
+      </div>
+      <div class="ov-summary" id="ov-summary"><span class="ov-level">Checking</span><span>Checking the state store, containers and guests…</span></div>
+      <div id="ov-sections"></div>
+    </div>
+
+    <div class="pane" id="pane-workers">
       <div class="pane-tb">
         <span class="pane-tb-title" style="color:var(--acc)">WORKERS</span>
         <span class="tb-sep"></span>
@@ -6032,6 +6066,76 @@ function _mountFrame(id, url){
   if(f && (!f.src || f.src==='about:blank' || f.src==='')) f.src=url;
 }
 
+// ── Overview: estate.health ─────────────────────────────────────────────────
+// One findings list: the state store, stopped infrastructure containers on the
+// Vera host, running Proxmox guests without autostart. Re-checks every 60 s
+// while the pane is open and the page is visible.
+let _ovBusy=false, _ovLast=null;
+const _ovNotesOpen={};
+const _OV_SEV={error:'Error',warn:'Check',info:'Note'};
+function _ovFacts(key,f){
+  f=f||{};
+  if(key==='state_store'){
+    return [f.url, f.version&&('redis '+f.version), f.executable,
+      f.keys!=null&&(Number(f.keys).toLocaleString()+' keys'),
+      f.expected_total&&(f.expected_present+' of '+f.expected_total+' estate keys')].filter(Boolean).join(' · ');
+  }
+  if(key==='containers'&&f.listed!=null){
+    return f.listed+' containers · '+f.not_running+' infrastructure not running · '+f.sandboxes_ignored+' sandboxes ignored';
+  }
+  if(key==='guests'&&f.records!=null){
+    return f.running_checked+' running guests checked · '+f.clusters+' cluster'+(f.clusters===1?'':'s')+' · '+f.records+' record'+(f.records===1?'':'s');
+  }
+  return '';
+}
+function _ovRow(f){
+  return '<div class="ov-row"><span class="ov-sev '+esc(f.severity)+'">'+esc(_OV_SEV[f.severity]||f.severity)+'</span>'
+    +'<span>'+esc(f.message)+(f.detail?'<span class="ov-detail">'+esc(f.detail)+'</span>':'')+'</span></div>';
+}
+function ovRender(r){
+  const sum=$('ov-summary'), box=$('ov-sections'); if(!sum||!box) return;
+  if(!r||r.error||!r.sections){
+    sum.innerHTML='<span class="ov-level error">Unavailable</span><span>'+esc((r&&r.error)||'The estate health check did not answer.')+'</span>';
+    txt('ov-ts','');
+    return;
+  }
+  _ovLast=r;
+  const c=r.counts||{}, need=(c.error||0)+(c.warn||0);
+  const words={ok:'All clear',warn:'Needs a look',error:'Something is down'};
+  sum.innerHTML='<span class="ov-level '+esc(r.level)+'">'+esc(words[r.level]||r.level)+'</span><span>'
+    +(need?(need+' finding'+(need===1?' needs':'s need')+' attention'):'Nothing checked needs attention')
+    +(c.info?(' · '+c.info+' note'+(c.info===1?'':'s')):'')+'</span>';
+  let h='';
+  for(const key of ['state_store','containers','guests']){
+    const s=r.sections[key]; if(!s) continue;
+    const all=s.findings||[], loud=all.filter(f=>f.severity!=='info'), notes=all.filter(f=>f.severity==='info');
+    const ms=s.elapsed_ms;
+    h+='<section class="ov-sec"><div class="ov-sec-h"><span>'+esc(s.label)+'</span><span class="ov-time">'
+      +(ms==null?'':(ms<1000?ms+' ms':(ms/1000).toFixed(1)+' s'))+'</span></div>';
+    const facts=_ovFacts(key,s.facts);
+    if(facts) h+='<div class="ov-facts">'+esc(facts)+'</div>';
+    h+='<div class="ov-list">'+(loud.length?loud.map(_ovRow).join(''):'<div class="ov-clear">No problems found.</div>');
+    if(notes.length){
+      h+=(_ovNotesOpen[key]?notes.map(_ovRow).join(''):'')
+        +'<div class="ov-more" onclick="P.ovNotes(\''+key+'\')">'
+        +(_ovNotesOpen[key]?'Hide notes':('Show '+notes.length+' note'+(notes.length===1?'':'s')))+'</div>';
+    }
+    h+='</div></section>';
+  }
+  box.innerHTML=h;
+  txt('ov-ts','checked '+_fmtDateTime(r.checked_at)+(r.cached?' · cached':''));
+}
+async function ovLoad(refresh){
+  if(_ovBusy) return;
+  _ovBusy=true;
+  if(refresh) txt('ov-ts','checking…');
+  try{ ovRender(await api('/estate/health'+(refresh?'?refresh=true':''))); }
+  finally{ _ovBusy=false; }
+}
+function ovNotes(key){ _ovNotesOpen[key]=!_ovNotesOpen[key]; if(_ovLast) ovRender(_ovLast); }
+setInterval(()=>{ const p=$('pane-overview'); if(p&&p.classList.contains('on')&&document.visibilityState==='visible') ovLoad(false); }, 60000);
+setTimeout(()=>{ const p=$('pane-overview'); if(p&&p.classList.contains('on')) ovLoad(false); }, 0);
+
 function showPane(name, el){
   if(name==='perf'){ // legacy alias — Perf now lives as a sub-tab of Observe
     showPane('observe', document.querySelector('.snav[data-pane="observe"]'));
@@ -6048,6 +6152,7 @@ function showPane(name, el){
   document.querySelectorAll('.pane').forEach(p=>p.classList.remove('on'));
   const pane=$('pane-'+name);
   if(pane) pane.classList.add('on');
+  if(name==='overview'){ ovLoad(false); }
   if(name==='ollama'){ loadEmbedCfg(); }
   if(name==='docker'){ if(!Object.keys(_dkrHosts||{}).length) _dkrInitHosts(); dkrWorkerList(); sbxRefresh(); stkRefresh(); if(_dkrHostId) dkrRefresh(); }
   if(name==='proxmox'){ if(_pmxInited){ if(_pmxCur) pmxRefresh(); } else pmxInit(); nmTick(true); }
@@ -7834,7 +7939,7 @@ function _bmRender(rec){
 
 // ── Public API ───────────────────────────────────────────────────────────────
 return {
-  show: showPane, refresh, autoToggle,
+  show: showPane, ovRefresh: ()=>ovLoad(true), ovNotes, refresh, autoToggle,
   wkFilter, wkSel, wkDrain, wkRemoveStale,
   wkSubTab, wkjTab, wkjFilter, oljTab, oljFilter,
   setStrat, olPing, olPingAll, olTogglePin, olTestGenerate,
