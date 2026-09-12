@@ -629,6 +629,7 @@ header .hdr-right{margin-left:0;gap:6px}
 #hdrSheet .hs-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 #hdrSheet .hs-k{font-size:var(--label-size,9px);text-transform:uppercase;letter-spacing:.09em;font-weight:600;color:var(--t3,var(--dim,#6b7280));width:100%}
 #hdrSheet .url-input{flex:1;min-width:0;background:var(--bg,var(--bg0,#0e0f12));border:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));border-radius:var(--r-sm,6px);color:var(--t1,var(--text,#d8dce4));font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:10.5px;padding:5px 8px}
+#hdrSheet #themeBtn{display:none}
 #hdrSheet .conn-label{display:block;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;color:var(--t2,var(--dim2,#8a92a0));max-width:none}
 /* the tab bar */
 .tabs{height:40px;align-items:flex-end;gap:4px;padding:0 16px;background:transparent;border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)))}
@@ -640,7 +641,7 @@ header .hdr-right{margin-left:0;gap:6px}
 .tab.open::after{content:'';position:absolute;top:auto;right:auto;left:11px;right:11px;bottom:0;width:auto;height:2px;border-radius:2px 2px 0 0;background:var(--ac2,var(--acc2,#8fb87a));opacity:.9}
 .tab .ct{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280));background:var(--s3,var(--bg3,#22262e));border-radius:var(--r-pill,99px);padding:1px 6px}
 .tab .who{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:8px;color:var(--ac,var(--acc,#5a9e8f));margin-left:2px;border:1px solid color-mix(in srgb,var(--ac,var(--acc,#5a9e8f)) 40%,transparent);border-radius:99px;padding:0 5px}
-.tab.more{color:var(--t3,var(--dim,#6b7280));font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:10px}
+.tab.more{order:9;color:var(--t3,var(--dim,#6b7280));font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:10px}
 .tab .tab-close{color:var(--t3,var(--dim,#6b7280))}
 .tab-controls{order:10;margin-left:auto;margin-right:0;padding:0 0 4px;border-right:none;gap:1px}
 .tab-ctrl-btn{width:26px;height:26px;border-radius:var(--r-sm,6px);color:var(--t3,var(--dim,#6b7280));font-size:12px}
@@ -1803,7 +1804,7 @@ function _harnessChromeMount(){
   if(document.body.dataset.designChrome) return; document.body.dataset.designChrome='1';
   // the ⋯ sheet: the URL, Connect, ↻ and the metric picker move as the same elements
   const sheet=document.getElementById('hdrSheet'), right=document.querySelector('header .hdr-right'), cfg=document.getElementById('hdrMetricCfgWrap'), conn=document.getElementById('connLabel');
-  if(sheet&&right){ const r1=document.createElement('div'); r1.className='hs-row'; r1.innerHTML='<span class="hs-k">Connection</span>'; if(conn) r1.appendChild(conn); while(right.firstChild){ const c=right.firstChild; if(c.id==='themeBtn'){ c.remove(); continue; } r1.appendChild(c); } sheet.appendChild(r1); right.style.display='none';
+  if(sheet&&right){ const r1=document.createElement('div'); r1.className='hs-row'; r1.innerHTML='<span class="hs-k">Connection</span>'; if(conn) r1.appendChild(conn); while(right.firstChild){ r1.appendChild(right.firstChild); } sheet.appendChild(r1); right.style.display='none';
     if(cfg){ const r2=document.createElement('div'); r2.className='hs-row'; r2.innerHTML='<span class="hs-k">Header metrics</span>'; r2.appendChild(cfg); sheet.appendChild(r2); } }
   document.addEventListener('click', ev=>{ const s=document.getElementById('hdrSheet'); if(s&&s.classList.contains('on')&&!s.contains(ev.target)&&!(ev.target.closest&&ev.target.closest('#hdrMore'))) _hdrSheet(false); });
   // live events fold away unless you left them open

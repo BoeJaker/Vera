@@ -33,7 +33,7 @@ def test_the_header_and_tab_bar_carry_the_boards_pieces_and_every_old_control():
               'id="backendUrl"', 'onclick="connect()">Connect</button>', 'onclick="refreshAll()">↻</button>', 'id="hdrMetricBtn"', 'id="evSidebar"', 'id="evFeed"', 'id="dashHealthStrip"'):
         assert s in HTML, s
     fn = HTML[HTML.index("function _harnessChromeMount(){"):HTML.index("if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', ()=>{ try{ _harnessChromeMount(); }")]
-    assert "r1.appendChild(c); } sheet.appendChild(r1); right.style.display='none';" in fn, "the connection controls move as the same elements"
+    assert "while(right.firstChild){ r1.appendChild(right.firstChild); } sheet.appendChild(r1); right.style.display='none';" in fn, "the connection controls (the theme button too) move as the same elements"
     assert "if(!evOpen&&!_evSidebarCollapsed) toggleEvSidebar();" in fn, "live events fold away by default"
     assert "localStorage.setItem('vera:harness:events'" in fn
 
