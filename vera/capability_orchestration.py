@@ -9812,6 +9812,7 @@ async def lifespan(app: FastAPI):
         # printer/printer_capabilities.py retired -> converged into business/thermal_printer_capabilities.py
         os.path.join(_here, "workers/docker_capabilities.py"),
         os.path.join(_here, "workers/workers.py"),
+        os.path.join(_here, "estate/estate_health_capabilities.py"),
         os.path.join(_here, "workers/nodes_capabilities.py"),
         os.path.join(_here, "remote/remote_capabilities.py"),
         os.path.join(_here, "remote/workspace_capabilities.py"),

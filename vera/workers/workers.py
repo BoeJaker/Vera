@@ -496,7 +496,7 @@ register_ui(
     '<div id="panel-wol" style="height:100%;overflow:hidden;background:var(--bg0)"></div>',
     _WOL_MOUNT_JS,
     ui_caps=[
-        "obs.cluster", "ollama.instances", "ollama.ping",
+        "estate.health", "obs.cluster", "ollama.instances", "ollama.ping",
         "ollama.pull", "ollama.generate", "cluster.nodes",
         "cluster.jobs", "worker.init", "worker.sync", "worker.drain",
         "cluster.job.stop",
