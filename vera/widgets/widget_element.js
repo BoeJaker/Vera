@@ -50,7 +50,7 @@
   // what this file draws today (the rest of the catalogue resolves through ALIAS or says so)
   const DRAWN = { trace: 'series', radial: 'level', counter: 'level', bar: 'level', bars: 'values', thermo: 'values', heat: 'values', matrix: 'matrix', donut: 'parts',
                   stack: 'parts', pills: 'values', log: 'events', lane: 'events', table: 'items', files: 'items', list: 'items', checklist: 'items', stepper: 'stages',
-                  calendar: 'calendar', string: 'string', kv: 'values', pipes: 'graph', scatter: 'points', panel: 'panel', composite: 'composite' };
+                  calendar: 'calendar', string: 'string', kv: 'values', pipes: 'graph', context_graph: 'graph', scatter: 'points', panel: 'panel', composite: 'composite' };
   const canon = (form) => { const f = String(form || '').toLowerCase(); return DRAWN[f] ? f : (ALIAS[f] || f); };
 
   /* ── the data a form draws ────────────────────────────────────────────── */
@@ -86,7 +86,7 @@
     if (Array.isArray(x)) return x;
     if (typeof x === 'object') {
       if ((form === 'radial' || form === 'counter' || form === 'bar') && typeof x.value === 'number') return x;
-      if (form === 'pipes' && Array.isArray(x.nodes)) return x;
+      if ((form === 'pipes' || form === 'context_graph') && Array.isArray(x.nodes)) return x;
       if (form === 'stepper' && (Array.isArray(x.stages) || Array.isArray(x.steps))) return x;
       const ks = Object.keys(x); if ((form === 'thermo' || form === 'heat' || form === 'bars' || form === 'donut' || form === 'pills' || form === 'kv' || form === 'stack') && ks.length >= 2 && ks.every((k) => typeof x[k] === 'number')) return x;
       for (const k of ['data', 'result', 'items', 'rows', 'points', 'series', 'history', 'values', 'entries', 'results']) if (x[k] != null) { const f = formByShape(x[k], depth + 1); if (f) return dataFor(x[k], form, depth + 1); }
@@ -230,6 +230,30 @@
     const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]); const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys), W = 300;
     return '<svg class="vw-svg" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="height:' + H + 'px">' + pts.slice(0, 400).map((p) => '<circle cx="' + (((p[0] - x0) / ((x1 - x0) || 1)) * (W - 12) + 6).toFixed(1) + '" cy="' + ((H - 6) - ((p[1] - y0) / ((y1 - y0) || 1)) * (H - 12)).toFixed(1) + '" r="' + Math.max(2, Math.min(8, p[2] || 3)) + '" fill="var(--acc,#5a9e8f)" fill-opacity=".7"/>').join('') + '</svg>';
   };
+  // the CONTEXT GRAPH (the chat's own graph, the Graph board): a lane per family — context · memory · loop · plan ·
+  // canvas — its members scattered by relevance (left = most relevant), hollow where related but not injected, the
+  // relations drawn between them. Data: {nodes:[{id, label, lane?, kind?, source?, score, col?, included?}],
+  // rels:[{from, to, kind}]}. S–L draw this mini graph; XL hands the data to the full <vera-context-graph> (hydrate).
+  const CG_LANES = [['context', 'context', 'var(--dv1,#a78bfa)'], ['memory', 'memory', 'var(--acc2,#5ec9a0)'], ['loop', 'loop', 'var(--acc,#5a9e8f)'], ['plan', 'plan', 'var(--dim,#8a92a0)'], ['canvas', 'canvas', 'var(--dv2,#c9955a)']];
+  const cgLane = (n) => { if (n.lane) return String(n.lane); const k = String(n.kind || n.source || '').toLowerCase(); if (/memory|recall/.test(k)) return 'memory'; if (/loop|step|run|cap$/.test(k)) return 'loop'; if (/plan|goal/.test(k)) return 'plan'; if (/canvas|land|pin/.test(k)) return 'canvas'; return 'context'; };
+  R.context_graph = (d, H, opts) => {
+    opts = opts || {}; const nodes = ((d && d.nodes) || []).filter((n) => n && (n.id || n.label)).slice(0, 60); const rels = ((d && (d.rels || d.links || d.edges)) || []).slice(0, 120);
+    if (!nodes.length) return EMPTY('no context yet');
+    if (opts.size === 'xl' && opts.full !== false) return '<div class="vw-cgfull" data-cg="' + esc(JSON.stringify({ nodes, rels })) + '" style="position:relative;height:100%;min-height:' + Math.max(H, 220) + 'px"><small class="wempty">context graph · ' + nodes.length + ' records</small></div>';
+    const idOf = (n) => String(n.id || n.label); const laneOf = {}; nodes.forEach((n) => { laneOf[idOf(n)] = cgLane(n); });
+    const lanes = CG_LANES.filter((L) => nodes.some((n) => cgLane(n) === L[0])); const LH = Math.max(22, Math.floor((H - 4) / Math.max(1, lanes.length)));
+    const pos = {}; let html = '<div class="vw-cg" style="position:relative;height:' + H + 'px;overflow:hidden;font-family:var(--mono,ui-monospace,monospace)">';
+    lanes.forEach((L, li) => { const top = 2 + li * LH; const members = nodes.filter((n) => cgLane(n) === L[0]);
+      html += '<div style="position:absolute;left:0;right:0;top:' + top + 'px;height:' + LH + 'px;border-top:1px dashed color-mix(in srgb,' + L[2] + ' 35%,transparent)"><span style="position:absolute;right:4px;top:1px;font-size:7.5px;letter-spacing:.1em;text-transform:uppercase;color:' + L[2] + ';opacity:.8">' + esc(L[1]) + ' · ' + members.length + '</span></div>';
+      members.forEach((n, i) => { const sc = Math.max(0, Math.min(1, +(n.score == null ? 0.5 : n.score))); const x = 5 + (1 - sc) * 82; const y = top + 9 + (i % 2) * Math.max(6, LH - 16) * 0.55 + (LH > 30 ? 4 : 0); pos[idOf(n)] = { x, y, col: n.col || L[2] }; });
+    });
+    html += '<svg viewBox="0 0 100 ' + H + '" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none">' + rels.map((e) => { const a = pos[String(e.from)], b = pos[String(e.to)]; if (!a || !b) return ''; const k = String(e.kind || e.label || 'cite').toLowerCase(); return '<line x1="' + a.x.toFixed(1) + '" y1="' + a.y.toFixed(1) + '" x2="' + b.x.toFixed(1) + '" y2="' + b.y.toFixed(1) + '" stroke="' + (laneOf[String(e.from)] === 'memory' || laneOf[String(e.to)] === 'memory' ? 'var(--acc2,#5ec9a0)' : 'var(--dim2,#8a92a0)') + '" stroke-opacity=".55" stroke-width="1" vector-effect="non-scaling-stroke"><title>' + esc(k) + '</title></line>'; }).join('') + '</svg>';
+    const labels = opts.labels === true || opts.size === 'l';
+    nodes.forEach((n) => { const p = pos[idOf(n)]; if (!p) return; const ghost = n.included === false; const sc = +(n.score == null ? 0.5 : n.score);
+      html += '<span title="' + esc((n.label || n.id) + ' · ' + cgLane(n) + ' · relevance ' + sc.toFixed(2) + (ghost ? ' · related, not injected' : '')) + '" style="position:absolute;left:' + p.x.toFixed(1) + '%;top:' + p.y.toFixed(1) + 'px;width:9px;height:9px;border-radius:50%;transform:translate(-50%,-50%);box-shadow:inset 0 0 0 1.5px ' + p.col + ';background:' + (ghost ? 'transparent' : 'color-mix(in srgb,' + p.col + ' 32%,transparent)') + '"></span>'
+        + (labels ? '<span style="position:absolute;left:' + p.x.toFixed(1) + '%;top:' + (p.y + 6).toFixed(1) + 'px;transform:translateX(-50%);font-size:7.5px;color:var(--dim2,#8a92a0);white-space:nowrap;max-width:90px;overflow:hidden;text-overflow:ellipsis">' + esc(String(n.label || n.id).slice(0, 18)) + '</span>' : ''); });
+    return html + '</div>';
+  };
   R.pipes = (d) => {
     // {nodes, links} → the ONE diagram renderer (<vera-mermaid>) through a slot hydrate() fills when the element is defined
     const nodes = ((d && d.nodes) || []).slice(0, 40), links = ((d && (d.links || d.edges)) || []).slice(0, 80);
@@ -255,7 +279,7 @@
   };
 
   /* ── draw at a size: the composition around the form ─────────────────── */
-  const GLYPH = { trace: '∿', radial: '◔', counter: '123', bar: '▬', bars: '▥', thermo: '≣', heat: '▦', matrix: '▦', donut: '◑', stack: '▤', pills: '◦', log: '≡', lane: '≡', table: '▦', files: '⊞', list: '≡', checklist: '☑', stepper: '⋮', calendar: '▦', string: '¶', kv: '≔', pipes: '⌥', scatter: '⁘', panel: '▭', composite: '⊞' };
+  const GLYPH = { context_graph: '◎', trace: '∿', radial: '◔', counter: '123', bar: '▬', bars: '▥', thermo: '≣', heat: '▦', matrix: '▦', donut: '◑', stack: '▤', pills: '◦', log: '≡', lane: '≡', table: '▦', files: '⊞', list: '≡', checklist: '☑', stepper: '⋮', calendar: '▦', string: '¶', kv: '≔', pipes: '⌥', scatter: '⁘', panel: '▭', composite: '⊞' };
   function draw(form, data, size, opts) {
     opts = opts || {}; const f0 = String(form || ''); const f = canon(f0); size = SIZES.includes(size) ? size : 'm';
     const H = opts.height || HEIGHT[size] || 70;
@@ -264,7 +288,7 @@
     if (size === 'xs') return '<span class="vw-xs" title="' + esc(opts.title || f0) + '"><i>' + (GLYPH[f] || '▢') + '</i>' + (figure(f, data) || '—') + '</span>';
     if (size === 's') return '<span class="vw-chip" title="' + esc(opts.title || f0) + '"><i>' + (GLYPH[f] || '▢') + '</i><b>' + (figure(f, data) || '—') + '</b>' + (opts.title ? '<small>' + esc(opts.title) + '</small>' : '') + '</span>';
     if (d == null && f !== 'panel' && f !== 'composite') return EMPTY('no data yet');
-    let body; try { body = R[f](d, H, opts); } catch (e) { body = EMPTY('could not draw ' + f0 + ': ' + (e && e.message || e)); }
+    let body; try { body = R[f](d, H, Object.assign({ size: size }, opts)); } catch (e) { body = EMPTY('could not draw ' + f0 + ': ' + (e && e.message || e)); }
     if (size === 'm' || opts.bare) return body;
     // L: the form plus its detail list beside it; XL: the form, its table, its log
     const kv = keyed(d).slice(0, 8); const rw = rows(d);
@@ -307,9 +331,14 @@
   }
   // the pipes form's slots become <vera-mermaid> when that element is defined
   function hydrate(root) {
-    const slots = (root || document).querySelectorAll ? (root || document).querySelectorAll('.vw-mm[data-mm-code]:not([data-live])') : [];
-    if (!slots.length || !(window.customElements && customElements.get('vera-mermaid'))) return 0;
-    let n = 0;
+    const R0 = root || document; let n = 0;
+    // the MAX context graph inside a widget (XL): the record's data feeds the chat's own element once it is defined
+    const cgs = R0.querySelectorAll ? R0.querySelectorAll('.vw-cgfull[data-cg]:not([data-live])') : [];
+    if (cgs.length && window.customElements && customElements.get('vera-context-graph')) cgs.forEach((slot) => { slot.dataset.live = '1'; let d = {}; try { d = JSON.parse(slot.dataset.cg || '{}'); } catch (_) {}
+      const el = document.createElement('vera-context-graph'); el.style.cssText = 'position:absolute;inset:0'; slot.innerHTML = ''; slot.appendChild(el);
+      try { el.setContext((d.nodes || []).map((x) => Object.assign({ source: x.source || x.lane || 'context' }, x)), (d.rels || d.edges || []).map((e) => ({ from: e.from, to: e.to, label: e.kind || e.label || '' })), { focus: (d.nodes || []).filter((x) => x.included !== false).map((x) => x.id) }); } catch (_) {} n++; });
+    const slots = R0.querySelectorAll ? R0.querySelectorAll('.vw-mm[data-mm-code]:not([data-live])') : [];
+    if (!slots.length || !(window.customElements && customElements.get('vera-mermaid'))) return n;
     slots.forEach((slot) => { slot.dataset.live = '1'; const el = document.createElement('vera-mermaid'); el.setAttribute('bare', ''); el.setAttribute('fill', ''); slot.innerHTML = ''; slot.appendChild(el); try { el.render(slot.dataset.mmCode); } catch (_) {} n++; });
     return n;
   }

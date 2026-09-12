@@ -51,15 +51,31 @@ def test_the_header_has_explode_and_its_modes_and_the_scene_takes_the_transcript
     assert "_xplEl.addEventListener('vera:xpl:turn', ev=>{ const mid=(ev.detail||{}).mid||''; if(mid){ _grFocusMid=mid;" in HTML, "a station picked is the turn in focus"
 
 
+def test_pass_b_the_context_graph_layer_is_a_widget_form_no_thinking_node_images_per_tier():
+    s = _fn("_xplScene")
+    assert "if(b.querySelector('.think-throb')) return '';" in s and "c.querySelectorAll('.think-throb,.think-box,.cap-dot').forEach(x=>x.remove());" in s, "the thinking message is never a node"
+    assert "if(!body||body.querySelector('.think-throb')) return; const made=cur.made;" in s
+    assert "kind:'image', src}" in s and "el.closest('.sd-img,.cap-imgs')?'image · diffusion':'image'" in s, "images travel with their source"
+    assert "_TURN_RELS[mid]=_xplRels();" in HTML and "function _xplRels(){" in HTML and "const _xplCtxCard=(n)=>({id:n.id, n:n.label||n.id," in HTML
+    assert "_xplEl.dataset.den=(document.documentElement.getAttribute('data-den')||'full').toLowerCase();" in HTML and "try{ if(_xpl.on) _xplRefresh(); }catch(_){}   // the scene's images follow the tier" in HTML
+    assert "{ key: 'graph', name: 'context graph', sub: 'where it came from', col: 'var(--xp-dv1)', kind: 'graph' }," in EL
+    assert "root.VeraWidget.draw('context_graph', { nodes: g.nodes, rels: g.rels }, 'm', { height: H, bare: true, labels: true, full: false })" in EL, "the mini graph is the registry's form"
+    assert 'data-r="scrub"' in EL and "ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight'" in EL, "the timeline scrub"
+    assert 'vera-exploded[data-den="hover"] .xp-it:hover .xp-img' in EL and 'vera-exploded[data-den="zen"] .xp-it.open .xp-img' in EL
+    WE = _read("vera", "widgets", "widget_element.js"); WR = _read("vera", "widgets", "widget_record.py")
+    assert "R.context_graph = (d, H, opts) => {" in WE and "context_graph: 'graph'" in WE and "'.vw-cgfull[data-cg]:not([data-live])'" in WE, "the form draws at every size; XL hands the data to the full element"
+    assert '_F("context_graph", "graph", glyph="context_graph", options=("lanes", "labels")),' in WR, "the form is in the catalogue"
+
+
 def test_the_scene_is_built_from_what_the_chat_has():
     s = _fn("_xplScene")
-    assert "cur={mid, who:'you', t:tm(w), text:txt(w).slice(0,160), read:(_TURN_READS[mid]||[]).slice(0,12), say:[], made:[], land:(_TURN_LAND[mid]||[]).slice(0,12)}" in s
+    assert "cur={mid, who:'you', t:tm(w), text:txt(w).slice(0,160), read:(_TURN_READS[mid]||[]).slice(0,12), rel:(_TURN_RELS[mid]||[]).slice(0,80), say:[], made:[], land:(_TURN_LAND[mid]||[]).slice(0,12)}" in s
     assert "if(!cur.reply){ cur.reply=txt(w).slice(0,160);" in s, "the reply folds into the question's station"
-    for sel in (".cap-inline", ".art-card", "vera-widget", "vera-mermaid,.mermaid,pre.mermaid", "pre code", "vera-agent-loop-output", "img:not(.art-card img)"):
+    for sel in (".cap-inline", ".art-card", "vera-widget", "vera-mermaid,.mermaid,pre.mermaid", "pre code", "vera-agent-loop-output", "img"):
         assert "body.querySelectorAll('%s')" % sel in s, sel
     assert "'.pa-atts .pa-att b'" in s, "attachments the question carried are what it read"
     assert "last.read=CTX_NODES.filter(n=>n.included!==false).slice(0,12).map(_xplCtxCard)" in s, "the newest question reads the live context"
-    assert "_xplRecordReads(uMsg.mid);\n    _paDecorate(uMsg.body, uCtx);" in HTML, "what a question read is recorded when it is sent"
+    assert "_xplRecordReads(uMsg.mid);\n    _cvRelMid=uMsg.mid; _cvRelText=msg;\n    _paDecorate(uMsg.body, uCtx);" in HTML, "what a question read is recorded when it is sent"
     assert "(_TURN_LAND[mid]=_TURN_LAND[mid]||[]).push(" in _fn("_wPin"), "what a turn pinned to the canvas is recorded"
     for name in ("explode", "explodeMode", "_xplScene", "_xplRefresh"):
         assert re.search(r"\n    [^\n]*\b%s," % name, HTML), name + " is exported on CH"
