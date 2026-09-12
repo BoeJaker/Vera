@@ -73,6 +73,12 @@ import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import (
     APP, capability, emit_event, now_iso, register_ui,
 )
+from Vera.vera.proxmox.pxstore_attach_core import (
+    DEFAULT_CT_PATH as _ATTACH_CT_PATH,
+    is_token_bindmount_refusal as _is_token_refusal,
+    mp_value as _mp_value,
+    pct_set_command as _pct_set_command,
+)
 
 log = logging.getLogger("vera.pxstore")
 
@@ -1137,16 +1143,19 @@ def _next_mp_index(disks: Dict[str, str]) -> int:
     description="Bind-mount a subdir of the central store into an LXC container "
                 "(read-only by default) so guests share one copy of models "
                 "instead of replicating them. Uses the next free mpN slot; the "
-                "CT must be RESTARTED for the mount to appear. Inputs: "
-                "cluster_id (str!), node (str!), vmid (int!), subdir "
-                "(str='models/ollama'), ct_path (str='/root/.ollama/models' — "
-                "where it appears inside the CT), ro (bool=true — set false for "
-                "the ONE writer CT that pulls new models). Output: {ok, mp_key, "
-                "host_path, restart_required:true}.",
+                "CT must be RESTARTED for the mount to appear. Proxmox refuses a "
+                "bind-mount mpN from an API token (root@pam only), so on that "
+                "HTTP 403 this falls back to `pct set` over the node's mapped SSH "
+                "host. Inputs: cluster_id (str!), node (str!), vmid (int!), subdir "
+                "(str='models/ollama'), ct_path (str='/.ollama/models' — where it "
+                "appears inside the CT; not /root, which unprivileged CTs cannot "
+                "traverse), ro (bool=true — set false for the ONE writer CT that "
+                "pulls new models). Output: {ok, mp_key, host_path, via "
+                "('api'|'node_shell'), restart_required:true}.",
 )
 async def cap_store_attach(cluster_id: str = "", node: str = "", vmid: int = 0,
                            subdir: str = "models/ollama",
-                           ct_path: str = "/root/.ollama/models",
+                           ct_path: str = _ATTACH_CT_PATH,
                            ro: bool = True, trace_id=None) -> Dict:
     if not (cluster_id and node and vmid):
         return {"error": "cluster_id, node, vmid required"}
@@ -1167,16 +1176,37 @@ async def cap_store_attach(cluster_id: str = "", node: str = "", vmid: int = 0,
             return {"ok": True, "mp_key": k, "host_path": host_path,
                     "already_attached": True, "restart_required": False}
     idx = _next_mp_index({k: v for k, v in cfgd.items() if isinstance(v, str)})
-    val = f"{host_path},mp={ct_path}" + (",ro=1" if ro else "")
-    _d, err = await _pve(rec, "PUT", f"/nodes/{node}/lxc/{vmid}/config",
-                         {f"mp{idx}": val})
+    mp_key = f"mp{idx}"
+    try:
+        val = _mp_value(host_path, ct_path, ro)
+    except ValueError as e:
+        return {"error": str(e)}
+    _d, err = await _pve(rec, "PUT", f"/nodes/{node}/lxc/{vmid}/config", {mp_key: val})
+    via = "api"
     if err:
-        return {"error": err}
+        # A 403 here is Proxmox refusing a bind-mount mpN from an API token
+        # (root@pam only) -- it will never succeed on retry. Anything else is a
+        # real failure, and falling back would only hide it.
+        if not _is_token_refusal(err):
+            return {"error": err}
+        try:
+            cmd = _pct_set_command(vmid, mp_key, val)
+        except ValueError as e:
+            return {"error": str(e)}
+        r = await _node_ssh(cluster_id, node, cmd, timeout=60)
+        if r.get("error") or r.get("rc", 0) != 0:
+            return {"error": "the API refused the bind mount (" + str(err) + ") and "
+                             "the node-shell fallback failed: "
+                             + (r.get("error") or (r.get("stderr") or "")[:300]
+                                or f"rc={r.get('rc')}"),
+                    "hint": "map this node to an SSH host with "
+                            "pxstore.settings.save node_hosts"}
+        via = "node_shell"
     await emit_event({"type": "pxstore.progress", "stage": "store.attach",
                       "message": f"attached {host_path} → CT {vmid}:{ct_path} "
-                                 f"({'ro' if ro else 'rw'}) — restart CT to apply"})
-    return {"ok": True, "mp_key": f"mp{idx}", "host_path": host_path,
-            "ct_path": ct_path, "ro": ro, "restart_required": True}
+                                 f"({'ro' if ro else 'rw'}, via {via}) — restart CT to apply"})
+    return {"ok": True, "mp_key": mp_key, "host_path": host_path,
+            "ct_path": ct_path, "ro": ro, "via": via, "restart_required": True}
 
 
 @capability(
