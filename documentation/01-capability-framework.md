@@ -377,6 +377,15 @@ code-reference scans instead of being guessed from request attribution.
 Declaring an alias does not deprecate or remove it, and telemetry failure cannot
 make the compatibility call fail.
 
+Three older Memory hook functions are deliberate import shims:
+`record_cap_interaction`, `patch_capability_for_memory`, and `patch_new_cap`.
+Activity capture now belongs to the capability wrapper, so all three are no-ops
+and must not wrap a capability again. That does not make their import names safe
+to delete: external-import coverage has not yet been established, and startup
+still calls `patch_capability_for_memory`. The internal startup call should be
+migrated first; the shims remain until stored, configured, runtime, and external
+consumer evidence satisfies the independent removal gate.
+
 - **`interval=0` in the scheduler** fires every second. Don't pass 0 expecting "off" — pass a very large number like 999999, or simply don't call `schedule()`.
 - **`memory="auto"`** is a legacy value, accepted for compatibility, treated as `"on"`.
 - **Don't call `record_cap_interaction` directly** — it's a deprecated no-op kept only so older modules don't crash. Activity recording is handled inside the wrapper now.
