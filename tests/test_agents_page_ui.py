@@ -84,9 +84,30 @@ def test_nothing_on_the_page_is_folded(src):
     assert "<details" not in ag and 'class="fold"' not in ag
     assert ".fold{" not in src and ".fold>" not in src, "the fold CSS went with the last fold"
     cards = re.findall(r'<div class="card"(?: id="([a-z-]+)")?>', ag)
-    assert cards == ["agents-card", ""], "the Agents page is its table's card and the edit queue's grid: %r" % cards
+    assert cards == ["agents-card", "board-lanes-card", ""], \
+        "the Agents page is its table's card, the board by lane, and the edit queue's grid: %r" % cards
     for gone in ("board-body", "board-new", "board-status", "board-fltrepo", "board-fltproj", "board-fltbranch", "cap-new"):
-        assert 'id="%s"' % gone not in src, "the Board's lanes view / the fold-era forms are gone: #%s" % gone
+        assert 'id="%s"' % gone not in src, "the fold-era board view and forms are gone: #%s" % gone
+
+
+def test_the_board_lanes_are_the_pages_infographic(src):
+    """The Board page's lanes view IS an infographic - the work plane by lane,
+    a card per item - and it is on the page, visible, from the page's one
+    call. (Lost in the 2026-09-12 redo, which deleted it with its fold.)"""
+    ag = _section(src, "agents")
+    i = ag.index('id="board-lanes-card"')
+    assert "display:none" not in ag[i - 60:i + 60] and 'id="board-lanes"' in ag and 'id="board-lanes-all"' in ag
+    assert ag.index('id="agents-table"') < i < ag.index('id="editq-grid"'), "under the table, above the edit queue"
+    bl = _fn(src, "renderBoardLanes")
+    assert "_agItems.filter(" in bl and "/board/items" not in bl, "from the page's one call"
+    assert "_LANES.filter(" in bl and "_LANE_COLOR[lane]" in bl
+    assert "agFilter('items','lane','" in bl.replace("\\'", "'"), "a lane's head filters the table"
+    for on_card in ("openBoardItem(", "boardMove(", "boardDispatch(", "boardEdit(", "eid('branch',it.branch", "eid('pipeline',it.pipeline)",
+                    "it.comment_count"):
+        assert on_card in bl, on_card
+    assert "renderBoardLanes();" in _fn(src, "loadAgents")
+    assert "renderBoardLanes()" in _fn(src, "agentsOnChange") and "renderBoardLanes()" in _fn(src, "agFilter"), \
+        "the lanes follow the filter row"
     for gone in ("function loadBoardTab(", "function _fillFilter(", "_boardCtxSeeded", "function boardToggleNew(",
                  "function capToggleNew(", "function loadNotes(", "agents-board", "agents-capacity", "agents-notes"):
         assert gone not in src, gone
