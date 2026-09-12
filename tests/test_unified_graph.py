@@ -52,3 +52,28 @@ def test_the_chats_context_graph_is_its_own_element():
     assert "data-a=\"alledges\"" in EL and "if (!S.allEdges) {" in EL, "the design's All edges toggle"
     assert "data-a=\"collapse\"" in EL and "vera:ctx:collapse" in EL, "Collapse folds the graph back into the quick menu"
     assert "out.families.push({ name: 'memory'" in EL and "out.families.push({ name: 'dag'" in EL and "out.families.push({ name: 'loop'" in EL
+
+
+def test_the_lane_and_the_plan_row_come_from_the_runs_own_events_for_any_run():
+    # pass B: families.js reads the planner's plan, sub-plans, replans and every record kind
+    assert "if (/\\.(plan|replan)$/.test(t) || /master_plan_piece_planned$/.test(t)) {" in FAM and "if (/\\.subplan$/.test(t)) {" in FAM
+    assert "edges.push(edge(pid, id, 'EXECUTED_BY', 'loop'));" in FAM, "the board's EXECUTED_BY — a plan step to the loop steps that ran it"
+    assert "const RECORD = /(assess|verify|ledger|clarif|recover|gate|deliverable|finaliz|finalis|journal|question)/;" in FAM
+    # the element: the run's plan is the row while a run is in the lane; the lane's structure; the runs picker
+    assert "const runPlan = (S.loop && S.loop.length && S.runPlan && S.runPlan.length) ? S.runPlan : [];" in EL
+    assert "(planIsRun ? 'plan · ' : 'goals · ')" in EL and "st === 'run' ? 'mem' : 'exec'" in EL
+    assert "loopStems" in EL and "' pruned'" in EL and "<span class=\"m\">" in EL, "sub-steps, pruned branches, marks"
+    assert "setRuns(list, o) {" in EL and 'data-r="runs"' in EL and "vera:ctx:run" in EL
+    # the chat: the live loop first, else this session's last run replayed from session_state; the picker's run, tailed
+    assert "function _ctxColRuns(force){" in CHAT and "function _ctxColShowRun(sid){" in CHAT
+    assert "/workshop/agent_loop/sessions?limit=40" in _fn("_ctxColRuns") and "/workshop/agent_loop/session_state?session_id=" in _fn("_ctxColShowRun")
+    assert "_reattachLoop(sid, (st.count||events.length), null, null, ev=>{ if(_ctxRunSid===sid&&_ctxCol) _ctxCol.appendLoopEvent(ev); }, ac.signal);" in _fn("_ctxColShowRun")
+    assert "_ctxCol.addEventListener('vera:ctx:run'" in CHAT
+    assert "if(t==='done'||/\\.done$/.test(t)){ _ctxColPlanT=0; _ctxRunsT=0; }" in _fn("_ctxColLoopEv"), "a run ending refreshes the goals and the runs"
+    assert "async function _reattachLoop(sid, since, aloEl, gEl, onEv, signal){" in CHAT and "try{ const ev=JSON.parse(raw); tee(ev); }catch(_){}" in CHAT
+
+
+def _fn(name):
+    i = CHAT.index("function %s(" % name)
+    j = CHAT.find("\n  function ", i + 10)
+    return CHAT[i:j if j > 0 else i + 20000]

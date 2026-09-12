@@ -78,5 +78,20 @@ t('the loop chip folds the lane away', G.compute(Object.assign({}, base, { dag, 
 // All edges
 const gA = G.compute(Object.assign({}, base, { loop: L.steps, stepReads: L.stepReads }), 660, 600), gB = G.compute(Object.assign({}, base, { loop: L.steps, stepReads: L.stepReads, allEdges: true }), 660, 600);
 t('All edges off keeps what touches the prompt; on draws every relation', gA.sedges.filter((e) => e.cls === 'rel').length === 0 && gB.sedges.filter((e) => e.cls === 'rel').length === 2 && gA.cedges.length === gB.cedges.length);
+// pass B: the lane and the plan row from the run's own events; the runs picker
+const R = G.loopFromEvents([{ type: 'agent_loop_v7.triage_start', goal: 'fix boot' }, { type: 'agent_loop_v7.plan', steps: [{ id: 1, title: 'recon' }, { id: 2, title: 'author' }, { id: 3, title: 'test' }] },
+  { type: 'agent_loop_v7.step_start', step_id: 1, title: 'recon' }, { type: 'cap.ok', step_id: 1, tool: 'memory.select', wires: ['v1'] }, { type: 'agent_loop_v7.step_done', step_id: 1, ms: 300 }, { type: 'agent_loop_v6.assess', step_id: 1, ok: true },
+  { type: 'agent_loop_v7.step_start', step_id: 2, title: 'author' }, { type: 'agent_loop_v7.subplan', parent_id: 2, steps: [{ id: '2.1', title: 'read' }, { id: '2.2', title: 'edit' }] },
+  { type: 'agent_loop_v7.step_start', step_id: '2.1', title: 'read' }, { type: 'agent_loop_v7.step_done', step_id: '2.1' }, { type: 'agent_loop_v7.step_start', step_id: '2.2', title: 'edit' }, { type: 'agent_loop_v6.branch_open', step_id: '2.2', branch: 'b1' },
+  { type: 'agent_loop_v7.step_start', step_id: 5, title: 'try b', group: 'b1', parents: ['step:2.2'] }, { type: 'agent_loop_v6.branch_prune', branch: 'b1' }, { type: 'agent_loop_v6.verify', step_id: '2.2', ok: false }]);
+t('loopFromEvents: the run, its plan with the steps that ran each, sub-steps under their parent, branches and marks', R.run && R.run.label === 'fix boot' && R.run.status === 'running' && R.plan.map((p) => p.label + ':' + p.status + ':' + p.steps.join('/')).join(',') === 'recon:ok:0,author:running:1/2/3,test:planned:'
+  && R.steps.length === 5 && R.steps[2].sub === 1 && R.steps[3].sub === 1 && R.steps[0].sub === -1 && R.steps[4].branch === 'b1' && R.steps[4].pruned === true && R.steps[0].marks[0].kind === 'assess' && R.steps[3].marks[0].kind === 'verify' && R.steps[3].marks[0].status === 'fail', JSON.stringify(R.plan));
+const gR = G.compute(Object.assign({}, base, { loop: R.steps, runPlan: R.plan, run: R.run, plan: [{ id: 'goal:g', label: 'a goal', status: 'active' }] }), 660, 600);
+t('the run\'s plan takes the row over the goals, EXECUTED_BY drawn to its loop steps, the running one lit', gR.planNodes.length === 3 && gR.planNodes.map((p) => p.cls).join(',') === 'done,run,pend' && gR.sedges.filter((e) => e.cls === 'exec').length === 1 && gR.sedges.filter((e) => e.cls === 'mem' && /plan step 2 ran as loop step/.test(e.title)).length === 3 && gR.regions.some((r) => r.t === 'plan · 3 steps · 1 done'), JSON.stringify(gR.sedges.map((e) => e.cls + ':' + e.title)));
+t('the lane: sub-steps indented with a stem, the pruned branch dimmed, marks on the rows', gR.loopNodes[2].x === 22 && gR.loopNodes[0].x === 10 && /\bsub\b/.test(gR.loopNodes[2].cls) && gR.loopStems.length === 2 && /pruned/.test(gR.loopNodes[4].cls) && /\bbr\b/.test(gR.loopNodes[4].cls) && gR.loopNodes[0].marks[0].g === '◔' && gR.loopNodes[3].marks[0].g === '✓' && gR.loopNodes[3].marks[0].status === 'fail');
+const gG = G.compute(Object.assign({}, base, { loop: [], runPlan: R.plan, plan: [{ id: 'goal:g', label: 'a goal', status: 'active' }] }), 660, 600);
+t('no run in the lane: the goals are the row', gG.planNodes.length === 1 && gG.regions.some((r) => r.t === 'goals · 1 · 0 done'));
+const gD = G.compute(Object.assign({}, base, { loop: R.steps, runPlan: R.plan, run: Object.assign({}, R.run, { status: 'fail' }) }), 660, 600);
+t('the lane\'s label carries the run\'s status', gD.regions.some((r) => r.t === 'loop · 2 of 5 · failed' && r.col === '#e06c75'));
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

@@ -10,8 +10,12 @@
 
    <vera-context-graph>  API:
      setContext(nodes, edges, {focus:[ids], reads:{mid:[ids]}, stepReads:[[ids]], color:(source)=>css, turn})
-     appendLoopEvent(ev) · setLoopEvents(evs) · setPlan(goals) · view(name) · fit() · positions() · state()
-   events: vera:ctx:rendered {view, tokens, lit} · vera:ctx:pick {id} · vera:ctx:toggle {id} · vera:ctx:focus-turn {mid}
+     appendLoopEvent(ev) · setLoopEvents(evs) · setPlan(goals) · setRuns(list, {current}) · view(name) · fit() · positions() · state()
+   the lane: the run's own plan (.plan / .subplan / .replan) is the row along the top while a run is shown, each
+   plan step wired to the loop steps that ran it; sub-plan steps sit under their parent; branches, pruned branches
+   and the assess · verify · ledger · clarify · recovery · gate · deliverable · finalised records mark their step;
+   a picker lists the runs the host hands it (vera:ctx:run {session_id} asks the host for one)
+   events: vera:ctx:rendered {view, tokens, lit} · vera:ctx:pick {id} · vera:ctx:toggle {id} · vera:ctx:focus-turn {mid} · vera:ctx:run {session_id}
    window.VeraContextGraph = { compute, VIEWS, version } — compute() is pure (node-testable).             */
 (function (root) {
   'use strict';
@@ -32,7 +36,10 @@
     const ghosts = S.related !== false;
     // the chat's other graphs, in this one: the loop lane falls back to the run's DAG steps when no loop is live;
     // the session's memory graph joins the memory arc (below); a family chip folds each away
-    const loop = off.has('loop') ? [] : ((S.loop && S.loop.length) ? S.loop : (S.dag || [])), plan = off.has('plan') ? [] : (S.plan || []);
+    // the plan row: the run's own plan while a run is in the lane (the board's "planned workflow along the top"), else the goals
+    const runPlan = (S.loop && S.loop.length && S.runPlan && S.runPlan.length) ? S.runPlan : [];
+    const planIsRun = runPlan.length > 0;
+    const loop = off.has('loop') ? [] : ((S.loop && S.loop.length) ? S.loop : (S.dag || [])), plan = off.has('plan') ? [] : (planIsRun ? runPlan : (S.plan || []));
     const hasLanes = loop.length > 0 || plan.length > 0;
     const LANE_L = loop.length ? 118 : 0, LANE_T = plan.length ? 52 : 0;
     const PW = Math.max(200, W), PH = Math.max(160, H);
@@ -57,7 +64,7 @@
     const turnKeys = Object.keys(reads);
     const firstRead = (id) => { const ks = readBy(id); return ks.length ? Math.min.apply(null, ks.map((k) => turnKeys.indexOf(k) + 1)) : 0; };
     const isoP = S.isoProj || ((x, y, z) => { const u = x - cxp, v = y - cyp; return { x: cxp + (u - v) * 0.78, y: cyp + 40 + (u + v) * 0.39 - (z || 0) }; });
-    const out = { view, rings: [], spokes: [], sectorLabels: [], cnodes: [], memNodes: [], cedges: [], sedges: [], stems: [], plate: null, regions: [], loopNodes: [], planNodes: [], pos: {}, tokens: 0, lit: 0, hub: { x: cxp, y: cyp, hid: view === 'flow' || view === 'time' } };
+    const out = { view, rings: [], spokes: [], sectorLabels: [], cnodes: [], memNodes: [], cedges: [], sedges: [], stems: [], plate: null, regions: [], loopNodes: [], loopStems: [], planNodes: [], pos: {}, tokens: 0, lit: 0, hub: { x: cxp, y: cyp, hid: view === 'flow' || view === 'time' } };
     // the plot's pan/zoom, for what is drawn OUTSIDE it (the lanes) but joins a record inside it
     const GZ = (S.pan && S.pan.z) || 1, GX = (S.pan && S.pan.x) || 0, GY = (S.pan && S.pan.y) || 0;
     const atP = (p) => ({ x: PW / 2 + (p.x - PW / 2) * GZ + GX, y: PH / 2 + (p.y - PH / 2) * GZ + GY });
@@ -119,17 +126,25 @@
     }
     const lpos = [];
     if (loop.length) {
-      loop.forEach((s, i) => { const y = LANE_T + 22 + i * 44; lpos.push({ x: LANE_L - 12, y, st: s.status });
-        out.loopNodes.push({ i, x: px(10), y: px(y), label: (i + 1) + ' ' + (s.label || s.id), cap: s.cap || '', ms: s.ms || '', cls: (s.status === 'ok' ? 'done' : s.status === 'running' ? 'run' : s.status === 'fail' ? 'fail' : 'pend') + (S.lsel === i ? ' sel' : ''), title: 'loop step ' + (i + 1) + ' · ' + (s.status || 'pending') + (s.cap ? ' · ' + s.cap : '') + ' · click to see what it read' }); });
+      const MARK = { assess: '◔', verify: '✓', ledger: '▤', clarify: '?', recovery: '↺', gate: '⊘', deliverable: '◆', finalised: '■', journal: '✎', question: '?' };
+      loop.forEach((s, i) => { const y = LANE_T + 22 + i * 44; const sub = s.sub != null && s.sub >= 0; lpos.push({ x: LANE_L - 12, y, st: s.status });
+        const marks = (s.marks || []).map((m) => ({ g: MARK[m.kind] || '·', kind: m.kind, status: m.status, label: m.label || m.kind }));
+        out.loopNodes.push({ i, x: px(sub ? 22 : 10), y: px(y), label: (i + 1) + ' ' + (s.label || s.id), cap: s.cap || '', ms: s.ms || '', marks, branch: s.branch || '',
+          cls: (s.status === 'ok' ? 'done' : s.status === 'running' ? 'run' : s.status === 'fail' ? 'fail' : 'pend') + (S.lsel === i ? ' sel' : '') + (sub ? ' sub' : '') + (s.pruned ? ' pruned' : '') + (s.branch && !/^sub:/.test(s.branch) ? ' br' : ''),
+          title: 'loop step ' + (i + 1) + ' · ' + (s.status || 'pending') + (s.cap ? ' · ' + s.cap : '') + (sub ? ' · a sub-plan step under step ' + (s.sub + 1) : '') + (s.branch && !/^sub:/.test(s.branch) ? ' · branch ' + s.branch + (s.pruned ? ' (pruned)' : '') : '') + (marks.length ? ' · ' + marks.map((m) => m.kind + ' ' + m.status).join(', ') : '') + ' · click to see what it read' });
+        if (sub && lpos[s.sub]) out.loopStems.push({ x: px(16), y: px(lpos[s.sub].y + 18), h: px(Math.max(0, y - lpos[s.sub].y - 18)) }); });
       const done = loop.filter((s) => s.status === 'ok').length;
-      out.regions.push({ x: px(10), y: px(LANE_T - 8 < 2 ? 2 : LANE_T - 8), col: 'var(--cg-ac)', t: 'loop · ' + done + ' of ' + loop.length });
+      const runSt = S.run && S.loop && S.loop.length ? S.run.status : '';
+      out.regions.push({ x: px(10), y: px(LANE_T - 8 < 2 ? 2 : LANE_T - 8), col: runSt === 'fail' ? '#e06c75' : 'var(--cg-ac)', t: 'loop · ' + done + ' of ' + loop.length + (runSt === 'fail' ? ' · failed' : runSt === 'ok' ? ' · done' : '') });
     }
     if (plan.length) {
       const pw = (PW - LANE_L - 40) / plan.length;
-      plan.forEach((p, i) => { const x = LANE_L + 20 + pw * (i + 0.5), st = p.status === 'done' || p.status === 'complete' || p.status === 'completed' ? 'done' : p.status === 'running' || p.status === 'active' || p.status === 'in_progress' ? 'run' : 'pend';
-        out.planNodes.push({ x: px(x), y: px(18), lx: px(x), ly: px(i % 2 ? 44 : 32), label: p.label || p.id, cls: st, title: 'plan step ' + (i + 1) + ' · ' + (p.label || p.id) + ' · ' + (p.status || '') });
-        if (st === 'run' && loop.length) { const ri = loop.findIndex((s) => s.status === 'running'); const b = lpos[ri >= 0 ? ri : loop.length - 1]; if (b) edge(out.sedges, { x, y: 26 }, b, 'var(--cg-ac)', 'mem', 'plan step ' + (i + 1) + ' → the loop step running it'); } });
-      out.regions.push({ x: px(LANE_L + 20), y: px(1), col: 'var(--cg-t2)', t: 'plan · ' + plan.length + ' steps · ' + plan.filter((p) => /done|complete/.test(p.status || '')).length + ' done' });
+      plan.forEach((p, i) => { const x = LANE_L + 20 + pw * (i + 0.5), st = /^(done|complete|completed|ok)$/.test(p.status || '') ? 'done' : /^(running|active|in_progress)$/.test(p.status || '') ? 'run' : p.status === 'fail' ? 'fail' : 'pend';
+        out.planNodes.push({ x: px(x), y: px(18), lx: px(x), ly: px(i % 2 ? 44 : 32), label: p.label || p.id, cls: st, title: 'plan step ' + (i + 1) + ' · ' + (p.label || p.id) + ' · ' + (p.status || '') + (planIsRun && (p.steps || []).length ? ' · ran as loop step' + ((p.steps || []).length > 1 ? 's ' : ' ') + p.steps.map((si) => si + 1).join(', ') : '') });
+        // the board's EXECUTED_BY: a plan step to the loop steps that ran it (the running one lit); the goals' row wires only the running goal to the running step
+        if (planIsRun) (p.steps || []).forEach((si) => { const b = lpos[si]; if (b) edge(out.sedges, { x, y: 26 }, b, st === 'run' ? 'var(--cg-ac)' : 'var(--cg-bd2)', st === 'run' ? 'mem' : 'exec', 'plan step ' + (i + 1) + ' ran as loop step ' + (si + 1)); });
+        else if (st === 'run' && loop.length) { const ri = loop.findIndex((s) => s.status === 'running'); const b = lpos[ri >= 0 ? ri : loop.length - 1]; if (b) edge(out.sedges, { x, y: 26 }, b, 'var(--cg-ac)', 'mem', 'plan step ' + (i + 1) + ' → the loop step running it'); } });
+      out.regions.push({ x: px(LANE_L + 20), y: px(1), col: 'var(--cg-t2)', t: (planIsRun ? 'plan · ' : 'goals · ') + plan.length + (planIsRun ? ' steps · ' : ' · ') + plan.filter((p) => /^(done|complete|completed|ok)$/.test(p.status || '')).length + ' done' });
     }
     // relations INSIDE the graph: what cites what (the context's own edges)
     (S.edges || []).forEach((e) => { const a = out.pos[e.from], b = out.pos[e.to]; if (!a || !b) return; const lit = a.lit && b.lit; const memRel = a.source === 'memory' || b.source === 'memory';
@@ -154,7 +169,7 @@
     if (nMem) out.families.push({ name: 'memory', col: color('memory'), n: nMem, on: !off.has('memory') });
     if ((S.dag || []).length && !(S.loop && S.loop.length)) out.families.push({ name: 'dag', col: 'var(--cg-ac)', n: S.dag.length, on: !off.has('loop') });
     if (S.loop && S.loop.length) out.families.push({ name: 'loop', col: 'var(--cg-ac)', n: S.loop.length, on: !off.has('loop') });
-    if ((S.plan || []).length) out.families.push({ name: 'plan', col: 'var(--cg-t2)', n: S.plan.length, on: !off.has('plan') });
+    if (runPlan.length || (S.plan || []).length) out.families.push({ name: 'plan', col: 'var(--cg-t2)', n: runPlan.length || S.plan.length, on: !off.has('plan') });
     out.ghosts = nodes.filter((n) => n.included === false).length + memSess.filter((n) => !n._injected).length;
     out.lanes = { l: LANE_L, t: LANE_T, hasLanes };
     return out;
@@ -162,14 +177,24 @@
 
   /* ── the loop lane from the loop's events (the same stream <vera-loop-graph> reads), through families.js ── */
   function loopFromEvents(evs) {
-    const F = root.VeraGraphFamilies; if (!F) return { steps: [], stepReads: [] };
-    const d = F.toDoc('loop', { events: evs }); if (d.error) return { steps: [], stepReads: [] };
-    const caps = {}; d.edges.forEach((e) => { if (e.label === 'CALLS') (caps[e.from] = caps[e.from] || []).push(e.to); });
-    const byId = {}; d.nodes.forEach((n) => { byId[n.id] = n; });
-    const steps = d.nodes.filter((n) => n.kind === 'step').map((n) => { const c = (caps[n.id] || []).map((id) => byId[id] && byId[id].label).filter(Boolean); return { id: n.id, label: n.label, status: n.status, cap: c.join(' · '), ms: n.rec && n.rec.ms != null ? (n.rec.ms >= 1000 ? (n.rec.ms / 1000).toFixed(1) + ' s' : n.rec.ms + ' ms') : '' }; });
+    const none = { steps: [], stepReads: [], plan: [], run: null };
+    const F = root.VeraGraphFamilies; if (!F) return none;
+    const d = F.toDoc('loop', { events: evs }); if (d.error) return none;
+    const caps = {}, recs = {}, exec = {}; const byId = {}; d.nodes.forEach((n) => { byId[n.id] = n; });
+    d.edges.forEach((e) => { if (e.label === 'CALLS') (caps[e.from] = caps[e.from] || []).push(e.to); else if (e.label === 'RECORDS') (recs[e.from] = recs[e.from] || []).push(e.to); else if (e.label === 'EXECUTED_BY') (exec[e.from] = exec[e.from] || []).push(e.to); });
+    const stepNodes = d.nodes.filter((n) => n.kind === 'step'); const idx = {}; stepNodes.forEach((n, i) => { idx[n.id] = i; });
+    const pruned = new Set(d.nodes.filter((n) => n.kind === 'branch' && n.status === 'pruned').map((n) => n.group || n.id.replace(/^branch:/, '')));
+    const steps = stepNodes.map((n) => { const c = (caps[n.id] || []).map((id) => byId[id] && byId[id].label).filter(Boolean); const parent = (n.parents || [])[0];
+      const marks = (recs[n.id] || []).map((id) => byId[id]).filter(Boolean).map((m) => ({ kind: m.kind, status: m.status, label: m.label }));
+      const branch = /^sub:/.test(n.group || '') ? '' : (n.group || '');
+      return { id: n.id, label: n.label, status: n.status, cap: c.join(' · '), ms: n.rec && n.rec.ms != null ? (n.rec.ms >= 1000 ? (n.rec.ms / 1000).toFixed(1) + ' s' : n.rec.ms + ' ms') : '',
+        sub: /^sub:/.test(n.group || '') && parent && idx[parent] != null ? idx[parent] : -1, branch, pruned: !!(branch && pruned.has(branch)), marks }; });
     // what each step read: the wires the cap events carried, when they name context ids
     const stepReads = steps.map((s) => (caps[s.id] || []).flatMap((id) => (byId[id] && byId[id].wires) || []).filter((w) => typeof w === 'string'));
-    return { steps, stepReads };
+    // the run's plan (the planner's steps, in order) and which loop steps executed each
+    const plan = d.nodes.filter((n) => n.kind === 'plan').map((n) => ({ id: n.id, label: n.label, status: n.status, steps: (exec[n.id] || []).map((id) => idx[id]).filter((i) => i != null), caps: (n.rec && n.rec.caps) || [] }));
+    const run = d.nodes.find((n) => n.kind === 'run');
+    return { steps, stepReads, plan, run: run ? { id: run.id, label: run.label, status: run.status } : null };
   }
   function planFromGoals(goals) {
     const F = root.VeraGraphFamilies; const list = Array.isArray(goals) ? goals : (goals && goals.goals) || [];
@@ -231,6 +256,13 @@ vera-context-graph .cg-loop b{font-weight:600;font-size:9px}vera-context-graph .
 vera-context-graph .cg-loop.done{color:var(--cg-ac2);box-shadow:inset 0 0 0 1px var(--cg-ac2)}vera-context-graph .cg-loop.run{color:var(--cg-ac);box-shadow:inset 0 0 0 1.5px var(--cg-ac);background:color-mix(in srgb,var(--cg-ac) 15%,transparent)}
 vera-context-graph .cg-loop.pend{color:var(--cg-t3);box-shadow:inset 0 0 0 1px var(--cg-bd2)}vera-context-graph .cg-loop.fail{color:#e06c75;box-shadow:inset 0 0 0 1px #e06c75}
 vera-context-graph .cg-loop.sel{box-shadow:inset 0 0 0 1.5px var(--cg-ac),0 0 0 2px var(--cg-bg),0 0 0 3.5px color-mix(in srgb,var(--cg-ac) 45%,transparent)}
+vera-context-graph .cg-loop.sub{width:88px}vera-context-graph .cg-loop.pruned{opacity:.45}vera-context-graph .cg-loop.br b::before{content:'⑂ ';color:var(--cg-t3)}
+vera-context-graph .cg-loop .m{position:absolute;right:5px;bottom:2px;display:flex;gap:2px}vera-context-graph .cg-loop .m i{font-style:normal;font-size:8px;line-height:1;color:var(--cg-t3)}
+vera-context-graph .cg-loop .m i.ok{color:var(--cg-ac2)}vera-context-graph .cg-loop .m i.fail{color:#e06c75}vera-context-graph .cg-loop .m i.running{color:var(--cg-ac)}
+vera-context-graph .cg-lstem{position:absolute;width:1px;background:var(--cg-bd2)}
+vera-context-graph .cg-plan.fail{background:#e06c75}vera-context-graph .cg-planl.fail{color:#e06c75}
+vera-context-graph .cg-edge.exec{opacity:.5}
+vera-context-graph .cg-sel{font:inherit;font-size:9.5px;height:20px;max-width:190px;border:1px solid var(--cg-bd);border-radius:5px;background:var(--cg-s2);color:var(--cg-t2)}
 vera-context-graph .cg-plan{position:absolute;transform:translate(-50%,-50%) rotate(45deg);width:10px;height:10px;border-radius:1px}
 vera-context-graph .cg-plan.done{background:var(--cg-ac2)}vera-context-graph .cg-plan.run{background:var(--cg-ac);box-shadow:0 0 0 2px var(--cg-bg),0 0 0 3.5px color-mix(in srgb,var(--cg-ac) 45%,transparent)}vera-context-graph .cg-plan.pend{background:var(--cg-t3)}
 vera-context-graph .cg-planl{position:absolute;transform:translate(-50%,0);font-family:var(--cg-mono);font-size:7.5px;color:var(--cg-t3);white-space:nowrap;max-width:92px;overflow:hidden;text-overflow:ellipsis;text-align:center}
@@ -254,16 +286,17 @@ vera-context-graph .cg-empty{position:absolute;inset:0;display:flex;align-items:
   /* ── the element ─────────────────────────────────────────────────────────────────────────────────── */
   if (typeof HTMLElement !== 'undefined' && root.customElements && !root.customElements.get('vera-context-graph')) {
     class VeraContextGraph extends HTMLElement {
-      constructor() { super(); this._S = { view: 'galaxy', nodes: [], edges: [], focus: [], reads: {}, stepReads: [], loop: [], plan: [], dag: [], memory: [], memEdges: [], memHide: null, memColor: null, edgeColor: null, allEdges: false, layersOff: new Set(), related: true, sel: null, lsel: null, pan: { x: 0, y: 0, z: 1 }, color: null, turn: '' }; this._evs = []; this._raf = 0; this._drag = null; }
+      constructor() { super(); this._S = { view: 'galaxy', nodes: [], edges: [], focus: [], reads: {}, stepReads: [], loop: [], plan: [], runPlan: [], run: null, runs: [], runSel: '', dag: [], memory: [], memEdges: [], memHide: null, memColor: null, edgeColor: null, allEdges: false, layersOff: new Set(), related: true, sel: null, lsel: null, pan: { x: 0, y: 0, z: 1 }, color: null, turn: '' }; this._evs = []; this._raf = 0; this._drag = null; }
       connectedCallback() {
         ensureCss(this.ownerDocument); if (this._built) { this._schedule(); return; } this._built = true;
         const a = this.getAttribute('view'); if (a) this._S.view = a;
-        this.innerHTML = '<div class="cg-hd"><h2>Context graph</h2><span class="lbl" data-r="tok"></span><span class="sp"></span><span class="cg-seg" data-r="views" title="The unified graph\'s layouts, here"></span><button class="cg-btn" data-a="alledges" data-r="alledges" title="Draw every relation, not only the ones that touch the prompt">All edges</button><span class="lbl" data-r="zoom">100%</span><button class="cg-btn" data-a="fit" title="Back to the whole graph">Fit</button><button class="cg-btn" data-a="collapse" title="Fold the graph back into the quick menu">Collapse</button></div>'
+        this.innerHTML = '<div class="cg-hd"><h2>Context graph</h2><span class="lbl" data-r="tok"></span><select class="cg-sel" data-r="runs" hidden title="The run in the lane — this session\'s, or any recorded run"></select><span class="sp"></span><span class="cg-seg" data-r="views" title="The unified graph\'s layouts, here"></span><button class="cg-btn" data-a="alledges" data-r="alledges" title="Draw every relation, not only the ones that touch the prompt">All edges</button><span class="lbl" data-r="zoom">100%</span><button class="cg-btn" data-a="fit" title="Back to the whole graph">Fit</button><button class="cg-btn" data-a="collapse" title="Fold the graph back into the quick menu">Collapse</button></div>'
           + '<div class="cg-key"><span><b>angle</b> = source</span><span><b>distance</b> = lower relevance</span><span><b>area</b> = tokens</span><span><b>hollow</b> = related, not injected</span></div>'
           + '<div class="cg-layers" data-r="layers"></div><div class="cg-plot" data-r="plot"><div class="cg-in" data-r="in"></div><div data-r="lanes"></div></div>';
         this._r = {}; this.querySelectorAll('[data-r]').forEach((el) => { this._r[el.dataset.r] = el; });
         this._r.views.innerHTML = VIEWS.map((v) => '<button data-v="' + v[0] + '" title="' + esc(v[2]) + '">' + v[1] + '</button>').join('');
         this.addEventListener('click', (e) => this._click(e));
+        this.addEventListener('change', (e) => { const s = e.target && e.target.closest && e.target.closest('select[data-r="runs"]'); if (s) this.dispatchEvent(new CustomEvent('vera:ctx:run', { detail: { session_id: s.value }, bubbles: true })); });
         const plot = this._r.plot;
         plot.addEventListener('wheel', (e) => { e.preventDefault(); const r = plot.getBoundingClientRect(); const qx = e.clientX - (r.left + r.width / 2), qy = e.clientY - (r.top + r.height / 2); const p = this._S.pan; const nz = Math.max(0.5, Math.min(4, p.z * (e.deltaY > 0 ? 0.88 : 1.14))), k = nz / p.z; this._S.pan = { z: nz, x: qx - (qx - p.x) * k, y: qy - (qy - p.y) * k }; this._schedule(); }, { passive: false });
         plot.addEventListener('pointerdown', (e) => { if (e.button || (e.target.closest && e.target.closest('.cg-rec,.cg-node,.cg-mem,.cg-loop,button'))) return; e.preventDefault(); this._drag = { x0: e.clientX, y0: e.clientY, px: this._S.pan.x, py: this._S.pan.y, id: e.pointerId, moved: false }; });
@@ -277,8 +310,10 @@ vera-context-graph .cg-empty{position:absolute;inset:0;display:flex;align-items:
       setContext(nodes, edges, o) { o = o || {}; const S = this._S; S.nodes = Array.isArray(nodes) ? nodes : []; S.edges = Array.isArray(edges) ? edges : []; if (o.focus) S.focus = o.focus; if (o.reads) S.reads = o.reads; if (o.stepReads) S.stepReads = o.stepReads; if (o.color) S.color = o.color; if (o.turn != null) S.turn = o.turn; if (S.sel && !S.nodes.some((n) => n.id === S.sel)) S.sel = null; this._schedule(); }
       setLoopEvents(evs) { this._evs = Array.isArray(evs) ? evs.slice() : []; this._loopRefresh(); }
       appendLoopEvent(ev) { if (!ev || typeof ev !== 'object') return; if (ev.type === 'start' || /\.triage_start$/.test(String(ev.type || ''))) this._evs = []; this._evs.push(ev); if (this._evs.length > 4000) this._evs = this._evs.slice(-3000); this._loopRefresh(); }
-      _loopRefresh() { const L = loopFromEvents(this._evs); this._S.loop = L.steps; if (!this._S.stepReadsPinned) this._S.stepReads = L.stepReads; this._schedule(); }
+      _loopRefresh() { const L = loopFromEvents(this._evs); this._S.loop = L.steps; this._S.runPlan = L.plan; this._S.run = L.run; if (!this._S.stepReadsPinned) this._S.stepReads = L.stepReads; this._schedule(); }
       setPlan(goals) { this._S.plan = planFromGoals(goals); this._schedule(); }
+      // the runs the picker offers: [{session_id, goal, status}] (the host's list); current = the one in the lane
+      setRuns(list, o) { o = o || {}; this._S.runs = (Array.isArray(list) ? list : []).filter((r) => r && r.session_id); if (o.current != null) this._S.runSel = String(o.current); this._schedule(); }
       // the rail's Memory graph: the session's records and their relations (the same data, drawn here on the arc)
       setMemory(nodes, edges, o) { o = o || {}; const S = this._S; S.memory = Array.isArray(nodes) ? nodes : []; S.memEdges = Array.isArray(edges) ? edges : []; if (o.color) S.memColor = o.color; if (o.edgeColor) S.edgeColor = o.edgeColor; if (o.hide) S.memHide = o.hide; this._schedule(); }
       // the rail's DAG graph: the run's planned cap chain, as the loop lane while no loop is live
@@ -306,13 +341,19 @@ vera-context-graph .cg-empty{position:absolute;inset:0;display:flex;align-items:
       }
       _render() {
         const S = this._S, plot = this._r.plot; const W = plot.clientWidth || 600, H = plot.clientHeight || 500;
-        const iso = root.VeraISO && typeof root.VeraISO.proj === 'function' ? (() => { const P = root.VeraISO.proj(30, 45, 1, true); const cx = (S.loop.length ? 118 : 0) + (W - (S.loop.length ? 118 : 0)) / 2, cy = (S.plan.length ? 52 : 0) + (H - (S.plan.length ? 52 : 0)) / 2; return (x, y, z) => { const p = P(x - cx, y - cy, z || 0); return { x: cx + p[0], y: cy + 40 + p[1] }; }; })() : null;
+        const iso = root.VeraISO && typeof root.VeraISO.proj === 'function' ? (() => { const P = root.VeraISO.proj(30, 45, 1, true); const cx = (S.loop.length ? 118 : 0) + (W - (S.loop.length ? 118 : 0)) / 2, cy = ((S.runPlan.length || S.plan.length) ? 52 : 0) + (H - ((S.runPlan.length || S.plan.length) ? 52 : 0)) / 2; return (x, y, z) => { const p = P(x - cx, y - cy, z || 0); return { x: cx + p[0], y: cy + 40 + p[1] }; }; })() : null;
         const o = compute(Object.assign({}, S, { isoProj: iso }), W, H); this._last = o;
         const p = S.pan; this._r.in.style.transform = 'translate(' + p.x + 'px,' + p.y + 'px) scale(' + p.z + ')';
         this._r.zoom.textContent = Math.round(p.z * 100) + '%';
         this._r.tok.textContent = (o.tokens ? o.tokens.toLocaleString() + ' tokens in the prompt' : '') + (S.turn ? (o.tokens ? ' · ' : '') + S.turn : '');
         this._r.views.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === o.view));
         if (this._r.alledges) this._r.alledges.classList.toggle('on', !!S.allEdges);
+        if (this._r.runs) { const runs = S.runs || []; const cur = S.runSel || ''; const others = runs.filter((r) => r.session_id !== cur);
+          const sig = cur + '|' + (S.run ? S.run.label + ':' + S.run.status : '') + '|' + others.map((r) => r.session_id + ':' + r.status).join(',');
+          if (sig !== this._runsSig) { this._runsSig = sig; const glyph = (st) => st === 'running' ? '● ' : /error|fail|interrupted/.test(st || '') ? '✕ ' : '✓ ';
+            this._r.runs.innerHTML = '<option value="' + esc(cur) + '">' + (S.run ? esc(glyph(S.run.status === 'ok' ? 'done' : S.run.status === 'fail' ? 'error' : 'running') + String(S.run.label || 'this run').slice(0, 38)) : 'this session · no run') + '</option>'
+              + others.map((r) => '<option value="' + esc(r.session_id) + '">' + esc(glyph(r.status) + String(r.goal || r.session_id).slice(0, 38)) + '</option>').join('');
+            this._r.runs.hidden = !(runs.length || S.run); } }
         const famChip = (f) => '<button class="cg-lay fam ' + (f.on ? 'on' : '') + '" data-a="layer" data-s="' + (f.name === 'dag' ? 'loop' : esc(f.name)) + '" style="color:' + esc(f.col) + '" title="' + esc(f.name) + ' · ' + f.n + ' · the ' + esc(f.name) + ' graph, folded into this one — click to fold it away"><i class="' + (f.name === 'plan' ? 'd' : f.name === 'memory' ? '' : 'p') + '" style="background:' + esc(f.col) + '"></i>' + esc(f.name) + '<b>' + f.n + '</b></button>';
         this._r.layers.innerHTML = o.srcs.concat(o.offSrcs).map((s) => '<button class="cg-lay ' + (S.layersOff.has(s.name) ? '' : 'on') + '" data-a="layer" data-s="' + esc(s.name) + '" style="color:' + esc(s.col) + '" title="' + esc(s.name) + ' · ' + s.n + ' records · click to fold this layer out of the graph"><i style="background:' + esc(s.col) + '"></i>' + esc(s.name) + '<b>' + s.n + '</b></button>').join('')
           + (o.families || []).map(famChip).join('')
@@ -334,7 +375,9 @@ vera-context-graph .cg-empty{position:absolute;inset:0;display:flex;align-items:
         let l = '';
         o.sedges.forEach((e) => { l += '<div class="cg-edge ' + e.cls + '" title="' + esc(e.title) + '" style="' + st(e.x, e.y) + 'width:' + e.len + 'px;background:' + esc(e.col) + ';transform:rotate(' + e.deg + 'deg)"></div>'; });
         o.planNodes.forEach((n) => { l += '<div class="cg-plan ' + n.cls + '" title="' + esc(n.title) + '" style="' + st(n.x, n.y) + '"></div><div class="cg-planl ' + n.cls + '" style="' + st(n.lx, n.ly) + '">' + esc(n.label) + '</div>'; });
-        o.loopNodes.forEach((n) => { l += '<div class="cg-loop ' + n.cls + '" data-i="' + n.i + '" title="' + esc(n.title) + '" style="' + st(n.x, n.y) + '"><b>' + esc(n.label.slice(0, 16)) + '</b><span class="c">' + esc(n.cap) + '</span><span class="t">' + esc(n.ms) + '</span></div>'; });
+        o.loopStems.forEach((s) => { l += '<div class="cg-lstem" style="' + st(s.x, s.y) + 'height:' + s.h + 'px"></div>'; });
+        o.loopNodes.forEach((n) => { l += '<div class="cg-loop ' + n.cls + '" data-i="' + n.i + '" title="' + esc(n.title) + '" style="' + st(n.x, n.y) + '"><b>' + esc(n.label.slice(0, 16)) + '</b><span class="c">' + esc(n.cap) + '</span><span class="t">' + esc(n.ms) + '</span>'
+          + (n.marks && n.marks.length ? '<span class="m">' + n.marks.map((m) => '<i class="' + esc(m.status) + ' ' + esc(m.kind) + '" title="' + esc(m.kind + ' · ' + m.status + ' · ' + m.label) + '">' + esc(m.g) + '</i>').join('') + '</span>' : '') + '</div>'; });
         if (o.rec) { const r = o.rec; l += '<div class="cg-rec" style="--gc:' + esc(r.col) + '"><span class="cg-rec-h"><i class="' + (r.ghost ? 'ghost' : '') + '"></i><b>' + esc(r.name) + '</b><span class="mono">' + esc(r.kind) + '</span><span class="x" data-a="close">✕</span></span>'
           + r.rows.map((x) => '<span class="cg-rec-r"><span class="k">' + esc(x.k) + '</span><span class="v">' + esc(x.v) + '</span></span>').join('') + r.rels.map((x) => '<span class="cg-rec-l"><i></i>' + esc(x) + '</span>').join('')
           + '<span class="cg-rec-a">' + (r.turn ? '<button class="pri" data-a="turn" data-mid="' + esc(r.turn) + '">Focus turn</button>' : '') + '<button data-a="toggle" data-id="' + esc(r.id) + '">' + (r.ghost ? 'Include in the prompt' : 'Exclude from the prompt') + '</button><button data-a="open" data-id="' + esc(r.id) + '">Open</button></span></div>'; }

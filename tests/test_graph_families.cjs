@@ -38,5 +38,18 @@ t('mix: focus keeps the focused turn and what touches it, not the rest', foc.nod
 const foc2 = F.mix(doc, { context: 'focus', memory: 'all' }, []);
 t('mix: focus without a focus keeps only cross-family touches', foc2.nodes.filter((n) => n.family === 'context').map((n) => n.id).join(',') === 'cap:obs.health' && foc2.nodes.filter((n) => n.family === 'memory').length === 2);
 const s = F.sector('memory'); t('sectors are equal bands starting at the top', s[0] < s[1] && Math.abs((s[1] - s[0]) - (Math.PI * 2) / 7) < 1e-9 && F.sector('turns')[0] === -Math.PI / 2);
+// pass B: the run's plan, sub-plans, replans, EXECUTED_BY, every record kind
+const pb = F.toDoc('loop', { events: [{ type: 'agent_loop_v7.triage_start', goal: 'fix boot' }, { type: 'agent_loop_v7.plan', steps: [{ id: 1, title: 'recon', caps: ['memory.select'] }, { id: 2, title: 'author', complex: true }, { id: 3, title: 'test' }] },
+  { type: 'agent_loop_v7.step_start', step_id: 1, title: 'recon' }, { type: 'agent_loop_v7.step_done', step_id: 1 },
+  { type: 'agent_loop_v7.step_start', step_id: 2, title: 'author' }, { type: 'agent_loop_v7.subplan', parent_id: 2, steps: [{ id: '2.1', title: 'read' }, { id: '2.2', title: 'edit' }] },
+  { type: 'agent_loop_v7.step_start', step_id: '2.1', title: 'read' }, { type: 'agent_loop_v7.step_done', step_id: '2.1' }, { type: 'agent_loop_v7.step_start', step_id: '2.2', title: 'edit' }, { type: 'agent_loop_v6.gate', step_id: '2.2', passed: false },
+  { type: 'agent_loop_v7.step_error', step_id: '2.2', error: 'x' }, { type: 'agent_loop_v7.step_done', step_id: 2, error: 'x' }, { type: 'agent_loop_v6.clarify_request', step_id: 2, question: 'which file?' },
+  { type: 'agent_loop_v5.replan', after_step: 2, remaining: [{ id: 3, title: 'test' }, { id: 4, title: 'verify' }] }, { type: 'agent_loop_v6.step_finalized', step_id: 1 }, { type: 'agent_loop_v6.deliverable', step_id: 1, title: 'patch' }] });
+const B = Object.fromEntries(pb.nodes.map((n) => [n.id, n]));
+t('the plan: the planner\'s steps in order, NEXT-chained, a replan appended once', pb.nodes.filter((n) => n.kind === 'plan').map((n) => n.id).join(',') === 'plan:1,plan:2,plan:3,plan:4' && pb.edges.filter((e) => e.label === 'NEXT').length === 2 && pb.edges.filter((e) => e.label === 'REPLANNED').length === 2 && pb.nodes.find((n) => n.kind === 'run').label === 'fix boot' && B['plan:4'].group === 'replan' && B['plan:1'].rec.caps[0] === 'memory.select');
+t('EXECUTED_BY: a plan step to the loop steps that ran it — the sub-plan\'s steps execute their parent\'s', pb.edges.filter((e) => e.label === 'EXECUTED_BY').map((e) => e.from + '>' + e.to).join(',') === 'plan:1>step:1,plan:2>step:2,plan:2>step:2.1,plan:2>step:2.2');
+t('a sub-plan step hangs under its parent step', B['step:2.1'].parents[0] === 'step:2' && B['step:2.1'].group === 'sub:step:2' && pb.edges.some((e) => e.from === 'step:2' && e.to === 'step:2.1' && e.label === 'THEN'));
+t('the plan step carries its loop step\'s status', B['plan:1'].status === 'ok' && B['plan:2'].status === 'fail' && B['plan:3'].status === 'planned');
+t('every record kind, as an inferred record on its step', B['agent_loop_v6_gate:2.2'].kind === 'gate' && B['agent_loop_v6_gate:2.2'].status === 'fail' && B['agent_loop_v6_clarify_request:2'].kind === 'clarify' && B['agent_loop_v6_clarify_request:2'].status === 'running' && B['agent_loop_v6_step_finalized:1'].kind === 'finalised' && B['agent_loop_v6_deliverable:1'].kind === 'deliverable' && pb.edges.filter((e) => e.label === 'RECORDS').length === 4 && !pb.nodes.some((n) => n.kind === 'step' && /finalized/.test(n.id)));
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

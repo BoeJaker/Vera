@@ -87,12 +87,28 @@
     // parents, group and wires the first event set stay
     const put = (o) => { const n = node(o); if (nodes.has(n.id)) { const ex = nodes.get(n.id); Object.keys(o).forEach((k) => { if (k in n && k !== 'rec') ex[k] = n[k]; }); return ex; } nodes.set(n.id, n); return n; };
     const stepId = (ev) => 'step:' + (ev.step_id != null ? ev.step_id : (ev.step != null ? ev.step : (ev.index != null ? ev.index : '?')));
+    // the run's PLAN — the planner's steps (the Graph board's "planned workflow along the top"); a sub-plan's steps
+    // hang under the plan step that spawned them, so "plan step 2 ran as loop steps 2-3"; a replan appends
+    const subOf = {}; const planIds = new Set(); let lastPlan = '';
+    const RECORD = /(assess|verify|ledger|clarif|recover|gate|deliverable|finaliz|finalis|journal|question)/;
+    const RKIND = { clarif: 'clarify', recover: 'recovery', finaliz: 'finalised', finalis: 'finalised' };
     (Array.isArray(evs) ? evs : []).forEach((ev) => {
       if (!ev || typeof ev !== 'object') return; const t = String(ev.type || ''); const time = ev.ts || ev.time || 0;
-      if (t === 'start' || /\.start$/.test(t) || t === 'run_start') { runId = runId || ev.run_id || ev.stream_id || 'run'; put({ id: 'run:' + runId, family: 'loop', kind: 'run', label: ev.goal || ev.title || 'run', status: 'running', weight: 0.9, time }); return; }
-      if (/step_start$/.test(t) || t === 'step') { const id = stepId(ev); put({ id, family: 'loop', kind: 'step', label: ev.title || ev.name || ev.goal || id, status: 'running', weight: 0.7, time, group: ev.branch || ev.group || '', parents: ev.parents || (ev.parent_step != null ? ['step:' + ev.parent_step] : []) });
-        const par = (ev.parents && ev.parents[0]) || (ev.parent_step != null ? 'step:' + ev.parent_step : ('run:' + (runId || 'run'))); edges.push(edge(par, id, 'THEN', 'loop')); (ev.parents || []).slice(1).forEach((pp) => edges.push(edge(pp, id, 'THEN', 'loop'))); return; }
-      if (/step_done$/.test(t) || /step_error$/.test(t) || /step_fail/.test(t)) { const id = stepId(ev); const o = { id, family: 'loop', kind: 'step', status: /done$/.test(t) && !ev.error ? 'ok' : 'fail', weight: 0.7, time }; if (ev.title || ev.name) o.label = ev.title || ev.name; const n = put(o); if (ev.ms != null) n.rec.ms = ev.ms; return; }
+      if (t === 'start' || /\.start$/.test(t) || /\.triage_start$/.test(t) || t === 'run_start') { runId = runId || ev.run_id || ev.stream_id || ev.session_id || 'run'; put({ id: 'run:' + runId, family: 'loop', kind: 'run', label: ev.goal || ev.title || 'run', status: 'running', weight: 0.9, time }); return; }
+      if (/\.(plan|replan)$/.test(t) || /master_plan_piece_planned$/.test(t)) {
+        const re = /\.replan$/.test(t); const list = (re ? ev.remaining : ev.steps) || []; let prev = re ? lastPlan : ''; let firstNew = re;
+        (Array.isArray(list) ? list : []).forEach((s) => { if (!s || s.id == null) return; const id = 'plan:' + s.id; if (planIds.has(id)) { prev = id; return; } planIds.add(id);
+          put({ id, family: 'loop', kind: 'plan', label: s.title || s.name || String(s.id), status: 'planned', weight: 0.5, time, group: re ? 'replan' : '', rec: { caps: s.caps || [], complex: !!s.complex } });
+          if (prev) edges.push(edge(prev, id, firstNew ? 'REPLANNED' : 'NEXT', 'loop', firstNew ? { real: false } : undefined)); firstNew = false; prev = id; lastPlan = id; });
+        if (re && ev.after_step != null && list[0] && list[0].id != null) edges.push(edge('step:' + ev.after_step, 'plan:' + list[0].id, 'REPLANNED', 'loop', { structural: false }));
+        return; }
+      if (/\.subplan$/.test(t)) { (ev.steps || []).forEach((s) => { if (s && s.id != null) subOf['step:' + s.id] = ev.parent_id != null ? 'step:' + ev.parent_id : ''; }); return; }
+      if (/step_start$/.test(t) || t === 'step') { const id = stepId(ev); const under = subOf[id] || ''; put({ id, family: 'loop', kind: 'step', label: ev.title || ev.name || ev.goal || id, status: 'running', weight: 0.7, time, group: ev.branch || ev.group || (under ? 'sub:' + under : ''), parents: ev.parents || (ev.parent_step != null ? ['step:' + ev.parent_step] : (under ? [under] : [])) });
+        const par = (ev.parents && ev.parents[0]) || (ev.parent_step != null ? 'step:' + ev.parent_step : (under || ('run:' + (runId || 'run')))); edges.push(edge(par, id, 'THEN', 'loop')); (ev.parents || []).slice(1).forEach((pp) => edges.push(edge(pp, id, 'THEN', 'loop')));
+        // the plan step this loop step executes (a sub-plan's steps execute their parent's plan step)
+        const pid = (under || id).replace('step:', 'plan:'); if (planIds.has(pid)) { edges.push(edge(pid, id, 'EXECUTED_BY', 'loop')); const pn = nodes.get(pid); if (pn && pn.status === 'planned') pn.status = 'running'; }
+        return; }
+      if (/step_done$/.test(t) || /step_error$/.test(t) || /step_fail/.test(t)) { const id = stepId(ev); const o = { id, family: 'loop', kind: 'step', status: /done$/.test(t) && !ev.error ? 'ok' : 'fail', weight: 0.7, time }; if (ev.title || ev.name) o.label = ev.title || ev.name; const n = put(o); if (ev.ms != null) n.rec.ms = ev.ms; const pn = nodes.get(id.replace('step:', 'plan:')); if (pn) pn.status = o.status; return; }
       if (/cap(_call|_start|\.start)$/.test(t) || t === 'tool_call' || t === 'cap' || t === 'cap.ok' || t === 'cap.fail' || /tool_(done|result)$/.test(t)) {
         const cap = ev.tool || ev.cap || ev.name || 'cap'; const sid = stepId(ev); const id = 'cap:' + sid + ':' + cap;
         put({ id, family: 'loop', kind: 'cap', label: cap, status: /ok|done|result/.test(t) ? 'ok' : (/fail/.test(t) ? 'fail' : 'running'), weight: 0.4, time, wires: ev.wires || [] });
@@ -100,7 +116,10 @@
       if (/branch_open$/.test(t)) { const id = 'branch:' + (ev.branch || ev.id || '?'); put({ id, family: 'loop', kind: 'branch', label: ev.label || ev.branch || 'branch', status: 'running', weight: 0.5, time, group: ev.branch || ev.id || '' }); edges.push(edge(stepId(ev), id, 'FORKS', 'loop')); return; }
       if (/branch_merge$/.test(t) || /merge$/.test(t)) { const id = 'branch:' + (ev.branch || ev.id || '?'); put({ id, family: 'loop', kind: 'branch', label: ev.label || ev.branch || 'branch', status: 'ok', weight: 0.5, time }); edges.push(edge(id, stepId(ev), 'MERGES', 'loop')); return; }
       if (/branch_prune$/.test(t) || /prune$/.test(t)) { const id = 'branch:' + (ev.branch || ev.id || '?'); put({ id, family: 'loop', kind: 'branch', label: ev.label || ev.branch || 'branch', status: 'pruned', weight: 0.2, time }); return; }
-      if (/(assess|verify|ledger|clarif|recover)/.test(t)) { const id = t.replace(/[^a-z0-9_]/gi, '_') + ':' + (ev.step_id != null ? ev.step_id : (ev.step != null ? ev.step : '')); put({ id, family: 'loop', kind: t.split('.').pop().split('_')[0], label: ev.title || ev.summary || t, status: ev.ok === false ? 'fail' : 'ok', weight: 0.35, time, real: false }); edges.push(edge(stepId(ev), id, 'RECORDS', 'loop', { structural: false, real: false })); return; }
+      const rk = RECORD.exec(t);
+      if (rk) { const kind = RKIND[rk[1]] || rk[1]; const id = t.replace(/[^a-z0-9_]/gi, '_') + ':' + (ev.step_id != null ? ev.step_id : (ev.step != null ? ev.step : ''));
+        put({ id, family: 'loop', kind, label: ev.title || ev.summary || ev.question || ev.reason || t, status: ev.ok === false || ev.passed === false ? 'fail' : /(request|raise|question)$/.test(t) ? 'running' : 'ok', weight: 0.35, time, real: false });
+        edges.push(edge(stepId(ev), id, 'RECORDS', 'loop', { structural: false, real: false })); return; }
       if (t === 'done' || /\.done$/.test(t) || t === 'run_done') { const n = nodes.get('run:' + (runId || 'run')); if (n) n.status = ev.ok === false ? 'fail' : 'ok'; }
     });
     return { family: 'loop', nodes: [...nodes.values()], edges };
