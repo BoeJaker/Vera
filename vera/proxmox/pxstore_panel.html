@@ -152,6 +152,11 @@ details.fold .twrap{background:var(--bg1)}
     <div class="pane on" id="p-overview">
       <div class="section-h">Pools <span id="unallocLab" class="kv"></span></div>
       <div class="grid" id="poolGrid"><div class="empty">Select a cluster + node…</div></div>
+      <div class="section-h">Physical disks <span id="diskLab" class="kv"></span></div>
+      <div class="twrap"><table id="diskTbl">
+        <thead><tr><th>Disk</th><th>Size</th><th>Model</th><th>Bus</th><th>Used for</th><th>State</th></tr></thead>
+        <tbody><tr><td colspan="6" class="empty">—</td></tr></tbody>
+      </table></div>
       <div class="section-h">Guests (by name)</div>
       <div class="twrap"><table id="guestTbl">
         <thead><tr><th>Name</th><th>Type</th><th>Status</th><th>Backing dataset(s)</th><th>Used</th><th>Quota / size</th><th></th></tr></thead>
@@ -396,8 +401,21 @@ details.fold .twrap{background:var(--bg1)}
       <div class="note"><b>The whole estate in one place.</b> Scan lists ZFS pools,
         datasets, <b>non-ZFS mounts</b>, per-guest (VM/CT) disk usage on every PVE node
         <i>and</i> volume/image sizes on every Docker host. VFS-02 keeps the estate tree current
-        by itself. Backups go to a PVE storage, ideally the one inside VFS-02's backup share, so
-        dumps do not sit on the hypervisor's root disk.</div>
+        by itself. Backups go to Proxmox Backup Server on the dedicated backup disk, with ZFS
+        snapshots and a replica of the file fabric's data alongside them.</div>
+
+      <div class="section-h">Backup system
+        <button class="btn sm" style="margin-left:10px" onclick="P.bkStatus()">↻ Refresh</button></div>
+      <div id="bkWarn"></div>
+      <div class="grid" id="bkTiles"><div class="empty">Loading the backup system…</div></div>
+      <div class="twrap"><table id="bkJobs">
+        <thead><tr><th>Job</th><th>Schedule</th><th>Target</th><th>Guests</th><th>State</th></tr></thead>
+        <tbody><tr><td colspan="5" class="empty">—</td></tr></tbody>
+      </table></div>
+      <div class="twrap"><table id="bkRuns">
+        <thead><tr><th>Guest</th><th>Last backup</th><th>Result</th></tr></thead>
+        <tbody><tr><td colspan="3" class="empty">—</td></tr></tbody>
+      </table></div>
 
       <div class="section-h">Estate storage
         <button class="btn sm" style="margin-left:10px" onclick="P.estateScan()">Scan estate</button></div>
@@ -514,17 +532,63 @@ P.estateInit = async ()=>{
     $('estBkLog').innerHTML=(b.log||[]).slice(-8).reverse().map(e=>
       `${esc((e.ts||'').slice(0,16))} ${e.ok?'✓ ok':'✗ errors'}`).join('<br>')||'no runs yet';
   }catch(e){ toast('Estate config load failed: '+e.message,'err'); }
+  P.bkStatus();
   try{
     const h=await api('/vfs/health','POST',{});
     if(!h.error) $('estTreeState').innerHTML=`VFS-02 keeps it current on a 5-minute timer · <b>${h.estate_mounts||0}</b> filesystems mounted`;
   }catch(e){}
+};
+P.bkStatus = async ()=>{
+  if(!P.state.cluster||!P.state.node) return;
+  let r;
+  try{ r=await api('/pxstore/backup/status','POST',{cluster_id:P.state.cluster,node:P.state.node}); }
+  catch(e){ $('bkTiles').innerHTML=`<div class="empty">${esc(e.message)}</div>`; return; }
+  if(r.error){ $('bkTiles').innerHTML=`<div class="empty">${esc(r.error)}</div>`; return; }
+  $('bkWarn').innerHTML=(r.warnings||[]).map(w=>
+    `<div class="note" style="border-color:var(--warn);color:var(--warn)">⚠ ${esc(w)}</div>`).join('');
+  const nowS=Date.now()/1000;
+  const ago=s=>{ if(!s) return 'never'; const d=Math.round(nowS-s);
+    return d<90?d+' s ago':d<5400?Math.round(d/60)+' min ago':d<172800?Math.round(d/3600)+' h ago':Math.round(d/86400)+' days ago'; };
+  const until=s=>{ if(!s) return '—'; const d=Math.round(s-nowS);
+    return d<=0?'due now':d<5400?'in '+Math.round(d/60)+' min':'in '+Math.round(d/3600)+' h'; };
+  const bar=(used,total)=>{ const p=total?Math.round(used/total*100):0;
+    return `<div class="metric"><div class="lab"><span>used ${fmtB(used)}</span><span>of ${fmtB(total)}</span></div>
+      <div class="${barClass(p)}"><i style="width:${p}%"></i></div></div>`; };
+  const t=r.timers||{};
+  const timerLine=(u,label)=>`<div class="kv">${label}: ${t[u]
+    ?('last '+ago(t[u].last)+' · next '+until(t[u].next))
+    :'<span style="color:var(--err)">not installed</span>'}</div>`;
+  const storages=(r.storages||[]).map(s=>`<div class="card"><div class="hd"><span class="nm">${esc(s.name)}</span>
+      <span class="pill ${s.active?'ok':'err'}">${s.active?esc(s.type):'offline'}</span></div>${bar(s.used,s.total)}</div>`).join('');
+  const snaps=Object.entries(r.snapshots||{}).map(([p,n])=>`${esc(p)} <b>${n}</b>`).join(' · ')||'none yet';
+  const lastGuard=(r.guard||[]).slice(-1)[0];
+  $('bkTiles').innerHTML=storages+
+    `<div class="card"><div class="hd"><span class="nm">Snapshots</span><span class="sub">ZFS, per pool</span></div>
+      <div class="kv">${snaps}</div>${timerLine('sanoid.timer','taken')}${timerLine('vera-snap-guard.timer','disk-full guard')}
+      <div class="kv">${lastGuard?esc(lastGuard.msg):'the guard has not needed to prune anything'}</div></div>`+
+    `<div class="card"><div class="hd"><span class="nm">Replica</span><span class="sub">file fabric → backup disk</span></div>
+      ${timerLine('vera-replicate.timer','replicated')}
+      <div class="kv">${(r.replication||[]).slice(-4).map(l=>esc(l.msg)).join('<br>')||'no runs yet'}</div></div>`;
+  $('bkJobs').querySelector('tbody').innerHTML=(r.jobs||[]).map(j=>`<tr>
+     <td><b>${esc(j.id)}</b>${j.comment?`<div class="kv">${esc(j.comment)}</div>`:''}</td>
+     <td>${esc(j.schedule)}<div class="kv">next ${j.enabled?until(j.next_run):'—'}</div></td>
+     <td>${esc(j.storage)}</td>
+     <td class="kv">${j.all?('all'+(j.exclude?' except '+esc(j.exclude):'')):esc(j.vmid)}</td>
+     <td><span class="pill ${j.enabled?'ok':'dim'}">${j.enabled?'enabled':'disabled'}</span></td></tr>`).join('')
+     ||'<tr><td colspan="5" class="empty">no backup jobs</td></tr>';
+  const running=(r.running||[]).length
+    ?`<tr><td colspan="3"><span class="pill warn">running now</span> <span class="kv">${esc(r.running[0].slice(0,120))}</span></td></tr>`:'';
+  $('bkRuns').querySelector('tbody').innerHTML=running+((r.runs||[]).map(x=>`<tr><td>${esc(x.guest)}</td><td>${ago(x.at)}</td>
+     <td><span class="pill ${x.result==='ok'?'ok':x.result==='error'?'err':x.result==='running'?'warn':'dim'}">${esc(x.result)}</span>
+     <span class="kv">${esc(x.line.slice(0,100))}</span></td></tr>`).join('')
+     ||'<tr><td colspan="3" class="empty">no backup has run on this node</td></tr>');
 };
 P.renderBkTargets = cur=>{
   const fabric=((P.state.settings||{}).backup_dataset_mount||'/tank_sde/vfs/backup')+'/';
   const st=(P.state.inv?.storages||[]).filter(s=>String(s.content||'').split(',').includes('backup'));
   const opts=st.map(s=>{
     const inFabric=String(s.path||'').startsWith(fabric);
-    return `<option value="${esc(s.storage)}" ${s.storage===cur?'selected':''}>${esc(s.storage)} — ${esc(s.path||s.type)}${inFabric?' (VFS-02 backup share)':''}</option>`;
+    return `<option value="${esc(s.storage)}" ${s.storage===cur?'selected':''}>${esc(s.storage)} — ${esc(s.path||s.type)}${s.type==='pbs'?' (Proxmox Backup Server)':''}${inFabric?' (VFS-02 backup share)':''}</option>`;
   });
   if(cur&&!st.some(s=>s.storage===cur)) opts.unshift(`<option value="${esc(cur)}" selected>${esc(cur)}</option>`);
   $('estBkStorage').innerHTML='<option value="">— not set —</option>'+opts.join('');
@@ -648,7 +712,7 @@ P.refresh = async ()=>{
         `<span style="color:var(--t2)">— check the credential in Estate → Connections (use “Test reach”), or that root SSH is allowed on the node.</span>`;
     }
   }
-  P.renderOverview(); P.fillCTSelects();
+  P.renderOverview(); P.fillCTSelects(); P.diskLoad();
 };
 
 /* ── overview ── */
@@ -700,6 +764,22 @@ P.renderOverview = ()=>{
   ).join('')||'<tr><td colspan="2" class="empty">none</td></tr>';
 };
 
+P.diskLoad = async ()=>{
+  if(!P.state.cluster||!P.state.node) return;
+  let r;
+  try{ r=await api('/pxstore/disks','POST',{cluster_id:P.state.cluster,node:P.state.node}); }
+  catch(e){ return; }
+  const tb=$('diskTbl').querySelector('tbody');
+  if(r.error){ tb.innerHTML=`<tr><td colspan="6" class="empty">${esc(r.error)}</td></tr>`; return; }
+  const cls={'in use':'ok','free':'warn','importable':'warn','labelled':'warn','damaged':'err','not mounted':'dim'};
+  tb.innerHTML=(r.disks||[]).map(d=>`<tr><td><b>${esc(d.name)}</b></td><td>${fmtB(d.size)}</td>
+    <td class="kv">${esc(d.model)}</td>
+    <td>${esc((d.transport||'?').toUpperCase())}${d.usb?' <span class="pill warn" title="USB-attached: slower, and unplugging it takes its data offline">USB</span>':''}</td>
+    <td>${esc(d.role)} <span class="kv">${esc(d.detail)}</span></td>
+    <td><span class="pill ${cls[d.state]||'dim'}">${esc(d.state)}</span></td></tr>`).join('')
+    ||'<tr><td colspan="6" class="empty">no disks reported</td></tr>';
+  $('diskLab').textContent=(r.free||[]).length?`· ${r.free.length} not in use: ${r.free.join(', ')}`:'';
+};
 P.resize = async (vmid,gtype,disk)=>{
   const v=$('rz-'+vmid).value.trim();
   if(!v) return toast('Enter a size like +10G','err');
