@@ -490,65 +490,79 @@ html.vpb-nav-hosted #secNav{display:none}
       <!-- Sub-pane: Workers Jobs — per-worker cap/job tracking -->
       <div id="wk-sub-jobs" style="display:none">
 
-      <!-- KPIs (reuse from job tracker) -->
-      <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:10px">
-        <div class="widget w-h1" style="grid-column:span 1">
-          <div class="w-head"><span class="w-dot" id="wkj-dot-pend"></span><span class="w-title">Pending</span></div>
+      <!-- The Workers › Jobs tiles and tables were fixed markup (a 6-column row and two full-width cards); they are
+           the wol-wkjobs grid now — the same VeraDash mechanics as every other pane (drag, resize, hide, float, the
+           loader, the layout file). The bodies and every id in them are unchanged: wkjRender() keeps driving them. -->
+      <div class="dash-picker" id="wkj-hidden-picker"><span style="font-size:9px;color:var(--dim);margin-right:4px">Hidden:</span><span id="wkj-hidden-chips"></span></div>
+      <div class="dash-grid" id="wkj-grid">
+        <!-- KPIs (reuse from job tracker) -->
+        <div class="widget w-w2 w-h1" data-wid="wkj-pending">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot" id="wkj-dot-pend"></span><span class="w-title">Pending</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('wkjobs','wkj-pending')">×</button></span></div>
           <div class="w-body" style="padding:6px 10px"><div class="kpi"><div class="kpi-val" id="wkj-pend">0</div><div class="kpi-sub">queued</div></div></div>
+          <span class="w-resize" data-resize></span>
         </div>
-        <div class="widget w-h1" style="grid-column:span 1">
-          <div class="w-head"><span class="w-dot" id="wkj-dot-run"></span><span class="w-title">Running</span></div>
+        <div class="widget w-w2 w-h1" data-wid="wkj-running">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot" id="wkj-dot-run"></span><span class="w-title">Running</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('wkjobs','wkj-running')">×</button></span></div>
           <div class="w-body" style="padding:6px 10px"><div class="kpi"><div class="kpi-val tv-warn" id="wkj-run">0</div><div class="kpi-sub">active</div></div></div>
+          <span class="w-resize" data-resize></span>
         </div>
-        <div class="widget w-h1" style="grid-column:span 1">
-          <div class="w-head"><span class="w-dot"></span><span class="w-title">Done</span></div>
+        <div class="widget w-w2 w-h1" data-wid="wkj-done">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Done</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('wkjobs','wkj-done')">×</button></span></div>
           <div class="w-body" style="padding:6px 10px"><div class="kpi"><div class="kpi-val tv-ok" id="wkj-done">0</div><div class="kpi-sub">completed</div></div></div>
+          <span class="w-resize" data-resize></span>
         </div>
-        <div class="widget w-h1" style="grid-column:span 1">
-          <div class="w-head"><span class="w-dot" id="wkj-dot-fail"></span><span class="w-title">Failed</span></div>
+        <div class="widget w-w2 w-h1" data-wid="wkj-failed">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot" id="wkj-dot-fail"></span><span class="w-title">Failed</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('wkjobs','wkj-failed')">×</button></span></div>
           <div class="w-body" style="padding:6px 10px"><div class="kpi"><div class="kpi-val tv-err" id="wkj-fail">0</div><div class="kpi-sub">errors</div></div></div>
+          <span class="w-resize" data-resize></span>
         </div>
-        <div class="widget w-h1" style="grid-column:span 1">
-          <div class="w-head"><span class="w-dot"></span><span class="w-title">Cap Types</span></div>
+        <div class="widget w-w2 w-h1" data-wid="wkj-cap-types">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Cap Types</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('wkjobs','wkj-cap-types')">×</button></span></div>
           <div class="w-body" style="padding:6px 10px"><div class="kpi"><div class="kpi-val" id="wkj-cap-types">0</div><div class="kpi-sub">unique caps</div></div></div>
+          <span class="w-resize" data-resize></span>
         </div>
-        <div class="widget w-h1" style="grid-column:span 1">
-          <div class="w-head"><span class="w-dot"></span><span class="w-title">Avg Duration</span></div>
+        <div class="widget w-w2 w-h1" data-wid="wkj-avg-dur">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Avg Duration</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('wkjobs','wkj-avg-dur')">×</button></span></div>
           <div class="w-body" style="padding:6px 10px"><div class="kpi"><div class="kpi-val" id="wkj-avg-dur" style="font-size:14px">—</div><div class="kpi-sub">per job</div></div></div>
+          <span class="w-resize" data-resize></span>
         </div>
-      </div>
 
-      <!-- Worker job breakdown -->
-      <div class="widget" style="grid-column:span 12;margin-bottom:10px">
-        <div class="w-head">
-          <span class="w-dot ok"></span>
-          <span class="w-title">Jobs by Worker</span>
-          <span style="flex:1"></span>
-          <input id="wkj-search" placeholder="Filter by cap, worker, args, error…" style="font-size:9px;background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:2px 6px;border-radius:3px;width:160px;font-family:var(--mono)" oninput="P.wkjFilter()">
-          <div style="display:flex;gap:2px;margin-left:6px">
-            <span class="j-tab active" id="wkjt-all" onclick="P.wkjTab('all')" style="padding:3px 8px;font-size:9px">All</span>
-            <span class="j-tab" id="wkjt-running" onclick="P.wkjTab('running')" style="padding:3px 8px;font-size:9px">Running</span>
-            <span class="j-tab" id="wkjt-done" onclick="P.wkjTab('done')" style="padding:3px 8px;font-size:9px">Done</span>
-            <span class="j-tab" id="wkjt-failed" onclick="P.wkjTab('failed')" style="padding:3px 8px;font-size:9px;color:var(--err)">Failed</span>
+        <!-- Worker job breakdown -->
+        <div class="widget w-w12 w-h5" data-wid="wkj-table">
+          <div class="w-head">
+            <span class="w-grip">⠿</span>
+            <span class="w-dot ok"></span>
+            <span class="w-title">Jobs by Worker</span>
+            <span style="flex:1"></span>
+            <input id="wkj-search" placeholder="Filter by cap, worker, args, error…" style="font-size:9px;background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:2px 6px;border-radius:3px;width:160px;font-family:var(--mono)" oninput="P.wkjFilter()">
+            <div style="display:flex;gap:2px;margin-left:6px">
+              <span class="j-tab active" id="wkjt-all" onclick="P.wkjTab('all')" style="padding:3px 8px;font-size:9px">All</span>
+              <span class="j-tab" id="wkjt-running" onclick="P.wkjTab('running')" style="padding:3px 8px;font-size:9px">Running</span>
+              <span class="j-tab" id="wkjt-done" onclick="P.wkjTab('done')" style="padding:3px 8px;font-size:9px">Done</span>
+              <span class="j-tab" id="wkjt-failed" onclick="P.wkjTab('failed')" style="padding:3px 8px;font-size:9px;color:var(--err)">Failed</span>
+            </div>
+            <span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('wkjobs','wkj-table')">×</button></span>
           </div>
+          <div class="w-body flush" style="padding:0;max-height:380px;overflow-y:auto">
+            <table class="job-tbl" id="wkj-table">
+              <thead><tr><th>Worker</th><th>Capability</th><th>State</th><th>Model</th><th>Elapsed</th><th>Tokens</th><th>Caller</th><th>Time</th></tr></thead>
+              <tbody id="wkj-tbody"></tbody>
+            </table>
+            <div id="wkj-empty" class="j-empty" style="display:none">No jobs tracked yet — non-LLM capability calls appear here as they execute (ollama/vllm traffic is under Ollama › Jobs)</div>
+          </div>
+          <span class="w-resize" data-resize></span>
         </div>
-        <div class="w-body flush" style="padding:0;max-height:380px;overflow-y:auto">
-          <table class="job-tbl" id="wkj-table">
-            <thead><tr><th>Worker</th><th>Capability</th><th>State</th><th>Model</th><th>Elapsed</th><th>Tokens</th><th>Caller</th><th>Time</th></tr></thead>
-            <tbody id="wkj-tbody"></tbody>
-          </table>
-          <div id="wkj-empty" class="j-empty" style="display:none">No jobs tracked yet — non-LLM capability calls appear here as they execute (ollama/vllm traffic is under Ollama › Jobs)</div>
-        </div>
-      </div>
 
-      <!-- Cap summary -->
-      <div class="widget">
-        <div class="w-head"><span class="w-dot ok"></span><span class="w-title">Capability Breakdown</span></div>
-        <div class="w-body flush" style="padding:0;max-height:200px;overflow-y:auto">
-          <table class="job-tbl" id="wkj-cap-table">
-            <thead><tr><th>Capability</th><th>Total</th><th>Running</th><th>Done</th><th>Failed</th><th>Avg Duration</th></tr></thead>
-            <tbody id="wkj-cap-tbody"></tbody>
-          </table>
+        <!-- Cap summary -->
+        <div class="widget w-w12 w-h3" data-wid="wkj-cap-table">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot ok"></span><span class="w-title">Capability Breakdown</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('wkjobs','wkj-cap-table')">×</button></span></div>
+          <div class="w-body flush" style="padding:0;max-height:200px;overflow-y:auto">
+            <table class="job-tbl" id="wkj-cap-table">
+              <thead><tr><th>Capability</th><th>Total</th><th>Running</th><th>Done</th><th>Failed</th><th>Avg Duration</th></tr></thead>
+              <tbody id="wkj-cap-tbody"></tbody>
+            </table>
+          </div>
+          <span class="w-resize" data-resize></span>
         </div>
       </div>
 
@@ -3631,7 +3645,14 @@ function gridId(pane){
 // ── Dashboard framework delegates to the shared VeraDash module ───────────────
 // (per-pane controllers live in _vd, created in Init below). The old grid*/wl*
 // internals further down are SUPERSEDED and kept only as inert dead code.
-function gridToggleEdit(pane){ if(_vd[pane]) _vd[pane].toggleEdit(); }
+// A pane's toolbar serves its sub-panes too: the WORKERS buttons reach the Workers › Jobs grid while that sub-pane
+// is showing, the OLLAMA buttons the Ollama › Jobs grid (which had no Configure of its own before).
+function _gridPane(pane){
+  if(pane==='workers'&&_wkSubCurrent==='jobs') return 'wkjobs';
+  if(pane==='ollama'&&_olSubCurrent==='jobs') return 'jobs';
+  return pane;
+}
+function gridToggleEdit(pane){ pane=_gridPane(pane); if(_vd[pane]) _vd[pane].toggleEdit(); }
 
 function gridHide(pane, wid){ if(_vd[pane]) _vd[pane].hide(wid); }
 
@@ -3691,7 +3712,7 @@ function gridRenderHidden(pane){
   }).join('');
 }
 
-function gridReset(pane){ if(_vd[pane]) _vd[pane].reset(); }
+function gridReset(pane){ pane=_gridPane(pane); if(_vd[pane]) _vd[pane].reset(); }
 
 // ── Drag & drop reordering ───────────────────────────────────────────────────
 let _dragSrc=null;
@@ -4254,7 +4275,7 @@ let _wlPanels=[];
 let _wlTargetPane=null;
 let _wlDynamic={}; // loaded dynamic widgets keyed by pane:wid
 
-function openWidgetLoader(pane){ if(_vd[pane]) _vd[pane].openLoader(); }
+function openWidgetLoader(pane){ pane=_gridPane(pane); if(_vd[pane]) _vd[pane].openLoader(); }
 
 function closeWidgetLoader(){
   $('wl-overlay').classList.add('hidden');
@@ -4790,10 +4811,9 @@ function wkSubTab(name,btn){
   if(nodesEl) nodesEl.style.display=name==='nodes'?'':'none';
   if(jobsEl)  jobsEl.style.display=name==='jobs'?'':'none';
   // Adjust which toolbar buttons are relevant
-  const editBtn=$('w-edit-btn');
   const filterBtns=['wf-all','wf-GPU','wf-CPU','wf-LIGHT'];
   const hideNodes=name==='jobs';
-  if(editBtn) editBtn.style.display=hideNodes?'none':'';
+  // Configure / Reset / + Add Widget stay: the Jobs sub-pane is a grid of its own now (wol-wkjobs)
   filterBtns.forEach(id=>{const el=$(id);if(el) el.style.display=hideNodes?'none':'';});
   if(name==='jobs') wkjRender();
 }
@@ -6221,7 +6241,10 @@ window.addEventListener('message', e=>{
     workers:{grid:'w-grid',  editBtn:'w-edit-btn',  picker:'w-hidden-picker',  chips:'w-hidden-chips'},
     ollama: {grid:'ol-grid', editBtn:'ol-edit-btn', picker:'ol-hidden-picker', chips:'ol-hidden-chips'},
     jobs:   {grid:'j-grid',  editBtn:'j-edit-btn',  picker:'j-hidden-picker',  chips:'j-hidden-chips'},
-    observe:{grid:'obs-grid',editBtn:'',            picker:'obs-hidden-picker',chips:'obs-hidden-chips'}
+    observe:{grid:'obs-grid',editBtn:'',            picker:'obs-hidden-picker',chips:'obs-hidden-chips'},
+    // Workers › Jobs — the fixed tiles and tables, a grid of their own now (UI redesign M5); it shares the
+    // WORKERS toolbar, whose buttons reach whichever sub-pane is showing (see gridToggleEdit).
+    wkjobs: {grid:'wkj-grid',editBtn:'w-edit-btn',  picker:'wkj-hidden-picker',chips:'wkj-hidden-chips'}
   };
   for(const pane in SPEC){ const s=SPEC[pane]; const g=$(s.grid); if(!g) continue;
     _vd[pane]=VeraDash.init(g,{key:'wol-'+pane,loader:true,popout:true,

@@ -14,6 +14,12 @@ and the capabilities a renderer or an editor asks before drawing.
                                   lacks, a refresh it cannot parse)
   widget.render_spec(record)      what a renderer needs in one answer: the normalised record, its
                                   resolved source, its form entry, and the size's composition
+  widget.layouts()                the dashboards' layout files (vera/widgets/layouts/<key>.json): one per
+                                  VeraDash grid, every widget of the grid as a record - {key, dashboard,
+                                  widgets}; GET /ui/widgets/layouts/<key> serves one file
+  widget.layout.migrate(key, legacy)  a legacy vera.dash.<key> {order, hidden, sizes, dynamic} as the
+                                  layout record (migrate_layouts.py - the same rule VeraDash applies in the
+                                  browser)
 
 Shapes, forms and the record's rules live in widget_record.py (pure data);
 this module only adds the live sources and the capabilities. Not named
@@ -22,6 +28,8 @@ this module only adds the live sources and the capabilities. Not named
 from __future__ import annotations
 
 import importlib.util as _ilu
+import json
+import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -245,3 +253,78 @@ async def widget_render_spec(record: Optional[dict] = None, trace_id=None):
     return {"ok": True, "record": r, "source": src, "form": f,
             "size": {"size": size, "composition": _rec.composition(size), "span": span},
             "problems": problems, "warnings": warnings}
+
+
+# ── the dashboards' layouts (UI redesign M5, Notes/40 section 4; the Dashboard board) ─────────────────────────
+# One file per VeraDash grid: {dashboard, layout, key, user, grid{cols, row, gap, widths}, widgets:[{record, at,
+# span, hidden, refresh}]} - every widget of the grid as a record. The page fetches its file on boot (VeraDash
+# applies it under the user's persisted layout); a missing file is a 404 and the page runs on its markup alone.
+_mig = _sibling("migrate_layouts")
+LAYOUT_DIR = Path(__file__).parent / "layouts"
+
+
+def layout_keys() -> List[str]:
+    try:
+        return sorted(p.stem for p in LAYOUT_DIR.glob("*.json"))
+    except Exception:
+        return []
+
+
+def load_layout(key: str) -> Optional[Dict[str, Any]]:
+    """The layout file for one grid key (main, dream, wol-workers, ...), or None. The key is a file stem only."""
+    k = str(key or "").strip()
+    if not k or not re.fullmatch(r"[a-zA-Z0-9_-]{1,48}", k):
+        return None
+    p = LAYOUT_DIR / (k + ".json")
+    if not p.exists():
+        return None
+    try:
+        rec = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return rec if isinstance(rec, dict) and isinstance(rec.get("widgets"), list) else None
+
+
+@capability(
+    "widget.layouts", memory="off", silent=True,
+    http_method="GET", http_path="/ui/widgets/layouts", http_tags=["ui", "widgets"],
+    description="The dashboards' layout files: one per VeraDash grid, every widget of the grid as a record. "
+                "Input: key (str - one grid; omit for the list). Output: {ok, layouts:[{key, dashboard, widgets, "
+                "records}], count} or, with a key, {ok, key, layout}.")
+async def widget_layouts(key: str = "", trace_id=None):
+    if key:
+        rec = load_layout(key)
+        return {"ok": bool(rec), "key": key, "layout": rec, **({} if rec else {"error": "no layout %r" % key})}
+    out = []
+    for k in layout_keys():
+        rec = load_layout(k)
+        if not rec:
+            continue
+        out.append({"key": k, "dashboard": rec.get("dashboard") or k, "widgets": len(rec["widgets"]),
+                    "records": _mig.count_records(rec)})
+    return {"ok": True, "layouts": out, "count": len(out)}
+
+
+@capability(
+    "widget.layout.migrate", memory="off", silent=True,
+    http_method="POST", http_path="/ui/widgets/layouts/migrate", http_tags=["ui", "widgets"],
+    description="A legacy vera.dash.<key> state {order, hidden, sizes, dynamic} as the layout record: order -> at "
+                "(dense flow), sizes -> span, hidden -> hidden, dynamic -> a panel record. The grid's layout file "
+                "supplies the page tiles when one exists. Input: key (str!), legacy (object!). Output: {ok, layout}.")
+async def widget_layout_migrate(key: str = "", legacy: Optional[dict] = None, trace_id=None):
+    k = str(key or "").strip()
+    if not k:
+        return {"ok": False, "error": "key required"}
+    if isinstance(legacy, dict) and isinstance(legacy.get("widgets"), list):
+        return {"ok": True, "layout": legacy, "note": "already the layout record"}
+    return {"ok": True, "layout": _mig.migrate(k, legacy if isinstance(legacy, dict) else {}, load_layout(k))}
+
+
+@_orch.APP.get("/ui/widgets/layouts/{key}", include_in_schema=False)
+async def _serve_widget_layout(key: str):
+    """One grid's layout file, as the page fetches it on boot."""
+    from fastapi.responses import JSONResponse
+    rec = load_layout(key)
+    if not rec:
+        return JSONResponse({"ok": False, "error": "no layout %r" % key}, status_code=404)
+    return JSONResponse(rec, headers={"Cache-Control": "no-cache"})

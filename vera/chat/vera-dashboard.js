@@ -29,6 +29,25 @@
  * w-hN span classes; injects only its own CSS for the loader modal, the float,
  * and the pop buttons.
  * Reuses GET /ui/panel/list, /ui/panel/get and /ui/panel/window.
+ *
+ * ON RECORDS (UI redesign M5 — Notes/40 §4, the Dashboard and Sizes boards):
+ * a dashboard is a LAYOUT RECORD — {dashboard, layout, key, user, grid {cols
+ * 12, row 58, gap 10, widths}, widgets[]} — and a tile is {record, at, span,
+ * hidden, refresh, floated}. Each grid's default lives in a layout file
+ * (vera/widgets/layouts/<key>.json, served at /ui/widgets/layouts/<key>):
+ * every widget of the grid as a record (form · source · title · span · the
+ * children of a composite). A tile the page still draws by hand carries
+ * draw.body = "page" — its body stays in the markup so the page's own
+ * updaters keep addressing it by id; the record owns the frame (title chip,
+ * span, size, max_body, hidden, order). A record without a page body is
+ * drawn by <vera-widget> at the size its span picks (2–3 wide S, 4 M, 6 L,
+ * 8–12 XL; rows add detail, then the table). The loader drops a panel
+ * record. vera.dash.<key> persists the layout record; a legacy {order,
+ * hidden, sizes, dynamic} is migrated in memory (VeraDash.migrate — the same
+ * rule as vera/widgets/migrate_layouts.py) and written back in the new
+ * shape. Saved layouts (vera.dash.<key>.layouts), a Layouts menu and Arrange
+ * (dense flow) sit beside the Configure button. Every tile gets its grip
+ * and its resize handle by construction. Every mechanic above is kept.
  * ========================================================================== */
 (function () {
   'use strict';
@@ -132,6 +151,23 @@
       'border:1px solid var(--border);background:var(--bg2);color:var(--dim2);cursor:pointer;',
       'user-select:none;font-family:var(--mono);margin:2px}',
       '.vd-chip:hover{border-color:var(--acc);color:var(--acc)}',
+      // Every widget is a record: the chip in the head says form · source (the Harness board). Quiet until the grid
+      // is being edited, when it is the thing you are arranging.
+      '.vd-rec{font-family:var(--mono);font-size:8px;color:var(--dim2);opacity:.55;white-space:nowrap;overflow:hidden;',
+      'text-overflow:ellipsis;max-width:38%;flex-shrink:1;margin-left:6px;letter-spacing:0;text-transform:none;font-weight:400}',
+      '.dash-grid.editing .vd-rec{opacity:1;color:var(--acc)}',
+      // The Layouts menu (saved arrangements, per user, per dashboard) and Arrange, beside Configure.
+      '.vd-lm-list .lm-row{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:3px;border:1px solid transparent}',
+      '.vd-lm-list .lm-row:hover{background:var(--bg2);border-color:var(--border)}',
+      '.vd-lm-list .lm-name{font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--text);flex:1}',
+      '.vd-lm-list .lm-name.on{color:var(--acc)}',
+      '.vd-lm-list .lm-meta{font-size:8.5px;color:var(--dim2);font-family:var(--mono)}',
+      '.vd-lm-list button{font-size:9px;padding:2px 8px;border-radius:3px;border:1px solid var(--border);background:var(--bg0);',
+      'color:var(--dim2);cursor:pointer;font-family:var(--mono)}',
+      '.vd-lm-list button:hover{border-color:var(--acc);color:var(--acc)}',
+      '.vd-lm-save{display:flex;gap:6px;padding:8px 10px;border-top:1px solid var(--border)}',
+      '.vd-lm-save input{flex:1;background:var(--bg0);border:1px solid var(--border2);color:var(--text);padding:4px 8px;',
+      'border-radius:3px;font-family:var(--mono);font-size:10.5px}',
       // Solo mode: this page was loaded (in a harness float) just to show ONE
       // widget — hide everything else and let the widget fill the viewport.
       // Self-contained styling like .widget.floating, since page CSS may scope
@@ -270,6 +306,96 @@
       '</body></html>';
   }
 
+  /* ── the layout record's pure parts (shared by every instance; VeraDash.* exports them) ─────────────────── */
+  // The grid the Dashboard board draws — the units VeraDash has always used, so a layout migrates one to one.
+  var GRID = { cols: 12, row: 58, gap: 10, widths: [2, 3, 4, 6, 8, 12] };
+  // The span → size rule (the Sizes board; widget_record.size_for_span is the same rule): 2–3 wide S, 4 M, 6 L,
+  // 8–12 XL; extra rows on a 6-wide add the detail, then the table.
+  function sizeForSpan(w, h) {
+    w = +w || 0; h = +h || 1;
+    if (w <= 1) return 'xs';
+    if (w <= 3) return 's';
+    if (w <= 4) return 'm';
+    if (w <= 6) return h < 3 ? 'l' : 'xl';
+    return 'xl';
+  }
+  // The span a record asks for: its own frame.span, else the size's default cell; a panel is the loader's 6 × 3.
+  function spanFor(record) {
+    var fr = record && record.frame && typeof record.frame === 'object' ? record.frame : {};
+    if (Array.isArray(fr.span) && fr.span.length === 2 && +fr.span[0]) return [+fr.span[0], +fr.span[1] || 1];
+    if (record && record.form === 'panel') return [6, 3];
+    var size = String(fr.size || (record && record.size) || (record && record.draw && record.draw.size) || 'm').toLowerCase();
+    return { xs: [2, 1], s: [2, 1], m: [4, 2], l: [6, 3], xl: [8, 4] }[size] || [4, 2];
+  }
+  function panelRecord(panelId, wid, label) {
+    panelId = String(panelId || '');
+    return { id: wid || ('dyn-' + panelId.replace(/[^a-zA-Z0-9_-]/g, '')), form: 'panel', panel: panelId, source: 'panel:' + panelId,
+      title: label || panelId, frame: { size: 'l', span: [6, 3] } };
+  }
+  // Dense flow: each visible tile takes the first cell, top row first then left to right, where its span fits —
+  // the position a browser gives the same order in a 12-column auto-flow grid. at = [col, row]; a hidden tile
+  // has no place (at: null). Positions are grid units, so a layout survives a window resize and the two narrow
+  // breakpoints (where the page's CSS re-flows the same order into 6 or 2 columns).
+  function flow(tiles, cols) {
+    cols = cols || GRID.cols;
+    var occ = {};
+    function fits(r, c, w, h) { for (var y = r; y < r + h; y++) for (var x = c; x < c + w; x++) if (occ[y + ',' + x]) return false; return true; }
+    function mark(r, c, w, h) { for (var y = r; y < r + h; y++) for (var x = c; x < c + w; x++) occ[y + ',' + x] = 1; }
+    return (tiles || []).map(function (t) {
+      var o = {}; Object.keys(t).forEach(function (k) { o[k] = t[k]; });
+      if (t.hidden) { o.at = null; return o; }
+      var sp = Array.isArray(t.span) ? t.span : [4, 1];
+      var w = Math.min(cols, Math.max(1, +sp[0] || 4)), h = Math.max(1, +sp[1] || 1);
+      for (var r = 0; r < 10000; r++) {
+        for (var c = 0; c + w <= cols; c++) {
+          if (fits(r, c, w, h)) { mark(r, c, w, h); o.at = [c, r]; return o; }
+        }
+      }
+      o.at = [0, r]; return o;
+    });
+  }
+  // Arrange / compact: the tiles in the order dense flow packs them (row, then column), hidden ones last in their
+  // own order — so the grid closes the holes a tall tile left without moving anything the user did not ask about.
+  function arrange(tiles, cols) {
+    var placed = flow(tiles, cols);
+    var vis = placed.filter(function (t) { return t.at; }), hid = placed.filter(function (t) { return !t.at; });
+    vis.sort(function (a, b) { return (a.at[1] - b.at[1]) || (a.at[0] - b.at[0]); });
+    return vis.concat(hid);
+  }
+  // The legacy shape → the layout record (one to one, the Dashboard board's rule): order → at (dense flow),
+  // sizes → span, hidden → hidden, dynamic → a panel record (or the record a dynamic record tile carried). Page
+  // tiles the legacy state never named keep their markup span and follow the ordered ones. Mirrored in
+  // vera/widgets/migrate_layouts.py; the two are held to the same fixture by the tests.
+  function migrate(legacy, o) {
+    o = o || {}; legacy = (legacy && typeof legacy === 'object') ? legacy : {};
+    var page = Array.isArray(o.page) ? o.page : [], key = o.key || '';
+    var order = Array.isArray(legacy.order) ? legacy.order : [];
+    var hidden = Array.isArray(legacy.hidden) ? legacy.hidden : [];
+    var sizes = (legacy.sizes && typeof legacy.sizes === 'object') ? legacy.sizes : {};
+    var dynamic = (legacy.dynamic && typeof legacy.dynamic === 'object') ? legacy.dynamic : {};
+    var known = {};
+    page.forEach(function (p) { if (p && p.id) known[String(p.id)] = { span: p.span }; });
+    Object.keys(dynamic).forEach(function (wid) {
+      var dd = dynamic[wid] || {};
+      var rec = (dd.record && typeof dd.record === 'object') ? dd.record : null;
+      var r = {};
+      if (rec) { r.id = wid; Object.keys(rec).forEach(function (k) { r[k] = rec[k]; }); if (!r.id) r.id = wid; }
+      known[wid] = { record: rec ? r : panelRecord(dd.panelId, wid) };
+    });
+    var ids = [], seen = {};
+    order.concat(page.map(function (p) { return p && p.id; }), Object.keys(dynamic)).forEach(function (id) {
+      id = String(id || ''); if (id && known[id] && !seen[id]) { seen[id] = 1; ids.push(id); }
+    });
+    var tiles = ids.map(function (id) {
+      var k = known[id], sz = sizes[id];
+      var span = (sz && +sz.w) ? [+sz.w, +sz.h || 1] : (k.span || (k.record ? spanFor(k.record) : [4, 1]));
+      var refresh = (k.record && k.record.read && k.record.read.refresh) || (k.record && k.record.refresh) || '';
+      return { record: k.record || id, at: null, span: span, hidden: hidden.indexOf(id) >= 0, refresh: refresh, floated: false };
+    });
+    return { v: 2, dashboard: key, layout: 'default', key: key, user: '', grid: { cols: GRID.cols, row: GRID.row, gap: GRID.gap, widths: GRID.widths.slice() },
+      widgets: flow(tiles, GRID.cols) };
+  }
+
   /* ── one dashboard instance ──────────────────────────────────────────── */
   function init(grid, opts) {
     if (!grid) return null;
@@ -280,29 +406,85 @@
     var SKEY = 'vera.dash.' + key;
     var withLoader = opts.loader !== false;
     var withPopout = opts.popout !== false;
-    var state = { order: [], hidden: new Set(), sizes: {}, dynamic: {}, editing: false };
+    var state = { order: [], hidden: new Set(), sizes: {}, dynamic: {}, editing: false,
+      // the record side: the layout file's records by wid, per-tile meta {at, refresh, floated}, which wids the
+      // persisted layout named (so a file's default hidden applies to new tiles only), the layout's name and grid
+      records: {}, meta: {}, seen: {}, name: 'default', user: '', file: null,
+      grid: { cols: GRID.cols, row: GRID.row, gap: GRID.gap, widths: GRID.widths.slice() } };
     var dragSrc = null, fdrag = null;
+    var LKEY = SKEY + '.layouts';     // the saved arrangements of this dashboard, by name
 
     function widgets() { return Array.prototype.slice.call(grid.querySelectorAll(':scope > .widget')); }
     function byId(wid) { return widgets().filter(function (w) { return w.dataset.wid === wid; })[0]; }
+    // a floated tile lives on <body>; the grid keeps its placeholder
+    function byIdAnywhere(wid) { return byId(wid) || document.querySelector('.widget[data-wid="' + wid + '"]'); }
     var $ = function (id) { return id ? document.getElementById(id) : null; };
+    function spanOf(w) {
+      return [parseInt((w.className.match(/w-w(\d+)/) || [])[1] || '4', 10), parseInt((w.className.match(/w-h(\d+)/) || [])[1] || '1', 10)];
+    }
+    function setSpan(w, span) {
+      if (!span || !+span[0]) return;
+      [2, 3, 4, 6, 8, 12].forEach(function (n) { w.classList.remove('w-w' + n); });
+      [1, 2, 3, 4, 5, 6].forEach(function (n) { w.classList.remove('w-h' + n); });
+      w.classList.add('w-w' + span[0]); w.classList.add('w-h' + (span[1] || 1));
+    }
+    function recordOf(wid) { return state.records[wid] || (state.dynamic[wid] && state.dynamic[wid].record) || null; }
+    // the span picks the size a record tile draws at; the tile says its size either way
+    function syncSize(w) {
+      var sp = spanOf(w), size = sizeForSpan(sp[0], sp[1]);
+      w.dataset.size = size;
+      var el = w.querySelector(':scope > .w-body > vera-widget');
+      if (el && el.getAttribute('size') !== size) el.setAttribute('size', size);
+    }
 
+    /* ── persistence: the LAYOUT RECORD (the Dashboard board) ──
+       vera.dash.<key> holds {v:2, dashboard, layout, key, user, grid, widgets:[{record, at, span, hidden, refresh,
+       floated}]}. The mechanics keep thinking in order / hidden / sizes / dynamic — they are what drag, resize,
+       hide and the loader mutate — so the record is BUILT from them and the DOM on save, and UNPACKED into them
+       on load. A page tile's record is its id (the layout file has the record); a tile the user added carries
+       its record inline. A legacy {order, hidden, sizes, dynamic} is migrated in memory and written back in the
+       new shape the next time anything saves. */
+    function layoutRecord() {
+      var tiles = [];
+      Array.prototype.slice.call(grid.children).forEach(function (el) {
+        var floated = el.hasAttribute && el.hasAttribute('data-vd-ph');
+        var w = floated ? byIdAnywhere(el.getAttribute('data-vd-ph')) : (el.classList && el.classList.contains('widget') ? el : null);
+        if (!w || !w.dataset.wid) return;
+        var wid = w.dataset.wid, dyn = state.dynamic[wid], m = state.meta[wid] || {};
+        var sp = state.sizes[wid] && +state.sizes[wid].w ? [+state.sizes[wid].w, +state.sizes[wid].h || 1] : spanOf(w);
+        tiles.push({ record: dyn ? (dyn.record || panelRecord(dyn.panelId, wid)) : wid, at: null, span: sp,
+          hidden: state.hidden.has(wid), refresh: m.refresh || '', floated: !!floated });
+      });
+      return { v: 2, dashboard: (state.file && state.file.dashboard) || key, layout: state.name || 'default', key: key,
+        user: state.user || '', grid: state.grid, widgets: flow(tiles, state.grid.cols) };
+    }
+    function unpack(rec) {
+      state.order = []; state.hidden = new Set(); state.sizes = {}; state.dynamic = {}; state.meta = {}; state.seen = {};
+      state.name = rec.layout || 'default'; state.user = rec.user || '';
+      if (rec.grid && +rec.grid.cols) state.grid = rec.grid;
+      (rec.widgets || []).forEach(function (t) {
+        if (!t) return;
+        var r = (t.record && typeof t.record === 'object') ? t.record : null;
+        var wid = r ? String(r.id || '') : String(t.record || '');
+        if (!wid) return;
+        state.order.push(wid); state.seen[wid] = 1;
+        if (t.hidden) state.hidden.add(wid);
+        if (Array.isArray(t.span) && +t.span[0]) state.sizes[wid] = { w: +t.span[0], h: +t.span[1] || 1 };
+        state.meta[wid] = { at: Array.isArray(t.at) ? t.at : null, refresh: t.refresh || '', floated: !!t.floated };
+        if (r) state.dynamic[wid] = (r.form === 'panel' && r.panel) ? { panelId: r.panel, wid: wid, record: r } : { record: r, wid: wid };
+      });
+    }
     function save() {
-      try {
-        localStorage.setItem(SKEY, JSON.stringify({
-          order: state.order, hidden: Array.from(state.hidden),
-          sizes: state.sizes, dynamic: state.dynamic
-        }));
-      } catch (e) { /* private mode / quota */ }
+      try { localStorage.setItem(SKEY, JSON.stringify(layoutRecord())); } catch (e) { /* private mode / quota */ }
     }
     function load() {
       try {
         var j = JSON.parse(localStorage.getItem(SKEY) || 'null');
         if (!j) return;
-        state.order = Array.isArray(j.order) ? j.order : [];
-        state.hidden = new Set(Array.isArray(j.hidden) ? j.hidden : []);
-        state.sizes = (j.sizes && typeof j.sizes === 'object') ? j.sizes : {};
-        state.dynamic = (j.dynamic && typeof j.dynamic === 'object') ? j.dynamic : {};
+        if (!Array.isArray(j.widgets)) {
+          j = migrate(j, { key: key, page: widgets().map(function (w) { return { id: w.dataset.wid, span: spanOf(w) }; }) });
+        }
+        unpack(j);
       } catch (e) { /* ignore */ }
     }
 
@@ -504,7 +686,9 @@
         // thing that needs to be idempotent; each widget's own CSS is
         // responsible for its own height ceiling, if it has one.
         state.sizes[w.dataset.wid] = { w: targetW, h: targetH };
+        syncSize(w);       // the span picks the size the record draws at
         save();
+        applyLayout();     // and the positions follow
       }
       applySize(sx, sy);   // seed the label before any movement
       _dragGuardOn('nwse-resize');
@@ -546,7 +730,25 @@
         if (sz && sz.w) { [2, 3, 4, 6, 8, 12].forEach(function (n) { w.classList.remove('w-w' + n); }); w.classList.add('w-w' + sz.w); }
         if (sz && sz.h) { [1, 2, 3, 4, 5, 6].forEach(function (n) { w.classList.remove('w-h' + n); }); w.classList.add('w-h' + sz.h); }
       });
+      stampAt();
+      ws.forEach(syncSize);
       renderHidden();
+    }
+    // at = [col, row] from dense flow over the grid's order — what the record persists and the tile shows
+    function stampAt() {
+      var tiles = widgets().map(function (w) { return { wid: w.dataset.wid, span: spanOf(w), hidden: state.hidden.has(w.dataset.wid) }; });
+      flow(tiles, state.grid.cols).forEach(function (t) {
+        var w = byId(t.wid); if (!w) return;
+        state.meta[t.wid] = state.meta[t.wid] || {};
+        state.meta[t.wid].at = t.at;
+        if (t.at) w.dataset.at = t.at[0] + ',' + t.at[1]; else delete w.dataset.at;
+      });
+    }
+    // Arrange / compact: the tiles in the order dense flow packs them, so the holes a tall tile left close.
+    function doArrange() {
+      var tiles = widgets().map(function (w) { return { wid: w.dataset.wid, span: spanOf(w), hidden: state.hidden.has(w.dataset.wid) }; });
+      state.order = arrange(tiles, state.grid.cols).map(function (t) { return t.wid; });
+      applyLayout(); save();
     }
 
     function toggleEdit() {
@@ -564,8 +766,9 @@
     function reset() {
       if (!confirm('Reset dashboard layout to defaults?')) return;
       try { localStorage.removeItem(SKEY); } catch (e) {}
-      state.order = []; state.hidden = new Set(); state.sizes = {};
-      applyLayout();
+      state.order = []; state.hidden = new Set(); state.sizes = {}; state.meta = {}; state.seen = {}; state.name = 'default';
+      widgets().forEach(function (w) { if (w.dataset.record && !w.dataset.fromFile) { w.remove(); delete state.dynamic[w.dataset.wid]; } });
+      if (state.file) applyFile(state.file); else applyLayout();
     }
 
     /* ── pop-out: float on page (survives tab switch) + new window ─────── */
@@ -716,7 +919,39 @@
       w.addEventListener('dragleave', onDragLeave);
       w.addEventListener('drop', onDrop);
       w.addEventListener('dragend', onDragEnd);
+      ensureChrome(w);
       addPopButtons(w);
+    }
+    // The frame is the record's: a grip to move it, a hide button, the resize handle (the one ol-bgqueue lacked)
+    // and the chip that says form · source. Only what is missing is added; a page's own head is left as written.
+    function ensureChrome(w) {
+      var head = w.querySelector(':scope > .w-head');
+      if (head) {
+        if (!head.querySelector('.w-grip')) head.insertAdjacentHTML('afterbegin', '<span class="w-grip">⠿</span>');
+        if (!head.querySelector('.w-actions')) {
+          head.insertAdjacentHTML('beforeend', '<span class="w-actions"><button class="w-iconbtn" data-vd-hide title="Hide">×</button></span>');
+          head.querySelector('[data-vd-hide]').onclick = function () { hide(w.dataset.wid); };
+        }
+      }
+      if (!w.querySelector(':scope > .w-resize')) w.insertAdjacentHTML('beforeend', '<span class="w-resize" data-resize></span>');
+      recordChip(w);
+    }
+    function recordChip(w) {
+      var head = w.querySelector(':scope > .w-head'); if (!head) return;
+      var r = recordOf(w.dataset.wid);
+      var text = r ? (String(r.form || '') + (r.source ? ' · ' + r.source : (r.panel ? ' · panel:' + r.panel : ''))) : '';
+      var chip = head.querySelector('.vd-rec');
+      if (!text) { if (chip) chip.remove(); return; }
+      if (!chip) {
+        chip = document.createElement('span'); chip.className = 'vd-rec';
+        var act = head.querySelector('.w-actions');
+        if (act) head.insertBefore(chip, act); else head.appendChild(chip);
+      }
+      chip.textContent = text; chip.title = 'record ' + (r.id || w.dataset.wid) + ' · ' + text;
+      if (r.form) w.dataset.form = r.form;
+      if (r.source) w.dataset.source = r.source; else if (r.panel) w.dataset.source = 'panel:' + r.panel;
+      var mb = r.frame && r.frame.max_body, body = w.querySelector(':scope > .w-body');
+      if (mb && body) { body.style.maxHeight = mb + 'px'; if (!body.style.overflowY) body.style.overflowY = 'auto'; }
     }
 
     /* widget loader (+ Add Widget) + dynamic widgets */
@@ -747,22 +982,29 @@
       var widget = document.createElement('div');
       widget.className = 'widget ' + spanClass(record);
       widget.dataset.wid = wid; widget.dataset.record = '1';
+      if (o2 && o2.fromFile) widget.dataset.fromFile = '1';
+      if (o2 && o2.span) setSpan(widget, o2.span);
+      if (state.sizes[wid] && +state.sizes[wid].w) setSpan(widget, [state.sizes[wid].w, state.sizes[wid].h]);
+      var refresh = (state.meta[wid] && state.meta[wid].refresh) || (o2 && o2.refresh) || '';
+      if (refresh) { record.read = (record.read && typeof record.read === 'object') ? record.read : {}; record.read.refresh = refresh; }
       widget.innerHTML =
         '<div class="w-head"><span class="w-grip">⠿</span><span class="w-dot ok"></span>' +
         '<span class="w-title">' + esc(record.title || record.name || record.form || 'widget') + '</span>' +
         '<span class="w-actions"><button class="w-iconbtn" data-vd-hide title="Hide">×</button>' +
-        '<button class="w-iconbtn" data-vd-remove title="Remove widget">🗑</button></span></div>' +
+        ((o2 && o2.fromFile) ? '' : '<button class="w-iconbtn" data-vd-remove title="Remove widget">🗑</button>') + '</span></div>' +
         '<div class="w-body" style="padding:8px;position:relative;min-height:0"></div>' +
         '<span class="w-resize" data-resize></span>';
       var el = document.createElement('vera-widget');
-      el.setAttribute('size', 'auto');
+      var sp0 = spanOf(widget);
+      el.setAttribute('size', sizeForSpan(sp0[0], sp0[1]));   // the span picks the size (the Sizes board), not the pixels
       el.setAttribute('record', JSON.stringify(record));
       widget.querySelector('.w-body').appendChild(el);
       widget.querySelector('[data-vd-hide]').onclick = function () { hide(wid); };
-      widget.querySelector('[data-vd-remove]').onclick = function () { removeDynamic(wid); };
+      var rm = widget.querySelector('[data-vd-remove]'); if (rm) rm.onclick = function () { removeDynamic(wid); };
       grid.appendChild(widget);
+      if (o2 && o2.fromFile) { state.records[wid] = record; } else { state.dynamic[wid] = { record: record, wid: wid }; }
+      state.meta[wid] = state.meta[wid] || { at: null, refresh: refresh, floated: false };
       wireWidget(widget);
-      state.dynamic[wid] = { record: record, wid: wid };
       if (!(o2 && o2.silent)) { state.order = widgets().map(function (w) { return w.dataset.wid; }); }
       save();
       return widget;
@@ -774,9 +1016,11 @@
         .then(function (r) { return r.json(); })
         .then(function (full) {
           if (!full || full.error) return;
+          var record = panelRecord(panelId, wid, ((full.icon || '') + ' ' + (full.label || panelId)).trim());
           var widget = document.createElement('div');
           widget.className = 'widget w-w6 w-h3';
-          widget.dataset.wid = wid; widget.dataset.panel = panelId;
+          widget.dataset.wid = wid; widget.dataset.panel = panelId; widget.dataset.form = 'panel';
+          if (state.sizes[wid] && +state.sizes[wid].w) setSpan(widget, [state.sizes[wid].w, state.sizes[wid].h]);
           widget.innerHTML =
             '<div class="w-head"><span class="w-grip">⠿</span><span class="w-dot ok"></span>' +
             '<span class="w-title">' + (full.icon || '') + ' ' + esc(full.label || panelId) + '</span>' +
@@ -798,8 +1042,9 @@
           widget.querySelector('[data-vd-hide]').onclick = function () { hide(wid); };
           widget.querySelector('[data-vd-remove]').onclick = function () { removeDynamic(wid); };
           grid.appendChild(widget);
+          state.dynamic[wid] = { panelId: panelId, wid: wid, record: record };
+          state.meta[wid] = state.meta[wid] || { at: null, refresh: '', floated: false };
           wireWidget(widget);
-          state.dynamic[wid] = { panelId: panelId, wid: wid };
           if (!(o2 && o2.silent)) { state.order = widgets().map(function (w) { return w.dataset.wid; }); }
           save();
         }).catch(function () {});
@@ -810,12 +1055,17 @@
       state.order = widgets().map(function (x) { return x.dataset.wid; }); save();
     }
     function restoreDynamic() {
+      var pending = [];
       Object.keys(state.dynamic).forEach(function (wid) {
         var info = state.dynamic[wid];
         if (grid.querySelector(':scope > [data-wid="' + wid + '"]')) return;
-        if (info && info.record) { addRecord(info.record, { silent: true, wid: wid }); return; }
-        addWidget(info.panelId, { silent: true });
+        if (!info) return;
+        if (info.panelId) { pending.push(addWidget(info.panelId, { silent: true })); return; }
+        if (info.record) addRecord(info.record, { silent: true, wid: wid });
       });
+      // the loader's tiles arrive after a fetch — once they are all in, the persisted order is applied once more
+      // so a restored panel sits where the layout put it, not at the end
+      if (pending.length) Promise.all(pending).then(function () { applyLayout(); }, function () {});
     }
 
     /* ── boot this instance ──────────────────────────────────────────── */
@@ -825,14 +1075,157 @@
     applyLayout();
     if (withLoader) restoreDynamic();
 
+    /* ── the layout file: this grid's widgets as records (vera/widgets/layouts/<key>.json) ──
+       The file is the DEFAULT layout. Under the user's persisted state it: names every page tile's record (the chip,
+       data-form / data-source, max_body); sets the span and the hidden flag of tiles the persisted layout never
+       named; orders a fresh dashboard the file's way; and draws, through <vera-widget>, any record that has no page
+       body. A page whose route is missing runs exactly as it did before — the DOM alone. */
+    function applyFile(file) {
+      if (!file || !Array.isArray(file.widgets)) return;
+      state.file = file;
+      var fileOrder = [], fresh = !state.order.length;
+      if (file.grid && +file.grid.cols && fresh) state.grid = file.grid;
+      file.widgets.forEach(function (t) {
+        var r = (t && t.record && typeof t.record === 'object') ? t.record : null;
+        var wid = r ? String(r.id || '') : String((t && t.record) || '');
+        if (!wid) return;
+        fileOrder.push(wid);
+        if (r) state.records[wid] = r;
+        var w = byIdAnywhere(wid);
+        var span = Array.isArray(t.span) && +t.span[0] ? t.span : (r ? spanFor(r) : null);
+        if (w) {
+          if (!state.seen[wid]) {          // the file's defaults, for a tile the user has not arranged
+            if (span && !(state.sizes[wid] && +state.sizes[wid].w)) setSpan(w, span);
+            if (t.hidden) state.hidden.add(wid);
+          }
+          state.meta[wid] = state.meta[wid] || { at: null, refresh: '', floated: false };
+          if (!state.meta[wid].refresh && t.refresh) state.meta[wid].refresh = t.refresh;
+          if (r && !(r.draw && r.draw.body === 'page')) w.dataset.fromFile = '1';
+          if (w.dataset.record) { var el = w.querySelector(':scope > .w-body > vera-widget'); if (el && r) { el.setAttribute('record', JSON.stringify(r)); } }
+          recordChip(w);
+        } else if (r && r.form && !(r.draw && r.draw.body === 'page')) {
+          // a record the page does not draw by hand: the element draws it
+          if (!state.meta[wid]) state.meta[wid] = { at: null, refresh: t.refresh || '', floated: false };
+          if (t.hidden && !state.seen[wid]) state.hidden.add(wid);
+          addRecord(r, { silent: true, wid: wid, fromFile: true, span: span, refresh: t.refresh || '' });
+        }
+      });
+      if (fresh) state.order = fileOrder;
+      applyLayout();
+      if (!EMBEDDED) {   // a tile the layout had floated comes back floating (a solo request needs the harness; skipped there)
+        Object.keys(state.meta).forEach(function (wid) { if (state.meta[wid].floated) { var w = byId(wid); if (w && !w.classList.contains('floating')) setTimeout(function () { try { floatW(w); } catch (e) {} }, 300); } });
+      }
+    }
+    function loadFile() {
+      if (opts.layout === false) return Promise.resolve(null);
+      var url = typeof opts.layout === 'string' ? opts.layout : '/ui/widgets/layouts/' + encodeURIComponent(key);
+      return fetch(url, { headers: { Accept: 'application/json' } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (j) { if (j && Array.isArray(j.widgets)) applyFile(j); return j; })
+        .catch(function () { return null; });
+    }
+
+    /* ── saved layouts: per user, per dashboard (vera.dash.<key>.layouts = {name: layout record}) ── */
+    function layouts() {
+      try { var j = JSON.parse(localStorage.getItem(LKEY) || 'null'); return (j && typeof j === 'object') ? j : {}; } catch (e) { return {}; }
+    }
+    function saveLayout(name) {
+      name = String(name || '').trim().slice(0, 48); if (!name) return null;
+      state.name = name;
+      var all = layouts(); all[name] = layoutRecord();
+      try { localStorage.setItem(LKEY, JSON.stringify(all)); } catch (e) {}
+      save(); renderLayouts();
+      return all[name];
+    }
+    function loadLayout(name) {
+      var rec = name === 'default' ? null : layouts()[name];
+      if (name !== 'default' && !rec) return false;
+      // the user's tiles go; the record's come back through the same paths a boot uses
+      widgets().forEach(function (w) { if (w.dataset.record && !w.dataset.fromFile) w.remove(); });
+      widgets().forEach(function (w) { if (w.dataset.panel && state.dynamic[w.dataset.wid]) w.remove(); });
+      if (rec) unpack(rec); else { state.order = []; state.hidden = new Set(); state.sizes = {}; state.dynamic = {}; state.meta = {}; state.seen = {}; state.name = 'default'; }
+      widgets().forEach(function (w) { if (!state.sizes[w.dataset.wid]) { var r = recordOf(w.dataset.wid), t = state.file && state.file.widgets.filter(function (x) { return x && (x.record === w.dataset.wid || (x.record && x.record.id === w.dataset.wid)); })[0]; if (t && Array.isArray(t.span)) setSpan(w, t.span); else if (r) setSpan(w, spanFor(r)); } });
+      applyLayout();
+      if (withLoader) restoreDynamic();
+      if (state.file) applyFile(state.file);
+      save(); renderLayouts();
+      return true;
+    }
+    function deleteLayout(name) {
+      var all = layouts(); if (!(name in all)) return false;
+      delete all[name];
+      try { localStorage.setItem(LKEY, JSON.stringify(all)); } catch (e) {}
+      if (state.name === name) { state.name = 'default'; save(); }
+      renderLayouts(); return true;
+    }
+    var _lm = null;
+    function openLayouts() {
+      injectCSS();
+      if (!_lm) {
+        _lm = document.createElement('div');
+        _lm.className = 'vd-wl-overlay vd-lm';
+        _lm.innerHTML =
+          '<div class="vd-wl-box" style="width:440px"><div class="vd-wl-head">' +
+          '<span style="font-family:var(--mono);font-size:10px;font-weight:700;color:var(--acc);letter-spacing:1px">LAYOUTS</span>' +
+          '<span style="flex:1;font-size:9px;color:var(--dim2);font-family:var(--mono)">saved arrangements · per user, per dashboard</span>' +
+          '<button class="w-iconbtn vd-wl-close" style="cursor:pointer">✕</button></div>' +
+          '<div class="vd-wl-list vd-lm-list"></div>' +
+          '<div class="vd-lm-save"><input placeholder="Save the current arrangement as…"><button class="w-iconbtn" data-lm-save style="cursor:pointer">Save</button></div></div>';
+        document.body.appendChild(_lm);
+        _lm.addEventListener('click', function (e) { if (e.target === _lm) _lm.style.display = 'none'; });
+        _lm.querySelector('.vd-wl-close').onclick = function () { _lm.style.display = 'none'; };
+        var inp = _lm.querySelector('input');
+        var doSave = function () { if (saveLayout(inp.value)) inp.value = ''; };
+        _lm.querySelector('[data-lm-save]').onclick = doSave;
+        inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') doSave(); });
+      }
+      renderLayouts();
+      _lm.style.display = 'flex';
+    }
+    function renderLayouts() {
+      if (!_lm) return;
+      var all = layouts(), names = Object.keys(all).sort();
+      var n = function (rec) { return (rec && rec.widgets ? rec.widgets.length : 0) + ' widgets'; };
+      var rows = ['<div class="lm-row"><span class="lm-name' + (state.name === 'default' ? ' on' : '') + '">default</span>' +
+        '<span class="lm-meta">' + (state.file ? 'from the layout file · ' + n(state.file) : 'the page as written') + '</span>' +
+        '<button data-lm-load="default">Load</button></div>'];
+      names.forEach(function (nm) {
+        rows.push('<div class="lm-row"><span class="lm-name' + (state.name === nm ? ' on' : '') + '">' + esc(nm) + '</span>' +
+          '<span class="lm-meta">' + n(all[nm]) + '</span><button data-lm-load="' + esc(nm) + '">Load</button>' +
+          '<button data-lm-del="' + esc(nm) + '" title="Delete">✕</button></div>');
+      });
+      var list = _lm.querySelector('.vd-lm-list');
+      list.innerHTML = rows.join('');
+      list.querySelectorAll('[data-lm-load]').forEach(function (b) { b.onclick = function () { loadLayout(b.getAttribute('data-lm-load')); }; });
+      list.querySelectorAll('[data-lm-del]').forEach(function (b) { b.onclick = function () { deleteLayout(b.getAttribute('data-lm-del')); }; });
+    }
+    // Layouts ▾ and Arrange beside the page's own Configure button (the Dashboard board's toolbar) — the same
+    // classes as that button so each page's toolbar styles them; once per toolbar.
+    function injectToolbar() {
+      var b = $(opts.editBtn); if (!b || !b.parentNode || b.parentNode.querySelector('[data-vd-layouts]')) return;
+      var cls = b.className.replace(/\b(primary|pri)\b/g, '').trim();
+      var lb = document.createElement('button'); lb.className = cls; lb.textContent = 'Layouts ▾'; lb.title = 'Saved layouts of this dashboard';
+      lb.setAttribute('data-vd-layouts', key); lb.onclick = openLayouts;
+      var ab = document.createElement('button'); ab.className = cls; ab.textContent = 'Arrange'; ab.title = 'Compact the grid: close the gaps, keep the order';
+      ab.setAttribute('data-vd-arrange', key); ab.onclick = doArrange;
+      b.parentNode.insertBefore(ab, b.nextSibling); b.parentNode.insertBefore(lb, b.nextSibling);
+    }
+
     var ctl = {
       key: key, grid: grid,
       toggleEdit: toggleEdit, reset: reset, openLoader: openLoader,
-      hide: hide, show: show, addWidget: addWidget, addRecord: addRecord, refresh: applyLayout
+      hide: hide, show: show, addWidget: addWidget, addRecord: addRecord, refresh: applyLayout,
+      // the record side
+      layout: layoutRecord, records: function () { var o = {}; widgets().forEach(function (w) { var r = recordOf(w.dataset.wid); if (r) o[w.dataset.wid] = r; }); return o; },
+      applyFile: applyFile, file: function () { return state.file; }, arrange: doArrange,
+      layouts: layouts, saveLayout: saveLayout, loadLayout: loadLayout, deleteLayout: deleteLayout, openLayouts: openLayouts,
+      state: function () { return { name: state.name, order: state.order.slice(), hidden: Array.from(state.hidden), sizes: state.sizes, grid: state.grid }; }
     };
     grid._veraDash = ctl;
+    ctl.ready = loadFile();
+    injectToolbar();
     return ctl;
   }
 
-  window.VeraDash = { init: init };
+  window.VeraDash = { init: init, migrate: migrate, flow: flow, arrange: arrange, sizeForSpan: sizeForSpan, spanFor: spanFor, panelRecord: panelRecord, GRID: GRID };
 })();

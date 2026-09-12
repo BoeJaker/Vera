@@ -1,0 +1,384 @@
+{
+ "v": 2,
+ "dashboard": "workers",
+ "layout": "default",
+ "key": "wol-workers",
+ "user": "",
+ "grid": {
+  "cols": 12,
+  "row": 58,
+  "gap": 10,
+  "widths": [
+   2,
+   3,
+   4,
+   6,
+   8,
+   12
+  ]
+ },
+ "note": "Every widget of the workers grid as a record (UI redesign M5). draw.body = \"page\": the page draws the body by hand today and its own updaters address it by id; the record owns the frame. Generated from the markup by the M5 slice; edit by hand from here.",
+ "widgets": [
+  {
+   "record": {
+    "id": "w-total",
+    "form": "counter",
+    "source": "cluster.workers",
+    "shape": "level",
+    "title": "Workers",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    0
+   ],
+   "span": [
+    2,
+    1
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "w-busy",
+    "form": "counter",
+    "source": "cluster.workers",
+    "shape": "level",
+    "title": "Busy",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    2,
+    0
+   ],
+   "span": [
+    2,
+    1
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "w-caps",
+    "form": "counter",
+    "source": "cluster.workers",
+    "shape": "level",
+    "title": "Capabilities",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    4,
+    0
+   ],
+   "span": [
+    2,
+    1
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "w-tasks",
+    "form": "counter",
+    "source": "cluster.jobs",
+    "shape": "level",
+    "title": "Tasks Done",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    6,
+    0
+   ],
+   "span": [
+    2,
+    1
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "w-queue",
+    "form": "counter",
+    "source": "cluster.jobs",
+    "shape": "level",
+    "title": "Queue",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    8,
+    0
+   ],
+   "span": [
+    2,
+    1
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "w-ollama",
+    "form": "counter",
+    "source": "cluster.ollama",
+    "shape": "level",
+    "title": "Ollama Nodes",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    10,
+    0
+   ],
+   "span": [
+    2,
+    1
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "w-resources",
+    "form": "meter-panel",
+    "source": "cluster.workers",
+    "shape": "values",
+    "title": "Cluster Resources",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      2
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    1
+   ],
+   "span": [
+    6,
+    2
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "w-detail",
+    "form": "cards",
+    "source": "cluster.workers",
+    "shape": "items",
+    "title": "Worker Detail",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      2
+     ],
+     "max_body": 260
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "subject": "$selected"
+   },
+   "at": [
+    6,
+    1
+   ],
+   "span": [
+    6,
+    2
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "w-cards",
+    "form": "cards",
+    "source": "cluster.workers",
+    "shape": "items",
+    "title": "Worker Nodes",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      4
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    3
+   ],
+   "span": [
+    12,
+    4
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  }
+ ]
+}
