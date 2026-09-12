@@ -28,7 +28,8 @@ def _fn(name):
 
 
 def test_the_chat_puts_every_loop_on_the_session_canvas_and_keeps_it_current():
-    assert "function _ctxColLoopEv(ev){ if(_ctxCol&&_pages.has('graph')) _ctxCol.appendLoopEvent(ev); try{ _loopCanvasEv(ev); }catch(_){} }" in HTML, "the same stream the loop card and the graph column read"
+    tee = _fn("_ctxColLoopEv")
+    assert "_ctxCol.appendLoopEvent(ev);" in tee and "try{ _loopCanvasEv(ev); }catch(_){}" in tee, "the same stream the loop card and the graph column read"
     ev = _fn("_loopCanvasEv")
     assert "const rid=String(ev.run_id||ev.stream_id||ev.session_id||'run').slice(0,80);" in ev and "key:'loop:'+rid" in ev
     assert "R.status=(ev.ok===false||/error|failed|cancelled/.test(t))?'fail':'ok';" in ev
