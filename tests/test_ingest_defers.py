@@ -327,3 +327,23 @@ def test_a_handler_is_registered_for_the_backfill():
     """Without this the runner drops the job as 'no handler' and the backfill
     silently never happens."""
     assert SVC.has_handler(IQ.KIND_EMBED_SESSIONS)
+
+
+# ── a person using Vera counts as busy, even with no GPU lease held ──────────
+def test_interactive_use_on_a_cpu_node_reads_as_busy(monkeypatch):
+    """For 12 hours on 2026-09-12 an embed run shared both CPU nodes with a
+    person waiting on chat replies, because the only busy signals were the
+    GPU gate and running loops. The chat path stamps interactive_recent();
+    the probe must honour it."""
+    async def free_gate():
+        return {"nodes": []}
+
+    monkeypatch.setattr(CS, "_running_loop_count", lambda: _zero())
+    monkeypatch.setattr(CS.CAPABILITY_REGISTRY, "get", lambda *_a, **_k: None)
+    monkeypatch.setattr(CS._orch, "interactive_recent", lambda *a, **k: True)
+    why = run(CS._system_is_busy())
+    assert "interactive" in why, why
+
+
+async def _zero():
+    return 0
