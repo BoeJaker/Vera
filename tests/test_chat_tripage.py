@@ -170,6 +170,20 @@ def test_the_element_renders_the_session_projection():
     assert "body.innerHTML = '<div class=\"empty\">This canvas is empty — blocks appear here as they are added.</div>';" in EL
 
 
+def test_the_relevance_engine_drives_the_canvas_columns_focus_set():
+    # P2: the chat asks after every reply (applies) and on a focus change in Hover/Zen (asks only); the element shows the focus per tier
+    fn = HTML[HTML.index("async function _cvRelevance("):HTML.index("async function _canvasColumnMount(){")]
+    assert "_capCall('canvas.session.relevance',{session_id:SID, turn:mid||'', text:String(text||'').slice(0,2000), entities:entities.slice(0,60), recent, apply:o.apply!==false})" in fn
+    assert "cv.setFocus(r.focus||[], r.scores||{})" in fn and "if(den==='full') return;" in fn, "a focus change asks only in Hover and Zen"
+    assert "try{ _cvRelevance(_cvRelMid, _cvRelText+'\\n'+String(fullText||'').slice(0,1500)); }catch(_){}" in HTML, "asked when the reply lands"
+    assert "_cvRelMid=uMsg.mid; _cvRelText=msg;" in HTML
+    assert "msgsEl.addEventListener('scroll', _cvRelFocus, {passive:true}); msgsEl.addEventListener('click', _cvRelFocus);" in HTML
+    assert "cv&&cv.retier&&cv.retier();" in HTML, "the focus set follows the tier"
+    assert "setFocus(keys, scores) {" in EL and "retier() {" in EL and "tier() {" in EL
+    assert "const fcls = inF ? (F ? ' inf' : '') : (tier === 'zen' ? ' out' : ' dim');" in EL and ".it.out{display:none}" in EL
+    assert 'async def cap_canvas_session_relevance(' in PY and '"canvas.session.relevance"' in PY and 'rev = await _write(doc, "add", key, turn=_anchor_turn(anchor))' in PY
+
+
 def test_the_python_side_names_match_the_vocabulary():
     for s in ('"canvas.session.resolve"', '"canvas.add"', '"canvas.pin"', '"canvas.park"', '"canvas.size"', '"canvas.recall"', '"canvas.timeline"',
               '"canvas.session.room"', '"canvas.ask"', 'ITEM_STATES = ("now", "parked", "pinned", "hidden")', 'ITEM_SIZES = ("s", "m", "l", "xl")',

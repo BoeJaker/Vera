@@ -294,6 +294,61 @@ def test_keyless_blocks_are_unchanged():
     assert "widget" in bt["block_types"] and bt["modes"] == ["dynamic", "static"]
 
 
+# ── the relevance engine (Notes/38 §3.3, P2) ──
+def _rel(sid, turn, text="", **kw):
+    return _run(C.cap_canvas_session_relevance(session_id=sid, turn=turn, text=text, **kw))
+
+
+def test_scenario_b_the_notes_come_back_by_intent_and_park_after_two_turns():
+    sid = "rel-b"
+    nb = _run(C.cap_canvas_add(session_id=sid, kind="note", key="notebook:rel-b", content={"text": "cell 1 · cell 2 · cell 3"}, anchor={"turn": "m1"}))
+    assert nb["resolved"] == "added"
+    # m1: an explicit hit this turn (the add) — live; m2, m3: recency keeps it live; m4: it parks
+    assert _rel(sid, "m1")["focus"] == ["notebook:rel-b"] and _rel(sid, "m1")["scores"]["notebook:rel-b"]["signals"]["explicit"] == 1.0
+    r2 = _rel(sid, "m2", "something else", recent=["m2", "m1"]); assert r2["focus"] == ["notebook:rel-b"] and r2["scores"]["notebook:rel-b"]["signals"]["recency"] == 0.5 and r2["parked"] == []
+    r3 = _rel(sid, "m3", "other work", recent=["m3", "m2", "m1"]); assert r3["focus"] == ["notebook:rel-b"]
+    r4 = _rel(sid, "m4", "more work", recent=["m4", "m3", "m2", "m1"])
+    assert r4["focus"] == [] and r4["parked"] == ["notebook:rel-b"] and r4["scores"]["notebook:rel-b"]["score"] < 0.35
+    doc = _run(C.cap_canvas_get(id=nb["id"]))
+    assert doc["blocks"][0]["state"] == "parked" and doc["timeline"][-2]["op"] == "park" and doc["timeline"][-1]["op"] == "relevance"
+    # m15: "add what we found to my notes" — the intent names the notebook; it is recalled, not recreated
+    r15 = _rel(sid, "m15", "add what we found to my notes", recent=["m15", "m14", "m13", "m12"])
+    assert r15["recalled"] == ["notebook:rel-b"] and r15["focus"] == ["notebook:rel-b"] and r15["scores"]["notebook:rel-b"]["signals"]["intent"] == 0.7
+    doc = _run(C.cap_canvas_get(id=nb["id"]))
+    b = doc["blocks"][0]
+    assert b["state"] == "now" and [a.get("turn") for a in b["anchors"]] == ["m1", "m15"] and b["anchors"][-1]["role"] == "recalled" and b["score"] == 0.7
+    assert [e["op"] for e in doc["timeline"][-2:]] == ["recall", "relevance"] and doc["timeline"][-1]["turn"] == "m15"
+    assert len(doc["blocks"]) == 1, "recalled, never a second notebook"
+
+
+def test_entity_similarity_and_pin_signals_and_ask_only():
+    sid = "rel-e"
+    _run(C.cap_canvas_add(session_id=sid, kind="session", key="ssh:ct126", content={"host": "ct126", "command": "df -h"}, anchor={"turn": "m2"}))
+    _run(C.cap_canvas_add(session_id=sid, kind="table", key="table:disk", content={"columns": ["fs", "use"], "rows": [["/", "81%"]], "caption": "disk usage on ct126"}, anchor={"turn": "m2"}))
+    _run(C.cap_canvas_add(session_id=sid, kind="note", key="note:pinned", content={"text": "keep me"}, at="pinned", anchor={"turn": "m1"}))
+    # far from m2: the entity ct126 in the turn brings the terminal and the table back; the pin never leaves
+    r = _rel(sid, "m10", "check that disk again on ct126", entities=["ct126"], recent=["m10", "m9", "m8", "m7", "m6", "m5"])
+    assert set(r["focus"]) == {"ssh:ct126", "table:disk", "note:pinned"}
+    assert r["scores"]["ssh:ct126"]["signals"]["entity"] == 0.85 and r["scores"]["note:pinned"]["signals"]["pin"] == 1.0
+    assert r["scores"]["table:disk"]["signals"]["similarity"] > 0, "the turn's words overlap the caption"
+    # nothing of the turn: the terminal and the table park, the pin stays; apply=False only answers
+    q = _rel(sid, "m11", "tell me a joke", recent=["m11", "m10"], apply=False)
+    assert q["applied"] is False and q["parked"] == [] and q["focus"] == ["note:pinned"]
+    doc = _run(C.cap_canvas_get(id=q["id"]))
+    assert all(b["state"] in ("now", "pinned") for b in doc["blocks"]), "ask-only moved nothing"
+    a = _rel(sid, "m11", "tell me a joke", recent=["m11", "m10"])
+    assert set(a["parked"]) == {"ssh:ct126", "table:disk"} and a["focus"] == ["note:pinned"]
+    view = _run(C.cap_canvas_recall(id=a["id"]))
+    assert all("score" in m for m in view["matches"]), "the item view carries the engine's last score"
+
+
+def test_the_engine_never_creates_the_canvas_and_the_room_is_untouched():
+    r = _rel("rel-none", "m1", "hello")
+    assert r["ok"] and r["focus"] == [] and r["applied"] is False and r["revision"] == 0
+    assert _run(C.cap_canvas_session_room(session_id="rel-none"))["count"] == 0
+    assert "canvas.session.relevance" in ORCH.CAPABILITY_REGISTRY
+
+
 def test_the_caps_are_registered_and_listed_on_the_panel():
     for n in ("canvas.session.resolve", "canvas.add", "canvas.pin", "canvas.park", "canvas.size", "canvas.remove",
               "canvas.recall", "canvas.timeline", "canvas.session.room", "canvas.ask",
