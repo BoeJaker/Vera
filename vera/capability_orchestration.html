@@ -249,6 +249,14 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .lhm-nav.events-open .lhm-s-w.events .lhm-s-wbody{max-height:50vh}
 .body-wrap.lhm .tab-hover-zone{top:0;left:0;bottom:0;right:auto;width:28px;height:auto}
 .lhm-nav-foot{padding:4px 6px;border-top:1px solid var(--border);flex-shrink:0;display:flex;gap:2px;align-items:center;justify-content:flex-end}
+/* a tab the aide opened (the Harness board): who, on the tab; the Driven ribbon over it (the Driven board) */
+#tabBar .tab.driven .who{font-family:var(--mono);font-size:8px;color:var(--acc);margin-left:6px;border:1px solid color-mix(in srgb,var(--acc) 40%,transparent);border-radius:99px;padding:0 5px}
+#tabRibbon{display:none;align-items:center;gap:6px;margin:2px 8px;padding:1px 8px;border-radius:10px;border:1px solid var(--acc3,#d4a96a);background:color-mix(in srgb,var(--acc3,#d4a96a) 12%,transparent);font-size:9.5px;width:fit-content}
+#tabRibbon.on{display:inline-flex}
+#tabRibbon i{width:6px;height:6px;border-radius:50%;background:var(--acc3,#d4a96a);display:inline-block}
+#tabRibbon b{font-family:var(--mono);font-size:8.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--acc3,#d4a96a)}
+#tabRibbon .who,#tabRibbon .pol{font-family:var(--mono);font-size:8.5px;color:var(--dim2)}
+#tabRibbon button{font:inherit;font-size:8.5px;padding:0 6px;border:1px solid var(--border);border-radius:5px;background:var(--bg2);color:var(--fg);cursor:pointer}
 .lhm-nav .tab{display:flex;align-items:center;border-bottom:none;border-right:2px solid transparent;padding:8px 10px 8px 10px;font-family:var(--mono);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.7px;color:var(--dim2);white-space:normal;word-break:break-word;user-select:none;cursor:pointer;position:relative;transition:all .14s;text-align:left;line-height:1.3}
 .lhm-nav .tab:hover{color:var(--text);background:rgba(255,255,255,.025)}
 .lhm-nav .tab.active{color:var(--acc);border-right-color:var(--acc);background:rgba(90,158,143,.06)}
@@ -713,6 +721,8 @@ select option{background:var(--bg2)}
       </div>
     </div>
     <div id="tabSubtabs"></div>
+    <!-- the Driven ribbon: shown over a tab the aide opened — who, the policy in force, undo the directive, the log -->
+    <span id="tabRibbon" data-w="driven ribbon · controls"><i></i><b>driven</b><span class="who"></span><span class="pol"></span><button type="button" onclick="_drivenUndo()" title="Undo the directive that opened this tab">Undo</button><button type="button" onclick="_drivenLog()" title="The Driven panel — every directive, allowed or refused">Log</button></span>
 
     <!-- LHM nav: shown when LHM mode is active -->
     <nav class="lhm-nav" id="lhmNav">
@@ -1753,9 +1763,50 @@ function _tabPaneOpen(id){
   _tabFireLoader(id);
 }
 
+// who opened each tab (the one panel set carries it): a tab the aide opened is marked and wears the Driven ribbon
+const _tabOrigin = {};
+let _panelsSetTimer = null;
+function _tabDrivenMark(){
+  document.querySelectorAll('#tabBar .tab').forEach(t => { const pid = _tabToPanelId(t); const by = _tabOrigin[pid] || 'you'; const driven = by !== 'you' && by !== 'user';
+    t.classList.toggle('driven', driven); let who = t.querySelector('.who');
+    if(driven){ if(!who){ who = document.createElement('span'); who.className = 'who'; t.appendChild(who); } who.textContent = by; } else if(who) who.remove(); });
+  // the ribbon names the open tab the aide opened (the active one first)
+  const isDriven = t => { const b = _tabOrigin[t] || 'you'; return b !== 'you' && b !== 'user'; };
+  const first = [..._openTabs].find(isDriven) || ''; const rb = document.getElementById('tabRibbon'); if(!rb) return;
+  const by = _tabOrigin[first] || 'you'; const driven = !!first && isDriven(first);
+  rb.classList.toggle('on', driven); rb.dataset.panel = driven ? first.replace(/^auto-/, '') : '';
+  if(driven){ rb.querySelector('.who').textContent = by; const pol = rb.querySelector('.pol'); pol.textContent = '';
+    api('/mcp/call', 'POST', { name: 'ui.policy.get', arguments: { session_id: _veraSessionId } }).then(r => { const c = r && r.content !== undefined ? r.content : r; const p = (c && (c.policy || c.rules)) || {}; pol.textContent = 'policy ' + (p['panel:' + rb.dataset.panel] || p.panels || 'drive'); }).catch(() => {}); }
+}
+// the one panel set, read back: a panel the aide opened as a harness tab (ui.panels.open says who and where) is
+// opened here as a tab alongside the others and marked; the harness's own report keeps who opened what
+async function _panelsSetSync(){
+  let r = null; try{ r = await api('/mcp/call', 'POST', { name: 'ui.panels.open', arguments: { session_id: _veraSessionId } }); }catch(_){ return; }
+  const c = r && r.content !== undefined ? r.content : r; const panels = (c && c.panels) || [];
+  let changed = false;
+  panels.forEach(p => { if(!p || !p.id) return; const by = p.origin || 'you'; if(by === 'you' || by === 'user') return; if(!/harness/.test(String(p.placement || p.host || ''))) return;
+    const tab = document.querySelector('#tabBar .tab[data-tab="' + p.id + '"]') || document.querySelector('#tabBar .tab[data-tab="auto-' + p.id + '"]'); if(!tab) return;
+    const pid = _tabToPanelId(tab); if(_tabOrigin[pid] !== by){ _tabOrigin[pid] = by; changed = true; }
+    if(!_openTabs.has(pid)){ _openTabs.add(pid); changed = true; try{ _tabFireLoader(pid); }catch(_){} } });
+  if(changed) _tabRender();
+}
+function _panelsSetStart(){ if(_panelsSetTimer) return; _panelsSetTimer = setInterval(_panelsSetSync, 5000); setTimeout(_panelsSetSync, 2500); }
+async function _drivenUndo(){
+  const rb = document.getElementById('tabRibbon'); const pid = rb && rb.dataset.panel; if(!pid) return;
+  try{
+    const log = await api('/mcp/call', 'POST', { name: 'ui.directive.log', arguments: { session_id: _veraSessionId, limit: 60 } });
+    const c = log && log.content !== undefined ? log.content : log;
+    const row = ((c && c.rows) || []).slice().reverse().find(x => x.name === 'panel.open' && x.outcome === 'applied' && ((x.args || {}).id === pid));
+    if(row){ await api('/mcp/call', 'POST', { name: 'ui.directive.undo', arguments: { session_id: _veraSessionId, row_id: row.id } }); }
+    const tabPid = [..._openTabs].find(t => t.replace(/^auto-/, '') === pid); if(tabPid){ delete _tabOrigin[tabPid]; if(_openTabs.size > 1) _openTabs.delete(tabPid); }
+    _tabRender();
+  }catch(_){}
+}
+function _drivenLog(){ const t = document.querySelector('#tabBar .tab[data-tab="driven"], #tabBar .tab[data-tab="auto-driven"]'); if(t){ splitTab(_tabToPanelId(t)); _tabFireLoader(_tabToPanelId(t)); } else { try{ window.open(base() + '/ui/driven', '_blank'); }catch(_){} } }
 function _tabRender(){
   const panelsEl = document.querySelector('.panels');
   const multi = _openTabs.size > 1;
+  try{ _tabDrivenMark(); _panelsSetStart(); }catch(_){}
   try{ _panelsOpenStart(); setTimeout(_panelsOpenReport, 400); }catch(_){}   // the one panel set follows the tabs
 
   // 1) Update tab button states + add/remove close buttons
@@ -2048,7 +2099,7 @@ function _panelsOpenList(){
   return [..._openTabs].map(pid => {
     const t = document.querySelector('#tabBar .tab[data-tab="' + pid + '"]');
     const label = t ? (Array.from(t.childNodes).filter(n => n.nodeType === 3).map(n => n.textContent.trim()).join('') || pid) : pid;
-    return { id: pid.replace(/^auto-/, ''), label, origin: 'you', placement: 'harness tab' };
+    return { id: pid.replace(/^auto-/, ''), label, origin: _tabOrigin[pid] || 'you', placement: 'harness tab' };
   });
 }
 function _panelsOpenReport(){
@@ -2189,7 +2240,7 @@ function _lhmTabRows(){
 }
 function _lhmNativeRender(host){
   const rows = _lhmTabRows();
-  const open = rows.filter(r => r.open).map(r => ({ id: r.pid, label: r.label, icon: r.icon || '▭', origin: 'you', placement: _openTabs.size > 1 ? 'split' : 'tab', active: r.active,
+  const open = rows.filter(r => r.open).map(r => ({ id: r.pid, label: r.label, icon: r.icon || '▭', origin: _tabOrigin[r.pid] || 'you', placement: _openTabs.size > 1 ? 'split' : 'tab', active: r.active,
     close: _openTabs.size > 1 ? () => { splitTab(r.pid); } : null, focus: () => { switchTab(r.pid); _tabFireLoader(r.pid); } }));
   const panels = rows.map(r => { const secs = r.active ? _panelSectionsFor(r.pid) : []; const openIdx = Math.min(_lhmSecOpen[r.pid] || 0, Math.max(0, secs.length - 1));
     return { id: r.pid, label: r.label, icon: r.icon || '▭', ct: '', active: r.active, open: r.open,
@@ -2202,7 +2253,7 @@ function _lhmNativeRender(host){
   // absorb path drew stays above it (side() clears what it is given)
   const box = document.createElement('div'); box.className = 'lhm-side-host'; box.style.cssText = 'flex:1;display:flex;flex-direction:column;min-height:0'; host.appendChild(box);
   VeraLHM.side(box, {
-    search: { label: 'Find a panel', hint: '⌘K', open: () => openTabPicker() },
+    search: { label: 'Find a panel', hint: '⌘K', open: () => openTabPicker() }, edit: true, id: 'harness-main',
     open, panels, registered: { n: (_uiPanelCache || []).length, open: () => openTabPicker() },
     onPanel: (pid, ev) => { if(ev && (ev.ctrlKey || ev.metaKey)) splitTab(pid); else switchTab(pid); _tabFireLoader(pid); _lhmNavSync(); },
     onSection: (pid, sid, i) => { _lhmSecOpen[pid] = i; _lhmNavSync(); },
