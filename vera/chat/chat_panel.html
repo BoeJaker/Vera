@@ -5729,6 +5729,41 @@ IMPORTANT:
     try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv&&cv.setFocus&&r&&r.ok){ cv.setFocus(r.focus||[], r.scores||{}); if(o.apply!==false){ cv._rev=null; cv.refresh(); } } }catch(_){}
     return r;
   }
+  // ── what a reply made, onto the session canvas (the Canvas board: "lifted out of the reply automatically") ──
+  // every capability card, code block, table, diagram, widget and image in the answer to `mid` becomes a keyed item
+  // anchored to the turn; the resolver brings an existing key back instead of doubling it; the turn's landed layer
+  // (the exploded scene) and the canvas routing see the same items
+  const _CV_LANDED={};
+  function _cvHarvest(body){
+    const out=[]; if(!body) return out;
+    body.querySelectorAll('.cap-inline').forEach((el,i)=>{ const hd=el.querySelector('.cap-inline-header'); const n=String((hd?hd.textContent:'')||'').replace(/\s+/g,' ').trim().slice(0,80); const res=String((el.querySelector('.cap-result,.cap-peek,.cap-md')||{}).textContent||'').trim().slice(0,2000); if(!n) return;
+      out.push({kind:'markdown', n:n.split(' ')[0]||'capability', d:'capability · '+(el.classList.contains('error')?'failed':'done'), content:{md:'**'+n+'**\n\n'+(res?'```\n'+res+'\n```':'')}, col:'var(--acc2)', k:'cap'}); });
+    body.querySelectorAll('pre code').forEach((el,i)=>{ const lang=(String(el.className||'').match(/language-([\w-]+)/)||[])[1]||''; const s=String(el.textContent||''); if(!s.trim()) return;
+      if(lang==='mermaid'){ out.push({kind:'diagram', n:'Diagram', d:'mermaid', content:{mermaid:s.slice(0,8000)}, col:'#a78bfa', k:'diagram'}); return; }
+      if(lang==='widget') return;
+      out.push({kind:'code', n:(lang||'code')+' · '+s.split('\n').length+' lines', d:'code block', content:{code:s.slice(0,12000), lang}, col:'#fb923c', k:'code'}); });
+    body.querySelectorAll('table').forEach((el,i)=>{ const columns=[...el.querySelectorAll('thead th, tr:first-child th')].map(x=>String(x.textContent||'').trim()); const rows=[...el.querySelectorAll('tbody tr, tr')].filter(tr=>tr.querySelector('td')).map(tr=>[...tr.querySelectorAll('td')].map(td=>String(td.textContent||'').trim())).slice(0,60); if(!rows.length) return;
+      out.push({kind:'table', n:(columns[0]||'Table')+' · '+rows.length+' rows', d:'table · '+rows.length+' rows', content:{columns, rows, caption:''}, col:'#38bdf8', k:'table'}); });
+    body.querySelectorAll('vera-widget').forEach((el,i)=>{ let rec=null; try{ rec=el.record||JSON.parse(el.getAttribute('record')||'null'); }catch(_){} const form=(rec&&rec.form)||el.getAttribute('form')||''; if(!form) return;
+      out.push({kind:'widget', n:(rec&&rec.title)||el.getAttribute('title')||form, d:'widget · '+form, content:{widget:form, args:(rec&&(rec.source||rec.args))||{}, title:(rec&&rec.title)||form, record:rec||undefined}, col:'#a78bfa', k:'widget'}); });
+    body.querySelectorAll('img').forEach((el,i)=>{ if(el.closest('.msg-actions,.cap-inline-header,.pa-att')||/\b(ico|icon|avatar)\b/.test(String(el.className||''))) return; const src=el.currentSrc||el.getAttribute('src')||''; if(!src||src.length>200000) return;
+      out.push({kind:'image', n:el.getAttribute('alt')||'image', d:el.closest('.sd-img,.cap-imgs')?'image · diffusion':'image', content:{url:src, alt:el.getAttribute('alt')||''}, col:'#e879f9', k:'image'}); });
+    return out.slice(0,12);
+  }
+  async function _cvLandReply(mid){
+    if(!SID||!mid) return 0; const q=document.querySelector('#msgs .mwrap[data-mid="'+mid+'"]'); if(!q) return 0;
+    let w=q.nextElementSibling; while(w&&!(w.classList&&w.classList.contains('mwrap')&&w.classList.contains('a'))) w=w.nextElementSibling;
+    const body=w&&w.querySelector('.msg-body'); if(!body||body.querySelector('.think-throb')) return 0;
+    const made=_cvHarvest(body); if(!made.length) return 0; let n=0;
+    for(let i=0;i<made.length;i++){ const m=made[i]; const key='turn:'+mid+':'+m.k+':'+i; if(_CV_LANDED[key]) continue;
+      try{ const r=await _capCall('canvas.add',{session_id:SID, kind:m.kind, content:m.content, key, at:'now', size:'s', anchor:{mid, turn:mid}});
+        if(!(r&&r.ok)) continue; _CV_LANDED[key]=true; n++;
+        (_TURN_LAND[mid]=_TURN_LAND[mid]||[]).push({n:m.n, d:'canvas · '+(r.resolved==='shown'?'already there':'lifted out of the reply'), col:m.col, kind:m.k, key, form:m.kind==='widget'?(m.content.widget||''):undefined});
+      }catch(_){}
+    }
+    if(n){ try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } }catch(_){} try{ _cvRunsDraw(); }catch(_){} try{ if(_xpl.on) _xplRefresh(); }catch(_){} }
+    return n;
+  }
   function _cvRelFocus(){
     const den=(document.documentElement.getAttribute('data-den')||'full').toLowerCase(); if(den==='full') return;
     if(_cvRelFocusT) clearTimeout(_cvRelFocusT);
@@ -5946,7 +5981,9 @@ IMPORTANT:
     if(Date.now()-_ctxTypingT<900){ svg.innerHTML=''; if(!_ctxTypingTimer) _ctxTypingTimer=setTimeout(()=>{ _ctxTypingTimer=null; _ctxRunsDraw(); }, 950); return; }
     const col=document.getElementById('chatColumn'), gcol=_ctxGrown?document.querySelector('#rightRail.lhm-host > .lhm-det'):document.getElementById('graphColumn'), w=_focusedTurn();
     if(!_pages.has('graph')||!_ctxCol||!col||!gcol||!w){ svg.innerHTML=''; return; }
-    const R=_ctxGrown?{left:0,top:0,width:window.innerWidth,height:window.innerHeight}:col.getBoundingClientRect(), M=w.getBoundingClientRect(), gc=gcol.getBoundingClientRect();
+    // the run ends on the exchange block itself (the question's surface, the answer's body), never on the column's edge
+    const surf=w.querySelector('.msg-user-line')||w.querySelector('.msg-body')||w;
+    const R=_ctxGrown?{left:0,top:0,width:window.innerWidth,height:window.innerHeight}:col.getBoundingClientRect(), M=surf.getBoundingClientRect(), gc=gcol.getBoundingClientRect();
     svg.setAttribute('viewBox','0 0 '+Math.round(R.width)+' '+Math.round(R.height));
     const lit=_ctxCol.positions().filter(p=>p.lit&&p.y>gc.top+40&&p.y<gc.bottom&&p.x>gc.left&&p.x<gc.right);
     const bySrc={}; lit.forEach(p=>{ (bySrc[p.source]=bySrc[p.source]||[]).push(p); });
@@ -9408,8 +9445,9 @@ Your task: decide what to do next to advance toward the goal.
     // sees its own past panel-opens in the history and parrots them on later
     // turns — the cause of it re-opening exec-panel on "thanks" / "huh?".
     HISTORY.push({role:'assistant',content:_stripPanelMarkup(fullText),thinking:fullThink});
-    // the reply landed: what is in focus on the session canvas now (parks · recalls through the resolver)
-    try{ _cvRelevance(_cvRelMid, _cvRelText+'\n'+String(fullText||'').slice(0,1500)); }catch(_){}
+    // the reply landed: what it MADE lands on the session canvas (keyed to the turn, through the resolver), then what is
+    // in focus now (parks · recalls)
+    try{ _cvLandReply(_cvRelMid).then(()=>{ try{ _cvRelevance(_cvRelMid, _cvRelText+'\n'+String(fullText||'').slice(0,1500)); }catch(_){} }); }catch(_){ try{ _cvRelevance(_cvRelMid, _cvRelText+'\n'+String(fullText||'').slice(0,1500)); }catch(__){} }
 
     // NOTE: NO /memory/record/turn call here — handled server-side by agents.py
 
@@ -16995,7 +17033,7 @@ Your task: decide what to do next to advance toward the goal.
     setDensity,toggleBlocks,
     _uiAskAnswer,_uiAskPick,_uiDirectiveApply,
     _cmpChip,_cmpSync,_paOpen,_paCopy,
-    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
+    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
     _persistMediaCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},
