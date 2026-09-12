@@ -1,0 +1,466 @@
+{
+ "v": 2,
+ "dashboard": "ollama-jobs",
+ "layout": "default",
+ "key": "wol-jobs",
+ "user": "",
+ "grid": {
+  "cols": 12,
+  "row": 58,
+  "gap": 10,
+  "widths": [
+   2,
+   3,
+   4,
+   6,
+   8,
+   12
+  ]
+ },
+ "note": "Every widget of the ollama-jobs grid as a record (UI redesign M5). draw.body = \"page\": the page draws the body by hand today and its own updaters address it by id; the record owns the frame. Generated from the markup by the M5 slice; edit by hand from here.",
+ "widgets": [
+  {
+   "record": {
+    "id": "j-pending",
+    "form": "counter",
+    "source": "jobs.stats",
+    "shape": "level",
+    "title": "Pending",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      3,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    0
+   ],
+   "span": [
+    3,
+    1
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "j-queued-kpi",
+    "form": "counter",
+    "source": "jobs.stats",
+    "shape": "level",
+    "title": "Queued",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      3,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    3,
+    0
+   ],
+   "span": [
+    3,
+    1
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "j-running",
+    "form": "counter",
+    "source": "jobs.stats",
+    "shape": "level",
+    "title": "Running",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      3,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    6,
+    0
+   ],
+   "span": [
+    3,
+    1
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "j-done-kpi",
+    "form": "counter",
+    "source": "jobs.stats",
+    "shape": "level",
+    "title": "Completed",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      3,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    9,
+    0
+   ],
+   "span": [
+    3,
+    1
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "j-failed-kpi",
+    "form": "counter",
+    "source": "jobs.stats",
+    "shape": "level",
+    "title": "Failed",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      3,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    1
+   ],
+   "span": [
+    3,
+    1
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "j-stream-kpi",
+    "form": "counter",
+    "source": "jobs.stats",
+    "shape": "level",
+    "title": "Stream Pending",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      3,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    3,
+    1
+   ],
+   "span": [
+    3,
+    1
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "j-reclaimed-kpi",
+    "form": "counter",
+    "source": "jobs.stats",
+    "shape": "level",
+    "title": "Recovered",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      3,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    6,
+    1
+   ],
+   "span": [
+    3,
+    1
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "olj-list",
+    "form": "table",
+    "source": "cluster.jobs",
+    "shape": "items",
+    "title": "All Jobs",
+    "read": {
+     "refresh": "10s"
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      4
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    2
+   ],
+   "span": [
+    12,
+    4
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "olj-breakdown",
+    "form": "table",
+    "source": "cluster.jobs",
+    "shape": "items",
+    "title": "Capability Breakdown",
+    "read": {
+     "refresh": "10s"
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      3
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    6
+   ],
+   "span": [
+    12,
+    3
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "j-list",
+    "form": "composite",
+    "source": "cluster.jobs",
+    "shape": "composite",
+    "title": "Job Queue",
+    "read": {
+     "refresh": "10s"
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      5
+     ],
+     "max_body": 400
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "layout": "rows",
+    "children": [
+     {
+      "slot": "queue",
+      "record": {
+       "id": "j-list:queue",
+       "form": "table",
+       "source": "cluster.jobs",
+       "title": "job queue",
+       "shape": "items"
+      }
+     },
+     {
+      "slot": "history",
+      "record": {
+       "id": "j-list:history",
+       "form": "table",
+       "source": "cluster.jobs",
+       "title": "history",
+       "shape": "items"
+      }
+     },
+     {
+      "slot": "ollama",
+      "record": {
+       "id": "j-list:ollama",
+       "form": "log",
+       "source": "ollama.request_log",
+       "title": "ollama log",
+       "shape": "events"
+      }
+     },
+     {
+      "slot": "stream",
+      "record": {
+       "id": "j-list:stream",
+       "form": "rows",
+       "source": "jobs.stats",
+       "title": "stream health",
+       "shape": "values"
+      }
+     }
+    ]
+   },
+   "at": [
+    0,
+    9
+   ],
+   "span": [
+    12,
+    5
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  }
+ ]
+}

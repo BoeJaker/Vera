@@ -1,0 +1,1314 @@
+{
+ "v": 2,
+ "dashboard": "cluster-overview",
+ "layout": "default",
+ "key": "main",
+ "user": "",
+ "grid": {
+  "cols": 12,
+  "row": 58,
+  "gap": 10,
+  "widths": [
+   2,
+   3,
+   4,
+   6,
+   8,
+   12
+  ]
+ },
+ "note": "Every widget of the cluster-overview grid as a record (UI redesign M5). draw.body = \"page\": the page draws the body by hand today and its own updaters address it by id; the record owns the frame. Generated from the markup by the M5 slice; edit by hand from here.",
+ "widgets": [
+  {
+   "record": {
+    "id": "topology-map",
+    "form": "topology",
+    "source": "topology.snapshot",
+    "shape": "graph",
+    "title": "Stack Topology",
+    "read": {
+     "refresh": "30s"
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      5
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    0
+   ],
+   "span": [
+    12,
+    5
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sysmon-proxmox",
+    "form": "composite",
+    "source": "sysmon.status",
+    "shape": "composite",
+    "title": "Proxmox",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      5
+     ],
+     "max_body": 290
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "layout": "grid",
+    "children": [
+     {
+      "slot": "nodes",
+      "record": {
+       "id": "sysmon-proxmox:nodes",
+       "form": "counter",
+       "source": "sysmon.status",
+       "title": "nodes",
+       "shape": "level"
+      }
+     },
+     {
+      "slot": "vms",
+      "record": {
+       "id": "sysmon-proxmox:vms",
+       "form": "counter",
+       "source": "sysmon.status",
+       "title": "VMs",
+       "shape": "level"
+      }
+     },
+     {
+      "slot": "cts",
+      "record": {
+       "id": "sysmon-proxmox:cts",
+       "form": "counter",
+       "source": "sysmon.status",
+       "title": "CTs",
+       "shape": "level"
+      }
+     },
+     {
+      "slot": "cpu",
+      "record": {
+       "id": "sysmon-proxmox:cpu",
+       "form": "trace",
+       "source": "sysmon.history",
+       "title": "cpu",
+       "shape": "series"
+      }
+     },
+     {
+      "slot": "mem",
+      "record": {
+       "id": "sysmon-proxmox:mem",
+       "form": "trace",
+       "source": "sysmon.history",
+       "title": "memory",
+       "shape": "series"
+      }
+     },
+     {
+      "slot": "disk",
+      "record": {
+       "id": "sysmon-proxmox:disk",
+       "form": "trace",
+       "source": "sysmon.history",
+       "title": "disk",
+       "shape": "series"
+      }
+     },
+     {
+      "slot": "clusters",
+      "record": {
+       "id": "sysmon-proxmox:clusters",
+       "form": "rows",
+       "source": "sysmon.status",
+       "title": "clusters",
+       "shape": "items"
+      }
+     },
+     {
+      "slot": "nodesList",
+      "record": {
+       "id": "sysmon-proxmox:nodesList",
+       "form": "rows",
+       "source": "sysmon.status",
+       "title": "nodes",
+       "shape": "items"
+      }
+     },
+     {
+      "slot": "guests",
+      "record": {
+       "id": "sysmon-proxmox:guests",
+       "form": "rows",
+       "source": "sysmon.status",
+       "title": "guests",
+       "shape": "items"
+      }
+     }
+    ]
+   },
+   "at": [
+    0,
+    5
+   ],
+   "span": [
+    4,
+    5
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sysmon-docker",
+    "form": "composite",
+    "source": "sysmon.status",
+    "shape": "composite",
+    "title": "Docker",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      5
+     ],
+     "max_body": 290
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "layout": "grid",
+    "children": [
+     {
+      "slot": "hosts",
+      "record": {
+       "id": "sysmon-docker:hosts",
+       "form": "counter",
+       "source": "sysmon.status",
+       "title": "hosts",
+       "shape": "level"
+      }
+     },
+     {
+      "slot": "running",
+      "record": {
+       "id": "sysmon-docker:running",
+       "form": "counter",
+       "source": "sysmon.status",
+       "title": "running",
+       "shape": "level"
+      }
+     },
+     {
+      "slot": "stopped",
+      "record": {
+       "id": "sysmon-docker:stopped",
+       "form": "counter",
+       "source": "sysmon.status",
+       "title": "stopped",
+       "shape": "level"
+      }
+     },
+     {
+      "slot": "top",
+      "record": {
+       "id": "sysmon-docker:top",
+       "form": "rows",
+       "source": "docker.stats.top",
+       "title": "top containers",
+       "shape": "items"
+      }
+     },
+     {
+      "slot": "hostsList",
+      "record": {
+       "id": "sysmon-docker:hostsList",
+       "form": "rows",
+       "source": "sysmon.status",
+       "title": "hosts",
+       "shape": "items"
+      }
+     },
+     {
+      "slot": "cpu",
+      "record": {
+       "id": "sysmon-docker:cpu",
+       "form": "trace",
+       "source": "sysmon.history",
+       "title": "cpu",
+       "shape": "series"
+      }
+     }
+    ]
+   },
+   "at": [
+    4,
+    5
+   ],
+   "span": [
+    4,
+    5
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sysmon-ollama",
+    "form": "composite",
+    "source": "sysmon.status",
+    "shape": "composite",
+    "title": "Ollama",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      4
+     ],
+     "max_body": 290
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "layout": "grid",
+    "children": [
+     {
+      "slot": "online",
+      "record": {
+       "id": "sysmon-ollama:online",
+       "form": "counter",
+       "source": "sysmon.status",
+       "title": "online",
+       "shape": "level"
+      }
+     },
+     {
+      "slot": "models",
+      "record": {
+       "id": "sysmon-ollama:models",
+       "form": "counter",
+       "source": "sysmon.status",
+       "title": "models",
+       "shape": "level"
+      }
+     },
+     {
+      "slot": "active",
+      "record": {
+       "id": "sysmon-ollama:active",
+       "form": "counter",
+       "source": "sysmon.status",
+       "title": "active",
+       "shape": "level"
+      }
+     },
+     {
+      "slot": "nodes",
+      "record": {
+       "id": "sysmon-ollama:nodes",
+       "form": "rows",
+       "source": "sysmon.status",
+       "title": "nodes",
+       "shape": "items"
+      }
+     },
+     {
+      "slot": "load",
+      "record": {
+       "id": "sysmon-ollama:load",
+       "form": "trace",
+       "source": "sysmon.history",
+       "title": "requests · tokens",
+       "shape": "series"
+      }
+     }
+    ]
+   },
+   "at": [
+    8,
+    5
+   ],
+   "span": [
+    4,
+    4
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "host-resources",
+    "form": "composite",
+    "source": "sysmon.history",
+    "shape": "composite",
+    "title": "Host Resources",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "layout": "grid",
+    "children": [
+     {
+      "slot": "cpu",
+      "record": {
+       "id": "host-resources:cpu",
+       "form": "trace",
+       "source": "sysmon.history",
+       "title": "cpu",
+       "shape": "series"
+      }
+     },
+     {
+      "slot": "mem",
+      "record": {
+       "id": "host-resources:mem",
+       "form": "trace",
+       "source": "sysmon.history",
+       "title": "memory",
+       "shape": "series"
+      }
+     },
+     {
+      "slot": "procs",
+      "record": {
+       "id": "host-resources:procs",
+       "form": "rows",
+       "source": "sysmon.status",
+       "title": "top processes",
+       "shape": "items"
+      }
+     }
+    ]
+   },
+   "at": [
+    8,
+    9
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "host-temps",
+    "form": "thermo",
+    "source": "obs.node_temps",
+    "shape": "values",
+    "title": "Host Temps — every sensor, click to collapse",
+    "read": {
+     "refresh": "10s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      4
+     ],
+     "max_body": 290
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    10
+   ],
+   "span": [
+    4,
+    4
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "status",
+    "form": "counter",
+    "source": "obs.health",
+    "shape": "level",
+    "title": "Status",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    4,
+    10
+   ],
+   "span": [
+    2,
+    1
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "mode",
+    "form": "counter",
+    "source": "obs.health",
+    "shape": "level",
+    "title": "Mode",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    6,
+    10
+   ],
+   "span": [
+    2,
+    1
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "redis",
+    "form": "counter",
+    "source": "obs.health",
+    "shape": "level",
+    "title": "Redis",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    4,
+    11
+   ],
+   "span": [
+    2,
+    1
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "workers",
+    "form": "counter",
+    "source": "obs.health",
+    "shape": "level",
+    "title": "Workers",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    6,
+    11
+   ],
+   "span": [
+    2,
+    1
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "caps",
+    "form": "counter",
+    "source": "obs.health",
+    "shape": "level",
+    "title": "Capabilities",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    4,
+    12
+   ],
+   "span": [
+    2,
+    1
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "pending",
+    "form": "counter",
+    "source": "obs.pending",
+    "shape": "level",
+    "title": "Pending",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    6,
+    12
+   ],
+   "span": [
+    2,
+    1
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "postgres",
+    "form": "hero",
+    "source": "memory.stats",
+    "shape": "level",
+    "title": "Postgres",
+    "read": {
+     "refresh": "30s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    8,
+    12
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "chroma",
+    "form": "hero",
+    "source": "memory.stats",
+    "shape": "level",
+    "title": "Chroma · vectors",
+    "read": {
+     "refresh": "30s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    4,
+    13
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "neo4j",
+    "form": "hero",
+    "source": "memory.stats",
+    "shape": "level",
+    "title": "Neo4j · graph",
+    "read": {
+     "refresh": "30s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      2
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    14
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "queues",
+    "form": "composite",
+    "source": "jobs.stats",
+    "shape": "composite",
+    "title": "Queues & Proxy",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      5
+     ],
+     "max_body": 110
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "layout": "rows",
+    "children": [
+     {
+      "slot": "queues",
+      "record": {
+       "id": "queues:queues",
+       "form": "pills",
+       "source": "jobs.stats",
+       "title": "queues",
+       "shape": "values"
+      }
+     },
+     {
+      "slot": "mimic",
+      "record": {
+       "id": "queues:mimic",
+       "form": "pills",
+       "source": "obs.health",
+       "title": "mimic",
+       "shape": "values"
+      }
+     },
+     {
+      "slot": "routing",
+      "record": {
+       "id": "queues:routing",
+       "form": "log",
+       "source": "ollama.request_log",
+       "title": "routing",
+       "shape": "events"
+      }
+     },
+     {
+      "slot": "proxy",
+      "record": {
+       "id": "queues:proxy",
+       "form": "trace",
+       "source": "sysmon.history",
+       "title": "proxy",
+       "shape": "series"
+      }
+     }
+    ]
+   },
+   "at": [
+    4,
+    15
+   ],
+   "span": [
+    6,
+    5
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "scheduler",
+    "form": "agenda",
+    "source": "obs.scheduler",
+    "shape": "calendar",
+    "title": "Scheduler",
+    "read": {
+     "refresh": "30s"
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      3
+     ],
+     "max_body": 220
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    20
+   ],
+   "span": [
+    6,
+    3
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "workerlist",
+    "form": "cards",
+    "source": "cluster.workers",
+    "shape": "items",
+    "title": "Workers",
+    "read": {
+     "refresh": "10s"
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      4
+     ],
+     "max_body": 280
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    6,
+    20
+   ],
+   "span": [
+    6,
+    4
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "ollama",
+    "form": "cards",
+    "source": "cluster.ollama",
+    "shape": "items",
+    "title": "Ollama Nodes",
+    "read": {
+     "refresh": "10s"
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      4
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    23
+   ],
+   "span": [
+    6,
+    4
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "mesh-info",
+    "form": "composite",
+    "source": "mesh.nodes",
+    "shape": "composite",
+    "title": "Mesh",
+    "read": {
+     "refresh": "30s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "layout": "rows",
+    "children": [
+     {
+      "slot": "count",
+      "record": {
+       "id": "mesh-info:count",
+       "form": "counter",
+       "source": "mesh.nodes",
+       "title": "nodes",
+       "shape": "level"
+      }
+     },
+     {
+      "slot": "kinds",
+      "record": {
+       "id": "mesh-info:kinds",
+       "form": "pills",
+       "source": "mesh.nodes",
+       "title": "by kind",
+       "shape": "parts"
+      }
+     }
+    ]
+   },
+   "at": [
+    0,
+    16
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "looplab-info",
+    "form": "composite",
+    "source": "evolve.sandbox.status",
+    "shape": "composite",
+    "title": "Loop Lab",
+    "read": {
+     "refresh": "10s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "layout": "rows",
+    "children": [
+     {
+      "slot": "count",
+      "record": {
+       "id": "looplab-info:count",
+       "form": "counter",
+       "source": "evolve.sandbox.status",
+       "title": "sandboxes",
+       "shape": "level"
+      }
+     },
+     {
+      "slot": "runs",
+      "record": {
+       "id": "looplab-info:runs",
+       "form": "rows",
+       "source": "evolve.pipeline.list",
+       "title": "pipelines",
+       "shape": "items"
+      }
+     }
+    ]
+   },
+   "at": [
+    6,
+    24
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "sandboxes-info",
+    "form": "list",
+    "source": "remote.sandbox.list",
+    "shape": "items",
+    "title": "Sandboxes",
+    "read": {
+     "refresh": "30s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    27
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "connections",
+    "form": "list",
+    "source": "ide.vscode.instances",
+    "shape": "items",
+    "title": "Connections",
+    "read": {
+     "refresh": "30s"
+    },
+    "frame": {
+     "size": "m",
+     "span": [
+      4,
+      3
+     ],
+     "max_body": 220
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    4,
+    27
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "diagnostics",
+    "form": "terminal",
+    "source": "obs.diagnostics",
+    "shape": "string",
+    "title": "Diagnostics",
+    "read": {
+     "refresh": "30s"
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      3
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    30
+   ],
+   "span": [
+    12,
+    3
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  }
+ ]
+}

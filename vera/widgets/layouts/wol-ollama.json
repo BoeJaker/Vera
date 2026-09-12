@@ -1,0 +1,429 @@
+{
+ "v": 2,
+ "dashboard": "ollama",
+ "layout": "default",
+ "key": "wol-ollama",
+ "user": "",
+ "grid": {
+  "cols": 12,
+  "row": 58,
+  "gap": 10,
+  "widths": [
+   2,
+   3,
+   4,
+   6,
+   8,
+   12
+  ]
+ },
+ "note": "Every widget of the ollama grid as a record (UI redesign M5). draw.body = \"page\": the page draws the body by hand today and its own updaters address it by id; the record owns the frame. Generated from the markup by the M5 slice; edit by hand from here.",
+ "widgets": [
+  {
+   "record": {
+    "id": "ol-routing",
+    "form": "form",
+    "source": "ollama.model_tags",
+    "shape": "values",
+    "title": "Model Tags & Routing",
+    "read": {
+     "refresh": "30s"
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      3
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    0
+   ],
+   "span": [
+    6,
+    3
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "ol-route-activity",
+    "form": "composite",
+    "source": "ollama.request_log",
+    "shape": "composite",
+    "title": "Routing Activity & Stats",
+    "read": {
+     "refresh": "30s"
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      3
+     ],
+     "max_body": 120
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "layout": "rows",
+    "children": [
+     {
+      "slot": "log",
+      "record": {
+       "id": "ol-route-activity:log",
+       "form": "log",
+       "source": "ollama.request_log",
+       "title": "routing activity",
+       "shape": "events"
+      }
+     },
+     {
+      "slot": "stats",
+      "record": {
+       "id": "ol-route-activity:stats",
+       "form": "rows",
+       "source": "ollama.route_stats",
+       "title": "throughput",
+       "shape": "values"
+      }
+     }
+    ]
+   },
+   "at": [
+    6,
+    0
+   ],
+   "span": [
+    6,
+    3
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "ol-online",
+    "form": "counter",
+    "source": "cluster.ollama",
+    "shape": "level",
+    "title": "Online",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    3
+   ],
+   "span": [
+    2,
+    1
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "ol-models",
+    "form": "counter",
+    "source": "cluster.ollama",
+    "shape": "level",
+    "title": "Models",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    2,
+    3
+   ],
+   "span": [
+    2,
+    1
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "ol-active",
+    "form": "counter",
+    "source": "cluster.ollama",
+    "shape": "level",
+    "title": "Active Requests",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    4,
+    3
+   ],
+   "span": [
+    2,
+    1
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "ol-nodes",
+    "form": "cards",
+    "source": "cluster.ollama",
+    "shape": "items",
+    "title": "Nodes",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      4
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    4
+   ],
+   "span": [
+    12,
+    4
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "ol-bgqueue",
+    "form": "list",
+    "source": "background.status",
+    "shape": "items",
+    "title": "Background Queue — waiting for an idle box",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      3
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    8
+   ],
+   "span": [
+    6,
+    3
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "ol-embed-cfg",
+    "form": "form",
+    "source": "ollama.embed_config",
+    "shape": "values",
+    "title": "Embedding Config",
+    "read": {
+     "refresh": ""
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      3
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    6,
+    8
+   ],
+   "span": [
+    6,
+    3
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "ol-test",
+    "form": "composite",
+    "source": "llm.generate",
+    "shape": "composite",
+    "title": "Node Test",
+    "read": {
+     "refresh": ""
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      3
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "layout": "rows",
+    "children": [
+     {
+      "slot": "form",
+      "record": {
+       "id": "ol-test:form",
+       "form": "form",
+       "source": "llm.generate",
+       "title": "node test",
+       "shape": "values"
+      }
+     },
+     {
+      "slot": "result",
+      "record": {
+       "id": "ol-test:result",
+       "form": "terminal",
+       "source": "llm.generate",
+       "title": "result",
+       "shape": "string"
+      }
+     }
+    ]
+   },
+   "at": [
+    0,
+    11
+   ],
+   "span": [
+    6,
+    3
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  }
+ ]
+}
