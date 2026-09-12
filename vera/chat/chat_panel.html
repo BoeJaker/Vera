@@ -1422,6 +1422,10 @@ body.has-panel #inputBar,body.has-cols #inputBar,#chatStack.narrow #inputBar{mar
 #inputBar #cmpFt .lbl{margin-left:auto;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280))}
 #cmpStrips{width:calc(var(--measure) - 58px);max-width:calc(100% - 32px);margin:0 auto 6px calc(50% - var(--measure) / 2 + 58px);box-sizing:border-box}
 body.has-panel #cmpStrips,body.has-cols #cmpStrips{margin-left:auto;margin-right:auto}
+/* the strips, the attachment chips and the attachment editor sit on the composer's measure (the old minimal-view rules outrank the plain selectors) */
+body[data-view="minimal"].has-msgs:not(.has-panel) #cmpStrips,body[data-view="minimal"].has-msgs:not(.has-panel) #docChips,body[data-view="minimal"].has-msgs:not(.has-panel) #docEditor{width:calc(var(--measure) - 58px);max-width:calc(100% - 32px);margin:0 auto 6px calc(50% - var(--measure) / 2 + 58px);box-sizing:border-box}
+body[data-view="minimal"].has-msgs.has-panel #cmpStrips,body[data-view="minimal"].has-msgs.has-cols #cmpStrips,body[data-view="minimal"].has-msgs.has-panel #docChips,body[data-view="minimal"].has-msgs.has-cols #docChips,body[data-view="minimal"].has-msgs.has-panel #docEditor,body[data-view="minimal"].has-msgs.has-cols #docEditor{width:calc(var(--measure) - 58px);max-width:calc(100% - 32px);margin:0 auto 6px}
+#docChips,#docEditor{box-sizing:border-box}
 /* an empty session: the composer centred, as before, but as the board's card */
 body:not(.has-msgs) #inputBar{margin:0 auto}
 /* the minimal view (the default once a message exists) painted the question with its own, more specific rules — a
