@@ -578,6 +578,118 @@ select option{background:var(--bg2)}
 ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px;opacity:.7}
 ::-webkit-scrollbar-thumb:hover{background:var(--dim)}
 </style>
+<style id="designHarness">
+/* ── the harness as the Harness board draws it (the design landing; every rule on the page's own markup) ── */
+body{background:var(--bg,var(--bg0,#0e0f12))}
+/* the header */
+header{height:48px;padding:0 16px;gap:10px;background:var(--s1,var(--bg1,#151719));border-bottom:none}
+header::after{display:none}
+header .logo{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:11px;font-weight:700;letter-spacing:3.2px;color:var(--ac,var(--acc,#5a9e8f));gap:0}
+header .logo-hex{display:none}
+header .dot{width:6px;height:6px;background:var(--ac2,var(--acc2,#8fb87a))}
+header .dot.live{box-shadow:none}
+header .conn-label{display:none}
+header .ls-sep{display:none}
+header #hdrPills{max-width:260px}
+header #hdrPills .hdr-pill{background:transparent;border:none;font-size:9px;color:var(--t3,var(--dim,#6b7280))}
+header #hdrMetrics{gap:3px;margin-left:6px;font-family:var(--f-ui,var(--sans,system-ui,sans-serif))}
+header #hdrMetrics .ls-group{display:flex;align-items:center;gap:6px;height:28px;padding:0 9px;border-radius:var(--r-sm,6px);cursor:default}
+header #hdrMetrics .ls-group:hover{background:var(--s2,var(--bg2,#1a1c20))}
+header #hdrMetrics .ls-icon{display:none}
+header #hdrMetrics .ls-label{font-size:9px;letter-spacing:.09em;text-transform:uppercase;color:var(--t3,var(--dim,#6b7280));font-weight:600}
+header #hdrMetrics .ls-meter{width:34px;height:4px;border-radius:2px;background:var(--s3,var(--bg3,#22262e));overflow:hidden;order:3}
+header #hdrMetrics .ls-meter-fill{height:100%;background:var(--ac,var(--acc,#5a9e8f))}
+header #hdrMetrics .ls-val{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:12px;font-weight:600;color:var(--t1,var(--text,#d8dce4));letter-spacing:-.01em}
+header #hdrMetricCfgWrap{position:relative}
+header #hdrMetricBtn{width:26px;height:26px;padding:0;border:none;background:transparent;color:var(--t3,var(--dim,#6b7280));border-radius:var(--r-sm,6px);font-size:12px}
+header #hdrMetricBtn:hover{color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20))}
+header .hsp{flex:1}
+header .vao{display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 11px;border-radius:var(--r-sm,6px);border:none;background:var(--s2,var(--bg2,#1a1c20));color:var(--t2,var(--dim2,#8a92a0));font:inherit;font-size:11px;cursor:pointer;max-width:340px;min-width:0}
+header .vao:hover,header .vao.on{color:var(--t1,var(--text,#d8dce4));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent))}
+header .vao .d{width:6px;height:6px;border-radius:50%;background:var(--ac,var(--acc,#5a9e8f));flex-shrink:0;box-shadow:0 0 0 3px color-mix(in srgb,var(--ac,var(--acc,#5a9e8f)) 22%,transparent)}
+header .vao .lt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+header .vao .ct{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280));background:var(--s3,var(--bg3,#22262e));border-radius:var(--r-pill,99px);padding:1px 6px;flex-shrink:0}
+header .vao .cv{color:var(--t3,var(--dim,#6b7280));font-size:9px;flex-shrink:0}
+header .hbtn{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 11px;border-radius:var(--r-sm,6px);border:none;background:transparent;color:var(--t2,var(--dim2,#8a92a0));font:inherit;font-size:11px;cursor:pointer;white-space:nowrap}
+header .hbtn:hover{color:var(--t1,var(--text,#d8dce4))}
+header .hbtn.on{color:var(--ac,var(--acc,#5a9e8f));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent))}
+header .hbtn .mono{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;opacity:.65}
+header .seg{display:flex;background:var(--s2,var(--bg2,#1a1c20));border-radius:var(--r-sm,6px);padding:2px;gap:2px}
+header .seg button{height:26px;padding:0 11px;font:inherit;font-size:10.5px;color:var(--t2,var(--dim2,#8a92a0));border:none;background:transparent;border-radius:calc(var(--r-sm,6px) - 2px);cursor:pointer}
+header .seg button.on{background:var(--pri-bg,var(--acc,#5a9e8f));color:var(--pri-fg,var(--on-acc,#fff));font-weight:600;box-shadow:inset 0 0 0 1px var(--pri-bd,transparent)}
+header .swp{width:24px;height:24px;border-radius:var(--r-sm,6px);cursor:pointer;position:relative;overflow:hidden;box-shadow:inset 0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));flex-shrink:0}
+header .swp.on{box-shadow:0 0 0 2px var(--ac,var(--acc,#5a9e8f))}
+header .swp i{position:absolute;left:0;right:0;bottom:0;height:6px}
+header .ico{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:var(--r-sm,6px);border:none;background:transparent;color:var(--t2,var(--dim2,#8a92a0));font:inherit;cursor:pointer}
+header .ico:hover,header .ico.on{color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20))}
+header .hdr-right{margin-left:0;gap:6px}
+/* ⋯: the old header controls (URL · Connect · ↻ · the metric picker) in a sheet */
+#hdrSheet{display:none;position:absolute;right:16px;top:52px;z-index:120;width:360px;padding:10px 12px;border-radius:var(--ui-radius,10px);background:var(--s1,var(--bg1,#151719));box-shadow:var(--card,0 1px 2px rgba(0,0,0,.18),0 8px 24px -18px rgba(0,0,0,.5)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));flex-direction:column;gap:8px}
+#hdrSheet.on{display:flex}
+#hdrSheet .hs-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+#hdrSheet .hs-k{font-size:var(--label-size,9px);text-transform:uppercase;letter-spacing:.09em;font-weight:600;color:var(--t3,var(--dim,#6b7280));width:100%}
+#hdrSheet .url-input{flex:1;min-width:0;background:var(--bg,var(--bg0,#0e0f12));border:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));border-radius:var(--r-sm,6px);color:var(--t1,var(--text,#d8dce4));font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:10.5px;padding:5px 8px}
+#hdrSheet .conn-label{display:block;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;color:var(--t2,var(--dim2,#8a92a0));max-width:none}
+/* the tab bar */
+.tabs{height:40px;align-items:flex-end;gap:4px;padding:0 16px;background:transparent;border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)))}
+.tab{height:32px;padding:0 13px;display:inline-flex;align-items:center;gap:7px;border-radius:var(--r-sm,6px) var(--r-sm,6px) 0 0;font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:11.5px;font-weight:500;letter-spacing:0;text-transform:none;color:var(--t2,var(--dim2,#8a92a0));border-bottom:none;position:relative;white-space:nowrap}
+.tab:hover{color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20))}
+.tab.active{color:var(--t1,var(--text,#d8dce4));background:var(--bg,var(--bg0,#0e0f12));font-weight:600;border-bottom:none}
+.tab.active::after{content:'';position:absolute;left:11px;right:11px;bottom:0;height:2px;background:var(--ac,var(--acc,#5a9e8f));border-radius:2px 2px 0 0}
+.tab.open{color:var(--t1,var(--text,#d8dce4));border-bottom:none}
+.tab.open::after{content:'';position:absolute;top:auto;right:auto;left:11px;right:11px;bottom:0;width:auto;height:2px;border-radius:2px 2px 0 0;background:var(--ac2,var(--acc2,#8fb87a));opacity:.9}
+.tab .ct{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280));background:var(--s3,var(--bg3,#22262e));border-radius:var(--r-pill,99px);padding:1px 6px}
+.tab .who{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:8px;color:var(--ac,var(--acc,#5a9e8f));margin-left:2px;border:1px solid color-mix(in srgb,var(--ac,var(--acc,#5a9e8f)) 40%,transparent);border-radius:99px;padding:0 5px}
+.tab.more{color:var(--t3,var(--dim,#6b7280));font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:10px}
+.tab .tab-close{color:var(--t3,var(--dim,#6b7280))}
+.tab-controls{order:10;margin-left:auto;margin-right:0;padding:0 0 4px;border-right:none;gap:1px}
+.tab-ctrl-btn{width:26px;height:26px;border-radius:var(--r-sm,6px);color:var(--t3,var(--dim,#6b7280));font-size:12px}
+.tab-ctrl-btn:hover{color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20))}
+.tab-ctrl-btn.active{color:var(--ac,var(--acc,#5a9e8f));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent))}
+/* the strips under the tabs: the active panel's own menu */
+#tabSubtabs:not(:empty){display:flex;align-items:center;gap:3px;min-height:30px;padding:0 14px;flex-shrink:0;border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));background:transparent;overflow-x:auto;scrollbar-width:none}
+#tabSubtabs .lhm-strips{display:contents}
+#tabSubtabs .lhm-st-p,#tabSubtabs .st-p{font-size:9.5px;text-transform:uppercase;letter-spacing:.1em;font-weight:600;color:var(--t3,var(--dim,#6b7280));margin-right:8px;flex-shrink:0}
+#tabSubtabs button,#tabSubtabs .lhm-st{height:22px;padding:0 9px;border:none;border-radius:var(--r-sm,6px);font:inherit;font-size:10.5px;color:var(--t2,var(--dim2,#8a92a0));background:transparent;white-space:nowrap;cursor:pointer}
+#tabSubtabs button:hover{color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20))}
+#tabSubtabs button.on,#tabSubtabs .lhm-st.on{color:var(--t1,var(--text,#d8dce4));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent));font-weight:600;box-shadow:inset 0 -2px 0 var(--ac,var(--acc,#5a9e8f))}
+#tabSubtabs .lhm-st-o,#tabSubtabs .st-o{height:20px;padding:0 8px;border-radius:var(--r-pill,99px);font-size:9.5px;color:var(--t2,var(--dim2,#8a92a0));background:var(--surf2,var(--bg2,#1a1c20))}
+/* live events: a column you bring back with ◫ */
+.sidebar{background:var(--s1,var(--bg1,#151719));border-right:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));width:250px}
+.sb-head{font-size:var(--label-size,9px);letter-spacing:.1em;color:var(--t3,var(--dim,#6b7280));border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));padding:8px 10px}
+#evExpandBtn{display:none!important}
+/* the dashboard */
+.dash-toolbar{display:flex;align-items:center;gap:8px;padding:12px 16px 8px;flex-wrap:wrap}
+.dash-title{font-size:15px;font-weight:600;letter-spacing:-.01em;color:var(--t1,var(--text,#d8dce4));margin:0;border:none;padding:0}
+.dash-meta{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;color:var(--t3,var(--dim,#6b7280))}
+.dash-toolbar .live{display:inline-flex;align-items:center;gap:6px;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;color:var(--t2,var(--dim2,#8a92a0))}
+.dash-toolbar .live i{width:6px;height:6px;border-radius:50%;background:var(--ac2,var(--acc2,#8fb87a));box-shadow:0 0 0 3px color-mix(in srgb,var(--ac2,var(--acc2,#8fb87a)) 22%,transparent)}
+.dash-toolbar .dsp{flex:1}
+.dash-toolbar .dlbl{font-size:var(--label-size,9px);text-transform:uppercase;letter-spacing:.09em;font-weight:600;color:var(--t3,var(--dim,#6b7280));white-space:nowrap}
+.dash-toolbar .btn,.dash-toolbar .mbtn{height:28px;padding:0 11px;border:none;border-radius:var(--r-sm,6px);background:var(--s2,var(--bg2,#1a1c20));color:var(--t2,var(--dim2,#8a92a0));font:inherit;font-size:10.5px;box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14));display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+.dash-toolbar .btn:hover,.dash-toolbar .mbtn:hover{color:var(--t1,var(--text,#d8dce4));background:var(--s3,var(--bg3,#22262e))}
+.dash-toolbar .btn.teal{color:var(--ac2,var(--acc2,#8fb87a));background:color-mix(in srgb,var(--ac2,var(--acc2,#8fb87a)) 12%,transparent)}
+.dash-toolbar .btn.pri,.dash-toolbar .mbtn.pri{background:var(--pri-bg,var(--acc,#5a9e8f));color:var(--pri-fg,var(--on-acc,#fff));font-weight:600}
+#clusterRefreshBadge{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280))}
+#dashHealthStrip{display:flex;gap:10px;flex-wrap:wrap;align-items:stretch;padding:0 16px;margin:0 0 12px;background:transparent;border:none}
+#dashHealthStrip > span:first-child{display:none}
+#dashHealthStrip > span{background:var(--s1,var(--bg1,#151719))!important;border:none!important;border-radius:var(--ui-radius,10px)!important;box-shadow:var(--card,0 1px 2px rgba(0,0,0,.18),0 8px 24px -18px rgba(0,0,0,.5));padding:8px 12px!important;font-size:8.5px!important;text-transform:uppercase;letter-spacing:.09em;font-weight:600;color:var(--t3,var(--dim,#6b7280))!important;min-width:110px}
+.panel#panel-dashboard{padding:0 0 16px}
+.dash-grid{padding:0 16px;gap:14px}
+.widget{background:var(--s1,var(--bg1,#151719));border:none;border-radius:var(--ui-radius,10px);box-shadow:var(--card,0 1px 2px rgba(0,0,0,.18),0 8px 24px -18px rgba(0,0,0,.5))}
+.widget:hover{border-color:transparent;box-shadow:var(--card,0 1px 2px rgba(0,0,0,.18),0 8px 24px -18px rgba(0,0,0,.5)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)))}
+.w-head{height:34px;padding:0 12px;gap:8px;border-bottom:none;background:transparent}
+.w-title{font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:11.5px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--t1,var(--text,#d8dce4));flex:0 1 auto}
+.w-head .vd-rec{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280));opacity:1;background:var(--s2,var(--bg2,#1a1c20));border-radius:var(--r-pill,99px);padding:1px 7px;max-width:180px}
+.w-head .w-sub,.w-head .w-meta{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280))}
+.w-head .w-actions{margin-left:auto;opacity:.55}
+.widget:hover .w-actions{opacity:1}
+.w-iconbtn{width:22px;height:22px;border-radius:var(--r-sm,6px);color:var(--t3,var(--dim,#6b7280))}
+.w-iconbtn:hover{color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20))}
+.w-body{padding:6px 12px 12px}
+.w-body.flush{padding:0}
+.w-grip{color:var(--t3,var(--dim,#6b7280))}
+</style>
 </head>
 <body>
 
@@ -647,7 +759,7 @@ select option{background:var(--bg2)}
 })();</script>
 
 <header>
-  <div class="logo"><div class="logo-hex"></div>VERA</div>
+  <div class="logo" title="Vera"><div class="logo-hex"></div>VERA</div>
   <div class="dot" id="dot"></div>
   <span class="conn-label" id="connLabel">disconnected</span>
   <div id="hdrPills"></div>
@@ -658,6 +770,15 @@ select option{background:var(--bg2)}
     <button class="btn sm" id="hdrMetricBtn" onclick="hdrMetricsToggleCfg(event)" title="Choose which metrics show in the header">▦</button>
     <div id="hdrMetricCfg"></div>
   </div>
+  <span class="hsp"></span>
+  <!-- the board's header: the activity ticker (every loop · dream · goal · cap · run — the lane opens on press), Search ⌘K, the style segment, theme swatches, Aa, ⋯ -->
+  <button class="vao" id="hdrAct" type="button" onclick="_hdrActToggle()" title="All agentic activity — loops, dreams, goals, caps, runs, artifacts"><span class="d"></span><span class="lt" id="hdrActLatest">no activity yet</span><span class="ct" id="hdrActCount">0</span><span class="cv">▾</span></button>
+  <button class="hbtn on" type="button" onclick="openTabPicker()" title="Find a panel, a setting, a capability"><svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="6" r="4.2"/><path d="m9.3 9.3 3 3"/></svg>Search<span class="mono">⌘K</span></button>
+  <div class="seg" id="hdrStyleSeg" title="The style pack — the same four the chat wears"></div>
+  <span id="hdrSwatches" style="display:contents"></span>
+  <button class="ico" type="button" onclick="openThemeMenu(event)" title="Theme, style pack and UI size"><span style="font-size:12px;font-weight:600">Aa</span></button>
+  <button class="ico" type="button" id="hdrMore" onclick="_hdrSheet()" title="Connection and the metric picker"><svg width="16" height="16" viewBox="0 0 18 18" fill="currentColor"><circle cx="4" cy="9" r="1.4"/><circle cx="9" cy="9" r="1.4"/><circle cx="14" cy="9" r="1.4"/></svg></button>
+  <div id="hdrSheet"></div>
   <div class="hdr-right">
       <button class="btn sm" id="themeBtn" onclick="openThemeMenu(event)" oncontextmenu="event.preventDefault();toggleTheme()" title="Choose theme (right-click to cycle)" style="padding:3px 8px;font-size:13px">☀</button>
     <input class="url-input" id="backendUrl" value="" placeholder="http://host:8999">
@@ -709,6 +830,7 @@ select option{background:var(--bg2)}
       <!-- Ollama tab removed — now in Workers & Ollama panel -->
       <div class="tab-controls">
         <button class="tab-ctrl-btn" onclick="tabToggleLhm()" title="Toggle left-hand menu" id="tabLhmBtn">☰</button>
+        <button class="tab-ctrl-btn" onclick="toggleEvSidebar()" title="Show or hide live events" id="tabEvBtn">◫</button>
         <button class="tab-ctrl-btn" onclick="tabToggleAutohide()" title="Auto-hide tabs" id="tabAutohideBtn">⇕</button>
         <button class="tab-ctrl-btn keep-inner-nav-btn" onclick="tabToggleKeepInnerNav()" title="Keep a panel's own inner menu visible while this main menu is auto-hiding">⧈</button>
         <button class="tab-ctrl-btn" onclick="tabAddPane()" title="Open additional panel alongside">+</button>
@@ -754,7 +876,10 @@ select option{background:var(--bg2)}
 
         <!-- Toolbar -->
         <div class="dash-toolbar">
-          <div class="dash-title">Cluster Overview</div>
+          <div class="dash-title">Cluster overview</div>
+          <span class="live" id="dashLive" style="display:none"><i></i>live · 5s</span>
+          <span class="dsp"></span>
+          <span class="dlbl" id="dashRecLbl"></span>
           <span class="dash-meta" id="dashLastUpdate">never updated</span>
           <button class="btn sm"      onclick="loadHealth();loadCluster();loadMemoryStats();loadSysmonSplit();loadHostTemps();loadDockerStats();loadSparklines();loadMeshInfo();loadLoopLabInfo();loadSandboxesInfo();loadConnections();loadMimicSummary();loadTopologyMap();pollDashHealthStrip();dashTouch()" title="Refresh all widgets">↻ Refresh</button>
           <button class="btn sm teal" onclick="clusterAutoRefresh()" id="dashAutoBtn">Auto 5s</button>
@@ -1659,6 +1784,40 @@ let _autohideTimer = null;
 // _reapplyNavHosting().
 let _keepInnerNavOnAutohide = false;
 let _evSidebarCollapsed = false;
+/* ── the harness chrome as the Harness board draws it ────────────────────────────────────────────────────────
+   Live events fold away by default (◫ brings the column back, remembered). The ⋯ sheet holds the connection
+   controls and the metric picker. The style segment and the theme swatches drive veraUI. The ticker in the
+   header is the newest activity headline and the count of what the feed has seen (its lane is the next step). */
+const _HDR_STYLES = [['standard','Standard'],['newspaper','News'],['terminal','Term'],['pixel','Pixel']];
+function _hdrSheet(on){ const s=document.getElementById('hdrSheet'), b=document.getElementById('hdrMore'); if(!s) return; const v=on==null?!s.classList.contains('on'):!!on; s.classList.toggle('on', v); if(b) b.classList.toggle('on', v); }
+function _hdrActToggle(){ const b=document.getElementById('hdrAct'); toggleEvSidebar(); if(b) b.classList.toggle('on', !_evSidebarCollapsed); }
+function _hdrActSync(){ const feed=document.getElementById('evFeed'); const lt=document.getElementById('hdrActLatest'), ct=document.getElementById('hdrActCount'); if(!feed||!lt||!ct) return; const rows=feed.children; const last=rows[0]; ct.textContent=String(rows.length); if(last){ const t=String(last.textContent||'').replace(/\s+/g,' ').trim().replace(/^\d\d:\d\d:\d\d\s*/,''); if(t) lt.textContent=t.slice(0,72); } }
+function _hdrStyleSync(){ const seg=document.getElementById('hdrStyleSeg'); if(!seg) return; let cur='standard'; try{ cur=document.documentElement.getAttribute('data-style')||localStorage.getItem('vera:ui:style')||'standard'; }catch(_){} seg.innerHTML=_HDR_STYLES.map(s=>'<button type="button" class="'+(s[0]===cur?'on':'')+'" data-style="'+s[0]+'">'+s[1]+'</button>').join(''); seg.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ try{ if(window.veraUI&&veraUI.setAppearance) veraUI.setAppearance({style:b.dataset.style}); else document.documentElement.setAttribute('data-style', b.dataset.style); }catch(_){} setTimeout(_hdrStyleSync,50); })); }
+async function _hdrSwatches(){ const host=document.getElementById('hdrSwatches'); if(!host) return; let themes={}; try{ themes=await _fetchAllThemes(); }catch(_){} const ids=Object.keys(themes||{}); if(!ids.length) return; const cur=(typeof _currentTheme!=='undefined'&&_currentTheme)||document.documentElement.getAttribute('data-theme')||''; const pick=ids.slice(0,5);
+  host.innerHTML=pick.map(id=>{ const t=themes[id]||{}; const v=t.vars||t||{}; const bg=v['--bg0']||v['--bg']||'#111', ac=v['--acc']||v['--ac']||'#5a9e8f'; return '<span class="swp'+(id===cur?' on':'')+'" data-theme="'+id+'" title="'+(t.name||id)+'" style="background:'+bg+'"><i style="background:'+ac+'"></i></span>'; }).join('');
+  host.querySelectorAll('.swp').forEach(s=>s.addEventListener('click',()=>{ try{ if(typeof _applyThemeById==='function') _applyThemeById(s.dataset.theme); else if(window.veraUI) veraUI.setTheme(s.dataset.theme); }catch(_){} host.querySelectorAll('.swp').forEach(x=>x.classList.toggle('on', x===s)); })); }
+function _dashRecLabel(){ const g=document.getElementById('dashGrid'), l=document.getElementById('dashRecLbl'); if(!g||!l) return; const n=g.querySelectorAll('.widget:not(.hidden)').length; let rows=0; try{ rows=getComputedStyle(g).gridTemplateRows.split(' ').length; }catch(_){} l.textContent=n+' widgets · every one a record · grid 12 × '+(rows||'—')+' · vera.dash.main'; const lv=document.getElementById('dashLive'); const ab=document.getElementById('dashAutoBtn'); if(lv&&ab) lv.style.display=/auto/i.test(ab.textContent)&&ab.classList.contains('teal')?'':'none'; }
+function _tabsMoreChip(){ const bar=document.getElementById('tabBar'); if(!bar||bar.querySelector('.tab.more')) return; const m=document.createElement('div'); m.className='tab more'; m.title='Every registered panel — add one as a tab'; m.textContent='+ ⌘K'; m.addEventListener('click',()=>openTabPicker()); const ctl=bar.querySelector('.tab-controls'); bar.insertBefore(m, ctl||null);
+  try{ fetch(base()+'/ui/panels').then(r=>r.json()).then(list=>{ const all=Array.isArray(list)?list.length:(list&&list.panels?list.panels.length:0); const open=bar.querySelectorAll('.tab[data-tab]').length; if(all>open) m.textContent='+'+(all-open)+' ⌘K'; }).catch(()=>{}); }catch(_){} }
+function _harnessChromeMount(){
+  if(document.body.dataset.designChrome) return; document.body.dataset.designChrome='1';
+  // the ⋯ sheet: the URL, Connect, ↻ and the metric picker move as the same elements
+  const sheet=document.getElementById('hdrSheet'), right=document.querySelector('header .hdr-right'), cfg=document.getElementById('hdrMetricCfgWrap'), conn=document.getElementById('connLabel');
+  if(sheet&&right){ const r1=document.createElement('div'); r1.className='hs-row'; r1.innerHTML='<span class="hs-k">Connection</span>'; if(conn) r1.appendChild(conn); while(right.firstChild){ const c=right.firstChild; if(c.id==='themeBtn'){ c.remove(); continue; } r1.appendChild(c); } sheet.appendChild(r1); right.style.display='none';
+    if(cfg){ const r2=document.createElement('div'); r2.className='hs-row'; r2.innerHTML='<span class="hs-k">Header metrics</span>'; r2.appendChild(cfg); sheet.appendChild(r2); } }
+  document.addEventListener('click', ev=>{ const s=document.getElementById('hdrSheet'); if(s&&s.classList.contains('on')&&!s.contains(ev.target)&&!(ev.target.closest&&ev.target.closest('#hdrMore'))) _hdrSheet(false); });
+  // live events fold away unless you left them open
+  let evOpen=false; try{ evOpen=localStorage.getItem('vera:harness:events')==='on'; }catch(_){}
+  if(!evOpen&&!_evSidebarCollapsed) toggleEvSidebar();
+  const evBtn=document.getElementById('tabEvBtn'); const syncEv=()=>{ if(evBtn) evBtn.classList.toggle('active', !_evSidebarCollapsed); try{ localStorage.setItem('vera:harness:events', _evSidebarCollapsed?'off':'on'); }catch(_){} const a=document.getElementById('hdrAct'); if(a) a.classList.toggle('on', !_evSidebarCollapsed); };
+  syncEv(); const sb=document.getElementById('evSidebar'); if(sb&&window.MutationObserver) new MutationObserver(syncEv).observe(sb,{attributes:true,attributeFilter:['style']});
+  // the ticker follows the feed
+  const feed=document.getElementById('evFeed'); if(feed&&window.MutationObserver){ let t=0; new MutationObserver(()=>{ clearTimeout(t); t=setTimeout(_hdrActSync,150); }).observe(feed,{childList:true}); } _hdrActSync();
+  _hdrStyleSync(); _hdrSwatches(); _tabsMoreChip(); _dashRecLabel();
+  const grid=document.getElementById('dashGrid'); if(grid&&window.MutationObserver){ let t2=0; new MutationObserver(()=>{ clearTimeout(t2); t2=setTimeout(_dashRecLabel,200); }).observe(grid,{childList:true,attributes:true,attributeFilter:['class']}); }
+  const ab=document.getElementById('dashAutoBtn'); if(ab&&window.MutationObserver) new MutationObserver(_dashRecLabel).observe(ab,{attributes:true,childList:true,characterData:true,subtree:true});
+}
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', ()=>{ try{ _harnessChromeMount(); }catch(e){ console.warn('harness chrome', e); } }); else { try{ _harnessChromeMount(); }catch(e){ console.warn('harness chrome', e); } }
 
 // ── Helpers: resolve tab element ↔ panel ID ──
 function _tabToPanelId(tabEl){
