@@ -25782,7 +25782,11 @@ try:
             "dag.agent_loop", "dag.agent_loop_v2", "dag.agent_loop_v3",
             "caps.describe", "caps.list",
         ],
-        mode      = "tab",
+        # "element", not "tab": the workshop is reached through the Automations
+        # hub, which embeds /workshop/panel as its "DAG flows" sub-tab. It stays
+        # registered (the dashboard-widget loader, custom tabs and solo popout
+        # all read the registry) but no longer claims a top-level tab.
+        mode      = "element",
         tab_order = 17,
         specialist_agent="agentic-planner",
         specialist_loop_profile="planning",

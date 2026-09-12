@@ -79,7 +79,6 @@ html.vpb-nav-hosted #secNav{display:none}
 .snav[data-pane="mimic"].on{color:var(--gpu)}
 .snav[data-pane="vllm"].on{color:var(--acc2)}
 .snav[data-pane="catalog"].on{color:#e6b800}
-.snav[data-pane="openclaw"].on{color:#b07ad6}
 .snav[data-pane="api"].on{color:var(--acc4)}
 .snav[data-pane="provision"].on{color:var(--acc3)}
 .navdiv{width:24px;height:1px;background:var(--border);margin:3px 0;flex-shrink:0}
@@ -391,7 +390,6 @@ html.vpb-nav-hosted #secNav{display:none}
     <div class="navdiv"></div>
     <div class="snav" data-pane="mimic" onclick="P.show('mimic',this)">Mimic</div>
     <div class="snav" data-pane="vllm" onclick="P.show('vllm',this)">vLLM</div>
-    <div class="snav" data-pane="openclaw" onclick="P.show('openclaw',this)">OpenClaw</div>
     <div class="snav" data-pane="api" onclick="P.show('api',this)">API</div>
     <div class="snav" data-pane="provision" onclick="P.show('provision',this)">Provision</div>
   </div>
@@ -1789,10 +1787,10 @@ html.vpb-nav-hosted #secNav{display:none}
     </div>
 
     <!-- ════════════════════════════════════════════════════════════════════
-         MIMIC / vLLM / OPENCLAW / API panes — standalone pages in iframes.
+         MIMIC / vLLM / API panes — standalone pages in iframes.
          Each loads lazily (src set on first activation in showPane) so the
-         backend isn't hit until the tab is opened. vLLM and OpenClaw moved
-         here from their old top-level harness tabs; the iframe pattern also
+         backend isn't hit until the tab is opened. vLLM moved
+         here from its old top-level harness tab; the iframe pattern also
          fixes the vLLM "nothing is clickable" bug (its scripts now run in
          their own window instead of being dropped by innerHTML injection).
          ════════════════════════════════════════════════════════════════════ -->
@@ -1806,9 +1804,6 @@ html.vpb-nav-hosted #secNav{display:none}
       <iframe id="vllm-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
     </div>
 
-    <div class="pane" id="pane-openclaw" style="padding:0;overflow:hidden">
-      <iframe id="openclaw-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
-    </div>
     <div class="pane" id="pane-api" style="padding:0;overflow:hidden">
       <iframe id="api-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
     </div>
@@ -6060,7 +6055,6 @@ function showPane(name, el){
   if(name==='modelrouting'){ _mountFrame('modelrouting-frame', BASE+'/ui/panels/model-routing'); }
   if(name==='mimic'){ _mountFrame('mimic-frame', BASE+'/cluster/mimic/panel'); }
   if(name==='vllm'){ _mountFrame('vllm-frame', BASE+'/vllm/panel'); }
-  if(name==='openclaw'){ _mountFrame('openclaw-frame', BASE+'/openclaw/panel'); }
   if(name==='api'){ _mountFrame('api-frame', BASE+'/providers/panel'); }
   if(name==='provision'){ provSub(_prvSub); }
   if(name==='storage'){ _mountFrame('storage-frame', BASE+'/pxstore/panel'); }
@@ -6088,7 +6082,7 @@ if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
   {id:'estate', label:'Estate'}, {id:'foundry', label:'Foundry'},
   {id:'docker', label:'Docker'}, {id:'sandbox', label:'Sandbox'}, {id:'network', label:'Network'},
   {id:'connections', label:'Connections'}, {id:'mimic', label:'Mimic'}, {id:'vllm', label:'vLLM'},
-  {id:'openclaw', label:'OpenClaw'}, {id:'api', label:'API'}, {id:'provision', label:'Provision'},
+{id:'api', label:'API'}, {id:'provision', label:'Provision'},
 ]);
 
 // ── Proxmox sub-tabs — Dashboard (native) / CPU-NUMA (pxstore solo iframe) ───
