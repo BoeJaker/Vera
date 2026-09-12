@@ -192,3 +192,37 @@ def summary(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
         if r.get("problem"):
             problems += 1
     return {"count": n, "kinds": kinds, "families": fams, "problems": problems}
+
+
+LIVE_IMPROVE = ("running",)
+LIVE_EDITQ = ("running", "queued")
+
+
+def fleet(sessions: Iterable[Dict[str, Any]], queue: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+    """The Watch page's fleet: every improvement loop running (its phase and
+    rounds so a bar can show progress) and every edit-queue action running or
+    queued (running first). Both lists are what evolve.improve.list and
+    evolve.editq.list hand back, reduced to what the card draws."""
+    loops = []
+    for s in sessions or []:
+        if not isinstance(s, dict):
+            continue
+        if not (s.get("live") or _s(s.get("status")) in LIVE_IMPROVE):
+            continue
+        done = int(s.get("rounds_done") or 0)
+        mx = int(s.get("max_rounds") or 0)
+        loops.append({
+            "id": _s(s.get("id")), "profile": _s(s.get("profile")), "phase": _s(s.get("phase") or s.get("status")),
+            "rounds_done": done, "max_rounds": mx, "pct": (min(100, round(done * 100 / mx)) if mx else 0),
+            "goal": _s(s.get("goal") or s.get("title"))[:120],
+        })
+    editors = []
+    for a in queue or []:
+        if not isinstance(a, dict) or _s(a.get("status")) not in LIVE_EDITQ:
+            continue
+        editors.append({
+            "id": _s(a.get("id")), "status": _s(a.get("status")), "model": _s(a.get("model")),
+            "instance": _s(a.get("instance")), "session": _s(a.get("session")), "title": _s(a.get("title") or a.get("area"))[:120],
+        })
+    editors.sort(key=lambda e: 0 if e["status"] == "running" else 1)
+    return {"loops": loops, "editors": editors, "count": len(loops) + len(editors)}

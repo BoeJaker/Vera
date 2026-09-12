@@ -120,3 +120,16 @@ def test_family_of_and_who_of():
     assert mc.family_of("bleeding_edge.promote_to_main") == "bleeding_edge" and mc.family_of("unittest.run") == "unittest"
     assert mc.family_of("census.control.set") == "census" and mc.family_of("weird") == "weird" and mc.family_of("") == ""
     assert mc.who_of({"by": "someone"}) == "someone" and mc.who_of({}) == ""
+
+
+def test_the_fleet_is_every_loop_running_and_every_editor_queued_or_running():
+    out = mc.fleet(
+        [{"id": "s1", "status": "running", "profile": "planning", "phase": "test", "rounds_done": 2, "max_rounds": 4},
+         {"id": "s2", "live": True, "status": "", "rounds_done": 0, "max_rounds": 0},
+         {"id": "s0", "status": "done", "rounds_done": 4, "max_rounds": 4}, "junk"],
+        [{"id": "a1", "status": "queued", "model": "m"}, {"id": "a2", "status": "running", "instance": "cpu"},
+         {"id": "a0", "status": "done"}])
+    assert [l["id"] for l in out["loops"]] == ["s1", "s2"]
+    assert out["loops"][0]["pct"] == 50 and out["loops"][1]["pct"] == 0, "a bar needs a percentage, 0 when rounds are unknown"
+    assert [e["id"] for e in out["editors"]] == ["a2", "a1"], "running before queued; done is not in the fleet"
+    assert out["count"] == 4

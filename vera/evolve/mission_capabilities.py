@@ -32,6 +32,9 @@ AUDIT_N = 300
 ERRORS_N = 200
 GATES_N = 60
 PIPELINES_N = 60
+IMPROVE_N = 20
+EDITQ_N = 60
+ACTIVITY_HOURS = 72
 
 
 def _mods():
@@ -75,8 +78,11 @@ def _truthy(v: Any, default: bool) -> bool:
         "active_items, errors by state, last gate). Filters: kind (action|error|gate), "
         "family (pipeline, sandbox, unittest, ...), text, who, problems (bool=false), "
         "hide_exec (bool=false - drop the sandbox.exec chatter), limit (int=300). "
+        "With it the page's infographics: fleet (every improvement loop running and "
+        "every edit-queue action running or queued - the Watch page's fleet) and "
+        "activity (evolve.activity's hourly buckets, 72 h - the Overview's chart). "
         "Output: {events[], count, total, summary{kinds,families,problems}, families[], "
-        "live, autonomous, counts, any_live}."),
+        "live, autonomous, counts, any_live, fleet{loops[],editors[]}, activity[]}."),
 )
 async def cap_evolve_mission_events(kind: str = "", family: str = "", text: str = "", who: str = "",
                                     problems: Any = False, hide_exec: Any = False, limit: int = 300,
@@ -84,7 +90,7 @@ async def cap_evolve_mission_events(kind: str = "", family: str = "", text: str 
     ev, th = _mods()
     if ev is None:
         return {"error": "evolve module unavailable", "events": [], "count": 0, "total": 0}
-    audit, errors, tests, pl, bd, live, auto = await asyncio.gather(
+    audit, errors, tests, pl, bd, live, auto, imp, eq, act = await asyncio.gather(
         _safe(ev.evolve_audit_list(limit=AUDIT_N), {}),
         _safe(ev.evolve_errors_list(limit=ERRORS_N), {}),
         _safe(ev.evolve_unittest_history(limit=GATES_N), {}),
@@ -92,6 +98,9 @@ async def cap_evolve_mission_events(kind: str = "", family: str = "", text: str 
         _safe(ev._call("board.items"), {}),
         _safe(th.cap_evolve_work_live(), {}) if th is not None else _nothing(),
         _safe(ev.autonomous_status(), {}),
+        _safe(ev.evolve_improve_list(limit=IMPROVE_N), {}),
+        _safe(ev.evolve_editq_list(limit=EDITQ_N), {}),
+        _safe(ev.evolve_activity(hours=ACTIVITY_HOURS), {}),
     )
     audit_rows = (audit or {}).get("audit") or []
     error_items = (errors or {}).get("items") or []
@@ -113,4 +122,6 @@ async def cap_evolve_mission_events(kind: str = "", family: str = "", text: str 
         "families": sorted({r["family"] for r in rows if r.get("family")}),
         "live": live, "autonomous": auto if isinstance(auto, dict) else {}, "counts": c, "any_live": any_live,
         "errors_counts": (errors or {}).get("counts") or {},
+        "fleet": mc.fleet((imp or {}).get("sessions") or [], (eq or {}).get("queue") or []),
+        "activity": (act or {}).get("buckets") or [],
     }

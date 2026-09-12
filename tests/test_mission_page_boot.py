@@ -56,13 +56,24 @@ def _stub(monkeypatch, calls):
     monkeypatch.setattr(EV, "_call", _call)
     stub(EV, "autonomous_status", {"ok": True, "engaged": True, "reason": "closed loop", "since": "2026-09-10T00:00:00Z"})
     stub(TH, "cap_evolve_work_live", {"census": {}, "suite": {}, "improve": None, "run": {}, "any_live": False})
+    stub(EV, "evolve_improve_list", {"sessions": [{"id": "s1", "status": "running", "profile": "planning", "phase": "evaluate",
+                                                   "rounds_done": 1, "max_rounds": 4},
+                                                  {"id": "s0", "status": "done", "rounds_done": 4, "max_rounds": 4}]})
+    stub(EV, "evolve_editq_list", {"queue": [{"id": "a1", "status": "queued", "model": "gpt-oss:20b"},
+                                             {"id": "a2", "status": "running", "model": "gpt-oss:20b", "instance": "cpu"},
+                                             {"id": "a0", "status": "done"}]})
+    stub(EV, "evolve_activity", {"buckets": [{"hour": "2026-09-10T09", "pass": 2, "fail": 1, "edits": 0}]})
 
 
 def test_the_table_and_the_strip_come_from_one_call(monkeypatch):
     calls = []
     _stub(monkeypatch, calls)
     out = run(MI.cap_evolve_mission_events())
-    assert {"events", "count", "total", "summary", "families", "live", "autonomous", "counts", "any_live"} <= set(out)
+    assert {"events", "count", "total", "summary", "families", "live", "autonomous", "counts", "any_live", "fleet", "activity"} <= set(out)
+    # the page's infographics ride the same call: the fleet and the activity chart
+    assert [l["id"] for l in out["fleet"]["loops"]] == ["s1"] and out["fleet"]["loops"][0]["pct"] == 25
+    assert [e["id"] for e in out["fleet"]["editors"]] == ["a2", "a1"], "running first, done not at all"
+    assert out["fleet"]["count"] == 3 and out["activity"][0]["pass"] == 2
     assert [e["kind"] for e in out["events"]] == ["error", "action", "action", "gate"], "open errors first, then newest"
     assert out["total"] == 4 and out["summary"]["problems"] == 2
     assert out["counts"]["needs_promotion"] == 1 and out["counts"]["live_pipelines"] == 1 and out["counts"]["active_items"] == 1
@@ -71,7 +82,7 @@ def test_the_table_and_the_strip_come_from_one_call(monkeypatch):
     assert out["any_live"] is True, "a live pipeline is live"
     assert out["families"] == ["errors", "pipeline", "sandbox", "unittest"]
     names = [c[0] for c in calls]
-    assert names.count("board.items") == 1 and names.count("cap_evolve_work_live") == 1 and len(names) == 7
+    assert names.count("board.items") == 1 and names.count("cap_evolve_work_live") == 1 and len(names) == 10
     calls.clear()
     lean = run(MI.cap_evolve_mission_events(kind="action", hide_exec="true", limit=5))
     assert [e["action"] for e in lean["events"]] == ["pipeline.promote"] and lean["count"] == 1 and lean["total"] == 4
@@ -96,6 +107,10 @@ def test_a_failing_reader_costs_its_rows_not_the_page(monkeypatch):
     monkeypatch.setattr(EV, "evolve_pipeline_list", empty)
     monkeypatch.setattr(EV, "_call", empty)
     monkeypatch.setattr(EV, "autonomous_status", boom)
+    monkeypatch.setattr(EV, "evolve_improve_list", boom)
+    monkeypatch.setattr(EV, "evolve_editq_list", empty)
+    monkeypatch.setattr(EV, "evolve_activity", boom)
     out = run(MI.cap_evolve_mission_events())
     assert [e["action"] for e in out["events"]] == ["config.set"]
     assert out["live"] == {} and out["autonomous"] == {} and out["counts"]["errors"] == {} and out["any_live"] is False
+    assert out["fleet"] == {"loops": [], "editors": [], "count": 0} and out["activity"] == []

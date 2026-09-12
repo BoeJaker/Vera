@@ -263,11 +263,6 @@ html.vpb-nav-hosted body{padding-left:0}
       <button class="btn sm" onclick="post('/evolve/sandbox/pause',{}).then(()=>refreshActiveRun())">⏸ pause now</button>
     </div>
   </div>
-  <div class="card" id="ollama-map-card" style="display:none">
-    <div class="card-h"><span class="card-t">Ollama routing</span>
-      <span class="hint">which real node the active run's LLM calls land on</span></div>
-    <vera-ollama-map id="ollama-map"></vera-ollama-map>
-  </div>
   <div class="card" id="test-pipeline-card" style="display:none">
     <div class="card-h"><span class="card-t">Pipeline</span>
       <span class="hint">this run's branch → sandbox test → gate → promote lifecycle</span></div>
@@ -350,6 +345,7 @@ html.vpb-nav-hosted body{padding-left:0}
     <div class="row" style="gap:6px;flex-wrap:wrap;margin:8px 0 6px;align-items:center">
       <input id="mc-q" placeholder="filter: action, summary, who, branch&hellip;" oninput="missionOnChange()" style="min-width:220px">
       <select id="mc-kind" onchange="missionOnChange()"><option value="">every kind</option><option value="action">actions</option><option value="error">errors</option><option value="gate">gates</option></select>
+      <select id="mc-errstate" onchange="missionOnChange()" title="an error's state - the lanes below set this"><option value="">every error state</option><option value="new">new</option><option value="suggested">suggested</option><option value="approved">approved</option><option value="applied">committed</option><option value="dismissed">dismissed</option></select>
       <select id="mc-family" onchange="missionOnChange()"><option value="">every family</option></select>
       <label class="hint"><input type="checkbox" id="mc-problems" onchange="missionOnChange()"> problems only</label>
       <label class="hint" title="every command run in a sandbox is an audit action; hidden by default, they are most of the log"><input type="checkbox" id="mc-hide-exec" checked onchange="missionOnChange()"> hide sandbox.exec</label>
@@ -358,10 +354,33 @@ html.vpb-nav-hosted body{padding-left:0}
     <div id="mission-table"><div class="empty">Loading&hellip;</div></div>
     <div class="hint" style="margin-top:6px">A row is an <b>event</b>: an audit <b>action</b> (every promote, rollback, merge, sandbox command, config change &mdash; who, whether it went well, the record it names), an <b>error</b> in the work-queue (new &rarr; suggested &rarr; approved &rarr; committed; suggest / approve / dismiss are in the row), a <b>gate</b> (a unit-test run and its pipeline). <b>&#9656;</b> expands the record; ids open theirs. Open errors lead, then newest first. The pills above are what is live and what needs a person &mdash; click one to go where those rows live. A run or an improvement session in flight shows in full above the table while it runs.</div>
   </div>
+  <!-- The pages' infographics, from the same call, always on the page: the
+       Errors page's flow + lanes, the Watch page's fleet, the Overview's
+       activity chart, the Test page's Ollama routing map. -->
   <div class="card">
     <div class="card-h"><span class="card-t">Errors &rarr; edits &rarr; commits</span>
-      <span class="hint">observability + ollama/workers errors flow in &rarr; a fix is suggested &rarr; you approve &rarr; it becomes a commit; only real problems land (healthy perf statuses are ignored)</span></div>
+      <span class="hint">observability + ollama/workers errors flow in &rarr; a fix is suggested &rarr; you approve &rarr; it becomes a commit; only real problems land (healthy perf statuses are ignored). A lane&rsquo;s head filters the table to its errors.</span></div>
     <div id="err-flow"></div>
+    <div class="err-board" id="err-board"><div class="empty">Loading&hellip;</div></div>
+  </div>
+  <div class="row" style="gap:10px;align-items:stretch;flex-wrap:wrap">
+    <div class="card" style="flex:1;min-width:360px;margin-top:10px">
+      <div class="card-h"><span class="card-t">&#128640; fleet</span>
+        <span class="hint" id="fleet-status">every improvement loop &amp; CPU editor running in parallel</span>
+        <span style="flex:1"></span>
+        <button class="btn sm" onclick="openImproveForm()" title="start an improvement session">+ improve</button></div>
+      <div id="fleet-body"><div class="empty">&mdash;</div></div>
+    </div>
+    <div class="card" style="flex:1;min-width:360px;margin-top:10px">
+      <div class="card-h"><span class="card-t">&#9638; activity</span>
+        <span class="hint">runs passed / failed and edit-queue actions, by hour, last 72 h</span></div>
+      <div id="mc-activity"><div class="empty">&mdash;</div></div>
+    </div>
+  </div>
+  <div class="card" id="ollama-map-card">
+    <div class="card-h"><span class="card-t">Ollama routing</span>
+      <span class="hint">which real node each LLM call lands on &mdash; the GPU/CPU gate, the models loaded, the run in flight</span></div>
+    <vera-ollama-map id="ollama-map"></vera-ollama-map>
   </div>
 </div>
 
@@ -401,6 +420,19 @@ html.vpb-nav-hosted body{padding-left:0}
     </div>
     <div id="agents-table"><div class="empty">Loading&hellip;</div></div>
     <div class="hint" style="margin-top:6px">In <b>sessions</b> a row is an agent session &mdash; a Claude Code or Codex session (the watch classifies it), a session the board names, a live Vera loop, an edit-queue agent &mdash; with its items by lane, its pipelines, sandboxes and branches; <b>&#9656;</b> expands them, a chat id opens the transcript. In <b>board items</b> a row is one item, live lanes first, naming its session; <b>&#9656;</b> expands its body and last comments; move, dispatch and open are in the row. The pills are what the Swarm page counted &mdash; click one to filter. States: live &rarr; working / recent / queued &rarr; resumable / stalled &rarr; declared-block / finished-unreported &rarr; human &rarr; done / idle. <b>untracked</b> means no board claim, not &ldquo;not running&rdquo; &mdash; a session that spoke within the stalled window is <b>recent</b>.</div>
+  </div>
+  <!-- the Board page's infographic: the work plane by lane, from the page's
+       one call. A lane's head filters the table to it; a card opens the record;
+       move and dispatch are on the card. -->
+  <div class="card" id="board-lanes-card">
+    <div class="card-h"><span class="card-t">Board &middot; by lane</span>
+      <span class="hint" id="board-lanes-status">&hellip;</span>
+      <span style="flex:1"></span>
+      <label class="hint" style="margin-right:8px" title="show the lanes with nothing in them, and every card of the done lane"><input type="checkbox" id="board-lanes-all" onchange="renderBoardLanes()"> every lane</label>
+      <button class="btn sm" onclick="openItemForm()" title="a new board item">+ item</button>
+    </div>
+    <div id="board-lanes" class="row" style="gap:10px;align-items:flex-start;overflow-x:auto;padding-bottom:4px"><div class="empty">Loading&hellip;</div></div>
+    <div class="hint" style="margin-top:6px">The work plane (<code>board.*</code>) by lane, following the filter row above (text, agent, plan). Click a lane&rsquo;s head to see just its items in the table; a card&rsquo;s title opens the record; move a card with its lane select, <b>&#9655;</b> dispatches an inbox/ready item. Items carry <code>repo</code>/<code>project</code> so the board is repo-agnostic; claim is a lease (lowest comment-id wins); comments run a secret scan on the write path.</div>
   </div>
   <!-- the editors' work: the background edit queue's grid, one cell per action -->
   <div class="card">
@@ -468,7 +500,8 @@ html.vpb-nav-hosted body{padding-left:0}
     <div id="census-dash"></div>
     <div id="census-runs"><div class="empty">Loading…</div></div>
     <div id="work-tasks" style="display:none"><div class="empty">Loading&hellip;</div></div>
-    <details style="margin-top:8px"><summary class="clk hint">Trends</summary><div id="census-charts" style="margin-top:6px"></div><div id="work-charts" style="margin-top:6px"></div></details>
+    <!-- the Census page's charts and the Overview's race-to-green + score trend, always on the page -->
+    <div id="census-charts" style="margin-top:8px"></div><div id="work-charts" style="margin-top:6px"></div>
     <div class="hint" style="margin-top:6px">In <b>runs</b> a row is one driver run &mdash; a census, a suite, an improvement session or a single run; <b>&#9656;</b> expands it to its tasks, a task opens its record. In <b>tasks</b> a row is one task with its history from every driver; <b>&#9656;</b> expands its recent results, <b>&#8961;</b> opens it through time. <b>coder</b> / <b>nodes</b> are the models and nodes a census run&#39;s calls hit; <b>code</b> the sha@branch prod ran.</div>
   </div>
   <!-- the tasks' infographics: every task's recent runs, and the run history by hour -->
@@ -709,13 +742,16 @@ async function loadMission(){
   if(fam){const cur=fam.value;fam.innerHTML='<option value="">every family</option>'+(r.families||[]).map(f=>'<option value="'+esc(f)+'">'+esc(f)+'</option>').join('');if((r.families||[]).indexOf(cur)>=0)fam.value=cur}
   renderMissionTable();
   renderErrorFlow(r);
+  renderErrorLanes();
+  renderFleet(r.fleet||{});
+  if($('mc-activity'))$('mc-activity').innerHTML=svgActivity(r.activity||[]);
   // The autonomous banner reads the same answer.
   const b=$('auto-banner'),a=r.autonomous||{};
   if(b){if(a.engaged){b.style.display='flex';const since=(a.since||'').slice(0,19).replace('T',' ');if($('auto-banner-msg'))$('auto-banner-msg').innerHTML='main is <b>LOCKED</b>'+(a.reason?(' &mdash; '+esc(a.reason)):'')+(since?(' &middot; since '+esc(since)):'')}else b.style.display='none'}
 }
 /* After a bus event or an action: the table, debounced, while Mission control is on screen. */
 function missionRefresh(){if(_curSec()!=='mission')return;clearTimeout(_mcRefreshT);_mcRefreshT=setTimeout(missionPoll,4000)}
-function missionOnChange(){renderMissionTable()}
+function missionOnChange(){renderMissionTable();renderErrorLanes()}
 /* Land on Mission control with a theatre open and in view - the way in for
    "run once", "watch" and "errors" from anywhere. */
 function mcOpen(which){
@@ -769,11 +805,12 @@ function renderMissionLive(r){
   _mcWasLive={run:_mcLiveNow.run,improve:_mcLiveNow.improve};
 }
 function agFilterShip(){nav('ship');setTimeout(()=>{if($('ship-stage')){$('ship-stage').value='review';renderShipTable()}},300)}
-function mcFilter(kind){if($('mc-kind'))$('mc-kind').value=kind;renderMissionTable()}
+function mcFilter(kind,errState){if($('mc-kind'))$('mc-kind').value=kind;if($('mc-errstate'))$('mc-errstate').value=errState||'';renderMissionTable();renderErrorLanes()}
 function _mcFiltered(){
-  const q=(($('mc-q')||{}).value||'').trim().toLowerCase(),kind=($('mc-kind')||{}).value||'',fam=($('mc-family')||{}).value||'',prob=!!($('mc-problems')&&$('mc-problems').checked),hideExec=!!($('mc-hide-exec')&&$('mc-hide-exec').checked);
+  const q=(($('mc-q')||{}).value||'').trim().toLowerCase(),kind=($('mc-kind')||{}).value||'',errState=($('mc-errstate')||{}).value||'',fam=($('mc-family')||{}).value||'',prob=!!($('mc-problems')&&$('mc-problems').checked),hideExec=!!($('mc-hide-exec')&&$('mc-hide-exec').checked);
   return _mcRows.filter(r=>{
     if(kind&&r.kind!==kind)return false;
+    if(errState&&(r.kind!=='error'||r.state!==errState))return false;
     if(fam&&r.family!==fam)return false;
     if(prob&&!r.problem)return false;
     if(hideExec&&r.action==='sandbox.exec')return false;
@@ -3532,6 +3569,54 @@ async function loadAgents(){
   renderAgentsHead(r);
   _agFillFilters(r);
   renderAgentsTable();
+  renderBoardLanes();
+}
+/* The Board page's lanes view, kept as the page's infographic: every item by
+   lane, following the filter row (text, agent, plan) but not the lane pick -
+   the lanes ARE the lane pick (a head filters the table). The done lane is
+   capped unless "every lane" is on. */
+function renderBoardLanes(){
+  const el=$('board-lanes');if(!el)return;
+  const all=!!($('board-lanes-all')&&$('board-lanes-all').checked);
+  const q=(($('ag-q')||{}).value||'').trim().toLowerCase(),agent=($('ag-agent')||{}).value||'',plan=($('ag-plan')||{}).value||'';
+  const items=_agItems.filter(i=>{
+    if(agent&&i.agent!==agent)return false;
+    if(plan&&i.plan!==plan)return false;
+    if(q){const hay=[i.id,i.title,(i.labels||[]).join(' '),i.session,i.branch,i.pipeline,i.plan].join(' ').toLowerCase();if(hay.indexOf(q)<0)return false}
+    return true;
+  });
+  const byLane={};for(const it of items){(byLane[it.lane]=byLane[it.lane]||[]).push(it)}
+  const lanes=_LANES.filter(l=>byLane[l]||all||['inbox','ready','in_progress','needs_review','done'].includes(l));
+  const st=$('board-lanes-status');
+  if(st)st.textContent=items.length+(items.length!==_agItems.length?(' / '+_agItems.length):'')+' items · '+lanes.filter(l=>byLane[l]).length+' lanes';
+  const cap=lane=>(all||(lane!=='done'&&lane!=='dropped'))?1e9:8;
+  const curLane=($('ag-lane')||{}).value||'';
+  let h='';
+  for(const lane of lanes){
+    const its=byLane[lane]||[],c=_LANE_COLOR[lane]||'#666',shown=its.slice(0,cap(lane));
+    h+='<div style="min-width:210px;max-width:240px;flex:0 0 auto">'
+      +'<div class="clk" style="font-size:11px;font-weight:600;border-bottom:2px solid '+c+';padding-bottom:3px;margin-bottom:6px'+(curLane===lane?';background:var(--bg2)':'')+'" onclick="agFilter(\'items\',\'lane\',\''+esc(lane)+'\')" title="show just this lane in the table">'+esc(lane)+' <span class="hint">'+its.length+'</span></div>';
+    for(const it of shown){
+      const labels=(it.labels||[]).map(l=>'<span class="tag" style="font-size:9px">'+esc(l)+'</span>').join(' ');
+      const meta=[it.repo?('⊟ '+esc(it.repo)):'',it.project?('▸ '+esc(it.project)):'',it.agent?('@'+esc(it.agent)):'',it.branch?('⎇ '+eid('branch',it.branch,esc(String(it.branch).slice(0,30)))):'',it.pipeline?('⌸ '+eid('pipeline',it.pipeline)):''].filter(Boolean).join('  ');
+      const moves=_LANES.map(l=>'<option value="'+l+'"'+(l===it.lane?' selected':'')+'>'+l+'</option>').join('');
+      const canDispatch=(lane==='ready'||lane==='inbox');
+      h+='<div style="background:var(--bg2);border-radius:6px;padding:6px;margin-bottom:6px;border-left:3px solid '+c+'">'
+        +'<div style="font-size:11.5px;cursor:pointer;font-weight:500" onclick="openBoardItem(\''+esc(it.id)+'\')" title="open the record">'+esc(it.title||'(untitled)')+'</div>'
+        +(meta?'<div class="hint" style="font-size:9.5px;margin-top:2px">'+meta+'</div>':'')
+        +(labels?'<div style="margin-top:3px">'+labels+'</div>':'')
+        +'<div class="row" style="gap:4px;margin-top:5px">'
+          +'<select onchange="boardMove(\''+esc(it.id)+'\',this.value)" style="font-size:9px;flex:1">'+moves+'</select>'
+          +(canDispatch?'<button class="btn sm" style="font-size:9px;padding:2px 5px" onclick="boardDispatch(\''+esc(it.id)+'\')" title="orchestrate: begin→work→gate">▷</button>':'')
+          +'<button class="btn sm" style="font-size:9px;padding:2px 5px" onclick="boardEdit(\''+esc(it.id)+'\')" title="edit">✎</button>'
+        +'</div>'
+        +(it.comment_count?'<div class="hint" style="font-size:9px;margin-top:2px;cursor:pointer" onclick="openBoardItem(\''+esc(it.id)+'\')">'+it.comment_count+' comment'+(it.comment_count>1?'s':'')+' ▸</div>':'')
+      +'</div>';
+    }
+    if(its.length>shown.length)h+='<div class="hint clk" style="font-size:9.5px" onclick="$(\'board-lanes-all\').checked=true;renderBoardLanes()">+'+(its.length-shown.length)+' more ▸</div>';
+    h+='</div>';
+  }
+  el.innerHTML=h||'<div class="empty">No items match the filter.</div>';
 }
 /* After an action (move, claim, comment, dispatch, save, resume, release):
    the table - only while Agents is on screen. */
@@ -3544,7 +3629,7 @@ function setAgentsMode(m){
   if($('ag-state'))$('ag-state').style.display=items?'none':'';
   renderAgentsTable();
 }
-function agentsOnChange(){renderAgentsTable()}
+function agentsOnChange(){renderAgentsTable();renderBoardLanes()}
 function _agFillFilters(r){
   const fill=(id,vals,label)=>{const s=$(id);if(!s)return;const cur=s.value;s.innerHTML='<option value="">'+label+'</option>'+vals.map(v=>'<option value="'+esc(v)+'">'+esc(v)+'</option>').join('');if(vals.indexOf(cur)>=0)s.value=cur};
   fill('ag-agent',r.agents||[],'every agent');
@@ -3584,7 +3669,7 @@ function agFilter(mode,key,val){
   if(_agMode!==mode)setAgentsMode(mode);
   if(key==='hide'){if($('ag-hide'))$('ag-hide').checked=true}
   else{const s=$('ag-'+key);if(s){s.value=val;if(s.value!==val)s.value=''}}
-  renderAgentsTable();
+  renderAgentsTable();renderBoardLanes();
 }
 function _agFiltered(){
   const q=(($('ag-q')||{}).value||'').trim().toLowerCase(),agent=($('ag-agent')||{}).value||'',state=($('ag-state')||{}).value||'',lane=($('ag-lane')||{}).value||'',plan=($('ag-plan')||{}).value||'',hide=!!($('ag-hide')&&$('ag-hide').checked);
@@ -3858,9 +3943,70 @@ function renderErrorFlow(r){
     if([...curLanes['approved']].some(id=>justEntered.has(id)))transitions.fix=true;
     if([...curLanes['applied']].some(id=>justEntered.has(id)))transitions.commit=true;
   }
-  _errPrevLanes=curLanes;_errFirstLoad=false;
+  _errPrevLanes=curLanes;_errFirstLoad=false;_errJustEntered=justEntered;
   el.innerHTML=svgErrorFlow(counts,bySource,transitions);
 }
+/* The Errors page's kanban: the same error rows by state, a card each with
+   its actions; a card that just entered a lane animates in. A lane's head
+   filters the table to that state. Dismissed errors are not a lane. */
+let _errJustEntered=new Set();
+function renderErrorLanes(){
+  const board=$('err-board');if(!board)return;
+  const items=(_mcRows||[]).filter(x=>x.kind==='error').map(x=>x.raw||{});
+  const cur=($('mc-errstate')||{}).value||'';
+  let staggerN=0;
+  board.innerHTML=ERR_LANES.map(([st,lbl,col])=>{
+    const lane=items.filter(i=>i.state===st);
+    return '<div class="err-lane"><div class="err-lane-h clk" onclick="mcFilter(\'error\',\''+st+'\')" title="show just these in the table"'+(cur===st?' style="background:var(--bg2)"':'')+'><span style="color:'+col+'">'+esc(lbl)+'</span><span class="n">'+lane.length+'</span></div>'
+      +(lane.length?lane.map(it=>errCard(it,_errJustEntered.has(it.id),staggerN++)).join(''):'<div class="empty" style="font-size:9px">—</div>')+'</div>';
+  }).join('');
+}
+function errCard(it,isEnter,staggerIdx){
+  const sug=it.suggestion||{};
+  const sev=(it.meta&&it.meta.severity)||'';
+  const isRem=!!(sug.remediation_id||(it.meta&&it.meta.remediation_id));
+  const approveLbl=isRem?'apply safe fix':'approve → commit';
+  const approveTitle=isRem?'Apply the built-in safe remediation (perf.remediate) immediately':'Approve → launch a gated code pipeline that commits the fix';
+  let acts='';
+  if(it.state==='new')acts='<button class="btn sm" onclick="errSuggest(\''+esc(it.id)+'\')">suggest fix</button><button class="btn sm" onclick="errDismiss(\''+esc(it.id)+'\')">dismiss</button>';
+  else if(it.state==='suggested')acts='<button class="btn sm primary" onclick="errApprove(\''+esc(it.id)+'\')" title="'+approveTitle+'">'+approveLbl+'</button><button class="btn sm" onclick="errDismiss(\''+esc(it.id)+'\')">dismiss</button>';
+  else if(it.state==='approved')acts=it.pipeline_id?('<button class="btn sm" onclick="openPipe(\''+esc(it.pipeline_id)+'\')">pipeline '+esc(String(it.pipeline_id).slice(0,8))+'</button>'):'';
+  else if(it.state==='applied'&&it.remediation_result)acts='<span class="hint">'+esc(String(it.remediation_result).slice(0,120))+'</span>';
+  const sevChip=sev?('<span class="err-src" style="color:'+(sev==='crit'?'var(--err)':'var(--warn)')+'">'+esc(sev)+'</span>'):'';
+  const runChip=(it.meta&&it.meta.run_id)?'<span class="err-src clk" style="color:var(--acc)" onclick="openRun(\''+esc(it.meta.run_id)+'\')" title="open the test run this error came from">run '+esc(String(it.meta.run_id).slice(0,8))+'</span>':'';
+  return '<div class="err-card s-'+esc(it.state)+(isEnter?' enter':'')+'"'+(isEnter?' style="animation-delay:'+(Math.min(staggerIdx||0,10)*70)+'ms"':'')+'>'
+    +'<div class="et">'+esc((it.title||'').slice(0,180))+'</div>'
+    +'<div class="ea">'+sevChip+'<span class="err-src">'+esc(it.source)+'</span>'+(it.count>1?'<span class="err-src">×'+it.count+'</span>':'')+(isRem?'<span class="err-src" style="color:var(--ok)">safe fix</span>':'')+runChip+'</div>'
+    +(sug.suggestion?'<div class="em"><b>fix:</b> '+esc(sug.suggestion.slice(0,240))+'</div>':'')
+    +'<div class="ea">'+acts+'</div></div>';
+}
+/* The Watch page's fleet: every improvement loop running (a bar per loop)
+   and every edit-queue action running or queued, from the same call. */
+function renderFleet(f){
+  const el=$('fleet-body');if(!el)return;
+  const ss=f.loops||[],eq=f.editors||[];
+  if($('fleet-status'))$('fleet-status').textContent=(ss.length+eq.length)?(ss.length+' loop'+(ss.length===1?'':'s')+' · '+eq.length+' editor'+(eq.length===1?'':'s')):'every improvement loop & CPU editor running in parallel';
+  if(!ss.length&&!eq.length){el.innerHTML='<div class="empty">No loops running. Start an improve session to see the fleet.</div>';return}
+  let h='';
+  for(const s of ss){
+    h+='<div class="row clk" style="gap:8px;padding:4px 0;border-bottom:1px solid var(--border)" onclick="watchSession(\''+esc(s.id)+'\')" title="watch this session"><span class="spin"></span>'
+      +'<span class="mono" style="width:70px">'+eid('session',s.id,esc(String(s.id).slice(0,8)))+'</span>'
+      +'<span class="tag">'+esc(s.profile||'')+'</span>'
+      +'<span class="hint" style="width:90px">'+esc(s.phase||'')+'</span>'
+      +'<div class="bar" style="max-width:160px"><span style="width:'+(s.pct||0)+'%"></span></div>'
+      +'<span class="mono" style="font-size:9px">r'+(s.rounds_done||0)+'/'+(s.max_rounds||'?')+'</span>'
+      +(s.goal?'<span class="hint" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.goal)+'</span>':'')+'</div>';
+  }
+  for(const a of eq){
+    h+='<div class="row clk" style="gap:8px;padding:4px 0;border-bottom:1px solid var(--border);opacity:.85" onclick="openEditq(\''+esc(a.id)+'\')" title="view this action">'
+      +(a.status==='running'?'<span class="spin"></span>':'<span style="width:9px"></span>')
+      +'<span class="mono" style="width:70px">'+esc(String(a.id).slice(0,8))+'</span>'
+      +'<span class="tag" style="color:var(--acc4)">editor</span>'
+      +'<span class="hint">'+esc(a.model||'')+(a.instance?(' @'+esc(a.instance)):'')+' · '+esc(a.status)+(a.title?(' · '+esc(a.title)):'')+'</span></div>';
+  }
+  el.innerHTML=h;
+}
+function watchSession(id){_watchSession=id;mcRevealLive('improve');const s=$('watch-sel');if(s)s.value=id}
 /* Bun-style flow: error SOURCES fan into a queue → fixer worker → commits.
    (à la the article's "errors being sent to workers and flowing to commits") */
 function svgErrorFlow(counts,bySource,transitions){
@@ -5589,7 +5735,6 @@ async function refreshActiveRun(){
   if(!card)return;
   if(!_testRunId){
     card.style.display='none';
-    if($('ollama-map-card'))$('ollama-map-card').style.display='none';
     if($('test-pipeline-card'))$('test-pipeline-card').style.display='none';
     return;
   }
@@ -5614,7 +5759,6 @@ async function refreshActiveRun(){
       profEl.style.color=cur.profile==='planning'?'var(--dim2,var(--t3))':'var(--acc,var(--ac))';
     } else profEl.style.display='none';
   }
-  if($('ollama-map-card'))$('ollama-map-card').style.display=running?'':'none';
   const sandboxed=cur.where==='sandbox';
   $('arh-sbx').style.display=sandboxed?'':'none';
   if(sandboxed){
