@@ -431,6 +431,8 @@
     if (_libs[src]) return _libs[src];
     return (_libs[src] = new Promise((res) => { const s = document.createElement('script'); s.src = src; s.async = true; s.onload = () => res(true); s.onerror = () => res(false); document.head.appendChild(s); }));
   }
+  // the /mcp/call envelope, opened: the tool's own reply (prod answers {type, tool_name, content}; a stand-in {result})
+  const unwrap = (j) => { if (!j || typeof j !== 'object') return j; if (j.result !== undefined && j.type === undefined) return j.result; if (j.content !== undefined && (j.type === 'tool_result' || j.tool_name)) return j.content; return j; };
   // the notebook page's own mapping of a cell's language to the command its exec runs (python · node · ruby · a shell snippet)
   function langRunCmd(lang, code) {
     const eof = 'VERA_NB_EOF_' + Math.random().toString(36).slice(2, 8);
@@ -944,7 +946,7 @@
     /* the bridge, asked for its answer (panel.query · panel.dispatch · ui.panels.open): the same /mcp/call, the reply back */
     async callResult(name, args) {
       const base = (window._veraBase || '').replace(/\/$/, '');
-      try { const r = await fetch(base + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, arguments: args || {} }) }); const j = await r.json(); return j && j.result !== undefined ? j.result : j; }
+      try { const r = await fetch(base + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, arguments: args || {} }) }); const j = await r.json(); return unwrap(j); }
       catch (e) { return { ok: false, error: String(e && e.message || e) }; }
     }
     /* the bridge asked from an item: the readout on the item, the reply to the host */
@@ -968,8 +970,9 @@
       id = String(id || '').trim(); if (!id) return; const key = 'panel:' + id; const focusMid = this.dataset.focusMid || '';
       const args = { kind: 'panel', key, content: { panel: id, title: label || id }, at: 'now', size: 'l' }; if (focusMid) args.anchor = { turn: focusMid, mid: focusMid };
       this._open.add(key);
-      try { this.dispatchEvent(new CustomEvent('vera:canvas:panel-src', { bubbles: true, detail: { key, id, content: args.content } })); } catch (e) {}
-      return this.call('canvas.add', args);
+      // the item first, then the host is asked for the panel's page (its registered page, alias or route) — the
+      // update it answers with needs the item to exist
+      return this.call('canvas.add', args).then(() => { try { this.dispatchEvent(new CustomEvent('vera:canvas:panel-src', { bubbles: true, detail: { key, id, content: args.content } })); } catch (e) {} });
     }
     /* the cell runs through the notebook's own exec (the SSE the notebook page uses); the output lands on the item
        and on the cell */
@@ -1005,7 +1008,7 @@
     }
   }
 
-  const api = { place, checkRoutes, decisionOf, suggestionsOf, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, ITEM_SIZES, KIND_GLYPH, BLOCK, langRunCmd, version: 3 };
+  const api = { place, checkRoutes, decisionOf, suggestionsOf, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, ITEM_SIZES, KIND_GLYPH, BLOCK, langRunCmd, unwrap, version: 3 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.VeraCanvas = Object.assign(root.VeraCanvas || {}, api);
   if (typeof customElements !== 'undefined' && !customElements.get('vera-canvas')) {
