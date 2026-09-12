@@ -377,6 +377,27 @@ code-reference scans instead of being guessed from request attribution.
 Declaring an alias does not deprecate or remove it, and telemetry failure cannot
 make the compatibility call fail.
 
+### Removal eligibility
+
+A compatibility path can become eligible for a separately executed removal
+only through the fail-closed evidence gate. The submission is bound to one
+candidate, its named replacement and owner, and an independent review that
+already recommends removal candidacy. It requires digest-backed semantic,
+caller, state and configuration inventories; success, error, timeout,
+cancellation, restart and recovery fixtures; a shadow or safety assessment;
+full conformance; quality and reliability evidence; verified state-export and
+rollback receipts; migrated documentation; and explicit, candidate-scoped,
+timestamped approval.
+
+Zero use is an observed result, not a default. At least two distinct,
+non-overlapping normal-operation cycles must each have complete telemetry and
+zero non-probe calls. Missing telemetry, an un-migrated stored definition, an
+overlapping or abnormal observation window, or a surviving consumer blocks the
+gate. Candidate p95 may be at most 10% above baseline unless a separately
+digested gain justifies the exception. The resulting receipt is payload-free
+and non-executing: even a passing receipt does not delete code, data, aliases,
+routes, configuration, or stored definitions.
+
 Three older Memory hook functions are deliberate import shims:
 `record_cap_interaction`, `patch_capability_for_memory`, and `patch_new_cap`.
 Activity capture now belongs to the capability wrapper, so all three are no-ops
