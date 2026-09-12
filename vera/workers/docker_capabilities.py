@@ -71,15 +71,14 @@ log = logging.getLogger("vera.docker")
 
 _LOCAL_SOCK = os.getenv("DOCKER_SOCK", "/var/run/docker.sock")
 
-# CPython's subprocess fast-path (os.posix_spawn, no fork/GIL-holding page-table
-# copy — see exec_capabilities._run_local's VERA_FAST_SPAWN comment) only
-# engages when argv[0] has a directory component (os.path.dirname(executable)
-# must be truthy — see cpython subprocess.Popen._execute_child). A bare
-# "docker" resolved via PATH fails that check silently, so every docker CLI
-# spawn in Vera was taking the slow fork() path regardless of close_fds=False
-# — confirmed live via perf.stalls (a 1.26s create_subprocess_exec hang during
-# sandbox archiving). Resolve the absolute path once so the fast path actually
-# applies; fall back to the bare name (old behavior) if docker isn't on PATH.
+# Every docker CLI call goes through exec_capabilities._run_local, which spawns
+# via subprocess.Popen on a worker thread (execution/spawn_core.py explains why
+# the event loop's own subprocess_exec — a full fork() under uvloop — is avoided).
+# Popen's posix_spawn fast path only engages when argv[0] has a directory
+# component (os.path.dirname(executable) must be truthy — see cpython
+# subprocess.Popen._execute_child); a bare "docker" resolved via PATH takes its
+# vfork path instead. Resolve the absolute path once so the fastest path
+# applies; fall back to the bare name if docker isn't on PATH.
 _DOCKER_BIN = shutil.which("docker") or "docker"
 
 
@@ -536,6 +535,15 @@ DOCKER_STATS_SEC = 30.0
 DOCKER_STATS_TOP_N = 12          # shown/kept per host — dashboard tile space, not a hard API limit
 DOCKER_STATS_HISTORY_MAX = 20    # ~10min of trend at the 30s sample cadence, per container
 _DOCKER_STATS_SAMPLE_CAP = 60    # max containers actually queried per host per tick, busiest-first by definition impossible to know in advance, so just capped by list order
+# How many /stats requests are in flight at once per host. dockerd answers
+# each stream=false stats call by sampling cgroups twice ~1 s apart, so 60
+# concurrent ones make it (and the containerd shims) spike together on a host
+# that already runs 80+ containers. Observed 2026-09-12 (perf.stalls, load
+# avg 26 on 12 cores): every dumped hang in a 50 s window sat in
+# _docker_container_stat and the three worst loop stalls of the quarter hour
+# (7.2 s, 5.7 s, 3.5 s) fell inside that burst. 8 keeps the tick well inside
+# its 30 s cadence (60 containers ≈ 8 rounds ≈ 8–10 s) without the spike.
+_DOCKER_STATS_CONCURRENCY = int(os.getenv("VERA_DOCKER_STATS_CONCURRENCY", "8") or 8)
 _DOCKER_STATS_CACHE: Dict[str, dict] = {}   # host_id -> {containers:[...], updated_at, error}
 try:
     from Vera.vera.workers import image_drift as _image_drift
@@ -596,8 +604,14 @@ async def _docker_stats_tick_host(host_id: str, rec: dict) -> None:
         if not isinstance(rows, list):
             rows = []
         rows = rows[:_DOCKER_STATS_SAMPLE_CAP]
+        gate = asyncio.Semaphore(max(1, _DOCKER_STATS_CONCURRENCY))
+
+        async def _one(cid: str):
+            async with gate:
+                return await _docker_container_stat(rec, cid)
+
         stats = await asyncio.gather(
-            *(_docker_container_stat(rec, c.get("Id", "")) for c in rows), return_exceptions=True)
+            *(_one(c.get("Id", "")) for c in rows), return_exceptions=True)
         out = []
         now = time.time()
         for c, st in zip(rows, stats):

@@ -13,6 +13,7 @@ known set of modules, so the tier is defined in one place.
 import pytest
 
 _CRITICAL_MODULES = {
+    "test_spawn_off_loop",  # a docker call must not fork the server on the loop (2026-09-12)
     "test_editor_reply",  # an editor that declines has told you something (2026-08-31)
     "test_editor_output_bound",  # bound the editor by the file it edits (2026-08-31)
     "test_edit_tag_balance",  # name the edit that unbalanced the markup (2026-08-31)
