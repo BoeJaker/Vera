@@ -109,3 +109,11 @@ from real consumers.
 
 The resulting inventory is evidence only. Even complete coverage with no known
 consumer produces an independent-review candidate, never removal authority.
+
+Independent reviews are content-addressed records for exactly one candidate.
+Each review binds the candidate, the exact inventory digest, evidence digests,
+consumer count, coverage state, rationale, and required follow-up. Supported
+recommendations are retain, adapt, migrate, insufficient evidence, or removal
+candidate. The last of these requires complete zero-consumer coverage plus
+semantic-contract and rollback evidence, but still carries no removal authority;
+the separate removal gate remains mandatory.

@@ -117,6 +117,14 @@ context response reports the active mode and number of generated rows excluded.
 Manual relations continue to be available, but this does not grant them resolver
 authority—the separate evaluation and activation decision still applies.
 
+The current evidence supports adapting generated ontology relations rather than
+deleting them. Persistent bulk generation and generated-relation prompt
+consumption remain independently disabled by default. Existing rows stay
+visible and restorable, while the non-saving suggestion path remains available
+for human review. Before either feature is enabled more broadly, a bounded
+quality evaluation must show a repeatable routing or tool-selection benefit;
+until then, absence of activation is not evidence that the stored data is dead.
+
 ### Planner integration & the "adjacent hidden cap" trick
 
 `cap_ontology.context_for` returns a snippet for a planner system-prompt. When an agent has a restricted `domain_caps` allowlist, this returns relations *between an allowed cap and a hidden cap* — described **by the relation only**. The planner thus learns that an adjacent capability exists (and how it relates) without being able to call it directly: situational awareness without privilege escalation.
