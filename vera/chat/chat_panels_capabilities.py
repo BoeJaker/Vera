@@ -274,6 +274,22 @@ async def _serve_vera_lhm_js():
                     media_type="application/javascript")
 
 
+# Serve exploded_element.js — the chat's Explode (UI redesign, Notes/40 §6 P6):
+# <vera-exploded>, one scene per session — a station per turn (read · exchange ·
+# produced · landed) — in three projections, cards · front · iso.
+@APP.get("/ui/exploded_element.js", include_in_schema=False)
+async def _serve_exploded_element_js():
+    from fastapi.responses import Response
+    from pathlib import Path
+    p = Path(__file__).parent / "exploded_element.js"
+    if p.exists():
+        return Response(content=p.read_text(encoding="utf-8"),
+                        media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache"})
+    return Response(content="console.warn('exploded_element.js not found');",
+                    media_type="application/javascript")
+
+
 # Serve context_graph_element.js — the chat's context graph (UI redesign: the
 # Graph board's column). <vera-context-graph> draws the records assembled for
 # the turn in focus — galaxy · iso · flow · time — with the loop lane and the

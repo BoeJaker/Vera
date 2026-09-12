@@ -826,6 +826,12 @@ body[data-cols~="graph"] #graphColumn{order:-1;border-left:none;border-right:1px
 body[data-cols~="graph"] #rightRail.lhm-host{width:46px !important;min-width:46px !important}
 body[data-cols~="graph"] #rightRail.lhm-host > .lhm-det{display:none}
 .tb-btn.col-on{color:var(--acc);border-color:var(--acc)}
+/* Explode: the one scene in the transcript's place, the composer docked under it; the mode segment shows while exploded */
+#xplHost{display:none;flex:1;min-height:0;position:relative}
+body.exploded #xplHost{display:flex}
+body.exploded #msgs,body.exploded #jumpToBottomBtn{display:none!important}
+#xplHost vera-exploded{flex:1;min-height:0}
+.tb-xm{display:none}.tb-xm.on{display:inline-flex}
 /* an empty minimal session lays its system lines out in a row; beside a column they wrap and stay in the chat */
 body[data-view="minimal"]:not(.has-msgs).has-cols #msgs{flex-wrap:wrap;overflow:hidden}
 html[data-blocks="off"] .tri-col{border-left-color:transparent}
@@ -1357,6 +1363,8 @@ html[data-blocks="off"] .pa-att{background:transparent}
     <button class="tb-btn" data-den="zen"   onclick="CH.setDensity('zen')">Zen</button>
   </div>
   <button class="tb-btn" id="blocksBtn" onclick="CH.toggleBlocks()" title="Blocks — the per-turn backgrounds and rules; off is a flatter, quieter transcript">Blocks</button>
+  <button class="tb-btn" id="xplBtn" onclick="CH.explode()" title="Pull the transcript apart into layers: what each turn read on the left, what it produced on the right">Explode</button>
+  <span class="tb-xm" id="xplSeg"><button class="tb-btn" data-xm="cards" onclick="CH.explodeMode('cards')" title="Every pane as layer cards">Cards</button><button class="tb-btn" data-xm="front" onclick="CH.explodeMode('front')" title="The layers pulled apart in depth">Front</button><button class="tb-btn" data-xm="iso" onclick="CH.explodeMode('iso')" title="The layers across an isometric plane">Iso</button></span>
 
   <!-- Layout toggles -->
   <div class="tb-group" title="Panel layout">
@@ -2141,6 +2149,7 @@ html[data-blocks="off"] .pa-att{background:transparent}
        and only span 50% of the centre area. -->
   <div id="chatColumn">
     <div id="chatStack">
+      <div id="xplHost"></div>
       <div id="msgs"><div class="sys-msg">Select an agent and start chatting.</div></div>
 
       <!-- Jump-to-bottom button: revealed when the user scrolls up during
@@ -5118,6 +5127,7 @@ IMPORTANT:
       const mid=(btn&&btn.closest('.mwrap')&&btn.closest('.mwrap').dataset.mid)||'';
       const r=await _capCall('canvas.add',{id:cid,session_id:SID||'',kind:'widget',content,key,size:(w.rec.draw&&w.rec.draw.size)||'m',anchor:{mid,turn:mid}});
       if(!(r&&r.ok)) throw new Error((r&&r.error)||'canvas.add failed');
+      try{ if(mid){ (_TURN_LAND[mid]=_TURN_LAND[mid]||[]).push({n:String(w.rec.title||w.rec.form||key).slice(0,60), d:'canvas · '+(r.resolved==='shown'?'already there':'pinned'), col:'var(--acc2)', kind:'widget'}); if(_xpl.on) _xplRefresh(); } }catch(_){}
       if(btn){ btn.textContent=r.resolved==='shown'?'Already on the canvas · shown':'On the canvas'; }
       openPage('canvas');
     }catch(e){ if(btn) btn.textContent='Pin failed'; console.warn('pin to canvas', e); }
@@ -8601,6 +8611,7 @@ Your task: decide what to do next to advance toward the goal.
     const uCtx=ctxInj?` <span class="ctx-pill">+${CTX_NODES.filter(n=>(n.score||0)>=parseFloat(document.getElementById('ctxSim')?.value||'0.55')).slice(0,parseInt(document.getElementById('ctxK')?.value||'8')).length} ctx</span>`:'';
     const uMsg=_mkMsg('user','you',esc(msg).replace(/\n/g,'<br>')+uCtx);
     try{ uMsg.body.dataset.markdown = msg; }catch(_){}
+    _xplRecordReads(uMsg.mid);
     _paDecorate(uMsg.body, uCtx);
     BOX().appendChild(uMsg.wrap);scroll();
     HISTORY.push({role:'user',content:msg});
@@ -9182,7 +9193,7 @@ Your task: decide what to do next to advance toward the goal.
 
     // User row — a specialist profile shows its id alongside the engine.
     const loopLabel = profileId ? `loop:${profileId}·${version}` : `loop:${version}`;
-    const uMsg=_mkMsg('user', loopLabel, esc(goal).replace(/\n/g,'<br>'));
+    const uMsg=_mkMsg('user', loopLabel, esc(goal).replace(/\n/g,'<br>')); _xplRecordReads(uMsg.mid);
     BOX().appendChild(uMsg.wrap);scroll();
     HISTORY.push({role:'user',content:goal});
 
@@ -14287,6 +14298,63 @@ Your task: decide what to do next to advance toward the goal.
     appendSys(!on?'Web search <b>on</b> for this session':'Web search <b>off</b>');
   }
 
+  /* ═══ EXPLODE — the one scene (UI redesign, Notes/40 §6 P6): a station per turn — what it read, the exchange, what
+     it produced, where it landed — in three projections. The chat records what a question read when it is sent and
+     what a turn pinned to the canvas, and harvests what the reply produced from the reply itself. ═══ */
+  let _xpl={on:false, mode:'cards'}, _xplEl=null, _xplMo=null, _xplT=null;
+  const _TURN_READS={}, _TURN_LAND={};
+  function explode(on){
+    on=(on==null)?!_xpl.on:!!on; _xpl.on=on;
+    document.body.classList.toggle('exploded', on);
+    if(on) document.body.classList.add('has-msgs');   // the composer docks at the bottom under the scene, never centred over it
+    const b=document.getElementById('xplBtn'); if(b) b.classList.toggle('col-on', on);
+    const seg=document.getElementById('xplSeg'); if(seg) seg.classList.toggle('on', on);
+    if(on){ _xplMount(); _xplRefresh(); } else if(_xplMo){ _xplMo.disconnect(); _xplMo=null; }
+    try{ _uiEvent('explode',{on, mode:_xpl.mode}); }catch(_){}
+    return on;
+  }
+  function explodeMode(m){ if(!/^(cards|front|iso)$/.test(m)) return; _xpl.mode=m; document.querySelectorAll('#xplSeg [data-xm]').forEach(b=>b.classList.toggle('col-on', b.dataset.xm===m)); if(!_xpl.on) explode(true); else if(_xplEl&&typeof _xplEl.mode==='function') _xplEl.mode(m); }
+  function _xplMount(){
+    const host=document.getElementById('xplHost'); if(!host) return;
+    if(!(window.customElements&&customElements.get('vera-exploded'))){ if(!host.querySelector('.sys-msg')) host.innerHTML='<div class="sys-msg" style="padding:12px">The exploded scene is loading…</div>'; setTimeout(()=>{ if(_xpl.on) _xplMount(); }, 600); return; }
+    if(_xplEl&&host.contains(_xplEl)) return;
+    host.innerHTML=''; _xplEl=document.createElement('vera-exploded'); _xplEl.setAttribute('mode', _xpl.mode); host.appendChild(_xplEl);
+    document.querySelectorAll('#xplSeg [data-xm]').forEach(b=>b.classList.toggle('col-on', b.dataset.xm===_xpl.mode));
+    _xplEl.addEventListener('vera:xpl:close', ()=>explode(false));
+    _xplEl.addEventListener('vera:xpl:turn', ev=>{ const mid=(ev.detail||{}).mid||''; if(mid){ _grFocusMid=mid; try{ _graphAnchorPost(true); }catch(_){} } });
+    _xplEl.addEventListener('vera:xpl:rendered', ev=>{ const d=ev.detail||{}; if(d.mode){ _xpl.mode=d.mode; document.querySelectorAll('#xplSeg [data-xm]').forEach(b=>b.classList.toggle('col-on', b.dataset.xm===d.mode)); } });
+    const msgs=document.getElementById('msgs');
+    if(msgs&&window.MutationObserver){ _xplMo=new MutationObserver(()=>{ if(!_xpl.on) return; clearTimeout(_xplT); _xplT=setTimeout(_xplRefresh, 400); }); _xplMo.observe(msgs,{childList:true,subtree:true,characterData:true}); }
+  }
+  function _xplRefresh(){ if(!_xpl.on||!_xplEl||typeof _xplEl.setScene!=='function') return; try{ _xplEl.setScene(_xplScene()); }catch(e){ console.warn('explode: scene', e); } }
+  const _xplCtxCard=(n)=>({n:n.label||n.id, d:(n.source||'')+' · '+(+(n.score||0)).toFixed(2), col:srcCol(n.source), kind:n.type||n.source||'', score:+(n.score||0), body:String(n.text||'').slice(0,240)});
+  function _xplRecordReads(mid){ try{ if(!mid||typeof CTX_NODES==='undefined') return; _TURN_READS[mid]=CTX_NODES.filter(n=>n.included!==false).slice(0,40).map(_xplCtxCard); }catch(_){} }
+  // the scene from the transcript: a station per question with its reply folded in
+  function _xplScene(){
+    const wraps=[...document.querySelectorAll('#msgs .mwrap[data-mid]')]; const turns=[]; let cur=null;
+    const txt=(w)=>{ const b=w.querySelector('.msg-body'); return b?String(b.textContent||'').replace(/\s+/g,' ').trim():''; };
+    const tm=(w)=>{ const t=w.querySelector('.mtime'); return t?String(t.textContent||'').trim():''; };
+    wraps.forEach(w=>{ const mid=w.dataset.mid; const isU=w.classList.contains('u');
+      if(isU){ cur={mid, who:'you', t:tm(w), text:txt(w).slice(0,160), read:(_TURN_READS[mid]||[]).slice(0,12), say:[], made:[], land:(_TURN_LAND[mid]||[]).slice(0,12)};
+        w.querySelectorAll('.pa-atts .pa-att b').forEach(el=>{ cur.read.push({n:String(el.textContent||'').slice(0,60), d:'attached to the question', col:'#38bdf8', kind:'attachment'}); });
+        turns.push(cur); return; }
+      if(!cur){ cur={mid, who:'aide', t:tm(w), text:'', read:[], say:[], made:[], land:[]}; turns.push(cur); }
+      if(!cur.reply){ cur.reply=txt(w).slice(0,160); cur.rt=tm(w); cur.amid=mid; }
+      const body=w.querySelector('.msg-body'); if(!body) return; const made=cur.made;
+      body.querySelectorAll('.cap-inline').forEach(el=>{ const hd=el.querySelector('.cap-inline-header'); const n=String((hd?hd.textContent:el.textContent)||'').replace(/\s+/g,' ').trim().slice(0,60); if(n) made.push({n, d:'capability · '+(el.classList.contains('error')?'failed':el.classList.contains('done')?'done':'ran'), col:'var(--acc2)', kind:'cap', body:String((el.querySelector('.cap-result,.cap-peek')||{}).textContent||'').slice(0,400)}); });
+      body.querySelectorAll('.art-card').forEach(el=>{ const n=String(((el.querySelector('.art-hd .t')||{}).textContent)||'artifact').trim().slice(0,60); made.push({n, d:'artifact', col:'#c9955a', kind:'artifact'}); });
+      body.querySelectorAll('vera-widget').forEach(el=>{ made.push({n:el.getAttribute('title')||el.getAttribute('form')||'widget', d:'widget · '+(el.getAttribute('form')||''), col:'#a78bfa', kind:'widget'}); });
+      body.querySelectorAll('vera-mermaid,.mermaid,pre.mermaid').forEach(()=>{ made.push({n:'Diagram', d:'mermaid', col:'#a78bfa', kind:'diagram'}); });
+      body.querySelectorAll('pre code').forEach(el=>{ const lang=(String(el.className||'').match(/language-([\w-]+)/)||[])[1]||''; if(lang==='mermaid'||lang==='widget') return; const s=String(el.textContent||''); made.push({n:(lang||'code')+' · '+s.split('\n').length+' lines', d:'code block', col:'#fb923c', kind:'code', body:s.slice(0,400)}); });
+      body.querySelectorAll('vera-agent-loop-output').forEach(el=>{ let steps=[]; try{ steps=[...el.querySelectorAll('[data-step],.step,.alo-step')].slice(0,12).map(s=>({label:String(s.textContent||'').trim().slice(0,40), status:/done|ok/.test(s.className)?'ok':/run|active/.test(s.className)?'run':/err|fail/.test(s.className)?'fail':''})); }catch(_){} made.push({n:'Agentic loop', d:'loop · '+(steps.length?steps.length+' steps':'running'), col:'var(--acc)', kind:'loop', steps}); });
+      body.querySelectorAll('img:not(.art-card img)').forEach(el=>{ made.push({n:el.getAttribute('alt')||'image', d:'image', col:'#e879f9', kind:'image'}); });
+    });
+    // the newest question without a recorded context: the live context is what it read
+    const last=turns.length?turns[turns.length-1]:null;
+    if(last&&!last.read.length&&typeof CTX_NODES!=='undefined') last.read=CTX_NODES.filter(n=>n.included!==false).slice(0,12).map(_xplCtxCard);
+    return {turns, sel:(_grFocusMid&&turns.some(t=>t.mid===_grFocusMid))?_grFocusMid:(last?last.mid:'')};
+  }
+
   /* ═══ PASTE HANDLER — large paste becomes a pinned doc chip ═══
      Old behaviour: modal popup forcing the user to choose Insert / Cancel.
      New behaviour: large pastes (>800 chars) become "chips" above the
@@ -16283,7 +16351,7 @@ Your task: decide what to do next to advance toward the goal.
     setDensity,toggleBlocks,
     _uiAskAnswer,_uiAskPick,_uiDirectiveApply,
     _cmpChip,_cmpSync,_paOpen,_paCopy,
-    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
+    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
     _persistMediaCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},
@@ -16956,5 +17024,6 @@ window.addEventListener('DOMContentLoaded',()=>{
 <script src="/ui/elements/canvas_element.js"></script>
 <script src="/ui/graph/families.js"></script>
 <script src="/ui/context_graph_element.js"></script>
+<script src="/ui/exploded_element.js"></script>
 </body>
 </html>
