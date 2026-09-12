@@ -85,6 +85,13 @@ html.vpb-nav-hosted #secNav{display:none}
 .snav[data-pane="remote"].on{color:#9c8cf0}
 .snav[data-pane="software"].on{color:var(--acc3)}
 .snav[data-pane="integrations"].on{color:#e6b800}
+.snav[data-pane="machines"].on{color:#6fd68b}
+.mc-kind{font-family:var(--mono);font-size:8.5px;letter-spacing:.6px;text-transform:uppercase;color:var(--dim2);white-space:nowrap}
+.mc-state{font-family:var(--mono);font-size:9px;font-weight:700;color:var(--dim2)}
+.mc-state.running{color:var(--ok)}.mc-state.unknown{color:var(--warn)}.mc-state.template{color:var(--acc4)}
+.mc-note{display:block;margin-top:1px;font-size:8.5px;color:var(--dim)}
+.mc-acts{display:flex;flex-wrap:wrap;gap:3px}
+.mc-acts .btn{font-size:8px;padding:1px 6px}
 .nsec{writing-mode:vertical-rl;transform:rotate(180deg);flex-shrink:0;width:34px;padding:8px 0 3px;text-align:center;font-family:var(--mono);font-size:7.5px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:var(--dim);user-select:none}
 #secNav [data-view="models"]{display:none}
 html.view-models #secNav [data-view="estate"]{display:none}
@@ -403,6 +410,7 @@ html.view-models #secNav [data-view="models"]{display:block}
     <div class="snav" data-pane="observe" data-view="estate" onclick="P.show('observe',this)">Observe</div>
     <div class="navdiv" data-view="estate"></div>
     <div class="nsec" data-view="estate">Machines</div>
+    <div class="snav" data-pane="machines" data-view="estate" onclick="P.show('machines',this)">All</div>
     <div class="snav" data-pane="workers" data-view="estate" onclick="P.show('workers',this)">Workers</div>
     <div class="snav" data-pane="nodes" data-view="estate" onclick="P.show('nodes',this)">Nodes</div>
     <div class="snav" data-pane="proxmox" data-view="estate" onclick="P.show('proxmox',this)">Proxmox</div>
@@ -1722,6 +1730,35 @@ html.view-models #secNav [data-view="models"]{display:block}
          lazy iframe to the interaction module's /interaction/panel -->
     <div class="pane" id="pane-estate" style="padding:0;overflow:hidden">
       <iframe id="estate-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
+    </div>
+
+    <!-- MACHINES PANE — every machine in one list (estate.machines): Proxmox
+         nodes, guests (running, stopped, never enrolled), SSH hosts and Docker
+         hosts, each with the actions that apply to it. -->
+    <div class="pane" id="pane-machines" style="padding:0;overflow:hidden">
+      <div style="display:flex;flex-direction:column;height:100%;overflow:hidden">
+        <div class="pane-tb" style="flex-shrink:0;padding:8px 12px 6px;gap:6px;flex-wrap:wrap">
+          <span class="pane-tb-title" style="color:#6fd68b">MACHINES</span>
+          <span class="tb-sep"></span>
+          <div style="display:flex;gap:2px" id="mc-kinds">
+            <span class="j-tab active" onclick="P.mcKind('',this)" style="padding:3px 9px;font-size:9px">All</span>
+            <span class="j-tab" onclick="P.mcKind('proxmox-node',this)" style="padding:3px 9px;font-size:9px">Proxmox</span>
+            <span class="j-tab" onclick="P.mcKind('guest',this)" style="padding:3px 9px;font-size:9px">Guests</span>
+            <span class="j-tab" onclick="P.mcKind('host',this)" style="padding:3px 9px;font-size:9px">Hosts</span>
+            <span class="j-tab" onclick="P.mcKind('docker-host',this)" style="padding:3px 9px;font-size:9px">Docker</span>
+          </div>
+          <input id="mc-filter" placeholder="filter…" oninput="P.mcRender()" style="font-size:9px;width:130px;background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:3px 7px;border-radius:3px">
+          <button class="btn sm" onclick="P.mcLoad()">↻ Refresh</button>
+          <span class="status-hint" id="mc-status"></span>
+        </div>
+        <div style="flex:1;overflow:auto;padding:10px 12px;min-height:0">
+          <table class="job-tbl" id="mc-tbl">
+            <thead><tr><th>Machine</th><th>Kind</th><th>State</th><th>Address</th><th>Hardware</th><th>Runs</th><th>Actions</th></tr></thead>
+            <tbody id="mc-tbody"></tbody>
+          </table>
+          <div id="mc-empty" class="j-empty" style="display:none">No machines match.</div>
+        </div>
+      </div>
     </div>
 
     <!-- REMOTE, INTEGRATIONS and PROVISION (software) PANES — the standalone
@@ -5396,24 +5433,24 @@ function pmxRenderVms(){
 // ── SSH into a guest — full in-Vera terminal via the remote-connections layer.
 // First use enrolls the guest (registers an SSH host + saved connection); after
 // that the button drops straight into a shell. Replaces the old Remote tab.
-async function pmxSsh(node,type,vmid,name){
+async function pmxSsh(node,type,vmid,name,cid){
   try{
-    const r=await api('/remote/conn/open','POST',{kind:'proxmox',cluster_id:_pmxCur,node:node,guest_type:type,vmid:parseInt(vmid)});
+    const r=await api('/remote/conn/open','POST',{kind:'proxmox',cluster_id:cid||_pmxCur,node:node,guest_type:type,vmid:parseInt(vmid)});
     if(r&&r.ok&&r.ws_path){ termOpen(r.ws_path,'🖧 '+name+' — SSH'); return; }
-    if(confirm('This guest is not enrolled for SSH yet.\nEnroll now? (the guest needs a reachable SSH server)')) await pmxEnrollSsh(node,type,vmid,name);
+    if(confirm('This guest is not enrolled for SSH yet.\nEnroll now? (the guest needs a reachable SSH server)')) await pmxEnrollSsh(node,type,vmid,name,cid);
   }catch(e){ alert('SSH open failed: '+e.message); }
 }
-async function pmxEnrollSsh(node,type,vmid,name){
+async function pmxEnrollSsh(node,type,vmid,name,cid){
   const user=prompt('SSH user for '+name+':','root'); if(!user) return;
   const pass=prompt('Password (leave blank to use a key path on the Vera host):','');
   if(pass===null) return;
   const key=pass?'':(prompt('Key path on the Vera host (blank = none):','')||'');
   const ip=prompt('Guest IP (blank = auto-detect):','')||'';
   const port=parseInt(prompt('SSH port:','22')||'22')||22;
-  const r=await api('/proxmox/guest/enroll','POST',{cluster_id:_pmxCur,node:node,guest_type:type,vmid:parseInt(vmid),user:user,password:pass||'',key_path:key,ip:ip,port:port,label:name});
+  const r=await api('/proxmox/guest/enroll','POST',{cluster_id:cid||_pmxCur,node:node,guest_type:type,vmid:parseInt(vmid),user:user,password:pass||'',key_path:key,ip:ip,port:port,label:name});
   if(!(r&&r.ok)) return alert('Enroll failed: '+((r&&r.error)||'unknown'));
-  await api('/remote/conn/save','POST',{kind:'proxmox',cluster_id:_pmxCur,node:node,guest_type:type,vmid:parseInt(vmid),ssh_host_id:r.ssh_host_id,label:name});
-  pmxSsh(node,type,vmid,name);
+  await api('/remote/conn/save','POST',{kind:'proxmox',cluster_id:cid||_pmxCur,node:node,guest_type:type,vmid:parseInt(vmid),ssh_host_id:r.ssh_host_id,label:name});
+  pmxSsh(node,type,vmid,name,cid);
 }
 
 async function pmxStartVm(node,vmid,type){
@@ -5438,13 +5475,13 @@ async function pmxStopVm(node,vmid,type){
 
 // ── Console: terminal (xterm) + remote desktop (noVNC) ────────────────────
 let _pmxCon={term:null,fit:null,ws:null,rfb:null,deeplink:'',sendResize:null};
-async function pmxConsole(node,type,vmid,mode,name){
+async function pmxConsole(node,type,vmid,mode,name,cid){
   $('pmx-con-ttl').textContent=(mode==='vnc'?'Desktop · ':'Terminal · ')+name+' ('+vmid+')';
   $('pmx-con').style.display='flex';
   $('pmx-con-term').innerHTML=''; $('pmx-con-vnc').innerHTML='';
   $('pmx-con-msg').style.display='none'; $('pmx-con-deep').style.display='none';
   let info;
-  try{ info=await _pmxApi('/proxmox/console/ticket','POST',{cluster_id:_pmxCur,node,guest_type:type,vmid:parseInt(vmid),mode}); }
+  try{ info=await _pmxApi('/proxmox/console/ticket','POST',{cluster_id:cid||_pmxCur,node,guest_type:type,vmid:parseInt(vmid),mode}); }
   catch(e){ return pmxConMsg('Could not reach console endpoint: '+e.message,false); }
   if(info.error){ return pmxConMsg(info.error,false); }
   _pmxCon.deeplink=info.deeplink_url||'';
@@ -6178,6 +6215,85 @@ function ovNotes(key){ _ovNotesOpen[key]=!_ovNotesOpen[key]; if(_ovLast) ovRende
 setInterval(()=>{ const p=$('pane-overview'); if(p&&p.classList.contains('on')&&document.visibilityState==='visible') ovLoad(false); }, 60000);
 setTimeout(()=>{ const p=$('pane-overview'); if(_VIEW==='estate'&&p&&p.classList.contains('on')) ovLoad(false); }, 0);
 
+// ── Machines: every machine in one list (estate.machines) ────────────────────
+// Actions use the same endpoints as the Proxmox, Nodes and Docker panes, but
+// each row carries its own cluster, so nothing depends on which cluster the
+// Proxmox pane has selected.
+let _mcRows=[], _mcKind='', _mcBusy=false;
+const _MC_KIND={'proxmox-node':'Proxmox node',guest:'Guest',host:'Host','docker-host':'Docker host'};
+function mcInit(){ if(_mcRows.length) mcRender(); else mcLoad(); }
+async function mcLoad(){
+  if(_mcBusy) return;
+  _mcBusy=true;
+  txt('mc-status','loading…');
+  try{
+    const r=await api('/estate/machines');
+    _mcRows=(r&&r.machines)||[];
+    const c=(r&&r.counts)||{}, errs=(r&&r.errors)||[];
+    txt('mc-status', r ? ((c.machines||0)+' machines · '+(c.running_guests||0)+' guests running'
+      +(errs.length?(' · '+errs.join('; ')):'')) : 'The machine list did not answer.');
+  } finally { _mcBusy=false; }
+  mcRender();
+}
+function mcKind(kind, el){
+  _mcKind=kind||'';
+  document.querySelectorAll('#mc-kinds .j-tab').forEach(t=>t.classList.toggle('active', t===el));
+  mcRender();
+}
+function mcRender(){
+  const tb=$('mc-tbody'); if(!tb) return;
+  const q=(($('mc-filter')||{}).value||'').trim().toLowerCase();
+  const rows=_mcRows.filter(r=>(!_mcKind||r.kind===_mcKind)
+    &&(!q||[r.label,r.addr,r.node,r.vmid,(r.runs||[]).join(' ')].join(' ').toLowerCase().includes(q)));
+  tb.innerHTML=rows.map(r=>{
+    const idx=_mcRows.indexOf(r);
+    const where=(r.kind==='guest'&&r.vmid)?((r.type==='qemu'?'VM ':'CT ')+r.vmid+(r.node?' on '+r.node:'')):'';
+    const acts=(r.actions||[]).map(a=>'<button class="btn sm'+(a.id==='shutdown'?' err-btn':'')
+      +'" onclick="P.mcAct('+idx+','+sq(a.id)+')">'+esc(a.label)+'</button>').join('');
+    return '<tr><td><b>'+esc(r.label)+'</b>'+(where?'<span class="mc-note">'+esc(where)+'</span>':'')
+      +(r.note?'<span class="mc-note">'+esc(r.note)+'</span>':'')+'</td>'
+      +'<td class="mc-kind">'+esc(_MC_KIND[r.kind]||r.kind)+'</td>'
+      +'<td><span class="mc-state '+esc(r.status||'')+'">'+esc(r.status||'—')+'</span></td>'
+      +'<td style="font-family:var(--mono);font-size:9px">'+esc(r.addr||'')+'</td>'
+      +'<td style="font-size:9px">'+esc((r.hardware||[]).join(' · '))+'</td>'
+      +'<td style="font-size:9px">'+esc((r.runs||[]).join(', '))+'</td>'
+      +'<td><div class="mc-acts">'+acts+'</div></td></tr>';
+  }).join('');
+  const empty=$('mc-empty'); if(empty) empty.style.display=rows.length?'none':'block';
+}
+// The console overlay lives inside the Proxmox pane, which is hidden while
+// another pane is open; lift it to the page before opening it from here.
+function _mcFloat(id){ const el=$(id); if(el&&el.parentElement!==document.body) document.body.appendChild(el); }
+async function mcAct(idx, action){
+  const r=_mcRows[idx]; if(!r) return;
+  const what=(r.type==='qemu'?'VM ':'CT ')+r.vmid+' ('+r.label+')';
+  if(action==='start'||action==='shutdown'||action==='reboot'){
+    const verb={start:'Start',shutdown:'Shut down',reboot:'Reboot'}[action];
+    if(!confirm(verb+' '+what+'?')) return;
+    const res=await api('/proxmox/guest/action','POST',{cluster_id:r.cluster_id,node:r.node,guest_type:r.type,vmid:parseInt(r.vmid),action});
+    if(!res||res.error){ alert(verb+' failed: '+((res&&res.error)||'no answer')); return; }
+    txt('mc-status', verb+' sent to '+what);
+    setTimeout(mcLoad,2500); setTimeout(mcLoad,7000);
+    return;
+  }
+  if(action==='console'){
+    const a=(r.actions||[]).find(x=>x.id==='console')||{};
+    _mcFloat('pmx-con');
+    return pmxConsole(r.node,r.type,String(r.vmid),a.mode||'term',r.label,r.cluster_id);
+  }
+  if(action==='ssh'){
+    if(r.ssh_host_id){
+      const res=await api('/remote/conn/open','POST',{kind:'ssh',ssh_host_id:r.ssh_host_id});
+      if(res&&res.ok&&res.ws_path) return termOpen(res.ws_path,'🖧 '+r.label+' — SSH');
+      return alert('Terminal failed: '+((res&&res.error)||'no answer'));
+    }
+    return pmxSsh(r.node,r.type,String(r.vmid),r.label,r.cluster_id);
+  }
+  if(action==='cpu'){ estateOpen('proxmox',''); return pmxSub('cpu'); }
+  if(action==='detect'){ txt('mc-status','detecting '+r.label+'…'); await ndDetect(r.ssh_host_id); return mcLoad(); }
+  if(action==='containers'){ estateOpen('docker',''); return dkrSelectHost(r.docker_host_id); }
+}
+
 function showPane(name, el){
   if(name==='perf'){ // legacy alias — Perf now lives as a sub-tab of Observe
     showPane('observe', document.querySelector('.snav[data-pane="observe"]'));
@@ -6210,6 +6326,7 @@ function showPane(name, el){
   if(name==='network'){ netSub(_netSub); }
   if(name==='connections'){ connLoad(); }
   if(name==='nodes'){ ndInit(); }
+  if(name==='machines'){ mcInit(); }
   if(name==='remote'){ _mountFrame('remote-frame', BASE+'/remote/panel'); }
   if(name==='integrations'){ _mountFrame('integrations-frame', BASE+'/integrations/panel'); }
   if(name==='software'){ _mountFrame('software-frame', BASE+'/provision/panel'); }
@@ -8000,7 +8117,7 @@ function _bmRender(rec){
 
 // ── Public API ───────────────────────────────────────────────────────────────
 return {
-  show: showPane, ovRefresh: ()=>ovLoad(true), ovNotes, refresh, autoToggle,
+  show: showPane, ovRefresh: ()=>ovLoad(true), ovNotes, mcLoad, mcRender, mcKind, mcAct, refresh, autoToggle,
   wkFilter, wkSel, wkDrain, wkRemoveStale,
   wkSubTab, wkjTab, wkjFilter, oljTab, oljFilter,
   setStrat, olPing, olPingAll, olTogglePin, olTestGenerate,
