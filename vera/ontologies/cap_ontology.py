@@ -1446,7 +1446,27 @@ register_ui(
     ],
 )
 
-log.info("cap_ontology: registered (%d existing relations)", _db_count())
+def _registration_relation_count() -> int | None:
+    """Best-effort relation count for startup logging.
+
+    Registration must not depend on the ontology store being writable or even
+    present.  Capability handlers can report database errors when they are
+    actually called; an informational log line must never make importing the
+    module fail.
+    """
+    try:
+        return _db_count()
+    except (OSError, sqlite3.Error) as exc:
+        log.warning("cap_ontology: relation count unavailable during registration: %s", exc)
+        return None
+
+
+_registered_relation_count = _registration_relation_count()
+if _registered_relation_count is None:
+    log.info("cap_ontology: registered (existing relation count unavailable)")
+else:
+    log.info("cap_ontology: registered (%d existing relations)",
+             _registered_relation_count)
 
 """
 cap_ontology_agent_integration.py  —  Inject ontology context into agent calls
