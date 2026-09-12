@@ -109,6 +109,8 @@ def _capabilities(registry: Mapping[str, Mapping[str, Any]]) -> list[dict[str, A
             "role_basis": role_basis,
             "mode": entry.get("mode", "local"),
             "source": entry.get("source", "local"),
+            "compatibility_alias_for": str(
+                entry.get("compatibility_alias_for") or ""),
             "module": getattr(raw, "__module__", ""),
             "callable": getattr(raw, "__qualname__", getattr(raw, "__name__", "")),
             "schema": _json_safe(entry.get("schema", {})),

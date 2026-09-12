@@ -23,7 +23,7 @@ Endpoints:
   Postgres: postgresql://postgres:password@<BACKEND_HOST>:5432/llm
 """
 
-import asyncio, contextvars, copy, functools, hashlib, inspect, json, logging, os, sys, time, uuid
+import asyncio, contextvars, copy, functools, hashlib, inspect, json, logging, os, re, sys, time, uuid
 import logging.handlers  # noqa: E402  (submodule; `import logging` alone won't load it)
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -189,6 +189,10 @@ BACKGROUND_LLM: "contextvars.ContextVar[str]" = contextvars.ContextVar(
 # triggered_by field (codex / claude_code / autonomous via BACKGROUND_LLM / user).
 CALLER_KIND: "contextvars.ContextVar[str]" = contextvars.ContextVar(
     "vera_caller_kind", default="")
+# Set only by the dedicated MCP envelope handler. Unlike caller_kind, this is a
+# server-owned transport fact and cannot be forged by request data.
+MCP_CALL_ACTIVE: "contextvars.ContextVar[bool]" = contextvars.ContextVar(
+    "vera_mcp_call_active", default=False)
 # Credential for the three narrow sandbox gate operations. It is sourced only
 # from an HTTP header by /mcp/call, never from capability arguments, so generic
 # capability telemetry and argument capture cannot persist it.
@@ -5474,6 +5478,10 @@ def capability(
     # shadow policy decision from this metadata while enforcement and trusted
     # approval receipts migrate incrementally.
     contract:    Optional[dict] = None,
+    # A callable compatibility surface that projects to another capability.
+    # The replacement is registry metadata and enables conservative usage
+    # evidence; it does not redirect, disable, or remove the capability.
+    compatibility_alias_for: Optional[str] = None,
 ):
     """
     Unified registration decorator.
@@ -5500,6 +5508,10 @@ def capability(
         _final_schema  = _merge_schema(_auto_schema, schema) if schema else _auto_schema
         group  = name.split(".")[0]
         _redact_args = frozenset(str(key) for key in (redact_args or ()))
+        _alias_for = str(compatibility_alias_for or "").strip()
+        if _alias_for and (_alias_for == name or not re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}", _alias_for)):
+            raise ValueError("compatibility alias replacement must be a different capability")
 
         @functools.wraps(func)
         async def wrap(**kw):
@@ -5519,6 +5531,20 @@ def capability(
                 except Exception as _eg:              # pragma: no cover
                     log.debug("estate guard skipped for %s: %s", name, _eg)
             tid     = kw.pop("trace_id",None) or new_id()
+            if _alias_for:
+                _surface = ("http_caller" if CURRENT_HTTP_CAP.get("") == name
+                            else "mcp_caller" if MCP_CALL_ACTIVE.get(False)
+                            else "")
+                if _surface:
+                    try:
+                        from .inventory.deprecation_inventory import record_alias_usage
+                        await record_alias_usage(
+                            REDIS, candidate_name=name, replacement=_alias_for,
+                            source_kind=_surface, observed_at=now_iso())
+                    except Exception as _alias_error:
+                        # Evidence collection cannot make a compatibility call fail.
+                        log.debug("compatibility usage evidence failed for %s: %s",
+                                  name, _alias_error)
             attempt = 0; last_err = None
             # Pull trigger chain from context vars (set by vera_syslog patcher)
             _vera_syslog = sys.modules.get("syslog")
@@ -5720,7 +5746,8 @@ def capability(
             "mode":        mode,
             "retries":     retries,
             "tags":        tags or [group],
-            "source":      "local",
+            "source":      "alias" if _alias_for else "local",
+            "compatibility_alias_for": _alias_for,
             "mcp_expose":  mcp_expose,
             "memory":      memory,
             "silent":      silent,
@@ -6948,6 +6975,7 @@ def _make_mcp_call_handler():
 
         caller_kind = str(body.get("caller_kind") or "").strip()
         _ck_token = CALLER_KIND.set(caller_kind) if caller_kind else None
+        _mcp_token = MCP_CALL_ACTIVE.set(True)
         gate_credential = str(request.headers.get("x-vera-sandbox-gate") or "").strip()
         _gate_token = SANDBOX_GATE_TOKEN.set(gate_credential) if gate_credential else None
         try:
@@ -6966,6 +6994,7 @@ def _make_mcp_call_handler():
             log.error("mcp/call cap %s: %s", name, e)
             raise HTTPException(500, str(e))
         finally:
+            MCP_CALL_ACTIVE.reset(_mcp_token)
             if _gate_token is not None:
                 SANDBOX_GATE_TOKEN.reset(_gate_token)
             if _ck_token is not None:

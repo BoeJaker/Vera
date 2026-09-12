@@ -351,6 +351,15 @@ assessment without performing the operation it describes. See
 [capability policy](45-capability-policy.md), and
 [interoperability foundations](46-interoperability-foundations.md).
 
+Compatibility names should be declared with
+`compatibility_alias_for="canonical.capability"` on the `@capability`
+decorator. This makes the replacement machine-readable in discovery and the
+system inventory. Calls through the HTTP and MCP transports contribute
+payload-free usage evidence; internal Python calls are established through
+code-reference scans instead of being guessed from request attribution.
+Declaring an alias does not deprecate or remove it, and telemetry failure cannot
+make the compatibility call fail.
+
 - **`interval=0` in the scheduler** fires every second. Don't pass 0 expecting "off" — pass a very large number like 999999, or simply don't call `schedule()`.
 - **`memory="auto"`** is a legacy value, accepted for compatibility, treated as `"on"`.
 - **Don't call `record_cap_interaction` directly** — it's a deprecated no-op kept only so older modules don't crash. Activity recording is handled inside the wrapper now.

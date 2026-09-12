@@ -1,8 +1,7 @@
 # Canonical system inventory
 
-`system.inventory` is the first executable slice of master-roadmap package
-W0-01. It captures Vera's loaded architecture as canonical JSON without changing
-runtime state or calling a model.
+`system.inventory` captures Vera's loaded architecture as canonical JSON
+without changing runtime state or calling a model.
 
 The snapshot currently includes:
 
@@ -86,3 +85,27 @@ Subsequent snapshots should be retained only
 at meaningful branch or release boundaries, and comparisons should report added,
 removed, and changed identities rather than committing a multi-megabyte dump on
 every startup.
+
+## Deprecation evidence
+
+Compatibility paths are inventoried as candidates, not assumed to be dead.
+Explicit alias declarations provide the candidate, replacement, and owner;
+Vera does not infer lifecycle state from naming conventions. The canonical
+capability inventory carries the declared replacement alongside each alias.
+
+Usage evidence has nine named source classes: code references, HTTP callers,
+MCP callers, stored workflows, schedules, UI links, configuration, artifacts,
+and external consumers. Every report must account for every class as complete,
+partial, or unavailable. An unavailable source remains a blocker rather than
+silently becoming evidence of zero use.
+
+HTTP and MCP alias calls increment durable, payload-free counters. These
+counters retain the alias, its replacement, transport class, count, and latest
+observation time; they do not retain arguments or results. Supplied code and
+configuration snapshots can be scanned deterministically, retaining only a
+digest of the source reference and an exact-token count. Health checks and
+migration probes must be classified explicitly and are reported separately
+from real consumers.
+
+The resulting inventory is evidence only. Even complete coverage with no known
+consumer produces an independent-review candidate, never removal authority.

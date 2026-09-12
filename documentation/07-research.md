@@ -420,6 +420,14 @@ The research panel has an "Iterate" toggle. With it on, submitting a new query w
 
 The thread is persistent — closing and reopening the panel preserves the last N entries.
 
+The older `research.report`, `research.parallel`, `research.deep`,
+`research.code`, `research.guide`, and `research.filestore` names are explicit
+compatibility aliases for `research.run`; `research.quick_search` is an alias
+for `research.report`. They retain their existing behavior while exposing the
+replacement as structured registry metadata. Their observed HTTP/MCP use can
+therefore inform a later migration review without making that review—or any
+removal—automatic.
+
 ---
 
 ## See also
