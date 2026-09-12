@@ -5520,7 +5520,36 @@ IMPORTANT:
     const s=document.getElementById('grColSub'); if(s) s.textContent='context graph · '+incl.length+' of '+nodesAll.length+' in the prompt';
   }
   // the live loop's events, teed into the column's loop lane (the same stream the loop card and the rail's graph read)
-  function _ctxColLoopEv(ev){ if(_ctxCol&&_pages.has('graph')) _ctxCol.appendLoopEvent(ev); }
+  function _ctxColLoopEv(ev){ if(_ctxCol&&_pages.has('graph')) _ctxCol.appendLoopEvent(ev); try{ _loopCanvasEv(ev); }catch(_){} }
+  // ── loops write to the canvas (Notes/40 §6 P7): a run is an item with its steps ──
+  // Every loop the chat runs or watches is ONE keyed item on the session canvas (loop:<run>), anchored to the turn
+  // that launched it, added on its first event and kept current from the same stream the loop card and the graph
+  // column read — the run's steps as they happen, each the capability it ran. The loop itself can write items
+  // with the same caps (canvas.add · update · pin · park) as any run does.
+  const _LOOP_RUNS={}, _loopCanvasT={}; let _loopCanvasMid='';
+  function _loopCanvasEv(ev){
+    if(!ev||typeof ev!=='object'||!SID) return;
+    const t=String(ev.type||''); const rid=String(ev.run_id||ev.stream_id||ev.session_id||'run').slice(0,80);
+    let R=_LOOP_RUNS[rid];
+    if(!R||t==='start'||/\.triage_start$/.test(t)){ if(R&&R.added&&(t==='start'||/\.triage_start$/.test(t))) { R.evs=[]; R.status='running'; } else R=_LOOP_RUNS[rid]={rid, key:'loop:'+rid, goal:'agentic loop', status:'running', evs:[], mid:_loopCanvasMid||'', added:false}; }
+    R.evs.push(ev); if(R.evs.length>3000) R.evs=R.evs.slice(-2000);
+    if(ev.goal&&!R.goalSet){ R.goal=String(ev.goal).slice(0,120); R.goalSet=true; }
+    if(t==='done'||/\.done$/.test(t)||t==='run_done'||/\.(error|failed|cancelled)$/.test(t)) R.status=(ev.ok===false||/error|failed|cancelled/.test(t))?'fail':'ok';
+    clearTimeout(_loopCanvasT[rid]); _loopCanvasT[rid]=setTimeout(()=>_loopCanvasFlush(rid), R.added?1500:50);
+  }
+  function _loopRunContent(R){
+    let steps=[];
+    try{ if(window.VeraContextGraph&&typeof VeraContextGraph.loopFromEvents==='function') steps=VeraContextGraph.loopFromEvents(R.evs).steps.map(s=>({n:s.label, cap:s.cap, status:s.status, ms:s.ms})); }catch(_){}
+    return {title:R.goal, goal:R.goal, status:R.status, run:R.rid, steps:steps.slice(0,60), updated:new Date().toISOString()};
+  }
+  async function _loopCanvasFlush(rid){
+    const R=_LOOP_RUNS[rid]; if(!R||!SID) return; const content=_loopRunContent(R);
+    try{
+      if(!R.added){ R.added=true; const r=await _capCall('canvas.add',{session_id:SID, kind:'loop', key:R.key, content, at:'now', size:'m', anchor:{mid:R.mid, turn:R.mid}}); if(!(r&&r.ok)){ R.added=false; return; }
+        if(R.mid){ try{ (_TURN_LAND[R.mid]=_TURN_LAND[R.mid]||[]).push({n:R.goal, d:'canvas · the run as an item', col:'var(--acc)', kind:'loop'}); if(_xpl.on) _xplRefresh(); }catch(_){} } }
+      else await _capCall('canvas.update',{session_id:SID, key:R.key, content});
+    }catch(_){}
+  }
   // the records in the focused turn's context run to the message: one collector per source beside its cluster, one
   // connector per source to the channel between the columns, then into the message's edge — never across a card
   function _ctxRunsDraw(){
@@ -16034,6 +16063,7 @@ Your task: decide what to do next to advance toward the goal.
         await new Promise(r=>setTimeout(r,200));
     }
     const el=document.createElement('vera-agent-loop-output');
+    try{ _loopCanvasMid=(statusCard&&statusCard.mid)||''; }catch(_){}   // the run's item on the canvas anchors to this turn
     if(typeof el.setApiBase!=='function'){ statusCard.body.innerHTML='<span style="color:var(--dim)">Loop renderer unavailable.</span>'; return null; }
     el.setAttribute('compact','true'); el.setAttribute('max-height','380');
     statusCard.body.appendChild(el);
@@ -16351,7 +16381,7 @@ Your task: decide what to do next to advance toward the goal.
     setDensity,toggleBlocks,
     _uiAskAnswer,_uiAskPick,_uiDirectiveApply,
     _cmpChip,_cmpSync,_paOpen,_paCopy,
-    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
+    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
     _persistMediaCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},
