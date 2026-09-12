@@ -1,11 +1,13 @@
 """Loop Lab flattening slice 6: the Agents page.
 
 Sessions, Board, Notes, Capacity and Swarm were five pages showing the
-agents' work from five stores. They are one section now, sec-agents: a
+agents' work from five stores. They are one section now, sec-agents: ONE
 table of agent sessions (evolve.agents.rows, one call) - or, by toggle, of
-board items - with the Swarm's live counts as pills above it; the board's
-lanes view, the notes editor and the seats card fold up under it, verbatim.
-Source-level assertions, the pattern of test_ship_page_ui.
+board items - with the Swarm's live counts as pills above it and the edit
+queue's work grid under it. The Board's item form, the Notes editor and the
+Capacity seats are modals from the header bar (and the seats pill), NOT
+former pages folded under the table. Source-level assertions, the pattern
+of test_ship_page_ui.
 """
 import os
 import re
@@ -63,44 +65,78 @@ def test_every_rail_button_calls_nav_plainly(src):
 def test_the_old_pages_still_route_to_the_table_that_holds_their_data(src):
     nav = _fn(src, "nav")
     assert "agents:agentsPoll," in nav
-    for old in ("csessions", "board", "notes", "capacity", "swarm"):
+    for old in ("csessions", "swarm"):
         assert "%s:()=>nav('agents')" % old in nav, old
+    assert "board:()=>{nav('agents');setAgentsMode('items')}" in nav, "the Board is the items mode of the table"
+    assert "notes:()=>{nav('agents');openNotes()}" in nav and "capacity:()=>{nav('agents');openSeats()}" in nav, \
+        "Notes and Capacity are modals over the page"
     for e in ("item", "chat"):
         m = re.search(r"\n  %s:\s*\{[^\n]*page:'([a-z]+)'" % e, src)
         assert m and m.group(1) == "agents", "%s records live on Agents" % e
 
 
-# -- nothing was lost: every element of the five pages is declared -----------
-def test_every_element_of_the_five_pages_survived(src):
-    ids = set(re.findall(r'id="([a-zA-Z0-9-]+)"', src))
-    for want in (
-        # Board
-        "board-status", "board-fltrepo", "board-fltproj", "board-fltbranch", "board-new", "bn-id", "bn-title", "bn-lane",
-        "bn-labels", "bn-repo", "bn-project", "bn-body", "bn-msg", "board-body",
-        # Notes
-        "notes-scope", "notes-host", "ll-notes-el",
-        # Capacity
-        "cap-status", "cap-new", "cs-id", "cs-target", "cs-label", "cs-auth", "cap-seats", "cap-ollama",
-        # Sessions
-        "csess-stalled",
-    ):
-        assert want in ids, "lost #%s in the merge" % want
+# -- the page is ONE table: nothing folded, nothing stacked under it ---------
+def test_nothing_on_the_page_is_folded(src):
+    """The contract: one table, its live strip above, the infographic (the edit
+    queue's grid) under it, the controls as modals. A former page in a
+    <details> hides it - the thing the redo of slices 5-7 removes."""
     ag = _section(src, "agents")
-    for want in ("board-body", "board-new", "notes-host", "cap-seats", "cap-new", "agents-table", "agents-swarm", "csess-stalled"):
-        assert 'id="%s"' % want in ag, "#%s is not on the Agents page" % want
-    assert '<script src="/ui/vera-notes.js"></script>' in ag, "the notes editor's script moved with it"
+    assert "<details" not in ag and 'class="fold"' not in ag
+    assert ".fold{" not in src and ".fold>" not in src, "the fold CSS went with the last fold"
+    cards = re.findall(r'<div class="card"(?: id="([a-z-]+)")?>', ag)
+    assert cards == ["agents-card", ""], "the Agents page is its table's card and the edit queue's grid: %r" % cards
+    for gone in ("board-body", "board-new", "board-status", "board-fltrepo", "board-fltproj", "board-fltbranch", "cap-new"):
+        assert 'id="%s"' % gone not in src, "the Board's lanes view / the fold-era forms are gone: #%s" % gone
+    for gone in ("function loadBoardTab(", "function _fillFilter(", "_boardCtxSeeded", "function boardToggleNew(",
+                 "function capToggleNew(", "function loadNotes(", "agents-board", "agents-capacity", "agents-notes"):
+        assert gone not in src, gone
+    for want in ("agents-swarm", "agents-table", "csess-stalled", "editq-grid", "editq-body"):
+        assert 'id="%s"' % want in ag, "#%s is on the Agents page" % want
     # The sessions table and the swarm's cross-section are the table now.
     for gone in ("csess-body", "csess-summary", "csess-status", "swarm-body", "swarm-summary", "swarm-status"):
         assert 'id="%s"' % gone not in src, gone
 
 
-def test_the_folds_load_on_open(src):
+def test_the_controls_are_the_header_bar_and_modals(src):
+    """The Board's item form, the Notes editor and the Capacity seats are
+    modals: their elements live in the modal templates, not on the page, and
+    a header button (or the seats pill, or an old deep-link) opens them."""
     ag = _section(src, "agents")
-    assert 'id="agents-board" ontoggle="if(this.open)loadBoardTab()"' in ag
-    assert 'id="agents-notes" ontoggle="if(this.open)loadNotes()"' in ag
-    assert 'id="agents-capacity" ontoggle="if(this.open)loadCapacity()"' in ag
-    assert '$(\'agents-board\').open=true;boardToggleNew()' in ag, "+ item opens the fold and the form"
-    assert '$(\'agents-capacity\').open=true;capToggleNew()' in ag, "+ seat likewise"
+    for btn in ('onclick="openItemForm()"', 'onclick="openSeats()"', 'onclick="openNotes()"', 'onclick="agentsPoll()"'):
+        assert btn in ag, btn
+    item = src[src.index("const _AG_ITEM_MODAL=`"):src.index("`;", src.index("const _AG_ITEM_MODAL=`"))]
+    for want in ("bn-id", "bn-title", "bn-lane", "bn-labels", "bn-repo", "bn-project", "bn-body", "bn-msg"):
+        assert 'id="%s"' % want in item, "the item form's #%s" % want
+        assert 'id="%s"' % want not in ag, "#%s is in the modal, not on the page" % want
+    assert 'onclick="boardSave()"' in item and 'onclick="closeModal()">Cancel' in item
+    seats = src[src.index("const _AG_SEATS_MODAL=`"):src.index("`;", src.index("const _AG_SEATS_MODAL=`"))]
+    for want in ("cap-status", "cs-id", "cs-target", "cs-label", "cs-auth", "cap-seats", "cap-ollama"):
+        assert 'id="%s"' % want in seats, "the seats modal's #%s" % want
+        assert 'id="%s"' % want not in ag, "#%s is in the modal, not on the page" % want
+    assert 'onclick="capRegister()"' in seats and 'onclick="loadCapacity()"' in seats
+    notes = src[src.index("const _AG_NOTES_MODAL=`"):src.index("`;", src.index("const _AG_NOTES_MODAL=`"))]
+    for want in ("notes-scope", "notes-host", "ll-notes-el"):
+        assert 'id="%s"' % want in notes, "the notes modal's #%s" % want
+        assert 'id="%s"' % want not in ag, "#%s is in the modal, not on the page" % want
+    assert '<vera-session-notes id="ll-notes-el" scope="general"' in notes
+    assert '<script src="/ui/vera-notes.js"></script>' in ag, "the notes element's script stays on the page"
+    # opening
+    assert "openModal(_AG_ITEM_MODAL);_boardFillLanes();" in _fn(src, "openItemForm")
+    be = _fn(src, "boardEdit")
+    assert "openModal(_AG_ITEM_MODAL);_boardFillLanes();" in be and "$('bn-id').value=it.id" in be, "edit is the same form, filled"
+    assert "openModal(_AG_SEATS_MODAL);loadCapacity()" in _fn(src, "openSeats")
+    on = _fn(src, "openNotes")
+    assert "openModal(_AG_NOTES_MODAL)" in on and "notesScope()" in on, "the notes modal reopens on the scope last picked"
+    assert "_notesScope=s.value" in _fn(src, "notesScope")
+    # saving closes the modal and refreshes THE table (there is no lanes view to reload)
+    bs = _fn(src, "boardSave")
+    assert "closeModal();agentsRefresh()" in bs and "loadBoardTab" not in bs
+    cr = _fn(src, "capRegister")
+    assert "loadCapacity();agentsRefresh()" in cr, "a new seat shows in the seats pill too"
+    # the seats pill and the row detail's edit button open the modals
+    assert "\"openSeats()\"" in _fn(src, "renderAgentsHead")
+    assert "event.stopPropagation();boardEdit(" in _fn(src, "_agItemDetail")
+    assert "'agents-board'" not in src and "'agents-capacity'" not in src
 
 
 # -- one table, one call --------------------------------------------------------
@@ -158,7 +194,8 @@ def test_the_poller_is_armed_in_a_finally_and_only_while_live(src):
     arm = _fn(src, "_agArm")
     assert "_curSec()==='agents'" in arm and "_agMeta.any_live" in arm and "setTimeout(agentsPoll,6000)" in arm
     assert "setTimeout(loadAgents" not in src
-    assert "if(s==='agents'){agentsPoll();" in src, "the context bar refreshes the page that is open"
+    assert "if(s==='agents')agentsPoll();" in src, "the context bar refreshes the page that is open"
+    assert "board-fltrepo" not in _fn(src, "_ctxBroadcast"), "no second filter set to mirror the context into"
 
 
 def test_actions_refresh_the_table(src):

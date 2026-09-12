@@ -90,8 +90,6 @@ def test_the_records_that_did_not_exist(src):
     ("_agRow", "eid('chat',r.id"),
     ("_agItemRow", "eid('branch',i.branch"),
     ("_agItemRow", "eid('pipeline',i.pipeline)"),
-    ("loadBoardTab", "eid('branch',it.branch"),
-    ("loadBoardTab", "eid('pipeline',it.pipeline)"),
     ("openSession", "eid('run',x.run_id,eid('task',x.task))"),
 ])
 def test_the_tables_use_the_link(src, fn, needle):
