@@ -163,7 +163,7 @@ def test_the_element_renders_the_session_projection():
     assert '<div class="vc-rec"><b>' in EL, "the record card when there is no drawer"
     assert "fetch(base + '/mcp/call'" in EL and "Object.assign({ id: this.canvasId }, args || {})" in EL
     assert "const rev = doc.revision != null ? doc.revision : doc.rev != null ? doc.rev" in EL
-    assert "static get observedAttributes() { return ['canvas-id', 'rows', 'compact']; }" in EL
+    assert "static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns']; }" in EL
     assert "if (this.hasAttribute('compact')) this.style.setProperty('--vc-max', '240px');" in EL
     assert "this._timer = setInterval(() => this.refresh(), 3000);" in EL
     # the plain projection is what it was
@@ -182,6 +182,19 @@ def test_the_relevance_engine_drives_the_canvas_columns_focus_set():
     assert "setFocus(keys, scores) {" in EL and "retier() {" in EL and "tier() {" in EL
     assert "const fcls = inF ? (F ? ' inf' : '') : (tier === 'zen' ? ' out' : ' dim');" in EL and ".it.out{display:none}" in EL
     assert 'async def cap_canvas_session_relevance(' in PY and '"canvas.session.relevance"' in PY and 'rev = await _write(doc, "add", key, turn=_anchor_turn(anchor))' in PY
+
+
+def test_the_canvas_columns_stage_places_items_level_with_their_turns_and_routes_the_runs():
+    # P3/P5: the placer takes measured turn tops, the column scrolls with the transcript, the runs go down the gutter, the checker
+    assert "function place(items, turns, o) {" in EL and "function checkRoutes(routes, rects) {" in EL and "root.VeraCanvas = Object.assign(root.VeraCanvas || {}, api);" in EL
+    assert "setTurns(turns, o) {" in EL and "syncScroll(msgsScrollTop, msgsTopClient) {" in EL and "itemRects() {" in EL and "_placeNow() {" in EL
+    assert '<div class="stage" id="stage">' in EL and 'class="hidbtn" data-act="hid"' in EL and "vera:canvas:placed" in EL and "vera:canvas:hover" in EL
+    assert "el.setAttribute('stage',''); el.setAttribute('columns', String(_cvCols()));" in HTML
+    assert "function _cvTurnTops(){" in HTML and "top:Math.round(r.top-mr.top+msgs.scrollTop)" in HTML, "measured tops in the transcript's scroll frame"
+    assert "new ResizeObserver(()=>_cvStageSync(true))" in HTML and "msgs.addEventListener('scroll', ()=>_cvStageSync(), {passive:true})" in HTML
+    assert 'id="cvRunsOverlay"' in HTML and "let pts=[{x:M.right, y:my},{x:gx, y:my},{x:gx, y:iy},{x:it.rect.left, y:iy}];" in HTML, "down the gutter, never diagonally"
+    assert "if(den==='zen'){ svg.innerHTML='';" in HTML and "const wanted=den==='hover'?items.filter(it=>it.key===_cvHoverKey||(_cvHoverMid&&it.mid===_cvHoverMid)):items;" in HTML
+    assert "window.VeraCanvas.checkRoutes(drawn, rects)" in HTML and 'id="cvColCols"' in HTML
 
 
 def test_the_python_side_names_match_the_vocabulary():
