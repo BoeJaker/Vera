@@ -45,5 +45,6 @@ t('iso: the same runs as the cards view', i.edges.filter((e) => e.cls === 'in').
 t('iso: the shared projection is used when given', (() => { let n = 0; const P = (u, v, z) => { n++; return [u - v, (u + v) * 0.5 - (z || 0)]; }; X.layout(scene, 'iso', 1200, 800, { proj: P }); return n > 8; })());
 t('iso: fitted into the frame', i.fit.s > 0.3 && i.fit.s <= 1.4);
 t('an empty session lays out nothing and does not crash', X.layout({ turns: [] }, 'iso', 800, 600).cards.length === 0 && X.layout(null, 'front', 800, 600).panels.length === 0);
+t('graphData: the graph sees every record the turn read, the column only the first twelve', X.graphData({ read: [{ id: 'a', n: 'a', score: 1 }], readAll: [{ id: 'a', n: 'a', score: 1 }, { id: 'b', n: 'b', score: 0.5 }], rel: [{ from: 'a', to: 'b', kind: 'cite' }] }).rels.length === 1 && X.graphData({ read: [{ id: 'a', n: 'a', score: 1 }], rel: [{ from: 'a', to: 'b' }] }).rels.length === 0);
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

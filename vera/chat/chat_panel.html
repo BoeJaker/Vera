@@ -14505,7 +14505,7 @@ Your task: decide what to do next to advance toward the goal.
     const txt=(w)=>{ const b=w.querySelector('.msg-body'); if(!b) return ''; if(b.querySelector('.think-throb')) return ''; const c=b.cloneNode(true); c.querySelectorAll('.think-throb,.think-box,.cap-dot').forEach(x=>x.remove()); return String(c.textContent||'').replace(/\s+/g,' ').trim(); };
     const tm=(w)=>{ const t=w.querySelector('.mtime'); return t?String(t.textContent||'').trim():''; };
     wraps.forEach(w=>{ const mid=w.dataset.mid; const isU=w.classList.contains('u');
-      if(isU){ cur={mid, who:'you', t:tm(w), text:txt(w).slice(0,160), read:(_TURN_READS[mid]||[]).slice(0,12), rel:(_TURN_RELS[mid]||[]).slice(0,80), say:[], made:[], land:(_TURN_LAND[mid]||[]).slice(0,12)};
+      if(isU){ cur={mid, who:'you', t:tm(w), text:txt(w).slice(0,160), read:(_TURN_READS[mid]||[]).slice(0,12), readAll:(_TURN_READS[mid]||[]).slice(0,40), rel:(_TURN_RELS[mid]||[]).slice(0,80), say:[], made:[], land:(_TURN_LAND[mid]||[]).slice(0,12)};
         w.querySelectorAll('.pa-atts .pa-att b').forEach(el=>{ cur.read.push({n:String(el.textContent||'').slice(0,60), d:'attached to the question', col:'#38bdf8', kind:'attachment'}); });
         turns.push(cur); return; }
       if(!cur){ cur={mid, who:'aide', t:tm(w), text:'', read:[], say:[], made:[], land:[]}; turns.push(cur); }
@@ -14522,7 +14522,7 @@ Your task: decide what to do next to advance toward the goal.
     });
     // the newest question without a recorded context: the live context is what it read
     const last=turns.length?turns[turns.length-1]:null;
-    if(last&&!last.read.length&&typeof CTX_NODES!=='undefined'){ last.read=CTX_NODES.filter(n=>n.included!==false).slice(0,12).map(_xplCtxCard); last.rel=_xplRels(); }
+    if(last&&!last.read.length&&typeof CTX_NODES!=='undefined'){ const live=CTX_NODES.filter(n=>n.included!==false).map(_xplCtxCard); last.read=live.slice(0,12); last.readAll=live.slice(0,40); last.rel=_xplRels(); }
     return {turns, sel:(_grFocusMid&&turns.some(t=>t.mid===_grFocusMid))?_grFocusMid:(last?last.mid:'')};
   }
 
