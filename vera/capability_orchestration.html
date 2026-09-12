@@ -647,6 +647,35 @@ header .hdr-right{margin-left:0;gap:6px}
 .tab-ctrl-btn{width:26px;height:26px;border-radius:var(--r-sm,6px);color:var(--t3,var(--dim,#6b7280));font-size:12px}
 .tab-ctrl-btn:hover{color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20))}
 .tab-ctrl-btn.active{color:var(--ac,var(--acc,#5a9e8f));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent))}
+/* the side menu (the board's .lhm): the top row, the search, the groups, the rows, the widgets, the note, the foot */
+.lhm-nav{width:186px;background:var(--s1,var(--bg1,#151719));border-right:1px solid var(--bd,var(--border,rgba(255,255,255,.09)))}
+#lhmNav .lhm-side .lhm-s-top{border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)))}
+#lhmNav .lhm-side .lhm-s-hd{padding:12px 12px 8px}
+#lhmNav .lhm-side .lhm-s-srch{height:30px;background:var(--bg,var(--bg0,#0e0f12));border:none;box-shadow:inset 0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));color:var(--t3,var(--dim,#6b7280));font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:10.5px}
+#lhmNav .lhm-side .lhm-s-srch:hover{color:var(--t1,var(--text,#d8dce4))}
+#lhmNav .lhm-side .lhm-s-edit{width:26px;height:26px;border:none;background:var(--s2,var(--bg2,#1a1c20));border-radius:var(--r-sm,6px);color:var(--t3,var(--dim,#6b7280))}
+#lhmNav .lhm-side .lhm-s-bd{padding:2px 10px 8px}
+#lhmNav .lhm-side .lhm-s-grp{font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:var(--label-size,9px);letter-spacing:.1em;color:var(--t3,var(--dim,#6b7280));padding:12px 6px 4px}
+#lhmNav .lhm-side .lhm-s-row{height:32px;padding:0 10px;gap:9px;border-left:none;border-radius:var(--r-sm,6px);font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:11px;color:var(--t2,var(--dim2,#8a92a0))}
+#lhmNav .lhm-side .lhm-s-row:hover{color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20))}
+#lhmNav .lhm-side .lhm-s-row.on{color:var(--t1,var(--text,#d8dce4));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent));font-weight:600;box-shadow:inset 2px 0 0 var(--ac,var(--acc,#5a9e8f))}
+#lhmNav .lhm-side .lhm-s-row .ico{width:14px;font-size:11px;color:var(--t3,var(--dim,#6b7280))}
+#lhmNav .lhm-side .lhm-s-pan.on .lhm-s-row .ico{color:var(--ac,var(--acc,#5a9e8f))}
+#lhmNav .lhm-side .lhm-s-row .ct{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280));background:var(--s3,var(--bg3,#22262e));border-radius:var(--r-pill,99px)}
+#lhmNav .lhm-side .lhm-s-row .nm em{font-size:8px;color:var(--t3,var(--dim,#6b7280))}
+#lhmNav .lhm-side .lhm-s-sec{margin-left:20px;border-left:1px solid var(--bd,var(--border,rgba(255,255,255,.09)))}
+#lhmNav .lhm-side .lhm-s-sech{height:26px;font-size:10.5px;color:var(--t2,var(--dim2,#8a92a0))}
+#lhmNav .lhm-side .lhm-s-opt{height:22px;font-size:10px;color:var(--t2,var(--dim2,#8a92a0))}
+#lhmNav .lhm-side .lhm-s-reg .nm{font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:11px;color:var(--t2,var(--dim2,#8a92a0))}
+#lhmNav .lhm-side .lhm-s-w{background:var(--surf2,var(--bg2,#1a1c20));border:none;border-radius:var(--r-sm,6px);padding:8px 9px;gap:4px;margin:3px 0}
+#lhmNav .lhm-side .lhm-s-wh{font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:9px;letter-spacing:.08em;color:var(--t3,var(--dim,#6b7280))}
+#lhmNav .lhm-side .lhm-s-wh b{font-size:10px;color:var(--t1,var(--text,#d8dce4))}
+#lhmNav .lhm-side .lhm-s-wbar{background:var(--s3,var(--bg3,#22262e))}
+#lhmNav .lhm-side .lhm-s-wrow{font-size:9.5px;color:var(--t2,var(--dim2,#8a92a0))}
+#lhmNav .lhm-side .lhm-s-w.events .event-feed{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px}
+#lhmNav .lhm-side .lhm-s-note{font-size:9.5px;color:var(--t2,var(--dim2,#8a92a0));border-top:1px solid var(--bd,var(--border,rgba(255,255,255,.09)))}
+#lhmNav .lhm-nav-foot{padding:8px 10px;border-top:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));gap:2px}
+#lhmNav .lhm-nav-foot .tab-ctrl-btn{width:26px;height:26px;border-radius:var(--r-sm,6px);color:var(--t3,var(--dim,#6b7280))}
 /* the strips under the tabs: the active panel's own menu */
 #tabSubtabs:not(:empty){display:flex;align-items:center;gap:3px;min-height:30px;padding:0 14px;flex-shrink:0;border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));background:transparent;overflow-x:auto;scrollbar-width:none}
 #tabSubtabs .lhm-strips{display:contents}
@@ -2405,18 +2434,32 @@ function _lhmNativeRender(host){
       sections: secs.map((s, i) => ({ id: s.id, label: s.label, nav: !!s.nav, on: i === openIdx, tabs: i === openIdx ? s.tabs : [] })) }; });
   const feed = document.getElementById('lhmEventsFeed'), mirror = document.getElementById('lhmEvFeedMirror');
   const widgets = [
-    feed ? { title: 'Live events', count: mirror ? mirror.children.length : 0, el: feed, cls: 'events' + (_lhmEventsOpen ? ' open' : ''), open: () => _lhmToggleEvents() } : null,
-    _lhmLoopsWidget() ];
+    _lhmMetersWidget(),
+    _lhmLoopsWidget(),
+    feed ? { title: 'Live events', count: mirror ? mirror.children.length : 0, el: feed, cls: 'events' + (_lhmEventsOpen ? ' open' : ''), open: () => _lhmToggleEvents() } : null ];
   // into a child of the list host: when the chat's menu is absorbed and ☰ swapped to this list, the ☰ bar the
   // absorb path drew stays above it (side() clears what it is given)
   const box = document.createElement('div'); box.className = 'lhm-side-host'; box.style.cssText = 'flex:1;display:flex;flex-direction:column;min-height:0'; host.appendChild(box);
   VeraLHM.side(box, {
+    top: { title: 'Vera', sub: ((_uiPanelCache || []).length || rows.length) + ' panels · ⌘K', toggle: () => tabToggleLhm(), toggleTitle: 'Switch to horizontal tabs (the same menu, as tabs and strips)' },
     search: { label: 'Find a panel', hint: '⌘K', open: () => openTabPicker() }, edit: true, id: 'harness-main',
     open, panels, registered: { n: (_uiPanelCache || []).length, open: () => openTabPicker() },
     onPanel: (pid, ev) => { if(ev && (ev.ctrlKey || ev.metaKey)) splitTab(pid); else switchTab(pid); _tabFireLoader(pid); _lhmNavSync(); },
     onSection: (pid, sid, i) => { _lhmSecOpen[pid] = i; _lhmNavSync(); },
     onTab: (pid, sec, tab) => { _lhmNavSelect(pid, sec.nav ? tab.id : (sec.id + '/' + tab.id)); if(sec.nav){ const nav = _panelNavCache[pid]; if(nav) _panelNavCache[pid] = Object.assign({}, nav, { active: tab.id }); } _lhmNavSync(); },
     widgets, note: 'One menu, everywhere: this side menu, the strips under the tabs and the chat\'s rail are one component. Open a UI and its menu is this menu; ☰ at the top swaps it for this list, in place.' });
+}
+// the meters, as a widget in the menu (the Harness board's GPU · queue): the header's own readings — the Ollama load
+// meter and the stack monitor's last sample (queue, CPU)
+function _lhmMetersWidget(){
+  let s = {}; try{ s = _hmLast || {}; }catch(_){}   // the sample lives in a later script block; before it runs there is none
+  const bars = [];
+  const of = document.getElementById('lsOllamaFill'); const ov = document.getElementById('lsOllamaVal');
+  const op = of && of.style.width ? parseFloat(of.style.width) : null;
+  bars.push({ label: 'GPU · Ollama', pct: op == null ? 0 : op, value: ov && ov.textContent && ov.textContent !== '—' ? ov.textContent : (op == null ? '—' : Math.round(op) + '%'), col: 'var(--acc)' });
+  bars.push({ label: 'Queue', pct: Math.min((s.queue || 0) * 10, 100), value: s.queue == null ? '—' : String(s.queue), col: 'var(--acc3)' });
+  if(s.cpu != null) bars.push({ label: 'CPU', pct: s.cpu, value: s.cpu.toFixed(0) + '%', col: 'var(--acc2)' });
+  return { title: 'Meters', bars };
 }
 // running loops, as a widget in the menu (the chat's data source: the persisted loop-run registry)
 let _lhmLoops = { rows: [], t: 0 };
