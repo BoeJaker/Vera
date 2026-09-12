@@ -1,0 +1,65 @@
+"""
+Explode in the chat (UI redesign, Notes/40 §6 P6; the Chat & canvas set): the
+transcript pulled apart into one scene — a station per turn: what it read, the
+exchange, what it produced, where it landed — in cards · front · iso, fed from
+the transcript the chat has. Text-level; the layouts run under node in
+tests/test_exploded_element.cjs.
+"""
+import os
+import re
+
+ROOT = os.path.join(os.path.dirname(__file__), "..")
+
+
+def _read(*parts):
+    with open(os.path.join(ROOT, *parts), encoding="utf-8", errors="replace") as fh:
+        return fh.read()
+
+
+HTML = _read("vera", "chat", "chat_panel.html")
+PY = _read("vera", "chat", "chat_panels_capabilities.py")
+EL = _read("vera", "chat", "exploded_element.js")
+
+
+def _fn(name):
+    i = HTML.index("function %s(" % name)
+    j = HTML.find("\n  function ", i + 10)
+    return HTML[i:j if j > 0 else i + 20000]
+
+
+def test_the_element_is_served_and_loaded_and_is_the_chats_own():
+    assert '@APP.get("/ui/exploded_element.js", include_in_schema=False)' in PY and 'Path(__file__).parent / "exploded_element.js"' in PY
+    assert '<script src="/ui/exploded_element.js"></script>' in HTML
+    assert "root.customElements.define('vera-exploded', VeraExploded);" in EL and "root.VeraExploded = api;" in EL
+    for m in ("'cards'", "'front'", "'iso'"):
+        assert m in EL
+    assert "root.VeraISO.proj(30, 45, 1, true)" in EL, "the shared projection when it is there"
+    assert "createGraph(" not in EL and "vera_graph.js" not in EL and "memory_graph" not in EL
+
+
+def test_the_header_has_explode_and_its_modes_and_the_scene_takes_the_transcripts_place():
+    assert '<button class="tb-btn" id="xplBtn" onclick="CH.explode()"' in HTML
+    for m in ("cards", "front", "iso"):
+        assert 'data-xm="%s" onclick="CH.explodeMode(\'%s\')"' % (m, m) in HTML, m
+    assert '<div id="xplHost"></div>\n      <div id="msgs">' in HTML, "the scene in the transcript's place, the composer docked under it"
+    assert "body.exploded #msgs,body.exploded #jumpToBottomBtn{display:none!important}" in HTML and "body.exploded #xplHost{display:flex}" in HTML
+    x = _fn("explode")
+    assert "document.body.classList.toggle('exploded', on);" in x and "if(on){ _xplMount(); _xplRefresh(); }" in x
+    assert "if(on) document.body.classList.add('has-msgs');" in x, "the composer docks under the scene"
+    assert "_xplEl=document.createElement('vera-exploded')" in _fn("_xplMount")
+    assert "_xplMo=new MutationObserver(" in _fn("_xplMount"), "the scene follows the transcript"
+    assert "_xplEl.addEventListener('vera:xpl:turn', ev=>{ const mid=(ev.detail||{}).mid||''; if(mid){ _grFocusMid=mid;" in HTML, "a station picked is the turn in focus"
+
+
+def test_the_scene_is_built_from_what_the_chat_has():
+    s = _fn("_xplScene")
+    assert "cur={mid, who:'you', t:tm(w), text:txt(w).slice(0,160), read:(_TURN_READS[mid]||[]).slice(0,12), say:[], made:[], land:(_TURN_LAND[mid]||[]).slice(0,12)}" in s
+    assert "if(!cur.reply){ cur.reply=txt(w).slice(0,160);" in s, "the reply folds into the question's station"
+    for sel in (".cap-inline", ".art-card", "vera-widget", "vera-mermaid,.mermaid,pre.mermaid", "pre code", "vera-agent-loop-output", "img:not(.art-card img)"):
+        assert "body.querySelectorAll('%s')" % sel in s, sel
+    assert "'.pa-atts .pa-att b'" in s, "attachments the question carried are what it read"
+    assert "last.read=CTX_NODES.filter(n=>n.included!==false).slice(0,12).map(_xplCtxCard)" in s, "the newest question reads the live context"
+    assert "_xplRecordReads(uMsg.mid);\n    _paDecorate(uMsg.body, uCtx);" in HTML, "what a question read is recorded when it is sent"
+    assert "(_TURN_LAND[mid]=_TURN_LAND[mid]||[]).push(" in _fn("_wPin"), "what a turn pinned to the canvas is recorded"
+    for name in ("explode", "explodeMode", "_xplScene", "_xplRefresh"):
+        assert re.search(r"\n    [^\n]*\b%s," % name, HTML), name + " is exported on CH"
