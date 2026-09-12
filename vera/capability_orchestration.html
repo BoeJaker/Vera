@@ -709,7 +709,15 @@ header .hdr-right{margin-left:0;gap:6px}
 .widget{background:var(--s1,var(--bg1,#151719));border:none;border-radius:var(--ui-radius,10px);box-shadow:var(--card,0 1px 2px rgba(0,0,0,.18),0 8px 24px -18px rgba(0,0,0,.5))}
 .widget:hover{border-color:transparent;box-shadow:var(--card,0 1px 2px rgba(0,0,0,.18),0 8px 24px -18px rgba(0,0,0,.5)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)))}
 .w-head{height:34px;padding:0 12px;gap:8px;border-bottom:none;background:transparent}
-.w-title{font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:11.5px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--t1,var(--text,#d8dce4));flex:0 1 auto}
+.w-title{font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:var(--label-size,9px);font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--t2,var(--dim2,#8a92a0));flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.w-head{padding:11px 12px 0;height:auto;min-height:30px}
+.w-head .w-dot{width:6px;height:6px}
+/* the counters as the board's hero numbers */
+.w-body .kpi{gap:4px;justify-content:flex-start;padding-top:2px}
+.w-body .kpi-val{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:34px!important;font-weight:700;letter-spacing:-.035em!important;line-height:1;color:var(--t1,var(--text,#d8dce4))}
+.w-body .kpi-val.tv-ok{color:var(--ac2,var(--acc2,#8fb87a))}.w-body .kpi-val.tv-err{color:var(--ac4,var(--err,#c96b6b))}.w-body .kpi-val.tv-warn{color:var(--ac3,var(--acc3,#c9955a))}.w-body .kpi-val.tv-neu{color:var(--t1,var(--text,#d8dce4))}
+.w-body .kpi-sub{font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:10.5px;color:var(--t2,var(--dim2,#8a92a0));letter-spacing:0}
+.w-body .kpi-trend{font-size:10.5px;color:var(--t2,var(--dim2,#8a92a0))}
 .w-head .vd-rec{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280));opacity:1;background:var(--s2,var(--bg2,#1a1c20));border-radius:var(--r-pill,99px);padding:1px 7px;max-width:180px}
 .w-head .w-sub,.w-head .w-meta{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280))}
 .w-head .w-actions{margin-left:auto;opacity:.55}
