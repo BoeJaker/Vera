@@ -23,14 +23,14 @@ def test_current_loop_manifest_is_source_bound_and_non_executing():
                for row in result["source_evidence"])
 
 
-def test_review_identifies_five_parallel_generic_executors():
+def test_five_independent_generic_executors_offer_a_shared_kernel_seam():
     result = build_agent_loop_authority_review(ROOT)
     ids = result["parallel_generic_executor_surface_ids"]
     names = {row["name"] for row in result["surfaces"]
              if row["surface_id"] in ids}
     assert names == {"agent_loop.v1", "agent_loop.v2", "agent_loop.v3",
                      "agent_loop.v4", "agent_loop.v5"}
-    assert "extract_shared_step_kernel_beneath_strategy_policies" in \
+    assert "share_step_kernel_without_collapsing_numbered_loop_modes" in \
         result["recommendations"]
 
 
@@ -44,12 +44,23 @@ def test_v6_v7_v8_and_domain_loop_are_not_mislabeled_as_duplicate_executors():
         "browser_observe_think_act"
 
 
-def test_all_versioned_capabilities_have_hashed_consumer_evidence():
+def test_all_numbered_loop_modes_are_retained_and_have_consumer_evidence():
     result = build_agent_loop_authority_review(ROOT)
     by_id = {row["surface_id"]: row for row in result["surfaces"]}
-    versioned = [row for row in result["surfaces"]
-                 if row["name"].startswith("agent_loop.v")]
-    for surface in versioned:
+    numbered_modes = [row for row in result["surfaces"]
+                      if row["name"].startswith("agent_loop.v")]
+    assert {row["name"] for row in numbered_modes} == {
+        f"agent_loop.v{number}" for number in range(1, 9)
+    }
+    assert result["v_label_semantics"] == "named_loop_mode_not_version_order"
+    assert result["retain_all_numbered_modes"] is True
+    assert "retain_all_numbered_loop_modes_and_public_identities" in \
+        result["recommendations"]
+    forbidden = ("remove", "retire", "deprecat", "migrate")
+    assert not any(token in recommendation
+                   for recommendation in result["recommendations"]
+                   for token in forbidden)
+    for surface in numbered_modes:
         assert result["consumer_reference_counts"][surface["surface_id"]] > 0
     assert all("source_path" not in row for row in result["consumer_evidence"])
     assert all(by_id[row["surface_id"]]["capability"] != "none"
