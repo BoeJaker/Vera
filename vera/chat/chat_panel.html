@@ -832,6 +832,17 @@ body[data-cols~="graph"] #rightRail.lhm-host > .lhm-det{display:none}
 .tb-btn.col-on{color:var(--acc);border-color:var(--acc)}
 /* Explode: the one scene in the transcript's place, the composer docked under it; the mode segment shows while exploded */
 #xplHost{display:none;flex:1;min-height:0;position:relative}
+/* + Place: the registry picker over the exploded scene (the user's templates, then every drawable form) */
+#xplPlace{display:none;position:absolute;left:14px;top:50px;z-index:40;width:300px;max-height:60%;flex-direction:column;background:var(--bg1);border:1px solid var(--border2);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+#xplPlace.on{display:flex}
+#xplPlace .hd{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid var(--border)}
+#xplPlace .hd input{flex:1;min-width:0;font:inherit;font-size:11px;background:var(--bg2);border:1px solid var(--border);border-radius:5px;color:var(--fg);padding:3px 7px}
+#xplPlace .grp{font-family:var(--mono);font-size:8.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim2);padding:6px 8px 2px}
+#xplPlace .list{overflow-y:auto;min-height:0;padding:0 4px 6px}
+#xplPlace .row{display:flex;align-items:center;gap:7px;padding:4px 6px;border-radius:5px;cursor:pointer;font-size:11px}
+#xplPlace .row:hover{background:var(--bg2)}
+#xplPlace .row i{font-style:normal;color:var(--acc);width:14px;text-align:center}
+#xplPlace .row em{font-style:normal;font-family:var(--mono);font-size:8.5px;color:var(--dim2);margin-left:auto}
 body.exploded #xplHost{display:flex}
 body.exploded #msgs,body.exploded #jumpToBottomBtn{display:none!important}
 #xplHost vera-exploded{flex:1;min-height:0}
@@ -14488,10 +14499,53 @@ Your task: decide what to do next to advance toward the goal.
     host.innerHTML=''; _xplEl=document.createElement('vera-exploded'); _xplEl.setAttribute('mode', _xpl.mode); host.appendChild(_xplEl);
     document.querySelectorAll('#xplSeg [data-xm]').forEach(b=>b.classList.toggle('col-on', b.dataset.xm===_xpl.mode));
     _xplEl.addEventListener('vera:xpl:close', ()=>explode(false));
+    _xplEl.addEventListener('vera:xpl:place', ev=>_xplPlaceOpen((ev.detail||{}).mid||''));
     _xplEl.addEventListener('vera:xpl:turn', ev=>{ const mid=(ev.detail||{}).mid||''; if(mid){ _grFocusMid=mid; try{ _graphAnchorPost(true); }catch(_){} } });
     _xplEl.addEventListener('vera:xpl:rendered', ev=>{ const d=ev.detail||{}; if(d.mode){ _xpl.mode=d.mode; document.querySelectorAll('#xplSeg [data-xm]').forEach(b=>b.classList.toggle('col-on', b.dataset.xm===d.mode)); } });
     const msgs=document.getElementById('msgs');
     if(msgs&&window.MutationObserver){ _xplMo=new MutationObserver(()=>{ if(!_xpl.on) return; clearTimeout(_xplT); _xplT=setTimeout(_xplRefresh, 400); }); _xplMo.observe(msgs,{childList:true,subtree:true,characterData:true}); }
+  }
+  /* ── + Place (Notes/40 §9): a widget from the registry onto the station's plate. The picker lists the user's
+     templates (widget.template.list) and every drawable form (widget.forms); a pick goes through the resolver —
+     canvas.add of a widget record anchored to the turn (saved with the scene: the session canvas persists it;
+     the template counts an "iso plate" placement) — and lands in the station's session-canvas layer tagged ⧉. ── */
+  let _xplPlaceMid='', _xplPlaceRows=null;
+  async function _xplPlaceOpen(mid){
+    _xplPlaceMid=mid||_grFocusMid||''; let pop=document.getElementById('xplPlace');
+    if(!pop){ pop=document.createElement('div'); pop.id='xplPlace'; pop.innerHTML='<div class="hd"><input type="search" placeholder="Place a widget · templates, then every form" id="xplPlaceQ"><button class="btn xs" onclick="CH._xplPlaceClose()" title="Close">✕</button></div><div class="list" id="xplPlaceList"></div>';
+      document.getElementById('xplHost').appendChild(pop); pop.querySelector('#xplPlaceQ').addEventListener('input', ()=>_xplPlaceRender()); }
+    pop.classList.add('on');
+    if(!_xplPlaceRows){ _xplPlaceRows=[];
+      try{ const t=await _capCall('widget.template.list',{limit:200}); ((t&&t.templates)||[]).forEach(x=>_xplPlaceRows.push({kind:'template', id:x.id, n:x.name||x.id, form:x.form, panel:(x.source&&x.source.panel)||x.panel||''})); }catch(_){}
+      try{ const f=await _capCall('widget.forms',{}); ((f&&f.forms)||[]).forEach(x=>_xplPlaceRows.push({kind:'form', id:x.id, n:x.id, form:x.id, iso:(x.proj||[]).indexOf('iso')>=0, shape:x.shape})); }catch(_){}
+    }
+    _xplPlaceRender(); try{ pop.querySelector('#xplPlaceQ').focus(); }catch(_){}
+  }
+  function _xplPlaceClose(){ const pop=document.getElementById('xplPlace'); if(pop) pop.classList.remove('on'); }
+  function _xplPlaceRender(){
+    const list=document.getElementById('xplPlaceList'), q=String((document.getElementById('xplPlaceQ')||{}).value||'').toLowerCase(); if(!list) return;
+    const rows=(_xplPlaceRows||[]).filter(r=>!q||(r.n+' '+r.form+' '+(r.panel||'')).toLowerCase().indexOf(q)>=0);
+    const tpl=rows.filter(r=>r.kind==='template'), iso=rows.filter(r=>r.kind==='form'&&r.iso), nodes=rows.filter(r=>r.kind==='form'&&/^(node|topology|estate|host)$/.test(r.form)), forms=rows.filter(r=>r.kind==='form'&&!r.iso&&!/^(node|topology|estate|host)$/.test(r.form));
+    const row=(r,glyph)=>'<div class="row" onclick="CH._xplPlacePick(\''+esc(r.kind)+'\',\''+esc(r.id)+'\')"><i>'+glyph+'</i><span>'+esc(r.n)+'</span><em>'+esc(r.kind==='template'?r.form:(r.shape||''))+'</em></div>';
+    let html='';
+    if(tpl.length) html+='<div class="grp">my templates · '+tpl.length+'</div>'+tpl.map(r=>row(r,'⧉')).join('');
+    if(iso.length) html+='<div class="grp">iso scenes · '+iso.length+'</div>'+iso.map(r=>row(r,'◈')).join('');
+    if(nodes.length) html+='<div class="grp">nodes · '+nodes.length+'</div>'+nodes.map(r=>row(r,'⬡')).join('');
+    if(forms.length) html+='<div class="grp">widgets · '+forms.length+'</div>'+forms.map(r=>row(r,'▢')).join('');
+    list.innerHTML=html||'<div class="grp">nothing matches</div>';
+  }
+  async function _xplPlacePick(kind, id){
+    const mid=_xplPlaceMid; const r=(_xplPlaceRows||[]).find(x=>x.kind===kind&&x.id===id); if(!r) return; _xplPlaceClose();
+    const tplName=kind==='template'?r.n:r.form;
+    const content={form:r.form, title:r.n, template:kind==='template'?r.id:'', draw:{form:r.form, size:'m'}, placed:{where:'iso plate', turn:mid}};
+    const key='widget:'+(kind==='template'?'tpl:'+r.id:r.form)+':'+(mid||'scene');
+    try{
+      const res=await _capCall('canvas.add',{session_id:SID||'', kind:'widget', content, key, at:'now', size:'m', anchor:{mid, turn:mid}});
+      if(!(res&&res.ok)) throw new Error((res&&res.error)||'canvas.add failed');
+      if(kind==='template'){ try{ await _capCall('widget.template.instantiate',{id:r.id, where:'iso plate', host:'chat', session_id:SID||'', config:{turn:mid}}); }catch(_){} }
+      if(mid){ (_TURN_LAND[mid]=_TURN_LAND[mid]||[]).push({n:r.n, d:'canvas · placed from the registry', col:'var(--acc2)', kind:'widget', tpl:tplName, key}); }
+      _xplRefresh(); try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } }catch(_){}
+    }catch(e){ appendSys('Place failed: '+esc(String(e&&e.message||e))); }
   }
   function _xplRefresh(){ if(!_xpl.on||!_xplEl||typeof _xplEl.setScene!=='function') return; try{ _xplEl.dataset.den=(document.documentElement.getAttribute('data-den')||'full').toLowerCase(); _xplEl.setScene(_xplScene()); }catch(e){ console.warn('explode: scene', e); } }
   const _xplCtxCard=(n)=>({id:n.id, n:n.label||n.id, d:(n.source||'')+' · '+(+(n.score||0)).toFixed(2), col:srcCol(n.source), kind:n.type||n.source||'', score:+(n.score||0), body:String(n.text||'').slice(0,240)});
@@ -16528,7 +16582,7 @@ Your task: decide what to do next to advance toward the goal.
     setDensity,toggleBlocks,
     _uiAskAnswer,_uiAskPick,_uiDirectiveApply,
     _cmpChip,_cmpSync,_paOpen,_paCopy,
-    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
+    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
     _persistMediaCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},

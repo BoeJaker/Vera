@@ -67,6 +67,16 @@ def test_pass_b_the_context_graph_layer_is_a_widget_form_no_thinking_node_images
     assert '_F("context_graph", "graph", glyph="context_graph", options=("lanes", "labels")),' in WR, "the form is in the catalogue"
 
 
+def test_place_puts_a_registry_widget_on_the_stations_plate_through_the_resolver():
+    assert 'data-a="place"' in EL and "new CustomEvent('vera:xpl:place'" in EL
+    assert "_xplEl.addEventListener('vera:xpl:place', ev=>_xplPlaceOpen((ev.detail||{}).mid||''));" in HTML
+    o = _fn("_xplPlaceOpen"); p = _fn("_xplPlacePick")
+    assert "_capCall('widget.template.list',{limit:200})" in o and "_capCall('widget.forms',{})" in o, "the picker lists the user's templates, then every form"
+    assert "_capCall('canvas.add',{session_id:SID||'', kind:'widget', content, key, at:'now', size:'m', anchor:{mid, turn:mid}})" in p, "a pick goes through the resolver, anchored to the turn"
+    assert "_capCall('widget.template.instantiate',{id:r.id, where:'iso plate', host:'chat', session_id:SID||'', config:{turn:mid}})" in p, "the template counts an iso-plate placement"
+    assert "kind:'widget', tpl:tplName, key}" in p, "tagged with its template in the station's canvas layer"
+
+
 def test_the_scene_is_built_from_what_the_chat_has():
     s = _fn("_xplScene")
     assert "cur={mid, who:'you', t:tm(w), text:txt(w).slice(0,160), read:(_TURN_READS[mid]||[]).slice(0,12), readAll:(_TURN_READS[mid]||[]).slice(0,40), rel:(_TURN_RELS[mid]||[]).slice(0,80), say:[], made:[], land:(_TURN_LAND[mid]||[]).slice(0,12)}" in s

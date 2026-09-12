@@ -12,7 +12,7 @@
    <vera-exploded>  API: setScene({turns:[{mid, who, t, text, reply, read:[card], say:[card], made:[card],
                     land:[card]}], sel}) · mode(name) · select(mid) · fit() · state()
    card = {n, d, col, kind, body?, score?, p?, m?, rows?}
-   events: vera:xpl:pick {mid, layer, card} · vera:xpl:turn {mid} · vera:xpl:rendered {mode, stations}
+   events: vera:xpl:pick {mid, layer, card} · vera:xpl:turn {mid} · vera:xpl:rendered {mode, stations} · vera:xpl:place {mid}
    window.VeraExploded = { layout, LAYERS, version } — layout() is pure (node-testable).                        */
 (function (root) {
   'use strict';
@@ -141,6 +141,7 @@ vera-exploded .xp-ctl .c{font-size:9px;letter-spacing:.14em;text-transform:upper
 vera-exploded .xp-ctl button{font:inherit;font-size:10px;color:var(--xp-t2);background:none;border:0;cursor:pointer;padding:3px 10px;border-radius:999px}
 vera-exploded .xp-ctl button.on{background:var(--xp-ac);color:var(--xp-bg)}
 vera-exploded .xp-ctl .sep{width:1px;height:14px;background:var(--xp-bd);margin:0 3px}
+vera-exploded .xp-it .tpl{font-style:normal;color:var(--xp-ac);font-size:10px}
 vera-exploded .xp-scrub{width:96px;accent-color:var(--xp-ac);margin:0 2px 0 6px;cursor:pointer}
 vera-exploded .xp-g{position:absolute;z-index:8;border-radius:6px;background:var(--xp-s2);box-shadow:0 0 0 1px var(--xp-bd);padding:4px 6px;box-sizing:border-box;overflow:hidden}
 vera-exploded .xp-gf i{position:absolute;width:9px;height:9px;border-radius:50%;transform:translate(-50%,-50%);box-shadow:inset 0 0 0 1.5px var(--cc);background:color-mix(in srgb,var(--cc) 32%,transparent)}
@@ -215,7 +216,7 @@ vera-exploded .xp-empty{position:absolute;inset:0;display:flex;align-items:cente
       connectedCallback() {
         ensureCss(this.ownerDocument); if (this._built) { this._schedule(); return; } this._built = true;
         const m = this.getAttribute('mode'); if (m) this._S.mode = m;
-        this.innerHTML = '<div class="xp-ctl"><span class="c">explode</span><button data-m="cards">Cards</button><button data-m="front">Front</button><button data-m="iso">Iso</button><span class="sep"></span><button data-a="fit" title="Back to the whole scene">Fit</button><button data-a="close" title="Back to the flat transcript">Flatten</button><span class="sep"></span><input type="range" class="xp-scrub" data-r="scrub" min="0" max="0" value="0" title="Scrub through the session\'s turns (← → too)"></div><div class="xp-dots" data-r="dots"></div><div class="xp-wrap" data-r="wrap"><div class="xp-view" data-r="view"></div></div><div class="xp-pz"><button data-a="zout">−</button><span class="z" data-r="zoom">100%</span><button data-a="zin">+</button></div>';
+        this.innerHTML = '<div class="xp-ctl"><span class="c">explode</span><button data-m="cards">Cards</button><button data-m="front">Front</button><button data-m="iso">Iso</button><span class="sep"></span><button data-a="fit" title="Back to the whole scene">Fit</button><button data-a="close" title="Back to the flat transcript">Flatten</button><span class="sep"></span><button data-a="place" title="Place a widget from the registry onto this station\'s plate — it becomes one of the turn\'s items, tagged ⧉ with its template">+ Place</button><span class="sep"></span><input type="range" class="xp-scrub" data-r="scrub" min="0" max="0" value="0" title="Scrub through the session\'s turns (← → too)"></div><div class="xp-dots" data-r="dots"></div><div class="xp-wrap" data-r="wrap"><div class="xp-view" data-r="view"></div></div><div class="xp-pz"><button data-a="zout">−</button><span class="z" data-r="zoom">100%</span><button data-a="zin">+</button></div>';
         this._r = {}; this.querySelectorAll('[data-r]').forEach((el) => { this._r[el.dataset.r] = el; });
         this.addEventListener('click', (e) => this._click(e));
         // the timeline: the slider and ← → walk the session's turns
@@ -239,7 +240,7 @@ vera-exploded .xp-empty{position:absolute;inset:0;display:flex;align-items:cente
       _applyPan() { const p = this._S.pan; if (this._r.view) this._r.view.style.transform = this._S.mode === 'cards' ? 'none' : 'translate(' + p.x + 'px,' + p.y + 'px) scale(' + p.z + ')'; if (this._r.zoom) this._r.zoom.textContent = Math.round(p.z * 100) + '%'; this.querySelectorAll('.xp-it.anch').forEach((el) => { el.style.setProperty('--inv', (1 / Math.max(0.5, Math.min(2.2, (this._last ? this._last.fit.s : 1) * p.z))).toFixed(3)); }); }
       _click(e) {
         const t = e.target; const mb = t.closest && t.closest('button[data-m]'); if (mb) { this.mode(mb.dataset.m); return; }
-        const ab = t.closest && t.closest('[data-a]'); if (ab) { const k = ab.dataset.a; if (k === 'fit') this.fit(); else if (k === 'close') this.dispatchEvent(new CustomEvent('vera:xpl:close', { bubbles: true })); else if (k === 'zin' || k === 'zout') { const p = this._S.pan; p.z = Math.max(0.4, Math.min(3, p.z * (k === 'zin' ? 1.2 : 0.83))); this._applyPan(); } else if (k === 'prev' || k === 'next') { this._S.layer = Math.max(0, Math.min(LAYERS.length - 1, this._S.layer + (k === 'next' ? 1 : -1))); this._schedule(); } return; }
+        const ab = t.closest && t.closest('[data-a]'); if (ab) { const k = ab.dataset.a; if (k === 'fit') this.fit(); else if (k === 'place') { const ts = this._S.scene.turns || []; const t = ts.find((x) => x.mid === this._S.scene.sel) || ts[ts.length - 1]; this.dispatchEvent(new CustomEvent('vera:xpl:place', { detail: { mid: t ? t.mid : '' }, bubbles: true })); } else if (k === 'close') this.dispatchEvent(new CustomEvent('vera:xpl:close', { bubbles: true })); else if (k === 'zin' || k === 'zout') { const p = this._S.pan; p.z = Math.max(0.4, Math.min(3, p.z * (k === 'zin' ? 1.2 : 0.83))); this._applyPan(); } else if (k === 'prev' || k === 'next') { this._S.layer = Math.max(0, Math.min(LAYERS.length - 1, this._S.layer + (k === 'next' ? 1 : -1))); this._schedule(); } return; }
         const dot = t.closest && t.closest('.xp-dot'); if (dot) { this.select(dot.dataset.mid); return; }
         const st = t.closest && t.closest('.xp-lb.station'); if (st) { this.select(st.dataset.mid); return; }
         const ph = t.closest && t.closest('.xp-cp-h'); if (ph) { this._S.layer = +ph.closest('.xp-cp').dataset.li; this._schedule(); return; }
@@ -257,7 +258,7 @@ vera-exploded .xp-empty{position:absolute;inset:0;display:flex;align-items:cente
         this._r.dots.innerHTML = (S.scene.turns || []).map((t, i) => '<div class="xp-dot' + (i === o.sel ? ' on' : '') + '" data-mid="' + esc(t.mid) + '" title="' + esc((t.who || 'you') + ' · ' + (t.t || '') + ' · ' + String(t.text || '').slice(0, 80)) + '"><span class="l">' + esc((t.who || 'you') + ' ' + (i + 1) + ' · ' + String(t.text || '').slice(0, 30)) + '</span><i></i></div>').join('');
         view.classList.toggle('scroll', o.mode === 'cards');
         const st = (x, y) => 'left:' + x + 'px;top:' + y + 'px;';
-        const itHtml = (c, anch) => '<div class="xp-it' + (anch ? ' anch' : '') + (c.card && c.card.src ? ' has-img' : '') + (S.open === c.id ? ' open' : '') + '" data-id="' + esc(c.id) + '" title="' + esc(c.card.n || '') + (c.card.d ? ' — ' + esc(c.card.d) : '') + '" style="' + st(c.x, c.y) + 'width:' + c.w + 'px;height:' + c.h + 'px;--cc:' + esc(c.col) + '"><span class="n">' + esc(c.card.n || '') + '</span><span class="d">' + esc(c.card.d || '') + '</span><div class="b">' + cardBody(c.card) + '</div></div>';
+        const itHtml = (c, anch) => '<div class="xp-it' + (anch ? ' anch' : '') + (c.card && c.card.src ? ' has-img' : '') + (S.open === c.id ? ' open' : '') + '" data-id="' + esc(c.id) + '" title="' + esc(c.card.n || '') + (c.card.d ? ' — ' + esc(c.card.d) : '') + '" style="' + st(c.x, c.y) + 'width:' + c.w + 'px;height:' + c.h + 'px;--cc:' + esc(c.col) + '"><span class="n">' + (c.card.tpl ? '<i class="tpl" title="placed from the registry · ' + esc(c.card.tpl) + '">⧉</i> ' : '') + esc(c.card.n || '') + '</span><span class="d">' + esc(c.card.d || '') + '</span><div class="b">' + cardBody(c.card) + '</div></div>';
         let h = '';
         if (!(S.scene.turns || []).length) { view.innerHTML = '<div class="xp-empty">Nothing to explode yet — the scene is the session\'s turns: what each read, what it said, what it made, where it landed.</div>'; view.style.transform = 'none'; this._emit(o); return; }
         if (o.mode === 'front') {
