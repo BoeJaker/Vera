@@ -2860,6 +2860,12 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     inst["in_use"] = inst.get("in_use", 0) + 1
     _inflight_hold(inst, _req_slot_id)
     mdl    = eff_model or OLLAMA_MODEL
+    # Record what actually serves the request. A caller that passes no model
+    # (llm.generate with only a job_type) cannot know the rule's model or the
+    # node picked, and used to report OLLAMA_MODEL - a naming call running
+    # qwen2.5:7b on a CPU node read as the 9B on that CPU.
+    if meta_out is not None:
+        meta_out.update({"model": mdl, "instance": chosen})
     body   = {"model":mdl,"prompt":prompt,"stream":stream_cb is not None}
     if system:    body["system"]  = system
     if json_mode: body["format"]  = "json"
@@ -3334,6 +3340,8 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                         req_entry.update({"status": "done_fallback",
                                           "fallback_instance": fb_id,
                                           "elapsed_s": fb_elapsed})
+                        if meta_out is not None:
+                            meta_out["instance"] = fb_id
                         return "".join(fbuf) or "".join(ftbuf)
                 finally:
                     fb_inst["in_use"] = max(0, fb_inst.get("in_use", 1) - 1)
