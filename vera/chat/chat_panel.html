@@ -1507,6 +1507,14 @@ html[data-blocks="off"] #rightRail.lhm-host .lhm-det{background:transparent;box-
 #rightRail.lhm-host .lhm-quick .wc-v .bar{flex:1;height:6px;border-radius:3px;background:var(--s1,var(--bg1,#151719));overflow:hidden}
 #rightRail.lhm-host .lhm-quick .wc-v .bar i{display:block;height:100%;background:var(--ac,var(--acc,#5a9e8f))}
 #rightRail.lhm-host .lhm-quick .sp{flex:1}
+#rightRail.lhm-host.lhm-editing .lhm-quick .wid::before{background:var(--surf,var(--bg1,#151719));color:var(--ac,var(--acc,#5a9e8f))}
+#rightRail.lhm-host .lhm-wbar.lhm-qbar{background:var(--surf,var(--bg1,#151719));box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)))}
+#rightRail.lhm-host .lhm-wfoot button,#rightRail.lhm-host .lhm-wname button{background:var(--surf2,var(--bg2,#1a1c20));color:var(--t2,var(--dim2,#8a92a0))}
+#rightRail.lhm-host .lhm-wfoot button.pri,#rightRail.lhm-host .lhm-wname button.pri{background:var(--pri-bg,var(--acc,#5a9e8f));color:var(--pri-fg,var(--on-acc,#fff))}
+body .lhm-pick{background:var(--surf,var(--bg1,#151719));border-radius:var(--ui-radius,10px);box-shadow:var(--elev,0 8px 24px rgba(0,0,0,.28)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)))}
+body .lhm-prow{background:var(--surf2,var(--bg2,#1a1c20));box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14))}
+body .lhm-prow .padd{background:var(--pri-bg,var(--acc,#5a9e8f));color:var(--pri-fg,var(--on-acc,#fff))}
+#rightRail.lhm-host .lhm-quick .wid.lhm-added{background:var(--surf2,var(--bg2,#1a1c20));box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14))}
 @keyframes xbl{50%{opacity:.35}}
 </style>
 </head>
@@ -12640,6 +12648,11 @@ Your task: decide what to do next to advance toward the goal.
       panes:[{id:'rpHist',w:'sessions · list',tpl:'lhm:sessions'},{id:'rpCfg',w:'settings · form'},{id:'rpCaps',w:'capabilities · list'},{id:'rpPanels',w:'panels · list'},{id:'rpLoop',w:'loop program · form',tpl:'lhm:loop-graph'},{id:'ctxCanvas',w:'context galaxy · graph',tpl:'lhm:ctx-galaxy'},{id:'ctxMeter',w:'budget bar · meter',tpl:'lhm:ctx-budget'},{id:'paneLoopGraph',w:'loop graph · graph',tpl:'lhm:loop-graph'},{id:'paneMemGraph',w:'memory graph · graph',tpl:'lhm:memory-graph'},{id:'paneCode',w:'file tree · tree',tpl:'lhm:file-tree'},{id:'sbxSessionTools',w:'sandbox actions · controls',tpl:'lhm:actions'},{id:'paneBrowser',w:'browser · panel'},{id:'paneMonitor',w:'monitor · log'}],
       onPick:()=>{ if(host.classList.contains('slim')) toggleRight(); },
       // "Save as menu…" (the ChatMenu board's edit mode): the composed menu becomes a record of yours through lhm.menu.save
+      // the picker's registry groups: every drawable form, then the user's templates (the same reads + Place makes)
+      pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',counter:'#',bar:'▬',bars:'▥',thermo:'≣',heat:'▦',matrix:'▦',donut:'◑',stack:'▤',pills:'◦',log:'≡',lane:'≡',table:'▦',files:'⊞',list:'≡',checklist:'☑',stepper:'⋮',calendar:'▤',string:'¶',kv:'≔',pipes:'⌥',scatter:'⁘',panel:'▭',composite:'⊞'};
+        const groups=[]; try{ const r=await _capCall('widget.forms',{}); const forms=(r&&r.forms)||[]; if(forms.length) groups.push({n:'Widget forms', items:forms.slice(0,60).map(f=>({g:GL[f.id]||'▢', n:f.id, c:(f.shape||'')+(f.proj&&f.proj.length?' · '+f.proj.join(' · '):''), add:{form:f.id}}))}); }catch(_){}
+        try{ const r=await _capCall('widget.template.list',{session_id:SID||''}); const tpls=(r&&r.templates)||[]; if(tpls.length) groups.push({n:'Your templates', items:tpls.slice(0,60).map(t=>({g:GL[t.form]||'⧉', n:t.name||t.id, c:(t.form||'')+(t.source&&t.source.panel?' · '+t.source.panel:''), add:{tpl:t.id, form:t.form||'kv', label:t.name||t.id}}))}); }catch(_){}
+        return groups; },
       saveMenu:(rec)=>{ _capCall('lhm.menu.save',{menu:rec, session_id:SID||''}).then(r=>{ appendSys(r&&r.ok?('Saved menu <b>'+esc(rec.name)+'</b> — it is in the rail now'):('Save as menu failed: '+esc(String((r&&r.error)||'')))); }).catch(()=>{}); },
       // the ☰ list gains the button while a menu is being edited; the record goes to the owner (above) and to the rail
       topExtra:(top)=>{ if(!(VeraLHM.active&&VeraLHM.active.editing)) return; const b=document.createElement('button'); b.className='lhm-cta'; b.style.margin='6px 8px 0'; b.textContent='⧉ Save as menu…'; b.title='The menu as it stands, as a menu of your own in the rail'; b.addEventListener('click',()=>{ const n=prompt('Name for this menu', ''); if(n) VeraLHM.saveAsMenu(n); }); top.appendChild(b); }});
