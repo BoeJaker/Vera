@@ -1,8 +1,9 @@
 """Rules for estate.health: turn raw facts about the state store, the Vera
-host's containers and the Proxmox guests into one findings list.
+host's containers, the Proxmox guests, backups, disks and the core services
+into one findings list.
 
 No app imports, so it tests without booting Vera
-(tests/test_estate_health_core.py).
+(tests/test_estate_health_core.py, tests/test_estate_overview_warnings.py).
 
 Why it exists: at the 2 Sep 2026 boot the host's own redis-server won port
 6379, and Vera ran ten days against a store without its estate settings. Two
@@ -11,6 +12,7 @@ were not set to start at boot. Nothing on screen said so.
 """
 from __future__ import annotations
 
+import time
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 from urllib.parse import urlparse
 
@@ -21,11 +23,17 @@ SECTIONS = {
     "state_store": "State store",
     "containers": "Containers on the Vera host",
     "guests": "Proxmox guests",
+    "backups": "Backups",
+    "storage": "Disks and storage",
+    "services": "File fabric and directory",
 }
 _SECTION_NOUN = {
     "state_store": "the state store",
     "containers": "the Vera host's containers",
     "guests": "the Proxmox guests",
+    "backups": "the backup system",
+    "storage": "the disks",
+    "services": "the file fabric and directory",
 }
 
 # Keys only the estate store holds: each is written the first time its feature
@@ -46,11 +54,22 @@ RESTARTING_POLICIES = ("always", "unless-stopped", "on-failure")
 _NOT_RUNNING = ("exited", "created", "dead")
 _PORT_CLASH = ("port is already allocated", "address already in use", "bind for")
 
+# A nightly job that has not produced a backup in a day and a half has stopped.
+BACKUP_STALE_H = 36
+
 
 def finding(severity: str, section: str, subject: str, message: str,
             detail: str = "") -> Dict[str, str]:
     return {"severity": severity, "section": section, "subject": subject,
             "message": message, "detail": detail}
+
+
+def _sentence(text: str) -> str:
+    text = str(text or "").strip()
+    if not text:
+        return text
+    text = text[0].upper() + text[1:]
+    return text if text.endswith((".", "!", "?")) else text + "."
 
 
 # ── state store ──────────────────────────────────────────────────────────────
@@ -195,6 +214,166 @@ def guest_section(guests: Iterable[Mapping[str, Any]],
             f"Could not read guests from {e.get('host') or 'Proxmox'}.",
             str(e.get("error") or "")))
     facts = {"clusters": len(groups), "records": len(records), "running_checked": running}
+    return {"facts": facts, "findings": findings}
+
+
+# ── backups ──────────────────────────────────────────────────────────────────
+
+def backups_section(reports: Iterable[Mapping[str, Any]],
+                    now: Optional[float] = None) -> Dict[str, Any]:
+    """reports: one per Proxmox node, {node, status} where status is
+    pxstore.backup.status's output or {error}."""
+    now = time.time() if now is None else now
+    findings = []
+    nodes = enabled = ok = failed = 0
+    latest_overall = 0
+    for rep in reports:
+        node = str(rep.get("node") or "Proxmox")
+        st = rep.get("status") or {}
+        nodes += 1
+        if st.get("error"):
+            findings.append(finding(WARN, "backups", node,
+                                    f"Could not read the backup system on {node}.",
+                                    str(st["error"])[:240]))
+            continue
+        for w in st.get("warnings") or []:
+            findings.append(finding(WARN, "backups", node, _sentence(w), f"Proxmox node {node}"))
+        enabled += sum(1 for j in st.get("jobs") or [] if j.get("enabled"))
+        runs = st.get("runs") or []
+        latest = 0
+        for run in runs:
+            latest = max(latest, int(run.get("at") or 0))
+            if run.get("result") == "error":
+                failed += 1
+                findings.append(finding(
+                    ERROR, "backups", str(run.get("guest") or "?"),
+                    f"The last backup of {run.get('guest')} on {node} failed.",
+                    str(run.get("line") or "")[:240]))
+            elif run.get("result") == "ok":
+                ok += 1
+        latest_overall = max(latest_overall, latest)
+        if not runs:
+            findings.append(finding(INFO, "backups", node,
+                                    f"No backup runs are recorded on {node}."))
+        elif now - latest > BACKUP_STALE_H * 3600:
+            hours = int((now - latest) // 3600)
+            findings.append(finding(
+                WARN, "backups", node,
+                f"No guest on {node} has been backed up in {hours} hours.",
+                "the nightly job may have stopped"))
+    facts = {"nodes": nodes, "enabled_jobs": enabled, "guests_ok": ok,
+             "guests_failed": failed, "latest_run_at": latest_overall or None}
+    return {"facts": facts, "findings": findings}
+
+
+# ── disks and storage ────────────────────────────────────────────────────────
+
+_DISK_STATES = {
+    "damaged": (WARN, "holds a damaged pool{pool}"),
+    "importable": (INFO, "holds pool{pool}, which is not imported"),
+    "labelled": (INFO, "carries a label, but nothing uses it"),
+    "free": (INFO, "is unused"),
+    "not mounted": (INFO, "has a filesystem that is not mounted"),
+}
+
+
+def _size(n: Any) -> str:
+    try:
+        return f"{round(int(n) / 1e9)} GB"
+    except (TypeError, ValueError):
+        return "unknown size"
+
+
+def storage_section(disk_reports: Iterable[Mapping[str, Any]],
+                    docker_disk: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    """disk_reports: one per Proxmox node, {node, status} where status is
+    pxstore.disks's output or {error}. docker_disk: docker.disk.status."""
+    findings = []
+    disks = in_use = 0
+    for rep in disk_reports:
+        node = str(rep.get("node") or "Proxmox")
+        st = rep.get("status") or {}
+        if st.get("error"):
+            findings.append(finding(WARN, "storage", node, f"Could not read the disks on {node}.",
+                                    str(st["error"])[:240]))
+            continue
+        for d in st.get("disks") or []:
+            disks += 1
+            state = str(d.get("state") or "")
+            if state == "in use":
+                in_use += 1
+                continue
+            rule = _DISK_STATES.get(state)
+            if not rule:
+                continue
+            severity, text = rule
+            pool = f" {d.get('pool')}" if d.get("pool") else ""
+            usb = ", USB" if d.get("usb") else ""
+            what = f"{d.get('name')} ({_size(d.get('size'))}, {d.get('model') or 'unknown model'}{usb})"
+            findings.append(finding(severity, "storage", f"{node}/{d.get('name')}",
+                                    f"Disk {what} on {node} {text.format(pool=pool)}.",
+                                    str(d.get("detail") or "")))
+    used_pct = None
+    if docker_disk is not None:
+        if docker_disk.get("error"):
+            findings.append(finding(WARN, "storage", "docker",
+                                    "Could not read the Docker data disk on the Vera host.",
+                                    str(docker_disk["error"])[:240]))
+        else:
+            used_pct = docker_disk.get("pct_used")
+            level = docker_disk.get("level")
+            if level in ("warn", "critical"):
+                findings.append(finding(
+                    ERROR if level == "critical" else WARN, "storage",
+                    str(docker_disk.get("mount") or "docker"),
+                    f"The Docker data disk on the Vera host is {used_pct}% full.",
+                    str(docker_disk.get("note") or "")))
+    facts = {"disks": disks, "in_use": in_use, "docker_disk_used_pct": used_pct}
+    return {"facts": facts, "findings": findings}
+
+
+# ── file fabric and directory ────────────────────────────────────────────────
+
+def services_section(vfs: Optional[Mapping[str, Any]] = None,
+                     identity: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    """vfs: vfs.health's output or {error}; identity: identity.status's."""
+    findings = []
+    fabric = "unknown"
+    if vfs is not None:
+        if vfs.get("error"):
+            findings.append(finding(WARN, "services", "VFS-02",
+                                    "Could not check the file server (VFS-02).",
+                                    str(vfs["error"])[:240]))
+        else:
+            down = sorted(name for name, up in (vfs.get("services") or {}).items() if not up)
+            for name in down:
+                findings.append(finding(ERROR, "services", f"VFS-02/{name}",
+                                        f"{name} is down on the file server (VFS-02)."))
+            if not vfs.get("estate_mounts"):
+                findings.append(finding(WARN, "services", "VFS-02/estate",
+                                        "VFS-02 has no estate mounts, so the estate share shows nothing.",
+                                        "vfs.estate.sync rebuilds the tree"))
+            fabric = "down" if down else "up"
+    directory = "unknown"
+    if identity is not None:
+        if "configured" not in identity and identity.get("error"):
+            findings.append(finding(WARN, "services", "FreeIPA",
+                                    "Could not check the directory (FreeIPA).",
+                                    str(identity["error"])[:240]))
+        elif not identity.get("configured"):
+            directory = "not configured"
+            findings.append(finding(WARN, "services", "FreeIPA",
+                                    "No directory (FreeIPA) is configured in Vera.",
+                                    "set it in Estate > Trust > Identity"))
+        elif not identity.get("reachable"):
+            directory = "unreachable"
+            findings.append(finding(ERROR, "services", "FreeIPA",
+                                    "The directory (FreeIPA) is not reachable.",
+                                    str(identity.get("error") or "")[:240]))
+        else:
+            directory = f"FreeIPA {identity.get('version') or ''}".strip()
+    facts = {"file_fabric": fabric, "estate_mounts": (vfs or {}).get("estate_mounts"),
+             "directory": directory}
     return {"facts": facts, "findings": findings}
 
 
