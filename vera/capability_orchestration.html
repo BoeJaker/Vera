@@ -1898,6 +1898,12 @@ async function _hdrSwatches(){ const host=document.getElementById('hdrSwatches')
 function _hdrCurTheme(){ let cur=''; try{ cur=_currentTheme||''; }catch(_){} return cur||document.documentElement.getAttribute('data-theme')||''; }
 function _hdrSwatchesSync(){ const host=document.getElementById('hdrSwatches'); if(!host) return; const cur=_hdrCurTheme(); const have=Array.from(host.querySelectorAll('.swp')); if(cur&&!have.some(x=>x.dataset.theme===cur)){ _hdrSwatches(); return; } have.forEach(x=>x.classList.toggle('on', x.dataset.theme===cur)); }
 function _dashRecLabel(){ const g=document.getElementById('dashGrid'), l=document.getElementById('dashRecLbl'); if(!g||!l) return; const n=g.querySelectorAll('.widget:not(.hidden)').length; let rows=0; try{ rows=getComputedStyle(g).gridTemplateRows.split(' ').length; }catch(_){} l.textContent=n+' widgets · every one a record · grid 12 × '+(rows||'—')+' · vera.dash.main'; const lv=document.getElementById('dashLive'); const ab=document.getElementById('dashAutoBtn'); if(lv&&ab) lv.style.display=/auto/i.test(ab.textContent)&&ab.classList.contains('teal')?'':'none'; }
+function _tabCounts(){
+  const bar=document.getElementById('tabBar'); if(!bar) return;
+  const set=(match, n)=>{ const tab=Array.from(bar.querySelectorAll('.tab[data-tab]')).find(t=>match.test(String(t.dataset.tab||'')+' '+String(t.textContent||''))); if(!tab) return; let ct=tab.querySelector(':scope > .ct'); if(!n){ if(ct) ct.remove(); return; } if(!ct){ ct=document.createElement('span'); ct.className='ct'; const close=tab.querySelector('.tab-close'); tab.insertBefore(ct, close||null); } ct.textContent=String(n); };
+  const act=parseInt(((document.querySelector('#vao-pill .vao-count')||{}).textContent||'').trim(),10); set(/activity/i, isFinite(act)?act:0);
+  const ol=String((document.getElementById('lsOllamaVal')||{}).textContent||''); const busy=(ol.match(/(\d+)\/\d+\s*busy/)||[])[1]; set(/workers|ollama/i, busy?parseInt(busy,10):0);
+}
 function _tabsMoreChip(){ const bar=document.getElementById('tabBar'); if(!bar||bar.querySelector('.tab.more')) return; const m=document.createElement('div'); m.className='tab more'; m.title='Every registered panel — add one as a tab'; m.textContent='+ ⌘K'; m.addEventListener('click',()=>openTabPicker()); const ctl=bar.querySelector('.tab-controls'); bar.insertBefore(m, ctl||null);
   try{ fetch(base()+'/ui/panels').then(r=>r.json()).then(list=>{ const all=Array.isArray(list)?list.length:(list&&list.panels?list.panels.length:0); const open=bar.querySelectorAll('.tab[data-tab]').length; if(all>open) m.textContent='+'+(all-open)+' ⌘K'; }).catch(()=>{}); }catch(_){} }
 function _harnessChromeMount(){
@@ -1914,6 +1920,8 @@ function _harnessChromeMount(){
   syncEv(); const sb=document.getElementById('evSidebar'); if(sb&&window.MutationObserver) new MutationObserver(syncEv).observe(sb,{attributes:true,attributeFilter:['style']});
   // the ticker follows the feed
   _hdrStyleSync(); _hdrSwatches(); _tabsMoreChip(); _dashRecLabel();
+  // counts on tabs with live work (the board): Activity carries the feed's count, Workers & Ollama the busy instances
+  _tabCounts(); setInterval(_tabCounts, 5000);
   const grid=document.getElementById('dashGrid'); if(grid&&window.MutationObserver){ let t2=0; new MutationObserver(()=>{ clearTimeout(t2); t2=setTimeout(_dashRecLabel,200); }).observe(grid,{childList:true,attributes:true,attributeFilter:['class']}); }
   const ab=document.getElementById('dashAutoBtn'); if(ab&&window.MutationObserver) new MutationObserver(_dashRecLabel).observe(ab,{attributes:true,childList:true,characterData:true,subtree:true});
 }
