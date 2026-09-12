@@ -1515,6 +1515,32 @@ html[data-blocks="off"] #rightRail.lhm-host .lhm-det{background:transparent;box-
 #rightRail.lhm-host .lhm-quick .wc-v .bar{flex:1;height:6px;border-radius:3px;background:var(--s1,var(--bg1,#151719));overflow:hidden}
 #rightRail.lhm-host .lhm-quick .wc-v .bar i{display:block;height:100%;background:var(--ac,var(--acc,#5a9e8f))}
 #rightRail.lhm-host .lhm-quick .sp{flex:1}
+/* ── ONE context menu (the Canvas board's .cmenu) and the staged capability runner (.crun) ── */
+.cmw{position:fixed;inset:0;z-index:9999;pointer-events:none}
+.cmw .cmbg{position:fixed;inset:0;pointer-events:auto}
+.cmenu{position:fixed;z-index:9999;min-width:216px;max-width:320px;padding:5px;pointer-events:auto;background:var(--surf,var(--bg1,#151719));border-radius:var(--ui-radius,10px);box-shadow:var(--elev,0 8px 24px rgba(0,0,0,.28)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));display:flex;flex-direction:column}
+.cmenu .cm-h{display:flex;align-items:center;gap:7px;padding:5px 9px 7px;font-size:11px;color:var(--t1,var(--text,#d8dce4));font-weight:600;white-space:nowrap;overflow:hidden}
+.cmenu .cm-h i{width:7px;height:7px;border-radius:2px;flex-shrink:0;display:inline-block}
+.cmenu .cm-h b{margin-left:auto;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280));font-weight:400;padding-left:10px}
+.cmenu .cm-h span{overflow:hidden;text-overflow:ellipsis;min-width:0}
+.cmenu .cm-i{display:flex;align-items:center;gap:10px;width:100%;font:inherit;font-size:11px;color:var(--t2,var(--dim2,#8a92a0));background:transparent;border:none;border-radius:var(--r-sm,6px);padding:6px 9px;text-align:left;cursor:pointer;white-space:nowrap}
+.cmenu .cm-i:hover{background:var(--surf2,var(--bg2,#1a1c20));color:var(--t1,var(--text,#d8dce4))}
+.cmenu .cm-i i{margin-left:auto;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280));font-style:normal;padding-left:12px}
+.cmenu .cm-i.danger{color:var(--dv6,#c96b6b)}.cmenu .cm-i.danger:hover{background:color-mix(in srgb,var(--dv6,#c96b6b) 14%,transparent)}
+.cmenu .cm-i.on{color:var(--ac,var(--acc,#5a9e8f))}
+.cmenu .cm-i.cap{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:10px}.cmenu .cm-i.cap::before{content:'▷';font-size:8px;color:var(--ac,var(--acc,#5a9e8f))}
+.cmenu .cm-sep{height:1px;background:var(--bd,var(--border,rgba(255,255,255,.09)));margin:4px 6px}
+.crun{position:fixed;z-index:9998;width:330px;padding:10px 12px;border-radius:var(--ui-radius,10px);background:var(--surf,var(--bg1,#151719));box-shadow:var(--elev,0 8px 24px rgba(0,0,0,.28)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));display:flex;flex-direction:column;gap:7px}
+.crun .crun-h{display:flex;align-items:center;gap:7px;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:11px;color:var(--ac,var(--acc,#5a9e8f))}
+.crun .crun-h i{width:7px;height:7px;border-radius:50%;background:var(--ac,var(--acc,#5a9e8f));display:inline-block}
+.crun .crun-h b{margin-left:auto;font-weight:400;font-size:9px;color:var(--t3,var(--dim,#6b7280));overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px}
+.crun .crun-x{border:none;background:transparent;color:var(--t3,var(--dim,#6b7280));cursor:pointer;font-size:11px;padding:0 2px}
+.crun .crun-b{display:block;width:100%;min-height:64px;max-height:180px;resize:vertical;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:10px;line-height:1.45;color:var(--t1,var(--text,#d8dce4));background:var(--bg0,#0e0f12);border:none;border-radius:var(--r-sm,6px);padding:7px 8px;box-shadow:inset 0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));box-sizing:border-box}
+.crun .crun-a{display:flex;align-items:center;gap:8px}
+.crun .crun-a .go{height:26px;padding:0 12px;border:none;border-radius:var(--r-pill,99px);background:var(--pri-bg,var(--acc,#5a9e8f));color:var(--pri-fg,var(--on-acc,#fff));font:inherit;font-size:10.5px;font-weight:600;cursor:pointer}
+.crun .crun-a .go[disabled]{opacity:.6;cursor:progress}
+.crun .crun-r{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280));flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.crun .crun-out{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;color:var(--t2,var(--dim2,#8a92a0));max-height:140px;overflow:auto;white-space:pre-wrap;word-break:break-word}
 #rightRail.lhm-host.lhm-editing .lhm-quick .wid::before{background:var(--surf,var(--bg1,#151719));color:var(--ac,var(--acc,#5a9e8f))}
 #rightRail.lhm-host .lhm-wbar.lhm-qbar{background:var(--surf,var(--bg1,#151719));box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)))}
 #rightRail.lhm-host .lhm-wfoot button,#rightRail.lhm-host .lhm-wname button{background:var(--surf2,var(--bg2,#1a1c20));color:var(--t2,var(--dim2,#8a92a0))}
@@ -5768,6 +5794,102 @@ IMPORTANT:
     if(n){ try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } }catch(_){} try{ _cvRunsDraw(); }catch(_){} try{ if(_xpl.on) _xplRefresh(); }catch(_){} }
     return n;
   }
+  /* ── ONE context menu on every entity (the registry /ui/menus.js) and the staged capability runner ──────────
+     what a right-click offers comes from what was clicked; a cap row stages the runner with the payload filled in
+     and nothing is sent until Send; actions the chat can bind run here, the rest still show ── */
+  const _CM_COL={message:'var(--ac,#5a9e8f)',turn:'var(--ac,#5a9e8f)',tool:'var(--acc2,#8fb87a)',cap:'var(--dv5,#ec4899)',file:'var(--dv1,#a78bfa)',cite:'var(--dv1,#a78bfa)',vector:'var(--dv1,#a78bfa)',record:'var(--dv7,#fb923c)',dataset:'var(--dv3,#38bdf8)',memory:'var(--dv2,#5ec9a0)',session:'var(--t2,#8a92a0)',step:'var(--ac,#5a9e8f)',loop:'var(--ac,#5a9e8f)',note:'var(--dv2,#5ec9a0)',code:'var(--dv7,#fb923c)',table:'var(--dv3,#38bdf8)',widget:'var(--dv1,#a78bfa)',artifact:'var(--dv4,#c9955a)',ontology:'var(--dv4,#c9955a)',skill:'var(--dv6,#c96b6b)',host:'var(--dv3,#38bdf8)',commit:'var(--dv7,#fb923c)',canvas:'var(--dv2,#5ec9a0)',ask:'var(--ac3,#c9955a)'};
+  let _cm=null, _crun=null;
+  // what is under the pointer: [kind, name, the element, extras]
+  function _cmTarget(t){
+    const q=(s)=>t.closest&&t.closest(s);
+    let el;
+    if((el=q('.crun,.cmenu'))) return null;
+    if((el=q('.cap-inline'))){ const hd=el.querySelector('.cap-inline-header'); const n=String((hd?hd.textContent:'')||'').trim().split(/\s+/)[0]||'capability'; return ['tool', n, el, {cap:n, mid:(el.closest('.mwrap')||{dataset:{}}).dataset.mid}]; }
+    if((el=q('.cg-node[data-kind]'))){ const k=el.dataset.kind||'record'; const MAP={file:'file',cap:'cap',dataset:'dataset',memory:'memory',entity:'record',page:'cite',qa:'record',ontology:'ontology',skill:'skill',agent:'session',host:'host',commit:'commit',step:'step',plan:'plan',canvas:'note',service:'service'}; const id=el.dataset.id||''; const nm=String(el.title||'').split(' · ')[0]||id; return [MAP[k]||'record', nm, el, {id, kind:k}]; }
+    if((el=q('.vw-gd[data-id]'))){ const id=el.dataset.id||''; const nm=String(el.title||'').split(' · ')[0]||id; return ['record', nm, el, {id}]; }
+    if((el=q('#rightRail .lhm-quick .lrow[data-sid]'))) return ['session', el.dataset.sid, el, {sid:el.dataset.sid}];
+    if((el=q('#rightRail .lhm-quick .lrow[data-fam]'))) return ['record', String((el.querySelector('.nm')||{}).textContent||el.dataset.fam).trim(), el, {fam:el.dataset.fam}];
+    if((el=q('#rightRail .lhm-quick .lps'))) return ['step', String((el.querySelector('.lps-n')||{}).textContent||'step').trim(), el, {cap:String((el.querySelector('.lps-c')||{}).textContent||'').trim()}];
+    if((el=q('#rightRail .lhm-quick .lrow[data-rid]'))) return ['loop', String((el.querySelector('.nm')||{}).textContent||'loop').trim().split('\n')[0], el, {rid:el.dataset.rid}];
+    if((el=q('.pa-att,.doc-chip'))) return ['file', String((el.querySelector('b')||el).textContent||'attachment').trim().slice(0,60), el, {}];
+    if((el=q('.xp-iw,.xp-it,.xp-rc'))){ const nm=String((el.querySelector('.n')||el).textContent||'item').trim().slice(0,60); const k=(el.title||'').toLowerCase(); return [/capability/.test(k)?'tool':/code/.test(k)?'code':/table/.test(k)?'table':/image/.test(k)?'artifact':/widget/.test(k)?'widget':'note', nm, el, {}]; }
+    if((el=q('#canvasColumn [data-key]'))){ const key=el.dataset.key||''; const kind=key.split(':')[0]==='turn'?(key.split(':')[2]||'note'):(key.split(':')[0]||'note'); return [({cap:'tool',markdown:'note',image:'artifact',diagram:'chart',loop:'loop'})[kind]||kind, String((el.querySelector('.vc-t,.vc-title,b')||el).textContent||key).trim().slice(0,60), el, {key}]; }
+    if((el=q('#msgs .mwrap[data-mid]'))){ const mid=el.dataset.mid; const txt=String((el.querySelector('.msg-body')||el).textContent||'').replace(/\s+/g,' ').trim(); return ['message', txt.slice(0,48)+(txt.length>48?'…':''), el, {mid, text:txt}]; }
+    if((el=q('#inputBar'))) return ['view', 'the composer', el, {}];
+    if((el=q('#canvasColumnBody'))) return ['canvas', 'session canvas', el, {}];
+    return null;
+  }
+  function _cmClose(){ if(_cm&&_cm.parentNode) _cm.parentNode.removeChild(_cm); _cm=null; }
+  function _crunClose(){ if(_crun&&_crun.parentNode) _crun.parentNode.removeChild(_crun); _crun=null; }
+  function _cmOpen(ev, kind, name, el, x){
+    if(!window.MENUS) return false; ev.preventDefault(); ev.stopPropagation(); _cmClose(); x=x||{};
+    const seen={}; const rows=MENUS.rows(kind, name, {noPin:kind==='canvas'||kind==='view'}).filter(r=>{ const k=r.t==='act'?'a:'+String(r.n||r.id):r.t==='cap'?'c:'+String(r.cap):'s'+Math.random(); if(seen[k]) return false; seen[k]=1; return true; });   /* one row per action, whatever the registry repeats */ const col=_CM_COL[MENUS.kindOf(kind)||kind]||'var(--t3)';
+    const w=document.createElement('div'); w.className='cmw'; const bg=document.createElement('span'); bg.className='cmbg'; bg.addEventListener('click',_cmClose); bg.addEventListener('contextmenu',e=>{ e.preventDefault(); _cmClose(); }); w.appendChild(bg);
+    const m=document.createElement('div'); m.className='cmenu'; m.setAttribute('data-w','context menu · menu');
+    m.innerHTML='<span class="cm-h"><i style="background:'+col+'"></i><span>'+esc(name)+'</span><b>'+esc(MENUS.label(kind))+'</b></span>';
+    let sawCap=false;
+    rows.forEach(r=>{ if(r.t==='cap'&&!sawCap){ sawCap=true; const s=document.createElement('div'); s.className='cm-sep'; m.appendChild(s); }
+      const b=document.createElement('button'); b.type='button'; b.className='cm-i'+(r.t==='cap'?' cap':'')+(r.cls?' '+r.cls:'');
+      b.innerHTML=(r.t==='cap'?esc(r.cap):esc(r.n))+'<i>'+esc(r.t==='cap'?'stage':(r.k||''))+'</i>';
+      b.addEventListener('click',e=>{ e.stopPropagation(); if(r.t==='cap'){ _crunOpen(r.cap, r.arg, name, ev.clientX, ev.clientY); _cmClose(); } else { _cmClose(); _cmAct(r.id, kind, name, el, x); } });
+      m.appendChild(b); });
+    w.appendChild(m); document.body.appendChild(w); _cm=w;
+    const r=m.getBoundingClientRect(); const left=Math.min(ev.clientX, window.innerWidth-r.width-8), top=Math.min(ev.clientY, window.innerHeight-r.height-8); m.style.left=Math.max(4,left)+'px'; m.style.top=Math.max(4,top)+'px';
+    return true;
+  }
+  // the runner: the capability with its payload filled in — looked at, then sent
+  function _crunOpen(cap, arg, target, cx, cy){
+    _crunClose(); const d=document.createElement('div'); d.className='crun'; d.setAttribute('data-w','capability runner · form');
+    d.innerHTML='<span class="crun-h"><i></i>'+esc(cap)+'<b title="'+esc(target||'')+'">'+esc(target||'')+'</b><button class="crun-x" type="button" title="Close">✕</button></span><textarea class="crun-b" spellcheck="false"></textarea><span class="crun-a"><button class="go" type="button">Send</button><span class="crun-r">staged from the menu · nothing sent yet</span></span><div class="crun-out" hidden></div>';
+    d.querySelector('.crun-b').value=JSON.stringify(arg||{}, null, 2);
+    d.querySelector('.crun-x').addEventListener('click',_crunClose);
+    d.querySelector('.go').addEventListener('click',async()=>{ const go=d.querySelector('.go'), r=d.querySelector('.crun-r'), out=d.querySelector('.crun-out'); let a={}; try{ a=JSON.parse(d.querySelector('.crun-b').value||'{}'); }catch(e){ r.textContent='the arguments are not JSON: '+e.message; return; }
+      go.disabled=true; r.textContent='sending…'; const t0=Date.now();
+      try{ const res=await _capCall(cap, a); const ms=Date.now()-t0; r.textContent=(res&&res.ok===false?'error':'200')+' · '+cap+' · '+ms+'ms'; out.hidden=false; out.textContent=(typeof res==='string'?res:JSON.stringify(res, null, 2)||'').slice(0,4000); go.textContent='Sent'; try{ appendSys('<span style="color:var(--dim)">'+esc(cap)+' staged from the menu → '+esc(String(res&&res.ok===false?'error':'ok'))+'</span>'); }catch(_){} }
+      catch(e){ r.textContent='failed · '+esc(String(e&&e.message||e)); }
+      finally{ go.disabled=false; } });
+    document.body.appendChild(d); _crun=d;
+    const r=d.getBoundingClientRect(); d.style.left=Math.max(4, Math.min(cx||40, window.innerWidth-r.width-8))+'px'; d.style.top=Math.max(4, Math.min(cy||40, window.innerHeight-r.height-8))+'px';
+    try{ d.querySelector('.crun-b').focus(); }catch(_){}
+  }
+  // the actions the chat can bind, by the registry's ids; the rest show and say so
+  function _cmAct(id, kind, name, el, x){
+    const mid=x.mid||''; const say=(t)=>{ try{ appendSys('<span style="color:var(--dim)">'+esc(t)+'</span>'); }catch(_){} };
+    const compose=(t)=>{ const inp=document.getElementById('chatInput'); if(!inp) return; inp.value=t; inp.dispatchEvent(new Event('input')); inp.focus(); };
+    const pinNote=async(title, text, k)=>{ if(!SID) return say('no session yet'); try{ const key=(k||'note')+':'+String(title).toLowerCase().replace(/[^a-z0-9]+/g,'-').slice(0,48); const r=await _capCall('canvas.add',{session_id:SID, kind:'note', content:{text:String(text||title).slice(0,4000), author:'you'}, key, at:'now', size:'s', anchor:{mid, turn:mid}}); if(r&&r.ok){ openPage('canvas'); try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } }catch(_){} } else say('canvas.add: '+((r&&r.error)||'failed')); }catch(e){ say('canvas.add failed'); } };
+    try{
+      switch(id){
+        case 'edit': if(mid) return _msgEdit(mid); break;
+        case 'retry': case 'resend': if(mid) return _msgResubmit(mid); break;
+        case 'copy': { const t=x.text||name||''; try{ navigator.clipboard.writeText(t); }catch(_){} return say('copied'); }
+        case 'notebook': if(mid) return _msgSaveToNotebook(mid); break;
+        case 'ide': if(mid) return _msgSaveToIde(mid); break;
+        case 'project': if(mid) return _msgSaveToProject(mid); break;
+        case 'later': case 'think': if(mid) return _msgThinkLater(mid); break;
+        case 'podcast': if(mid) return _msgPodcast(mid); break;
+        case 'html': if(mid) return _msgHtmlReport(mid); break;
+        case 'deliver': case 'redeliver': if(mid) return _msgRedeliver(mid); break;
+        case 'reply': return compose('> '+String(x.text||name).slice(0,200)+'\n\n');
+        case 'speak': { const t=x.text||name; if(typeof _ttsSpeak==='function') return _ttsSpeak(t); if(typeof ttsSpeak==='function') return ttsSpeak(t); break; }
+        case 'canvas': case 'pin': if(kind==='record'||kind==='vector'||kind==='memory'||kind==='file'||kind==='cite'||kind==='dataset'){ if(x.id){ const n=CTX_NODES.find(q=>q.id===x.id); if(n&&n.included===false){ n.included=true; try{ renderCtxList(); }catch(_){} say('pinned into the prompt: '+name); return; } } } return pinNote(name, x.text||name, kind);
+        case 'ask': return compose('About '+name+': what is this, what depends on it, and what would break if it changed?');
+        case 'open': case 'source': if(x.id){ try{ nodeClick(x.id); }catch(_){} return; } if(kind==='message'&&mid){ const w=document.querySelector('#msgs .mwrap[data-mid="'+mid+'"]'); w&&w.scrollIntoView({block:'center',behavior:'smooth'}); return; } if(kind==='tool'&&el){ const p=el.querySelector('.cap-peek,.cap-result'); if(p) p.hidden=!p.hidden; return; } if(x.sid) return loadSession(x.sid); if(x.rid){ VeraLHM.pick('loop'); return; } break;
+        case 'resume': case 'attach': if(x.sid) return loadSession(x.sid); break;
+        case 'payload': if(kind==='tool'&&el){ const p=el.querySelector('.cap-peek,.cap-result'); if(p){ p.hidden=false; p.scrollIntoView({block:'nearest'}); } return; } break;
+        case 'rerun': case 'run': if(x.cap) return _crunOpen(x.cap, {}, name, 60, 120); break;
+        case 'explode': if(mid){ _grFocusMid=mid; if(!_xpl.on) explode(true); return; } break;
+        case 'context': if(mid){ _grFocusMid=mid; if(!_ctxGrown) _ctxGrow(true); return; } break;
+        case 'made': if(mid){ _grFocusMid=mid; if(!_xpl.on) explode(true); return; } break;
+        case 'answer': return compose('');
+        case 'jump': case 'read': if(x.rid||kind==='step'){ VeraLHM.pick('loop'); return; } break;
+        case 'inject': if(kind==='skill') return compose('/skill '+name+' ');
+        case 'ctx': if(x.id){ const n=CTX_NODES.find(q=>q.id===x.id); if(n){ n.included=n.included===false; try{ renderCtxList(); }catch(_){} return; } } break;
+      }
+    }catch(e){ say(id+': '+String(e&&e.message||e)); return; }
+    say('"'+id+'" is not wired in the chat yet — the menu reads the same everywhere; this surface does not act on it');
+  }
+  document.addEventListener('contextmenu', ev=>{ try{ if(ev.shiftKey) return; const t=_cmTarget(ev.target); if(!t) return; _cmOpen(ev, t[0], t[1], t[2], t[3]); }catch(_){} }, true);
+  document.addEventListener('keydown', ev=>{ if(ev.key==='Escape'){ _cmClose(); } });
   function _cvRelFocus(){
     const den=(document.documentElement.getAttribute('data-den')||'full').toLowerCase(); if(den==='full') return;
     if(_cvRelFocusT) clearTimeout(_cvRelFocusT);
@@ -17037,7 +17159,7 @@ Your task: decide what to do next to advance toward the goal.
     setDensity,toggleBlocks,
     _uiAskAnswer,_uiAskPick,_uiDirectiveApply,
     _cmpChip,_cmpSync,_paOpen,_paCopy,
-    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
+    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
     _persistMediaCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},
@@ -17711,5 +17833,6 @@ window.addEventListener('DOMContentLoaded',()=>{
 <script src="/ui/graph/families.js"></script>
 <script src="/ui/context_graph_element.js"></script>
 <script src="/ui/exploded_element.js"></script>
+<script src="/ui/menus.js"></script>
 </body>
 </html>
