@@ -1,11 +1,12 @@
 """Loop Lab flattening slice 7: Mission control - the fifth and last page.
 
 Master, Activity and Errors were three pages over the same happenings; they
-are one section now, sec-mission: a table of events (evolve.mission.events,
-one call) with the live strip above it, and the Run-once / Improve-live
-theatres folded under it, verbatim. Loop Lab is five pages: Work, Ship,
-Agents, Mission control, Settings. Source-level assertions, the pattern of
-test_ship_page_ui.
+are one section now, sec-mission: ONE table of events (evolve.mission.events,
+one call), the live strip above it, what is in flight shown in full above the
+table only while it runs, the compose form as a modal, the error flow as the
+page's infographic. NOTHING FOLDED: a former page hidden in a <details> is a
+page inside a page, the opposite of flattening (learned 2026-09-12). Loop Lab
+is five pages: Work, Ship, Agents, Mission control, Settings.
 """
 import os
 import re
@@ -52,15 +53,28 @@ def test_loop_lab_is_five_pages(src):
         assert m.group(2) == "nav('%s')" % m.group(1), m.group(0)[:100]
 
 
-def test_the_old_pages_still_route_and_the_theatres_open_as_folds(src):
+def test_nothing_on_the_page_is_folded(src):
+    """The rule for every flattened page: one table, its infographics visible,
+    its controls as modals. A former page in a <details> hides it."""
+    ms = _section(src, "mission")
+    assert 'class="fold"' not in ms and "<details" not in ms
+    assert 'id="mission-table"' in ms and 'id="err-flow"' in ms
+    assert 'id="mc-live"' in ms and 'style="display:none' in ms[ms.index('id="mc-live"') - 40:ms.index('id="mc-live"') + 60] or \
+        'id="mc-live" style="display:none' in ms, "the live panel is hidden until something runs"
+
+
+def test_the_old_pages_still_route_to_the_modal_the_panel_or_the_filter(src):
     nav = _fn(src, "nav")
     assert "mission:missionPoll," in nav
     for old, target in (("test", "mcOpen('test')"), ("watch", "mcOpen('watch')"), ("errors", "mcOpen('errors')"),
                         ("master", "nav('mission')"), ("activity", "nav('mission')")):
         assert "%s:()=>%s" % (old, target) in nav, old
     mo = _fn(src, "mcOpen")
-    assert "nav('mission')" in mo and "d.open=true" in mo and "{test:loadTest,watch:loadWatch,errors:loadErrors}" in mo
-    assert "scrollIntoView" in mo
+    assert "nav('mission')" in mo
+    assert "if(_testRunId||_mcLiveNow.run)mcRevealLive('run');else openRunCompose()" in mo, "test: the run in flight, else the compose modal"
+    assert "mcRevealLive('improve')" in mo and "mcFilter('error')" in mo
+    rv = _fn(src, "mcRevealLive")
+    assert "r.style.display=which==='run'?'':'none'" in rv and "if(which==='run')loadTest();else loadWatch();" in rv
 
 
 # -- nothing was lost ----------------------------------------------------------------
@@ -71,36 +85,57 @@ def test_every_element_of_the_five_pages_survived(src):
         "active-run-card", "arh-task", "arh-goal", "sbx-strip", "ollama-map-card", "ollama-map", "test-pipeline-card", "test-pipeline",
         "test-author-card", "test-author-map", "tc-kind", "tc-run", "tc-cat", "tc-target", "tc-info", "tc-goal", "tc-cap", "tc-args",
         "tc-task", "tc-tag", "wf-status", "wf-fly", "wf-diagram", "evolve-alo", "test-eval", "test-result", "test-suite-card",
-        "test-suite-log", "test-activity", "task-matrix", "test-runs",
+        "test-suite-log", "test-activity", "task-matrix",
         # Improve · live (Watch)
-        "watch-sub", "watch-sel", "phase-steps", "watch-status", "evolve-alo-watch", "watch-eval", "watch-synth", "fleet-body",
+        "watch-sub", "watch-sel", "phase-steps", "watch-status", "evolve-alo-watch", "watch-eval", "watch-synth",
         "editq-model-lbl", "editq-worker", "editq-grid", "editq-body",
         # Errors
-        "err-autosync", "err-flow", "err-board",
+        "err-autosync", "err-flow",
     ):
         assert want in ids, "lost #%s in the merge" % want
     ms = _section(src, "mission")
-    for want in ("mission-table", "mission-live", "mc-test", "mc-watch", "mc-errors", "evolve-alo", "evolve-alo-watch", "err-board",
-                 "task-matrix", "test-activity"):
+    for want in ("mission-table", "mission-live", "mc-live", "mc-live-run", "mc-live-improve", "evolve-alo", "evolve-alo-watch",
+                 "err-flow", "active-run-card", "wf-diagram", "test-eval", "test-result", "watch-sel", "phase-steps"):
         assert 'id="%s"' % want in ms, "#%s is not on Mission control" % want
-    # Master's cards and the audit table are the table + strip now.
-    for gone in ("m-promo", "m-board", "m-gates", "m-activity", "master-auto", "audit-body", "aud-filter"):
+    # The tasks' infographics live on Work; the editors' work grid on Agents.
+    wk, ag = _section(src, "work"), _section(src, "agents")
+    assert 'id="task-matrix"' in wk and 'id="test-activity"' in wk and "taskmatrix:opencell" in wk
+    assert 'id="editq-grid"' in ag and 'id="editq-body"' in ag and 'id="editq-worker"' in ag
+    # Master's cards, the audit table, the error lanes, the recent-runs list
+    # and the fleet are the table + strip (+ Agents) now.
+    for gone in ("m-promo", "m-board", "m-gates", "m-activity", "master-auto", "audit-body", "aud-filter", "err-board", "test-runs",
+                 "fleet-body"):
         assert 'id="%s"' % gone not in src, gone
-    for gone in ("function loadMaster(", "function _masterAutoToggle(", "_masterTimer", "function loadAudit("):
+    for gone in ("function loadMaster(", "function _masterAutoToggle(", "_masterTimer", "function loadAudit(", "function loadErrors(",
+                 "function errCard("):
         assert gone not in src, gone
-    for keep in ("function pollAutonomous(", "function autonomousRelease(", "function loadErrors(", "function errCard(", "function svgErrorFlow(",
-                 "function loadTest(", "function loadWatch(", "function loadFleet(", "function loadEditq(", "function refreshActiveRun("):
+    for keep in ("function pollAutonomous(", "function autonomousRelease(", "function renderErrorFlow(", "function svgErrorFlow(",
+                 "function loadTest(", "function loadTestForm(", "function openRunCompose(", "function loadWatch(", "function loadEditq(",
+                 "function refreshActiveRun("):
         assert keep in src, keep
 
 
 def test_the_theatres_own_lookups_follow_them(src):
-    assert "function _testAlo(){return document.querySelector('#mc-test vera-agent-loop-output')}" in src
-    assert "function _watchAlo(){return document.querySelector('#mc-watch vera-agent-loop-output')}" in src
-    assert "alo.closest('#mc-test')" in src and "'#sec-test'" not in src and "'#sec-watch'" not in src
+    assert "function _testAlo(){return document.querySelector('#mc-live-run vera-agent-loop-output')}" in src
+    assert "function _watchAlo(){return document.querySelector('#mc-live-improve vera-agent-loop-output')}" in src
+    assert "alo.closest('#mc-live-run')" in src and "'#sec-test'" not in src and "'#sec-watch'" not in src and "'#mc-test'" not in src
+
+
+def test_the_compose_form_is_a_modal_and_the_live_panel_shows_what_runs(src):
     ms = _section(src, "mission")
-    assert 'id="mc-test" ontoggle="if(this.open)loadTest()"' in ms
-    assert 'id="mc-watch" ontoggle="if(this.open)loadWatch()"' in ms
-    assert 'id="mc-errors" ontoggle="if(this.open)loadErrors()"' in ms
+    assert 'onclick="openRunCompose()"' in ms and 'onclick="openImproveForm()"' in ms
+    assert 'id="tc-kind"' not in ms, "the compose form is not on the page; it is the modal"
+    form = src[src.index("const _MC_RUN_FORM="):src.index("`;", src.index("const _MC_RUN_FORM="))]
+    for want in ('id="tc-kind"', 'id="tc-goal"', 'id="tc-cat"', 'id="tc-task"', 'id="tc-tag"', 'onclick="tcRun()"'):
+        assert want in form, want
+    oc = _fn(src, "openRunCompose")
+    assert "openModal(_MC_RUN_FORM)" in oc and "loadTestForm()" in oc
+    live = _fn(src, "renderMissionLive")
+    assert "_mcLiveNow={run:!!(run.live||run.running),improve:!!lv.improve}" in live
+    assert "if(_mcLiveNow.run&&!_mcWasLive.run)mcRevealLive('run')" in live, "revealed once per transition to live"
+    assert "else if(!_mcLiveNow.run&&!_mcLiveNow.improve&&!_testRunId)mcHideLive()" in live, "hidden when nothing runs"
+    for e in ("sync errors", "clear errors", 'id="err-autosync"'):
+        assert e in ms, e
 
 
 # -- one table, one call --------------------------------------------------------------
@@ -114,9 +149,8 @@ def test_the_page_is_one_call_with_the_strip_in_it(src):
     live = _fn(src, "renderMissionLive")
     for pill in ("'needs promotion'", "'active items'", "'errors'", "'last gate'", "'live pipelines'", "'census '", "'improve · live'", "'run'", "'main LOCKED'"):
         assert pill in live, pill
-    assert "mcOpen('watch')" in live and "mcOpen('test')" in live and "nav('ship')" in live and "nav('work')" in live
-    assert "_mcWasLive[w]" in live and "d.open=true" in live, "a theatre opens by itself when its thing goes live"
-    assert "live-dot" in live
+    assert "nav('ship')" in live and "nav('work')" in live
+    assert "mcRevealLive('run')" in live and "mcRevealLive('improve')" in live
 
 
 def test_a_row_is_an_event_with_its_record_and_actions(src):
@@ -137,8 +171,9 @@ def test_a_row_is_an_event_with_its_record_and_actions(src):
 def test_the_pollers_follow_the_page_and_its_folds(src):
     for gone in ("_curSec()==='test'", "_curSec()==='watch'", "_curSec()==='errors'", "_curSec()==='master'", "_curSec()==='activity'"):
         assert gone not in src, gone
-    assert "_curSec()==='mission'&&$('mc-watch')&&$('mc-watch').open){clearTimeout(window._fleetT)" in src
-    assert "if(t.startsWith('evolve.errors.')){if(_curSec()==='mission'){missionRefresh();if($('mc-errors')&&$('mc-errors').open)loadErrors()}}" in src
+    assert "_fleetT" not in src, "the fleet is the Agents table"
+    assert "if(t.startsWith('evolve.errors.')){missionRefresh()}" in src
+    assert "if(t.startsWith('evolve.editq.')){watchOnEditq(ev);if(_curSec()==='agents')loadEditq()}" in src
     assert "if(t.startsWith('evolve.')&&_curSec()==='mission')missionRefresh();" in src
     poll = _fn(src, "missionPoll")
     assert "finally" in poll and "_mcArm()" in poll and "_mcBusy" in poll
