@@ -3452,6 +3452,7 @@ const CH = (() => {
           })
         });
         if(!cellResp.ok) throw new Error('Add cell failed: HTTP '+cellResp.status);
+try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, content); }catch(_){}
         status.className = 'smstatus ok';
         status.textContent = `Saved → notebook ${nbId.slice(0,8)}…`;
         appendSys(`<span style="color:var(--ok)">✓ Saved to notebook</span> <code style="color:var(--acc)">${esc(nbId.slice(0,12))}</code>`);
@@ -5813,13 +5814,15 @@ IMPORTANT:
     if((el=q('#rightRail .lhm-quick .lrow[data-rid]'))) return ['loop', String((el.querySelector('.nm')||{}).textContent||'loop').trim().split('\n')[0], el, {rid:el.dataset.rid}];
     if((el=q('.pa-att,.doc-chip'))) return ['file', String((el.querySelector('b')||el).textContent||'attachment').trim().slice(0,60), el, {}];
     if((el=q('.xp-iw,.xp-it,.xp-rc'))){ const nm=String((el.querySelector('.n')||el).textContent||'item').trim().slice(0,60); const k=(el.title||'').toLowerCase(); return [/capability/.test(k)?'tool':/code/.test(k)?'code':/table/.test(k)?'table':/image/.test(k)?'artifact':/widget/.test(k)?'widget':'note', nm, el, {}]; }
-    if((el=q('#canvasColumn [data-key]'))){ const key=el.dataset.key||''; const kind=key.split(':')[0]==='turn'?(key.split(':')[2]||'note'):(key.split(':')[0]||'note'); return [({cap:'tool',markdown:'note',image:'artifact',diagram:'chart',loop:'loop'})[kind]||kind, String((el.querySelector('.vc-t,.vc-title,b')||el).textContent||key).trim().slice(0,60), el, {key}]; }
+    if((el=q('#canvasColumn [data-key]'))){ const key=el.dataset.key||''; const kind=key.split(':')[0]==='turn'?(key.split(':')[2]||'note'):(key.split(':')[0]||'note'); return [({cap:'tool',markdown:'note',image:'artifact',diagram:'chart',loop:'loop',session:'terminal'})[kind]||kind, String((el.querySelector('.vc-t,.vc-title,b')||el).textContent||key).trim().slice(0,60), el, {key}]; }
     if((el=q('#msgs .mwrap[data-mid]'))){ const mid=el.dataset.mid; const txt=String((el.querySelector('.msg-body')||el).textContent||'').replace(/\s+/g,' ').trim(); return ['message', txt.slice(0,48)+(txt.length>48?'…':''), el, {mid, text:txt}]; }
     if((el=q('#inputBar'))) return ['view', 'the composer', el, {}];
     if((el=q('#canvasColumnBody'))) return ['canvas', 'session canvas', el, {}];
     return null;
   }
   function _cmClose(){ if(_cm&&_cm.parentNode) _cm.parentNode.removeChild(_cm); _cm=null; }
+  // a canvas item's own action (the live items: attach · run · query · refresh · standalone), reached from the menu
+  function _cvItemAct(key, act){ try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); const b=cv&&cv.shadowRoot&&cv.shadowRoot.querySelector('.it[data-key="'+String(key).replace(/"/g,'\\"')+'"] [data-act="'+act+'"]'); if(b){ b.click(); return true; } }catch(_){} return false; }
   function _crunClose(){ if(_crun&&_crun.parentNode) _crun.parentNode.removeChild(_crun); _crun=null; }
   function _cmOpen(ev, kind, name, el, x){
     if(!window.MENUS) return false; ev.preventDefault(); ev.stopPropagation(); _cmClose(); x=x||{};
@@ -5873,10 +5876,13 @@ IMPORTANT:
         case 'speak': { const t=x.text||name; if(typeof _ttsSpeak==='function') return _ttsSpeak(t); if(typeof ttsSpeak==='function') return ttsSpeak(t); break; }
         case 'canvas': case 'pin': if(kind==='record'||kind==='vector'||kind==='memory'||kind==='file'||kind==='cite'||kind==='dataset'){ if(x.id){ const n=CTX_NODES.find(q=>q.id===x.id); if(n&&n.included===false){ n.included=true; try{ renderCtxList(); }catch(_){} say('pinned into the prompt: '+name); return; } } } return pinNote(name, x.text||name, kind);
         case 'ask': return compose('About '+name+': what is this, what depends on it, and what would break if it changed?');
-        case 'open': case 'source': if(x.id){ try{ nodeClick(x.id); }catch(_){} return; } if(kind==='message'&&mid){ const w=document.querySelector('#msgs .mwrap[data-mid="'+mid+'"]'); w&&w.scrollIntoView({block:'center',behavior:'smooth'}); return; } if(kind==='tool'&&el){ const p=el.querySelector('.cap-peek,.cap-result'); if(p) p.hidden=!p.hidden; return; } if(x.sid) return loadSession(x.sid); if(x.rid){ VeraLHM.pick('loop'); return; } break;
-        case 'resume': case 'attach': if(x.sid) return loadSession(x.sid); break;
+        case 'open': case 'source': if(x.key&&(kind==='terminal'||kind==='panel')) return _cvItemAct(x.key,'open'); if(x.key&&kind==='notebook') return _cvItemAct(x.key,'nbopen'); if(x.id){ try{ nodeClick(x.id); }catch(_){} return; } if(kind==='message'&&mid){ const w=document.querySelector('#msgs .mwrap[data-mid="'+mid+'"]'); w&&w.scrollIntoView({block:'center',behavior:'smooth'}); return; } if(kind==='tool'&&el){ const p=el.querySelector('.cap-peek,.cap-result'); if(p) p.hidden=!p.hidden; return; } if(x.sid) return loadSession(x.sid); if(x.rid){ VeraLHM.pick('loop'); return; } break;
+        case 'resume': case 'attach': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tattach'); if(x.sid) return loadSession(x.sid); break;
+case 'standalone': if(x.key) return _cvItemAct(x.key,'pstand'); break;
+case 'refresh': if(x.key) return _cvItemAct(x.key,'prefresh'); break;
+case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); break;
         case 'payload': if(kind==='tool'&&el){ const p=el.querySelector('.cap-peek,.cap-result'); if(p){ p.hidden=false; p.scrollIntoView({block:'nearest'}); } return; } break;
-        case 'rerun': case 'run': if(x.cap) return _crunOpen(x.cap, {}, name, 60, 120); break;
+        case 'rerun': case 'run': if(x.key&&kind==='notebook') return _cvItemAct(x.key,'nbrun'); if(x.cap) return _crunOpen(x.cap, {}, name, 60, 120); break;
         case 'explode': if(mid){ _grFocusMid=mid; if(!_xpl.on) explode(true); return; } break;
         case 'context': if(mid){ _grFocusMid=mid; if(!_ctxGrown) _ctxGrow(true); return; } break;
         case 'made': if(mid){ _grFocusMid=mid; if(!_xpl.on) explode(true); return; } break;
@@ -5890,6 +5896,19 @@ IMPORTANT:
   }
   document.addEventListener('contextmenu', ev=>{ try{ if(ev.shiftKey) return; const t=_cmTarget(ev.target); if(!t) return; _cmOpen(ev, t[0], t[1], t[2], t[3]); }catch(_){} }, true);
   document.addEventListener('keydown', ev=>{ if(ev.key==='Escape'){ _cmClose(); } });
+  // a notebook cell the conversation made lands on the session canvas as the cell (keyed, so never twice)
+  async function _cvLandCell(nbId, cell, cellType, lang, content){
+    if(!SID||!nbId||!cell||!cell.id) return; const key='notebook:'+nbId+':'+cell.id; const mid=_cvRelMid||'';
+    try{ const r=await _capCall('canvas.add',{session_id:SID, kind:'notebook', key, at:'now', size:'m', anchor:mid?{mid, turn:mid}:undefined,
+      content:{notebook_id:nbId, cell_id:cell.id, cell_type:cell.cell_type||cellType||'markdown', lang:cell.lang||lang||'', content:String(cell.content!=null?cell.content:(content||'')).slice(0,20000), title:cell.title||''}});
+      if(r&&r.ok){ try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } }catch(_){} }
+    }catch(_){}
+  }
+  // a panel item asks for its page: resolved the way the chat resolves any panel (its registered page, its alias, its route)
+  document.addEventListener('vera:canvas:panel-src', async (ev)=>{
+    const d=ev.detail||{}; if(!d.key||!d.id||!SID) return; const p=(UI_PANELS||[]).find(q=>q&&q.id===d.id); if(!p) return;
+    try{ const src=await _panelSrcAsync(p); if(src) await _capCall('canvas.update',{session_id:SID, key:d.key, content:Object.assign({}, d.content||{}, {src, title:(d.content&&d.content.title)||p.label||d.id})}); }catch(_){}
+  });
   function _cvRelFocus(){
     const den=(document.documentElement.getAttribute('data-den')||'full').toLowerCase(); if(den==='full') return;
     if(_cvRelFocusT) clearTimeout(_cvRelFocusT);
@@ -5905,7 +5924,7 @@ IMPORTANT:
     try{ const r=await _capCall('canvas.session.resolve',{session_id:SID}); cid=(r&&r.id)||''; }catch(_){}
     if(!cid) cid='cv_session_'+String(SID).replace(/[^A-Za-z0-9_.-]/g,'_').slice(0,64);
     let el=host.querySelector('vera-canvas');
-    if(!el){ host.innerHTML=''; el=document.createElement('vera-canvas'); el.setAttribute('fill',''); el.setAttribute('session',''); el.setAttribute('stage',''); el.setAttribute('columns', String(_cvCols())); host.appendChild(el);
+    if(!el){ host.innerHTML=''; el=document.createElement('vera-canvas'); el.setAttribute('fill',''); el.setAttribute('session',''); el.setAttribute('stage',''); el.setAttribute('columns', String(_cvCols())); try{ el.setAttribute('nb-api', _NB_API_BASE()); }catch(_){} host.appendChild(el);
       // the stage follows the transcript: its turn tops, its scroll, its reflow
       el.addEventListener('vera:canvas:placed', ()=>_cvRunsDraw());
       el.addEventListener('vera:canvas:hover', ev=>{ _cvHoverKey=(ev.detail||{}).key||null; _cvRunsDraw(); });
@@ -17159,7 +17178,7 @@ Your task: decide what to do next to advance toward the goal.
     setDensity,toggleBlocks,
     _uiAskAnswer,_uiAskPick,_uiDirectiveApply,
     _cmpChip,_cmpSync,_paOpen,_paCopy,
-    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
+    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_cvLandCell,_cvItemAct,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
     _persistMediaCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},
