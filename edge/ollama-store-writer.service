@@ -1,0 +1,25 @@
+[Unit]
+Description=Ollama model-store writer (VFS-02, loopback only)
+Documentation=https://github.com/ollama/ollama
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# The store is a nested ZFS mount. If it is absent, ollama would silently
+# create an empty models dir on the container rootfs and pull into THAT.
+ExecStartPre=/usr/bin/mountpoint -q /srv/pools/tank_sdh/vera-store
+ExecStart=/usr/local/bin/ollama serve
+User=root
+Group=root
+UMask=0022
+StateDirectory=ollama-store-writer
+Environment="HOME=/var/lib/ollama-store-writer"
+Environment="OLLAMA_MODELS=/srv/pools/tank_sdh/vera-store/models/ollama"
+Environment="OLLAMA_HOST=127.0.0.1:11436"
+Environment="OLLAMA_NOPRUNE=1"
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

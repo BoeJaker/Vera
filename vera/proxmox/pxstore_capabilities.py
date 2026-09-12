@@ -13,13 +13,12 @@ What this module provides (group `pxstore.*`)
   Inventory     pxstore.inventory              — guests (by NAME), ZFS pools/
                 datasets, non-ZFS mounts, per-guest disk→dataset resolution,
                 unallocated space.
-  File server   pxstore.fs.provision / .sync / .status
-                One Samba share (\\\\node\\vera-fs) with a NAME-keyed symlink
-                per guest: LXC subvol datasets are linked directly (they are
-                always mounted on the host); host pools + non-ZFS drives are
-                linked under _host/; running VMs are attached via sshfs when
-                SSH creds are enrolled (VM block devices can't be mounted
-                live, so the guest's own view is the only safe live view).
+  File fabric   The estate's file server is VFS-02 (vfs.* capabilities);
+                the Storage panel drives it directly. pxstore.fs.provision /
+                .sync / .status remain for the LEGACY hypervisor share
+                (\\\\node\\vera-fs), and pxstore.fs.retire takes that share out
+                of service in stages: dry run first, refuses while anyone is
+                connected, one call to restore.
   Storage mgmt  pxstore.disk.resize            — grow a guest disk (PVE API;
                 LXC filesystems grow automatically, VMs get in-guest steps),
                 pxstore.zfs.set / .create      — quotas + datasets.
@@ -28,11 +27,17 @@ What this module provides (group `pxstore.*`)
                 affinity), NUMA-span + reserved-range conflict detection,
                 and a safe-cpuset allocator that never hands out the ollama
                 ranges and never spans NUMA nodes.
-  Model store   pxstore.store.provision / .attach / .consolidate
+  Model store   pxstore.store.provision / .status / .attach / .consolidate
                 Central ZFS dataset for models/images/artifacts, bind-mounted
-                READ-ONLY into consumer CTs (mpN,ro=1) so ollama/ollama-a/
-                ollama-b stop replicating model blobs; consolidate rsyncs the
-                existing per-CT copies into the store first.
+                READ-ONLY into consumer CTs (mpN,ro=1) with OLLAMA_NOPRUNE=1 so
+                no node can prune another's blobs. The store has ONE writer:
+                pxstore.store.writer.provision installs an Ollama on VFS-02
+                bound to 127.0.0.1, and pxstore.models.pull (via=store) runs
+                detached pulls through it (pxstore.models.pull.status).
+                pxstore.store.export / .attach_remote reuse VFS-02's read-only
+                NFS export -- nothing is installed on the hypervisor.
+  Backups       pxstore.backup.target — a PVE backup storage inside the
+                fabric's backup dataset, used by nodes.backup (vzdump).
   Vera data     pxstore.veradata.provision / .plan
                 Dedicated dataset + NFS export for Vera's databases (the
                 "Vera VM keeps filling up" fix) plus a generated stop-copy-
@@ -78,6 +83,31 @@ from Vera.vera.proxmox.pxstore_attach_core import (
     is_token_bindmount_refusal as _is_token_refusal,
     mp_value as _mp_value,
     pct_set_command as _pct_set_command,
+)
+from Vera.vera.proxmox.pxstore_fabric_core import (
+    CONSOLIDATE_RSYNC_FLAGS as _RSYNC_FLAGS,
+    FABRIC_HOST as _FABRIC_HOST,
+    FABRIC_SSH_LABEL as _FABRIC_LABEL,
+    LEGACY_PROBE_SCRIPT as _LEGACY_PROBE,
+    WRITER_PORT as _WRITER_PORT,
+    WRITER_UNIT as _WRITER_UNIT,
+    add_export_client_script as _add_export_client,
+    backup_target_script as _backup_target_script,
+    export_for as _export_for,
+    fabric_path as _fabric_path,
+    fstab_line as _fstab_line,
+    is_read_only_error as _is_ro_error,
+    parse_exports as _parse_exports,
+    parse_legacy_probe as _parse_legacy_probe,
+    parse_pull_log as _parse_pull_log,
+    parse_store_consumers as _parse_consumers,
+    pull_start_script as _pull_start_script,
+    pull_status_script as _pull_status_script,
+    restore_legacy_script as _restore_legacy_script,
+    retire_legacy_script as _retire_legacy_script,
+    valid_client as _valid_client,
+    valid_model as _valid_model,
+    writer_unit as _writer_unit,
 )
 
 log = logging.getLogger("vera.pxstore")
@@ -134,7 +164,9 @@ _DEFAULT_CFG: Dict[str, Any] = {
     "veradata_mount":   "",
     "reserved_cpus": [],                 # [{label:"ollama", node:"pve", cpus:"0-15", note:""}]
     "mount_vms":     False,              # sshfs running VMs into the share on sync
-    "store_writer_instance": "",         # ollama instance id that PULLS into the shared store
+    "store_writer_instance": "",         # legacy: pulls now go through the writer on VFS-02
+    "store_writer_host": "",             # exec.ssh host_id of the store writer (blank = VFS-02 by label)
+    "backup_dataset_mount": "/tank_sde/vfs/backup",   # the fabric's backup share, host path
     "nwm_host_id":   "",                 # exec.ssh host_id of the NWM-01 monitor container
 }
 
@@ -184,7 +216,9 @@ async def cap_settings_get(cluster_id: str = "", trace_id=None) -> Dict:
                 "(dict node→exec.ssh host_id — the root SSH credential for each "
                 "PVE node, enrol via the Workers panel), share_root (str), "
                 "store_dataset (str), reserved_cpus (list of {label,node,cpus} — "
-                "e.g. the ollama containers' ranges), mount_vms (bool). "
+                "e.g. the ollama containers' ranges), mount_vms (bool), "
+                "store_writer_host (str — exec.ssh host_id of the model "
+                "store's writer; blank = VFS-02 found by its label). "
                 "Output: {ok, settings}.",
 )
 async def cap_settings_save(cluster_id: str = "", node_hosts: Dict = None,
@@ -193,6 +227,7 @@ async def cap_settings_save(cluster_id: str = "", node_hosts: Dict = None,
                             reserved_cpus: List[Dict] = None,
                             mount_vms: Optional[bool] = None,
                             store_writer_instance: Optional[str] = None,
+                            store_writer_host: Optional[str] = None,
                             nwm_host_id: Optional[str] = None,
                             trace_id=None) -> Dict:
     if not cluster_id:
@@ -218,6 +253,8 @@ async def cap_settings_save(cluster_id: str = "", node_hosts: Dict = None,
         cfg["mount_vms"] = bool(mount_vms)
     if store_writer_instance is not None:
         cfg["store_writer_instance"] = store_writer_instance
+    if store_writer_host is not None:
+        cfg["store_writer_host"] = store_writer_host
     if nwm_host_id is not None:
         cfg["nwm_host_id"] = nwm_host_id
     cfg.pop("worker_policy", None)   # idle-worker policy removed
@@ -247,6 +284,74 @@ async def _node_ssh(cluster_id: str, node: str, command: str,
 def _sh(script: str) -> str:
     """Wrap a multi-line script for one ssh exec (bash, fail-fast off)."""
     return "bash -c " + shlex.quote(script)
+
+
+def _split_sections(text: str, first: str = "HEAD") -> Dict[str, List[str]]:
+    """Split a '###NAME'-delimited transcript into named, non-blank line lists."""
+    out: Dict[str, List[str]] = {first: []}
+    cur = first
+    for ln in (text or "").splitlines():
+        if ln.startswith("###"):
+            cur = ln[3:].strip()
+            out[cur] = []
+        elif ln.strip():
+            out[cur].append(ln)
+    return out
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  SSH ONTO THE FILE FABRIC  (VFS-02)
+# ═════════════════════════════════════════════════════════════════════════════
+async def _fabric_host(cfg: Dict) -> Tuple[str, str]:
+    """(host_id, address) of the file fabric: the configured store writer host,
+    else VFS-02 by its host-store label, else by address. Going through the
+    store means re-addressing VFS-02 is a host-store edit, not a code change."""
+    label, addr = _FABRIC_LABEL, _FABRIC_HOST
+    vfs = sys.modules.get("vfs_capabilities")
+    if vfs is not None and hasattr(vfs, "_cfg"):
+        try:
+            vc = await vfs._cfg()
+            label, addr = vc.get("ssh_label") or label, vc.get("host") or addr
+        except Exception as e:
+            log.debug("vfs cfg read failed: %s", e)
+    hosts: List[Dict] = []
+    listc = _rawcap("exec.ssh.hosts.list")
+    if listc:
+        try:
+            res = await listc()
+            got = res.get("hosts") if isinstance(res, dict) else res
+            hosts = got if isinstance(got, list) else []
+        except Exception as e:
+            log.debug("ssh host list failed: %s", e)
+    want = cfg.get("store_writer_host", "")
+    if want:
+        # Configured but gone: fail rather than silently pick another box.
+        h = next((h for h in hosts if h.get("id") == want), None)
+        return (h.get("id", ""), h.get("host") or addr) if h else ("", addr)
+    for key, val in (("label", label), ("host", addr)):
+        h = next((h for h in hosts if h.get(key) == val), None)
+        if h:
+            return h.get("id", ""), h.get("host") or addr
+    return "", addr
+
+
+async def _fabric_ssh(cfg: Dict, command: str, timeout: int = 60) -> Dict:
+    """Run a command on the file fabric. The result carries `fabric_addr`."""
+    hid, addr = await _fabric_host(cfg)
+    base = {"ok": False, "rc": -1, "stdout": "", "stderr": "", "fabric_addr": addr}
+    if not hid:
+        return {**base, "error": f"no SSH credential for the file fabric "
+                                 f"({_FABRIC_LABEL}, {addr}) — enrol it in Workers & "
+                                 "Ollama → Connections, or set store_writer_host "
+                                 "in pxstore.settings.save"}
+    run = _rawcap("exec.ssh.run")
+    if not run:
+        return {**base, "error": "exec.ssh.run unavailable (execution module not loaded)"}
+    try:
+        r = await run(command=command, host_id=hid, timeout=timeout)
+    except Exception as e:
+        return {**base, "error": f"SSH to the file fabric failed: {e}"}
+    return {**(r or {}), "fabric_addr": addr}
 
 
 def _safe(name: str, vmid) -> str:
@@ -425,12 +530,14 @@ async def cap_inventory(cluster_id: str = "", node: str = "", trace_id=None) -> 
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  FILE SERVER  (Samba on the node, one share, name-keyed symlinks)
+#  LEGACY FILE SERVER  (Samba on the node) — superseded by VFS-02, retired in stages
 # ═════════════════════════════════════════════════════════════════════════════
 @capability(
     "pxstore.fs.provision",
     http_method="POST", http_path="/pxstore/fs/provision", http_tags=["pxstore"],
-    description="Provision (idempotently) a Samba file server on a Proxmox node "
+    description="LEGACY: the estate's file server is VFS-02 (vfs.*) — do not "
+                "provision this on a new node. "
+                "Provision (idempotently) a Samba file server on a Proxmox node "
                 "and wire in the vera share config. Installs samba + sshfs, "
                 "creates the share root, adds the include to smb.conf, creates "
                 "the SMB user, enables smbd. Inputs: cluster_id (str!), node "
@@ -484,7 +591,9 @@ echo PROVISION_OK
 @capability(
     "pxstore.fs.sync",
     http_method="POST", http_path="/pxstore/fs/sync", http_tags=["pxstore"],
-    description="(Re)build the name-keyed share tree and Samba share on a node: "
+    description="LEGACY hypervisor share — VFS-02 keeps its own estate tree "
+                "current (vfs.estate.sync). "
+                "(Re)build the name-keyed share tree and Samba share on a node: "
                 "one symlink per LXC guest pointing at its ZFS subvol (real "
                 "names, not vmids), _host/ links for pools and non-ZFS drives, "
                 "optional sshfs mounts for running VMs with enrolled SSH creds, "
@@ -668,6 +777,8 @@ for f in {shlex.quote(root)}/* {shlex.quote(root)}/_host/*; do
   k=link; mountpoint -q "$f" 2>/dev/null && k=mount
   echo "$f|$k|$t"
 done
+echo '###PROBE'
+{_LEGACY_PROBE}
 """
     r = await _node_ssh(cluster_id, node, _sh(script), timeout=30)
     if r.get("rc") != 0 and not r.get("stdout"):
@@ -684,8 +795,58 @@ done
             continue
         p, k, t = (ln.split("|", 2) + ["", ""])[:3]
         entries.append({"name": p[len(root):].strip("/"), "kind": k, "target": t})
-    return {"running": running, "entries": entries,
+    stdout = r.get("stdout", "")
+    probe = _parse_legacy_probe(stdout.split("###PROBE", 1)[1]) \
+        if "###PROBE" in stdout else {}
+    return {"running": running, "entries": entries, "legacy": True, "probe": probe,
             "share": {"unc": f"\\\\{node}\\{cfg['smb_share']}", "root": root}}
+
+
+@capability(
+    "pxstore.fs.retire",
+    http_method="POST", http_path="/pxstore/fs/retire", http_tags=["pxstore"],
+    description="Take the LEGACY hypervisor Samba share (\\\\node\\vera-fs) out of "
+                "service now that VFS-02 is the file server. Staged and "
+                "reversible: the default dry run reports whether smbd runs and "
+                "how many clients are connected; confirm=true stops and disables "
+                "smbd+nmbd but keeps the config and share tree, and refuses "
+                "while anyone is connected unless force=true; restore=true "
+                "brings it straight back. Inputs: cluster_id (str!), node "
+                "(str!), confirm (bool=false), force (bool=false), restore "
+                "(bool=false). Output: {ok, dry_run, action, probe:{active, "
+                "enabled, sessions, listening}, blocked} or {error}.",
+)
+async def cap_fs_retire(cluster_id: str = "", node: str = "",
+                        confirm: bool = False, force: bool = False,
+                        restore: bool = False, trace_id=None) -> Dict:
+    if not (cluster_id and node):
+        return {"error": "cluster_id and node required"}
+    pr = await _node_ssh(cluster_id, node, _sh(_LEGACY_PROBE), timeout=30)
+    if pr.get("error"):
+        return {"error": pr["error"]}
+    probe = _parse_legacy_probe(pr.get("stdout", ""))
+    action = "restore" if restore else "retire"
+    if not confirm:
+        return {"ok": True, "dry_run": True, "action": action, "probe": probe,
+                "would": ("enable and start smbd+nmbd" if restore else
+                          "stop and disable smbd+nmbd, keeping config and share tree"),
+                "blocked": bool(not restore and not force
+                                and (probe.get("sessions") or 0) > 0)}
+    script = _restore_legacy_script() if restore else _retire_legacy_script(force=force)
+    r = await _node_ssh(cluster_id, node, _sh(script), timeout=60)
+    out = r.get("stdout", "")
+    if "IN_USE" in out:
+        return {"error": f"refused: {out.split('IN_USE', 1)[1].split()[0]} client(s) "
+                         "connected to the legacy share — move them to VFS-02 "
+                         "first, or pass force=true", "probe": probe}
+    if ("RESTORED" if restore else "RETIRED") not in out:
+        return {"error": r.get("error") or (r.get("stderr") or out)[:400] or f"{action} failed",
+                "probe": probe}
+    after = await _node_ssh(cluster_id, node, _sh(_LEGACY_PROBE), timeout=30)
+    await emit_event({"type": "pxstore.progress", "stage": "fs.retire",
+                      "message": f"legacy hypervisor share on {node}: {action}d"})
+    return {"ok": True, "dry_run": False, "action": action, "before": probe,
+            "probe": _parse_legacy_probe(after.get("stdout", ""))}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1104,12 +1265,15 @@ async def cap_cpu_suggest(cluster_id: str = "", node: str = "", count: int = 1,
                 "dataset with zstd compression and models/ images/ artifacts/ "
                 "subdirs, remembered in settings. Bind-mount it read-only into "
                 "consumer CTs with pxstore.store.attach. Inputs: cluster_id "
-                "(str!), node (str!), dataset (str='rpool/data/vera-store'), "
+                "(str!), node (str!), dataset (str — default the configured store, "
+                "else 'tank_sdh/vera-store'), "
                 "quota (str — optional). Output: {ok, dataset, mountpoint}.",
 )
 async def cap_store_provision(cluster_id: str = "", node: str = "",
-                              dataset: str = "rpool/data/vera-store",
+                              dataset: str = "",
                               quota: str = "", trace_id=None) -> Dict:
+    if not dataset:
+        dataset = (await _cfg_get(cluster_id)).get("store_dataset") or "tank_sdh/vera-store"
     r = await cap_zfs_create(cluster_id=cluster_id, node=node, dataset=dataset,
                              compression="zstd", quota=quota)
     if r.get("error"):
@@ -1214,17 +1378,19 @@ async def cap_store_attach(cluster_id: str = "", node: str = "", vmid: int = 0,
     http_method="POST", http_path="/pxstore/store/consolidate", http_tags=["pxstore"],
     description="Rsync model data FROM one or more LXC containers' local dirs "
                 "INTO the central store (host-side, via each CT's subvol — no "
-                "guest downtime; identical blobs overwrite harmlessly). Run "
+                "guest downtime; existing blobs are never rewritten and in-flight "
+                "partial pulls are skipped). Run "
                 "once per source CT before switching them to the read-only "
                 "mount. Inputs: cluster_id (str!), node (str!), vmid (int!), "
-                "src_path (str='/root/.ollama/models' — path INSIDE the CT), "
+                "src_path (str='/.ollama/models' — path INSIDE the CT; read "
+                "OLLAMA_MODELS from its ollama-vera unit, it differs per node), "
                 "subdir (str='models/ollama'), delete_source (bool=false — "
                 "after a successful copy, rename the CT-local dir to "
                 "<dir>.pre-store to free the space; do this only after the ro "
                 "mount is attached+verified). Output: {ok, stats, freed_hint}.",
 )
 async def cap_store_consolidate(cluster_id: str = "", node: str = "", vmid: int = 0,
-                                src_path: str = "/root/.ollama/models",
+                                src_path: str = "/.ollama/models",
                                 subdir: str = "models/ollama",
                                 delete_source: bool = False, trace_id=None) -> Dict:
     if not (cluster_id and node and vmid):
@@ -1255,7 +1421,7 @@ async def cap_store_consolidate(cluster_id: str = "", node: str = "", vmid: int 
 set -e
 test -d {shlex.quote(src)} || {{ echo NO_SOURCE; exit 3; }}
 mkdir -p {shlex.quote(dst)}
-rsync -a --info=stats2 {shlex.quote(src + '/')} {shlex.quote(dst + '/')}
+rsync {_RSYNC_FLAGS} {shlex.quote(src + '/')} {shlex.quote(dst + '/')}
 """
     if delete_source:
         script += f"mv {shlex.quote(src)} {shlex.quote(src + '.pre-store')}\n"
@@ -1275,6 +1441,199 @@ rsync -a --info=stats2 {shlex.quote(src + '/')} {shlex.quote(dst + '/')}
                            "the ro mount is verified" if delete_source else
                            "source left in place — re-run with delete_source="
                            "true after attaching + verifying the ro mount")}
+
+
+@capability(
+    "pxstore.store.status",
+    http_method="POST", http_path="/pxstore/store/status", http_tags=["pxstore"],
+    memory="off", silent=True,
+    description="The shared model store at a glance: dataset usage and "
+                "compression, how many Ollama models it holds, which containers "
+                "mount it and whether read-only, the store's writer on the file "
+                "fabric (VFS-02), and how other machines reach it. Inputs: "
+                "cluster_id (str!), node (str!). Output: {dataset, mount, used, "
+                "avail, ratio, models, consumers:[{vmid,name,status,ct_path,ro}], "
+                "writer:{host,active,version,port,error}, share:{server,path,nfs,"
+                "unc,smb,clients}} or {error}.",
+)
+async def cap_store_status(cluster_id: str = "", node: str = "", trace_id=None) -> Dict:
+    if not (cluster_id and node):
+        return {"error": "cluster_id and node required"}
+    cfg = await _cfg_get(cluster_id)
+    ds, mp = cfg.get("store_dataset", ""), cfg.get("store_mount", "")
+    if not (ds and mp):
+        return {"error": "central store not provisioned — run pxstore.store.provision first",
+                "provisioned": False}
+    try:
+        fab = _fabric_path(mp)
+    except ValueError:
+        fab = ""
+    node_script = "\n".join([
+        f"zfs list -Hp -o used,avail,compressratio {shlex.quote(ds)} 2>/dev/null",
+        "echo '###MODELS'",
+        f"find {shlex.quote(mp + '/models/ollama/manifests')} -type f 2>/dev/null | wc -l",
+        "echo '###CONSUMERS'",
+        f"grep -H {shlex.quote(mp)} /etc/pve/lxc/*.conf 2>/dev/null",
+        "echo '###STATUS'",
+        "pct list 2>/dev/null | tail -n +2",
+    ])
+    fabric_script = "\n".join([
+        f"echo \"active=$(systemctl is-active {_WRITER_UNIT} 2>/dev/null)\"",
+        f"echo \"version=$(curl -s -m 3 http://127.0.0.1:{_WRITER_PORT}/api/version 2>/dev/null)\"",
+        "echo '###EXPORTS'",
+        "cat /etc/exports 2>/dev/null",
+        "echo '###SMB'",
+        "testparm -s 2>/dev/null | awk '/^\\[/{s=$0} /^[[:space:]]*path = /{print s, $3}'",
+    ])
+    node_r, fab_r = await asyncio.gather(
+        _node_ssh(cluster_id, node, _sh(node_script), timeout=45),
+        _fabric_ssh(cfg, _sh(fabric_script), timeout=30))
+    if node_r.get("error"):
+        return {"error": node_r["error"]}
+
+    s = _split_sections(node_r.get("stdout", ""))
+    used = avail = 0
+    ratio = ""
+    if s["HEAD"]:
+        f = s["HEAD"][0].split()
+        if len(f) >= 3:
+            used = int(f[0]) if f[0].isdigit() else 0
+            avail = int(f[1]) if f[1].isdigit() else 0
+            ratio = f[2]
+    mc = (s.get("MODELS") or ["0"])[0].strip()
+    status = {}
+    for ln in s.get("STATUS", []):
+        f = ln.split()
+        if len(f) >= 2 and f[0].isdigit():
+            status[int(f[0])] = {"status": f[1], "name": f[-1]}
+    consumers = _parse_consumers("\n".join(s.get("CONSUMERS", [])), mp)
+    for c in consumers:
+        c.update(status.get(c["vmid"], {"status": "unknown", "name": str(c["vmid"])}))
+
+    addr = fab_r.get("fabric_addr") or _FABRIC_HOST
+    writer = {"host": addr, "active": False, "version": "", "port": _WRITER_PORT,
+              "error": fab_r.get("error", "")}
+    share = {"server": addr, "path": fab, "nfs": "", "unc": "", "smb": "", "clients": []}
+    if not fab_r.get("error"):
+        fs = _split_sections(fab_r.get("stdout", ""))
+        kv = {k: v for k, _, v in (ln.partition("=") for ln in fs["HEAD"])}
+        writer["active"] = kv.get("active", "").strip() == "active"
+        try:
+            writer["version"] = json.loads(kv.get("version") or "{}").get("version", "")
+        except ValueError:
+            writer["version"] = ""
+        if fab:
+            ex = _parse_exports("\n".join(fs.get("EXPORTS", [])))
+            share["clients"] = [{"client": c, "read_only": "ro" in o.split(",")}
+                                for c, o in ex.get(fab, [])]
+            if share["clients"]:
+                share["nfs"] = f"{addr}:{fab}"
+            for ln in fs.get("SMB", []):
+                parts = ln.split()
+                if len(parts) == 2 and parts[1].rstrip("/") == fab:
+                    share["smb"] = parts[0].strip("[]")
+                    share["unc"] = f"\\\\{addr}\\{share['smb']}"
+    return {"dataset": ds, "mount": mp, "used": used, "avail": avail, "ratio": ratio,
+            "models": int(mc) if mc.isdigit() else 0, "consumers": consumers,
+            "writer": writer, "share": share, "checked_at": now_iso()}
+
+
+@capability(
+    "pxstore.store.writer.provision",
+    http_method="POST", http_path="/pxstore/store/writer/provision",
+    http_tags=["pxstore"],
+    description="Install or update the model store's ONE writer on the file "
+                "fabric (VFS-02): the exact ollama binary the inference nodes "
+                "run, copied from a source container so manifests stay "
+                "compatible, as ollama-store-writer.service bound to "
+                "127.0.0.1:11436 with OLLAMA_NOPRUNE=1 and a guard that refuses "
+                "to start unless the store is mounted. Idempotent; refuses to "
+                "restart the writer while a pull is running. Nothing is exposed "
+                "on the network and no serving node needs a writable mount. "
+                "Inputs: cluster_id (str!), node (str!), source_vmid (int! — a "
+                "running CT with the fleet's ollama), fabric_vmid (int=160). "
+                "Output: {ok, version, models, changed, host} or {error}.",
+)
+async def cap_store_writer_provision(cluster_id: str = "", node: str = "",
+                                     source_vmid: int = 0, fabric_vmid: int = 160,
+                                     trace_id=None) -> Dict:
+    if not (cluster_id and node and source_vmid):
+        return {"error": "cluster_id, node and source_vmid required"}
+    cfg = await _cfg_get(cluster_id)
+    mp = cfg.get("store_mount", "")
+    if not mp:
+        return {"error": "central store not provisioned — run pxstore.store.provision first"}
+    try:
+        fab = _fabric_path(mp)
+        src, dst = int(source_vmid), int(fabric_vmid)
+    except (ValueError, TypeError) as e:
+        return {"error": str(e)}
+    tmp = f"/root/.vera-ollama-{src}.bin"
+    copy = "\n".join([
+        "set -e",
+        f"pct exec {src} -- test -x /usr/local/bin/ollama",
+        f"pct pull {src} /usr/local/bin/ollama {tmp}",
+        f"pct push {dst} {tmp} /usr/local/bin/.ollama.vera-new --perms 755",
+        f"rm -f {tmp}",
+        "echo COPY_OK",
+    ])
+    await emit_event({"type": "pxstore.progress", "stage": "store.writer",
+                      "message": f"copying ollama from CT {src} to the file fabric"})
+    r = await _node_ssh(cluster_id, node, _sh(copy), timeout=300)
+    if r.get("error") or "COPY_OK" not in r.get("stdout", ""):
+        return {"error": "copying the ollama binary failed: "
+                         + (r.get("error") or (r.get("stderr") or r.get("stdout") or "")[:400])}
+    U, P = _WRITER_UNIT, _WRITER_PORT
+    unit = _writer_unit(store_mount=fab, models_dir=fab + "/models/ollama")
+    install = "\n".join([
+        "set -e",
+        "NEW=/usr/local/bin/.ollama.vera-new; changed=0",
+        "if [ -f $NEW ]; then",
+        "  if cmp -s $NEW /usr/local/bin/ollama; then rm -f $NEW; else changed=1; fi",
+        "fi",
+        "cat > /tmp/vera-writer.unit <<'VERAUNIT'",
+        unit.rstrip("\n"),
+        "VERAUNIT",
+        f"cmp -s /tmp/vera-writer.unit /etc/systemd/system/{U} || changed=1",
+        "if [ \"$changed\" = 1 ] && systemctl list-units --state=active --no-legend "
+        "'vera-store-pull-*' | grep -q .; then",
+        "  rm -f /tmp/vera-writer.unit $NEW; echo PULL_ACTIVE; exit 7",
+        "fi",
+        "if [ -f $NEW ]; then mv -f $NEW /usr/local/bin/ollama; fi",
+        f"mv -f /tmp/vera-writer.unit /etc/systemd/system/{U}",
+        "systemctl daemon-reload",
+        f"systemctl enable {U} >/dev/null 2>&1",
+        f"if [ \"$changed\" = 1 ]; then systemctl restart {U}; else systemctl start {U}; fi",
+        "ok=0",
+        f"for i in $(seq 1 30); do curl -sf -m 2 http://127.0.0.1:{P}/api/version "
+        ">/dev/null && ok=1 && break; sleep 1; done",
+        f"if [ \"$ok\" != 1 ]; then echo WRITER_NOT_UP; journalctl -u {U} -n 5 --no-pager; exit 8; fi",
+        f"echo \"version=$(curl -s -m 3 http://127.0.0.1:{P}/api/version)\"",
+        f"echo \"models=$(curl -s -m 10 http://127.0.0.1:{P}/api/tags | grep -o '\"name\":' | wc -l)\"",
+        "echo \"changed=$changed\"",
+        "echo INSTALL_OK",
+    ])
+    r2 = await _fabric_ssh(cfg, _sh(install), timeout=120)
+    out = r2.get("stdout", "")
+    if "PULL_ACTIVE" in out:
+        return {"error": "a store pull is running on the writer — updating it now "
+                         "would abort that download; try again when it finishes"}
+    if "INSTALL_OK" not in out:
+        return {"error": r2.get("error") or (r2.get("stderr") or out)[-600:]
+                         or "writer install failed"}
+    kv = {k: v for k, _, v in (ln.partition("=") for ln in out.splitlines())
+          if k in ("version", "models", "changed")}
+    try:
+        version = json.loads(kv.get("version") or "{}").get("version", "")
+    except ValueError:
+        version = ""
+    models = (kv.get("models") or "").strip()
+    await emit_event({"type": "pxstore.progress", "stage": "store.writer",
+                      "message": f"store writer ready on {r2.get('fabric_addr')} "
+                                 f"(ollama {version})"})
+    return {"ok": True, "version": version, "models": int(models) if models.isdigit() else 0,
+            "changed": kv.get("changed", "").strip() == "1",
+            "host": r2.get("fabric_addr", "")}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1321,6 +1680,16 @@ echo NFS_OK
     cfg["veradata_dataset"], cfg["veradata_mount"] = dataset, mp
     await _cfg_put(cluster_id, cfg)
     host_hint = "<node-ip>"
+    hid = (cfg.get("node_hosts") or {}).get(node, "")
+    listc = _rawcap("exec.ssh.hosts.list")
+    if hid and listc:
+        try:
+            res = await listc()
+            hosts = res.get("hosts") if isinstance(res, dict) else res
+            host_hint = next((h.get("host") for h in (hosts or [])
+                              if h.get("id") == hid and h.get("host")), host_hint)
+        except Exception as e:
+            log.debug("node address lookup failed: %s", e)
     mount_cmd = (f"mkdir -p /mnt/vera-data && "
                  f"echo '{host_hint}:{mp} /mnt/vera-data nfs "
                  f"rw,hard,intr,vers=4 0 0' >> /etc/fstab && mount -a")
@@ -1692,16 +2061,17 @@ async def cap_backend_switch(cluster_id: str = "", node: str = "", vmid: int = 0
 @capability(
     "pxstore.models.pull",
     http_method="POST", http_path="/pxstore/models/pull", http_tags=["pxstore"],
-    description="Pull an ollama model the storage-aware way. via='store' "
-                "(default when a writer is configured): the pull runs on the "
-                "designated WRITER instance only — the model lands in the "
-                "central store and every read-only consumer sees it instantly. "
-                "via='direct': plain per-instance pull (for instances that "
-                "can't share the store, e.g. on another machine). Inputs: model "
-                "(str!), cluster_id (str — for the writer setting), instance_id "
-                "(str — required for direct, ignored for store), via "
-                "('auto'|'store'|'direct'). Output: {ok, routed_to, via} or "
-                "{error}.",
+    description="Pull an Ollama model the storage-aware way. via='store' (the "
+                "default once the store is provisioned): the download runs on "
+                "the store's one writer on the file fabric (VFS-02) as a "
+                "detached job, lands in the shared store, and every read-only "
+                "node lists it at once with no restart; poll "
+                "pxstore.models.pull.status. via='direct': a plain per-instance "
+                "pull, only for an instance that does NOT serve the shared store "
+                "(a read-only instance refuses it). Inputs: model (str!), "
+                "cluster_id (str — required for store), instance_id (str — "
+                "required for direct), via ('auto'|'store'|'direct'). Output: "
+                "{ok, via, routed_to, state, already_running} or {error, hint}.",
     schema={"properties": {"via": {"enum": ["auto", "store", "direct"]}}},
 )
 async def cap_models_pull(model: str = "", cluster_id: str = "",
@@ -1709,105 +2079,173 @@ async def cap_models_pull(model: str = "", cluster_id: str = "",
                           trace_id=None) -> Dict:
     if not model:
         return {"error": "model required"}
-    writer = ""
-    if cluster_id:
-        cfg = await _cfg_get(cluster_id)
-        writer = cfg.get("store_writer_instance", "")
+    if not _valid_model(model):
+        return {"error": f"not a valid Ollama model reference: {model!r}"}
+    cfg = await _cfg_get(cluster_id) if cluster_id else {}
     if via == "auto":
-        via = "store" if writer else "direct"
+        via = "store" if cfg.get("store_mount") else "direct"
     if via == "store":
-        if not writer:
-            return {"error": "no store writer configured — set "
-                             "store_writer_instance in settings, or use "
-                             "via='direct'"}
-        target = writer
-    else:
-        if not instance_id:
-            return {"error": "instance_id required for a direct pull"}
-        target = instance_id
+        if not cluster_id:
+            return {"error": "cluster_id required for a store pull"}
+        if not cfg.get("store_mount"):
+            return {"error": "central store not provisioned — run pxstore.store.provision first"}
+        r = await _fabric_ssh(cfg, _sh(_pull_start_script(model)), timeout=45)
+        out, host = r.get("stdout", ""), r.get("fabric_addr", "")
+        if "WRITER_DOWN" in out:
+            return {"error": "the store writer is not running on the file fabric",
+                    "hint": "install it with pxstore.store.writer.provision",
+                    "via": via, "routed_to": host}
+        if "STARTED" not in out and "ALREADY_RUNNING" not in out:
+            return {"error": r.get("error") or (r.get("stderr") or out)[:400]
+                             or "could not start the pull", "via": via, "routed_to": host}
+        await emit_event({"type": "pxstore.progress", "stage": "models.pull",
+                          "message": f"pulling {model} into the shared store (writer on {host})"})
+        return {"ok": True, "via": via, "routed_to": f"store writer on {host}",
+                "model": model, "state": "running",
+                "already_running": "ALREADY_RUNNING" in out,
+                "poll": "pxstore.models.pull.status"}
+    if not instance_id:
+        return {"error": "instance_id required for a direct pull"}
     pull = _rawcap("ollama.pull")
     if not pull:
         return {"error": "ollama.pull unavailable"}
     await emit_event({"type": "pxstore.progress", "stage": "models.pull",
-                      "message": f"pulling {model} on {target} (via {via})"})
-    res = await pull(model=model, instance_id=target)
+                      "message": f"pulling {model} on {instance_id} (direct)"})
+    res = await pull(model=model, instance_id=instance_id)
     if res.get("error"):
-        return {"error": res["error"], "routed_to": target, "via": via}
-    return {"ok": True, "routed_to": target, "via": via, **{
+        err = str(res["error"])
+        out = {"error": err, "routed_to": instance_id, "via": via}
+        if _is_ro_error(err):
+            out["hint"] = ("this instance serves the shared read-only store — pull "
+                           "with via='store' and it appears here without a restart")
+        return out
+    return {"ok": True, "routed_to": instance_id, "via": via, "state": "done", **{
         k: v for k, v in res.items() if k in ("model", "status")}}
+
+
+@capability(
+    "pxstore.models.pull.status",
+    http_method="POST", http_path="/pxstore/models/pull/status",
+    http_tags=["pxstore"],
+    memory="off", silent=True,
+    description="Progress of a store pull started by pxstore.models.pull "
+                "(via=store), read from the writer's own download stream. "
+                "Inputs: model (str!), cluster_id (str!). Output: {model, state "
+                "('running'|'done'|'failed'|'unknown'), status, completed, "
+                "total, percent, error}.",
+)
+async def cap_models_pull_status(model: str = "", cluster_id: str = "",
+                                 trace_id=None) -> Dict:
+    if not (model and cluster_id):
+        return {"error": "model and cluster_id required"}
+    if not _valid_model(model):
+        return {"error": f"not a valid Ollama model reference: {model!r}"}
+    cfg = await _cfg_get(cluster_id)
+    r = await _fabric_ssh(cfg, _sh(_pull_status_script(model)), timeout=30)
+    if r.get("error"):
+        return {"error": r["error"]}
+    head, _, log_txt = r.get("stdout", "").partition("###LOG")
+    active = "state=active" in head or "state=activating" in head
+    return {"model": model, **_parse_pull_log(log_txt.splitlines(), unit_active=active)}
 
 
 @capability(
     "pxstore.store.export",
     http_method="POST", http_path="/pxstore/store/export", http_tags=["pxstore"],
-    description="NFS-export the central model store to hosts that can't share "
-                "the drive locally (other machines / OS+docker stacks). "
-                "Read-only by default. Inputs: cluster_id (str!), node (str!), "
-                "client (str! — IP or CIDR), rw (bool=false). Output: {ok, "
-                "export}.",
+    description="Share the central model store with a machine that cannot bind "
+                "the drive locally. The file fabric (VFS-02) already exports it "
+                "read-only over NFS 4.2, so this confirms the client is covered "
+                "and returns the mount line; a client outside the existing "
+                "ranges is added to that read-only export. Nothing is installed "
+                "on the hypervisor, and the store is never exported writable "
+                "(it has one writer). Inputs: cluster_id (str!), client (str! — "
+                "IP or CIDR), node (str — unused), rw (bool — refused). Output: "
+                "{ok, already_covered, server, path, export, fstab} or {error}.",
 )
 async def cap_store_export(cluster_id: str = "", node: str = "",
                            client: str = "", rw: bool = False,
                            trace_id=None) -> Dict:
-    if not client or not re.match(r"^[0-9./]+$", client):
+    if not _valid_client(client):
         return {"error": "client must be an IP or CIDR"}
+    if rw:
+        return {"error": "the shared store is never exported writable — it has one "
+                         "writer (pxstore.models.pull via='store'), and a writable "
+                         "client could prune every node's models"}
     cfg = await _cfg_get(cluster_id)
     mp = cfg.get("store_mount", "")
     if not mp:
-        return {"error": "central store not provisioned — run "
-                         "pxstore.store.provision first"}
-    opts = "rw,sync,no_subtree_check,no_root_squash" if rw \
-        else "ro,sync,no_subtree_check,root_squash"
-    export = f"{mp} {client}({opts})"
-    script = f"""
-set -e
-export DEBIAN_FRONTEND=noninteractive
-command -v exportfs >/dev/null 2>&1 || (apt-get -qq update && apt-get -qq -y install nfs-kernel-server)
-grep -qF {shlex.quote(export)} /etc/exports || echo {shlex.quote(export)} >> /etc/exports
-exportfs -ra
-systemctl enable --now nfs-server >/dev/null 2>&1 || true
-echo EXPORT_OK
-"""
-    r = await _node_ssh(cluster_id, node, _sh(script), timeout=180)
-    if r.get("rc") != 0 or "EXPORT_OK" not in r.get("stdout", ""):
-        return {"error": (r.get("error") or r.get("stderr", ""))[:400]
+        return {"error": "central store not provisioned — run pxstore.store.provision first"}
+    try:
+        fab = _fabric_path(mp)
+    except ValueError as e:
+        return {"error": f"the file fabric cannot see the store: {e}"}
+    r = await _fabric_ssh(cfg, "cat /etc/exports", timeout=30)
+    if r.get("error"):
+        return {"error": r["error"]}
+    server = r.get("fabric_addr") or _FABRIC_HOST
+    fstab = _fstab_line(server, fab, "/vera-store")
+    hit = _export_for(_parse_exports(r.get("stdout", "")), fab, client)
+    if hit:
+        return {"ok": True, "already_covered": True, "server": server, "path": fab,
+                "export": f"{fab} {hit['client']}({hit['opts']})", "fstab": fstab,
+                "note": "mount it with pxstore.store.attach_remote"}
+    try:
+        script = _add_export_client(fab, client)
+    except ValueError as e:
+        return {"error": str(e)}
+    rr = await _fabric_ssh(cfg, _sh(script), timeout=60)
+    if "EXPORT_OK" not in rr.get("stdout", ""):
+        return {"error": rr.get("error") or (rr.get("stderr") or rr.get("stdout") or "")[:400]
                          or "export failed"}
-    return {"ok": True, "export": export,
-            "note": "attach on remote hosts with pxstore.store.attach_remote"}
+    await emit_event({"type": "pxstore.progress", "stage": "store.export",
+                      "message": f"model store export on {server} now admits {client} (read-only)"})
+    return {"ok": True, "already_covered": False, "server": server, "path": fab,
+            "export": f"{fab} {client} (read-only)", "fstab": fstab,
+            "note": "mount it with pxstore.store.attach_remote"}
 
 
 @capability(
     "pxstore.store.attach_remote",
     http_method="POST", http_path="/pxstore/store/attach_remote",
     http_tags=["pxstore"],
-    description="Mount the NFS-exported central store on a REMOTE host (an "
-                "OS+docker box or a VM — anything with an enrolled SSH cred): "
-                "installs nfs-common, adds the fstab entry, mounts. Bind the "
-                "local_path into containers afterwards (e.g. ollama -v "
-                "/vera-store/models/ollama:/root/.ollama/models:ro). Inputs: "
-                "host_id (str! — exec.ssh host), server (str! — the PVE node "
-                "IP), remote_path (str — default the store mountpoint from "
-                "settings, needs cluster_id), cluster_id (str), local_path "
-                "(str='/vera-store'), ro (bool=true). Output: {ok, mounted_at}.",
+    description="Mount the central model store READ-ONLY on another machine (an "
+                "OS+docker box or a VM — anything with an enrolled SSH cred) "
+                "from the file fabric's NFS export: installs the NFS client, adds "
+                "a boot-safe fstab entry (_netdev,nofail), mounts. Then bind it "
+                "into containers read-only with pruning off, e.g. -v "
+                "/vera-store/models/ollama:/root/.ollama/models:ro -e "
+                "OLLAMA_NOPRUNE=1. Inputs: host_id (str! — exec.ssh host), "
+                "cluster_id (str — for the defaults), server (str — default the "
+                "file fabric), remote_path (str — default the store's path on "
+                "the fabric), local_path (str='/vera-store'), ro (bool=true). "
+                "Output: {ok, mounted_at, fstab, hint} or {error}.",
 )
 async def cap_store_attach_remote(host_id: str = "", server: str = "",
                                   remote_path: str = "", cluster_id: str = "",
                                   local_path: str = "/vera-store",
                                   ro: bool = True, trace_id=None) -> Dict:
-    if not (host_id and server):
-        return {"error": "host_id and server required"}
+    if not host_id:
+        return {"error": "host_id required"}
+    if not (remote_path and server) and not cluster_id:
+        return {"error": "cluster_id required unless server and remote_path are given"}
+    cfg = await _cfg_get(cluster_id) if cluster_id else {}
     if not remote_path:
-        if not cluster_id:
-            return {"error": "remote_path or cluster_id required"}
-        cfg = await _cfg_get(cluster_id)
-        remote_path = cfg.get("store_mount", "")
-        if not remote_path:
+        mp = cfg.get("store_mount", "")
+        if not mp:
             return {"error": "central store not provisioned"}
+        try:
+            remote_path = _fabric_path(mp)
+        except ValueError as e:
+            return {"error": f"the file fabric cannot see the store: {e}"}
+    if not server:
+        _hid, server = await _fabric_host(cfg)
+    try:
+        fstab = _fstab_line(server, remote_path, local_path, ro=ro)
+    except ValueError as e:
+        return {"error": str(e)}
     run = _rawcap("exec.ssh.run")
     if not run:
         return {"error": "exec.ssh.run unavailable"}
-    opts = "ro,hard,vers=4" if ro else "rw,hard,vers=4"
-    fstab = f"{server}:{remote_path} {local_path} nfs {opts} 0 0"
     script = f"""
 set -e
 export DEBIAN_FRONTEND=noninteractive
@@ -1821,7 +2259,55 @@ echo ATTACH_OK
     if r.get("rc") != 0 or "ATTACH_OK" not in r.get("stdout", ""):
         return {"error": (r.get("error") or r.get("stderr", ""))[:500]
                          or "mount failed"}
-    return {"ok": True, "mounted_at": local_path, "fstab": fstab}
+    return {"ok": True, "mounted_at": local_path, "fstab": fstab,
+            "hint": f"bind it into containers read-only with pruning off: -v "
+                    f"{local_path}/models/ollama:/root/.ollama/models:ro "
+                    f"-e OLLAMA_NOPRUNE=1"}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  BACKUP TARGET  (vzdump into the file fabric's backup share)
+# ═════════════════════════════════════════════════════════════════════════════
+@capability(
+    "pxstore.backup.target",
+    http_method="POST", http_path="/pxstore/backup/target", http_tags=["pxstore"],
+    description="Give estate backups (nodes.backup, vzdump) a target inside the "
+                "file fabric's backup dataset, so dumps land on the backup disk "
+                "and show up read-only in VFS-02's backup share, instead of "
+                "sharing the hypervisor's root disk like the stock 'local' and "
+                "'bpool' storages. Registers a PVE dir storage with "
+                "is_mountpoint, so PVE marks it offline rather than filling the "
+                "root disk if the dataset is ever unmounted. Dry run by default; "
+                "creating it backs nothing up. Inputs: cluster_id (str!), node "
+                "(str!), storage_id (str='vfs-backup'), keep_last (int=3), "
+                "confirm (bool=false). Output: {ok, dry_run, storage_id, path, "
+                "fabric_path, keep_last, command|already_existed} or {error}.",
+)
+async def cap_backup_target(cluster_id: str = "", node: str = "",
+                            storage_id: str = "vfs-backup", keep_last: int = 3,
+                            confirm: bool = False, trace_id=None) -> Dict:
+    if not (cluster_id and node):
+        return {"error": "cluster_id and node required"}
+    cfg = await _cfg_get(cluster_id)
+    mount = cfg.get("backup_dataset_mount") or "/tank_sde/vfs/backup"
+    try:
+        script = _backup_target_script(storage_id, mount, "pve", keep_last)
+        fab = _fabric_path(mount + "/pve")
+    except (ValueError, TypeError) as e:
+        return {"error": str(e)}
+    info = {"storage_id": storage_id, "path": f"{mount}/pve", "fabric_path": fab,
+            "keep_last": max(1, int(keep_last))}
+    if not confirm:
+        return {"ok": True, "dry_run": True, **info, "command": script}
+    r = await _node_ssh(cluster_id, node, _sh(script), timeout=60)
+    out = r.get("stdout", "")
+    if "NOT_MOUNTED" in out:
+        return {"error": f"{mount} is not mounted on {node}", **info}
+    if "TARGET_OK" not in out and "ALREADY_EXISTS" not in out:
+        return {"error": r.get("error") or (r.get("stderr") or out)[:400] or "failed", **info}
+    await emit_event({"type": "pxstore.progress", "stage": "backup.target",
+                      "message": f"backup storage {storage_id} → {mount}/pve"})
+    return {"ok": True, "dry_run": False, "already_existed": "ALREADY_EXISTS" in out, **info}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
