@@ -946,6 +946,28 @@ body.has-panel #chatStack.resized{ flex:0 0 auto; }
 .doc-chip.active{border-color:var(--acc);background:rgba(90,158,143,.12)}
 .doc-chip .doc-chip-icon{font-size:9.5px;color:var(--acc);font-family:var(--mono);flex-shrink:0}
 .doc-chip .doc-chip-name{font-size:10px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px}
+/* attachments of every kind (the Paste board): the drop band, a thumbnail for an image, a kind per chip, the size guard */
+.pa-drop{display:none;align-items:center;justify-content:center;height:34px;margin:6px 9px 0;border-radius:8px;border:1.5px dashed var(--acc);background:color-mix(in srgb,var(--acc) 8%,transparent);color:var(--acc);font-size:10.5px;flex-shrink:0}
+body.pa-dragging .pa-drop{display:flex}
+.doc-chips-lbl{font-size:9px;color:var(--dim2);align-self:center;margin-right:2px;font-family:var(--mono)}
+.doc-chip .doc-chip-icon.img{width:18px;height:18px;border-radius:4px;background-size:cover;background-position:center;background-color:var(--bg0);font-size:0}
+.doc-chip .doc-chip-icon.link{color:var(--acc3,#e09a55)}.doc-chip .doc-chip-icon.diff{color:var(--err,#e06c75)}.doc-chip .doc-chip-icon.rich{color:#c9955a}.doc-chip .doc-chip-icon.file{color:var(--dim)}
+.doc-chip .doc-chip-meta{font-size:8.5px;color:var(--dim2);font-family:var(--mono)}
+.doc-guard{display:flex;align-items:center;gap:8px;width:100%;padding:6px 8px;margin-top:4px;border-radius:8px;background:color-mix(in srgb,var(--warn,#c9a45a) 10%,var(--bg2));box-shadow:0 0 0 1px var(--warn,#c9a45a);font-size:9.5px;color:var(--dim);line-height:1.45}
+.doc-guard .warn b{color:var(--warn,#c9a45a);font-weight:600}
+.doc-guard .opts{display:flex;gap:4px;margin-left:auto;flex-shrink:0}
+.doc-guard .opts button{height:20px;padding:0 8px;border-radius:10px;border:1px solid var(--border);background:var(--bg1);font-size:9px;color:var(--dim);cursor:pointer}
+.doc-guard .opts button.on{background:var(--warn,#c9a45a);color:var(--bg0);font-weight:600;border-color:transparent}
+#docEditorLang{font-size:9.5px;height:20px;background:var(--bg0);color:var(--dim);border:1px solid var(--border);border-radius:4px}
+.doc-send{display:flex;gap:2px;background:var(--bg0);border-radius:6px;padding:2px}
+.doc-send button{height:18px;padding:0 7px;border-radius:4px;border:none;background:transparent;font-size:9px;color:var(--dim2);cursor:pointer}
+.doc-send button.on{background:var(--bg2);color:var(--text)}
+.doc-ed-body{display:grid;grid-template-columns:1fr 1fr;min-height:140px;max-height:32vh}
+.doc-prev{padding:8px 10px;font-size:10px;color:var(--dim);line-height:1.45;overflow:auto;border-left:1px solid var(--border)}
+.doc-prev b{color:var(--text)}.doc-prev .mono{font-family:var(--mono);font-size:9px;color:var(--dim2)}.doc-prev .mono i{font-style:normal;color:var(--acc2)}
+.doc-prev .pa-tbl{border-collapse:collapse;margin-top:6px;font-family:var(--mono);font-size:9px}.doc-prev .pa-tbl th,.doc-prev .pa-tbl td{border:1px solid var(--border);padding:2px 5px;text-align:left}
+.doc-prev .pa-md{margin-top:6px;font-size:10px;color:var(--text)}
+.pa-att .ico.image{background-size:cover;background-position:center;font-size:0}
 .doc-chip .doc-chip-meta{font-size:8.5px;color:var(--dim2);font-family:var(--mono);flex-shrink:0}
 .doc-chip .doc-chip-x{padding:0 5px;border-radius:50%;color:var(--dim2);background:transparent;border:none;cursor:pointer;font-size:11px;line-height:1;flex-shrink:0}
 .doc-chip .doc-chip-x:hover{color:var(--err);background:rgba(201,107,107,.1)}
@@ -2157,6 +2179,8 @@ html[data-blocks="off"] .pa-att{background:transparent}
            Each chip shows a label, char count, and an × to remove. Clicking
            opens the inline editor below. The chip's full text is appended to
            the next send() call automatically — no manual "insert" step. -->
+      <div id="paDrop" class="pa-drop"><span>Drop to attach · images · files · text · links</span></div>
+      <input type="file" id="paFile" multiple style="display:none" onchange="CH._paFilesChosen(this)">
       <div id="docChips" style="display:none;flex-wrap:wrap;gap:5px;padding:5px 9px 0;border-top:1px solid var(--border);background:var(--bg1);flex-shrink:0"></div>
       <!-- Inline doc editor: revealed when a chip is clicked. Lives in the
            chat column so the user can edit a pasted document without losing
@@ -2165,10 +2189,15 @@ html[data-blocks="off"] .pa-att{background:transparent}
         <div style="display:flex;align-items:center;gap:6px;padding:5px 9px;border-bottom:1px solid var(--border);flex-shrink:0">
           <input id="docEditorTitle" placeholder="Title…" style="flex:1;font-size:10.5px;height:22px;background:transparent;border:none;color:var(--text)" oninput="CH._docChipUpdate()">
           <span id="docEditorMeta" style="font-size:9px;color:var(--dim2);font-family:var(--mono)"></span>
+          <select id="docEditorLang" onchange="CH._docEditorLang(this.value)" title="The language — overrides what was sniffed"><option value="">text</option><option value="diff">diff</option><option value="python">python</option><option value="javascript">javascript</option><option value="json">json</option><option value="markdown">markdown</option><option value="html">html</option><option value="csv">csv</option><option value="log">log</option><option value="yaml">yaml</option><option value="sql">sql</option></select>
+          <span id="docEditorSend" class="doc-send" title="How the model gets it"><button data-send="inline" onclick="CH._docEditorSend('inline')">inline block</button><button data-send="file" onclick="CH._docEditorSend('file')">file the model can open</button><button data-send="both" onclick="CH._docEditorSend('both')">both</button></span>
           <button class="btn xs" onclick="CH._docEditorClose()" title="Hide editor">Hide</button>
           <button class="btn xs danger" onclick="CH._docChipRemoveCurrent()" title="Remove this attachment">Remove</button>
         </div>
-        <textarea id="docEditorBody" style="flex:1;min-height:140px;resize:none;border:none;background:var(--bg0);padding:8px 11px;font-size:11px;font-family:var(--mono);line-height:1.5;color:var(--text)" oninput="CH._docChipUpdate()"></textarea>
+        <div class="doc-ed-body">
+          <textarea id="docEditorBody" style="min-height:140px;resize:none;border:none;background:var(--bg0);padding:8px 11px;font-size:11px;font-family:var(--mono);line-height:1.5;color:var(--text)" oninput="CH._docChipUpdate()"></textarea>
+          <div id="docEditorPrev" class="doc-prev"></div>
+        </div>
       </div>
 
       <!-- Podcast composer: revealed by the Pod toolbar button. Content is
@@ -5541,6 +5570,7 @@ IMPORTANT:
      them. The council and diffuse panels are the chat's own, moved above the composer and given the board's strip. */
   let _cmpTimer=null, _micLevel=0, _micTx=0, _micHist=[];
   function _cmpMount(){
+    try{ _paDropInit(); }catch(_){}
     const box=document.getElementById('cmpStrips'), voice=document.getElementById('cmpVoice');
     if(!box) return;
     // the council and diffuse panels sit above the composer, as strips
@@ -5572,7 +5602,7 @@ IMPORTANT:
   function _cmpChip(k){
     if(k==='context'){ try{ if(window.VeraLHM){ VeraLHM.pick('context/ctx'); const r=document.getElementById('rightRail'); if(r&&r.classList.contains('slim')) toggleRight(); } }catch(_){} return; }
     if(k==='web'){ toggleWebSearch(); }
-    else if(k==='attach'){ const ed=document.getElementById('docEditor'); if(_DOCS.length&&ed&&ed.style.display==='none') _docEditorOpen(_DOCS[0].id); else { const ta=document.getElementById('chatInput'); if(ta){ ta.focus(); appendSys('Attach: paste text, code or a log into the composer — anything over a few lines becomes a card on the message. Drop files onto the composer too.'); } } }
+    else if(k==='attach'){ const ed=document.getElementById('docEditor'); if(_DOCS.length&&ed&&ed.style.display==='none') _docEditorOpen(_DOCS[0].id); else _paPickFiles(); }
     else if(k==='voice'){ toggleMic(); }
     else if(k==='council'){ toggleCouncil(); }
     else if(k==='diffuse'){ toggleSD(); }
@@ -5616,24 +5646,31 @@ IMPORTANT:
   let _LAST_SENT_DOCS=[], _LAST_SENT_TYPED='';
   function _paRenderAttachments(body, typed, docs, extraHtml){
     if(!body||!docs||!docs.length) return;
-    const icon=(d)=>{ const l=(d.lang||'').toLowerCase(); return l==='python'?'py':l==='javascript'?'js':l==='markdown'?'md':l==='json'?'json':l==='html'?'html':l==='diff'?'diff':l==='csv'?'csv':l==='log'?'log':/\.csv$/i.test(d.title||'')?'csv':/log/i.test(d.title||'')?'log':'text'; };
-    const cards=docs.map((d,i)=>{ const lines=(d.body||'').split('\n'); const ex=lines.slice(0,12).join('\n'); const more=lines.length-12;
-      return '<div class="pa-att" data-pa="'+i+'"><div class="hdr" onclick="this.parentElement.classList.toggle(\'open\')"><span class="ico">'+esc(icon(d))+'</span><b>'+esc(d.title||'attachment')+'</b><small>'+(d.lang?esc(d.lang)+' · ':'')+lines.length.toLocaleString()+' lines · '+(d.body||'').length.toLocaleString()+' chars · attached inline</small><span class="op">▾</span></div>'
-        +'<pre>'+esc(ex)+(more>0?'\n<i>… '+more.toLocaleString()+' more lines · Open to read or edit</i>':'')+'</pre>'
-        +'<div class="ft"><button onclick="CH._paOpen(this)">Open</button><button onclick="CH._paCopy(this)">Copy</button></div></div>'; });
+    const icon=(d)=>{ const k=d.kind||'text'; if(k==='image') return 'img'; if(k==='link') return 'url'; if(k==='rich') return 'rich'; if(k==='file') return d.att_kind||'file'; const l=(d.lang||'').toLowerCase(); return l==='python'?'py':l==='javascript'?'js':l==='markdown'?'md':l==='json'?'json':l==='html'?'html':l==='diff'?'diff':l==='csv'?'csv':l==='log'?'log':/\.csv$/i.test(d.title||'')?'csv':/log/i.test(d.title||'')?'log':'text'; };
+    const cards=docs.map((d,i)=>{ const k=d.kind||'text'; const lines=(d.body||'').split('\n'); const ex=lines.slice(0,12).join('\n'); const more=lines.length-12;
+      const how=k==='link'?'a link · the URLs source':k==='image'?'an image · in the session\'s artifacts':(d.send==='file'||!d.body)?'as a file the model can open':(d.send==='both')?'inline and as a file':'attached inline';
+      const meta=k==='link'?esc(d.url||''):k==='image'?_paBytes(d.bytes)+' · '+how:(d.body?((d.lang?esc(d.lang)+' · ':'')+lines.length.toLocaleString()+' lines · '+(d.body||'').length.toLocaleString()+' chars · '):(d.meta?esc(d.meta)+' · ':''))+how;
+      const thumb=k==='image'&&(d.thumb||d.preview)?' style="background-image:url(\''+esc(d.thumb||(BASE+d.preview))+'\')"':'';
+      return '<div class="pa-att" data-pa="'+i+'"><div class="hdr" onclick="this.parentElement.classList.toggle(\'open\')"><span class="ico '+esc(k)+'"'+thumb+'>'+esc(icon(d))+'</span><b>'+esc(d.title||'attachment')+'</b><small>'+meta+'</small><span class="op">▾</span></div>'
+        +(d.body?'<pre>'+esc(ex)+(more>0?'\n<i>… '+more.toLocaleString()+' more lines · Open to read or edit</i>':'')+'</pre>':'')
+        +'<div class="ft">'+((d.body||d.url||d.preview)?'<button onclick="CH._paOpen(this)">Open</button>':'')+(d.body?'<button onclick="CH._paCopy(this)">Copy</button>':'')+'</div></div>'; });
     body.innerHTML=(typed?esc(typed).replace(/\n/g,'<br>'):'<span style="color:var(--dim2)">the attached document'+(docs.length>1?'s':'')+'</span>')+(extraHtml||'')+'<div class="pa-atts">'+cards.join('')+'</div>';
     body._paDocs=docs;
   }
   // a question the chat sent itself: the stash send() left, then cleared
   function _paDecorate(body, extraHtml){ if(!_LAST_SENT_DOCS.length) return; try{ _paRenderAttachments(body, _LAST_SENT_TYPED, _LAST_SENT_DOCS, extraHtml); }catch(_){} _LAST_SENT_DOCS=[]; _LAST_SENT_TYPED=''; }
   // a question read back from history: the "### title\n```lang … ```" blocks _buildDocsPrefix wrote, as cards again
+  // a question read back from history: the "### title\n```lang … ```" blocks _buildDocsPrefix wrote, then its
+  // "[attachment N · kind · name · meta] url?" reference lines, as cards again
   function _paFromMarkdown(txt){
     const docs=[]; let rest=String(txt||''); const re=/^### ([^\n]+)\n```([^\n]*)\n([\s\S]*?)\n```\n*/;
-    for(;;){ const m=rest.match(re); if(!m) break; docs.push({title:m[1].trim(),lang:m[2].trim(),body:m[3]}); rest=rest.slice(m[0].length); }
+    for(;;){ const m=rest.match(re); if(!m) break; docs.push({title:m[1].trim(),lang:m[2].trim(),body:m[3],kind:m[2].trim()==='diff'?'diff':'text'}); rest=rest.slice(m[0].length); }
+    const ra=/^\[attachment \d+ · ([a-z]+)(?: · ([^\]]*?))?\](?: (\S+))?\n*/;
+    for(;;){ const m=rest.match(ra); if(!m) break; const kind=m[1]; const parts=(m[2]||'').split(' · '); const title=kind==='link'?(m[3]||'link').replace(/^https?:\/\//,'').slice(0,60):(parts[0]||kind); docs.push({title, lang:'', body:'', kind:kind==='link'?'link':kind==='image'?'image':'file', att_kind:kind, url:m[3]||'', meta:parts.slice(1).join(' · ')}); rest=rest.slice(m[0].length); }
     return docs.length?{docs,typed:rest.trim()}:null;
   }
   function _paDocOf(btn){ const card=btn.closest('.pa-att'), body=btn.closest('.msg-body'); const i=card?+card.dataset.pa:-1; return body&&body._paDocs?body._paDocs[i]:null; }
-  function _paOpen(btn){ const d=_paDocOf(btn); if(!d) return; const id='doc'+(++_DOC_SEQ); _DOCS.push({id,title:d.title,body:d.body,lang:d.lang}); _renderDocChips(); _docEditorOpen(id); _cmpSync(); }
+  function _paOpen(btn){ const d=_paDocOf(btn); if(!d) return; if(d.url){ try{ window.open(d.url,'_blank','noopener'); }catch(_){} return; } if(!d.body&&d.preview){ try{ window.open(BASE+d.preview,'_blank','noopener'); }catch(_){} return; } const nd=_paAddDoc({title:d.title,body:d.body,lang:d.lang,kind:d.kind==='diff'?'diff':undefined}); _docEditorOpen(nd.id); _cmpSync(); }
   function _paCopy(btn){ const d=_paDocOf(btn); if(!d) return; try{ navigator.clipboard.writeText(d.body||''); btn.textContent='Copied'; setTimeout(()=>{ btn.textContent='Copy'; },1200); }catch(_){} }
 
   /* ── Studio prompt hint — advertises the media/render/code caps ───── */
@@ -8301,7 +8338,7 @@ Your task: decide what to do next to advance toward the goal.
     const docPrefix=_buildDocsPrefix();
     const hasDocs=_DOCS.length>0;
     if(!msg && !hasDocs) return;
-    _LAST_SENT_DOCS=hasDocs?_DOCS.map(d=>({title:d.title,body:d.body,lang:d.lang})):[]; _LAST_SENT_TYPED=msg;
+    _LAST_SENT_DOCS=hasDocs?_DOCS.map(d=>({title:d.title,body:d.body,lang:d.lang,kind:_paKindOf(d),url:d.url||'',preview:d.preview||'',bytes:d.bytes||0,pages:d.pages||0,send:d.send||'inline',thumb:d.thumb||''})):[]; _LAST_SENT_TYPED=msg;
     if(docPrefix){
       msg = docPrefix + (msg||'Please review the attached document(s).');
     }
@@ -14293,51 +14330,155 @@ Your task: decide what to do next to advance toward the goal.
     return '';
   }
 
-  function _onPaste(e){
-    const text=e.clipboardData?.getData('text')||'';
-    if(text.length<PASTE_THRESHOLD) return; // small pastes go in the textarea normally
-    e.preventDefault();
-    // Create a new doc chip and auto-open its editor for review
-    const id='doc'+(++_DOC_SEQ);
-    const title=_docInferTitle(text);
-    const lang=_docInferLang(text);
-    _DOCS.push({id,title,body:text,lang});
-    _renderDocChips();
-    _docEditorOpen(id);
+  /* ── attachments of every kind (the Paste board): images, files, links, rich text — through paste, drop, the picker
+        and /attach; a file goes to POST /chat/attachment (the session's artifact store) and comes back as a record ── */
+  function _paKindOf(d){ return (d&&d.kind)||'text'; }
+  function _paIsUrl(t){ t=(t||'').trim(); return /^https?:\/\/\S+$/i.test(t)&&t.length<600; }
+  function _paBytes(n){ n=+n||0; return n<1024?n+' B':n<1048576?(n/1024).toFixed(1)+' KB':(n/1048576).toFixed(1)+' MB'; }
+  // html → markdown, the pieces that matter kept: headings, paragraphs, lists, links, tables, code
+  function _paHtmlToMd(html){
+    let doc; try{ doc=new DOMParser().parseFromString(html,'text/html'); }catch(_){ return ''; }
+    const walk=(n)=>{ if(n.nodeType===3) return n.textContent.replace(/\s+/g,' ');
+      if(n.nodeType!==1) return ''; const tag=n.tagName.toLowerCase(); const kids=()=>[...n.childNodes].map(walk).join('');
+      if(/^h[1-6]$/.test(tag)) return '\n'+'#'.repeat(+tag[1])+' '+kids().trim()+'\n\n';
+      if(tag==='p'||tag==='div'||tag==='section'||tag==='article') return kids().trim()?'\n'+kids().trim()+'\n\n':'';
+      if(tag==='br') return '\n';
+      if(tag==='strong'||tag==='b') return '**'+kids().trim()+'**';
+      if(tag==='em'||tag==='i') return '_'+kids().trim()+'_';
+      if(tag==='a'){ const href=n.getAttribute('href')||''; const t=kids().trim(); return href&&t?'['+t+']('+href+')':t; }
+      if(tag==='ul'||tag==='ol'){ let i=0; return '\n'+[...n.children].filter(c=>c.tagName.toLowerCase()==='li').map(li=>(tag==='ol'?(++i)+'. ':'- ')+walk(li).trim()).join('\n')+'\n\n'; }
+      if(tag==='li') return kids();
+      if(tag==='pre') return '\n```\n'+n.textContent.replace(/\n$/,'')+'\n```\n\n';
+      if(tag==='code') return '`'+n.textContent+'`';
+      if(tag==='table'){ const rows=[...n.querySelectorAll('tr')].map(tr=>[...tr.children].map(td=>walk(td).trim().replace(/\|/g,'\\|'))); if(!rows.length) return ''; const w=Math.max(...rows.map(r=>r.length)); const line=(r)=>'| '+r.concat(Array(Math.max(0,w-r.length)).fill('')).join(' | ')+' |'; return '\n'+line(rows[0])+'\n|'+' --- |'.repeat(w)+'\n'+rows.slice(1).map(line).join('\n')+'\n\n'; }
+      if(tag==='script'||tag==='style'||tag==='head') return '';
+      return kids(); };
+    return walk(doc.body||doc).replace(/\n{3,}/g,'\n\n').trim();
   }
-
+  function _paAddDoc(rec){
+    const d=Object.assign({id:'doc'+(++_DOC_SEQ), send:'inline', body:'', lang:''}, rec||{});
+    if(!d.title) d.title=_docInferTitle(d.body||'');
+    if(!d.lang&&d.body) d.lang=_docInferLang(d.body);
+    if(!d.kind) d.kind=d.lang==='diff'?'diff':d.lang==='csv'?'csv':d.lang==='log'?'log':(d.lang?'code':'text');
+    _DOCS.push(d); _renderDocChips(); return d;
+  }
+  async function _attUpload(file){
+    const isImg=/^image\//.test(file.type||'');
+    const d=_paAddDoc({kind:isImg?'image':'file', title:file.name||(isImg?'image':'file'), body:'', lang:'', mime:file.type||'', bytes:file.size||0, send:isImg?'file':'file', uploading:true, thumb:isImg?URL.createObjectURL(file):''});
+    try{
+      const fd=new FormData(); fd.append('file', file, file.name||'attachment'); fd.append('session_id', SID||'');
+      const r=await fetch(BASE+'/chat/attachment',{method:'POST',body:fd}); const j=r.ok?await r.json():null;
+      if(j&&j.ok){ d.att=j; d.rel=j.rel; d.preview=j.preview; d.pages=j.pages||0; d.bytes=j.bytes||d.bytes;
+        if(j.text_extracted&&!isImg){ d.body=j.text_extracted; d.lang=d.lang||_docInferLang(d.body); d.kind=j.kind==='pdf'||j.kind==='docx'?'file':(d.lang==='diff'?'diff':d.lang==='csv'?'csv':d.lang==='log'?'log':(d.lang?'code':'text')); d.send=d.body.length<PASTE_THRESHOLD*10?'inline':'file'; } }
+      else { d.error=(j&&j.error)||'upload failed'; appendSys('Attachment upload failed: '+esc(d.title)+(j&&j.error?' — '+esc(j.error):'')); }
+    }catch(e){ d.error=String(e); }
+    d.uploading=false; _renderDocChips(); if(_docActive===d.id) _docEditorOpen(d.id); else if(!_docActive) _docEditorOpen(d.id);
+    return d;
+  }
+  // a pasted text that is not a file: sent as one, so the model can open it (send as file · both, or the size guard)
+  async function _paUploadText(d){
+    if(!d||!d.body||d.att||d.uploading) return;
+    const ext=({python:'py',javascript:'js',markdown:'md',diff:'diff',csv:'csv',log:'log',json:'json',html:'html',yaml:'yml',sql:'sql'})[d.lang]||'txt';
+    const name=(d.title||'document').replace(/[^\w.\-]+/g,'_').replace(/^_+|_+$/g,'').slice(0,60)+(/\.[a-z0-9]{1,5}$/i.test(d.title||'')?'':'.'+ext);
+    d.uploading=true; _renderDocChips();
+    try{ const fd=new FormData(); fd.append('file', new Blob([d.body],{type:'text/plain'}), name); fd.append('session_id', SID||''); const r=await fetch(BASE+'/chat/attachment',{method:'POST',body:fd}); const j=r.ok?await r.json():null; if(j&&j.ok){ d.att=j; d.rel=j.rel; d.preview=j.preview; d.bytes=j.bytes; } }catch(_){}
+    d.uploading=false; _renderDocChips(); if(_docActive===d.id) _docEditorOpen(d.id);
+  }
+  function _paPickFiles(){ const inp=document.getElementById('paFile'); if(inp){ inp.value=''; inp.click(); } }
+  function _paFilesChosen(inp){ [...((inp&&inp.files)||[])].forEach(f=>_attUpload(f)); }
+  function _paIngestText(text, html){
+    if(_paIsUrl(text)){ const u=text.trim(); const d=_paAddDoc({kind:'link', title:u.replace(/^https?:\/\//,'').slice(0,60), body:'', url:u, lang:'', send:'inline'}); _docEditorOpen(d.id); return true; }
+    if(html&&/<(table|ul|ol|h[1-6]|a\s)/i.test(html)&&!/^\s*<pre/i.test(html)){ const md=_paHtmlToMd(html); if(md&&md.length>=Math.min(PASTE_THRESHOLD, Math.max(60, (text||'').length*0.5))){ const d=_paAddDoc({kind:'rich', title:_docInferTitle(md).replace(/^#+\s*/,'').replace(/[*_`]/g,''), body:md, lang:'markdown', send:'inline'}); _docEditorOpen(d.id); return true; } }
+    if((text||'').length<PASTE_THRESHOLD) return false;   // a small paste goes into the textarea as it always did
+    const d=_paAddDoc({body:text}); _docEditorOpen(d.id); return true;
+  }
+  function _onPaste(e){
+    const cd=e.clipboardData; if(!cd) return;
+    const files=[...(cd.files||[])]; const items=[...(cd.items||[])].filter(it=>it.kind==='file');
+    if(files.length||items.length){ e.preventDefault(); (files.length?files:items.map(it=>it.getAsFile()).filter(Boolean)).forEach(f=>_attUpload(f)); return; }
+    const text=cd.getData('text/plain')||cd.getData('text')||''; const html=cd.getData('text/html')||'';
+    if(_paIngestText(text, html)) e.preventDefault();
+  }
+  // drop anywhere on the chat: the band shows while something is dragged over; files upload, text pastes
+  function _paHasPayload(e){ const t=e.dataTransfer&&e.dataTransfer.types; return !!(t&&[...t].some(x=>x==='Files'||x==='text/plain'||x==='text/html'||x==='text/uri-list')); }
+  function _paDropInit(){
+    if(document.body._paDropBound) return; document.body._paDropBound=true; let over=0;
+    document.addEventListener('dragenter', e=>{ if(!_paHasPayload(e)) return; over++; document.body.classList.add('pa-dragging'); });
+    document.addEventListener('dragover', e=>{ if(!_paHasPayload(e)) return; e.preventDefault(); });
+    document.addEventListener('dragleave', e=>{ if(!_paHasPayload(e)) return; over=Math.max(0,over-1); if(!over) document.body.classList.remove('pa-dragging'); });
+    document.addEventListener('drop', e=>{ over=0; document.body.classList.remove('pa-dragging'); const dt=e.dataTransfer; if(!dt) return;
+      if(dt.files&&dt.files.length){ e.preventDefault(); [...dt.files].forEach(f=>_attUpload(f)); return; }
+      const t=dt.getData('text/uri-list')||dt.getData('text/plain')||''; if(t&&(_paIsUrl(t)||t.length>=PASTE_THRESHOLD||dt.getData('text/html'))){ if(_paIngestText(t, dt.getData('text/html')||'')) e.preventDefault(); } });
+  }
+  // the size guard: a running token count of what goes inline against the model's window
+  let _paGuardMode='';
+  function _paTokens(){ return _DOCS.filter(d=>d.send!=='file'&&d.body&&_paKindOf(d)!=='image'&&_paKindOf(d)!=='link').reduce((a,d)=>a+Math.ceil(d.body.length/4),0); }
+  function _paBudget(){ const m=(document.getElementById('ctxMeterLabel')||{}).textContent||''; const mm=m.match(/\/\s*([\d.]+)k/); const win=mm?Math.round(parseFloat(mm[1])*1000):16000; return Math.max(2000, Math.round(win*0.6)); }
+  function _paGuardHtml(){
+    const tok=_paTokens(), bud=_paBudget(); if(tok<=bud) return '';
+    const b=(m,l)=>'<button class="'+(_paGuardMode===m?'on':'')+'" onclick="CH._paGuard(\''+m+'\')">'+l+'</button>';
+    return '<span class="doc-guard"><span class="warn"><b>Large.</b> Together these are '+(tok/1000).toFixed(1)+'k tokens — more than the model\'s window will take with the history ('+(bud/1000).toFixed(0)+'k). Pick what goes inline; the rest goes as files the model can open.</span><span class="opts">'+b('diff','inline the diff')+b('files','files for the rest')+b('all','everything inline')+'</span></span>';
+  }
+  function _paGuard(mode){
+    _paGuardMode=mode;
+    _DOCS.forEach(d=>{ const k=_paKindOf(d); if(k==='image'||k==='link') return; if(mode==='all') d.send='inline'; else if(mode==='files') d.send='file'; else d.send=(k==='diff'||d.lang==='diff')?'inline':'file'; if((d.send==='file'||d.send==='both')&&!d.att&&d.body) _paUploadText(d); });
+    _renderDocChips(); if(_docActive) _docEditorOpen(_docActive);
+  }
   function _renderDocChips(){
     const wrap=document.getElementById('docChips');
     try{ setTimeout(_cmpSync,0); }catch(_){}
     if(!wrap)return;
-    if(!_DOCS.length){
-      wrap.classList.remove('on');
-      wrap.innerHTML='';
-      return;
-    }
+    if(!_DOCS.length){ wrap.classList.remove('on'); wrap.innerHTML=''; return; }
     wrap.classList.add('on');
-    wrap.innerHTML=_DOCS.map(d=>{
-      const cls='doc-chip'+(d.id===_docActive?' active':'');
-      const meta=`${d.body.length.toLocaleString()}c`;
-      const langPill=d.lang?`<span class="doc-chip-icon">${esc(d.lang)}</span>`:'<span class="doc-chip-icon">doc</span>';
+    const ico=(d)=>{ const k=_paKindOf(d); if(k==='image') return '<span class="doc-chip-icon img" style="background-image:url(\''+esc(d.thumb||(d.preview?BASE+d.preview:''))+'\')">img</span>';
+      const lbl=k==='link'?'url':k==='rich'?'rich':k==='file'?((d.att&&d.att.kind==='pdf')?'pdf':(d.att&&d.att.kind==='docx')?'docx':'file'):(d.lang||'doc'); return '<span class="doc-chip-icon '+esc(k)+'">'+esc(lbl)+'</span>'; };
+    const meta=(d)=>{ const k=_paKindOf(d); if(d.uploading) return 'uploading…'; if(d.error) return 'failed'; if(k==='image') return _paBytes(d.bytes); if(k==='link') return 'link';
+      if(k==='file') return (d.pages?d.pages+' pages · ':'')+_paBytes(d.bytes)+(d.body?(d.send==='inline'?' · inline':d.send==='both'?' · both':' · file'):' · file');
+      return d.body.length.toLocaleString()+'c'+(d.send==='file'?' · file':d.send==='both'?' · both':''); };
+    wrap.innerHTML='<span class="doc-chips-lbl">attached · '+_DOCS.length+'</span>'+_DOCS.map(d=>{
+      const cls='doc-chip k-'+_paKindOf(d)+(d.id===_docActive?' active':'');
       return `<span class="${cls}" onclick="CH._docEditorOpen('${d.id}')" title="${esc(d.title)}">`
-           +   langPill
+           +   ico(d)
            +   `<span class="doc-chip-name">${esc(d.title)}</span>`
-           +   `<span class="doc-chip-meta">${meta}</span>`
+           +   `<span class="doc-chip-meta">${esc(meta(d))}</span>`
            +   `<button class="doc-chip-x" onclick="event.stopPropagation();CH._docChipRemove('${d.id}')" title="Remove">&times;</button>`
            + `</span>`;
-    }).join('');
+    }).join('')+_paGuardHtml();
   }
 
+  // the editor: the language picker overrides the sniff, the preview shows the attachment as it will appear, send-as
+  // says how the model gets it (inline block · file the model can open · both)
+  function _paEditorMeta(d){ const k=_paKindOf(d);
+    if(k==='image') return 'image · '+_paBytes(d.bytes)+(d.att?' · stored':d.uploading?' · uploading…':'');
+    if(k==='link') return 'link · the URLs source reads it for this turn';
+    if(k==='file') return ((d.att&&d.att.kind)||'file')+' · '+_paBytes(d.bytes)+(d.pages?' · '+d.pages+' pages':'')+(d.body?' · text extracted':'')+(d.uploading?' · uploading…':'');
+    if(k==='rich') return 'html → markdown · '+d.body.length.toLocaleString()+' chars';
+    return d.body.length.toLocaleString()+' chars · '+d.body.split('\n').length+' lines'+(d.lang?' · '+d.lang+(d.langSet?'':' · sniffed'):''); }
+  function _paPreview(d){
+    const pv=document.getElementById('docEditorPrev'); if(!pv) return; const k=_paKindOf(d); let h='';
+    const ref=(d.send==='file'?'<br><br>The model sees a reference it can open, not the text.':d.send==='both'?'<br><br>The model sees the text inline and a reference it can open.':'');
+    if(k==='image') h='<b>Preview</b><br><br><img src="'+esc(d.thumb||(d.preview?BASE+d.preview:''))+'" style="max-width:100%;max-height:200px;border-radius:4px"><br><span class="mono">the model sees [attachment · image · '+esc(d.title)+'] — the file is in this session\'s artifacts</span>';
+    else if(k==='link') h='<b>'+esc(d.url||'')+'</b><br><br><span class="mono">the model sees the link; the URLs source fetches the page into this turn\'s context</span>';
+    else if(d.lang==='diff'){ const p=(d.body.match(/^\+(?!\+\+)/mg)||[]).length, m=(d.body.match(/^-(?!--)/mg)||[]).length, hk=(d.body.match(/^@@ /mg)||[]).length; h='<b>Preview</b> · rendered as it will appear in the message<br><br><span class="mono">### '+esc(d.title)+' <i>(diff · '+esc(d.send||'inline')+')</i><br>```diff … '+hk+' hunk'+(hk===1?'':'s')+' · +'+p+' −'+m+' ```</span>'+ref; }
+    else if(d.lang==='csv'){ const rows=d.body.split('\n').filter(l=>l.trim()).slice(0,6).map(l=>l.split(',')); h='<b>Preview</b> · the first rows<table class="pa-tbl">'+rows.map((r,i)=>'<tr>'+r.slice(0,6).map(c=>(i?'<td>':'<th>')+esc(c.trim().slice(0,18))+(i?'</td>':'</th>')).join('')+'</tr>').join('')+'</table>'+ref; }
+    else if(d.lang==='markdown'||k==='rich'){ let md=''; try{ md=(typeof renderMd==='function')?renderMd(d.body.slice(0,4000)):esc(d.body.slice(0,1200)); }catch(_){ md=esc(d.body.slice(0,1200)); } h='<b>Preview</b> · rendered'+(k==='rich'?' · html → markdown':'')+'<div class="pa-md">'+md+'</div>'+ref; }
+    else h='<b>Preview</b> · as it will appear in the message<br><br><span class="mono">### '+esc(d.title)+' <i>('+esc(d.lang||'text')+' · '+esc(d.send||'inline')+')</i><br>```'+esc(d.lang||'')+' … '+d.body.split('\n').length+' lines ```</span>'+ref;
+    pv.innerHTML=h;
+  }
+  function _docEditorLang(v){ const d=_DOCS.find(x=>x.id===_docActive); if(!d) return; d.lang=v; d.langSet=true; const k=_paKindOf(d); if(k!=='image'&&k!=='link'&&k!=='rich'&&k!=='file') d.kind=v==='diff'?'diff':v==='csv'?'csv':v==='log'?'log':(v?'code':'text'); _docEditorOpen(d.id); }
+  function _docEditorSend(v){ const d=_DOCS.find(x=>x.id===_docActive); if(!d) return; d.send=v; if((v==='file'||v==='both')&&!d.att&&d.body) _paUploadText(d); _docEditorOpen(d.id); }
   function _docEditorOpen(id){
     const d=_DOCS.find(x=>x.id===id);
     if(!d) return;
     _docActive=id;
+    const k=_paKindOf(d);
     document.getElementById('docEditor').style.display='flex';
     document.getElementById('docEditorTitle').value=d.title;
-    document.getElementById('docEditorBody').value=d.body;
-    document.getElementById('docEditorMeta').textContent=
-      `${d.body.length.toLocaleString()} chars · ${d.body.split('\n').length} lines${d.lang?' · '+d.lang:''}`;
+    const body=document.getElementById('docEditorBody'); body.value=d.body||''; body.style.display=(k==='image'||k==='link')?'none':''; body.readOnly=false;
+    const lang=document.getElementById('docEditorLang'); if(lang){ lang.value=d.lang||''; lang.style.display=(k==='image'||k==='link')?'none':''; }
+    const sendEl=document.getElementById('docEditorSend'); if(sendEl){ sendEl.style.display=(k==='link'||k==='image')?'none':''; sendEl.querySelectorAll('button').forEach(b=>b.classList.toggle('on', b.dataset.send===(d.send||'inline'))); }
+    document.getElementById('docEditorMeta').textContent=_paEditorMeta(d);
+    _paPreview(d);
     _renderDocChips();
   }
 
@@ -14352,9 +14493,9 @@ Your task: decide what to do next to advance toward the goal.
     const d=_DOCS.find(x=>x.id===_docActive);
     if(!d) return;
     d.title=document.getElementById('docEditorTitle').value||d.title;
-    d.body =document.getElementById('docEditorBody').value;
-    document.getElementById('docEditorMeta').textContent=
-      `${d.body.length.toLocaleString()} chars · ${d.body.split('\n').length} lines${d.lang?' · '+d.lang:''}`;
+    if(_paKindOf(d)!=='image'&&_paKindOf(d)!=='link'){ d.body =document.getElementById('docEditorBody').value; if(d.att&&d.body!==((d.att.text_extracted)||'')) { d.att=null; d.rel=''; } }   // edited: the stored file is stale
+    document.getElementById('docEditorMeta').textContent=_paEditorMeta(d);
+    _paPreview(d);
     _renderDocChips();
   }
 
@@ -14373,11 +14514,17 @@ Your task: decide what to do next to advance toward the goal.
      each doc as a distinct labelled block. Returns '' if no docs. */
   function _buildDocsPrefix(){
     if(!_DOCS.length) return '';
-    const blocks=_DOCS.map(d=>{
-      const lang=d.lang||'';
-      return `### ${d.title}\n\`\`\`${lang}\n${d.body}\n\`\`\``;
+    const blocks=[], refs=[]; let n=0;
+    _DOCS.forEach(d=>{ n++; const k=_paKindOf(d);
+      if(k==='link'){ refs.push('[attachment '+n+' · link] '+d.url); return; }
+      if(k==='image'){ refs.push('[attachment '+n+' · image · '+d.title+' · '+_paBytes(d.bytes)+(d.rel?' · at ./'+d.rel+' in this session\'s artifacts':'')+']'); return; }
+      const inline=(d.send!=='file')||!d.att;                       // a file the model can open needs the stored copy
+      const asFile=(d.send==='file'||d.send==='both')&&!!d.att;
+      if(inline&&d.body){ const lang=d.lang||''; blocks.push(`### ${d.title}\n\`\`\`${lang}\n${d.body}\n\`\`\``); }
+      if(asFile) refs.push('[attachment '+n+' · '+((d.att&&d.att.kind)||'file')+' · '+d.title+' · '+_paBytes(d.bytes||d.body.length)+(d.pages?' · '+d.pages+' pages':'')+' · at ./'+d.rel+' in this session\'s artifacts — open it to read]');
+      else if(!d.body) refs.push('[attachment '+n+' · '+((d.att&&d.att.kind)||'file')+' · '+d.title+' · '+_paBytes(d.bytes)+(d.rel?' · at ./'+d.rel+' in this session\'s artifacts — open it to read':'')+']');
     });
-    return blocks.join('\n\n')+'\n\n';
+    return (blocks.length?blocks.join('\n\n')+'\n\n':'')+(refs.length?refs.join('\n')+'\n\n':'');
   }
 
   /* Drop all pinned docs after a successful send — same lifecycle as
@@ -14703,6 +14850,7 @@ Your task: decide what to do next to advance toward the goal.
      text, so file paths etc. aren't hijacked. ════════════════════════ */
   const SLASH_COMMANDS=[
     {name:'find', alias:['search','palette','menu','k'], arg:'query', desc:'Command palette — search panels, agents, settings, caps', run:(a)=>cmdOpen({query:(a||'').trim()})},
+    {name:'attach', alias:['file','upload'], arg:'', desc:'Attach files — images, documents, code — to the next message (or paste / drop them)', run:()=>{ _paPickFiles(); return true; }},
     {name:'new', alias:['create'], arg:'thing', desc:'Create a DAG, fabric source, or dream', run:(a)=>cmdOpen({tab:'create',query:(a||'').trim()})},
     {name:'dag', arg:'goal', desc:'Set up / build a DAG workflow', run:_slashDag},
     {name:'flow', alias:['builder'], desc:'Open the visual DAG flow builder', run:()=>cmdOpen({view:'flow-dag'})},
@@ -16135,7 +16283,7 @@ Your task: decide what to do next to advance toward the goal.
     setDensity,toggleBlocks,
     _uiAskAnswer,_uiAskPick,_uiDirectiveApply,
     _cmpChip,_cmpSync,_paOpen,_paCopy,
-    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,
+    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
     _persistMediaCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},
