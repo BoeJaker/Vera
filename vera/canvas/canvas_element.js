@@ -581,7 +581,9 @@
       const cols = Math.max(1, Math.min(4, parseInt(this.getAttribute('columns') || '1', 10) || 1)); const W = st.clientWidth || 300, gap = 10; const w = Math.floor((W - gap * (cols - 1)) / cols);
       const cards = [...st.querySelectorAll('.it')]; cards.forEach((c) => { c.style.width = w + 'px'; });
       const items = cards.map((c) => ({ key: c.dataset.key, h: c.offsetHeight, mid: c.dataset.mid || '' }));
-      const P = place(items, this._turns || {}, { columns: cols, gap, colWidth: w, pad: 0 });
+      const bar = this.shadowRoot.querySelector('.addbar'), bh = this.shadowRoot.querySelector('.band.now > .band-h');
+      const pad = (bar ? bar.offsetHeight : 0) + (bh ? bh.offsetHeight : 0);   // the sticky heads overlay the stage's top: nothing is placed under them
+      const P = place(items, this._turns || {}, { columns: cols, gap, colWidth: w, pad });
       P.placements.forEach((p) => { const c = cards.find((x) => x.dataset.key === p.key); if (!c) return; c.style.left = p.x + 'px'; c.style.top = p.y + 'px'; c.dataset.col = String(p.col); c.classList.toggle('level', !!p.level); });
       // the stage is at least as tall as the transcript's scroll height, so the column can scroll in step with it
       st.style.height = Math.max(P.height, (this._turnsH || 0) + 40) + 'px'; this._placed = P;
