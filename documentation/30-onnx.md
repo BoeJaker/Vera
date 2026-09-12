@@ -170,6 +170,25 @@ Each exported model is promoted to its own `ml.onnx.model.<slug>` cap (MCP / DAG
 / HTTP callable) with no torch loaded. These are re-registered from disk at
 startup so they survive restarts.
 
+### Capability identity and artifact authority
+
+The two invocation forms currently remain callable, but they have different
+architectural roles. `ml.onnx.run` is the stable executor and accepts an
+artifact selector; `ml.onnx.model.<slug>` is an artifact-bound compatibility
+surface restored from the export manifest. New integrations should prefer the
+stable executor rather than creating another global capability identity for
+every model.
+
+Artifact identity belongs to the provider-neutral `ModelPackage` registry.
+Legacy bindings can associate both current invocation forms with one immutable
+package without changing execution. This separation lets discovery present
+models as catalog data while keeping existing MCP, DAG, and HTTP callers
+working. It does not authorize removal of dynamic capabilities: stored
+definitions, external consumers, runtime calls, and inference parity must be
+measured before any routing or retirement decision. The current system
+inventory exposes artifact-provider interfaces but does not yet enumerate
+model-package instances.
+
 ### Verified parity
 
 Offline against `dense → gelu → layer_norm → dense+softmax`:
