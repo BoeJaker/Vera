@@ -105,6 +105,11 @@ pre{background:var(--bg);border:1px solid var(--bd);border-radius:7px;padding:10
 .kv b{color:var(--t1)}
 #status-tile .lbl{color:var(--t2);text-transform:uppercase;letter-spacing:.08em;font-size:9px;margin-bottom:5px}
 #status-tile .row{display:flex;align-items:center;gap:6px}
+details.fold{margin-top:18px;background:var(--s2);border:1px solid var(--bd);border-radius:9px;padding:10px 12px}
+details.fold>summary{cursor:pointer;color:var(--t2);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+details.fold[open]>summary{margin-bottom:10px}
+details.fold .twrap{background:var(--bg1)}
+.kv code{font-size:11px;color:var(--t1);word-break:break-all}
 </style>
 <link rel="stylesheet" href="/ui/vera-panel.css">
 </head>
@@ -120,7 +125,7 @@ pre{background:var(--bg);border:1px solid var(--bd);border-radius:7px;padding:10
          moved to Provision → Backends; VSCode targets moved to Remote IDE. -->
     <nav id="nav">
       <button class="nav-btn active" data-p="overview" onclick="P.show('overview',this)"><span class="gl">▤</span><span>Overview</span></button>
-      <button class="nav-btn" data-p="fs" onclick="P.show('fs',this)"><span class="gl">🗂</span><span>File Server</span></button>
+      <button class="nav-btn" data-p="fs" onclick="P.show('fs',this)"><span class="gl">🗂</span><span>File Fabric</span></button>
       <button class="nav-btn" data-p="store" onclick="P.show('store',this)"><span class="gl">◱</span><span>Model Store</span></button>
       <button class="nav-btn" data-p="veradata" onclick="P.show('veradata',this)"><span class="gl">🗄</span><span>Vera Data</span></button>
       <button class="nav-btn" data-p="estate" onclick="P.show('estate',this)"><span class="gl">⛃</span><span>Estate &amp; Backup</span></button>
@@ -169,28 +174,82 @@ pre{background:var(--bg);border:1px solid var(--bd);border-radius:7px;padding:10
       </table></div>
     </div>
 
-    <!-- FILE SERVER -->
+    <!-- FILE FABRIC — VFS-02 is the estate's file server (vfs.* caps). The
+         hypervisor Samba share this pane used to build is kept below as
+         legacy and retired in stages (pxstore.fs.retire). -->
     <div class="pane" id="p-fs">
-      <div class="note"><b>One connection, real names.</b> Provision puts Samba on the
-        PVE host; Sync builds <b>/srv/vera-fs/&lt;guest-name&gt;</b> links straight onto each
-        container's ZFS subvol (host pools + non-ZFS drives appear under <b>_host/</b>).
-        Running VMs are attached live via sshfs when their SSH creds are enrolled
-        (VM disk images can't be host-mounted while running). The share uses samba
-        wide-links — treat it as a trusted-LAN admin share.</div>
-      <div class="frow">
-        <div class="field"><label>SMB user</label><input id="fsUser" value="vera"></div>
-        <div class="field"><label>SMB password (first run)</label><input id="fsPass" type="password" placeholder="set once"></div>
-        <div class="field"><label>Share root</label><input id="fsRoot" placeholder="/srv/vera-fs"></div>
-        <button class="btn pri" onclick="P.fsProvision()">Provision</button>
-        <button class="btn" onclick="P.fsSync()">↺ Sync share tree</button>
-        <label class="checkrow" style="font-size:11px;color:var(--t2)"><input type="checkbox" id="fsVMs"> mount running VMs (sshfs)</label>
-      </div>
-      <div id="fsShareInfo" class="kv" style="margin-bottom:10px"></div>
-      <div class="section-h">Share tree</div>
-      <div class="twrap"><table id="fsTbl">
-        <thead><tr><th>Entry</th><th>Kind</th><th>Target</th></tr></thead>
-        <tbody><tr><td colspan="3" class="empty">Provision + sync, then refresh</td></tr></tbody>
+      <div class="note"><b>VFS-02 is the file server.</b> Every share, the name-keyed estate
+        tree (every container and VM filesystem, read-only) and the model repository are
+        served from one container over SMB3, NFS 4.2, and a WireGuard door for devices away
+        from home. Its own timer rebuilds the estate tree every 5 minutes, so new guests
+        appear without anyone pressing Sync.</div>
+      <div class="grid" id="vfsSvc"><div class="empty">Loading VFS-02…</div></div>
+
+      <div class="section-h">Shares <span class="kv" id="vfsHost"></span></div>
+      <div class="twrap"><table id="vfsShareTbl">
+        <thead><tr><th>Share</th><th>Drive</th><th>Windows path</th><th>NFS</th><th>Access</th></tr></thead>
+        <tbody><tr><td colspan="5" class="empty">—</td></tr></tbody>
       </table></div>
+      <div class="frow" id="vfsSetup"></div>
+
+      <div class="section-h">Estate tree <span class="kv" id="vfsEstateLab"></span>
+        <button class="btn sm" style="margin-left:10px" onclick="P.vfsEstateSync()">↺ Rebuild now</button></div>
+      <div class="twrap"><table id="vfsEstateTbl">
+        <thead><tr><th>Guest</th><th>Kind</th><th>Source</th></tr></thead>
+        <tbody><tr><td colspan="3" class="empty">—</td></tr></tbody>
+      </table></div>
+      <div id="vfsSkipped" class="kv" style="margin:-6px 2px 12px"></div>
+
+      <div class="section-h">Devices on the WireGuard door</div>
+      <div class="twrap"><table id="vfsPeerTbl">
+        <thead><tr><th>Device</th><th>Tunnel address</th><th>Last handshake</th><th></th></tr></thead>
+        <tbody><tr><td colspan="4" class="empty">—</td></tr></tbody>
+      </table></div>
+      <div class="frow">
+        <div class="field"><label>New device name</label><input id="vfsPeerName" placeholder="phone-pixel"></div>
+        <button class="btn" onclick="P.vfsPeerAdd()">+ Enrol device</button>
+      </div>
+      <div id="vfsPeerCfg" style="display:none">
+        <div class="note" style="border-color:var(--warn)"><b>This config contains the device's private key.</b>
+          Import it into the WireGuard app now. It is not stored anywhere and will not be shown again.</div>
+        <pre id="vfsPeerCfgText"></pre>
+        <div class="frow">
+          <button class="btn sm" onclick="P.copy($('vfsPeerCfgText').textContent)">⧉ Copy config</button>
+          <button class="btn sm" onclick="P.vfsPeerCfgClose()">Done — clear it</button>
+        </div>
+      </div>
+
+      <details class="fold" id="fsLegacy">
+        <summary>Legacy: Samba on the hypervisor <span id="fsLegacyPill"></span></summary>
+        <div class="note">The share this pane used to build: <b>\\node\vera-fs</b>, Samba running on
+          the Proxmox host itself with wide links. VFS-02 replaces it. <b>Retire</b> stops and
+          disables smbd but keeps its config and share tree, so <b>Restore</b> brings it straight
+          back; it refuses while anyone is connected.</div>
+        <div class="frow">
+          <span id="fsLegacyState" class="kv">—</span>
+          <span class="spacer"></span>
+          <button class="btn danger" id="fsRetireBtn" onclick="P.fsRetire(false)">Retire legacy share</button>
+          <button class="btn" onclick="P.fsRetire(true)">Restore</button>
+        </div>
+        <div class="frow">
+          <div class="field"><label>SMB user</label><input id="fsUser" value="vera"></div>
+          <div class="field"><label>SMB password (first run)</label><input id="fsPass" type="password" placeholder="set once"></div>
+          <div class="field"><label>Share root</label><input id="fsRoot" placeholder="/srv/vera-fs"></div>
+          <button class="btn" onclick="P.fsProvision()">Provision</button>
+          <button class="btn" onclick="P.fsSync()">↺ Sync share tree</button>
+          <label class="checkrow" style="font-size:11px;color:var(--t2)"><input type="checkbox" id="fsVMs"> mount running VMs (sshfs)</label>
+        </div>
+        <div class="frow">
+          <div class="field"><label>Saved share root</label><input id="setRoot" placeholder="/srv/vera-fs"></div>
+          <label class="checkrow" style="font-size:11px;color:var(--t2)"><input type="checkbox" id="setVMs"> sshfs running VMs on sync</label>
+          <button class="btn" onclick="P.saveSettings()">Save</button>
+        </div>
+        <div id="fsShareInfo" class="kv" style="margin-bottom:10px"></div>
+        <div class="twrap"><table id="fsTbl">
+          <thead><tr><th>Entry</th><th>Kind</th><th>Target</th></tr></thead>
+          <tbody><tr><td colspan="3" class="empty">—</td></tr></tbody>
+        </table></div>
+      </details>
     </div>
 
     <!-- CPU / NUMA — shown via the Workers panel's Proxmox pane
@@ -231,62 +290,84 @@ pre{background:var(--bg);border:1px solid var(--bd);border-radius:7px;padding:10
       </div>
     </div>
 
-    <!-- MODEL STORE -->
+    <!-- MODEL STORE — one dataset, read-only on every node, one writer on
+         VFS-02 (pxstore.store.* / pxstore.models.pull). -->
     <div class="pane" id="p-store">
-      <div class="note"><b>One copy of every model.</b> A central ZFS dataset holds
-        models / images / artifacts; consumer CTs get it as a <b>read-only bind mount</b>
-        (mpN,ro=1 — restart the CT to apply). Workflow for ollama, ollama-a, ollama-b:
-        ① Provision → ② Consolidate each CT (rsyncs its local models in, no downtime)
-        → ③ Attach ro to all three (keep <i>one</i> writer rw if you pull new models from
-        inside a CT) → ④ re-run Consolidate with <i>free source space</i> ticked.
-        <br><b>Gitea?</b> Not for model blobs — git (even LFS) is the wrong shape for
-        50 GB weights. Keep Gitea for code, use this dataset for models, and a Docker
-        registry (Gitea's built-in OCI registry works) for images.</div>
-      <div class="frow">
-        <div class="field"><label>Store dataset</label><input id="stDataset" value="rpool/data/vera-store"></div>
-        <div class="field sm"><label>Quota (opt)</label><input id="stQuota" placeholder="2T"></div>
-        <button class="btn pri" onclick="P.storeProvision()">① Provision store</button>
-        <span id="stInfo" class="kv"></span>
-      </div>
-      <div class="section-h">② Consolidate a CT's models into the store</div>
-      <div class="frow">
-        <div class="field"><label>Container</label><select id="conCT"></select></div>
-        <div class="field"><label>Model dir inside CT</label><input id="conSrc" value="/root/.ollama/models"></div>
-        <div class="field"><label>Store subdir</label><input id="conSub" value="models/ollama"></div>
-        <label class="checkrow" style="font-size:11px;color:var(--t2)"><input type="checkbox" id="conDel"> free source space (rename away after copy)</label>
-        <button class="btn" onclick="P.storeConsolidate()">Run rsync</button>
-      </div>
-      <pre id="conOut" style="display:none"></pre>
-      <div class="section-h">③ Attach store to a CT (read-only bind mount)</div>
-      <div class="frow">
-        <div class="field"><label>Container</label><select id="atCT"></select></div>
-        <div class="field"><label>Store subdir</label><input id="atSub" value="models/ollama"></div>
-        <div class="field"><label>Mount at (inside CT)</label><input id="atPath" value="/.ollama/models" title="Not /root: unprivileged containers cannot traverse it, and ollama then fails to start. Must match OLLAMA_MODELS in ollama-vera.service."></div>
-        <label class="checkrow" style="font-size:11px;color:var(--t2)"><input type="checkbox" id="atRO" checked> read-only</label>
-        <button class="btn" onclick="P.storeAttach()">Attach</button>
-      </div>
-      <div id="atOut" class="kv"></div>
-      <div class="section-h">Pull a model (store-aware)</div>
+      <div class="note"><b>One copy of every model, one writer.</b> Every Ollama node mounts the
+        store <b>read-only</b> with pruning off, so no node can delete another's models. New
+        models are pulled by the store's single writer, an Ollama on VFS-02 that listens only on
+        its own loopback, and appear on every node at once. VFS-02 also publishes the store
+        read-only for other machines.</div>
+      <div class="grid" id="stTiles"><div class="empty">Loading the store…</div></div>
+
+      <div class="section-h">Nodes serving from the store</div>
+      <div class="twrap"><table id="stConsTbl">
+        <thead><tr><th>Container</th><th>Status</th><th>Mounted at</th><th>Mode</th></tr></thead>
+        <tbody><tr><td colspan="4" class="empty">—</td></tr></tbody>
+      </table></div>
+
+      <div class="section-h">Pull a model</div>
       <div class="frow">
         <div class="field"><label>Model</label><input id="plModel" placeholder="llama3.1:8b"></div>
-        <div class="field sm"><label>Via</label><select id="plVia"><option value="auto">auto</option><option value="store">store (writer)</option><option value="direct">direct</option></select></div>
-        <div class="field"><label>Instance (direct)</label><select id="plInst"></select></div>
+        <div class="field sm"><label>Into</label><select id="plVia" onchange="P.plViaChanged()"><option value="store">the store</option><option value="direct">one instance</option></select></div>
+        <div class="field" id="plInstWrap" style="display:none"><label>Instance</label><select id="plInst"></select></div>
         <button class="btn pri" onclick="P.modelPull()">⇣ Pull</button>
-        <span id="plOut" class="kv"></span>
       </div>
-      <div class="note" style="margin-top:6px">Via <b>store</b>: the pull runs on the
-        designated writer instance only — every read-only consumer sees the model
-        immediately, nothing is replicated. Via <b>direct</b>: classic per-instance
-        pull, for instances that can't share the store.</div>
-      <div class="section-h">Share the store over the network (hosts on other machines)</div>
+      <div id="plProg" class="metric" style="display:none;margin-bottom:8px">
+        <div class="lab"><span id="plProgLab">starting…</span><span id="plProgPct"></span></div>
+        <div class="bar"><i id="plProgBar" style="width:0%"></i></div>
+      </div>
+      <div id="plOut" class="kv"></div>
+      <div class="note" style="margin-top:8px"><b>The store</b> downloads on VFS-02 in the
+        background, so closing this panel does not stop it. <b>One instance</b> pulls into that
+        instance's own disk, which only works for an instance that does <i>not</i> serve the
+        shared store.</div>
+
+      <div class="section-h">Share the store with another machine</div>
       <div class="frow">
-        <div class="field"><label>Allow client (IP/CIDR)</label><input id="sxClient" placeholder="192.168.0.0/24"></div>
-        <button class="btn" onclick="P.storeExport()">① NFS-export store</button>
-        <div class="field"><label>Remote host (SSH cred)</label><select id="sxHost"></select></div>
-        <div class="field"><label>PVE node IP</label><input id="sxServer" placeholder="192.168.0.245"></div>
-        <button class="btn" onclick="P.storeAttachRemote()">② Mount on remote host</button>
+        <div class="field"><label>Client (IP or CIDR)</label><input id="sxClient" placeholder="192.168.0.0/24"></div>
+        <button class="btn" onclick="P.storeExport()">Check / admit client</button>
+        <div class="field"><label>Mount on (SSH credential)</label><select id="sxHost"></select></div>
+        <div class="field"><label>File server</label><input id="sxServer" placeholder="VFS-02"></div>
+        <button class="btn" onclick="P.storeAttachRemote()">Mount read-only</button>
       </div>
       <div id="sxOut" class="kv"></div>
+
+      <details class="fold">
+        <summary>Build or extend the store</summary>
+        <div class="note">These already ran for the five Ollama nodes. To add a node: copy its local
+          models in (existing blobs are never rewritten), attach the store read-only, point
+          <code>OLLAMA_MODELS</code> in its <code>ollama-vera.service</code> at the mount path, then
+          restart the container. <b>Gitea?</b> Not for model blobs: keep Gitea for code and its OCI
+          registry for images.</div>
+        <div class="frow">
+          <div class="field"><label>Store dataset</label><input id="stDataset" placeholder="tank_sdh/vera-store"></div>
+          <div class="field sm"><label>Quota (opt)</label><input id="stQuota" placeholder="2T"></div>
+          <button class="btn" onclick="P.storeProvision()">Provision store</button>
+          <span id="stInfo" class="kv"></span>
+        </div>
+        <div class="frow">
+          <div class="field"><label>Store writer: copy ollama from</label><select id="wrSrc"></select></div>
+          <button class="btn" onclick="P.writerProvision()">Install / update writer on VFS-02</button>
+          <span id="wrOut" class="kv"></span>
+        </div>
+        <div class="frow">
+          <div class="field"><label>Copy models from</label><select id="conCT"></select></div>
+          <div class="field"><label>Model dir inside CT</label><input id="conSrc" value="/.ollama/models" title="Read OLLAMA_MODELS from the container's ollama-vera.service; it differs per node."></div>
+          <div class="field"><label>Store subdir</label><input id="conSub" value="models/ollama"></div>
+          <label class="checkrow" style="font-size:11px;color:var(--t2)"><input type="checkbox" id="conDel"> free source space (rename away after copy)</label>
+          <button class="btn" onclick="P.storeConsolidate()">Run rsync</button>
+        </div>
+        <pre id="conOut" style="display:none"></pre>
+        <div class="frow">
+          <div class="field"><label>Attach to</label><select id="atCT"></select></div>
+          <div class="field"><label>Store subdir</label><input id="atSub" value="models/ollama"></div>
+          <div class="field"><label>Mount at (inside CT)</label><input id="atPath" value="/.ollama/models" title="Not /root: unprivileged containers cannot traverse it, and ollama then fails to start. Must match OLLAMA_MODELS in ollama-vera.service."></div>
+          <label class="checkrow" style="font-size:11px;color:var(--t2)"><input type="checkbox" id="atRO" checked> read-only</label>
+          <button class="btn" onclick="P.storeAttach()">Attach</button>
+        </div>
+        <div id="atOut" class="kv"></div>
+      </details>
     </div>
 
     <!-- VERA DATA -->
@@ -314,20 +395,24 @@ pre{background:var(--bg);border:1px solid var(--bd);border-radius:7px;padding:10
     <div class="pane" id="p-estate">
       <div class="note"><b>The whole estate in one place.</b> Scan lists ZFS pools,
         datasets, <b>non-ZFS mounts</b>, per-guest (VM/CT) disk usage on every PVE node
-        <i>and</i> volume/image sizes on every Docker host. Below: keep the share tree
-        in sync on a schedule (daily by default) and back everything up to a
-        dedicated target (vzdump for guests, tarballs for docker volumes).</div>
+        <i>and</i> volume/image sizes on every Docker host. VFS-02 keeps the estate tree current
+        by itself. Backups go to a PVE storage, ideally the one inside VFS-02's backup share, so
+        dumps do not sit on the hypervisor's root disk.</div>
 
       <div class="section-h">Estate storage
         <button class="btn sm" style="margin-left:10px" onclick="P.estateScan()">Scan estate</button></div>
       <div id="estOut"><div class="empty">Click “Scan estate” — probes every mapped PVE node and Docker host.</div></div>
 
-      <div class="section-h">Share-tree auto-sync</div>
+      <div class="section-h">Estate tree</div>
       <div class="frow">
-        <label class="checkrow" style="font-size:11px;color:var(--t2)"><input type="checkbox" id="estSyncEn" onchange="P.estSyncSave()"> enabled</label>
-        <div class="field sm"><label>Every (hours)</label><input id="estSyncInt" type="number" min="1" value="24" onchange="P.estSyncSave()"></div>
-        <button class="btn" onclick="P.estSyncRun()">↺ Sync now</button>
+        <span id="estTreeState" class="kv">VFS-02 rebuilds it every 5 minutes on its own timer.</span>
+        <button class="btn" onclick="P.estSyncRun()">↺ Rebuild now</button>
         <span id="estSyncLast" class="kv"></span>
+      </div>
+      <div class="frow">
+        <label class="checkrow" style="font-size:11px;color:var(--t2)"><input type="checkbox" id="estSyncEn" onchange="P.estSyncSave()"> also trigger from Vera every</label>
+        <div class="field sm"><label>Hours</label><input id="estSyncInt" type="number" min="1" value="24" onchange="P.estSyncSave()"></div>
+        <label class="checkrow" style="font-size:11px;color:var(--t2)"><input type="checkbox" id="estSyncLegacy" onchange="P.estSyncSave()"> include the legacy hypervisor share</label>
       </div>
       <div id="estSyncMsg" class="kv" style="white-space:pre-wrap"></div>
 
@@ -335,7 +420,8 @@ pre{background:var(--bg);border:1px solid var(--bd);border-radius:7px;padding:10
       <div class="frow">
         <label class="checkrow" style="font-size:11px;color:var(--t2)"><input type="checkbox" id="estBkEn" onchange="P.estBkSave()"> scheduled</label>
         <div class="field sm"><label>Every (hours)</label><input id="estBkInt" type="number" min="1" value="24" onchange="P.estBkSave()"></div>
-        <div class="field"><label>PVE backup storage (vzdump target)</label><input id="estBkStorage" placeholder="e.g. backup-nfs" onchange="P.estBkSave()"></div>
+        <div class="field"><label>Backup target (PVE storage)</label><select id="estBkStorage" onchange="P.estBkSave()"></select></div>
+        <button class="btn" onclick="P.backupTarget()">Create VFS-02 backup target</button>
         <button class="btn pri" onclick="P.estBkRun()">Back up now</button>
       </div>
       <div class="frow">
@@ -354,8 +440,9 @@ pre{background:var(--bg);border:1px solid var(--bd);border-radius:7px;padding:10
 
     <!-- SETUP -->
     <div class="pane" id="p-setup">
-      <div class="note">Storage ops (ZFS, Samba, cpusets) run over <b>root SSH to each
-        PVE node</b> — map every node to an SSH credential below. Credentials themselves
+      <div class="note">Storage ops (ZFS, cpusets, bind mounts) run over <b>root SSH to each
+        PVE node</b>; file-fabric ops run over SSH to <b>VFS-02</b>, found by its
+        host-store label — map every node to an SSH credential below. Credentials themselves
         are created and managed in <b>Workers &amp; Ollama → Connections</b> (the canonical
         SSH store); tag a host <code>proxmox</code> and add it there, then it appears in
         these dropdowns. Reserved CPU ranges are managed in the CPU / NUMA view
@@ -364,12 +451,8 @@ pre{background:var(--bg);border:1px solid var(--bd);border-radius:7px;padding:10
       <div id="nodeMap"><div class="empty">Select a cluster…</div></div>
       <div class="section-h">Store writer &amp; network monitor</div>
       <div class="frow">
-        <div class="field"><label>Store writer instance (pulls land in the shared store)</label><select id="setWriter"></select></div>
+        <div class="field"><label>Store writer host</label><select id="setWriterHost"></select></div>
         <div class="field"><label>NWM-01 SSH credential</label><select id="setNwm"></select></div>
-      </div>
-      <div class="frow">
-        <div class="field"><label>Share root</label><input id="setRoot" placeholder="/srv/vera-fs"></div>
-        <label class="checkrow" style="font-size:11px;color:var(--t2)"><input type="checkbox" id="setVMs"> sshfs running VMs on sync</label>
         <button class="btn pri" onclick="P.saveSettings()">Save settings</button>
       </div>
     </div>
@@ -405,9 +488,9 @@ P.show = (p,el)=>{
   const t=document.querySelector('.nav-btn[data-p="'+p+'"] span:last-child');
   if(t) $('secTitle').textContent=t.textContent;
   if(p==='cpu'){ if(!P.state.cpuMap) P.cpuLoad(); P.renderSetup(); }
-  if(p==='fs') P.fsStatus();
+  if(p==='fs') P.fsLoad();
   if(p==='setup') P.renderSetup();
-  if(p==='store'&&!(P.state.workerRows||[]).length) P.wpLoad();
+  if(p==='store') P.storeLoad();
   if(p==='estate') P.estateInit();
 };
 
@@ -418,11 +501,12 @@ P.estateInit = async ()=>{
     const sc=s.config||{};
     $('estSyncEn').checked=!!sc.enabled;
     $('estSyncInt').value=sc.interval_hours||24;
-    $('estSyncLast').textContent=sc.last_run?('last run '+new Date(sc.last_run*1000).toLocaleString()):'never run';
+    $('estSyncLegacy').checked=!!sc.legacy_share;
+    $('estSyncLast').textContent=sc.last_run?('last triggered from Vera '+new Date(sc.last_run*1000).toLocaleString()):'';
     const bc=b.config||{}, pc=bc.proxmox||{}, dc=bc.docker||{};
     $('estBkEn').checked=!!bc.enabled;
     $('estBkInt').value=bc.interval_hours||24;
-    $('estBkStorage').value=pc.storage||'';
+    P.renderBkTargets(pc.storage||'');
     $('estBkDk').checked=!!dc.enabled;
     $('estBkDest').value=dc.dest||'/var/backups/vera';
     $('estBkInc').value=dc.include||'vera-';
@@ -430,6 +514,32 @@ P.estateInit = async ()=>{
     $('estBkLog').innerHTML=(b.log||[]).slice(-8).reverse().map(e=>
       `${esc((e.ts||'').slice(0,16))} ${e.ok?'✓ ok':'✗ errors'}`).join('<br>')||'no runs yet';
   }catch(e){ toast('Estate config load failed: '+e.message,'err'); }
+  try{
+    const h=await api('/vfs/health','POST',{});
+    if(!h.error) $('estTreeState').innerHTML=`VFS-02 keeps it current on a 5-minute timer · <b>${h.estate_mounts||0}</b> filesystems mounted`;
+  }catch(e){}
+};
+P.renderBkTargets = cur=>{
+  const fabric=((P.state.settings||{}).backup_dataset_mount||'/tank_sde/vfs/backup')+'/';
+  const st=(P.state.inv?.storages||[]).filter(s=>String(s.content||'').split(',').includes('backup'));
+  const opts=st.map(s=>{
+    const inFabric=String(s.path||'').startsWith(fabric);
+    return `<option value="${esc(s.storage)}" ${s.storage===cur?'selected':''}>${esc(s.storage)} — ${esc(s.path||s.type)}${inFabric?' (VFS-02 backup share)':''}</option>`;
+  });
+  if(cur&&!st.some(s=>s.storage===cur)) opts.unshift(`<option value="${esc(cur)}" selected>${esc(cur)}</option>`);
+  $('estBkStorage').innerHTML='<option value="">— not set —</option>'+opts.join('');
+};
+P.backupTarget = async ()=>{
+  const base={cluster_id:P.state.cluster,node:P.state.node};
+  try{
+    const d=await api('/pxstore/backup/target','POST',base);
+    if(d.error) return toast(d.error,'err');
+    if(!confirm(`Register PVE backup storage “${d.storage_id}” at ${d.path}?\n\nDumps show up read-only in VFS-02's backup share (${d.fabric_path}) and the last ${d.keep_last} per guest are kept. Creating it backs nothing up by itself.`)) return;
+    const r=await api('/pxstore/backup/target','POST',{...base,confirm:true});
+    if(r.error) return toast(r.error,'err');
+    toast(r.already_existed?'Backup target already exists':'Backup target created');
+    await P.refresh(); P.renderBkTargets(r.storage_id); P.estBkSave();
+  }catch(e){ toast(e.message,'err'); }
 };
 P.estateScan = async ()=>{
   $('estOut').innerHTML='<div class="empty">Scanning estate (probes every node)…</div>';
@@ -455,15 +565,17 @@ P.estateScan = async ()=>{
 };
 P.estSyncSave = async ()=>{
   try{ await api('/nodes/sync/set','POST',{enabled:$('estSyncEn').checked,
-    interval_hours:parseInt($('estSyncInt').value)||24}); }
+    interval_hours:parseInt($('estSyncInt').value)||24,legacy_share:$('estSyncLegacy').checked}); }
   catch(e){ toast(e.message,'err'); }
 };
 P.estSyncRun = async ()=>{
-  $('estSyncMsg').textContent='syncing…';
+  $('estSyncMsg').textContent='rebuilding…';
   try{
     const r=await api('/nodes/sync/run','POST',{});
-    $('estSyncMsg').textContent=(r.results||[]).map(x=>x.cluster_id+'/'+x.node+' '+(x.ok?('✓ '+x.linked+' links'):('✗ '+(x.error||'')))).join('\n')
-      ||(r.error||'no clusters with node→SSH mappings — set them in Setup');
+    $('estSyncMsg').textContent=(r.results||[]).map(x=>
+      (x.target==='legacy'?'legacy share '+x.node:x.node)+' '+
+      (x.ok?('✓ '+x.linked+' filesystems'):('✗ '+(x.error||((x.failed||0)+' failed'))))).join('\n')
+      ||(r.error||'nothing to sync');
   }catch(e){ $('estSyncMsg').textContent='✗ '+e.message; }
   P.estateInit();
 };
@@ -601,7 +713,106 @@ P.resize = async (vmid,gtype,disk)=>{
   }catch(e){ toast(e.message,'err'); }
 };
 
-/* ── file server ── */
+/* ── file fabric (VFS-02) ── */
+const VFS_SVC={'smbd':'SMB','nfs-server':'NFS','wg-quick@wg0':'WireGuard door',
+  'syncthing@syncthing':'Syncthing','nginx':'Setup endpoint','vfs-estate-sync.timer':'Estate timer'};
+const soft = p => p.catch(e=>({error:e.message}));
+P.fsLoad = async ()=>{
+  const [st,sh,es,pe]=await Promise.all([
+    soft(api('/vfs/status','POST',{})), soft(api('/vfs/shares','POST',{})),
+    soft(api('/vfs/estate/list','POST',{})), soft(api('/vfs/peer/list','POST',{}))]);
+  if(st.error){
+    $('vfsSvc').innerHTML=`<div class="empty">${/HTTP 404/.test(st.error)
+      ?'The file fabric controls (vfs.*) are not loaded in this Vera build.'
+      :'VFS-02 unreachable: '+esc(st.error)}</div>`;
+  }else P.renderVfsStatus(st);
+  P.renderVfsShares(sh); P.renderVfsEstate(es); P.renderVfsPeers(pe);
+  P.fsStatus();
+};
+P.renderVfsStatus = st=>{
+  $('vfsHost').textContent='· '+(st.host||'');
+  const svc=st.services||{};
+  let h=`<div class="card"><div class="hd"><span class="nm">Services</span><span class="sub">${esc(st.host||'')}</span></div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px">`+Object.entries(svc).map(([k,v])=>
+      `<span class="pill ${v==='active'?'ok':'err'}" title="${esc(k)}: ${esc(v)}">${esc(VFS_SVC[k]||k)}</span>`).join('')+`</div></div>`;
+  (st.disk||[]).forEach(d=>{
+    const pct=d.size?Math.round(d.used/d.size*100):0;
+    h+=`<div class="card"><div class="hd"><span class="nm">${esc(String(d.target).replace('/srv/pools/',''))}</span><span class="sub">${fmtB(d.size)}</span></div>
+      <div class="metric"><div class="lab"><span>used ${fmtB(d.used)}</span><span>free ${fmtB(d.avail)}</span></div>
+      <div class="${barClass(pct)}"><i style="width:${pct}%"></i></div></div></div>`;
+  });
+  h+=`<div class="card"><div class="hd"><span class="nm">Reach</span></div>
+    <div class="kv">estate filesystems <b>${(st.estate||{}).mounted||0}</b> · devices <b>${(st.peers||[]).length}</b></div>
+    <div class="kv">cloud <a href="${esc(st.cloud_url)}" target="_blank" rel="noopener">${esc(st.cloud_url)}</a><br>
+    sync <a href="${esc(st.sync_url)}" target="_blank" rel="noopener">${esc(st.sync_url)}</a></div></div>`;
+  $('vfsSvc').innerHTML=h;
+};
+P.renderVfsShares = sh=>{
+  const tb=$('vfsShareTbl').querySelector('tbody');
+  if(sh.error){ tb.innerHTML=`<tr><td colspan="5" class="empty">${esc(sh.error)}</td></tr>`; $('vfsSetup').innerHTML=''; return; }
+  tb.innerHTML=(sh.shares||[]).map(s=>
+    `<tr><td><b>${esc(s.name)}</b></td><td>${s.drive_letter?esc(s.drive_letter)+':':'—'}</td>
+     <td class="kv">${esc(s.unc)} <button class="btn sm" onclick="P.copy(${esc(JSON.stringify(s.unc))})">⧉</button></td>
+     <td class="kv">${esc(s.nfs||'—')}</td>
+     <td>${s.read_only?'<span class="pill dim">read-only</span>':'<span class="pill ok">read-write</span>'}${s.admin_only?' <span class="pill warn">admins</span>':''}</td></tr>`
+  ).join('')||'<tr><td colspan="5" class="empty">no shares</td></tr>';
+  const su=sh.setup||{};
+  $('vfsSetup').innerHTML=su.windows?
+    `<div class="field"><label>Connect a Windows PC (PowerShell)</label><div class="kv"><code>${esc(su.windows)}</code> <button class="btn sm" onclick="P.copy(${esc(JSON.stringify(su.windows))})">⧉</button></div></div>
+     <div class="field"><label>Connect a Linux machine</label><div class="kv"><code>${esc(su.linux)}</code> <button class="btn sm" onclick="P.copy(${esc(JSON.stringify(su.linux))})">⧉</button></div>
+     <div class="hint">The setup endpoint answers on the LAN and the WireGuard door without sign-in.</div></div>`:'';
+};
+P.renderVfsEstate = es=>{
+  const tb=$('vfsEstateTbl').querySelector('tbody');
+  if(es.error){ tb.innerHTML=`<tr><td colspan="3" class="empty">${esc(es.error)}</td></tr>`; $('vfsEstateLab').textContent=''; $('vfsSkipped').innerHTML=''; return; }
+  const rows=(es.entries||[]).slice().sort((a,b)=>String(a.name).localeCompare(String(b.name)));
+  $('vfsEstateLab').textContent=`· ${rows.length} filesystems, read-only`;
+  tb.innerHTML=rows.map(e=>`<tr><td><b>${esc(e.name)}</b></td>
+    <td><span class="pill ${e.kind==='sshfs'?'warn':'dim'}">${e.kind==='sshfs'?'running VM (sshfs)':'dataset'}</span></td>
+    <td class="kv">${esc(e.source)}</td></tr>`).join('')||'<tr><td colspan="3" class="empty">empty — Rebuild now</td></tr>';
+  const sk=es.skipped||[];
+  $('vfsSkipped').innerHTML=sk.length?`Not in the tree (${sk.length}): `+sk.map(s=>typeof s==='string'?esc(s)
+    :`<span title="${esc(s.reason||'')}">${esc(s.name||'?')}</span>`).join(' · '):'';
+};
+P.renderVfsPeers = pe=>{
+  const tb=$('vfsPeerTbl').querySelector('tbody');
+  if(pe.error){ tb.innerHTML=`<tr><td colspan="4" class="empty">${esc(pe.error)}</td></tr>`; return; }
+  tb.innerHTML=(pe.peers||[]).map(p=>`<tr><td><b>${esc(p.name)}</b></td><td class="kv">${esc(p.address)}</td>
+    <td class="kv">${esc(p.last_handshake||'never')}</td>
+    <td><button class="btn sm danger" onclick="P.vfsPeerRemove(${esc(JSON.stringify(p.name))})">Revoke</button></td></tr>`
+  ).join('')||'<tr><td colspan="4" class="empty">no devices enrolled</td></tr>';
+};
+P.vfsPeerAdd = async ()=>{
+  const name=$('vfsPeerName').value.trim();
+  if(!/^[A-Za-z0-9_-]{1,40}$/.test(name)) return toast('Device name: letters, digits, - and _ (max 40)','err');
+  try{
+    const r=await api('/vfs/peer/add','POST',{name});
+    if(r.error) return toast(r.error,'err');
+    $('vfsPeerCfgText').textContent=r.config; $('vfsPeerCfg').style.display='block'; $('vfsPeerName').value='';
+    toast('Enrolled '+name+' at '+r.address);
+    P.renderVfsPeers(await soft(api('/vfs/peer/list','POST',{})));
+  }catch(e){ toast(e.message,'err'); }
+};
+P.vfsPeerCfgClose = ()=>{ $('vfsPeerCfgText').textContent=''; $('vfsPeerCfg').style.display='none'; };
+P.vfsPeerRemove = async name=>{
+  if(!confirm(`Revoke ${name}? It loses access to the file server immediately.`)) return;
+  try{
+    const r=await api('/vfs/peer/remove','POST',{name});
+    if(r.error) return toast(r.error,'err');
+    toast('Revoked '+name); P.renderVfsPeers(await soft(api('/vfs/peer/list','POST',{})));
+  }catch(e){ toast(e.message,'err'); }
+};
+P.vfsEstateSync = async ()=>{
+  toast('Rebuilding the estate tree on VFS-02…');
+  try{
+    const r=await api('/vfs/estate/sync','POST',{});
+    if(r.error) return toast(r.error,'err');
+    toast(`Estate tree: ${r.mounted} filesystems`+((r.failed||[]).length?`, ${r.failed.length} failed`:''));
+    P.renderVfsEstate(await soft(api('/vfs/estate/list','POST',{})));
+  }catch(e){ toast(e.message,'err'); }
+};
+
+/* ── legacy hypervisor share (pxstore.fs.*) ── */
 P.fsProvision = async ()=>{
   try{
     const r=await api('/pxstore/fs/provision','POST',{cluster_id:P.state.cluster,node:P.state.node,
@@ -611,7 +822,7 @@ P.fsProvision = async ()=>{
   }catch(e){ toast(e.message,'err'); }
 };
 P.fsSync = async ()=>{
-  toast('Syncing share tree…');
+  toast('Syncing the legacy share tree…');
   try{
     const r=await api('/pxstore/fs/sync','POST',{cluster_id:P.state.cluster,node:P.state.node,
       smb_user:$('fsUser').value.trim()||'vera',mount_vms:$('fsVMs').checked});
@@ -619,20 +830,39 @@ P.fsSync = async ()=>{
     toast(`Synced: ${r.linked.length} CTs, ${r.vm_mounted.length} VMs, ${r.skipped.length} skipped`);
     if(r.share) $('fsShareInfo').innerHTML=`Connect: <b>${esc(r.share.unc)}</b> (user ${esc(r.share.smb_user)}) — root ${esc(r.share.root)}`;
     P.fsStatus();
-    if(r.skipped.length) console.log('skipped:',r.skipped);
   }catch(e){ toast(e.message,'err'); }
 };
 P.fsStatus = async ()=>{
   if(!P.state.cluster||!P.state.node) return;
   try{
     const r=await api('/pxstore/fs/status','POST',{cluster_id:P.state.cluster,node:P.state.node});
-    if(r.error) return;
-    if(r.share&&!$('fsShareInfo').innerHTML)
-      $('fsShareInfo').innerHTML=`Share: <b>${esc(r.share.unc)}</b> — smbd ${r.running?'<span style="color:var(--ok)">active</span>':'<span style="color:var(--err)">inactive</span>'}`;
+    if(r.error){ $('fsLegacyState').textContent=r.error; return; }
+    const pr=r.probe||{};
+    $('fsLegacyState').innerHTML=`${esc(r.share?.unc||'')} · smbd <b>${r.running?'running':'stopped'}</b>`+
+      `${pr.enabled?' · starts at boot':''} · <b>${pr.sessions??'?'}</b> connected`;
+    $('fsLegacyPill').innerHTML=r.running?'<span class="pill warn">still running</span>':'<span class="pill dim">retired</span>';
+    $('fsRetireBtn').disabled=!r.running;
     $('fsTbl').querySelector('tbody').innerHTML=(r.entries||[]).map(e=>
       `<tr><td>${esc(e.name)}</td><td><span class="pill ${e.kind==='mount'?'ok':'dim'}">${esc(e.kind)}</span></td><td class="kv">${esc(e.target)}</td></tr>`
-    ).join('')||'<tr><td colspan="3" class="empty">empty — run Sync</td></tr>';
+    ).join('')||'<tr><td colspan="3" class="empty">empty</td></tr>';
   }catch(e){}
+};
+P.fsRetire = async restore=>{
+  const base={cluster_id:P.state.cluster,node:P.state.node,restore};
+  try{
+    const d=await api('/pxstore/fs/retire','POST',base);
+    if(d.error) return toast(d.error,'err');
+    const pr=d.probe||{};
+    if(d.blocked) return toast(`${pr.sessions} client(s) still connected to the legacy share. Move them to VFS-02 first.`,'err');
+    const q=restore
+      ?`Restore Samba on ${P.state.node}? smbd and nmbd start again and are re-enabled at boot.`
+      :`Retire the legacy share on ${P.state.node}?\n\nsmbd and nmbd stop and are disabled at boot. The config and share tree are kept, so Restore brings it back. Connected clients: ${pr.sessions??'?'}.`;
+    if(!confirm(q)) return;
+    const r=await api('/pxstore/fs/retire','POST',{...base,confirm:true});
+    if(r.error) return toast(r.error,'err');
+    toast(restore?'Legacy share restored':'Legacy share retired');
+    P.fsStatus();
+  }catch(e){ toast(e.message,'err'); }
 };
 
 /* ── cpu / numa ── */
@@ -694,13 +924,44 @@ P.cpuSuggest = async ()=>{
 P.fillCTSelects = ()=>{
   const cts=(P.state.inv?.guests||[]).filter(g=>g.type==='lxc');
   const opts=cts.map(g=>`<option value="${g.vmid}">${esc(g.name)} (#${g.vmid})</option>`).join('');
-  ['conCT','atCT'].forEach(id=>{ if($(id)) $(id).innerHTML=opts||'<option value="">no CTs</option>'; });
+  ['conCT','atCT','wrSrc'].forEach(id=>{ if($(id)) $(id).innerHTML=opts||'<option value="">no CTs</option>'; });
   if($('sxHost')) $('sxHost').innerHTML=(P.state.sshHosts||[]).map(h=>`<option value="${esc(h.id)}">${esc(h.label||h.host)}</option>`).join('')||'<option value="">no SSH hosts</option>';
   const st=P.state.settings||{};
   if(st.store_mount) $('stInfo').innerHTML=`store: <b>${esc(st.store_dataset)}</b> @ ${esc(st.store_mount)}`;
+  if(st.store_dataset&&!$('stDataset').value) $('stDataset').value=st.store_dataset;
   if(st.share_root){ $('setRoot').placeholder=st.share_root; if(!$('fsRoot').value) $('fsRoot').placeholder=st.share_root; }
   if($('setVMs')) $('setVMs').checked=!!st.mount_vms;
   if($('fsVMs')) $('fsVMs').checked=!!st.mount_vms;
+};
+P.storeLoad = async ()=>{
+  if(!(P.state.workerRows||[]).length) P.wpLoad();
+  if(!P.state.cluster||!P.state.node) return;
+  let r;
+  try{ r=await api('/pxstore/store/status','POST',{cluster_id:P.state.cluster,node:P.state.node}); }
+  catch(e){ $('stTiles').innerHTML=`<div class="empty">${esc(e.message)}</div>`; return; }
+  if(r.error){ $('stTiles').innerHTML=`<div class="empty">${esc(r.error)}</div>`; return; }
+  P.state.store=r;
+  const w=r.writer||{}, s=r.share||{};
+  const tot=(r.used||0)+(r.avail||0), pct=tot?Math.round(r.used/tot*100):0;
+  $('stTiles').innerHTML=
+    `<div class="card"><div class="hd"><span class="nm">${esc(r.dataset)}</span><span class="sub">${esc(r.ratio||'')} compression</span></div>
+      <div class="metric"><div class="lab"><span>used ${fmtB(r.used)}</span><span>free ${fmtB(r.avail)}</span></div>
+      <div class="${barClass(pct)}"><i style="width:${pct}%"></i></div></div>
+      <div class="kv"><b>${r.models}</b> Ollama models · served by <b>${(r.consumers||[]).length}</b> containers</div></div>`+
+    `<div class="card"><div class="hd"><span class="nm">Writer</span><span class="pill ${w.active?'ok':'err'}">${w.active?'running':'not running'}</span><span class="sub">${esc(w.host||'')}</span></div>
+      <div class="kv">${w.error?esc(w.error):`Ollama ${esc(w.version||'?')} · 127.0.0.1:${w.port} only · never prunes`}</div></div>`+
+    `<div class="card"><div class="hd"><span class="nm">Published</span><span class="pill dim">read-only</span></div>
+      <div class="kv">${s.unc?`SMB <b>${esc(s.unc)}</b> <button class="btn sm" onclick="P.copy(${esc(JSON.stringify(s.unc))})">⧉</button><br>`:''}`+
+      `${s.nfs?`NFS <b>${esc(s.nfs)}</b><br>`:''}${(s.clients||[]).map(c=>esc(c.client)).join(' · ')||'not exported'}</div></div>`;
+  $('stConsTbl').querySelector('tbody').innerHTML=(r.consumers||[]).map(c=>
+    `<tr><td><b>${esc(c.name)}</b> <span class="kv">#${c.vmid}</span></td>
+     <td><span class="pill ${c.status==='running'?'ok':'dim'}">${esc(c.status)}</span></td>
+     <td class="kv">${esc(c.ct_path)}</td>
+     <td>${c.ro?'<span class="pill ok">read-only</span>':'<span class="pill err" title="a writable node can prune other nodes’ models">writable</span>'}</td></tr>`
+  ).join('')||'<tr><td colspan="4" class="empty">no container mounts the store yet</td></tr>';
+  const live=(r.consumers||[]).find(c=>c.status==='running');
+  if(live&&$('wrSrc')) $('wrSrc').value=String(live.vmid);
+  if(!$('sxServer').value) $('sxServer').placeholder=w.host||'VFS-02';
 };
 P.storeProvision = async ()=>{
   try{
@@ -709,8 +970,18 @@ P.storeProvision = async ()=>{
     if(r.error) return toast(r.error,'err');
     P.state.settings.store_dataset=r.dataset; P.state.settings.store_mount=r.mountpoint;
     $('stInfo').innerHTML=`store: <b>${esc(r.dataset)}</b> @ ${esc(r.mountpoint)}`;
-    toast('Central store ready at '+r.mountpoint);
+    toast('Central store ready at '+r.mountpoint); P.storeLoad();
   }catch(e){ toast(e.message,'err'); }
+};
+P.writerProvision = async ()=>{
+  const vmid=parseInt($('wrSrc').value); if(!vmid) return toast('Pick a running container with the fleet’s ollama','err');
+  $('wrOut').textContent='installing…';
+  try{
+    const r=await api('/pxstore/store/writer/provision','POST',{cluster_id:P.state.cluster,node:P.state.node,source_vmid:vmid});
+    if(r.error){ $('wrOut').textContent=''; return toast(r.error,'err'); }
+    $('wrOut').innerHTML=`✓ writer ${r.changed?'updated':'already current'} · Ollama ${esc(r.version)} · ${r.models} models`;
+    P.storeLoad();
+  }catch(e){ $('wrOut').textContent=''; toast(e.message,'err'); }
 };
 P.storeConsolidate = async ()=>{
   const vmid=parseInt($('conCT').value); if(!vmid) return toast('Pick a CT','err');
@@ -727,6 +998,7 @@ P.storeConsolidate = async ()=>{
 };
 P.storeAttach = async ()=>{
   const vmid=parseInt($('atCT').value); if(!vmid) return toast('Pick a CT','err');
+  if(!$('atRO').checked&&!confirm('Attach the store WRITABLE?\n\nThe store already has its writer on VFS-02, and a writable node can prune other nodes’ models.')) return;
   try{
     const r=await api('/pxstore/store/attach','POST',{cluster_id:P.state.cluster,node:P.state.node,
       vmid,subdir:$('atSub').value.trim(),ct_path:$('atPath').value.trim(),ro:$('atRO').checked});
@@ -735,6 +1007,7 @@ P.storeAttach = async ()=>{
       ?`Already attached as <b>${esc(r.mp_key)}</b>`
       :`Attached as <b>${esc(r.mp_key)}</b>: ${esc(r.host_path)} → ${esc(r.ct_path)} ${r.ro?'(ro)':'(rw)'} — <b>restart the CT</b> to apply`;
     toast('Attached'+(r.restart_required?' — restart CT '+vmid:''));
+    P.storeLoad();
   }catch(e){ toast(e.message,'err'); }
 };
 
@@ -770,56 +1043,83 @@ P.vdPlan = async ()=>{
 };
 
 /* ── ollama instance registry ──
-   Fills the Model-Store pull select + Setup's store-writer select. Backend
-   switching (ollama⇄vLLM) lives in Workers & Ollama → Nodes; VSCode targets
-   moved to the Remote IDE panel. */
+   Fills the "one instance" pull select. Backend switching (ollama⇄vLLM)
+   lives in Workers & Ollama → Nodes. */
 P.wpLoad = async ()=>{
   try{
     const r=await api('/ollama/instances');   // {iid:{label,…}} keyed by id
     P.state.workerRows=Object.entries(r||{}).filter(([,v])=>v&&typeof v==='object')
       .map(([id,i])=>({id,label:i.label||id}));
     if($('plInst')) $('plInst').innerHTML=P.state.workerRows.map(w=>`<option value="${esc(w.id)}">${esc(w.id)}</option>`).join('');
-    P.renderSetupSelects();
   }catch(e){ toast(e.message,'err'); }
 };
 
-/* ── model pull + network store ── */
+/* ── model pull + network share ── */
+P.plViaChanged = ()=>{ $('plInstWrap').style.display=$('plVia').value==='direct'?'':'none'; };
 P.modelPull = async ()=>{
   const model=$('plModel').value.trim(); if(!model) return toast('Model required','err');
-  $('plOut').textContent='pulling…';
+  const via=$('plVia').value;
+  $('plOut').textContent=via==='store'?'starting on the store writer…':'pulling…';
   try{
-    const r=await api('/pxstore/models/pull','POST',{cluster_id:P.state.cluster,model,
-      via:$('plVia').value,instance_id:$('plInst').value});
-    if(r.error){ $('plOut').textContent=''; return toast(r.error,'err'); }
-    $('plOut').innerHTML=`✓ pulled on <b>${esc(r.routed_to)}</b> (via ${esc(r.via)})`;
-    toast('Model pulled on '+r.routed_to);
+    const r=await api('/pxstore/models/pull','POST',{cluster_id:P.state.cluster,model,via,
+      instance_id:$('plInst').value});
+    if(r.error){ $('plOut').innerHTML=`<span style="color:var(--err)">${esc(r.error)}</span>${r.hint?'<br>'+esc(r.hint):''}`; return; }
+    if(r.via==='store'){
+      $('plOut').textContent=(r.already_running?'already downloading · ':'')+'running on the '+r.routed_to;
+      P.pullWatch(model);
+    }else $('plOut').innerHTML=`✓ pulled on <b>${esc(r.routed_to)}</b>`;
   }catch(e){ $('plOut').textContent=''; toast(e.message,'err'); }
+};
+P.pullWatch = model=>{
+  clearTimeout(P.state._pullT);
+  $('plProg').style.display='block'; $('plProgBar').style.width='0%'; $('plProgPct').textContent='';
+  let unknown=0;
+  const tick=async ()=>{
+    let s; try{ s=await api('/pxstore/models/pull/status','POST',{cluster_id:P.state.cluster,model}); }
+    catch(e){ s={error:e.message}; }
+    const again=()=>{ P.state._pullT=setTimeout(tick,document.visibilityState==='visible'?2000:15000); };
+    if(s.error){ $('plProgLab').textContent=s.error; return again(); }
+    const pct=s.percent??0;
+    $('plProgBar').style.width=pct+'%';
+    $('plProgPct').textContent=s.total?`${fmtB(s.completed)} / ${fmtB(s.total)} · ${pct}%`:'';
+    $('plProgLab').textContent=`${model} — ${s.status||s.state}`;
+    if(s.state==='running') return again();
+    if(s.state==='unknown'&&++unknown<10) return again();
+    if(s.state==='done'){
+      $('plProgBar').style.width='100%';
+      $('plOut').innerHTML=`✓ <b>${esc(model)}</b> is in the store — every node lists it now`;
+      toast('Pulled '+model); P.storeLoad();
+    }else $('plOut').innerHTML=`<span style="color:var(--err)">✗ ${esc(s.error||'the pull did not start')}</span>`;
+  };
+  tick();
 };
 P.storeExport = async ()=>{
   const client=$('sxClient').value.trim(); if(!client) return toast('Client IP/CIDR required','err');
   try{
     const r=await api('/pxstore/store/export','POST',{cluster_id:P.state.cluster,node:P.state.node,client});
     if(r.error) return toast(r.error,'err');
-    $('sxOut').innerHTML='Exported: <b>'+esc(r.export)+'</b>';
-    toast('Store NFS-exported');
+    $('sxOut').innerHTML=(r.already_covered?`Already admitted by <b>${esc(r.export)}</b>`:`Admitted: <b>${esc(r.export)}</b>`)+
+      `<br>fstab: <code>${esc(r.fstab)}</code>`;
+    if(!$('sxServer').value) $('sxServer').value=r.server;
   }catch(e){ toast(e.message,'err'); }
 };
 P.storeAttachRemote = async ()=>{
   const host_id=$('sxHost').value, server=$('sxServer').value.trim();
-  if(!host_id||!server) return toast('Remote host and PVE node IP required','err');
+  if(!host_id) return toast('Pick the host to mount on','err');
+  if(!confirm('Mount the model store read-only on this host? It adds an /etc/fstab entry there.')) return;
   try{
     const r=await api('/pxstore/store/attach_remote','POST',{cluster_id:P.state.cluster,host_id,server});
     if(r.error) return toast(r.error,'err');
-    $('sxOut').innerHTML='Mounted at <b>'+esc(r.mounted_at)+'</b> on remote — bind it into containers with -v '+esc(r.mounted_at)+'/models/ollama:/root/.ollama/models:ro';
-    toast('Store mounted on remote host');
+    $('sxOut').innerHTML=`Mounted at <b>${esc(r.mounted_at)}</b> — ${esc(r.hint||'')}`;
+    toast('Store mounted read-only');
   }catch(e){ toast(e.message,'err'); }
 };
 
 /* ── setup ── */
 P.renderSetupSelects = ()=>{
   const st=P.state.settings||{};
-  if($('setWriter')) $('setWriter').innerHTML='<option value="">— none (direct pulls) —</option>'+
-    (P.state.workerRows||[]).map(w=>`<option value="${esc(w.id)}" ${w.id===st.store_writer_instance?'selected':''}>${esc(w.id)} (${esc(w.label)})</option>`).join('');
+  if($('setWriterHost')) $('setWriterHost').innerHTML='<option value="">VFS-02 (found by its label)</option>'+
+    (P.state.sshHosts||[]).map(h=>`<option value="${esc(h.id)}" ${h.id===st.store_writer_host?'selected':''}>${esc(h.label||h.host)} (${esc(h.host)})</option>`).join('');
   if($('setNwm')) $('setNwm').innerHTML='<option value="">— not set —</option>'+
     (P.state.sshHosts||[]).map(h=>`<option value="${esc(h.id)}" ${h.id===st.nwm_host_id?'selected':''}>${esc(h.label||h.host)}</option>`).join('');
 };
@@ -858,7 +1158,7 @@ P.saveSettings = async ()=>{
     const r=await api('/pxstore/settings/save','POST',{cluster_id:P.state.cluster,node_hosts,
       share_root:$('setRoot').value.trim(),reserved_cpus:P.state.settings.reserved_cpus||[],
       mount_vms:$('setVMs').checked,
-      store_writer_instance:$('setWriter')?$('setWriter').value:'',
+      store_writer_host:$('setWriterHost')?$('setWriterHost').value:'',
       nwm_host_id:$('setNwm')?$('setNwm').value:''});
     if(r.error) return toast(r.error,'err');
     P.state.settings=r.settings; toast('Settings saved'); P.refresh();

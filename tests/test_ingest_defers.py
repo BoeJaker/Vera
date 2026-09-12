@@ -406,3 +406,23 @@ def test_a_turn_recorded_without_embedding_writes_no_memory_node_and_queues_noth
     assert "memory_store" not in calls, "a memory node was written (and embedded) with embedding off"
     assert calls["fabric"] == {"defer": True, "queue": False}, calls
     assert calls.get("broadcast"), "the live turn broadcast must still happen"
+
+
+# ── a person using Vera counts as busy, even with no GPU lease held ──────────
+def test_interactive_use_on_a_cpu_node_reads_as_busy(monkeypatch):
+    """For 12 hours on 2026-09-12 an embed run shared both CPU nodes with a
+    person waiting on chat replies, because the only busy signals were the
+    GPU gate and running loops. The chat path stamps interactive_recent();
+    the probe must honour it."""
+    async def free_gate():
+        return {"nodes": []}
+
+    monkeypatch.setattr(CS, "_running_loop_count", lambda: _zero())
+    monkeypatch.setattr(CS, "CAPABILITY_REGISTRY", {})       # no gate/census/dream caps
+    monkeypatch.setattr(CS._orch, "interactive_recent", lambda *a, **k: True)
+    why = run(CS._system_is_busy())
+    assert "interactive" in why, why
+
+
+async def _zero():
+    return 0

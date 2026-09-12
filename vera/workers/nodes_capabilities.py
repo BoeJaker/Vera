@@ -1343,6 +1343,7 @@ _DEFAULT_SYNC = {
     "interval_hours": 24,          # "daily at the least" — configurable
     "last_run": 0,
     "clusters": {},                # cluster_id -> [pve node names] ([] = all mapped)
+    "legacy_share": False,         # also rebuild the hypervisor Samba tree (pxstore.fs.sync)
 }
 
 
@@ -1350,8 +1351,10 @@ _DEFAULT_SYNC = {
     "nodes.sync.get",
     http_method="GET", http_path="/nodes/sync", http_tags=["nodes"],
     memory="off", silent=True,
-    description="Get the share-tree auto-sync schedule (pxstore.fs.sync on a "
-                "timer). Output: {config}.",
+    description="Get the estate-tree sync schedule. VFS-02 rebuilds its own "
+                "estate tree every 5 minutes; this is the extra trigger from "
+                "Vera, plus whether the legacy hypervisor share is rebuilt too. "
+                "Output: {config}.",
 )
 async def cap_sync_get(trace_id=None) -> Dict:
     return {"config": await _json_cfg(KEY_SYNC, _DEFAULT_SYNC)}
@@ -1365,11 +1368,13 @@ async def cap_sync_get(trace_id=None) -> Dict:
                 "interval_hours (int=24 — daily default, any interval), "
                 "clusters (dict — {cluster_id:[pve nodes]} ; empty node list = "
                 "every node mapped in that cluster's pxstore settings; omit to "
-                "keep). Output: {ok, config}.",
+                "keep), legacy_share (bool — also rebuild the legacy hypervisor "
+                "share). Output: {ok, config}.",
 )
 async def cap_sync_set(enabled: Optional[bool] = None,
                        interval_hours: Optional[int] = None,
-                       clusters: Optional[Dict] = None, trace_id=None) -> Dict:
+                       clusters: Optional[Dict] = None,
+                       legacy_share: Optional[bool] = None, trace_id=None) -> Dict:
     cfg = await _json_cfg(KEY_SYNC, _DEFAULT_SYNC)
     if enabled is not None:
         cfg["enabled"] = bool(enabled)
@@ -1378,6 +1383,8 @@ async def cap_sync_set(enabled: Optional[bool] = None,
     if isinstance(clusters, dict):
         cfg["clusters"] = {str(k): [str(n) for n in (v or [])]
                            for k, v in clusters.items()}
+    if legacy_share is not None:
+        cfg["legacy_share"] = bool(legacy_share)
     await _json_cfg_put(KEY_SYNC, cfg)
     return {"ok": True, "config": cfg}
 
@@ -1386,39 +1393,51 @@ async def cap_sync_set(enabled: Optional[bool] = None,
     "nodes.sync.run",
     http_method="POST", http_path="/nodes/sync/run", http_tags=["nodes"],
     memory="off",
-    description="Rebuild the share tree now on every configured node "
-                "(pxstore.fs.sync per cluster/node; falls back to every "
-                "cluster with a node→SSH mapping when nothing is configured). "
-                "Output: {ok, results:[{cluster_id,node,ok,error}]}.",
+    description="Rebuild the estate tree now. The file fabric (VFS-02) is "
+                "the estate's file server: this triggers vfs.estate.sync, which "
+                "VFS-02 otherwise runs every 5 minutes on its own timer. The "
+                "legacy hypervisor share (pxstore.fs.sync per mapped node) is "
+                "rebuilt too only when legacy_share is on (nodes.sync.set). "
+                "Output: {ok, results:[{target,cluster_id,node,ok,linked,error}]}.",
 )
 async def cap_sync_run(trace_id=None) -> Dict:
     cfg = await _json_cfg(KEY_SYNC, _DEFAULT_SYNC)
-    fs_sync = _rawcap("pxstore.fs.sync")
-    if not fs_sync:
-        return {"error": "pxstore.fs.sync unavailable"}
-    px = await _pxstore_cfgs()
-    plan: List[tuple] = []
-    wanted = cfg.get("clusters") or {}
-    for cid, pcfg in px.items():
-        if wanted and cid not in wanted:
-            continue
-        nodes = wanted.get(cid) or list((pcfg.get("node_hosts") or {}).keys())
-        for n in nodes:
-            plan.append((cid, n))
-    results = []
-    for cid, n in plan:
+    results: List[Dict] = []
+    vfs_sync = _rawcap("vfs.estate.sync")
+    if vfs_sync:
         try:
-            r = await fs_sync(cluster_id=cid, node=n)
-            results.append({"cluster_id": cid, "node": n,
-                            "ok": bool(r.get("ok")),
-                            "linked": len(r.get("linked") or []),
+            r = await vfs_sync()
+            results.append({"target": "vfs-02", "cluster_id": "", "node": "VFS-02",
+                            "ok": bool(r.get("ok")) and not r.get("error"),
+                            "linked": int(r.get("mounted") or 0),
+                            "failed": len(r.get("failed") or []),
                             "error": str(r.get("error", ""))[:300]})
         except Exception as e:
-            results.append({"cluster_id": cid, "node": n, "ok": False,
-                            "error": str(e)[:300]})
+            results.append({"target": "vfs-02", "cluster_id": "", "node": "VFS-02",
+                            "ok": False, "linked": 0, "error": str(e)[:300]})
+    fs_sync = _rawcap("pxstore.fs.sync") if cfg.get("legacy_share") else None
+    if fs_sync:
+        wanted = cfg.get("clusters") or {}
+        for cid, pcfg in (await _pxstore_cfgs()).items():
+            if wanted and cid not in wanted:
+                continue
+            for n in wanted.get(cid) or list((pcfg.get("node_hosts") or {}).keys()):
+                try:
+                    r = await fs_sync(cluster_id=cid, node=n)
+                    results.append({"target": "legacy", "cluster_id": cid, "node": n,
+                                    "ok": bool(r.get("ok")),
+                                    "linked": len(r.get("linked") or []),
+                                    "error": str(r.get("error", ""))[:300]})
+                except Exception as e:
+                    results.append({"target": "legacy", "cluster_id": cid, "node": n,
+                                    "ok": False, "linked": 0, "error": str(e)[:300]})
+    if not results:
+        return {"ok": False, "results": [],
+                "error": "nothing to sync — the file fabric capabilities (vfs.*) "
+                         "are not loaded and the legacy share is off"}
     cfg["last_run"] = time.time()
     await _json_cfg_put(KEY_SYNC, cfg)
-    ok = bool(results) and all(r["ok"] for r in results)
+    ok = all(r["ok"] for r in results)
     await emit_event({"type": "nodes.sync.done", "ok": ok, "results": results})
     return {"ok": ok, "results": results}
 
