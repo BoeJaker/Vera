@@ -445,7 +445,7 @@ html.view-models #secNav [data-view="models"]{display:block}
         <button class="btn sm" onclick="P.ovRefresh()">↻ Check now</button>
         <span class="status-hint" id="ov-ts"></span>
       </div>
-      <div class="ov-summary" id="ov-summary"><span class="ov-level">Checking</span><span>Checking the state store, containers and guests…</span></div>
+      <div class="ov-summary" id="ov-summary"><span class="ov-level">Checking</span><span>Checking the estate…</span></div>
       <div id="ov-sections"></div>
     </div>
 
@@ -6115,6 +6115,19 @@ function _ovFacts(key,f){
   if(key==='guests'&&f.records!=null){
     return f.running_checked+' running guests checked · '+f.clusters+' cluster'+(f.clusters===1?'':'s')+' · '+f.records+' record'+(f.records===1?'':'s');
   }
+  if(key==='backups'&&f.nodes!=null){
+    return f.enabled_jobs+' enabled job'+(f.enabled_jobs===1?'':'s')+' · '+f.guests_ok+' guest backups ok'
+      +(f.guests_failed?(' · '+f.guests_failed+' failed'):'')
+      +(f.latest_run_at?(' · latest '+_fmtDateTime(f.latest_run_at)):'');
+  }
+  if(key==='storage'&&f.disks!=null){
+    return f.disks+' disks · '+f.in_use+' in use'
+      +(f.docker_disk_used_pct!=null?(' · Docker data disk '+f.docker_disk_used_pct+'% used'):'');
+  }
+  if(key==='services'&&f.file_fabric){
+    return 'file server '+f.file_fabric+(f.estate_mounts!=null?(' · '+f.estate_mounts+' estate mounts'):'')
+      +' · directory '+f.directory;
+  }
   return '';
 }
 function _ovRow(f){
@@ -6135,7 +6148,7 @@ function ovRender(r){
     +(need?(need+' finding'+(need===1?' needs':'s need')+' attention'):'Nothing checked needs attention')
     +(c.info?(' · '+c.info+' note'+(c.info===1?'':'s')):'')+'</span>';
   let h='';
-  for(const key of ['state_store','containers','guests']){
+  for(const key of Object.keys(r.sections)){
     const s=r.sections[key]; if(!s) continue;
     const all=s.findings||[], loud=all.filter(f=>f.severity!=='info'), notes=all.filter(f=>f.severity==='info');
     const ms=s.elapsed_ms;
