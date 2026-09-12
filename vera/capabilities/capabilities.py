@@ -2020,12 +2020,16 @@ async def llm_generate(
     if not isinstance(text, str) or not text.strip():
         return {"error": "Generation returned no usable text; inspect the provider request log.",
                 "error_code": "empty_generation", "text": "", "backend": "ollama",
-                "model": model or OLLAMA_MODEL, "tokens": len(tokens_collected),
+                "model": _meta.get("model") or model or OLLAMA_MODEL,
+                "tokens": len(tokens_collected),
                 "truncated": bool(_meta.get("truncated"))}
-    chosen = pick_instance(prefer_gpu=prefer_gpu, instance_id=instance_id or None,
-                           model=model, job_type=job_type or None)
+    # Report the router's own record of what ran. Re-picking here guessed: it
+    # ignored the job-type rule's model and could name a different node.
+    chosen = _meta.get("instance") or pick_instance(
+        prefer_gpu=prefer_gpu, instance_id=instance_id or None,
+        model=model, job_type=job_type or None)
     inst   = OLLAMA_INSTANCES.get(chosen or "", {})
-    return {"text": text, "model": model or OLLAMA_MODEL,
+    return {"text": text, "model": _meta.get("model") or model or OLLAMA_MODEL,
             "instance": chosen, "instance_url": inst.get("url"),
             "backend": "ollama",
             "has_gpu": inst.get("has_gpu", False), "tokens": len(tokens_collected),
