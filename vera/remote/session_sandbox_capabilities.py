@@ -48,7 +48,7 @@ import tarfile
 import tempfile
 import time
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import (
@@ -3792,17 +3792,33 @@ async def _sbx_host_any(session_id: str):
     return dk, host, rec
 
 
+async def _rmtree_bg(path: str) -> None:
+    """Remove a snapshot/restore temp tree off the event loop. A workspace copy
+    can hold thousands of files (node_modules, a venv), and shutil.rmtree on the
+    loop was one of the idle-sleep tick's stalls (1.0–1.3 s samples in
+    perf.stalls, at _sync_session's finally)."""
+    if path:
+        await asyncio.to_thread(shutil.rmtree, path, ignore_errors=True)
+
+
+def _unlink_quiet(path: str) -> None:
+    try:
+        os.unlink(path)
+    except Exception:
+        pass
+
+
 async def _collect_workspace(session_id: str) -> Optional[str]:
     """`docker cp` the container's /workspace into a fresh host temp dir. Returns
-    the temp dir (caller MUST rmtree) or None."""
+    the temp dir (caller MUST remove it — `_rmtree_bg`) or None."""
     dk, host, rec = await _sbx_host_any(session_id)
     if dk is None:
         return None
-    tmp = tempfile.mkdtemp(prefix="vera-sbx-snap-")
+    tmp = await asyncio.to_thread(tempfile.mkdtemp, prefix="vera-sbx-snap-")
     src = f"{rec['container']}:{_WORKDIR}/."
     cp = await dk._run_local(await dk._docker_argv(host, ["cp", src, tmp]), timeout=600)
     if not cp.get("ok"):
-        shutil.rmtree(tmp, ignore_errors=True)
+        await _rmtree_bg(tmp)
         log.warning("sandbox snapshot cp failed for %s: %s", session_id, cp.get("stderr"))
         return None
     return tmp
@@ -3922,10 +3938,13 @@ def _extract_tar(tarpath: str, dest: str) -> None:
             tf.extractall(dest)
 
 
-def _iter_files(src_dir: str, *, max_files: int = 500, max_bytes: int = 2_000_000):
-    """Yield (posix_relpath, bytes) for files under src_dir, bounded, skipping
-    .git and oversized blobs — for the Gitea mirror."""
-    n = 0
+def _list_files(src_dir: str, *, max_files: int = 500,
+                max_bytes: int = 2_000_000) -> List[Tuple[str, str]]:
+    """(posix_relpath, abs_path) for files under src_dir, bounded, skipping .git
+    and oversized blobs — for the Gitea mirror. Pure filesystem walk: run it in
+    a worker thread (a workspace can hold thousands of entries); the caller
+    reads each file the same way so no disk I/O lands on the event loop."""
+    out: List[Tuple[str, str]] = []
     for root, dirs, files in os.walk(src_dir):
         dirs[:] = [d for d in dirs if d != ".git"]
         for fn in files:
@@ -3935,14 +3954,12 @@ def _iter_files(src_dir: str, *, max_files: int = 500, max_bytes: int = 2_000_00
             try:
                 if os.path.getsize(fp) > max_bytes:
                     continue
-                data = _read_bytes(fp)
             except Exception:
                 continue
-            rel = os.path.relpath(fp, src_dir).replace("\\", "/")
-            yield rel, data
-            n += 1
-            if n >= max_files:
-                return
+            out.append((os.path.relpath(fp, src_dir).replace("\\", "/"), fp))
+            if len(out) >= max_files:
+                return out
+    return out
 
 
 async def _gitea_reachable(base: str, headers: dict) -> bool:
@@ -3979,7 +3996,11 @@ async def _gitea_sync_tree(session_id: str, src_dir: str, *, message: str = "",
                          json={"name": repo, "auto_init": True, "private": True})
             await c.post(f"{base}/api/v1/user/repos", headers=headers,
                          json={"name": repo, "auto_init": True, "private": True})
-            for rel, data in _iter_files(src_dir):
+            for rel, fp in await asyncio.to_thread(_list_files, src_dir):
+                try:
+                    data = await asyncio.to_thread(_read_bytes, fp)
+                except Exception:
+                    continue
                 url = f"{base}/api/v1/repos/{owner}/{repo}/contents/{rel}"
                 payload = {"content": base64.b64encode(data).decode(),
                            "message": message or f"sync v{version}: {rel}"}
@@ -4027,8 +4048,7 @@ async def _sync_session(session_id: str, *, message: str = "") -> Dict:
                     await asyncio.to_thread(
                         store.upload_file, latest, tarpath, "application/gzip")
             finally:
-                try: os.unlink(tarpath)
-                except Exception: pass
+                await asyncio.to_thread(_unlink_quiet, tarpath)
         gitea = await _gitea_sync_tree(session_id, tmp, message=message, version=version)
         if garage_ok:
             rec["store_version"] = version
@@ -4050,7 +4070,7 @@ async def _sync_session(session_id: str, *, message: str = "") -> Dict:
                 "version": rec.get("store_version", 0), "garage": garage_ok,
                 "gitea": gitea, "gitea_pending": rec["gitea_pending"]}
     finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+        await _rmtree_bg(tmp)
 
 
 async def _restore_session(session_id: str) -> Dict:
@@ -4065,14 +4085,14 @@ async def _restore_session(session_id: str) -> Dict:
     latest = _store_key(session_id, "workspace-latest.tar.gz")
     if await asyncio.to_thread(store.stat, latest) is None:
         return {"ok": False, "error": "no snapshot in store"}
-    tmp = tempfile.mkdtemp(prefix="vera-sbx-rst-")
+    tmp = await asyncio.to_thread(tempfile.mkdtemp, prefix="vera-sbx-rst-")
     try:
         tarpath = os.path.join(tmp, "ws.tar.gz")
         # Stream the snapshot to disk (download_file) rather than into memory.
         if not await asyncio.to_thread(store.download_file, latest, tarpath):
             return {"ok": False, "error": "download failed"}
         extract = os.path.join(tmp, "x")
-        os.makedirs(extract, exist_ok=True)
+        await asyncio.to_thread(os.makedirs, extract, exist_ok=True)
         await asyncio.to_thread(_extract_tar, tarpath, extract)
         cp = await dk._run_local(await dk._docker_argv(
             host, ["cp", extract + "/.", f"{rec['container']}:{_WORKDIR}"]), timeout=600)
@@ -4083,7 +4103,7 @@ async def _restore_session(session_id: str) -> Dict:
                           "bytes": size})
         return {"ok": True, "restored_bytes": size}
     finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+        await _rmtree_bg(tmp)
 
 
 async def _workspace_is_empty(session_id: str) -> bool:
