@@ -676,6 +676,31 @@ header .hdr-right{margin-left:0;gap:6px}
 #lhmNav .lhm-side .lhm-s-note{font-size:9.5px;color:var(--t2,var(--dim2,#8a92a0));border-top:1px solid var(--bd,var(--border,rgba(255,255,255,.09)))}
 #lhmNav .lhm-nav-foot{padding:8px 10px;border-top:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));gap:2px}
 #lhmNav .lhm-nav-foot .tab-ctrl-btn{width:26px;height:26px;border-radius:var(--r-sm,6px);color:var(--t3,var(--dim,#6b7280))}
+/* every dashboard row opens its own detail modal (the board's .modal > .mbox) */
+#rowModal{position:fixed;inset:0;z-index:9600;display:none;align-items:center;justify-content:center;background:color-mix(in srgb,var(--bg,var(--bg0,#0e0f12)) 62%,transparent);backdrop-filter:blur(2px)}
+#rowModal.on{display:flex}
+#rowModal .mbox{width:min(860px,92vw);max-height:78vh;background:var(--s1,var(--bg1,#151719));border-radius:var(--ui-radius,10px);box-shadow:var(--card,0 1px 2px rgba(0,0,0,.18),0 8px 24px -18px rgba(0,0,0,.5)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));display:flex;flex-direction:column;overflow:hidden}
+#rowModal .mhd{display:flex;align-items:center;gap:10px;padding:14px 18px;flex-shrink:0;flex-wrap:wrap}
+#rowModal .mhd h2{margin:0;font-size:15px;font-weight:600;letter-spacing:-.01em;color:var(--t1,var(--text,#d8dce4));min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60%}
+#rowModal .mhd .lbl{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;color:var(--t3,var(--dim,#6b7280));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+#rowModal .mhd .sp{flex:1}
+#rowModal .mhd .mbtn{height:28px;padding:0 11px;border:none;border-radius:var(--r-sm,6px);background:var(--s2,var(--bg2,#1a1c20));color:var(--t2,var(--dim2,#8a92a0));font:inherit;font-size:10.5px;cursor:pointer;white-space:nowrap}
+#rowModal .mhd .mbtn:hover{color:var(--t1,var(--text,#d8dce4))}
+#rowModal .mhd .x{width:26px;height:26px;border:none;border-radius:var(--r-sm,6px);background:transparent;color:var(--t3,var(--dim,#6b7280));display:flex;align-items:center;justify-content:center;font:inherit;font-size:12px;cursor:pointer}
+#rowModal .mhd .x:hover{color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20))}
+#rowModal .mbd{padding:0 18px 18px;display:flex;flex-direction:column;gap:10px;overflow:auto;min-height:0}
+#rowModal .mstats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+#rowModal .mstat{background:var(--s2,var(--bg2,#1a1c20));border-radius:var(--r-sm,6px);padding:10px 12px;display:flex;flex-direction:column;gap:3px;min-width:0}
+#rowModal .mstat b{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:18px;font-weight:700;letter-spacing:-.02em;line-height:1;color:var(--t1,var(--text,#d8dce4));overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#rowModal .mstat span{font-size:9.5px;color:var(--t2,var(--dim2,#8a92a0));text-transform:uppercase;letter-spacing:.08em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#rowModal .mrows{display:flex;flex-direction:column;gap:1px}
+#rowModal .mrow{display:grid;grid-template-columns:16px 160px 1fr;align-items:center;gap:10px;padding:6px 8px;border-radius:var(--r-sm,6px);font-size:11px;color:var(--t1,var(--text,#d8dce4))}
+#rowModal .mrow:hover{background:var(--s2,var(--bg2,#1a1c20))}
+#rowModal .mrow .dot{width:9px;height:9px;border-radius:50%;justify-self:center;background:var(--t3,var(--dim,#6b7280))}
+#rowModal .mrow .n{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;color:var(--t3,var(--dim,#6b7280));text-transform:uppercase;letter-spacing:.06em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#rowModal .mrow .out{color:var(--t2,var(--dim2,#8a92a0));white-space:pre-wrap;word-break:break-word;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:10.5px}
+#rowModal .mnote{font-size:9.5px;color:var(--t3,var(--dim,#6b7280))}
+#dashGrid .w-body tr,#dashGrid .w-body [class$="-row"],#dashGrid .w-body [class*="-row "],#dashGrid .w-body .inst-card{cursor:pointer}
 /* the strips under the tabs: the active panel's own menu */
 #tabSubtabs:not(:empty){display:flex;align-items:center;gap:3px;min-height:30px;padding:0 14px;flex-shrink:0;border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));background:transparent;overflow-x:auto;scrollbar-width:none}
 #tabSubtabs .lhm-strips{display:contents}
@@ -1821,6 +1846,40 @@ let _autohideTimer = null;
 // _reapplyNavHosting().
 let _keepInnerNavOnAutohide = false;
 let _evSidebarCollapsed = false;
+/* ── every dashboard row opens its own detail modal (the Harness board) ─────────────────────────────────────── */
+const _ROW_SEL = 'tr, [class$="-row"], [class*="-row "], .inst-card, [data-row], .lhm-s-wrow';
+function _rowOf(t){ const w = t.closest && t.closest('#dashGrid .widget .w-body'); if(!w) return null; let el = t.closest(_ROW_SEL); if(el && w.contains(el) && el !== w) return el; return null; }
+function _rowFields(row){
+  const F = []; const txt = (e) => String(e.textContent || '').replace(/\s+/g, ' ').trim();
+  if(row.tagName === 'TR'){ const tbl = row.closest('table'); const heads = tbl ? Array.from(tbl.querySelectorAll('thead th, tr:first-child th')).map(txt) : []; Array.from(row.children).forEach((c, i) => { const v = txt(c); if(v) F.push({ k: heads[i] || ('col ' + (i + 1)), v }); }); }
+  else { const kids = Array.from(row.children).filter(c => txt(c)); if(kids.length >= 2) kids.forEach((c, i) => { const k = (c.getAttribute && (c.getAttribute('title') || c.getAttribute('data-k'))) || (c.className && String(c.className).split(' ')[0]) || ('field ' + (i + 1)); F.push({ k: String(k).slice(0, 24), v: txt(c) }); }); else F.push({ k: 'row', v: txt(row) }); }
+  Array.from(row.attributes || []).forEach(a => { if(/^data-/.test(a.name) && a.value && a.value.length < 200) F.push({ k: a.name.slice(5), v: a.value }); });
+  if(row.title) F.push({ k: 'title', v: row.title });
+  return F.slice(0, 40);
+}
+function _rowDetail(row){
+  const widget = row.closest('.widget'); const wt = widget ? String((widget.querySelector('.w-title') || {}).textContent || '').trim() : ''; const rec = widget ? String((widget.querySelector('.vd-rec') || {}).textContent || '').trim() : ''; const wid = widget ? (widget.dataset.wid || '') : '';
+  const F = _rowFields(row); const title = (F[0] && F[0].v) || wt || 'row'; const stats = F.slice(0, 5); const rows = F;
+  let m = document.getElementById('rowModal'); if(!m){ m = document.createElement('div'); m.id = 'rowModal'; document.body.appendChild(m); m.addEventListener('click', (ev) => { if(ev.target === m) _rowDetailClose(); }); }
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  m.innerHTML = '<div class="mbox" role="dialog" aria-label="' + esc(title) + '"><div class="mhd"><h2>' + esc(title) + '</h2><span class="lbl">' + esc([wt, rec].filter(Boolean).join(' · ')) + '</span><span class="sp"></span>'
+    + '<button class="mbtn" type="button" data-a="copy" title="Copy the row">Copy</button>' + (wid ? '<button class="mbtn" type="button" data-a="open" title="This widget in its own window">Open ↗</button>' : '') + '<button class="x" type="button" data-a="close" title="Close">✕</button></div>'
+    + '<div class="mbd">' + (stats.length ? '<div class="mstats">' + stats.map(s => '<div class="mstat"><b title="' + esc(s.v) + '">' + esc(String(s.v).slice(0, 28)) + '</b><span>' + esc(s.k) + '</span></div>').join('') + '</div>' : '')
+    + '<div class="mrows">' + rows.map(r => '<div class="mrow"><span class="dot"></span><span class="n">' + esc(r.k) + '</span><span class="out">' + esc(r.v) + '</span></div>').join('') + '</div>'
+    + '<div class="mnote">Every row on the dashboard opens like this — the same record the widget drew, laid out; Esc closes.</div></div></div>';
+  m.querySelector('[data-a="close"]').addEventListener('click', _rowDetailClose);
+  m.querySelector('[data-a="copy"]').addEventListener('click', () => { try{ navigator.clipboard.writeText(rows.map(r => r.k + ': ' + r.v).join('\n')); }catch(_){} });
+  const ob = m.querySelector('[data-a="open"]'); if(ob) ob.addEventListener('click', () => { try{ dashWidgetWindow(wid); }catch(_){} _rowDetailClose(); });
+  m.classList.add('on'); return m;
+}
+function _rowDetailClose(){ const m = document.getElementById('rowModal'); if(m) m.classList.remove('on'); }
+document.addEventListener('keydown', (ev) => { if(ev.key === 'Escape') _rowDetailClose(); });
+document.addEventListener('click', (ev) => {
+  if(ev.defaultPrevented) return; const t = ev.target; if(!t || !t.closest) return;
+  if(t.closest('button, a, input, select, textarea, [contenteditable], .w-head, .w-actions, .w-resize, [onclick]')) return;   // a row with its own handler keeps it
+  const row = _rowOf(t); if(!row) return; if(row.matches('[onclick]') || row.closest('[onclick]')) return;
+  _rowDetail(row);
+});
 /* ── the harness chrome as the Harness board draws it ────────────────────────────────────────────────────────
    Live events fold away by default (◫ brings the column back, remembered). The ⋯ sheet holds the connection
    controls and the metric picker. The style segment and the theme swatches drive veraUI. The ticker in the
