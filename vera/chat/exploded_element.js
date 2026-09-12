@@ -120,7 +120,8 @@
   function graphData(t) {
     const nodes = []; const seen = {};
     const add = (c, lane) => { if (!c) return; const id = String(c.id || c.n || ''); if (!id || seen[id]) return; seen[id] = 1; nodes.push({ id, label: c.n || id, lane: lane || LANE_OF(c), kind: c.kind || '', score: +(c.score == null ? 0.5 : c.score), col: c.col || '', included: c.included !== false }); };
-    (t.read || []).forEach((c) => add(c)); (t.land || []).forEach((c) => add(c, 'canvas'));
+    // the graph sees everything the turn read (readAll — up to the 40 recorded), the read column only the first twelve
+    (t.readAll || t.read || []).forEach((c) => add(c)); (t.land || []).forEach((c) => add(c, 'canvas'));
     (t.made || []).filter((c) => c && c.kind === 'loop' && Array.isArray(c.steps)).forEach((c) => c.steps.slice(0, 8).forEach((s, i) => add({ id: 'step:' + (i + 1), n: s.label || s.n || ('step ' + (i + 1)), kind: 'step', score: 1 - i * 0.08 }, 'loop')));
     const rels = (t.rel || []).filter((r) => r && seen[String(r.from)] && seen[String(r.to)]).map((r) => ({ from: String(r.from), to: String(r.to), kind: String(r.kind || 'cite') }));
     const laneList = ['context', 'memory', 'loop', 'plan', 'canvas'].filter((l) => nodes.some((n) => n.lane === l));

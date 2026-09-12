@@ -69,12 +69,13 @@ def test_pass_b_the_context_graph_layer_is_a_widget_form_no_thinking_node_images
 
 def test_the_scene_is_built_from_what_the_chat_has():
     s = _fn("_xplScene")
-    assert "cur={mid, who:'you', t:tm(w), text:txt(w).slice(0,160), read:(_TURN_READS[mid]||[]).slice(0,12), rel:(_TURN_RELS[mid]||[]).slice(0,80), say:[], made:[], land:(_TURN_LAND[mid]||[]).slice(0,12)}" in s
+    assert "cur={mid, who:'you', t:tm(w), text:txt(w).slice(0,160), read:(_TURN_READS[mid]||[]).slice(0,12), readAll:(_TURN_READS[mid]||[]).slice(0,40), rel:(_TURN_RELS[mid]||[]).slice(0,80), say:[], made:[], land:(_TURN_LAND[mid]||[]).slice(0,12)}" in s
+    assert "(t.readAll || t.read || []).forEach((c) => add(c));" in EL, "the graph layer sees everything the turn read"
     assert "if(!cur.reply){ cur.reply=txt(w).slice(0,160);" in s, "the reply folds into the question's station"
     for sel in (".cap-inline", ".art-card", "vera-widget", "vera-mermaid,.mermaid,pre.mermaid", "pre code", "vera-agent-loop-output", "img"):
         assert "body.querySelectorAll('%s')" % sel in s, sel
     assert "'.pa-atts .pa-att b'" in s, "attachments the question carried are what it read"
-    assert "last.read=CTX_NODES.filter(n=>n.included!==false).slice(0,12).map(_xplCtxCard)" in s, "the newest question reads the live context"
+    assert "const live=CTX_NODES.filter(n=>n.included!==false).map(_xplCtxCard); last.read=live.slice(0,12); last.readAll=live.slice(0,40);" in s, "the newest question reads the live context"
     assert "_xplRecordReads(uMsg.mid);\n    _cvRelMid=uMsg.mid; _cvRelText=msg;\n    _paDecorate(uMsg.body, uCtx);" in HTML, "what a question read is recorded when it is sent"
     assert "(_TURN_LAND[mid]=_TURN_LAND[mid]||[]).push(" in _fn("_wPin"), "what a turn pinned to the canvas is recorded"
     for name in ("explode", "explodeMode", "_xplScene", "_xplRefresh"):
