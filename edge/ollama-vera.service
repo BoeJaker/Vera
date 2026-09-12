@@ -1,0 +1,56 @@
+# /etc/systemd/system/ollama-vera.service
+#
+# The unit that actually runs Vera's inference fleet. Every Ollama node in the
+# estate serves Vera on :11435 through this; stock `ollama.service` (127.0.0.1:
+# 11434) is a leftover and is NOT what Vera talks to. `systemctl cat ollama` and
+# `pgrep -f "ollama serve"` both hit the wrong one -- resolve the pid with
+#   systemctl show -p MainPID --value ollama-vera
+#
+# It lived only on the containers until 2026-09-12, which is how CT131/CT132
+# ended up with no unit at all and sat dark: nothing in source described the
+# thing the whole fleet depends on.
+#
+# Install:
+#   cp ollama-vera.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now ollama-vera
+#
+# ── HOME=/ is deliberate, do not "tidy" it to /root ──────────────────────────
+# /root is owned 0:100000 mode 700 on these containers. In an UNPRIVILEGED
+# container host uid 0 is outside the id map, so it shows as `nobody` and
+# container root cannot traverse it -- ollama then dies at startup with
+#   Error: mkdir /root/.ollama: permission denied: ensure path elements are traversable
+# "/" is traversable in both privileged and unprivileged containers, so one unit
+# works everywhere. A privileged node may use HOME=/root, but there is no reason
+# to differ.
+#
+# ── The shared model store ───────────────────────────────────────────────────
+# OLLAMA_MODELS points at a bind mount of the central store, attached READ-ONLY:
+#   pct set <vmid> -mpN /<pool>/vera-store/models/ollama,mp=/.ollama/models,ro=1
+# Provision it with pxstore.store.provision. Note pxstore.store.attach cannot do
+# the attach itself -- Proxmox refuses bind-mount mpN entries from an API token
+# (root@pam only), so it returns HTTP 403; go through proxmox.node.exec.
+#
+# Share the WHOLE models directory, blobs AND manifests. Sharing blobs alone
+# lets an instance see blobs no local manifest references and delete another
+# node's models. OLLAMA_NOPRUNE below is the second line of defence behind the
+# read-only mount.
+
+[Unit]
+Description=Ollama (Vera cluster node, port 11435)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/ollama serve
+User=root
+Group=root
+Environment="HOME=/"
+Environment="OLLAMA_MODELS=/.ollama/models"
+Environment="OLLAMA_HOST=0.0.0.0:11435"
+Environment="OLLAMA_NOPRUNE=1"
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
