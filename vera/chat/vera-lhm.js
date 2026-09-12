@@ -186,7 +186,8 @@
     top.addEventListener('click', function(){ toggleTop(); });
     _rail.appendChild(top);
     (_cfg.menus || []).forEach(function(m){
-      var ico = _el('div', 'lhm-ico' + (m.id === _active && !_topMode ? ' on' : ''), m.icon || '•');
+      var ico = _el('div', 'lhm-ico' + (m.id === _active && !_topMode ? ' on' : ''), m.iconHtml ? null : (m.icon || '•'));
+      if(m.iconHtml) ico.innerHTML = m.iconHtml;   // the board's SVG glyph for this menu
       ico.title = m.label + (m.tabs && m.tabs.length > 1 ? ' — ' + m.tabs.map(function(t){ return t.label; }).join(' · ') : '');
       ico.setAttribute('data-menu', m.id);
       var badge = 0; try{ badge = m.badge ? +m.badge() : 0; }catch(e){}
