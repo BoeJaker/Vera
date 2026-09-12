@@ -153,25 +153,21 @@ def test_logs_is_not_its_own_rail_entry(src):
     assert 'data-sec="logs"' not in src
 
 
-def test_every_logs_element_survived_the_move(src):
-    """A flatten must not cost an element. Each control is still declared."""
-    ids = set(re.findall(r'id="([a-z0-9-]+)"', src))
-    for want in ("logs-body", "logs-status", "logs-container", "logs-follow",
-                 "logs-perf"):
-        assert want in ids, "lost #%s in the move" % want
-
-
-def test_the_logs_card_is_inside_the_sandbox_section(src):
-    # The Sandbox page is the Ship page since slice 5; the logs went with it.
-    start = src.index('id="sec-ship"')
-    end = src.index('<div class="sec" id=', start + 10)
-    for want in ("logs-body", "logs-status", "logs-container"):
-        assert start < src.index('id="%s"' % want) < end
-
-
-def test_opening_sandbox_loads_the_logs(src):
-    assert "loadLogs()" in src
-    assert 'id="ship-logs" ontoggle="if(this.open)loadLogs()"' in src, "the logs fold loads when opened"
+def test_a_containers_log_is_inside_its_branchs_row(src):
+    """A container's output belongs next to the container it came from: the
+    page-wide tail of every sandbox is gone; a branch's row shows its own
+    sandbox's last lines (with its cpu / mem sample) when expanded."""
+    for gone in ("logs-body", "logs-container", "logs-follow", "logs-perf", "ship-logs"):
+        assert 'id="%s"' % gone not in src, gone
+    assert "function loadLogs(" not in src and "_logsTimer" not in src
+    det = src[src.index("function _shipDetail(r){"):]
+    det = det[:det.index("\n}\n")]
+    assert "shipLoadLogs(r.sandbox.name,'ship-log-'+_shipId(r.branch))" in det
+    ll = src[src.index("async function shipLoadLogs(name,elId){"):]
+    ll = ll[:ll.index("\n}\n")]
+    assert "'/evolve/sandbox/logs?limit=80&container='+encodeURIComponent(name)" in ll
+    assert "'/evolve/sandbox/metrics?limit=1&container='+encodeURIComponent(name)" in ll
+    assert "renderLogs((r&&r.logs)||[],el,perf)" in ll
 
 
 def test_an_old_logs_deeplink_still_lands_somewhere_real(src):

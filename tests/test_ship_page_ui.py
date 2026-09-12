@@ -68,51 +68,67 @@ def test_every_element_of_the_five_pages_survived(src):
     ids = set(re.findall(r'id="([a-zA-Z0-9-]+)"', src))
     for want in (
         # CI/CD
-        "git-repo", "add-repo-body", "ar-id", "ar-path", "git-body", "git-graph", "pipes-body", "pipe-lanes",
-        "author-map", "gitlog-body",
+        "git-repo", "add-repo-body", "ar-id", "ar-path", "git-graph", "pipe-lanes", "author-map",
         # Sources
         "src-area", "src-profile", "src-review-out", "src-obs-out",
         # Sandbox
-        "sb-mode", "sbx-spawn-branch", "sb-port", "sb-status-line", "sbx-capacity", "edges-card", "edges-list",
+        "sb-mode", "sbx-spawn-branch", "sb-port", "sb-status-line", "sbx-capacity",
         "sbx-tools", "sbx-tools-tgt", "sbxtab-term", "sbxtab-files", "sbxtab-diff", "sbxtab-code", "sbxp-term",
         "sbt-out", "sbt-cmd", "sbxp-files", "sbf-tree", "sbf-edit", "sbxp-diff", "sbd-files", "sbd-view", "sbxp-code",
-        "sbc-frame", "logs-status", "logs-container", "logs-errors", "logs-follow", "logs-perf", "logs-body",
+        "sbc-frame",
         # Unit tests
         "ct-cap", "ct-args", "ut-path", "ut-repo-hint", "qt-out", "ut-matrix-status", "ut-filter", "ut-only-gated",
         "ut-matrix-summary", "ut-matrix-body", "ut-trend", "ut-lanes", "ut-regressions", "tg-branch", "tg-body",
     ):
         assert want in ids, "lost #%s in the merge" % want
     ship = _section(src, "ship")
-    for want in ("git-graph", "pipe-lanes", "author-map", "ut-lanes", "sbx-tools", "logs-body", "edges-list",
-                 "pipes-body", "gitlog-body", "ut-matrix-body", "src-area", "ct-cap", "tg-body", "git-repo", "sb-mode"):
+    for want in ("git-graph", "pipe-lanes", "author-map", "ut-lanes", "sbx-tools", "ut-matrix-body", "git-repo", "sb-mode", "ship-mode"):
         assert 'id="%s"' % want in ship, "#%s is not on the Ship page" % want
-    # The review queue and the sandbox list are the table's rows now.
-    assert "review-body" not in src and "sbx-list" not in src and "sbx-count" not in src
+    # The review queue, the sandbox list, the pipeline list, the git log, the
+    # edges list and the logs tail are the table's rows (and their detail) now.
+    for gone in ("review-body", "sbx-list", "sbx-count", "pipes-body", "gitlog-body", "edges-list", "logs-body", "git-body"):
+        assert 'id="%s"' % gone not in src, gone
+    # The controls are modals: sandbox, test, pipeline-from, add-repo.
+    for m in ("_SHIP_SANDBOX_MODAL", "_SHIP_TEST_MODAL", "_SHIP_FROM_MODAL", "_SHIP_REPO_MODAL"):
+        assert "const %s=`" % m in src, m
+    for want, modal in (('id="sbx-spawn-branch"', "_SHIP_SANDBOX_MODAL"), ('id="sb-port"', "_SHIP_SANDBOX_MODAL"), ('id="ct-cap"', "_SHIP_TEST_MODAL"),
+                        ('id="tg-body"', "_SHIP_TEST_MODAL"), ('id="src-area"', "_SHIP_FROM_MODAL"), ('id="src-obs-out"', "_SHIP_FROM_MODAL"),
+                        ('id="ar-path"', "_SHIP_REPO_MODAL")):
+        t = src[src.index("const %s=`" % modal):src.index("`;", src.index("const %s=`" % modal))]
+        assert want in t, (want, modal)
+        assert want not in ship, want + " is on the page, not in its modal"
 
 
-def test_the_infographics_are_the_same_elements_above_the_folds(src):
+def test_the_infographics_are_the_same_elements_visible_under_the_table(src):
+    """Nothing on the page is folded: the table, then every infographic the
+    five pages drew, as the same elements, visible."""
     ship = _section(src, "ship")
-    first_fold = ship.index('<details class="fold"')
-    above = ship[:first_fold]
-    assert '<vera-git-graph id="git-graph" repo="vera" limit="150"></vera-git-graph>' in above
-    assert '<vera-branch-pipeline id="pipe-lanes" mode="lanes"></vera-branch-pipeline>' in above
-    assert '<vera-author-map id="author-map" hours="72"></vera-author-map>' in above
-    assert 'id="ut-lanes"' in above and 'id="ut-trend"' in above and 'id="ut-regressions"' in above
-    assert 'id="sbx-tools"' in above, "the connection panel opens next to the table"
-    assert above.index('id="ship-table"') < above.index("git-graph"), "the table first"
-
-
-def test_the_folds_load_on_open_and_the_slow_matrix_only_once(src):
-    ship = _section(src, "ship")
-    assert 'id="ship-logs" ontoggle="if(this.open)loadLogs()"' in ship
-    assert 'id="ship-pipes" ontoggle="if(this.open)loadPipelines()"' in ship
-    assert 'id="ship-gitlog" ontoggle="if(this.open)loadGitLog()"' in ship
-    assert 'id="ship-sources" ontoggle="if(this.open)loadSources()"' in ship
-    assert 'id="ship-coverage" ontoggle="if(this.open&&!_utMatrix)loadUnitTests()"' in ship, \
+    assert "<details" not in ship and 'class="fold"' not in ship
+    assert '<vera-git-graph id="git-graph" repo="vera" limit="150"></vera-git-graph>' in ship
+    assert '<vera-branch-pipeline id="pipe-lanes" mode="lanes"></vera-branch-pipeline>' in ship
+    assert '<vera-author-map id="author-map" hours="72"></vera-author-map>' in ship
+    assert 'id="ut-lanes"' in ship and 'id="ut-trend"' in ship and 'id="ut-regressions"' in ship
+    assert 'id="ut-matrix-body"' in ship and 'onclick="loadUnitTests()"' in ship, "the coverage matrix: a card, collected on demand"
+    assert "Press collect" in ship and "/evolve/tests/matrix" not in _fn(src, "loadShip"), \
         "evolve.tests.matrix collects the test tree (13 s on prod): never on the page's poll"
-    assert "/evolve/tests/matrix" not in _fn(src, "loadShip")
-    for fid in ("ship-edges", "ship-tgen", "ship-quick", "ship-repo"):
-        assert 'id="%s"' % fid in ship, fid
+    assert 'id="sbx-tools"' in ship, "the connection panel opens next to the table"
+    assert ship.index('id="ship-table"') < ship.index("git-graph"), "the table first"
+
+
+def test_the_controls_are_the_header_bar_and_modals(src):
+    ship = _section(src, "ship")
+    head = ship[ship.index('<span class="card-t">Ship</span>'):ship.index('id="sb-status-line"')]   # the header and the control bar under it
+    for c in ('id="git-repo"', 'id="sb-mode"', 'onclick="openSandboxModal()"', 'onclick="openTestTools()"', 'onclick="openPipelineFrom()"',
+              'onclick="openAddRepo()"', 'onclick="sbxReap()"', 'id="ship-mode"'):
+        assert c in head, c
+    assert "openModal(_SHIP_SANDBOX_MODAL)" in _fn(src, "openSandboxModal")
+    assert "openModal(_SHIP_TEST_MODAL)" in _fn(src, "openTestTools") and "genTests()" in _fn(src, "openTestTools")
+    assert "openModal(_SHIP_FROM_MODAL)" in _fn(src, "openPipelineFrom") and "loadSources()" in _fn(src, "openPipelineFrom")
+    assert "openModal(_SHIP_REPO_MODAL)" in _fn(src, "openAddRepo")
+    sm = _fn(src, "setShipMode")
+    assert "b.dataset.mode===m" in sm and "renderShipTable()" in sm
+    rt = _fn(src, "renderShipTable")
+    assert "if(_shipMode==='pipelines'){" in rt and "ps.map(_shipPipeRow)" in rt and "rows.map(_shipRow)" in rt
 
 
 # -- one table, one call --------------------------------------------------------
@@ -139,7 +155,8 @@ def test_a_row_is_a_branch_with_the_columns_of_the_five_pages(src):
     assert "pending.map(reviewCard)" in det, "a pipeline awaiting a decision is its review card"
     assert "_sbxItemHtml(r.sandbox)" in det, "the sandbox with every control the Sandbox page had"
     assert "_edgeRowHtml(r.edge" in det and "p.superseded" in det and "openBranch(" in det
-    assert "genTests()" in det
+    assert "openTestTools(" in det, "generate tests for this branch: the test modal, on this branch"
+    assert "shipLoadLogs(r.sandbox.name" in det, "the sandbox's own log, in its row"
     filt = _fn(src, "_shipFiltered")
     for f in ("ship-q", "ship-role", "ship-stage", "ship-merged"):
         assert f in filt, f
@@ -163,15 +180,13 @@ def test_the_sandbox_and_edge_renderers_became_one_item_functions(src):
 
 
 # -- pollers and actions follow the page ----------------------------------------
-def test_the_pollers_follow_the_ship_page_and_its_folds(src):
+def test_one_poller_follows_the_ship_page(src):
     assert "_curSec()==='pipelines'" not in src and "_curSec()==='review'" not in src and "_curSec()==='sandbox'" not in src
-    assert "if(ps.some(p=>p.live)&&_curSec()==='ship'&&$('ship-pipes')&&$('ship-pipes').open){clearTimeout(window._pipeT)" in src
-    assert "_curSec()==='ship'&&$('ship-logs')&&$('ship-logs').open)_logsTimer=setTimeout(loadLogs,4000)" in src
+    assert "_pipeT" not in src and "_logsTimer" not in src and "function loadPipelines(" not in src and "function loadGitLog(" not in src
     assert "if(t.startsWith('evolve.pipeline.')){shipRefresh();pollPipeLive(ev.id)}" in src
     assert "if(t.startsWith('ide.workspace.changes.')||t==='evolve.sandbox.review'){shipRefresh()}" in src
     assert "else if(s==='ship')loadShip();" in src
-    sr = _fn(src, "shipRefresh")
-    assert "if(_curSec()!=='ship')return;" in sr and "loadShip();" in sr and "loadPipelines()" in sr
+    assert "function shipRefresh(){if(_curSec()==='ship')loadShip()}" in src
 
 
 def test_actions_refresh_the_table_not_the_pages_that_are_gone(src):

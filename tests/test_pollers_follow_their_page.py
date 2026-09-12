@@ -78,7 +78,7 @@ def test_the_panel_refreshes_a_pages_elements_when_it_opens():
     # CI/CD and Review are the Ship page since slice 5: one poller for the
     # table, the full pipeline list's own only while its fold is open.
     assert "if(r.any_live&&$('ship-follow')&&$('ship-follow').checked&&_curSec()==='ship')window._shipT=setTimeout(loadShip,6000)" in src
-    assert "if(ps.some(p=>p.live)&&_curSec()==='ship'&&$('ship-pipes')&&$('ship-pipes').open){clearTimeout(window._pipeT)" in src
+    assert "_pipeT" not in src and "function loadPipelines(" not in src, "the pipeline list is a mode of the Ship table; one poller"
     assert "_reviewT" not in src
 
 
