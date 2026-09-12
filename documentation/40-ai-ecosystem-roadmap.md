@@ -347,6 +347,19 @@ instrumentation throughout Vera. Compare self-hosting cost, trace usefulness,
 evaluation workflow, retention, access control, portability, and failure impact.
 Export failure must never fail a user task.
 
+Vera now has a frozen, provider-neutral comparison contract for this decision.
+It binds both backend observations to the exact same content-redacted portable
+trace and derived OTLP/HTTP JSON digest. Reports keep span/parent/event/attribute
+fidelity, query dimensions and UI views, evaluation linkage, ingest/query
+latency, retention/access/deletion, storage/CPU/memory, standards portability,
+outage isolation, and teardown separate. Missing measurements remain explicit;
+the report has no composite score, winner, activation authority, backend import,
+or network path.
+
+Real isolated Langfuse and Phoenix deployments are still required before a
+backend decision. Their live ingestion, query, recovery, resource, retention,
+access, deletion, export, and teardown measurements remain queued.
+
 ### Guardrails and Ragas
 
 Guardrails AI combines input/output guards with structured validation and a
@@ -526,13 +539,17 @@ scenario, then decide whether the second candidate is necessary.
 Gate: packaging, cold start, streaming, batching, autoscaling if required, health,
 recovery, resource placement, provenance, and rollback.
 
-### LIB-13 — observability backend comparison
+### Observability backend comparison
 
 Send the same redacted OTLP/OpenInference fixture to Langfuse and Phoenix in
 isolated deployments.
 
 Gate: trace fidelity, query/UI use, evaluation linkage, retention, access,
 resource cost, export portability, outage isolation, and teardown.
+
+The deterministic evidence contract and validation fixtures are implemented.
+The isolated backend deployments described above remain live-test work and are
+not implied by an offline pass.
 
 ### LIB-14 — GraphRAG/Worldview comparison
 
