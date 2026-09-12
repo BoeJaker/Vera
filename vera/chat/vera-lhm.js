@@ -102,7 +102,11 @@
     '.lhm-absorbed .lhm-tabs .lhm-ttl{font-family:var(--sans);font-size:11px;font-weight:600;color:var(--text);padding:4px 8px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
     /* the top-level SIDE menu — the harness\'s main LHM (the Harness board): search, Open now, the panels with their sections, widgets */
     '.lhm-side{flex:1;display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden}',
-    '.lhm-side .lhm-s-hd{padding:10px 10px 6px;flex-shrink:0}',
+    '.lhm-side .lhm-s-hd{padding:10px 10px 6px;flex-shrink:0;display:flex;align-items:center;gap:6px}',
+    '.lhm-side .lhm-s-srch{flex:1;min-width:0}',
+    '.lhm-side .lhm-s-edit{flex:0 0 auto;font:inherit;font-size:12px;height:28px;width:28px;border:1px solid var(--border);border-radius:var(--r-sm,6px);background:var(--bg2);color:var(--dim2);cursor:pointer}',
+    '.lhm-side .lhm-s-edit.on{color:var(--acc);border-color:var(--acc)}',
+    '.lhm-side > .lhm-wcfg{max-height:46%;border-top:1px solid var(--border)}',
     '.lhm-side .lhm-s-srch{display:flex;align-items:center;gap:8px;height:28px;padding:0 9px;border-radius:var(--r-sm,6px);background:var(--bg2);color:var(--dim2);font-size:10.5px;cursor:pointer;border:1px solid transparent}',
     '.lhm-side .lhm-s-srch:hover{color:var(--text);border-color:var(--border)}',
     '.lhm-side .lhm-s-srch .k{margin-left:auto;font-family:var(--mono);font-size:9px}',
@@ -320,9 +324,9 @@
   // ── every part's record: the widget registry's template behind it ──────
   function _base(){ try{ return (_cfg && _cfg.base) || window._veraBase || location.origin; }catch(e){ return ''; } }
   function _tplOf(el){ return el ? (el.getAttribute('data-tpl') || '') : ''; }
-  function _wireBars(){
-    if(!_host) return;
-    var parts = _host.querySelectorAll('[data-w]');
+  function _wireBars(root){
+    root = root || _host; if(!root) return;
+    var parts = root.querySelectorAll('[data-w]');
     Array.prototype.forEach.call(parts, function(el){
       if(el.querySelector(':scope > .lhm-wbar')) return;
       var bar = _el('div', 'lhm-wbar');
@@ -337,9 +341,13 @@
   }
   function _row(k, v){ var r = _el('div', 'lhm-wr'); r.appendChild(_el('span', 'k', k)); var vv = _el('span', 'v'); vv.innerHTML = v; r.appendChild(vv); return r; }
   function _escH(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]; }); }
+  // a side menu's own record sheet (the harness has no mounted rail; its sheet lives inside the side menu)
+  var _sideWcfg = null, _sideHost = null;
   function openRecord(tplId, label){
+    if(_sideHost && _sideHost._lhmEditing && _sideWcfg) _wcfg = _sideWcfg;   // the side menu in edit mode owns the sheet
     if(!_wcfg) return;
-    _wcfg.innerHTML = ''; _wcfgOpen = true; _host.classList.add('lhm-wcfgmode');
+    var hostEl = _wcfg === _sideWcfg ? _sideHost : _host;
+    _wcfg.innerHTML = ''; _wcfgOpen = true; if(hostEl) hostEl.classList.add('lhm-wcfgmode');
     var hd = _el('div', 'lhm-wnote', (label || 'widget') + (tplId ? ' · ' + tplId : ' · no record yet')); _wcfg.appendChild(hd);
     var closeRow = _el('div', 'lhm-wacts'); var x = _el('button', '', '✕ close'); x.addEventListener('click', closeRecord); closeRow.appendChild(x); _wcfg.appendChild(closeRow);
     if(!tplId){ _wcfg.appendChild(_el('div', 'lhm-wnote', 'This part has no template in the registry yet — ⧉ saves it as one.')); return; }
@@ -359,7 +367,19 @@
       _wcfg.appendChild(acts);
     }).catch(function(){ _wcfg.appendChild(_el('div', 'lhm-wnote', 'registry unavailable')); });
   }
-  function closeRecord(){ _wcfgOpen = false; if(_host) _host.classList.remove('lhm-wcfgmode'); }
+  function closeRecord(){ _wcfgOpen = false; if(_host) _host.classList.remove('lhm-wcfgmode'); if(_sideHost) _sideHost.classList.remove('lhm-wcfgmode'); }
+  // ── a side menu's edit mode (the Harness board's ✎): every part outlined and named, ⚙ its record, ⧉ a template ──
+  var _sideEditOn = {};   // by menu id: a host re-made on every sync keeps its edit mode
+  function sideEdit(host, on){
+    if(!host) return false;
+    var key = host._lhmEditKey || '';
+    host._lhmEditing = (on == null) ? !host._lhmEditing : !!on; _sideEditOn[key] = host._lhmEditing;
+    host.classList.toggle('lhm-editing', host._lhmEditing);
+    var ed = host.querySelector('.lhm-s-edit'); if(ed) ed.classList.toggle('on', host._lhmEditing);
+    if(host._lhmEditing){ _sideHost = host; _sideWcfg = host.querySelector('.lhm-side > .lhm-wcfg'); _wireBars(host); }
+    else closeRecord();
+    return host._lhmEditing;
+  }
   function saveAsTemplate(tplId, label){
     var name = ''; try{ name = window.prompt('Name for your template', (label || 'widget').split(' · ')[0] + ' (mine)') || ''; }catch(e){}
     if(!name) return;
@@ -492,13 +512,18 @@
     if(!host) return null; cfg = cfg || {}; _css(host.ownerDocument);
     host.innerHTML = '';
     var wrap = _el('div', 'lhm-side');
+    host._lhmEditKey = cfg.id || ''; if(_sideEditOn[host._lhmEditKey]) host._lhmEditing = true;
+    var hd = _el('div', 'lhm-s-hd');
     if(cfg.search){
-      var hd = _el('div', 'lhm-s-hd'); var s = _el('div', 'lhm-s-srch'); s.setAttribute('data-w', 'search · search');
+      var s = _el('div', 'lhm-s-srch'); s.setAttribute('data-w', 'search · search');
       s.innerHTML = '<svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="6" r="4.2"/><path d="m9.3 9.3 3 3"/></svg>';
       s.appendChild(_el('span', '', cfg.search.label || 'Find a panel')); s.appendChild(_el('span', 'k', cfg.search.hint || '⌘K'));
       s.addEventListener('click', function(){ if(cfg.search.open) cfg.search.open(); });
-      hd.appendChild(s); wrap.appendChild(hd);
+      hd.appendChild(s);
     }
+    // ✎ — this menu's edit mode: every part is a widget (its record behind ⚙, ⧉ saves it as a template)
+    if(cfg.edit !== false){ var ed = _el('button', 'lhm-s-edit' + (host._lhmEditing ? ' on' : ''), '✎'); ed.type = 'button'; ed.title = 'Edit this menu — every part is a widget: ⚙ its record, ⧉ save it as a template'; ed.addEventListener('click', function(){ sideEdit(host); }); hd.appendChild(ed); }
+    if(hd.childNodes.length) wrap.appendChild(hd);
     var bd = _el('div', 'lhm-s-bd');
     // ONE set of open panels: opened by you or by the aide, wherever they sit
     var open = cfg.open || [];
@@ -545,7 +570,9 @@
     });
     wrap.appendChild(bd);
     if(cfg.note) wrap.appendChild(_el('div', 'lhm-s-note', cfg.note));
+    if(cfg.edit !== false) wrap.appendChild(_el('div', 'lhm-wcfg'));   // the record sheet, opened by ⚙ in edit mode
     host.appendChild(wrap);
+    if(host._lhmEditing) sideEdit(host, true);   // a re-render keeps the menu in edit mode
     return wrap;
   }
   // ── the STRIPS under a tab bar (tabs mode): the active panel's sections, then the open section's tabs ──
@@ -564,7 +591,7 @@
     return row;
   }
 
-  window.VeraLHM = { mount: mount, pick: pick, setActiveTab: setActiveTab, toggleTop: toggleTop, toggleEdit: toggleEdit, render: render, spec: spec, absorb: absorb, side: side, strips: strips, css: _css,
+  window.VeraLHM = { mount: mount, pick: pick, setActiveTab: setActiveTab, toggleTop: toggleTop, toggleEdit: toggleEdit, render: render, spec: spec, absorb: absorb, side: side, sideEdit: sideEdit, strips: strips, css: _css,
     openRecord: openRecord, closeRecord: closeRecord, saveAsTemplate: saveAsTemplate, placeInto: placeInto,
     compose: compose, composeUndo: composeUndo, saveAsMenu: saveAsMenu, addMenus: addMenus,
     get active(){ return { menu: _active, tab: _activeTab, top: _topMode, editing: _editing, hosted: _hosted, embedded: _embedded }; } };
