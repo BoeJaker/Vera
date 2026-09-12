@@ -10,7 +10,9 @@
 
    <vera-context-graph>  API:
      setContext(nodes, edges, {focus:[ids], reads:{mid:[ids]}, stepReads:[[ids]], color:(source)=>css, turn})
-     appendLoopEvent(ev) · setLoopEvents(evs) · setPlan(goals) · setRuns(list, {current}) · view(name) · fit() · positions() · state()
+     appendLoopEvent(ev) · setLoopEvents(evs) · setPlan(goals) · setRuns(list, {current}) · setEstate(snapshot) · view(name) · fit() · positions() · state()
+   the estate (the topology snapshot the dashboard's map draws) is a strip along the bottom — the leaves as status
+   boxes under their category, their links, "ran on" from a loop step to the node its cap ran on — off by default
    the lane: the run's own plan (.plan / .subplan / .replan) is the row along the top while a run is shown, each
    plan step wired to the loop steps that ran it; sub-plan steps sit under their parent; branches, pruned branches
    and the assess · verify · ledger · clarify · recovery · gate · deliverable · finalised records mark their step;
@@ -40,9 +42,13 @@
     const runPlan = (S.loop && S.loop.length && S.runPlan && S.runPlan.length) ? S.runPlan : [];
     const planIsRun = runPlan.length > 0;
     const loop = off.has('loop') ? [] : ((S.loop && S.loop.length) ? S.loop : (S.dag || [])), plan = off.has('plan') ? [] : (planIsRun ? runPlan : (S.plan || []));
-    const hasLanes = loop.length > 0 || plan.length > 0;
-    const LANE_L = loop.length ? 118 : 0, LANE_T = plan.length ? 52 : 0;
-    const PW = Math.max(200, W), PH = Math.max(160, H);
+    // the estate: the snapshot's leaves (never the hub, a category or a monitor — code paths, not machines), each under its category
+    const estAll = ((S.estate && S.estate.nodes) || []).filter((n) => n && !/^(hub|category|monitor)$/.test(n.kind || ''));
+    const estate = off.has('estate') ? [] : estAll;
+    const hasLanes = loop.length > 0 || plan.length > 0 || estate.length > 0;
+    const LANE_L = loop.length ? 118 : 0, LANE_T = plan.length ? 52 : 0, LANE_B = estate.length ? 68 : 0;
+    // the plot's own height ends above the estate strip; the pan/zoom centre stays the full plot's (the CSS origin)
+    const PW = Math.max(200, W), PHfull = Math.max(160, H), PH = PHfull - LANE_B;
     // the plot proper: right of the loop lane, below the plan row
     const cxp = LANE_L + (PW - LANE_L) / 2, cyp = LANE_T + (PH - LANE_T) / 2;
     // memory: the context's own memory records (injected) plus the session's memory graph (the rail's Memory tab) —
@@ -64,10 +70,10 @@
     const turnKeys = Object.keys(reads);
     const firstRead = (id) => { const ks = readBy(id); return ks.length ? Math.min.apply(null, ks.map((k) => turnKeys.indexOf(k) + 1)) : 0; };
     const isoP = S.isoProj || ((x, y, z) => { const u = x - cxp, v = y - cyp; return { x: cxp + (u - v) * 0.78, y: cyp + 40 + (u + v) * 0.39 - (z || 0) }; });
-    const out = { view, rings: [], spokes: [], sectorLabels: [], cnodes: [], memNodes: [], cedges: [], sedges: [], stems: [], plate: null, regions: [], loopNodes: [], loopStems: [], planNodes: [], pos: {}, tokens: 0, lit: 0, hub: { x: cxp, y: cyp, hid: view === 'flow' || view === 'time' } };
+    const out = { view, rings: [], spokes: [], sectorLabels: [], cnodes: [], memNodes: [], cedges: [], sedges: [], stems: [], plate: null, regions: [], loopNodes: [], loopStems: [], planNodes: [], estNodes: [], estLabels: [], pos: {}, tokens: 0, lit: 0, hub: { x: cxp, y: cyp, hid: view === 'flow' || view === 'time' } };
     // the plot's pan/zoom, for what is drawn OUTSIDE it (the lanes) but joins a record inside it
     const GZ = (S.pan && S.pan.z) || 1, GX = (S.pan && S.pan.x) || 0, GY = (S.pan && S.pan.y) || 0;
-    const atP = (p) => ({ x: PW / 2 + (p.x - PW / 2) * GZ + GX, y: PH / 2 + (p.y - PH / 2) * GZ + GY });
+    const atP = (p) => ({ x: PW / 2 + (p.x - PW / 2) * GZ + GX, y: PHfull / 2 + (p.y - PHfull / 2) * GZ + GY });
     const edge = (list, a, b, col, cls, title) => { const dx = b.x - a.x, dy = b.y - a.y; list.push({ x: px(a.x), y: px(a.y), len: px(Math.sqrt(dx * dx + dy * dy)), deg: +(Math.atan2(dy, dx) * 180 / Math.PI).toFixed(2), col, cls, title }); };
     const bucket = {};
     const place = (si, i, n, score, id) => {
@@ -152,12 +158,36 @@
     // the step in focus (or the one running), wired to the records it read — from the fixed lane into the moving plot
     stepReads.forEach((ids, si) => { const a = lpos[si]; if (!a) return; const lit = S.lsel != null ? S.lsel === si : a.st === 'running'; if (!lit && S.lsel != null) return;
       (ids || []).forEach((id) => { const b = out.pos[id]; if (!b) return; edge(out.sedges, a, atP(b), lit ? 'var(--cg-ac)' : 'var(--cg-bd2)', lit ? 'used' : 'rel', 'step ' + (si + 1) + ' read ' + b.label); }); });
+    // the estate strip along the bottom: the leaves as status boxes grouped under their category (from the snapshot's
+    // hub → category → leaf edges), the real links among them, and "ran on" from a loop step to the node its cap ran on
+    if (estate.length) {
+      const eById = {}; ((S.estate && S.estate.nodes) || []).forEach((n) => { eById[n.id] = n; });
+      const catOf = {}; ((S.estate && S.estate.edges) || []).forEach((ed) => { const a = eById[ed.from], b = eById[ed.to]; if (a && b && a.kind === 'category') catOf[b.id] = a.label; });
+      const groups = []; const gIdx = {};
+      estate.forEach((n) => { const g = catOf[n.id] || (n.kind === 'service' ? 'Services' : 'Other'); if (gIdx[g] == null) { gIdx[g] = groups.length; groups.push({ name: g, items: [] }); } groups[gIdx[g]].items.push(n); });
+      const X0 = LANE_L + 14, X1 = PW - 14, GAP = 18; const per = Math.max(14, Math.min(40, (X1 - X0 - GAP * (groups.length - 1)) / Math.max(1, estate.length)));
+      const y = PH + 40; let x = X0;
+      const stCls = (s) => s === 'ok' ? 'ok' : s === 'warn' ? 'warn' : s === 'err' || s === 'error' || s === 'fail' ? 'err' : 'unk';
+      const estCol = (s) => s === 'ok' ? 'var(--cg-ac2)' : s === 'warn' ? '#e0b060' : s === 'err' || s === 'error' || s === 'fail' ? '#e06c75' : 'var(--cg-t3)';
+      groups.forEach((g) => { out.estLabels.push({ x: px(x), y: px(PH + 12), t: g.name + ' · ' + g.items.length });
+        g.items.forEach((n) => { const cx = x + per / 2; const r = n.rec || {};
+          out.pos[n.id] = { x: cx, y, col: estCol(n.status), source: 'estate', label: n.label, lit: false, rim: 6, ghost: false, score: 0, tok: 0, kind: n.kind || 'node', rec: r, fixed: true };
+          out.estNodes.push({ id: n.id, x: px(cx), y: px(y), cls: stCls(n.status) + (S.sel === n.id ? ' on' : ''), label: per >= 34 ? String(n.label || '').slice(0, 7) : '', title: (n.label || n.id) + ' · ' + (n.kind || 'node') + ' · ' + (n.status || 'unknown') + (r.detail ? ' · ' + r.detail : '') });
+          x += per; });
+        x += GAP; });
+      out.regions.push({ x: px(X1 - 60), y: px(PH + 12), col: 'var(--cg-est)', t: 'estate' });
+      // the snapshot's own links among the drawn leaves (a machine serves an instance, a container backs a store)
+      ((S.estate && S.estate.edges) || []).forEach((ed) => { const a = out.pos[ed.from], b = out.pos[ed.to]; if (!a || !b || a.source !== 'estate' || b.source !== 'estate') return; edge(out.sedges, a, b, 'var(--cg-bd2)', 'est', a.label + ' → ' + b.label + ' · ' + String(ed.label || 'link').toLowerCase()); });
+      // "ran on": a loop step to the node its capability ran on — matched by id or label
+      const find = (name) => { const q = String(name).toLowerCase(); return estate.find((n) => n.id.toLowerCase() === 'estate:' + q || String(n.label || '').toLowerCase() === q) || estate.find((n) => String(n.label || '').toLowerCase().indexOf(q) >= 0 || n.id.toLowerCase().indexOf(q) >= 0); };
+      loop.forEach((s, i) => { const a = lpos[i]; if (!a) return; (s.ranOn || []).forEach((name) => { const n = find(name); const b = n && out.pos[n.id]; if (!b) return; edge(out.sedges, a, b, 'var(--cg-est)', 'ran', 'step ' + (i + 1) + ' ran on ' + b.label); }); });
+    }
     // the record open in the panel
     out.rec = null;
     if (S.sel && out.pos[S.sel]) { const r = out.pos[S.sel]; const by = readBy(S.sel), steps = readBySteps(S.sel);
       const rels = (S.edges || []).filter((e) => e.from === S.sel || e.to === S.sel).map((e) => { const o = out.pos[e.from === S.sel ? e.to : e.from]; return (o ? o.label : '?') + (e.label ? ' — ' + String(e.label).replace(/_/g, ' ').toLowerCase() : ''); }).slice(0, 4);
-      out.rec = { id: S.sel, name: r.label, kind: r.source + ' · ' + r.kind, col: r.col, turn: by[0] || null, ghost: r.ghost, family: r.source === 'memory' ? 'memory' : 'context', rec: r.rec || null,
-        rows: r.sess ? [{ k: 'kind', v: r.kind + (r.rec && r.rec.source_type ? ' · ' + r.rec.source_type : '') }, { k: 'recalled', v: r.ghost ? 'in the session, never injected' : 'injected' + (by.length ? ' · ' + by.join(', ') : '') }, { k: 'created', v: String((r.rec && r.rec.created_at) || '').replace('T', ' ').slice(0, 16) || '—' }, { k: 'importance', v: r.score.toFixed(2) }]
+      out.rec = { id: S.sel, name: r.label, kind: r.source + ' · ' + r.kind, col: r.col, turn: by[0] || null, ghost: r.ghost, family: r.source === 'estate' ? 'estate' : r.source === 'memory' ? 'memory' : 'context', rec: r.rec || null,
+        rows: r.source === 'estate' ? [{ k: 'kind', v: r.kind }, { k: 'status', v: (r.rec && r.rec.status) || 'unknown' }, { k: 'detail', v: (r.rec && r.rec.detail) || '—' }, { k: 'temperature', v: r.rec && r.rec.temp_c != null ? r.rec.temp_c + ' °C' : '—' }] : r.sess ? [{ k: 'kind', v: r.kind + (r.rec && r.rec.source_type ? ' · ' + r.rec.source_type : '') }, { k: 'recalled', v: r.ghost ? 'in the session, never injected' : 'injected' + (by.length ? ' · ' + by.join(', ') : '') }, { k: 'created', v: String((r.rec && r.rec.created_at) || '').replace('T', ' ').slice(0, 16) || '—' }, { k: 'importance', v: r.score.toFixed(2) }]
           : [{ k: 'relevance', v: r.score.toFixed(2) + (r.ghost ? ' · related, not injected' : r.lit ? ' · in this prompt' : by.length ? ' · in the prompt of ' + by.join(', ') : ' · not read') }, { k: 'tokens', v: String(r.tok) }, { k: 'read by', v: by.length ? by.join(' · ') : '—' }, { k: 'loop steps', v: steps.length ? steps.map((s) => 'step ' + s).join(' · ') : '—' }, { k: 'source', v: r.source + ' · ' + r.kind }], rels }; }
     // All edges off: only the relations that touch the prompt (lit, used, memory) stay; the dim ones fold away
     if (!S.allEdges) { out.cedges = out.cedges.filter((e) => e.cls !== 'rel'); out.sedges = out.sedges.filter((e) => e.cls !== 'rel'); }
@@ -170,8 +200,9 @@
     if ((S.dag || []).length && !(S.loop && S.loop.length)) out.families.push({ name: 'dag', col: 'var(--cg-ac)', n: S.dag.length, on: !off.has('loop') });
     if (S.loop && S.loop.length) out.families.push({ name: 'loop', col: 'var(--cg-ac)', n: S.loop.length, on: !off.has('loop') });
     if (runPlan.length || (S.plan || []).length) out.families.push({ name: 'plan', col: 'var(--cg-t2)', n: runPlan.length || S.plan.length, on: !off.has('plan') });
+    if (estAll.length) out.families.push({ name: 'estate', col: 'var(--cg-est)', n: estAll.length, on: !off.has('estate') });
     out.ghosts = nodes.filter((n) => n.included === false).length + memSess.filter((n) => !n._injected).length;
-    out.lanes = { l: LANE_L, t: LANE_T, hasLanes };
+    out.lanes = { l: LANE_L, t: LANE_T, b: LANE_B, hasLanes };
     return out;
   }
 
@@ -188,7 +219,8 @@
       const marks = (recs[n.id] || []).map((id) => byId[id]).filter(Boolean).map((m) => ({ kind: m.kind, status: m.status, label: m.label }));
       const branch = /^sub:/.test(n.group || '') ? '' : (n.group || '');
       return { id: n.id, label: n.label, status: n.status, cap: c.join(' · '), ms: n.rec && n.rec.ms != null ? (n.rec.ms >= 1000 ? (n.rec.ms / 1000).toFixed(1) + ' s' : n.rec.ms + ' ms') : '',
-        sub: /^sub:/.test(n.group || '') && parent && idx[parent] != null ? idx[parent] : -1, branch, pruned: !!(branch && pruned.has(branch)), marks }; });
+        sub: /^sub:/.test(n.group || '') && parent && idx[parent] != null ? idx[parent] : -1, branch, pruned: !!(branch && pruned.has(branch)), marks,
+        ranOn: (caps[n.id] || []).map((id) => byId[id] && byId[id].rec && byId[id].rec.node).filter(Boolean) }; });
     // what each step read: the wires the cap events carried, when they name context ids
     const stepReads = steps.map((s) => (caps[s.id] || []).flatMap((id) => (byId[id] && byId[id].wires) || []).filter((w) => typeof w === 'string'));
     // the run's plan (the planner's steps, in order) and which loop steps executed each
@@ -261,6 +293,14 @@ vera-context-graph .cg-loop .m{position:absolute;right:5px;bottom:2px;display:fl
 vera-context-graph .cg-loop .m i.ok{color:var(--cg-ac2)}vera-context-graph .cg-loop .m i.fail{color:#e06c75}vera-context-graph .cg-loop .m i.running{color:var(--cg-ac)}
 vera-context-graph .cg-lstem{position:absolute;width:1px;background:var(--cg-bd2)}
 vera-context-graph .cg-plan.fail{background:#e06c75}vera-context-graph .cg-planl.fail{color:#e06c75}
+vera-context-graph{--cg-est:#5aa0c8}
+vera-context-graph .cg-est{position:absolute;transform:translate(-50%,-50%);width:11px;height:11px;border-radius:2px;background:var(--cg-s2);box-shadow:inset 0 0 0 1.5px var(--cg-t3);cursor:pointer}
+vera-context-graph .cg-est.ok{box-shadow:inset 0 0 0 1.5px var(--cg-ac2)}vera-context-graph .cg-est.warn{box-shadow:inset 0 0 0 1.5px #e0b060;background:color-mix(in srgb,#e0b060 18%,transparent)}vera-context-graph .cg-est.err{box-shadow:inset 0 0 0 1.5px #e06c75;background:color-mix(in srgb,#e06c75 22%,transparent)}
+vera-context-graph .cg-est.on{box-shadow:inset 0 0 0 1.5px var(--cg-est),0 0 0 2px var(--cg-bg),0 0 0 3.5px color-mix(in srgb,var(--cg-est) 45%,transparent)}
+vera-context-graph .cg-estl{position:absolute;transform:translate(-50%,0);font-family:var(--cg-mono);font-size:7px;color:var(--cg-t3);white-space:nowrap;pointer-events:none}
+vera-context-graph .cg-estg{position:absolute;font-family:var(--cg-mono);font-size:7.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--cg-t3);white-space:nowrap;pointer-events:none}
+vera-context-graph .cg-edge.est{opacity:.45}vera-context-graph .cg-edge.ran{opacity:.9;height:1.5px}
+vera-context-graph .cg-lay i.h{border-radius:2px}
 vera-context-graph .cg-edge.exec{opacity:.5}
 vera-context-graph .cg-sel{font:inherit;font-size:9.5px;height:20px;max-width:190px;border:1px solid var(--cg-bd);border-radius:5px;background:var(--cg-s2);color:var(--cg-t2)}
 vera-context-graph .cg-plan{position:absolute;transform:translate(-50%,-50%) rotate(45deg);width:10px;height:10px;border-radius:1px}
@@ -286,7 +326,7 @@ vera-context-graph .cg-empty{position:absolute;inset:0;display:flex;align-items:
   /* ── the element ─────────────────────────────────────────────────────────────────────────────────── */
   if (typeof HTMLElement !== 'undefined' && root.customElements && !root.customElements.get('vera-context-graph')) {
     class VeraContextGraph extends HTMLElement {
-      constructor() { super(); this._S = { view: 'galaxy', nodes: [], edges: [], focus: [], reads: {}, stepReads: [], loop: [], plan: [], runPlan: [], run: null, runs: [], runSel: '', dag: [], memory: [], memEdges: [], memHide: null, memColor: null, edgeColor: null, allEdges: false, layersOff: new Set(), related: true, sel: null, lsel: null, pan: { x: 0, y: 0, z: 1 }, color: null, turn: '' }; this._evs = []; this._raf = 0; this._drag = null; }
+      constructor() { super(); this._S = { view: 'galaxy', nodes: [], edges: [], focus: [], reads: {}, stepReads: [], loop: [], plan: [], runPlan: [], run: null, runs: [], runSel: '', dag: [], estate: { nodes: [], edges: [] }, memory: [], memEdges: [], memHide: null, memColor: null, edgeColor: null, allEdges: false, layersOff: new Set(['estate']), related: true, sel: null, lsel: null, pan: { x: 0, y: 0, z: 1 }, color: null, turn: '' }; this._evs = []; this._raf = 0; this._drag = null; }
       connectedCallback() {
         ensureCss(this.ownerDocument); if (this._built) { this._schedule(); return; } this._built = true;
         const a = this.getAttribute('view'); if (a) this._S.view = a;
@@ -313,6 +353,8 @@ vera-context-graph .cg-empty{position:absolute;inset:0;display:flex;align-items:
       _loopRefresh() { const L = loopFromEvents(this._evs); this._S.loop = L.steps; this._S.runPlan = L.plan; this._S.run = L.run; if (!this._S.stepReadsPinned) this._S.stepReads = L.stepReads; this._schedule(); }
       setPlan(goals) { this._S.plan = planFromGoals(goals); this._schedule(); }
       // the runs the picker offers: [{session_id, goal, status}] (the host's list); current = the one in the lane
+      // the estate: the topology snapshot ({nodes:[{id,label,kind,status,detail,temp_c}], edges:[{from,to,kind}]}), through families.js
+      setEstate(snapshot) { const F = root.VeraGraphFamilies; const d = F && snapshot ? F.toDoc('estate', snapshot) : null; this._S.estate = d && !d.error ? { nodes: d.nodes, edges: d.edges } : { nodes: [], edges: [] }; this._schedule(); }
       setRuns(list, o) { o = o || {}; this._S.runs = (Array.isArray(list) ? list : []).filter((r) => r && r.session_id); if (o.current != null) this._S.runSel = String(o.current); this._schedule(); }
       // the rail's Memory graph: the session's records and their relations (the same data, drawn here on the arc)
       setMemory(nodes, edges, o) { o = o || {}; const S = this._S; S.memory = Array.isArray(nodes) ? nodes : []; S.memEdges = Array.isArray(edges) ? edges : []; if (o.color) S.memColor = o.color; if (o.edgeColor) S.edgeColor = o.edgeColor; if (o.hide) S.memHide = o.hide; this._schedule(); }
@@ -336,7 +378,7 @@ vera-context-graph .cg-empty{position:absolute;inset:0;display:flex;align-items:
           else if (k === 'open') { const r = this._last && this._last.rec; this.dispatchEvent(new CustomEvent('vera:ctx:pick', { detail: { id: a.dataset.id, open: true, family: r && r.id === a.dataset.id ? r.family : 'context', rec: r && r.id === a.dataset.id ? r.rec : null }, bubbles: true })); }
           else if (k === 'turn') { this.dispatchEvent(new CustomEvent('vera:ctx:focus-turn', { detail: { mid: a.dataset.mid }, bubbles: true })); }
           return; }
-        const n = t.closest && t.closest('.cg-node,.cg-mem'); if (n) { const S = this._S; S.sel = S.sel === n.dataset.id ? null : n.dataset.id; S.lsel = null; this._schedule(); this.dispatchEvent(new CustomEvent('vera:ctx:pick', { detail: { id: n.dataset.id }, bubbles: true })); return; }
+        const n = t.closest && t.closest('.cg-node,.cg-mem,.cg-est'); if (n) { const S = this._S; S.sel = S.sel === n.dataset.id ? null : n.dataset.id; S.lsel = null; this._schedule(); this.dispatchEvent(new CustomEvent('vera:ctx:pick', { detail: { id: n.dataset.id }, bubbles: true })); return; }
         const l = t.closest && t.closest('.cg-loop'); if (l) { const i = +l.dataset.i; const S = this._S; S.lsel = S.lsel === i ? null : i; S.sel = null; this._schedule(); }
       }
       _render() {
@@ -354,7 +396,7 @@ vera-context-graph .cg-empty{position:absolute;inset:0;display:flex;align-items:
             this._r.runs.innerHTML = '<option value="' + esc(cur) + '">' + (S.run ? esc(glyph(S.run.status === 'ok' ? 'done' : S.run.status === 'fail' ? 'error' : 'running') + String(S.run.label || 'this run').slice(0, 38)) : 'this session · no run') + '</option>'
               + others.map((r) => '<option value="' + esc(r.session_id) + '">' + esc(glyph(r.status) + String(r.goal || r.session_id).slice(0, 38)) + '</option>').join('');
             this._r.runs.hidden = !(runs.length || S.run); } }
-        const famChip = (f) => '<button class="cg-lay fam ' + (f.on ? 'on' : '') + '" data-a="layer" data-s="' + (f.name === 'dag' ? 'loop' : esc(f.name)) + '" style="color:' + esc(f.col) + '" title="' + esc(f.name) + ' · ' + f.n + ' · the ' + esc(f.name) + ' graph, folded into this one — click to fold it away"><i class="' + (f.name === 'plan' ? 'd' : f.name === 'memory' ? '' : 'p') + '" style="background:' + esc(f.col) + '"></i>' + esc(f.name) + '<b>' + f.n + '</b></button>';
+        const famChip = (f) => '<button class="cg-lay fam ' + (f.on ? 'on' : '') + '" data-a="layer" data-s="' + (f.name === 'dag' ? 'loop' : esc(f.name)) + '" style="color:' + esc(f.col) + '" title="' + esc(f.name) + ' · ' + f.n + ' · the ' + esc(f.name) + ' graph, folded into this one — click to fold it away"><i class="' + (f.name === 'plan' ? 'd' : f.name === 'estate' ? 'h' : f.name === 'memory' ? '' : 'p') + '" style="background:' + esc(f.col) + '"></i>' + esc(f.name) + '<b>' + f.n + '</b></button>';
         this._r.layers.innerHTML = o.srcs.concat(o.offSrcs).map((s) => '<button class="cg-lay ' + (S.layersOff.has(s.name) ? '' : 'on') + '" data-a="layer" data-s="' + esc(s.name) + '" style="color:' + esc(s.col) + '" title="' + esc(s.name) + ' · ' + s.n + ' records · click to fold this layer out of the graph"><i style="background:' + esc(s.col) + '"></i>' + esc(s.name) + '<b>' + s.n + '</b></button>').join('')
           + (o.families || []).map(famChip).join('')
           + (o.ghosts ? '<span style="flex:1"></span><button class="cg-lay ' + (S.related ? 'on' : '') + '" data-a="related" style="color:var(--cg-ac2)" title="Records related to this question that were not injected"><i class="s"></i>related<b>+' + o.ghosts + '</b></button>' : '');
@@ -375,12 +417,14 @@ vera-context-graph .cg-empty{position:absolute;inset:0;display:flex;align-items:
         let l = '';
         o.sedges.forEach((e) => { l += '<div class="cg-edge ' + e.cls + '" title="' + esc(e.title) + '" style="' + st(e.x, e.y) + 'width:' + e.len + 'px;background:' + esc(e.col) + ';transform:rotate(' + e.deg + 'deg)"></div>'; });
         o.planNodes.forEach((n) => { l += '<div class="cg-plan ' + n.cls + '" title="' + esc(n.title) + '" style="' + st(n.x, n.y) + '"></div><div class="cg-planl ' + n.cls + '" style="' + st(n.lx, n.ly) + '">' + esc(n.label) + '</div>'; });
+        o.estLabels.forEach((g) => { l += '<div class="cg-estg" style="' + st(g.x, g.y) + '">' + esc(g.t) + '</div>'; });
+        o.estNodes.forEach((n) => { l += '<div class="cg-est ' + n.cls + '" data-id="' + esc(n.id) + '" title="' + esc(n.title) + '" style="' + st(n.x, n.y) + '"></div>' + (n.label ? '<div class="cg-estl" style="' + st(n.x, n.y + 9) + '">' + esc(n.label) + '</div>' : ''); });
         o.loopStems.forEach((s) => { l += '<div class="cg-lstem" style="' + st(s.x, s.y) + 'height:' + s.h + 'px"></div>'; });
         o.loopNodes.forEach((n) => { l += '<div class="cg-loop ' + n.cls + '" data-i="' + n.i + '" title="' + esc(n.title) + '" style="' + st(n.x, n.y) + '"><b>' + esc(n.label.slice(0, 16)) + '</b><span class="c">' + esc(n.cap) + '</span><span class="t">' + esc(n.ms) + '</span>'
           + (n.marks && n.marks.length ? '<span class="m">' + n.marks.map((m) => '<i class="' + esc(m.status) + ' ' + esc(m.kind) + '" title="' + esc(m.kind + ' · ' + m.status + ' · ' + m.label) + '">' + esc(m.g) + '</i>').join('') + '</span>' : '') + '</div>'; });
-        if (o.rec) { const r = o.rec; l += '<div class="cg-rec" style="--gc:' + esc(r.col) + '"><span class="cg-rec-h"><i class="' + (r.ghost ? 'ghost' : '') + '"></i><b>' + esc(r.name) + '</b><span class="mono">' + esc(r.kind) + '</span><span class="x" data-a="close">✕</span></span>'
+        if (o.rec) { const r = o.rec; l += '<div class="cg-rec" style="--gc:' + esc(r.col) + (o.lanes.b ? ';bottom:' + (o.lanes.b + 6) + 'px' : '') + '"><span class="cg-rec-h"><i class="' + (r.ghost ? 'ghost' : '') + '"></i><b>' + esc(r.name) + '</b><span class="mono">' + esc(r.kind) + '</span><span class="x" data-a="close">✕</span></span>'
           + r.rows.map((x) => '<span class="cg-rec-r"><span class="k">' + esc(x.k) + '</span><span class="v">' + esc(x.v) + '</span></span>').join('') + r.rels.map((x) => '<span class="cg-rec-l"><i></i>' + esc(x) + '</span>').join('')
-          + '<span class="cg-rec-a">' + (r.turn ? '<button class="pri" data-a="turn" data-mid="' + esc(r.turn) + '">Focus turn</button>' : '') + '<button data-a="toggle" data-id="' + esc(r.id) + '">' + (r.ghost ? 'Include in the prompt' : 'Exclude from the prompt') + '</button><button data-a="open" data-id="' + esc(r.id) + '">Open</button></span></div>'; }
+          + '<span class="cg-rec-a">' + (r.turn ? '<button class="pri" data-a="turn" data-mid="' + esc(r.turn) + '">Focus turn</button>' : '') + (r.family === 'estate' ? '' : '<button data-a="toggle" data-id="' + esc(r.id) + '">' + (r.ghost ? 'Include in the prompt' : 'Exclude from the prompt') + '</button><button data-a="open" data-id="' + esc(r.id) + '">Open</button>') + '</span></div>'; }
         if (!o.cnodes.length && !o.memNodes.length) l += '<div class="cg-empty">' + (S.nodes.length ? 'Every layer is folded away — turn one back on above.' : 'The records the aide assembles for a turn appear here — send a message with context injection on.') + '</div>';
         this._r.lanes.innerHTML = l;
         this.dispatchEvent(new CustomEvent('vera:ctx:rendered', { detail: { view: o.view, tokens: o.tokens, lit: o.lit, nodes: o.cnodes.length + o.memNodes.length }, bubbles: true }));

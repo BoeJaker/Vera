@@ -5475,7 +5475,7 @@ IMPORTANT:
   let _ctxCol=null, _ctxColTimer=null, _ctxColSig='', _ctxColPlanT=0, _ctxColMemT=0, _ctxColMemSig='', _ctxColDagSig='', _ctxTypingT=0, _ctxTypingTimer=null;
   // the run in the lane: _ctxRunSid is the loop session shown ('' = none yet — this session's last run is replayed);
   // a pick from the column's runs picker sets _ctxRunPicked; a tail (a picked run still running) is an AbortController
-  let _ctxRunsT=0, _ctxRunSid='', _ctxRunFor='', _ctxRunPicked=false, _ctxRunTail=null;
+  let _ctxRunsT=0, _ctxRunSid='', _ctxRunFor='', _ctxRunPicked=false, _ctxRunTail=null, _ctxEstT=0;
   // every source the column shows (the rail's graph honours its own layer toggles; the column has its own chips)
   const _CTX_ALL_LAYERS=new Set(['vector','graph','memory','fabric','web','cap','run','skill','ontology','related_qa','worldview','agent','news','both','entities','urls']);
   function _graphColumnMount(){
@@ -5484,7 +5484,7 @@ IMPORTANT:
       if(!(window.customElements&&window.customElements.get('vera-context-graph'))){ if(!host.querySelector('.sys-msg')) host.innerHTML='<div class="sys-msg" style="padding:12px">The context graph is loading…</div>'; if(!_ctxColTimer) _ctxColTimer=setInterval(_graphColumnTick, 800); return; }
       host.innerHTML=''; _ctxCol=document.createElement('vera-context-graph'); host.appendChild(_ctxCol);
       // a fresh column shows this session's run again (replayed from its persisted events) and refreshes the runs list
-      _ctxRunSid=''; _ctxRunFor=''; _ctxRunPicked=false; _ctxRunsT=0;
+      _ctxRunSid=''; _ctxRunFor=''; _ctxRunPicked=false; _ctxRunsT=0; _ctxEstT=0;
       _ctxCol.addEventListener('vera:ctx:run', ev=>{ const sid=(ev.detail||{}).session_id||SID||''; _ctxRunPicked=sid!==(SID||''); _ctxColShowRun(sid); });
       _ctxCol.addEventListener('vera:ctx:rendered', ()=>_ctxRunsDraw());
       _ctxCol.addEventListener('vera:ctx:collapse', ()=>{ togglePage('graph'); try{ if(window.VeraLHM){ VeraLHM.pick('context'); const r=document.getElementById('rightRail'); if(r&&r.classList.contains('slim')) toggleRight(); } }catch(_){} });
@@ -5524,6 +5524,7 @@ IMPORTANT:
     if(dsig!==_ctxColDagSig){ _ctxColDagSig=dsig; _ctxCol.setDag(_lastDagNodes); }
     if(Date.now()-_ctxColPlanT>60000){ _ctxColPlanT=Date.now(); fetch(BASE+'/dream/goals/list').then(r=>r.json()).then(r=>{ try{ _ctxCol&&_ctxCol.setPlan((r&&r.goals)||[]); }catch(_){} }).catch(()=>{}); }
     _ctxColRuns();
+    _ctxColEstate();
     const s=document.getElementById('grColSub'); if(s) s.textContent='context graph · '+incl.length+' of '+nodesAll.length+' in the prompt';
   }
   // the live loop's events, teed into the column's loop lane (the same stream the loop card and the rail's graph read)
@@ -5539,6 +5540,14 @@ IMPORTANT:
   // the runs the lane can show (pass B of the column): the chat's live loop first; otherwise this session's last run,
   // replayed from its persisted events (the same session_state the chat resumes from); any recorded run from the
   // column's picker (the same list the Loops pane reads), tailed while it runs
+  // the estate family: the topology snapshot (the same nodes the dashboard's map draws) — read once when the column
+  // opens (the chip shows its count, off by default) and every five minutes while the layer is on
+  function _ctxColEstate(force){
+    if(!_ctxCol||!_pages.has('graph')) return;
+    let on=false; try{ on=!_ctxCol.state().layersOff.has('estate'); }catch(_){}
+    if(!force&&_ctxEstT&&!(on&&Date.now()-_ctxEstT>300000)) return; _ctxEstT=Date.now();
+    fetch(BASE+'/topology/snapshot').then(r=>r.json()).then(r=>{ try{ _ctxCol&&_ctxCol.setEstate(r&&r.content!==undefined?r.content:r); }catch(_){} }).catch(()=>{});
+  }
   function _ctxColRuns(force){
     if(!_ctxCol||!_pages.has('graph')) return;
     if(!_ctxRunPicked&&_ctxRunFor!==(SID||'')) _ctxRunSid='';   // the session changed under the column
@@ -16421,7 +16430,7 @@ Your task: decide what to do next to advance toward the goal.
     setDensity,toggleBlocks,
     _uiAskAnswer,_uiAskPick,_uiDirectiveApply,
     _cmpChip,_cmpSync,_paOpen,_paCopy,
-    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
+    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
     _persistMediaCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},
