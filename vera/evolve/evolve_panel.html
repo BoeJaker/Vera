@@ -655,7 +655,7 @@ html.vpb-nav-hosted body{padding-left:0}
     </div>
     <div class="row" style="margin-top:10px">
       <button class="btn primary" onclick="saveConfig()">Save</button>
-      <span class="hint">Synthesis (proposing the next variant) runs here — on gpt-oss:20b on a CPU node — so it stays off the GPU/API. Add Anthropic/OpenAI keys under Workers &amp; Ollama → API.</span>
+      <span class="hint">Synthesis (proposing the next variant) runs here — on gpt-oss:20b on a CPU node — so it stays off the GPU/API. Add Anthropic/OpenAI keys under Estate → API.</span>
     </div>
   </div>
 </div>
@@ -1953,7 +1953,7 @@ const _AG_SEATS_MODAL=`<div class="card-h"><span class="card-t">Capacity</span><
   </div>
   <div id="cap-seats"><div class="empty">Loading…</div></div>
   <div id="cap-ollama" class="hint" style="margin-top:8px"></div>
-  <div class="hint" style="margin-top:6px">Seat spend joins onto the providers-usage view (Workers &amp; Ollama UI); subscription seats have no per-token signal, only inferred state. Ollama occupancy is read live from the GPU/CPU gate.</div>`;
+  <div class="hint" style="margin-top:6px">Seat spend joins onto the providers-usage view (Estate UI); subscription seats have no per-token signal, only inferred state. Ollama occupancy is read live from the GPU/CPU gate.</div>`;
 function openSeats(){openModal(_AG_SEATS_MODAL);loadCapacity()}
 async function capRegister(){
   const id=$('cs-id').value.trim(),target=$('cs-target').value.trim();

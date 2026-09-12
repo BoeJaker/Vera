@@ -491,7 +491,7 @@ _WOL_MOUNT_JS = r"""
 
 register_ui(
     "workers-ollama",
-    "Workers & Ollama",
+    "Estate",
     "",
     '<div id="panel-wol" style="height:100%;overflow:hidden;background:var(--bg0)"></div>',
     _WOL_MOUNT_JS,

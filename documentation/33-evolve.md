@@ -79,7 +79,7 @@ elapsed time, and the loop's live tool calls.
 Both accept a provider **spec**: `ollama[:model]` runs on the local cluster
 (`llm.generate`); `anthropic[:model]` / `openai[:model]` / any stored provider
 id routes through `providers.chat` (sealed keys + usage/cost tracking). Add API
-keys under **Workers & Ollama → API** (the providers registry).
+keys under **Estate → API** (the providers registry).
 
 Default config: critic `ollama`, editor `anthropic` — Claude tunes while the
 local models run. `evolve.assess.compare` scores one run with two critics and
@@ -645,7 +645,7 @@ the audit log, and a **Sandbox** tab with the `sandbox_mode` control.
 - [Markets](./15-markets.md) — the backtest/sweep engine the markets loop drives
 - **Business Simulation** — `business.sim.*`, the ground-truth scorer for `sim`-type tasks
 - [IDE and remote development](08-ide.md) — where queued code edits execute
-- Providers registry — Workers & Ollama → API (critic/editor API keys)
+- Providers registry — Estate → API (critic/editor API keys)
 
 ## Screenshots
 

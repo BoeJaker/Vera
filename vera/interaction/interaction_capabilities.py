@@ -39,7 +39,7 @@ async def _interaction_panel():
 
 register_ui(
     "interaction-map",
-    "Estate",
+    "Estate Map",
     "🛰️",
     """<div style="height:100%;display:flex;flex-direction:column">
   <iframe src="/interaction/panel"
@@ -49,5 +49,5 @@ register_ui(
     "",
     ui_caps=["obs.events", "proxmox.cluster.list", "workers.docker.hosts",
              "netsec.mesh.members", "identity.host.list"],
-    mode="element",      # embedded as a Workers & Ollama sub-tab, not a top-level tab
+    mode="element",      # embedded as the Estate tab's Map pane, not a top-level tab
 )

@@ -24,7 +24,7 @@ if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
   --ac:var(--acc);--ok:var(--acc2);--ac5:var(--acc4);
 }
 *{box-sizing:border-box;margin:0;padding:0}
-/* Base font matches the Workers & Ollama shell (sans); code/values stay mono */
+/* Base font matches the Estate shell (sans); code/values stay mono */
 html,body{height:100%;background:var(--bg);color:var(--t1);font:12px/1.5 var(--sans)}
 pre,code,.kv{font-family:var(--mono)}
 body{overflow:hidden}
@@ -443,10 +443,10 @@ details.fold .twrap{background:var(--bg1)}
       <div class="note">Storage ops (ZFS, cpusets, bind mounts) run over <b>root SSH to each
         PVE node</b>; file-fabric ops run over SSH to <b>VFS-02</b>, found by its
         host-store label — map every node to an SSH credential below. Credentials themselves
-        are created and managed in <b>Workers &amp; Ollama → Connections</b> (the canonical
+        are created and managed in <b>Estate → Connections</b> (the canonical
         SSH store); tag a host <code>proxmox</code> and add it there, then it appears in
         these dropdowns. Reserved CPU ranges are managed in the CPU / NUMA view
-        (Workers &amp; Ollama → Proxmox → CPU / NUMA).</div>
+        (Estate → Proxmox → CPU / NUMA).</div>
       <div class="section-h">Node → SSH host mapping</div>
       <div id="nodeMap"><div class="empty">Select a cluster…</div></div>
       <div class="section-h">Store writer &amp; network monitor</div>
@@ -642,10 +642,10 @@ P.refresh = async ()=>{
     if(unmapped){
       banner.innerHTML=`<b>Node “${esc(inv.node||'?')}” has no SSH credential mapped.</b> `+
         `Go to <b>⚙ Setup</b> and pick a host for it under “Node → SSH host mapping”, then Save. `+
-        `Create the credential first in <b>Workers &amp; Ollama → Connections</b> if it isn’t listed.`;
+        `Create the credential first in <b>Estate → Connections</b> if it isn’t listed.`;
     }else{
       banner.innerHTML=`<b>SSH to node “${esc(inv.node||'?')}” failed.</b> ${esc(err)||'no detail returned'} `+
-        `<span style="color:var(--t2)">— check the credential in Workers &amp; Ollama → Connections (use “Test reach”), or that root SSH is allowed on the node.</span>`;
+        `<span style="color:var(--t2)">— check the credential in Estate → Connections (use “Test reach”), or that root SSH is allowed on the node.</span>`;
     }
   }
   P.renderOverview(); P.fillCTSelects();
@@ -1044,7 +1044,7 @@ P.vdPlan = async ()=>{
 
 /* ── ollama instance registry ──
    Fills the "one instance" pull select. Backend switching (ollama⇄vLLM)
-   lives in Workers & Ollama → Nodes. */
+   lives in Estate → Nodes. */
 P.wpLoad = async ()=>{
   try{
     const r=await api('/ollama/instances');   // {iid:{label,…}} keyed by id
@@ -1125,7 +1125,7 @@ P.renderSetupSelects = ()=>{
 };
 P.renderSetup = async ()=>{
   // Re-fetch the canonical SSH host list so credentials added in
-  // Workers & Ollama → Connections after this panel loaded show up here.
+  // Estate → Connections after this panel loaded show up here.
   try{ P.state.sshHosts=(await api('/exec/ssh/hosts')).hosts||P.state.sshHosts||[]; }catch(e){}
   const st=P.state.settings||{}; const hosts=P.state.sshHosts||[];
   const hostOpts=hid=>['<option value="">— unmapped —</option>']

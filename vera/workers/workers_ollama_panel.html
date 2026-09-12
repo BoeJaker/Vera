@@ -7,7 +7,7 @@
   var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
   if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
-<title>Vera — Workers · Ollama · Jobs</title>
+<title>Vera — Estate</title>
 <!-- Proxmox console: xterm.js (terminal) + noVNC (remote desktop), loaded on demand -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
@@ -379,7 +379,7 @@ html.vpb-nav-hosted #secNav{display:none}
     <div class="navdiv"></div>
     <div class="snav" data-pane="proxmox" onclick="P.show('proxmox',this)">Proxmox</div>
     <div class="snav" data-pane="storage" onclick="P.show('storage',this)">Storage</div>
-    <div class="snav" data-pane="estate" onclick="P.show('estate',this)">Estate</div>
+    <div class="snav" data-pane="estate" onclick="P.show('estate',this)">Map</div>
     <div class="snav" data-pane="foundry" onclick="P.show('foundry',this)">Foundry</div>
     <div class="navdiv"></div>
     <div class="snav" data-pane="docker" onclick="P.show('docker',this)">Docker</div>
@@ -6079,7 +6079,7 @@ if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
   {id:'workers', label:'Workers'}, {id:'nodes', label:'Nodes'}, {id:'ollama', label:'Ollama'},
   {id:'modelrouting', label:'Model Routing'},
   {id:'observe', label:'Observe'}, {id:'proxmox', label:'Proxmox'}, {id:'storage', label:'Storage'},
-  {id:'estate', label:'Estate'}, {id:'foundry', label:'Foundry'},
+  {id:'estate', label:'Map'}, {id:'foundry', label:'Foundry'},
   {id:'docker', label:'Docker'}, {id:'sandbox', label:'Sandbox'}, {id:'network', label:'Network'},
   {id:'connections', label:'Connections'}, {id:'mimic', label:'Mimic'}, {id:'vllm', label:'vLLM'},
 {id:'api', label:'API'}, {id:'provision', label:'Provision'},
