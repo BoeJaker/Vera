@@ -21,12 +21,58 @@
    window.VeraContextGraph = { compute, VIEWS, version } — compute() is pure (node-testable).             */
 (function (root) {
   'use strict';
+  // exposed for the host and the tests: what a record is
   const VIEWS = [['galaxy', 'Galaxy', 'angle is the source, distance is relevance'], ['iso', 'Iso', 'the galaxy on an isometric plate, relevance as height'],
     ['flow', 'Flow', 'a column per source, the most relevant on top'], ['time', 'Time', 'a column per turn that first read it, a lane per source']];
   const RAD = Math.PI / 180;
   const ORDER = ['vector', 'graph', 'fabric', 'web', 'news', 'ontology', 'cap', 'skill', 'run', 'related_qa', 'worldview', 'agent', 'entities', 'urls', 'both'];
   const DEF_COL = { vector: '#a78bfa', graph: '#fb923c', both: '#8fb87a', fabric: '#38bdf8', memory: '#5a9e8f', web: '#f59e0b', news: '#e879f9', cap: '#ec4899', run: '#60a5fa', skill: '#5a9e8f', ontology: '#c9955a', related_qa: '#e8a44c', worldview: '#2dd4bf', agent: '#888' };
   const tokOf = (n) => n.tok != null ? +n.tok : n.tokens != null ? +n.tokens : Math.max(12, Math.round(String(n.text || n.label || '').length / 4));
+  // the typed icons (the Canvas board's node icons, 16-unit paths): a record wears the icon of what it is
+  const ICON = {
+    person: 'M8 8.4a2.8 2.8 0 1 0 0-5.6 2.8 2.8 0 0 0 0 5.6Zm-4.9 5.2a4.9 4.9 0 0 1 9.8 0',
+    host: 'M2.4 3.6h11.2v6.8H2.4zM5.6 13h4.8M8 10.4V13',
+    ssh: 'M2.4 3.4h11.2v9.2H2.4zM4.9 6.6l2 1.8-2 1.8M8.6 10.4h3',
+    container: 'M8 2.5 13.5 5.2v5.6L8 13.5 2.5 10.8V5.2zM2.5 5.2 8 7.9l5.5-2.7M8 7.9v5.6',
+    service: 'M8 3.2a4.8 4.8 0 1 0 0 9.6 4.8 4.8 0 0 0 0-9.6Zm0 3.1a1.7 1.7 0 1 1 0 3.4 1.7 1.7 0 0 1 0-3.4Z',
+    file: 'M4.2 2.4h4.9l3 3v8.2H4.2zM9.1 2.4v3h3',
+    commit: 'M8 5.4a2.6 2.6 0 1 0 0 5.2 2.6 2.6 0 0 0 0-5.2ZM8 2.2v3.2M8 10.6v3.2',
+    memory: 'M2.6 5 8 2.6 13.4 5 8 7.4zM2.6 8 8 10.4 13.4 8M2.6 11 8 13.4 13.4 11',
+    skill: 'M8 2.5l1.7 3.5 3.8.5-2.8 2.7.7 3.8L8 11.2l-3.4 1.8.7-3.8L2.5 6.5l3.8-.5z',
+    cap: 'M6.4 2.4v3.3M9.6 2.4v3.3M4.7 5.7h6.6v2.6a3.3 3.3 0 0 1-6.6 0zM8 11.6v2',
+    step: 'M5.2 3.2 11 8l-5.8 4.8z',
+    plan: 'M3.4 4.2h9.2M3.4 8h9.2M3.4 11.8h5.6',
+    canvas: 'M2.6 3.2h10.8v9.6H2.6zM2.6 7.4h10.8M8 3.2v9.6',
+    dataset: 'M8 2.6c3 0 5.2.8 5.2 1.8v7.2c0 1-2.2 1.8-5.2 1.8s-5.2-.8-5.2-1.8V4.4C2.8 3.4 5 2.6 8 2.6ZM2.8 4.4c0 1 2.2 1.8 5.2 1.8s5.2-.8 5.2-1.8',
+    page: 'M3.2 2.6h9.6v10.8H3.2zM5.4 5.6h5.2M5.4 8h5.2M5.4 10.4h3.4',
+    entity: 'M8 2.8l4.6 2.6v5.2L8 13.2l-4.6-2.6V5.4z',
+    ontology: 'M8 2.6a2 2 0 1 0 0 4 2 2 0 0 0 0-4ZM3.6 9.4a2 2 0 1 0 0 4 2 2 0 0 0 0-4ZM12.4 9.4a2 2 0 1 0 0 4 2 2 0 0 0 0-4ZM8 6.6v1.4M6.4 8.9 4.6 9.6M9.6 8.9l1.8.7',
+    agent: 'M8 7.6a2.4 2.4 0 1 0 0-4.8 2.4 2.4 0 0 0 0 4.8ZM3.6 13.2c.5-2.6 2.2-3.9 4.4-3.9s3.9 1.3 4.4 3.9M10.8 4.4l1.6-1.6',
+    qa: 'M3 3.4h10v6.4H6.2L3.8 12V9.8H3z'
+  };
+  // what a record is: its type, else its source, else what its label looks like (a path, a hash, a host)
+  const kindOf = (n, source) => {
+    const t = String(n.type || '').toLowerCase(), s = String(source || n.source || '').toLowerCase(), l = String(n.label || n.id || '');
+    if (t === 'capability' || t === 'cap' || s === 'cap') return 'cap';
+    if (t === 'dataset' || t === 'record' || s === 'fabric') return 'dataset';
+    if (t === 'skill' || s === 'skill') return 'skill';
+    if (t === 'agent' || s === 'agent') return 'agent';
+    if (t === 'ontology') return 'ontology';
+    if (t === 'entity' || s === 'entities') return 'entity';
+    if (t === 'memory' || s === 'memory' || /memory|recall/.test(t)) return 'memory';
+    if (t === 'page' || t === 'url' || s === 'web' || s === 'news' || s === 'urls') return 'page';
+    if (t === 'step' || t === 'run' || s === 'run') return 'step';
+    if (t === 'plan' || t === 'goal') return 'plan';
+    if (t === 'canvas') return 'canvas';
+    if (t === 'host' || t === 'node' || /^[a-z][a-z0-9-]*\.(int|lab|local)$/i.test(l)) return 'host';
+    if (t === 'commit' || /^(commit\s+)?[0-9a-f]{7,40}$/i.test(l)) return 'commit';
+    if (t === 'person') return 'person';
+    if (s === 'related_qa' || t === 'qa') return 'qa';
+    if (t === 'file' || t === 'chunk' || /\.[a-z0-9]{1,5}(\s|$|\b\d)/i.test(l.split(' ')[0]) || /\//.test(l)) return 'file';
+    if (t === 'service') return 'service';
+    return s === 'vector' ? 'file' : s === 'graph' ? 'entity' : 'dataset';
+  };
+  const iconSvg = (k) => ICON[k] ? '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"><path d="' + ICON[k] + '"/></svg>' : '';
   const px = (v) => Math.round(v * 10) / 10;
 
   /* ── the layout, pure: state + size → everything the element draws ───────────────────────────────── */
@@ -104,8 +150,9 @@
         const inFocus = focus.has(n.id) && n.included !== false, by = readBy(n.id), everRead = by.length > 0, ghost = n.included === false;
         if (inFocus) { out.tokens += tok; out.lit++; }
         const d = Math.max(17, 7 + Math.sqrt(tok) / 2.7 + 8);
-        out.pos[n.id] = { x: q.x, y: q.y, col, source: s, label: n.label || n.id, lit: inFocus, rim: d / 2, ghost, score, tok, kind: n.type || s };
-        out.cnodes.push({ id: n.id, x: px(q.x), y: px(q.y), d: px(d), col, cls: (inFocus ? 'lit ' : everRead ? '' : 'dim ') + (ghost ? 'ghost ' : '') + (n.type === 'dataset' ? 'sq ' : '') + (S.sel === n.id ? 'on' : ''),
+        const kind = kindOf(n, s);
+        out.pos[n.id] = { x: q.x, y: q.y, col, source: s, label: n.label || n.id, lit: inFocus, rim: d / 2, ghost, score, tok, kind: n.type || s, icon: kind };
+        out.cnodes.push({ id: n.id, x: px(q.x), y: px(q.y), d: px(d), col, kind, cls: (inFocus ? 'lit ' : everRead ? '' : 'dim ') + (ghost ? 'ghost ' : '') + (n.type === 'dataset' ? 'sq ' : '') + (S.sel === n.id ? 'on' : ''),
           op: (inFocus ? 1 : everRead ? 0.55 + score * 0.3 : ghost ? 0.4 : 0.55).toFixed(2),
           title: (n.label || n.id) + ' · ' + s + (n.type ? ' · ' + n.type : '') + ' · relevance ' + score.toFixed(2) + ' · ' + tok + ' tokens' + (ghost ? ' · related, not injected' : inFocus ? ' · in this prompt' : everRead ? ' · read by ' + by.join(', ') : '') });
       });
@@ -270,6 +317,8 @@ vera-context-graph .cg-node.dim{filter:saturate(.4)}
 vera-context-graph .cg-node.ghost{background:transparent;box-shadow:inset 0 0 0 1.5px var(--nc)}
 vera-context-graph .cg-node.lit{box-shadow:0 0 0 2px var(--cg-bg),0 0 0 3.5px var(--nc),0 0 14px -2px var(--nc)}
 vera-context-graph .cg-node.on{box-shadow:0 0 0 3px var(--cg-bg),0 0 0 5px var(--cg-ac)}
+vera-context-graph .cg-node svg{width:62%;height:62%;display:block;color:var(--cg-bg);opacity:.92;pointer-events:none;flex-shrink:0}
+vera-context-graph .cg-node.ghost svg{color:var(--nc)}
 vera-context-graph .cg-node span{font-family:var(--cg-mono);font-size:7px;color:var(--cg-bg);opacity:.9;pointer-events:none;max-width:90%;overflow:hidden;white-space:nowrap}
 vera-context-graph .cg-mem{position:absolute;transform:translate(-50%,-50%);width:12px;height:12px;border-radius:3px;cursor:pointer;--mc:var(--cg-ac2);background:var(--mc)}
 vera-context-graph .cg-mem.msg{width:16px;height:9px;border-radius:3px}vera-context-graph .cg-mem.sess{transform:translate(-50%,-50%) rotate(45deg);border-radius:1px}vera-context-graph .cg-mem.dag{border-radius:50%;border:1.5px dashed var(--mc);box-sizing:border-box}
@@ -408,7 +457,7 @@ vera-context-graph .cg-empty{position:absolute;inset:0;display:flex;align-items:
         o.stems.forEach((s) => { h += '<div class="cg-stem" style="' + st(s.x, s.y) + 'height:' + s.h + 'px"></div>'; });
         o.sectorLabels.forEach((s) => { h += '<div class="cg-slbl' + (s.lane ? ' lane' : '') + '" style="' + st(s.x, s.y) + 'color:' + esc(s.col) + '">' + esc(s.name) + '</div>'; });
         o.cedges.forEach((e) => { h += '<div class="cg-edge ' + e.cls + '" title="' + esc(e.title) + '" style="' + st(e.x, e.y) + 'width:' + e.len + 'px;background:' + esc(e.col) + ';transform:rotate(' + e.deg + 'deg)"></div>'; });
-        o.cnodes.forEach((n) => { h += '<div class="cg-node ' + n.cls + '" data-id="' + esc(n.id) + '" title="' + esc(n.title) + '" style="' + st(n.x, n.y) + 'width:' + n.d + 'px;height:' + n.d + 'px;--nc:' + esc(n.col) + ';opacity:' + n.op + '">' + (n.d >= 24 ? '<span>' + esc(String(n.id).replace(/^__\w+__/, '').slice(0, 6)) + '</span>' : '') + '</div>'; });
+        o.cnodes.forEach((n) => { h += '<div class="cg-node ' + n.cls + '" data-id="' + esc(n.id) + '" data-kind="' + esc(n.kind || '') + '" title="' + esc(n.title) + '" style="' + st(n.x, n.y) + 'width:' + n.d + 'px;height:' + n.d + 'px;--nc:' + esc(n.col) + ';opacity:' + n.op + '">' + (n.d >= 14 ? iconSvg(n.kind) : '') + (n.d >= 30 ? '<span>' + esc(String(n.id).replace(/^__\w+__/, '').slice(0, 6)) + '</span>' : '') + '</div>'; });
         o.memNodes.forEach((n) => { h += '<div class="cg-mem ' + n.cls + '" data-id="' + esc(n.id) + '" title="' + esc(n.title) + '" style="' + st(n.x, n.y) + (n.col ? ';--mc:' + esc(n.col) : '') + '"></div>'; });
         o.regions.forEach((r) => { h += '<div class="cg-region" style="' + st(r.x, r.y) + 'color:' + esc(r.col) + '">' + esc(r.t) + '</div>'; });
         h += '<div class="cg-hub' + (o.hub.hid ? ' hid' : '') + '" style="' + st(o.hub.x, o.hub.y) + '"><b>aide</b><span>' + (o.tokens >= 1000 ? (o.tokens / 1000).toFixed(1) + 'k' : o.tokens) + '</span></div>';
@@ -432,7 +481,7 @@ vera-context-graph .cg-empty{position:absolute;inset:0;display:flex;align-items:
     }
     root.customElements.define('vera-context-graph', VeraContextGraph);
   }
-  const api = { compute, loopFromEvents, planFromGoals, VIEWS, ensureCss, version: 1 };
+  const api = { compute, loopFromEvents, planFromGoals, VIEWS, ensureCss, kindOf, ICON, version: 2 };
   root.VeraContextGraph = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
