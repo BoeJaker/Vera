@@ -229,7 +229,7 @@ input[type=range]{padding:0;accent-color:var(--acc3);cursor:pointer}
           </div>
 
           <div class="sec">Task Routing <span style="font-weight:400;color:var(--dim2);font-size:9.5px">— auto-classify each message to a job type</span></div>
-          <div class="hint">The FIRST row whose pattern is found in the incoming message decides that turn's job type instead of the plain "chat" default — which then routes through the existing <b>Model Routing → Job-type routing</b> table (Workers &amp; Ollama tab), so pin/model/GPU rules there apply automatically. No match keeps ordinary chat routing.</div>
+          <div class="hint">The FIRST row whose pattern is found in the incoming message decides that turn's job type instead of the plain "chat" default — which then routes through the existing <b>Model Routing → Job-type routing</b> table (Estate tab), so pin/model/GPU rules there apply automatically. No match keeps ordinary chat routing.</div>
           <div id="rt-rows" style="display:flex;flex-direction:column;gap:4px;margin:6px 0"></div>
           <div class="row" style="gap:6px;flex-wrap:wrap">
             <input id="rt-match" placeholder="match text, e.g. &quot;write code&quot;" style="flex:1;min-width:160px">
