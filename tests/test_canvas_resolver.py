@@ -197,6 +197,37 @@ def test_ask_records_only_and_needs_a_real_item():
     assert doc["blocks"][0]["state"] == "now", "asking changes nothing on the item"
 
 
+# ── update by key · the loop type (P7: loops write to the canvas) ─────────────
+
+def test_update_by_key_on_the_session_canvas_is_a_write_like_any_other():
+    _fresh()
+    _run(C.cap_canvas_add(session_id=SID, kind="loop", content={"goal": "fix boot", "status": "running", "steps": []}, key="loop:r1"))
+    r = _run(C.cap_canvas_update(session_id=SID, key="loop:r1", content={"goal": "fix boot", "status": "ok", "steps": [{"n": "recall", "cap": "memory.select", "status": "ok"}]}))
+    assert r["ok"] and r["key"] == "loop:r1" and r["revision"] == 3 and r["item"]["key"] == "loop:r1"
+    doc = _run(C.cap_canvas_get(id="cv_session_" + SID))
+    b = doc["blocks"][0]
+    assert b["type"] == "loop" and b["content"]["status"] == "ok" and b["content"]["steps"][0]["cap"] == "memory.select"
+    assert _run(C.cap_canvas_update(session_id=SID, key="loop:zz", content={}))["ok"] is False
+    assert _run(C.cap_canvas_update(session_id="never-made", key="loop:r1", content={}))["ok"] is False, "no canvas is made by an update"
+    tl = _run(C.cap_canvas_timeline(id="cv_session_" + SID))
+    assert tl["timeline"][-1]["op"] == "update" and tl["timeline"][-1]["key"] == "loop:r1"
+    assert _updates()[-1]["op"] == "update" and _updates()[-1]["revision"] == 3
+
+
+def test_update_by_block_id_is_unchanged():
+    _fresh()
+    cv = _run(C.cap_canvas_create(title="t"))
+    a = _run(C.cap_canvas_append(id=cv["id"], type="note", content="one"))
+    r = _run(C.cap_canvas_update(id=cv["id"], block_id=a["block_id"], content="two"))
+    assert r["ok"] and r["block_id"] == a["block_id"]
+    assert _run(C.cap_canvas_get(id=cv["id"]))["blocks"][0]["content"]["text"] == "two"
+
+
+def test_loop_is_a_block_type_with_a_bare_string_as_its_goal():
+    assert "loop" in C.BLOCK_TYPES
+    assert C._validate_block("loop", "fix boot")["content"] == {"goal": "fix boot"}
+
+
 # ── recall · room ─────────────────────────────────────────────────────────────
 
 def test_recall_finds_items_by_key_kind_or_content_without_changing_them():

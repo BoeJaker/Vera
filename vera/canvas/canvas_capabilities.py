@@ -77,6 +77,9 @@ BLOCK_TYPES: Dict[str, Dict[str, str]] = {
     "html":     {"desc": "Raw HTML — ON-THE-FLY escape hatch; prefer a predefined "
                          "type so the UI stays consistent.",
                  "content": "{html:str}"},
+    "loop":     {"desc": "An agentic run as an item: its goal, status and steps (each a "
+                         "capability) — written by the chat and by the loop itself (P7).",
+                 "content": "{goal:str, status:str, steps:[{n:str, cap?:str, status?:str, ms?:str}], run?:str}"},
 }
 CANVAS_MODES = ("dynamic", "static")
 
@@ -221,7 +224,7 @@ def _validate_block(btype: str, content: Any) -> Dict[str, Any]:
     if isinstance(content, str):
         # A bare string is treated as the natural field for the type.
         key = {"markdown": "md", "code": "code", "diagram": "mermaid",
-               "note": "text", "html": "html"}.get(btype, "text")
+               "note": "text", "html": "html", "loop": "goal"}.get(btype, "text")
         content = {key: content}
     if not isinstance(content, dict):
         content = {"text": str(content)}
@@ -323,19 +326,41 @@ async def cap_canvas_append(id: str = "", type: str = "markdown",
     "canvas.update", memory="off",
     http_method="POST", http_path="/canvas/update", http_tags=["canvas"],
     description="Update a block's content/meta in place (live patch — e.g. refresh a "
-                "dynamic topic). Inputs: id (str!), block_id (str!), content (JSON), "
-                "meta (JSON, optional).",
+                "dynamic topic, a run's steps). Inputs: id (str) + block_id (str), or — "
+                "through the resolver — key (str, <kind>:<ref>) with id or session_id; "
+                "content (JSON), meta (JSON, optional). A keyed update is a write like "
+                "every other: the revision bumps, the timeline records it, canvas.updated "
+                "fires. Output: {ok, key?, block_id, revision?}.",
 )
 async def cap_canvas_update(id: str = "", block_id: str = "",
-                            content: Any = None, meta: Any = None, trace_id=None):
-    doc = await _load(id)
-    if not doc:
-        return {"error": f"unknown canvas: {id}"}
+                            content: Any = None, meta: Any = None,
+                            key: str = "", session_id: str = "", trace_id=None):
     if isinstance(content, str) and content.strip().startswith(("{", "[")):
         try:
             content = json.loads(content)
         except Exception:
             pass
+    key = str(key or "").strip()
+    if key and not block_id:
+        # by key, on the session canvas (or an explicit id): the resolver's own path
+        doc = await _target(id, session_id, create=False)
+        if not doc:
+            return {"ok": False, "error": f"unknown canvas: {id or session_id or '(no id or session_id)'}"}
+        hit = _find_key(doc, key)
+        if not hit:
+            return {"ok": False, "error": f"unknown key: {key}"}
+        if content is not None:
+            v = _validate_block(hit.get("type", "note"), _as_obj(content))
+            hit["content"] = v["content"]
+        if isinstance(meta, dict):
+            hit.setdefault("meta", {}).update(meta)
+        hit["ts"] = now_iso()
+        rev = await _write(doc, "update", key)
+        return {"ok": True, "key": key, "block_id": hit.get("id"), "item": _item_view(hit),
+                "id": doc["id"], "revision": rev}
+    doc = await _load(id)
+    if not doc:
+        return {"error": f"unknown canvas: {id}"}
     for b in doc.get("blocks", []):
         if b.get("id") == block_id:
             if content is not None:
