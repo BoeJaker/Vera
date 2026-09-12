@@ -819,6 +819,10 @@ body[data-cols~="canvas"] #canvasColumn,body[data-cols~="graph"] #graphColumn{di
 body.has-cols #chatColumn{position:relative}
 #ctxRunsOverlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:5;display:none}
 body[data-cols~="graph"] #ctxRunsOverlay{display:block}
+/* the item ↔ turn runs of the canvas column (the design's router): down the gutter, never diagonally */
+#cvRunsOverlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:5;display:none}
+body[data-cols~="canvas"] #cvRunsOverlay{display:block}
+#cvRunsOverlay .run.dim{stroke-opacity:.3}
 /* the design's order: rail | context graph | chat | canvas — the graph is the LHM grown, so it sits by the rail */
 body[data-cols~="graph"] #graphColumn{order:-1;border-left:none;border-right:1px solid var(--border)}
 /* the column IS the Context quick menu grown into the full graph: while it is open the quick menu folds to the rail —
@@ -2284,9 +2288,11 @@ html[data-blocks="off"] .pa-att{background:transparent}
          CH.togglePage('canvas'|'graph') / ?pages=chat,canvas,graph show them;
          the canvas element and the graph iframe mount on first open. -->
     <svg id="ctxRunsOverlay" aria-hidden="true"></svg>
+    <svg id="cvRunsOverlay" aria-hidden="true"></svg>
     <div id="canvasColumn" class="tri-col" data-col="canvas">
       <div class="tri-hd"><b>Session canvas</b><span class="lbl" id="cvColSub"></span><span class="sp"></span>
         <span class="nowbar" title="Items in the NOW band"><i></i><b>NOW</b><span id="cvColNow">0</span></span>
+        <button class="btn xs" id="cvColCols" onclick="CH._cvColumns()" title="Columns on the stage — items pack around the pinned ones">1 col</button>
         <button class="btn xs" onclick="CH.togglePage('canvas')" title="Close the canvas column">&#215;</button></div>
       <div class="tri-bd" id="canvasColumnBody"></div>
     </div>
@@ -5479,20 +5485,78 @@ IMPORTANT:
     const host=document.getElementById('canvasColumnBody'); if(!host) return;
     if(!_cvColTimer) _cvColTimer=setInterval(()=>{ if(_pages.has('canvas')&&SID&&SID!==_cvColSid) _canvasColumnMount(); }, 2000);
     if(!SID){ if(!host.querySelector('.sys-msg')) host.innerHTML='<div class="sys-msg" style="padding:12px">The session canvas appears once a session starts.</div>'; return; }
-    if(SID===_cvColSid && host.querySelector('vera-canvas')) return;
+    if(SID===_cvColSid && host.querySelector('vera-canvas')){ _cvStageSync(); return; }
     _cvColSid=SID;
     let cid='';
     try{ const r=await _capCall('canvas.session.resolve',{session_id:SID}); cid=(r&&r.id)||''; }catch(_){}
     if(!cid) cid='cv_session_'+String(SID).replace(/[^A-Za-z0-9_.-]/g,'_').slice(0,64);
     let el=host.querySelector('vera-canvas');
-    if(!el){ host.innerHTML=''; el=document.createElement('vera-canvas'); el.setAttribute('fill',''); el.setAttribute('session',''); host.appendChild(el);
+    if(!el){ host.innerHTML=''; el=document.createElement('vera-canvas'); el.setAttribute('fill',''); el.setAttribute('session',''); el.setAttribute('stage',''); el.setAttribute('columns', String(_cvCols())); host.appendChild(el);
+      // the stage follows the transcript: its turn tops, its scroll, its reflow
+      el.addEventListener('vera:canvas:placed', ()=>_cvRunsDraw());
+      el.addEventListener('vera:canvas:hover', ev=>{ _cvHoverKey=(ev.detail||{}).key||null; _cvRunsDraw(); });
+      const msgs=document.getElementById('msgs');
+      if(msgs&&!msgs._cvStageBound){ msgs._cvStageBound=true; msgs.addEventListener('scroll', ()=>_cvStageSync(), {passive:true}); msgs.addEventListener('mouseover', ev=>{ const w=ev.target&&ev.target.closest&&ev.target.closest('.mwrap[data-mid]'); const m=w?w.dataset.mid:null; if(m!==_cvHoverMid){ _cvHoverMid=m; _cvRunsDraw(); } });
+        try{ if(window.ResizeObserver){ const ro=new ResizeObserver(()=>_cvStageSync(true)); ro.observe(msgs); msgs.querySelectorAll('.mwrap').forEach(w=>ro.observe(w)); _cvStageRO=ro; } }catch(_){}
+        try{ new MutationObserver(()=>{ if(_cvStageRO) msgs.querySelectorAll('.mwrap').forEach(w=>_cvStageRO.observe(w)); _cvStageSync(true); }).observe(msgs, {childList:true, subtree:true}); }catch(_){} }
+      window.addEventListener('resize', ()=>_cvStageSync(true));
+      if(!_cvStageTimer) _cvStageTimer=setInterval(()=>{ if(_pages.has('canvas')) _cvStageSync(); }, 700);
       const msgsEl=document.getElementById('msgs');
       if(msgsEl&&!msgsEl._cvRelBound){ msgsEl._cvRelBound=true; msgsEl.addEventListener('scroll', _cvRelFocus, {passive:true}); msgsEl.addEventListener('click', _cvRelFocus); }
-      el.addEventListener('vera:canvas:rendered', ev=>{ const d=ev.detail||{}; const n=document.getElementById('cvColNow'); if(n) n.textContent=String(d.now||0); const s=document.getElementById('cvColSub'); if(s) s.textContent=(d.pinned?d.pinned+' pinned · ':'')+(d.parked?d.parked+' parked · ':'')+'rev '+(d.revision||0); }); }
+      el.addEventListener('vera:canvas:rendered', ev=>{ const d=ev.detail||{}; const n=document.getElementById('cvColNow'); if(n) n.textContent=String(d.now||0); const s=document.getElementById('cvColSub'); if(s) s.textContent=(d.pinned?d.pinned+' pinned · ':'')+(d.parked?d.parked+' parked · ':'')+'rev '+(d.revision||0); _cvStageSync(true); }); }
     if(el.getAttribute('canvas-id')!==cid) el.setAttribute('canvas-id', cid);
     try{ window._veraBase=BASE; }catch(_){}
   }
-  function _canvasColumnIdle(){ if(_cvColTimer&&!_pages.has('canvas')){ clearInterval(_cvColTimer); _cvColTimer=null; } }
+  function _canvasColumnIdle(){ if(_cvColTimer&&!_pages.has('canvas')){ clearInterval(_cvColTimer); _cvColTimer=null; } if(_cvStageTimer&&!_pages.has('canvas')){ clearInterval(_cvStageTimer); _cvStageTimer=null; _cvRunsDraw(); } }
+  /* ── the stage's placer input and the router (Notes/38 §3.5; the Canvas board's canvas column) ──
+     The placer takes the transcript's MEASURED turn tops (never guessed) in the transcript's scroll frame; the column's
+     scroll follows the transcript so a level item stays level; the runs are drawn over the chat column from the
+     turn's right edge, down the gutter at the column's edge, into the item's left edge — never diagonally, never
+     across a card — and the checker counts crossings and missed joins (zero by construction in one column). ── */
+  let _cvStageTimer=null, _cvStageRO=null, _cvStageSig='', _cvHoverKey=null, _cvHoverMid=null, _cvLastCheck=null;
+  function _cvCols(){ let n=1; try{ n=parseInt(localStorage.getItem('vera:canvas:cols')||'1',10)||1; }catch(_){} return Math.max(1, Math.min(2, n)); }
+  function _cvColumns(){ const n=_cvCols()===1?2:1; try{ localStorage.setItem('vera:canvas:cols', String(n)); }catch(_){} const b=document.getElementById('cvColCols'); if(b) b.textContent=n+' col'+(n>1?'s':''); const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv) cv.setAttribute('columns', String(n)); }
+  function _cvTurnTops(){ const msgs=document.getElementById('msgs'); if(!msgs) return {}; const mr=msgs.getBoundingClientRect(); const out={}; msgs.querySelectorAll('.mwrap[data-mid]').forEach(w=>{ const r=w.getBoundingClientRect(); out[w.dataset.mid]={top:Math.round(r.top-mr.top+msgs.scrollTop), height:Math.round(r.height)}; }); return out; }
+  function _cvStageSync(force){
+    const cv=document.querySelector('#canvasColumnBody vera-canvas'); const msgs=document.getElementById('msgs'); if(!cv||!msgs||!_pages.has('canvas')) return;
+    const turns=_cvTurnTops(); const sig=Object.keys(turns).map(k=>k+':'+turns[k].top+':'+turns[k].height).join('|')+'#'+_cvCols()+'#'+msgs.scrollHeight;
+    if(force||sig!==_cvStageSig){ _cvStageSig=sig; try{ cv.setTurns(turns, {height:msgs.scrollHeight}); }catch(_){} }
+    try{ cv.syncScroll(msgs.scrollTop, msgs.getBoundingClientRect().top); }catch(_){}
+    _cvRunsDraw();
+  }
+  function _cvRunsDraw(){
+    const svg=document.getElementById('cvRunsOverlay'); if(!svg) return;
+    const cv=document.querySelector('#canvasColumnBody vera-canvas'); const col=document.getElementById('chatColumn'), ccol=document.getElementById('canvasColumn'), msgs=document.getElementById('msgs');
+    if(!_pages.has('canvas')||!cv||!cv.itemRects||!col||!ccol||!msgs){ svg.innerHTML=''; _cvLastCheck=null; return; }
+    const den=(document.documentElement.getAttribute('data-den')||'full').toLowerCase();
+    if(den==='zen'){ svg.innerHTML=''; _cvLastCheck={crossings:0, missedJoins:0, n:0, tier:den}; return; }
+    const R=col.getBoundingClientRect(), C=ccol.getBoundingClientRect(), MB=msgs.getBoundingClientRect();
+    svg.setAttribute('viewBox','0 0 '+Math.round(R.width)+' '+Math.round(R.height));
+    const items=cv.itemRects().filter(it=>it.mid&&!it.out&&it.state==='now'&&it.rect.bottom>C.top+30&&it.rect.top<C.bottom);
+    // Hover draws the hovered item's run, or the hovered turn's runs; Full draws every run, out-of-focus dimmed
+    const wanted=den==='hover'?items.filter(it=>it.key===_cvHoverKey||(_cvHoverMid&&it.mid===_cvHoverMid)):items;
+    const rects=cv.itemRects().map(it=>({key:it.key, x0:it.rect.left, y0:it.rect.top, x1:it.rect.right, y1:it.rect.bottom}));
+    const gx=C.left+5;   // the gutter: inside the column's left padding, left of every card
+    const routes=[];
+    wanted.forEach(it=>{ const w=msgs.querySelector('.mwrap[data-mid="'+it.mid+'"]'); if(!w) return; const M=w.getBoundingClientRect(); if(M.bottom<MB.top||M.top>MB.bottom) return; routes.push({it, M}); });
+    routes.sort((a,b)=>a.it.rect.top-b.it.rect.top);
+    const byMid={}; routes.forEach(r=>{ (byMid[r.it.mid]=byMid[r.it.mid]||[]).push(r); });
+    let out=''; const drawn=[];
+    Object.keys(byMid).forEach(mid=>{ const g=byMid[mid]; const M=g[0].M; const n=g.length; const th=Math.max(24, M.height);
+      g.forEach((r,i)=>{ const it=r.it; const my=M.top+Math.min(th-8, 10+i*Math.max(8, Math.min(18, (th-20)/Math.max(1,n))));
+        const iy=Math.max(it.rect.top+2, Math.min(it.rect.bottom-2, it.rect.top+14));
+        // from the turn's right edge, to the gutter, down (or up) the gutter to the item's header, into its left edge
+        let pts=[{x:M.right, y:my},{x:gx, y:my},{x:gx, y:iy},{x:it.rect.left, y:iy}];
+        // a second-column item: the leg to it would cross the first column — go along a free band of the first column instead
+        if(it.col>0){ const col0=rects.filter(rc=>{ const o=cv.itemRects().find(x=>x.key===rc.key); return o&&o.col===0&&o.state==='now'; });
+          const free=y=>!col0.some(rc=>y>rc.y0+1&&y<rc.y1-1); const cands=[iy, it.rect.top-6].concat(col0.flatMap(rc=>[rc.y0-4, rc.y1+4])).filter(y=>y>=it.rect.top-60&&y<=it.rect.bottom&&free(y));
+          const gapX=it.rect.left-5; if(cands.length){ const fy=cands.sort((a,b)=>Math.abs(a-iy)-Math.abs(b-iy))[0]; pts=[{x:M.right, y:my},{x:gx, y:my},{x:gx, y:fy},{x:gapX, y:fy},{x:gapX, y:iy},{x:it.rect.left, y:iy}]; } }
+        const cls='run'+(it.inFocus?'':' dim');
+        out+='<polyline class="'+cls+'" data-key="'+esc(it.key)+'" points="'+pts.map(p=>(p.x-R.left).toFixed(1)+','+(p.y-R.top).toFixed(1)).join(' ')+'"><title>'+esc(it.key)+' · turn '+esc(mid)+'</title></polyline>';
+        drawn.push({key:it.key, pts, from:{key:'turn:'+mid, x0:M.left, y0:M.top, x1:M.right, y1:M.bottom}, to:{key:it.key, x0:it.rect.left, y0:it.rect.top, x1:it.rect.right, y1:it.rect.bottom}}); }); });
+    svg.innerHTML='<g fill="none" stroke="var(--acc3,#e09a55)" stroke-width="1.5" stroke-opacity=".85" stroke-linecap="round" stroke-linejoin="round">'+out+'</g>';
+    try{ _cvLastCheck=Object.assign(window.VeraCanvas.checkRoutes(drawn, rects), {tier:den}); }catch(_){ _cvLastCheck=null; }
+  }
   // the graph column: the design's context graph — the Context menu grown into the full graph, beside the transcript.
   // The chat's own records (CTX_NODES / CTX_EDGES), the live loop's events and the goals feed <vera-context-graph>
   // (the chat's own element; nothing else's graph); the records in the focused turn's context run to the message.
@@ -16399,6 +16463,7 @@ Your task: decide what to do next to advance toward the goal.
     }
     _appearanceSync();
     try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); cv&&cv.retier&&cv.retier(); }catch(_){}   // the focus set follows the tier
+    try{ _cvRunsDraw(); }catch(_){}
   }
   function setDensity(id){ _appearanceApply({den:String(id||'full')}); }
   function toggleBlocks(){ _appearanceApply({blocks:document.documentElement.getAttribute('data-blocks')==='off'}); }
@@ -16458,7 +16523,7 @@ Your task: decide what to do next to advance toward the goal.
     setDensity,toggleBlocks,
     _uiAskAnswer,_uiAskPick,_uiDirectiveApply,
     _cmpChip,_cmpSync,_paOpen,_paCopy,
-    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
+    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
     _persistMediaCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},
