@@ -1,6 +1,7 @@
 """
 The Explode scene redone as the Canvas board draws it (design landing, step 3): every band drawn on the iso plate, every
-item an iso widget on a stem with its caption, the galaxy on the plate, a placed widget drawn as its form, Stack · Size,
+item the board's card on a stem (a widget an iso widget group with its caption, a context record an icon node), the galaxy on the
+plate, a placed widget drawn as its form, Stack · Size,
 Blocks off, the tip-in / flatten motion. Text-level; the layout itself is tested by test_exploded_iso_widgets.cjs.
 """
 import os
@@ -17,15 +18,24 @@ HTML = _read("vera", "chat", "chat_panel.html")
 EL = _read("vera", "chat", "exploded_element.js")
 
 
-def test_the_element_draws_bands_and_iso_widgets_and_carries_stack_size_and_the_motion():
-    for s in ("out.bands = []; out.widgets = []; out.stack = STK; out.wsz = WSZ;", "function widgetOf(c) {", "function frameHtml(wg, H) {",
-              "const iwHtml = (wg) =>", '<span class="xp-stem"', '<div class="xp-if', '<span class="xp-cap">', "stack(on) {", "widgetSize(s) {", "tipIn() {", "flatten(done) {",
-              "view: 'iso', full: false", 'data-a="stack"', 'data-a="wsz"', "widgetOf, version: 3"):
+def test_the_element_draws_bands_and_the_boards_items_and_carries_stack_size_and_the_motion():
+    # the iso's items are the Canvas board's: a card (.xit) on a stem, an iso widget group (.xig) with a frameless caption,
+    # a typed icon node (.xnd) — no terminal-style frame; the layout is tested by tests/test_exploded_iso_labels.cjs
+    for s in ("out.bands = []; out.widgets = []; out.stack = STK; out.wsz = WSZ;", "function widgetOf(c) {", "function groupOf(wg, ISO, o) {", "function isoBody(c, wd) {",
+              "const xitHtml = (wg) =>", "const xigHtml = (wg) =>", '<span class="xstem"', '<div class="xit bb', '<div class="xit frameless', '<div class="xig', '<span class="xnd',
+              "stack(on) {", "widgetSize(s) {", "tipIn() {", "flatten(done) {", "function ensureIso(doc, onload) {",
+              "view: 'iso', full: false", 'data-a="stack"', 'data-a="wsz"', "widgetOf, groupOf, valueOf, isoBody, ICON, version: 4"):
         assert s in EL, s
-    for css in ("vera-exploded .xp-iw{", "vera-exploded .xp-band{", "vera-exploded .xp-band.empty{", ':root[data-blocks="off"] vera-exploded .xp-pl,', "vera-exploded.opening .xp-view{animation:xp-tip", "vera-exploded.closing .xp-view{animation:xp-flat",
-                'vera-exploded[data-den="hover"] .xp-iw:hover .xp-img,vera-exploded[data-den="zen"] .xp-iw.open .xp-img{display:block}'):
+    for css in ("vera-exploded .xit{", "vera-exploded .xig{", "vera-exploded .xnd{", "vera-exploded .xstem{", "vera-exploded .xit.frameless{", "vera-exploded .xf-score{", "vera-exploded .xf-chart{", "vera-exploded .xf-diff{", "vera-exploded .xf-tab{",
+                "vera-exploded .xp-band{", "vera-exploded .xp-band.empty{", ':root[data-blocks="off"] vera-exploded .xp-pl,', "vera-exploded.opening .xp-view{animation:xp-tip", "vera-exploded.closing .xp-view{animation:xp-flat",
+                'vera-exploded[data-den="hover"] .xit:hover .xp-img', 'vera-exploded[data-den="zen"] .xit.open .xp-img'):
         assert css in EL, css
+    assert "xp-if-hd" not in EL and "frameHtml" not in EL, "no terminal-style frame with a three-dot header"
     assert "a record the turn read" in EL and "return { form: 'bar'," in EL, "a read record stands as its relevance meter"
+    # the items scale with the scene: the counter-scale follows the fit alone, set once per render, never by the pan zoom
+    assert "out.inv = +(s * Math.min(1.45, 1 / Math.min(1, s))).toFixed(3);" in EL and "view.style.setProperty('--inv'" in EL
+    pan = EL[EL.index("_applyPan() {"):EL.index("_click(e) {")]
+    assert "--inv" not in pan
 
 
 def test_the_host_tips_the_scene_in_flattens_it_and_lands_a_placed_widget_with_its_form():
