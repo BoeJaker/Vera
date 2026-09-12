@@ -109,6 +109,14 @@
     /* the top-level SIDE menu — the harness\'s main LHM (the Harness board): search, Open now, the panels with their sections, widgets */
     '.lhm-side{flex:1;display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden}',
     '.lhm-side .lhm-s-hd{padding:10px 10px 6px;flex-shrink:0;display:flex;align-items:center;gap:6px}',
+    '.lhm-side .lhm-s-top{height:36px;flex-shrink:0;display:flex;align-items:center;gap:8px;padding:0 8px;border-bottom:1px solid var(--border)}',
+    '.lhm-side .lhm-s-tb{width:26px;height:26px;border-radius:6px;border:none;background:transparent;color:var(--dim2);font:inherit;font-size:14px;display:flex;align-items:center;justify-content:center;cursor:pointer}',
+    '.lhm-side .lhm-s-tb:hover{color:var(--text);background:var(--bg2)}.lhm-side .lhm-s-tb.on{color:var(--acc);background:color-mix(in srgb,var(--acc) 14%,transparent)}',
+    '.lhm-side .lhm-s-top .nm{font-size:11px;font-weight:600;color:var(--text)}',
+    '.lhm-side .lhm-s-top .mono{font-family:var(--mono);font-size:9px;color:var(--dim2);margin-left:auto}',
+    '.lhm-side .lhm-s-wm{cursor:default}.lhm-side .lhm-s-wm + .lhm-s-wbar{margin-bottom:4px}',
+    '.lhm-side .lhm-s-wbar{height:5px;border-radius:3px;background:var(--bg3,var(--bg0));overflow:hidden}',
+    '.lhm-side .lhm-s-wbar i{display:block;height:100%;border-radius:3px;background:var(--acc)}',
     '.lhm-side .lhm-s-srch{flex:1;min-width:0}',
     '.lhm-side .lhm-s-edit{flex:0 0 auto;font:inherit;font-size:12px;height:28px;width:28px;border:1px solid var(--border);border-radius:var(--r-sm,6px);background:var(--bg2);color:var(--dim2);cursor:pointer}',
     '.lhm-side .lhm-s-edit.on{color:var(--acc);border-color:var(--acc)}',
@@ -536,6 +544,11 @@
     host.innerHTML = '';
     var wrap = _el('div', 'lhm-side');
     host._lhmEditKey = cfg.id || ''; if(_sideEditOn[host._lhmEditKey]) host._lhmEditing = true;
+    // the top row (the Harness board): ☰ swaps this list for the open UI's own menu (or the tabs), the title, the count
+    if(cfg.top){ var top = _el('div', 'lhm-s-top'); top.setAttribute('data-w', 'top row · header');
+      var tb = _el('button', 'lhm-s-tb' + (cfg.top.on ? ' on' : ''), '☰'); tb.type = 'button'; tb.title = cfg.top.toggleTitle || 'Swap this menu'; tb.addEventListener('click', function(ev){ ev.stopPropagation(); if(cfg.top.toggle) cfg.top.toggle(ev); }); top.appendChild(tb);
+      top.appendChild(_el('span', 'nm', cfg.top.title || 'Vera')); if(cfg.top.sub) top.appendChild(_el('span', 'mono', cfg.top.sub));
+      wrap.appendChild(top); }
     var hd = _el('div', 'lhm-s-hd');
     if(cfg.search){
       var s = _el('div', 'lhm-s-srch'); s.setAttribute('data-w', 'search · search');
@@ -588,6 +601,9 @@
       var h = _el('div', 'lhm-s-wh'); h.appendChild(_el('span', '', w.title || 'widget')); if(w.count != null) h.appendChild(_el('b', '', String(w.count)));
       if(w.open) h.addEventListener('click', function(){ w.open(); });
       box.appendChild(h);
+      // meters: [{label, pct, value, col}] — a bar per row (the board's GPU · queue widget)
+      if(Array.isArray(w.bars) && w.bars.length){ w.bars.forEach(function(m){ var mh = _el('div', 'lhm-s-wh lhm-s-wm'); mh.appendChild(_el('span', '', m.label || '')); mh.appendChild(_el('b', '', m.value == null ? '' : String(m.value))); box.appendChild(mh);
+        var bar = _el('div', 'lhm-s-wbar'); var fill = _el('i'); fill.style.width = Math.max(0, Math.min(100, +m.pct || 0)) + '%'; if(m.col) fill.style.background = m.col; bar.appendChild(fill); box.appendChild(bar); }); }
       if(w.el){ var body = _el('div', 'lhm-s-wbody'); body.appendChild(w.el); box.appendChild(body); }
       bd.appendChild(box);
     });
