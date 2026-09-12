@@ -151,9 +151,9 @@ def test_the_absorbed_controls_are_reachable_as_modals(src):
 
 
 def test_the_quick_tests_card_moved_to_unit_tests(src):
-    # ...and with Unit tests into the Ship page (slice 5), folded.
-    ut = _section(src, "ship")
-    assert 'id="ut-path"' in ut and "capTest()" in ut
+    # ...and with Unit tests into the Ship page (slice 5): its test modal.
+    ut = src[src.index("const _SHIP_TEST_MODAL="):src.index("`;", src.index("const _SHIP_TEST_MODAL="))]
+    assert 'id="ut-path"' in ut and "capTest()" in ut and "genTests()" in ut
 
 
 def test_the_trends_hold_what_the_suite_page_drew(src):
