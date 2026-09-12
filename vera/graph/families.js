@@ -111,7 +111,9 @@
       if (/step_done$/.test(t) || /step_error$/.test(t) || /step_fail/.test(t)) { const id = stepId(ev); const o = { id, family: 'loop', kind: 'step', status: /done$/.test(t) && !ev.error ? 'ok' : 'fail', weight: 0.7, time }; if (ev.title || ev.name) o.label = ev.title || ev.name; const n = put(o); if (ev.ms != null) n.rec.ms = ev.ms; const pn = nodes.get(id.replace('step:', 'plan:')); if (pn) pn.status = o.status; return; }
       if (/cap(_call|_start|\.start)$/.test(t) || t === 'tool_call' || t === 'cap' || t === 'cap.ok' || t === 'cap.fail' || /tool_(done|result)$/.test(t)) {
         const cap = ev.tool || ev.cap || ev.name || 'cap'; const sid = stepId(ev); const id = 'cap:' + sid + ':' + cap;
-        put({ id, family: 'loop', kind: 'cap', label: cap, status: /ok|done|result/.test(t) ? 'ok' : (/fail/.test(t) ? 'fail' : 'running'), weight: 0.4, time, wires: ev.wires || [] });
+        const ranOn = ev.node || ev.host || ev.routed || ev.instance || ev.worker || '';
+        const cn = put({ id, family: 'loop', kind: 'cap', label: cap, status: /ok|done|result/.test(t) ? 'ok' : (/fail/.test(t) ? 'fail' : 'running'), weight: 0.4, time, wires: ev.wires || [] });
+        if (ranOn) cn.rec.node = String(ranOn);   // where it ran — the estate family's "ran on"
         edges.push(edge(sid, id, 'CALLS', 'loop')); return; }
       if (/branch_open$/.test(t)) { const id = 'branch:' + (ev.branch || ev.id || '?'); put({ id, family: 'loop', kind: 'branch', label: ev.label || ev.branch || 'branch', status: 'running', weight: 0.5, time, group: ev.branch || ev.id || '' }); edges.push(edge(stepId(ev), id, 'FORKS', 'loop')); return; }
       if (/branch_merge$/.test(t) || /merge$/.test(t)) { const id = 'branch:' + (ev.branch || ev.id || '?'); put({ id, family: 'loop', kind: 'branch', label: ev.label || ev.branch || 'branch', status: 'ok', weight: 0.5, time }); edges.push(edge(id, stepId(ev), 'MERGES', 'loop')); return; }

@@ -73,6 +73,14 @@ def test_the_lane_and_the_plan_row_come_from_the_runs_own_events_for_any_run():
     assert "async function _reattachLoop(sid, since, aloEl, gEl, onEv, signal){" in CHAT and "try{ const ev=JSON.parse(raw); tee(ev); }catch(_){}" in CHAT
 
 
+def test_the_estate_is_the_fifth_family_of_the_column():
+    assert "if (ranOn) cn.rec.node = String(ranOn);" in FAM, "a cap keeps the node it ran on"
+    assert "setEstate(snapshot) {" in EL and "layersOff: new Set(['estate'])" in EL, "off by default"
+    assert "out.families.push({ name: 'estate'" in EL and "LANE_B = estate.length ? 68 : 0" in EL and "' ran on ' + b.label" in EL
+    assert "!/^(hub|category|monitor)$/.test(n.kind || '')" in EL, "leaves only — the hub, the categories and the monitors are not machines"
+    assert "function _ctxColEstate(force){" in CHAT and "fetch(BASE+'/topology/snapshot')" in _fn("_ctxColEstate") and "_ctxColEstate();" in _fn("_ctxColumnSync")
+
+
 def _fn(name):
     i = CHAT.index("function %s(" % name)
     j = CHAT.find("\n  function ", i + 10)
