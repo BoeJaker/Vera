@@ -142,6 +142,11 @@ retrieval evidence while retaining its own model-package provenance. This
 allows their datasets to complement the JEPA implementation without coupling
 JEPA to Godseye storage, UI state, or product-specific schemas.
 
+Context's current optional `worldview.query` and `worldview.rollout` lookups
+refer specifically to the JEPA Worldview capability surface. Their historical
+names do not make non-JEPA Worldview or Godseye implementations of JEPA, and
+those other lineages must not be substituted behind the names implicitly.
+
 Offline retrieval comparisons name JEPA explicitly as
 `jepa_worldview_evidence` and measure it against other providers on identical
 snapshot and citation fixtures. They report quality, latency, failures, storage,

@@ -40,6 +40,24 @@ Provider-neutral training/evaluation contracts and deterministic providers
 produce portable evidence without importing or invoking optional external
 libraries during the offline lane.
 
+Context currently discovers several optional collaborators through direct
+capability-registry names: skills rendering, related-QA recall, Data Fabric
+retrieval, and JEPA Worldview neighbour/rollout augmentation. The related-QA
+pair has ordered compatibility semantics: `context.related_qa_block` is
+preferred and `memory.recall_2nd_order` is its fallback. Missing optional
+collaborators currently yield an empty contribution rather than failing prompt
+assembly. Those names, arguments, result projections, fallback order, and
+absence behavior are compatibility contracts.
+
+A future typed Context dependency manifest can name semantic roles and ordered
+compatibility identities without giving a resolver permission to execute them
+or bypass policy. It must remain distinct from the loop's static discovery and
+essential-tool lists, which are bootstrap policy rather than dependency
+resolution. The `worldview.query` and `worldview.rollout` probes specifically
+target JEPA Worldview. They are not aliases for the non-JEPA Worldview or
+Godseye lineages; those datasets can interoperate with JEPA only through the
+separate snapshot and evidence boundary.
+
 ## Workflows and durable execution
 
 Workflow IR provides typed, bounded control flow and loss-aware adapter analysis.
