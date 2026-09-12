@@ -604,7 +604,7 @@ header #hdrMetricCfgWrap{position:relative}
 header #hdrMetricBtn{width:26px;height:26px;padding:0;border:none;background:transparent;color:var(--t3,var(--dim,#6b7280));border-radius:var(--r-sm,6px);font-size:12px}
 header #hdrMetricBtn:hover{color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20))}
 header .hsp{flex:1}
-header .vao{display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 11px;border-radius:var(--r-sm,6px);border:none;background:var(--s2,var(--bg2,#1a1c20));color:var(--t2,var(--dim2,#8a92a0));font:inherit;font-size:11px;cursor:pointer;max-width:340px;min-width:0}
+header #vao-pill,header .vao{display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 11px;border-radius:var(--r-sm,6px);border:none;background:var(--s2,var(--bg2,#1a1c20));color:var(--t2,var(--dim2,#8a92a0));font:inherit;font-size:11px;cursor:pointer;max-width:340px;min-width:0}
 header .vao:hover,header .vao.on{color:var(--t1,var(--text,#d8dce4));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent))}
 header .vao .d{width:6px;height:6px;border-radius:50%;background:var(--ac,var(--acc,#5a9e8f));flex-shrink:0;box-shadow:0 0 0 3px color-mix(in srgb,var(--ac,var(--acc,#5a9e8f)) 22%,transparent)}
 header .vao .lt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
@@ -773,7 +773,6 @@ header .hdr-right{margin-left:0;gap:6px}
   </div>
   <span class="hsp"></span>
   <!-- the board's header: the activity ticker (every loop · dream · goal · cap · run — the lane opens on press), Search ⌘K, the style segment, theme swatches, Aa, ⋯ -->
-  <button class="vao" id="hdrAct" type="button" onclick="_hdrActToggle()" title="All agentic activity — loops, dreams, goals, caps, runs, artifacts"><span class="d"></span><span class="lt" id="hdrActLatest">no activity yet</span><span class="ct" id="hdrActCount">0</span><span class="cv">▾</span></button>
   <button class="hbtn on" type="button" onclick="openTabPicker()" title="Find a panel, a setting, a capability"><svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="6" r="4.2"/><path d="m9.3 9.3 3 3"/></svg>Search<span class="mono">⌘K</span></button>
   <div class="seg" id="hdrStyleSeg" title="The style pack — the same four the chat wears"></div>
   <span id="hdrSwatches" style="display:contents"></span>
@@ -1791,8 +1790,8 @@ let _evSidebarCollapsed = false;
    header is the newest activity headline and the count of what the feed has seen (its lane is the next step). */
 const _HDR_STYLES = [['standard','Standard'],['newspaper','News'],['terminal','Term'],['pixel','Pixel']];
 function _hdrSheet(on){ const s=document.getElementById('hdrSheet'), b=document.getElementById('hdrMore'); if(!s) return; const v=on==null?!s.classList.contains('on'):!!on; s.classList.toggle('on', v); if(b) b.classList.toggle('on', v); }
-function _hdrActToggle(){ const b=document.getElementById('hdrAct'); toggleEvSidebar(); if(b) b.classList.toggle('on', !_evSidebarCollapsed); }
-function _hdrActSync(){ const feed=document.getElementById('evFeed'); const lt=document.getElementById('hdrActLatest'), ct=document.getElementById('hdrActCount'); if(!feed||!lt||!ct) return; const rows=feed.children; const last=rows[0]; ct.textContent=String(rows.length); if(last){ const t=String(last.textContent||'').replace(/\s+/g,' ').trim().replace(/^\d\d:\d\d:\d\d\s*/,''); if(t) lt.textContent=t.slice(0,72); } }
+// the activity ticker in the header is the activity overlay's pill (vera/activity_overlay.js): the /activity/timeline
+// feed, the lane in the column flow under the header, the run flow beneath it
 function _hdrStyleSync(){ const seg=document.getElementById('hdrStyleSeg'); if(!seg) return; let cur='standard'; try{ cur=document.documentElement.getAttribute('data-style')||localStorage.getItem('vera:ui:style')||'standard'; }catch(_){} seg.innerHTML=_HDR_STYLES.map(s=>'<button type="button" class="'+(s[0]===cur?'on':'')+'" data-style="'+s[0]+'">'+s[1]+'</button>').join(''); seg.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ try{ if(window.veraUI&&veraUI.setAppearance) veraUI.setAppearance({style:b.dataset.style}); else document.documentElement.setAttribute('data-style', b.dataset.style); }catch(_){} setTimeout(_hdrStyleSync,50); })); }
 async function _hdrSwatches(){ const host=document.getElementById('hdrSwatches'); if(!host) return; let themes={}; try{ themes=await _fetchAllThemes(); }catch(_){} const ids=Object.keys(themes||{}); if(!ids.length) return; const cur=(typeof _currentTheme!=='undefined'&&_currentTheme)||document.documentElement.getAttribute('data-theme')||''; const pick=ids.slice(0,5);
   host.innerHTML=pick.map(id=>{ const t=themes[id]||{}; const v=t.vars||t||{}; const bg=v['--bg0']||v['--bg']||'#111', ac=v['--acc']||v['--ac']||'#5a9e8f'; return '<span class="swp'+(id===cur?' on':'')+'" data-theme="'+id+'" title="'+(t.name||id)+'" style="background:'+bg+'"><i style="background:'+ac+'"></i></span>'; }).join('');
@@ -1810,10 +1809,9 @@ function _harnessChromeMount(){
   // live events fold away unless you left them open
   let evOpen=false; try{ evOpen=localStorage.getItem('vera:harness:events')==='on'; }catch(_){}
   if(!evOpen&&!_evSidebarCollapsed) toggleEvSidebar();
-  const evBtn=document.getElementById('tabEvBtn'); const syncEv=()=>{ if(evBtn) evBtn.classList.toggle('active', !_evSidebarCollapsed); try{ localStorage.setItem('vera:harness:events', _evSidebarCollapsed?'off':'on'); }catch(_){} const a=document.getElementById('hdrAct'); if(a) a.classList.toggle('on', !_evSidebarCollapsed); };
+  const evBtn=document.getElementById('tabEvBtn'); const syncEv=()=>{ if(evBtn) evBtn.classList.toggle('active', !_evSidebarCollapsed); try{ localStorage.setItem('vera:harness:events', _evSidebarCollapsed?'off':'on'); }catch(_){} };
   syncEv(); const sb=document.getElementById('evSidebar'); if(sb&&window.MutationObserver) new MutationObserver(syncEv).observe(sb,{attributes:true,attributeFilter:['style']});
   // the ticker follows the feed
-  const feed=document.getElementById('evFeed'); if(feed&&window.MutationObserver){ let t=0; new MutationObserver(()=>{ clearTimeout(t); t=setTimeout(_hdrActSync,150); }).observe(feed,{childList:true}); } _hdrActSync();
   _hdrStyleSync(); _hdrSwatches(); _tabsMoreChip(); _dashRecLabel();
   const grid=document.getElementById('dashGrid'); if(grid&&window.MutationObserver){ let t2=0; new MutationObserver(()=>{ clearTimeout(t2); t2=setTimeout(_dashRecLabel,200); }).observe(grid,{childList:true,attributes:true,attributeFilter:['class']}); }
   const ab=document.getElementById('dashAutoBtn'); if(ab&&window.MutationObserver) new MutationObserver(_dashRecLabel).observe(ab,{attributes:true,childList:true,characterData:true,subtree:true});
@@ -2802,7 +2800,7 @@ function handleLiveEvent(ev){
   if(t==='ollama.health'&&ev.instances){
     for(const[iid,info] of Object.entries(ev.instances)){if(instances[iid])Object.assign(instances[iid],info);}
     renderHdrPills();
-    if(document.getElementById('panel-ollama').classList.contains('active')) renderInstCards();
+    const po=document.getElementById('panel-ollama'); if(po&&po.classList.contains('active')) renderInstCards();   // the Ollama tab lives in the Workers & Ollama panel now
   }
 }
 
