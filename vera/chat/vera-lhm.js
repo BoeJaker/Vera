@@ -81,6 +81,41 @@
     '.lhm-topmode .lhm-cta{display:none!important}',
     /* every part is a widget: edit mode outlines and names them; ⚙ opens the part's record, ⧉ saves it as a template */
     '.lhm-wbar{display:none;position:absolute;top:2px;right:4px;z-index:6;gap:2px}',
+/* the quick body in edit mode (the ChatMenu board): outline + name on every widget, the bar ⋮⋮ ⚙ ⧉ ✕, the foot, the picker */
+'.lhm-editing .lhm-quick .wid{outline:1px dashed color-mix(in srgb,var(--acc) 65%,transparent);outline-offset:4px;margin-top:10px;position:relative}',
+'.lhm-editing .lhm-quick .wid::before{content:attr(data-w);position:absolute;left:4px;top:-11px;z-index:5;font-family:var(--mono);font-size:7.5px;letter-spacing:.04em;color:var(--acc);background:var(--bg1);padding:0 5px;border-radius:99px;white-space:nowrap;pointer-events:none}',
+'.lhm-editing .lhm-quick .wid.lhm-removed{opacity:.35}',
+'.lhm-quick .wid.lhm-off{display:none}',
+'.lhm-wbar.lhm-qbar{top:-11px;right:2px;align-items:center;padding:1px 3px;border-radius:99px;background:var(--bg1);box-shadow:0 0 0 1px var(--border)}',
+'.lhm-wbar.lhm-qbar b{font-size:9px;color:var(--dim2);cursor:grab;letter-spacing:-.1em;padding:0 3px}',
+'.lhm-wbar.lhm-qbar button{width:18px;height:18px;border:none;border-radius:50%;background:transparent;color:var(--dim2);font-size:10px;display:inline-flex;align-items:center;justify-content:center}',
+'.lhm-wbar.lhm-qbar button:hover{color:var(--acc);background:color-mix(in srgb,var(--acc) 14%,transparent)}',
+'.lhm-wbar.lhm-qbar button.saved{color:var(--acc2,var(--acc))}',
+'.lhm-quick .wid.lhm-dragging{opacity:.4}.lhm-quick .wid.lhm-dropover{outline-color:var(--acc);outline-style:solid}',
+'.lhm-quick .lhm-added-grp{margin-top:8px}',
+'.lhm-quick .wid.lhm-added{background:var(--bg2);border-radius:var(--r-sm,6px);padding:8px 10px;display:flex;flex-direction:column;gap:6px}',
+'.lhm-quick .lhm-added-cap{display:flex;align-items:center;gap:7px;font-size:10.5px;color:var(--text)}.lhm-quick .lhm-added-cap b{font-weight:600;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.lhm-quick .lhm-added-cap .mono{font-family:var(--mono);font-size:9px;color:var(--dim2)}',
+'.lhm-wedit{display:flex;flex-direction:column;gap:5px;margin-top:10px;flex-shrink:0}',
+'.lhm-wadd{height:30px;border:none;border-radius:var(--r-sm,6px);font:inherit;font-size:10.5px;color:var(--dim2);text-align:left;padding:0 10px;background:transparent;outline:1px dashed color-mix(in srgb,var(--dim) 60%,transparent);outline-offset:-1px;cursor:pointer}',
+'.lhm-wadd:hover{color:var(--acc);outline-color:var(--acc)}',
+'.lhm-wnote-s{font-size:9px;color:var(--dim);padding:4px 2px 0;line-height:1.5}',
+'.lhm-wfoot{display:flex;align-items:center;gap:6px;padding-top:2px}.lhm-wfoot .sp{flex:1}',
+'.lhm-wfoot button,.lhm-wname button{height:23px;padding:0 10px;border:none;border-radius:99px;font:inherit;font-size:10px;color:var(--dim2);background:var(--bg2);cursor:pointer;white-space:nowrap}',
+'.lhm-wfoot button.pri,.lhm-wname button.pri,.lhm-prow .padd{color:var(--on-acc,#fff);background:var(--acc);font-weight:600}',
+'.lhm-wname{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:var(--r-sm,6px);background:var(--bg2)}',
+'.lhm-wname .lbl{font-size:9px;text-transform:uppercase;letter-spacing:.09em;color:var(--dim)}',
+'.lhm-wname .inp{flex:1;min-width:0;height:24px;padding:0 8px;border:none;border-radius:var(--r-sm,6px);background:var(--bg0);font:inherit;font-size:11px;color:var(--text);box-shadow:inset 0 0 0 1px var(--acc)}',
+'.lhm-pick{position:fixed;width:378px;z-index:2147483000;display:flex;flex-direction:column;border-radius:10px;background:var(--bg1);box-shadow:0 8px 24px rgba(0,0,0,.28),0 0 0 1px var(--border)}',
+'.lhm-pick-hd{display:flex;align-items:center;gap:8px;padding:12px 15px 8px}.lhm-pick-hd h3{margin:0;font-size:12.5px;font-weight:600;color:var(--text)}.lhm-pick-hd .sp{flex:1}.lhm-pick-hd .lbl{font-family:var(--mono);font-size:9px;color:var(--dim)}',
+'.lhm-pick-hd .x{margin-left:6px;border:none;background:transparent;color:var(--dim);font-size:11px;cursor:pointer}',
+'.lhm-pick-s{margin:0 15px 8px;height:28px;display:flex;align-items:center;gap:6px;padding:0 10px;border-radius:var(--r-sm,6px);background:var(--bg0);font-size:10.5px;color:var(--dim);box-shadow:inset 0 0 0 1px var(--border)}',
+'.lhm-pick-s input{flex:1;min-width:0;border:none;background:transparent;font:inherit;font-size:10.5px;color:var(--text);outline:none;padding:0}',
+'.lhm-pick-bd{display:flex;flex-direction:column;gap:4px;padding:0 15px;overflow:auto;min-height:0;scrollbar-width:thin}',
+'.lhm-pick-bd .grp{font-size:9px;text-transform:uppercase;letter-spacing:.09em;font-weight:600;color:var(--dim);display:flex;align-items:center;gap:7px;margin-top:6px}.lhm-pick-bd .grp::after{content:"";flex:1;height:1px;background:var(--border)}',
+'.lhm-prow{display:grid;grid-template-columns:24px 1fr auto;gap:6px;align-items:center;padding:5px 6px;border-radius:var(--r-sm,6px);background:var(--bg2)}',
+'.lhm-prow .wg{font-family:var(--mono);font-size:11px;color:var(--acc);text-align:center}.lhm-prow .wn{display:flex;flex-direction:column;min-width:0}.lhm-prow .wn b{font-size:10.5px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.lhm-prow .wn span{font-family:var(--mono);font-size:8.5px;color:var(--dim2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+'.lhm-prow .padd{height:22px;padding:0 9px;border:none;border-radius:99px;font:inherit;font-size:10px;cursor:pointer}',
+'.lhm-pick-note{padding:10px 15px 14px;font-size:10px;color:var(--dim2);line-height:1.5}',
     '.lhm-editing .lhm-wbar{display:flex}',
     '.lhm-wbar button{width:18px;height:18px;border:1px solid var(--border);border-radius:var(--r-sm,4px);background:var(--bg1);color:var(--dim2);font-size:10px;line-height:1;cursor:pointer;padding:0}',
     '.lhm-wbar button:hover{color:var(--acc);border-color:var(--acc)}',
@@ -234,10 +269,109 @@
     _host.classList.toggle('lhm-quickmode', on);
     if(!on){ _quick.style.display = 'none'; return; }
     _quick.style.display = '';
-    if(_quick._for !== m.id){ _quick.innerHTML = ''; _quick._for = m.id; }
+    if(_quick._for !== m.id){ _quick.innerHTML = ''; _quick._for = m.id; try{ delete _quick.dataset.sig; }catch(e){} }   // a menu of your own shares the host: its body must draw afresh
     try{ m.quick(_quick, { menu:m, render:render, pick:pick, deep:deep }); }catch(e){ _quick.innerHTML = '<div class="lhm-empty">' + _escH(e && e.message || e) + '</div>'; }
+    _quickCompose(m);
   }
   // deep(on): the active menu's full pane (its old tabs and panes) in place of the quick body — and back
+  // ── composing a quick menu (the ChatMenu board): every widget removable, reorderable, the picker adds more ──
+  var _QK = 'vera:lhm:quick:';
+  function _qspec(m){ if(m._qs) return m._qs; var s = null; try{ s = JSON.parse(localStorage.getItem(_QK + m.id) || 'null'); }catch(e){} m._qs = (s && typeof s === 'object') ? s : { removed:{}, order:[], added:[] }; m._qs.removed = m._qs.removed || {}; m._qs.order = m._qs.order || []; m._qs.added = m._qs.added || []; return m._qs; }
+  function _qsave(m){ try{ localStorage.setItem(_QK + m.id, JSON.stringify(_qspec(m))); }catch(e){} }
+  function _qkey(el){ return el.getAttribute('data-w') || ''; }
+  // harvest a menu's widgets (name · tag · template) without showing it: its quick body into a detached element
+  function _qparts(m){ if(m._parts && m._parts.length) return m._parts; if(typeof m.quick !== 'function') return []; var tmp = _el('div'); try{ m.quick(tmp, { menu:m, render:function(){}, pick:function(){}, deep:function(){} }); }catch(e){} m._parts = Array.prototype.map.call(tmp.querySelectorAll('.wid[data-w]'), function(w){ var k = _qkey(w); return { key:k, label:k.split(' · ')[0], tag:(k.split(' · ')[1] || ''), tpl:_tplOf(w) }; }); return m._parts; }
+  function _quickCompose(m){
+    var qs = _qspec(m);
+    Array.prototype.forEach.call(_quick.querySelectorAll('.lhm-wedit, .lhm-added-grp, .wid[data-added], .lhm-wbar.lhm-qbar'), function(x){ if(x.parentNode) x.parentNode.removeChild(x); });
+    var wids = Array.prototype.slice.call(_quick.querySelectorAll('.wid[data-w]'));
+    m._parts = wids.map(function(w){ var k = _qkey(w); return { key:k, label:k.split(' · ')[0], tag:(k.split(' · ')[1] || ''), tpl:_tplOf(w) }; });
+    // removed widgets stay out (edit mode shows them dimmed so ✕ can be undone)
+    wids.forEach(function(w){ var off = !!qs.removed[_qkey(w)]; w.classList.toggle('lhm-off', off && !_editing); w.classList.toggle('lhm-removed', off && _editing); });
+    // the order the user gave
+    if(qs.order.length){ var byKey = {}; wids.forEach(function(w){ byKey[_qkey(w)] = w; }); qs.order.forEach(function(k){ var w = byKey[k]; if(w) _quick.appendChild(w); }); }
+    // what the picker added: another menu's widget, a widget form, a template of yours
+    if(qs.added.length){ var grp = _el('div', 'grp lhm-added-grp', 'Added'); grp.setAttribute('data-w', 'added · group'); _quick.appendChild(grp);
+      qs.added.forEach(function(a, i){ var w = _addedWidget(m, a, i); if(w) _quick.appendChild(w); }); }
+    if(_editing){ _quickBars(m); _quickFoot(m); }
+  }
+  function _addedWidget(m, a, i){
+    var w = null;
+    if(a.from){ var src = _menu(a.from); if(src && typeof src.quick === 'function'){ var tmp = _el('div'); try{ src.quick(tmp, { menu:src, render:render, pick:pick, deep:deep }); }catch(e){} var found = Array.prototype.filter.call(tmp.querySelectorAll('.wid[data-w]'), function(x){ return _qkey(x) === a.key; })[0]; if(found){ w = found; w.setAttribute('data-from', a.from); } } }
+    if(!w){ w = _el('div', 'wid lhm-added'); w.setAttribute('data-w', (a.label || a.form || 'widget') + ' · ' + (a.tpl ? 'template' : (a.form || 'widget'))); if(a.tpl) w.setAttribute('data-tpl', a.tpl);
+      var body = _el('div', 'lhm-added-body'); var drawn = ''; try{ if(window.VeraWidget && a.form) drawn = window.VeraWidget.draw(a.form, a.data != null ? a.data : _sample(a.form), 'm', { bare:true, title:a.label }); }catch(e){}
+      body.innerHTML = drawn || ('<span class="lhm-empty">' + _escH(a.label || a.form || 'widget') + '</span>'); w.appendChild(body);
+      var cap = _el('div', 'lhm-added-cap'); cap.appendChild(_el('b', '', a.label || a.form || 'widget')); cap.appendChild(_el('span', 'mono', a.c || (a.tpl ? 'template · ' + a.tpl : (a.form || '')))); w.appendChild(cap); }
+    w.setAttribute('data-added', String(i)); return w;
+  }
+  var _SAMPLE = { trace:[3,5,4,7,6,8,7], radial:{ value:62, max:100 }, counter:{ value:412 }, bar:{ value:62, max:100 }, bars:{ a:4, b:7, c:5, d:6 }, thermo:{ cpu:62, mem:48, gpu:71 }, donut:{ a:4, b:7, c:5 }, pills:{ ok:4, warn:1 }, kv:{ status:'online', node:'ct126' }, list:[{ name:'no reading yet', value:'' }], table:[{ name:'no reading yet', value:'' }], log:[{ t:'', text:'no reading yet' }], stepper:{ steps:[{ label:'no steps yet', status:'' }] }, string:'no reading yet', context_graph:{ nodes:[] } };
+  function _sample(form){ return _SAMPLE[form] != null ? _SAMPLE[form] : 'no reading yet'; }
+  // the bars: ⋮⋮ drag · ⚙ record · ⧉ template · ✕ remove
+  function _quickBars(m){
+    var qs = _qspec(m);
+    Array.prototype.forEach.call(_quick.querySelectorAll('.wid[data-w]'), function(el){
+      var bar = _el('div', 'lhm-wbar lhm-qbar'); var key = _qkey(el);
+      var grip = _el('b', '', '⋮⋮'); grip.title = 'Drag to reorder'; bar.appendChild(grip);
+      var cfgB = _el('button', '', '⚙'); cfgB.title = 'This widget\'s record'; cfgB.addEventListener('click', function(ev){ ev.stopPropagation(); openRecord(_tplOf(el), key); }); bar.appendChild(cfgB);
+      var saveB = _el('button', '', '⧉'); saveB.title = 'Save this configuration as a template'; saveB.addEventListener('click', function(ev){ ev.stopPropagation(); saveAsTemplate(_tplOf(el), key); saveB.classList.add('saved'); }); bar.appendChild(saveB);
+      var rmB = _el('button', '', qs.removed[key] ? '↩' : '✕'); rmB.title = qs.removed[key] ? 'Put it back' : 'Remove from this menu';
+      rmB.addEventListener('click', function(ev){ ev.stopPropagation(); if(el.hasAttribute('data-added')){ qs.added.splice(+el.getAttribute('data-added'), 1); } else { if(qs.removed[key]) delete qs.removed[key]; else qs.removed[key] = true; } _qsave(m); render(); }); bar.appendChild(rmB);
+      if(getComputedStyle(el).position === 'static') el.style.position = 'relative';
+      el.appendChild(bar);
+      if(el._lhmDnd) return; el._lhmDnd = true;
+      el.setAttribute('draggable', 'true');
+      el.addEventListener('dragstart', function(ev){ _dragKey = key; el.classList.add('lhm-dragging'); try{ ev.dataTransfer.setData('text/plain', key); ev.dataTransfer.effectAllowed = 'move'; }catch(e){} });
+      el.addEventListener('dragend', function(){ el.classList.remove('lhm-dragging'); _dragKey = ''; });
+      el.addEventListener('dragover', function(ev){ if(!_dragKey || _dragKey === key) return; ev.preventDefault(); el.classList.add('lhm-dropover'); });
+      el.addEventListener('dragleave', function(){ el.classList.remove('lhm-dropover'); });
+      el.addEventListener('drop', function(ev){ ev.preventDefault(); el.classList.remove('lhm-dropover'); if(!_dragKey || _dragKey === key) return; var keys = Array.prototype.map.call(_quick.querySelectorAll('.wid[data-w]:not([data-added])'), _qkey); var from = keys.indexOf(_dragKey), to = keys.indexOf(key); if(from < 0 || to < 0) return; keys.splice(from, 1); keys.splice(to, 0, _dragKey); qs.order = keys; _qsave(m); render(); });
+    });
+  }
+  var _dragKey = '';
+  // the foot: + Add a widget, the note, Reset, Save as menu…
+  function _quickFoot(m){
+    var qs = _qspec(m); var foot = _el('div', 'lhm-wedit'); foot.setAttribute('data-w', 'edit foot · controls');
+    var add = _el('button', 'lhm-wadd', '+ Add a widget — from any menu, any widget form, or your templates'); add.type = 'button'; add.addEventListener('click', function(ev){ ev.stopPropagation(); openPicker(); }); foot.appendChild(add);
+    var n = Object.keys(qs.removed).length, a = qs.added.length;
+    foot.appendChild(_el('div', 'lhm-wnote-s', (a ? a + ' added' : 'nothing added') + ' · ' + (n ? n + ' removed' : 'nothing removed') + (qs.order.length ? ' · reordered' : '') + ' — every part is a widget: ⚙ its record, ⧉ a template, ✕ takes it out, ⋮⋮ moves it'));
+    var row = _el('div', 'lhm-wfoot'); row.appendChild(_el('span', 'sp'));
+    var reset = _el('button', '', 'Reset'); reset.type = 'button'; reset.title = 'Back to the menu as it came'; reset.addEventListener('click', function(ev){ ev.stopPropagation(); m._qs = { removed:{}, order:[], added:[] }; _qsave(m); render(); }); row.appendChild(reset);
+    var save = _el('button', 'pri', 'Save as menu…'); save.type = 'button'; save.title = 'The menu as it stands, as a menu of your own in the rail'; save.addEventListener('click', function(ev){ ev.stopPropagation(); m._naming = !m._naming; render(); }); row.appendChild(save);
+    foot.appendChild(row);
+    if(m._naming){ var nm = _el('div', 'lhm-wname'); nm.appendChild(_el('span', 'lbl', 'Name')); var inp = _el('input', 'inp'); inp.type = 'text'; inp.placeholder = 'Ops glance'; inp.value = m._name || ''; inp.addEventListener('input', function(){ m._name = inp.value; }); inp.addEventListener('keydown', function(ev){ if(ev.key === 'Enter'){ ev.preventDefault(); go(); } }); nm.appendChild(inp);
+      var ok = _el('button', 'pri', 'Save'); ok.type = 'button'; var go = function(){ var name = (inp.value || '').trim(); if(!name) return; m._naming = false; saveAsMenu(name); }; ok.addEventListener('click', function(ev){ ev.stopPropagation(); go(); }); nm.appendChild(ok); foot.appendChild(nm); setTimeout(function(){ try{ inp.focus(); }catch(e){} }, 0); }
+    _quick.appendChild(foot);
+  }
+  // ── THE PICKER: everything a menu can be made of — the other menus' widgets, every widget form, your templates ──
+  var _pick = null, _pickQ = '';
+  function openPicker(){
+    var m = _menu(_active); if(!m || !_host) return; closePicker();
+    _pick = _el('div', 'lhm-pick'); _pick.setAttribute('data-w', 'widget picker · sheet');
+    var hd = _el('div', 'lhm-pick-hd'); hd.appendChild(_el('h3', '', 'Add to ' + (m.title || m.label))); hd.appendChild(_el('span', 'sp')); hd.appendChild(_el('span', 'lbl mono', 'everything is a widget')); var x = _el('button', 'x', '✕'); x.type = 'button'; x.addEventListener('click', closePicker); hd.appendChild(x); _pick.appendChild(hd);
+    var s = _el('label', 'lhm-pick-s'); s.appendChild(_el('span', '', '⌕')); var q = _el('input'); q.type = 'search'; q.placeholder = 'search widgets, menus, templates…'; q.value = _pickQ; q.addEventListener('input', function(){ _pickQ = q.value; _pickRender(m); }); s.appendChild(q); _pick.appendChild(s);
+    _pick.appendChild(_el('div', 'lhm-pick-bd'));
+    _pick.appendChild(_el('div', 'lhm-pick-note', 'A widget record is a form + a config. Anything here can be saved as a template and placed anywhere — a dashboard, the canvas, this menu, a reply, a notebook, the ops map, an iso plate.'));
+    document.body.appendChild(_pick); _pickPlace(); _pickRender(m);
+    window.addEventListener('resize', _pickPlace);
+    if(_cfg.pickerSources){ try{ Promise.resolve(_cfg.pickerSources()).then(function(groups){ _pickExtra = Array.isArray(groups) ? groups : []; if(_pick) _pickRender(m); }).catch(function(){}); }catch(e){} }
+  }
+  var _pickExtra = [];
+  function _pickPlace(){ if(!_pick) return; var r = (_det || _host).getBoundingClientRect(); var left = r.right + 12; if(left + 378 > window.innerWidth - 8) left = Math.max(8, r.left - 390); _pick.style.left = left + 'px'; _pick.style.top = Math.max(8, r.top + 44) + 'px'; _pick.style.maxHeight = Math.max(200, window.innerHeight - r.top - 60) + 'px'; }
+  function closePicker(){ if(_pick && _pick.parentNode) _pick.parentNode.removeChild(_pick); _pick = null; window.removeEventListener('resize', _pickPlace); }
+  function _pickRender(m){
+    var bd = _pick && _pick.querySelector('.lhm-pick-bd'); if(!bd) return; bd.innerHTML = '';
+    var q = (_pickQ || '').toLowerCase(); var qs = _qspec(m);
+    var groups = [];
+    var others = []; (_cfg.menus || []).forEach(function(o){ if(o.id === m.id || typeof o.quick !== 'function') return; _qparts(o).forEach(function(p){ others.push({ g:'≡', n:p.label, c:o.label, add:{ from:o.id, key:p.key, label:p.label } }); }); });
+    if(others.length) groups.push({ n:'From the other menus', items:others });
+    _pickExtra.forEach(function(g){ groups.push(g); });
+    var any = false;
+    groups.forEach(function(g){ var items = (g.items || []).filter(function(it){ return !q || (String(it.n || '') + ' ' + String(it.c || '')).toLowerCase().indexOf(q) >= 0; }); if(!items.length) return; any = true;
+      bd.appendChild(_el('div', 'grp', g.n));
+      items.forEach(function(it){ var r = _el('div', 'lhm-prow'); r.appendChild(_el('span', 'wg mono', it.g || '▢')); var wn = _el('span', 'wn'); wn.appendChild(_el('b', '', it.n || '')); wn.appendChild(_el('span', '', it.c || '')); r.appendChild(wn);
+        var b = _el('button', 'padd', '+ Add'); b.type = 'button'; b.addEventListener('click', function(ev){ ev.stopPropagation(); qs.added.push(Object.assign({ label:it.n, c:it.c }, it.add || {})); _qsave(m); closePicker(); render(); }); r.appendChild(b); bd.appendChild(r); }); });
+    if(!any) bd.appendChild(_el('div', 'lhm-empty', groups.length ? 'Nothing matches.' : 'Loading the registry…'));
+  }
   function deep(on){ var m = _menu(_active); if(!m) return false; m._deep = (on == null) ? !m._deep : !!on; render(); return m._deep; }
   function _renderCta(){
     if(!_cta) return;
@@ -281,7 +415,7 @@
     if(_host) _host.classList.toggle('lhm-topmode', _topMode);
     if(_host) _host.classList.toggle('lhm-editing', _editing);
     _renderRail(); _renderHeader(); _renderTabs(); _renderCta(); _renderTop(); _renderQuick();
-    if(_editing) _wireBars();
+    if(_editing) _wireBars(); else closePicker();
     if(!_editing && _wcfgOpen) closeRecord();
     _publish();
   }
@@ -337,7 +471,7 @@
   function saveAsMenu(name){
     var m = _menu(_active); if(!m) return null;
     var rec = { id:'menu:' + String(name || m.label).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48), name:String(name || m.label), icon:m.icon || '✦',
-      items:(m.tabs || []).map(function(t){ return { id:t.id, label:t.label, tpl:t.tpl || '' }; }), from:m.id };
+      items:(m.tabs || []).map(function(t){ return { id:t.id, label:t.label, tpl:t.tpl || '' }; }), from:m.id, widgets:_qspec(m) };
     if(_cfg && _cfg.saveMenu){ try{ _cfg.saveMenu(rec); }catch(e){} }
     addMenus([rec]);
     return rec;
@@ -345,7 +479,11 @@
   function addMenus(list){
     if(!_cfg || !Array.isArray(list)) return 0;
     var n = 0;
-    list.forEach(function(rec){ if(!rec || !rec.id) return; if(_menu(rec.id)) return; _cfg.menus.push({ id:rec.id, label:rec.name || rec.id, icon:rec.icon || '✦', own:true, tabs:(rec.items || []).map(function(t){ return { id:t.id, label:t.label || t.id, tpl:t.tpl || '' }; }) }); n++; });
+    list.forEach(function(rec){ if(!rec || !rec.id) return; if(_menu(rec.id)) return; var src = rec.from ? _menu(rec.from) : null;
+      var mm = { id:rec.id, label:rec.name || rec.id, icon:rec.icon || '✦', own:true, tabs:(rec.items || []).map(function(t){ return { id:t.id, label:t.label || t.id, tpl:t.tpl || '' }; }) };
+      // a menu of your own composed from a quick menu: the same quick body, with what you added, removed and reordered
+      if(src && typeof src.quick === 'function'){ mm.quick = src.quick; mm.cta = src.cta; mm.meta = src.meta; mm.iconHtml = src.iconHtml; if(rec.widgets && typeof rec.widgets === 'object') mm._qs = { removed:rec.widgets.removed || {}, order:rec.widgets.order || [], added:rec.widgets.added || [] }; }
+      _cfg.menus.push(mm); n++; });
     if(n) render();
     return n;
   }
@@ -357,6 +495,7 @@
     root = root || _host; if(!root) return;
     var parts = root.querySelectorAll('[data-w]');
     Array.prototype.forEach.call(parts, function(el){
+      if(el.closest && el.closest('.lhm-quick')) return;   // the quick body's widgets carry their own bars (⋮⋮ ⚙ ⧉ ✕)
       if(el.querySelector(':scope > .lhm-wbar')) return;
       var bar = _el('div', 'lhm-wbar');
       var cfgB = _el('button', '', '⚙'); cfgB.title = 'This widget\'s record';
@@ -632,6 +771,6 @@
 
   window.VeraLHM = { mount: mount, pick: pick, setActiveTab: setActiveTab, toggleTop: toggleTop, toggleEdit: toggleEdit, render: render, spec: spec, absorb: absorb, side: side, sideEdit: sideEdit, strips: strips, css: _css,
     openRecord: openRecord, closeRecord: closeRecord, saveAsTemplate: saveAsTemplate, placeInto: placeInto,
-    compose: compose, composeUndo: composeUndo, saveAsMenu: saveAsMenu, addMenus: addMenus, deep: deep,
+    compose: compose, composeUndo: composeUndo, saveAsMenu: saveAsMenu, addMenus: addMenus, deep: deep, openPicker: openPicker, closePicker: closePicker,
     get active(){ return { menu: _active, tab: _activeTab, top: _topMode, editing: _editing, hosted: _hosted, embedded: _embedded }; } };
 })();
