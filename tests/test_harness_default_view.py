@@ -43,4 +43,4 @@ def test_the_dashboard_toolbar_is_the_boards():
     assert "' widgets · every one a record · grid 12 × '" in HTML
     assert "function _tabsMoreChip(){" in HTML and "m.className='tab more';" in HTML
     assert "const _HDR_STYLES = [['standard','Standard'],['newspaper','News'],['terminal','Term'],['pixel','Pixel']];" in HTML
-    assert "veraUI.setAppearance({style:b.dataset.style})" in HTML and "_applyThemeById(s.dataset.theme)" in HTML
+    assert "veraUI.setAppearance({style:b.dataset.style})" in HTML and "await _setTheme(s.dataset.theme);" in HTML, "a swatch is the theme menu's own pick"
