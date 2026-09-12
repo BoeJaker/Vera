@@ -21378,6 +21378,21 @@ async def _v7_persist_strategic(goal: str, master_plan: str, done_when: str, *,
     up = CAPABILITY_REGISTRY.get("project.upsert")
     if not up or not up.get("func"):
         return ""
+    # A CENSUS run (the harness's goal, a seeded census task) is a measurement:
+    # it must not become a dream project nor a V8 program. markets-symbol-series
+    # escalated into one on 2026-09-11 (a multi-day program on prod's GPU, which
+    # the census could neither see nor stop); the harness passes
+    # enable_dream_persistence=False now, and this is the wall behind it.
+    try:
+        _cc = sys.modules.get("census_capabilities")
+        if _cc is not None and session_id and _cc.census_owns_session_sync(session_id):
+            log.warning("v7 strategic: session %s is a census run - not persisting a goal "
+                        "or spawning a program for %r", session_id[:12], (goal or "")[:60])
+            await emit_event({"type": "agent_loop_v6.strategic_refused", "session_id": session_id,
+                              "note": "a census run does not escalate into a dream project or a V8 program"})
+            return ""
+    except Exception as _e:
+        log.debug("v7 strategic: census check failed (%s) - continuing", _e)
     name = ((goal or "").strip().split("\n")[0])[:70] or "Strategic goal"
     # Reuse an existing goal-project when this goal is the same as one already
     # tracked (exact or fuzzy) — never fork a second project for the same goal.

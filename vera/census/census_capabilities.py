@@ -22,6 +22,7 @@ so a prod restart no longer costs a census. It never touches a run file. See
 `control.py` for the contract and why the default on restart is resume.
 """
 import asyncio
+import sys
 import json
 import os
 import time
@@ -828,6 +829,92 @@ async def census_before_restart(resume: bool, by: str = "sys.dev.restart") -> Di
     plan["ack_wait_max_s"] = _ctl.PAUSE_ACK_MAX_S
     log.warning("census: %s written before restart (%s)", plan["action"].upper(), plan["why"])
     return plan
+
+
+def _seeded_census_session_sync() -> str:
+    """The loop session of a SEEDED census task in flight (the suite path,
+    census posture) - `evolve:<run_id>` - or ''."""
+    ev = sys.modules.get("evolve_capabilities")
+    live = getattr(ev, "_RUN_LIVE", None) if ev is not None else None
+    if isinstance(live, dict) and live.get("run_id") and str(live.get("posture") or "") == "census":
+        return "evolve:%s" % live["run_id"]
+    return ""
+
+
+def census_owned_sessions_sync() -> List[str]:
+    """Every loop session the census owns right now: the goal the harness is
+    running (census.active.json, while the harness is live) and a seeded
+    census task in flight. These are measurements, not work to keep: a
+    restart cancels them (a cancelled run is not resumed), and none of them
+    may escalate into a V8 program."""
+    out: List[str] = []
+    try:
+        active = _ctl.read_json(_active_path())
+        v = _ctl.active_view(active)
+        sid = str((active or {}).get("session_id") or "")
+        if v.get("live") and sid:
+            out.append(sid)
+    except Exception:
+        pass
+    seeded = _seeded_census_session_sync()
+    if seeded:
+        out.append(seeded)
+    return out
+
+
+def census_owns_session_sync(session_id: str) -> bool:
+    """Is this loop session a census measurement (the harness's goal or a
+    seeded census task)? Read by the v7 engine before it escalates a
+    strategic goal into a V8 program: a census must never spawn one. On
+    2026-09-11 markets-symbol-series escalated into a program that held the
+    GPU for 5 hours and cost the set four templates."""
+    sid = str(session_id or "")
+    return bool(sid) and sid in census_owned_sessions_sync()
+
+
+async def census_cancel_owned_loops(why: str = "restart") -> Dict[str, Any]:
+    """Cancel every loop the census owns, the way the Stop button does: the
+    cooperative cancel flag on the run record (so a resumed or orphaned
+    coroutine self-terminates) and the live runner task when this process
+    holds it. Loops survive a restart by design (Redis-backed resume); a
+    cancelled run is not resumed - so this is what a restart must do BEFORE
+    it re-execs, or the census's loop comes back under nobody (the 16:00Z
+    research loop came back at 17:07Z on 2026-09-11 for exactly that)."""
+    sids = await asyncio.to_thread(census_owned_sessions_sync)
+    cancelled: List[str] = []
+    r = _redis()
+    dw = sys.modules.get("dag_workshop_capabilities")
+    for sid in sids:
+        try:
+            if r is not None:
+                raw = await r.hgetall(_RUN_KEY % sid)
+                run = {_rd(k): _rd(v) for k, v in (raw or {}).items()}
+                if run and run.get("status") not in ("running", ""):
+                    continue
+                await r.hset(_RUN_KEY % sid, mapping={"status": "cancelled", "updated_at": _now_iso_z()})
+            tasks = getattr(dw, "_AGENT_LOOP_TASKS", None) if dw is not None else None
+            if isinstance(tasks, dict):
+                t = tasks.pop(sid, None)
+                if t is not None and not t.done():
+                    t.cancel()
+            cancelled.append(sid)
+            log.warning("census: cancelled loop %s before %s (a cancelled run is not resumed)", sid[:12], why)
+        except Exception as e:
+            log.info("census: could not cancel %s: %s", sid[:12], e)
+    return {"owned": sids, "cancelled": cancelled}
+
+
+def _now_iso_z() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+async def census_restart_gate(plan: Dict[str, Any], max_wait_s: float = 0.0) -> Dict[str, Any]:
+    """What a restart does for the census before it re-execs: wait for the
+    harness to acknowledge the pause it was written (bounded), then cancel
+    every loop the census still owns so none is resumed under nobody."""
+    ack = await census_wait_acked(plan, max_wait_s)
+    cancelled = await census_cancel_owned_loops("restart")
+    return {"ack": ack, **cancelled}
 
 
 async def census_wait_acked(plan: Dict[str, Any], max_wait_s: float = 0.0) -> Dict[str, Any]:

@@ -131,3 +131,52 @@ def test_the_harness_named_session_outranks_the_loops_staleness_rule(monkeypatch
     assert run(CC._running_loop("gone")) == {}, "a named session that is not running is not the goal in flight"
     runs["named"]["status"] = "done"
     assert run(CC._running_loop("named")) == {}
+
+
+def test_a_census_owns_its_sessions_and_a_restart_cancels_them(tmp_path, monkeypatch):
+    """A census run is a measurement: the v7 engine asks census_owns_session
+    before escalating a strategic goal into a V8 program (markets-symbol-series
+    spawned a five-hour program on 2026-09-11), and a restart cancels every
+    loop the census owns - loops survive a restart by design, a cancelled run
+    is not resumed (the 16:00Z research loop came back at 17:07Z)."""
+    import sys
+    monkeypatch.setattr(CC, "CENSUS_DIR", tmp_path)
+    (tmp_path / "census.active.json").write_text(json.dumps({
+        "state": "running", "updated_at": CC._ctl._now_iso(), "goals_total": 4, "goals_done": 1,
+        "current_goal": "g2", "template": "t", "session_id": "harness-sid"}))
+
+    class _EV:
+        _RUN_LIVE = {"run_id": "r9", "posture": "census", "task": "census-t-g2"}
+    monkeypatch.setitem(sys.modules, "evolve_capabilities", _EV)
+    assert CC.census_owned_sessions_sync() == ["harness-sid", "evolve:r9"]
+    assert CC.census_owns_session_sync("harness-sid") and CC.census_owns_session_sync("evolve:r9")
+    assert not CC.census_owns_session_sync("someone-elses") and not CC.census_owns_session_sync("")
+    _EV._RUN_LIVE = {"run_id": "r9", "posture": ""}
+    assert CC.census_owned_sessions_sync() == ["harness-sid"], "an ordinary suite run is not the census's"
+
+    class _T:
+        def __init__(self): self.cancelled = False
+        def done(self): return False
+        def cancel(self): self.cancelled = True
+
+    class _R:
+        def __init__(self): self.runs = {"harness-sid": {"status": "running"}}; self.writes = []
+        async def hgetall(self, key):
+            return {k.encode(): v.encode() for k, v in (self.runs.get(key.rsplit(":", 1)[-1]) or {}).items()}
+        async def hset(self, key, mapping=None):
+            self.writes.append((key, dict(mapping or {})))
+    r = _R(); t = _T()
+
+    class _DW:
+        _AGENT_LOOP_TASKS = {"harness-sid": t}
+    monkeypatch.setattr(CC, "_redis", lambda: r)
+    monkeypatch.setitem(sys.modules, "dag_workshop_capabilities", _DW)
+    out = run(CC.census_cancel_owned_loops("test"))
+    assert out["cancelled"] == ["harness-sid"] and t.cancelled and "harness-sid" not in _DW._AGENT_LOOP_TASKS
+    assert r.writes and r.writes[0][1]["status"] == "cancelled", "the cooperative flag, so a resumed coroutine self-terminates"
+    r.runs["harness-sid"]["status"] = "done"
+    assert run(CC.census_cancel_owned_loops("test"))["cancelled"] == [], "a finished run is left alone"
+    # the restart gate: ack (nothing written here) then cancel
+    (tmp_path / "census.active.json").write_text(json.dumps({"state": "done", "updated_at": CC._ctl._now_iso()}))
+    g = run(CC.census_restart_gate({"action": "none"}))
+    assert g["ack"]["acked"] is False and g["owned"] == [] and g["cancelled"] == []
