@@ -701,6 +701,10 @@ header .hdr-right{margin-left:0;gap:6px}
 #rowModal .mrow .out{color:var(--t2,var(--dim2,#8a92a0));white-space:pre-wrap;word-break:break-word;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:10.5px}
 #rowModal .mnote{font-size:9.5px;color:var(--t3,var(--dim,#6b7280))}
 #dashGrid .w-body tr,#dashGrid .w-body [class$="-row"],#dashGrid .w-body [class*="-row "],#dashGrid .w-body .inst-card{cursor:pointer}
+/* the tab bar fits: what does not fit folds into the "+N ⌘K" chip; the bar never scrolls */
+.tabs{overflow-x:hidden}
+.tabs .tab.folded{display:none}
+.tabs .tab-controls{margin-left:auto;flex:0 0 auto;order:10}
 /* the strips under the tabs: the active panel's own menu */
 #tabSubtabs:not(:empty){display:flex;align-items:center;gap:3px;min-height:30px;padding:0 14px;flex-shrink:0;border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));background:transparent;overflow-x:auto;scrollbar-width:none}
 #tabSubtabs .lhm-strips{display:contents}
@@ -1904,8 +1908,30 @@ function _tabCounts(){
   const act=parseInt(((document.querySelector('#vao-pill .vao-count')||{}).textContent||'').trim(),10); set(/activity/i, isFinite(act)?act:0);
   const ol=String((document.getElementById('lsOllamaVal')||{}).textContent||''); const busy=(ol.match(/(\d+)\/\d+\s*busy/)||[])[1]; set(/workers|ollama/i, busy?parseInt(busy,10):0);
 }
+/* the tab bar fits its width (the Harness board): open tabs first, then the rest in order, until the width beside the
+   chip and the controls runs out; the remainder folds into the chip — its count — and the picker lists them */
+let _tabsFitRaf = 0;
+function _tabsFit(){
+  const bar=document.getElementById('tabBar'); if(!bar||!bar.offsetWidth) return;
+  const tabs=[...bar.querySelectorAll('.tab[data-tab]')]; if(!tabs.length) return;
+  tabs.forEach(t=>t.classList.remove('folded'));
+  const chip=bar.querySelector('.tab.more'), ctl=bar.querySelector('.tab-controls');
+  const cs=getComputedStyle(bar); const gap=parseFloat(cs.columnGap||cs.gap)||0;
+  let avail=bar.clientWidth-(parseFloat(cs.paddingLeft)||0)-(parseFloat(cs.paddingRight)||0)-(chip?chip.offsetWidth+gap:0)-(ctl?ctl.offsetWidth+gap:0)-8;
+  const open=t=>{ try{ const pid=_tabToPanelId(t); return !!(pid&&_openTabs.has(pid)); }catch(_){ return t.classList.contains('active')||t.classList.contains('open'); } };
+  const w=new Map(tabs.map(t=>[t, t.offsetWidth+gap]));
+  const keep=new Set();
+  tabs.filter(open).forEach(t=>{ keep.add(t); avail-=w.get(t); });      // open tabs are never folded
+  tabs.filter(t=>!keep.has(t)).forEach(t=>{ if(avail-w.get(t)>=0){ keep.add(t); avail-=w.get(t); } });
+  let folded=0; tabs.forEach(t=>{ if(!keep.has(t)){ t.classList.add('folded'); folded++; } });
+  if(chip){ chip.dataset.folded=String(folded); chip.textContent=(folded?'+'+folded+' ':'+ ')+'⌘K'; chip.title=folded?folded+' more panel'+(folded>1?'s':'')+' — every registered panel, ⌘K':'Every registered panel — add one as a tab'; }
+  return folded;
+}
+function _tabsFitSoon(){ if(_tabsFitRaf) return; _tabsFitRaf=requestAnimationFrame(()=>{ _tabsFitRaf=0; try{ _tabsFit(); }catch(_){} }); }
+window.addEventListener('resize', _tabsFitSoon);
 function _tabsMoreChip(){ const bar=document.getElementById('tabBar'); if(!bar||bar.querySelector('.tab.more')) return; const m=document.createElement('div'); m.className='tab more'; m.title='Every registered panel — add one as a tab'; m.textContent='+ ⌘K'; m.addEventListener('click',()=>openTabPicker()); const ctl=bar.querySelector('.tab-controls'); bar.insertBefore(m, ctl||null);
-  try{ fetch(base()+'/ui/panels').then(r=>r.json()).then(list=>{ const all=Array.isArray(list)?list.length:(list&&list.panels?list.panels.length:0); const open=bar.querySelectorAll('.tab[data-tab]').length; if(all>open) m.textContent='+'+(all-open)+' ⌘K'; }).catch(()=>{}); }catch(_){} }
+  try{ fetch(base()+'/ui/panels').then(r=>r.json()).then(list=>{ const all=Array.isArray(list)?list.length:(list&&list.panels?list.panels.length:0); const open=bar.querySelectorAll('.tab[data-tab]').length; if(all>open&&!m.dataset.folded) m.textContent='+'+(all-open)+' ⌘K'; }).catch(()=>{}); }catch(_){}
+  _tabsFitSoon(); try{ new MutationObserver(_tabsFitSoon).observe(bar,{childList:true}); }catch(_){} }
 function _harnessChromeMount(){
   if(document.body.dataset.designChrome) return; document.body.dataset.designChrome='1';
   // the ⋯ sheet: the URL, Connect, ↻ and the metric picker move as the same elements
@@ -2147,6 +2173,8 @@ function _tabRender(){
 
   // 5) Keep LHM nav in sync
   _lhmNavSync();
+  // 6) the tab bar fits its width (the Harness board): the open tabs show, what does not fit folds into the chip
+  try{ _tabsFitSoon(); }catch(_){}
 }
 
 // ── Panel divider drag resize — panels are always row-flex, so always col-resize ──
