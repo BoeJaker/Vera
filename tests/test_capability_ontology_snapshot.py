@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import os
+import sqlite3
 
 import pytest
 
@@ -103,6 +104,16 @@ def test_capability_gate_blocks_before_model_or_database_access(monkeypatch):
         assert result["code"] == "generated_relations_disabled"
         assert result["relations_changed"] is False
         assert result["model_called"] is False
+
+
+def test_registration_logging_does_not_require_an_available_database(monkeypatch):
+    from vera.ontologies import cap_ontology
+
+    def unavailable():
+        raise sqlite3.OperationalError("unable to open database file")
+
+    monkeypatch.setattr(cap_ontology, "_db_count", unavailable)
+    assert cap_ontology._registration_relation_count() is None
 
 
 def test_explicit_enable_reaches_existing_auto_pair_validation(monkeypatch):
