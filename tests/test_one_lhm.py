@@ -32,13 +32,13 @@ def test_the_chat_has_the_two_embed_modes():
 
 def test_the_two_instances_are_one_chat():
     assert "const _LHMBC=(function(){ try{ return new BroadcastChannel('vera:chat:lhm'); }" in CHAT
-    assert "if(_EMBED.only==='menu'){ _lhmPost('grow',{ on:(on==null)?true:!!on }); return _ctxGrown; }" in CHAT, "grow goes to the chat instance"
+    assert "_lhmPost('grown',{ on:on })" in CHAT, "the menu instance grows in place and tells the chat instance (w70)"
     assert "if(_EMBED.only==='menu'&&name!=='graph'){ _lhmPost('page',{ name }); return true; }" in CHAT
     assert "if(_EMBED.only==='menu'){ _lhmPost('explode',{ on }); return; }" in CHAT
     assert "if(_EMBED.only==='menu'){ _lhmPost('newSession',{}); return; }" in CHAT
     assert "if(_EMBED.only!=='menu') _lhmPost('session',{ sid:SID });" in CHAT, "the chat instance announces its session"
     assert "window.addEventListener('storage', ev=>{ if(ev.key==='vera_session_id'&&ev.newValue&&ev.newValue!==SID){ try{ loadSession(ev.newValue); }catch(_){} } });" in CHAT, "the menu instance follows the session"
-    assert "if(m.act==='grow') _ctxGrow(a.on!==false); else if(m.act==='page') togglePage(a.name); else if(m.act==='explode') explode(a.on);" in CHAT, "the chat instance answers"
+    assert "if(m.act==='grow') _ctxGrow(a.on!==false); else if(m.act==='grown') _ctxRemoteSet(a.on);" in CHAT and "else if(m.act==='page') togglePage(a.name); else if(m.act==='explode') explode(a.on);" in CHAT, "the chat instance answers"
     assert "try{ _embedMount(); }catch(e){ console.warn('embed', e); }" in CHAT
 
 

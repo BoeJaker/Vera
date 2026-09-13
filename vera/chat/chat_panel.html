@@ -826,7 +826,7 @@ body[data-cols~="canvas"] #cvRunsOverlay{display:block}
 /* the runs need a channel to take their lanes in: while the graph is grown the chat column is inset by the lanes the
    context's runs need (the design's graph|chat channel, 44 px at most), and the canvas column's body by the lanes the
    turns' runs need (the chat|canvas channel, 76 at most) — the inset is the geometry's, set by the router */
-body.ctx-grown #chatColumn{padding-left:var(--ctx-gutter,16px)}
+body.ctx-grown #chatColumn,body.ctx-remote #chatColumn{padding-left:var(--ctx-gutter,16px)}
 body[data-cols~="canvas"] #canvasColumnBody{padding-left:var(--cv-gutter,18px)}
 /* a type's branches are hairlines, its trunk carries the colour; the type under the pointer lights up, the rest recede */
 #ctxRunsOverlay line.br{stroke-opacity:.35;stroke-width:1}
@@ -5796,7 +5796,7 @@ IMPORTANT:
   // the graph "page" is the Context menu grown in place, never a column: the body's columns leave it out
   let _ctxGrown=false;
   function _ctxGrow(on){
-    if(_EMBED.only==='menu'){ _lhmPost('grow',{ on:(on==null)?true:!!on }); return _ctxGrown; }   // the menu instance asks the chat instance
+    if(_EMBED.only==='menu'){ on=(on==null)?!_ctxGrown:!!on; try{ window.parent.postMessage({ type:'vera:lhm:grow', on:on, width:on?706:318 }, '*'); }catch(_){} _lhmPost('grown',{ on:on }); }   // the menu instance grows IN PLACE: the harness widens the slot, the chat instance draws the seam runs
     on=(on==null)?!_ctxGrown:!!on; if(on===_ctxGrown && document.getElementById('rightRail').classList.contains('lhm-grown')===on) return _ctxGrown;
     _ctxGrown=on; const host=document.getElementById('rightRail');
     if(host) host.classList.toggle('lhm-grown', on); document.body.classList.toggle('ctx-grown', on);
@@ -6167,7 +6167,10 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     _ctxColRuns();
     _ctxColEstate();
     const s=document.getElementById('grColSub'); if(s) s.textContent='context graph · '+incl.length+' of '+nodesAll.length+' in the prompt';
+    if(mid&&mid!==_ctxMiniMid){ _ctxMiniMid=mid; try{ renderCtxGraph(); }catch(_){} }   // the mini graph follows the focus too
+    if(mid&&mid!==_ctxFocusSent&&_EMBED.only!=='menu'){ _ctxFocusSent=mid; _lhmPost('focus',{ mid:mid }); }
   }
+  let _ctxMiniMid='';
   // the live loop's events, teed into the column's loop lane (the same stream the loop card and the rail's graph read)
   function _ctxColLoopEv(ev){
     const t=String((ev&&ev.type)||'');
@@ -6267,6 +6270,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
   // tag), or — exploded — the station in focus, whose left edge is the arrival, measured in the same screen space as
   // the records. null when nothing is on screen to end on
   function _ctxRunsTarget(){
+    if(_EMBED.only==='menu'){ const b=_ctxRemoteBlock; if(!b||!(b.bottom>b.top)) return null; const ft=_frameTop(), W=window.innerWidth; return {kind:'seam', mid:b.mid||'', left:W, right:W+1, content:W-1, top:b.top-ft, bottom:b.bottom-ft}; }
     if(_xpl.on&&_xplEl&&document.body.classList.contains('exploded')){
       _ctxRunsFollowScene();
       const S=typeof _xplEl.state==='function'?_xplEl.state():null; const sel=(S&&S.scene&&S.scene.sel)||_grFocusMid||'';
@@ -6310,6 +6314,20 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
   function _ctxRunsDraw(){
     const svg=document.getElementById('ctxRunsOverlay'); if(!svg) return;
     if(_runsOff.ctx){ svg.innerHTML=''; return; }
+    if(_EMBED.only==='chat'&&_ctxRemote.on&&!_ctxGrown){
+      // the graph is the menu instance's: it posts one connector height per type; this side draws the channel lanes in
+      // the column's gutter and one arrival per type on the block, in from the frame's left edge (the seam)
+      const T=_ctxRunsTarget(); if(!T){ svg.innerHTML=''; return; }
+      const ft=_frameTop(); const b={ top:T.top+ft, bottom:T.bottom+ft, mid:T.mid||'' };
+      if(!_ctxRemoteSent||_ctxRemoteSent.top!==b.top||_ctxRemoteSent.bottom!==b.bottom||_ctxRemoteSent.mid!==b.mid){ _ctxRemoteSent=b; _lhmPost('block', b); }
+      const lanes=_ctxRemote.lanes||[]; const rn=lanes.length; _ctxRunsGutter(rn);
+      const R={left:0,top:0,width:window.innerWidth,height:window.innerHeight}; svg.setAttribute('viewBox','0 0 '+Math.round(R.width)+' '+Math.round(R.height));
+      const chan0=0, chan1=T.content, G0=(chan0+chan1)/2, HWG=Math.max(1, Math.abs(chan1-chan0)/2-8); const edgeAt=(y)=>(T.edgeAt?T.edgeAt(y):T.content)-2;
+      let out=''; lanes.forEach((l,i)=>{ const ye=l.ye-ft, ty=l.ty-ft; const u=rn>1?(l.lane-(rn-1)/2)/((rn-1)/2):0; const lx=G0+u*Math.min(HWG, 9*(rn-1));
+        const L=(x1,y1,x2,y2,cls)=>'<line class="run '+cls+'" data-src="'+esc(l.src)+'" data-lane="'+l.lane+'" x1="'+x1.toFixed(1)+'" y1="'+y1.toFixed(1)+'" x2="'+x2.toFixed(1)+'" y2="'+y2.toFixed(1)+'" stroke="'+l.col+'"><title>'+esc(l.src)+'</title></line>';
+        out+=L(0, ye, lx, ye, 'tr'); if(Math.abs(ty-ye)>0.5) out+=L(lx, ye, lx, ty, 'tr'); out+=L(lx, ty, edgeAt(ty), ty, 'tr'); });
+      svg.innerHTML='<g fill="none" stroke-linecap="round">'+out+'</g>'; svg.dataset.target=T.kind; return;
+    }
     if(Date.now()-_ctxTypingT<900){ svg.innerHTML=''; if(!_ctxTypingTimer) _ctxTypingTimer=setTimeout(()=>{ _ctxTypingTimer=null; _ctxRunsDraw(); }, 950); return; }
     const col=document.getElementById('chatColumn'), gcol=_ctxGrown?document.querySelector('#rightRail.lhm-host > .lhm-det'):document.getElementById('graphColumn');
     if(!_pages.has('graph')||!_ctxCol||!col||!gcol){ svg.innerHTML=''; return; }
@@ -6344,6 +6362,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     const dn=G.filter(g=>g.my<=g.ty).sort((a,b)=>b.my-a.my), up=G.filter(g=>g.my>g.ty).sort((a,b)=>a.my-b.my);
     dn.concat(up).forEach((g,li)=>{ g.lane=li; });
     _ctxRunsIdSrc={}; all.forEach(p=>{ _ctxRunsIdSrc[p.id]=p.source; });
+    const seam=_EMBED.only==='menu', seamX=window.innerWidth; const lanesOut=[];
     let out='';
     G.forEach(g=>{
       const u=rn>1?(g.lane-(rn-1)/2)/((rn-1)/2):0; const lx=G0+(leftSide?1:-1)*u*Math.min(HWG, 9*(rn-1)); const c=g.col;
@@ -6368,10 +6387,14 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       if(ye==null){ ye=ys[0]; for(let dd=6; dd<=200; dd+=6){ if(cc(ys[0]-dd)){ ye=ys[0]-dd; break; } if(cc(ys[0]+dd)){ ye=ys[0]+dd; break; } } }
       yMin=Math.min(yMin, ye); yMax=Math.max(yMax, ye);
       if(yMax-yMin>1) out+=L(cx, yMin, cx, yMax, 'tr');      // the collector
+      if(seam){ out+=L(cx, ye, seamX, ye, 'tr'); lanesOut.push({ src:g.src, col:g.col, lane:g.lane, ye:ye+_frameTop(), ty:g.ty+_frameTop() }); }   // to the seam; the chat instance draws the rest
+      else {
       out+=L(cx, ye, lx, ye, 'tr');                          // one connector per type, across the plot
       if(Math.abs(g.ty-ye)>0.5) out+=L(lx, ye, lx, g.ty, 'tr');   // along the channel, in its own lane, to the arrival
       out+=L(lx, g.ty, edgeAt(g.ty), g.ty, 'tr');            // one arrival per type, on the block's edge
+      }
     });
+    if(seam) _lhmPost('lanes',{ lanes:lanesOut });
     svg.innerHTML='<g fill="none" stroke-linecap="round">'+out+'</g>';
     svg.dataset.target=T.kind; _ctxRunsHover(svg.getAttribute('data-lit')?Object.keys(_ctxRunsIdSrc).find(id=>_ctxRunsIdSrc[id]===svg.getAttribute('data-lit'))||'':'');
   }
@@ -11098,7 +11121,7 @@ Your task: decide what to do next to advance toward the goal.
     const _flush=()=>{
       if(stale())return;
       CTX_NODES=nodes;CTX_EDGES=edges;_ctxQuery=query;
-      renderCtxGraph();renderCtxList();renderFabPane();
+      renderCtxGraph();renderCtxList();renderFabPane(); _ctxBroadcast();
       const cc=document.getElementById('ctxCount');if(cc)cc.textContent=nodes.length+' ctx';
       const empty=document.getElementById('ctxEmpty');if(empty)empty.style.display=nodes.length?'none':'flex';
       if(st&&nodes.length)st.textContent=nodes.length+' ctx…';
@@ -11395,7 +11418,7 @@ Your task: decide what to do next to advance toward the goal.
     if(stale()){if(sp)sp.classList.add('hidden');return;}
 
     _ctxAbort=null;
-    CTX_NODES=nodes;CTX_EDGES=edges;_ctxQuery=query;
+    CTX_NODES=nodes;CTX_EDGES=edges;_ctxQuery=query; _ctxBroadcast();
     if(sp)sp.classList.add('hidden');
     const vec=nodes.filter(n=>n.source==='vector'||n.source==='both').length;
     const grp=nodes.filter(n=>n.source==='graph').length;
@@ -12998,11 +13021,16 @@ function _embedMount(){
   if(_EMBED.only==='menu'){
     try{ const r=document.getElementById('rightRail'); if(r&&r.classList.contains('slim')) toggleRight(); }catch(_){}
     window.addEventListener('storage', ev=>{ if(ev.key==='vera_session_id'&&ev.newValue&&ev.newValue!==SID){ try{ loadSession(ev.newValue); }catch(_){} } });
-    if(_LHMBC) _LHMBC.onmessage=ev=>{ const m=ev.data||{}; if(!m||m.from==='menu') return; if(m.act==='session'&&m.args&&m.args.sid&&m.args.sid!==SID){ try{ loadSession(m.args.sid); }catch(_){} } };
+    if(_LHMBC) _LHMBC.onmessage=ev=>{ const m=ev.data||{}; if(!m||m.from==='menu') return; const a=m.args||{};
+      if(m.act==='session'&&a.sid&&a.sid!==SID){ try{ loadSession(a.sid); }catch(_){} }
+      else if(m.act==='ctx'){ CTX_NODES=Array.isArray(a.nodes)?a.nodes:[]; CTX_EDGES=Array.isArray(a.edges)?a.edges:[]; _ctxQuery=a.query||''; if(a.mid) _grFocusMid=a.mid; try{ renderCtxGraph(); renderCtxList(); renderFabPane(); }catch(_){} const cc=document.getElementById('ctxCount'); if(cc) cc.textContent=CTX_NODES.length+' ctx'; const empty=document.getElementById('ctxEmpty'); if(empty) empty.style.display=CTX_NODES.length?'none':'flex'; if(_ctxGrown){ _ctxColSig=''; try{ _ctxColumnSync(a.mid||''); }catch(_){} } }
+      else if(m.act==='focus'&&a.mid){ _grFocusMid=a.mid; if(_ctxGrown){ try{ _ctxColumnSync(a.mid); }catch(_){} } try{ renderCtxGraph(); }catch(_){} }
+      else if(m.act==='grow-set'){ _ctxGrow(!!a.on); }
+      else if(m.act==='block'){ _ctxRemoteBlock=a; try{ _ctxRunsDraw(); }catch(_){} } };
   }
   if(_EMBED.only==='chat'){
     if(_LHMBC) _LHMBC.onmessage=ev=>{ const m=ev.data||{}; if(!m||m.from!=='menu') return; const a=m.args||{};
-      try{ if(m.act==='grow') _ctxGrow(a.on!==false); else if(m.act==='page') togglePage(a.name); else if(m.act==='explode') explode(a.on); else if(m.act==='explodeMode') explodeMode(a.m); else if(m.act==='session'&&a.sid&&a.sid!==SID) loadSession(a.sid); else if(m.act==='newSession') newSession(); }catch(_){} };
+      try{ if(m.act==='grow') _ctxGrow(a.on!==false); else if(m.act==='grown') _ctxRemoteSet(a.on); else if(m.act==='lanes'){ _ctxRemote.lanes=Array.isArray(a.lanes)?a.lanes:[]; _ctxRunsDraw(); } else if(m.act==='page') togglePage(a.name); else if(m.act==='explode') explode(a.on); else if(m.act==='explodeMode') explodeMode(a.m); else if(m.act==='session'&&a.sid&&a.sid!==SID) loadSession(a.sid); else if(m.act==='newSession') newSession(); }catch(_){} };
   }
 }
   function _chromeMount(){
@@ -15420,13 +15448,20 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
   let _xpl={on:false, mode:'cards'}, _xplEl=null, _xplMo=null, _xplT=null;
   const _TURN_READS={}, _TURN_LAND={}, _TURN_RELS={};
   let _xplHid=null;   // what Explode folded away: { canvas, graph } — restored when the scene closes
+  // the graph held by the other instance (the harness): the chat instance draws the seam runs from the lanes the menu
+  // instance posts; the menu instance aims at the block the chat instance posts. Frame offsets: same origin.
+  const _ctxRemote={ on:false, lanes:[] }; let _ctxRemoteBlock=null, _ctxRemoteSent=null, _ctxFocusSent='';
+  function _frameTop(){ try{ const f=window.frameElement; return f?f.getBoundingClientRect().top:0; }catch(_){ return 0; } }
+  function _ctxBroadcast(){ if(_EMBED.only==='menu') return; try{ _lhmPost('ctx',{ nodes:CTX_NODES, edges:CTX_EDGES, query:_ctxQuery, mid:_grFocusMid }); }catch(_){} }
+  function _ctxRemoteInfo(){ return { on:_ctxRemote.on, lanes:_ctxRemote.lanes.slice(), block:_ctxRemoteBlock, ctx:CTX_NODES.length, focus:_grFocusMid }; }
+  function _ctxRemoteSet(on){ _ctxRemote.on=!!on; if(!on) _ctxRemote.lanes=[]; document.body.classList.toggle('ctx-remote', !!on); try{ _ctxRunsDraw(); }catch(_){} }
   function explode(on){
     if(_EMBED.only==='menu'){ _lhmPost('explode',{ on }); return; }
     on=(on==null)?!_xpl.on:!!on; _xpl.on=on;
     // the scene has the canvas and the context graph built in (the Canvas board): the columns fold away while it is
     // open and come back as they were when it closes — + Canvas / + Graph by hand still open one over the scene
-    if(on){ _xplHid={ canvas:_pages.has('canvas'), graph:_ctxGrown }; if(_xplHid.graph) _ctxGrow(false); if(_xplHid.canvas){ _pages.delete('canvas'); _pagesApply(); } }
-    else if(_xplHid){ const hid=_xplHid; _xplHid=null; if(hid.graph) _ctxGrow(true); if(hid.canvas){ _pages.add('canvas'); _pagesApply(); } }
+    if(on){ _xplHid={ canvas:_pages.has('canvas'), graph:_ctxGrown, remote:_ctxRemote.on }; if(_xplHid.graph) _ctxGrow(false); if(_xplHid.remote) _lhmPost('grow-set',{ on:false }); if(_xplHid.canvas){ _pages.delete('canvas'); _pagesApply(); } }
+    else if(_xplHid){ const hid=_xplHid; _xplHid=null; if(hid.graph) _ctxGrow(true); if(hid.remote) _lhmPost('grow-set',{ on:true }); if(hid.canvas){ _pages.add('canvas'); _pagesApply(); } }
     document.body.classList.toggle('exploded', on);
     if(on) document.body.classList.add('has-msgs');   // the composer docks at the bottom under the scene, never centred over it
     const b=document.getElementById('xplBtn'); if(b) b.classList.toggle('col-on', on);
@@ -17530,7 +17565,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     setDensity,toggleBlocks,
     _uiAskAnswer,_uiAskPick,_uiDirectiveApply,
     _cmpChip,_cmpSync,_paOpen,_paCopy,
-    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_cvLandCell,_cvItemAct,_settingsPage,_spShow,_spFilter,_runsToggle,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
+    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_cvLandCell,_cvItemAct,_settingsPage,_spShow,_spFilter,_runsToggle,_ctxRemoteSet,_ctxRemoteInfo,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
     _persistMediaCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},

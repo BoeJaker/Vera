@@ -285,6 +285,7 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .lhm-nav .lhm-abs{flex:1;display:flex;min-height:0;overflow:hidden}
 /* the chat open: its MENU instance is the LHM (one persistent frame, the board's 318 px) */
 #lhmNav.lhm-nav.absorbed.chatmenu{width:318px!important}
+#lhmNav.lhm-nav.absorbed.chatmenu.grown{width:706px!important}   /* the Context menu grown into the full graph, in place */
 .body-wrap.lhm .main.autohide-reserve-v.absorbed.chatmenu{padding-left:318px}
 .lhm-nav #lhmMenuHost{display:none;flex:1;min-height:0}
 .lhm-nav #lhmMenuHost.on{display:flex}
@@ -2384,6 +2385,8 @@ function _hostFramesWatch(){
 }
 function _hostFrameSrc(src){ try{ const s = String(src || ''); if(/\/chat_panel(\?|#|$)/.test(s) && !/[?&]only=/.test(s)) return s + (s.indexOf('?') >= 0 ? '&' : '?') + 'only=chat&harness=yes'; }catch(_){} return src; }
 // the chat's MENU instance as the LHM: one persistent frame (never rebuilt with the list), shown while the chat is the open UI
+// the menu instance grows its graph in place: the slot widens with it
+window.addEventListener('message', ev=>{ const d=ev&&ev.data; if(!d||d.type!=='vera:lhm:grow') return; const nav=document.getElementById('lhmNav'); if(nav) nav.classList.toggle('grown', !!d.on); });
 function _lhmMenuFrame(nav, src){
   let hostEl = document.getElementById('lhmMenuHost');
   if(!hostEl){ hostEl = document.createElement('div'); hostEl.id = 'lhmMenuHost'; hostEl.setAttribute('data-w', 'the chat\'s menu · lhm'); const tabs = document.getElementById('lhmNavTabs'); if(tabs && tabs.parentNode) tabs.parentNode.insertBefore(hostEl, tabs.nextSibling); else nav.appendChild(hostEl); }
