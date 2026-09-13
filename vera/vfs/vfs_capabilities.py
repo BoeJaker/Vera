@@ -32,7 +32,7 @@ Capabilities (group `vfs.*`)
   vfs.shares         the share catalogue, with the client mount strings
   vfs.estate.sync    rebuild the name-keyed estate tree now
   vfs.estate.list    what the tree currently exposes, and what was skipped
-  vfs.peer.add       enrol a device on the WireGuard door (returns its config)
+  vfs.peer.add       give a device file access over netctl's WireGuard door (files profile)
   vfs.peer.list      enrolled devices and last-handshake times
   vfs.peer.remove    revoke a device
 
@@ -42,11 +42,14 @@ Redis layout
 """
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import shlex
 import string
 from typing import Any, Dict, List, Optional
+
+import httpx
 
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import (
@@ -65,6 +68,11 @@ DEFAULTS = {
     "estate_root": "/srv/vfs/estate",
     "cloud_url": "http://192.168.0.161:8080",
     "sync_url": "http://192.168.0.160:8384",
+    # Devices reach the file server through netctl's WireGuard door (files
+    # profile). Vera acts there with a token that can only add, list and revoke
+    # files-only devices, held in the secrets service at door_secret.
+    "door_url": "http://192.168.0.221:8088",
+    "door_secret": "netctl/door-files",
 }
 
 # name -> (server path, transport hint, whether it is read-only)
@@ -168,13 +176,13 @@ async def _ssh(script: str, timeout: int = 120) -> Dict[str, Any]:
     http_method="POST", http_path="/vfs/health", http_tags=["vfs"],
     memory="off", silent=True,
     description="Cheap liveness probe for the Vera File Fabric (VFS-02): are "
-                "smbd, nfsd, wireguard and syncthing up, and is the estate tree "
+                "smbd, nfsd, syncthing and nginx up, and is the estate tree "
                 "mounted. No inputs. Output: {ok, services:{name:bool}, "
                 "estate_mounts:int} or {error}.",
 )
 async def cap_health(trace_id=None) -> Dict:
     script = (
-        "for s in smbd nfs-server wg-quick@wg0 syncthing@syncthing nginx; do "
+        "for s in smbd nfs-server syncthing@syncthing nginx; do "
         "printf '%s=%s\\n' \"$s\" \"$(systemctl is-active $s 2>/dev/null)\"; done; "
         "echo mounts=$(findmnt -rno TARGET 2>/dev/null | grep -c '^/srv/vfs/estate/')"
     )
@@ -201,7 +209,7 @@ async def cap_health(trace_id=None) -> Dict:
     memory="off",
     description="Full status of the Vera File Fabric (VFS-02) in one call: "
                 "service states, share catalogue with free space, NFS exports, "
-                "estate tree size, WireGuard peers, and the last estate sync "
+                "estate tree size, file devices on netctl's WireGuard door, and the last estate sync "
                 "report. No inputs. Output: {host, services, shares, exports, "
                 "estate:{mounted,skipped}, peers, disk} or {error}.",
 )
@@ -209,7 +217,7 @@ async def cap_status(trace_id=None) -> Dict:
     cfg = await _cfg()
     script = r"""
 echo '###SERVICES'
-for s in smbd nfs-server wg-quick@wg0 syncthing@syncthing nginx vfs-estate-sync.timer; do
+for s in smbd nfs-server syncthing@syncthing nginx vfs-estate-sync.timer; do
   printf '%s=%s\n' "$s" "$(systemctl is-active $s 2>/dev/null)"
 done
 echo '###DISK'
@@ -218,8 +226,6 @@ echo '###EXPORTS'
 exportfs -s 2>/dev/null | head -20
 echo '###ESTATE'
 findmnt -rno TARGET 2>/dev/null | grep '^/srv/vfs/estate/' | wc -l
-echo '###PEERS'
-wg show wg0 dump 2>/dev/null | tail -n +2
 echo '###SYNCREPORT'
 cat /var/lib/vfs/estate-state.json 2>/dev/null | head -c 4000
 """
@@ -245,16 +251,11 @@ cat /var/lib/vfs/estate-state.json 2>/dev/null | head -c 4000
             except ValueError:
                 continue
 
-    peers = []
-    for line in sections.get("PEERS", []):
-        f = line.split("\t")
-        if len(f) >= 5:
-            try:
-                handshake = int(f[4])
-            except ValueError:
-                handshake = 0
-            peers.append({"pubkey": f[0][:16] + "...", "allowed_ips": f[3],
-                          "last_handshake": handshake})
+    # File devices connect through netctl's WireGuard door (files profile).
+    door = await _door("GET", "/api/door/files")
+    peers = [{"name": d.get("name", ""), "address": d.get("address", ""),
+              "last_handshake_s": d.get("last_handshake_s"), "connected": bool(d.get("connected"))}
+             for d in door.get("peers") or []]
 
     estate_mounts = 0
     if sections.get("ESTATE"):
@@ -280,6 +281,7 @@ cat /var/lib/vfs/estate-state.json 2>/dev/null | head -c 4000
                    "skipped": sync_report.get("skipped", []),
                    "vm": sync_report.get("vm", [])},
         "peers": peers,
+        "door_error": door.get("error", ""),
         "disk": disk,
         "cloud_url": cfg["cloud_url"],
         "sync_url": cfg["sync_url"],
@@ -437,7 +439,41 @@ _PEER_NAME_OK = set(string.ascii_letters + string.digits + "-_")
 
 
 def _valid_peer(name: str) -> bool:
-    return bool(name) and len(name) <= 40 and set(name) <= _PEER_NAME_OK
+    # netctl's own rule for device names
+    return bool(name) and len(name) <= 32 and set(name) <= _PEER_NAME_OK
+
+
+def _secrets_service() -> Optional[Dict[str, Any]]:
+    fn = (_orch.CAPABILITY_REGISTRY.get("secrets.status") or {}).get("func")
+    return getattr(inspect.unwrap(fn), "__globals__", None) if fn is not None else None
+
+
+async def _door(method: str, path: str, body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """netctl's files-only door API, authorised by the door token held in the
+    secrets service. netctl lets that token add, list and revoke files-profile
+    devices and reach nothing else."""
+    cfg = await _cfg()
+    svc = _secrets_service()
+    if not svc or "get_named" not in svc:
+        return {"error": "the secrets service is not loaded, so the netctl door token cannot be read"}
+    where = cfg.get("door_secret") or DEFAULTS["door_secret"]
+    token = ((await svc["get_named"](where)) or {}).get("value", "")
+    if not token:
+        return {"error": f"the secrets service holds no netctl door token at {where!r}"}
+    base = (cfg.get("door_url") or DEFAULTS["door_url"]).rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            r = await client.request(method, base + path, headers={"X-Netctl-Door": token}, json=body)
+        data = r.json() if r.content else {}
+    except Exception as e:
+        return {"error": f"netctl's door at {base} did not answer: {type(e).__name__}"}
+    if r.status_code == 401:
+        return {"error": "netctl refused the door token"}
+    if not isinstance(data, dict):
+        return {"error": "netctl gave an unreadable answer"}
+    if r.status_code >= 400:
+        return {"error": data.get("error") or data.get("message") or f"netctl answered HTTP {r.status_code}"}
+    return data
 
 
 @capability(
@@ -446,41 +482,26 @@ def _valid_peer(name: str) -> bool:
     # The result carries the device's PRIVATE KEY. Never let it into the
     # memory/fabric stores, and keep it out of the activity transcript.
     memory="off", silent=True,
-    description="Enrol a device on the VFS-02 WireGuard door and return its "
-                "client config. Each device gets its own keypair, so losing one "
-                "phone is one revocation rather than a rotation across every "
-                "device. The tunnel routes ONLY the file server -- normal "
-                "internet traffic is untouched, and a peer cannot reach the rest "
-                "of the estate. Inputs: name (str! -- letters, digits, - and _). "
-                "Output: {ok, name, address, config} or {error}. The config "
-                "contains a private key: treat it as a secret.",
+    description="Give a device file-server access over netctl's WireGuard door (on NWM-02) "
+                "and return its client config. The device gets netctl's 'files' profile: "
+                "the tunnel carries only the file server (VFS-02), normal internet traffic "
+                "is untouched, and nothing else on the estate answers. Each device has its "
+                "own key pair, so a lost phone is one revocation. Vera acts with a netctl "
+                "token that can only add, list and revoke files-only devices. Inputs: name "
+                "(str! -- letters, digits, - and _, up to 32). Output: {ok, name, address, "
+                "config, qr_svg} or {error}. The config contains a private key: treat it "
+                "as a secret.",
 )
 async def cap_peer_add(name: str = "", trace_id=None) -> Dict:
     if not _valid_peer(name):
-        return {"error": "name required: letters, digits, '-' and '_', max 40 chars"}
-    r = await _ssh(f"/usr/local/sbin/vfs-peer add {shlex.quote(name)}", timeout=90)
-    if r.get("error"):
-        return {"error": r["error"]}
-    out = r.get("stdout") or ""
-    if "already exists" in out or r.get("rc", 0) != 0:
-        return {"error": (r.get("stderr") or out).strip()[:300] or "peer add failed"}
-    # The tool prints the config between its own markers; take the [Interface]
-    # block onward and stop before the QR code.
-    conf, addr = [], ""
-    started = False
-    for line in out.splitlines():
-        if line.startswith("[Interface]"):
-            started = True
-        if line.startswith("--- scan"):
-            break
-        if started:
-            conf.append(line)
-            if line.startswith("Address"):
-                addr = line.split("=", 1)[-1].strip()
+        return {"error": "name required: letters, digits, '-' and '_', up to 32 characters"}
+    r = await _door("POST", "/api/door/files/peer", {"name": name, "dns": False})
+    if r.get("error") or not r.get("ok"):
+        return {"error": r.get("error") or r.get("message") or "the device was not enrolled"}
     await emit_event({"type": "vfs.progress", "stage": "peer.add",
-                      "message": f"WireGuard device enrolled: {name} ({addr})"})
-    return {"ok": True, "name": name, "address": addr,
-            "config": "\n".join(conf).strip(),
+                      "message": f"WireGuard files device enrolled: {name} ({r.get('address', '')})"})
+    return {"ok": True, "name": name, "address": r.get("address", ""), "config": r.get("config", ""),
+            "qr_svg": r.get("qr_svg", ""), "endpoint_note": r.get("endpoint_note", ""),
             "note": "contains a private key -- deliver it over a trusted channel"}
 
 
@@ -488,43 +509,41 @@ async def cap_peer_add(name: str = "", trace_id=None) -> Dict:
     "vfs.peer.list",
     http_method="POST", http_path="/vfs/peer/list", http_tags=["vfs"],
     memory="off", silent=True,
-    description="Devices enrolled on the VFS-02 WireGuard door, with their "
-                "tunnel address and how long ago each last completed a "
-                "handshake. No inputs. Output: {peers:[{name,address,"
-                "last_handshake}], count}.",
+    description="Devices with file access over netctl's WireGuard door, with their tunnel "
+                "address and when each last completed a handshake, plus whether the door is "
+                "open. No inputs. Output: {peers:[{name,address,last_handshake,connected}], "
+                "count, door:{enabled,up,endpoint,port,router}}.",
 )
 async def cap_peer_list(trace_id=None) -> Dict:
-    r = await _ssh("/usr/local/sbin/vfs-peer list", timeout=45)
+    r = await _door("GET", "/api/door/files")
     if r.get("error"):
         return {"error": r["error"]}
     peers = []
-    for line in (r.get("stdout") or "").splitlines()[1:]:
-        parts = line.split(None, 2)
-        if len(parts) >= 2:
-            peers.append({"name": parts[0], "address": parts[1],
-                          "last_handshake": parts[2].strip() if len(parts) > 2 else ""})
-    return {"peers": peers, "count": len(peers)}
+    for d in r.get("peers") or []:
+        seconds = d.get("last_handshake_s")
+        peers.append({"name": d.get("name", ""), "address": d.get("address", ""),
+                      "last_handshake": "never" if seconds is None else f"{int(seconds)}s ago",
+                      "connected": bool(d.get("connected"))})
+    return {"peers": peers, "count": len(peers),
+            "door": {"enabled": r.get("enabled"), "up": r.get("up"), "endpoint": r.get("endpoint", ""),
+                     "port": r.get("port"), "router": r.get("router", "")}}
 
 
 @capability(
     "vfs.peer.remove",
     http_method="POST", http_path="/vfs/peer/remove", http_tags=["vfs"],
-    description="Revoke a device's access to the VFS-02 WireGuard door. Takes "
-                "effect immediately -- the peer is dropped from the live "
-                "interface as well as the config. Inputs: name (str!). Output: "
-                "{ok, name} or {error}.",
+    description="Revoke a device's file access over netctl's WireGuard door. Takes effect "
+                "immediately. Only files-only devices can be revoked this way. Inputs: name "
+                "(str!). Output: {ok, name} or {error}.",
 )
 async def cap_peer_remove(name: str = "", trace_id=None) -> Dict:
     if not _valid_peer(name):
-        return {"error": "name required: letters, digits, '-' and '_', max 40 chars"}
-    r = await _ssh(f"/usr/local/sbin/vfs-peer remove {shlex.quote(name)}", timeout=60)
-    if r.get("error"):
-        return {"error": r["error"]}
-    if r.get("rc", 0) != 0:
-        return {"error": (r.get("stderr") or r.get("stdout") or "").strip()[:300]
-                         or "peer remove failed"}
+        return {"error": "name required: letters, digits, '-' and '_', up to 32 characters"}
+    r = await _door("POST", f"/api/door/files/peer/delete/{name}")
+    if r.get("error") or not r.get("ok"):
+        return {"error": r.get("error") or r.get("message") or "the device was not revoked"}
     await emit_event({"type": "vfs.progress", "stage": "peer.remove",
-                      "message": f"WireGuard device revoked: {name}"})
+                      "message": f"WireGuard files device revoked: {name}"})
     return {"ok": True, "name": name}
 
 
@@ -537,16 +556,18 @@ async def cap_peer_remove(name: str = "", trace_id=None) -> Dict:
     description="Update where the Vera File Fabric lives, for when VFS-02 is "
                 "re-addressed or its SSH host-store label changes. Only the "
                 "fields you pass are altered. Inputs: host (str), host_internal "
-                "(str), ssh_label (str), cloud_url (str), sync_url (str). "
+                "(str), ssh_label (str), cloud_url (str), sync_url (str), door_url (str -- netctl's address), door_secret (str -- where the secrets service holds the door token). "
                 "Output: {ok, settings}.",
 )
 async def cap_settings_save(host: str = "", host_internal: str = "",
                             ssh_label: str = "", cloud_url: str = "",
-                            sync_url: str = "", trace_id=None) -> Dict:
+                            sync_url: str = "", door_url: str = "",
+                            door_secret: str = "", trace_id=None) -> Dict:
     cfg = await _cfg()
     for field, value in (("host", host), ("host_internal", host_internal),
                          ("ssh_label", ssh_label), ("cloud_url", cloud_url),
-                         ("sync_url", sync_url)):
+                         ("sync_url", sync_url), ("door_url", door_url),
+                         ("door_secret", door_secret)):
         if value:
             cfg[field] = value
     r = _redis()

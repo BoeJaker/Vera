@@ -525,6 +525,7 @@ async def ide_inspect_snapshot(
                          "bytes": total_bytes, "created_at": now_iso()},
         ))
 
+        asyncio.ensure_future(_auto_prune_snapshots())
         return {
             "ok":           True,
             "snapshot_id":  sid,
@@ -764,6 +765,118 @@ async def ide_inspect_diff_snapshot(
 # ─────────────────────────────────────────────────────────────────────────────
 # ide.inspect.delete_snapshot
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+# ── retention ────────────────────────────────────────────────────────────────
+# Every dream review takes a full copy of the source tree; left alone they grew to
+# 730 copies and 230 GB in three months. Keep the newest SNAPSHOT_KEEP_MIN, anything
+# younger than SNAPSHOT_KEEP_DAYS, and any snapshot a dream review still names.
+SNAPSHOT_KEEP_DAYS = 14
+SNAPSHOT_KEEP_MIN = 20
+
+
+def _prune_candidates(snaps, now, keep_days, keep_min, protected):
+    """Snapshot ids to delete: everything but the newest keep_min, anything younger
+    than keep_days, and protected ids. snaps: [{id, mtime}]."""
+    ordered = sorted(snaps, key=lambda s: (s["mtime"], s["id"]), reverse=True)
+    cutoff = now - keep_days * 86400
+    return [s["id"] for i, s in enumerate(ordered)
+            if i >= keep_min and s["mtime"] < cutoff and s["id"] not in protected]
+
+
+def _snapshot_entries_sync():
+    if not SNAPSHOT_ROOT.exists():
+        return []
+    out = []
+    for d in SNAPSHOT_ROOT.iterdir():
+        if d.is_dir():
+            try:
+                out.append({"id": d.name, "mtime": d.stat().st_mtime})
+            except OSError:
+                continue
+    return out
+
+
+def _delete_snapshots_sync(ids):
+    removed = 0
+    root = SNAPSHOT_ROOT.resolve()
+    for sid in ids:
+        snap = (SNAPSHOT_ROOT / sid).resolve()
+        try:
+            snap.relative_to(root)
+        except ValueError:
+            continue
+        if snap == root or not snap.is_dir():
+            continue
+        shutil.rmtree(str(snap), ignore_errors=True)
+        removed += 0 if snap.exists() else 1
+    return removed
+
+
+async def _protected_snapshot_ids(names):
+    """Snapshot names that a dream review's records still mention."""
+    import Vera.vera.capability_orchestration as _orch_mod
+    r = getattr(_orch_mod, "REDIS", None)
+    if r is None or not names:
+        return set()
+    texts = []
+    async for raw in r.scan_iter(match="vera:dream:*", count=500):
+        key = raw.decode() if isinstance(raw, bytes) else raw
+        try:
+            kind = await r.type(key)
+            kind = kind.decode() if isinstance(kind, bytes) else kind
+            if kind == "string":
+                texts.append(await r.get(key))
+            elif kind == "hash":
+                texts.extend((await r.hgetall(key)).values())
+            elif kind == "list":
+                texts.extend(await r.lrange(key, 0, 1000))
+            elif kind == "set":
+                texts.extend(await r.smembers(key))
+        except Exception:
+            continue
+    blob = "\n".join(t.decode("utf-8", "replace") if isinstance(t, bytes) else str(t) for t in texts if t)
+    return {n for n in names if n in blob}
+
+
+async def _prune_snapshots(apply=False, keep_days=SNAPSHOT_KEEP_DAYS, keep_min=SNAPSHOT_KEEP_MIN):
+    import time as _time
+    loop = asyncio.get_event_loop()
+    snaps = await loop.run_in_executor(None, _snapshot_entries_sync)
+    protected = await _protected_snapshot_ids([s["id"] for s in snaps])
+    doomed = _prune_candidates(snaps, _time.time(), int(keep_days), int(keep_min), protected)
+    out = {"dry_run": not apply, "total": len(snaps), "delete_count": len(doomed),
+           "delete": doomed, "protected": sorted(protected)}
+    if apply and doomed:
+        out["removed"] = await loop.run_in_executor(None, _delete_snapshots_sync, doomed)
+    return out
+
+
+async def _auto_prune_snapshots():
+    try:
+        res = await _prune_snapshots(apply=True)
+        if res.get("removed"):
+            log.info("inspect: pruned %s old snapshots", res["removed"])
+    except Exception as e:
+        log.warning("inspect: snapshot pruning failed: %s", e)
+
+
+@capability(
+    "ide.inspect.prune_snapshots",
+    http_method="POST", http_path="/ide/inspect/prune_snapshots",
+    http_tags=["ide", "inspect"],
+    memory="off",
+    description="Delete old inspect snapshots. Keeps the newest keep_min (20), anything "
+                "younger than keep_days (14), and any snapshot a dream review still names. "
+                "Runs by itself after every new snapshot. A dry run unless apply=true. "
+                "Inputs: apply (bool), keep_days (int), keep_min (int). Output: {dry_run, "
+                "total, delete_count, delete, protected, removed?}.",
+)
+async def ide_inspect_prune_snapshots(apply: bool = False, keep_days: int = SNAPSHOT_KEEP_DAYS,
+                                      keep_min: int = SNAPSHOT_KEEP_MIN, trace_id=None):
+    flag = apply.strip().lower() in ("1", "true", "yes", "on") if isinstance(apply, str) else bool(apply)
+    return await _prune_snapshots(flag, keep_days, keep_min)
+
 
 @capability(
     "ide.inspect.delete_snapshot",
