@@ -67,6 +67,23 @@
  * label — and a tile can be dropped on the grid itself, not only on another
  * tile. Without the surface loaded the panel picker is the loader, as before
  * (and always reachable as openPanels), and ⚙ opens the record itself.
+ *
+ * THE MOVE IS THE PAGE'S OWN GESTURE (the Dashboard board's lifted tile and
+ * dashed slot): in edit mode a press on a tile and a pull of a few pixels
+ * lift the tile itself — it follows the pointer on a transform, nothing
+ * reflows — while the dashed ghost sits on the slot it will take; release
+ * lands it there (the same insertBefore, save and applyLayout as ever),
+ * Escape puts it back. This replaces the native HTML5 drag session for the
+ * mouse. That session belongs to the OS, not the page: once it starts the
+ * page sees no mouse events, cannot end it, cannot scroll while the pointer
+ * rests, and on Windows Chrome it locked the harness dashboard outright
+ * ("Configure then drag a widget — the page locks, the cursor stays a hand").
+ * The pointer gesture is the mechanism the resize corner and the float head
+ * already use — tracked on the document under a full-viewport guard so an
+ * iframe under the pointer never swallows it — and the page owns every step.
+ * The dragstart / dragover / drop / dragend handlers stay wired for any
+ * native session that still reaches the grid (dragenter is cancelled too, as
+ * the drop model asks), so nothing that worked is gone.
  * ========================================================================== */
 (function () {
   'use strict';
@@ -180,10 +197,19 @@
       // tile, the accent corner handle always showing, the moving tile lifted with its label, a dashed frame while a
       // tile can be dropped on the grid itself — the cues that say "this is arrangeable now". The vars come from
       // the grid's geometry (gridVars) so the lines sit on the real columns whatever the host page's gap.
-      '.dash-grid.editing{background-image:linear-gradient(var(--border,rgba(255,255,255,.09)) 1px,transparent 1px),',
+      // The lines are painted on a layer of their own (a positioned ::before promoted with will-change), never on the
+      // grid's background: a background on the grid — two gradients tiled over its 3,500 px — made every scroll step
+      // of the dashboard's container a 75–150 ms synchronous job (measured; 0.2 ms without it), and the drag's
+      // auto-scroll runs a step per dragover, which Windows fires continuously while the pointer rests at the edge —
+      // the main thread saturated, the native drag session starved and the page locked ("Configure then drag a
+      // widget — the page locks"). On its own layer the lines cost the scroll nothing (0.1 ms a step).
+      '.dash-grid.editing{position:relative;background-image:none}',
+      '.dash-grid.editing::before{content:"";position:absolute;z-index:0;pointer-events:none;will-change:transform;',
+      'top:0;bottom:0;left:var(--vd-pl,0px);right:var(--vd-pr,0px);',
+      'background-image:linear-gradient(var(--border,rgba(255,255,255,.09)) 1px,transparent 1px),',
       'linear-gradient(90deg,var(--border,rgba(255,255,255,.09)) 1px,transparent 1px);',
       'background-size:calc((100% + var(--vd-gap,10px)) / var(--vd-cols,12)) calc(var(--vd-row,58px) + var(--vd-gap,10px));',
-      'background-origin:content-box;background-position:-1px -1px}',
+      'background-position:-1px -1px}',
       '.dash-grid.editing > .widget{box-shadow:0 0 0 1px color-mix(in srgb,var(--acc,#5a9e8f) 30%,transparent),var(--card,var(--shadow,none));cursor:grab}',
       '.dash-grid.editing > .widget > .w-resize{display:flex;opacity:.85}',
       '.dash-grid.editing > .widget > .w-resize::before{border-right-color:var(--acc,#5a9e8f);border-bottom-color:var(--acc,#5a9e8f);width:10px;height:10px}',
@@ -193,6 +219,13 @@
       '.dash-grid.editing > .widget.dragging::before{content:"moving · drop on the grid";position:absolute;left:8px;bottom:6px;z-index:2;',
       'font-family:var(--mono);font-size:8px;color:var(--acc,#5a9e8f);pointer-events:none}',
       '.dash-grid.editing.vd-drop-here{outline:2px dashed var(--acc,#5a9e8f);outline-offset:6px}',
+      // the moving tile follows the pointer on its transform: the host page's transform transition would trail it
+      '.dash-grid.editing > .widget.dragging{transition:none}',
+      // the dashed slot the lifted tile will take (the board's ghost: "drop here · 4 × 2") — fixed on the body, as the resize
+      // ghost is: a box inside the grid would dirty the grid's layout on every move and the auto-scroll would pay for it
+      '.vd-ghost{position:fixed;box-sizing:border-box;border-radius:var(--radius-lg,8px);border:1.5px dashed var(--acc,#5a9e8f);',
+      'background:color-mix(in srgb,var(--acc,#5a9e8f) 8%,transparent);pointer-events:none;z-index:9600}',
+      '.vd-ghost span{position:absolute;left:8px;top:6px;font-family:var(--mono);font-size:8.5px;color:var(--acc,#5a9e8f);white-space:nowrap}',
       // the tile that was just placed shows where it landed
       '@keyframes vdLanded{0%{box-shadow:0 0 0 2px var(--acc,#5a9e8f),0 0 24px color-mix(in srgb,var(--acc,#5a9e8f) 45%,transparent)}100%{box-shadow:none}}',
       '.widget.vd-landed{animation:vdLanded 1.6s ease-out}',
@@ -201,7 +234,9 @@
       '.dash-grid.editing .w-iconbtn.vd-cfg{color:var(--acc,#5a9e8f)}',
       // the retired hand-drawn body of a tile the record now draws (kept for the page's updaters)
       '.w-body > .w-page[hidden]{display:none!important}',
-      '.w-body > vera-widget.vd-draw{display:block;flex:1;min-height:0;padding:8px}',
+      // the drawing keeps its own height inside the tile's scrolling body: a composite taller than the tile scrolls, it is
+      // never shrunk to the box and clipped top and bottom (the element centres its body in whatever height it is given)
+      '.w-body > vera-widget.vd-draw{display:block;flex:1 0 auto;min-height:0;padding:8px}',
       // the record sheet (⚙ without the widget surface loaded): the record itself, editable
       '.vd-sheet textarea{width:100%;min-height:220px;background:var(--bg0);border:1px solid var(--border2);color:var(--text);',
       'font-family:var(--mono);font-size:10px;padding:8px;border-radius:3px;resize:vertical;box-sizing:border-box}',
@@ -472,6 +507,23 @@
       o.at = [0, r]; return o;
     });
   }
+  // Where a lifted tile lands for a pointer at (x, y) — the one rule for the pointer gesture and for a native drop.
+  // Over another tile: before it on its left half, after it on the right. Over the grid itself (a gap, the padding,
+  // past the last tile): before the first tile that follows the point in reading order — below it, or on its row
+  // and to its right — else the end. tiles = [{wid, rect:{left,top,right,bottom}, src, hidden}] in grid order.
+  function slotAt(tiles, x, y) {
+    var list = (tiles || []).filter(function (t) { return t && t.rect && !t.hidden; });
+    var others = list.filter(function (t) { return !t.src; });
+    var over = others.filter(function (t) { var r = t.rect; return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; })[0];
+    if (over) {
+      var r = over.rect;
+      if (x < r.left + (r.right - r.left) / 2) return { next: over.wid, over: over.wid, before: true };
+      var i = others.indexOf(over);
+      return { next: i + 1 < others.length ? others[i + 1].wid : null, over: over.wid, before: false };
+    }
+    var next = others.filter(function (t) { var r = t.rect; return r.top > y || (y >= r.top && y <= r.bottom && r.left > x); })[0];
+    return { next: next ? next.wid : null, over: null, before: true };
+  }
   // Arrange / compact: the tiles in the order dense flow packs them (row, then column), hidden ones last in their
   // own order — so the grid closes the holes a tall tile left without moving anything the user did not ask about.
   function arrange(tiles, cols) {
@@ -671,6 +723,8 @@
       grid.querySelectorAll('.widget.drag-over').forEach(function (x) { x.classList.remove('drag-over'); });
       state.order = widgets().map(function (w) { return w.dataset.wid; }); save();
     }
+    // the drop model takes the dragenter's answer until the first dragover: a tile or the grid that is a target says so
+    function onDragEnter(e) { if (state.editing && dragSrc) e.preventDefault(); }
     function onDragEnd() {
       if (dragSrc) dragSrc.classList.remove('dragging');
       grid.querySelectorAll('.widget.drag-over').forEach(function (x) { x.classList.remove('drag-over'); });
@@ -691,14 +745,112 @@
       var over = e.target.closest('.widget');
       if (over && over.parentNode === grid && over !== dragSrc) return;
       e.preventDefault(); grid.classList.remove('vd-drop-here');
-      var x = e.clientX, y = e.clientY, next = null;
-      widgets().forEach(function (w) {
-        if (next || w === dragSrc || w.classList.contains('hidden')) return;
-        var r = w.getBoundingClientRect();
-        if (r.top > y || (y >= r.top && y <= r.bottom && r.left > x)) next = w;
-      });
-      grid.insertBefore(dragSrc, next);
+      var slot = slotAt(tileRects(dragSrc), e.clientX, e.clientY);
+      grid.insertBefore(dragSrc, slot.next ? byId(slot.next) : null);
       state.order = widgets().map(function (w) { return w.dataset.wid; }); save(); applyLayout();
+    }
+    // every visible tile's box, in grid order, the moving one flagged — what slotAt reads
+    function tileRects(src) {
+      return widgets().map(function (w) { var r = w.getBoundingClientRect(); return { wid: w.dataset.wid, rect: { left: r.left, top: r.top, right: r.right, bottom: r.bottom }, src: w === src, hidden: w.classList.contains('hidden') }; });
+    }
+
+    /* ── the move: a pointer gesture on the tile (the Dashboard board's lifted tile and dashed slot) ──
+       A press on a tile in edit mode — not on a control, the resize corner or an embedded panel's own frame — and a
+       pull past a few pixels lift the tile: it follows the pointer on its transform (the class's lift plus the
+       pointer's offset; nothing reflows), the moving label on it, the dashed ghost on the slot it will take,
+       computed by slotAt from the live boxes; the container auto-scrolls while the pointer rests at its edge (a
+       rAF loop, as the resize does — a pointer that stays still fires no events); release lands the tile — the
+       same insertBefore, save and applyLayout as a drop — and the landed flash says where; Escape puts it back.
+       The press itself is cancelled so the browser never opens a native drag session for the mouse. */
+    var move = null;
+    function onMoveDown(e) {
+      if (!state.editing || e.button !== 0) return;
+      if (e.target.closest('.w-resize, button, input, select, textarea, a[href], [contenteditable], iframe, .vd-ghost')) return;
+      var w = e.target.closest('.widget'); if (!w || w.parentNode !== grid || w.classList.contains('floating')) return;
+      e.preventDefault();
+      var scrollEl = _scrollParent(grid);
+      move = { w: w, sx: e.clientX, sy: e.clientY, x: e.clientX, y: e.clientY, live: false, scrolled: 0, scrollEl: scrollEl, slot: null, ghost: null, raf: 0 };
+      document.addEventListener('mousemove', onMoveMove);
+      document.addEventListener('mouseup', onMoveUp);
+      document.addEventListener('keydown', onMoveKey, true);
+      window.addEventListener('blur', onMoveBlur);
+    }
+    function onMoveMove(e) {
+      if (!move) return;
+      move.x = e.clientX; move.y = e.clientY;
+      if (!move.live) {
+        if (Math.abs(e.clientX - move.sx) + Math.abs(e.clientY - move.sy) < 4) return;
+        moveLift();
+      }
+      if (!move.raf) move.raf = requestAnimationFrame(moveTick);
+    }
+    function moveLift() {
+      var m = move; m.live = true;
+      dragSrc = m.w; m.w.classList.add('dragging');
+      m.startRect = m.w.getBoundingClientRect();
+      m.ghost = document.createElement('div'); m.ghost.className = 'vd-ghost'; m.ghost.innerHTML = '<span></span>';
+      document.body.appendChild(m.ghost);
+      _dragGuardOn('grabbing');
+      m.scrollRaf = requestAnimationFrame(moveScrollTick);
+    }
+    // the lifted tile at the pointer, the ghost on the slot; the scroll so far keeps the tile under a resting pointer
+    function moveTick() {
+      var m = move; if (!m || !m.live) return;
+      m.raf = 0;
+      var dx = m.x - m.sx, dy = m.y - m.sy + m.scrolled;
+      m.w.style.transform = 'translate(' + dx + 'px,' + dy + 'px) rotate(-1deg) scale(1.02)';
+      var rects = tileRects(m.w), slot = slotAt(rects, m.x, m.y);
+      var same = m.slot && m.slot.next === slot.next && m.slot.over === slot.over && m.slot.before === slot.before;
+      if (same) return;
+      m.slot = slot;
+      var gr = grid.getBoundingClientRect(), sp = spanOf(m.w);
+      var w = m.startRect.width, h = m.startRect.height, left, top;
+      var target = slot.next ? rects.filter(function (t) { return t.wid === slot.next; })[0] : null;
+      if (target) { left = target.rect.left; top = target.rect.top; }
+      else {   // the end: under the last visible tile, at the grid's left edge
+        var bottom = 0; rects.forEach(function (t) { if (!t.src && !t.hidden && t.rect.bottom > bottom) bottom = t.rect.bottom; });
+        var cs = getComputedStyle(grid);
+        left = gr.left + (parseFloat(cs.paddingLeft) || 0); top = bottom ? bottom + (parseFloat(cs.rowGap || cs.gap) || GRID.gap) : gr.top + (parseFloat(cs.paddingTop) || 0);
+      }
+      m.ghost.style.left = left + 'px'; m.ghost.style.top = top + 'px'; m.ghost.style.width = Math.min(w, gr.right - left) + 'px'; m.ghost.style.height = h + 'px';
+      m.ghost.firstChild.textContent = 'drop here · ' + sp[0] + ' × ' + sp[1] + (target ? '' : ' · at the end');
+    }
+    // the container scrolls while the pointer rests within EDGE of its top or bottom, as the resize corner does
+    function moveScrollTick() {
+      var m = move; if (!m || !m.live) return;
+      var r = m.scrollEl.getBoundingClientRect(), EDGE = 56, MAX = 16;
+      var top = Math.max(0, r.top), bottom = Math.min(window.innerHeight, r.bottom), d = 0;
+      if (m.y < top + EDGE) d = -MAX * (1 - (m.y - top) / EDGE);
+      else if (m.y > bottom - EDGE) d = MAX * (1 - (bottom - m.y) / EDGE);
+      if (d) {
+        var before = m.scrollEl.scrollTop; m.scrollEl.scrollBy(0, d);
+        var actual = m.scrollEl.scrollTop - before;
+        if (actual) { m.scrolled += actual; m.slot = null; if (!m.raf) m.raf = requestAnimationFrame(moveTick); }
+      }
+      m.scrollRaf = requestAnimationFrame(moveScrollTick);
+    }
+    function onMoveKey(e) { if (e.key === 'Escape' && move) { e.preventDefault(); e.stopPropagation(); moveEnd(false); } }
+    function onMoveUp() { moveEnd(true); }
+    function onMoveBlur() { moveEnd(false); }   // the button let go over another window: the tile goes back
+    function moveEnd(commit) {
+      var m = move; if (!m) return; move = null;
+      document.removeEventListener('mousemove', onMoveMove);
+      document.removeEventListener('mouseup', onMoveUp);
+      document.removeEventListener('keydown', onMoveKey, true);
+      window.removeEventListener('blur', onMoveBlur);
+      if (!m.live) return;   // a click: the tile never lifted
+      if (m.raf) cancelAnimationFrame(m.raf); if (m.scrollRaf) cancelAnimationFrame(m.scrollRaf);
+      _dragGuardOff();
+      if (m.ghost) m.ghost.remove();
+      m.w.style.transform = ''; m.w.classList.remove('dragging');
+      if (dragSrc === m.w) dragSrc = null;
+      var slot = commit ? slotAt(tileRects(m.w), m.x, m.y) : null;
+      if (!slot) return;
+      var next = slot.next ? byId(slot.next) : null;
+      if (next === m.w.nextElementSibling || next === m.w) return;   // let go where it was
+      grid.insertBefore(m.w, next);
+      state.order = widgets().map(function (w) { return w.dataset.wid; }); save(); applyLayout();
+      landed(m.w);
     }
     // the edit-mode grid lines follow the grid's own geometry: its columns, its gap, the layout record's row
     function gridVars() {
@@ -706,6 +858,9 @@
       grid.style.setProperty('--vd-cols', String(state.grid.cols || GRID.cols));
       grid.style.setProperty('--vd-gap', (parseFloat(cs.columnGap || cs.gap) || GRID.gap) + 'px');
       grid.style.setProperty('--vd-row', (state.grid.row || GRID.row) + 'px');
+      // the lines' layer sits on the content box, as the background did (the host page pads the grid)
+      grid.style.setProperty('--vd-pl', (parseFloat(cs.paddingLeft) || 0) + 'px');
+      grid.style.setProperty('--vd-pr', (parseFloat(cs.paddingRight) || 0) + 'px');
     }
 
     /* resize (edit mode only) — snap width/height to allowed spans.
@@ -1077,6 +1232,7 @@
       if (w._vdWired) return; w._vdWired = true;
       w.setAttribute('draggable', state.editing ? 'true' : 'false');
       w.addEventListener('dragstart', onDragStart);
+      w.addEventListener('dragenter', onDragEnter);
       w.addEventListener('dragover', onDragOver);
       w.addEventListener('dragleave', onDragLeave);
       w.addEventListener('drop', onDrop);
@@ -1394,6 +1550,8 @@
     load();
     widgets().forEach(wireWidget);
     grid.addEventListener('mousedown', onResizeDown);
+    grid.addEventListener('mousedown', onMoveDown);
+    grid.addEventListener('dragenter', onDragEnter);
     grid.addEventListener('dragover', onGridDragOver); grid.addEventListener('drop', onGridDrop);
     grid.addEventListener('dragleave', function (e) { if (e.target === grid) grid.classList.remove('vd-drop-here'); });
     applyLayout();
@@ -1558,5 +1716,5 @@
   }
 
   window.VeraDash = { init: init, migrate: migrate, flow: flow, arrange: arrange, sizeForSpan: sizeForSpan, spanFor: spanFor, panelRecord: panelRecord, GRID: GRID,
-    sizeLadder: sizeLadder, ladderSizes: ladderSizes, sample: sampleFor, withSample: withSample };
+    sizeLadder: sizeLadder, ladderSizes: ladderSizes, sample: sampleFor, withSample: withSample, slotAt: slotAt };
 })();

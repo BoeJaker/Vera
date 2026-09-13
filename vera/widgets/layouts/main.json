@@ -17,7 +17,7 @@
    12
   ]
  },
- "note": "Every widget of the cluster-overview grid as a record (UI redesign M5). draw.body = \"page\": the page draws the body by hand today and its own updaters address it by id; the record owns the frame. draw.body = \"record\": the element draws the record and the page's markup is retired under it (VeraDash.drawTile). Generated from the markup by the M5 slice; edit by hand from here.",
+ "note": "Every widget of the cluster-overview grid as a record (UI redesign M5). draw.body = \"page\": the page draws the body by hand today and its own updaters address it by id; the record owns the frame. draw.body = \"record\": the element draws the record and the page's markup is retired under it (VeraDash.drawTile). Generated from the markup by the M5 slice; edit by hand from here. The record tiles read their sources through the element: read.map names the envelope's fields (the shape's container ← a path, every other key a field of each row); a composite reads its subject once and its children take $subject.<path> slices of it, or read on their own. A tile kept on the page body carries a note saying why.",
  "widgets": [
   {
    "record": {
@@ -45,7 +45,8 @@
      "pin",
      "ask"
     ],
-    "place": "dashboard"
+    "place": "dashboard",
+    "note": "the topology form draws a mermaid diagram through <vera-mermaid>, which the harness page does not load; the page draws the estate's own <vera-topology-map> (status colour, click a node, collapse a kind)"
    },
    "at": [
     0,
@@ -67,7 +68,7 @@
     "shape": "composite",
     "title": "Proxmox",
     "read": {
-     "refresh": "5s"
+     "refresh": "10s"
     },
     "frame": {
      "size": "m",
@@ -78,7 +79,7 @@
      "max_body": 290
     },
     "draw": {
-     "body": "page"
+     "body": "record"
     },
     "actions": [
      "dive",
@@ -93,59 +94,29 @@
       "record": {
        "id": "sysmon-proxmox:nodes",
        "form": "counter",
-       "source": "sysmon.status",
+       "source": "$subject.proxmox.nodes",
        "title": "nodes",
        "shape": "level"
       }
      },
      {
-      "slot": "vms",
+      "slot": "guests",
       "record": {
-       "id": "sysmon-proxmox:vms",
+       "id": "sysmon-proxmox:guests",
        "form": "counter",
-       "source": "sysmon.status",
-       "title": "VMs",
+       "source": "$subject.proxmox.guests",
+       "title": "guests",
        "shape": "level"
       }
      },
      {
-      "slot": "cts",
+      "slot": "running",
       "record": {
-       "id": "sysmon-proxmox:cts",
+       "id": "sysmon-proxmox:running",
        "form": "counter",
-       "source": "sysmon.status",
-       "title": "CTs",
+       "source": "$subject.proxmox.running",
+       "title": "running",
        "shape": "level"
-      }
-     },
-     {
-      "slot": "cpu",
-      "record": {
-       "id": "sysmon-proxmox:cpu",
-       "form": "trace",
-       "source": "sysmon.history",
-       "title": "cpu",
-       "shape": "series"
-      }
-     },
-     {
-      "slot": "mem",
-      "record": {
-       "id": "sysmon-proxmox:mem",
-       "form": "trace",
-       "source": "sysmon.history",
-       "title": "memory",
-       "shape": "series"
-      }
-     },
-     {
-      "slot": "disk",
-      "record": {
-       "id": "sysmon-proxmox:disk",
-       "form": "trace",
-       "source": "sysmon.history",
-       "title": "disk",
-       "shape": "series"
       }
      },
      {
@@ -153,28 +124,8 @@
       "record": {
        "id": "sysmon-proxmox:clusters",
        "form": "rows",
-       "source": "sysmon.status",
+       "source": "$subject.proxmox.clusters",
        "title": "clusters",
-       "shape": "items"
-      }
-     },
-     {
-      "slot": "nodesList",
-      "record": {
-       "id": "sysmon-proxmox:nodesList",
-       "form": "rows",
-       "source": "sysmon.status",
-       "title": "nodes",
-       "shape": "items"
-      }
-     },
-     {
-      "slot": "guests",
-      "record": {
-       "id": "sysmon-proxmox:guests",
-       "form": "rows",
-       "source": "sysmon.status",
-       "title": "guests",
        "shape": "items"
       }
      }
@@ -200,7 +151,7 @@
     "shape": "composite",
     "title": "Docker",
     "read": {
-     "refresh": "5s"
+     "refresh": "10s"
     },
     "frame": {
      "size": "m",
@@ -211,7 +162,7 @@
      "max_body": 290
     },
     "draw": {
-     "body": "page"
+     "body": "record"
     },
     "actions": [
      "dive",
@@ -226,7 +177,7 @@
       "record": {
        "id": "sysmon-docker:hosts",
        "form": "counter",
-       "source": "sysmon.status",
+       "source": "$subject.docker.total_hosts",
        "title": "hosts",
        "shape": "level"
       }
@@ -236,29 +187,19 @@
       "record": {
        "id": "sysmon-docker:running",
        "form": "counter",
-       "source": "sysmon.status",
+       "source": "$subject.docker.running",
        "title": "running",
        "shape": "level"
       }
      },
      {
-      "slot": "stopped",
+      "slot": "containers",
       "record": {
-       "id": "sysmon-docker:stopped",
+       "id": "sysmon-docker:containers",
        "form": "counter",
-       "source": "sysmon.status",
-       "title": "stopped",
+       "source": "$subject.docker.containers",
+       "title": "containers",
        "shape": "level"
-      }
-     },
-     {
-      "slot": "top",
-      "record": {
-       "id": "sysmon-docker:top",
-       "form": "rows",
-       "source": "docker.stats.top",
-       "title": "top containers",
-       "shape": "items"
       }
      },
      {
@@ -266,19 +207,15 @@
       "record": {
        "id": "sysmon-docker:hostsList",
        "form": "rows",
-       "source": "sysmon.status",
+       "source": "$subject.docker.hosts",
        "title": "hosts",
-       "shape": "items"
-      }
-     },
-     {
-      "slot": "cpu",
-      "record": {
-       "id": "sysmon-docker:cpu",
-       "form": "trace",
-       "source": "sysmon.history",
-       "title": "cpu",
-       "shape": "series"
+       "shape": "items",
+       "read": {
+        "map": {
+         "name": "label",
+         "count": "containers"
+        }
+       }
       }
      }
     ]
@@ -303,7 +240,7 @@
     "shape": "composite",
     "title": "Ollama",
     "read": {
-     "refresh": "5s"
+     "refresh": "10s"
     },
     "frame": {
      "size": "m",
@@ -314,7 +251,7 @@
      "max_body": 290
     },
     "draw": {
-     "body": "page"
+     "body": "record"
     },
     "actions": [
      "dive",
@@ -329,28 +266,28 @@
       "record": {
        "id": "sysmon-ollama:online",
        "form": "counter",
-       "source": "sysmon.status",
+       "source": "$subject.ollama.online",
        "title": "online",
        "shape": "level"
       }
      },
      {
-      "slot": "models",
+      "slot": "inuse",
       "record": {
-       "id": "sysmon-ollama:models",
+       "id": "sysmon-ollama:inuse",
        "form": "counter",
-       "source": "sysmon.status",
-       "title": "models",
+       "source": "$subject.ollama.in_use",
+       "title": "in use",
        "shape": "level"
       }
      },
      {
-      "slot": "active",
+      "slot": "gpu",
       "record": {
-       "id": "sysmon-ollama:active",
+       "id": "sysmon-ollama:gpu",
        "form": "counter",
-       "source": "sysmon.status",
-       "title": "active",
+       "source": "$subject.ollama.gpu",
+       "title": "gpu",
        "shape": "level"
       }
      },
@@ -359,19 +296,14 @@
       "record": {
        "id": "sysmon-ollama:nodes",
        "form": "rows",
-       "source": "sysmon.status",
+       "source": "$subject.ollama.nodes",
        "title": "nodes",
-       "shape": "items"
-      }
-     },
-     {
-      "slot": "load",
-      "record": {
-       "id": "sysmon-ollama:load",
-       "form": "trace",
-       "source": "sysmon.history",
-       "title": "requests · tokens",
-       "shape": "series"
+       "shape": "items",
+       "read": {
+        "map": {
+         "name": "label"
+        }
+       }
       }
      }
     ]
@@ -396,7 +328,7 @@
     "shape": "composite",
     "title": "Host Resources",
     "read": {
-     "refresh": "5s"
+     "refresh": "10s"
     },
     "frame": {
      "size": "m",
@@ -407,7 +339,7 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record"
     },
     "actions": [
      "dive",
@@ -422,9 +354,14 @@
       "record": {
        "id": "host-resources:cpu",
        "form": "trace",
-       "source": "sysmon.history",
-       "title": "cpu",
-       "shape": "series"
+       "source": "$subject.samples",
+       "title": "cpu %",
+       "shape": "series",
+       "read": {
+        "map": {
+         "v": "cpu"
+        }
+       }
       }
      },
      {
@@ -432,9 +369,14 @@
       "record": {
        "id": "host-resources:mem",
        "form": "trace",
-       "source": "sysmon.history",
-       "title": "memory",
-       "shape": "series"
+       "source": "$subject.samples",
+       "title": "memory %",
+       "shape": "series",
+       "read": {
+        "map": {
+         "v": "mem"
+        }
+       }
       }
      },
      {
@@ -444,7 +386,12 @@
        "form": "rows",
        "source": "sysmon.status",
        "title": "top processes",
-       "shape": "items"
+       "shape": "items",
+       "read": {
+        "map": {
+         "rows": "top_processes"
+        }
+       }
       }
      }
     ]
@@ -469,7 +416,12 @@
     "shape": "values",
     "title": "Host Temps — every sensor, click to collapse",
     "read": {
-     "refresh": "10s"
+     "refresh": "10s",
+     "map": {
+      "values": "hosts",
+      "name": "label",
+      "value": "max_c"
+     }
     },
     "frame": {
      "size": "m",
@@ -480,7 +432,8 @@
      "max_body": 290
     },
     "draw": {
-     "body": "page"
+     "unit": "°C",
+     "body": "record"
     },
     "actions": [
      "dive",
@@ -527,7 +480,8 @@
      "pin",
      "ask"
     ],
-    "place": "dashboard"
+    "place": "dashboard",
+    "note": "the page computes the verdict (OFFLINE / degraded / healthy) from the connection and the health strip; obs.health carries no status field a form could read"
    },
    "at": [
     4,
@@ -544,12 +498,15 @@
   {
    "record": {
     "id": "mode",
-    "form": "counter",
+    "form": "string",
     "source": "obs.health",
-    "shape": "level",
+    "shape": "string",
     "title": "Mode",
     "read": {
-     "refresh": "5s"
+     "refresh": "5s",
+     "map": {
+      "text": "mode"
+     }
     },
     "frame": {
      "size": "s",
@@ -560,7 +517,7 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record"
     },
     "actions": [
      "dive",
@@ -607,7 +564,8 @@
      "pin",
      "ask"
     ],
-    "place": "dashboard"
+    "place": "dashboard",
+    "note": "obs.health answers redis: true | false — no form draws a boolean (a counter reads 0); the page draws ✓ / ✗"
    },
    "at": [
     4,
@@ -629,7 +587,10 @@
     "shape": "level",
     "title": "Workers",
     "read": {
-     "refresh": "5s"
+     "refresh": "5s",
+     "map": {
+      "value": "workers"
+     }
     },
     "frame": {
      "size": "s",
@@ -640,7 +601,7 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record"
     },
     "actions": [
      "dive",
@@ -669,7 +630,10 @@
     "shape": "level",
     "title": "Capabilities",
     "read": {
-     "refresh": "5s"
+     "refresh": "5s",
+     "map": {
+      "value": "caps"
+     }
     },
     "frame": {
      "size": "s",
@@ -680,7 +644,7 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record"
     },
     "actions": [
      "dive",
@@ -709,7 +673,10 @@
     "shape": "level",
     "title": "Pending",
     "read": {
-     "refresh": "5s"
+     "refresh": "5s",
+     "map": {
+      "value": "count"
+     }
     },
     "frame": {
      "size": "s",
@@ -720,7 +687,7 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record"
     },
     "actions": [
      "dive",
@@ -749,7 +716,10 @@
     "shape": "level",
     "title": "Postgres",
     "read": {
-     "refresh": "30s"
+     "refresh": "30s",
+     "map": {
+      "value": "backends.postgres.total"
+     }
     },
     "frame": {
      "size": "m",
@@ -760,7 +730,8 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "unit": "records",
+     "body": "record"
     },
     "actions": [
      "dive",
@@ -789,7 +760,10 @@
     "shape": "level",
     "title": "Chroma · vectors",
     "read": {
-     "refresh": "30s"
+     "refresh": "30s",
+     "map": {
+      "value": "backends.chroma.count"
+     }
     },
     "frame": {
      "size": "m",
@@ -800,7 +774,8 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "unit": "vectors",
+     "body": "record"
     },
     "actions": [
      "dive",
@@ -829,7 +804,10 @@
     "shape": "level",
     "title": "Neo4j · graph",
     "read": {
-     "refresh": "30s"
+     "refresh": "30s",
+     "map": {
+      "value": "backends.neo4j.nodes"
+     }
     },
     "frame": {
      "size": "m",
@@ -840,7 +818,8 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "unit": "nodes",
+     "body": "record"
     },
     "actions": [
      "dive",
@@ -869,7 +848,7 @@
     "shape": "composite",
     "title": "Queues & Proxy",
     "read": {
-     "refresh": "5s"
+     "refresh": "10s"
     },
     "frame": {
      "size": "xl",
@@ -877,10 +856,10 @@
       6,
       5
      ],
-     "max_body": 110
+     "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record"
     },
     "actions": [
      "dive",
@@ -888,26 +867,47 @@
      "ask"
     ],
     "place": "dashboard",
-    "layout": "rows",
+    "layout": "grid",
     "children": [
      {
-      "slot": "queues",
+      "slot": "stream",
       "record": {
-       "id": "queues:queues",
+       "id": "queues:stream",
        "form": "pills",
-       "source": "jobs.stats",
-       "title": "queues",
+       "source": "$subject.stream",
+       "title": "task stream",
        "shape": "values"
       }
      },
      {
-      "slot": "mimic",
+      "slot": "proxy",
       "record": {
-       "id": "queues:mimic",
+       "id": "queues:proxy",
        "form": "pills",
-       "source": "obs.health",
-       "title": "mimic",
-       "shape": "values"
+       "source": "obs.cluster",
+       "title": "proxy",
+       "shape": "values",
+       "read": {
+        "map": {
+         "values": "proxy"
+        }
+       }
+      }
+     },
+     {
+      "slot": "queue",
+      "record": {
+       "id": "queues:queue",
+       "form": "trace",
+       "source": "sysmon.history",
+       "title": "queue",
+       "shape": "series",
+       "read": {
+        "map": {
+         "series": "samples",
+         "v": "queue"
+        }
+       }
       }
      },
      {
@@ -917,17 +917,15 @@
        "form": "log",
        "source": "ollama.request_log",
        "title": "routing",
-       "shape": "events"
-      }
-     },
-     {
-      "slot": "proxy",
-      "record": {
-       "id": "queues:proxy",
-       "form": "trace",
-       "source": "sysmon.history",
-       "title": "proxy",
-       "shape": "series"
+       "shape": "events",
+       "read": {
+        "map": {
+         "events": "entries",
+         "t": "ts",
+         "kind": "instance",
+         "text": "model"
+        }
+       }
       }
      }
     ]
@@ -952,7 +950,11 @@
     "shape": "calendar",
     "title": "Scheduler",
     "read": {
-     "refresh": "30s"
+     "refresh": "30s",
+     "map": {
+      "when": "last",
+      "title": "name"
+     }
     },
     "frame": {
      "size": "xl",
@@ -963,7 +965,7 @@
      "max_body": 220
     },
     "draw": {
-     "body": "page"
+     "body": "record"
     },
     "actions": [
      "dive",
@@ -1010,7 +1012,8 @@
      "pin",
      "ask"
     ],
-    "place": "dashboard"
+    "place": "dashboard",
+    "note": "obs.workers / obs.cluster.workers answer a dict keyed by worker id; the map picks paths, it does not turn a dict into rows — a rows view of the workers is needed before cards can draw it"
    },
    "at": [
     6,
@@ -1028,11 +1031,15 @@
    "record": {
     "id": "ollama",
     "form": "cards",
-    "source": "cluster.ollama",
+    "source": "sysmon.status",
     "shape": "items",
     "title": "Ollama Nodes",
     "read": {
-     "refresh": "10s"
+     "refresh": "10s",
+     "map": {
+      "rows": "ollama.nodes",
+      "name": "label"
+     }
     },
     "frame": {
      "size": "xl",
@@ -1043,7 +1050,7 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record"
     },
     "actions": [
      "dive",
@@ -1083,7 +1090,7 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record"
     },
     "actions": [
      "dive",
@@ -1091,26 +1098,31 @@
      "ask"
     ],
     "place": "dashboard",
-    "layout": "rows",
+    "layout": "grid",
     "children": [
      {
       "slot": "count",
       "record": {
        "id": "mesh-info:count",
        "form": "counter",
-       "source": "mesh.nodes",
+       "source": "$subject.count",
        "title": "nodes",
        "shape": "level"
       }
      },
      {
-      "slot": "kinds",
+      "slot": "nodes",
       "record": {
-       "id": "mesh-info:kinds",
+       "id": "mesh-info:nodes",
        "form": "pills",
-       "source": "mesh.nodes",
-       "title": "by kind",
-       "shape": "parts"
+       "source": "$subject.nodes",
+       "title": "by state",
+       "shape": "values",
+       "read": {
+        "map": {
+         "name": "label"
+        }
+       }
       }
      }
     ]
@@ -1146,7 +1158,7 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record"
     },
     "actions": [
      "dive",
@@ -1154,16 +1166,16 @@
      "ask"
     ],
     "place": "dashboard",
-    "layout": "rows",
+    "layout": "grid",
     "children": [
      {
-      "slot": "count",
+      "slot": "state",
       "record": {
-       "id": "looplab-info:count",
-       "form": "counter",
-       "source": "evolve.sandbox.status",
-       "title": "sandboxes",
-       "shape": "level"
+       "id": "looplab-info:state",
+       "form": "node",
+       "source": "$subject",
+       "title": "sandbox",
+       "shape": "values"
       }
      },
      {
@@ -1173,7 +1185,14 @@
        "form": "rows",
        "source": "evolve.pipeline.list",
        "title": "pipelines",
-       "shape": "items"
+       "shape": "items",
+       "read": {
+        "map": {
+         "rows": "pipelines",
+         "name": "id",
+         "status": "decision"
+        }
+       }
       }
      }
     ]
@@ -1194,11 +1213,16 @@
    "record": {
     "id": "sandboxes-info",
     "form": "list",
-    "source": "remote.sandbox.list",
+    "source": "sandbox.session.list",
     "shape": "items",
     "title": "Sandboxes",
     "read": {
-     "refresh": "30s"
+     "refresh": "30s",
+     "map": {
+      "rows": "sandboxes",
+      "name": "session_id",
+      "status": "state"
+     }
     },
     "frame": {
      "size": "m",
@@ -1209,7 +1233,7 @@
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record"
     },
     "actions": [
      "dive",
@@ -1256,7 +1280,8 @@
      "pin",
      "ask"
     ],
-    "place": "dashboard"
+    "place": "dashboard",
+    "note": "the page merges three reads (ide.vscode.instances · ide.claude_sessions.sources · openclaw.status) and the element does not read ide.vscode.instances on its own (readable() knows no .instances)"
    },
    "at": [
     4,
