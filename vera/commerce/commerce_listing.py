@@ -34,6 +34,8 @@ import uuid
 from pathlib import Path as _Path
 from typing import Any, Dict, List, Optional
 
+from Vera.vera.commerce.commerce_effects import observe_marketplace_listing_effect
+
 log = logging.getLogger("vera.commerce.listing")
 
 try:
@@ -531,6 +533,8 @@ if _CAP_AVAILABLE:
     @capability(
         "business.listing.publish", http_method="POST",
         http_path="/business/listing/publish", http_tags=["commerce"],
+        redact_args=["listing_id", "account_id", "price", "category_id",
+                     "idempotency_key", "approval_receipt_ref"], redact_result=True,
         description="Publish a draft LIVE on its platform in one click. eBay: syncs the "
                     "product (price/qty/photos) then creates & publishes the offer (needs "
                     "business.ebay.defaults set once). Vinted: creates the item (photos "
@@ -539,7 +543,10 @@ if _CAP_AVAILABLE:
                     "platform), price (float — override), category_id (str — eBay leaf). "
                     "Output: {ok, listing, result} or {error}.")
     async def cap_listing_publish(listing_id: str = "", account_id: str = "",
-                                  price: float = None, category_id: str = "", trace_id=None):
+                                  price: float = None, category_id: str = "",
+                                  idempotency_key: str = "",
+                                  approval_receipt_ref: str = "", retry: bool = False,
+                                  trace_id=None):
         await _ensure_schema()
         core = _core(); plat = _platforms()
         if not (core and plat):
@@ -551,13 +558,20 @@ if _CAP_AVAILABLE:
         if not prod:
             return {"error": "product for this listing no longer exists"}
         platform = listing["platform"]
-        acct = (await _run(plat._db_get_account, account_id, True) if account_id
-                else await _run(plat._db_first_account, platform, True))
-        if not acct:
+        acct_ref = (await _run(plat._db_get_account, account_id, False) if account_id
+                    else await _run(plat._db_first_account, platform, False))
+        if not acct_ref:
             return {"error": f"no connected {platform} account — connect one first"}
         conn = plat.CONNECTORS.get(platform)
         if not conn:
             return {"error": f"no connector for '{platform}'"}
+        shadow = observe_marketplace_listing_effect(
+            account_ref=acct_ref["id"], listing_ref=listing_id,
+            provider=platform, mode="publish", idempotency_key=idempotency_key,
+            approval_receipt_ref=approval_receipt_ref, retry=retry)
+        acct = await _run(plat._db_get_account, acct_ref["id"], True)
+        if not acct:
+            return {"error": "account unavailable", "effect_shadow": shadow}
         # sync product with the listing's price / photos before publishing
         final_price = price if price is not None else _f(listing.get("price"))
         attrs = dict(prod.get("attributes") or {})
@@ -589,35 +603,53 @@ if _CAP_AVAILABLE:
         saved = await _run(_db_upsert_listing, patch)
         await emit_event({"type": "commerce.progress", "stage": "listing.publish",
                           "message": f"{platform}: {saved['status']} '{saved.get('title','')[:36]}'"})
-        return {"ok": bool(res.get("ok")), "listing": saved, "result": res}
+        return {"ok": bool(res.get("ok")), "listing": saved, "result": res,
+                "effect_shadow": shadow}
 
     @capability(
         "business.listing.archive", http_method="POST",
         http_path="/business/listing/archive", http_tags=["commerce"],
+        redact_args=["listing_id", "idempotency_key", "approval_receipt_ref"],
+        redact_result=True,
         description="End / archive a listing. If it is live it is withdrawn on the "
                     "platform (eBay offer withdraw / Vinted delete), then marked "
                     "archived locally. Input: listing_id (str!). "
                     "Output: {ok, listing, result}.")
-    async def cap_listing_archive(listing_id: str = "", trace_id=None):
+    async def cap_listing_archive(listing_id: str = "", idempotency_key: str = "",
+                                  approval_receipt_ref: str = "", retry: bool = False,
+                                  trace_id=None):
         await _ensure_schema()
         plat = _platforms()
         listing = await _run(_db_get_listing, listing_id)
         if not listing:
             return {"error": "listing not found"}
         result = {"ok": True, "note": "was a draft — nothing live to withdraw"}
+        shadow = None
         if listing.get("status") == "published" and plat:
-            acct = await _run(plat._db_get_account, listing.get("account_id"), True) \
+            acct_ref = await _run(plat._db_get_account, listing.get("account_id"), False) \
                 if listing.get("account_id") else await _run(plat._db_first_account,
-                                                             listing["platform"], True)
-            conn = plat.CONNECTORS.get(listing["platform"]) if acct else None
-            if conn and hasattr(conn, "archive_listing") and acct:
+                                                             listing["platform"], False)
+            conn = plat.CONNECTORS.get(listing["platform"])
+            if acct_ref and conn and hasattr(conn, "archive_listing"):
+                shadow = observe_marketplace_listing_effect(
+                    account_ref=acct_ref["id"], listing_ref=listing_id,
+                    provider=listing["platform"], mode="archive",
+                    idempotency_key=idempotency_key,
+                    approval_receipt_ref=approval_receipt_ref, retry=retry)
+                acct = await _run(plat._db_get_account, acct_ref["id"], True)
+            else:
+                acct = None
+            if acct:
                 ext = listing.get("offer_id") or listing.get("external_id") or listing.get("listing_id")
                 result = await conn.archive_listing(acct, external_id=ext,
                                                     sku=listing.get("sku") or "")
         saved = await _run(_db_upsert_listing, {"id": listing_id, "status": "archived"})
         await emit_event({"type": "commerce.progress", "stage": "listing.archive",
                           "message": f"archived '{saved.get('title','')[:36]}'"})
-        return {"ok": True, "listing": saved, "result": result}
+        out = {"ok": True, "listing": saved, "result": result}
+        if shadow is not None:
+            out["effect_shadow"] = shadow
+        return out
 
     # ── Panel route (the whole reselling operation UI) ─────────────────────────
 

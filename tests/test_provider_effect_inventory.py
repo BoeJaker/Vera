@@ -34,14 +34,17 @@ def test_inventory_separates_local_business_from_real_provider_mutations():
 
 def test_inventory_does_not_claim_unmigrated_enforcement_or_retry():
     result = provider_effect_inventory()
-    assert result["summary"]["migrated_effect_families"] == []
+    assert result["summary"]["migrated_effect_families"] == ["commerce"]
     assert result["summary"]["enforcement_available"] is False
     assert result["claims"] == {
         "executes": False, "probes": False, "opens_credentials": False,
         "records_receipts": False, "adds_retries": False,
         "changes_enforcement": False,
     }
-    assert "commerce" not in EVIDENCE_FAMILIES
+    commerce = _domain(result, "commerce_marketplaces")
+    assert commerce["effect_contract_applied"] is True
+    assert commerce["effect_enforcement"] == "observe_only"
+    assert "commerce" in EVIDENCE_FAMILIES
     assert "infrastructure" not in EVIDENCE_FAMILIES
 
 
@@ -85,3 +88,4 @@ def test_integrations_ui_exposes_inventory_without_rollout_controls():
     assert "/integrations/effect/inventory" in source
     assert "Provider boundaries" in source
     assert "Static inventory only" in source
+    assert "commerce:'Commerce'" in source

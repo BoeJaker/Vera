@@ -55,8 +55,12 @@ Real marketplace writes are concentrated at
 withdraw an offer; Vinted can create or delete an item. Shopify, WooCommerce,
 Etsy, and Amazon connectors are declared but unimplemented. The deterministic
 `integration.effect.inventory` surface reports those facts without making a
-provider call. Commerce has not yet joined the shared effect evidence or
-enforcement families, and no automatic retry is implied by this inventory.
+provider call. These three write paths now project payload-free policy evidence
+before opening marketplace credentials, and Commerce has its own bounded view in
+the Integrations Effect evidence drawer. The projection is observe-only: it does
+not block or retry a provider call, forward approval/idempotency references,
+record completion, or establish provider idempotency. A draft-only archive does
+not create external-effect evidence because it performs no provider write.
 
 ## Troubleshooting and reconciliation
 

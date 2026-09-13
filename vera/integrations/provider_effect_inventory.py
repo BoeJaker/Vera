@@ -62,7 +62,8 @@ _DOMAINS: tuple[dict[str, Any], ...] = (
         "authority": "marketplace_provider_for_remote_listing_state",
         "external_mutation": True,
         "effect_family": "commerce",
-        "effect_contract_applied": False,
+        "effect_contract_applied": True,
+        "effect_enforcement": "observe_only",
         "automatic_retries": False,
         "source_modules": [
             "vera/commerce/commerce_platforms.py",
@@ -148,13 +149,13 @@ def provider_effect_inventory() -> dict[str, Any]:
         "summary": {
             "domains": len(domains),
             "external_mutation_domains": mutating,
-            "migrated_effect_families": [],
+            "migrated_effect_families": ["commerce"],
             "enforcement_available": False,
         },
         "next_adapter": {
-            "domain": "commerce_marketplaces",
-            "providers": ["ebay", "vinted"],
-            "reason": "bounded_marketplace_connector_boundary_with_three_explicit_write_operations",
+            "domain": "container_and_build",
+            "providers": ["docker", "builder"],
+            "reason": "explicit_container_and_build_write_operations_remain_unobserved",
             "required_before_enforcement": [
                 "payload_free_shadow_evidence",
                 "operation_specific_approval",

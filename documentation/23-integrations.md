@@ -103,18 +103,20 @@ arguments and results; the existing mail event stream remains a separate legacy
 surface pending its own privacy migration.
 
 The Integrations **Effect evidence** drawer can switch among Generic API,
-Telegram, and Email observations. Enforcement readiness, approval, and activation
-controls appear only for the Generic API contract; the messaging-family views do
-not borrow or imply that authority.
+Telegram, Email, and Commerce observations. Enforcement readiness, approval, and
+activation controls appear only for the Generic API contract; the other family
+views do not borrow or imply that authority.
 
 The same drawer also exposes a static **Provider boundaries** inventory from
 `integration.effect.inventory`. It separates local business records and
 simulations from marketplace reads, OAuth lifecycle, marketplace writes,
 container/build mutations, and Proxmox/provisioning mutations. This inventory is
-descriptive: it performs no probe and does not add Commerce or Infrastructure to
-the evidence families. The current bounded migration candidate is the shared
-marketplace listing seam used by eBay and Vinted; credentialed validation remains
-a separate, explicitly authorized activity.
+descriptive: it performs no probe and does not add Infrastructure to the evidence
+families. Commerce listing push, publish, and archive now produce payload-free,
+observe-only projections before marketplace credentials are opened. This does
+not block provider calls, add retries, forward control references, or claim that
+eBay or Vinted idempotency has been validated. Credentialed validation remains a
+separate, explicitly authorized activity.
 
 ---
 
