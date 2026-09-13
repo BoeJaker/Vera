@@ -258,6 +258,13 @@ async def cap_settings_save(cluster_id: str = "", node_hosts: Dict = None,
     cfg = await _cfg_get(cluster_id)
     if node_hosts is not None:
         cfg["node_hosts"] = {str(k): str(v) for k, v in (node_hosts or {}).items()}
+        # the same map on the cluster record, which every other caller reads
+        pm = _pmx()
+        if pm is not None and hasattr(pm, "set_node_hosts"):
+            try:
+                await pm.set_node_hosts(cluster_id, cfg["node_hosts"])
+            except Exception as e:
+                log.debug("cluster record node_hosts save failed: %s", e)
     if share_root:
         cfg["share_root"] = share_root
     if smb_share:
@@ -288,15 +295,32 @@ async def cap_settings_save(cluster_id: str = "", node_hosts: Dict = None,
 # ═════════════════════════════════════════════════════════════════════════════
 #  SSH ONTO A NODE
 # ═════════════════════════════════════════════════════════════════════════════
+async def _node_host_id(cluster_id: str, node: str, cfg: Dict = None) -> str:
+    """A node's SSH login: the Proxmox cluster record's node_hosts first (the map
+    every caller shares), then this module's own older map."""
+    pm = _pmx()
+    rec = None
+    if pm is not None:
+        try:
+            rec = await pm._get_cluster(cluster_id)
+        except Exception as e:
+            log.debug("cluster record lookup failed: %s", e)
+    mapped = str(((rec or {}).get("node_hosts") or {}).get(node) or "")
+    if mapped:
+        return mapped
+    cfg = cfg if cfg is not None else await _cfg_get(cluster_id)
+    return str((cfg.get("node_hosts") or {}).get(node) or "")
+
+
 async def _node_ssh(cluster_id: str, node: str, command: str,
                     timeout: int = 60) -> Dict:
     """Run a shell command as root on a PVE node via the mapped SSH host."""
     cfg = await _cfg_get(cluster_id)
-    hid = (cfg.get("node_hosts") or {}).get(node, "")
+    hid = await _node_host_id(cluster_id, node, cfg)
     if not hid:
         return {"ok": False, "rc": -1, "stdout": "", "stderr": "",
-                "error": f"no SSH host mapped for node '{node}' — set it in "
-                         "pxstore.settings.save (node_hosts)"}
+                "error": f"no SSH login mapped for node '{node}' — set node_hosts on "
+                         "the Proxmox cluster, or pxstore.settings.save (node_hosts)"}
     run = _rawcap("exec.ssh.run")
     if not run:
         return {"ok": False, "rc": -1, "stdout": "", "stderr": "",
@@ -1703,7 +1727,7 @@ echo NFS_OK
     cfg["veradata_dataset"], cfg["veradata_mount"] = dataset, mp
     await _cfg_put(cluster_id, cfg)
     host_hint = "<node-ip>"
-    hid = (cfg.get("node_hosts") or {}).get(node, "")
+    hid = await _node_host_id(cluster_id, node, cfg)
     listc = _rawcap("exec.ssh.hosts.list")
     if hid and listc:
         try:

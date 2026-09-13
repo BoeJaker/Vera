@@ -60,6 +60,8 @@ from Vera.vera.capability_orchestration import (
     APP, capability, emit_event, now_iso, register_ui,
 )
 from Vera.vera.security import secrets as vsecrets
+# which SSH login reaches a Proxmox node: one map, on the cluster record
+from Vera.vera.proxmox import node_hosts_core as _node_hosts
 
 log = logging.getLogger("vera.proxmox")
 
@@ -212,12 +214,15 @@ async def _pve(rec: Dict, method: str, path: str,
                 "optional — omit to create), label, api_url "
                 "('https://host:8006' or full /api2/json), token, verify_tls "
                 "(bool=false), console_user ('root@pam' — enables the in-Vera "
-                "console proxy), console_password. Output: {ok, cluster(redacted)}.",
+                "console proxy), console_password, node_hosts (dict node -> exec SSH "
+                "host_id: the login that reaches each Proxmox node; replaces the map). "
+                "Output: {ok, cluster(redacted)}.",
 )
 async def cap_cluster_save(
     id: str = "", label: str = "", api_url: str = "", token: str = "",
     verify_tls: bool = False, console_user: str = "",
-    console_password: str = "", trace_id=None,
+    console_password: str = "", node_hosts: Optional[Dict[str, str]] = None,
+    trace_id=None,
 ) -> Dict:
     r = _redis()
     if not r:
@@ -233,6 +238,14 @@ async def cap_cluster_save(
                  ("verify_tls", bool(verify_tls)), ("console_user", console_user)):
         if v != "" or k not in rec:
             rec[k] = v
+    if node_hosts is not None:
+        if isinstance(node_hosts, str):
+            try:
+                node_hosts = json.loads(node_hosts) if node_hosts.strip() else {}
+            except Exception:
+                return {"error": "node_hosts must be an object {node: exec SSH host_id}"}
+        rec["node_hosts"] = {str(k): str(v) for k, v in (node_hosts or {}).items()
+                             if str(v or "").strip()}
     if not rec.get("label"):
         rec["label"] = (api_url or "Proxmox").split("//", 1)[-1].split("/")[0]
     # Seal secrets only when a (truthy) new value is provided; else keep existing.
@@ -534,6 +547,55 @@ async def cap_guest_exec(cluster_id: str = "", node: str = "", guest_type: str =
     return {"error": "agent exec timed out", "via": "qm-agent"}
 
 
+async def set_node_hosts(cluster_id: str, node_hosts: Dict[str, str],
+                         merge: bool = False) -> Optional[Dict]:
+    """Write a cluster record's node -> SSH login map without touching any other
+    field (proxmox.cluster.save rewrites verify_tls from its own default)."""
+    r = _redis()
+    if not r or not cluster_id:
+        return None
+    raw = await r.hget(KEY_CLUSTERS, cluster_id)
+    if not raw:
+        return None
+    rec = json.loads(raw)
+    clean = {str(k): str(v) for k, v in (node_hosts or {}).items() if str(v or "").strip()}
+    rec["node_hosts"] = dict(rec.get("node_hosts") or {}, **clean) if merge else clean
+    rec["updated"] = now_iso()
+    await r.hset(KEY_CLUSTERS, rec["id"], json.dumps(rec))
+    return rec
+
+
+async def _exec_logins() -> List[Dict]:
+    lst = _cap("exec.ssh.hosts.list")
+    if not lst:
+        return []
+    try:
+        return list((await lst() or {}).get("hosts") or [])
+    except Exception:
+        return []
+
+
+async def _pxstore_cfg_raw(cluster_id: str) -> Dict:
+    """The storage fabric's own settings for a cluster, as stored (its older
+    node_hosts map lives there)."""
+    r = _redis()
+    if not r or not cluster_id:
+        return {}
+    try:
+        raw = await r.hget("vera:pxstore:cfg", cluster_id)
+        return json.loads(raw) if raw else {}
+    except Exception:
+        return {}
+
+
+async def _resolve_node_login(cluster_id: str, rec: Dict, node: str = "") -> Dict[str, str]:
+    """The SSH login for a node of this cluster: the record's node_hosts, then
+    the storage fabric's older map, then a login named after the node, then the
+    login at the API host (node_hosts_core.resolve_node_host)."""
+    return _node_hosts.resolve_node_host(node, rec, await _pxstore_cfg_raw(cluster_id),
+                                         await _exec_logins())
+
+
 @capability(
     "proxmox.node.exec",
     http_method="POST", http_path="/proxmox/node/exec", http_tags=["proxmox"],
@@ -542,10 +604,13 @@ async def cap_guest_exec(cluster_id: str = "", node: str = "", guest_type: str =
                 "— for qm / pvesm / pveam / wget when building templates or importing "
                 "images. Needs the node registered as an SSH host. Inputs: cluster_id "
                 "(str!), command (str!), timeout (int=300), pve_ssh_host_id (str — "
-                "override). Output: {ok, stdout, stderr, exit_code}.",
+                "override), node (str — which node; blank = the cluster's only mapped "
+                "node). The login comes from the cluster record's node_hosts, then the "
+                "storage fabric's map, then a login named after the node, then the login "
+                "at the API host. Output: {ok, stdout, stderr, exit_code}.",
 )
 async def cap_node_exec(cluster_id: str = "", command: str = "", timeout: int = 300,
-                        pve_ssh_host_id: str = "", trace_id=None) -> Dict:
+                        pve_ssh_host_id: str = "", node: str = "", trace_id=None) -> Dict:
     if not command:
         return {"error": "command required"}
     rec = await _get_cluster(cluster_id, opened=True)
@@ -554,17 +619,10 @@ async def cap_node_exec(cluster_id: str = "", command: str = "", timeout: int = 
     host = _host_port(rec)[0]
     hid = pve_ssh_host_id
     if not hid:
-        lst = _cap("exec.ssh.hosts.list")
-        if lst:
-            try:
-                for h in (await lst() or {}).get("hosts", []):
-                    if h.get("host") == host:
-                        hid = h.get("id")
-                        break
-            except Exception:
-                pass
+        hid = (await _resolve_node_login(cluster_id, rec, node))["host_id"]
     if not hid:
-        return {"error": f"the Proxmox node ({host}) isn't a registered SSH host — add it"}
+        return {"error": f"no SSH login is mapped for the Proxmox node {node or host} — set "
+                         "node_hosts on the cluster or register the node as an SSH host"}
     run = _cap("exec.ssh.run")
     if not run:
         return {"error": "exec.ssh.run unavailable"}
@@ -572,6 +630,42 @@ async def cap_node_exec(cluster_id: str = "", command: str = "", timeout: int = 
     return {"ok": bool(res.get("ok")) or res.get("rc") == 0,
             "stdout": res.get("stdout", ""), "stderr": res.get("stderr", ""),
             "exit_code": res.get("rc", res.get("exit_code"))}
+
+
+@capability(
+    "proxmox.node_hosts.merge",
+    http_method="POST", http_path="/proxmox/node_hosts/merge", http_tags=["proxmox"],
+    memory="off",
+    description="Copy the storage fabric's node -> SSH login map (pxstore settings "
+                "node_hosts) onto each Proxmox cluster record, where proxmox.node.exec, "
+                "the storage fabric and nodes.list now read it. Dry run by default: per "
+                "record the nodes to add, conflicts (both maps name different logins; the "
+                "record's is kept) and stale logins the exec store no longer has. Only adds "
+                "map entries; nothing else on the record changes. Input: apply (bool, "
+                "default false). Output: {dry_run, steps, counts, clusters_changed, "
+                "applied?:[{cluster_id, ok, node_hosts|error}]}.",
+)
+async def cap_node_hosts_merge(apply: bool = False, trace_id=None) -> Dict:
+    if isinstance(apply, str):
+        apply = apply.strip().lower() in ("1", "true", "yes", "on")
+    records = await _all_raw()
+    cfgs = {c.get("id"): await _pxstore_cfg_raw(c.get("id", "")) for c in records}
+    plan = _node_hosts.plan_merge([_redact(c) for c in records], cfgs, await _exec_logins())
+    if not apply:
+        return dict(plan, dry_run=True)
+    applied = []
+    for step in plan["steps"]:
+        if not step["add"]:
+            continue
+        rec = await set_node_hosts(step["cluster_id"], step["add"], merge=True)
+        if rec is None:
+            applied.append({"cluster_id": step["cluster_id"], "ok": False,
+                            "error": "cluster record not found"})
+        else:
+            applied.append({"cluster_id": rec["id"], "ok": True, "node_hosts": rec["node_hosts"]})
+    await emit_event({"type": "proxmox.node_hosts.merged",
+                      "clusters": sum(1 for a in applied if a["ok"])})
+    return dict(plan, dry_run=False, applied=applied)
 
 
 @capability(
