@@ -24,7 +24,7 @@ def test_the_element_draws_bands_and_the_boards_items_and_carries_stack_size_and
     for s in ("out.bands = []; out.widgets = []; out.stack = STK; out.wsz = WSZ;", "function widgetOf(c) {", "function groupOf(wg, ISO, o) {", "function isoBody(c, wd) {",
               "const xitHtml = (wg) =>", "const xigHtml = (wg) =>", '<span class="xstem"', '<div class="xit bb', '<div class="xit frameless', '<div class="xig', '<span class="xnd',
               "stack(on) {", "widgetSize(s) {", "tipIn() {", "flatten(done) {", "function ensureIso(doc, onload) {",
-              "view: 'iso', full: false", 'data-a="stack"', 'data-a="wsz"', "widgetOf, groupOf, valueOf, isoBody, ICON, version: 4"):
+              "view: 'iso', full: false", 'data-a="stack"', 'data-a="wsz"', "widgetOf, groupOf, valueOf, isoBody, ICON, version: 5"):
         assert s in EL, s
     for css in ("vera-exploded .xit{", "vera-exploded .xig{", "vera-exploded .xnd{", "vera-exploded .xstem{", "vera-exploded .xit.frameless{", "vera-exploded .xf-score{", "vera-exploded .xf-chart{", "vera-exploded .xf-diff{", "vera-exploded .xf-tab{",
                 "vera-exploded .xp-band{", "vera-exploded .xp-band.empty{", ':root[data-blocks="off"] vera-exploded .xp-pl,', "vera-exploded.opening .xp-view{animation:xp-tip", "vera-exploded.closing .xp-view{animation:xp-flat",

@@ -2,7 +2,9 @@
    "ONE EXPLODED SCENE"): not three panes side by side but one pipeline for the session — per turn (a station) what
    the turn READ, the EXCHANGE, what it PRODUCED and where it LANDED on the canvas — with the runs drawn between the
    actual entities. Cards · Front · Iso are three projections of this one scene, not three re-implementations:
-     cards — every station as a row of its layers, the cards in flow, the runs between them;
+     cards — the board's tri-page cards: the five layers side by side as columns at 1:1, a plate each, the cards on a
+             row pitch with a tall one pushing the rows under it down, the runs level out of a card's side and down the
+             gutter — never diagonally, always behind the cards; every turn is such a row, the stage scrolls both ways;
      front — the selected station as a carousel of its layers in depth (the same construction the board uses);
      iso   — the lattice: u = station, v = the layer bands, the plates identical parallelograms in a row, projected
              through the shared ISO projection (/ui/iso.js) when it is there, the classic 30°/45° otherwise.
@@ -22,7 +24,7 @@
                     land:[card]}], sel}) · mode(name) · select(mid) · fit() · state()
    card = {n, d, col, kind, body?, score?, p?, m?, rows?}
    events: vera:xpl:pick {mid, layer, card} · vera:xpl:turn {mid} · vera:xpl:rendered {mode, stations} · vera:xpl:place {mid}
-   window.VeraExploded = { layout, LAYERS, version } — layout() is pure (node-testable).                        */
+   window.VeraExploded = { layout, frontRuns, LAYERS, version } — layout() and frontRuns() are pure (node-testable). */
 (function (root) {
   'use strict';
   const LAYERS = [
@@ -60,6 +62,11 @@
     if (/host|node|machine/.test(k)) return ICON.host; if (/container|docker|sandbox/.test(k)) return ICON.container; if (/canvas|note|widget|pin/.test(k)) return ICON.canvas;
     if (lane === 'canvas') return ICON.canvas; if (lane === 'loop') return ICON.step; if (lane === 'plan') return ICON.plan; if (lane === 'memory') return ICON.memory; return ICON.service; };
   const LANES = ['context', 'memory', 'loop', 'plan', 'canvas'];
+  // relations INSIDE the context graph, as the board colours them: what cites what (thin), which memory relates (dashed), the loop's own order
+  const RELC = { cite: ['var(--xp-t3)', 'rel cite', 'cites'], mem: ['var(--xp-ac2)', 'rel mem', 'a memory that relates'], step: ['var(--xp-ac)', 'rel step', 'the next step in the loop'] };
+  // the carousel's runs by kind: what was read in, what came out, what became a canvas item, what was pinned back
+  const FRC = { in: 'var(--xp-dv1)', out: 'var(--xp-dv2)', link: 'var(--xp-ac)', mem: 'var(--xp-ac2)' };
+  const GALH = 84;   // the galaxy sheet lying past the nodes
 
   /* ── the layout, pure ─────────────────────────────────────────────────────────────────────────────── */
   function layout(scene, mode, W, H, o) {
@@ -73,38 +80,109 @@
     const edge = (a, b, col, cls, title) => { const dx = b.x - a.x, dy = b.y - a.y; out.edges.push({ x: px(a.x), y: px(a.y), len: px(Math.sqrt(dx * dx + dy * dy)), deg: +(Math.atan2(dy, dx) * 180 / Math.PI).toFixed(2), col, cls: cls || '', title: title || '' }); };
     if (!turns.length) return out;
     if (mode === 'cards') {
-      // every station a row: its layers as columns — the context graph first, then the cards in flow, the runs across the gutters
-      const GUT = 26, PADX = 24, colW = Math.max(180, (W - PADX * 2 - GUT * (LAYERS.length - 1)) / LAYERS.length), CH = 54, CG = 8; let y = 24;
+      // the board's CARDS scene (Canvas.dc.html, the tri-page's cards): the five layers stand side by side as columns at
+      // 1:1 — a rounded plate each with its caption inside the top edge, the cards centred on a 100px row pitch and a tall
+      // card pushing the rows under it down (its measured height comes back from the element after a render; a guess by
+      // kind until then), the context graph a lane per family of typed nodes about the plate's middle — and the stage is
+      // the one thing that scrolls, both ways. Every turn is such a row of five, in order; the selected one is lit.
+      const SWD = 430, SGP = 54, VP = 100, CW = 398, CH = 74, VSPAN = 4, PADX = 40, PADY = 56, ROWGAP = 60, NX = 120, NR = 36;
+      const HM = o.heights || {};
+      const idOf = (c) => String((c && (c.id != null ? c.id : c.n)) || '');
+      const estH = (c) => { const k = String(c.kind || '').toLowerCase(); if (c.src && den === 'full') return CH + 62; if (Array.isArray(c.steps) && c.steps.length) return 168; if (Array.isArray(c.rows) && c.rows.length) return 128; if (Array.isArray(c.bars) && c.bars.length) return 112; if (/^(code|term|terminal|cap|capability|log)$/.test(k)) return 104; if (k === 'diff') return 96; if (k === 'widget' || c.form || c.tpl) return 118; if (c.score != null) return 92; return CH; };
+      const xU = (i) => PADX + 16 + i * (SWD + SGP);
+      out.rows = []; out.runs = 0;
+      let oy = PADY + 107 + 22;   // the first row line: the plate top sits 107 above it, the turn's caption above that
       turns.forEach((t, si) => {
-        const gH = (t) => { const g = graphData(t); return g.nodes.length ? 24 + g.lanes * 26 : CH; };
-        const colH = (L) => L.kind === 'graph' ? gH(t) + CG : cardsOf(t, L.key).reduce((s, c) => s + chOf(c, CH) + CG, 0);
-        const rowH = 34 + Math.max.apply(null, LAYERS.map(colH).concat([CH + CG])) + 18;
-        out.plates.push({ si, x: px(PADX - 10), y: px(y - 8), w: px(W - PADX * 2 + 20), h: px(rowH), cls: si === sel ? 'on' : '', mid: t.mid });
-        out.labels.push({ si, x: px(PADX), y: px(y), n: (t.who || 'you') + ' · ' + (t.t || ''), k: String(t.text || '').slice(0, 60), cls: 'station' + (si === sel ? ' on' : ''), col: 'var(--xp-t2)', mid: t.mid });
-        const pos = {};
-        LAYERS.forEach((L, li) => {
-          const x = PADX + li * (colW + GUT); const list = cardsOf(t, L.key);
-          if (L.kind === 'graph') { const g = graphData(t); out.labels.push({ si, x: px(x), y: px(y + 18), n: L.name, k: String(g.nodes.length), cls: 'layer ' + L.key, col: L.col });
-            if (g.nodes.length) out.graphs.push({ id: t.mid + ':graph', mid: t.mid, si, x: px(x), y: px(y + 34), w: px(colW), h: px(gH(t)), data: g }); pos[L.key] = []; return; }
-          out.labels.push({ si, x: px(x), y: px(y + 18), n: L.name, k: String(list.length), cls: 'layer ' + L.key, col: L.col });
-          let cy = y + 34;
-          pos[L.key] = list.map((c, ci) => { const h = chOf(c, CH); const r = { x: x, y: cy, w: colW, h }; out.cards.push({ id: t.mid + ':' + L.key + ':' + ci, mid: t.mid, si, layer: L.key, ci, x: px(x), y: px(cy), w: px(colW), h: px(h), card: c, col: c.col || L.col }); cy += h + CG; return r; });
-        });
-        // the runs: every read into the exchange, the exchange into every product, every product to what landed
-        const mid = (r) => ({ x: r.x + r.w, y: r.y + r.h / 2 }), left = (r) => ({ x: r.x, y: r.y + r.h / 2 });
-        const ex = pos.say[0]; if (ex) { pos.read.forEach((r) => edge(mid(r), left(ex), 'var(--xp-dv1)', 'in', 'read by this turn')); pos.made.forEach((r) => edge(mid(ex), left(r), 'var(--xp-dv2)', 'out', 'produced by this turn')); }
-        pos.made.forEach((r, i) => { const l = pos.land[i] || pos.land[0]; if (l) edge(mid(r), left(l), 'var(--xp-ac)', 'link', 'this became a canvas item'); });
-        y += rowH + 14;
+        const g = graphData(t), lit = si === sel, boxes = {};
+        const lanes = LANES.filter((l) => g.laneList.indexOf(l) >= 0);
+        const members = (l) => g.nodes.filter((n) => n.lane === l).sort((a, b) => b.score - a.score);
+        const graphH = lanes.reduce((s, l) => s + 40 + Math.ceil(members(l).length / 3) * NR, 0) + (g.nodes.length ? GALH + 30 : 0);
+        // every column's rows, each row's excess over the base card, and from those the plate's height
+        const cols = LAYERS.map((L, i) => { if (L.kind === 'graph') return { L, i, list: [], extras: [], spn: VSPAN, h: Math.max((VSPAN + 1.4) * VP, graphH + 60) };
+          const list = cardsOf(t, L.key); const extras = list.map((c, j) => Math.max(0, (HM[t.mid + ':' + L.key + ':' + j] || estH(c)) - CH)); const spn = Math.max(VSPAN, list.length - 1);
+          return { L, i, list, extras, spn, h: (spn + 1.4) * VP + extras.reduce((a, b) => a + b, 0) }; });
+        const rowH = Math.max.apply(null, cols.map((c) => c.h));
+        out.labels.push({ si, mid: t.mid, x: px(PADX), y: px(oy - 107 - 22), n: (t.who || 'you') + ' · ' + (t.t || ''), k: String(t.text || '').slice(0, 60), cls: 'station' + (lit ? ' on' : ''), col: 'var(--xp-t2)' });
+        cols.forEach((c) => { const x = xU(c.i);
+          out.plates.push({ si, mid: t.mid, st: c.i, layer: c.L.key, x: px(x - 16), y: px(oy - 107), w: SWD, h: px(c.h), col: c.L.col, cls: 'rect' + (lit ? ' on' : '') });
+          out.labels.push({ si, mid: t.mid, st: c.i, x: px(x - 4), y: px(oy - 92), n: c.L.name, k: c.L.sub, cls: 'layer hit ' + c.L.key + (lit ? ' on' : ''), col: c.L.col }); });
+        // the cards: centred on their row line, growing down; the rows under a tall one move down by its excess
+        cols.forEach((c) => { if (c.L.kind === 'graph') return; const x = xU(c.i); let voff = 0;
+          c.list.forEach((card, j) => { const xh = c.extras[j], h = CH + xh, vj = j + (c.spn - (c.list.length - 1)) / 2 + voff, cy = oy + vj * VP, id = t.mid + ':' + c.L.key + ':' + j;
+            out.cards.push({ id, mid: t.mid, si, layer: c.L.key, ci: j, x: px(x), y: px(cy - CH / 2), w: CW, h: px(h), ih: CH, card, col: card.col || c.L.col, ct: true, chip: c.L.key === 'land' ? 'canvas item' : c.L.name, badge: card.badge || (card.tpl ? 'placed' : card.included === false ? 'related' : ''), turn: (t.who || 'you') + ' · ' + (t.t || '') });
+            boxes[c.L.key + ':' + j] = { cx: x + CW / 2, cy: cy - CH / 2 + h / 2, w: CW, h, st: c.i }; voff += xh / VP; }); });
+        // the context graph: a lane per family down the plate (its label at the plate's edge, with the count), the members
+        // across the lane three to a row, the most relevant first; a node is bigger the more relevant it is
+        { const x = xU(0); let ly = oy;
+          lanes.forEach((lane) => { const ms = members(lane); out.labels.push({ si, mid: t.mid, x: px(x), y: px(ly - 13), n: lane, k: String(ms.length), cls: 'layer sm lane ' + lane, col: ms[0].col || LAYERS[0].col });
+            ms.forEach((n, mi) => { const row = Math.floor(mi / 3), inRow = Math.min(3, ms.length - row * 3), k = mi % 3; const rel = Math.max(0, Math.min(1, n.score)), d = Math.round(19 + rel * 9);
+              const cx = x + 215 + (k - (inRow - 1) / 2) * NX, cy = ly + row * NR + 12;
+              out.gnodes.push({ id: t.mid + ':graph:' + n.id, nid: n.id, mid: t.mid, si, x: px(cx), y: px(cy), d, col: n.col || LAYERS[0].col, icon: ICON_OF(n.kind, n.lane), label: n.label, lane: n.lane, kind: n.kind, score: rel, ghost: n.included === false, lit: rel > 0.82, op: +(0.45 + rel * 0.55).toFixed(2) });
+              boxes['node:' + n.id] = { cx, cy, w: d, h: d, st: 0, lane: n.lane }; });
+            ly += 40 + Math.ceil(ms.length / 3) * NR; });
+          // the galaxy sheet lies past the lanes — the same widget the Context menu draws
+          if (g.nodes.length) out.graphs.push({ id: t.mid + ':graph', mid: t.mid, si, x: px(x), y: px(ly + 4), w: CW, h: GALH, data: g }); }
+        // the runs, routed as the board routes them: level out of a card's side, down or up the gutter between the
+        // stations, level into the target — never diagonally; two stations apart they drop to a lane under the plates
+        // and travel there. A run's legs are pushed one by one, so every edge is horizontal or vertical.
+        let lane = 0;
+        const run = (A, B, col, cls, title) => { if (!A || !B) return; const k = lane++, off = ((k % 5) - 2) * 6; let Pp;
+          const dir = B.cx > A.cx ? 1 : -1, sx = A.cx + dir * (A.w / 2 + 3), ex = B.cx - dir * (B.w / 2 + 3);
+          if (A.st === B.st) { const lx = xU(A.st) + SWD - 44 + off; Pp = [[A.cx + A.w / 2 + 3, A.cy], [lx, A.cy], [lx, B.cy], [B.cx + B.w / 2 + 3, B.cy]]; }
+          else if (Math.abs(A.st - B.st) === 1) { const gx = (sx + ex) / 2 + off; Pp = [[sx, A.cy], [gx, A.cy], [gx, B.cy], [ex, B.cy]]; }
+          else { const gA = (dir > 0 ? xU(A.st) + SWD + 11 : xU(A.st) - 43) + off, gB = (dir > 0 ? xU(B.st) - 43 : xU(B.st) + SWD + 11) - off, yl = oy - 107 + rowH + 14 + (k % 6) * 7; Pp = [[sx, A.cy], [gA, A.cy], [gA, yl], [gB, yl], [gB, B.cy], [ex, B.cy]]; }
+          for (let n = 0; n + 1 < Pp.length; n++) { const a = { x: Pp[n][0], y: Pp[n][1] }, b = { x: Pp[n + 1][0], y: Pp[n + 1][1] }; if (Math.abs(a.x - b.x) + Math.abs(a.y - b.y) < 1) continue; edge(a, b, col, cls, title); out.edges[out.edges.length - 1].run = out.runs; }
+          out.runs++; };
+        const bx = (k) => boxes[k], nb = (c) => boxes['node:' + idOf(c)];
+        const reads = cardsOf(t, 'read'), mades = cardsOf(t, 'made'), lands = cardsOf(t, 'land');
+        reads.forEach((c, j) => { const n = nb(c); if (n) run(n, bx('read:' + j), n.lane === 'memory' ? 'var(--xp-ac2)' : 'var(--xp-dv1)', n.lane === 'memory' ? 'in mem' : 'in', n.lane === 'memory' ? 'the memory that was recalled' : 'the context entry that was injected'); });
+        const ex = bx('say:0'); if (ex) { reads.forEach((c, j) => run(bx('read:' + j), ex, 'var(--xp-dv1)', 'in', 'read by this turn')); if (!reads.length && lanes.length) run(nb(members(lanes[0])[0]), ex, 'var(--xp-dv1)', 'in', 'the context this turn read'); mades.forEach((c, j) => run(ex, bx('made:' + j), 'var(--xp-dv2)', 'out', 'produced by this turn')); }
+        mades.forEach((c, j) => { const l = bx('land:' + j) || bx('land:0'); if (l) run(bx('made:' + j), l, 'var(--xp-ac)', 'link', 'this became a canvas item'); });
+        lands.forEach((c, j) => { const n = nb(c); if (n && n.lane === 'canvas') run(bx('land:' + j), n, 'var(--xp-ac2)', 'pin', 'pinned back into the next prompt'); });
+        g.rels.forEach((r) => { const a = boxes['node:' + r.from], b = boxes['node:' + r.to], R = RELC[r.kind] || RELC.cite; if (a && b) run(a, b, R[0], R[1], R[2]); });
+        out.rows.push({ mid: t.mid, si, y: px(oy - 107 - 22), h: px(rowH + 22) });
+        oy += rowH + ROWGAP + 22;
       });
-      out.size = { w: W, h: y };
+      out.size = { w: xU(LAYERS.length - 1) - 16 + SWD + PADX, h: oy - 107 - 22 - ROWGAP + PADY };
+      out.inv = 1;
       return out;
     }
     if (mode === 'front') {
-      // the selected station as a carousel of its layers in depth: the same construction the board uses
-      const t = turns[sel]; const PDX = Math.max(300, Math.min(520, (W - 80) / 3.2)), PDZ = 126, li0 = o.layer == null ? 2 : o.layer;
-      LAYERS.forEach((L, li) => { const off = li - li0, a = Math.abs(off); const list = cardsOf(t, L.key);
-        out.panels.push({ layer: L.key, name: L.name, sub: L.sub, col: L.col, li, n: list.length, tf: 'translateX(' + (off * PDX).toFixed(0) + 'px) translateZ(' + (-a * PDZ).toFixed(0) + 'px) rotateY(26deg)', cls: (a === 0 ? 'on' : a === 1 ? 'near' : 'far') + (list.length > 5 ? ' many' : ''), d: (a * 0.07).toFixed(2) + 's', cards: list.map((c, ci) => ({ id: t.mid + ':' + L.key + ':' + ci, mid: t.mid, layer: L.key, ci, card: c, col: c.col || L.col })), graph: L.kind === 'graph' ? graphData(t) : null }); });
-      for (let i = 0; i + 1 < LAYERS.length; i++) { const oa = i - li0, ob = i + 1 - li0; const ax = oa * PDX, az = -Math.abs(oa) * PDZ, bx = ob * PDX, bz = -Math.abs(ob) * PDZ; out.leaders.push({ tf: 'translateX(' + ax.toFixed(0) + 'px) translateZ(' + az.toFixed(0) + 'px) rotateY(' + (Math.atan2(-(bz - az), bx - ax) * 180 / Math.PI).toFixed(1) + 'deg)', w: Math.sqrt((bx - ax) * (bx - ax) + (bz - az) * (bz - az)).toFixed(0) + 'px' }); }
+      // FRONT: the chat UI's carousel construction, ported rather than imitated — the selected station's layers pulled
+      // apart along one axis, the one you are on nearest and centred, the rest receding either side, every face turned
+      // the same little way off axis so each is read head-on. A panel is sized from the room the view has (the board's
+      // 568 × 640 at its 2560 width); the layers past the window fade to a ghost and carry no cards. A wider gap where
+      // the chat's own layers end and the context graph / session canvas begin. Clicking a layer's header FOCUSES it —
+      // square-on, full size, the rest hushed — and again puts it back in the line.
+      const t = turns[sel], g = graphData(t);
+      const PW = Math.round(Math.max(400, Math.min(568, (W - 40) / 2.6))), PH = Math.round(Math.max(420, Math.min(640, H - 200)));   // the runs' floor lies below the panels and the host's composer floats over the foot
+      const PDX = Math.max(300, Math.min(520, (W - 80) / 3.2)), PDZ = 126, li0 = o.layer == null ? 2 : o.layer, foc = o.focus == null ? null : o.focus;
+      const CAX = LAYERS.map((_, i) => i + (i >= 1 ? 0.3 : 0) + (i >= 4 ? 0.3 : 0));
+      const idOf = (c) => String((c && (c.id != null ? c.id : c.n)) || '');
+      // the context graph's layer is a card per family: the lane, its count and top relevance, its members as rows
+      const lanes = LANES.filter((l) => g.laneList.indexOf(l) >= 0);
+      const laneCards = lanes.map((l) => { const ms = g.nodes.filter((n) => n.lane === l).sort((a, b) => b.score - a.score); return { n: l, d: ms.length + ' · top ' + ms[0].score.toFixed(2), col: ms[0].col || LAYERS[0].col, kind: 'panel', lane: l, rows: ms.slice(0, 6).map((m) => ({ k: m.label, v: m.score.toFixed(2) })) }; });
+      LAYERS.forEach((L, li) => { const off = CAX[li] - CAX[li0], a = Math.abs(li - li0); const list = L.kind === 'graph' ? laneCards : cardsOf(t, L.key);
+        out.panels.push({ layer: L.key, name: L.name, sub: L.sub, col: L.col, li, n: list.length, w: PW, h: PH, px: off * PDX, pz: -Math.abs(off) * PDZ,
+          tf: foc === li ? 'translateX(0px) translateZ(24px) rotateY(0deg)' : 'translateX(' + (off * PDX).toFixed(0) + 'px) translateZ(' + (-Math.abs(off) * PDZ).toFixed(0) + 'px) rotateY(26deg)',
+          cls: (foc === li ? 'focus ' : foc != null ? 'hushed ' : '') + (a === 0 ? 'on' : a === 1 ? 'near' : a >= 3 ? 'gone' : 'far') + (list.length > 5 ? ' many' : ''), d: (a * 0.07).toFixed(2) + 's', el: 1 + li, focL: foc === li ? 'back' : 'focus',
+          cards: (a > 2 ? [] : list).map((c, ci) => ({ id: t.mid + ':' + L.key + ':' + (L.kind === 'graph' ? c.lane : ci), mid: t.mid, layer: L.key, ci, card: c, col: c.col || L.col })), graph: L.kind === 'graph' ? g : null }); });
+      for (let i = 0; i + 1 < LAYERS.length; i++) { const oa = CAX[i] - CAX[li0], ob = CAX[i + 1] - CAX[li0]; const ax = oa * PDX, az = -Math.abs(oa) * PDZ, bx = ob * PDX, bz = -Math.abs(ob) * PDZ; out.leaders.push({ tf: 'translateX(' + ax.toFixed(0) + 'px) translateZ(' + az.toFixed(0) + 'px) rotateY(' + (Math.atan2(-(bz - az), bx - ax) * 180 / Math.PI).toFixed(1) + 'deg)', w: Math.sqrt((bx - ax) * (bx - ax) + (bz - az) * (bz - az)).toFixed(0) + 'px', cls: (i === 0 || i === 3) ? 'across' : 'same' }); }
+      // the relations, the same ones the iso scene draws, as panel:card pairs — laid out for the carousel by frontRuns
+      // once the element has measured where the cards sit: the context entry into the record it became (a memory's
+      // dashed), every read into the exchange, the exchange into what it made, what it made into where it landed, and
+      // a canvas item pinned back into the next prompt
+      const nodeLane = {}; g.nodes.forEach((n) => { nodeLane[n.id] = n.lane; });
+      const rels = [], R = (a, b, kind, title) => rels.push({ a, b, kind, col: FRC[kind], title });
+      const reads = cardsOf(t, 'read'), says = cardsOf(t, 'say'), mades = cardsOf(t, 'made'), lands = cardsOf(t, 'land');
+      // four of a kind at most: the carousel draws the thread, the cards and the iso draw every run
+      reads.slice(0, 4).forEach((c, j) => { const ln = nodeLane[idOf(c)], k = ln ? lanes.indexOf(ln) : -1; if (k >= 0) R([0, k], [1, j], ln === 'memory' ? 'mem' : 'in', ln === 'memory' ? 'the memory that was recalled' : 'the context entry that was injected'); });
+      if (says.length) { reads.slice(0, 4).forEach((c, j) => R([1, j], [2, 0], 'in', 'the passage the answer is based on')); if (!reads.length && lanes.length) R([0, 0], [2, 0], 'in', 'the context this turn read'); mades.slice(0, 4).forEach((c, j) => R([2, 0], [3, j], 'out', 'produced by this turn')); }
+      mades.slice(0, 4).forEach((c, j) => { if (lands[j] || lands[0]) R([3, j], [4, lands[j] ? j : 0], 'link', 'this became a canvas item'); });
+      lands.forEach((c, j) => { if (nodeLane[idOf(c)] === 'canvas' && lanes.indexOf('canvas') >= 0) R([4, j], [0, lanes.indexOf('canvas')], 'mem', 'pinned back into the next prompt'); });
+      out.frontRels = rels; out.layer0 = li0; out.focus = foc; out.panel = { w: PW, h: PH };
+      // the carousel measures about 3000px across five panels and 1640 across three at 1:1 — the board's fit for the room
+      const five = (W - 60) / 3000, three = (W - 40) / 1640; out.fitZ = +Math.min(1, five >= 0.8 ? five : Math.max(0.45, three)).toFixed(3);
       out.station = { mid: t.mid, who: t.who, t: t.t, text: t.text };
       return out;
     }
@@ -187,6 +265,10 @@
     const T = (p) => ({ x: px(p.x * s + dx), y: px(p.y * s + dy) });
     out.plates.forEach((pl) => { pl.poly = pl.poly.map(T); });
     out.bands.forEach((b) => { b.poly = b.poly.map(T); });
+    // the plates' edges as lines (the board's .xpe): four per plate, four hairlines per band — what keeps a plane a plane when Blocks takes its fill
+    const edgesOf = (poly) => poly.map((a, i) => { const b = poly[(i + 1) % poly.length]; return { x: a.x, y: a.y, len: px(Math.hypot(b.x - a.x, b.y - a.y)), deg: +(Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI).toFixed(2) }; });
+    out.outline = []; out.plates.forEach((pl) => { edgesOf(pl.poly).forEach((e) => out.outline.push(Object.assign(e, { si: pl.si, cls: pl.cls }))); });
+    out.boutline = []; out.bands.forEach((b) => { edgesOf(b.poly).forEach((e) => out.boutline.push(Object.assign(e, { si: b.si, col: b.col }))); });
     out.labels.forEach((l) => { const q = T(l); l.x = q.x; l.y = q.y; });
     out.cards.forEach((c) => { const q = T(c); c.x = q.x; c.y = q.y; });
     out.widgets.forEach((c) => { const q = T(c); c.x = q.x; c.y = q.y; });
@@ -199,7 +281,7 @@
       const gr = out.graphs.find((g) => g.mid === t.mid);
       const ex = (byL.say || [])[0]; if (ex) { (byL.read || []).forEach((r) => edge(r, ex, 'var(--xp-dv1)', 'in', 'read by this turn')); if (gr && !(byL.read || []).length) edge(gr, ex, 'var(--xp-dv1)', 'in', 'the context this turn read'); (byL.made || []).forEach((r) => edge(ex, r, 'var(--xp-dv2)', 'out', 'produced by this turn')); }
       (byL.made || []).forEach((r, i) => { const l = (byL.land || [])[i] || (byL.land || [])[0]; if (l) edge(r, l, 'var(--xp-ac)', 'link', 'this became a canvas item'); });
-      graphData(t).rels.forEach((r) => { const a = nodePins[t.mid + '|' + r.from], b = nodePins[t.mid + '|' + r.to]; if (a && b) edge(a, b, r.kind === 'mem' ? 'var(--xp-ac2)' : 'var(--xp-dv1)', 'rel', r.kind === 'mem' ? 'a memory that relates' : 'cites'); }); });
+      graphData(t).rels.forEach((r) => { const a = nodePins[t.mid + '|' + r.from], b = nodePins[t.mid + '|' + r.to], R = RELC[r.kind] || RELC.cite; if (a && b) edge(a, b, R[0], R[1], R[2]); }); });
     out.size = { w: W, h: H };
     return out;
   }
@@ -257,6 +339,48 @@
     const bw = x1 - x0, bh = y1 - y0;
     return { kind, faces, needle: nd, big: big ? { x: '0px', y: (-bh / 2 - 3).toFixed(1) + 'px', n: big } : null, bw, bh, sh: bh / 2 + 3 };
   }
+  /* ── FRONT: the relation runs laid out for the carousel — the board's own construction (Canvas.dc.html, xcRels). A
+     run leaves a card at its side edge, travels the panel's own gutter, drops to a lane below the cards, runs forward
+     (a depth leg), across, back, up, and level into the target — round the outside the whole way, which is what stops a
+     run vanishing under the next panel. Every valid run, furthest reach first: that order is the lane order; a run
+     needs a lane at BOTH ends and a port on each card side, and two runs leaving one panel never share one, so the
+     margin the cards are inset by (pad) is sized from the count rather than guessed. Pure: yOf(li, ci) hands in where a
+     card's centre sits in its panel (measured by the element); without it only the pad is answered. ─────────────── */
+  function frontRuns(o, yOf) {
+    const out = { h: [], v: [], z: [], pad: 42, n: 0 }; const P = (o && o.panels) || [], REL = (o && o.frontRels) || [];
+    if (!P.length) return out;
+    const PW = P[0].w, PH = P[0].h, li0 = o.layer0 == null ? 2 : o.layer0;
+    const ok = REL.map((r) => Math.abs(r.a[0] - li0) <= 2 && Math.abs(r.b[0] - li0) <= 2 && !!(P[r.a[0]] && P[r.a[0]].cards[r.a[1]]) && !!(P[r.b[0]] && P[r.b[0]].cards[r.b[1]]));
+    const reach = (r) => Math.abs(r.b[0] - r.a[0]);
+    const ORD = REL.map((r, i) => i).filter((i) => ok[i]).sort((x, y) => reach(REL[y]) - reach(REL[x]) || REL[x].a[0] - REL[y].a[0] || x - y);
+    const LSRC = {}, LDST = {}, LFLR = {}, cS = {}, cT = {}, PSRC = {}, PDST = {}, pS = {}, pT = {};
+    ORD.forEach((i, li) => { const r = REL[i]; LFLR[i] = li; cS[r.a[0]] = (cS[r.a[0]] || 0) + 1; cT[r.b[0]] = (cT[r.b[0]] || 0) + 1; LSRC[i] = cS[r.a[0]] - 1; LDST[i] = cT[r.b[0]] - 1;
+      const ks = r.a.join(':'), kt = r.b.join(':'); pS[ks] = (pS[ks] || 0) + 1; pT[kt] = (pT[kt] || 0) + 1; PSRC[i] = [pS[ks] - 1, ks]; PDST[i] = [pT[kt] - 1, kt]; });
+    const LMAX = Math.max(1, Math.min(4, Math.max.apply(null, Object.keys(cS).map((k) => cS[k]).concat(Object.keys(cT).map((k) => cT[k])).concat([1]))));
+    out.pad = LMAX * 18 + 24; out.n = ORD.length;
+    if (typeof yOf !== 'function' || o.focus != null) return out;
+    const portY = (base, p, n) => base + (p - (n - 1) / 2) * 11;
+    const TH = 26 * Math.PI / 180, CX = Math.cos(TH), SZ = Math.sin(TH);   // the panels' own turn, or the endpoints miss the face
+    const HW = PW / 2 - 14 - out.pad;   // the card's edge: the panel's half-width less its padding and the lanes' room
+    const settle = 'xp-cs' + li0, settleV = 'xp-csv' + li0;
+    const YP = Math.min(8, Math.max(4, Math.floor(60 / Math.max(1, ORD.length - 1)))), ZP = Math.min(10, Math.max(5, Math.floor(80 / Math.max(1, ORD.length - 1))));   // the floor's lane pitch, and its depth pitch: the board's 9 and 12, closer when there are many
+    ORD.forEach((i) => { const r = REL[i], A = P[r.a[0]], B = P[r.b[0]];
+      const ya0 = yOf(r.a[0], r.a[1]), yb0 = yOf(r.b[0], r.b[1]); if (ya0 == null || yb0 == null) return;
+      const ya = portY(ya0, PSRC[i][0], pS[PSRC[i][1]]), yb = portY(yb0, PDST[i][0], pT[PDST[i][1]]);
+      const ax = A.px, az = A.pz, bx = B.px, bz = B.pz;
+      const GXs = HW + 16 + (LSRC[i] % LMAX) * 18, GXt = HW + 16 + (LDST[i] % LMAX) * 18, li = LFLR[i];
+      const yLane = PH / 2 + 30 + (ORD.length - 1 - li) * YP;   // furthest reach lowest
+      const dirS = bx >= ax ? 1 : -1, dirT = -dirS;
+      const Pq = (cx0, cz0, lx) => ({ x: cx0 + lx * CX, z: cz0 - lx * SZ + 16 });
+      const s1 = Pq(ax, az, dirS * HW), s2 = Pq(ax, az, dirS * GXs), t2 = Pq(bx, bz, dirT * GXt), t1 = Pq(bx, bz, dirT * HW);
+      const zc = Math.max(s2.z, t2.z) + 170 + (ORD.length - 1 - li) * ZP;   // and deepest
+      const col = r.col, cls = r.kind, title = r.title;
+      const sg = (p, q, yy) => { const dx = q.x - p.x, dz = q.z - p.z, L = Math.sqrt(dx * dx + dz * dz); if (L < 1) return; out.h.push({ tf: 'translate3d(' + p.x.toFixed(0) + 'px,' + yy.toFixed(0) + 'px,' + p.z.toFixed(0) + 'px) rotateY(' + (Math.atan2(-dz, dx) * 180 / Math.PI).toFixed(1) + 'deg)', w: L.toFixed(0) + 'px', col, cls, title, anim: settle }); };
+      const vg = (p, y1, y2) => { if (Math.abs(y2 - y1) < 1) return; out.v.push({ tf: 'translate3d(' + p.x.toFixed(0) + 'px,' + Math.min(y1, y2).toFixed(0) + 'px,' + p.z.toFixed(0) + 'px)', h: Math.abs(y2 - y1).toFixed(0) + 'px', col, cls, title, anim: settleV }); };
+      const zg = (p, yy, z1, z2) => { if (Math.abs(z2 - z1) < 1) return; out.z.push({ tf: 'translate3d(' + p.x.toFixed(0) + 'px,' + yy.toFixed(0) + 'px,' + Math.min(z1, z2).toFixed(0) + 'px) rotateX(90deg)', h: Math.abs(z2 - z1).toFixed(0) + 'px', col, cls, title, anim: settleV }); };
+      sg(s1, s2, ya); vg(s2, ya, yLane); zg(s2, yLane, s2.z, zc); sg({ x: s2.x, z: zc }, { x: t2.x, z: zc }, yLane); zg(t2, yLane, t2.z, zc); vg(t2, yLane, yb); sg(t2, t1, yb); });
+    return out;
+  }
 
   /* ── the context-graph layer's data, from the turn's cards: a lane per family, the relations the host recorded ── */
   const LANE_OF = (c) => { const k = String((c && (c.lane || c.kind || '')) || '').toLowerCase(); if (/memory|recall/.test(k)) return 'memory'; if (/loop|step|run/.test(k)) return 'loop'; if (/plan|goal/.test(k)) return 'plan'; if (/canvas|land|pin/.test(k)) return 'canvas'; return 'context'; };
@@ -267,6 +391,7 @@
     (t.readAll || t.read || []).forEach((c) => add(c)); (t.land || []).forEach((c) => add(c, 'canvas'));
     (t.made || []).filter((c) => c && c.kind === 'loop' && Array.isArray(c.steps)).forEach((c) => c.steps.slice(0, 8).forEach((s, i) => add({ id: 'step:' + (i + 1), n: s.label || s.n || ('step ' + (i + 1)), kind: 'step', score: 1 - i * 0.08 }, 'loop')));
     const rels = (t.rel || []).filter((r) => r && seen[String(r.from)] && seen[String(r.to)]).map((r) => ({ from: String(r.from), to: String(r.to), kind: String(r.kind || 'cite') }));
+    for (let i = 1; seen['step:' + i] && seen['step:' + (i + 1)]; i++) rels.push({ from: 'step:' + i, to: 'step:' + (i + 1), kind: 'step' });
     const laneList = ['context', 'memory', 'loop', 'plan', 'canvas'].filter((l) => nodes.some((n) => n.lane === l));
     return { nodes, rels, lanes: laneList.length, laneList };
   }
@@ -299,13 +424,29 @@ vera-exploded .xp-view.scroll{overflow:auto;transition:none}
 vera-exploded .xp-pl{position:absolute;pointer-events:none;background:color-mix(in srgb,var(--xp-ac) 5%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--xp-ac) 20%,transparent);border-radius:8px}
 vera-exploded .xp-pl.on{background:color-mix(in srgb,var(--xp-ac) 9%,transparent);box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--xp-ac) 45%,transparent)}
 vera-exploded .xp-pl.iso{border-radius:0;clip-path:var(--cp);box-shadow:none;background:color-mix(in srgb,var(--xp-ac) 8%,transparent)}
+/* CARDS — the board's tri-page cards: a rounded plate per layer in the layer's colour, its caption inside the top edge;
+   the same .xit as the iso, top-anchored on its row line and growing down. A card has a ceiling; past it the card
+   scrolls (one scroll container — no double scrolling with the stage) */
+vera-exploded .xp-pl.rect{--pc:var(--xp-ac);border-radius:8px;background:color-mix(in srgb,var(--pc) 6%,var(--xp-s1));box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--pc) 24%,transparent)}
+vera-exploded .xp-pl.rect.on{box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--pc) 42%,transparent)}
+vera-exploded .xp-wrap.cards{cursor:default}vera-exploded .xp-view.scroll{cursor:default}vera-exploded .xp-view.scroll .xp-lb{transform:none}
+vera-exploded .xp-lb.hit{pointer-events:auto;cursor:pointer}vera-exploded .xp-lb.hit:hover{text-decoration:underline;text-underline-offset:3px}
+vera-exploded .xp-lb.layer.hit{font-size:11px;letter-spacing:.12em}vera-exploded .xp-lb.layer.hit b{font-size:10px;max-width:none}
+vera-exploded .xit.ct{transform:none;transform-origin:50% 0;max-height:236px;overflow:auto;scrollbar-width:thin}
+vera-exploded .xit.ct .xit-body{max-height:none;overflow:visible}
+vera-exploded .xit-c{font-family:var(--xp-mono);font-size:9px;color:var(--xp-t3);background:var(--xp-s2);border-radius:999px;padding:1px 7px}
+vera-exploded .xit-xr{display:flex;gap:8px;font-family:var(--xp-mono);font-size:9px;color:var(--xp-t3)}vera-exploded .xit-xr b{margin-left:auto;color:var(--xp-t2);font-weight:400}
+/* the plate's edges: in iso a plane is a polygon clipped out of a layer, so its outline is drawn as four lines in the
+   plate's colour (the board's .xpe) — they are what keeps it a plane when Blocks takes the fill away */
+vera-exploded .xp-pe{position:absolute;height:1px;transform-origin:0 50%;pointer-events:none;z-index:3;background:color-mix(in srgb,var(--pc,var(--xp-ac)) 34%,transparent)}
+vera-exploded .xp-be{display:none;position:absolute;height:0;border-top:1px dashed color-mix(in srgb,var(--bc,var(--xp-ac)) 45%,transparent);transform-origin:0 50%;pointer-events:none;z-index:3}
 vera-exploded .xp-lb{position:absolute;font-size:10px;letter-spacing:.12em;text-transform:uppercase;white-space:nowrap;display:flex;gap:8px;align-items:baseline;pointer-events:none;color:var(--xp-t3)}
 vera-exploded .xp-lb b{font-family:var(--xp-mono);font-size:9.5px;letter-spacing:0;font-weight:400;text-transform:none;color:var(--xp-t3);max-width:320px;overflow:hidden;text-overflow:ellipsis}
 vera-exploded .xp-lb.station{font-size:11px;color:var(--xp-t2);pointer-events:auto;cursor:pointer}vera-exploded .xp-lb.station.on{color:var(--xp-t1)}vera-exploded .xp-lb.station:hover{text-decoration:underline;text-underline-offset:3px}
 vera-exploded .xp-lb.sm{font-size:8.5px}
 vera-exploded .xp-e{position:absolute;height:2px;transform-origin:0 50%;z-index:6;pointer-events:none;border-radius:2px;background:var(--ec);opacity:.75;box-shadow:0 0 7px -2px var(--ec)}
-vera-exploded .xp-e.link{height:0;border-top:2px dashed var(--ec);background:none;box-shadow:none}
-vera-exploded .xp-e.thin{height:1px;opacity:.5;box-shadow:none}vera-exploded .xp-e.rel{height:1px;opacity:.55;box-shadow:none;z-index:7}
+vera-exploded .xp-e.mem,vera-exploded .xp-e.pin,vera-exploded .xp-e.dash{height:0;border-top:2px dashed var(--ec);background:none;box-shadow:none}
+vera-exploded .xp-e.thin{height:1px;opacity:.5;box-shadow:none}vera-exploded .xp-e.rel{height:1px;opacity:.55;box-shadow:none;z-index:7}vera-exploded .xp-e.rel.cite{opacity:.4}vera-exploded .xp-e.rel.mem{height:0;border-top:1px dashed var(--ec);background:none}
 vera-exploded .xp-it{position:absolute;border-radius:6px;background:var(--xp-s2);box-shadow:inset 3px 0 0 0 var(--cc),0 0 0 1px var(--xp-bd);cursor:pointer;z-index:10;padding:6px 10px;display:flex;flex-direction:column;gap:2px;box-sizing:border-box;overflow:hidden;transition:box-shadow .15s ease}
 vera-exploded .xp-it:hover{box-shadow:inset 3px 0 0 0 var(--cc),0 0 0 1px var(--xp-t3),0 14px 28px -18px rgba(0,0,0,.95);z-index:22}
 vera-exploded .xp-it.open{height:auto!important;z-index:26;background:color-mix(in srgb,var(--xp-s1) 97%,transparent);box-shadow:inset 3px 0 0 0 var(--cc),0 0 0 1.5px var(--xp-ac),0 26px 46px -18px rgba(0,0,0,.98)}
@@ -323,19 +464,59 @@ vera-exploded .xp-dot{display:flex;align-items:center;gap:8px;cursor:pointer;hei
 vera-exploded .xp-dot .l{order:1;display:none;font-family:var(--xp-mono);font-size:9px;color:var(--xp-t2);white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis}vera-exploded .xp-dots:hover .xp-dot .l{display:block}
 vera-exploded .xp-pz{position:absolute;left:14px;bottom:12px;z-index:34;display:flex;align-items:center;gap:3px;padding:4px 6px;border-radius:8px;background:color-mix(in srgb,var(--xp-s1) 90%,transparent);box-shadow:0 0 0 1px var(--xp-bd);opacity:.6}vera-exploded .xp-pz:hover{opacity:1}
 vera-exploded .xp-pz button{font:inherit;font-family:var(--xp-mono);font-size:11px;color:var(--xp-t2);background:none;border:0;cursor:pointer;padding:3px 7px;border-radius:4px}vera-exploded .xp-pz button:hover{background:var(--xp-s2);color:var(--xp-t1)}vera-exploded .xp-pz .z{font-family:var(--xp-mono);font-size:9px;color:var(--xp-t3);min-width:34px;text-align:center}
-/* FRONT: the carousel */
-vera-exploded .xp-car{position:absolute;inset:0;perspective:2800px;perspective-origin:50% 48%;overflow:hidden}
-vera-exploded .xp-track{position:absolute;left:50%;top:50%;width:0;height:0;transform-style:preserve-3d;transition:transform .5s cubic-bezier(.2,.85,.25,1.02)}
-vera-exploded .xp-cp{position:absolute;left:-200px;top:-236px;width:400px;height:472px;border-radius:8px;cursor:pointer;display:flex;flex-direction:column;gap:9px;padding:14px;box-sizing:border-box;background:color-mix(in srgb,var(--pc) 8%,var(--xp-s1));box-shadow:0 0 0 1px color-mix(in srgb,var(--pc) 32%,transparent),0 12px 30px -14px rgba(0,0,0,.9);transition:transform .64s cubic-bezier(.2,.85,.25,1.04),opacity .46s ease;animation:xp-cp-in .62s cubic-bezier(.2,.8,.25,1) backwards;animation-delay:var(--d,0s)}
+/* FRONT: the carousel — the chat UI's own construction, ported rather than imitated: the layers pulled apart along one
+   axis, the one you are on nearest and centred, the rest receding either side, every face turned the same little way
+   off axis so each is read head-on. A panel is sized from the room the view has (inline); the ones past the window fade
+   to a ghost — plainly continuing, not competing */
+/* the carousel sits a little above the middle: the runs' floor lanes lie below the panels, and the host's composer floats over the foot */
+vera-exploded .xp-car{position:absolute;inset:0;perspective:2800px;perspective-origin:50% 42%;overflow:hidden}
+vera-exploded .xp-track{position:absolute;left:50%;top:42%;width:0;height:0;transform-style:preserve-3d;transition:transform .5s cubic-bezier(.2,.85,.25,1.02)}
+vera-exploded .xp-cp{position:absolute;left:-200px;top:-236px;width:400px;height:472px;border-radius:8px;cursor:pointer;display:flex;flex-direction:column;gap:9px;padding:14px 14px 16px;box-sizing:border-box;overflow:hidden;background:color-mix(in srgb,var(--pc) 8%,var(--xp-s1));box-shadow:0 0 0 1px color-mix(in srgb,var(--pc) 32%,transparent),0 calc(var(--el,1) * 4px + 4px) calc(var(--el,1) * 10px + 12px) calc(var(--el,1) * -3px - 10px) rgba(0,0,0,.9);will-change:transform;transition:transform .64s cubic-bezier(.2,.85,.25,1.04),opacity .46s ease,box-shadow .46s ease,filter .46s ease;animation:xp-cp-in .62s cubic-bezier(.2,.8,.25,1) backwards;animation-delay:var(--d,0s)}
+/* 2D → 3D: the panels start flat and face-on, then swing into the carousel */
 @keyframes xp-cp-in{from{opacity:0;transform:translateX(0) translateZ(-140px) rotateY(-6deg)}}
-vera-exploded .xp-cp.on{background:var(--xp-s1);box-shadow:0 0 0 1.5px color-mix(in srgb,var(--pc) 62%,transparent),0 22px 40px -26px #000}vera-exploded .xp-cp.near{opacity:.92}vera-exploded .xp-cp.far{opacity:.55}
-vera-exploded .xp-cp-h{display:flex;align-items:baseline;gap:7px;font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:color-mix(in srgb,var(--pc) 90%,var(--xp-t3));flex-shrink:0;cursor:pointer}vera-exploded .xp-cp-h i{width:7px;height:7px;border-radius:2px;background:var(--pc);align-self:center}vera-exploded .xp-cp-h b{font-family:var(--xp-mono);font-size:9px;letter-spacing:0;color:var(--xp-t3);font-weight:400;text-transform:none;margin-left:auto}
-vera-exploded .xp-cp-b{flex:1;min-height:0;display:flex;flex-direction:column;gap:10px;overflow:auto;padding:0 6px 2px}
-vera-exploded .xp-cp.many .xp-cp-b{display:grid;grid-template-columns:1fr 1fr;align-content:start}
-vera-exploded .xp-rc{position:relative;display:flex;flex-direction:column;gap:2px;padding:8px 10px;border-radius:6px;background:var(--xp-s2);cursor:pointer;box-shadow:inset 3px 0 0 0 var(--cc),0 0 0 1px var(--xp-bd)}vera-exploded .xp-rc:hover{box-shadow:inset 3px 0 0 0 var(--cc),0 0 0 1px var(--xp-t3)}vera-exploded .xp-rc.open{box-shadow:inset 3px 0 0 0 var(--cc),0 0 0 1px var(--xp-ac)}
+vera-exploded .xp-cp.on{background:var(--xp-s1);box-shadow:0 0 0 1.5px color-mix(in srgb,var(--pc) 62%,transparent),0 22px 40px -26px #000}vera-exploded .xp-cp.near{opacity:.92}vera-exploded .xp-cp.far{opacity:.62;filter:brightness(.82)}
+/* past the window: plainly continuing, not competing */
+vera-exploded .xp-cp.gone{opacity:.16;pointer-events:none;filter:brightness(.6)}vera-exploded .xp-cp.gone .xp-cp-b{visibility:hidden}
+vera-exploded .xp-cp-h{display:flex;align-items:baseline;gap:7px;font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:color-mix(in srgb,var(--pc) 90%,var(--xp-t3));flex-shrink:0;cursor:pointer}vera-exploded .xp-cp-h:hover{color:var(--xp-t1)}vera-exploded .xp-cp-h i{width:7px;height:7px;border-radius:2px;background:var(--pc);align-self:center}vera-exploded .xp-cp-h .sub{letter-spacing:0;text-transform:none;opacity:.7}vera-exploded .xp-cp-h b{font-family:var(--xp-mono);font-size:9px;letter-spacing:0;color:var(--xp-t3);font-weight:400;text-transform:none;margin-left:auto}vera-exploded .xp-cp-h .fx2{margin-left:8px;font-family:var(--xp-mono);font-size:9px;color:var(--xp-t3);letter-spacing:0;text-transform:none}
+/* the cards are inset by exactly the lanes the runs need (--cpad, sized from the relation count), so a run has somewhere
+   to leave from and the scrollbar never lands on a lane; the body scrolls so an opened card makes room instead of being clipped */
+vera-exploded .xp-cp-b{flex:1;min-height:0;display:flex;flex-direction:column;gap:14px;overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;padding:0 var(--cpad,29px) 2px}
+/* a layer with many cards: two columns, the header says how many, and the thread fades out at the foot */
+vera-exploded .xp-cp.many .xp-cp-b{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-content:start;padding-bottom:22px;-webkit-mask-image:linear-gradient(#000 calc(100% - 28px),transparent);mask-image:linear-gradient(#000 calc(100% - 28px),transparent)}
+/* focusing a whole section: a layer's header brings that entire card square-on and full size, and hushes the rest; clicking it again puts it back in the line */
+vera-exploded .xp-cp.focus{width:860px!important;height:560px!important;left:-430px!important;top:-280px!important;z-index:40;background:var(--xp-s1);box-shadow:0 0 0 1.5px color-mix(in srgb,var(--pc) 62%,transparent),0 34px 72px -30px #000}
+vera-exploded .xp-cp.focus .xp-cp-b{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-content:start;overflow:auto;-webkit-mask-image:none;mask-image:none}
+vera-exploded .xp-cp.hushed{opacity:.12;pointer-events:none}
+/* the flow variant of the card: the same inner vocabulary as the projected scene, laid out in a column */
+vera-exploded .xp-rc{position:relative;display:flex;flex-direction:column;gap:2px;padding:8px 10px;border-radius:6px;background:var(--xp-s2);cursor:pointer;overflow:hidden;box-shadow:inset 3px 0 0 0 var(--cc),0 0 0 1px var(--xp-bd);transition:box-shadow .15s ease,transform .15s ease;animation:xp-rc-in .42s ease backwards;animation-delay:.2s}
+@keyframes xp-rc-in{from{opacity:0;transform:translateY(8px)}}
+vera-exploded .xp-rc:hover{box-shadow:inset 3px 0 0 0 var(--cc),0 0 0 1px var(--xp-bd2);transform:translateX(2px)}vera-exploded .xp-rc.open{box-shadow:inset 3px 0 0 0 var(--cc),0 0 0 1px var(--xp-ac);z-index:3}
 vera-exploded .xp-rc .n{font-size:11px;color:var(--xp-t1)}vera-exploded .xp-rc .d{font-family:var(--xp-mono);font-size:9px;color:var(--xp-t3)}vera-exploded .xp-rc .b{display:none;margin-top:4px;font-size:10px;color:var(--xp-t2)}vera-exploded .xp-rc.open .b{display:block}vera-exploded .xp-rc .b pre{margin:0;font-family:var(--xp-mono);font-size:9px;white-space:pre-wrap}
-vera-exploded .xp-spine{position:absolute;left:-2600px;top:-1px;width:5200px;height:2px;pointer-events:none;background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--xp-t3) 26%,transparent) 20%,color-mix(in srgb,var(--xp-t3) 26%,transparent) 80%,transparent)}
-vera-exploded .xp-lead{position:absolute;left:0;top:0;height:0;transform-origin:0 50%;border-top:1px dashed var(--xp-bd);pointer-events:none}
+/* the leaders that make it read as pulled apart rather than merely spaced; the spine runs the length of the carousel,
+   so the layers plainly carry on past the edge of the view */
+vera-exploded .xp-spine{position:absolute;left:-2600px;top:-1px;width:5200px;height:2px;pointer-events:none;z-index:0;background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--xp-t3) 26%,transparent) 20%,color-mix(in srgb,var(--xp-t3) 26%,transparent) 80%,transparent)}
+vera-exploded .xp-spine i{position:absolute;left:50%;top:-3px;width:8px;height:8px;margin-left:-4px;border-radius:50%;background:var(--xp-ac);opacity:.55}
+vera-exploded .xp-lead{position:absolute;left:0;top:0;height:0;transform-origin:0 50%;border-top:1px dashed var(--xp-bd2);pointer-events:none;z-index:1}vera-exploded .xp-lead.across{border-top-color:color-mix(in srgb,var(--xp-ac) 55%,transparent);border-top-style:dotted}
+/* the relation runs, laid out for the carousel (frontRuns): out of the card's side edge, into the panel's own gutter,
+   down to a lane below the cards, forward — a depth leg, its HEIGHT axis mapped onto Z so it runs toward the reader —
+   across, back and up. A run is recomputed the moment the layer changes, so while the panels glide it would be drawn
+   at the NEW geometry against the OLD positions — the disconnected, janky look. The runs are held back until the
+   panels land, then fade in attached; the keyframe name varies with the focused layer so the hold replays on every change */
+vera-exploded .xp-runs{position:absolute;left:0;top:0;width:0;height:0;transform-style:preserve-3d}
+vera-exploded .xp-cr,vera-exploded .xp-crv,vera-exploded .xp-crz{animation-duration:.92s;animation-timing-function:cubic-bezier(.3,.7,.25,1);animation-fill-mode:backwards;pointer-events:none;z-index:2;border-radius:2px}
+vera-exploded .xp-cr{position:absolute;left:0;top:0;height:0;transform-origin:0 50%;border-top:2px solid var(--xp-t3)}vera-exploded .xp-cr.mem{border-top-style:dashed}
+vera-exploded .xp-crv{position:absolute;left:0;top:0;width:2px}
+vera-exploded .xp-crz{position:absolute;left:0;top:0;width:2px;transform-origin:50% 0}
+@keyframes xp-cs0{0%,68%{opacity:0;clip-path:inset(0 100% 0 0)}70%{opacity:1;clip-path:inset(0 100% 0 0)}100%{opacity:1;clip-path:inset(0 0 0 0)}}
+@keyframes xp-cs1{0%,68%{opacity:0;clip-path:inset(0 100% 0 0)}70%{opacity:1;clip-path:inset(0 100% 0 0)}100%{opacity:1;clip-path:inset(0 0 0 0)}}
+@keyframes xp-cs2{0%,68%{opacity:0;clip-path:inset(0 100% 0 0)}70%{opacity:1;clip-path:inset(0 100% 0 0)}100%{opacity:1;clip-path:inset(0 0 0 0)}}
+@keyframes xp-cs3{0%,68%{opacity:0;clip-path:inset(0 100% 0 0)}70%{opacity:1;clip-path:inset(0 100% 0 0)}100%{opacity:1;clip-path:inset(0 0 0 0)}}
+@keyframes xp-cs4{0%,68%{opacity:0;clip-path:inset(0 100% 0 0)}70%{opacity:1;clip-path:inset(0 100% 0 0)}100%{opacity:1;clip-path:inset(0 0 0 0)}}
+@keyframes xp-csv0{0%,68%{opacity:0;clip-path:inset(0 0 100% 0)}70%{opacity:1;clip-path:inset(0 0 100% 0)}100%{opacity:1;clip-path:inset(0 0 0 0)}}
+@keyframes xp-csv1{0%,68%{opacity:0;clip-path:inset(0 0 100% 0)}70%{opacity:1;clip-path:inset(0 0 100% 0)}100%{opacity:1;clip-path:inset(0 0 0 0)}}
+@keyframes xp-csv2{0%,68%{opacity:0;clip-path:inset(0 0 100% 0)}70%{opacity:1;clip-path:inset(0 0 100% 0)}100%{opacity:1;clip-path:inset(0 0 0 0)}}
+@keyframes xp-csv3{0%,68%{opacity:0;clip-path:inset(0 0 100% 0)}70%{opacity:1;clip-path:inset(0 0 100% 0)}100%{opacity:1;clip-path:inset(0 0 0 0)}}
+@keyframes xp-csv4{0%,68%{opacity:0;clip-path:inset(0 0 100% 0)}70%{opacity:1;clip-path:inset(0 0 100% 0)}100%{opacity:1;clip-path:inset(0 0 0 0)}}
 vera-exploded .xp-nav{position:absolute;top:50%;transform:translateY(-50%);z-index:30;width:30px;height:52px;border:0;border-radius:6px;cursor:pointer;font-size:17px;line-height:1;color:var(--xp-t2);background:color-mix(in srgb,var(--xp-s1) 84%,transparent);box-shadow:0 0 0 1px var(--xp-bd)}vera-exploded .xp-nav:hover{color:var(--xp-t1);background:var(--xp-s2)}vera-exploded .xp-nav.l{left:16px}vera-exploded .xp-nav.r{right:16px}
 /* ISO ITEMS — the board's card (Canvas.dc.html .xit): a billboard standing on its stem, name · meta · a body by kind. It
    counter-scales by the fit alone (--inv, set once per render), about its foot, so the zoom grows it with the scene */
@@ -398,10 +579,17 @@ vera-exploded .xp-lb.lane{transform:translate(-100%,-50%)}vera-exploded .xp-lb.p
 vera-exploded .xp-lb.sm,vera-exploded .xp-lb.station{transform-origin:0 0}
 /* the galaxy lying on the plate — a sheet, counter-scaled with the items */
 vera-exploded .xp-g.iso{background:transparent;box-shadow:none;transform:translate(-50%,-50%) scale(var(--inv,1));transform-origin:50% 50%;padding:0;overflow:visible;z-index:7}
-/* Blocks off: plates, bands and cards lose their fills — outlines only (the board) */
+/* Blocks off in the exploded scene, the board's words: cards, plates, panels and columns lose their FILLS — outlines
+   only. So the iso plate keeps its four edges (drawn as lines, and brighter now) and the plane stays a plane with its
+   ground legible; the bands turn to hairline dashed outlines; a card keeps its accent bar and a faint ring; the widgets
+   stay. Nothing is removed, only the fills. */
 :root[data-blocks="off"] vera-exploded .xp-pl,:root[data-blocks="off"] vera-exploded .xp-band{background:none!important}
-:root[data-blocks="off"] vera-exploded .xp-pl.iso{box-shadow:none;outline:1px solid color-mix(in srgb,var(--xp-ac) 30%,transparent);outline-offset:-1px}
-:root[data-blocks="off"] vera-exploded .xit,:root[data-blocks="off"] vera-exploded .xp-it,:root[data-blocks="off"] vera-exploded .xp-cp{background:transparent!important}
+:root[data-blocks="off"] vera-exploded .xp-pl.rect{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--pc) 34%,transparent)}
+:root[data-blocks="off"] vera-exploded .xp-pe{background:color-mix(in srgb,var(--pc,var(--xp-ac)) 62%,transparent);box-shadow:0 0 6px -1px color-mix(in srgb,var(--pc,var(--xp-ac)) 40%,transparent)}
+:root[data-blocks="off"] vera-exploded .xp-be{display:block}
+:root[data-blocks="off"] vera-exploded .xit,:root[data-blocks="off"] vera-exploded .xp-it,:root[data-blocks="off"] vera-exploded .xp-cp,:root[data-blocks="off"] vera-exploded .xp-rc,:root[data-blocks="off"] vera-exploded .xp-g{background:transparent!important}
+:root[data-blocks="off"] vera-exploded .xit{box-shadow:inset 3px 0 0 0 var(--cc),0 0 0 1px color-mix(in srgb,var(--xp-bd) 70%,transparent)}
+:root[data-blocks="off"] vera-exploded .xit.open{background:color-mix(in srgb,var(--xp-s1) 72%,transparent)!important;box-shadow:inset 3px 0 0 0 var(--cc),0 0 0 1.5px var(--xp-ac)}
 :root[data-blocks="off"] vera-exploded .xiw{opacity:.6}
 /* the detail tiers, behaving as they do everywhere on the board: FULL — it is all on the card; HOVER — pointing reveals more;
    ZEN — hover does nothing at all, every level arrives on click */
@@ -452,7 +640,7 @@ vera-exploded .xp-empty{position:absolute;inset:0;display:flex;align-items:cente
 
   if (typeof HTMLElement !== 'undefined' && root.customElements && !root.customElements.get('vera-exploded')) {
     class VeraExploded extends HTMLElement {
-      constructor() { super(); this._S = { scene: { turns: [], sel: '' }, mode: 'cards', layer: 2, open: null, pan: { x: 0, y: 0, z: 1 } }; this._raf = 0; }
+      constructor() { super(); this._S = { scene: { turns: [], sel: '' }, mode: 'cards', layer: 2, open: null, focus: null, heights: {}, pan: { x: 0, y: 0, z: 1 } }; this._raf = 0; }
       connectedCallback() {
         ensureCss(this.ownerDocument); ensureIso(this.ownerDocument, () => this._schedule()); if (this._built) { this._schedule(); return; } this._built = true;
         const m = this.getAttribute('mode'); if (m) this._S.mode = m;
@@ -478,20 +666,57 @@ vera-exploded .xp-empty{position:absolute;inset:0;display:flex;align-items:cente
       setScene(scene) { this._S.scene = scene && scene.turns ? scene : { turns: [], sel: '' }; if (!this._S.scene.sel && this._S.scene.turns.length) this._S.scene.sel = this._S.scene.turns[this._S.scene.turns.length - 1].mid; this._schedule(); }
       stack(on) { this._S.stack = on == null ? !this._S.stack : !!on; this._S.pan = { x: 0, y: 0, z: 1 }; this._schedule(); return this._S.stack; }
       widgetSize(s) { const L = ['s', 'm', 'l']; this._S.wsz = L.includes(s) ? s : L[(L.indexOf(this._S.wsz || 'm') + 1) % L.length]; this._schedule(); return this._S.wsz; }
-      mode(name) { if (name && /^(cards|front|iso)$/.test(name)) { this._S.mode = name; this._S.pan = { x: 0, y: 0, z: 1 }; this._S.open = null; this._schedule(); } return this._S.mode; }
+      mode(name) { if (name && /^(cards|front|iso)$/.test(name)) { this._S.mode = name; this._S.pan = { x: 0, y: 0, z: 1, auto: true }; this._S.open = null; this._S.focus = null; this._frontKey = null; this._schedule(); } return this._S.mode; }
       select(mid) { this._S.scene.sel = mid; this._schedule(); this.dispatchEvent(new CustomEvent('vera:xpl:turn', { detail: { mid }, bubbles: true })); }
-      fit() { this._S.pan = { x: 0, y: 0, z: 1 }; this._applyPan(); }
+      fit() { this._S.pan = { x: 0, y: 0, z: 1, auto: true }; this._applyPan(); this._schedule(); }   // back to the whole scene: the front takes its fit again
       state() { return this._S; }
+      focus(li) { this._S.focus = li == null || this._S.focus === li ? null : li; if (li != null) this._S.layer = li; this._schedule(); return this._S.focus; }
       // the pan zoom is one transform on the view: nothing counter-scales against it (the items' --inv follows the fit alone)
       _applyPan() { const p = this._S.pan; if (this._r.view) this._r.view.style.transform = this._S.mode === 'cards' ? 'none' : 'translate(' + p.x + 'px,' + p.y + 'px) scale(' + p.z + ')'; if (this._r.zoom) this._r.zoom.textContent = Math.round(p.z * 100) + '%'; }
       _click(e) {
         const t = e.target; const mb = t.closest && t.closest('button[data-m]'); if (mb) { this.mode(mb.dataset.m); return; }
-        const ab = t.closest && t.closest('[data-a]'); if (ab) { const k = ab.dataset.a; if (k === 'fit') this.fit(); else if (k === 'stack') this.stack(); else if (k === 'wsz') this.widgetSize(); else if (k === 'place') { const ts = this._S.scene.turns || []; const t = ts.find((x) => x.mid === this._S.scene.sel) || ts[ts.length - 1]; this.dispatchEvent(new CustomEvent('vera:xpl:place', { detail: { mid: t ? t.mid : '' }, bubbles: true })); } else if (k === 'close') this.dispatchEvent(new CustomEvent('vera:xpl:close', { bubbles: true })); else if (k === 'zin' || k === 'zout') { const p = this._S.pan; p.z = Math.max(0.4, Math.min(3, p.z * (k === 'zin' ? 1.2 : 0.83))); this._applyPan(); } else if (k === 'prev' || k === 'next') { this._S.layer = Math.max(0, Math.min(LAYERS.length - 1, this._S.layer + (k === 'next' ? 1 : -1))); this._schedule(); } return; }
+        const ab = t.closest && t.closest('[data-a]'); if (ab) { const k = ab.dataset.a; if (k === 'fit') this.fit(); else if (k === 'stack') this.stack(); else if (k === 'wsz') this.widgetSize(); else if (k === 'place') { const ts = this._S.scene.turns || []; const t = ts.find((x) => x.mid === this._S.scene.sel) || ts[ts.length - 1]; this.dispatchEvent(new CustomEvent('vera:xpl:place', { detail: { mid: t ? t.mid : '' }, bubbles: true })); } else if (k === 'close') this.dispatchEvent(new CustomEvent('vera:xpl:close', { bubbles: true })); else if (k === 'zin' || k === 'zout') { const p = this._S.pan; p.auto = false; p.z = Math.max(0.4, Math.min(3, p.z * (k === 'zin' ? 1.2 : 0.83))); this._applyPan(); } else if (k === 'prev' || k === 'next') { this._S.layer = Math.max(0, Math.min(LAYERS.length - 1, this._S.layer + (k === 'next' ? 1 : -1))); this._schedule(); } return; }
         const dot = t.closest && t.closest('.xp-dot'); if (dot) { this.select(dot.dataset.mid); return; }
         const st = t.closest && t.closest('.xp-lb.station'); if (st) { this.select(st.dataset.mid); return; }
-        const ph = t.closest && t.closest('.xp-cp-h'); if (ph) { this._S.layer = +ph.closest('.xp-cp').dataset.li; this._schedule(); return; }
+        const ph = t.closest && t.closest('.xp-cp-h'); if (ph) { this.focus(+ph.closest('.xp-cp').dataset.li); return; }   // a layer's header focuses the whole section; again puts it back
+        const hit = t.closest && t.closest('.xp-lb.hit'); if (hit) { const v = this._r.view, x = parseFloat(hit.style.left) || 0; if (v && v.classList.contains('scroll')) v.scrollTo({ left: Math.max(0, x - 40), behavior: 'smooth' }); return; }   // a station caption frames its own column
         const card = t.closest && t.closest('.xp-it,.xp-rc,.xit,.xig,.xnd'); if (card) { const id = card.dataset.id; this._S.open = this._S.open === id ? null : id; const [mid, layer] = id.split(':'); this._schedule(); this.dispatchEvent(new CustomEvent('vera:xpl:pick', { detail: { mid, layer, card: id }, bubbles: true })); if (layer === 'say') this.dispatchEvent(new CustomEvent('vera:xpl:turn', { detail: { mid }, bubbles: true })); return; }
         const cp = t.closest && t.closest('.xp-cp'); if (cp) { this._S.layer = +cp.dataset.li; this._schedule(); }
+      }
+      /* ── FRONT: the carousel is built once per station and then driven IN PLACE — a layer change moves the panels by
+         their CSS transition (they glide; nothing is rebuilt, so nothing swings in again), the cards past the window are
+         dropped and given back as the window moves, and the runs are re-laid over the measured cards, held back by their
+         keyframe until the panels land. A new station (or a new room) rebuilds, and the panels swing in from flat. ── */
+      _renderFront(o) {
+        const S = this._S, view = this._r.view, P = o.panels; const PW = o.panel ? o.panel.w : 400, PH = o.panel ? o.panel.h : 472;
+        const rcHtml = (c) => '<div class="xp-rc' + (S.open === c.id ? ' open' : '') + '" data-id="' + esc(c.id) + '" data-ci="' + c.ci + '" style="--cc:' + esc(c.col) + '" title="' + esc(c.card.n || '') + (c.card.d ? ' — ' + esc(c.card.d) : '') + ' · click for the record"><span class="n">' + (c.card.tpl ? '<i class="tpl" title="placed from the registry · ' + esc(c.card.tpl) + '">⧉</i> ' : '') + esc(c.card.n || '') + '</span><span class="d">' + esc(c.card.d || '') + '</span><div class="b">' + cardBody(c.card) + '</div></div>';
+        const bodyHtml = (p) => (p.graph && p.graph.nodes.length ? '<div class="xp-gp">' + graphHtml(p.graph, 200) + '</div>' : '') + p.cards.map(rcHtml).join('') + (p.cards.length || (p.graph && p.graph.nodes.length) ? '' : '<div class="d" style="color:var(--xp-t3);font-family:var(--xp-mono);font-size:9px">nothing here for this turn</div>');
+        const key = (o.station ? o.station.mid : '') + '|' + P.map((p) => p.n).join(',') + '|' + PW + 'x' + PH;
+        let car = view.querySelector('.xp-car');
+        if (!car || this._frontKey !== key) {
+          this._frontKey = key;
+          view.innerHTML = '<div class="xp-car"><div class="xp-track"><span class="xp-spine"><i></i></span>' + o.leaders.map((l, i) => '<div class="xp-lead ' + l.cls + '" data-i="' + i + '" style="transform:' + l.tf + ';width:' + l.w + '"></div>').join('') + '<div class="xp-runs" data-r="runs"></div>'
+            + P.map((p) => '<div class="xp-cp ' + p.cls + '" data-li="' + p.li + '" style="--pc:' + esc(p.col) + ';--d:' + p.d + ';--el:' + p.el + ';left:' + (-PW / 2) + 'px;top:' + (-PH / 2) + 'px;width:' + PW + 'px;height:' + PH + 'px;transform:' + p.tf + '"><div class="xp-cp-h"><i></i>' + esc(p.name) + '<span class="sub"> · ' + esc(p.sub) + '</span><b>' + p.n + '</b><span class="fx2">' + p.focL + '</span></div><div class="xp-cp-b" data-cards="' + esc(p.cards.map((c) => c.id).join(',')) + '">' + bodyHtml(p) + '</div></div>').join('')
+            + '</div><button class="xp-nav l" data-a="prev" title="Previous layer">‹</button><button class="xp-nav r" data-a="next" title="Next layer">›</button></div>';
+          car = view.querySelector('.xp-car');
+        } else {
+          P.forEach((p) => { const el = car.querySelector('.xp-cp[data-li="' + p.li + '"]'); if (!el) return; el.className = 'xp-cp ' + p.cls; el.style.transform = p.tf;
+            const hb = el.querySelector('.xp-cp-h b'); if (hb) hb.textContent = p.n; const fx = el.querySelector('.xp-cp-h .fx2'); if (fx) fx.textContent = p.focL;
+            const body = el.querySelector('.xp-cp-b'), want = p.cards.map((c) => c.id).join(','); if (body && body.dataset.cards !== want) { body.innerHTML = bodyHtml(p); body.dataset.cards = want; } });
+          o.leaders.forEach((l, i) => { const el = car.querySelector('.xp-lead[data-i="' + i + '"]'); if (el) { el.style.transform = l.tf; el.style.width = l.w; } });
+          car.querySelectorAll('.xp-rc[data-id]').forEach((el) => el.classList.toggle('open', S.open === el.dataset.id));
+        }
+        // the runs: the inset first (it sizes the cards, so it goes before they are measured), then each card's centre in
+        // its panel — offsetTop is the panel's own coordinate, untouched by the 3D transform — and the segments over them
+        const track = car.querySelector('.xp-track'), runs = car.querySelector('[data-r="runs"]');
+        const pad = frontRuns(o, null).pad; track.style.setProperty('--cpad', pad + 'px');
+        const yOf = (li, ci) => { const el = car.querySelector('.xp-cp[data-li="' + li + '"] .xp-rc[data-ci="' + ci + '"]'); if (!el) return null; const body = el.closest('.xp-cp-b'); return el.offsetTop - (body ? body.scrollTop : 0) + el.offsetHeight / 2 - PH / 2; };
+        const R = frontRuns(o, yOf); this._frontRuns = R;
+        runs.innerHTML = R.h.map((r) => '<span class="xp-cr ' + esc(r.cls) + '" title="' + esc(r.title) + '" style="transform:' + r.tf + ';width:' + r.w + ';border-top-color:' + esc(r.col) + ';animation-name:' + r.anim + '"></span>').join('')
+          + R.v.map((r) => '<span class="xp-crv ' + esc(r.cls) + '" title="' + esc(r.title) + '" style="transform:' + r.tf + ';height:' + r.h + ';background:' + esc(r.col) + ';animation-name:' + r.anim + '"></span>').join('')
+          + R.z.map((r) => '<span class="xp-crz ' + esc(r.cls) + '" title="' + esc(r.title) + '" style="transform:' + r.tf + ';height:' + r.h + ';background:' + esc(r.col) + ';animation-name:' + r.anim + '"></span>').join('');
+        if (S.pan.auto) S.pan.z = o.fitZ || 1;   // the board's fit for the room, until the user zooms
+        this._applyPan(); this._emit(o);
       }
       _schedule() { if (this._raf || !this._built) return; this._raf = (root.requestAnimationFrame || setTimeout)(() => { this._raf = 0; this._render(); }); }
       _render() {
@@ -499,27 +724,19 @@ vera-exploded .xp-empty{position:absolute;inset:0;display:flex;align-items:cente
         const ISO = root.VeraISO && typeof root.VeraISO.proj === 'function' ? root.VeraISO : null;
         const proj = ISO ? root.VeraISO.proj(30, 45, 1, true) : null;   // the shared projection when it is there; z in px, as the floors are measured
         const den = (this.ownerDocument && this.ownerDocument.documentElement.getAttribute('data-den') || 'full').toLowerCase(); this.dataset.den = den;
-        const o = layout(S.scene, S.mode, W, H, { layer: S.layer, proj, den, stack: S.stack, wsz: S.wsz }); this._last = o;
+        const o = layout(S.scene, S.mode, W, H, { layer: S.layer, proj, den, stack: S.stack, wsz: S.wsz, focus: S.focus, heights: S.heights }); this._last = o;
         this.querySelectorAll('.xp-ctl button[data-a="stack"]').forEach((b) => { b.classList.toggle('on', !!S.stack && o.mode === 'iso'); b.style.display = o.mode === 'iso' ? '' : 'none'; });
         this.querySelectorAll('.xp-ctl button[data-a="wsz"]').forEach((b) => { b.textContent = (S.wsz || 'm').toUpperCase(); b.style.display = o.mode === 'iso' ? '' : 'none'; });
         if (this._r.scrub) { this._r.scrub.max = String(Math.max(0, (S.scene.turns || []).length - 1)); this._r.scrub.value = String(o.sel); }
         this.querySelectorAll('.xp-ctl button[data-m]').forEach((b) => b.classList.toggle('on', b.dataset.m === o.mode));
         this._r.dots.innerHTML = (S.scene.turns || []).map((t, i) => '<div class="xp-dot' + (i === o.sel ? ' on' : '') + '" data-mid="' + esc(t.mid) + '" title="' + esc((t.who || 'you') + ' · ' + (t.t || '') + ' · ' + String(t.text || '').slice(0, 80)) + '"><span class="l">' + esc((t.who || 'you') + ' ' + (i + 1) + ' · ' + String(t.text || '').slice(0, 30)) + '</span><i></i></div>').join('');
-        view.classList.toggle('scroll', o.mode === 'cards');
+        view.classList.toggle('scroll', o.mode === 'cards'); wrap.classList.toggle('cards', o.mode === 'cards');
         view.style.setProperty('--inv', o.mode === 'iso' ? String(o.inv || 1) : '1');   // the fit's counter-scale, once per render; the zoom never touches it
         const st = (x, y) => 'left:' + x + 'px;top:' + y + 'px;';
         const itHtml = (c, anch) => '<div class="xp-it' + (anch ? ' anch' : '') + (c.card && c.card.src ? ' has-img' : '') + (S.open === c.id ? ' open' : '') + '" data-id="' + esc(c.id) + '" title="' + esc(c.card.n || '') + (c.card.d ? ' — ' + esc(c.card.d) : '') + '" style="' + st(c.x, c.y) + 'width:' + c.w + 'px;height:' + c.h + 'px;--cc:' + esc(c.col) + '"><span class="n">' + (c.card.tpl ? '<i class="tpl" title="placed from the registry · ' + esc(c.card.tpl) + '">⧉</i> ' : '') + esc(c.card.n || '') + '</span><span class="d">' + esc(c.card.d || '') + '</span><div class="b">' + cardBody(c.card) + '</div></div>';
         let h = '';
         if (!(S.scene.turns || []).length) { view.innerHTML = '<div class="xp-empty">Nothing to explode yet — the scene is the session\'s turns: what each read, what it said, what it made, where it landed.</div>'; view.style.transform = 'none'; this._emit(o); return; }
-        if (o.mode === 'front') {
-          const nav = '<button class="xp-nav l" data-a="prev">‹</button><button class="xp-nav r" data-a="next">›</button>';
-          h = '<div class="xp-car"><div class="xp-track"><div class="xp-spine"></div>' + o.leaders.map((l) => '<div class="xp-lead" style="transform:' + l.tf + ';width:' + l.w + '"></div>').join('')
-            + o.panels.map((p) => '<div class="xp-cp ' + p.cls + '" data-li="' + p.li + '" style="--pc:' + esc(p.col) + ';--d:' + p.d + ';transform:' + p.tf + '"><div class="xp-cp-h"><i></i>' + esc(p.name) + '<span style="letter-spacing:0;text-transform:none;opacity:.7"> · ' + esc(p.sub) + '</span><b>' + p.n + '</b></div><div class="xp-cp-b">'
-              + (p.graph && p.graph.nodes.length ? '<div class="xp-gp">' + graphHtml(p.graph, 260) + '</div>' : '')
-              + p.cards.map((c) => '<div class="xp-rc' + (S.open === c.id ? ' open' : '') + '" data-id="' + esc(c.id) + '" style="--cc:' + esc(c.col) + '"><span class="n">' + esc(c.card.n || '') + '</span><span class="d">' + esc(c.card.d || '') + '</span><div class="b">' + cardBody(c.card) + '</div></div>').join('')
-              + (p.cards.length ? '' : '<div class="d" style="color:var(--xp-t3);font-family:var(--xp-mono);font-size:9px">nothing here for this turn</div>') + '</div></div>').join('') + '</div>' + nav + '</div>';
-          view.innerHTML = h; view.style.transform = 'none'; this._emit(o); return;
-        }
+        if (o.mode === 'front') { this._renderFront(o); return; }
         // ISO: the board's card on its stem; a widget as an iso widget group with its frameless caption; a context record as a typed node
         const tplTag = (c) => (c.tpl ? '<i class="tpl" title="placed from the registry · ' + esc(c.tpl) + '">⧉</i> ' : '');
         const xitHtml = (wg) => { const c = wg.card, open = S.open === wg.id; const wd = { form: wg.form, data: wg.data, sample: wg.sample }; const b = isoBody(c, wd);
@@ -534,14 +751,24 @@ vera-exploded .xp-empty{position:absolute;inset:0;display:flex;align-items:cente
             + g.faces.map((f) => '<i class="xiw ' + f.k + (f.cls ? ' ' + f.cls : '') + '" style="left:' + f.x + ';top:' + f.y + ';width:' + f.w + ';height:' + f.h + ';--cp:' + f.cp + ';--fc:' + f.col + '"></i>').join('')
             + (g.needle ? '<span class="xiw-n" style="left:' + g.needle.x + ';top:' + g.needle.y + ';width:' + g.needle.len + ';transform:rotate(' + g.needle.deg + ')"></span>' : '')
             + (g.big ? '<span class="xiw-b" style="left:' + g.big.x + ';top:' + g.big.y + '">' + esc(g.big.n) + '</span>' : '') + '</div>' + cap; };
+        // CARDS: the same card, top-anchored on its row line — name · meta · the body by kind · its chips; the record (the rest of the body, the layer, the turn) behind a click
+        const ctHtml = (c) => { const card = c.card, open = S.open === c.id; const b = isoBody(card, widgetOf(card));
+          return '<div class="xit ct' + (open ? ' open' : '') + (card.src ? ' has-img' : '') + '" data-id="' + esc(c.id) + '" title="' + esc(card.n || '') + (card.d ? ' — ' + esc(card.d) : '') + ' · click for the record" style="' + st(c.x, c.y) + 'width:' + c.w + 'px;--ih:' + c.ih + 'px;--cc:' + esc(c.col) + '">'
+            + '<span class="xit-n">' + tplTag(card) + esc(card.n || '') + '</span><span class="xit-d">' + esc(card.d || '') + '</span>'
+            + (b.on ? '<span class="xit-body">' + b.on + '</span>' : '') + (card.src ? '<img class="xp-img" src="' + esc(card.src) + '" alt="" loading="lazy">' : '')
+            + '<span class="xit-m">' + (c.badge ? '<span class="xit-b">' + esc(c.badge) + '</span>' : '') + '<span class="xit-c">' + esc(c.chip) + '</span></span>'
+            + '<div class="xit-x">' + b.x + '<span class="xit-xr">layer<b>' + esc(c.layer) + '</b></span><span class="xit-xr">turn<b>' + esc(c.turn) + '</b></span>' + (card.kind ? '<span class="xit-xr">kind<b>' + esc(card.kind) + '</b></span>' : '') + '</div></div>'; };
         if (o.mode === 'iso') {
           this.classList.toggle('stacked', !!o.stack);
           o.plates.forEach((p) => { const xs = p.poly.map((q) => q.x), ys = p.poly.map((q) => q.y); const x0 = Math.min.apply(null, xs), y0 = Math.min.apply(null, ys), x1 = Math.max.apply(null, xs), y1 = Math.max.apply(null, ys); const cp = 'polygon(' + p.poly.map((q) => (q.x - x0).toFixed(1) + 'px ' + (q.y - y0).toFixed(1) + 'px').join(',') + ')'; h += '<div class="xp-pl iso' + (p.cls ? ' ' + p.cls : '') + '" style="' + st(x0, y0) + 'width:' + (x1 - x0).toFixed(1) + 'px;height:' + (y1 - y0).toFixed(1) + 'px;--cp:' + cp + '"></div>'; });
-        } else { o.plates.forEach((p) => { h += '<div class="xp-pl' + (p.cls ? ' ' + p.cls : '') + '" style="' + st(p.x, p.y) + 'width:' + p.w + 'px;height:' + p.h + 'px"></div>'; }); }
+        } else { o.plates.forEach((p) => { h += '<div class="xp-pl' + (p.cls ? ' ' + p.cls : '') + '" style="' + st(p.x, p.y) + 'width:' + p.w + 'px;height:' + p.h + 'px;--pc:' + esc(p.col || 'var(--xp-ac)') + '"></div>'; }); }
         (o.bands || []).forEach((b) => { const xs = b.poly.map((q) => q.x), ys = b.poly.map((q) => q.y); const x0 = Math.min.apply(null, xs), y0 = Math.min.apply(null, ys), x1 = Math.max.apply(null, xs), y1 = Math.max.apply(null, ys); const cp = 'polygon(' + b.poly.map((q) => (q.x - x0).toFixed(1) + 'px ' + (q.y - y0).toFixed(1) + 'px').join(',') + ')'; h += '<div class="xp-band ' + esc(b.layer) + (b.empty ? ' empty' : '') + (b.cls ? ' ' + b.cls : '') + '" style="' + st(x0, y0) + 'width:' + (x1 - x0).toFixed(1) + 'px;height:' + (y1 - y0).toFixed(1) + 'px;--cp:' + cp + ';--bc:' + esc(b.col) + '"></div>'; });
+        // the plates' edges as lines, the bands' hairlines (shown when Blocks is off): the planes stay planes without their fills
+        (o.outline || []).forEach((e) => { h += '<span class="xp-pe' + (e.cls ? ' ' + e.cls : '') + '" style="' + st(e.x, e.y) + 'width:' + e.len + 'px;transform:rotate(' + e.deg + 'deg)"></span>'; });
+        (o.boutline || []).forEach((e) => { h += '<span class="xp-be" style="' + st(e.x, e.y) + 'width:' + e.len + 'px;transform:rotate(' + e.deg + 'deg);--bc:' + esc(e.col) + '"></span>'; });
         o.edges.forEach((e) => { h += '<div class="xp-e ' + e.cls + '" title="' + esc(e.title) + '" style="' + st(e.x, e.y) + 'width:' + e.len + 'px;--ec:' + esc(e.col) + ';transform:rotate(' + e.deg + 'deg)"></div>'; });
-        o.labels.forEach((l) => { h += '<div class="xp-lb ' + l.cls + '" data-mid="' + esc(l.mid || '') + '" style="' + st(l.x, l.y) + 'color:' + esc(l.col) + (o.mode === 'iso' ? ';transform:' + (/\bmore\b/.test(l.cls) ? 'translate(-100%,-50%) ' : /\bempty\b/.test(l.cls) ? 'translate(-50%,-50%) ' : /\blane\b/.test(l.cls) ? 'translate(-100%,-50%) ' : /\bprompt\b/.test(l.cls) ? 'translate(-50%,-100%) ' : '') + 'scale(var(--inv,1))' : '') + '">' + esc(l.n) + '<b>' + esc(l.k) + '</b></div>'; });
-        o.cards.forEach((c) => { if (!c.iw) h += itHtml(c, !!c.anchored); });
+        o.labels.forEach((l) => { h += '<div class="xp-lb ' + l.cls + '" data-mid="' + esc(l.mid || '') + '" data-st="' + (l.st == null ? '' : l.st) + '" style="' + st(l.x, l.y) + 'color:' + esc(l.col) + (o.mode === 'iso' ? ';transform:' + (/\bmore\b/.test(l.cls) ? 'translate(-100%,-50%) ' : /\bempty\b/.test(l.cls) ? 'translate(-50%,-50%) ' : /\blane\b/.test(l.cls) ? 'translate(-100%,-50%) ' : /\bprompt\b/.test(l.cls) ? 'translate(-50%,-100%) ' : '') + 'scale(var(--inv,1))' : '') + '">' + esc(l.n) + '<b>' + esc(l.k) + '</b></div>'; });
+        o.cards.forEach((c) => { if (c.ct) h += ctHtml(c); else if (!c.iw) h += itHtml(c, !!c.anchored); });
         o.graphs.forEach((g) => { h += g.iso
           ? '<div class="xp-g iso" data-id="' + esc(g.id) + '" style="' + st(g.x, g.y) + 'width:' + g.w + 'px;height:' + g.h + 'px">' + (root.VeraWidget && typeof root.VeraWidget.draw === 'function' ? root.VeraWidget.draw('context_graph', { nodes: g.data.nodes, rels: g.data.rels }, 'm', { height: g.h, width: g.w, bare: true, view: 'iso', full: false, hubMeta: g.data.nodes.length + ' rec' }) : graphHtml(g.data, g.h)) + '</div>'
           : '<div class="xp-g" data-id="' + esc(g.id) + '" style="' + st(g.x, g.y) + 'width:' + g.w + 'px;height:' + g.h + 'px">' + graphHtml(g.data, g.h - 10) + '</div>'; });
@@ -550,13 +777,21 @@ vera-exploded .xp-empty{position:absolute;inset:0;display:flex;align-items:cente
         (o.widgets || []).forEach((wg) => { h += '<span class="xstem" style="left:' + wg.x.toFixed(1) + 'px;top:' + (wg.y - (wg.draw === 'group' ? 0 : wg.stem)).toFixed(1) + 'px;height:' + (wg.draw === 'group' ? 0 : wg.stem) + 'px;--sc:' + esc(wg.col) + '"><i></i></span>'; });
         (o.widgets || []).slice().sort((a, b) => a.y - b.y).forEach((wg) => { h += wg.draw === 'group' ? xigHtml(wg) : xitHtml(wg); });
         if (o.mode === 'cards') h = '<div style="position:relative;width:' + o.size.w + 'px;height:' + o.size.h + 'px">' + h + '</div>';
-        view.innerHTML = h; this._applyPan(); this._emit(o);
+        const sx = view.scrollLeft, sy = view.scrollTop; view.innerHTML = h; this._applyPan();   // the stage is rebuilt; where it was scrolled to is kept
+        if (o.mode === 'cards' && (sx || sy)) { view.scrollLeft = sx; view.scrollTop = sy; }
+        // CARDS: measure every card's height (a tall one pushes the rows under it down) and lay out once more when one
+        // changed — twice at most per render, so a hover that grows a card can never chase itself; then, on a new
+        // selection, scroll the stage to the selected turn's row
+        if (o.mode === 'cards') { const hs = {}; let changed = false; view.querySelectorAll('.xit.ct[data-id]').forEach((el) => { const k = el.dataset.id, hh = el.offsetHeight; hs[k] = hh; if (!S.heights[k] || Math.abs(S.heights[k] - hh) > 1) changed = true; });
+          if (changed && (this._measureN || 0) < 2) { this._measureN = (this._measureN || 0) + 1; S.heights = Object.assign({}, S.heights, hs); this._schedule(); return; }
+          this._measureN = 0; if (this._rowSel !== o.sel + ':' + (o.station ? '' : S.scene.sel)) { this._rowSel = o.sel + ':' + S.scene.sel; const row = (o.rows || [])[o.sel]; if (row && (row.y < view.scrollTop || row.y + Math.min(row.h, view.clientHeight - 60) > view.scrollTop + view.clientHeight)) view.scrollTop = Math.max(0, row.y - 56); } }
+        this._emit(o);
       }
-      _emit(o) { this.dispatchEvent(new CustomEvent('vera:xpl:rendered', { detail: { mode: o.mode, stations: o.stations, cards: o.cards.length, panels: o.panels.length, graphs: (o.graphs || []).length, gnodes: (o.gnodes || []).length, inv: o.inv || 1 }, bubbles: true })); }
+      _emit(o) { const R = o.mode === 'front' ? (this._frontRuns || { n: 0 }) : null; this.dispatchEvent(new CustomEvent('vera:xpl:rendered', { detail: { mode: o.mode, stations: o.stations, cards: o.cards.length, panels: o.panels.length, graphs: (o.graphs || []).length, gnodes: (o.gnodes || []).length, edges: (o.edges || []).length, runs: R ? R.n : (o.runs || 0), outline: (o.outline || []).length, focus: o.focus == null ? null : o.focus, inv: o.inv || 1 }, bubbles: true })); }
     }
     root.customElements.define('vera-exploded', VeraExploded);
   }
-  const api = { layout, LAYERS, ensureCss, ensureIso, graphData, widgetOf, groupOf, valueOf, isoBody, ICON, version: 4 };
+  const api = { layout, frontRuns, LAYERS, ensureCss, ensureIso, graphData, widgetOf, groupOf, valueOf, isoBody, ICON, version: 5 };
   root.VeraExploded = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -1,6 +1,7 @@
 // The exploded scene's layout (UI redesign, the Chat & canvas set's Explode; vera/chat/exploded_element.js): one scene
 // per session — a station per turn with what it read, the exchange, what it made, where it landed — projected three
-// ways: cards (rows), front (the carousel of the selected station's layers), iso (the lattice through the projection).
+// ways: cards (the board's tri-page cards: five plates side by side per turn, the runs level and down the gutters),
+// front (the carousel of the selected station's layers, with the relation runs laid out for it), iso (the lattice).
 //   node tests/test_exploded_element.cjs   (CommonJS: the gate parses js as scripts)
 const path = require('node:path'); const fs = require('node:fs');
 const X = require(path.join(__dirname, '..', 'vera', 'chat', 'exploded_element.js'));
@@ -10,42 +11,68 @@ const scene = { sel: 'm3', turns: [
   { mid: 'm3', who: 'you', t: '14:38', text: 'where exactly does it re-embed?', reply: 'No idempotence check — ensure() pulled and re-embedded on every start.', read: [{ n: 'fabric_capabilities.py', d: '410-486 · 0.94', col: '#a78bfa', kind: 'code', score: 0.94 }], made: [{ n: 'Loop v7 · fixer', d: 'step 4 of 9', col: '#7c9cff', kind: 'loop', steps: [{ label: 'recall', status: 'ok' }, { label: 'author', status: 'run' }] }, { n: '312caef', d: '+7 −2', col: '#fb923c', kind: 'diff', p: 7, m: 2 }], land: [] },
 ] };
 t('five layers in order — the context graph first', X.LAYERS.map((l) => l.key).join(',') === 'graph,read,say,made,land' && X.LAYERS[0].kind === 'graph');
-// cards
+// ── cards: the board's tri-page cards
 const c = X.layout(scene, 'cards', 1200, 800);
-t('cards: a row per station, the selected one lit', c.stations === 2 && c.plates.length === 2 && c.plates[1].cls === 'on' && c.sel === 1);
+const runsOf = (o, cls) => new Set(o.edges.filter((e) => e.cls === cls).map((e) => e.run)).size;
+t('cards: five plates per turn, side by side, the selected turn lit', c.stations === 2 && c.plates.length === 10 && c.plates.every((p) => /^rect/.test(p.cls)) && c.plates.filter((p) => /\bon\b/.test(p.cls)).length === 5 && c.plates.slice(5).every((p) => /\bon\b/.test(p.cls)) && c.sel === 1);
+t('cards: the board\'s geometry — 430 plates on a 484 pitch, 398 × 74 cards inset 16, each layer\'s plate in its colour', c.plates[1].x - c.plates[0].x === 484 && c.plates.every((p) => p.w === 430) && c.cards.every((k) => k.w === 398 && k.ih === 74 && k.ct) && c.cards[0].x === c.plates[1].x + 16 && c.plates[2].col === X.LAYERS[2].col);
 t('cards: the exchange is built from the turn and its reply', c.cards.filter((k) => k.layer === 'say' && k.mid === 'm1').length === 2 && c.cards.find((k) => k.layer === 'say' && k.mid === 'm1').card.n === 'why is boot so slow lately?');
 t('cards: every card in its column, the columns in layer order', ['read', 'say', 'made', 'land'].every((k, i) => c.cards.filter((x) => x.layer === k).every((x) => x.x === c.cards.find((y) => y.layer === k).x)) && c.cards.find((x) => x.layer === 'read').x < c.cards.find((x) => x.layer === 'say').x && c.cards.find((x) => x.layer === 'say').x < c.cards.find((x) => x.layer === 'made').x);
-t('cards: the runs — every read into the exchange, the exchange into every product, a product to what landed', c.edges.filter((e) => e.cls === 'in').length === 3 && c.edges.filter((e) => e.cls === 'out').length === 3 && c.edges.filter((e) => e.cls === 'link').length === 1);
-t('cards: rows stack, the scene grows down', c.size.h > 300 && c.plates[1].y > c.plates[0].y + c.plates[0].h);
-t('cards: labels — the station (who · time · text) and each layer with its count', c.labels.some((l) => l.cls.indexOf('station') === 0 && /you · 14:31/.test(l.n)) && c.labels.some((l) => /layer read/.test(l.cls) && l.k === '2'));
-// front
+t('cards: the rows on a 100px pitch, centred in the plate\'s span', (() => { const r = c.cards.filter((k) => k.mid === 'm1' && k.layer === 'say'); return r.length === 2 && r[1].y - r[0].y === 100 && r[0].y - c.plates[2].y === 107 + 150 - 37; })());
+t('cards: the runs — the context entry into its record, every read into the exchange, the exchange into every product, a product to what landed', runsOf(c, 'in') === 5 && runsOf(c, 'in mem') === 1 && runsOf(c, 'out') === 3 && runsOf(c, 'link') === 1 && c.runs >= 10);
+t('cards: every leg of every run is level or plumb — never diagonal', c.edges.every((e) => [0, 90, 180, -90].some((d) => Math.abs(e.deg - d) < 0.01)));
+t('cards: a run leaves a card at its side and travels the gutter between the stations', (() => { const r = c.cards.find((k) => k.mid === 'm3' && k.layer === 'read'), s = c.cards.find((k) => k.mid === 'm3' && k.layer === 'say'); const legs = c.edges.filter((e) => e.cls === 'in' && e.title === 'read by this turn' && e.y === r.y + r.h / 2); return legs.length >= 1 && legs[0].x === r.x + r.w + 3 && legs[0].x + legs[0].len > r.x + r.w && legs[0].x + legs[0].len < s.x; })());
+t('cards: a tall card pushes the rows under it down by its excess (the element hands the measured heights back)', (() => { const b = X.layout(scene, 'cards', 1200, 800, { heights: { 'm1:read:0': 74 } }), h = X.layout(scene, 'cards', 1200, 800, { heights: { 'm1:read:0': 200 } }); const r = h.cards.filter((k) => k.mid === 'm1' && k.layer === 'read'); return r[0].h === 200 && r[1].y - r[0].y === 226 && h.plates[1].h === b.plates[1].h + 126 && b.cards.filter((k) => k.mid === 'm1' && k.layer === 'read')[1].y - b.cards.filter((k) => k.mid === 'm1' && k.layer === 'read')[0].y === 100; })());
+t('cards: the turns are rows, the stage grows down and scrolls at 1:1', c.rows.length === 2 && c.plates[5].y > c.plates[0].y + c.plates[0].h && c.size.h > c.plates[5].y && c.size.w > c.plates[4].x + 430 && c.inv === 1);
+t('cards: labels — the turn (who · time · text), each layer\'s caption inside its plate, each lane with its count', c.labels.some((l) => l.cls.indexOf('station') === 0 && /you · 14:31/.test(l.n)) && c.labels.some((l) => /layer hit read/.test(l.cls) && l.k === 'what the turn read' && l.y === c.plates[1].y + 15) && c.labels.some((l) => /lane memory/.test(l.cls) && l.k === '1'));
+t('cards: the context graph is lanes of typed nodes in its plate, the galaxy past them', c.gnodes.filter((n) => n.mid === 'm1').length === 3 && c.gnodes.every((n) => n.x > c.plates[0].x && n.x < c.plates[0].x + 430 && /^M/.test(n.icon)) && c.graphs.length === 2 && c.graphs[0].y > Math.max.apply(null, c.gnodes.filter((n) => n.mid === 'm1').map((n) => n.y)));
+// ── front
 const f = X.layout(scene, 'front', 1200, 800, { layer: 2 });
 t('front: five panels of the selected station, the exchange centred, the others in depth', f.panels.length === 5 && f.panels[2].cls.indexOf('on') === 0 && /translateX\(0px\) translateZ\(0px\) rotateY\(26deg\)/.test(f.panels[2].tf) && /translateZ\(-126px\)/.test(f.panels[1].tf) && f.panels[4].cls.indexOf('far') === 0);
 t('front: the selected station\'s cards, four leaders between the five panels', f.panels[1].cards.length === 1 && f.panels[3].cards.length === 2 && f.leaders.length === 4 && f.station.mid === 'm3');
+t('front: a wider gap where the chat\'s own layers end; the leaders across those gaps are the accent ones', f.panels[0].px < -f.panels[4].px + 1 && Math.abs(f.panels[0].px) - Math.abs(f.panels[1].px) > 400 && f.leaders[0].cls === 'across' && f.leaders[1].cls === 'same' && f.leaders[3].cls === 'across');
+t('front: the panel is sized from the room; the layers past the window are ghosts without cards', f.panels.every((p) => p.w === 446 && p.h === 600) && (() => { const g = X.layout(scene, 'front', 1200, 800, { layer: 0 }); return /gone/.test(g.panels[3].cls) && g.panels[3].cards.length === 0 && /gone/.test(g.panels[4].cls) && g.panels[1].cards.length === 1; })());
+t('front: the context graph\'s layer is a card per family with its members', f.panels[0].cards.length === 2 && f.panels[0].cards[0].card.kind === 'panel' && f.panels[0].cards[0].card.rows.length >= 1 && f.panels[0].n === 2);
 const f2 = X.layout(scene, 'front', 1200, 800, { layer: 3 });
 t('front: the focused layer moves the carousel', f2.panels[3].cls.indexOf('on') === 0 && /translateX\(-/.test(f2.panels[2].tf));
-// pass B: the context-graph layer, images per tier
+const ff = X.layout(scene, 'front', 1200, 800, { layer: 2, focus: 1 });
+t('front: focusing a section brings it square-on and hushes the rest; the header says back', /^focus /.test(ff.panels[1].cls) && /rotateY\(0deg\)/.test(ff.panels[1].tf) && ff.panels[1].focL === 'back' && ff.panels.filter((p) => /^hushed /.test(p.cls)).length === 4 && ff.focus === 1);
+// the relation runs of the carousel
+t('front: the relations are the iso\'s — the entry into its record, the reads into the exchange, the exchange into what it made, what it made into where it landed', (() => { const k = f.frontRels.map((r) => r.kind); return k.filter((x) => x === 'in').length === 2 && k.filter((x) => x === 'out').length === 2 && f.frontRels.some((r) => r.a[0] === 0 && r.b[0] === 1) && f.frontRels.some((r) => r.a[0] === 1 && r.b[0] === 2) && f.frontRels.every((r) => r.col); })());
+const R0 = X.frontRuns(f, null);
+t('frontRuns: without the measure only the inset is answered, sized from the lanes the runs need', R0.h.length === 0 && R0.n === 4 && R0.pad === 2 * 18 + 24);
+const R = X.frontRuns(f, (li, ci) => -100 + ci * 112);
+t('frontRuns: a run is seven legs — level, down, forward, across, back, up, level — every one placed in 3D', R.n === 4 && R.h.length === 4 * 3 && R.v.length === 4 * 2 && R.z.length === 4 * 2 && R.h.every((s) => /translate3d\(.*\) rotateY\(/.test(s.tf)) && R.z.every((s) => /rotateX\(90deg\)/.test(s.tf)));
+t('frontRuns: held back until the panels land — the keyframe named for the focused layer', R.h.every((s) => s.anim === 'xp-cs2') && R.v.every((s) => s.anim === 'xp-csv2') && X.frontRuns(f2, () => 0).h.every((s) => s.anim === 'xp-cs3'));
+t('frontRuns: the runs leave by the panel\'s own gutter, below the cards, and carry their kind', (() => { const v = R.v[0]; const y = +(/,(-?\d+)px,/.exec(v.tf) || [])[1]; return y >= -100 - 20 && R.h.every((s) => /^(in|out|link|mem)$/.test(s.cls) && s.col && s.title) && R.h.some((s) => s.cls === 'in') && R.h.some((s) => s.cls === 'out'); })());
+t('frontRuns: none while a section is focused', X.frontRuns(ff, () => 0).h.length === 0 && X.frontRuns(ff, null).pad > 0);
+// ── pass B: the context-graph layer, images per tier
 const gt = { turns: [{ mid: 'g1', who: 'you', t: '10:00', text: 'why', read: [{ id: 'v1', n: 'fabric.py', kind: 'chunk', score: 0.9 }, { id: 'm1', n: 'recall', kind: 'memory', score: 0.6, included: false }], rel: [{ from: 'm1', to: 'v1', kind: 'mem' }], land: [{ id: 'k1', n: 'boot log', kind: 'note' }], made: [{ n: 'render', kind: 'image', src: 'data:image/png;base64,AAAA' }, { n: 'loop', kind: 'loop', steps: [{ label: 'recall' }, { label: 'author' }] }] }], sel: 'g1' };
 const gd = X.graphData(gt.turns[0]);
-t('graphData: a lane per family, the members with their relevance, the relations the host recorded, the run\'s steps', gd.laneList.join(',') === 'context,memory,loop,canvas' && gd.nodes.length === 5 && gd.rels.length === 1 && gd.nodes.find((n) => n.id === 'm1').included === false && gd.nodes.filter((n) => n.lane === 'loop').length === 2, JSON.stringify(gd));
+t('graphData: a lane per family, the members with their relevance, the relations the host recorded, the run\'s steps and their order', gd.laneList.join(',') === 'context,memory,loop,canvas' && gd.nodes.length === 5 && gd.rels.length === 2 && gd.rels.some((r) => r.kind === 'mem') && gd.rels.some((r) => r.kind === 'step' && r.from === 'step:1' && r.to === 'step:2') && gd.nodes.find((n) => n.id === 'm1').included === false && gd.nodes.filter((n) => n.lane === 'loop').length === 2, JSON.stringify(gd));
 const gc = X.layout(gt, 'cards', 1200, 700, { den: 'full' });
-t('cards: the graph layer is a graph box, not cards; an image card gets room in Full', gc.graphs.length === 1 && gc.graphs[0].data.nodes.length === 5 && gc.cards.filter((c) => c.layer === 'graph').length === 0 && gc.cards.find((c) => c.card.src).h === 116);
+t('cards: the graph layer is nodes and a galaxy box, not cards; an image card gets room in Full', gc.graphs.length === 1 && gc.graphs[0].data.nodes.length === 5 && gc.gnodes.length === 5 && gc.cards.filter((c) => c.layer === 'graph').length === 0 && gc.cards.find((c) => c.card.src).h === 136);
+t('cards: the relations inside the graph run between the nodes (a memory dashed, the loop\'s thread), a pinned item back into the canvas lane', runsOf(gc, 'rel mem') === 1 && runsOf(gc, 'rel step') === 1 && runsOf(gc, 'pin') === 1 && gc.edges.filter((e) => e.cls === 'pin').length === 5);
 const gh = X.layout(gt, 'cards', 1200, 700, { den: 'hover' });
-t('cards: in Hover and Zen the image card keeps its height (the image shows over it)', gh.cards.find((c) => c.card.src).h === 54);
+t('cards: in Hover and Zen the image card keeps its height (the image shows over it)', gh.cards.find((c) => c.card.src).h === 74);
 const gi = X.layout(gt, 'iso', 1200, 800, {});
-t('iso: the graph band draws the members as nodes on the plate with their relations', gi.gnodes.length === 5 && gi.edges.some((e) => e.cls === 'rel') && gi.cards.filter((c) => c.layer === 'graph').length === 0);
+t('iso: the graph band draws the members as nodes on the plate with their relations, by kind', gi.gnodes.length === 5 && gi.edges.some((e) => e.cls === 'rel mem') && gi.edges.some((e) => e.cls === 'rel step') && gi.cards.filter((c) => c.layer === 'graph').length === 0);
 const gf = X.layout(gt, 'front', 1200, 800, {});
 t('front: the graph panel carries the graph data', gf.panels[0].layer === 'graph' && gf.panels[0].graph && gf.panels[0].graph.nodes.length === 5);
-// iso
+// ── iso
 const i = X.layout(scene, 'iso', 1200, 800);
 t('iso: a plate per station as a four-cornered polygon, the selected lit', i.plates.length === 2 && i.plates.every((p) => p.poly.length === 4) && i.plates[1].cls === 'on');
 t('iso: plates are identical parallelograms in a row (same shape, shifted)', (() => { const d = (p) => [p.poly[1].x - p.poly[0].x, p.poly[2].y - p.poly[0].y]; const a = d(i.plates[0]), b = d(i.plates[1]); return Math.abs(a[0] - b[0]) < 0.5 && Math.abs(a[1] - b[1]) < 0.5 && i.plates[1].poly[0].x > i.plates[0].poly[0].x; })());
+t('iso: every plate carries its four edges as lines, every band its four hairlines (the planes without their fills)', i.outline.length === 8 && i.outline.every((e) => e.len > 0 && typeof e.deg === 'number') && i.boutline.length === 40 && i.boutline.every((e) => e.col));
 t('iso: cards anchored at projected points inside the frame, counter-scaled in the DOM', i.cards.length === c.cards.length && i.cards.every((k) => k.anchored && k.x > 0 && k.x < 1200 && k.y > 0 && k.y < 800));
 t('iso: the same runs as the cards view', i.edges.filter((e) => e.cls === 'in').length === 3 && i.edges.filter((e) => e.cls === 'out').length === 3 && i.edges.filter((e) => e.cls === 'link').length === 1);
 t('iso: the shared projection is used when given', (() => { let n = 0; const P = (u, v, z) => { n++; return [u - v, (u + v) * 0.5 - (z || 0)]; }; X.layout(scene, 'iso', 1200, 800, { proj: P }); return n > 8; })());
 t('iso: fitted into the frame', i.fit.s > 0.3 && i.fit.s <= 1.4);
-t('an empty session lays out nothing and does not crash', X.layout({ turns: [] }, 'iso', 800, 600).cards.length === 0 && X.layout(null, 'front', 800, 600).panels.length === 0);
+t('an empty session lays out nothing and does not crash', X.layout({ turns: [] }, 'iso', 800, 600).cards.length === 0 && X.layout(null, 'front', 800, 600).panels.length === 0 && X.frontRuns(X.layout(null, 'front', 800, 600), null).n === 0);
 t('graphData: the graph sees every record the turn read, the column only the first twelve', X.graphData({ read: [{ id: 'a', n: 'a', score: 1 }], readAll: [{ id: 'a', n: 'a', score: 1 }, { id: 'b', n: 'b', score: 0.5 }], rel: [{ from: 'a', to: 'b', kind: 'cite' }] }).rels.length === 1 && X.graphData({ read: [{ id: 'a', n: 'a', score: 1 }], rel: [{ from: 'a', to: 'b' }] }).rels.length === 0);
-t('a placed item wears its template tag (the host hands tpl on the card)', /class="tpl"/.test(fs.readFileSync(path.join(__dirname, '..', 'vera', 'chat', 'exploded_element.js'), 'utf8')) && /vera:xpl:place/.test(fs.readFileSync(path.join(__dirname, '..', 'vera', 'chat', 'exploded_element.js'), 'utf8')));
+const SRC = fs.readFileSync(path.join(__dirname, '..', 'vera', 'chat', 'exploded_element.js'), 'utf8');
+t('a placed item wears its template tag (the host hands tpl on the card)', /class="tpl"/.test(SRC) && /vera:xpl:place/.test(SRC));
+t('the element: the carousel is driven in place (the panels glide), the cards are measured, a section focuses, the planes keep their edges with Blocks off', /_renderFront\(o\) \{/.test(SRC) && /this\._frontKey !== key/.test(SRC) && /querySelectorAll\('\.xit\.ct\[data-id\]'\)/.test(SRC) && /focus\(li\) \{/.test(SRC) && /:root\[data-blocks="off"\] vera-exploded \.xp-pe\{/.test(SRC) && /vera-exploded \.xp-pe\{position:absolute/.test(SRC) && /class="xp-pe/.test(SRC));
+t('the element: the cards scene is the same .xit, top-anchored with a ceiling; the runs sit behind the cards', /vera-exploded \.xit\.ct\{transform:none;[^}]*max-height:236px;overflow:auto/.test(SRC) && /vera-exploded \.xp-e\{position:absolute;height:2px;[^}]*z-index:6/.test(SRC) && /vera-exploded \.xit\{position:absolute;[^}]*z-index:10/.test(SRC));
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
