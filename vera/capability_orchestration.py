@@ -9831,6 +9831,8 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "estate/estate_nav_capabilities.py"),
         os.path.join(_here, "estate/estate_machines_capabilities.py"),
         os.path.join(_here, "estate/backup_capabilities.py"),
+        os.path.join(_here, "security/secrets_capabilities.py"),
+        os.path.join(_here, "execution/ssh_cleanup_capabilities.py"),
         os.path.join(_here, "workers/nodes_capabilities.py"),
         os.path.join(_here, "remote/remote_capabilities.py"),
         os.path.join(_here, "remote/workspace_capabilities.py"),
