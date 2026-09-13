@@ -5815,6 +5815,7 @@ IMPORTANT:
     else if(kind==='code'){ if(typeof c==='string') c={code:c}; }
     args.content=c;
     if(!args.key){ const t=(c&&typeof c==='object')?(c.title||c.caption||c.name||(c.text||c.md||c.code||'').slice(0,40)):''; args.key=kind+':'+slug(t||Date.now()); }
+    else if(!/^[a-z]+:/.test(String(args.key))) args.key=kind+':'+slug(args.key);   // "disk-gauge" → "widget:disk-gauge": one key vocabulary on the canvas
     return args;
   }
   // a markdown table → {columns, rows}
@@ -7991,7 +7992,8 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
 
   function hasCapPlaceholders(text){
     const t=_stripMdLinksFromCap(text);
-    return /\[\[(?:cap:|dag:|panel:|loop\b|suggest:(?:cap\s+|[a-z][a-z0-9_]*\.[a-z0-9_.]+|dag\s+)|[a-z][a-z0-9_]*\.[a-z0-9_.]+\()/.test(t);
+    // …or the control plane's inline shorthand ⟦name {args}⟧ (a reply of directives alone must run, not read as prose)
+    return /\[\[(?:cap:|dag:|panel:|loop\b|suggest:(?:cap\s+|[a-z][a-z0-9_]*\.[a-z0-9_.]+|dag\s+)|[a-z][a-z0-9_]*\.[a-z0-9_.]+\()/.test(t) || /\u27e6\s*[a-z][a-z0-9_.]+/.test(t);
   }
 
   // Remove [[panel:...]] placeholders from text destined for the model's
@@ -9917,7 +9919,8 @@ Your task: decide what to do next to advance toward the goal.
     // Strip code-block wrappers the LLM sometimes puts around placeholders.
     const stripped=fullText
       .replace(/```[a-z]*\n?([\s\S]*?)```/g,'$1')  // strip fenced code blocks
-      .replace(/`(\[\[(?:cap|suggest):[^\]]+\]\])`/g,'$1'); // strip inline backtick around placeholders
+      .replace(/`(\[\[(?:cap|suggest):[^\]]+\]\])`/g,'$1') // strip inline backtick around placeholders
+      .replace(/`(\u27e6[^\u27e7]*\u27e7)`/g,'$1');   // …and around a directive the model quoted
     const hasPlaceholders=hasCapPlaceholders(stripped);
     // An [[loop]] auto-defer is handled even when integrated-cap mode is off,
     // since the Auto-loop directive is injected independently of it.

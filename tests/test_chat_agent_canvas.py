@@ -34,6 +34,15 @@ def test_hint_lists_every_registry_form():
     assert "const form=known?draw:'table';" in src and "draw:{form:form, size:" in src
 
 
+def test_a_reply_of_directives_alone_runs():
+    # mirror a42d.png: the model wrote two ⟦canvas.add …⟧ and they sat in the reply as raw text — the gate only knew [[…]]
+    src = _read("vera", "chat", "chat_panel.html")
+    gate = src[src.index("function hasCapPlaceholders(text){"):src.index("function _stripPanelMarkup(text){")]
+    assert "|| /\\u27e6\\s*[a-z][a-z0-9_.]+/.test(t);" in gate
+    assert ".replace(/`(\\u27e6[^\\u27e7]*\\u27e7)`/g,'$1');" in src
+    assert "else if(!/^[a-z]+:/.test(String(args.key))) args.key=kind+':'+slug(args.key);" in src
+
+
 def test_directive_shapes_its_content():
     src = _read("vera", "chat", "chat_panel.html")
     assert "if(name==='canvas.add') _cvDirectiveShape(args);" in src
