@@ -14,7 +14,7 @@ scores by keywords, as it always did on a miss - and let the embed run on, so a
 late vector still lands in the cache for the next caller.
 """
 import asyncio
-from typing import Awaitable, Callable, List, Optional, Set
+from typing import Awaitable, Callable, List, Optional, Set, Tuple
 
 # asyncio holds only weak references to tasks; an abandoned embed with no strong
 # reference can be collected before it finishes.
@@ -27,16 +27,28 @@ def _finished(task: "asyncio.Future") -> None:
         task.exception()          # retrieved, so asyncio does not warn about it
 
 
-async def bounded_embed(embed: Callable[[], Awaitable[Optional[List[float]]]],
-                        wait_s: float) -> Optional[List[float]]:
-    """The vector if it arrives within `wait_s` seconds, else None. Never cancels
-    the embed on timeout; a cancellation of the CALLER still propagates."""
+async def bounded_embed_result(embed: Callable[[], Awaitable[Optional[List[float]]]],
+                               wait_s: float) -> Tuple[Optional[List[float]], bool]:
+    """(vector-or-None, timed_out). The vector if it arrives within `wait_s`
+    seconds; None with timed_out=True when the wait ran out (the embed keeps
+    running, unshielded only from the CALLER's own cancellation); None with
+    timed_out=False when the embed itself failed or produced nothing. Callers
+    that keep a circuit breaker need the distinction: a timeout means the node
+    is merely backed up, a failure means it is unreachable."""
     task = asyncio.ensure_future(embed())
     _RUNNING.add(task)
     task.add_done_callback(_finished)
     try:
-        return await asyncio.wait_for(asyncio.shield(task), timeout=wait_s)
+        return await asyncio.wait_for(asyncio.shield(task), timeout=wait_s), False
     except asyncio.TimeoutError:
-        return None
+        return None, True
     except Exception:
-        return None
+        return None, False
+
+
+async def bounded_embed(embed: Callable[[], Awaitable[Optional[List[float]]]],
+                        wait_s: float) -> Optional[List[float]]:
+    """The vector if it arrives within `wait_s` seconds, else None. Never cancels
+    the embed on timeout; a cancellation of the CALLER still propagates."""
+    vec, _ = await bounded_embed_result(embed, wait_s)
+    return vec

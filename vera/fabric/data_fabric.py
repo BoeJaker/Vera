@@ -917,8 +917,9 @@ _embed_failed     = False   # tripped flag — external callers reset it (worldv
 _embed_failed_at  = 0.0     # monotonic ts when tripped; cooldown re-opens the gate
 _EMBED_RETRY_SECS = 300.0
 # Same wait budget + slow-cooldown as memory.embed_text (see there): an
-# ingest or fabric.query embed that does not come back promptly is abandoned
-# and the record/query carries on without a vector.
+# ingest or fabric.query embed that does not come back promptly is left to
+# finish on its own (its vector lands in ollama_embed's cache) while the
+# record/query carries on without one.
 _EMBED_WAIT_S          = float(os.getenv("VERA_EMBED_WAIT_S", "5") or 5)
 _EMBED_SLOW_COOLDOWN_S = float(os.getenv("VERA_EMBED_SLOW_COOLDOWN_S", "30") or 30)
 _embed_slow_until      = 0.0
@@ -945,11 +946,11 @@ async def _embed(text: str) -> Optional[List[float]]:
         # single chokepoint shared with memory.embed_text and every other
         # caller), so identical/concurrent embeds collapse to one request.
         from Vera.vera.capability_orchestration import ollama_embed
-        try:
-            vec = await asyncio.wait_for(
-                ollama_embed(text, model=OLLAMA_EMBED_MODEL, normalize=HAS_NUMPY),
-                timeout=_EMBED_WAIT_S)
-        except asyncio.TimeoutError:
+        from Vera.vera.dag.query_embed_core import bounded_embed_result
+        vec, timed_out = await bounded_embed_result(
+            lambda: ollama_embed(text, model=OLLAMA_EMBED_MODEL, normalize=HAS_NUMPY),
+            _EMBED_WAIT_S)
+        if timed_out:
             first = not _embed_slow_until or time.monotonic() >= _embed_slow_until
             _embed_slow_until = time.monotonic() + _EMBED_SLOW_COOLDOWN_S
             if first:
