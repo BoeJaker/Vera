@@ -84,6 +84,7 @@ def test_read_range_rides_in_the_record():
 
 def test_a_size_is_a_composition_and_a_span_picks_it():
     assert R.size_for_span(2) == "s" and R.size_for_span(3) == "s"
+    assert R.size_for_span(2, 2) == "m" and R.size_for_span(3, 2) == "m", "a 2-3 wide tile two rows tall is a cell (the board's stat tile), not a chip"
     assert R.size_for_span(4) == "m"
     assert R.size_for_span(6) == "l" and R.size_for_span(6, 3) == "xl"
     assert R.size_for_span(8) == "xl" and R.size_for_span(12) == "xl"

@@ -240,12 +240,15 @@ def form(id_or_name: str) -> Optional[Dict[str, Any]]:
 
 
 def size_for_span(w: int, h: int = 1) -> str:
-    """VeraDash's 12-column grid: 2-3 wide S, 4 M, 6 L, 8-12 XL; extra rows add detail then the table."""
+    """VeraDash's 12-column grid: 2-3 wide S, 4 M, 6 L, 8-12 XL; extra rows add detail then the table.
+
+    A 2-3 wide tile one row tall is a row (S); two rows or more is a cell (M) - the figure and its sub line, as the
+    Dashboard board's stat tiles draw (the Sizes board: "S is a chip or a row ... M is a cell")."""
     w = int(w or 0)
     if w <= 1:
         return "xs"
     if w <= 3:
-        return "s"
+        return "s" if int(h or 1) < 2 else "m"
     if w <= 4:
         return "m"
     if w <= 6:

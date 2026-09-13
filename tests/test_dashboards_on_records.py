@@ -44,7 +44,7 @@ GRIDS = {"main": ("vera/capability_orchestration.html", "dashGrid"), "dream": ("
          "wol-workers": ("vera/workers/workers_ollama_panel.html", "w-grid"), "wol-ollama": ("vera/workers/workers_ollama_panel.html", "ol-grid"),
          "wol-jobs": ("vera/workers/workers_ollama_panel.html", "j-grid"), "wol-observe": ("vera/workers/workers_ollama_panel.html", "obs-grid"),
          "wol-wkjobs": ("vera/workers/workers_ollama_panel.html", "wkj-grid")}
-COUNTS = {"main": 24, "dream": 9, "wol-workers": 9, "wol-ollama": 9, "wol-jobs": 10, "wol-observe": 2, "wol-wkjobs": 8}
+COUNTS = {"main": 24, "dream": 9, "wol-workers": 9, "wol-ollama": 8, "wol-jobs": 10, "wol-observe": 2, "wol-wkjobs": 8}   # wol-ollama: the Background Queue tile folded into the Jobs head (bleeding-edge 53043a9); its record is the element's
 
 
 def _layout(key):
@@ -392,7 +392,7 @@ def test_the_catalogue_lists_and_serves_the_layout_files():
     assert orch.CAPABILITY_REGISTRY["widget.layout.migrate"]["meta"]["http_path"] == "/ui/widgets/layouts/migrate"
     assert cat.layout_keys() == sorted(COUNTS)
     r = _run(cat.widget_layouts())
-    assert r["ok"] and r["count"] == 7 and {x["key"]: x["widgets"] for x in r["layouts"]} == dict(COUNTS, main=26)   # main: the page's 24 + two record-only tiles
+    assert r["ok"] and r["count"] == 7 and {x["key"]: x["widgets"] for x in r["layouts"]} == dict(COUNTS, main=26, **{"wol-ollama": 9})   # main: the page's 24 + two record-only tiles; wol-ollama: 8 + the Background Queue, record-only
     assert [x for x in r["layouts"] if x["key"] == "main"][0]["records"] == 56
     one = _run(cat.widget_layouts(key="wol-observe"))
     assert one["ok"] and one["layout"]["widgets"][0]["record"]["id"] == "obs-stream"
