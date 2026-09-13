@@ -193,6 +193,7 @@ FORMS: List[Dict[str, Any]] = [
     # ── the three the spec adds, the composites, and the chrome the registry already names ──
     _F("panel", "panel", glyph="panel", sizes=("l", "xl"), name="Registered panel", boards=("spec",)),
     _F("form", "values", ("flat", "iso"), glyph="form", options=("fields",), name="Form", boards=("spec", "iso")),
+    _F("kv", "values", glyph="kv", options=("keys", "limit"), name="Key · value", boards=("spec", "reply")),   # a record's plain values, one per line (the element's kv)
     _F("composite", "composite", ("flat", "iso"), glyph="composite", options=("layout",), name="Composite", boards=("motion",)),
     _F("iso", "items", ("iso",), glyph="iso", name="Iso", boards=("reply",)),
     _F("program", "stages", glyph="program", name="Program", boards=("reply",)),

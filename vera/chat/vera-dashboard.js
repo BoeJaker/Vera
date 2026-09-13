@@ -193,6 +193,9 @@
       'text-overflow:ellipsis;max-width:38%;flex-shrink:1;margin-left:6px;letter-spacing:0;text-transform:none;font-weight:400}',
       '.dash-grid.editing .vd-rec{opacity:1;color:var(--acc)}',
       '.vd-rec.sample{font-style:italic}',
+      // a record placed before widget.validate answered (the staged Add): the chip says so, then says what it found
+      '.vd-rec.checking{font-style:italic;opacity:.8}',
+      '.vd-rec.bad{color:var(--err,#c96b6b);opacity:.9}',
       // Edit mode as the Dashboard board draws it: the grid's own columns and rows under the tiles, a ring on every
       // tile, the accent corner handle always showing, the moving tile lifted with its label, a dashed frame while a
       // tile can be dropped on the grid itself — the cues that say "this is arrangeable now". The vars come from
@@ -236,7 +239,12 @@
       '.w-body > .w-page[hidden]{display:none!important}',
       // the drawing keeps its own height inside the tile's scrolling body: a composite taller than the tile scrolls, it is
       // never shrunk to the box and clipped top and bottom (the element centres its body in whatever height it is given)
-      '.w-body > vera-widget.vd-draw{display:block;flex:1 0 auto;min-height:0;padding:8px}',
+      // The grid's rows are the Dashboard board's fixed units (58 px, the span IS the height): the host page's
+      // minmax(58px, auto) let a row grow with its content, so a refresh tick that rewrote a page body, or a composite
+      // that re-drew with more rows, changed a row's height and reflowed the whole grid under the pointer — the
+      // "can't move" feel of a move with Auto 5 s on. A drawing taller than its tile scrolls inside the body instead.
+      '.dash-grid[data-vd]{grid-auto-rows:var(--vd-row,58px)}',
+      '.w-body > vera-widget.vd-draw{display:block;flex:1 1 auto;min-height:0;padding:8px}',
       // the record sheet (⚙ without the widget surface loaded): the record itself, editable
       '.vd-sheet textarea{width:100%;min-height:220px;background:var(--bg0);border:1px solid var(--border2);color:var(--text);',
       'font-family:var(--mono);font-size:10px;padding:8px;border-radius:3px;resize:vertical;box-sizing:border-box}',
@@ -763,6 +771,9 @@
        same insertBefore, save and applyLayout as a drop — and the landed flash says where; Escape puts it back.
        The press itself is cancelled so the browser never opens a native drag session for the mouse. */
     var move = null;
+    // a live gesture (a move, a resize) holds every layout pass until it ends: the grid never reflows under the pointer
+    var gesture = 0, layoutAfter = false;
+    function endGesture() { gesture = 0; if (layoutAfter) { layoutAfter = false; applyLayout(); } }
     function onMoveDown(e) {
       if (!state.editing || e.button !== 0) return;
       if (e.target.closest('.w-resize, button, input, select, textarea, a[href], [contenteditable], iframe, .vd-ghost')) return;
@@ -790,7 +801,7 @@
       m.startRect = m.w.getBoundingClientRect();
       m.ghost = document.createElement('div'); m.ghost.className = 'vd-ghost'; m.ghost.innerHTML = '<span></span>';
       document.body.appendChild(m.ghost);
-      _dragGuardOn('grabbing');
+      _dragGuardOn('grabbing'); gesture = 1;
       m.scrollRaf = requestAnimationFrame(moveScrollTick);
     }
     // the lifted tile at the pointer, the ghost on the slot; the scroll so far keeps the tile under a resting pointer
@@ -840,7 +851,7 @@
       window.removeEventListener('blur', onMoveBlur);
       if (!m.live) return;   // a click: the tile never lifted
       if (m.raf) cancelAnimationFrame(m.raf); if (m.scrollRaf) cancelAnimationFrame(m.scrollRaf);
-      _dragGuardOff();
+      _dragGuardOff(); endGesture();
       if (m.ghost) m.ghost.remove();
       m.w.style.transform = ''; m.w.classList.remove('dragging');
       if (dragSrc === m.w) dragSrc = null;
@@ -982,7 +993,7 @@
         document.removeEventListener('mousemove', mv);
         document.removeEventListener('mouseup', up);
         if (rafId) cancelAnimationFrame(rafId);
-        _dragGuardOff();
+        _dragGuardOff(); endGesture();
         ghost.remove();
         allowed.forEach(function (n) { w.classList.remove('w-w' + n); });
         [1, 2, 3, 4, 5, 6].forEach(function (n) { w.classList.remove('w-h' + n); });
@@ -1006,7 +1017,7 @@
         applyLayout();     // and the positions follow
       }
       applySize(sx, sy);   // seed the label before any movement
-      _dragGuardOn('nwse-resize');
+      _dragGuardOn('nwse-resize'); gesture = 1;
       rafId = requestAnimationFrame(autoScrollTick);
       document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
     }
@@ -1029,6 +1040,7 @@
 
     /* apply persisted order (new widgets → end) + hidden + sizes */
     function applyLayout() {
+      if (gesture) { layoutAfter = true; return; }
       var ws = widgets(), map = {};
       ws.forEach(function (w) { map[w.dataset.wid] = w; });
       var seen = {}, ordered = [];
@@ -1266,8 +1278,11 @@
         var act = head.querySelector('.w-actions');
         if (act) head.insertBefore(chip, act); else head.appendChild(chip);
       }
-      chip.textContent = text + (w.dataset.sample ? ' · sample' : ''); chip.classList.toggle('sample', !!w.dataset.sample);
-      chip.title = 'record ' + (r.id || w.dataset.wid) + ' · ' + text + (w.dataset.sample ? ' · drawn from the form\'s sample: the source cannot be read' : '');
+      var probs = w.dataset.problems ? w.dataset.problems.split('\n').filter(Boolean) : [];
+      chip.textContent = text + (w.dataset.sample ? ' · sample' : '') + (w.dataset.checking ? ' · checking…' : '') + (probs.length ? ' · ' + probs.length + ' problem' + (probs.length === 1 ? '' : 's') : '');
+      chip.classList.toggle('sample', !!w.dataset.sample); chip.classList.toggle('checking', !!w.dataset.checking); chip.classList.toggle('bad', !!probs.length);
+      chip.title = 'record ' + (r.id || w.dataset.wid) + ' · ' + text + (w.dataset.sample ? ' · drawn from the form\'s sample: the source cannot be read' : '')
+        + (w.dataset.checking ? ' · widget.validate is checking this record' : '') + (probs.length ? '\nwidget.validate: ' + probs.join(' · ') : '');
       ensureCfg(w);
       if (r.form) w.dataset.form = r.form;
       if (src) w.dataset.source = src; else if (r.panel) w.dataset.source = 'panel:' + r.panel;
@@ -1326,15 +1341,33 @@
        the tile itself previews the edit (onChange); Save writes the record back (applyRecord), Cancel leaves the
        tile as it was. Without the surface on this page the record sheet opens instead: the record as the layout
        keeps it, editable, saved through the same path. */
+    // The record is placed the moment the sheet closes; widget.validate (7–15 s on a busy backend) finishes behind it:
+    // the tile says "checking…" meanwhile, then takes the normalised record, or names the problems on its chip and
+    // stays editable through ⚙. The sheet drives this through onValidating / onValidated.
+    function checking(w, on) { if (!w) return; if (on) w.dataset.checking = '1'; else delete w.dataset.checking; recordChip(w); }
+    function validated(w, r, probs) {
+      if (!w) return; delete w.dataset.checking;
+      if (probs && probs.length) w.dataset.problems = probs.join('\n'); else delete w.dataset.problems;
+      if (r && typeof r === 'object') applyRecord(w.dataset.wid, r); else recordChip(w);
+    }
+    // the staged validation of a tile that may not exist yet (the Add): what the sheet reports waits for the tile
+    function stager() {
+      var s = { w: null, on: false, res: null };
+      s.onValidating = function () { s.on = true; if (s.w) checking(s.w, true); };
+      s.onValidated = function (r, probs) { s.res = [r, probs || []]; s.on = false; if (s.w) validated(s.w, s.res[0], s.res[1]); };
+      s.tile = function (w) { s.w = w; if (!w) return w; if (s.res) validated(w, s.res[0], s.res[1]); else if (s.on) checking(w, true); return w; };
+      return s;
+    }
     function configure(wid, anchor) {
       var rec = recordOf(wid), w = byIdAnywhere(wid); if (!rec || !w) return Promise.resolve(null);
       var was = withId(rec, wid);
       var back = function () { drawTile(w, was); recordChip(w); return null; };
       if (window.VeraWidgetConfig && typeof window.VeraWidgetConfig.open === 'function') {
-        var p;
+        var p, st = stager(); st.tile(w);
         try {
           p = window.VeraWidgetConfig.open({ mode: 'edit', record: was, into: 'dashboard', title: was.title || wid, anchor: anchor || w, sizes: ladderSizes(), templates: true,
-            onChange: function (r) { if (r && typeof r === 'object') { drawTile(w, withId(r, wid)); recordChip(w); } } });
+            onChange: function (r) { if (r && typeof r === 'object') { drawTile(w, withId(r, wid)); recordChip(w); } },
+            onValidating: st.onValidating, onValidated: st.onValidated });
         } catch (e) { p = Promise.reject(e); }
         return Promise.resolve(p).then(function (r) { return (r && typeof r === 'object') ? applyRecord(wid, r) : back(); }, back);
       }
@@ -1402,10 +1435,10 @@
     function openLoader() {
       if (!withLoader) return;
       if (window.VeraWidgetConfig && typeof window.VeraWidgetConfig.open === 'function') {
-        var p;
-        try { p = window.VeraWidgetConfig.open({ mode: 'add', into: 'dashboard', title: 'Add a widget', sizes: ladderSizes(), templates: true }); }
+        var p, st = stager();
+        try { p = window.VeraWidgetConfig.open({ mode: 'add', into: 'dashboard', title: 'Add a widget', sizes: ladderSizes(), templates: true, onValidating: st.onValidating, onValidated: st.onValidated }); }
         catch (e) { p = Promise.reject(e); }
-        return Promise.resolve(p).then(function (rec) { return rec ? placeRecord(rec) : null; }, function () { return null; });
+        return Promise.resolve(p).then(function (rec) { return rec ? Promise.resolve(placeRecord(rec)).then(st.tile) : null; }, function () { return null; });
       }
       return openPanels();
     }
@@ -1710,6 +1743,7 @@
       state: function () { return { name: state.name, order: state.order.slice(), hidden: Array.from(state.hidden), sizes: state.sizes, grid: state.grid }; }
     };
     grid._veraDash = ctl;
+    grid.dataset.vd = '1'; gridVars(); window.addEventListener('resize', gridVars);
     ctl.ready = loadFile();
     injectToolbar();
     return ctl;

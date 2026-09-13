@@ -124,7 +124,7 @@
   const series = (d) => (Array.isArray(d) ? d : []).map((p) => typeof p === 'number' ? p : num(p && (p.v ?? p.value ?? p.y ?? p.close)));
   const keyed = (d) => (d && typeof d === 'object' && !Array.isArray(d)) ? Object.keys(d).filter((k) => typeof d[k] === 'number').map((k) => [k, d[k]]) : (Array.isArray(d) ? d.filter((r) => r && typeof r === 'object' && ['v', 'value', 'n', 'count'].some((k) => typeof r[k] === 'number')).map((r) => [String(r.name ?? r.k ?? r.key ?? r.label ?? ''), num(r.v ?? r.value ?? r.n ?? r.count)]).filter((kv) => kv[0]) : []);
   const rows = (d) => (Array.isArray(d) ? d : []).filter((r) => r && typeof r === 'object');
-  const level = (d) => (d && typeof d === 'object' && !Array.isArray(d)) ? { v: num(d.value), lo: num(d.min ?? 0), hi: num(d.max ?? 100), unit: typeof d.unit === 'string' ? d.unit : '', delta: d.delta } : (typeof d === 'number' ? { v: d, lo: 0, hi: 100, unit: '' } : null);
+  const level = (d) => (d && typeof d === 'object' && !Array.isArray(d)) ? { v: num(d.value), lo: num(d.min ?? 0), hi: num(d.max ?? 100), unit: typeof d.unit === 'string' ? d.unit : '', delta: d.delta, bounded: d.max != null || d.min != null } : (typeof d === 'number' ? { v: d, lo: 0, hi: 100, unit: '', bounded: false } : null);
   // nothing to draw: no result, an empty list or object, an empty string
   const isEmpty = (d) => d == null || d === '' || (Array.isArray(d) && !d.length) || (typeof d === 'object' && !Array.isArray(d) && !Object.keys(d).length);
 
@@ -167,6 +167,8 @@
     let d = (m && typeof m === 'object' && Object.keys(m).length) ? applyMap(data, m, sh) : data;
     const rg = rec.read && rec.read.range;
     if (Array.isArray(rg) && rg.length === 2 && (sh === 'level' || sh === 'rate') && d && typeof d === 'object' && !Array.isArray(d)) d = Object.assign({}, d, { min: num(rg[0]), max: num(rg[1]) });
+    const du = rec.draw && rec.draw.unit;   // the record's unit dresses a level the source gave bare
+    if (du && (sh === 'level' || sh === 'rate')) { if (typeof d === 'number') d = { value: d, unit: String(du) }; else if (d && typeof d === 'object' && !Array.isArray(d) && !d.unit) d = Object.assign({}, d, { unit: String(du) }); }
     return d;
   }
 
@@ -308,7 +310,7 @@
   function figure(form, data) {
     form = canon(form); const d = dataFor(data, form);
     if (d == null) return '';
-    if (form === 'radial' || form === 'counter' || form === 'bar') { const l = level(d); return l ? fmt(l.v) + esc(l.unit || ((form === 'radial' && l.lo === 0 && l.hi === 100) ? '%' : '')) : ''; }
+    if (DRAWN[form] === 'level') { const l = level(d); if (!l) return ''; const u = l.unit || ((l.bounded && form !== 'counter' && form !== 'hero' && l.lo === 0 && l.hi === 100) ? '%' : ''); return fmt(l.v) + (u && u !== '%' ? ' ' : '') + esc(u); }
     if (form === 'trace' || form === 'scatter') { const s = series(d); return s.length ? fmt(s[s.length - 1]) : ''; }
     if (form === 'thermo' || form === 'heat' || form === 'bars' || form === 'donut' || form === 'pills' || form === 'kv' || form === 'stack' || form === 'matrix') { const kv = keyed(d); return kv.length ? kv.length + ' · ' + esc(kv[0][0]) + ' ' + fmt(kv[0][1]) : ''; }
     if (form === 'stepper') { const st = (d.stages || d.steps || d); const arr = Array.isArray(st) ? st : []; const done = arr.filter((s) => s && (s.done || s.state === 'done' || s.status === 'done')).length; return arr.length ? done + ' / ' + arr.length : ''; }
@@ -332,7 +334,7 @@
   R.radial = (d, H) => {
     const l = level(d); if (!l) return EMPTY('a ring needs { value, min, max }');
     const f = Math.max(0, Math.min(1, (l.v - l.lo) / ((l.hi - l.lo) || 1)));
-    const r = Math.max(16, (H - 8) / 2), c = 2 * Math.PI * r, s = H / 2 + 2, unit = l.unit || ((l.hi === 100 && l.lo === 0) ? '%' : '');
+    const r = Math.max(16, (H - 8) / 2), c = 2 * Math.PI * r, s = H / 2 + 2, unit = l.unit || ((l.bounded && l.hi === 100 && l.lo === 0) ? '%' : '');
     return '<svg class="vw-svg" viewBox="0 0 ' + (s * 2) + ' ' + (s * 2) + '" style="height:' + H + 'px;width:auto"><circle cx="' + s + '" cy="' + s + '" r="' + r + '" fill="none" stroke="var(--bg2,#1a1c20)" stroke-width="6"/><circle cx="' + s + '" cy="' + s + '" r="' + r + '" fill="none" stroke="var(--acc,#5a9e8f)" stroke-width="6" stroke-dasharray="' + (f * c).toFixed(1) + ' ' + (c - f * c).toFixed(1) + '" transform="rotate(-90 ' + s + ' ' + s + ')" stroke-linecap="round"/><text x="' + s + '" y="' + s + '" text-anchor="middle" dominant-baseline="central" font-size="' + Math.max(10, r * 0.55) + '" fill="var(--text,#d8dce4)" font-family="var(--mono,ui-monospace,monospace)">' + esc(fmt(l.v)) + esc(unit) + '</text></svg>';
   };
   R.counter = (d, H) => {
@@ -343,7 +345,7 @@
   R.bar = (d, H) => {
     const l = level(d); if (!l) return EMPTY('a meter needs { value, min, max }');
     const f = Math.max(0, Math.min(1, (l.v - l.lo) / ((l.hi - l.lo) || 1)));
-    return '<div class="vw-meter"><span class="vw-track"><i style="width:' + (f * 100).toFixed(1) + '%"></i></span><b>' + esc(fmt(l.v)) + esc(l.unit || ((l.hi === 100 && l.lo === 0) ? '%' : '')) + '</b>' + (l.delta != null ? '<small class="vw-delta ' + (num(l.delta) >= 0 ? 'up' : 'down') + '">' + (num(l.delta) >= 0 ? '▲' : '▼') + esc(fmt(Math.abs(num(l.delta)))) + '</small>' : '') + '</div>';
+    return '<div class="vw-meter"><span class="vw-track"><i style="width:' + (f * 100).toFixed(1) + '%"></i></span><b>' + esc(fmt(l.v)) + esc(l.unit || ((l.bounded && l.hi === 100 && l.lo === 0) ? '%' : '')) + '</b>' + (l.delta != null ? '<small class="vw-delta ' + (num(l.delta) >= 0 ? 'up' : 'down') + '">' + (num(l.delta) >= 0 ? '▲' : '▼') + esc(fmt(Math.abs(num(l.delta)))) + '</small>' : '') + '</div>';
   };
   R.bars = (d, H, o) => {
     let kv = keyed(d); if (!kv.length) return EMPTY('no numbers to draw');
@@ -534,7 +536,12 @@
     const rec = (o && o.record) || {}; const kids = Array.isArray(rec.children) ? rec.children : [];
     if (!kids.length) return EMPTY('a composite needs children');
     const layout = rec.layout || 'grid', kd = (o && o.kids) || {}, chip = layout === 'rail' || layout === 'report';
-    return '<div class="vw-comp vw-comp-' + esc(layout) + '">' + kids.slice(0, 12).map((c, i) => {
+    // the frame's height (opts.height is the element's measured body) shared among the rows of slots: a 2 × 2 of four
+    // children gets two rows, each slot a fixed height, its body scrolling — the composite fills its tile and never grows it
+    const shown = kids.slice(0, 12), ncol = chip ? 1 : 2, nrows = Math.max(1, Math.ceil(shown.length / ncol));
+    const slotH = (o && o.height && !chip) ? Math.max(44, Math.floor((o.height - (nrows - 1) * 8) / nrows)) : 0, kidH = slotH ? Math.max(24, slotH - 40) : Math.max(44, Math.round(H * 0.8));
+    const slotStyle = slotH ? ' style="height:' + slotH + 'px"' : '';
+    return '<div class="vw-comp vw-comp-' + esc(layout) + '">' + shown.map((c, i) => {
       const r0 = c && typeof c.record === 'object' ? c.record : null; const slot = String((c && c.slot) || String.fromCharCode(97 + i));
       if (!r0) return '<div class="vw-slot" data-slot="' + esc(slot) + '"><small class="wempty">' + esc(String(c && c.record || '')) + '</small></div>';
       const n = normalise(r0); const k = kd[slot]; const wasRead = !!(k && typeof k === 'object' && k.__read); const data = r0.data !== undefined ? r0.data : (wasRead ? k.data : k); const kopts = { record: n, draw: n.draw, bare: true, sample: wasRead ? false : undefined };
@@ -543,7 +550,7 @@
       const stale = wasRead && k.err && kHave ? ' vw-stale' : '';
       if (chip) return '<div class="vw-slot vw-slot-row' + stale + '" data-slot="' + esc(slot) + '"><span class="k">' + esc(n.title || n.form) + '</span>' + draw(n.form, data, 's', kopts) + kerr + '</div>';
       const fig = figure(n.form, mapped(n, n.form, data === undefined && !wasRead ? sample(n.form) : data));
-      return '<div class="vw-slot' + stale + '" data-slot="' + esc(slot) + '"><span class="vw-slot-h">' + esc(n.title || n.form) + (fig ? '<b>' + fig + '</b>' : '') + kerr + '</span><div class="vw-slot-b">' + draw(n.form, data, 'm', Object.assign({ height: Math.max(44, Math.round(H * 0.8)), title: n.title }, kopts)) + '</div></div>'; }).join('') + '</div>';
+      return '<div class="vw-slot' + stale + '" data-slot="' + esc(slot) + '"' + slotStyle + '><span class="vw-slot-h">' + esc(n.title || n.form) + (fig ? '<b>' + fig + '</b>' : '') + kerr + '</span><div class="vw-slot-b">' + draw(n.form, data, 'm', Object.assign({ height: kidH, title: n.title }, kopts)) + '</div></div>'; }).join('') + '</div>';
   };
 
   /* ══ THE STILL FORMS — the Widgets board's seventy-five ways of reading data, each the board's own drawing ═════════
@@ -604,6 +611,9 @@
                                                                         rows, a bar to the max, hottest first, coloured by band */
   const TABLE_FORMS = new Set(['table', 'rows', 'cards', 'temps', 'files', 'list']);
   const TABLE_ROWS = { xs: 1, s: 1, m: 4, l: 8, xl: 12 };
+  // the rows a frame holds (opts.height is the element's measured body, or a composite slot's): the table shows that many
+  // and pages the rest — the size's count when nothing measured it yet
+  const fitRows = (o, size, rowH, chrome) => (o && o.height ? Math.max(2, Math.floor((o.height - chrome) / rowH)) : (TABLE_ROWS[size] || 4));
   // the columns the record asks for: read.map's renames (not the container, not the shape's own fields), then draw.columns,
   // then the row's plain keys — never more than `max`, never a key the row lacks
   const tableCols = (rw, o, max) => {
@@ -621,7 +631,7 @@
     let all = rows(d); if (!all.length) return EMPTY('no rows');
     const size = (o && o.size) || 'm'; const cols = tableCols(all, o, size === 'xl' ? 8 : 6); const lit = o && o.draw && o.draw.lit != null ? o.draw.lit : null;
     const q = String(ui(o, 'q', '')).trim().toLowerCase(); if (q) all = all.filter((r) => cols.some((c) => String(r[c] ?? '').toLowerCase().includes(q)));
-    const lim = (o && o.draw && o.draw.limit) || TABLE_ROWS[size] || 4; const { rw, sortBy, dir } = tableSort(all, cols, o);
+    const lim = (o && o.draw && o.draw.limit) || fitRows(o, size, 18, 48 + (size === 'xl' ? 30 : 0)); const { rw, sortBy, dir } = tableSort(all, cols, o);
     const page = Math.max(0, +ui(o, 'page', 0) || 0), pages = Math.max(1, Math.ceil(rw.length / lim)), pg = Math.min(page, pages - 1), shown = rw.slice(pg * lim, pg * lim + lim);
     const head = '<div class="vb-dgr h" style="grid-template-columns:' + gridCols(cols) + '">' + cols.map((c) => '<button class="' + (sortBy === c ? 'on' : '') + '"' + set('sort', c) + (sortBy === c ? ' data-vb-set2="dir:' + (-dir) + '"' : ' data-vb-set2="dir:-1"') + '>' + esc(c.replace(/_/g, ' ')) + '<span>' + (sortBy === c ? (dir < 0 ? '↓' : '↑') : '') + '</span></button>').join('') + '</div>';
     const body = shown.map((r) => '<div class="vb-dgr" style="grid-template-columns:' + gridCols(cols) + '">' + cols.map((c) => tableCell(r, c, lit)).join('') + '</div>').join('');
@@ -631,11 +641,11 @@
   };
   R.rows = (d, H, o) => {
     const all = rows(d); const str = (Array.isArray(d) ? d : []).filter((x) => typeof x === 'string'); const rw0 = all.length ? all : str.map((s) => ({ name: s })); if (!rw0.length) return EMPTY('no rows');
-    const size = (o && o.size) || 'm'; const cols = tableCols(rw0, o, 4); const lim = (o && o.draw && o.draw.limit) || TABLE_ROWS[size] || 4; const { rw } = tableSort(rw0, cols, o); const lit = o && o.draw && o.draw.lit != null ? o.draw.lit : null;
+    const size = (o && o.size) || 'm'; const cols = tableCols(rw0, o, 4); const lim = (o && o.draw && o.draw.limit) || fitRows(o, size, 17, 18); const { rw } = tableSort(rw0, cols, o); const lit = o && o.draw && o.draw.lit != null ? o.draw.lit : null;
     return wrap('rows', rw.slice(0, lim).map((r) => '<div class="vb-dgr" style="grid-template-columns:' + gridCols(cols) + '">' + cols.map((c) => tableCell(r, c, lit)).join('') + '</div>').join('') + (rw.length > lim ? '<span class="vb-lbl">+ ' + (rw.length - lim) + ' more</span>' : ''), 'vb-tf');
   };
   R.cards = (d, H, o) => {
-    const rw = rows(d); if (!rw.length) return EMPTY('cards need rows'); const size = (o && o.size) || 'm'; const ncol = { s: 1, m: 2, l: 3, xl: 4 }[size] || 2; const lim = (o && o.draw && o.draw.limit) || ncol * (size === 'xl' ? 3 : 2); const cols = tableCols(rw, o, 5); const nameC = cols.find((c) => /^(name|title|label|id|host|hostname|node)$/i.test(c)) || cols[0]; const rest = cols.filter((c) => c !== nameC && !/^(status|state|health)$/i.test(c)).slice(0, 2); const stC = cols.find((c) => /^(status|state|health)$/i.test(c));
+    const rw = rows(d); if (!rw.length) return EMPTY('cards need rows'); const size = (o && o.size) || 'm'; const ncol = { s: 1, m: 2, l: 3, xl: 4 }[size] || 2; const lim = (o && o.draw && o.draw.limit) || ncol * (o && o.height ? Math.max(1, Math.floor(o.height / 66)) : (size === 'xl' ? 3 : 2)); const cols = tableCols(rw, o, 5); const nameC = cols.find((c) => /^(name|title|label|id|host|hostname|node)$/i.test(c)) || cols[0]; const rest = cols.filter((c) => c !== nameC && !/^(status|state|health)$/i.test(c)).slice(0, 2); const stC = cols.find((c) => /^(status|state|health)$/i.test(c));
     return wrap('cards', '<div class="vb-cards" style="grid-template-columns:repeat(' + ncol + ',minmax(0,1fr))">' + rw.slice(0, lim).map((r) => '<div class="vb-card">' + (stC ? '<i style="background:' + stCol(r[stC]) + '" title="' + esc(String(r[stC] ?? '')) + '"></i>' : '') + '<b>' + esc(String(r[nameC] ?? '')) + '</b>' + rest.map((c) => '<span><small>' + esc(c.replace(/_/g, ' ')) + '</small>' + esc(typeof r[c] === 'number' ? fmt(r[c]) : String(r[c] ?? '')) + '</span>').join('') + '</div>').join('') + '</div>' + (rw.length > lim ? cap('+ ' + (rw.length - lim) + ' more') : ''));
   };
   R.temps = (d, H, o) => {
@@ -689,7 +699,7 @@
   const trendOf = (d, o) => { const t = (d && typeof d === 'object' && !Array.isArray(d)) ? (d.trend ?? d.history ?? d.series ?? d.samples) : null; return Array.isArray(t) ? series(t) : ((o && o.draw && Array.isArray(o.draw.trend)) ? series(o.draw.trend) : []); };
   R.hero = (d, H, o) => {
     const l = level(d); if (!l) return EMPTY('a hero needs a value');
-    const tr = trendOf(d, o); const unit = l.unit || ((l.hi === 100 && l.lo === 0) ? '%' : '');
+    const tr = trendOf(d, o); const unit = l.unit || ((l.bounded && l.hi === 100 && l.lo === 0) ? '%' : '');
     const dl = l.delta != null ? '<span class="vb-lbl ' + (num(l.delta) >= 0 ? 'up' : 'dn') + '">' + (num(l.delta) >= 0 ? '▲' : '▼') + ' ' + esc(fmt(Math.abs(num(l.delta)))) + '</span>' : '';
     const chart = tr.length > 1 ? '<div class="vb-chart" style="height:' + chH(H, 62) + 'px"><svg viewBox="0 0 150 80" preserveAspectRatio="none"><path d="M0,80 L' + poly(tr, 150, 80, 5).join(' L') + ' L150,80 Z" fill="' + B.ac + '" fill-opacity=".16"/><polyline points="' + poly(tr, 150, 80, 5).join(' ') + '" fill="none" stroke="' + B.ac + '" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg></div>' : '';
     const sorted = tr.slice().sort((a, b) => a - b); const note = tr.length > 1 ? 'peak ' + fmt(sorted[sorted.length - 1]) + ' · median ' + fmt(sorted[Math.floor(sorted.length / 2)]) : '';
@@ -703,13 +713,13 @@
   };
   R.ring = (d, H, o) => {
     const l = level(d); if (!l) return EMPTY('a ring needs { value, min, max }');
-    const f = Math.max(0, Math.min(1, (l.v - l.lo) / ((l.hi - l.lo) || 1))), C = 2 * Math.PI * 26, unit = l.unit || ((l.hi === 100 && l.lo === 0) ? '%' : ''), big = Math.min(96, Math.max(56, H + 14));
+    const f = Math.max(0, Math.min(1, (l.v - l.lo) / ((l.hi - l.lo) || 1))), C = 2 * Math.PI * 26, unit = l.unit || ((l.bounded && l.hi === 100 && l.lo === 0) ? '%' : ''), big = Math.min(96, Math.max(56, H + 14));
     const note = (d && d.note) || (unit === '%' ? '' : fmt(l.v) + ' of ' + fmt(l.hi) + (unit ? ' ' + unit : ''));
-    return wrap('ring', '<span class="vb-ring" style="width:' + big + 'px;height:' + big + 'px"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="none" stroke="' + B.s3 + '" stroke-width="7"/><circle cx="32" cy="32" r="26" fill="none" stroke="' + palOf(o, 'accent')(0, f * 100, 100) + '" stroke-width="7" stroke-linecap="round" stroke-dasharray="' + (C * f).toFixed(1) + ' ' + C.toFixed(1) + '"/></svg><span>' + Math.round(f * 100) + '%</span></span>' + cap(esc(note)), 'vb-center');
+    return wrap('ring', '<span class="vb-dial" style="width:' + big + 'px;height:' + big + 'px"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="none" stroke="' + B.s3 + '" stroke-width="7"/><circle cx="32" cy="32" r="26" fill="none" stroke="' + palOf(o, 'accent')(0, f * 100, 100) + '" stroke-width="7" stroke-linecap="round" stroke-dasharray="' + (C * f).toFixed(1) + ' ' + C.toFixed(1) + '"/></svg><span>' + Math.round(f * 100) + '%</span></span>' + cap(esc(note)), 'vb-center');
   };
   R.meter = (d, H, o) => {
     const l = level(d); if (!l) return EMPTY('a meter needs { value, min, max }');
-    const f = Math.max(0, Math.min(1, (l.v - l.lo) / ((l.hi - l.lo) || 1))), unit = l.unit || ((l.hi === 100 && l.lo === 0) ? '%' : ''); const col = (d && d.col) || ((o && o.draw && o.draw.palette) ? palOf(o)(0, f * 100, 100) : B.ac); const tr = trendOf(d, o);
+    const f = Math.max(0, Math.min(1, (l.v - l.lo) / ((l.hi - l.lo) || 1))), unit = l.unit || ((l.bounded && l.hi === 100 && l.lo === 0) ? '%' : ''); const col = (d && d.col) || ((o && o.draw && o.draw.palette) ? palOf(o)(0, f * 100, 100) : B.ac); const tr = trendOf(d, o);
     const dl = l.delta != null ? '<span class="vb-lbl ' + (num(l.delta) >= 0 ? 'up' : 'dn') + '">' + (num(l.delta) >= 0 ? '▲' : '▼') + ' ' + esc(fmt(Math.abs(num(l.delta)))) + '</span>' : '';
     return wrap('meter', '<div class="vb-hero"><b style="color:' + col + '">' + esc(fmt(l.v)) + '</b><span class="u">' + esc(unit) + '</span>' + dl + '</div><span class="vb-bar2"><i style="width:' + (f * 100).toFixed(1) + '%;background:' + col + '"></i><i style="width:' + (100 - f * 100).toFixed(1) + '%;background:' + mix(B.ac4, 70, B.s3) + '"></i></span>' + cap(esc(String((d && d.note) || (unit === '%' ? '' : fmt(l.v) + ' of ' + fmt(l.hi) + ' ' + unit))))
       + (tr.length > 1 ? '<div class="vb-cols" style="height:' + Math.max(24, H - 84) + 'px"><div class="vb-colbars">' + tr.slice(-16).map((v) => '<i style="height:' + pct(v, Math.max(...tr)).toFixed(0) + '%;background:' + B.ac4 + ';opacity:.7"></i>').join('') + '</div></div>' : ''));
@@ -970,7 +980,7 @@
     const by = {}; rw.forEach((r) => { const s = String(r.status ?? r.state ?? 'other'); by[s] = (by[s] || 0) + 1; }); const parts = Object.keys(by).map((k) => [k, by[k]]); const tot = rw.length; const C = 2 * Math.PI * 26; let acc = 0;
     const list = (rs) => '<div class="vb-flist"><span class="h"><span>' + esc((o && o.draw && o.draw.what) || 'row') + '</span><span class="m">node</span><span class="m">state</span><span class="m">up</span></span>' + rs.map((r) => '<span><span><i style="background:' + stCol(r.status ?? r.state) + '"></i>' + esc(nameOf(r)) + '</span><span class="m">' + esc(String(r.node ?? r.host ?? '')) + '</span><span class="m">' + esc(String(r.status ?? r.state ?? '')) + '</span><span class="m">' + esc(String(r.up ?? r.uptime ?? r.age ?? '')) + '</span></span>').join('') + '</div>';
     let body;
-    if (pg === 0) body = '<div class="vb-carp"><span class="vb-ring"><svg viewBox="0 0 64 64">' + '<circle cx="32" cy="32" r="26" fill="none" stroke="' + B.s3 + '" stroke-width="9"/>' + parts.map((p) => { const fr = p[1] / tot; const el = '<circle cx="32" cy="32" r="26" fill="none" stroke="' + stCol(p[0]) + '" stroke-width="9" stroke-dasharray="' + Math.max(0, C * fr - 2).toFixed(1) + ' ' + (C - C * fr + 2).toFixed(1) + '" stroke-dashoffset="' + (-C * acc).toFixed(1) + '"/>'; acc += fr; return el; }).join('') + '</svg><span>' + tot + '</span></span><div class="vb-lg" style="width:96px">' + parts.map((p) => '<span><i style="background:' + stCol(p[0]) + '"></i>' + esc(p[0]) + '<b>' + p[1] + '</b></span>').join('') + '</div>' + list(rw.slice(0, 4)) + '</div>';
+    if (pg === 0) body = '<div class="vb-carp"><span class="vb-dial"><svg viewBox="0 0 64 64">' + '<circle cx="32" cy="32" r="26" fill="none" stroke="' + B.s3 + '" stroke-width="9"/>' + parts.map((p) => { const fr = p[1] / tot; const el = '<circle cx="32" cy="32" r="26" fill="none" stroke="' + stCol(p[0]) + '" stroke-width="9" stroke-dasharray="' + Math.max(0, C * fr - 2).toFixed(1) + ' ' + (C - C * fr + 2).toFixed(1) + '" stroke-dashoffset="' + (-C * acc).toFixed(1) + '"/>'; acc += fr; return el; }).join('') + '</svg><span>' + tot + '</span></span><div class="vb-lg" style="width:96px">' + parts.map((p) => '<span><i style="background:' + stCol(p[0]) + '"></i>' + esc(p[0]) + '<b>' + p[1] + '</b></span>').join('') + '</div>' + list(rw.slice(0, 4)) + '</div>';
     else if (pg === 1) body = '<div class="vb-carp">' + list(rw.slice(0, 8)) + '</div>';
     else body = R.racks ? R.racks(rw, H, o) : '<div class="vb-carp">' + list(rw.slice(0, 8)) + '</div>';
     return wrap('carousel', body + '<div class="vb-carn"><button' + set('page', (pg + 2) % 3) + '>‹</button>' + [0, 1, 2].map((j) => '<i class="' + (j === pg ? 'on' : '') + '"' + set('page', j) + '></i>').join('') + '<button' + set('page', (pg + 1) % 3) + '>›</button><span class="vb-lbl">' + pages[pg] + '</span></div>');
@@ -989,7 +999,7 @@
   R.rings = (d, H, o) => {
     const kv = keyed(d).slice(0, 3); if (!kv.length) return EMPTY('activity rings need up to three values'); const rw = rows(d); const cols = [B.ac2, B.ac, B.ac5], R0 = [34, 24, 14];
     const ringD = (r, f) => { const C = 2 * Math.PI * r; return (C * f).toFixed(1) + ' ' + C.toFixed(1); };
-    return wrap('rings', '<div class="vb-row"><div class="vb-rings"><svg viewBox="0 0 80 80">' + kv.map((x, i) => { const m = rw.find((q) => nameOf(q) === x[0]) || {}; const f = Math.max(0, Math.min(1, x[1] / (num(m.max) || 100))); return '<circle cx="40" cy="40" r="' + R0[i] + '" fill="none" stroke="' + B.s3 + '" stroke-width="7"/><circle cx="40" cy="40" r="' + R0[i] + '" fill="none" stroke="' + cols[i] + '" stroke-width="7" stroke-dasharray="' + ringD(R0[i], f) + '" stroke-linecap="round"/>'; }).join('') + '</svg></div><div class="vb-lg">' + kv.map((x, i) => '<span><i style="background:' + cols[i] + '"></i>' + esc(x[0]) + '<b>' + esc(fmt(x[1])) + '%</b></span>').join('') + '</div></div>');
+    return wrap('rings', '<div class="vb-row"><div class="vb-dials"><svg viewBox="0 0 80 80">' + kv.map((x, i) => { const m = rw.find((q) => nameOf(q) === x[0]) || {}; const f = Math.max(0, Math.min(1, x[1] / (num(m.max) || 100))); return '<circle cx="40" cy="40" r="' + R0[i] + '" fill="none" stroke="' + B.s3 + '" stroke-width="7"/><circle cx="40" cy="40" r="' + R0[i] + '" fill="none" stroke="' + cols[i] + '" stroke-width="7" stroke-dasharray="' + ringD(R0[i], f) + '" stroke-linecap="round"/>'; }).join('') + '</svg></div><div class="vb-lg">' + kv.map((x, i) => '<span><i style="background:' + cols[i] + '"></i>' + esc(x[0]) + '<b>' + esc(fmt(x[1])) + '%</b></span>').join('') + '</div></div>');
   };
   R.scatter = (d, H, o) => {
     const pts = rows(d).map((p) => ({ x: num(p.x ?? p.t ?? p[0]), y: num(p.y ?? p.v ?? p.value ?? p[1]), s: num(p.size ?? p.r ?? p.calls ?? 3), k: String(p.kind ?? p.class ?? p.label ?? ''), col: p.col || p.color })); if (pts.length < 2) return EMPTY('a scatter needs points');
@@ -1033,7 +1043,7 @@
     const b = isoBuild(boxes, k, W, H, null, null, null, o); const an = a0 + (Math.max(1, lit) - 1) / (N - 1) * span;
     return Object.assign(b, { needle: segsAt(b.at, [[0, 0, .42], [Math.cos(an) * Rr * .82, Math.sin(an) * Rr * .82, .32]], B.t1, 'needle') }); };
   R.dial = (d, H, o) => { const l = level(d); if (!l) return EMPTY('a dial needs { value, min, max }'); if (!ISO()) return ISO_WAIT; const W = wof(o), HH = hof(H); const f = Math.max(0, Math.min(1, (l.v - l.lo) / ((l.hi - l.lo) || 1)));
-    const D1 = dialScene(72, W, HH, f, {}); const unit = l.unit || ((l.hi === 100 && l.lo === 0) ? '%' : '');
+    const D1 = dialScene(72, W, HH, f, {}); const unit = l.unit || ((l.bounded && l.hi === 100 && l.lo === 0) ? '%' : '');
     const L = [lbl(D1.at, 0, 1.25, .7, fmt(l.v) + unit, B.t1, 'big dn'), lbl(D1.at, 0, 3.3, 0, String((d && d.note) || (o && o.title) || ''), B.t3, 'dn sm'), lbl(D1.at, -2.5, 2.1, 0, fmt(l.lo), B.t3, 'sm'), lbl(D1.at, 2.5, 2.1, 0, fmt(l.hi), B.t3, 'sm')];
     return wrap('dial', isow(W, HH, D1.faces.map(fpx).join('') + D1.needle.map(epx).join('') + L.map(lpx).join(''))); };
   R['radial@iso'] = (d, H, o) => R.dial(d, H, o);
@@ -1046,7 +1056,7 @@
   R.tank = (d, H, o) => { const l = level(d); if (!l) return EMPTY('a tank needs { value, max }'); if (!ISO()) return ISO_WAIT; const W = wof(o), HH = hof(H); const f = Math.max(0, Math.min(1, (l.v - l.lo) / ((l.hi - l.lo) || 1)));
     const TK = tankScene(66, W, HH, f, (d && d.col) || B.ac, {}); const writing = d && (d.writing || d.rate);
     const E = writing ? segsAt(TK.at, [[-1.9, 1.6, 4.4], [.9, 1.6, 4.4]], mix(B.ac, 55, B.s3), 'flowe').concat(segsAt(TK.at, [[.9, 1.6, 4.4], [.9, 1.6, 3.7]], mix(B.ac, 55, B.s3), 'flowe')) : [];
-    const unit = l.unit || ((l.hi === 100 && l.lo === 0) ? '%' : ''); const L = [lbl(TK.at, 1.6, 1.6, 3.15, Math.round(f * 100) + '%', B.t1, 'big'), lbl(TK.at, 1.6, 1.6, 2.55, String((d && d.note) || (fmt(l.v) + (unit === '%' ? '' : ' of ' + fmt(l.hi)) + ' ' + (unit === '%' ? '' : unit))), B.t2, 'sm'), lbl(TK.at, 1.6, 4.1, 0, String((o && o.title) || ''), B.t3, 'dn')].concat(writing ? [lbl(TK.at, -2.2, 1.6, 4.65, 'writing ' + esc(String(d.rate || '')), B.ac2, 'sm')] : []);
+    const unit = l.unit || ((l.bounded && l.hi === 100 && l.lo === 0) ? '%' : ''); const L = [lbl(TK.at, 1.6, 1.6, 3.15, Math.round(f * 100) + '%', B.t1, 'big'), lbl(TK.at, 1.6, 1.6, 2.55, String((d && d.note) || (fmt(l.v) + (unit === '%' ? '' : ' of ' + fmt(l.hi)) + ' ' + (unit === '%' ? '' : unit))), B.t2, 'sm'), lbl(TK.at, 1.6, 4.1, 0, String((o && o.title) || ''), B.t3, 'dn')].concat(writing ? [lbl(TK.at, -2.2, 1.6, 4.65, 'writing ' + esc(String(d.rate || '')), B.ac2, 'sm')] : []);
     return wrap('tank', isow(W, HH, TK.faces.map(fpx).join('') + E.map(epx).join('') + L.map(lpx).join(''))); };
 
   /* ── thermometers: a dim tube, a fill to the reading, a glowing cap when hot ── */
@@ -1281,8 +1291,8 @@
     if (!R[f]) return EMPTY('form ' + f0 + ' · no drawing yet');
     const proj = String(opts.projection || (opts.record && opts.record.projection) || (opts.draw && opts.draw.proj) || '').toLowerCase();
     const fi = proj === 'iso' ? (R[f0.toLowerCase() + '@iso'] ? f0.toLowerCase() + '@iso' : (R[f + '@iso'] ? f + '@iso' : f)) : f;
-    if (opts.map !== false) { const rec0 = opts.record; const m = opts.map || (rec0 && rec0.read && rec0.read.map), rg = opts.range || (rec0 && rec0.read && rec0.read.range);
-      if ((m && typeof m === 'object' && Object.keys(m).length) || (Array.isArray(rg) && rg.length === 2)) data = mapped({ read: { map: opts.map || m, range: opts.range || rg } }, f, data); }
+    if (opts.map !== false) { const rec0 = opts.record; const m = opts.map || (rec0 && rec0.read && rec0.read.map), rg = opts.range || (rec0 && rec0.read && rec0.read.range), du = opts.draw && opts.draw.unit;
+      if ((m && typeof m === 'object' && Object.keys(m).length) || (Array.isArray(rg) && rg.length === 2) || du) data = mapped({ read: { map: opts.map || m, range: opts.range || rg }, draw: { unit: du } }, f, data); }
     const d = dataFor(data, f);
     // nothing to draw yet (no result, an empty one, or a placeholder string handed to a form that draws numbers): the
     // form's SAMPLE face, marked — never "no data yet" (opts.sample === false keeps the bare answer for a caller that asks)
@@ -1297,7 +1307,7 @@
     if (size === 'xs') return '<span class="vw-xs" title="' + esc(opts.title || f0) + '"><i class="vw-g">' + glyphOf(f, data) + '</i>' + (figure(f, data) || '—') + '</span>';
     if (size === 's') return '<span class="vw-chip" title="' + esc(opts.title || f0) + '"><i class="vw-g">' + glyphOf(f, data) + '</i><b>' + (figure(f, data) || '—') + '</b>' + (opts.title ? '<small>' + esc(opts.title) + '</small>' : '') + '</span>';
     let body; try { body = R[fi](d, H, Object.assign({ size: size }, opts)); } catch (e) { body = EMPTY('could not draw ' + f0 + ': ' + (e && e.message || e)); }
-    if (size === 'm' || opts.bare || TABLE_FORMS.has(f)) return body;
+    if (size === 'm' || opts.bare || TABLE_FORMS.has(f) || f === 'composite' || DRAWN[f] === 'events') return body;   // a composite, a table, a feed: the body is the composition
     // L: the form plus its detail list beside it; XL: the form, its table, its log
     const kv = keyed(d).slice(0, 8); const rw = rows(d);
     const detail = kv.length ? '<div class="vw-detail">' + kv.map((x) => '<div><span>' + esc(x[0]) + '</span><b>' + esc(fmt(x[1])) + '</b></div>').join('') + '</div>'
@@ -1399,9 +1409,9 @@ span.vw-sampled{opacity:.85}
 .vw-l{display:grid;grid-template-columns:1fr 160px;gap:10px;width:100%;align-items:start}.vw-xl{display:grid;grid-template-columns:1fr 180px;gap:10px;width:100%;align-items:start}.vw-xl .vw-xltable{grid-column:1/-1}
 .vw-main{min-width:0}.vw-detail{display:flex;flex-direction:column;gap:3px;font-size:9.5px;border-left:1px solid var(--border,rgba(255,255,255,.09));padding-left:10px}.vw-detail div{display:flex;justify-content:space-between;gap:8px;color:var(--text,#d8dce4)}.vw-detail span{color:var(--dim2,#8a92a0);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.vw-detail b{font-family:var(--mono,ui-monospace,monospace);font-weight:400}
 .vw-comp{display:grid;gap:8px;width:100%;grid-template-columns:1fr 1fr}.vw-comp-rows,.vw-comp-report{grid-template-columns:1fr}.vw-comp-rail{grid-template-columns:1fr}.vw-comp-2x2{grid-template-columns:1fr 1fr}
-.vw-slot{min-width:0;min-height:0;background:var(--surf2,var(--bg2,#1a1c20));border-radius:var(--r-sm,6px);padding:7px 9px 8px;display:flex;flex-direction:column;gap:4px;box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14))}
+.vw-slot{min-width:0;min-height:0;box-sizing:border-box;overflow:hidden;background:var(--surf2,var(--bg2,#1a1c20));border-radius:var(--r-sm,6px);padding:7px 9px 8px;display:flex;flex-direction:column;gap:4px;box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14))}
 .vw-slot-h{display:flex;align-items:baseline;gap:6px;font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;font-weight:600;color:var(--t3,var(--dim,#6b7280));flex-shrink:0;white-space:nowrap;overflow:hidden}.vw-slot-h b{margin-left:auto;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:11px;color:var(--t1,var(--text,#d8dce4));font-weight:400;text-transform:none;letter-spacing:0}
-.vw-slot-b{flex:1;min-height:0;display:flex;align-items:center}.vw-slot-b > *{width:100%}
+.vw-slot-b{flex:1;min-height:0;display:flex;align-items:safe center;overflow:auto}.vw-slot-b > *{width:100%}
 .vw-slot-row{flex-direction:row;align-items:center;gap:8px;background:transparent;box-shadow:none;border-radius:0;padding:3px 0;border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)))}
 .vw-slot.vw-stale .vw-slot-b,.vw-slot-row.vw-stale .vw-chip{opacity:.55}.vw-kerr,.vw-kempty{font-style:normal;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:7.5px;letter-spacing:.06em;text-transform:uppercase;margin-left:6px;opacity:.85}.vw-kerr{color:var(--err,#c96b6b)}.vw-kempty{color:var(--t3,var(--dim,#6b7280))}
 .vw-root[data-stale="1"] .vw-body{opacity:.55}.vw-slot-row .k{width:72px;flex-shrink:0;font-size:9.5px;color:var(--t3,var(--dim,#6b7280));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -1504,7 +1514,7 @@ span.vw-sampled{opacity:.85}
 .vb-kb{flex:1;min-height:0;display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.vb-kb .kc{background:var(--b-surf2);border-radius:var(--b-r);padding:6px;display:flex;flex-direction:column;gap:4px;min-height:0;min-width:0;overflow:hidden}.vb-kb .kh{font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--b-t3);display:flex;gap:5px}.vb-kb .kh b{margin-left:auto;font-family:var(--b-mono);font-weight:400}.vb-kb .kt{background:var(--b-surf);border-radius:4px;padding:4px 6px;font-size:9px;color:var(--b-t1);line-height:1.3;box-shadow:inset 2px 0 0 0 var(--kc);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-kb .kt small{display:block;color:var(--b-t3);font-size:8px}
 /* levels */
 .vb-gg{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px}.vb-gg b{font-family:var(--b-mono);font-size:12px}.vb-gg .vb-lbl{font-size:9px}
-.vb-ring{position:relative;flex-shrink:0;display:block}.vb-ring svg{width:100%;height:100%;transform:rotate(-90deg);display:block}.vb-ring > span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:var(--b-mono);font-size:15px;font-weight:700}
+.vb-dial{position:relative;flex-shrink:0;display:block}.vb-dial svg{width:100%;height:100%;transform:rotate(-90deg);display:block}.vb-dial > span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:var(--b-mono);font-size:15px;font-weight:700}
 .vb-bar2{display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--b-s3);width:100%}.vb-bar2 i{display:block;height:100%}
 .vb-colbars{display:flex;align-items:flex-end;gap:2px;height:100%;min-height:56px;width:100%}.vb-colbars.gap{gap:3px}.vb-colbars i{flex:1;border-radius:2px 2px 0 0;display:block;min-height:1px}.vb-cols{flex:none;min-height:24px;display:flex}
 .vb-seg7{display:flex;gap:3px;justify-content:center;align-items:baseline;padding:8px 0 4px;flex-wrap:wrap}.vb-seg7 span{position:relative;font-family:var(--b-mono);font-size:34px;font-weight:700;line-height:1;letter-spacing:-.02em}.vb-seg7 span.p{font-size:22px;color:var(--b-t3)}.vb-seg7 span.u{font-size:13px}.vb-seg7 span::before{content:attr(data-g);position:absolute;left:0;top:0;opacity:0;pointer-events:none}
@@ -1553,9 +1563,9 @@ span.vw-sampled{opacity:.85}
 .vb-nstat{display:flex;align-items:center;gap:7px;font-size:10px;color:var(--b-t2)}.vb-nstat i{width:8px;height:8px;border-radius:50%}
 .vb-ncard,.vb-glance{display:grid;grid-template-columns:1fr 1fr;gap:6px;flex:1;min-height:0;align-content:center}.vb-ncard div,.vb-glance div{background:var(--b-surf2);border-radius:var(--b-r);padding:6px 8px;display:flex;flex-direction:column;gap:2px;min-width:0}.vb-ncard b,.vb-glance b{font-family:var(--b-mono);font-size:15px;font-weight:700;line-height:1}.vb-ncard b small{font-size:9px;font-weight:400;color:var(--b-t3);margin-left:1px}.vb-ncard span,.vb-glance span{font-size:8.5px;color:var(--b-t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-ncard .bar{height:4px;border-radius:2px;background:var(--b-s3);margin-top:3px;overflow:hidden}.vb-ncard .bar i{display:block;height:100%}.vb-glance .vb-spk{height:16px;margin-top:3px}
 .vb-cmpr{display:grid;grid-template-columns:1fr 70px 1fr;gap:8px;align-items:center;font-size:10px}.vb-cmpr .n{grid-column:2;text-align:center;color:var(--b-t2);order:2;white-space:nowrap;overflow:hidden}.vb-cmpr .side{display:flex;align-items:center;gap:6px;height:12px}.vb-cmpr .side.l{order:1;justify-content:flex-end}.vb-cmpr .side.r{order:3}.vb-cmpr .side i{display:block;height:8px;border-radius:4px}.vb-cmpr .side b{font-family:var(--b-mono);font-size:9.5px;color:var(--b-t1);width:34px;text-align:right}.vb-cmpr .side.r b{text-align:left}
-.vb-carp{flex:1;min-height:0;display:flex;align-items:center;gap:12px}.vb-carp .vb-ring{width:64px;height:64px}.vb-carp .vb-ring > span{font-size:13px}
+.vb-carp{flex:1;min-height:0;display:flex;align-items:center;gap:12px}.vb-carp .vb-dial{width:64px;height:64px}.vb-carp .vb-dial > span{font-size:13px}
 .vb-flist{flex:1;display:flex;flex-direction:column;gap:1px;font-size:9.5px;min-width:0}.vb-flist > span{display:grid;grid-template-columns:1fr 46px 50px 36px;gap:6px;align-items:center;height:19px}.vb-flist span i{width:6px;height:6px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:middle}.vb-flist .h{color:var(--b-t3);font-size:8px;text-transform:uppercase;letter-spacing:.08em}.vb-flist .m{font-family:var(--b-mono);color:var(--b-t2);text-align:right;white-space:nowrap;overflow:hidden}
-.vb-rings{width:96px;height:96px;flex-shrink:0}.vb-rings svg{width:96px;height:96px;transform:rotate(-90deg)}`;
+.vb-dials{width:96px;height:96px;flex-shrink:0}.vb-dials svg{width:96px;height:96px;transform:rotate(-90deg)}`;
   function ensureCss(root) {
     const host = root && root.head ? root.head : root;
     if (!host || !host.querySelector) return;
@@ -1568,7 +1578,7 @@ span.vw-sampled{opacity:.85}
 .vw-root{display:flex;flex-direction:column;gap:5px;height:100%;min-width:0}
 .vw-hd{display:flex;align-items:center;gap:6px;font-family:var(--mono,ui-monospace,monospace);font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim,#6b7280);font-weight:600}
 .vw-hd i{width:6px;height:6px;border-radius:50%;background:var(--acc,#5a9e8f);flex-shrink:0}.vw-hd b{margin-left:auto;font-size:11px;color:var(--text,#d8dce4);font-weight:400;text-transform:none;letter-spacing:0}
-.vw-body{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;font-size:10.5px}
+.vw-body{flex:1;min-height:0;display:flex;align-items:safe center;justify-content:center;overflow:auto;font-size:10.5px}
 .vw-cap{font-size:9px;color:var(--dim2,#8a92a0);font-family:var(--mono,ui-monospace,monospace);display:flex;gap:6px;align-items:center}.vw-cap .sp{flex:1}
 .vw-acts{display:flex;gap:4px;flex-wrap:wrap}.vw-acts button{font-size:8.5px;color:var(--text,#d8dce4);background:var(--bg2,#1a1c20);border:1px solid var(--border,rgba(255,255,255,.09));border-radius:99px;padding:2px 7px;cursor:pointer;font-family:inherit}.vw-acts button:hover{color:var(--acc,#5a9e8f);border-color:var(--acc,#5a9e8f)}
 .vw-read{font-size:9px;padding:2px 8px;border:1px solid var(--border,rgba(255,255,255,.09));border-radius:4px;background:var(--bg2,#1a1c20);color:var(--dim2,#8a92a0);cursor:pointer;font-family:inherit}
@@ -1998,17 +2008,36 @@ span.vw-sampled{opacity:.85}
   const validateLater = dbg(() => validate(), 350);
   function changed(rerender) {
     if (!S) return; S.armed = false; S.rec.shape = shapeOf(S.rec);
+    S.dirty = true;   // the record changed since the last validation was sent
     if (rerender) { renderRec(); renderCat(); renderPacks(); }
     renderPvw(); renderFoot(); validateLater();
     try { if (typeof S.opts.onChange === 'function') S.opts.onChange(recOut(S.rec)); } catch (_) {}
   }
+  // what widget.validate said of a record: the problems that bar it, the warnings, the normalised record
+  const verdict = (r) => { const probs = (r && Array.isArray(r.problems)) ? r.problems : [];
+    // a record with no source draws its sample face and stays editable (widget_record.validate's own rule): a warning here, not a bar
+    return { problems: probs.filter((p) => p !== 'no source'), warnings: ((r && Array.isArray(r.warnings)) ? r.warnings : []).concat(probs.filter((p) => p === 'no source').map(() => 'no source · the sample face until one is picked')), validated: (r && r.record && typeof r.record === 'object') ? r.record : null }; };
   async function validate() {
     const st = S; if (!st) return; const seq = (st.vseq = (st.vseq || 0) + 1);   // an older answer never overwrites a newer record's
-    try { const r = await call(st.base, 'widget.validate', { record: recOut(st.rec) }); if (st !== S || seq !== st.vseq) return; const probs = (r && Array.isArray(r.problems)) ? r.problems : [];
-      // a record with no source draws its sample face and stays editable (widget_record.validate's own rule): a warning here, not a bar
-      st.problems = probs.filter((p) => p !== 'no source'); st.warnings = ((r && Array.isArray(r.warnings)) ? r.warnings : []).concat(probs.filter((p) => p === 'no source').map(() => 'no source · the sample face until one is picked')); st.validated = (r && r.record && typeof r.record === 'object') ? r.record : null; }
+    st.dirty = false;   // the record sent is the record as it stands; a change after this marks it dirty again
+    try { const r = await call(st.base, 'widget.validate', { record: recOut(st.rec) }); if (st !== S || seq !== st.vseq) return; Object.assign(st, verdict(r)); }
     catch (_) { if (st !== S || seq !== st.vseq) return; st.problems = []; st.warnings = []; st.validated = null; }
+    st.vAnswered = seq;
     renderFoot();
+  }
+  // widget.validate's normalised record with the sheet's own keys kept beside it (what OK hands back)
+  function finalise(out, v) {
+    const fin = v ? Object.assign({}, v, { title: out.title || v.title, read: Object.assign({}, v.read, { map: out.read.map, args: out.read.args, range: out.read.range || null }), skin: out.skin || v.skin, frame: Object.assign({}, v.frame, { dive: out.frame.dive, caption: out.frame.caption, legend: out.frame.legend, motion: out.frame.motion != null ? out.frame.motion : v.frame.motion }),
+      draw: Object.assign({}, out.draw, v.draw), actions: out.actions, placement: out.placement, place: out.place, template: out.template, panel: v.panel || out.panel, projection: v.projection || out.projection, children: out.children || v.children }) : out;
+    if (fin.data === undefined && out.data !== undefined) fin.data = out.data;
+    return fin;
+  }
+  // The staged OK: the sheet has closed and the caller has placed the record as it stood; widget.validate finishes here
+  // and the caller hears the verdict through opts.onValidated(record | null, problems, warnings) — the tile takes the
+  // normalised record, or names the problems and stays editable.
+  async function validateDetached(st, out) {
+    let v; try { v = verdict(await call(st.base, 'widget.validate', { record: out })); } catch (e) { v = { problems: [], warnings: ['widget.validate could not be reached: ' + String(e && e.message || e).slice(0, 80)], validated: null }; }
+    try { if (typeof st.opts.onValidated === 'function') st.opts.onValidated(v.problems.length ? null : finalise(out, v.validated), v.problems, v.warnings); } catch (_) {}
   }
   const titleOf = (rec) => rec.title || ((rec.form || 'widget') + (rec.source ? ' · ' + rec.source : ''));
 
@@ -2124,14 +2153,17 @@ span.vw-sampled{opacity:.85}
   async function ok() {
     const st = S; if (!st) return;
     if (st.picked && st.picked.kind === 'menu') { cfgClose(st.picked.item.record); return; }
-    await validate(); if (st !== S) return;
-    if (st.problems.length && !st.armed) { st.armed = true; renderFoot(); return; }
     const out = recOut(st.rec); if (!out.title) out.title = titleOf(st.rec);
-    // what widget.validate normalised, with the sheet's own keys kept beside it
-    const v = st.validated; const fin = v ? Object.assign({}, v, { title: out.title || v.title, read: Object.assign({}, v.read, { map: out.read.map, args: out.read.args, range: out.read.range || null }), skin: out.skin || v.skin, frame: Object.assign({}, v.frame, { dive: out.frame.dive, caption: out.frame.caption, legend: out.frame.legend, motion: out.frame.motion != null ? out.frame.motion : v.frame.motion }),
-      draw: Object.assign({}, out.draw, v.draw), actions: out.actions, placement: out.placement, place: out.place, template: out.template, panel: v.panel || out.panel, projection: v.projection || out.projection, children: out.children || v.children }) : out;
-    if (fin.data === undefined && out.data !== undefined) fin.data = out.data;
-    cfgClose(fin);
+    // a validation that has answered for the record as it stands decides now (problems arm OK once, as before); without
+    // one the record is handed over at once and validated behind the closed sheet — OK never waits on widget.validate
+    // (7–15 s on a busy backend; the tile used to wait that long to appear)
+    const fresh = !st.dirty && st.vAnswered && st.vAnswered === st.vseq;
+    if (!fresh) {
+      try { if (typeof st.opts.onValidating === 'function') st.opts.onValidating(); } catch (_) {}
+      validateDetached(st, out); cfgClose(out); return;
+    }
+    if (st.problems.length && !st.armed) { st.armed = true; renderFoot(); return; }
+    cfgClose(finalise(out, st.validated));
   }
   window.VeraWidgetConfig = { open: cfgOpen, close: () => cfgClose(null), recordFrom: recFrom, recordOut: recOut, entries: CG_ENTRIES.slice(), packs: PACKS.slice(), version: 2 };
 })();

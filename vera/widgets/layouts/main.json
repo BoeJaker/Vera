@@ -17,7 +17,7 @@
    12
   ]
  },
- "note": "Every widget of the cluster-overview grid as a record (UI redesign M5). draw.body = \"page\": the page draws the body by hand today and its own updaters address it by id; the record owns the frame. draw.body = \"record\": the element draws the record and the page's markup is retired under it (VeraDash.drawTile). Generated from the markup by the M5 slice; edit by hand from here. The record tiles read their sources through the element: read.map names the envelope's fields (the shape's container ← a path, every other key a field of each row); a composite reads its subject once and its children take $subject.<path> slices of it, or read on their own. A tile kept on the page body carries a note saying why.",
+ "note": "Every widget of the cluster-overview grid as a record (UI redesign M5). draw.body = \"record\": the element draws the record and the page's markup is retired under it (VeraDash.drawTile); draw.body = \"page\": the page draws the body by hand and its own updaters address it by id — the record owns the frame, and a note says why. A record tile reads its source through the element: read.map names the envelope's fields (the shape's container ← a path, a dict of things ← rows named by key, every other key ← a field of each row); a composite reads its subject once and its children take $subject.<path> slices of it, or read on their own. A tile the page has no markup for (events, health) is drawn from this file alone. Generated from the markup by the M5 slice; edit by hand from here.",
  "widgets": [
   {
    "record": {
@@ -46,7 +46,7 @@
      "ask"
     ],
     "place": "dashboard",
-    "note": "the topology form draws a mermaid diagram through <vera-mermaid>, which the harness page does not load; the page draws the estate's own <vera-topology-map> (status colour, click a node, collapse a kind)"
+    "note": "the page draws the estate's own <vera-topology-map> (status colour per node, click a node to open it, collapse a kind); the topology form draws a diagram of the graph without those hooks"
    },
    "at": [
     0,
@@ -76,7 +76,7 @@
       4,
       5
      ],
-     "max_body": 290
+     "max_body": null
     },
     "draw": {
      "body": "record"
@@ -87,36 +87,35 @@
      "ask"
     ],
     "place": "dashboard",
-    "layout": "grid",
+    "layout": "2x2",
     "children": [
      {
-      "slot": "nodes",
+      "slot": "counts",
       "record": {
-       "id": "sysmon-proxmox:nodes",
-       "form": "counter",
-       "source": "$subject.proxmox.nodes",
-       "title": "nodes",
-       "shape": "level"
+       "id": "sysmon-proxmox:counts",
+       "form": "pills",
+       "source": "$subject.proxmox",
+       "title": "counts",
+       "shape": "values"
       }
      },
      {
-      "slot": "guests",
+      "slot": "mem",
       "record": {
-       "id": "sysmon-proxmox:guests",
-       "form": "counter",
-       "source": "$subject.proxmox.guests",
-       "title": "guests",
-       "shape": "level"
-      }
-     },
-     {
-      "slot": "running",
-      "record": {
-       "id": "sysmon-proxmox:running",
-       "form": "counter",
-       "source": "$subject.proxmox.running",
-       "title": "running",
-       "shape": "level"
+       "id": "sysmon-proxmox:mem",
+       "form": "meter",
+       "source": "$subject.proxmox",
+       "title": "memory",
+       "shape": "level",
+       "read": {
+        "map": {
+         "value": "mem_used_gb",
+         "max": "mem_total_gb"
+        }
+       },
+       "draw": {
+        "unit": "GB"
+       }
       }
      },
      {
@@ -127,6 +126,22 @@
        "source": "$subject.proxmox.clusters",
        "title": "clusters",
        "shape": "items"
+      }
+     },
+     {
+      "slot": "memtrace",
+      "record": {
+       "id": "sysmon-proxmox:memtrace",
+       "form": "trace",
+       "source": "sysmon.history",
+       "title": "memory %",
+       "shape": "series",
+       "read": {
+        "map": {
+         "series": "samples",
+         "v": "pmx_mem_pct"
+        }
+       }
       }
      }
     ]
@@ -159,7 +174,7 @@
       4,
       5
      ],
-     "max_body": 290
+     "max_body": null
     },
     "draw": {
      "body": "record"
@@ -170,42 +185,22 @@
      "ask"
     ],
     "place": "dashboard",
-    "layout": "grid",
+    "layout": "2x2",
     "children": [
+     {
+      "slot": "counts",
+      "record": {
+       "id": "sysmon-docker:counts",
+       "form": "pills",
+       "source": "$subject.docker",
+       "title": "counts",
+       "shape": "values"
+      }
+     },
      {
       "slot": "hosts",
       "record": {
        "id": "sysmon-docker:hosts",
-       "form": "counter",
-       "source": "$subject.docker.total_hosts",
-       "title": "hosts",
-       "shape": "level"
-      }
-     },
-     {
-      "slot": "running",
-      "record": {
-       "id": "sysmon-docker:running",
-       "form": "counter",
-       "source": "$subject.docker.running",
-       "title": "running",
-       "shape": "level"
-      }
-     },
-     {
-      "slot": "containers",
-      "record": {
-       "id": "sysmon-docker:containers",
-       "form": "counter",
-       "source": "$subject.docker.containers",
-       "title": "containers",
-       "shape": "level"
-      }
-     },
-     {
-      "slot": "hostsList",
-      "record": {
-       "id": "sysmon-docker:hostsList",
        "form": "rows",
        "source": "$subject.docker.hosts",
        "title": "hosts",
@@ -213,7 +208,39 @@
        "read": {
         "map": {
          "name": "label",
-         "count": "containers"
+         "containers": "containers",
+         "running": "running"
+        }
+       }
+      }
+     },
+     {
+      "slot": "runtrace",
+      "record": {
+       "id": "sysmon-docker:runtrace",
+       "form": "trace",
+       "source": "sysmon.history",
+       "title": "running",
+       "shape": "series",
+       "read": {
+        "map": {
+         "series": "samples",
+         "v": "dkr_running"
+        }
+       }
+      }
+     },
+     {
+      "slot": "top",
+      "record": {
+       "id": "sysmon-docker:top",
+       "form": "rows",
+       "source": "docker.stats.top",
+       "title": "top containers",
+       "shape": "items",
+       "read": {
+        "map": {
+         "rows": "hosts.local.containers"
         }
        }
       }
@@ -248,7 +275,7 @@
       4,
       4
      ],
-     "max_body": 290
+     "max_body": null
     },
     "draw": {
      "body": "record"
@@ -259,36 +286,32 @@
      "ask"
     ],
     "place": "dashboard",
-    "layout": "grid",
+    "layout": "2x2",
     "children": [
-     {
-      "slot": "online",
-      "record": {
-       "id": "sysmon-ollama:online",
-       "form": "counter",
-       "source": "$subject.ollama.online",
-       "title": "online",
-       "shape": "level"
-      }
-     },
      {
       "slot": "inuse",
       "record": {
        "id": "sysmon-ollama:inuse",
-       "form": "counter",
-       "source": "$subject.ollama.in_use",
+       "form": "ring",
+       "source": "$subject.ollama",
        "title": "in use",
-       "shape": "level"
+       "shape": "level",
+       "read": {
+        "map": {
+         "value": "in_use",
+         "max": "total"
+        }
+       }
       }
      },
      {
-      "slot": "gpu",
+      "slot": "counts",
       "record": {
-       "id": "sysmon-ollama:gpu",
-       "form": "counter",
-       "source": "$subject.ollama.gpu",
-       "title": "gpu",
-       "shape": "level"
+       "id": "sysmon-ollama:counts",
+       "form": "pills",
+       "source": "$subject.ollama",
+       "title": "counts",
+       "shape": "values"
       }
      },
      {
@@ -301,7 +324,25 @@
        "shape": "items",
        "read": {
         "map": {
-         "name": "label"
+         "name": "label",
+         "status": "status",
+         "latency_ms": "latency_ms"
+        }
+       }
+      }
+     },
+     {
+      "slot": "usetrace",
+      "record": {
+       "id": "sysmon-ollama:usetrace",
+       "form": "trace",
+       "source": "sysmon.history",
+       "title": "in use",
+       "shape": "series",
+       "read": {
+        "map": {
+         "series": "samples",
+         "v": "oll_inuse"
         }
        }
       }
@@ -347,7 +388,7 @@
      "ask"
     ],
     "place": "dashboard",
-    "layout": "grid",
+    "layout": "2x2",
     "children": [
      {
       "slot": "cpu",
@@ -411,7 +452,7 @@
   {
    "record": {
     "id": "host-temps",
-    "form": "thermo",
+    "form": "temps",
     "source": "obs.node_temps",
     "shape": "values",
     "title": "Host Temps — every sensor, click to collapse",
@@ -432,7 +473,9 @@
      "max_body": 290
     },
     "draw": {
-     "unit": "°C",
+     "unit": "°",
+     "throttle": 70,
+     "limit": 8,
      "body": "record"
     },
     "actions": [
@@ -458,30 +501,33 @@
    "record": {
     "id": "status",
     "form": "counter",
-    "source": "obs.health",
+    "source": "perf.scan",
     "shape": "level",
-    "title": "Status",
+    "title": "Health",
     "read": {
-     "refresh": "5s"
+     "refresh": "30s",
+     "map": {
+      "value": "summary.warn"
+     }
     },
     "frame": {
      "size": "s",
      "span": [
       2,
-      1
+      2
      ],
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "unit": "warnings",
+     "body": "record"
     },
     "actions": [
      "dive",
      "pin",
      "ask"
     ],
-    "place": "dashboard",
-    "note": "the page computes the verdict (OFFLINE / degraded / healthy) from the connection and the health strip; obs.health carries no status field a form could read"
+    "place": "dashboard"
    },
    "at": [
     4,
@@ -489,7 +535,7 @@
    ],
    "span": [
     2,
-    1
+    2
    ],
    "hidden": false,
    "refresh": "5s",
@@ -512,7 +558,7 @@
      "size": "s",
      "span": [
       2,
-      1
+      2
      ],
      "max_body": null
     },
@@ -532,7 +578,7 @@
    ],
    "span": [
     2,
-    1
+    2
    ],
    "hidden": false,
    "refresh": "5s",
@@ -542,30 +588,33 @@
    "record": {
     "id": "redis",
     "form": "counter",
-    "source": "obs.health",
+    "source": "obs.redis",
     "shape": "level",
-    "title": "Redis",
+    "title": "Redis · clients",
     "read": {
-     "refresh": "5s"
+     "refresh": "10s",
+     "map": {
+      "value": "connected_clients"
+     }
     },
     "frame": {
      "size": "s",
      "span": [
       2,
-      1
+      2
      ],
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "unit": "clients",
+     "body": "record"
     },
     "actions": [
      "dive",
      "pin",
      "ask"
     ],
-    "place": "dashboard",
-    "note": "obs.health answers redis: true | false — no form draws a boolean (a counter reads 0); the page draws ✓ / ✗"
+    "place": "dashboard"
    },
    "at": [
     4,
@@ -573,7 +622,7 @@
    ],
    "span": [
     2,
-    1
+    2
    ],
    "hidden": false,
    "refresh": "5s",
@@ -596,7 +645,7 @@
      "size": "s",
      "span": [
       2,
-      1
+      2
      ],
      "max_body": null
     },
@@ -616,7 +665,7 @@
    ],
    "span": [
     2,
-    1
+    2
    ],
    "hidden": false,
    "refresh": "5s",
@@ -639,7 +688,7 @@
      "size": "s",
      "span": [
       2,
-      1
+      2
      ],
      "max_body": null
     },
@@ -659,7 +708,7 @@
    ],
    "span": [
     2,
-    1
+    2
    ],
    "hidden": false,
    "refresh": "5s",
@@ -682,7 +731,7 @@
      "size": "s",
      "span": [
       2,
-      1
+      2
      ],
      "max_body": null
     },
@@ -702,7 +751,7 @@
    ],
    "span": [
     2,
-    1
+    2
    ],
    "hidden": false,
    "refresh": "5s",
@@ -799,14 +848,14 @@
   {
    "record": {
     "id": "neo4j",
-    "form": "hero",
+    "form": "pills",
     "source": "memory.stats",
-    "shape": "level",
+    "shape": "values",
     "title": "Neo4j · graph",
     "read": {
      "refresh": "30s",
      "map": {
-      "value": "backends.neo4j.nodes"
+      "values": "backends.neo4j"
      }
     },
     "frame": {
@@ -867,7 +916,7 @@
      "ask"
     ],
     "place": "dashboard",
-    "layout": "grid",
+    "layout": "2x2",
     "children": [
      {
       "slot": "stream",
@@ -914,7 +963,7 @@
       "slot": "routing",
       "record": {
        "id": "queues:routing",
-       "form": "log",
+       "form": "feed",
        "source": "ollama.request_log",
        "title": "routing",
        "shape": "events",
@@ -945,26 +994,32 @@
   {
    "record": {
     "id": "scheduler",
-    "form": "agenda",
+    "form": "table",
     "source": "obs.scheduler",
-    "shape": "calendar",
+    "shape": "items",
     "title": "Scheduler",
     "read": {
      "refresh": "30s",
      "map": {
-      "when": "last",
-      "title": "name"
+      "rows": "$"
      }
     },
     "frame": {
      "size": "xl",
      "span": [
       6,
-      3
+      4
      ],
      "max_body": 220
     },
     "draw": {
+     "columns": [
+      "name",
+      "interval",
+      "runs",
+      "last"
+     ],
+     "sort": "runs",
      "body": "record"
     },
     "actions": [
@@ -980,7 +1035,7 @@
    ],
    "span": [
     6,
-    3
+    4
    ],
    "hidden": false,
    "refresh": "30s",
@@ -989,12 +1044,15 @@
   {
    "record": {
     "id": "workerlist",
-    "form": "cards",
-    "source": "cluster.workers",
+    "form": "table",
+    "source": "obs.workers",
     "shape": "items",
     "title": "Workers",
     "read": {
-     "refresh": "10s"
+     "refresh": "10s",
+     "map": {
+      "rows": "$"
+     }
     },
     "frame": {
      "size": "xl",
@@ -1005,15 +1063,22 @@
      "max_body": 280
     },
     "draw": {
-     "body": "page"
+     "columns": [
+      "name",
+      "status",
+      "host",
+      "tasks_done",
+      "tasks_failed",
+      "cap_count"
+     ],
+     "body": "record"
     },
     "actions": [
      "dive",
      "pin",
      "ask"
     ],
-    "place": "dashboard",
-    "note": "obs.workers / obs.cluster.workers answer a dict keyed by worker id; the map picks paths, it does not turn a dict into rows — a rows view of the workers is needed before cards can draw it"
+    "place": "dashboard"
    },
    "at": [
     6,
@@ -1038,7 +1103,10 @@
      "refresh": "10s",
      "map": {
       "rows": "ollama.nodes",
-      "name": "label"
+      "name": "label",
+      "status": "status",
+      "latency_ms": "latency_ms",
+      "in_use": "in_use"
      }
     },
     "frame": {
@@ -1085,7 +1153,7 @@
      "size": "m",
      "span": [
       4,
-      3
+      4
      ],
      "max_body": null
     },
@@ -1098,7 +1166,7 @@
      "ask"
     ],
     "place": "dashboard",
-    "layout": "grid",
+    "layout": "2x2",
     "children": [
      {
       "slot": "count",
@@ -1120,9 +1188,20 @@
        "shape": "values",
        "read": {
         "map": {
-         "name": "label"
+         "name": "label",
+         "status": "state"
         }
        }
+      }
+     },
+     {
+      "slot": "transports",
+      "record": {
+       "id": "mesh-info:transports",
+       "form": "kv",
+       "source": "$subject.transports",
+       "title": "transports",
+       "shape": "values"
       }
      }
     ]
@@ -1133,7 +1212,7 @@
    ],
    "span": [
     4,
-    3
+    4
    ],
    "hidden": false,
    "refresh": "30s",
@@ -1153,7 +1232,7 @@
      "size": "m",
      "span": [
       4,
-      3
+      4
      ],
      "max_body": null
     },
@@ -1166,16 +1245,31 @@
      "ask"
     ],
     "place": "dashboard",
-    "layout": "grid",
+    "layout": "2x2",
     "children": [
      {
       "slot": "state",
       "record": {
        "id": "looplab-info:state",
-       "form": "node",
+       "form": "kv",
        "source": "$subject",
        "title": "sandbox",
        "shape": "values"
+      }
+     },
+     {
+      "slot": "slots",
+      "record": {
+       "id": "looplab-info:slots",
+       "form": "counter",
+       "source": "evolve.sandbox.list",
+       "title": "slots free",
+       "shape": "level",
+       "read": {
+        "map": {
+         "value": "capacity.available_slots"
+        }
+       }
       }
      },
      {
@@ -1203,7 +1297,7 @@
    ],
    "span": [
     4,
-    3
+    4
    ],
    "hidden": false,
    "refresh": "10s",
@@ -1212,16 +1306,14 @@
   {
    "record": {
     "id": "sandboxes-info",
-    "form": "list",
+    "form": "table",
     "source": "sandbox.session.list",
     "shape": "items",
     "title": "Sandboxes",
     "read": {
      "refresh": "30s",
      "map": {
-      "rows": "sandboxes",
-      "name": "session_id",
-      "status": "state"
+      "rows": "sandboxes"
      }
     },
     "frame": {
@@ -1233,6 +1325,13 @@
      "max_body": null
     },
     "draw": {
+     "columns": [
+      "session_id",
+      "state",
+      "source",
+      "last_used"
+     ],
+     "sort": "last_used",
      "body": "record"
     },
     "actions": [
@@ -1257,9 +1356,9 @@
   {
    "record": {
     "id": "connections",
-    "form": "list",
+    "form": "composite",
     "source": "ide.vscode.instances",
-    "shape": "items",
+    "shape": "composite",
     "title": "Connections",
     "read": {
      "refresh": "30s"
@@ -1268,12 +1367,12 @@
      "size": "m",
      "span": [
       4,
-      3
+      4
      ],
-     "max_body": 220
+     "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record"
     },
     "actions": [
      "dive",
@@ -1281,7 +1380,54 @@
      "ask"
     ],
     "place": "dashboard",
-    "note": "the page merges three reads (ide.vscode.instances · ide.claude_sessions.sources · openclaw.status) and the element does not read ide.vscode.instances on its own (readable() knows no .instances)"
+    "layout": "2x2",
+    "children": [
+     {
+      "slot": "vscode",
+      "record": {
+       "id": "connections:vscode",
+       "form": "rows",
+       "source": "$subject.instances",
+       "title": "VS Code",
+       "shape": "items",
+       "read": {
+        "map": {
+         "name": "label",
+         "status": "status",
+         "kind": "kind"
+        }
+       }
+      }
+     },
+     {
+      "slot": "claude",
+      "record": {
+       "id": "connections:claude",
+       "form": "rows",
+       "source": "ide.claude_sessions.sources",
+       "title": "Claude Code",
+       "shape": "items",
+       "read": {
+        "map": {
+         "rows": "sources",
+         "name": "label",
+         "kind": "kind",
+         "alive": "alive"
+        }
+       }
+      }
+     },
+     {
+      "slot": "openclaw",
+      "record": {
+       "id": "connections:openclaw",
+       "form": "kv",
+       "source": "openclaw.status",
+       "title": "OpenClaw",
+       "shape": "values"
+      }
+     }
+    ]
    },
    "at": [
     4,
@@ -1289,6 +1435,122 @@
    ],
    "span": [
     4,
+    4
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "events",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "events": "$",
+      "t": "ts",
+      "kind": "type",
+      "text": "name"
+     }
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      3
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "form": "feed",
+    "shape": "events",
+    "source": "obs.events",
+    "title": "Live events"
+   },
+   "at": [
+    0,
+    30
+   ],
+   "span": [
+    6,
+    3
+   ],
+   "hidden": false,
+   "refresh": "10s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "health",
+    "read": {
+     "refresh": "30s"
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      3
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "form": "composite",
+    "shape": "composite",
+    "source": "perf.scan",
+    "title": "Health · perf.scan",
+    "layout": "2x2",
+    "children": [
+     {
+      "slot": "summary",
+      "record": {
+       "id": "health:summary",
+       "form": "pills",
+       "source": "$subject.summary",
+       "title": "findings",
+       "shape": "values"
+      }
+     },
+     {
+      "slot": "findings",
+      "record": {
+       "id": "health:findings",
+       "form": "rows",
+       "source": "$subject.findings",
+       "title": "what perf.scan found",
+       "shape": "items",
+       "read": {
+        "map": {
+         "name": "title",
+         "status": "severity",
+         "area": "area"
+        }
+       }
+      }
+     }
+    ]
+   },
+   "at": [
+    6,
+    30
+   ],
+   "span": [
+    6,
     3
    ],
    "hidden": false,

@@ -147,11 +147,18 @@ def test_the_seven_layout_files_name_every_tile_of_their_grid_as_a_record():
         assert lay["v"] == 2 and lay["key"] == key and lay["grid"] == {"cols": 12, "row": 58, "gap": 10, "widths": [2, 3, 4, 6, 8, 12]}, key
         page = _grid_tiles(key)
         assert len(page) == n, (key, len(page))
-        assert [t["record"]["id"] for t in lay["widgets"]] == [wid for wid, _ in page], key
-        for t, (wid, span) in zip(lay["widgets"], page):
-            r = t["record"]
+        page_ids = [wid for wid, _ in page]
+        # the page's tiles lead the layout, in the page's order; a tile the layout adds beyond them has no markup — the
+        # element draws it from the file alone (VeraDash.applyFile → addRecord)
+        assert [t["record"]["id"] for t in lay["widgets"] if t["record"]["id"] in page_ids] == page_ids, key
+        spans = dict(page)
+        for t in lay["widgets"]:
+            r = t["record"]; wid = r["id"]
             assert r["form"] in forms, (key, wid, r["form"])
             assert r["title"] and r["source"] and r["shape"], (key, wid)
+            span = spans.get(wid) or tuple(t["span"])
+            if wid not in spans:
+                assert r["draw"]["body"] == "record", (key, wid, "a tile without markup is the element's")
             assert t["span"] == list(span) and r["frame"]["span"] == list(span), (key, wid)
             assert r["frame"]["size"] == REC.size_for_span(*span), (key, wid)
             assert r["draw"]["body"] in ("page", "record"), (key, wid)
@@ -159,10 +166,11 @@ def test_the_seven_layout_files_name_every_tile_of_their_grid_as_a_record():
             for c in r.get("children") or []:
                 assert c["record"]["form"] in forms and c["slot"], (key, wid, c)
         total += MIG.count_records(lay)
-    assert total >= 100, total   # the composites carry the children an M tile's body holds (two rows of slots), not every sub-widget the inventory listed
+    assert total >= 100, total   # the composites carry the children a tile's rows hold, not every sub-widget the inventory listed
 
 
-PAGE_TILES = ("topology-map", "status", "redis", "workerlist", "connections")   # what stays the page's, each with its note
+PAGE_TILES = ("topology-map",)   # what stays the page's (the estate's own topology element), with its note
+RECORD_ONLY = ("events", "health")   # the board's Live events and a Health tile: no page markup, drawn from the layout file
 
 
 def test_the_main_tiles_are_record_tiles_the_element_draws_from_their_sources():
@@ -176,24 +184,41 @@ def test_the_main_tiles_are_record_tiles_the_element_draws_from_their_sources():
     main = _layout("main")
     converted = [t["record"]["id"] for t in main["widgets"] if t["record"]["draw"].get("body") == "record"]
     page = [t["record"]["id"] for t in main["widgets"] if t["record"]["draw"].get("body") == "page"]
-    assert len(converted) == 19 and tuple(page) == PAGE_TILES, (converted, page)
+    assert len(converted) == 25 and tuple(page) == PAGE_TILES, (converted, page)
     recs = {t["record"]["id"]: t["record"] for t in main["widgets"]}
     for wid in PAGE_TILES:
         assert recs[wid].get("note"), wid
+    page_ids = [wid for wid, _ in _grid_tiles("main")]
+    assert [wid for wid in recs if wid not in page_ids] == list(RECORD_ONLY)
     # a record tile reads a source the element reads on its own, through a map into the real envelope
     assert recs["workers"]["read"]["map"] == {"value": "workers"} and recs["workers"]["source"] == "obs.health"
     assert recs["pending"]["read"]["map"] == {"value": "count"} and recs["pending"]["source"] == "obs.pending"
     assert recs["mode"]["form"] == "string" and recs["mode"]["shape"] == "string" and recs["mode"]["read"]["map"] == {"text": "mode"}
-    assert recs["postgres"]["read"]["map"] == {"value": "backends.postgres.total"} and recs["neo4j"]["read"]["map"] == {"value": "backends.neo4j.nodes"}
-    assert recs["host-temps"]["read"]["map"] == {"values": "hosts", "name": "label", "value": "max_c"}
-    assert recs["scheduler"]["form"] == "agenda" and recs["scheduler"]["read"]["map"] == {"when": "last", "title": "name"}
-    assert recs["ollama"]["source"] == "sysmon.status" and recs["ollama"]["read"]["map"] == {"rows": "ollama.nodes", "name": "label"}, "cluster.ollama is not a capability"
-    assert recs["sandboxes-info"]["source"] == "sandbox.session.list" and recs["sandboxes-info"]["read"]["map"]["rows"] == "sandboxes", "remote.sandbox.list is a route"
+    assert recs["status"]["title"] == "Health" and recs["status"]["source"] == "perf.scan" and recs["status"]["read"]["map"] == {"value": "summary.warn"}
+    assert recs["redis"]["source"] == "obs.redis" and recs["redis"]["read"]["map"] == {"value": "connected_clients"} and recs["redis"]["draw"]["unit"] == "clients"
+    assert recs["postgres"]["read"]["map"] == {"value": "backends.postgres.total"} and recs["postgres"]["draw"]["unit"] == "records"
+    assert recs["neo4j"]["form"] == "pills" and recs["neo4j"]["read"]["map"] == {"values": "backends.neo4j"}
+    assert recs["host-temps"]["form"] == "temps" and recs["host-temps"]["read"]["map"] == {"values": "hosts", "name": "label", "value": "max_c"} and recs["host-temps"]["draw"]["throttle"] == 70
+    # the lists are tables: columns named, sorted, paged
+    assert recs["scheduler"]["form"] == "table" and recs["scheduler"]["read"]["map"] == {"rows": "$"} and recs["scheduler"]["draw"]["columns"] == ["name", "interval", "runs", "last"]
+    assert recs["workerlist"]["form"] == "table" and recs["workerlist"]["source"] == "obs.workers" and recs["workerlist"]["read"]["map"] == {"rows": "$"}, "a dict keyed by worker id → rows named by key"
+    assert recs["workerlist"]["draw"]["columns"] == ["name", "status", "host", "tasks_done", "tasks_failed", "cap_count"]
+    assert recs["ollama"]["form"] == "cards" and recs["ollama"]["source"] == "sysmon.status" and recs["ollama"]["read"]["map"]["rows"] == "ollama.nodes", "cluster.ollama is not a capability"
+    assert recs["sandboxes-info"]["form"] == "table" and recs["sandboxes-info"]["source"] == "sandbox.session.list" and recs["sandboxes-info"]["draw"]["columns"] == ["session_id", "state", "source", "last_used"], "remote.sandbox.list is a route"
+    # the board's Live events feed and a Health tile, on sources the old page never showed
+    assert recs["events"]["form"] == "feed" and recs["events"]["source"] == "obs.events" and recs["events"]["read"]["map"] == {"events": "$", "t": "ts", "kind": "type", "text": "name"}
+    assert recs["health"]["form"] == "composite" and recs["health"]["source"] == "perf.scan" and [c["slot"] for c in recs["health"]["children"]] == ["summary", "findings"]
     for wid in converted:
         r = recs[wid]
         assert r["form"] and r["source"] and r["shape"], wid
         if r["form"] != "composite":
             assert r["read"].get("map") or wid == "diagnostics", (wid, "a converted tile names the part of its envelope it draws")
+    # the breadth: the Dashboard board's cluster overview is many different forms on real sources
+    forms = set()
+    for r in recs.values():
+        if r["draw"]["body"] == "record":
+            forms.add(r["form"]); forms.update(c["record"]["form"] for c in r.get("children") or [])
+    assert forms >= {"composite", "counter", "hero", "pills", "ring", "meter", "trace", "rows", "table", "cards", "feed", "kv", "temps", "string", "terminal"}, sorted(forms)
     assert 'draw.body = "record": the element draws the record and the page\'s markup is retired under it (VeraDash.drawTile)' in main["note"]
     assert "a composite reads its subject once and its children take $subject.<path> slices of it" in main["note"]
     for s in ("function drawTile(w, rec)", "holder.className = 'w-page'; holder.hidden = true;", "var pageBody = !rec.form || (rec.draw && rec.draw.body === 'page');",
@@ -206,7 +231,7 @@ def test_add_widget_opens_the_widget_surface_and_every_tile_has_its_gear():
     size ladder, templates) and places the record; the panel picker stays as openPanels and through a row of the
     picker; gear on every tile opens the surface on its record (mode edit) and Save writes it back; without the
     surface the record sheet opens; a record without a readable source draws the form's sample."""
-    for s in ("window.VeraWidgetConfig.open({ mode: 'add', into: 'dashboard', title: 'Add a widget', sizes: ladderSizes(), templates: true })",
+    for s in ("window.VeraWidgetConfig.open({ mode: 'add', into: 'dashboard', title: 'Add a widget', sizes: ladderSizes(), templates: true, onValidating: st.onValidating, onValidated: st.onValidated })",
               "return openPanels();", "function openPanels()", "data-records", "function placeRecord(rec)",
               "window.VeraWidgetConfig.open({ mode: 'edit', record: was, into: 'dashboard', title: was.title || wid, anchor: anchor || w, sizes: ladderSizes(), templates: true,",
               "function ensureCfg(w)", "b.textContent = '⚙';", "function configure(wid, anchor)", "function applyRecord(wid, r)", "function openSheet(wid, rec)",
@@ -230,20 +255,25 @@ def test_the_composites_carry_the_sub_widgets_the_inventory_names():
     their own with a map; four children (two rows of slots) is what an M tile's body holds."""
     main = {t["record"]["id"]: t["record"] for t in _layout("main")["widgets"]}
     for wid, subject in (("sysmon-proxmox", "sysmon.status"), ("sysmon-docker", "sysmon.status"), ("sysmon-ollama", "sysmon.status"),
-                         ("host-resources", "sysmon.history"), ("queues", "jobs.stats"), ("mesh-info", "mesh.nodes"), ("looplab-info", "evolve.sandbox.status")):
+                         ("host-resources", "sysmon.history"), ("queues", "jobs.stats"), ("mesh-info", "mesh.nodes"), ("looplab-info", "evolve.sandbox.status"),
+                         ("connections", "ide.vscode.instances"), ("health", "perf.scan")):
         r = main[wid]
-        assert r["form"] == "composite" and r["source"] == subject and r["draw"]["body"] == "record" and r["layout"] == "grid", wid
+        assert r["form"] == "composite" and r["source"] == subject and r["draw"]["body"] == "record" and r["layout"] == "2x2", wid
         assert 2 <= len(r["children"]) <= 4, (wid, len(r["children"]))
+        assert r["frame"]["max_body"] is None, (wid, "a composite fills its tile; the rows are the height")
+        assert len(set(c["record"]["form"] for c in r["children"])) >= 2, (wid, "a composite mixes its forms")
         for c in r["children"]:
             k = c["record"]
             assert k["id"] == wid + ":" + c["slot"] and k["form"] and k["shape"] and k["source"], (wid, c)
-            assert k["source"].startswith("$subject") or k.get("read", {}).get("map"), (wid, c["slot"], "a child of its own source says what it draws")
-    assert [c["record"]["source"] for c in main["sysmon-ollama"]["children"]] == ["$subject.ollama.online", "$subject.ollama.in_use", "$subject.ollama.gpu", "$subject.ollama.nodes"]
+            assert k["source"].startswith("$subject") or k.get("read", {}).get("map") or k["shape"] == "values", (wid, c["slot"], "a child of its own source says what it draws (a values form lists the envelope's own numbers and values)")
+    ol_kids = {c["slot"]: c["record"] for c in main["sysmon-ollama"]["children"]}
+    assert ol_kids["inuse"]["form"] == "ring" and ol_kids["inuse"]["source"] == "$subject.ollama" and ol_kids["inuse"]["read"]["map"] == {"value": "in_use", "max": "total"}
+    assert ol_kids["nodes"]["form"] == "rows" and ol_kids["nodes"]["source"] == "$subject.ollama.nodes"
+    assert main["sysmon-proxmox"]["children"][1]["record"]["form"] == "meter" and main["sysmon-proxmox"]["children"][1]["record"]["read"]["map"] == {"value": "mem_used_gb", "max": "mem_total_gb"}
     assert main["host-resources"]["children"][0]["record"]["read"]["map"] == {"v": "cpu"}, "a series of {t, cpu} rows: v renamed per row"
-    assert main["queues"]["children"][3]["record"]["read"]["map"] == {"events": "entries", "t": "ts", "kind": "instance", "text": "model"}
-    assert main["status"]["form"] == "counter" and main["status"]["source"] == "obs.health"
-    assert main["topology-map"]["form"] == "topology" and main["topology-map"]["frame"]["size"] == "xl"
-    assert main["sysmon-proxmox"]["frame"]["max_body"] == 290, "the inline cap became the record's max_body"
+    assert main["queues"]["children"][3]["record"]["form"] == "feed" and main["queues"]["children"][3]["record"]["read"]["map"] == {"events": "entries", "t": "ts", "kind": "instance", "text": "model"}
+    assert main["status"]["form"] == "counter" and main["status"]["source"] == "perf.scan"
+    assert main["topology-map"]["form"] == "topology" and main["topology-map"]["frame"]["size"] == "xl" and main["topology-map"]["draw"]["body"] == "page"
     ol = {t["record"]["id"]: t["record"] for t in _layout("wol-ollama")["widgets"]}
     assert ol["ol-bgqueue"]["form"] == "list" and ol["ol-bgqueue"]["source"] == "background.status"
     obs = {t["record"]["id"]: t["record"] for t in _layout("wol-observe")["widgets"]}
@@ -315,7 +345,7 @@ def test_migrate_store_walks_a_localstorage_dump_and_ignores_the_wol_legacy():
             "vera:wol-layout:workers": json.dumps({"order": ["w-total"]}), "vera.theme": "dusk", "vera.dash.broken": "{not json"}
     out = MIG.migrate_store(dump, {"main": _layout("main")})
     assert set(out) == {"main", "dream"}
-    assert out["main"]["v"] == 2 and out["main"]["widgets"][0]["record"] == "status" and len(out["main"]["widgets"]) == 24
+    assert out["main"]["v"] == 2 and out["main"]["widgets"][0]["record"] == "status" and len(out["main"]["widgets"]) == 26   # the page's 24 tiles + the file's two record-only tiles
     assert out["dream"]["widgets"][0]["record"] == "cycle", "an entry already in the new shape passes through"
 
 
@@ -362,8 +392,8 @@ def test_the_catalogue_lists_and_serves_the_layout_files():
     assert orch.CAPABILITY_REGISTRY["widget.layout.migrate"]["meta"]["http_path"] == "/ui/widgets/layouts/migrate"
     assert cat.layout_keys() == sorted(COUNTS)
     r = _run(cat.widget_layouts())
-    assert r["ok"] and r["count"] == 7 and {x["key"]: x["widgets"] for x in r["layouts"]} == COUNTS
-    assert [x for x in r["layouts"] if x["key"] == "main"][0]["records"] == 47
+    assert r["ok"] and r["count"] == 7 and {x["key"]: x["widgets"] for x in r["layouts"]} == dict(COUNTS, main=26)   # main: the page's 24 + two record-only tiles
+    assert [x for x in r["layouts"] if x["key"] == "main"][0]["records"] == 56
     one = _run(cat.widget_layouts(key="wol-observe"))
     assert one["ok"] and one["layout"]["widgets"][0]["record"]["id"] == "obs-stream"
     assert cat.load_layout("../widget_record") is None and cat.load_layout("nope") is None
