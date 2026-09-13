@@ -4642,7 +4642,7 @@ IMPORTANT:
     const hasTools=(mode!=='none');
 
     // Top bar pill
-    if(meta)meta.innerHTML=`<span class="model-pill">${esc(mdl||'default')}</span>&nbsp;T:${a.temperature??0.7}`;
+    if(meta){ const node=String(a.node||a.host||a.route_node||(a.routing&&(a.routing.node||a.routing.host))||''); meta.innerHTML=`<span class="model-pill">${esc(mdl||'default')}</span>`+(node?`<span class="node"> · ${esc(node)}</span>`:'')+`<span class="temp" title="temperature">&nbsp;T:${a.temperature??0.7}</span>`; }   // the board: model · node beneath the name
     if(capBadge)capBadge.className=hasTools?'':'hidden';
     if(infoBox)infoBox.innerHTML=
       `<b>Model:</b> ${esc(mdl||'(system default)')}<br>`+
@@ -12795,12 +12795,13 @@ function _embedMount(){
   // Sessions: search, today's sessions as rows (the history list's own records), the current one lit
   function _quickSessions(el){
     const list=(typeof SESSIONS!=='undefined'&&Array.isArray(SESSIONS))?SESSIONS:[]; const q=_qSessQ.toLowerCase();
-    const rows=list.filter(s=>!q||(s.displayName||s.name||s.session_id||'').toLowerCase().includes(q)||(s.preview||'').toLowerCase().includes(q)).slice(0,10);
+    const rows=list.filter(s=>!q||(s.displayName||s.name||s.session_id||'').toLowerCase().includes(q)||(s.preview||'').toLowerCase().includes(q)).slice(0,24);
+  const titleOf=s=>String(s.displayName||s.name||(s.preview?String(s.preview).replace(/\s+/g,' ').trim().slice(0,64):'')||('session · '+String(s.session_id||'').slice(-8)));   // a session is its first question until it is named
     const sig=list.length+':'+q+':'+SID+':'+rows.map(s=>s.session_id).join(','); if(el.dataset.sig===sig) return; el.dataset.sig=sig;
-    const day=s=>{ const t=(s.first_ts||'').slice(0,10), today=new Date().toISOString().slice(0,10); return t===today?'Today':t; };
+    const day=s=>{ const t=(s.first_ts||'').slice(0,10), today=new Date().toISOString().slice(0,10), yest=new Date(Date.now()-864e5).toISOString().slice(0,10); return t===today?'Today':t===yest?'Yesterday':(t||'Earlier'); };
     el.innerHTML='<div class="wid" data-w="search · search"><label class="wsearch">⌕<input placeholder="find a session · /" value="'+esc(_qSessQ)+'"></label></div>'
-      +'<div class="wid" data-w="sessions · list"><div class="grp">'+(rows.length&&day(rows[0])==='Today'?'Today':'Recent')+' · '+list.length+'</div>'
-      +(rows.length?rows.map(s=>'<div class="lrow'+(s.session_id===SID?' on':'')+'" data-sid="'+esc(s.session_id)+'" title="'+esc((s.agent||'?')+' · '+(s.count||0)+' msgs · '+(s.first_ts||'').slice(0,16))+'"><span class="nm">'+esc(s.displayName||s.name||s.session_id.slice(-12))+'<small>'+esc((s.agent||'?')+' · '+(s.count||0)+' msgs')+'</small></span><span class="rt-n">'+esc(day(s)==='Today'?(s.first_ts||'').slice(11,16):(s.first_ts||'').slice(5,10))+'</span></div>').join('')
+      +'<div class="wid" data-w="sessions · list">'
+      +(rows.length?rows.map((s,i)=>(i===0||day(rows[i-1])!==day(s)?'<div class="grp">'+esc(day(s))+(i===0?' · '+list.length:'')+'</div>':'')+'<div class="lrow'+(s.session_id===SID?' on':'')+'" data-sid="'+esc(s.session_id)+'" title="'+esc((s.agent||'?')+' · '+(s.count||0)+' msgs · '+(s.first_ts||'').slice(0,16))+'"><span class="nm">'+esc(titleOf(s))+'<small>'+esc((s.agent||'?')+' · '+(s.count||0)+' msgs')+'</small></span><span class="rt-n">'+esc(day(s)==='Today'?(s.first_ts||'').slice(11,16):(s.first_ts||'').slice(5,10))+'</span></div>').join('')
         :'<div class="lhm-empty">'+(list.length?'No session matches.':'No sessions yet.')+'</div>')+'</div>';
     const inp=el.querySelector('input'); inp.addEventListener('input',()=>{ _qSessQ=inp.value; VeraLHM.render(); const i2=el.querySelector('input'); if(i2){ i2.focus(); i2.selectionStart=i2.selectionEnd=i2.value.length; } });
     el.querySelectorAll('.lrow[data-sid]').forEach(r=>r.addEventListener('click',()=>{ try{ loadSession(r.dataset.sid); }catch(_){} }));
@@ -12889,7 +12890,9 @@ function _embedMount(){
       onPick:()=>{ if(host.classList.contains('slim')) toggleRight(); },
       // "Save as menu…" (the ChatMenu board's edit mode): the composed menu becomes a record of yours through lhm.menu.save
       // the picker's registry groups: every drawable form, then the user's templates (the same reads + Place makes)
-      pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',counter:'#',bar:'▬',bars:'▥',thermo:'≣',heat:'▦',matrix:'▦',donut:'◑',stack:'▤',pills:'◦',log:'≡',lane:'≡',table:'▦',files:'⊞',list:'≡',checklist:'☑',stepper:'⋮',calendar:'▤',string:'¶',kv:'≔',pipes:'⌥',scatter:'⁘',panel:'▭',composite:'⊞'};
+      // the ☰ top-level list (the board: Vera · 86 panels · ⌘K): every registered panel, a row opens it beside the chat
+panels:()=>{ try{ return (UI_PANELS||[]).map(p=>({ id:p.id, label:p.label||p.id, icon:p.icon||'▭', open:()=>{ try{ _slashOpenPanel(p.id); }catch(_){} } })); }catch(_){ return []; } },
+pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',counter:'#',bar:'▬',bars:'▥',thermo:'≣',heat:'▦',matrix:'▦',donut:'◑',stack:'▤',pills:'◦',log:'≡',lane:'≡',table:'▦',files:'⊞',list:'≡',checklist:'☑',stepper:'⋮',calendar:'▤',string:'¶',kv:'≔',pipes:'⌥',scatter:'⁘',panel:'▭',composite:'⊞'};
         const groups=[]; try{ const r=await _capCall('widget.forms',{}); const forms=(r&&r.forms)||[]; if(forms.length) groups.push({n:'Widget forms', items:forms.slice(0,60).map(f=>({g:GL[f.id]||'▢', n:f.id, c:(f.shape||'')+(f.proj&&f.proj.length?' · '+f.proj.join(' · '):''), add:{form:f.id}}))}); }catch(_){}
         try{ const r=await _capCall('widget.template.list',{session_id:SID||''}); const tpls=(r&&r.templates)||[]; if(tpls.length) groups.push({n:'Your templates', items:tpls.slice(0,60).map(t=>({g:GL[t.form]||'⧉', n:t.name||t.id, c:(t.form||'')+(t.source&&t.source.panel?' · '+t.source.panel:''), add:{tpl:t.id, form:t.form||'kv', label:t.name||t.id}}))}); }catch(_){}
         return groups; },

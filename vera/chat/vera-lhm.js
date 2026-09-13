@@ -96,7 +96,9 @@
 '.lhm-quick .wid.lhm-added{background:var(--bg2);border-radius:var(--r-sm,6px);padding:8px 10px;display:flex;flex-direction:column;gap:6px}',
 '.lhm-quick .lhm-added-cap{display:flex;align-items:center;gap:7px;font-size:10.5px;color:var(--text)}.lhm-quick .lhm-added-cap b{font-weight:600;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.lhm-quick .lhm-added-cap .mono{font-family:var(--mono);font-size:9px;color:var(--dim2)}',
 '.lhm-wedit{display:flex;flex-direction:column;gap:5px;margin-top:10px;flex-shrink:0}',
-'.lhm-wadd{height:30px;border:none;border-radius:var(--r-sm,6px);font:inherit;font-size:10.5px;color:var(--dim2);text-align:left;padding:0 10px;background:transparent;outline:1px dashed color-mix(in srgb,var(--dim) 60%,transparent);outline-offset:-1px;cursor:pointer}',
+'.lhm-tsearch{display:flex;align-items:center;gap:6px;margin:6px 8px 4px;height:28px;padding:0 9px;border-radius:var(--r-sm,6px);background:var(--bg,var(--bg0,#0e0f12));box-shadow:inset 0 0 0 1px var(--border);color:var(--dim)}',
+    '.lhm-tsearch input{flex:1;min-width:0;border:none;background:transparent;font:inherit;font-size:10.5px;color:var(--text);outline:none}',
+    '.lhm-wadd{height:30px;border:none;border-radius:var(--r-sm,6px);font:inherit;font-size:10.5px;color:var(--dim2);text-align:left;padding:0 10px;background:transparent;outline:1px dashed color-mix(in srgb,var(--dim) 60%,transparent);outline-offset:-1px;cursor:pointer}',
 '.lhm-wadd:hover{color:var(--acc);outline-color:var(--acc)}',
 '.lhm-wnote-s{font-size:9px;color:var(--dim);padding:4px 2px 0;line-height:1.5}',
 '.lhm-wfoot{display:flex;align-items:center;gap:6px;padding-top:2px}.lhm-wfoot .sp{flex:1}',
@@ -251,7 +253,7 @@
     if(!_hd) return;
     var m = _menu(_active);
     var h2 = _hd.querySelector('h2'), meta = _hd.querySelector('.lhm-meta'), ed = _hd.querySelector('.lhm-edit');
-    if(_topMode){ h2.textContent = _cfg.title || 'Vera'; meta.textContent = (_cfg.menus || []).length + ' menus · ' + _openNow().length + ' open'; }
+    if(_topMode){ h2.textContent = _cfg.title || 'Vera'; var np = 0; try{ np = ((_cfg.panels && _cfg.panels()) || []).length; }catch(e){} meta.textContent = (np ? np + ' panels · ⌘K' : (_cfg.menus || []).length + ' menus') + ' · ' + _openNow().length + ' open'; }
     else { h2.textContent = m ? (m.title || m.label) : ''; var s = ''; try{ s = m && m.meta ? String(m.meta() || '') : ''; }catch(e){} meta.textContent = s; }
     ed.classList.toggle('on', _editing);
     var dp = _hd.querySelector('.lhm-deep'); if(dp){ var hasQ = !!(m && typeof m.quick === 'function' && !_topMode); dp.classList.toggle('has', hasQ); dp.textContent = (m && m._deep) ? '◂ Quick' : 'Full ▸'; dp.title = (m && m._deep) ? 'Back to the quick menu' : 'The full ' + (m ? (m.label || m.id) : '') + ' panel, in this same place'; }
@@ -417,6 +419,16 @@
       if(o.focus) r.addEventListener('click', function(){ try{ o.focus(); }catch(e){} });
       _top.appendChild(r);
     });
+    // every panel (the board's top-level list): a search box, then the rows; a row opens the panel beside the chat
+    var panels = []; try{ panels = (_cfg.panels && _cfg.panels()) || []; }catch(e){}
+    if(panels.length){
+      var s = _el('label', 'lhm-tsearch'); s.appendChild(_el('span', '', '⌕')); var q = _el('input'); q.type = 'search'; q.placeholder = 'find a panel, a setting, a capability'; q.value = _topQ; s.appendChild(q); _top.appendChild(s);
+      q.addEventListener('input', function(){ _topQ = q.value; _renderTop(); var i2 = _top.querySelector('.lhm-tsearch input'); if(i2){ i2.focus(); i2.selectionStart = i2.selectionEnd = i2.value.length; } });
+      var qq = (_topQ || '').toLowerCase(); var shown = panels.filter(function(p){ return !qq || String(p.label || p.id).toLowerCase().indexOf(qq) >= 0 || String(p.id).toLowerCase().indexOf(qq) >= 0; });
+      _top.appendChild(_el('div', 'lhm-sec', 'Panels · ' + panels.length + (qq ? ' · ' + shown.length + ' match' : '') + ' · ⌘K'));
+      shown.slice(0, 120).forEach(function(p){ var r = _el('div', 'lhm-row'); r.appendChild(_el('span', 'lhm-ri', p.icon || '▭')); r.appendChild(_el('span', 'lhm-rn', p.label || p.id)); r.appendChild(_el('span', 'lhm-rm', p.id)); r.addEventListener('click', function(){ try{ if(p.open) p.open(); }catch(e){} }); _top.appendChild(r); });
+      if(!shown.length) _top.appendChild(_el('div', 'lhm-empty', 'No panel matches.'));
+    }
     _top.appendChild(_el('div', 'lhm-sec', 'Menus · ' + (_cfg.menus || []).length));
     (_cfg.menus || []).forEach(function(m){
       var r = _el('div', 'lhm-row' + (m.id === _active ? ' on' : ''));
@@ -459,6 +471,7 @@
     var m = _menuOfTab(tabId); if(!m) return;
     _active = m.id; _activeTab = tabId; m._last = tabId; _topMode = false; render();
   }
+  var _topQ = '';
   function toggleTop(on){ _topMode = (on == null) ? !_topMode : !!on; render(); }
   function toggleEdit(on){ _editing = (on == null) ? !_editing : !!on; if(!_editing) closeRecord(); render(); }
 
